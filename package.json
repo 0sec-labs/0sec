@@ -47,13 +47,13 @@
   },
   "license": "SEE LICENSE IN LICENSE",
   "engines": {
-    "node": ">=20",
-    "pnpm": ">=8"
+    "node": ">=24.0.0",
+    "pnpm": ">=9"
   },
   "packageManager": "pnpm@9.15.9",
   "dependencies": {
     "@types/pdfkit": "^0.13.9",
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "node-sqlite3-wasm": "^0.8.55",
     "pdfkit": "^0.15.2"
   },

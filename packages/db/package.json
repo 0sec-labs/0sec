@@ -16,11 +16,11 @@
   },
   "dependencies": {
     "@pwnkit/shared": "workspace:*",
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "node-sqlite3-wasm": "^0.8.55"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "typescript": "^5.7.2",
     "vitest": "^2.1.9"
   }
 }
