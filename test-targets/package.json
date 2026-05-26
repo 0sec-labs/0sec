@@ -1,0 +1,29 @@
+{
+  "name": "@pwnkit/test-targets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/vulnerable-server.js",
+  "exports": {
+    "./vulnerable": "./dist/vulnerable-server.js",
+    "./safe": "./dist/safe-server.js"
+  },
+  "description": "Intentionally vulnerable and safe LLM endpoints for testing pwnkit",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "vulnerable": "tsx src/vulnerable-server.ts",
+    "safe": "tsx src/safe-server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "express": "^4.22.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
+}

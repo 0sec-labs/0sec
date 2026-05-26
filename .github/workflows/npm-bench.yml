@@ -1,0 +1,175 @@
+name: npm-bench Benchmark
+
+run-name: >-
+  npm-bench (${{
+    inputs.depth || 'quick'
+  }}, ${{
+    inputs.runtime || 'api'
+  }}, ${{
+    inputs.features || 'default'
+  }}, repeat=${{
+    inputs.repeat || '1'
+  }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      depth:
+        description: 'Benchmark depth (quick, default, deep)'
+        required: false
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - default
+          - deep
+      runtime:
+        description: 'Runtime mode'
+        required: false
+        default: 'api'
+        type: choice
+        options:
+          - api
+          - auto
+      features:
+        description: 'Feature flag profile (mirrors xbow-bench): default, none, no-triage, moat, moat-only, experimental, or comma-separated single flags (pov,reachability,multimodal,debate,memories,egats,consensus,no-hiw,no-evidence)'
+        required: false
+        default: 'default'
+        type: string
+      repeat:
+        description: 'Number of independent attempts per package (default 1; set to 3 for FPR stability runs)'
+        required: false
+        default: '1'
+
+jobs:
+  npm-bench:
+    runs-on: ubuntu-latest
+    # Job ceiling has to exceed the per-step ceiling. The 81-package set
+    # observed ~30s-2min per package in run #24025320432, so the worst-case
+    # serial runtime is north of 90 minutes once retries kick in.
+    timeout-minutes: 180
+
+    env:
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      AZURE_OPENAI_BASE_URL: ${{ secrets.AZURE_OPENAI_BASE_URL }}
+      AZURE_OPENAI_MODEL: ${{ secrets.AZURE_OPENAI_MODEL }}
+      AZURE_OPENAI_WIRE_API: ${{ secrets.AZURE_OPENAI_WIRE_API }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Configure feature flags
+        # Mirrors the xbow-bench.yml profile system so npm-bench can run
+        # the same ablation matrix. Profiles are documented there.
+        run: |
+          FEATURES="${{ inputs.features || 'default' }}"
+          if [ "$FEATURES" = "none" ]; then
+            echo "PWNKIT_FEATURE_EARLY_STOP=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_LOOP_DETECTION=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_CONTEXT_COMPACTION=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_SCRIPT_TEMPLATES=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_EXTERNAL_MEMORY=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_HOLDING_IT_WRONG=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_EVIDENCE_GATE=0" >> "$GITHUB_ENV"
+            echo "Running with ALL features DISABLED (true baseline, no triage gates)"
+          elif [ "$FEATURES" = "default" ]; then
+            echo "Running with features.ts defaults"
+          elif [ "$FEATURES" = "experimental" ]; then
+            echo "PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_EXTERNAL_MEMORY=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_PROGRESS_HANDOFF=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_WEB_SEARCH=1" >> "$GITHUB_ENV"
+            echo "Running with default + experimental features"
+          elif [ "$FEATURES" = "moat" ]; then
+            echo "PWNKIT_FEATURE_POV_GATE=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_REACHABILITY_GATE=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_MULTIMODAL=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_DEBATE=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_TRIAGE_MEMORIES=1" >> "$GITHUB_ENV"
+            # egats excluded — see pwnkit#116 (and the ablation comment in xbow-bench.yml)
+            echo "PWNKIT_FEATURE_CONSENSUS_VERIFY=1" >> "$GITHUB_ENV"
+            echo "Running with default features + v0.6.0 FP moat layers (egats excluded, #116)"
+          elif [ "$FEATURES" = "moat-only" ]; then
+            echo "PWNKIT_FEATURE_EARLY_STOP=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_LOOP_DETECTION=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_CONTEXT_COMPACTION=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_SCRIPT_TEMPLATES=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_POV_GATE=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_REACHABILITY_GATE=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_MULTIMODAL=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_DEBATE=1" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_TRIAGE_MEMORIES=1" >> "$GITHUB_ENV"
+            # egats excluded — see pwnkit#116
+            echo "PWNKIT_FEATURE_CONSENSUS_VERIFY=1" >> "$GITHUB_ENV"
+            echo "Running with ONLY the v0.6.0 FP moat layers, egats excluded (#116)"
+          elif [ "$FEATURES" = "no-triage" ]; then
+            echo "PWNKIT_FEATURE_HOLDING_IT_WRONG=0" >> "$GITHUB_ENV"
+            echo "PWNKIT_FEATURE_EVIDENCE_GATE=0" >> "$GITHUB_ENV"
+            echo "Running with default features but always-on triage gates DISABLED"
+          else
+            for f in $(echo "$FEATURES" | tr ',' ' '); do
+              case "$f" in
+                playbooks) echo "PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS=1" >> "$GITHUB_ENV" ;;
+                memory) echo "PWNKIT_FEATURE_EXTERNAL_MEMORY=1" >> "$GITHUB_ENV" ;;
+                web_search) echo "PWNKIT_FEATURE_WEB_SEARCH=1" >> "$GITHUB_ENV" ;;
+                handoff) echo "PWNKIT_FEATURE_PROGRESS_HANDOFF=1" >> "$GITHUB_ENV" ;;
+                pov) echo "PWNKIT_FEATURE_POV_GATE=1" >> "$GITHUB_ENV" ;;
+                reachability) echo "PWNKIT_FEATURE_REACHABILITY_GATE=1" >> "$GITHUB_ENV" ;;
+                multimodal) echo "PWNKIT_FEATURE_MULTIMODAL=1" >> "$GITHUB_ENV" ;;
+                debate) echo "PWNKIT_FEATURE_DEBATE=1" >> "$GITHUB_ENV" ;;
+                memories) echo "PWNKIT_FEATURE_TRIAGE_MEMORIES=1" >> "$GITHUB_ENV" ;;
+                egats) echo "PWNKIT_FEATURE_EGATS=1" >> "$GITHUB_ENV" ;;
+                consensus) echo "PWNKIT_FEATURE_CONSENSUS_VERIFY=1" >> "$GITHUB_ENV" ;;
+                no-hiw) echo "PWNKIT_FEATURE_HOLDING_IT_WRONG=0" >> "$GITHUB_ENV" ;;
+                no-evidence) echo "PWNKIT_FEATURE_EVIDENCE_GATE=0" >> "$GITHUB_ENV" ;;
+                # Stable feature isolation tokens — see xbow-bench.yml
+                # for context. Used to isolate which stable feature
+                # causes the npm-bench FPR increase (see pwnkit#72).
+                no-early-stop) echo "PWNKIT_FEATURE_EARLY_STOP=0" >> "$GITHUB_ENV" ;;
+                no-loop-detection) echo "PWNKIT_FEATURE_LOOP_DETECTION=0" >> "$GITHUB_ENV" ;;
+                no-context-compaction) echo "PWNKIT_FEATURE_CONTEXT_COMPACTION=0" >> "$GITHUB_ENV" ;;
+                no-script-templates) echo "PWNKIT_FEATURE_SCRIPT_TEMPLATES=0" >> "$GITHUB_ENV" ;;
+                no-handoff) echo "PWNKIT_FEATURE_PROGRESS_HANDOFF=0" >> "$GITHUB_ENV" ;;
+                learned-router) echo "PWNKIT_FEATURE_LEARNED_ROUTER=1" >> "$GITHUB_ENV" ;;
+              esac
+            done
+            echo "Running with features: $FEATURES"
+          fi
+
+      - name: Run npm-bench benchmark
+        # Bumped 45m → 150m after run #24025320432 hit the wall mid-run on
+        # the expanded 81-package set. The 81-package set is the new baseline;
+        # this needs to comfortably accommodate the worst-case serial runtime.
+        run: |
+          DEPTH="${{ inputs.depth || 'quick' }}"
+          RUNTIME="${{ inputs.runtime || 'api' }}"
+          REPEAT="${{ inputs.repeat || '1' }}"
+          pnpm --filter @pwnkit/benchmark npm-bench -- --depth "$DEPTH" --runtime "$RUNTIME" --repeat "$REPEAT"
+        timeout-minutes: 150
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Profile + run-id keeps parallel ablation dispatches from
+          # colliding on the same artifact name.
+          name: npm-bench-results-${{ inputs.features || 'default' }}-${{ github.run_id }}
+          # Both files are uploaded so a workflow timeout still produces
+          # useful partial data via the JSONL incremental sidecar even
+          # when the end-of-run summary file (npm-bench-latest.json) was
+          # never written. Run #24025320432 hit the wall at 51/81 with
+          # zero artifact data because of this exact gap.
+          path: |
+            packages/benchmark/results/npm-bench-latest.json
+            packages/benchmark/results/npm-bench-incremental.jsonl

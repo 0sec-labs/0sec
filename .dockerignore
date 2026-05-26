@@ -1,0 +1,17 @@
+node_modules
+dist
+.git
+.github
+docs/dist
+packages/*/node_modules
+packages/*/dist
+.claude
+www/node_modules
+www/.next
+www/dist
+marketing/node_modules
+test-targets/node_modules
+*.log
+.DS_Store
+.env
+.env.*

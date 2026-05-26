@@ -1,0 +1,120 @@
+name: HackBench Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Number of challenges to run (max 16)'
+        required: false
+        default: '16'
+      start:
+        description: 'Start offset (skip first N challenges)'
+        required: false
+        default: '0'
+      only:
+        description: 'Comma-separated challenge IDs to run'
+        required: false
+        default: ''
+      fresh:
+        description: 'Start from clean results instead of merging'
+        required: false
+        default: 'true'
+      benchmark_repo:
+        description: 'HackBench source repo (owner/repo or full git URL)'
+        required: false
+        default: 'ElectrovoltSec/HackBench'
+
+jobs:
+  hackbench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      HACKBENCH_PATH: /tmp/hackbench
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      AZURE_OPENAI_BASE_URL: ${{ secrets.AZURE_OPENAI_BASE_URL }}
+      AZURE_OPENAI_MODEL: ${{ secrets.AZURE_OPENAI_MODEL }}
+      AZURE_OPENAI_WIRE_API: ${{ secrets.AZURE_OPENAI_WIRE_API }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Clone HackBench repo
+        run: |
+          BENCHMARK_REPO="${{ inputs.benchmark_repo || 'ElectrovoltSec/HackBench' }}"
+          if [[ "$BENCHMARK_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+            BENCHMARK_URL="https://github.com/${BENCHMARK_REPO}.git"
+          else
+            BENCHMARK_URL="$BENCHMARK_REPO"
+          fi
+          echo "Cloning HackBench: $BENCHMARK_URL"
+          git clone --depth 1 "$BENCHMARK_URL" "$HACKBENCH_PATH"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Install pentest tools
+        run: |
+          npm install -g playwright 2>/dev/null || true
+          playwright install --with-deps chromium 2>/dev/null || echo "Playwright install skipped"
+
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            sqlmap nmap nikto gobuster dirb ffuf \
+            python3-pip python3-requests jq \
+            seclists 2>/dev/null || echo "Some packages failed"
+
+          pip3 install --quiet --break-system-packages \
+            requests beautifulsoup4 lxml 2>/dev/null || true
+
+      - name: Run HackBench benchmark
+        run: |
+          LIMIT="${{ inputs.limit || '16' }}"
+          START="${{ inputs.start || '0' }}"
+          ONLY="${{ inputs.only || '' }}"
+          FRESH="${{ inputs.fresh || 'true' }}"
+          START_FLAG=""
+          ONLY_FLAG=""
+          FRESH_FLAG=""
+          if [ "$START" != "0" ]; then START_FLAG="--start $START"; fi
+          if [ -n "$ONLY" ]; then ONLY_FLAG="--only $ONLY"; fi
+          if [ "$FRESH" = "true" ]; then FRESH_FLAG="--fresh"; fi
+
+          echo "Running HackBench benchmark... (start=$START, limit=$LIMIT, only=$ONLY)"
+          pnpm --filter @pwnkit/benchmark hackbench --agentic --save-findings --limit "$LIMIT" --retries 3 $START_FLAG $ONLY_FLAG $FRESH_FLAG
+        timeout-minutes: 150
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hackbench-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/benchmark/results/hackbench-latest.json
+
+      - name: Post summary
+        if: always()
+        run: |
+          RESULTS="packages/benchmark/results/hackbench-latest.json"
+          if [ ! -f "$RESULTS" ]; then
+            echo "### HackBench Benchmark" >> "$GITHUB_STEP_SUMMARY"
+            echo "No results file produced." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          TOTAL=$(jq '.results | length' "$RESULTS")
+          FLAGS=$(jq '[.results[] | select(.flagFound == true)] | length' "$RESULTS")
+          STARTED=$(jq '.started' "$RESULTS")
+          echo "### HackBench Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Count |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total challenges | $TOTAL |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Flags extracted | $FLAGS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Started | $STARTED |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Score** | **$FLAGS / $TOTAL** |" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,125 @@
+name: Kernel Validator E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/kernel-validator-e2e.yml"
+      - "scripts/kernel-validator-e2e.sh"
+      - "packages/core/src/triage/kernel-oracle.ts"
+      - "packages/core/src/triage/kernel-vm-runner.ts"
+      - "packages/core/src/triage/kernel-vm/**"
+      - "packages/core/src/ingest/**"
+      - "packages/cli/src/commands/ingest.ts"
+      - "docs/src/content/docs/commands.md"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/kernel-validator-e2e.yml"
+      - "scripts/kernel-validator-e2e.sh"
+      - "packages/core/src/triage/kernel-oracle.ts"
+      - "packages/core/src/triage/kernel-vm-runner.ts"
+      - "packages/core/src/triage/kernel-vm/**"
+      - "packages/core/src/ingest/**"
+      - "packages/cli/src/commands/ingest.ts"
+      - "docs/src/content/docs/commands.md"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  kernel-validator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: corepack enable && corepack prepare pnpm@9 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-system-x86 qemu-utils
+
+      - name: Restore cached kernel VM artifacts
+        id: kernel-vm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/kernel-vm
+          key: kernel-vm-artifacts-${{ runner.os }}-${{ hashFiles('packages/core/src/triage/kernel-vm/Dockerfile', 'packages/core/src/triage/kernel-vm/build.sh') }}
+
+      - name: Build kernel VM artifacts
+        if: steps.kernel-vm-cache.outputs.cache-hit != 'true'
+        env:
+          PWNKIT_KERNEL_VM_MAKE_JOBS: "4"
+        run: |
+          ARTIFACT_ROOT="${RUNNER_TEMP}/kernel-vm"
+          mkdir -p "${ARTIFACT_ROOT}"
+          bash packages/core/src/triage/kernel-vm/build.sh "${ARTIFACT_ROOT}"
+
+      - name: Save kernel VM artifacts cache
+        if: steps.kernel-vm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/kernel-vm
+          key: ${{ steps.kernel-vm-cache.outputs.cache-primary-key }}
+
+      - name: Verify kernel VM artifacts exist
+        run: |
+          test -f "${RUNNER_TEMP}/kernel-vm/bzImage"
+          test -f "${RUNNER_TEMP}/kernel-vm/rootfs.img"
+          test -f "${RUNNER_TEMP}/kernel-vm/kernel.config"
+
+      - name: Restore cached stable kernel source
+        id: kernel-source-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/linux-source/linux-6.8.12
+          key: linux-source-6.8.12-${{ runner.os }}
+
+      - name: Download stable kernel source
+        if: steps.kernel-source-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/linux-source"
+          curl -fL --retry 3 --retry-delay 2 -s \
+            https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.8.12.tar.xz \
+            -o "${RUNNER_TEMP}/linux-source/linux.tar.xz"
+          tar -C "${RUNNER_TEMP}/linux-source" -xf "${RUNNER_TEMP}/linux-source/linux.tar.xz"
+          rm "${RUNNER_TEMP}/linux-source/linux.tar.xz"
+
+      - name: Save stable kernel source cache
+        if: steps.kernel-source-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/linux-source/linux-6.8.12
+          key: ${{ steps.kernel-source-cache.outputs.cache-primary-key }}
+
+      - name: Run real kernel validator E2E
+        env:
+          PWNKIT_KERNEL_QEMU_KERNEL: ${{ runner.temp }}/kernel-vm/bzImage
+          PWNKIT_KERNEL_QEMU_DISK: ${{ runner.temp }}/kernel-vm/rootfs.img
+          PWNKIT_KERNEL_QEMU_BOOT_TIMEOUT_SEC: "180"
+          PWNKIT_KERNEL_QEMU_TIMEOUT_SEC: "60"
+          PWNKIT_KERNEL_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/kernel-vm-e2e
+          PWNKIT_KERNEL_SOURCE_TREE: ${{ runner.temp }}/linux-source/linux-6.8.12
+        run: |
+          bash scripts/kernel-validator-e2e.sh | tee "${RUNNER_TEMP}/kernel-validator-summary.json"
+
+      - name: Upload kernel validator artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-validator-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/kernel-vm/
+            ${{ runner.temp }}/kernel-vm-e2e/
+            ${{ runner.temp }}/kernel-validator-summary.json
+          retention-days: 14

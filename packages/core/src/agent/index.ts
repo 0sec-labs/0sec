@@ -1,0 +1,75 @@
+export { runAgentLoop, parseToolCalls } from "./loop.js";
+export { runNativeAgentLoop } from "./native-loop.js";
+export {
+  parseXmlDispatch,
+  formatXmlOutput,
+  formatXmlOutputBatch,
+  buildXmlDispatchPrompt,
+  resolveDispatchMode,
+} from "./xml-dispatch.js";
+export type { XmlDispatchParse } from "./xml-dispatch.js";
+export { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
+export { discoveryPrompt, attackPrompt, verifyPrompt, reportPrompt, sourceVerifyPrompt, researchPrompt, blindVerifyPrompt } from "./prompts.js";
+export { features } from "./features.js";
+export { DockerExecutor, execInDocker, generateContainerName, buildDockerRunArgs } from "./docker-executor.js";
+export type { DockerExecResult, BindMount } from "./docker-executor.js";
+export { PtySessionManager } from "./pty-session.js";
+export type { PtySession } from "./pty-session.js";
+export { estimateCost } from "./cost.js";
+export { PLAYBOOKS, detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
+export {
+  clearSkillRegistry,
+  formatJitSkillsInstruction,
+  getSkillById,
+  listSkillSummaries,
+  loadSkillRegistry,
+  matchTriggers,
+} from "./skills/index.js";
+export type { SkillDefinition, SkillSummary } from "./skills/index.js";
+export { runEGATS, runEGATSWithDefaults, scoreEvidence, summariseTree } from "./egats.js";
+export {
+  createJournalWriter,
+  defaultJournalRootDir,
+  loadJournal,
+  migrateJournalEntry,
+  resolveJournalPaths,
+  streamJournal,
+  DEFAULT_JOURNAL_SIDECAR_THRESHOLD_BYTES,
+  JOURNAL_SCHEMA_VERSION,
+} from "./journal/index.js";
+export type {
+  JournalArtifact,
+  JournalArtifactInline,
+  JournalArtifactInput,
+  JournalArtifactRef,
+  JournalDecisionEntry,
+  JournalDispatchEntry,
+  JournalDoneEntry,
+  JournalEntry,
+  JournalEntryInput,
+  JournalEntryKind,
+  JournalErrorEntry,
+  JournalFindingEntry,
+  JournalLoadOptions,
+  JournalObservationEntry,
+  JournalPaths,
+  JournalReplayOptions,
+  JournalSchemaVersion,
+  JournalWriter,
+  JournalWriterOptions,
+} from "./journal/index.js";
+export type { AttackNode, AttackTreeResult, EGATSConfig, Evidence, NodeStatus } from "./egats.js";
+export type {
+  AgentRole,
+  AgentConfig,
+  AgentState,
+  AgentMessage,
+  ToolDefinition,
+  ToolCall,
+  ToolResult,
+  ToolContext,
+  MessageRole,
+  DispatchMode,
+} from "./types.js";
+export type { AgentLoopOptions } from "./loop.js";
+export type { NativeAgentConfig, NativeAgentLoopOptions, NativeAgentState } from "./native-loop.js";

@@ -1,0 +1,266 @@
+name: Paperclip Variant Hunt
+
+run-name: >-
+  paperclip-hunt (${{ inputs.pass || 'all' }} · ${{ inputs.paperclip_ref || 'v2026.416.0' }})
+
+# Authorised variant-hunt against paperclipai/paperclip, triggered by
+# maintainer invitation in GHSA-47wq-cj9q-wpmp. pwnkit-cli runs `review`
+# passes against a pinned paperclip checkout. Public logs surface only
+# finding counts + severities; full findings are committed to the private
+# pwnkit-cloud repo at research/paperclip-scans/<date>/<pass>/.
+#
+# Requires the `PWNKIT_CLOUD_DEPLOY_TOKEN` repo secret — a PAT with repo
+# scope on `0sec-labs/pwnkit-cloud`. Without it, the workflow still runs
+# the scans and uploads artifacts with retention 1 day, but will not push
+# results to the private repo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pass:
+        description: 'Which pass to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - routes-authz
+          - command-exec
+          - paths-xss
+          - spoofing
+          - broad
+      paperclip_ref:
+        description: 'paperclip git ref to scan'
+        required: false
+        default: 'v2026.416.0'
+      depth:
+        description: 'Review depth'
+        required: false
+        default: 'deep'
+        type: choice
+        options:
+          - quick
+          - default
+          - deep
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    env:
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      AZURE_OPENAI_BASE_URL: ${{ secrets.AZURE_OPENAI_BASE_URL }}
+      AZURE_OPENAI_MODEL: ${{ secrets.AZURE_OPENAI_MODEL }}
+      AZURE_OPENAI_WIRE_API: ${{ secrets.AZURE_OPENAI_WIRE_API }}
+
+    steps:
+      - name: Checkout pwnkit
+        uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Clone pwnkit-cloud (for seeds)
+        env:
+          PWNKIT_CLOUD_DEPLOY_TOKEN: ${{ secrets.PWNKIT_CLOUD_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PWNKIT_CLOUD_DEPLOY_TOKEN:-}" ]; then
+            echo "::warning::PWNKIT_CLOUD_DEPLOY_TOKEN not set — seeds unavailable, findings will not push back"
+            exit 0
+          fi
+          git clone --depth 1 \
+            "https://x-access-token:${PWNKIT_CLOUD_DEPLOY_TOKEN}@github.com/0sec-labs/pwnkit-cloud.git" \
+            /tmp/pwnkit-cloud
+
+      - name: Clone paperclip target
+        run: |
+          set -euo pipefail
+          REF="${{ inputs.paperclip_ref || 'v2026.416.0' }}"
+          git clone --depth 1 --branch "$REF" \
+            https://github.com/paperclipai/paperclip.git /tmp/paperclip
+          cd /tmp/paperclip
+          git log --oneline -1
+
+      - name: Run passes
+        run: |
+          set -euo pipefail
+          PASS="${{ inputs.pass || 'all' }}"
+          DEPTH="${{ inputs.depth || 'deep' }}"
+          DATE=$(date -u +%Y-%m-%d)
+          RUN_ID="${{ github.run_id }}"
+          OUT_ROOT="/tmp/hunt-results/$DATE"
+          mkdir -p "$OUT_ROOT"
+
+          if [ "$PASS" = "all" ]; then
+            PASSES=(routes-authz command-exec paths-xss spoofing broad)
+          else
+            PASSES=("$PASS")
+          fi
+
+          for p in "${PASSES[@]}"; do
+            echo ""
+            echo "════════════════════════════════════════════════════════════"
+            echo " Pass: $p"
+            echo "════════════════════════════════════════════════════════════"
+
+            OUT_DIR="$OUT_ROOT/$p"
+            mkdir -p "$OUT_DIR"
+
+            # Assemble the PWNKIT_CONTEXT.md seed from common + pass-specific.
+            SEED_COMMON=""
+            SEED_PASS=""
+            if [ -d /tmp/pwnkit-cloud ]; then
+              SEED_COMMON="/tmp/pwnkit-cloud/research/paperclip-scans/seeds/_common.md"
+              SEED_PASS="/tmp/pwnkit-cloud/research/paperclip-scans/seeds/pass-$p.md"
+            fi
+            if [ -f "$SEED_COMMON" ] && [ -f "$SEED_PASS" ]; then
+              cat "$SEED_COMMON" "$SEED_PASS" > /tmp/paperclip/PWNKIT_CONTEXT.md
+              echo "[seed] wrote $(wc -l < /tmp/paperclip/PWNKIT_CONTEXT.md) lines of context"
+            else
+              echo "::warning::seeds not available for pass $p — running without prime context"
+              rm -f /tmp/paperclip/PWNKIT_CONTEXT.md
+            fi
+
+            start_ts=$(date +%s)
+            set +e
+            timeout 3600 node ./dist/pwnkit.js review /tmp/paperclip \
+              --depth "$DEPTH" \
+              --format md \
+              --runtime api \
+              --verbose \
+              > "$OUT_DIR/findings.md" 2> "$OUT_DIR/run.log"
+            exit_code=$?
+            set -e
+            end_ts=$(date +%s)
+            duration=$((end_ts - start_ts))
+
+            md_size=$(wc -c < "$OUT_DIR/findings.md" 2>/dev/null || echo 0)
+
+            # Also emit SARIF alongside for a second pass. Fall back quietly
+            # if the CLI can't regenerate from state.
+            set +e
+            timeout 300 node ./dist/pwnkit.js review /tmp/paperclip \
+              --depth quick \
+              --format sarif \
+              --runtime api \
+              > "$OUT_DIR/findings.sarif" 2>> "$OUT_DIR/run.log"
+            set -e
+
+            # Extract finding count for public log (no PoC content).
+            finding_count=$(grep -c '^---FINDING---$' "$OUT_DIR/findings.md" 2>/dev/null || echo 0)
+            critical=$(grep -cE '^severity:\s*critical' "$OUT_DIR/findings.md" 2>/dev/null || echo 0)
+            high=$(grep -cE '^severity:\s*high' "$OUT_DIR/findings.md" 2>/dev/null || echo 0)
+            medium=$(grep -cE '^severity:\s*medium' "$OUT_DIR/findings.md" 2>/dev/null || echo 0)
+
+            {
+              echo "pass=$p"
+              echo "exit_code=$exit_code"
+              echo "duration_sec=$duration"
+              echo "md_bytes=$md_size"
+              echo "findings_total=$finding_count"
+              echo "findings_critical=$critical"
+              echo "findings_high=$high"
+              echo "findings_medium=$medium"
+            } > "$OUT_DIR/summary.txt"
+
+            echo ""
+            echo "── Summary ───────────────────────────────────────────────"
+            cat "$OUT_DIR/summary.txt"
+
+            # Clean the seed out of the paperclip tree before next pass so
+            # the agent re-reads a fresh copy.
+            rm -f /tmp/paperclip/PWNKIT_CONTEXT.md
+          done
+
+          # Public log: aggregated table
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo " All passes complete"
+          echo "════════════════════════════════════════════════════════════"
+          for p in "${PASSES[@]}"; do
+            if [ -f "$OUT_ROOT/$p/summary.txt" ]; then
+              echo ""
+              echo "── $p ──"
+              cat "$OUT_ROOT/$p/summary.txt"
+            fi
+          done
+
+          echo "OUT_ROOT=$OUT_ROOT" >> "$GITHUB_ENV"
+          echo "DATE=$DATE" >> "$GITHUB_ENV"
+
+      - name: Push findings to pwnkit-cloud (private)
+        if: always()
+        env:
+          PWNKIT_CLOUD_DEPLOY_TOKEN: ${{ secrets.PWNKIT_CLOUD_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PWNKIT_CLOUD_DEPLOY_TOKEN:-}" ]; then
+            echo "PWNKIT_CLOUD_DEPLOY_TOKEN not set — skipping push"
+            exit 0
+          fi
+          if [ ! -d /tmp/pwnkit-cloud ]; then
+            echo "/tmp/pwnkit-cloud not present — skipping push"
+            exit 0
+          fi
+          if [ ! -d "$OUT_ROOT" ]; then
+            echo "$OUT_ROOT not present — skipping push"
+            exit 0
+          fi
+
+          TARGET_DIR="/tmp/pwnkit-cloud/research/paperclip-scans/$DATE/run-${{ github.run_id }}"
+          mkdir -p "$TARGET_DIR"
+          cp -r "$OUT_ROOT"/* "$TARGET_DIR/" || true
+
+          cd /tmp/pwnkit-cloud
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add research/paperclip-scans
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+            exit 0
+          fi
+          git commit -m "research(paperclip): variant-hunt run ${{ github.run_id }} (${{ inputs.paperclip_ref || 'v2026.416.0' }})"
+
+          # Concurrent-push race: other matrix jobs may be pushing to the
+          # same branch. Retry with pull --rebase up to 6 times with
+          # exponential backoff before giving up.
+          for attempt in 1 2 3 4 5 6; do
+            if git push 2>&1 | tee /tmp/push.log; then
+              echo "[push] succeeded on attempt $attempt"
+              break
+            fi
+            if grep -q "rejected" /tmp/push.log; then
+              echo "[push] rejected on attempt $attempt — rebasing"
+              git pull --rebase origin main || {
+                echo "[push] rebase failed, aborting"
+                git rebase --abort || true
+                exit 1
+              }
+              sleep $((attempt * 5))
+            else
+              echo "[push] non-rejection error, bailing"
+              exit 1
+            fi
+            if [ "$attempt" = "6" ]; then
+              echo "[push] giving up after 6 attempts"
+              exit 1
+            fi
+          done
+
+      - name: Upload artifacts (short retention fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperclip-hunt-${{ github.run_id }}
+          path: /tmp/hunt-results/**
+          retention-days: 1
+          if-no-files-found: ignore

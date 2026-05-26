@@ -1,0 +1,34 @@
+name: New Attack Template
+description: Propose a new attack template for the template library
+labels: [template, enhancement]
+body:
+  - type: input
+    attributes:
+      label: Template name
+      description: Short descriptive name
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Category
+      options:
+        - prompt-injection
+        - jailbreak
+        - system-prompt-extraction
+        - data-exfiltration
+        - encoding-bypass
+        - mcp-exploitation
+        - tool-abuse
+        - other
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Attack description
+      description: What does this attack test for?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Payload
+      description: The actual prompt/payload

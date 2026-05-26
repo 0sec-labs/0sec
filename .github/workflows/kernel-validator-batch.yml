@@ -1,0 +1,112 @@
+name: Kernel Validator Batch
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Maximum corpus cases to run"
+        required: false
+        default: "1"
+      corpus_json:
+        description: "Optional corpus JSON override"
+        required: false
+        default: ""
+      boot_timeout_sec:
+        description: "QEMU boot timeout per case"
+        required: false
+        default: "180"
+      reproducer_timeout_sec:
+        description: "Reproducer timeout per case"
+        required: false
+        default: "60"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  kernel-validator-batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: corepack enable && corepack prepare pnpm@9 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-system-x86 qemu-utils
+
+      - name: Restore cached kernel VM artifacts
+        id: kernel-vm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/kernel-vm
+          key: kernel-vm-artifacts-${{ runner.os }}-${{ hashFiles('packages/core/src/triage/kernel-vm/Dockerfile', 'packages/core/src/triage/kernel-vm/build.sh') }}
+
+      - name: Build kernel VM artifacts
+        if: steps.kernel-vm-cache.outputs.cache-hit != 'true'
+        env:
+          PWNKIT_KERNEL_VM_MAKE_JOBS: "4"
+        run: |
+          ARTIFACT_ROOT="${RUNNER_TEMP}/kernel-vm"
+          mkdir -p "${ARTIFACT_ROOT}"
+          bash packages/core/src/triage/kernel-vm/build.sh "${ARTIFACT_ROOT}"
+
+      - name: Save kernel VM artifacts cache
+        if: steps.kernel-vm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/kernel-vm
+          key: ${{ steps.kernel-vm-cache.outputs.cache-primary-key }}
+
+      - name: Verify kernel VM artifacts exist
+        run: |
+          test -f "${RUNNER_TEMP}/kernel-vm/bzImage"
+          test -f "${RUNNER_TEMP}/kernel-vm/rootfs.img"
+          test -f "${RUNNER_TEMP}/kernel-vm/kernel.config"
+
+      - name: Prepare corpus
+        env:
+          CORPUS_JSON: ${{ inputs.corpus_json }}
+        run: |
+          if [ -n "${CORPUS_JSON}" ]; then
+            printf '%s\n' "${CORPUS_JSON}" | jq empty >/dev/null || {
+              echo "Invalid corpus JSON provided"
+              exit 1
+            }
+            printf '%s\n' "${CORPUS_JSON}" > "${RUNNER_TEMP}/kernel-validator-batch-corpus.json"
+          else
+            cp scripts/kernel-validator-batch-corpus.json "${RUNNER_TEMP}/kernel-validator-batch-corpus.json"
+          fi
+
+      - name: Run syzbot corpus through the real kernel VM
+        env:
+          PWNKIT_KERNEL_QEMU_KERNEL: ${{ runner.temp }}/kernel-vm/bzImage
+          PWNKIT_KERNEL_QEMU_DISK: ${{ runner.temp }}/kernel-vm/rootfs.img
+          PWNKIT_KERNEL_QEMU_BOOT_TIMEOUT_SEC: ${{ inputs.boot_timeout_sec }}
+          PWNKIT_KERNEL_QEMU_TIMEOUT_SEC: ${{ inputs.reproducer_timeout_sec }}
+        run: |
+          node scripts/kernel-validator-batch.mjs \
+            --corpus "${RUNNER_TEMP}/kernel-validator-batch-corpus.json" \
+            --out-dir "${RUNNER_TEMP}/kernel-validator-batch" \
+            --limit "${{ inputs.limit }}"
+
+      - name: Upload kernel validator batch artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-validator-batch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/kernel-vm/
+            ${{ runner.temp }}/kernel-validator-batch/
+          retention-days: 14

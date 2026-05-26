@@ -1,0 +1,47 @@
+name: pwnkit PR scan
+
+# Dogfoods the composite action at .github/actions/pwnkit-scan against every
+# pwnkit PR. We deliberately set fail-on-confirmed=false here so the scan is
+# advisory-only on this repo until we're confident in the false-positive
+# rate. External consumers can flip the gate on.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  pwnkit-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Diff-scope needs the PR base commit in the local object DB. A
+          # shallow checkout breaks `git diff base...HEAD`; fetch-depth=0
+          # makes the whole graph available. The action also performs a
+          # by-SHA recovery fetch as a defensive fallback.
+          fetch-depth: 0
+
+      - name: Run pwnkit diff-scoped scan
+        uses: ./.github/actions/pwnkit-scan
+        with:
+          mode: pr
+          profile: web
+          comment-on-pr: true
+          fail-on-confirmed: false
+        env:
+          # Self-scan uses the same Azure creds as the existing self-scan
+          # workflow. External consumers will plug in their own provider
+          # credentials via repo secrets (see README in the action dir).
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_BASE_URL: ${{ secrets.AZURE_OPENAI_BASE_URL }}
+          AZURE_OPENAI_MODEL: ${{ secrets.AZURE_OPENAI_MODEL }}
+          AZURE_OPENAI_WIRE_API: ${{ secrets.AZURE_OPENAI_WIRE_API }}

@@ -1,0 +1,70 @@
+# syntax=docker/dockerfile:1.7
+#
+# pwnkit-kali — Pre-built Kali Linux image for benchmark / Docker executor mode.
+#
+# Contains a full pentesting toolset so the Docker executor can start
+# immediately without pulling packages at runtime.
+#
+# Build:
+#   docker build -f packages/core/docker/Dockerfile.kali -t ghcr.io/0sec-labs/pwnkit-kali:latest .
+#
+# Run (manual):
+#   docker run --rm -it ghcr.io/0sec-labs/pwnkit-kali:latest bash
+
+FROM kalilinux/kali-rolling
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install all pentesting tools and utilities in a single layer to minimise
+# image size.  Apt lists and pip cache are cleaned up at the end.
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        nmap \
+        sqlmap \
+        wpscan \
+        nikto \
+        gobuster \
+        ffuf \
+        hydra \
+        john \
+        dirb \
+        wfuzz \
+        curl \
+        wget \
+        python3 \
+        python3-pip \
+        netcat-openbsd \
+        socat \
+        proxychains4 \
+        seclists \
+        whatweb \
+        git \
+        jq \
+        ca-certificates \
+        gdb \
+        gdb-multiarch \
+        radare2 \
+        binwalk \
+        foremost \
+        libimage-exiftool-perl \
+        ltrace \
+        strace \
+        file \
+        binutils \
+        python3-ropgadget \
+    && pip3 install --no-cache-dir --break-system-packages \
+        requests \
+        pwntools \
+        beautifulsoup4 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create a non-root user for running pentesting commands
+RUN useradd -m -s /bin/bash pentester \
+    && mkdir -p /shared /work \
+    && chown pentester:pentester /shared /work
+
+USER pentester
+WORKDIR /work
+
+CMD ["bash"]

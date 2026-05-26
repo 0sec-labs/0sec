@@ -1,0 +1,1668 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { join, basename } from "node:path";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import type {
+  ScanDepth,
+  OutputFormat,
+  RuntimeMode,
+  ScanMode,
+  Finding,
+  FindingWorkflowStatus,
+  LayerVerdict,
+  NpmAuditFinding,
+  PocStep,
+  SeedFinding,
+  SemgrepFinding,
+  ScanConfig,
+} from "@pwnkit/shared";
+import type { InferSelectModel } from "drizzle-orm";
+import type * as dbSchema from "@pwnkit/db";
+import type { ScanListener } from "./scanner.js";
+import { runAnalysisAgent } from "./agent-runner.js";
+import { auditAgentPrompt, reviewAgentPrompt } from "./analysis-prompts.js";
+import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
+import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
+import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
+import { researchPrompt, researchPromptSingleFile, blindVerifyPrompt } from "./agent/prompts.js";
+import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
+import { collectScopeFiles } from "./source-files.js";
+import { features as agentFeatures } from "./agent/features.js";
+import { relative as pathRelative } from "node:path";
+import { detectAvailableRuntimes } from "./runtime/registry.js";
+import type { RuntimeType } from "./runtime/types.js";
+import { LlmApiRuntime } from "./runtime/llm-api.js";
+import type { ApiRuntimeDiagnostics } from "./runtime/llm-api.js";
+import {
+  installPackageForEcosystem,
+  runDependencyAuditForEcosystem,
+  type InstalledPackage,
+} from "./package-ecosystems.js";
+import {
+  isExistingLocalTargetPath,
+  isExplicitLocalTargetPath,
+  resolveLocalTargetPath,
+} from "./path-resolution.js";
+import { eventBus, isCloudEventSinkActive } from "./events/bus.js";
+
+// ── Public types ──
+
+export interface PipelineOptions {
+  target: string;
+  targetType?: "npm-package" | "pypi-package" | "cargo-package" | "oci-image" | "source-code" | "url" | "web-app";
+  depth: ScanDepth;
+  format: OutputFormat;
+  runtime?: RuntimeMode;
+  mode?: ScanMode;
+  resumeScanId?: string;
+  diffBase?: string;
+  changedOnly?: boolean;
+  onEvent?: (event: { type: string; stage?: string; message: string; data?: unknown }) => void;
+  dbPath?: string;
+  apiKey?: string;
+  model?: string;
+  timeout?: number;
+  packageVersion?: string;
+  costCeilingUsd?: number;
+  /**
+   * Review profile (only consulted when targetType === "source-code").
+   * - `default`: web/JS/TS/Python application-layer review.
+   * - `c-library`: foundational C/C++ libraries — memory safety, integer
+   *   bugs, allocation paths. Pairs with the tier-1/2/3 harness scaffolder.
+   * - `linux-kernel`: Linux kernel source review — syscall/ioctl/netlink
+   *   surface, copy_from_user discipline, refcount races, skb cow/share
+   *   violations (Dirty Frag class). Static-only; verification via #271/#272.
+   */
+  reviewProfile?: "default" | "c-library" | "linux-kernel";
+  /**
+   * Restrict the kernel-review agent to files under this subdirectory
+   * (e.g. `crypto/`, `net/tcp/`). Only meaningful when
+   * `reviewProfile === "linux-kernel"`. Injected into the agent prompt
+   * as a hard scope restriction.
+   */
+  subsystem?: string;
+  /**
+   * Operator hypothesis to seed the agent with a specific research direction.
+   * Injected at the top of the agent's system prompt as a priority investigation
+   * target. Works with all review profiles (default, c-library, linux-kernel).
+   * Modeled after Xint Code's operator prompt that found CVE-2026-31431.
+   */
+  hypothesis?: string;
+  /**
+   * External candidate vulnerable spans (e.g. from `gemmaforge scan`) to seed
+   * the review agent's worklist alongside — or instead of — semgrep. Each
+   * record carries its own source tag, so provenance survives into the agent
+   * prompt and downstream reports. Closes pwnkit#368.
+   */
+  seedFindings?: SeedFinding[];
+  /**
+   * Skip semgrep entirely and let `seedFindings` be the sole source of leads.
+   * No-op when `seedFindings` is empty (the pipeline falls back to semgrep
+   * automatically, since "no leads" is worse than "best-effort leads").
+   */
+  seedOnly?: boolean;
+}
+
+export interface PipelineReport {
+  target: string;
+  targetType: string;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  summary: {
+    totalAttacks: number;
+    totalFindings: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+  };
+  findings: Finding[];
+  warnings: Array<{ stage: string; message: string }>;
+  // Extras for backwards compat
+  package?: string;
+  version?: string;
+  repo?: string;
+  semgrepFindings?: number;
+  npmAuditFindings?: NpmAuditFinding[];
+}
+
+// ── Internal helpers ──
+
+/**
+ * Parse the `--subsystem` flag value into an array of subsystem directory
+ * paths. Supports comma-separated values (e.g. `crypto/,net/xfrm/`) for
+ * cross-subsystem hypotheses. Each path is normalised: leading/trailing
+ * whitespace is stripped, and a trailing `/` is ensured.
+ *
+ * Exported for tests.
+ */
+export function parseSubsystems(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => (s.endsWith("/") ? s : `${s}/`));
+}
+
+function shouldEmitPipelineCloudEvents(): boolean {
+  if (isCloudEventSinkActive()) return true;
+  const flag = process.env.PWNKIT_CLOUD_EVENTS;
+  return !!flag && flag !== "0" && flag.toLowerCase() !== "false";
+}
+
+/**
+ * Convert external `SeedFinding[]` (from `--seed-findings`) into the
+ * `SemgrepFinding` shape the review pipeline already consumes everywhere
+ * downstream (prompt builders, persistence, the finding-table renderer).
+ *
+ * This keeps the agent-prompt code path uniform: the agent sees a single
+ * ranked list of leads and doesn't care which producer they came from.
+ * Provenance is preserved in two places:
+ *   - `ruleId` is prefixed with the producer source (e.g.
+ *     `gemmaforge.CWE-89`) so the prompt visibly cites it.
+ *   - `metadata` carries the full producer payload (gemmaforge_confidence,
+ *     gemmaforge_layer, model_id) for any downstream renderer that wants
+ *     to surface it.
+ *
+ * Severity is bucketed from the producer's confidence (0–1) so that the
+ * agent's existing severity-aware triage logic gives the most-likely
+ * leads more attention. The mapping is deliberately conservative —
+ * "critical" is reserved for findings the agent has actually confirmed.
+ *
+ * Closes pwnkit#368.
+ */
+export function seedFindingsToSemgrepShape(seeds: SeedFinding[]): SemgrepFinding[] {
+  return seeds.map((s) => {
+    const confidence = typeof s.confidence === "number" ? s.confidence : 0.5;
+    let severity: string;
+    if (confidence >= 0.8) severity = "high";
+    else if (confidence >= 0.6) severity = "medium";
+    else if (confidence >= 0.4) severity = "low";
+    else severity = "info";
+
+    const cwePart = s.cwe ?? "lead";
+    const ruleId = `${s.source}.${cwePart}`;
+    const claim = s.claim ?? `External lead from ${s.source}${s.cwe ? ` (${s.cwe})` : ""}`;
+    const messageWithConfidence =
+      typeof s.confidence === "number"
+        ? `${claim} [confidence=${s.confidence.toFixed(2)}]`
+        : claim;
+
+    return {
+      ruleId,
+      message: messageWithConfidence,
+      severity,
+      path: s.file,
+      startLine: s.startLine,
+      endLine: s.endLine,
+      snippet: s.snippet,
+      metadata: {
+        source: s.source,
+        confidence: s.confidence,
+        cwe: s.cwe,
+        ...(s.metadata ?? {}),
+      },
+    };
+  });
+}
+
+interface PrepareResult {
+  scopePath: string;
+  resolvedTarget: string;
+  resolvedType: "npm-package" | "pypi-package" | "cargo-package" | "oci-image" | "source-code" | "url" | "web-app";
+  packageName?: string;
+  packageVersion?: string;
+  packageEcosystem?: "npm" | "pypi" | "cargo" | "oci";
+  tempDir?: string;
+  needsCleanup: boolean;
+}
+
+/**
+ * Detect target type from the raw target string if not explicitly provided.
+ */
+function detectTargetType(target: string): "npm-package" | "source-code" | "url" | "web-app" {
+  // Git URL patterns
+  if (
+    target.startsWith("git@") ||
+    target.startsWith("git://") ||
+    target.endsWith(".git") ||
+    target.startsWith("https://github.com/")
+  ) {
+    return "source-code";
+  }
+  if (target.startsWith("http://") || target.startsWith("https://")) {
+    return "url";
+  }
+  // Local directory
+  if (isExplicitLocalTargetPath(target) || isExistingLocalTargetPath(target)) {
+    return "source-code";
+  }
+  // Default: treat as npm package name
+  return "npm-package";
+}
+
+/**
+ * Phase 1: Prepare the target for analysis.
+ *
+ * - npm-package / pypi-package: install in temp dir
+ * - source-code: clone if URL, resolve if local path
+ * - url/web-app: no-op (target is the URL itself)
+ */
+function prepareTarget(
+  opts: PipelineOptions,
+  emit: ScanListener,
+): PrepareResult {
+  const targetType = opts.targetType ?? detectTargetType(opts.target);
+
+  if (targetType === "npm-package") {
+    return prepareNpmPackage(opts.target, opts.packageVersion, emit);
+  }
+
+  if (targetType === "pypi-package") {
+    return preparePythonPackage(opts.target, opts.packageVersion, emit);
+  }
+
+  if (targetType === "cargo-package") {
+    return prepareCargoPackage(opts.target, opts.packageVersion, emit);
+  }
+
+  if (targetType === "oci-image") {
+    return prepareOciImage(opts.target, opts.packageVersion, emit);
+  }
+
+  if (targetType === "source-code") {
+    return prepareSourceCode(opts.target, emit);
+  }
+
+  // url or web-app — nothing to install/clone
+  return {
+    scopePath: opts.target,
+    resolvedTarget: opts.target,
+    resolvedType: targetType,
+    needsCleanup: false,
+  };
+}
+
+function prepareNpmPackage(
+  rawPackageName: string,
+  requestedVersion: string | undefined,
+  emit: ScanListener,
+): PrepareResult {
+  // Split "node-forge@0.10.0" into name + version
+  let packageName = rawPackageName;
+  let version = requestedVersion;
+  const atIdx = rawPackageName.startsWith("@")
+    ? rawPackageName.indexOf("@", 1)
+    : rawPackageName.indexOf("@");
+  if (atIdx > 0) {
+    packageName = rawPackageName.slice(0, atIdx);
+    version = version ?? rawPackageName.slice(atIdx + 1);
+  }
+
+  const pkg = installPackageForEcosystem("npm", packageName, version, emit);
+
+  return {
+    scopePath: pkg.path,
+    resolvedTarget: `npm:${pkg.name}@${pkg.version}`,
+    resolvedType: "npm-package",
+    packageName: pkg.name,
+    packageVersion: pkg.version,
+    packageEcosystem: "npm",
+    tempDir: pkg.tempDir,
+    needsCleanup: true,
+  };
+}
+
+function preparePythonPackage(
+  packageName: string,
+  requestedVersion: string | undefined,
+  emit: ScanListener,
+): PrepareResult {
+  const pkg = installPackageForEcosystem("pypi", packageName, requestedVersion, emit);
+  return {
+    scopePath: pkg.path,
+    resolvedTarget: `pypi:${pkg.name}@${pkg.version}`,
+    resolvedType: "pypi-package",
+    packageName: pkg.name,
+    packageVersion: pkg.version,
+    packageEcosystem: "pypi",
+    tempDir: pkg.tempDir,
+    needsCleanup: true,
+  };
+}
+
+function prepareCargoPackage(
+  packageName: string,
+  requestedVersion: string | undefined,
+  emit: ScanListener,
+): PrepareResult {
+  const pkg = installPackageForEcosystem("cargo", packageName, requestedVersion, emit);
+  return {
+    scopePath: pkg.path,
+    resolvedTarget: `cargo:${pkg.name}@${pkg.version}`,
+    resolvedType: "cargo-package",
+    packageName: pkg.name,
+    packageVersion: pkg.version,
+    packageEcosystem: "cargo",
+    tempDir: pkg.tempDir,
+    needsCleanup: true,
+  };
+}
+
+function prepareOciImage(
+  imageRef: string,
+  requestedVersion: string | undefined,
+  emit: ScanListener,
+): PrepareResult {
+  const pkg = installPackageForEcosystem("oci", imageRef, requestedVersion, emit);
+  return {
+    scopePath: pkg.path,
+    resolvedTarget: `oci:${pkg.name}@${pkg.version}`,
+    resolvedType: "oci-image",
+    packageName: pkg.name,
+    packageVersion: pkg.version,
+    packageEcosystem: "oci",
+    tempDir: pkg.tempDir,
+    needsCleanup: true,
+  };
+}
+
+function prepareSourceCode(target: string, emit: ScanListener): PrepareResult {
+  const isUrl =
+    target.startsWith("https://") ||
+    target.startsWith("http://") ||
+    target.startsWith("git@") ||
+    target.startsWith("git://");
+
+  if (!isUrl) {
+    const absPath = resolveLocalTargetPath(target);
+    if (!existsSync(absPath)) {
+      throw new Error(`Repository path not found: ${absPath}`);
+    }
+    return {
+      scopePath: absPath,
+      resolvedTarget: `repo:${absPath}`,
+      resolvedType: "source-code",
+      needsCleanup: false,
+    };
+  }
+
+  const tempDir = join(tmpdir(), `pwnkit-pipeline-${randomUUID().slice(0, 8)}`);
+  mkdirSync(tempDir, { recursive: true });
+
+  emit({ type: "stage:start", stage: "prepare", message: `Cloning ${target}...` });
+
+  try {
+    execFileSync("git", ["clone", "--depth", "1", target, `${tempDir}/repo`], {
+      timeout: 120_000,
+      stdio: "pipe",
+    });
+  } catch (err) {
+    rmSync(tempDir, { recursive: true, force: true });
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to clone ${target}: ${msg}`);
+  }
+
+  const repoPath = join(tempDir, "repo");
+
+  emit({ type: "stage:end", stage: "prepare", message: `Cloned ${basename(target.replace(/\.git$/, ""))}` });
+
+  return {
+    scopePath: repoPath,
+    resolvedTarget: `repo:${target}`,
+    resolvedType: "source-code",
+    tempDir,
+    needsCleanup: true,
+  };
+}
+
+// ── CLI prompt builders (for CLI runtime fast path) ──
+
+function buildCliPrompt(
+  scopePath: string,
+  semgrepFindings: SemgrepFinding[],
+  npmAuditFindings: NpmAuditFinding[],
+  label: string,
+  advisoryLabel: string,
+  changedFiles?: string[],
+  changedOnly = false,
+): string {
+  const semgrepContext = semgrepFindings.length > 0
+    ? semgrepFindings
+        .slice(0, 30)
+        .map((f, i) => `  ${i + 1}. [${f.severity}] ${f.ruleId} — ${f.path}:${f.startLine}: ${f.message}`)
+        .join("\n")
+    : "  None.";
+
+  const npmContext = npmAuditFindings.length > 0
+    ? npmAuditFindings
+        .slice(0, 30)
+        .map((f, i) => `  ${i + 1}. [${f.severity}] ${f.name}: ${f.title}`)
+        .join("\n")
+    : "  None.";
+
+  const changedFilesContext =
+    changedFiles && changedFiles.length > 0
+      ? `\nChanged files to prioritize:\n${changedFiles.slice(0, 200).map((path) => `  - ${path}`).join("\n")}\n`
+      : "";
+
+  return `Audit the ${label} at ${scopePath}.
+
+Read the source code, look for: prototype pollution, ReDoS, path traversal, injection, unsafe deserialization, missing validation. Map data flow from untrusted input to sensitive operations. Report any security findings with severity and PoC suggestions.
+Start by reading the ecosystem manifest and entry points when present: package.json, pyproject.toml, setup.cfg, setup.py, Cargo.toml, go.mod, composer.json, or /etc/os-release for extracted images.
+${changedFilesContext}
+${changedOnly ? "\nThis is a diff-aware review. Focus findings on vulnerabilities introduced by or reachable from the changed files above. You may inspect surrounding files for context.\n" : ""}
+
+The static scanner already found these leads:
+${semgrepContext}
+
+${advisoryLabel} found these advisories:
+${npmContext}
+
+For EACH confirmed vulnerability, output a block in this exact format:
+
+---FINDING---
+title: <clear title>
+severity: <critical|high|medium|low|info>
+category: <prototype-pollution|redos|path-traversal|command-injection|code-injection|unsafe-deserialization|ssrf|information-disclosure|missing-validation|other>
+description: <detailed description of the vulnerability, how to exploit it, and suggested PoC>
+file: <path/to/file.js:lineNumber>
+---END---
+
+Output as many ---FINDING--- blocks as needed. Be precise and honest about severity.`;
+}
+
+
+// ── Build summary from findings ──
+
+function buildSummary(findings: Finding[], totalAttacks: number) {
+  return {
+    totalAttacks,
+    totalFindings: findings.length,
+    critical: findings.filter((f) => f.severity === "critical").length,
+    high: findings.filter((f) => f.severity === "high").length,
+    medium: findings.filter((f) => f.severity === "medium").length,
+    low: findings.filter((f) => f.severity === "low").length,
+    info: findings.filter((f) => f.severity === "info").length,
+  };
+}
+
+/**
+ * Strict shape of a persisted findings-table row, inferred directly from
+ * the drizzle schema. We thread this through `restorePersistedFinding`
+ * (rather than `any`) so the *next* column added to `schema.findings`
+ * fails to compile in the rehydrator instead of being silently dropped
+ * on resume. See pwnkit#414 / pwnkit#382 — historical regressions where
+ * `verificationSpec`, `pocSteps`, `layerVerdicts`, `pocExecution`, the
+ * `workflow*` fields, and `score` were each added to the writer/schema
+ * but never threaded back through the loader.
+ */
+type PersistedFindingRow = InferSelectModel<typeof dbSchema.findings>;
+/**
+ * Same shape as the strict drizzle row, but with JSON-text columns also
+ * permitted as their already-parsed object form. Cloud sinks and the
+ * in-memory test doubles hand back the parsed objects directly; production
+ * SQLite rows are always strings.
+ */
+type RestorablePersistedFindingRow = Omit<
+  PersistedFindingRow,
+  "verificationSpec" | "pocSteps" | "layerVerdicts" | "pocExecution"
+> & {
+  verificationSpec: PersistedFindingRow["verificationSpec"] | Finding["verificationSpec"];
+  pocSteps: PersistedFindingRow["pocSteps"] | Finding["pocSteps"];
+  layerVerdicts: PersistedFindingRow["layerVerdicts"] | Finding["layerVerdicts"];
+  pocExecution: PersistedFindingRow["pocExecution"] | Finding["pocExecution"];
+};
+
+/**
+ * Parse a JSON-text column from a persisted row. Returns the parsed value
+ * when the column is a non-empty string of valid JSON, the value itself
+ * when it is already an object (sink-shim / test-double path), or
+ * `undefined` otherwise. Malformed JSON is non-fatal: the finding still
+ * restores, just without that field. See pwnkit#414.
+ */
+function parseJsonColumn<T>(value: string | T | null | undefined): T | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") {
+    if (value.length === 0) return undefined;
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return undefined;
+    }
+  }
+  // Already-parsed object handed in by a shim/test double.
+  return value;
+}
+
+/**
+ * Rehydrate a persisted findings-table row into a {@link Finding}.
+ *
+ * Exported for tests so the wire round-trip (verificationSpec, evidence,
+ * triage flags, etc.) can be exercised without a full pipeline run.
+ * Production callers reach this through the `getFindings(...).map(...)`
+ * inside `runPipeline`.
+ */
+export function restorePersistedFinding(row: RestorablePersistedFindingRow): Finding {
+  // pwnkit#193 — `verificationSpec` is the deterministic re-check contract
+  // produced by the OSS engine and consumed by cloud's canary watcher.
+  // It is persisted as JSON text and must be threaded through every
+  // reload path; otherwise findings restored from storage silently lose
+  // the contract before cloud re-checks can run.
+  let verificationSpec: Finding["verificationSpec"];
+  if (typeof row.verificationSpec === "string" && row.verificationSpec.length > 0) {
+    try {
+      const parsed = JSON.parse(row.verificationSpec);
+      // Defensive: only accept the shape we expect. Older rows that
+      // stored something malformed get dropped silently rather than
+      // breaking the resume path.
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.code)) {
+        verificationSpec = parsed;
+      }
+    } catch {
+      // Malformed JSON in the column is non-fatal; the finding still
+      // restores, just without a verification contract.
+    }
+  } else if (row.verificationSpec && typeof row.verificationSpec === "object") {
+    // Some shims (cloud sinks, in-memory test doubles) hand back the
+    // already-parsed object. Pass it through unchanged.
+    if (Array.isArray(row.verificationSpec.code)) {
+      verificationSpec = row.verificationSpec;
+    }
+  }
+
+  // pwnkit#414 — mirror the verificationSpec thread for every other
+  // JSON-text column the writer persists. Each defaults to `undefined`
+  // when missing or malformed; the typed `RestorablePersistedFindingRow`
+  // parameter ensures any new column added to the schema fails to
+  // compile here instead of being dropped.
+  const pocSteps = parseJsonColumn<PocStep[]>(row.pocSteps);
+  const layerVerdicts = parseJsonColumn<LayerVerdict[]>(row.layerVerdicts);
+  const pocExecution = parseJsonColumn<Finding["pocExecution"]>(row.pocExecution);
+
+  return {
+    id: row.id,
+    templateId: row.templateId,
+    title: row.title,
+    description: row.description,
+    severity: row.severity as Finding["severity"],
+    category: row.category as Finding["category"],
+    status: row.status as Finding["status"],
+    fingerprint: row.fingerprint ?? undefined,
+    triageStatus: row.triageStatus as Finding["triageStatus"],
+    triageNote: row.triageNote ?? undefined,
+    // pwnkit#414 — workflow + score fields were persisted by saveFinding
+    // but silently dropped on resume. Thread the scalar columns directly.
+    workflowStatus: (row.workflowStatus ?? undefined) as FindingWorkflowStatus | undefined,
+    workflowAssignee: row.workflowAssignee ?? undefined,
+    workflowUpdatedAt: row.workflowUpdatedAt ?? undefined,
+    score: row.score ?? undefined,
+    confidence: row.confidence ?? undefined,
+    cvssVector: row.cvssVector ?? undefined,
+    cvssScore: row.cvssScore ?? undefined,
+    evidence: {
+      request: row.evidenceRequest,
+      response: row.evidenceResponse,
+      analysis: row.evidenceAnalysis ?? undefined,
+    },
+    layerVerdicts,
+    pocSteps,
+    verificationSpec,
+    pocExecution,
+    timestamp: row.timestamp,
+  };
+}
+
+function listChangedFiles(scopePath: string, diffBase: string): string[] {
+  const output = execFileSync(
+    "git",
+    ["diff", "--name-only", "--diff-filter=ACMR", `${diffBase}...HEAD`],
+    {
+      cwd: scopePath,
+      timeout: 30_000,
+      stdio: "pipe",
+      encoding: "utf-8",
+    },
+  );
+
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((path) => existsSync(join(scopePath, path)));
+}
+
+/**
+ * `--runtime codex` is a special case: it can resolve through either the
+ * local `codex` CLI binary (subscription path, source-analysis only) OR
+ * through the direct ChatGPT Codex provider when one of
+ * `PWNKIT_CHATGPT_ACCESS_TOKEN` / `PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN` is
+ * set. In the latter mode `LlmApiRuntime` reports `provider:
+ * "chatgpt-codex"`, and the pipeline must route the codex request through
+ * the API runtime instead of bailing with "Requested runtime 'codex' is
+ * not available." This mirrors the routing already in `agentic-scanner.ts`
+ * (the web/url scan path); without it, kernel reviews + npm/pypi/cargo
+ * audits with `--runtime codex` were skipped on machines where the
+ * operator had configured subscription auth but not installed the codex
+ * CLI binary. See #402.
+ */
+function hasDirectChatGptCodexProvider(
+  diagnostics: ApiRuntimeDiagnostics,
+): boolean {
+  return diagnostics.valid && diagnostics.provider === "chatgpt-codex";
+}
+
+function selectVerificationRuntime(
+  preferredRuntime: RuntimeMode | undefined,
+  hasApiKey: boolean,
+  availableRuntimes: Set<RuntimeType>,
+  apiDiagnostics: ApiRuntimeDiagnostics,
+): RuntimeMode | null {
+  if (preferredRuntime === "api") {
+    return hasApiKey ? "api" : null;
+  }
+
+  if (preferredRuntime && preferredRuntime !== "auto") {
+    if (availableRuntimes.has(preferredRuntime)) return preferredRuntime;
+    // Explicit `--runtime codex` with the direct ChatGPT Codex provider
+    // configured (PWNKIT_CHATGPT_*_TOKEN env). Route verification through
+    // the API runtime — agent-runner.ts will pick up the same env vars
+    // and run the native tool_use loop against chatgpt.com.
+    if (preferredRuntime === "codex" && hasDirectChatGptCodexProvider(apiDiagnostics)) {
+      return "codex";
+    }
+    return null;
+  }
+
+  if (hasApiKey) {
+    return "api";
+  }
+
+  if (availableRuntimes.size > 0) {
+    return "auto";
+  }
+
+  return null;
+}
+
+function hasRequestedAnalysisRuntime(
+  preferredRuntime: RuntimeMode | undefined,
+  hasApiKey: boolean,
+  availableRuntimes: Set<RuntimeType>,
+  apiDiagnostics: ApiRuntimeDiagnostics,
+): boolean {
+  if (preferredRuntime === "api") {
+    return hasApiKey;
+  }
+
+  if (preferredRuntime && preferredRuntime !== "auto") {
+    if (availableRuntimes.has(preferredRuntime)) return true;
+    // Direct ChatGPT Codex provider unlocks `--runtime codex` even when
+    // the codex CLI binary is absent. See `hasDirectChatGptCodexProvider`.
+    if (preferredRuntime === "codex" && hasDirectChatGptCodexProvider(apiDiagnostics)) {
+      return true;
+    }
+    return false;
+  }
+
+  return hasApiKey || availableRuntimes.size > 0;
+}
+
+function assertApiRuntimeSelection(
+  preferredRuntime: RuntimeMode | undefined,
+  diagnostics: ApiRuntimeDiagnostics,
+): void {
+  if (preferredRuntime === "api" && diagnostics.reason === "invalid_config") {
+    throw new Error(diagnostics.fatalError ?? `${diagnostics.providerLabel} runtime is not available.`);
+  }
+
+  if ((preferredRuntime === "auto" || preferredRuntime === undefined) && diagnostics.reason === "invalid_config") {
+    throw new Error(diagnostics.fatalError ?? `${diagnostics.providerLabel} runtime is misconfigured.`);
+  }
+}
+
+function isRepairableDbError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /database disk image is malformed|file is not a database|malformed|invalid page number|database main|btree|b-tree|database corrupt/i.test(message);
+}
+
+// ── Per-file research orchestration (#285) ──
+
+export interface PerFileResearchOptions {
+  scopePath: string;
+  target: string;
+  scanId: string;
+  files: string[];
+  semgrepFindings: SemgrepFinding[];
+  npmAuditFindings: NpmAuditFinding[];
+  targetLabel: string;
+  advisoryLabel: string;
+  /** Per-file agent invoker. Injected so tests can drive the loop without
+   *  spinning up real runtimes; production passes `runAnalysisAgent`. */
+  invoke: (perFile: {
+    file: string;
+    fileRel: string;
+    systemPrompt: string;
+    cliSystemPrompt: string;
+  }) => Promise<{ findings: Finding[] }>;
+  /** Optional per-file lifecycle hook for stage-progress emission. */
+  onFileStart?: (fileRel: string, index: number, total: number) => void;
+  /** Optional handler for per-file errors (logged + recorded but does not
+   *  abort the overall research pass). */
+  onFileError?: (fileRel: string, error: Error) => void;
+}
+
+/**
+ * Runs the per-file research loop. One agent session per file, findings
+ * aggregated into a single `Finding[]`.
+ *
+ * Reference pattern: `pov-gate.ts:367 buildPovSystemPrompt` — one finding /
+ * file per agent session, deterministic outer loop, tight per-call budget.
+ *
+ * Closes #285 H2 (control-flow audit): the prior shared-session research
+ * walked nominally but skipped past the first ~30 files. Per-file
+ * iteration guarantees full coverage.
+ */
+export async function runPerFileResearch(
+  opts: PerFileResearchOptions,
+): Promise<Finding[]> {
+  const aggregated: Finding[] = [];
+  for (let i = 0; i < opts.files.length; i++) {
+    const fileAbs = opts.files[i];
+    const fileRel = pathRelative(opts.scopePath, fileAbs);
+    const filePrompt = researchPromptSingleFile(
+      opts.scopePath,
+      fileRel,
+      opts.semgrepFindings.map(f => ({ ruleId: f.ruleId, message: f.message, path: f.path, startLine: f.startLine })),
+      opts.npmAuditFindings.map(f => ({ name: f.name, severity: f.severity, title: f.title })),
+      opts.targetLabel,
+      opts.advisoryLabel,
+    );
+    const cliSystemPrompt =
+      `You are a security researcher analyzing the single file ${fileRel}. For EACH vulnerability you find in THIS file, output it using the exact ---FINDING--- / ---END--- format. Do NOT analyze other files. If you find no vulnerabilities in this file, say 'No vulnerabilities found.' and nothing else.`;
+
+    opts.onFileStart?.(fileRel, i, opts.files.length);
+
+    try {
+      const agentResult = await opts.invoke({
+        file: fileAbs,
+        fileRel,
+        systemPrompt: filePrompt,
+        cliSystemPrompt,
+      });
+      aggregated.push(...agentResult.findings);
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      opts.onFileError?.(fileRel, e);
+    }
+  }
+  return aggregated;
+}
+
+// ── Main entry point ──
+
+/**
+ * Unified pipeline for all pwnkit scan types.
+ *
+ * Pipeline:
+ *   Phase 1: PREPARE   — detect target type, install/clone/resolve
+ *   Phase 2: ANALYZE   — static scanner + dependency audit
+ *   Phase 3: RESEARCH  — single AI agent discovers, attacks, and writes PoCs
+ *   Phase 4: VERIFY    — parallel blind agents independently verify each finding
+ *
+ * Reuses runAnalysisAgent() from agent-runner.ts which handles all runtimes
+ * (Claude Code CLI, Codex, API with native tool_use, legacy fallback).
+ */
+export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport> {
+  const emit: ScanListener = (opts.onEvent as ScanListener) ?? (() => {});
+  const startTime = Date.now();
+  const warnings: Array<{ stage: string; message: string }> = [];
+  let emittedScanCompleted = false;
+
+  const emitPipelineScanCompleted = (
+    exitReason: "completed" | "failed",
+    payload: Record<string, unknown> = {},
+  ): void => {
+    if (!shouldEmitPipelineCloudEvents()) return;
+    if (emittedScanCompleted) return;
+    emittedScanCompleted = true;
+    eventBus.emit("scan_completed", {
+      exit_reason: exitReason,
+      duration_ms: Date.now() - startTime,
+      ...payload,
+    });
+  };
+
+  // Initialize DB (optional, best-effort)
+  let db = await (async () => {
+    try {
+      const { pwnkitDB, repairPwnkitDatabase } = await import("@pwnkit/db");
+      try {
+        return new pwnkitDB(opts.dbPath);
+      } catch (error) {
+        if (!isRepairableDbError(error)) throw error;
+        const repaired = repairPwnkitDatabase(opts.dbPath);
+        warnings.push({
+          stage: "prepare",
+          message: repaired.backupPath
+            ? `Recovered local scan database. Backup saved to ${repaired.backupPath}`
+            : `Recovered local scan database at ${repaired.path}`,
+        });
+        return new pwnkitDB(opts.dbPath);
+      }
+    } catch {
+      return null as any;
+    }
+  })() as any;
+
+  const existingScan = opts.resumeScanId ? db?.getScan(opts.resumeScanId) : null;
+  if (opts.resumeScanId && !existingScan) {
+    throw new Error(`Scan ${opts.resumeScanId} not found`);
+  }
+
+  let persistedScanId = opts.resumeScanId ?? "";
+  const logPipelineEvent = (
+    stage: string,
+    eventType: string,
+    payload: Record<string, unknown> = {},
+  ): void => {
+    if (!persistedScanId) return;
+    db?.logEvent({
+      scanId: persistedScanId,
+      stage,
+      eventType,
+      payload,
+      timestamp: Date.now(),
+    });
+  };
+
+  // ── PHASE 1: PREPARE ──
+  emit({ type: "stage:start", stage: "prepare", message: opts.resumeScanId ? "Re-preparing target for resume..." : "Preparing target..." });
+
+  let prepared: PrepareResult;
+  try {
+    prepared = prepareTarget(opts, emit);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logPipelineEvent("prepare", "stage_error", { error: msg });
+    throw new Error(`Prepare failed: ${msg}`);
+  }
+
+  emit({ type: "stage:end", stage: "prepare", message: `Target ready: ${prepared.resolvedType}` });
+
+  const scanConfig: ScanConfig = {
+    target: prepared.resolvedTarget,
+    depth: opts.depth,
+    format: opts.format,
+    runtime: opts.runtime ?? "api",
+    mode: opts.mode ?? "deep",
+  };
+
+  if (db) {
+    try {
+      if (opts.resumeScanId) {
+        persistedScanId = opts.resumeScanId;
+        db.reopenScan(persistedScanId);
+        logPipelineEvent("prepare", "scan_resumed", {
+          originalStatus: existingScan?.status ?? null,
+          resumedAt: new Date().toISOString(),
+        });
+      } else {
+        persistedScanId = db.createScan(scanConfig);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push({
+        stage: "prepare",
+        message: `Local scan database unavailable; continuing without persistence: ${msg}`,
+      });
+      db = null as any;
+    }
+  }
+  if (!persistedScanId) {
+    persistedScanId = `pipeline-${randomUUID().slice(0, 8)}`;
+  }
+  logPipelineEvent("prepare", "stage_start", { resumed: !!opts.resumeScanId });
+  logPipelineEvent("prepare", "stage_complete", { resolvedType: prepared.resolvedType, resolvedTarget: prepared.resolvedTarget });
+
+  try {
+    // ── PHASE 2: ANALYZE (static analysis) ──
+    emit({ type: "stage:start", stage: "analyze", message: "Running static analysis..." });
+    logPipelineEvent("analyze", "stage_start");
+
+    // Intercept inner events — convert to analyze sub-actions
+    const analyzeEmit: ScanListener = (event) => {
+      if (event.type === "stage:start") {
+        emit({ type: "stage:start", stage: "analyze", message: event.message });
+      }
+    };
+
+    let semgrepFindings: SemgrepFinding[] = [];
+    let npmAuditFindings: NpmAuditFinding[] = [];
+    let changedFiles: string[] = [];
+    const staticScanner = selectedStaticScanner();
+    let staticScannerRan = false;
+    let staticScannerFindings = 0;
+
+    // External seeds (e.g. from `gemmaforge scan` via `--seed-findings`).
+    // Prepended to semgrepFindings so the agent prompt lists them FIRST —
+    // the agent treats top-of-list as highest priority. When `seedOnly` is
+    // also set we skip the static scan entirely. Closes pwnkit#368.
+    const externalSeedCount = opts.seedFindings?.length ?? 0;
+    if (externalSeedCount > 0) {
+      const seededAsSemgrep = seedFindingsToSemgrepShape(opts.seedFindings!);
+      semgrepFindings.push(...seededAsSemgrep);
+      const sources = new Set(opts.seedFindings!.map((s) => s.source));
+      emit({
+        type: "stage:start",
+        stage: "analyze",
+        message: `Seeded ${externalSeedCount} external lead(s) from ${[...sources].join(", ")}`,
+      });
+      logPipelineEvent("analyze", "seed_findings_loaded", {
+        count: externalSeedCount,
+        sources: [...sources],
+        seedOnly: !!opts.seedOnly,
+      });
+    }
+    const skipSemgrep = !!(opts.seedOnly && externalSeedCount > 0);
+
+    if (prepared.resolvedType === "source-code" && opts.diffBase) {
+      try {
+        changedFiles = listChangedFiles(prepared.scopePath, opts.diffBase);
+        if (changedFiles.length > 0) {
+          emit({
+            type: "stage:start",
+            stage: "analyze",
+            message: `Diff context loaded: ${changedFiles.length} changed files from ${opts.diffBase}`,
+          });
+          logPipelineEvent("analyze", "diff_context", {
+            diffBase: opts.diffBase,
+            changedFiles: changedFiles.slice(0, 200),
+            changedOnly: !!opts.changedOnly,
+          });
+        } else {
+          warnings.push({
+            stage: "analyze",
+            message: `No changed files found for diff base '${opts.diffBase}'. Falling back to full review.`,
+          });
+          logPipelineEvent("analyze", "warning", {
+            message: `No changed files found for diff base '${opts.diffBase}'. Falling back to full review.`,
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({
+          stage: "analyze",
+          message: `Failed to compute changed files from '${opts.diffBase}': ${msg}`,
+        });
+        logPipelineEvent("analyze", "warning", {
+          message: `Failed to compute changed files from '${opts.diffBase}': ${msg}`,
+        });
+      }
+    }
+
+    // Static source scan. Foxguard is the default; PWNKIT_STATIC=semgrep
+    // routes source and package-source leads through Semgrep while leaving
+    // dependency advisory checks intact.
+    if (
+      !skipSemgrep && (
+      prepared.resolvedType === "source-code" ||
+      prepared.resolvedType === "npm-package" ||
+      prepared.resolvedType === "pypi-package" ||
+      prepared.resolvedType === "cargo-package" ||
+      prepared.resolvedType === "oci-image"
+      )
+    ) {
+      const scannerName = staticScanner === "foxguard" ? "Foxguard" : "Semgrep";
+      try {
+        const changedOnlyPaths =
+          opts.changedOnly && changedFiles.length > 0
+            ? changedFiles.map((path) => join(prepared.scopePath, path))
+            : undefined;
+        const packageStaticTarget =
+          prepared.resolvedType === "npm-package" ||
+          prepared.resolvedType === "pypi-package" ||
+          prepared.resolvedType === "cargo-package" ||
+          prepared.resolvedType === "oci-image";
+
+        // Subsystem-scoped static scanning (pwnkit#466). When --subsystem is
+        // set for a linux-kernel review, scope the static scanner to only the
+        // specified subdirectory/directories. The full tree is still available
+        // for cross-reference reads, but scanning the whole 30M-line tree
+        // wastes the scanner's time budget.
+        const subsystemPaths =
+          opts.reviewProfile === "linux-kernel" && opts.subsystem
+            ? parseSubsystems(opts.subsystem).map((s) => join(prepared.scopePath, s))
+            : undefined;
+
+        // Push (not assign) so prepended external seedFindings survive.
+        const scanResults = runSelectedStaticScan(
+          prepared.scopePath,
+          analyzeEmit,
+          {
+            ...(packageStaticTarget ? { noGitIgnore: true } : {}),
+            ...(changedOnlyPaths ? { paths: changedOnlyPaths } : {}),
+            ...(subsystemPaths ? { paths: subsystemPaths } : {}),
+          },
+        );
+        staticScannerRan = true;
+        staticScannerFindings = scanResults.length;
+        semgrepFindings.push(...scanResults);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({ stage: "analyze", message: `${scannerName} scan failed: ${msg}` });
+        logPipelineEvent("analyze", "warning", { message: `${scannerName} scan failed: ${msg}` });
+      }
+    }
+
+    // dependency audit (package targets only, need the temp project dir)
+    if (
+      (prepared.resolvedType === "npm-package" || prepared.resolvedType === "pypi-package" || prepared.resolvedType === "cargo-package" || prepared.resolvedType === "oci-image") &&
+      prepared.tempDir &&
+      prepared.packageEcosystem
+    ) {
+      try {
+        npmAuditFindings = runDependencyAuditForEcosystem(
+          prepared.packageEcosystem,
+          prepared.tempDir,
+          emit,
+          prepared.packageName && prepared.packageVersion
+            ? { name: prepared.packageName, version: prepared.packageVersion }
+            : undefined,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({ stage: "analyze", message: `dependency audit failed: ${msg}` });
+        logPipelineEvent("analyze", "warning", { message: `dependency audit failed: ${msg}` });
+      }
+    }
+
+    emit({
+      type: "stage:end",
+      stage: "analyze",
+      message: `Analysis complete: ${semgrepFindings.length} static scanner findings, ${npmAuditFindings.length} dependency advisories`,
+    });
+    logPipelineEvent("analyze", "stage_complete", {
+      staticScanner,
+      staticScannerRan,
+      staticScannerFindings,
+      semgrepFindings: semgrepFindings.length,
+      npmAuditFindings: npmAuditFindings.length,
+    });
+    if (shouldEmitPipelineCloudEvents()) {
+      eventBus.emit("analyze:stage_complete", {
+        stage: "static-analysis",
+        staticScanner,
+        staticScannerRan,
+        staticScannerFindings,
+        semgrepFindings: semgrepFindings.length,
+        npmAuditFindings: npmAuditFindings.length,
+      });
+    }
+
+    const availableRuntimes = await detectAvailableRuntimes();
+    const needsApiDiagnostics =
+      opts.runtime === "api" ||
+      opts.runtime === "auto" ||
+      opts.runtime === undefined ||
+      (opts.runtime === "codex" && !availableRuntimes.has("codex"));
+    const apiDiagnostics = needsApiDiagnostics
+      ? new LlmApiRuntime({
+          type: "api",
+          timeout: opts.timeout ?? 120_000,
+          apiKey: opts.apiKey,
+          model: opts.model,
+        }).getConfigurationDiagnostics()
+      : {
+          valid: false,
+          provider: "openai",
+          providerLabel: "OpenAI",
+          reason: "missing_key",
+        } satisfies ApiRuntimeDiagnostics;
+    assertApiRuntimeSelection(opts.runtime, apiDiagnostics);
+    const hasApiKey = apiDiagnostics.valid;
+    const hasCliRuntime = availableRuntimes.size > 0;
+    const canUseAiRuntime = hasRequestedAnalysisRuntime(
+      opts.runtime,
+      hasApiKey,
+      availableRuntimes,
+      apiDiagnostics,
+    );
+    const verificationRuntime = selectVerificationRuntime(opts.runtime, hasApiKey, availableRuntimes, apiDiagnostics);
+
+    // Log pipeline decisions to stderr for CI visibility
+    if (process.env.CI || process.env.PWNKIT_DEBUG) {
+      process.stderr.write(`[pwnkit] Research: apiKey=${hasApiKey}, apiReason=${apiDiagnostics.reason ?? "ok"}, runtimes=[${[...availableRuntimes].join(",")}], config=${opts.runtime ?? "auto"}\n`);
+    }
+
+    if (!canUseAiRuntime) {
+      const skipMessage = opts.runtime === "api"
+        ? "Explicit runtime 'api' requested without an API key. AI analysis skipped."
+        : opts.runtime && opts.runtime !== "auto"
+          ? `Requested runtime '${opts.runtime}' is not available. AI analysis skipped.`
+          : "No API key or CLI runtime available. AI analysis skipped. Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY, or OPENAI_API_KEY.";
+      warnings.push({ stage: "research", message: skipMessage });
+      emit({ type: "stage:end", stage: "research", message: "Skipped — no compatible AI runtime" });
+      emit({ type: "stage:end", stage: "verify", message: "Skipped" });
+      logPipelineEvent("research", "stage_skipped", { reason: "no_runtime", requestedRuntime: opts.runtime ?? "auto" });
+      logPipelineEvent("verify", "stage_skipped", { reason: "no_runtime", requestedRuntime: opts.runtime ?? "auto" });
+      // Skip research + verify, go straight to report
+    }
+
+    let findings: Finding[] = [];
+
+    if (canUseAiRuntime) {
+    const existingResearchSession = opts.resumeScanId ? db?.getSession(persistedScanId, prepared.resolvedType === "source-code" ? "review" : "audit") : null;
+    const existingPersistedFindings = opts.resumeScanId
+      ? ((db?.getFindings(persistedScanId) ?? []) as RestorablePersistedFindingRow[]).map(restorePersistedFinding)
+      : [];
+    const existingVerifiedFindings = existingPersistedFindings.filter((finding) => finding.status === "verified" || finding.status === "false-positive");
+    const canResumeResearchSession = existingResearchSession?.status === "paused";
+    const canSkipResearch = existingPersistedFindings.length > 0 && !canResumeResearchSession;
+
+    emit({
+      type: "stage:start",
+      stage: "research",
+      message: canResumeResearchSession
+        ? "Resuming AI research session..."
+        : canSkipResearch
+          ? "Reusing persisted research findings..."
+          : "Researching vulnerabilities...",
+    });
+    logPipelineEvent("research", "stage_start", {
+      resumed: canResumeResearchSession,
+      reusedFindings: canSkipResearch,
+    });
+
+    const researchEmit: ScanListener = (event) => {
+      if (event.type === "stage:start") {
+        emit({ type: "stage:start", stage: "research", message: event.message });
+      } else if (event.type === "thinking") {
+        emit({ type: "thinking", stage: "research", message: event.message, data: event.data });
+      } else if (event.type === "usage") {
+        emit({ type: "usage", stage: "research", message: event.message, data: event.data });
+      } else if (event.type === "error") {
+        emit({ type: "error", stage: "research", message: event.message, data: event.data });
+      } else if (event.type === "finding") {
+        emit(event);
+      }
+    };
+
+    if (canSkipResearch) {
+      findings = existingPersistedFindings;
+    } else if (
+      prepared.resolvedType === "npm-package" ||
+      prepared.resolvedType === "pypi-package" ||
+      prepared.resolvedType === "cargo-package" ||
+      prepared.resolvedType === "oci-image" ||
+      prepared.resolvedType === "source-code"
+    ) {
+      const targetLabel = prepared.resolvedType === "source-code"
+        ? "repository"
+        : `${prepared.packageEcosystem === "pypi" ? "PyPI" : prepared.packageEcosystem === "cargo" ? "crates.io" : prepared.packageEcosystem === "oci" ? "OCI image" : "npm"} package ${prepared.packageName}@${prepared.packageVersion}`;
+      const advisoryLabel =
+        prepared.packageEcosystem === "pypi"
+          ? "OSV PyPI advisory lookup"
+          : prepared.packageEcosystem === "cargo"
+            ? "OSV crates.io advisory lookup"
+            : prepared.packageEcosystem === "oci"
+              ? "OCI image dependency audit"
+            : "npm audit";
+
+      const agentSystemPrompt = researchPrompt(
+        prepared.scopePath,
+        semgrepFindings.map(f => ({ ruleId: f.ruleId, message: f.message, path: f.path, startLine: f.startLine })),
+        npmAuditFindings.map(f => ({ name: f.name, severity: f.severity, title: f.title })),
+        targetLabel,
+        advisoryLabel,
+      );
+
+      // Log operator hypothesis for post-hoc analysis (#467)
+      if (opts.hypothesis && prepared.resolvedType === "source-code") {
+        emit({ type: "stage:start", stage: "research", message: `Operator hypothesis seeded: ${opts.hypothesis.slice(0, 200)}` });
+      }
+
+      // Pre-scan attack surface enumeration for kernel reviews (pwnkit#471).
+      let attackSurfaceCtx: string | undefined;
+      if (opts.reviewProfile === "linux-kernel" && prepared.resolvedType === "source-code") {
+        try {
+          const enumResult = enumerateAttackSurfaces({
+            tree: prepared.scopePath,
+            subsystem: opts.subsystem,
+          });
+          attackSurfaceCtx = formatAttackSurfaceForPrompt(enumResult);
+        } catch {
+          // Non-fatal — agent runs without attack surface context.
+        }
+      }
+
+      const effectiveSystemPrompt = prepared.resolvedType === "source-code"
+        ? (opts.reviewProfile === "linux-kernel"
+            ? kernelReviewAgentPrompt(prepared.scopePath, semgrepFindings, undefined, opts.subsystem, opts.hypothesis, attackSurfaceCtx)
+            : opts.reviewProfile === "c-library"
+            ? cppReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
+            : reviewAgentPrompt(prepared.scopePath, semgrepFindings, changedFiles, !!opts.changedOnly, opts.hypothesis))
+        : agentSystemPrompt;
+
+      // Per-file research loop (#285). When `perItemOrchestration` is on,
+      // we run one agent session per source file with a focused per-file
+      // prompt — this guarantees full coverage instead of relying on the
+      // model to walk every file inside a single shared session (which
+      // historically skipped, deduped, or condensed past ~30 files).
+      //
+      // Scoped to package-research targets (npm / pypi / cargo / oci); the
+      // `source-code` review path uses profile-specific prompts (kernel,
+      // c-library, default review) and is intentionally untouched here.
+      const usePerFileLoop =
+        agentFeatures.perItemOrchestration &&
+        prepared.resolvedType !== "source-code";
+
+      try {
+        if (usePerFileLoop) {
+          const sourceFiles = collectScopeFiles(prepared.scopePath);
+          if (sourceFiles.length === 0) {
+            // Nothing to walk — fall back to the single-shot session so we
+            // still take a whole-package look (e.g. inspecting package.json
+            // metadata, examining built artifacts).
+            const agentResult = await runAnalysisAgent({
+              role: "audit",
+              scopePath: prepared.scopePath,
+              target: prepared.resolvedTarget,
+              scanId: persistedScanId,
+              sessionId: canResumeResearchSession ? existingResearchSession.id : undefined,
+              config: {
+                runtime: opts.runtime,
+                timeout: opts.timeout,
+                depth: opts.depth,
+                apiKey: opts.apiKey,
+                model: opts.model,
+                costCeilingUsd: opts.costCeilingUsd,
+              },
+              db,
+              emit: researchEmit,
+              cliPrompt: buildCliPrompt(
+                prepared.scopePath,
+                semgrepFindings,
+                npmAuditFindings,
+                targetLabel,
+                advisoryLabel,
+                changedFiles,
+                !!opts.changedOnly,
+              ),
+              agentSystemPrompt: effectiveSystemPrompt,
+              cliSystemPrompt:
+                "You are a security researcher performing an authorized source code audit. For EACH vulnerability you find, output it using the exact ---FINDING--- / ---END--- format specified in the prompt. Do NOT write prose analysis — only output structured finding blocks. If you find no vulnerabilities, say 'No vulnerabilities found.' and nothing else.",
+            });
+            findings = agentResult.findings;
+          } else {
+            findings = await runPerFileResearch({
+              scopePath: prepared.scopePath,
+              target: prepared.resolvedTarget,
+              scanId: persistedScanId,
+              files: sourceFiles,
+              semgrepFindings,
+              npmAuditFindings,
+              targetLabel,
+              advisoryLabel,
+              invoke: ({ systemPrompt, cliSystemPrompt }) =>
+                runAnalysisAgent({
+                  role: "audit",
+                  scopePath: prepared.scopePath,
+                  target: prepared.resolvedTarget,
+                  scanId: persistedScanId,
+                  // Don't reuse the resume sessionId across multiple per-file
+                  // calls — the resumable session is a single-prompt shape and
+                  // would be wrongly reattached to the second file's session.
+                  config: {
+                    runtime: opts.runtime,
+                    timeout: opts.timeout,
+                    depth: opts.depth,
+                    apiKey: opts.apiKey,
+                    model: opts.model,
+                    costCeilingUsd: opts.costCeilingUsd,
+                  },
+                  db,
+                  emit: researchEmit,
+                  cliPrompt: buildCliPrompt(
+                    prepared.scopePath,
+                    semgrepFindings,
+                    npmAuditFindings,
+                    targetLabel,
+                    advisoryLabel,
+                    changedFiles,
+                    !!opts.changedOnly,
+                  ),
+                  agentSystemPrompt: systemPrompt,
+                  cliSystemPrompt,
+                }),
+              onFileStart: (fileRel, i, total) => {
+                emit({
+                  type: "stage:start",
+                  stage: "research",
+                  message: `Researching file ${i + 1}/${total}: ${fileRel}`,
+                });
+              },
+              onFileError: (fileRel, perFileErr) => {
+                warnings.push({ stage: "research", message: `Per-file analysis failed (${fileRel}): ${perFileErr.message}` });
+                logPipelineEvent("research", "warning", { message: `Per-file analysis failed (${fileRel}): ${perFileErr.message}` });
+              },
+            });
+          }
+        } else {
+          const agentResult = await runAnalysisAgent({
+            role: prepared.resolvedType === "source-code" ? "review" : "audit",
+            scopePath: prepared.scopePath,
+            target: prepared.resolvedTarget,
+            scanId: persistedScanId,
+            sessionId: canResumeResearchSession ? existingResearchSession.id : undefined,
+            config: {
+              runtime: opts.runtime,
+              timeout: opts.timeout,
+              depth: opts.depth,
+              apiKey: opts.apiKey,
+              model: opts.model,
+              costCeilingUsd: opts.costCeilingUsd,
+            },
+            db,
+            emit: researchEmit,
+            cliPrompt: buildCliPrompt(
+              prepared.scopePath,
+              semgrepFindings,
+              npmAuditFindings,
+              targetLabel,
+              advisoryLabel,
+              changedFiles,
+              !!opts.changedOnly,
+            ),
+            agentSystemPrompt: effectiveSystemPrompt,
+            cliSystemPrompt:
+              "You are a security researcher performing an authorized source code audit. For EACH vulnerability you find, output it using the exact ---FINDING--- / ---END--- format specified in the prompt. Do NOT write prose analysis — only output structured finding blocks. If you find no vulnerabilities, say 'No vulnerabilities found.' and nothing else.",
+          });
+          findings = agentResult.findings;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({ stage: "research", message: `AI analysis failed: ${msg}` });
+        logPipelineEvent("research", "warning", { message: `AI analysis failed: ${msg}` });
+      }
+    } else {
+      // URL / web-app targets — not supported yet in unified pipeline
+      warnings.push({
+        stage: "research",
+        message: `Target type "${prepared.resolvedType}" is not yet supported in the unified pipeline. Use 'pwnkit scan' for URL/web-app targets.`,
+      });
+      logPipelineEvent("research", "warning", {
+        message: `Target type "${prepared.resolvedType}" is not yet supported in the unified pipeline.`,
+      });
+    }
+
+    emit({
+      type: "stage:end",
+      stage: "research",
+      message: `${findings.length} findings discovered`,
+    });
+    logPipelineEvent("research", "stage_complete", { findings: findings.length });
+
+    // ── PHASE 4: VERIFY (parallel blind agents) ──
+    if (
+      findings.length > 0 &&
+      (prepared.resolvedType === "source-code" || prepared.resolvedType === "npm-package" || prepared.resolvedType === "pypi-package" || prepared.resolvedType === "cargo-package" || prepared.resolvedType === "oci-image")
+    ) {
+      // #416 Bug A: a resumed scan whose verify wave already completed has
+      // every finding sitting in storage with status='verified' or
+      // 'false-positive'. We can — and must — short-circuit before
+      // consulting `verificationRuntime`. Otherwise the runtime fail-close
+      // below (Bug B) clobbers those persisted verdicts.
+      const canSkipVerify =
+        existingVerifiedFindings.length === findings.length &&
+        findings.length > 0;
+
+      emit({
+        type: "stage:start",
+        stage: "verify",
+        message: canSkipVerify
+          ? `Reusing persisted verification results for ${findings.length} findings...`
+          : `Blind-verifying ${findings.length} findings...`,
+      });
+      logPipelineEvent("verify", "stage_start", {
+        reusedFindings: canSkipVerify,
+        findingCount: findings.length,
+      });
+
+      if (canSkipVerify) {
+        // #416 Bug B: this branch MUST run before the `!verificationRuntime`
+        // check below. A resumed scan with no API key still has fully
+        // verified findings on disk; force-flipping them to false-positive
+        // here would silently destroy real verdicts on every resume.
+        findings = existingVerifiedFindings;
+        const confirmedCount = findings.filter((finding: Finding) => finding.status === "verified").length;
+        const rejectedCount = findings.filter((finding: Finding) => finding.status === "false-positive").length;
+        emit({
+          type: "stage:end",
+          stage: "verify",
+          message: `Verification reused: ${confirmedCount} confirmed, ${rejectedCount} rejected`,
+        });
+        logPipelineEvent("verify", "stage_complete", {
+          confirmed: confirmedCount,
+          rejected: rejectedCount,
+          reused: true,
+        });
+      } else if (!verificationRuntime) {
+        warnings.push({
+          stage: "verify",
+          message: "Verification skipped because no verifier runtime is available. Findings were dropped rather than fail open.",
+        });
+        findings = findings.map((finding) => ({ ...finding, status: "false-positive" as Finding["status"] }));
+        // #416 Bug A: persist the forced verdict so a subsequent resume —
+        // possibly with an API key available — sees a consistent verify
+        // state instead of re-running the whole phase.
+        for (const f of findings) {
+          try {
+            db?.saveFinding(persistedScanId, f);
+          } catch (persistErr) {
+            const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+            warnings.push({ stage: "verify", message: `Failed to persist verify verdict for "${f.title}": ${msg}` });
+          }
+        }
+        emit({
+          type: "stage:end",
+          stage: "verify",
+          message: "Verification skipped — no verifier runtime available",
+        });
+        logPipelineEvent("verify", "stage_skipped", { reason: "no_runtime" });
+      } else {
+      try {
+        const verifyResults = await Promise.all(
+          findings.map(async (finding) => {
+            // Extract file path from evidence_request field
+            const filePath = finding.evidence.request || "";
+            // Extract PoC from evidence_response (the PoC code)
+            const poc = finding.evidence.response || finding.evidence.analysis || "";
+            const claimedSeverity = finding.severity;
+
+            const verifySystemPrompt = blindVerifyPrompt(
+              filePath,
+              poc,
+              claimedSeverity,
+              prepared.scopePath,
+            );
+
+            // #416 Bug C: the inner verifyEmit previously re-fired
+            // `verify:result` on every `finding` event from the verify
+            // agent. The outer findings.map (below) is the single source
+            // of truth for verify:result — it knows confirmed vs
+            // rejected, fires exactly once per input finding, and
+            // matches the `{ confirmed, title, reason }` shape SSE/TUI
+            // consumers actually read. So forward inner agent events
+            // *without* synthesizing extra verify:result frames here.
+            const verifyEmit: ScanListener = () => {
+              // intentionally silent: see comment above
+            };
+
+            try {
+              const agentResult = await runAnalysisAgent({
+                role: "review",
+                purpose: "verify",
+                scopePath: prepared.scopePath,
+                target: prepared.resolvedTarget,
+                scanId: `${persistedScanId}-verify`,
+                config: {
+                  runtime: verificationRuntime,
+                  timeout: Math.min(opts.timeout ?? 120_000, 120_000),
+                  depth: "quick",
+                  apiKey: opts.apiKey,
+                  model: opts.model,
+                  costCeilingUsd: opts.costCeilingUsd,
+                },
+                db: null,
+                emit: verifyEmit,
+                cliPrompt: `Verify this vulnerability in ${filePath}:\n\nPoC:\n${poc}\n\nClaimed severity: ${claimedSeverity}\n\nRead the file, trace data flow, confirm or reject.`,
+                agentSystemPrompt: verifySystemPrompt,
+                cliSystemPrompt: "You are a blind verification agent. Read the file, trace the PoC, confirm or reject the vulnerability.",
+              });
+              const verifiedFindings = agentResult.findings;
+
+              const confirmed = verifiedFindings.length > 0;
+              const rejectionReason = confirmed ? undefined : "Could not independently reproduce";
+              return { finding, confirmed, verifiedFinding: verifiedFindings[0] ?? null, rejectionReason };
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              warnings.push({ stage: "verify", message: `Verification failed for "${finding.title}": ${msg}` });
+              return { finding, confirmed: false, verifiedFinding: null, rejectionReason: `Verifier error: ${msg}` };
+            }
+          }),
+        );
+
+        // Emit results and filter
+        let confirmedCount = 0;
+        let rejectedCount = 0;
+
+        findings = verifyResults
+          .map(({ finding, confirmed, verifiedFinding, rejectionReason }) => {
+            if (confirmed) {
+              confirmedCount++;
+              emit({ type: "verify:result", message: `Confirmed: ${finding.title}`, data: { confirmed: true, title: finding.title } });
+              return {
+                ...finding,
+                status: "verified" as Finding["status"],
+                confidence: verifiedFinding?.confidence ?? finding.confidence,
+                severity: verifiedFinding?.severity ?? finding.severity,
+              };
+            } else {
+              rejectedCount++;
+              emit({ type: "verify:result", message: `Rejected: ${finding.title}`, data: { confirmed: false, title: finding.title, reason: rejectionReason ?? "Could not independently reproduce" } });
+              return { ...finding, status: "false-positive" as Finding["status"] };
+            }
+          });
+
+        // #416 Bug A: persist the verify verdict for each finding so a
+        // subsequent resume can short-circuit through the canSkipVerify
+        // branch above. Without this round-trip the verify phase re-runs
+        // on every resume even though storage already knows the answer.
+        //
+        // We re-save the full Finding (saveFinding does INSERT … ON
+        // CONFLICT UPDATE), so verificationSpec / pocSteps / evidence
+        // round-trip rather than getting nulled out. A focused partial
+        // update would be safer if other code paths mutated the same row
+        // concurrently, but the verify phase is the sole writer here.
+        for (const f of findings) {
+          try {
+            db?.saveFinding(persistedScanId, f);
+          } catch (persistErr) {
+            const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+            warnings.push({ stage: "verify", message: `Failed to persist verify verdict for "${f.title}": ${msg}` });
+          }
+        }
+
+        emit({
+          type: "stage:end",
+          stage: "verify",
+          message: `Verification complete: ${confirmedCount} confirmed, ${rejectedCount} rejected`,
+        });
+        logPipelineEvent("verify", "stage_complete", {
+          confirmed: confirmedCount,
+          rejected: rejectedCount,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({ stage: "verify", message: `Verification failed: ${msg}` });
+        findings = findings.map((finding) => ({ ...finding, status: "false-positive" as Finding["status"] }));
+        // #416 Bug A: persist the catch-all forced verdict too — without
+        // this, the next resume sees no verified findings and re-runs
+        // verify against an already-broken runtime.
+        for (const f of findings) {
+          try {
+            db?.saveFinding(persistedScanId, f);
+          } catch {
+            // best-effort: don't compound a verify error with a persistence error
+          }
+        }
+        emit({ type: "stage:end", stage: "verify", message: `Verification failed: ${msg}` });
+        logPipelineEvent("verify", "warning", { message: `Verification failed: ${msg}` });
+      }
+      }
+    }
+
+    } // end of hasApiKey || hasCliRuntime else block
+
+    // ── BUILD REPORT ──
+    const confirmedFindings = findings.filter((f) => f.status !== "false-positive");
+    const durationMs = Date.now() - startTime;
+    const summary = buildSummary(confirmedFindings, semgrepFindings.length + npmAuditFindings.length);
+
+    db?.completeScan(persistedScanId, summary);
+    logPipelineEvent("report", "stage_complete", summary as unknown as Record<string, unknown>);
+
+    const report: PipelineReport = {
+      target: opts.target,
+      targetType: prepared.resolvedType,
+      startedAt: new Date(startTime).toISOString(),
+      completedAt: new Date().toISOString(),
+      durationMs,
+      summary,
+      findings: confirmedFindings,
+      warnings,
+      // Backwards-compat extras
+      ...(prepared.resolvedType === "npm-package" || prepared.resolvedType === "pypi-package" || prepared.resolvedType === "cargo-package" || prepared.resolvedType === "oci-image"
+        ? {
+            package: prepared.packageName,
+            version: prepared.packageVersion,
+            npmAuditFindings,
+            semgrepFindings: semgrepFindings.length,
+          }
+        : {}),
+      ...(prepared.resolvedType === "source-code"
+        ? {
+            repo: opts.target,
+            semgrepFindings: semgrepFindings.length,
+          }
+        : {}),
+    };
+
+    emitPipelineScanCompleted("completed", {
+      findings: confirmedFindings.length,
+      summary: `${confirmedFindings.length} finding(s), ${semgrepFindings.length + npmAuditFindings.length} automated lead(s)`,
+    });
+
+    return report;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    db?.failScan(persistedScanId, msg);
+    logPipelineEvent("report", "stage_error", { error: msg });
+    emitPipelineScanCompleted("failed", { summary: msg });
+    throw err;
+  } finally {
+    db?.close();
+    // Clean up temporary directories
+    if (prepared.needsCleanup && prepared.tempDir) {
+      try {
+        rmSync(prepared.tempDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+}

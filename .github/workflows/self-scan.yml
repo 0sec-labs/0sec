@@ -1,0 +1,153 @@
+name: Self-Scan
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && corepack prepare pnpm@9 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # Dogfood: review pwnkit's own source code
+      - name: Run pwnkit self-scan
+        run: |
+          set +euo pipefail
+          EXTRA_ARGS=()
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            EXTRA_ARGS+=(--changed-only --diff-base "${{ github.event.before }}")
+          fi
+          timeout --signal=TERM --kill-after=30s 480s \
+            node packages/cli/dist/index.js review . \
+            --format json \
+            --runtime api \
+            --depth quick \
+            --timeout 420000 \
+            "${EXTRA_ARGS[@]}" \
+            2> scan-stderr.log | tee scan-results.json
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "scan_exit_code=$status" >> "$GITHUB_OUTPUT"
+          echo "--- stderr ---"
+          cat scan-stderr.log || true
+          if [ "$status" -eq 2 ]; then
+            echo "::error::pwnkit self-scan failed to execute."
+            exit 2
+          fi
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "::error::pwnkit self-scan exceeded the CI timeout budget."
+            exit 2
+          fi
+          if [ ! -s scan-results.json ]; then
+            echo "::error::pwnkit self-scan produced no JSON output."
+            exit 2
+          fi
+          node -e "
+            const fs = require('fs');
+            const raw = fs.readFileSync('scan-results.json', 'utf8');
+            try {
+              JSON.parse(raw);
+            } catch (error) {
+              console.error('::error::scan-results.json is invalid JSON.');
+              console.error(String(error));
+              process.exit(2);
+            }
+          "
+        env:
+          # Match the benchmark workflows: Azure is the primary CI runtime.
+          # Do NOT set OPENROUTER_API_KEY here — pwnkit prefers OpenRouter
+          # over Azure when both are present, which can silently route the
+          # self-scan to a slower or less deterministic provider/model.
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_BASE_URL: ${{ secrets.AZURE_OPENAI_BASE_URL }}
+          AZURE_OPENAI_MODEL: ${{ secrets.AZURE_OPENAI_MODEL }}
+          AZURE_OPENAI_WIRE_API: ${{ secrets.AZURE_OPENAI_WIRE_API }}
+
+      # Print results in CI
+      - name: Show scan summary
+        run: |
+          echo "=== Scan Results ==="
+          if [ -s scan-results.json ]; then
+            node -e "
+              const r = JSON.parse(require('fs').readFileSync('scan-results.json','utf8'));
+              console.log('Duration: ' + (r.durationMs/1000).toFixed(1) + 's');
+              console.log('Semgrep findings: ' + (r.semgrepFindings ?? 0));
+              console.log('AI findings: ' + r.summary.totalFindings);
+              console.log('  Critical: ' + r.summary.critical);
+              console.log('  High: ' + r.summary.high);
+              console.log('  Medium: ' + r.summary.medium);
+              console.log('  Low: ' + r.summary.low);
+              console.log('  Info: ' + r.summary.info);
+              if (r.findings.length > 0) {
+                console.log('');
+                console.log('=== Findings ===');
+                for (const f of r.findings) {
+                  console.log('[' + f.severity.toUpperCase() + '] ' + f.title);
+                  if (f.file) console.log('  File: ' + f.file);
+                  console.log('  ' + (f.description || '').slice(0, 200));
+                  console.log('');
+                }
+              }
+              if (r.warnings?.length > 0) {
+                console.log('');
+                console.log('=== Warnings ===');
+                for (const w of r.warnings) console.log('[' + w.stage + '] ' + w.message);
+              }
+            "
+          else
+            echo "No scan results file found"
+          fi
+          if [ -s scan-stderr.log ]; then
+            echo ""
+            echo "=== Stderr (last 50 lines) ==="
+            tail -50 scan-stderr.log
+          fi
+
+      - name: Upload scan results
+        uses: actions/upload-artifact@v7
+        with:
+          name: scan-results
+          path: |
+            scan-results.json
+            scan-stderr.log
+          retention-days: 30
+
+      - name: Warn on critical findings (advisory on push)
+        if: github.event_name == 'push'
+        run: |
+          if [ -s scan-results.json ]; then
+            node -e "
+              const r = JSON.parse(require('fs').readFileSync('scan-results.json','utf8'));
+              if (r.summary.critical > 0 || r.summary.high > 0) {
+                console.log('::warning::Self-scan found ' + r.summary.critical + ' critical and ' + r.summary.high + ' high findings on push.');
+              } else {
+                console.log('PASS: no critical/high findings');
+              }
+            "
+          fi
+
+      # Block only on explicit/manual security gates
+      - name: Check for critical findings
+        if: github.event_name != 'push'
+        run: |
+          if [ -s scan-results.json ]; then
+            node -e "
+              const r = JSON.parse(require('fs').readFileSync('scan-results.json','utf8'));
+              if (r.summary.critical > 0 || r.summary.high > 0) {
+                console.error('FAIL: ' + r.summary.critical + ' critical, ' + r.summary.high + ' high findings');
+                process.exit(1);
+              }
+              console.log('PASS: no critical/high findings');
+            "
+          fi

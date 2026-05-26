@@ -1,0 +1,121 @@
+name: Release Smoke
+
+# Defense-in-depth: after a release publishes, download the actual release
+# asset (the same bytes users get from install.sh) and run a tripwire smoke
+# on a fresh runner. Catches:
+#
+#   - The v0.10.0 / v0.10.1 failure mode where bun-compiled binaries baked
+#     in build-host filesystem paths and crashed on user machines.
+#   - Any regression where the upload step in release.yml drifts from the
+#     compile step in binary-build.yml.
+#
+# This is post-release so it cannot block the release announcement, but
+# every step that exercises the binary fails LOUDLY in the workflow UI on
+# crash. Treat any red run here as "ship a follow-on patch release."
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke (e.g. v0.10.2). Defaults to latest."
+        required: false
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  release-smoke:
+    name: release-smoke (${{ matrix.label }})
+    permissions:
+      contents: read
+    # Don't fail the whole workflow if one platform breaks — we still want
+    # to know about the others. Per-step failures inside each job DO surface
+    # as red in the UI.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            runs_on: '"ubuntu-latest"'
+            asset: pwnkit-linux-x64
+          - label: linux-arm64
+            runs_on: '"ubuntu-24.04-arm"'
+            asset: pwnkit-linux-arm64
+          - label: darwin-arm64
+            runs_on: '"macos-14"'
+            asset: pwnkit-darwin-arm64
+          - label: windows-x64
+            runs_on: '"windows-latest"'
+            asset: pwnkit-windows-x64.exe
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    timeout-minutes: 10
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG=$(gh release view --repo "${{ github.repository }}" --json tagName --jq '.tagName')
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Smoke-testing release: $TAG"
+
+      - name: Download released binary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist-bin
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "${{ matrix.asset }}" \
+            --dir dist-bin
+          ls -lh dist-bin
+
+      - name: Resolve binary path
+        id: bin
+        shell: bash
+        run: |
+          if [ -f "dist-bin/${{ matrix.asset }}" ]; then
+            P="dist-bin/${{ matrix.asset }}"
+          else
+            echo "::error::expected asset ${{ matrix.asset }} not present after download"
+            exit 1
+          fi
+          if [ "${{ matrix.label }}" != "windows-x64" ]; then
+            chmod +x "$P"
+          fi
+          echo "path=$P" >> "$GITHUB_OUTPUT"
+
+      - name: Runtime smoke — --version
+        shell: bash
+        run: |
+          BIN="${{ steps.bin.outputs.path }}"
+          OUT=$("$BIN" --version)
+          echo "version output: $OUT"
+          echo "$OUT" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+' || {
+            echo "::error::released binary --version did not print a version string"
+            exit 1
+          }
+
+      - name: Runtime smoke — history --db-path (DB init on fresh runner)
+        shell: bash
+        run: |
+          BIN="${{ steps.bin.outputs.path }}"
+          if [ "${{ matrix.label }}" = "windows-x64" ]; then
+            DB="${RUNNER_TEMP:-/tmp}/release-smoke.db"
+          else
+            DB="/tmp/release-smoke.db"
+          fi
+          rm -f "$DB"
+          "$BIN" history --db-path "$DB"

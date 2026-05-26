@@ -1,0 +1,35 @@
+node_modules/
+dist/
+dist-bin/
+*.tsbuildinfo
+.DS_Store
+.cache/
+.claude/
+.omx/
+pnpm-publish-summary.json
+*.sync-conflict-*
+
+# Astro generated build artifacts (root + nested)
+.astro/
+**/.astro/
+
+# Strategy / marketing / launch / fundraising / pitch material lives in
+# the business repo at ~/coding/business/opensoar-hq-strategy/, not here.
+# These patterns are kept so any stale local-only files don't accidentally
+# end up tracked again.
+.internal/
+.local/
+marketing/
+POSITIONING.md
+www/
+dist-npm/
+
+# Release-staging binary artifacts — operator builds these locally
+# via packages/core/src/triage/kernel-vm/build.sh and uploads to the
+# 0sec-labs/pwnkit-kernel-artifacts GitHub release. Only the metadata
+# (SHA256SUMS, PUBLISH.md, *.patch) is committed.
+release-staging/*/bzImage
+release-staging/*/rootfs.img
+release-staging/*/kernel.config
+release-staging/*/pwnkit_vm_key
+release-staging/*/pwnkit_vm_key.pub

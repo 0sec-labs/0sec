@@ -1,0 +1,144 @@
+name: "pwnkit"
+description: "One-line security scanning for repos, packages, and endpoints"
+author: "0sec Labs"
+
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  mode:
+    description: "Scan mode: review (source code), audit (npm package), or scan (endpoint)"
+    required: false
+    default: "review"
+  path:
+    description: "Local path to review when mode=review"
+    required: false
+    default: "."
+  package:
+    description: "npm package spec to audit when mode=audit"
+    required: false
+    default: ""
+  target:
+    description: "Target URL or mcp:// endpoint when mode=scan"
+    required: false
+    default: ""
+  scan-mode:
+    description: "Scanner sub-mode for mode=scan: probe, deep, mcp, or web"
+    required: false
+    default: "probe"
+  depth:
+    description: "Scan depth: quick, default, deep"
+    required: false
+    default: "default"
+  runtime:
+    description: "Runtime: api, claude, codex, gemini, auto"
+    required: false
+    default: "api"
+  timeout:
+    description: "Runtime timeout in milliseconds"
+    required: false
+    default: "300000"
+  format:
+    description: "Primary report format: json or sarif"
+    required: false
+    default: "json"
+  severity-threshold:
+    description: "Severity level counted by the gate: critical, high, medium, low, info, none"
+    required: false
+    default: "high"
+  threshold:
+    description: "Allowed number of findings at or above severity-threshold before failing"
+    required: false
+    default: "0"
+  report-dir:
+    description: "Directory for generated reports"
+    required: false
+    default: "pwnkit-report"
+  comment-pr:
+    description: "Post or update a pull request comment with findings"
+    required: false
+    default: "true"
+  pwnkit-version:
+    description: "pwnkit-cli npm version to install"
+    required: false
+    default: "latest"
+
+outputs:
+  report-file:
+    description: "Primary report file path"
+    value: ${{ steps.scan.outputs.report-file }}
+  json-report-file:
+    description: "JSON report file path"
+    value: ${{ steps.scan.outputs.json-report-file }}
+  sarif-report-file:
+    description: "SARIF report file path"
+    value: ${{ steps.scan.outputs.sarif-report-file }}
+  total-findings:
+    description: "Total confirmed findings"
+    value: ${{ steps.scan.outputs.total-findings }}
+  qualifying-findings:
+    description: "Findings counted by the gate"
+    value: ${{ steps.scan.outputs.qualifying-findings }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: "22"
+
+    - name: Install pwnkit
+      shell: bash
+      run: npm install --global "pwnkit-cli@${{ inputs.pwnkit-version }}"
+
+    - name: Run pwnkit
+      id: scan
+      shell: bash
+      run: "${{ github.action_path }}/scripts/run-github-action.sh"
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_PACKAGE: ${{ inputs.package }}
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_SCAN_MODE: ${{ inputs.scan-mode }}
+        INPUT_DEPTH: ${{ inputs.depth }}
+        INPUT_RUNTIME: ${{ inputs.runtime }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+        INPUT_THRESHOLD: ${{ inputs.threshold }}
+        INPUT_REPORT_DIR: ${{ inputs.report-dir }}
+        PWNKIT_ACTION_ROOT: ${{ github.action_path }}
+
+    - name: Find existing PR comment
+      if: github.event_name == 'pull_request' && inputs.comment-pr == 'true'
+      uses: peter-evans/find-comment@v4
+      id: find-comment
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: github-actions[bot]
+        body-includes: "<!-- pwnkit-action -->"
+
+    - name: Post or update PR comment
+      if: github.event_name == 'pull_request' && inputs.comment-pr == 'true'
+      uses: peter-evans/create-or-update-comment@v5
+      with:
+        comment-id: ${{ steps.find-comment.outputs.comment-id }}
+        issue-number: ${{ github.event.pull_request.number }}
+        edit-mode: replace
+        body: ${{ steps.scan.outputs.comment-body }}
+
+    - name: Upload SARIF
+      if: inputs.format == 'sarif' && steps.scan.outputs.sarif-report-file != ''
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-report-file }}
+
+    - name: Enforce finding threshold
+      if: steps.scan.outputs.should-fail == 'true'
+      shell: bash
+      run: |
+        echo "::error::${{ steps.scan.outputs.gate-message }}"
+        exit 1

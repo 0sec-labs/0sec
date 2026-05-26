@@ -1,0 +1,30 @@
+name: Bug Report
+description: Report a bug in Pwnkit
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the bug
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+  - type: input
+    attributes:
+      label: Pwnkit version
+      description: Run `pwnkit-cli --version`
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Node.js version
+      description: Run `node --version`
