@@ -33,24 +33,15 @@
 
 ## Install
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/0sec-labs/pwnkit/main/install.sh | bash
-```
-
-Drops a standalone `pwnkit` binary into `~/.pwnkit/bin` (~74 MB, linux-x64 / linux-arm64 / darwin-arm64 / windows-x64). Pin a version with `PWNKIT_VERSION=vX.Y.Z`, change the install dir with `PWNKIT_INSTALL_DIR=…`.
-
-Alternatives:
+pwnkit is closed-source software. Public npm and binary distribution have been retired.
 
 ```bash
-# Node ≥20 (npm bundle, command name is pwnkit-cli)
-npx pwnkit-cli scan --target https://example.com
-
 # Docker (Playwright + sqlmap/wpscan/nmap/nikto/gobuster/ffuf/hydra/john preinstalled)
 docker run --rm -e OPENROUTER_API_KEY=$KEY \
   ghcr.io/0sec-labs/pwnkit:latest scan --target https://example.com
 ```
 
-Intel Mac users have no prebuilt binary — install Bun and build from source.
+For access, contact **security@0sec.ai**.
 
 ## Use
 
@@ -84,18 +75,6 @@ pwnkit https://example.com
 - **Blind verification.** Findings are independently re-exploited before they are reported.
 - **Benchmark transparency.** Raw artifacts and per-challenge breakdowns under `packages/benchmark/results`.
 
-## GitHub Action
-
-```yaml
-- uses: 0sec-labs/pwnkit@main
-  with:
-    mode: review
-    path: .
-    format: sarif
-  env:
-    OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-```
-
 ## Docs
 
 [Getting Started](https://docs.0sec.ai/getting-started) · [Commands](https://docs.0sec.ai/commands) · [Configuration](https://docs.0sec.ai/configuration) · [Recipes](https://docs.0sec.ai/recipes) · [Architecture](https://docs.0sec.ai/architecture) · [Triage](https://docs.0sec.ai/triage) · [Benchmark](https://docs.0sec.ai/benchmark) · [Adversarial evals](https://docs.0sec.ai/adversarial-evals) · [Enterprise](https://docs.0sec.ai/enterprise)
@@ -103,8 +82,8 @@ pwnkit https://example.com
 ## Development
 
 ```bash
-git clone https://github.com/0sec-labs/pwnkit.git
-cd pwnkit && pnpm install && pnpm lint && pnpm test
+# Internal — this repo is private and closed-source.
+pnpm install && pnpm lint && pnpm test
 ```
 
 When running from a source checkout, rebuild after every pull before invoking the ignored bundle:

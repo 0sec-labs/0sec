@@ -5,7 +5,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/0sec-labs/pwnkit.git
+# Internal — this repo is private and closed-source.
 cd pwnkit
 pnpm install
 pnpm build        # builds all packages in dependency order + bundles CLI

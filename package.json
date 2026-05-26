@@ -39,11 +39,12 @@
   "author": "0sec Labs",
   "homepage": "https://0sec.ai",
   "bugs": {
-    "url": "https://github.com/0sec-labs/pwnkit/issues"
+    "url": "https://0sec.ai/contact"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0sec-labs/pwnkit.git"
+    "url": "git+ssh://git@github.com/0sec-labs/0sec.git",
+    "directory": "pwnkit"
   },
   "license": "SEE LICENSE IN LICENSE",
   "engines": {
