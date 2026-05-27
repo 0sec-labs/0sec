@@ -227,25 +227,46 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
 
 export function runLogout(opts: LogoutOptions): void {
   const home = opts.homeDir ?? homedir();
-  const path = join(home, ".pwnkit", "cloud.env");
+  const pwnkitPath = join(home, ".pwnkit", "cloud.env");
+  const cloudCredsPath = join(home, ".0cloud", "credentials.json");
+  let deletedAny = false;
+
+  // Delete pwnkit credential file
   try {
-    unlinkSync(path);
-    console.log("Logged out");
-    process.exitCode = EXIT_OK;
+    unlinkSync(pwnkitPath);
+    deletedAny = true;
   } catch (err: unknown) {
     const code = (err as { code?: string }).code;
-    if (code === "ENOENT") {
-      // Already logged out — still a success. Surface a hint so the
-      // user knows what happened.
-      console.log("Logged out (no credentials file was present)");
-      process.exitCode = EXIT_OK;
+    if (code !== "ENOENT") {
+      console.error(
+        chalk.red(`Could not delete ${pwnkitPath}: ${err instanceof Error ? err.message : String(err)}`),
+      );
+      process.exitCode = EXIT_USER_ERROR;
       return;
     }
-    console.error(
-      chalk.red(`Could not delete ${path}: ${err instanceof Error ? err.message : String(err)}`),
-    );
-    process.exitCode = EXIT_USER_ERROR;
   }
+
+  // Also clean up 0cloud-compatible credential file
+  try {
+    unlinkSync(cloudCredsPath);
+    deletedAny = true;
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code;
+    if (code !== "ENOENT") {
+      console.error(
+        chalk.red(`Could not delete ${cloudCredsPath}: ${err instanceof Error ? err.message : String(err)}`),
+      );
+      process.exitCode = EXIT_USER_ERROR;
+      return;
+    }
+  }
+
+  if (deletedAny) {
+    console.log("Logged out");
+  } else {
+    console.log("Logged out (no credentials file was present)");
+  }
+  process.exitCode = EXIT_OK;
 }
 
 export async function runStatus(opts: StatusOptions): Promise<void> {
@@ -333,6 +354,29 @@ function persistCredentials(host: string, token: string, homeDirOverride?: strin
   if (!existsSync(path)) {
     // Should be impossible; we just wrote it.
     return;
+  }
+
+  // Write 0cloud-compatible credential file for unified auth.
+  // Best-effort: don't fail the pwnkit login if this secondary write fails.
+  try {
+    const cloudDir = join(home, ".0cloud");
+    mkdirSync(cloudDir, { recursive: true });
+    const cloudCredsPath = join(cloudDir, "credentials.json");
+    const cloudCreds = JSON.stringify(
+      {
+        token,
+        orgId: "",
+        endpoint: host,
+        dashboardUrl: host,
+        createdAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + "\n";
+    writeFileSync(cloudCredsPath, cloudCreds, { mode: 0o600 });
+    chmodSync(cloudCredsPath, 0o600);
+  } catch {
+    // Silently ignore — the primary pwnkit credential write succeeded.
   }
 }
 
