@@ -90,6 +90,7 @@ describe("cloud-sink", () => {
     expect(init.method).toBe("POST");
     expect(init.headers["Content-Type"]).toBe("application/json");
     expect(init.headers["X-Pwnkit-Scan-Id"]).toBe("scan-123");
+    expect(init.headers["x-cloud-sink-version"]).toBe("1");
     expect(init.headers["Authorization"]).toBe("Bearer tok-abc");
     // The wire payload is the NORMALIZED finding, not the raw input.
     const body = JSON.parse(init.body);

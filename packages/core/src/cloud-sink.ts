@@ -82,6 +82,7 @@ function buildHeaders(config: CloudSinkConfig): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-Pwnkit-Scan-Id": config.scanId,
+    "x-cloud-sink-version": "1",
   };
   if (config.token) headers["Authorization"] = `Bearer ${config.token}`;
   return headers;
