@@ -53,6 +53,7 @@ import {
   routeFinding,
   decideLayers,
   appendRoutingTraceRecord,
+  canAutoSuppressDetailed,
   type LayerId,
   type RoutingDecision,
 } from "./triage/index.js";
@@ -1183,7 +1184,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
       const evidenceGateStartedAt = Date.now();
       const evidenceGateRejects = evidenceCompleteness <= 0.5;
-      if (evidenceGateRejects && features.evidenceGate) {
+      // Guardrail (#518): a low completeness *score* alone must never auto-drop
+      // a high-severity / high-impact finding. When the guard fires we do NOT
+      // short-circuit — the finding falls through to the rest of the triage
+      // pipeline (reachability / multi-modal / verify), which is exactly the
+      // "route to verification instead of suppress" behavior we want.
+      const evidenceGuard = canAutoSuppressDetailed(finding);
+      if (evidenceGateRejects && features.evidenceGate && evidenceGuard.canSuppress) {
         pushLayerVerdict(finding, {
           layer: "evidence_gate",
           verdict: "reject",
@@ -1202,6 +1209,38 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           message: `Triage rejected ${finding.id}: insufficient evidence (completeness=${evidenceCompleteness.toFixed(2)})`,
         });
         continue;
+      }
+      if (evidenceGateRejects && features.evidenceGate && !evidenceGuard.canSuppress) {
+        // Guard bailed the auto-drop. Record it and let the finding proceed.
+        pushLayerVerdict(finding, {
+          layer: "evidence_gate",
+          verdict: "skip",
+          confidence: 1 - evidenceCompleteness,
+          reason: `would have rejected (completeness=${evidenceCompleteness.toFixed(2)} <= 0.5) but auto-suppress guard fired: ${evidenceGuard.reason}`,
+          startedAt: evidenceGateStartedAt,
+        });
+        finding.triageNote = `evidence_gate guard: kept for verification despite completeness=${evidenceCompleteness.toFixed(2)} <= 0.5 — ${evidenceGuard.reason}`;
+        db.logEvent?.({
+          scanId,
+          stage: "verify",
+          eventType: "auto_suppress_guard",
+          agentRole: "triage",
+          payload: {
+            findingId: finding.id,
+            path: "evidence_gate",
+            guard: evidenceGuard.guard,
+            reason: evidenceGuard.reason,
+            severity: finding.severity,
+            category: finding.category,
+          },
+          timestamp: Date.now(),
+        });
+        emit({
+          type: "stage:end",
+          stage: "attack",
+          message: `Evidence gate held ${finding.id} for verification: ${evidenceGuard.reason}`,
+        });
+        // fall through to remaining triage layers + verify
       }
       pushLayerVerdict(finding, {
         layer: "evidence_gate",
@@ -1247,17 +1286,47 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         }
 
         if (routerResult.decision === "auto_reject") {
-          finding.triageStatus = "suppressed";
-          finding.triageNote = `router_auto_reject: ${routerResult.reason}`;
-          db.updateFindingStatus?.(finding.id, "false-positive");
-          finding.status = "false-positive";
-          db.saveFinding?.(scanId, finding);
+          // Guardrail (#518): the XGBoost router's auto_reject is a *score*
+          // (p<=0.25). It may never auto-drop a high-severity / high-impact
+          // finding — those get at least one verification pass. When the guard
+          // fires we record it and fall through to the remaining layers + verify.
+          const routerGuard = canAutoSuppressDetailed(finding);
+          if (routerGuard.canSuppress) {
+            finding.triageStatus = "suppressed";
+            finding.triageNote = `router_auto_reject: ${routerResult.reason}`;
+            db.updateFindingStatus?.(finding.id, "false-positive");
+            finding.status = "false-positive";
+            db.saveFinding?.(scanId, finding);
+            emit({
+              type: "stage:end",
+              stage: "attack",
+              message: `Router rejected ${finding.id}: ${routerResult.reason}`,
+            });
+            continue;
+          }
+          finding.triageNote = `router guard: kept for verification despite auto_reject (${routerResult.reason}) — ${routerGuard.reason}`;
+          db.logEvent?.({
+            scanId,
+            stage: "verify",
+            eventType: "auto_suppress_guard",
+            agentRole: "triage",
+            payload: {
+              findingId: finding.id,
+              path: "learned_router",
+              guard: routerGuard.guard,
+              reason: routerGuard.reason,
+              severity: finding.severity,
+              category: finding.category,
+              tpProbability: routerResult.tpProbability,
+            },
+            timestamp: Date.now(),
+          });
           emit({
             type: "stage:end",
             stage: "attack",
-            message: `Router rejected ${finding.id}: ${routerResult.reason}`,
+            message: `Router held ${finding.id} for verification: ${routerGuard.reason}`,
           });
-          continue;
+          // fall through to the dynamic router + remaining layers + verify
         }
 
         // decision === "run_layers" — continue to the layers below,
@@ -1294,17 +1363,48 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         // returns an empty layer set short-circuits the entire
         // downstream triage stage for this finding.
         if (decision.layers_to_invoke.length === 0) {
-          finding.triageStatus = "suppressed";
-          finding.triageNote = `dynamic_router_auto_reject: ${decision.reasoning ?? decision.matchedRule ?? "empty layer set"}`;
-          db.updateFindingStatus?.(finding.id, "false-positive");
-          finding.status = "false-positive";
-          db.saveFinding?.(scanId, finding);
+          // Guardrail (#518): an empty-layer-set (FP-pattern heuristic) may
+          // never auto-drop a high-severity / high-impact finding. When the
+          // guard fires we record it and fall through; the finding still
+          // reaches the agentic verify agent (Stage 3) — a real verification
+          // pass — instead of being marked false-positive on a pattern alone.
+          const dynamicGuard = canAutoSuppressDetailed(finding);
+          if (dynamicGuard.canSuppress) {
+            finding.triageStatus = "suppressed";
+            finding.triageNote = `dynamic_router_auto_reject: ${decision.reasoning ?? decision.matchedRule ?? "empty layer set"}`;
+            db.updateFindingStatus?.(finding.id, "false-positive");
+            finding.status = "false-positive";
+            db.saveFinding?.(scanId, finding);
+            emit({
+              type: "stage:end",
+              stage: "attack",
+              message: `Dynamic router rejected ${finding.id}: ${decision.matchedRule ?? "empty layer set"}`,
+            });
+            continue;
+          }
+          finding.triageNote = `dynamic_router guard: kept for verification despite empty layer set (${decision.matchedRule ?? "FP-pattern"}) — ${dynamicGuard.reason}`;
+          db.logEvent?.({
+            scanId,
+            stage: "verify",
+            eventType: "auto_suppress_guard",
+            agentRole: "triage",
+            payload: {
+              findingId: finding.id,
+              path: "dynamic_triage",
+              guard: dynamicGuard.guard,
+              reason: dynamicGuard.reason,
+              severity: finding.severity,
+              category: finding.category,
+              matchedRule: decision.matchedRule,
+            },
+            timestamp: Date.now(),
+          });
           emit({
             type: "stage:end",
             stage: "attack",
-            message: `Dynamic router rejected ${finding.id}: ${decision.matchedRule ?? "empty layer set"}`,
+            message: `Dynamic router held ${finding.id} for verification: ${dynamicGuard.reason}`,
           });
-          continue;
+          // fall through; the empty layer set still routes to the verify agent
         }
       }
 

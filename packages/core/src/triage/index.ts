@@ -6,6 +6,13 @@
  */
 
 export { extractFeatures, FEATURE_NAMES } from "./feature-extractor.js";
+export {
+  canAutoSuppress,
+  canAutoSuppressDetailed,
+  AUTO_SUPPRESS_PROTECTED_SEVERITIES,
+  AUTO_SUPPRESS_HIGH_IMPACT_CATEGORIES,
+} from "./can-auto-suppress.js";
+export type { AutoSuppressDecision, AutoSuppressGuard } from "./can-auto-suppress.js";
 export { isHoldingItWrong } from "./holding-it-wrong.js";
 export type { HoldingItWrongResult } from "./holding-it-wrong.js";
 export { checkReachability, extractSinkLocation } from "./reachability.js";
