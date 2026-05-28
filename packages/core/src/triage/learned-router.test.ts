@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { routeFinding } from "./learned-router.js";
+import { parseModel, routeFinding } from "./learned-router.js";
 import type { Finding } from "@pwnkit/shared";
+
+/**
+ * Minimal XGBoost-JSON-shaped fixture. `base_score` is intentionally a
+ * string (XGBoost stores model params as strings) so we can vary it to
+ * exercise parseModel's numeric coercion (#519).
+ */
+function makeModelJson(baseScore: string): unknown {
+  return {
+    learner: {
+      learner_model_param: { base_score: baseScore },
+      gradient_booster: {
+        model: {
+          trees: [
+            {
+              split_indices: [0],
+              split_conditions: [0],
+              left_children: [-1],
+              right_children: [-1],
+              base_weights: [0.1],
+              default_left: [0],
+            },
+          ],
+        },
+      },
+    },
+  };
+}
 
 function makeFinding(overrides: Partial<Finding>): Finding {
   return {
@@ -97,5 +124,27 @@ describe("routeFinding — XGBoost model evaluation", () => {
     if (result.decision === "auto_reject") {
       expect(result.layersToRun).toHaveLength(0);
     }
+  });
+});
+
+describe("parseModel — base_score parsing (#519)", () => {
+  it("preserves a legitimate base_score of 0 (does not coerce to 0.5)", () => {
+    const model = parseModel(makeModelJson("0"));
+    expect(model.baseScore).toBe(0);
+  });
+
+  it("parses a non-zero base_score correctly", () => {
+    const model = parseModel(makeModelJson("0.5"));
+    expect(model.baseScore).toBe(0.5);
+  });
+
+  it("strips XGBoost's bracket notation around base_score (e.g. \"[0]\")", () => {
+    const model = parseModel(makeModelJson("[0]"));
+    expect(model.baseScore).toBe(0);
+  });
+
+  it("falls back to 0.5 when base_score is non-numeric / unparseable", () => {
+    const model = parseModel(makeModelJson("not-a-number"));
+    expect(model.baseScore).toBe(0.5);
   });
 });
