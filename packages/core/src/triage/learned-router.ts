@@ -32,12 +32,13 @@ interface XGBTree {
   default_left: number[];
 }
 
-interface XGBModel {
+export interface XGBModel {
   trees: XGBTree[];
   baseScore: number;
 }
 
-function parseModel(json: unknown): XGBModel {
+/** Exported for unit testing (#519). */
+export function parseModel(json: unknown): XGBModel {
   const d = json as Record<string, unknown>;
   const learner = d.learner as Record<string, unknown>;
   const params = learner.learner_model_param as Record<string, string>;
@@ -55,9 +56,13 @@ function parseModel(json: unknown): XGBModel {
   }));
 
   const rawBase = (params.base_score ?? "0.5").replace(/[\[\]]/g, "");
+  // Guard against `parseFloat(...) || 0.5` coercing a legitimate base_score
+  // of 0 to the fallback (#519). `0 || 0.5` would wrongly yield 0.5, shifting
+  // the sigmoid offset by 0.5 in logit space across the accept/reject bands.
+  const parsed = parseFloat(rawBase);
   return {
     trees,
-    baseScore: parseFloat(rawBase) || 0.5,
+    baseScore: Number.isFinite(parsed) ? parsed : 0.5,
   };
 }
 
