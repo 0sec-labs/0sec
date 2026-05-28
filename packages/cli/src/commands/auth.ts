@@ -362,11 +362,20 @@ function persistCredentials(host: string, token: string, homeDirOverride?: strin
     const cloudDir = join(home, ".0cloud");
     mkdirSync(cloudDir, { recursive: true });
     const cloudCredsPath = join(cloudDir, "credentials.json");
+    // pwnkit only knows the dashboard host (cloud.0sec.ai); the 0cloud
+    // orchestrator API lives under /api on it. `api.0sec.ai` has no DNS
+    // (#508), so derive the API base as `${host}/api` for 0cloud's
+    // endpoint. orgId stays empty — 0cloud resolves org from its own
+    // config / --org.
+    const trimmedHost = host.replace(/\/+$/, "");
+    const apiEndpoint = trimmedHost.endsWith("/api")
+      ? trimmedHost
+      : `${trimmedHost}/api`;
     const cloudCreds = JSON.stringify(
       {
         token,
         orgId: "",
-        endpoint: host,
+        endpoint: apiEndpoint,
         dashboardUrl: host,
         createdAt: new Date().toISOString(),
       },
