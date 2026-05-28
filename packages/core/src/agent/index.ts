@@ -32,12 +32,14 @@ export {
   defaultJournalRootDir,
   loadJournal,
   migrateJournalEntry,
+  rehydrateContext,
   resolveJournalPaths,
   streamJournal,
   DEFAULT_JOURNAL_SIDECAR_THRESHOLD_BYTES,
   JOURNAL_SCHEMA_VERSION,
 } from "./journal/index.js";
 export type {
+  ConversationState,
   JournalArtifact,
   JournalArtifactInline,
   JournalArtifactInput,
@@ -50,13 +52,19 @@ export type {
   JournalEntryKind,
   JournalErrorEntry,
   JournalFindingEntry,
+  JournalHypothesisEntry,
   JournalLoadOptions,
+  JournalNoteEntry,
   JournalObservationEntry,
   JournalPaths,
   JournalReplayOptions,
   JournalSchemaVersion,
+  JournalToolCallEntry,
+  JournalToolResultEntry,
   JournalWriter,
   JournalWriterOptions,
+  RehydratedHypothesis,
+  RehydratedToolStep,
 } from "./journal/index.js";
 export type { AttackNode, AttackTreeResult, EGATSConfig, Evidence, NodeStatus } from "./egats.js";
 export type {

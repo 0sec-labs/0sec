@@ -383,6 +383,9 @@ class FileJournalWriter implements JournalWriter {
   private readonly sidecarThresholdBytes: number;
   private readonly now: () => Date;
   private readonly idFactory: () => string;
+  /** Next monotonic seq to assign. Seeded from any pre-existing journal so
+   *  resumed / branched runs continue the numbering rather than restarting. */
+  private nextSeq: number;
 
   constructor(options: JournalWriterOptions) {
     this.runId = options.runId;
@@ -393,6 +396,7 @@ class FileJournalWriter implements JournalWriter {
     mkdirSync(this.paths.runDir, { recursive: true, mode: 0o700 });
     mkdirSync(this.paths.artifactsDir, { recursive: true, mode: 0o700 });
     fsyncDir(dirname(this.paths.runDir));
+    this.nextSeq = seedNextSeq(this.paths.journalPath);
   }
 
   append(input: JournalEntryInput): JournalEntry {
@@ -401,12 +405,17 @@ class FileJournalWriter implements JournalWriter {
     const artifacts = input.artifacts
       ? materializeArtifacts(this.paths, input.artifacts, this.sidecarThresholdBytes)
       : undefined;
+    // Honour a caller-supplied seq (replay/branch tooling) but never let it
+    // move the counter backwards; otherwise assign the next monotonic value.
+    const seq = input.seq ?? this.nextSeq;
+    this.nextSeq = Math.max(this.nextSeq, seq) + 1;
 
-    const { artifacts: _inputArtifacts, id: _inputId, timestamp: _inputTimestamp, ...rest } = input;
+    const { artifacts: _inputArtifacts, id: _inputId, timestamp: _inputTimestamp, seq: _inputSeq, ...rest } = input;
     const entry = {
       schemaVersion: JOURNAL_SCHEMA_VERSION,
       id,
       runId: this.runId,
+      seq,
       timestamp,
       ...rest,
       ...(artifacts && artifacts.length > 0 ? { artifacts } : {}),
@@ -419,6 +428,48 @@ class FileJournalWriter implements JournalWriter {
   load(): JournalEntry[] {
     return loadJournal({ runId: this.runId, runDir: this.paths.runDir });
   }
+}
+
+/**
+ * Determine the next monotonic seq for a (possibly pre-existing) journal so a
+ * resumed or branched run continues numbering rather than colliding with
+ * already-written entries.
+ *
+ * - No file / empty file → 0.
+ * - Entries carrying `seq` → max(seq) + 1.
+ * - Legacy v1 entries without `seq` → entry count (file order is the order),
+ *   which is also the seq the writer would have assigned had it been present.
+ *
+ * Best-effort: a corrupt/half-written journal must not crash writer
+ * construction, so any parse failure falls back to a line count.
+ */
+function seedNextSeq(journalPath: string): number {
+  if (!existsSync(journalPath)) return 0;
+  let text: string;
+  try {
+    text = readFileSync(journalPath, "utf8");
+  } catch {
+    return 0;
+  }
+  const lines = text.split("\n").filter((line) => line.trim() !== "");
+  if (lines.length === 0) return 0;
+
+  let maxSeq = -1;
+  let sawSeq = false;
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as { seq?: unknown };
+      if (typeof parsed.seq === "number" && Number.isFinite(parsed.seq)) {
+        sawSeq = true;
+        if (parsed.seq > maxSeq) maxSeq = parsed.seq;
+      }
+    } catch {
+      // Ignore unparseable (e.g. trailing half-written) lines; they still
+      // occupy a slot so the line-count fallback below stays monotonic.
+    }
+  }
+
+  return sawSeq ? maxSeq + 1 : lines.length;
 }
 
 function materializeArtifacts(
