@@ -30,6 +30,7 @@ export type {
   RehydratedHypothesis,
   RehydratedToolStep,
 } from "./rehydrate.js";
+export { renderSeedMessages } from "./seed.js";
 export {
   branchJournal,
   createJournalWriter,

@@ -14,6 +14,7 @@ import type { AttributionConfig } from "../scope/attribution.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
 import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
+import { loadJournal, rehydrateContext, renderSeedMessages } from "./journal/index.js";
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
 import { formatJitSkillsInstruction } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
@@ -241,8 +242,44 @@ export async function runNativeAgentLoop(
     });
   }
 
-  // Try to restore from existing session
-  if (config.sessionId && db) {
+  // ── Execution-journal context routing (#494, slice 2, flag-gated, OFF) ──
+  // When PWNKIT_FEATURE_JOURNAL_REHYDRATE is on, seed the loop's context off
+  // the durable on-disk journal (rehydrateContext + renderSeedMessages)
+  // instead of the truncated 40-message DB session blob. This is the slice
+  // that routes the loop OFF the journal. Independent of the shadow-WRITE flag
+  // (executionJournal): rehydrate is a READER, so it only fires when a journal
+  // was actually written for this run. A fresh run rehydrates to empty, which
+  // falls through to the identical fresh-start prompt below — so the flag only
+  // changes behaviour on RESUME of an already-journaled run. Missing / empty /
+  // corrupt journals fall back to the DB-blob path and never crash the loop.
+  let rehydratedFromJournal = false;
+  if (features.journalRehydrate) {
+    const seed = seedFromJournal(config.scanId, (reason, detail) => {
+      onEvent?.("journal_rehydrate_fallback", {
+        sessionId,
+        scanId: config.scanId,
+        reason,
+        detail: detail instanceof Error ? detail.message : detail,
+      });
+    });
+    if (seed.seeded) {
+      messages = seed.messages;
+      turnCount = seed.turnCount;
+      toolCtx.findings = seed.findings;
+      rehydratedFromJournal = true;
+      onEvent?.("journal_rehydrated", {
+        sessionId,
+        scanId: config.scanId,
+        turnCount,
+        messageCount: messages.length,
+        findingCount: seed.findings.length,
+      });
+    }
+  }
+
+  // Try to restore from existing session (skipped when the journal already
+  // seeded the context above — the journal is the source of truth then).
+  if (!rehydratedFromJournal && config.sessionId && db) {
     const existing = db.getSessionById(config.sessionId);
     if (existing && existing.status === "paused") {
       messages = JSON.parse(existing.messages) as NativeMessage[];
@@ -1509,6 +1546,85 @@ function readExternalMemory(path: string): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Result of attempting to seed the loop's context off the execution journal
+ * (#494, slice 2). `messages` is the rendered conversation window (empty when
+ * there is no journaled progress yet — a fresh run); `findings` are the
+ * findings recovered from `finding` entries so the in-loop tool context starts
+ * with what the prior run already confirmed. `seeded` is true only when we
+ * actually rehydrated non-empty progress from the journal.
+ */
+interface JournalSeed {
+  messages: NativeMessage[];
+  findings: Finding[];
+  /** Highest tool-step turn observed in the journal (0 when unknown). */
+  turnCount: number;
+  seeded: boolean;
+}
+
+/**
+ * Load the run's execution journal and render it into a fresh conversation
+ * seed. Guard-railed: a missing/empty/corrupt journal yields an empty,
+ * un-seeded result (the caller falls back to DB-blob / fresh-prompt seeding)
+ * and NEVER throws — rehydration must not be more fragile than the journal it
+ * reads. The reason for any non-fatal degradation is reported via `onWarn` so
+ * the fallback is observable.
+ */
+function seedFromJournal(
+  scanId: string,
+  onWarn: (reason: string, detail?: unknown) => void,
+): JournalSeed {
+  const empty: JournalSeed = { messages: [], findings: [], turnCount: 0, seeded: false };
+
+  let entries;
+  try {
+    entries = loadJournal({ runId: scanId });
+  } catch (err) {
+    // loadJournal throws on a complete malformed line (corrupt journal).
+    onWarn("journal_load_failed", err);
+    return empty;
+  }
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    // Missing or empty journal — nothing to rehydrate. Not an error: this is
+    // the fresh-run case, which must behave exactly as today.
+    return empty;
+  }
+
+  let messages: NativeMessage[];
+  let findings: Finding[];
+  let turnCount: number;
+  try {
+    const state = rehydrateContext(entries);
+    messages = renderSeedMessages(state);
+    // `finding` journal entries are written from real `save_finding` payloads
+    // (native-loop shadow write), but the journal types them loosely as
+    // `Record<string, unknown>`. Cast through `unknown` to recover the shape
+    // the in-loop tool context carries.
+    findings = state.findings as unknown as Finding[];
+    // Continue numbering from the last turn the prior run reached so budget /
+    // loop-detection math stays consistent. Falls back to 0 when no tool step
+    // carried a turn (older journals).
+    turnCount = state.toolSteps.reduce(
+      (max, step) => (typeof step.turn === "number" && step.turn > max ? step.turn : max),
+      0,
+    );
+  } catch (err) {
+    // rehydrateContext is total by contract, but render or an unexpected edge
+    // must still degrade rather than abort the loop.
+    onWarn("journal_rehydrate_failed", err);
+    return empty;
+  }
+
+  if (messages.length === 0) {
+    // Journal had entries but no conversation-bearing progress — treat as a
+    // fresh start so we stay byte-equivalent to today's initial prompt.
+    return empty;
+  }
+
+  return { messages, findings, turnCount, seeded: true };
 }
 
 function buildInitialPrompt(config: NativeAgentConfig): string {
