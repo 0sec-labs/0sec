@@ -24,6 +24,19 @@ export type {
   JournalToolResultEntry,
 } from "./types.js";
 export { migrateJournalEntry } from "./migrate.js";
+export {
+  buildSpecialistDispatch,
+  selectNextDispatch,
+  summarizeForOrchestrator,
+  SPECIALIST_PIPELINE,
+} from "./orchestrator.js";
+export type {
+  DispatchDecision,
+  OrchestratorView,
+  SpecialistDispatch,
+  SpecialistRole,
+  StopReason,
+} from "./orchestrator.js";
 export { rehydrateContext } from "./rehydrate.js";
 export type {
   ConversationState,
