@@ -311,6 +311,40 @@ export const features = {
   get executionJournal(): boolean {
     return env("PWNKIT_FEATURE_EXECUTION_JOURNAL", false);
   },
+
+  /**
+   * Execution-journal context routing (#494, slice 2).
+   *
+   * When ON, the native agent loop seeds its initial/resume conversation
+   * context from the on-disk execution journal via
+   * `rehydrateContext(loadJournal(...))` instead of (or fronting) the
+   * truncated 40-message DB session blob. This is the slice that finally
+   * routes the loop's context OFF the journal — the IronCurtain "every
+   * agent begins with a fresh context window and rehydrates from disk"
+   * primitive becomes load-bearing.
+   *
+   * Independent of `executionJournal` (the shadow-WRITE flag) on purpose so
+   * the moat-ablation harness can toggle write and route separately for a
+   * clean A/B. Rehydrate is a READER, though, so it only does anything when
+   * a journal was written for the run — it reads `~/.pwnkit/runs/<scanId>/
+   * journal.jsonl` regardless of how it got there (shadow mode this slice,
+   * or specialists in a later slice). When the journal is missing, empty, or
+   * corrupt the loop falls back to the existing DB-blob / fresh-prompt
+   * seeding and never crashes; the fallback is logged. A FRESH run (no
+   * journal yet) rehydrates to empty state, which is byte-equivalent to
+   * today's initial-prompt seeding — so `journalRehydrate` only changes
+   * behaviour on RESUME of an already-journaled run.
+   *
+   * Default OFF: this changes the loop's source of truth for resume, so it
+   * must be explicitly opted into before any A/B claim. Implemented as a
+   * getter so the CLI `--features` flag (which sets the env var inside the
+   * command action, AFTER this module has been imported) is honored at loop
+   * time. Enable via PWNKIT_FEATURE_JOURNAL_REHYDRATE=1 or `--features
+   * journal-rehydrate`.
+   */
+  get journalRehydrate(): boolean {
+    return env("PWNKIT_FEATURE_JOURNAL_REHYDRATE", false);
+  },
 };
 
 function env(key: string, defaultValue: boolean): boolean {
