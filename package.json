@@ -13,8 +13,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm -r exec rm -f tsconfig.tsbuildinfo && pnpm --filter @pwnkit/shared build && pnpm --filter @pwnkit/db --filter @pwnkit/templates build && pnpm -r build && pnpm run build:bundle",
+    "build": "pnpm -r exec rm -f tsconfig.tsbuildinfo && pnpm --filter @pwnkit/shared build && pnpm --filter @pwnkit/db --filter @pwnkit/templates build && pnpm --filter '!@pwnkit/docs' -r build && pnpm run build:bundle",
     "build:bundle": "node ./scripts/bundle-cli.mjs",
+    "build:docs": "pnpm --filter @pwnkit/docs build",
     "dev": "pnpm -r --parallel dev",
     "lint": "pnpm -r exec tsc --noEmit",
     "test": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter ./packages/cli test && pnpm test:launcher",
