@@ -133,6 +133,7 @@ export {
   defaultJournalRootDir,
   loadJournal,
   migrateJournalEntry,
+  rehydrateContext,
   resolveJournalPaths,
   streamJournal,
   DEFAULT_JOURNAL_SIDECAR_THRESHOLD_BYTES,
@@ -141,6 +142,7 @@ export {
 export type {
   BranchJournalOptions,
   BranchJournalResult,
+  ConversationState,
   JournalArtifact,
   JournalArtifactInline,
   JournalArtifactInput,
@@ -153,13 +155,19 @@ export type {
   JournalEntryKind,
   JournalErrorEntry,
   JournalFindingEntry,
+  JournalHypothesisEntry,
   JournalLoadOptions,
+  JournalNoteEntry,
   JournalObservationEntry,
   JournalPaths,
   JournalReplayOptions,
   JournalSchemaVersion,
+  JournalToolCallEntry,
+  JournalToolResultEntry,
   JournalWriter,
   JournalWriterOptions,
+  RehydratedHypothesis,
+  RehydratedToolStep,
 } from "./agent/journal/index.js";
 export type { AttackNode, AttackTreeResult, EGATSConfig, Evidence as EGATSEvidence, NodeStatus as EGATSNodeStatus } from "./agent/egats.js";
 export { discoveryPrompt, attackPrompt, verifyPrompt, reportPrompt, sourceVerifyPrompt, researchPrompt, blindVerifyPrompt } from "./agent/prompts.js";

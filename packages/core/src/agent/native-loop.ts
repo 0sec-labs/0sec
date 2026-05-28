@@ -13,6 +13,7 @@ import type { ScopePolicy } from "../scope/scope.js";
 import type { AttributionConfig } from "../scope/attribution.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
+import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
 import { formatJitSkillsInstruction } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
@@ -222,6 +223,23 @@ export async function runNativeAgentLoop(
   const sessionId = config.sessionId ?? randomUUID();
   let messages: NativeMessage[] = [];
   let turnCount = 0;
+
+  // ── Execution-journal shadow mode (#494, flag-gated, default OFF) ──
+  // When PWNKIT_FEATURE_EXECUTION_JOURNAL is on, mirror this run's steps into
+  // an append-only journal at ~/.pwnkit/runs/<scanId>/journal.jsonl. This is
+  // strictly additive: the loop still drives off its own conversation window,
+  // the journal is write-only here, and createShadowJournal returns a no-op
+  // (no I/O) when the flag is off. The run id is the scanId — the same
+  // convention the agentic-scanner already uses for resolveJournalPaths.
+  const shadowJournal: ShadowJournal = createShadowJournal({ runId: config.scanId });
+  if (shadowJournal.enabled) {
+    shadowJournal.append({
+      kind: "dispatch",
+      targetAgent: config.role,
+      objective: `${config.role} agent on ${config.target}`,
+      context: { scanId: config.scanId, maxTurns: config.maxTurns, sessionId },
+    });
+  }
 
   // Try to restore from existing session
   if (config.sessionId && db) {
@@ -697,9 +715,32 @@ export async function runNativeAgentLoop(
         args_preview: argsPreview,
       });
 
+      // Shadow journal: record the tool call (#494). `block.id` is the native
+      // tool_use id; reuse it as the callId so the matching tool_result entry
+      // joins to this call during rehydration.
+      shadowJournal.append({
+        kind: "tool_call",
+        tool: block.name,
+        arguments: block.input as Record<string, unknown>,
+        turn: state.turnCount,
+        callId: block.id,
+      });
+
       const toolStartedAt = Date.now();
       const toolResult = await executor.execute(call);
       toolResults.push(toolResult);
+
+      // Shadow journal: record the tool result (#494). Large outputs are
+      // sidecarred by the writer; here we only attach the raw output and let
+      // the writer's threshold logic decide. Errors are recorded too.
+      shadowJournal.append({
+        kind: "tool_result",
+        tool: block.name,
+        ok: toolResult.success,
+        ...(toolResult.success ? { output: toolResult.output } : { error: toolResult.error }),
+        turn: state.turnCount,
+        callId: block.id,
+      });
 
       // Bus event: tool_call_completed.
       eventBus.emit("tool_call_completed", {
@@ -729,6 +770,13 @@ export async function runNativeAgentLoop(
             typeof input.confidence === "number" && Number.isFinite(input.confidence)
               ? input.confidence
               : undefined,
+        });
+        // Shadow journal: record the finding (#494) as a first-class entry so
+        // a rehydrated context sees confirmed findings without replaying the
+        // whole tool stream.
+        shadowJournal.append({
+          kind: "finding",
+          finding: { ...(f ?? {}), ...input },
         });
       }
 
@@ -987,6 +1035,16 @@ export async function runNativeAgentLoop(
   // where the real cause was a transient Azure API timeout on turn 5.
   if (!state.summary) {
     state.summary = `Agent reached max turns (${config.maxTurns}) without completing.`;
+  }
+
+  // Shadow journal: terminal entry (#494). Mirrors the loop's own
+  // done/timeout/error verdict so a replayed journal knows the run is closed.
+  if (shadowJournal.enabled) {
+    shadowJournal.append({
+      kind: "done",
+      status: state.done ? "success" : state.summary.startsWith("Error:") ? "failed" : "cancelled",
+      summary: state.summary.slice(0, 2000),
+    });
   }
 
   // Final session save

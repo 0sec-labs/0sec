@@ -15,11 +15,21 @@ export type {
   JournalEntryKind,
   JournalErrorEntry,
   JournalFindingEntry,
+  JournalHypothesisEntry,
+  JournalNoteEntry,
   JournalObservationEntry,
   JournalPaths,
   JournalSchemaVersion,
+  JournalToolCallEntry,
+  JournalToolResultEntry,
 } from "./types.js";
 export { migrateJournalEntry } from "./migrate.js";
+export { rehydrateContext } from "./rehydrate.js";
+export type {
+  ConversationState,
+  RehydratedHypothesis,
+  RehydratedToolStep,
+} from "./rehydrate.js";
 export {
   branchJournal,
   createJournalWriter,

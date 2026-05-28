@@ -286,6 +286,31 @@ export const features = {
   get jitSkills(): boolean {
     return env("PWNKIT_FEATURE_JIT_SKILLS", false);
   },
+
+  /**
+   * Execution-journal shadow mode (#494, first additive slice).
+   *
+   * When ON, the live agent loop ALSO writes append-only journal entries
+   * (`tool_call`, `tool_result`, `finding`, `done`) to
+   * `~/.pwnkit/runs/<scanId>/journal.jsonl` as it runs — a durable,
+   * replayable trace alongside the existing in-memory conversation window.
+   * This is strictly additive: the loop continues to drive off its own
+   * conversation state, the journal is write-only here, and a failed
+   * journal write is swallowed so it can never abort a scan. The journal is
+   * NOT yet the source of truth — routing the loop off `rehydrateContext`
+   * is the next slice (see docs/research/agent-execution-journal-design.md).
+   *
+   * Default OFF: shadow writes add a small per-turn fsync cost and the
+   * format is still settling, so it must be explicitly opted into for the
+   * moat-ablation harness before any A/B claim. Implemented as a getter so
+   * the CLI `--features` flag (which sets the env var inside the command
+   * action, AFTER this module has been imported) is honored at loop time.
+   * Enable via PWNKIT_FEATURE_EXECUTION_JOURNAL=1 or `--features
+   * execution-journal`.
+   */
+  get executionJournal(): boolean {
+    return env("PWNKIT_FEATURE_EXECUTION_JOURNAL", false);
+  },
 };
 
 function env(key: string, defaultValue: boolean): boolean {
