@@ -2264,6 +2264,8 @@ describe("ToolExecutor — `done` coverage gate integration (#audit-laziness)", 
 import { detectHttpEgressSegments } from "./tools.js";
 import { PathPolicy, EnforcementTracker } from "../scope/enforcement.js";
 import { ScopePolicy as HttpAuditScopePolicy } from "../scope/scope.js";
+import { RateLimiter } from "../scope/rate-limit.js";
+import { WafDetector } from "../scope/waf-detect.js";
 
 describe("detectHttpEgressSegments", () => {
   it("detects curl / wget / httpie", () => {
@@ -2387,6 +2389,151 @@ describe("ToolExecutor — http_audit enforcement (FROZEN CONTRACT)", () => {
     // echo succeeds; no egress, no blocked counter bump.
     expect(result.success).toBe(true);
     expect(ctx.enforcement!.summarize().requests_out_of_scope_blocked).toBe(0);
+  });
+
+  // ── pwnkit#568: close the bash rate-limiter bypass ──
+  // Bash curl/wget previously bypassed both the per-host RateLimiter and the
+  // enforcement counters entirely. These pin that bash-issued HTTP is now
+  // paced (acquire) and counted (noteInScope) BEFORE exec.
+  it("counts a bash curl as an in-scope request on the enforcement tracker", async () => {
+    // Loopback scope so the real curl exec fails fast (connection refused)
+    // without touching the network; the count happens before exec regardless.
+    const scope = ScopePolicyFromHosts(["127.0.0.1"]);
+    const enforcement = new EnforcementTracker({
+      pathPolicy: new PathPolicy([]), // allow all paths
+      killAfterSec: 1800,
+    });
+    const ctx: ToolContext = {
+      target: "http://127.0.0.1",
+      scanId: "waf-bash-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+      enforcement,
+    };
+    const ex = new ToolExecutor(ctx, null);
+    await ex.execute({
+      name: "bash",
+      arguments: { command: "curl --max-time 1 http://127.0.0.1:9/probe || true" },
+    });
+    expect(enforcement.summarize().requests_in_scope).toBe(1);
+  });
+
+  it("paces a bash curl through the per-host RateLimiter", async () => {
+    const scope = ScopePolicyFromHosts(["127.0.0.1"]);
+    const rateLimiter = new RateLimiter({ default: { rps: 5 } });
+    const acquireSpy = vi.spyOn(rateLimiter, "acquire");
+    const ctx: ToolContext = {
+      target: "http://127.0.0.1",
+      scanId: "waf-bash-2",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+      rateLimiter,
+    };
+    const ex = new ToolExecutor(ctx, null);
+    await ex.execute({
+      name: "bash",
+      arguments: { command: "curl --max-time 1 http://127.0.0.1:9/a || true" },
+    });
+    expect(acquireSpy).toHaveBeenCalledWith("http://127.0.0.1:9/a");
+  });
+});
+
+// ── pwnkit#568: WAF detection + adaptive evasion (http_request) ──
+describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () => {
+  function wafCtx(overrides: Partial<ToolContext> = {}): ToolContext {
+    return {
+      target: "https://api.example.com",
+      scanId: "waf-http-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope: ScopePolicyFromHosts(["api.example.com"]),
+      wafDetector: new WafDetector(),
+      ...overrides,
+    };
+  }
+
+  it("reports a WAF block and adaptively varies the payload until it slips through", async () => {
+    const ctx = wafCtx();
+    const fetchUrls: string[] = [];
+    let n = 0;
+    const fetchStub = vi.fn(async (url: string) => {
+      n += 1;
+      fetchUrls.push(url);
+      if (n === 1) {
+        // Baseline: blocked by Cloudflare.
+        return {
+          status: 403,
+          headers: new Headers({ server: "cloudflare", "cf-ray": "7d-LHR" }),
+          text: async () => "Attention Required! | Cloudflare",
+        } as unknown as Response;
+      }
+      // Evasion variant slips through.
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "text/html" }),
+        text: async () => "<html>ok</html>",
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const ex = new ToolExecutor(ctx, null);
+      const result = await ex.execute({
+        name: "http_request",
+        arguments: {
+          url: "https://api.example.com/api/search?q=1%20UNION%20SELECT%20pwd%20FROM%20users",
+          method: "GET",
+        },
+      });
+      expect(result.success).toBe(true);
+      const output = result.output as Record<string, any>;
+      // WAF was detected & reported.
+      expect(output.waf).toBeDefined();
+      expect(output.waf.detected).toBe(true);
+      expect(output.waf.vendor).toBe("cloudflare");
+      // Adaptive evasion ran and bypassed; the bypass response is returned.
+      expect(output.waf.evasion.bypassed).toBe(true);
+      expect(output.status).toBe(200);
+      // "Subsequent payloads vary encoding" — the retried URL differs from the
+      // original (query value was re-encoded).
+      expect(fetchUrls.length).toBeGreaterThanOrEqual(2);
+      expect(fetchUrls[1]).not.toBe(fetchUrls[0]);
+      // Evidence recorded on the per-scan detector.
+      const summary = ctx.wafDetector!.summary();
+      expect(summary.waf_detected).toBe(true);
+      expect(summary.total_blocks).toBe(1);
+      expect(summary.total_bypasses).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("passes a clean (non-WAF) response straight through with no evasion", async () => {
+    const ctx = wafCtx();
+    const fetchStub = vi.fn(async () => ({
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: async () => '{"ok":true}',
+    } as unknown as Response));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const ex = new ToolExecutor(ctx, null);
+      const result = await ex.execute({
+        name: "http_request",
+        arguments: { url: "https://api.example.com/api/health", method: "GET" },
+      });
+      expect(result.success).toBe(true);
+      const output = result.output as Record<string, any>;
+      expect(output.waf).toBeUndefined();
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(ctx.wafDetector!.summary().waf_detected).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

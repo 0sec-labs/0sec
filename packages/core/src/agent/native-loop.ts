@@ -14,6 +14,7 @@ import { SessionEngine } from "./session.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import type { AttributionConfig } from "../scope/attribution.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
+import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
 import { LootLedger } from "./loot.js";
@@ -168,6 +169,13 @@ export interface NativeAgentConfig {
    */
   enforcement?: EnforcementTracker;
   /**
+   * WAF detection + adaptive evasion aggregator (pwnkit#568). When omitted
+   * but the scan carries an engagement scope (`scope`/`enforcement` set), one
+   * is created automatically so authorized engagements get WAF fingerprinting
+   * and adaptive evasion by default. Pass `null` to disable explicitly.
+   */
+  wafDetector?: WafDetector | null;
+  /**
    * Generic-scanner-traffic suppression opt-out (pwnkit#217). Defaults
    * to false. Only consulted when `scope` is set.
    */
@@ -316,6 +324,14 @@ export async function runNativeAgentLoop(
     scope: config.scope,
     rateLimiter: config.rateLimiter,
     enforcement: config.enforcement,
+    // WAF detection + adaptive evasion (pwnkit#568). Auto-enabled for
+    // authorized engagements (scope/enforcement configured) unless the caller
+    // passed `wafDetector: null` to opt out.
+    wafDetector:
+      config.wafDetector === null
+        ? undefined
+        : (config.wafDetector ??
+          (config.scope || config.enforcement ? new WafDetector() : undefined)),
     allowScanners: config.allowScanners,
     attribution: config.attribution,
     loot,

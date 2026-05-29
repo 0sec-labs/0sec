@@ -6,6 +6,7 @@ import type {
   ToolCall,
 } from "./types.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
+import { WafDetector } from "../scope/waf-detect.js";
 import type { ToolContext } from "./types.js";
 import type { pwnkitDB } from "@pwnkit/db";
 import type { Runtime } from "../runtime/types.js";
@@ -65,6 +66,14 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
     session: config.session,
     scope: config.scope,
     rateLimiter: config.rateLimiter,
+    // WAF detection + adaptive evasion (pwnkit#568). Auto-enabled for
+    // authorized engagements (scope/enforcement set) unless explicitly
+    // disabled with `wafDetector: null`.
+    wafDetector:
+      config.wafDetector === null
+        ? undefined
+        : (config.wafDetector ??
+          (config.scope || config.enforcement ? new WafDetector() : undefined)),
     allowScanners: config.allowScanners,
     attribution: config.attribution,
     recentToolResultTexts,

@@ -20,6 +20,12 @@ import type { LootKind } from "./loot.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import { extractUrls } from "../scope/scope.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
+import {
+  classifyResponse,
+  runEvasionCampaign,
+  type HttpRequestParts,
+  type WafResponseLike,
+} from "../scope/waf-detect.js";
 import { detectScannerBinary } from "../scope/scanner-binaries.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
 import { sendPrompt, extractResponseText } from "../http.js";
@@ -2384,67 +2390,156 @@ export class ToolExecutor {
     const authHeaders = this.activeAuthHeaders();
     const headers = { ...authHeaders, ...(args.headers as Record<string, string>) ?? {} };
 
-    // Per-host rate limit (#214). Acquire token BEFORE the network call;
-    // park the host bucket on 429 via `noteResponse` AFTER the response.
-    if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+    // One in-scope HTTP round-trip for a given (possibly evasion-mutated)
+    // request shape. Rate-limit (#214), attribution (#216), and 429-honoring
+    // all live here so the baseline call AND every adaptive-evasion variant
+    // (#568) pace identically and stay in-scope. Returns the response, the
+    // body text, and the headers actually sent.
+    const sendHttp = async (
+      parts: HttpRequestParts,
+    ): Promise<{ res: Response; body: string; sentHeaders: Record<string, string> }> => {
+      // Re-validate the (possibly evasion-mutated) URL immediately before the
+      // fetch — same-origin + scope + private-network allowlist, identical to
+      // the pre-flight `validateTargetUrl` at the top. Evasion transforms only
+      // rewrite query values / body / header casing, never the host or path,
+      // so this always passes for legitimate variants; it is defense-in-depth
+      // guaranteeing a mutated payload can never escape the validated in-scope
+      // origin (and feeds an allowlisted URL into `fetch`, not a raw param).
+      // `enforcement` is omitted so this re-check does NOT double-count the
+      // request — the baseline was already tallied by the pre-flight call.
+      const safeUrl = validateTargetUrl(this.ctx.target, parts.url, this.ctx.scope);
+      // Acquire token BEFORE the network call; park the host bucket on 429
+      // via `noteResponse` AFTER the response.
+      if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(safeUrl);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const fetchInit = applyAttribution(
+          safeUrl,
+          {
+            method: parts.method,
+            headers: { "Content-Type": "application/json", ...parts.headers },
+            body: parts.body ?? undefined,
+            signal: controller.signal,
+            redirect: "manual",
+          },
+          this.ctx.attribution,
+          this.ctx.scope,
+        )!;
+        // js/no-ssrf FP: `safeUrl` is the return of validateTargetUrl() just
+        // above (same-origin + scope + private-IP/localhost block + http_audit
+        // path allowlist), re-validated for the baseline AND every evasion
+        // variant before egress. Fetching the in-scope authorized target is
+        // intended pwnkit behaviour.
+        // foxguard:ignore
+        const res = await fetch(safeUrl, fetchInit);
+        if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(safeUrl, res);
+        // Persist session state (pwnkit#564): capture Set-Cookie for the active
+        // identity. No-op when no SessionEngine is wired. Runs for the baseline
+        // AND every evasion variant so session cookies stay current.
+        this.captureActiveCookies(res);
+        const text = await res.text();
+        return { res, body: text, sentHeaders: fetchInit.headers as Record<string, string> };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
+    const baseParts: HttpRequestParts = { url, method, headers, body };
+    const first = await sendHttp(baseParts);
+    let chosen = first;
 
-    try {
-      // Attribution-header injection (pwnkit#216). Merged before the call
-      // so the on-the-wire request carries the engagement identifier on
-      // every in-scope hop. Out-of-scope hosts are already refused above
-      // by validateTargetUrl; applyAttribution defends in depth.
-      const fetchInit = applyAttribution(
-        url,
-        {
-          method,
-          headers: { "Content-Type": "application/json", ...headers },
-          body: body ?? undefined,
-          signal: controller.signal,
-          redirect: "manual",
-        },
-        this.ctx.attribution,
-        this.ctx.scope,
-      )!;
-      // js/no-ssrf FP: `url` is the operator-specified scan target validated by
-      // validateTargetUrl() above (same-origin + scope policy + private-IP/
-      // localhost block + http_audit path allowlist) — exactly the
-      // validate+allowlist the rule asks for. pwnkit is an offensive web
-      // scanner; fetching the configured target is the intended behaviour.
-      // foxguard:ignore
-      const res = await fetch(url, fetchInit);
-
-      if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
-      // Persist session state (pwnkit#564): capture Set-Cookie for the active
-      // identity and re-auth on 401/403. No-op when no SessionEngine is wired.
-      this.captureActiveCookies(res);
-      clearTimeout(timer);
-      const text = await res.text();
-      const output = {
-        status: res.status,
-        headers: Object.fromEntries(res.headers.entries()),
-        body: text.slice(0, 10_000), // cap response size
+    // ── WAF detection + adaptive evasion (pwnkit#568) ──
+    // Passive fingerprinting is cheap and ALWAYS runs, so a WAF block is
+    // reported as such instead of being mistaken for "not vulnerable" (the
+    // silent-false-negative gap). When a block is detected AND a WafDetector
+    // is wired (authorized engagement — scope/enforcement configured), we walk
+    // the evasion ladder through the SAME rate-limited / in-scope `sendHttp`
+    // path, recording every attempt as evidence.
+    let wafInfo: Record<string, unknown> | undefined;
+    const verdict = classifyResponse({ status: first.res.status, headers: first.res.headers, body: first.body });
+    if (verdict.blocked) {
+      this.ctx.wafDetector?.recordBlock(url, verdict);
+      wafInfo = {
+        detected: true,
+        blocked: true,
+        vendor: verdict.fingerprint?.vendor ?? "generic",
+        label: verdict.fingerprint?.label ?? "unfingerprinted WAF",
+        confidence: verdict.fingerprint?.confidence ?? null,
+        reason: verdict.reason,
+        authorized_engagement: true,
       };
 
-      // Persist as run artifact (record the headers actually sent so the
-      // operator can confirm attribution was attached on engagement-tagged
-      // traffic).
-      this.persistToolArtifact("http_request", {
-        request: {
+      if (this.ctx.wafDetector) {
+        // Capture the underlying send for the variant that ultimately runs, so
+        // a bypassing response (with its real sent-headers) becomes the result.
+        let lastSend: { res: Response; body: string; sentHeaders: Record<string, string> } | null = null;
+        const campaign = await runEvasionCampaign(
+          baseParts,
+          async (parts): Promise<WafResponseLike> => {
+            const r = await sendHttp(parts);
+            lastSend = r;
+            return { status: r.res.status, headers: r.res.headers, body: r.body };
+          },
+          { jitterBaseMs: 250 },
+        );
+        this.ctx.wafDetector.recordEvasion(url, verdict, campaign);
+        wafInfo.evasion = {
+          attempts: campaign.attempts,
+          bypassed: campaign.bypassed,
+          bypass_strategy: campaign.bypassStrategy,
+        };
+        // Persist the evasion audit trail as a first-class artifact so the
+        // operator's report shows exactly what variants were sent.
+        this.persistToolArtifact("waf_evasion", {
           url,
-          method,
-          headers: fetchInit.headers as Record<string, string>,
-          body: body?.slice(0, 2_000),
-        },
-        response: { status: output.status, body: output.body.slice(0, 5_000) },
-      });
-
-      return { success: true, output };
-    } finally {
-      clearTimeout(timer);
+          vendor: verdict.fingerprint?.vendor ?? "generic",
+          reason: verdict.reason,
+          authorized_engagement: true,
+          attempts: campaign.attempts,
+          bypassed: campaign.bypassed,
+          bypass_strategy: campaign.bypassStrategy,
+        });
+        if (campaign.bypassed && lastSend) {
+          chosen = lastSend;
+        }
+      }
+    } else if (verdict.fingerprint) {
+      // WAF present but this response looks legitimate — note it so the agent
+      // knows it is operating behind an edge filter.
+      wafInfo = {
+        detected: true,
+        blocked: false,
+        vendor: verdict.fingerprint.vendor,
+        label: verdict.fingerprint.label,
+        confidence: verdict.fingerprint.confidence,
+        reason: verdict.reason,
+        authorized_engagement: true,
+      };
     }
+
+    const output: Record<string, unknown> = {
+      status: chosen.res.status,
+      headers: Object.fromEntries(chosen.res.headers.entries()),
+      body: chosen.body.slice(0, 10_000), // cap response size
+    };
+    if (wafInfo) output.waf = wafInfo;
+
+    // Persist as run artifact (record the headers actually sent so the
+    // operator can confirm attribution was attached on engagement-tagged
+    // traffic).
+    this.persistToolArtifact("http_request", {
+      request: {
+        url,
+        method,
+        headers: chosen.sentHeaders,
+        body: body?.slice(0, 2_000),
+      },
+      response: { status: chosen.res.status, body: chosen.body.slice(0, 5_000) },
+      ...(wafInfo ? { waf: wafInfo } : {}),
+    });
+
+    return { success: true, output };
   }
 
   private async sendPromptTool(args: Record<string, unknown>): Promise<ToolResult> {
@@ -3168,6 +3263,31 @@ export class ToolExecutor {
         }
         // URLs present in the segment were already host+path validated in
         // the scope block above (any out-of-scope URL would have returned).
+      }
+    }
+
+    // ── Close the bash rate-limiter bypass (pwnkit#568) ──
+    // The bash subprocess shells out to curl/wget/python-http, which bypass
+    // node's `fetch` and therefore the per-host RateLimiter (#214) that the
+    // http_request / crawl / submit_form tools pace against. Without an egress
+    // proxy we can't throttle the subprocess socket itself, but we CAN pace +
+    // count BEFORE exec: for every explicit, in-scope http(s) URL an egress
+    // segment will hit, acquire a token from the SAME per-host bucket (so bash
+    // traffic paces identically to the fetch tools and honours any active 429
+    // cool-off) and tally it on the enforcement tracker, so bash-issued
+    // requests show up in `requests_in_scope` / peak-RPS instead of being
+    // invisible. URLs were already host+path validated above when scope is set;
+    // when scope is unset we still pace whatever explicit URLs are present.
+    if (this.ctx.rateLimiter || this.ctx.enforcement) {
+      const egressSegments = detectHttpEgressSegments(command);
+      const pacedUrls = new Set<string>();
+      for (const segment of egressSegments) {
+        for (const egressUrl of extractUrls(segment)) {
+          if (pacedUrls.has(egressUrl)) continue;
+          pacedUrls.add(egressUrl);
+          if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(egressUrl);
+          this.ctx.enforcement?.noteInScope();
+        }
       }
     }
 

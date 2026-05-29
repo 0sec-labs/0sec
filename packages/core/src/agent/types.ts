@@ -5,6 +5,7 @@ import type { AttributionConfig } from "../scope/attribution.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import type { LootLedger } from "./loot.js";
 import type { SessionEngine } from "./session.js";
+import type { WafDetector } from "../scope/waf-detect.js";
 
 // ── Agent Roles ──
 
@@ -100,6 +101,13 @@ export interface AgentConfig {
    * tallied into the report's `enforcement_summary` block.
    */
   enforcement?: EnforcementTracker;
+  /**
+   * WAF detection + adaptive evasion aggregator (pwnkit#568). When omitted
+   * but an engagement scope (`scope`/`enforcement`) is configured, one is
+   * created automatically so authorized engagements get WAF fingerprinting +
+   * adaptive evasion. Pass `null` to disable explicitly.
+   */
+  wafDetector?: WafDetector | null;
   /**
    * Generic-scanner-traffic suppression opt-out (pwnkit#217). When
    * scope is loaded the agent refuses to spawn `sqlmap`, `wpscan`,
@@ -197,6 +205,16 @@ export interface ToolContext {
    * increments the in-scope / out-of-scope counters at the verdict sites.
    */
   enforcement?: EnforcementTracker;
+  /**
+   * WAF detection + adaptive evasion aggregator (pwnkit#568). When set, the
+   * `http_request` chokepoint fingerprints each response for known WAF
+   * vendors; on a detected block it runs a bounded adaptive-evasion campaign
+   * (re-encoding / casing / jitter) through the same rate-limited fetch path
+   * and records every attempt as evidence. Created for authorized engagements
+   * (when `scope` or `enforcement` is configured); undefined otherwise so the
+   * default scan path is unchanged.
+   */
+  wafDetector?: WafDetector;
   /**
    * See `AgentConfig.allowScanners`. Opt-out for the scanner-binary
    * suppression gate (pwnkit#217). Only consulted when `scope` is set.
