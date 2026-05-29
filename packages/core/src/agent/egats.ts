@@ -180,6 +180,25 @@ export function scoreEvidence(
     }
   }
 
+  // Inline-validation confirmation (#554) is ground truth — a deterministic
+  // oracle reproduced the exploit out-of-band. It must DOMINATE the regex
+  // POSITIVE/NEGATIVE signals: a single confirmed finding alone is enough to
+  // saturate the branch score to 1.0, so EGATS keeps and expands the branch
+  // regardless of how many "403 Forbidden"-style negatives the noisy output
+  // also contains. Inconclusive / unconfirmed verdicts add nothing here — they
+  // never penalize, since inline errors are explicitly not refutations.
+  const inlineConfirmed = findings.filter((f) => f.inlineValidation?.confirmed);
+  if (inlineConfirmed.length > 0) {
+    positive += 1.0 * inlineConfirmed.length;
+    for (const f of inlineConfirmed.slice(0, 3)) {
+      evidence.push({
+        label: `inline-confirmed: ${f.severity}`,
+        excerpt: (f.inlineValidation?.reason ?? f.title ?? "").slice(0, 200),
+        source: "inline_validation",
+      });
+    }
+  }
+
   // Squash to [0, 1] via a simple logistic-ish transform.
   const raw = Math.max(0, positive - negative);
   const score = Math.min(1, raw);

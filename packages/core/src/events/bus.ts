@@ -251,6 +251,29 @@ export interface UntrustedInputSanitizedPayload {
 }
 
 /**
+ * Inline validation / validate-on-save verdict (#554). Emitted by the native
+ * attack loop's onFindingSaved hook when a high/critical finding's PoC is
+ * re-run inline by the deterministic category oracle.
+ */
+export interface InlineValidationPayload {
+  /** Agent turn the finding was saved on. */
+  turn?: number;
+  /** Id of the saved finding that was validated. */
+  findingId: string;
+  category?: string;
+  severity?: string;
+  /** The oracle reproduced the exploit out-of-band. */
+  confirmed: boolean;
+  /** Oracle could not run to a conclusion (never a refutation). */
+  inconclusive: boolean;
+  /** Short reason for the verdict. */
+  reason?: string;
+  /** Wall-clock cost of the inline check. */
+  durationMs?: number;
+  [k: string]: unknown;
+}
+
+/**
  * Token-level streaming delta. Emitted by the agent loop while the runtime
  * is still streaming the assistant's text or reasoning channel — each emit
  * carries a *coalesced* run of characters (NOT per-token; see the batcher in
@@ -296,7 +319,8 @@ export type PwnkitEvent =
   | { type: "delta"; payload: DeltaPayload }
   | { type: "skill_loaded"; payload: SkillLoadedPayload }
   | { type: "skill_listed"; payload: SkillListedPayload }
-  | { type: "untrusted_input_sanitized"; payload: UntrustedInputSanitizedPayload };
+  | { type: "untrusted_input_sanitized"; payload: UntrustedInputSanitizedPayload }
+  | { type: "inline_validation"; payload: InlineValidationPayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = PwnkitEvent["type"];

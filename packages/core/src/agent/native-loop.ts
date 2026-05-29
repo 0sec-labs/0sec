@@ -27,6 +27,13 @@ import {
 import { DeltaBatcherSet } from "./delta-batcher.js";
 import { toolCallPreview } from "./tool-preview.js";
 import { registerSignalCleanup } from "./signal-cleanup.js";
+import {
+  validateFindingInline,
+  buildInlineValidationNote,
+  shouldValidateInline,
+  type InlineOracle,
+  type InlineValidationOutcome,
+} from "./inline-validation.js";
 import type { pwnkitDB } from "@pwnkit/db";
 import type { Finding, AttackResult, TargetInfo } from "@pwnkit/shared";
 
@@ -161,6 +168,13 @@ export interface NativeAgentLoopOptions {
   onEvent?: (eventType: string, payload: Record<string, unknown>) => void;
   /** Poll for user-injected messages at turn boundaries. */
   getPendingUserMessages?: () => string[];
+  /**
+   * Inline-validation oracle override (#554). Defaults to the shared
+   * `verifyOracleByCategory` from triage/oracles. Tests inject a deterministic
+   * stub here so the onFindingSaved hook never touches the network. Only
+   * consulted when `features.inlineValidation` is on.
+   */
+  inlineValidationOracle?: InlineOracle;
 }
 
 export interface NativeAgentState {
@@ -206,6 +220,14 @@ export interface NativeAgentState {
    * the loop bailed out.
    */
   errorExit?: { error: string; turn: number };
+  /**
+   * Inline-validation outcomes (#554), one per high/critical finding that the
+   * onFindingSaved hook validated. Empty when `features.inlineValidation` is
+   * off or no high/critical finding was saved. Carries the verdict for
+   * telemetry / test assertions; the per-finding verdict is also stamped on
+   * `finding.inlineValidation` so EGATS and the batch triage can read it.
+   */
+  inlineValidations: InlineValidationOutcome[];
 }
 
 /**
@@ -222,7 +244,7 @@ export interface NativeAgentState {
 export async function runNativeAgentLoop(
   opts: NativeAgentLoopOptions,
 ): Promise<NativeAgentState> {
-  const { config, runtime, db, onTurn, onEvent, getPendingUserMessages } = opts;
+  const { config, runtime, db, onTurn, onEvent, getPendingUserMessages, inlineValidationOracle } = opts;
 
   const memoryPath = externalMemoryPath(config.scanId);
 
@@ -356,6 +378,7 @@ export async function runNativeAgentLoop(
     estimatedCostUsd: 0,
     costCeilingExceeded: false,
     killSwitchTriggered: false,
+    inlineValidations: [],
   };
 
   // Early-stop tracking: has the agent called save_finding at least once?
@@ -827,6 +850,10 @@ export async function runNativeAgentLoop(
     const toolCalls: ToolCall[] = [];
     const toolResults: ToolResult[] = [];
     const toolResultBlocks: NativeContentBlock[] = [];
+    // Inline-validation context notes accumulated this turn (#554). Appended as
+    // text blocks to the tool-results user message below so the agent sees the
+    // confirmed/unconfirmed verdict on its NEXT turn.
+    const inlineValidationNotes: string[] = [];
 
     for (const block of toolUseBlocks) {
       const call: ToolCall = { name: block.name, arguments: block.input };
@@ -909,6 +936,66 @@ export async function runNativeAgentLoop(
           kind: "finding",
           finding: { ...(f ?? {}), ...input },
         });
+
+        // ── onFindingSaved hook: inline validation (#554) ──
+        // The moment a high/critical finding is saved, run the cheap
+        // deterministic category oracle (the #553 PoV-gate→oracle delegation)
+        // against it and feed the verdict back so the agent stops piling on a
+        // confirmed lead — or knows not to assume success on an unconfirmed
+        // one. Stamps `finding.inlineValidation` so EGATS scoring and the batch
+        // triage can read it. Fires at most ONCE per newly-saved finding: a
+        // dedup merge (message !== "Finding saved") is skipped, and an inline
+        // error is inconclusive, never a false-positive. Behind a flag, so the
+        // default path is byte-identical to today.
+        const saveMsg = typeof f?.message === "string" ? f.message : "";
+        const findingId = typeof f?.findingId === "string" ? f.findingId : undefined;
+        if (
+          features.inlineValidation &&
+          saveMsg === "Finding saved" &&
+          findingId
+        ) {
+          const saved = toolCtx.findings.find((x) => x.id === findingId);
+          if (saved && shouldValidateInline(saved)) {
+            const inlineStartedAt = Date.now();
+            const outcome = await validateFindingInline(saved, config.target, {
+              oracle: inlineValidationOracle,
+            });
+            // Stamp the verdict on the finding so EGATS scoreEvidence and the
+            // batch oracle/PoV gate can read it (skip the redundant re-run).
+            saved.inlineValidation = {
+              confirmed: outcome.confirmed,
+              inconclusive: outcome.inconclusive,
+              reason: outcome.reason,
+              evidence: outcome.evidence || undefined,
+              confidence: outcome.confidence,
+            };
+            state.inlineValidations.push(outcome);
+            inlineValidationNotes.push(buildInlineValidationNote(outcome));
+
+            const inlinePayload = {
+              turn: state.turnCount,
+              findingId: outcome.findingId,
+              category: outcome.category,
+              severity: outcome.severity,
+              confirmed: outcome.confirmed,
+              inconclusive: outcome.inconclusive,
+              reason: outcome.reason,
+              durationMs: Date.now() - inlineStartedAt,
+            };
+            onEvent?.("inline_validation", inlinePayload);
+            eventBus.emit("inline_validation", inlinePayload);
+            if (db) {
+              db.logEvent({
+                scanId: config.scanId,
+                stage: config.role,
+                eventType: "inline_validation",
+                agentRole: config.role,
+                payload: inlinePayload,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
       }
 
       // Check if agent called done
@@ -949,6 +1036,13 @@ export async function runNativeAgentLoop(
         content: resultContent,
         is_error: !toolResult.success,
       });
+    }
+
+    // Inline-validation notes (#554): append as text blocks to the SAME
+    // tool-results user message so the verdict reaches the agent next turn
+    // without creating an invalid two-user-messages-in-a-row sequence.
+    for (const note of inlineValidationNotes) {
+      toolResultBlocks.push({ type: "text", text: note });
     }
 
     // Append tool results as user message

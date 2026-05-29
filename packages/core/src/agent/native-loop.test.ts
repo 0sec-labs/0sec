@@ -1324,3 +1324,268 @@ describe("runNativeAgentLoop — untrusted tool output sanitization (#558)", () 
     }
   });
 });
+
+// ── #554: inline validation / validate-on-save ──────────────────────────────
+
+describe("runNativeAgentLoop — inline validation (#554)", () => {
+  const FLAG = "PWNKIT_FEATURE_INLINE_VALIDATION";
+  let prevFlag: string | undefined;
+  beforeEach(() => {
+    prevFlag = process.env[FLAG];
+    process.env[FLAG] = "1";
+  });
+  afterEach(() => {
+    if (prevFlag === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = prevFlag;
+  });
+
+  /** Save one high/critical SQLi finding on turn 1, then `done` on turn 2. */
+  function saveThenDoneRuntime(
+    severity = "high",
+    title = "SQLi in /search",
+  ): NativeRuntime {
+    let turn = 0;
+    return {
+      type: "api" as const,
+      async executeNative(): Promise<NativeRuntimeResult> {
+        turn++;
+        if (turn === 1) {
+          return {
+            content: [
+              {
+                type: "tool_use",
+                id: "tc1",
+                name: "save_finding",
+                input: {
+                  title,
+                  severity,
+                  category: "sql-injection",
+                  evidence_request: "GET /search?q=foo' HTTP/1.1\nHost: t\n\n",
+                  evidence_response: "SQL syntax error near 'foo''",
+                },
+              },
+            ],
+            stopReason: "tool_use",
+            durationMs: 10,
+          };
+        }
+        return {
+          content: [{ type: "tool_use", id: "tcd", name: "done", input: { summary: "done" } }],
+          stopReason: "tool_use",
+          durationMs: 10,
+        };
+      },
+      async isAvailable() {
+        return true;
+      },
+    };
+  }
+
+  function noteTexts(state: { messages: NativeMessage[] }): string[] {
+    const out: string[] = [];
+    for (const msg of state.messages) {
+      for (const block of msg.content) {
+        if (block.type === "text" && block.text.includes("[inline validation]")) {
+          out.push(block.text);
+        }
+      }
+    }
+    return out;
+  }
+
+  it("CONFIRMED: injects a confirmation note, stamps the finding, fires inline_validation once", async () => {
+    let calls = 0;
+    const events: Record<string, unknown>[] = [];
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 5,
+        target: "https://t",
+        scanId: "iv-confirm",
+      },
+      runtime: saveThenDoneRuntime(),
+      db: null,
+      onEvent: (type, payload) => {
+        if (type === "inline_validation") events.push(payload);
+      },
+      inlineValidationOracle: async () => {
+        calls++;
+        return { verified: true, confidence: 1, evidence: "boolean_diff | sql_error", reason: "" };
+      },
+    });
+
+    // Hook fired exactly once for the one saved high finding.
+    expect(calls).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0].confirmed).toBe(true);
+
+    expect(state.inlineValidations).toHaveLength(1);
+    expect(state.inlineValidations[0].confirmed).toBe(true);
+    expect(state.findings[0].inlineValidation?.confirmed).toBe(true);
+
+    const notes = noteTexts(state);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("CONFIRMED");
+  });
+
+  it("UNCONFIRMED: tells the agent 'do not assume success'; finding not confirmed", async () => {
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 5,
+        target: "https://t",
+        scanId: "iv-unconfirmed",
+      },
+      runtime: saveThenDoneRuntime(),
+      db: null,
+      inlineValidationOracle: async () => ({
+        verified: false,
+        confidence: 0,
+        evidence: "",
+        reason: "no sqli signals fired",
+      }),
+    });
+
+    expect(state.inlineValidations[0].confirmed).toBe(false);
+    expect(state.inlineValidations[0].inconclusive).toBe(false);
+    expect(state.findings[0].inlineValidation?.confirmed).toBe(false);
+    const notes = noteTexts(state);
+    expect(notes[0]).toMatch(/do not assume success/i);
+  });
+
+  it("ERROR: inline oracle throwing yields an INCONCLUSIVE verdict, never a false-positive", async () => {
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 5,
+        target: "https://t",
+        scanId: "iv-error",
+      },
+      runtime: saveThenDoneRuntime(),
+      db: null,
+      inlineValidationOracle: async () => {
+        throw new Error("collector failed to bind");
+      },
+    });
+
+    expect(state.inlineValidations[0].confirmed).toBe(false);
+    expect(state.inlineValidations[0].inconclusive).toBe(true);
+    expect(noteTexts(state)[0]).toContain("INCONCLUSIVE");
+  });
+
+  it("fires EXACTLY ONCE per saved finding — a dedup merge does not re-validate", async () => {
+    let calls = 0;
+    // Turn 1 + 2 save the SAME finding (2nd is a dedup merge), turn 3 done.
+    let turn = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative(): Promise<NativeRuntimeResult> {
+        turn++;
+        if (turn <= 2) {
+          return {
+            content: [
+              {
+                type: "tool_use",
+                id: `tc${turn}`,
+                name: "save_finding",
+                input: {
+                  title: "SQLi in /search",
+                  severity: "critical",
+                  category: "sql-injection",
+                  evidence_request: "GET /search?q=foo' HTTP/1.1\nHost: t\n\n",
+                  evidence_response: "SQL syntax error",
+                },
+              },
+            ],
+            stopReason: "tool_use",
+            durationMs: 10,
+          };
+        }
+        return {
+          content: [{ type: "tool_use", id: "tcd", name: "done", input: { summary: "done" } }],
+          stopReason: "tool_use",
+          durationMs: 10,
+        };
+      },
+      async isAvailable() {
+        return true;
+      },
+    };
+
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 6,
+        target: "https://t",
+        scanId: "iv-once",
+      },
+      runtime,
+      db: null,
+      inlineValidationOracle: async () => {
+        calls++;
+        return { verified: true, confidence: 1, evidence: "sql_error", reason: "" };
+      },
+    });
+
+    expect(state.findings).toHaveLength(1); // deduped
+    expect(calls).toBe(1); // validated once, not on the merge
+    expect(state.inlineValidations).toHaveLength(1);
+  });
+
+  it("does NOT fire for sub-high severity findings", async () => {
+    let calls = 0;
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 5,
+        target: "https://t",
+        scanId: "iv-medium",
+      },
+      runtime: saveThenDoneRuntime("medium"),
+      db: null,
+      inlineValidationOracle: async () => {
+        calls++;
+        return { verified: true, confidence: 1, evidence: "x", reason: "" };
+      },
+    });
+
+    expect(calls).toBe(0);
+    expect(state.inlineValidations).toHaveLength(0);
+    expect(noteTexts(state)).toHaveLength(0);
+  });
+
+  it("does NOT fire when the feature flag is off", async () => {
+    process.env[FLAG] = "0";
+    let calls = 0;
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 5,
+        target: "https://t",
+        scanId: "iv-off",
+      },
+      runtime: saveThenDoneRuntime(),
+      db: null,
+      inlineValidationOracle: async () => {
+        calls++;
+        return { verified: true, confidence: 1, evidence: "x", reason: "" };
+      },
+    });
+
+    expect(calls).toBe(0);
+    expect(state.inlineValidations).toHaveLength(0);
+    expect(state.findings[0].inlineValidation).toBeUndefined();
+  });
+});

@@ -1935,10 +1935,30 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // oracle actually executed (not router-skipped, not thrown).
       let oracleOutcomeForPov: OracleResult | undefined;
       try {
-        const oracle = oracleAllowed
-          ? await verifyOracleByCategory(finding, config.target)
-          : { verified: false, confidence: 0, evidence: "", reason: "skipped by dynamic_router" };
-        if (oracleAllowed) oracleOutcomeForPov = oracle;
+        // Inline-validation reuse (#554): when the in-loop onFindingSaved hook
+        // already CONFIRMED this finding with the same deterministic oracle,
+        // do NOT re-run the probe / browser / collector here — that would
+        // double-spend. Reuse the inline verdict as a verified OracleResult.
+        // It flows through the `oracle.verified` branch below (accept the
+        // finding), which also makes the PoV gate skip via
+        // triageStatus === "accepted" — exactly the "don't double-spend"
+        // requirement.
+        const inlineConfirmed = finding.inlineValidation?.confirmed === true;
+        const oracle: OracleResult = inlineConfirmed
+          ? {
+              verified: true,
+              confidence: finding.inlineValidation?.confidence ?? 1,
+              evidence:
+                `inline-confirmed: ` +
+                `${finding.inlineValidation?.evidence ?? finding.inlineValidation?.reason ?? ""}`.trim(),
+              reason: "",
+            }
+          : oracleAllowed
+            ? await verifyOracleByCategory(finding, config.target)
+            : { verified: false, confidence: 0, evidence: "", reason: "skipped by dynamic_router" };
+        // Reuse for the PoV gate whenever the oracle actually produced a
+        // verdict here — either it ran, or we reused an inline confirmation.
+        if (oracleAllowed || inlineConfirmed) oracleOutcomeForPov = oracle;
         db.logEvent?.({
           scanId,
           stage: "verify",

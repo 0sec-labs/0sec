@@ -80,6 +80,27 @@ export const features = {
   publishabilityGate: env("PWNKIT_FEATURE_PUBLISHABILITY_GATE", false),
   /** PoV gate: require a working, executable PoC per finding or downgrade to info */
   povGate: env("PWNKIT_FEATURE_POV_GATE", false),
+  /**
+   * Inline validation / validate-on-save (#554). When ON, the native attack
+   * loop runs a fast deterministic category oracle the moment a high/critical
+   * finding is saved (`onFindingSaved` hook → `verifyOracleByCategory`, the
+   * cheap end of the #553 PoV-gate→oracle delegation). The verdict is injected
+   * back into the loop as a context note (confirmed → stop piling on;
+   * unconfirmed → "do not assume success"), stamped on `finding.inlineValidation`
+   * so EGATS `scoreEvidence` lets a confirmed finding dominate the regex signals
+   * and the batch oracle/PoV gate can skip the redundant re-run. Inline errors
+   * are inconclusive, never false-positive. Emits `inline_validation` events.
+   *
+   * Default OFF: it adds a per-finding network probe inside the attack loop and
+   * changes EGATS scoring, so it must be explicitly opted into before any A/B /
+   * cost_per_flag claim. Implemented as a getter so the CLI `--features` flag
+   * (which sets the env var inside the command action, AFTER this module is
+   * imported) is honored at loop time. Enable via
+   * PWNKIT_FEATURE_INLINE_VALIDATION=1.
+   */
+  get inlineValidation(): boolean {
+    return env("PWNKIT_FEATURE_INLINE_VALIDATION", false);
+  },
   /** Semgrep-style per-target persistent FP memories injected into the verify pipeline */
   triageMemories: env("PWNKIT_FEATURE_TRIAGE_MEMORIES", false),
   /**

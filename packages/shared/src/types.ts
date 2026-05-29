@@ -442,7 +442,44 @@ export interface Finding {
    * `duplicate` / `fix_bypass` decision so a reviewer can see what was matched.
    */
   dedupRefs?: string[];
+  /**
+   * Inline (in-loop) validation verdict (issue #554). Optional and additive.
+   * Set by the native attack loop's onFindingSaved hook when
+   * PWNKIT_FEATURE_INLINE_VALIDATION is on and a high/critical finding is saved:
+   * a fast deterministic oracle re-runs the PoC inline so the attack agent gets
+   * a real-time ground-truth signal instead of burning turns on an unprovable
+   * lead. `confirmed` means the oracle reproduced the exploit — downstream
+   * triage reuses this to skip the redundant batch oracle / PoV gate (no
+   * double-spend), and EGATS `scoreEvidence` lets a confirmed finding dominate
+   * the regex signals. `inconclusive` (the oracle errored or could not run to a
+   * conclusion) NEVER marks a finding false-positive. See
+   * {@link InlineValidationVerdict}.
+   */
+  inlineValidation?: InlineValidationVerdict;
   timestamp: number;
+}
+
+/**
+ * Verdict from the in-loop ("validate-on-save") deterministic check (#554).
+ * Attached to {@link Finding.inlineValidation}. Lives in shared so both the
+ * core attack loop (which writes it) and downstream consumers (EGATS scorer,
+ * triage oracle layer) can read it without an import cycle.
+ */
+export interface InlineValidationVerdict {
+  /** The deterministic oracle reproduced the exploit out-of-band. */
+  confirmed: boolean;
+  /**
+   * The oracle could not run to a conclusion (harness/infra error, or the
+   * inline check itself threw). Inconclusive is NEVER a refutation — the full
+   * verification batch re-checks the finding later.
+   */
+  inconclusive: boolean;
+  /** Short human-readable reason for the verdict. */
+  reason: string;
+  /** Concrete artifact the oracle reproduced (when confirmed). */
+  evidence?: string;
+  /** Oracle confidence (0–1) when confirmed. */
+  confidence?: number;
 }
 
 // ── Agent Verdicts (multi-agent consensus) ──
