@@ -4,6 +4,7 @@ import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import type { Finding, AttackCategory, Severity, Evidence, FindingStatus, PocStep } from "@pwnkit/shared";
+import { DEFAULT_SEVERITY_FLOOR, meetsSeverityFloor } from "@pwnkit/shared";
 import { z } from "zod";
 import { pocStepArraySchema, formatZodError } from "./schemas.js";
 import {
@@ -77,14 +78,6 @@ interface FindingRow {
   cvssScore?: number | null;
   pocSteps?: string | null;
 }
-
-const SEVERITY_RANK: Record<string, number> = {
-  critical: 4,
-  high: 3,
-  medium: 2,
-  low: 1,
-  info: 0,
-};
 
 function rowToFinding(row: FindingRow): Finding {
   const evidence: Evidence = {
@@ -187,7 +180,7 @@ async function disclose(findingId: string | undefined, opts: DiscloseOptions): P
       else if (prefix.length > 1) throw new Error(`Finding prefix '${findingId}' is ambiguous across ${prefix.length} rows.`);
       else throw new Error(`Finding '${findingId}' not found.`);
     } else {
-      const floor = SEVERITY_RANK[opts.severityFloor ?? "medium"] ?? 2;
+      const floor = opts.severityFloor ?? DEFAULT_SEVERITY_FLOOR;
       // Advisory quality gate: never auto-draft advisories from "discovered"
       // (LLM hypothesised but not agent-confirmed) or "false-positive"
       // (explicitly rejected) findings. Auto-filing an unverified PoC is the
@@ -197,13 +190,13 @@ async function disclose(findingId: string | undefined, opts: DiscloseOptions): P
       // `findingId` since single-finding mode bypasses this filter.
       selected = rows.filter(
         (r) =>
-          (SEVERITY_RANK[r.severity] ?? 0) >= floor &&
+          meetsSeverityFloor(r.severity, floor) &&
           r.triageStatus !== "suppressed" &&
           r.status !== "discovered" &&
           r.status !== "false-positive",
       );
       if (selected.length === 0) {
-        console.log(chalk.gray(`No findings at or above severity '${opts.severityFloor ?? "medium"}' after triage filtering.`));
+        console.log(chalk.gray(`No findings at or above severity '${floor}' after triage filtering.`));
         return;
       }
     }
@@ -522,7 +515,7 @@ export function registerDiscloseCommand(program: Command): void {
     .option("--db-path <path>", "Path to SQLite database")
     .option("--scan <scanId>", "Restrict to findings from this scan")
     .option("--output-dir <path>", "Directory to write advisories into (default ~/pwnkit/disclosures/scan-<id>)")
-    .option("--severity-floor <severity>", "In batch mode, only draft findings at or above this severity", "medium")
+    .option("--severity-floor <severity>", "In batch mode, only draft findings at or above this severity", DEFAULT_SEVERITY_FLOOR)
     .option("--no-screenshots", "Skip terminal-screenshot rendering even when freeze is available")
     .option("--repo <path>", "Local git checkout of the target repo to re-verify findings against")
     .option("--ref <tag>", "Git ref (tag/sha/branch) to check out before verifying — defaults to the repo's current HEAD")

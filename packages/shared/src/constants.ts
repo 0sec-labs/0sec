@@ -56,3 +56,54 @@ export const SEVERITY_ORDER: Record<string, number> = {
   low: 3,
   info: 4,
 };
+
+// ── Severity floor (#582) ────────────────────────────────────────
+//
+// Single source of truth for the severity FLOOR that gates which findings
+// advance into triage / disclosure. Findings below the floor (by default
+// `low` / `info`) are recorded but NOT routed into the disclosure funnel —
+// they don't get to spend maintainer goodwill on low-quality reports.
+//
+// NOTE: this rank is ASCENDING by severity (critical highest), the opposite
+// of `SEVERITY_ORDER` above (a critical-first DISPLAY sort). Compare floors
+// via `meetsSeverityFloor` rather than hard-coding integers.
+
+export const SEVERITY_RANK: Record<string, number> = {
+  info: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+/**
+ * Default severity floor. Anything below `medium` (i.e. `low` / `info`) is
+ * recorded but NOT routed into triage / disclosure (#582, operator decision).
+ */
+export const DEFAULT_SEVERITY_FLOOR = "medium";
+
+/**
+ * Numeric rank for a severity string, tolerant of casing and the
+ * `informational` alias. Unknown severities rank below `info` (-1) so they
+ * can never accidentally clear a floor.
+ */
+export function severityRank(severity: string): number {
+  const lower = severity.trim().toLowerCase();
+  const key = lower === "informational" ? "info" : lower;
+  return SEVERITY_RANK[key] ?? -1;
+}
+
+/**
+ * The single predicate that gates below-floor findings out of triage /
+ * disclosure (#582). True when `severity` is at or above `floor`. Unknown
+ * severities never clear the floor.
+ */
+export function meetsSeverityFloor(
+  severity: string,
+  floor: string = DEFAULT_SEVERITY_FLOOR,
+): boolean {
+  const floorRank = severityRank(floor);
+  // Unknown floor → fall back to the default floor's rank.
+  const effectiveFloor = floorRank === -1 ? severityRank(DEFAULT_SEVERITY_FLOOR) : floorRank;
+  return severityRank(severity) >= effectiveFloor;
+}
