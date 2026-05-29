@@ -464,6 +464,79 @@ describe("scan — --resume (pwnkit#374)", () => {
   });
 });
 
+describe("scan — http_audit env bridge (FROZEN CONTRACT)", () => {
+  const TARGET_ENV = [
+    "PWNKIT_TARGET_BASE_URL",
+    "PWNKIT_TARGET_AUTH_JSON",
+    "PWNKIT_TARGET_ALLOWED_HOSTS",
+    "PWNKIT_TARGET_ALLOWED_PATHS",
+    "PWNKIT_TARGET_RATE_LIMIT_RPS",
+    "PWNKIT_TARGET_KILL_AFTER_SEC",
+  ];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of TARGET_ENV) { saved[k] = process.env[k]; delete process.env[k]; }
+  });
+  afterEach(() => {
+    for (const k of TARGET_ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it("threads env-derived hosts/paths/rps/kill + auth into runUnified", async () => {
+    process.env.PWNKIT_TARGET_BASE_URL = "https://api.example.com";
+    process.env.PWNKIT_TARGET_AUTH_JSON = JSON.stringify({ type: "bearer", token: "SECRET" });
+    process.env.PWNKIT_TARGET_ALLOWED_HOSTS = JSON.stringify(["api.example.com", "cdn.example.com"]);
+    process.env.PWNKIT_TARGET_ALLOWED_PATHS = JSON.stringify(["/api"]);
+    process.env.PWNKIT_TARGET_RATE_LIMIT_RPS = "3";
+    process.env.PWNKIT_TARGET_KILL_AFTER_SEC = "600";
+    await runCli(["scan", "--target", "https://api.example.com", "--mode", "http_audit", "--format", "json"]);
+    expect(runUnifiedMock).toHaveBeenCalledOnce();
+    const opts = runUnifiedMock.mock.calls[0]![0];
+    expect(opts.mode).toBe("http_audit");
+    expect(opts.httpAuditAllowedHosts).toEqual(["api.example.com", "cdn.example.com"]);
+    expect(opts.httpAuditAllowedPaths).toEqual(["/api"]);
+    expect(opts.httpAuditRateLimitRps).toBe(3);
+    expect(opts.httpAuditKillAfterSec).toBe(600);
+    expect(opts.auth).toEqual({ type: "bearer", token: "SECRET" });
+  });
+
+  it("defaults allowed hosts to the base host and applies rps/kill defaults", async () => {
+    process.env.PWNKIT_TARGET_BASE_URL = "https://only.example.com";
+    await runCli(["scan", "--target", "https://only.example.com", "--mode", "http_audit", "--format", "json"]);
+    const opts = runUnifiedMock.mock.calls[0]![0];
+    expect(opts.httpAuditAllowedHosts).toEqual(["only.example.com"]);
+    expect(opts.httpAuditAllowedPaths).toEqual([]); // empty = allow all paths
+    expect(opts.httpAuditRateLimitRps).toBe(5);
+    expect(opts.httpAuditKillAfterSec).toBe(1800);
+  });
+
+  it("fails fast (exit 2, no scan) on malformed PWNKIT_TARGET_ALLOWED_HOSTS", async () => {
+    process.env.PWNKIT_TARGET_BASE_URL = "https://api.example.com";
+    process.env.PWNKIT_TARGET_ALLOWED_HOSTS = "{not json}";
+    await runCli(["scan", "--target", "https://api.example.com", "--mode", "http_audit", "--format", "json"]);
+    expect(tracker.firstCode).toBe(2);
+    expect(runUnifiedMock).not.toHaveBeenCalled();
+  });
+
+  it("fails fast on a non-integer PWNKIT_TARGET_RATE_LIMIT_RPS", async () => {
+    process.env.PWNKIT_TARGET_BASE_URL = "https://api.example.com";
+    process.env.PWNKIT_TARGET_RATE_LIMIT_RPS = "5.5";
+    await runCli(["scan", "--target", "https://api.example.com", "--mode", "http_audit", "--format", "json"]);
+    expect(tracker.firstCode).toBe(2);
+    expect(runUnifiedMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT set http_audit fields for a normal web scan", async () => {
+    await runCli(["scan", "--target", "https://example.com", "--mode", "web"]);
+    const opts = runUnifiedMock.mock.calls[0]![0];
+    expect(opts.mode).toBe("web");
+    expect(opts.httpAuditAllowedHosts).toBeUndefined();
+    expect(opts.httpAuditAllowedPaths).toBeUndefined();
+  });
+});
+
 // Silence "unused" warnings for the imported ScanReport type (kept for
 // readers who want to extend these tests with report-shape assertions).
 void ({} as ScanReport | undefined);

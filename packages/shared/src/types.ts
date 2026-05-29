@@ -5,7 +5,7 @@ import type { VerificationResult } from "./verification.js";
 export type ScanDepth = "quick" | "default" | "deep";
 export type OutputFormat = "terminal" | "json" | "markdown" | "html" | "sarif" | "pdf";
 export type RuntimeMode = "api" | "claude" | "codex" | "gemini" | "ollama" | "auto";
-export type ScanMode = "probe" | "deep" | "mcp" | "web";
+export type ScanMode = "probe" | "deep" | "mcp" | "web" | "http_audit";
 export type PackageEcosystem = "npm" | "pypi" | "cargo" | "oci";
 
 // ── Authentication ──
@@ -117,6 +117,23 @@ export interface ScanConfig {
    * provider-native tool_use blocks.
    */
   dispatchMode?: "json" | "xml" | "auto";
+  /**
+   * http_audit mode (FROZEN CONTRACT). Set only when `mode === "http_audit"`.
+   * The CLI parses these from the PWNKIT_TARGET_* env vars; the core builds
+   * an in-memory ScopePolicy (host allowlist), path-prefix allowlist,
+   * per-host RateLimiter, and a wall-clock kill switch from them, threaded
+   * down through an EnforcementTracker into every fetch chokepoint and
+   * aggregated into the report's `enforcement_summary` block.
+   *
+   * - `httpAuditAllowedHosts`: hosts the scan may touch (default = base host).
+   * - `httpAuditAllowedPaths`: path PREFIXES the scan may touch (empty = all).
+   * - `httpAuditRateLimitRps`: per-host requests-per-second cap (default 5).
+   * - `httpAuditKillAfterSec`: wall-clock budget in seconds (default 1800).
+   */
+  httpAuditAllowedHosts?: string[];
+  httpAuditAllowedPaths?: string[];
+  httpAuditRateLimitRps?: number;
+  httpAuditKillAfterSec?: number;
 }
 
 // ── Attack Templates ──
@@ -764,6 +781,30 @@ export interface ScanReport {
    * in normal scan output to avoid bloating JSON reports.
    */
   trace?: unknown[];
+  /**
+   * http_audit enforcement summary (frozen worker contract). Present ONLY
+   * when the scan ran in `mode: "http_audit"`; undefined for every other
+   * mode. Emitted verbatim as the `enforcement_summary` block in the report
+   * JSON so the cloud worker can audit scope adherence, rate-limit pacing,
+   * and the kill-switch outcome of an authed HTTP scan.
+   */
+  enforcementSummary?: EnforcementSummary;
+}
+
+/**
+ * Frozen `enforcement_summary` block emitted in http_audit reports. Mirrors
+ * `EnforcementSummary` in `@pwnkit/core` (scope/enforcement.ts); duplicated
+ * here (rather than imported) so `@pwnkit/shared` stays dependency-free of
+ * core. snake_case keys are part of the contract — do not rename.
+ */
+export interface EnforcementSummary {
+  auth_mode_used: "bearer" | "header" | "cookie" | "basic" | "none";
+  requests_in_scope: number;
+  requests_out_of_scope_blocked: number;
+  peak_rps: number;
+  rate_limited_count: number;
+  kill_switch_triggered: boolean;
+  wall_clock_sec: number;
 }
 
 export interface ReportSummary {

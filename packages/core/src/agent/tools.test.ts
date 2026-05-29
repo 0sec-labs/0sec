@@ -2119,3 +2119,140 @@ describe("ToolExecutor — `done` coverage gate integration (#audit-laziness)", 
     expect(result.success).toBe(true);
   });
 });
+
+// ── http_audit enforcement: path allowlist + counters + bash egress ──────
+// Mirrors the scope-enforcement suite above but for the EnforcementTracker
+// path-prefix allowlist and the scope/blocked counters that feed
+// `enforcement_summary`. See `scope/enforcement.ts` and the FROZEN CONTRACT.
+import { detectHttpEgressSegments } from "./tools.js";
+import { PathPolicy, EnforcementTracker } from "../scope/enforcement.js";
+import { ScopePolicy as HttpAuditScopePolicy } from "../scope/scope.js";
+
+describe("detectHttpEgressSegments", () => {
+  it("detects curl / wget / httpie", () => {
+    expect(detectHttpEgressSegments("curl https://t/api").length).toBe(1);
+    expect(detectHttpEgressSegments("wget https://t/x").length).toBe(1);
+    expect(detectHttpEgressSegments("http GET https://t/x").length).toBe(1);
+  });
+
+  it("detects python http libraries", () => {
+    expect(
+      detectHttpEgressSegments("python3 -c 'import requests; requests.get(\"https://t\")'").length,
+    ).toBe(1);
+    expect(
+      detectHttpEgressSegments("python -c 'import urllib.request; urllib.request.urlopen(1)'").length,
+    ).toBe(1);
+  });
+
+  it("ignores non-egress commands", () => {
+    expect(detectHttpEgressSegments("grep -r foo .").length).toBe(0);
+    expect(detectHttpEgressSegments("echo hello | jq .").length).toBe(0);
+    expect(detectHttpEgressSegments("ls -la /tmp").length).toBe(0);
+  });
+
+  it("splits on pipes / && / ; and reports each egress segment", () => {
+    const hits = detectHttpEgressSegments("curl https://t/a && cat x | wget https://t/b");
+    expect(hits.length).toBe(2);
+  });
+});
+
+describe("ToolExecutor — http_audit enforcement (FROZEN CONTRACT)", () => {
+  function httpAuditCtx(overrides: Partial<ToolContext> = {}): ToolContext {
+    const scope = ScopePolicyFromHosts(["api.example.com"]);
+    const enforcement = new EnforcementTracker({
+      pathPolicy: new PathPolicy(["/api"]),
+      auth: { type: "bearer", token: "x" },
+      killAfterSec: 1800,
+    });
+    return {
+      target: "https://api.example.com",
+      scanId: "http-audit-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+      enforcement,
+      ...overrides,
+    };
+  }
+
+  it("http_request blocks an out-of-path URL and counts it", async () => {
+    const ctx = httpAuditCtx();
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "http_request",
+      arguments: { url: "https://api.example.com/secret" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Scope violation/);
+    const s = ctx.enforcement!.summarize();
+    expect(s.requests_out_of_scope_blocked).toBe(1);
+    expect(s.requests_in_scope).toBe(0);
+  });
+
+  it("http_request counts an in-scope, in-path request", async () => {
+    const ctx = httpAuditCtx();
+    const fetchStub = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      url: "https://api.example.com/api/health",
+      headers: new Headers({ "content-type": "text/plain" }),
+      text: async () => "ok",
+      json: async () => ({}),
+    }));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const ex = new ToolExecutor(ctx, null);
+      await ex.execute({
+        name: "http_request",
+        arguments: { url: "https://api.example.com/api/health" },
+      });
+      const s = ctx.enforcement!.summarize();
+      expect(s.requests_in_scope).toBe(1);
+      expect(s.requests_out_of_scope_blocked).toBe(0);
+      expect(fetchStub).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("bash refuses an out-of-path curl and counts it", async () => {
+    const ctx = httpAuditCtx();
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "bash",
+      arguments: { command: "curl https://api.example.com/secret" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/out-of-path|Scope/);
+    expect(ctx.enforcement!.summarize().requests_out_of_scope_blocked).toBe(1);
+  });
+
+  it("bash fail-closed on an egress command with no resolvable URL", async () => {
+    const ctx = httpAuditCtx();
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "bash",
+      arguments: { command: "curl $TARGET_URL" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/http_audit/);
+    expect(ctx.enforcement!.summarize().requests_out_of_scope_blocked).toBe(1);
+  });
+
+  it("bash allows a non-egress command untouched", async () => {
+    const ctx = httpAuditCtx();
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "bash",
+      arguments: { command: "echo hello" },
+    });
+    // echo succeeds; no egress, no blocked counter bump.
+    expect(result.success).toBe(true);
+    expect(ctx.enforcement!.summarize().requests_out_of_scope_blocked).toBe(0);
+  });
+});
+
+function ScopePolicyFromHosts(hosts: string[]) {
+  return HttpAuditScopePolicy.fromJson({ in_scope: hosts });
+}

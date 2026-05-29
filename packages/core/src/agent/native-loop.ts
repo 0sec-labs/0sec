@@ -11,6 +11,7 @@ import type { AuthConfig } from "@pwnkit/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import type { AttributionConfig } from "../scope/attribution.js";
+import type { EnforcementTracker } from "../scope/enforcement.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
 import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
@@ -114,6 +115,15 @@ export interface NativeAgentConfig {
    */
   scope?: ScopePolicy;
   /**
+   * http_audit enforcement tracker (path allowlist + counters + kill
+   * switch). When set, the main loop polls `enforcement.isKillExpired()`
+   * at each turn boundary and aborts cleanly (preserving partial findings)
+   * once the wall-clock budget is exhausted. Also threaded onto the
+   * ToolContext so fetch chokepoints enforce the path allowlist and tally
+   * counters. Undefined for non-http_audit scans.
+   */
+  enforcement?: EnforcementTracker;
+  /**
    * Generic-scanner-traffic suppression opt-out (pwnkit#217). Defaults
    * to false. Only consulted when `scope` is set.
    */
@@ -164,6 +174,13 @@ export interface NativeAgentState {
    */
   costCeilingExceeded: boolean;
   /**
+   * Set to true when the http_audit wall-clock kill switch fired and the
+   * loop aborted cleanly. Partial findings on `state.findings` are
+   * preserved and flow through the normal report-assembly path. Always
+   * false for non-http_audit scans (no kill switch configured).
+   */
+  killSwitchTriggered: boolean;
+  /**
    * Set when the loop terminated because the planner LLM call returned an
    * error (or empty response). The legacy `state.summary = "Error: ..."`
    * marker is preserved for back-compat with downstream readers, but this
@@ -210,6 +227,7 @@ export async function runNativeAgentLoop(
     authConfig: config.authConfig,
     scope: config.scope,
     rateLimiter: config.rateLimiter,
+    enforcement: config.enforcement,
     allowScanners: config.allowScanners,
     attribution: config.attribution,
   };
@@ -321,6 +339,7 @@ export async function runNativeAgentLoop(
     progressSummary: "",
     estimatedCostUsd: 0,
     costCeilingExceeded: false,
+    killSwitchTriggered: false,
   };
 
   // Early-stop tracking: has the agent called save_finding at least once?
@@ -387,6 +406,41 @@ export async function runNativeAgentLoop(
 
   try {
   while (!state.done && state.turnCount < config.maxTurns) {
+    // ── http_audit wall-clock kill switch ──
+    // Checked at the turn boundary BEFORE spending another LLM call so an
+    // expired budget can't trigger one more (expensive) round-trip. Breaks
+    // out cleanly: partial findings already live on toolCtx.findings and
+    // are synced to state.findings post-loop, then assembled into the
+    // report by agentic-scanner. We deliberately do NOT process.exit here.
+    if (config.enforcement && config.enforcement.isKillExpired()) {
+      state.killSwitchTriggered = true;
+      config.enforcement.markKilled();
+      state.summary =
+        `http_audit kill switch fired at turn ${state.turnCount} ` +
+        `(${config.enforcement.wallClockSec().toFixed(1)}s elapsed). ` +
+        `Aborting cleanly with ${toolCtx.findings.length} partial finding(s).`;
+      onEvent?.("kill_switch_triggered", {
+        turn: state.turnCount,
+        wallClockSec: config.enforcement.wallClockSec(),
+        findingCount: toolCtx.findings.length,
+      });
+      if (db) {
+        db.logEvent({
+          scanId: config.scanId,
+          stage: config.role,
+          eventType: "kill_switch_triggered",
+          agentRole: config.role,
+          payload: {
+            turn: state.turnCount,
+            wallClockSec: config.enforcement.wallClockSec(),
+            findingCount: toolCtx.findings.length,
+          },
+          timestamp: Date.now(),
+        });
+      }
+      break;
+    }
+
     state.turnCount++;
     const turnStartedAt = Date.now();
     // Mutable inside the try-block; read in the finally to stamp

@@ -2,6 +2,7 @@ import type { Finding, AttackResult, TargetInfo, AuthConfig } from "@pwnkit/shar
 import type { ScopePolicy } from "../scope/scope.js";
 import type { RateLimiter } from "../scope/rate-limit.js";
 import type { AttributionConfig } from "../scope/attribution.js";
+import type { EnforcementTracker } from "../scope/enforcement.js";
 
 // ── Agent Roles ──
 
@@ -75,6 +76,15 @@ export interface AgentConfig {
    * See `scope/rate-limit.ts` (#214).
    */
   rateLimiter?: RateLimiter;
+  /**
+   * http_audit enforcement tracker (path allowlist + counters + kill
+   * switch). Present ONLY in `mode: "http_audit"` scans; undefined for
+   * every other mode, leaving behaviour identical to the pre-http_audit
+   * path. When set, the path-prefix allowlist is enforced alongside the
+   * host scope at every fetch chokepoint and the scope/rate counters are
+   * tallied into the report's `enforcement_summary` block.
+   */
+  enforcement?: EnforcementTracker;
   /**
    * Generic-scanner-traffic suppression opt-out (pwnkit#217). When
    * scope is loaded the agent refuses to spawn `sqlmap`, `wpscan`,
@@ -150,6 +160,13 @@ export interface ToolContext {
   scope?: ScopePolicy;
   /** Per-host rate limiter; see AgentConfig.rateLimiter. */
   rateLimiter?: RateLimiter;
+  /**
+   * See `AgentConfig.enforcement`. http_audit-only path allowlist +
+   * scope/rate counters + kill switch. Every URL-touching tool consults
+   * `enforcement.pathPolicy` (when set) in addition to host scope, and
+   * increments the in-scope / out-of-scope counters at the verdict sites.
+   */
+  enforcement?: EnforcementTracker;
   /**
    * See `AgentConfig.allowScanners`. Opt-out for the scanner-binary
    * suppression gate (pwnkit#217). Only consulted when `scope` is set.

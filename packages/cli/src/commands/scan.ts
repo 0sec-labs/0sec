@@ -47,6 +47,80 @@ function parseAuthFlag(value: string): AuthConfig {
 }
 
 /**
+ * Parse a JSON `string[]` env var. Returns `[]` for unset/empty. Throws a
+ * clear, env-named error on malformed JSON or a non-string-array shape so a
+ * worker misconfiguration fails the scan at boot rather than silently
+ * degrading the scope.
+ */
+function parseStringArrayEnv(name: string, raw: string | undefined): string[] {
+  const trimmed = raw?.trim();
+  if (!trimmed) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(`${name}: must be a JSON array of strings (got: ${trimmed.slice(0, 80)})`);
+  }
+  if (!Array.isArray(parsed) || parsed.some((x) => typeof x !== "string")) {
+    throw new Error(`${name}: must be a JSON array of strings`);
+  }
+  return parsed as string[];
+}
+
+/**
+ * Parse a positive-integer env var with a default. Throws on a value that is
+ * present but not a non-negative integer.
+ */
+function parseIntEnv(name: string, raw: string | undefined, def: number): number {
+  const trimmed = raw?.trim();
+  if (!trimmed) return def;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    throw new Error(`${name}: must be a non-negative integer (got: ${trimmed})`);
+  }
+  return n;
+}
+
+/**
+ * Resolve the http_audit FROZEN CONTRACT env vars into a normalized config.
+ * Defaults: allowed hosts → [base host]; allowed paths → [] (allow all);
+ * rate limit → 5 rps; kill switch → 1800s. Throws on malformed input.
+ *
+ * `target` is the resolved --target value; PWNKIT_TARGET_BASE_URL takes
+ * precedence as the base when both are set (the worker always sets it), but
+ * either way the base host is the default sole allowed host.
+ */
+function parseHttpAuditEnv(
+  target: string,
+  env: NodeJS.ProcessEnv,
+): { allowedHosts: string[]; allowedPaths: string[]; rateLimitRps: number; killAfterSec: number } {
+  const baseUrl = env.PWNKIT_TARGET_BASE_URL?.trim() || target;
+  let baseHost: string;
+  try {
+    baseHost = new URL(baseUrl).hostname;
+  } catch {
+    throw new Error(
+      `http_audit: could not derive base host from '${baseUrl}'. Set PWNKIT_TARGET_BASE_URL to an absolute http(s) URL.`,
+    );
+  }
+  const allowedHosts = parseStringArrayEnv(
+    "PWNKIT_TARGET_ALLOWED_HOSTS",
+    env.PWNKIT_TARGET_ALLOWED_HOSTS,
+  );
+  const allowedPaths = parseStringArrayEnv(
+    "PWNKIT_TARGET_ALLOWED_PATHS",
+    env.PWNKIT_TARGET_ALLOWED_PATHS,
+  );
+  return {
+    // Empty allowed-hosts list defaults to the base host only.
+    allowedHosts: allowedHosts.length > 0 ? allowedHosts : [baseHost],
+    allowedPaths,
+    rateLimitRps: parseIntEnv("PWNKIT_TARGET_RATE_LIMIT_RPS", env.PWNKIT_TARGET_RATE_LIMIT_RPS, 5),
+    killAfterSec: parseIntEnv("PWNKIT_TARGET_KILL_AFTER_SEC", env.PWNKIT_TARGET_KILL_AFTER_SEC, 1800),
+  };
+}
+
+/**
  * Validate `--emit <target>` against the supported set (currently only `pr`).
  * Returns the typed value or undefined when no flag was passed; throws
  * (process.exit 2) on an unknown emitter so the user sees the typo early
@@ -67,7 +141,7 @@ export function registerScanCommand(program: Command): void {
     .option("--depth <depth>", "Scan depth: quick, default, deep", "default")
     .option("--format <format>", "Output format: terminal, json, md, html, sarif, pdf", "terminal")
     .option("--runtime <runtime>", "Runtime: auto (default), api, claude, codex, gemini", "auto")
-    .option("--mode <mode>", "Scan mode: probe, deep, mcp, web")
+    .option("--mode <mode>", "Scan mode: probe, deep, mcp, web, http_audit. `http_audit` is the worker-driven authed HTTP scan: it reads target config from PWNKIT_TARGET_* env vars (PWNKIT_TARGET_BASE_URL, PWNKIT_TARGET_AUTH_JSON, PWNKIT_TARGET_ALLOWED_HOSTS, PWNKIT_TARGET_ALLOWED_PATHS, PWNKIT_TARGET_RATE_LIMIT_RPS, PWNKIT_TARGET_KILL_AFTER_SEC), builds an in-memory ScopePolicy + path allowlist + per-host RateLimiter + wall-clock kill switch, runs the web-pentest loop, and emits an enforcement_summary block in the report JSON.")
     .option("--timeout <ms>", "Request timeout in milliseconds", "30000")
     .option("--db-path <path>", "Path to SQLite database")
     .option("--api-key <key>", "API key for LLM provider")
@@ -207,7 +281,7 @@ export function registerScanCommand(program: Command): void {
           : /^https?:\/\//i.test(targetStr)
             ? "web"
             : "deep") as ScanMode;
-      const validModes = new Set<ScanMode>(["probe", "deep", "mcp", "web"]);
+      const validModes = new Set<ScanMode>(["probe", "deep", "mcp", "web", "http_audit"]);
       if (!validModes.has(mode)) {
         console.error(chalk.red(`Unknown mode '${mode}'. Valid: ${[...validModes].join(", ")}`));
         process.exit(2);
@@ -246,6 +320,42 @@ export function registerScanCommand(program: Command): void {
         } catch (err) {
           console.error(chalk.red(err instanceof Error ? err.message : String(err)));
           process.exit(2);
+        }
+      }
+
+      // ── http_audit env bridge (FROZEN CONTRACT) ──
+      // In `--mode http_audit` the worker drives the scan entirely through
+      // PWNKIT_TARGET_* env vars. We parse them here (fail-fast on malformed
+      // JSON, same rationale as --scope/--auth pre-flight) and thread the
+      // results through RunOptions → ScanConfig, where the core builds the
+      // in-memory ScopePolicy + path allowlist + RateLimiter + kill switch.
+      let httpAudit: {
+        allowedHosts: string[];
+        allowedPaths: string[];
+        rateLimitRps: number;
+        killAfterSec: number;
+      } | undefined;
+      if (mode === "http_audit") {
+        try {
+          httpAudit = parseHttpAuditEnv(targetStr, process.env);
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(2);
+        }
+        // PWNKIT_TARGET_AUTH_JSON (if set) wins over any --auth flag in
+        // http_audit mode — the worker contract is env-driven.
+        const authJson = process.env.PWNKIT_TARGET_AUTH_JSON?.trim();
+        if (authJson) {
+          try {
+            authConfig = parseAuthFlag(authJson);
+          } catch (err) {
+            console.error(
+              chalk.red(
+                `PWNKIT_TARGET_AUTH_JSON: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+            process.exit(2);
+          }
         }
       }
 
@@ -367,6 +477,12 @@ export function registerScanCommand(program: Command): void {
         emitPrBase: opts.base as string | undefined,
         emitPrDryRun: opts.dryRun as boolean | undefined,
         emitOutDir: opts.emitOutDir as string | undefined,
+        // http_audit env-bridge config (FROZEN CONTRACT). Undefined for all
+        // other modes; when set, core builds the in-memory enforcement stack.
+        httpAuditAllowedHosts: httpAudit?.allowedHosts,
+        httpAuditAllowedPaths: httpAudit?.allowedPaths,
+        httpAuditRateLimitRps: httpAudit?.rateLimitRps,
+        httpAuditKillAfterSec: httpAudit?.killAfterSec,
       });
     });
 }

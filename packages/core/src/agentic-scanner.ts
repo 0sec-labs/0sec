@@ -64,8 +64,9 @@ import { getCloudSinkConfig, postFinding, postFinalReport } from "./cloud-sink.j
 import { eventBus } from "./events/bus.js";
 import type { CostBreakdownEntry } from "./events/bus.js";
 import { modelProvider, splitCost } from "./agent/cost.js";
-import { loadScope, type ScopePolicy } from "./scope/scope.js";
+import { loadScope, ScopePolicy } from "./scope/scope.js";
 import { RateLimiter, parseRateLimitFlag } from "./scope/rate-limit.js";
+import { EnforcementTracker, PathPolicy } from "./scope/enforcement.js";
 import {
   resolveAttribution,
   extractAttributionFromScopeJson,
@@ -88,11 +89,62 @@ const RATE_LIMITER_CACHE = new WeakMap<ScanConfig, RateLimiter>();
 function getOrCreateRateLimiter(config: ScanConfig): RateLimiter {
   let rl = RATE_LIMITER_CACHE.get(config);
   if (!rl) {
-    const cfg = parseRateLimitFlag(config.rateLimit ?? "", 5);
-    rl = new RateLimiter(cfg);
+    // In http_audit mode the per-host rps comes from the env-bridge
+    // (PWNKIT_TARGET_RATE_LIMIT_RPS, default 5) rather than the --rate-limit
+    // flag; the flag form isn't part of the worker contract. Otherwise we
+    // honour the parsed --rate-limit spec with the usual 5 rps default.
+    const fallbackRps = config.mode === "http_audit"
+      ? (config.httpAuditRateLimitRps ?? 5)
+      : 5;
+    const cfg = parseRateLimitFlag(config.rateLimit ?? "", fallbackRps);
+    // Wire the throttle observer into the http_audit enforcement tracker so
+    // every blocked acquire / 429 park bumps `rate_limited_count`. No-op for
+    // every other mode (tracker is undefined).
+    const enforcement = resolveEnforcementForConfig(config);
+    rl = new RateLimiter(cfg, {
+      onThrottle: enforcement ? () => enforcement.noteRateLimited() : undefined,
+    });
     RATE_LIMITER_CACHE.set(config, rl);
   }
   return rl;
+}
+
+/**
+ * Per-scan enforcement-tracker cache (http_audit only). Created lazily the
+ * first time any helper needs it and reused for the whole scan so the
+ * scope/rate counters and the kill-switch clock aggregate across discovery +
+ * attack + verify stages. Returns undefined for every non-http_audit scan,
+ * leaving the legacy behaviour untouched.
+ *
+ * The tracker owns the path-prefix allowlist (PathPolicy) and the auth mode;
+ * the host allowlist is enforced separately via the ScopePolicy built in
+ * `resolveScopeForConfig`.
+ */
+const ENFORCEMENT_CACHE = new WeakMap<ScanConfig, EnforcementTracker>();
+function resolveEnforcementForConfig(config: ScanConfig): EnforcementTracker | undefined {
+  if (config.mode !== "http_audit") return undefined;
+  const cached = ENFORCEMENT_CACHE.get(config);
+  if (cached) return cached;
+  const tracker = new EnforcementTracker({
+    pathPolicy: new PathPolicy(config.httpAuditAllowedPaths ?? []),
+    auth: config.auth,
+    killAfterSec: config.httpAuditKillAfterSec ?? 1800,
+  });
+  ENFORCEMENT_CACHE.set(config, tracker);
+  return tracker;
+}
+
+/**
+ * Attach the frozen `enforcement_summary` block to a report when the scan ran
+ * in http_audit mode. No-op for every other mode (tracker is undefined), so
+ * non-http_audit reports are byte-for-byte unchanged. Mutates `report` in
+ * place; called on every http_audit report return path (happy, kill-switch,
+ * cost-ceiling) so the block is always present.
+ */
+function attachEnforcementSummary(report: ScanReport, config: ScanConfig): void {
+  const enforcement = resolveEnforcementForConfig(config);
+  if (!enforcement) return;
+  report.enforcementSummary = enforcement.summarize();
 }
 
 /**
@@ -1061,6 +1113,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         costCeilingExceeded: true,
         ...(partialTraceMessages.length > 0 ? { trace: partialTraceMessages } : {}),
       };
+      attachEnforcementSummary(partialReport, config);
 
       const dbScan = db.getScan(scanId);
       if (dbScan) {
@@ -1098,6 +1151,98 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         findingsForFlagCount: allFindings,
       });
       return partialReport;
+    }
+
+    // ── http_audit kill-switch short-circuit ──
+    // If the wall-clock budget expired during discovery or attack, the native
+    // loop already broke cleanly at a turn boundary (partial findings flushed
+    // to the DB and carried on `allFindings`). Skip triage/verify/remediation
+    // — those would re-enter the loop only to break again immediately — and
+    // emit a partial report straight away, exactly mirroring the cost-ceiling
+    // path. Never process.exit: we flow through normal report assembly so the
+    // enforcement_summary and partial findings reach the caller.
+    const killEnforcement = resolveEnforcementForConfig(config);
+    if (killEnforcement?.triggered) {
+      for (const f of allFindings) {
+        try { db.saveFinding(scanId, f); } catch { /* may already be persisted */ }
+      }
+      const killSummary = {
+        totalAttacks: attackState.turnCount,
+        totalFindings: allFindings.length,
+        critical: allFindings.filter((f) => f.severity === "critical").length,
+        high: allFindings.filter((f) => f.severity === "high").length,
+        medium: allFindings.filter((f) => f.severity === "medium").length,
+        low: allFindings.filter((f) => f.severity === "low").length,
+        info: allFindings.filter((f) => f.severity === "info").length,
+      };
+      try { db.completeScan(scanId, killSummary); } catch { /* best effort */ }
+
+      const killTrace = [
+        ...(discoveryState.messages ?? []),
+        ...(attackState.messages ?? []),
+      ];
+      const killReport: ScanReport = {
+        target: config.target,
+        scanDepth: config.depth,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: 0,
+        summary: killSummary,
+        findings: allFindings,
+        warnings: [
+          {
+            stage: "attack",
+            message: `Scan aborted: http_audit kill switch fired after ${killEnforcement.wallClockSec().toFixed(1)}s. ${allFindings.length} partial finding(s) preserved.`,
+          },
+        ],
+        benchmarkMeta: {
+          attackTurns: attackState.turnCount,
+          estimatedCostUsd: attackState.estimatedCostUsd,
+          inputTokens: attackState.totalUsage?.inputTokens,
+          outputTokens: attackState.totalUsage?.outputTokens,
+          totalTokens: attackState.totalUsage
+            ? attackState.totalUsage.inputTokens + attackState.totalUsage.outputTokens
+            : undefined,
+          model: config.model,
+        },
+        ...(killTrace.length > 0 ? { trace: killTrace } : {}),
+      };
+      attachEnforcementSummary(killReport, config);
+
+      const dbScan = db.getScan(scanId);
+      if (dbScan) {
+        killReport.startedAt = dbScan.startedAt;
+        killReport.completedAt = dbScan.completedAt ?? killReport.completedAt;
+        killReport.durationMs = dbScan.durationMs ?? 0;
+      }
+
+      db.logEvent({
+        scanId,
+        stage: "report",
+        eventType: "scan_aborted",
+        payload: { reason: "kill_switch_triggered", ...killSummary },
+        timestamp: Date.now(),
+      });
+      emit({
+        type: "stage:end",
+        stage: "report",
+        message: `kill_switch_triggered: aborted with ${allFindings.length} partial finding(s)`,
+      });
+      await postFinalReport(killReport);
+      emitScanCompleted("completed", allFindings.length, {
+        turnsUsed: (discoveryState?.turnCount ?? 0) + (attackState?.turnCount ?? 0),
+        summary: attackState?.summary ?? discoveryState?.summary,
+        stages: [
+          ...(discoveryState
+            ? [{ usage: discoveryState.totalUsage ?? { inputTokens: 0, outputTokens: 0 }, model: config.model }]
+            : []),
+          ...(attackState
+            ? [{ usage: attackState.totalUsage ?? { inputTokens: 0, outputTokens: 0 }, model: config.model }]
+            : []),
+        ],
+        findingsForFlagCount: allFindings,
+      });
+      return killReport;
     }
 
     // ── Stage 2.5: Triage (holding-it-wrong + feature extraction) ──
@@ -2032,6 +2177,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         model: config.model,
       },
     };
+    attachEnforcementSummary(report, config);
 
     // Attach conversation trace (discovery + attack) when available.
     // Only native-mode runs produce messages; legacy CLI runs don't.
@@ -2210,9 +2356,19 @@ interface AgentOutput {
 const scopePolicyCache = new WeakMap<ScanConfig, ScopePolicy>();
 
 function resolveScopeForConfig(config: ScanConfig): ScopePolicy | undefined {
-  if (!config.scopeFile) return undefined;
   const cached = scopePolicyCache.get(config);
   if (cached) return cached;
+  // http_audit mode synthesises an in-memory host-allowlist ScopePolicy from
+  // the env-bridge `httpAuditAllowedHosts` rather than reading a scope file.
+  // This is the host half of the enforcement; the path half lives on the
+  // EnforcementTracker's PathPolicy.
+  if (config.mode === "http_audit") {
+    const hosts = config.httpAuditAllowedHosts ?? [];
+    const policy = ScopePolicy.fromJson({ in_scope: hosts });
+    scopePolicyCache.set(config, policy);
+    return policy;
+  }
+  if (!config.scopeFile) return undefined;
   const policy = loadScope(config.scopeFile);
   scopePolicyCache.set(config, policy);
   return policy;
@@ -2244,7 +2400,10 @@ async function runNativeDiscovery(
   apiSpecPromptText?: string,
   getPendingUserMessages?: () => string[],
 ): Promise<AgentOutput> {
-  const isWeb = config.mode === "web";
+  // http_audit reuses the web-pentest prompts + tools wholesale; the only
+  // additions are the env-driven scope/path/rate/kill enforcement layered on
+  // via the EnforcementTracker. So it is "web" for every prompt/tool decision.
+  const isWeb = config.mode === "web" || config.mode === "http_audit";
   const basePrompt = isWeb
     ? webPentestDiscoveryPrompt(config.target, config.auth)
     : discoveryPrompt(config.target, config.auth);
@@ -2267,6 +2426,7 @@ async function runNativeDiscovery(
       authConfig: config.auth,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
+      enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
       costCeilingUsd: config.costCeilingUsd,
@@ -2325,7 +2485,10 @@ async function runNativeAttack(
   apiSpecPromptText?: string,
   getPendingUserMessages?: () => string[],
 ): Promise<AgentOutput> {
-  const isWeb = config.mode === "web";
+  // http_audit reuses the web-pentest prompts + tools wholesale; the only
+  // additions are the env-driven scope/path/rate/kill enforcement layered on
+  // via the EnforcementTracker. So it is "web" for every prompt/tool decision.
+  const isWeb = config.mode === "web" || config.mode === "http_audit";
 
   // Detect playwright availability for browser tool
   let hasBrowser = false;
@@ -2493,6 +2656,7 @@ async function runNativeAttack(
       authConfig: config.auth,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
+      enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
       costCeilingUsd: config.costCeilingUsd,
@@ -2559,6 +2723,7 @@ async function runNativeAttack(
         authConfig: config.auth,
         scope: resolveScopeForConfig(config),
         rateLimiter: getOrCreateRateLimiter(config),
+        enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
         costCeilingUsd: config.costCeilingUsd,
@@ -2805,6 +2970,7 @@ export async function runNativeVerify(
         authConfig: config.auth,
         scope: resolveScopeForConfig(config),
         rateLimiter: getOrCreateRateLimiter(config),
+        enforcement: resolveEnforcementForConfig(config),
         allowScanners: config.allowScanners,
         attribution: buildAttributionForConfig(config),
         costCeilingUsd: config.costCeilingUsd,
@@ -2847,7 +3013,10 @@ async function runLegacyDiscovery(
   dbPath?: string,
   apiSpecPromptText?: string,
 ): Promise<AgentOutput> {
-  const isWeb = config.mode === "web";
+  // http_audit reuses the web-pentest prompts + tools wholesale; the only
+  // additions are the env-driven scope/path/rate/kill enforcement layered on
+  // via the EnforcementTracker. So it is "web" for every prompt/tool decision.
+  const isWeb = config.mode === "web" || config.mode === "http_audit";
   const basePrompt = isWeb
     ? webPentestDiscoveryPrompt(config.target, config.auth)
     : discoveryPrompt(config.target, config.auth);
@@ -2872,6 +3041,7 @@ async function runLegacyDiscovery(
       authConfig: config.auth,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
+      enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
       dispatchMode: config.dispatchMode,
@@ -2911,7 +3081,10 @@ async function runLegacyAttack(
   dbPath?: string,
   apiSpecPromptText?: string,
 ): Promise<AgentOutput> {
-  const isWeb = config.mode === "web";
+  // http_audit reuses the web-pentest prompts + tools wholesale; the only
+  // additions are the env-driven scope/path/rate/kill enforcement layered on
+  // via the EnforcementTracker. So it is "web" for every prompt/tool decision.
+  const isWeb = config.mode === "web" || config.mode === "http_audit";
 
   // Detect playwright availability for browser tool (mirrors native path)
   let hasBrowser = false;
@@ -2941,6 +3114,7 @@ async function runLegacyAttack(
       authConfig: config.auth,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
+      enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
       dispatchMode: config.dispatchMode,
@@ -3011,6 +3185,7 @@ async function runLegacyVerify(
       authConfig: config.auth,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
+      enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
       dispatchMode: config.dispatchMode,

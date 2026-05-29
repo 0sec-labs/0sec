@@ -16,6 +16,7 @@ import type {
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import { extractUrls } from "../scope/scope.js";
+import type { EnforcementTracker } from "../scope/enforcement.js";
 import { detectScannerBinary } from "../scope/scanner-binaries.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
 import { sendPrompt, extractResponseText } from "../http.js";
@@ -944,6 +945,68 @@ export type AuthInjectResult =
   | { kind: "refuse"; reason: string };
 
 /**
+ * http_audit bash-egress SSRF gate (FROZEN CONTRACT). The bash subprocess
+ * bypasses node's fetch — and therefore the host/path scope checks the
+ * `http_request`/`crawl`/`submit_form` tools enforce. In http_audit mode we
+ * must guarantee the host+path allowlist holds for ALL egress, so we refuse
+ * any raw HTTP-egress command (curl/wget/python http libs) that does not
+ * carry an explicit, in-scope, in-path http(s) URL we can verify up front.
+ *
+ * This is intentionally fail-closed: an egress command whose destination we
+ * can't statically resolve (obfuscated URL, variable, base64, DNS trick) is
+ * refused rather than allowed, because the whole point of http_audit is a
+ * bounded, auditable egress surface. Non-egress bash (grep, jq, echo, file
+ * munging) is untouched.
+ *
+ * Returns the list of egress-tool segments found in the command (one per
+ * pipe / `&&` / `;` segment whose executable is a known HTTP client).
+ */
+const HTTP_EGRESS_BINARIES = new Set([
+  "curl",
+  "wget",
+  "httpie",
+  "http",
+  "https",
+]);
+
+const PYTHON_HTTP_RE = /(requests\.|urllib\.|httpx\.|http\.client|aiohttp\.|socket\.)/;
+
+export function detectHttpEgressSegments(command: string): string[] {
+  const hits: string[] = [];
+  // Curl/wget/httpie detection: split on top-level `;`, `&&`, and `|`
+  // (quote-aware so we don't split inside a quoted arg). Each segment whose
+  // executable is a known HTTP client is an egress segment.
+  const segments = command.split(/\s*(?:\|\||&&|;|\|)\s*/);
+  for (const segment of segments) {
+    const trimmed = segment.trim();
+    if (!trimmed) continue;
+    let rest = trimmed;
+    let m: RegExpMatchArray | null;
+    while ((m = rest.match(/^[A-Za-z_][A-Za-z0-9_]*=\S+\s+/))) {
+      rest = rest.slice(m[0].length);
+    }
+    const exe = (rest.split(/\s+/)[0] ?? "").replace(/^.*\//, "");
+    if (HTTP_EGRESS_BINARIES.has(exe)) {
+      hits.push(trimmed);
+    }
+  }
+  // python -c '…' scripts legitimately contain `;` inside the quoted body,
+  // so the naive split above corrupts them. Detect a python HTTP-client
+  // invocation against the WHOLE command instead and record the matched
+  // python segment(s) by re-splitting only on top-level pipes (which a
+  // `-c` body rarely contains unquoted).
+  if (/(^|[\s;&|/])python(?:3)?(\s|$)/.test(command) && PYTHON_HTTP_RE.test(command)) {
+    for (const seg of splitOnTopLevelPipes(command)) {
+      const t = seg.trim();
+      if (/(^|[\s;&|/])python(?:3)?(\s|$)/.test(t) && PYTHON_HTTP_RE.test(t)) {
+        hits.push(t);
+      }
+    }
+  }
+  return hits;
+}
+
+/**
  * Find the index of the next URL token in a tokenized curl/wget invocation,
  * starting from `from`. Returns -1 if no URL token is present.
  *
@@ -1320,7 +1383,12 @@ function isLocalHostname(hostname: string): boolean {
   return normalized === "localhost" || normalized.endsWith(".localhost");
 }
 
-function validateTargetUrl(baseUrl: string, requestedUrl: string, scope?: ScopePolicy): string {
+function validateTargetUrl(
+  baseUrl: string,
+  requestedUrl: string,
+  scope?: ScopePolicy,
+  enforcement?: EnforcementTracker,
+): string {
   const base = new URL(baseUrl);
   const candidate = new URL(requestedUrl, base);
 
@@ -1341,18 +1409,34 @@ function validateTargetUrl(baseUrl: string, requestedUrl: string, scope?: ScopeP
     throw new Error(`Local/internal http_request blocked: ${candidate.hostname}`);
   }
 
+  const candidateUrl = candidate.toString();
+
   // Programmatic scope enforcement (pwnkit#215). Additive on top of the
   // existing same-origin / private-network guards above — scope cannot
   // loosen those, only further restrict. When `scope` is undefined the
   // behaviour is identical to the pre-#215 implementation.
   if (scope) {
-    const verdict = scope.match(candidate.toString());
+    const verdict = scope.match(candidateUrl);
     if (!verdict.allowed) {
+      enforcement?.noteOutOfScopeBlocked();
       throw new Error(`Scope violation blocked: ${verdict.reason}`);
     }
   }
 
-  return candidate.toString();
+  // http_audit path-prefix allowlist (FROZEN CONTRACT). Layered on top of
+  // the host scope above: a URL must pass BOTH the host check and the path
+  // check. Empty path allowlist = allow all paths. Out-of-scope path is
+  // counted as a blocked request, same as a host violation.
+  if (enforcement) {
+    const pathVerdict = enforcement.pathPolicy.match(candidateUrl);
+    if (!pathVerdict.allowed) {
+      enforcement.noteOutOfScopeBlocked();
+      throw new Error(`Scope violation blocked: ${pathVerdict.reason}`);
+    }
+    enforcement.noteInScope();
+  }
+
+  return candidateUrl;
 }
 
 // ── PoC step graph helpers (pwnkit#170) ──
@@ -1940,7 +2024,7 @@ export class ToolExecutor {
   }
 
   private async httpRequest(args: Record<string, unknown>): Promise<ToolResult> {
-    const url = validateTargetUrl(this.ctx.target, args.url as string, this.ctx.scope);
+    const url = validateTargetUrl(this.ctx.target, args.url as string, this.ctx.scope, this.ctx.enforcement);
     const method = (args.method as string) ?? "POST";
     const body = args.body as string | undefined;
     const authHeaders = buildAuthHeaders(this.ctx.authConfig);
@@ -2130,7 +2214,16 @@ export class ToolExecutor {
     if (this.ctx.scope) {
       const verdict = this.ctx.scope.match(resolved.toString());
       if (!verdict.allowed) {
+        this.ctx.enforcement?.noteOutOfScopeBlocked();
         return { success: false, output: null, error: `crawl refused: ${verdict.reason}` };
+      }
+    }
+    // http_audit path allowlist on the crawl seed URL (FROZEN CONTRACT).
+    if (this.ctx.enforcement) {
+      const pathVerdict = this.ctx.enforcement.pathPolicy.match(resolved.toString());
+      if (!pathVerdict.allowed) {
+        this.ctx.enforcement.noteOutOfScopeBlocked();
+        return { success: false, output: null, error: `crawl refused: ${pathVerdict.reason}` };
       }
     }
 
@@ -2167,7 +2260,21 @@ export class ToolExecutor {
       // that only allows prod.example.com.
       if (this.ctx.scope) {
         const verdict = this.ctx.scope.match(normalizedUrl);
-        if (!verdict.allowed) continue;
+        if (!verdict.allowed) {
+          this.ctx.enforcement?.noteOutOfScopeBlocked();
+          continue;
+        }
+      }
+      // http_audit path allowlist per crawled page (FROZEN CONTRACT). Each
+      // page about to be fetched counts as one in-scope or out-of-scope
+      // request for the enforcement_summary.
+      if (this.ctx.enforcement) {
+        const pathVerdict = this.ctx.enforcement.pathPolicy.match(normalizedUrl);
+        if (!pathVerdict.allowed) {
+          this.ctx.enforcement.noteOutOfScopeBlocked();
+          continue;
+        }
+        this.ctx.enforcement.noteInScope();
       }
 
       const controller = new AbortController();
@@ -2351,7 +2458,7 @@ export class ToolExecutor {
     // Validate URL against same-origin policy (same as http_request)
     let resolved: URL;
     try {
-      const validated = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope);
+      const validated = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
       resolved = new URL(validated);
     } catch (err) {
       return { success: false, output: null, error: err instanceof Error ? err.message : `Invalid URL: ${rawUrl}` };
@@ -2434,11 +2541,24 @@ export class ToolExecutor {
       for (const url of urls) {
         const verdict = this.ctx.scope.match(url);
         if (!verdict.allowed) {
+          this.ctx.enforcement?.noteOutOfScopeBlocked();
           return {
             success: false,
             output: null,
             error: `bash refused: command references out-of-scope URL '${url}' (${verdict.reason})`,
           };
+        }
+        // http_audit path allowlist on bash-extracted URLs (FROZEN CONTRACT).
+        if (this.ctx.enforcement) {
+          const pathVerdict = this.ctx.enforcement.pathPolicy.match(url);
+          if (!pathVerdict.allowed) {
+            this.ctx.enforcement.noteOutOfScopeBlocked();
+            return {
+              success: false,
+              output: null,
+              error: `bash refused: command references out-of-path URL '${url}' (${pathVerdict.reason})`,
+            };
+          }
         }
       }
 
@@ -2460,6 +2580,35 @@ export class ToolExecutor {
             error: `bash refused: ${hit.reason}`,
           };
         }
+      }
+    }
+
+    // ── http_audit bash-egress SSRF gate (FROZEN CONTRACT) ──
+    // Close the gap where bash curl/wget/python-http bypasses the
+    // host+path allowlist that http_request/crawl/submit_form enforce.
+    // Any HTTP-egress segment MUST carry at least one explicit http(s) URL
+    // (which the scope+path block above already verified is in-scope AND
+    // in-path). An egress command with no statically-resolvable URL is
+    // refused fail-closed — its destination can't be audited, which defeats
+    // the bounded-egress guarantee of http_audit. Non-egress bash is
+    // untouched. Only active in http_audit mode (enforcement set).
+    if (this.ctx.enforcement) {
+      const egressSegments = detectHttpEgressSegments(command);
+      for (const segment of egressSegments) {
+        const urlsInSegment = extractUrls(segment);
+        if (urlsInSegment.length === 0) {
+          this.ctx.enforcement.noteOutOfScopeBlocked();
+          return {
+            success: false,
+            output: null,
+            error:
+              `bash refused (http_audit): HTTP-egress command '${segment.slice(0, 80)}' has no explicit ` +
+              `in-scope http(s) URL to verify against the host+path allowlist. Use the http_request tool, ` +
+              `or pass a literal in-scope URL.`,
+          };
+        }
+        // URLs present in the segment were already host+path validated in
+        // the scope block above (any out-of-scope URL would have returned).
       }
     }
 
@@ -2610,7 +2759,7 @@ export class ToolExecutor {
           // Validate against same-origin policy (same as http_request/submit_form)
           let url: string;
           try {
-            url = validateTargetUrl(this.ctx.target, rawNavUrl, this.ctx.scope);
+            url = validateTargetUrl(this.ctx.target, rawNavUrl, this.ctx.scope, this.ctx.enforcement);
           } catch (err) {
             return { success: false, output: null, error: err instanceof Error ? err.message : `Invalid URL: ${rawNavUrl}` };
           }

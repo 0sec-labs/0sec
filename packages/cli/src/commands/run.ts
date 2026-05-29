@@ -76,6 +76,18 @@ export interface RunOptions {
   /** `--attribution-ua <token>` (pwnkit#216). */
   attributionUaToken?: string;
   /**
+   * http_audit env-bridge config (FROZEN CONTRACT). Populated by the scan
+   * command from PWNKIT_TARGET_* env vars only when `mode === "http_audit"`;
+   * undefined otherwise. The core (`agenticScan`) turns these into an
+   * in-memory ScopePolicy (host allowlist), PathPolicy (path-prefix
+   * allowlist), per-host RateLimiter, and a wall-clock kill switch, all
+   * aggregated into the report's `enforcement_summary` block.
+   */
+  httpAuditAllowedHosts?: string[];
+  httpAuditAllowedPaths?: string[];
+  httpAuditRateLimitRps?: number;
+  httpAuditKillAfterSec?: number;
+  /**
    * Tool-call dispatch protocol (pwnkit#232) — `json`, `xml`, or `auto`.
    * Threaded into ScanConfig.dispatchMode and consulted only by the
    * legacy text-based agent loop.
@@ -440,6 +452,10 @@ export async function runUnified(opts: RunOptions): Promise<void> {
             attributionHeaders: opts.attributionHeaders,
             attributionUaToken: opts.attributionUaToken,
             dispatchMode: opts.dispatchMode,
+            httpAuditAllowedHosts: opts.httpAuditAllowedHosts,
+            httpAuditAllowedPaths: opts.httpAuditAllowedPaths,
+            httpAuditRateLimitRps: opts.httpAuditRateLimitRps,
+            httpAuditKillAfterSec: opts.httpAuditKillAfterSec,
           },
           dbPath: opts.dbPath,
           onEvent: eventHandler,

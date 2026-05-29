@@ -202,6 +202,10 @@ export type {
   RateLimiterConfig,
 } from "./scope/rate-limit.js";
 
+// http_audit enforcement (path allowlist + counters + kill switch)
+export { PathPolicy, EnforcementTracker } from "./scope/enforcement.js";
+export type { EnforcementSummary, PathMatch } from "./scope/enforcement.js";
+
 export type { DBScan, DBFinding, DBTarget, DBAttackResult } from "./db/schema.js";
 
 // API spec parser

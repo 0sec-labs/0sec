@@ -213,11 +213,21 @@ export class RateLimiter {
    */
   static readonly RETRY_AFTER_FLOOR_MS = 60_000;
 
+  /**
+   * Optional observer invoked once whenever a fetch is actually throttled:
+   * either an `acquire` that had to block because the bucket was dry, or a
+   * 429 response parking the host. Used by the http_audit enforcement
+   * tracker to populate `rate_limited_count`. No-op when unset, so the
+   * normal scan path is unaffected.
+   */
+  private readonly onThrottle?: () => void;
+
   constructor(
     config: RateLimiterConfig,
     opts: {
       nowFn?: () => number;
       sleepFn?: (ms: number) => Promise<void>;
+      onThrottle?: () => void;
     } = {},
   ) {
     this.defaultCfg = config.default;
@@ -229,6 +239,7 @@ export class RateLimiter {
     }
     this.nowFn = opts.nowFn ?? (() => Date.now());
     this.sleepFn = opts.sleepFn ?? defaultSleep;
+    this.onThrottle = opts.onThrottle;
   }
 
   /**
@@ -282,7 +293,15 @@ export class RateLimiter {
   async acquire(urlOrHost: string, n = 1): Promise<void> {
     const host = this.hostKey(urlOrHost);
     if (!host) return;
-    await this.getBucket(host).acquire(n);
+    const bucket = this.getBucket(host);
+    // Detect whether this acquire will block: if the non-blocking path can
+    // satisfy it immediately, no throttle occurred. Otherwise we had to
+    // wait, which is the signal the http_audit summary counts. tryConsume
+    // consumes the token on the fast path, so we only fall through to the
+    // blocking acquire (and fire the observer) when the bucket was dry.
+    if (bucket.tryConsume(n)) return;
+    this.onThrottle?.();
+    await bucket.acquire(n);
   }
 
   /**
@@ -310,6 +329,7 @@ export class RateLimiter {
     if (res.status !== 429) return;
     const host = this.hostKey(urlOrHost);
     if (!host) return;
+    this.onThrottle?.();
     const bucket = this.getBucket(host); // create-on-demand is fine
     const retryAfter = readHeader(res.headers, "retry-after");
     const delayMs = parseRetryAfter(retryAfter, this.nowFn());
