@@ -32,3 +32,12 @@ export const skillsToolDefinitions: Record<string, ToolDefinition> = {
     required: ["skill_id"],
   },
 };
+
+// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// this domain's definitions so a new tool adds its route here, not in a
+// shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
+// executor instance in agent/tools.ts (handler bodies stay private methods).
+export const skillsDispatch: Record<string, string> = {
+  list_skills: "listSkills",
+  load_skill: "loadSkill",
+};

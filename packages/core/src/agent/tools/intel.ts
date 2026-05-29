@@ -83,3 +83,15 @@ export const intelToolDefinitions: Record<string, ToolDefinition> = {
     },
   },
 };
+
+// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// this domain's definitions so a new tool adds its route here, not in a
+// shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
+// executor instance in agent/tools.ts (handler bodies stay private methods).
+export const intelDispatch: Record<string, string> = {
+  intel_search_advisories: "intelSearchAdvisories",
+  intel_lookup_cve: "intelLookupCve",
+  intel_search_similar: "intelSearchSimilar",
+  intel_build_dossier: "intelBuildDossier",
+  intel_search_target_history: "intelSearchTargetHistory",
+};

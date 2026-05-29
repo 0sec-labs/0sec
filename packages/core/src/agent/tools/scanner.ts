@@ -93,3 +93,14 @@ export const SCANNER_TOOL_NAMES: ReadonlyArray<string> = [
   "run_ffuf",
   "run_nuclei",
 ];
+
+// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// this domain's definitions so a new tool adds its route here, not in a
+// shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
+// executor instance in agent/tools.ts (handler bodies stay private methods).
+export const scannerDispatch: Record<string, string> = {
+  run_sqlmap: "runSqlmap",
+  run_nmap: "runNmap",
+  run_ffuf: "runFfuf",
+  run_nuclei: "runNuclei",
+};

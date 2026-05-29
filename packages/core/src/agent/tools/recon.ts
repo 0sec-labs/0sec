@@ -132,3 +132,17 @@ export const reconToolDefinitions: Record<string, ToolDefinition> = {
     },
   },
 };
+
+// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// this domain's definitions so a new tool adds its route here, not in a
+// shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
+// executor instance in agent/tools.ts (handler bodies stay private methods).
+export const reconDispatch: Record<string, string> = {
+  http_request: "httpRequest",
+  send_prompt: "sendPromptTool",
+  crawl: "crawl",
+  submit_form: "submitForm",
+  browser: "browserAction",
+  web_search: "webSearch",
+  wp_fingerprint: "wpFingerprint",
+};

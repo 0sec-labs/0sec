@@ -105,6 +105,12 @@ import {
 import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES } from "./tools/index.js";
 export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES };
 
+// Tool-name → handler-method-name routing table (pwnkit#614), assembled from
+// per-domain `*Dispatch` maps. `ToolExecutor._dispatch` resolves the handler
+// off the instance by this name, replacing the hand-written switch so adding a
+// tool no longer edits a shared dispatch chokepoint.
+import { TOOL_DISPATCH } from "./tools/dispatch.js";
+
 // ── Sensitive env filtering ──
 
 const SENSITIVE_ENV_PATTERNS = [
@@ -1678,76 +1684,24 @@ export class ToolExecutor {
 
   private async _dispatch(call: ToolCall): Promise<ToolResult> {
     try {
-      switch (call.name) {
-        case "http_request":
-          return await this.httpRequest(call.arguments);
-        case "send_prompt":
-          return await this.sendPromptTool(call.arguments);
-        case "save_finding":
-          return this.saveFinding(call.arguments);
-        case "query_findings":
-          return this.queryFindings(call.arguments);
-        case "use_loot":
-          return this.useLoot(call.arguments);
-        case "update_finding":
-          return this.updateFinding(call.arguments);
-        case "read_file":
-          return this.readFile(call.arguments);
-        case "apply_patch":
-          return this.applyPatch(call.arguments);
-        case "run_command":
-          return this.runCommand(call.arguments);
-        case "crawl":
-          return await this.crawl(call.arguments);
-        case "submit_form":
-          return await this.submitForm(call.arguments);
-        case "access_control_probe":
-          return await this.accessControlProbe(call.arguments);
-        case "update_target":
-          return this.updateTarget(call.arguments);
-        case "bash":
-          return await this.shellExec(call.arguments);
-        case "browser":
-          return await this.browserAction(call.arguments);
-        case "web_search":
-          return await this.webSearch(call.arguments);
-        case "intel_search_advisories":
-          return await this.intelSearchAdvisories(call.arguments);
-        case "intel_lookup_cve":
-          return await this.intelLookupCve(call.arguments);
-        case "intel_search_similar":
-          return await this.intelSearchSimilar(call.arguments);
-        case "intel_build_dossier":
-          return await this.intelBuildDossier(call.arguments);
-        case "intel_search_target_history":
-          return await this.intelSearchTargetHistory(call.arguments);
-        case "payload_lookup":
-          return this.payloadLookup(call.arguments);
-        case "pty_session":
-          return await this.ptySession(call.arguments);
-        case "spawn_agent":
-          return await this.spawnAgent(call.arguments);
-        case "wp_fingerprint":
-          return await this.wpFingerprint(call.arguments);
-        case "mongo_objectid":
-          return this.mongoObjectIdForge(call.arguments);
-        case "list_skills":
-          return this.listSkills(call.arguments);
-        case "load_skill":
-          return this.loadSkill(call.arguments);
-        case "run_sqlmap":
-          return await this.runSqlmap(call.arguments);
-        case "run_nmap":
-          return await this.runNmap(call.arguments);
-        case "run_ffuf":
-          return await this.runFfuf(call.arguments);
-        case "run_nuclei":
-          return await this.runNuclei(call.arguments);
-        case "done":
-          return this.markDone(call.arguments);
-        default:
-          return { success: false, output: null, error: `Unknown tool: ${call.name}` };
+      // Resolve the handler off this instance by name. TOOL_DISPATCH (assembled
+      // from the per-domain `*Dispatch` maps in tools/) is the single seam where
+      // a tool name meets its still-private handler method; the cast is
+      // contained here and guarded by tools/dispatch.test.ts, which pins the
+      // full routing and asserts every name resolves to a real method. An
+      // unmapped (or, defensively, unresolvable) name returns the same
+      // "Unknown tool" result the previous switch's default did.
+      const methodName = TOOL_DISPATCH[call.name];
+      const handler = methodName
+        ? (this as unknown as Record<
+            string,
+            (args: Record<string, unknown>) => ToolResult | Promise<ToolResult>
+          >)[methodName]
+        : undefined;
+      if (typeof handler !== "function") {
+        return { success: false, output: null, error: `Unknown tool: ${call.name}` };
       }
+      return await handler.call(this, call.arguments);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: msg };
