@@ -3,6 +3,7 @@ import type { ScopePolicy } from "../scope/scope.js";
 import type { RateLimiter } from "../scope/rate-limit.js";
 import type { AttributionConfig } from "../scope/attribution.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
+import type { LootLedger } from "./loot.js";
 
 // ── Agent Roles ──
 
@@ -186,6 +187,17 @@ export interface ToolContext {
    * "Skill already loaded" message instead of burning tokens.
    */
   loadedSkills?: Set<string>;
+  /**
+   * Typed loot / foothold ledger (pwnkit#567). When set, `save_finding`
+   * harvests reusable artifacts (credentials, tokens, cookies, hashes,
+   * endpoints, paths) from the finding's evidence into it, and the `use_loot`
+   * tool reads from it so the agent can replay a captured artifact in a
+   * follow-up request to chain to higher impact. The agent loop also harvests
+   * from evidence-bearing tool results and re-injects a compact "known
+   * footholds" block each turn. Created only when `features.lootLedger` is on;
+   * undefined otherwise so the default scan path is unchanged.
+   */
+  loot?: LootLedger;
 }
 
 // ── Dispatch Mode (pwnkit#232) ──

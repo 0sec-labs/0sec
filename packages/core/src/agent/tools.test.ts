@@ -12,10 +12,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ORIGINAL_JIT_SKILLS_ENV = process.env.PWNKIT_FEATURE_JIT_SKILLS;
+const ORIGINAL_LOOT_LEDGER_ENV = process.env.PWNKIT_FEATURE_LOOT_LEDGER;
 
 afterEach(() => {
   if (ORIGINAL_JIT_SKILLS_ENV === undefined) delete process.env.PWNKIT_FEATURE_JIT_SKILLS;
   else process.env.PWNKIT_FEATURE_JIT_SKILLS = ORIGINAL_JIT_SKILLS_ENV;
+  if (ORIGINAL_LOOT_LEDGER_ENV === undefined) delete process.env.PWNKIT_FEATURE_LOOT_LEDGER;
+  else process.env.PWNKIT_FEATURE_LOOT_LEDGER = ORIGINAL_LOOT_LEDGER_ENV;
 });
 
 // ── Tool Registry ──
@@ -87,10 +90,15 @@ describe("getToolsForRole", () => {
 
   it("audit role gets all enabled tools", () => {
     process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    // Pin the loot flag ON so the count is deterministic regardless of ambient
+    // env: use_loot (pwnkit#567) is then in the enabled set, leaving exactly
+    // the two JIT-skill tools gated out below.
+    process.env.PWNKIT_FEATURE_LOOT_LEDGER = "1";
     const tools = getToolsForRole("audit");
     const names = tools.map((t) => t.name);
     expect(names).not.toContain("list_skills");
     expect(names).not.toContain("load_skill");
+    expect(names).toContain("use_loot");
     expect(tools.length).toBe(Object.keys(TOOL_DEFINITIONS).length - 2);
   });
 

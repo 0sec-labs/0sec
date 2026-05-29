@@ -399,6 +399,34 @@ export const features = {
   get journalRehydrate(): boolean {
     return env("PWNKIT_FEATURE_JOURNAL_REHYDRATE", false);
   },
+
+  /**
+   * Loot / foothold ledger for opportunistic exploit chaining (#567).
+   *
+   * When ON, the attack/discovery/verify agents maintain a typed `LootLedger`
+   * (credential | token | path | endpoint | hash | cookie) populated from
+   * `save_finding` evidence AND from evidence-bearing tool results
+   * (http_request / crawl / submit_form / send_prompt / browser / read_file /
+   * bash). A compact "known footholds" block is re-injected into the agent's
+   * context each turn (re-rendered from structured state, so it survives
+   * compaction), and a `use_loot` tool lets the agent retrieve full artifact
+   * values on demand to replay them in follow-up requests. This is the cheap,
+   * deterministic alternative to EGATS tree-search (which is disabled) — it
+   * stays inside the existing single agent loop, adds no new search layer.
+   *
+   * Default ON: it's purely additive (extra context awareness + one read-only
+   * tool), matches the `preserveCriticalMessages` rationale — recovering a
+   * credential in turn 12 that's needed in turn 38 is a large win on long-tail
+   * challenges — and the cost (a short, size-capped block per turn) is small.
+   * Disable via PWNKIT_FEATURE_LOOT_LEDGER=0 or `--no-loot-ledger` for
+   * ablation. Implemented as a getter so the CLI `--features` flag (which sets
+   * the env var inside the command action, AFTER this module has been
+   * imported) is honored at tool-dispatch / injection time — matches the
+   * wpFingerprint / preserveCriticalMessages pattern.
+   */
+  get lootLedger(): boolean {
+    return env("PWNKIT_FEATURE_LOOT_LEDGER", true);
+  },
 };
 
 function env(key: string, defaultValue: boolean): boolean {

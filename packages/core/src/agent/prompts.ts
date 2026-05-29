@@ -79,6 +79,24 @@ Save important discoveries (credentials, endpoints, tokens, attack plans) to {{E
 \`echo '{"creds":["admin:pass"],"endpoints":["/api/users"],"plan":"try IDOR on /api/users/2"}' > {{EXTERNAL_MEMORY_PATH}}\`
 Update it whenever you discover something new.`;
 
+// pwnkit#567 — loot / foothold ledger guidance. Appended to the attack-oriented
+// system prompts (flag-gated, mirrors EXTERNAL_MEMORY_INSTRUCTION). The ledger
+// itself is populated and re-injected by the agent loop; this primes the agent
+// to expect a "known footholds" block and to actively reuse it for chaining.
+const LOOT_LEDGER_INSTRUCTION = `
+
+## Footholds & chaining
+
+Secrets and footholds you uncover (credentials, tokens, session cookies,
+password hashes, endpoints, sensitive file paths) are captured automatically
+into a loot ledger and surfaced back to you as a "Known footholds" block. Treat
+every captured artifact as a lead to CHAIN: log in with a leaked credential,
+replay a captured session cookie, hit a discovered internal endpoint, or crack
+a captured hash — then turn that access into a higher-severity finding. Call the
+\`use_loot\` tool to retrieve the full value of any foothold (the summary may
+truncate long ones) before you replay it in a request. The best findings come
+from combining footholds, not from single isolated probes.`;
+
 // ---------------------------------------------------------------------------
 // Shared attack-technique sections  (#422)
 // ---------------------------------------------------------------------------
@@ -290,7 +308,7 @@ Only save findings where:
 1. The sink is reachable through a realistic, unintended attack path
 2. The attacker's input comes from a network-ingestion point (HTTP request body/query/header, file upload, user-supplied URL)
 3. The impact involves privilege escalation, data exfiltration, or lateral movement — not self-DoS
-4. The package's own documentation doesn't already warn about this usage${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}`;
+4. The package's own documentation doesn't already warn about this usage${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}`;
 }
 
 export function webPentestPrompt(target: string, opts?: { hasBrowser?: boolean; auth?: AuthConfig }): string {
@@ -360,7 +378,7 @@ ${IDOR_SECTION}
 - Be thorough: test every input field and parameter you discover
 - Do NOT report missing security headers as critical/high — they are typically medium/low
 
-When done testing all categories, call the done tool with a summary of findings.${browserSection}${buildAuthPromptBlock(opts?.auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}`;
+When done testing all categories, call the done tool with a summary of findings.${browserSection}${buildAuthPromptBlock(opts?.auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}`;
 }
 
 export function webPentestDiscoveryPrompt(target: string, auth?: AuthConfig): string {
@@ -499,7 +517,7 @@ When you find a vulnerability:
 10. Do NOT give up after one failed payload — try ALL variations.
 11. Call done with a summary when you have exhausted the realistic audit surface.
 
-If the target uses MongoDB-style 24-char hex IDs (ObjectIds) and you suspect an IDOR vulnerability, the \`mongo_objectid\` tool can forge IDs with arbitrary timestamp + counter. The 'first user' has counter 0 — copy the 5-byte machine ID from any observed ObjectId.${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}`;
+If the target uses MongoDB-style 24-char hex IDs (ObjectIds) and you suspect an IDOR vulnerability, the \`mongo_objectid\` tool can forge IDs with arbitrary timestamp + counter. The 'first user' has counter 0 — copy the 5-byte machine ID from any observed ObjectId.${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}`;
 }
 
 export function verifyPrompt(target: string, findings: Finding[], auth?: AuthConfig): string {
@@ -934,7 +952,7 @@ observed in real scans and will fail the engagement if you fall into them:
 - **Repeat-payload trap**: If you've already sent a specific payload to a
   specific endpoint and it failed, do not send the same payload again
   later "to double-check". Mutate it or move on.
-${scriptSection}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}
+${scriptSection}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}
 ## Rules
 - Read ALL response headers and cookies after every request
 - Log in FIRST if there is a login form

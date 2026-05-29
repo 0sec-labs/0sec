@@ -14,6 +14,7 @@ import type {
   VerificationBehaviorStep,
 } from "@pwnkit/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
+import type { LootKind } from "./loot.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import { extractUrls } from "../scope/scope.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
@@ -447,6 +448,26 @@ export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
         enum: ["discovered", "confirmed", "false-positive"],
       },
       limit: { type: "number", description: "Max results to return (default 20)" },
+    },
+  },
+
+  // pwnkit#567 — retrieve previously captured footholds for exploit chaining.
+  use_loot: {
+    name: "use_loot",
+    description:
+      "Retrieve footholds (credentials, tokens, cookies, hashes, endpoints, sensitive paths) captured EARLIER this scan so you can REUSE them in a follow-up request and chain to higher impact — e.g. authenticate with a leaked credential, replay a session cookie, hit a discovered endpoint, or crack a captured hash. Returns the FULL stored values (the per-turn 'known footholds' summary may truncate long ones). Optionally filter by kind and/or a case-insensitive substring.",
+    parameters: {
+      kind: {
+        type: "string",
+        description: "Optional: only return loot of this kind.",
+        enum: ["credential", "token", "path", "endpoint", "hash", "cookie"],
+      },
+      search: {
+        type: "string",
+        description:
+          "Optional: only return loot whose id, value, or context contains this substring (case-insensitive).",
+      },
+      id: { type: "string", description: "Optional: return only the loot item with this id (e.g. 'loot-3')." },
     },
   },
 
@@ -1988,6 +2009,8 @@ export class ToolExecutor {
           return this.saveFinding(call.arguments);
         case "query_findings":
           return this.queryFindings(call.arguments);
+        case "use_loot":
+          return this.useLoot(call.arguments);
         case "update_finding":
           return this.updateFinding(call.arguments);
         case "read_file":
@@ -3152,7 +3175,60 @@ export class ToolExecutor {
       this.db.saveFinding(this.ctx.scanId, finding);
     }
 
+    // pwnkit#567 — harvest reusable footholds (credentials/tokens/cookies/…)
+    // out of this finding's evidence into the loot ledger so the agent can
+    // chain them into follow-up requests via `use_loot`. No-op when the loot
+    // feature is off (ctx.loot undefined). Best-effort: a harvest failure must
+    // never block a finding from being saved.
+    try {
+      this.ctx.loot?.harvestFromFinding(finding);
+    } catch {
+      /* harvesting is best-effort and must not abort save_finding */
+    }
+
     return { success: true, output: { findingId: finding.id, message: "Finding saved" } };
+  }
+
+  /**
+   * `use_loot` (pwnkit#567) — return previously captured footholds so the agent
+   * can replay a leaked credential / token / cookie / endpoint / hash / path in
+   * a follow-up request. Read-only and TRUSTED (we construct the output). When
+   * the loot feature is off (no ledger), returns an empty, explanatory result
+   * rather than an error so the call is always safe.
+   */
+  private useLoot(args: Record<string, unknown>): ToolResult {
+    const ledger = this.ctx.loot;
+    if (!ledger || ledger.size === 0) {
+      return {
+        success: true,
+        output: {
+          count: 0,
+          items: [],
+          message:
+            "No footholds captured yet. Keep probing — leaked credentials, tokens, cookies, endpoints, and hashes are harvested automatically and will appear here for reuse.",
+        },
+      };
+    }
+    const kindArg = typeof args.kind === "string" ? args.kind : undefined;
+    const items = ledger.query({
+      kind: kindArg as LootKind | undefined,
+      search: typeof args.search === "string" ? args.search : undefined,
+      id: typeof args.id === "string" ? args.id : undefined,
+    });
+    return {
+      success: true,
+      output: {
+        count: items.length,
+        items: items.map((it) => ({
+          id: it.id,
+          kind: it.kind,
+          value: it.value,
+          source: it.source,
+          context: it.context,
+          turn: it.turn,
+        })),
+      },
+    };
   }
 
   private queryFindings(args: Record<string, unknown>): ToolResult {
@@ -4071,6 +4147,8 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   const wpTools = featureFlags.wpFingerprint ? ["wp_fingerprint"] : [];
   const mongoTools = featureFlags.mongoObjectIdForge ? ["mongo_objectid"] : [];
   const skillTools = featureFlags.jitSkills ? ["list_skills", "load_skill"] : [];
+  // pwnkit#567 — loot retrieval tool, only when the ledger feature is on.
+  const lootTools = featureFlags.lootLedger ? ["use_loot"] : [];
   const networkTools = [
     "http_request",
     "crawl",
@@ -4083,6 +4161,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     ...wpTools,
     ...mongoTools,
     ...skillTools,
+    ...lootTools,
     "send_prompt",
     "save_finding",
     "update_finding",
@@ -4091,7 +4170,10 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   ];
   const fileTools = ["read_file", "apply_patch", "run_command"];
   const allEnabledTools = Object.keys(TOOL_DEFINITIONS).filter((name) =>
-    featureFlags.jitSkills || (name !== "list_skills" && name !== "load_skill"),
+    (featureFlags.jitSkills || (name !== "list_skills" && name !== "load_skill"))
+    // Keep use_loot out of the audit/review "everything" set when the loot
+    // ledger feature is off (parity with the JIT-skill gating above).
+    && (featureFlags.lootLedger || name !== "use_loot"),
   );
 
   const roleTools: Record<string, string[]> = {

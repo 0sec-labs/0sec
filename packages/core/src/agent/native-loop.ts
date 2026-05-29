@@ -14,6 +14,7 @@ import type { AttributionConfig } from "../scope/attribution.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
+import { LootLedger } from "./loot.js";
 import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
 import { loadJournal, rehydrateContext, renderSeedMessages } from "./journal/index.js";
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
@@ -43,6 +44,22 @@ import type { Finding, AttackResult, TargetInfo } from "@pwnkit/shared";
 // the conversation so the agent doesn't lose track of discoveries.
 function externalMemoryPath(scanId?: string): string {
   return `/tmp/pwnkit-state-${scanId ?? randomUUID()}.json`;
+}
+
+// ── Loot harvesting (pwnkit#567) ──
+// Tools whose result text reflects target data worth mining for footholds.
+// `isUntrustedSourceTool` already covers http_request / crawl / read_file /
+// send_prompt / submit_form / browser; bash + run_command are added because
+// they routinely shell out to curl / cat and surface the same kind of
+// credentials, tokens, and paths. Our own trusted bookkeeping tools
+// (save_finding / query_findings / use_loot / done) are deliberately excluded
+// — save_finding harvests via its own evidence path in the executor.
+function shouldHarvestLoot(toolName: string): boolean {
+  return (
+    isUntrustedSourceTool(toolName) ||
+    toolName === "bash" ||
+    toolName === "run_command"
+  );
 }
 
 // ── Reasoning summary heuristic ──
@@ -253,6 +270,12 @@ export async function runNativeAgentLoop(
     config.systemPrompt = config.systemPrompt.replaceAll("{{EXTERNAL_MEMORY_PATH}}", memoryPath);
   }
 
+  // pwnkit#567 — loot / foothold ledger. Created only when the feature is on;
+  // threaded through ToolContext so save_finding harvests into it and use_loot
+  // reads from it. The loop below also harvests from evidence-bearing tool
+  // results and re-injects a compact "known footholds" block each turn.
+  const loot = features.lootLedger ? new LootLedger() : undefined;
+
   const toolCtx: ToolContext = {
     target: config.target,
     scanId: config.scanId,
@@ -268,6 +291,7 @@ export async function runNativeAgentLoop(
     enforcement: config.enforcement,
     allowScanners: config.allowScanners,
     attribution: config.attribution,
+    loot,
   };
 
   const executor = new ToolExecutor(toolCtx, db);
@@ -400,6 +424,14 @@ export async function runNativeAgentLoop(
   // Dynamic playbook injection — only inject once per session
   let playbookInjected = false;
   const recentToolResultTexts: string[] = [];
+
+  // pwnkit#567 — loot-injection cadence. Re-surface the "known footholds"
+  // block when the ledger grew since the last injection, or at least every
+  // LOOT_REINJECT_INTERVAL turns so a foothold captured early stays in the
+  // recent context window even after the original tool result scrolls/compacts
+  // away. -1 sentinels force a first injection as soon as loot exists.
+  let lastInjectedLootRevision = -1;
+  let lastLootInjectionTurn = -1;
 
   // JIT skill tracking (#458): share the recentToolResultTexts buffer and
   // a persistent loadedSkills set with the ToolContext so skill tools can
@@ -1018,6 +1050,19 @@ export async function runNativeAgentLoop(
       let resultContent = toolResult.success
         ? JSON.stringify(toolResult.output)
         : `Error: ${toolResult.error}`;
+      // pwnkit#567 — harvest reusable footholds from evidence-bearing tool
+      // results into the loot ledger. Done on the RAW output (before the
+      // injection-marker sanitizer rewrites it) and only for tools whose
+      // output reflects target data — never our own trusted bookkeeping
+      // results (save_finding / query_findings / use_loot / done). Best-effort:
+      // a harvest failure must never abort the agent loop.
+      if (loot && toolResult.success && shouldHarvestLoot(block.name)) {
+        try {
+          loot.harvest(resultContent, block.name, state.turnCount);
+        } catch {
+          /* harvesting is best-effort */
+        }
+      }
       if (toolResult.success && isUntrustedSourceTool(block.name)) {
         const sanitized = sanitizeUntrustedToolResult(resultContent);
         resultContent = sanitized.content;
@@ -1098,6 +1143,46 @@ export async function runNativeAgentLoop(
               timestamp: Date.now(),
             });
           }
+        }
+      }
+    }
+
+    // ── Known-footholds (loot) injection (pwnkit#567) ──
+    // Re-surface captured footholds so the agent reuses them to chain to
+    // higher impact. The block is re-rendered from the structured ledger (not
+    // the original tool result), so it survives context compaction. Throttled:
+    // inject when the ledger grew since the last injection, OR at least every
+    // LOOT_REINJECT_INTERVAL turns — that keeps an early credential in the
+    // recent window without re-pushing identical text every single turn.
+    const LOOT_REINJECT_INTERVAL = 3;
+    if (
+      loot
+      && loot.size > 0
+      && (loot.revision !== lastInjectedLootRevision
+        || state.turnCount - lastLootInjectionTurn >= LOOT_REINJECT_INTERVAL)
+    ) {
+      const lootText = loot.render({ limit: 12 });
+      if (lootText) {
+        state.messages.push({
+          role: "user",
+          content: [{ type: "text", text: lootText }],
+        });
+        lastInjectedLootRevision = loot.revision;
+        lastLootInjectionTurn = state.turnCount;
+        onEvent?.("loot_injected", {
+          turn: state.turnCount,
+          count: loot.size,
+          revision: loot.revision,
+        });
+        if (db) {
+          db.logEvent({
+            scanId: config.scanId,
+            stage: config.role,
+            eventType: "loot_injected",
+            agentRole: config.role,
+            payload: { turn: state.turnCount, count: loot.size, revision: loot.revision },
+            timestamp: Date.now(),
+          });
         }
       }
     }
