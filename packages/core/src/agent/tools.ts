@@ -31,6 +31,7 @@ import {
 } from "./wp-fingerprint.js";
 import { validateFlagShape } from "./flag-validator.js";
 import { extractPocStepsFromProse } from "./poc-steps-from-prose.js";
+import { isUntrustedSourceTool } from "../untrusted-sanitizer.js";
 import { computeFindingConfidence } from "./finding-confidence.js";
 import {
   validateFindingDraft,
@@ -236,6 +237,25 @@ async function runBashWithWallclock(
 }
 
 // ── Tool Registry ──
+
+// ── Tool trust level (#558) ───────────────────────────────────────────────
+//
+// A tool result is either TRUSTED (we constructed it — save_finding,
+// query_findings, done, the intel_* summaries, …) or UNTRUSTED (its payload is
+// attacker-influenced target output — http_request / crawl / read_file /
+// send_prompt / submit_form / browser / any MCP tool). UNTRUSTED results are
+// run through `sanitizeUntrustedToolResult` before they re-enter model context
+// (see `agent/native-loop.ts`). The classification itself lives next to the
+// sanitizer so the marker set and the trust set stay in one place; we re-export
+// it here so the trust level is discoverable from the canonical tool registry.
+export type ToolTrustLevel = "trusted" | "untrusted";
+
+export { isUntrustedSourceTool };
+
+/** Trust level for a tool's result content. See `isUntrustedSourceTool`. */
+export function toolTrustLevel(toolName: string, isMcp = false): ToolTrustLevel {
+  return isUntrustedSourceTool(toolName, isMcp) ? "untrusted" : "trusted";
+}
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
   http_request: {

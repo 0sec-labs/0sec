@@ -20,6 +20,10 @@ import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
 import { formatJitSkillsInstruction } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
 import { eventBus, isCloudEventSinkActive } from "../events/bus.js";
+import {
+  isUntrustedSourceTool,
+  sanitizeUntrustedToolResult,
+} from "../untrusted-sanitizer.js";
 import { DeltaBatcherSet } from "./delta-batcher.js";
 import { toolCallPreview } from "./tool-preview.js";
 import { registerSignalCleanup } from "./signal-cleanup.js";
@@ -877,13 +881,36 @@ export async function runNativeAgentLoop(
         state.summary = (toolResult.output as { summary: string }).summary;
       }
 
-      // Build tool_result block
+      // Build tool_result block.
+      //
+      // Inbound prompt-injection defense (#558): output from untrusted-source
+      // tools (http_request / crawl / read_file / send_prompt / submit_form /
+      // browser / MCP) is attacker-influenced. Before it re-enters model
+      // context — and before it feeds the recentToolResultTexts buffer used by
+      // dynamic playbooks + JIT skills below — we wrap it in DATA-not-
+      // instructions delimiters and NEUTRALIZE (escape + annotate, never drop)
+      // common injection markers. Our own structured outputs (save_finding,
+      // query_findings, done, …) are trusted and pass through untouched.
+      // Deterministic / pattern-based only; no LLM-guards-LLM.
+      let resultContent = toolResult.success
+        ? JSON.stringify(toolResult.output)
+        : `Error: ${toolResult.error}`;
+      if (toolResult.success && isUntrustedSourceTool(block.name)) {
+        const sanitized = sanitizeUntrustedToolResult(resultContent);
+        resultContent = sanitized.content;
+        if (sanitized.neutralized) {
+          eventBus.emit("untrusted_input_sanitized", {
+            tool: block.name,
+            turn: state.turnCount,
+            role: config.role,
+            markers: sanitized.markers,
+          });
+        }
+      }
       toolResultBlocks.push({
         type: "tool_result",
         tool_use_id: block.id,
-        content: toolResult.success
-          ? JSON.stringify(toolResult.output)
-          : `Error: ${toolResult.error}`,
+        content: resultContent,
         is_error: !toolResult.success,
       });
     }

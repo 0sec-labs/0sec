@@ -229,6 +229,27 @@ export interface SkillListedPayload {
   role?: string;
 }
 
+// ── Inbound prompt-injection defense (#558) ───────────────────────────────
+
+/**
+ * Fired when `sanitizeUntrustedToolResult` neutralizes one or more injection
+ * markers in untrusted tool output (HTTP body, crawled HTML, file content,
+ * MCP result) BEFORE that content re-enters model context. This is the
+ * self-defense analogue of the `mcp-indirect-prompt-injection` probe: the
+ * probe records a finding when the *target* is vulnerable; this event records
+ * that OUR harness defanged an attempted indirect injection against itself.
+ */
+export interface UntrustedInputSanitizedPayload {
+  /** The untrusted-source tool whose result was sanitized. */
+  tool: string;
+  /** Agent turn the sanitization happened on. */
+  turn?: number;
+  role?: string;
+  /** Distinct marker labels neutralized (e.g. "instruction-override"). */
+  markers: string[];
+  [k: string]: unknown;
+}
+
 /**
  * Token-level streaming delta. Emitted by the agent loop while the runtime
  * is still streaming the assistant's text or reasoning channel — each emit
@@ -274,7 +295,8 @@ export type PwnkitEvent =
   | { type: "reasoning_summary"; payload: ReasoningSummaryPayload }
   | { type: "delta"; payload: DeltaPayload }
   | { type: "skill_loaded"; payload: SkillLoadedPayload }
-  | { type: "skill_listed"; payload: SkillListedPayload };
+  | { type: "skill_listed"; payload: SkillListedPayload }
+  | { type: "untrusted_input_sanitized"; payload: UntrustedInputSanitizedPayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = PwnkitEvent["type"];
