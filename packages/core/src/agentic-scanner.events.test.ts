@@ -146,7 +146,10 @@ describe("agenticScan: scan_completed emission", () => {
     const completedEvents = events.filter((e) => e.type === "scan_completed");
     expect(completedEvents).toHaveLength(1);
     expect(completedEvents[0]!.payload.exit_reason).toBe("completed");
-  });
+    // #618 — this exercises a real agent-loop path that retries on a simulated
+    // Azure 500, so it legitimately takes ~6s and races the 5s default
+    // testTimeout under full-suite parallelism. Bump it per-test.
+  }, 15000);
 });
 
 describe("agenticScan: planner LLM error mid-scan", () => {
@@ -249,5 +252,7 @@ describe("agenticScan: planner LLM error mid-scan", () => {
     // The summary should carry the planner error string verbatim so the
     // cloud relay can surface it as the failure reason.
     expect(completedEvents[0]!.payload.summary).toBe(errorMessage);
-  });
+    // #618 — same as above: a real retry-on-500 agent-loop path takes ~6s and
+    // races the 5s default testTimeout under full-suite parallelism.
+  }, 15000);
 });
