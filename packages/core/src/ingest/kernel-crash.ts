@@ -3,6 +3,11 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import type { Finding, AttackCategory, CrashReport, CrashType } from "@pwnkit/shared";
 import type { Severity } from "@pwnkit/shared";
+import {
+  classifyKernelPrimitive,
+  exploitabilityAdjustedSeverity,
+  describeKernelPrimitive,
+} from "../triage/kernel-primitive.js";
 
 export interface KernelCrashArtifact {
   sourcePath: string;
@@ -382,7 +387,11 @@ export function crashSeverity(report: CrashReport): Severity {
 
 export function crashToFinding(report: CrashReport): Finding {
   const category = crashTypeToCategory(report.crashType);
-  const severity = crashSeverity(report);
+  // Base severity from the crash-type heuristic, then escalate to reflect the
+  // synthesised exploitation primitive (issue #569 — severity reflects
+  // exploitability, not just the bug class).
+  const primitive = classifyKernelPrimitive(report);
+  const severity = exploitabilityAdjustedSeverity(crashSeverity(report), primitive);
   const stackSummary = report.callStack.slice(0, 5).join(" → ");
 
   const accessDetails = report.accessType
@@ -393,6 +402,7 @@ export function crashToFinding(report: CrashReport): Finding {
     `Kernel ${report.crashType} detected in function ${report.faultingFunction}.`,
     accessDetails ? `Access: ${accessDetails}.` : "",
     report.subsystem !== "unknown" ? `Subsystem: ${report.subsystem}.` : "",
+    `Primitive: ${primitive.kind} (control=${primitive.control}, exploitability=${primitive.exploitability.toFixed(2)}).`,
     stackSummary ? `Call path: ${stackSummary}.` : "",
     report.kernelVersion ? `Kernel version: ${report.kernelVersion}.` : "",
   ].filter(Boolean).join("\n");
@@ -407,6 +417,7 @@ export function crashToFinding(report: CrashReport): Finding {
   if (report.allocSite) analysisLines.push(`Alloc site: ${report.allocSite}`);
   if (report.freeSite) analysisLines.push(`Free site: ${report.freeSite}`);
   if (report.accessType) analysisLines.push(`Access: ${report.accessType} size=${report.accessSize ?? "?"}`);
+  analysisLines.push("", "---primitive---", ...describeKernelPrimitive(primitive));
 
   // Confidence by crash type reliability
   let confidence = 0.4;

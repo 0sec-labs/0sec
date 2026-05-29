@@ -60,6 +60,17 @@ import {
   extractKernelFindingMetadata,
   selectSubsystemSourceSlice,
 } from "./kernel-prompts.js";
+import {
+  classifyPrimitiveFromDmesg,
+  describeKernelPrimitive,
+  exploitabilityAdjustedSeverity,
+  type KernelPrimitive,
+} from "../triage/kernel-primitive.js";
+import {
+  minimizeReproducer,
+  makeKernelMinimizeOracle,
+  type MinimizeResult,
+} from "./reproducer-minimize.js";
 
 // ── Public types ─────────────────────────────────────────────────────────
 
@@ -90,6 +101,19 @@ export interface KernelVerifyResult {
   /** The winning reproducer when status is `confirmed` or `soft_hit`. */
   generated_program?: string;
   generated_program_lang?: "syz" | "c";
+  /**
+   * Synthesised exploitation primitive (issue #569) for confirmed / soft-hit
+   * results — UAF / OOB-write / double-free / ... plus a bounded control-demo
+   * step. Undefined when no crash fired.
+   */
+  primitive?: KernelPrimitive;
+  /**
+   * Minimized reproducer (issue #569), populated when `opts.minimize` is set
+   * and the result is `confirmed`. `generated_program` is replaced with the
+   * minimized source; this carries the before/after stats.
+   */
+  minimized_program?: string;
+  minimization?: MinimizeResult;
   attempts: KernelVerifyAttempt[];
   /** Free-form reason — populated for non-confirmed verdicts. */
   reason?: string;
@@ -118,6 +142,14 @@ export interface KernelVerifyOptions {
   sourceSlice?: Array<{ relativePath: string; content: string }>;
   /** Optional override for the Tier-1 cache root. */
   cacheDir?: string;
+  /**
+   * Run a delta-debug minimization pass on the confirmed reproducer (issue
+   * #569). Off by default — each minimization candidate boots QEMU, so callers
+   * opt in. Uses the same Tier-1 `runner` as the verify loop.
+   */
+  minimize?: boolean;
+  /** Oracle-call budget for the minimization pass. Default 60. */
+  minimizeMaxOracleCalls?: number;
 }
 
 /**
@@ -469,13 +501,16 @@ export async function verifyStaticKernelFinding(
         // Win condition.
         if (result.oracle.signatureMatched) {
           messages.push({ role: "user", content: toolResults });
-          return finalize({
+          const confirmed = finalize({
             status: "confirmed",
             finding,
             attempts,
             lastSoftHit,
             winning: attempt,
           });
+          return opts.minimize
+            ? await minimizeConfirmedReproducer(confirmed, attempt, opts, runner, finding)
+            : confirmed;
         }
 
         // Soft hit: a kernel crash fired but signature didn't match. Track
@@ -538,6 +573,7 @@ function finalize(args: FinalizeArgs): KernelVerifyResult {
         signature: args.winning?.oracle?.detectedCrashType,
         generated_program: args.winning?.program,
         generated_program_lang: args.winning?.programLang,
+        primitive: primitiveFromAttempt(args.winning),
         attempts: args.attempts,
       };
     case "soft_hit":
@@ -547,6 +583,7 @@ function finalize(args: FinalizeArgs): KernelVerifyResult {
         signature: args.lastSoftHit?.oracle?.detectedCrashType,
         generated_program: args.lastSoftHit?.program,
         generated_program_lang: args.lastSoftHit?.programLang,
+        primitive: primitiveFromAttempt(args.lastSoftHit),
         attempts: args.attempts,
         reason: args.reason ?? "kernel crashed but signature did not match",
       };
@@ -571,6 +608,68 @@ function finalize(args: FinalizeArgs): KernelVerifyResult {
         attempts: args.attempts,
         reason: args.reason ?? "verifier error",
       };
+  }
+}
+
+/**
+ * Synthesise the exploitation primitive from a winning / soft-hit attempt's
+ * oracle output (issue #569). Returns undefined when the attempt has no oracle
+ * dmesg to classify from.
+ */
+function primitiveFromAttempt(
+  attempt: KernelVerifyAttempt | undefined,
+): KernelPrimitive | undefined {
+  if (!attempt?.oracle) return undefined;
+  return classifyPrimitiveFromDmesg(
+    attempt.oracle.dmesgExcerpt,
+    attempt.oracle.detectedCrashType,
+  );
+}
+
+/**
+ * Run a delta-debug minimization pass on a confirmed reproducer (issue #569).
+ * Reuses the verify loop's Tier-1 `runner` as the crash oracle, requiring the
+ * minimized program to keep producing the confirmed signature.
+ *
+ * On any failure (or if minimization can't shrink the program) the original
+ * confirmed result is returned unchanged — minimization is best-effort.
+ */
+async function minimizeConfirmedReproducer(
+  confirmed: KernelVerifyResult,
+  winning: KernelVerifyAttempt,
+  opts: KernelVerifyOptions,
+  runner: KernelVerifyRunner,
+  finding: Finding,
+): Promise<KernelVerifyResult> {
+  if (!confirmed.generated_program || !confirmed.generated_program_lang) {
+    return confirmed;
+  }
+  try {
+    const oracle = makeKernelMinimizeOracle({
+      runner,
+      finding,
+      kernelTree: opts.kernelTree,
+      kernelConfig: opts.kernelConfig,
+      forceBuild: opts.forceBuild,
+      expectedSignature: winning.expectedSignature,
+    });
+    const minimization = await minimizeReproducer(confirmed.generated_program, {
+      lang: confirmed.generated_program_lang,
+      oracle,
+      expectedSignature: winning.expectedSignature,
+      maxOracleCalls: opts.minimizeMaxOracleCalls ?? 60,
+    });
+    if (!minimization.reproduced) return confirmed;
+    return {
+      ...confirmed,
+      generated_program: minimization.program,
+      minimized_program: minimization.program,
+      minimization,
+    };
+  } catch {
+    // Best-effort: never fail a confirmed verification because minimization
+    // tripped.
+    return confirmed;
   }
 }
 
@@ -654,6 +753,17 @@ export function applyVerificationToFinding(
   if (result.signature) lines.push(`Observed signature: ${result.signature}`);
   if (result.reason) lines.push(`Reason: ${result.reason}`);
   if (result.errorMessage) lines.push(`Error: ${result.errorMessage}`);
+  if (result.minimization) {
+    lines.push(
+      `Reproducer minimized: ${result.minimization.originalUnitCount} → ` +
+        `${result.minimization.minimizedUnitCount} units` +
+        ` (${result.minimization.oracleCalls} oracle calls` +
+        `${result.minimization.oneMinimal ? ", 1-minimal" : ""})`,
+    );
+  }
+  if (result.primitive) {
+    lines.push("", "---primitive---", ...describeKernelPrimitive(result.primitive));
+  }
 
   // Flip the hypothesis flag (mirrored in evidence.analysis by the parser) on
   // confirmed/soft-hit promotion — those are no longer static-only.
@@ -681,6 +791,15 @@ export function applyVerificationToFinding(
 
   if (result.status === "confirmed") {
     next.status = "confirmed";
+  }
+
+  // Severity reflects exploitability (issue #569): a confirmed / soft-hit
+  // primitive can only escalate the finding's severity, never downgrade it.
+  if (
+    result.primitive &&
+    (result.status === "confirmed" || result.status === "soft_hit")
+  ) {
+    next.severity = exploitabilityAdjustedSeverity(next.severity, result.primitive);
   }
 
   return next;

@@ -116,6 +116,21 @@ export type {
 } from "./router/index.js";
 export { verifyKernelCrash, compileAndRunReproducer, matchCrashSignature, validateCrashReportConsistency } from "./kernel-oracle.js";
 export type { KernelOracleResult, ReproducerResult, CrashSignatureMatch, ConsistencyResult } from "./kernel-oracle.js";
+export {
+  classifyKernelPrimitive,
+  classifyPrimitiveFromDmesg,
+  buildControlDemo,
+  attemptControlDemo,
+  exploitabilityAdjustedSeverity,
+  describeKernelPrimitive,
+  maxSeverity,
+} from "./kernel-primitive.js";
+export type {
+  KernelPrimitive,
+  KernelPrimitiveKind,
+  PrimitiveControl,
+  ControlDemoStep,
+} from "./kernel-primitive.js";
 export type {
   TriageMemory,
   MemoryScope,

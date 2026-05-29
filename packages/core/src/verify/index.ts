@@ -23,6 +23,21 @@ export type {
   KernelVerifyRunnerInput,
 } from "./kernel-verify-types.js";
 export {
+  minimizeReproducer,
+  splitProgram,
+  ddmin,
+  makeKernelMinimizeOracle,
+} from "./reproducer-minimize.js";
+export type {
+  ReproducerLang,
+  MinimizeOracle,
+  MinimizeOracleResult,
+  MinimizeOptions,
+  MinimizeResult,
+  SplitProgram,
+  KernelMinimizeOracleDeps,
+} from "./reproducer-minimize.js";
+export {
   buildKernelVerifySystemPrompt,
   buildKernelVerifyInitialPrompt,
   extractKernelFindingMetadata,
