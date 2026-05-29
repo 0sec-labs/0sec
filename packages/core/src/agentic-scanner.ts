@@ -2093,6 +2093,21 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
             },
             timestamp: Date.now(),
           });
+          // Mirror onto the typed EventBus (#570). `db.logEvent` only writes
+          // pwnkit's LOCAL sqlite, which the cloud worker never relays — so
+          // without this the per-finding "deterministic vs heuristic" badge
+          // never reaches the dashboard. cloudEventSink serializes this to a
+          // `PWNKIT_EVENT_POV_ORACLE` line → worker → orchestrator
+          // `scan_events`, keyed by findingId, exactly like
+          // untrusted_input_sanitized (#558).
+          eventBus.emit("pov_oracle", {
+            findingId: finding.id,
+            category: finding.category,
+            oracle: pov.oracle,
+            hasPov: pov.hasPov,
+            inconclusive: pov.inconclusive ?? false,
+            reason: pov.reason,
+          });
           if (pov.hasPov) {
             pushLayerVerdict(finding, {
               layer: "pov_gate",

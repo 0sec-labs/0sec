@@ -274,6 +274,42 @@ export interface InlineValidationPayload {
 }
 
 /**
+ * Per-finding proof-of-vulnerability oracle verdict (#570). Emitted by the
+ * batch PoV gate in `agentic-scanner.ts` immediately after `generatePov`
+ * decides which deterministic oracle (or the regex fallback) adjudicated a
+ * finding — mirroring the existing `db.logEvent("pov_oracle")` trace.
+ *
+ * Why both: `db.logEvent` only writes pwnkit's LOCAL sqlite `pipeline_events`,
+ * which the cloud worker never relays. Putting the same signal on the typed
+ * bus lets `cloudEventSink` serialize it (→ worker → orchestrator
+ * `scan_events`), so the dashboard can join it to the finding by `findingId`
+ * and render the "deterministically verified vs heuristic" badge that is the
+ * core low-false-positive story. Mirrors `untrusted_input_sanitized` (#558).
+ */
+export interface PovOraclePayload {
+  /** Id of the finding the oracle adjudicated. */
+  findingId: string;
+  category?: string;
+  /**
+   * Which oracle decided the verdict:
+   *  - `headless-browser` / `oast-callback` → deterministic proof.
+   *  - `regex-fallback` → heuristic / pattern match (no deterministic oracle
+   *    exists for the category).
+   */
+  oracle: "headless-browser" | "oast-callback" | "regex-fallback";
+  /** A working PoV artifact reproduced the exploit. */
+  hasPov: boolean;
+  /**
+   * Deterministic oracle could not run to a conclusion (browser / collector
+   * errored). Never a refutation — "inconclusive on error, not a false pass".
+   */
+  inconclusive: boolean;
+  /** Short reason for the verdict. */
+  reason?: string;
+  [k: string]: unknown;
+}
+
+/**
  * Token-level streaming delta. Emitted by the agent loop while the runtime
  * is still streaming the assistant's text or reasoning channel — each emit
  * carries a *coalesced* run of characters (NOT per-token; see the batcher in
@@ -320,7 +356,8 @@ export type PwnkitEvent =
   | { type: "skill_loaded"; payload: SkillLoadedPayload }
   | { type: "skill_listed"; payload: SkillListedPayload }
   | { type: "untrusted_input_sanitized"; payload: UntrustedInputSanitizedPayload }
-  | { type: "inline_validation"; payload: InlineValidationPayload };
+  | { type: "inline_validation"; payload: InlineValidationPayload }
+  | { type: "pov_oracle"; payload: PovOraclePayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = PwnkitEvent["type"];
