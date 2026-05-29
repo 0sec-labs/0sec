@@ -1,6 +1,6 @@
 import { gzipSync } from "zlib";
 import chalk from "chalk";
-import type { ScanReport, AuditReport, ReviewReport, ScanDepth, RuntimeMode } from "@pwnkit/shared";
+import type { ScanReport, AuditReport, ReviewReport, RuntimeMode } from "@pwnkit/shared";
 
 export interface ApiRuntimeAvailability {
   configured: boolean;
@@ -70,15 +70,4 @@ export function buildShareUrl(report: ScanReport | AuditReport | ReviewReport): 
   const compressed = gzipSync(Buffer.from(json, "utf-8"));
   const b64 = compressed.toString("base64url");
   return `https://0sec.ai/r#${b64}`;
-}
-
-export function depthLabel(depth: ScanDepth): string {
-  switch (depth) {
-    case "quick":
-      return "~5 probes";
-    case "default":
-      return "~50 probes";
-    case "deep":
-      return "full coverage";
-  }
 }
