@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, evaluateDoneCoverageGate, containsUnquotedShellChars } from "./tools.js";
+import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, evaluateDoneCoverageGate, containsUnquotedShellChars } from "./tools.js";
 import type { ToolContext, ToolCall } from "./types.js";
 import {
   existsSync,
@@ -99,7 +99,12 @@ describe("getToolsForRole", () => {
     expect(names).not.toContain("list_skills");
     expect(names).not.toContain("load_skill");
     expect(names).toContain("use_loot");
-    expect(tools.length).toBe(Object.keys(TOOL_DEFINITIONS).length - 2);
+    // -2 JIT-skill tools (gated off above) and -N scanner tools (pwnkit#555,
+    // engagement-gated, off by default). use_loot stays IN (loot flag pinned
+    // on), so it is not subtracted here.
+    expect(tools.length).toBe(
+      Object.keys(TOOL_DEFINITIONS).length - 2 - SCANNER_TOOL_NAMES.length,
+    );
   });
 
   it("audit role includes skill tools when JIT skills are enabled", () => {
@@ -107,6 +112,39 @@ describe("getToolsForRole", () => {
     const names = getToolsForRole("audit").map((t) => t.name);
     expect(names).toContain("list_skills");
     expect(names).toContain("load_skill");
+  });
+
+  // ── Engagement-gated scanner wrappers (pwnkit#555) ──
+  // allowScanners=false (default) MUST keep all four wrappers out of EVERY
+  // role's tool set — no regression of the pwnkit#217 stealthy default.
+  it("omits scanner wrappers from all roles when allowScanners is unset", () => {
+    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    for (const role of ["discovery", "attack", "verify", "audit", "review"]) {
+      const names = getToolsForRole(role, { hasScope: true }).map((t) => t.name);
+      for (const scanner of SCANNER_TOOL_NAMES) {
+        expect(names).not.toContain(scanner);
+      }
+    }
+  });
+
+  it("exposes scanner wrappers for network roles when allowScanners is true", () => {
+    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    for (const role of ["discovery", "attack"]) {
+      const names = getToolsForRole(role, { allowScanners: true }).map((t) => t.name);
+      expect(names).toContain("run_sqlmap");
+      expect(names).toContain("run_nmap");
+      expect(names).toContain("run_ffuf");
+      expect(names).toContain("run_nuclei");
+    }
+  });
+
+  it("includes scanner wrappers in the audit/review everything-set only with allowScanners", () => {
+    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    const off = getToolsForRole("audit").map((t) => t.name);
+    expect(off).not.toContain("run_sqlmap");
+    const on = getToolsForRole("audit", { allowScanners: true }).map((t) => t.name);
+    expect(on).toContain("run_sqlmap");
+    expect(on).toContain("run_nuclei");
   });
 });
 
@@ -1551,6 +1589,97 @@ describe("ToolExecutor — scanner suppression (pwnkit#217)", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/--allow-scanners/);
+  });
+});
+
+// ── Structured scanner wrappers at the executor surface (pwnkit#555) ──
+//
+// The argv-builder / parser unit tests live in `scanner-tools.test.ts`. These
+// pin the gating + scope/argument wiring at the ToolExecutor boundary: the
+// wrappers hard-refuse unless allowScanners, refuse out-of-scope targets, and
+// validate required arguments — all BEFORE any binary is spawned, so they run
+// without sqlmap/nmap/ffuf/nuclei installed.
+
+describe("ToolExecutor — structured scanner wrappers (pwnkit#555)", () => {
+  async function makeCtx(opts: { allowScanners?: boolean }) {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const ctx: ToolContext = {
+      target: "https://api.example.com",
+      scanId: `test-runscanner-${Math.random().toString(36).slice(2)}`,
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope: ScopePolicy.fromJson({ in_scope: ["*.example.com"] }),
+      allowScanners: opts.allowScanners,
+    };
+    return ctx;
+  }
+
+  for (const tool of ["run_sqlmap", "run_nmap", "run_ffuf", "run_nuclei"]) {
+    it(`${tool} is hard-refused when allowScanners is unset`, async () => {
+      const ctx = await makeCtx({ allowScanners: false });
+      const ex = new ToolExecutor(ctx, null);
+      const args =
+        tool === "run_ffuf"
+          ? { url: "https://api.example.com/FUZZ", wordlist: "/tmp/w.txt" }
+          : tool === "run_nmap" || tool === "run_nuclei"
+            ? { target: "api.example.com" }
+            : { url: "https://api.example.com/?id=1" };
+      const result = await ex.execute({ name: tool, arguments: args });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/--allow-scanners/);
+    });
+  }
+
+  it("run_sqlmap refuses an out-of-scope target even with allowScanners", async () => {
+    const ctx = await makeCtx({ allowScanners: true });
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "run_sqlmap",
+      arguments: { url: "https://evil.attacker.test/?id=1" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/out-of-scope/);
+  });
+
+  it("run_nmap refuses an out-of-scope host even with allowScanners", async () => {
+    const ctx = await makeCtx({ allowScanners: true });
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "run_nmap",
+      arguments: { target: "evil.attacker.test" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/out-of-scope/);
+  });
+
+  it("run_ffuf requires a FUZZ keyword in the url", async () => {
+    const ctx = await makeCtx({ allowScanners: true });
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "run_ffuf",
+      arguments: { url: "https://api.example.com/", wordlist: "/tmp/w.txt" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/FUZZ/);
+  });
+
+  it("run_sqlmap reports a clear error when the binary is missing", async () => {
+    // allowScanners + in-scope target → preflight passes and we attempt to
+    // spawn `sqlmap`. On a runner without sqlmap installed this surfaces as a
+    // structured ENOENT error (never an unbounded hang). If sqlmap IS present
+    // the run completes structured; either way success is well-defined.
+    const ctx = await makeCtx({ allowScanners: true });
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "run_sqlmap",
+      arguments: { url: "https://api.example.com/?id=1", timeout: 2 },
+    });
+    if (!result.success) {
+      expect(result.error).toMatch(/run_sqlmap (failed|)/);
+    } else {
+      expect((result.output as { result: { tool: string } }).result.tool).toBe("sqlmap");
+    }
   });
 });
 

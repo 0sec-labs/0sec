@@ -322,7 +322,7 @@ export async function runNativeAgentLoop(
   };
 
   const executor = new ToolExecutor(toolCtx, db);
-  const tools = config.tools.length > 0 ? config.tools : getToolsForRole(config.role, { hasScope: !!config.scopePath });
+  const tools = config.tools.length > 0 ? config.tools : getToolsForRole(config.role, { hasScope: !!config.scopePath, allowScanners: config.allowScanners });
 
   // Convert ToolDefinitions to native API format
   const nativeTools: NativeToolDef[] = tools.map(toNativeToolDef);

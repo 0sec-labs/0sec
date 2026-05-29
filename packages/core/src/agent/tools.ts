@@ -32,6 +32,21 @@ import {
   summarizeWpFingerprint,
   type FetchLike,
 } from "./wp-fingerprint.js";
+import {
+  runScannerProcess,
+  buildSqlmapArgv,
+  buildNmapArgv,
+  buildFfufArgv,
+  buildNucleiArgv,
+  parseSqlmapOutput,
+  parseNmapOutput,
+  parseFfufOutput,
+  parseNucleiOutput,
+  suggestedFindingsFor,
+  summarizeScannerResult,
+  type ScannerParsedResult,
+  type ScannerRunStats,
+} from "./scanner-tools.js";
 import { validateFlagShape } from "./flag-validator.js";
 import { extractPocStepsFromProse } from "./poc-steps-from-prose.js";
 import { isUntrustedSourceTool } from "../untrusted-sanitizer.js";
@@ -832,6 +847,72 @@ export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       summary: { type: "string", description: "Summary of completed work" },
     },
     required: ["summary"],
+  },
+
+  // ── Engagement-gated structured scanner wrappers (pwnkit#555) ──
+  // These are ONLY present in the tool set when the engagement passed
+  // --allow-scanners (ctx.allowScanners). See getToolsForRole + SCANNER_TOOL_NAMES.
+  // They build a safe argv (no shell concat), enforce scope + rate-limit +
+  // wallclock, and return PARSED structured output (no raw blobs).
+  run_sqlmap: {
+    name: "run_sqlmap",
+    description:
+      "Run sqlmap against an in-scope URL and return a STRUCTURED result (confirmed DBMS, injection points, enumerated databases/tables, dumped columns) — not raw output. Engagement-gated: only available when the scan was started with --allow-scanners. Use for authorized SQLi testing on CTF/internal/pentest targets. Always non-interactive; never escalates to OS/file shells.",
+    parameters: {
+      url: { type: "string", description: "Target URL (in-scope), e.g. http://host/item?id=1" },
+      data: { type: "string", description: "POST body to test (implies POST), e.g. 'user=a&pass=b'" },
+      level: { type: "number", description: "sqlmap --level 1-5 (default 1)" },
+      risk: { type: "number", description: "sqlmap --risk 1-3 (default 1)" },
+      technique: { type: "string", description: "Restrict techniques, letters from BEUSTQ" },
+      dbms: { type: "string", description: "DBMS hint, e.g. mysql, postgresql" },
+      enumerate_dbs: { type: "boolean", description: "Pass --dbs to enumerate databases" },
+      dump: { type: "boolean", description: "Pass --dump to dump tables/columns once injectable" },
+      threads: { type: "number", description: "Concurrent requests 1-10 (default 1)" },
+      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
+    },
+    required: ["url"],
+  },
+
+  run_nmap: {
+    name: "run_nmap",
+    description:
+      "Run nmap against an in-scope host and return a STRUCTURED port table (open ports, services, versions) — not raw output. Engagement-gated: only available with --allow-scanners. NSE scripts are not enabled.",
+    parameters: {
+      target: { type: "string", description: "Target host or IP (in-scope)" },
+      ports: { type: "string", description: "Port spec e.g. '22,80,443' or '1-1024'" },
+      service_detection: { type: "boolean", description: "Enable -sV service/version detection" },
+      top_ports: { type: "number", description: "Scan the N most common ports (--top-ports)" },
+      skip_ping: { type: "boolean", description: "Skip host discovery (-Pn). Default true." },
+      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
+    },
+    required: ["target"],
+  },
+
+  run_ffuf: {
+    name: "run_ffuf",
+    description:
+      "Run ffuf content/path fuzzing against an in-scope URL (with a FUZZ keyword) and return STRUCTURED hits (path/input, status, length). Engagement-gated: only available with --allow-scanners.",
+    parameters: {
+      url: { type: "string", description: "Target URL with FUZZ keyword, e.g. http://host/FUZZ" },
+      wordlist: { type: "string", description: "Path to a wordlist file on the runner" },
+      match_status: { type: "string", description: "Status allowlist e.g. '200,204,301,302,403'" },
+      threads: { type: "number", description: "Concurrent requests 1-50 (default 10)" },
+      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
+    },
+    required: ["url", "wordlist"],
+  },
+
+  run_nuclei: {
+    name: "run_nuclei",
+    description:
+      "Run nuclei template-driven scanning against an in-scope target and return STRUCTURED findings (template id, severity, matched-at). Engagement-gated: only available with --allow-scanners.",
+    parameters: {
+      target: { type: "string", description: "Target URL/host (in-scope)" },
+      severity: { type: "string", description: "Severity allowlist e.g. 'critical,high,medium'" },
+      tags: { type: "string", description: "Template tag allowlist e.g. 'cve,rce'" },
+      timeout: { type: "number", description: "Requested wallclock seconds (clamped to ceiling)" },
+    },
+    required: ["target"],
   },
 };
 
@@ -2277,6 +2358,14 @@ export class ToolExecutor {
           return this.listSkills(call.arguments);
         case "load_skill":
           return this.loadSkill(call.arguments);
+        case "run_sqlmap":
+          return await this.runSqlmap(call.arguments);
+        case "run_nmap":
+          return await this.runNmap(call.arguments);
+        case "run_ffuf":
+          return await this.runFfuf(call.arguments);
+        case "run_nuclei":
+          return await this.runNuclei(call.arguments);
         case "done":
           return this.markDone(call.arguments);
         default:
@@ -4299,6 +4388,221 @@ export class ToolExecutor {
     }
   }
 
+  // ── Engagement-gated structured scanner wrappers (pwnkit#555) ──
+  //
+  // Shared glue for run_sqlmap / run_nmap / run_ffuf / run_nuclei. Each public
+  // method validates the target against scope, acquires a rate-limit token,
+  // builds a SAFE argv (delegated to the pure builders in scanner-tools.ts),
+  // runs the binary under the wallclock ceiling (partial output on timeout),
+  // parses stdout into a normalized result, emits a `scanner_tool_run` event,
+  // and returns structured output + save_finding-ready evidence. Never raw
+  // blobs back to the model.
+
+  /**
+   * Common preflight for every scanner wrapper:
+   *   - hard-refuse unless ctx.allowScanners (defense-in-depth; the tool is
+   *     also absent from the tool set in that case — see getToolsForRole);
+   *   - scope-check the URL/host (out-of-scope → refuse);
+   *   - acquire a per-host rate-limit token (best-effort; see the subprocess
+   *     gap note in scanner-tools.ts).
+   * Returns an error ToolResult to short-circuit, or null to proceed.
+   */
+  private async scannerPreflight(
+    tool: string,
+    scopeUrl: string,
+  ): Promise<ToolResult | null> {
+    if (!this.ctx.allowScanners) {
+      return {
+        success: false,
+        output: null,
+        error:
+          `${tool} is disabled: generic scanners are suppressed unless the engagement was ` +
+          `started with --allow-scanners (pwnkit#217). Use http_request/crawl for manual probing.`,
+      };
+    }
+    if (this.ctx.scope) {
+      const verdict = this.ctx.scope.match(scopeUrl);
+      if (!verdict.allowed) {
+        this.ctx.enforcement?.noteOutOfScopeBlocked();
+        return {
+          success: false,
+          output: null,
+          error: `${tool} refused: target out-of-scope '${scopeUrl}' (${verdict.reason})`,
+        };
+      }
+    }
+    if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(scopeUrl);
+    return null;
+  }
+
+  /**
+   * Run a scanner binary under the bash wallclock ceiling and parse its
+   * stdout. Shapes the structured ToolResult, emits the scanner_tool_run
+   * event, and projects save_finding-ready evidence. `timeoutSec` is the
+   * caller-requested wallclock, clamped to the ceiling inside runScannerProcess.
+   */
+  private async executeScanner(
+    tool: string,
+    binary: string,
+    argv: string[],
+    parse: (raw: string) => ScannerParsedResult,
+    timeoutSec: unknown,
+  ): Promise<ToolResult> {
+    const ceilingMs = resolveBashWallclockCeilingMs();
+    const requestedMs = Math.max(1, ((timeoutSec as number) ?? 90) * 1000);
+    const env = { ...sanitizedEnv(), TARGET: this.ctx.target };
+
+    const outcome = await runScannerProcess(binary, argv, {
+      timeoutMs: requestedMs,
+      ceilingMs,
+      env,
+    });
+
+    if (outcome.kind === "error") {
+      this.persistToolArtifact("scanner_tool_run", {
+        scanner: tool,
+        binary,
+        argv,
+        error: outcome.message,
+        durationMs: outcome.durationMs,
+      });
+      // ENOENT → the binary isn't installed on this runner. Surface a clear,
+      // actionable error rather than a cryptic spawn failure.
+      const hint = /ENOENT/.test(outcome.message)
+        ? ` (is '${binary}' installed on the runner?)`
+        : "";
+      return {
+        success: false,
+        output: null,
+        error: `${tool} failed: ${outcome.message}${hint}`,
+      };
+    }
+
+    const raw =
+      outcome.kind === "timeout" ? outcome.partial : outcome.combined;
+    const exitCode = outcome.kind === "exit" ? outcome.exitCode : null;
+    const timedOut = outcome.kind === "timeout";
+    const result = parse(raw);
+    const stats: ScannerRunStats = {
+      binary,
+      argv,
+      durationMs: outcome.durationMs,
+      timedOut,
+      exitCode,
+    };
+    const suggested = suggestedFindingsFor(result, stats);
+
+    this.persistToolArtifact("scanner_tool_run", {
+      scanner: tool,
+      binary,
+      argv,
+      exitCode,
+      timedOut,
+      durationMs: outcome.durationMs,
+      summary: summarizeScannerResult(result),
+      suggestedFindings: suggested.length,
+    });
+
+    return {
+      success: true,
+      output: {
+        summary:
+          summarizeScannerResult(result) +
+          (timedOut ? " [PARTIAL — wallclock ceiling hit]" : ""),
+        timed_out: timedOut,
+        exit_code: exitCode,
+        result,
+        // save_finding-ready projections (the agent decides whether to save;
+        // we never auto-save — operator gate + false-positive discipline).
+        finding_evidence: suggested,
+      },
+    };
+  }
+
+  private async runSqlmap(args: Record<string, unknown>): Promise<ToolResult> {
+    const url = String(args.url ?? "");
+    if (!url) {
+      return { success: false, output: null, error: "run_sqlmap requires a 'url'." };
+    }
+    const pre = await this.scannerPreflight("run_sqlmap", url);
+    if (pre) return pre;
+    const argv = buildSqlmapArgv({
+      url,
+      data: typeof args.data === "string" ? args.data : undefined,
+      level: args.level as number | undefined,
+      risk: args.risk as number | undefined,
+      technique: typeof args.technique === "string" ? args.technique : undefined,
+      dbms: typeof args.dbms === "string" ? args.dbms : undefined,
+      enumerateDbs: args.enumerate_dbs === true,
+      dump: args.dump === true,
+      threads: args.threads as number | undefined,
+    });
+    return this.executeScanner("run_sqlmap", "sqlmap", argv, parseSqlmapOutput, args.timeout);
+  }
+
+  private async runNmap(args: Record<string, unknown>): Promise<ToolResult> {
+    const target = String(args.target ?? "");
+    if (!target) {
+      return { success: false, output: null, error: "run_nmap requires a 'target'." };
+    }
+    // nmap takes a bare host; build a URL purely for the scope check.
+    const scopeUrl = /^https?:\/\//i.test(target) ? target : `http://${target}`;
+    const pre = await this.scannerPreflight("run_nmap", scopeUrl);
+    if (pre) return pre;
+    const argv = buildNmapArgv({
+      target,
+      ports: typeof args.ports === "string" ? args.ports : undefined,
+      serviceDetection: args.service_detection === true,
+      topPorts: args.top_ports as number | undefined,
+      skipPing: args.skip_ping as boolean | undefined,
+    });
+    return this.executeScanner("run_nmap", "nmap", argv, parseNmapOutput, args.timeout);
+  }
+
+  private async runFfuf(args: Record<string, unknown>): Promise<ToolResult> {
+    const url = String(args.url ?? "");
+    const wordlist = String(args.wordlist ?? "");
+    if (!url || !wordlist) {
+      return {
+        success: false,
+        output: null,
+        error: "run_ffuf requires 'url' (with a FUZZ keyword) and 'wordlist'.",
+      };
+    }
+    if (!url.includes("FUZZ")) {
+      return {
+        success: false,
+        output: null,
+        error: "run_ffuf: 'url' must contain a FUZZ keyword, e.g. http://host/FUZZ.",
+      };
+    }
+    const pre = await this.scannerPreflight("run_ffuf", url);
+    if (pre) return pre;
+    const argv = buildFfufArgv({
+      url,
+      wordlist,
+      matchStatus: typeof args.match_status === "string" ? args.match_status : undefined,
+      threads: args.threads as number | undefined,
+    });
+    return this.executeScanner("run_ffuf", "ffuf", argv, parseFfufOutput, args.timeout);
+  }
+
+  private async runNuclei(args: Record<string, unknown>): Promise<ToolResult> {
+    const target = String(args.target ?? "");
+    if (!target) {
+      return { success: false, output: null, error: "run_nuclei requires a 'target'." };
+    }
+    const scopeUrl = /^https?:\/\//i.test(target) ? target : `http://${target}`;
+    const pre = await this.scannerPreflight("run_nuclei", scopeUrl);
+    if (pre) return pre;
+    const argv = buildNucleiArgv({
+      target,
+      severity: typeof args.severity === "string" ? args.severity : undefined,
+      tags: typeof args.tags === "string" ? args.tags : undefined,
+    });
+    return this.executeScanner("run_nuclei", "nuclei", argv, parseNucleiOutput, args.timeout);
+  }
+
   private payloadLookup(args: Record<string, unknown>): ToolResult {
     const name = String(args.name ?? "");
     if (name === "jsfuck_alert") {
@@ -4566,7 +4870,21 @@ export class ToolExecutor {
 
 // ── Helper: get tools for a specific agent role ──
 
-export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMode?: boolean; hasBrowser?: boolean }): ToolDefinition[] {
+/**
+ * Names of the engagement-gated structured scanner wrappers (pwnkit#555).
+ * These are exposed ONLY when the engagement passed --allow-scanners
+ * (`opts.allowScanners`), preserving the stealthy generic-scanner-suppression
+ * default (pwnkit#217). Kept as a module constant so both the role tool sets
+ * and the `allEnabledTools` (audit/review) path filter on the same source.
+ */
+export const SCANNER_TOOL_NAMES: ReadonlyArray<string> = [
+  "run_sqlmap",
+  "run_nmap",
+  "run_ffuf",
+  "run_nuclei",
+];
+
+export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMode?: boolean; hasBrowser?: boolean; allowScanners?: boolean }): ToolDefinition[] {
   const common = ["query_findings", "done"];
   const browserTools = opts?.hasBrowser ? ["browser"] : [];
   const webSearchTools = featureFlags.webSearch ? ["web_search"] : [];
@@ -4577,6 +4895,9 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   const skillTools = featureFlags.jitSkills ? ["list_skills", "load_skill"] : [];
   // pwnkit#567 — loot retrieval tool, only when the ledger feature is on.
   const lootTools = featureFlags.lootLedger ? ["use_loot"] : [];
+  // pwnkit#555: scanner wrappers only when the engagement explicitly permits
+  // generic-scanner traffic. Default-off preserves pwnkit#217 stealth.
+  const scannerTools = opts?.allowScanners ? [...SCANNER_TOOL_NAMES] : [];
   const networkTools = [
     "http_request",
     "crawl",
@@ -4591,6 +4912,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     ...mongoTools,
     ...skillTools,
     ...lootTools,
+    ...scannerTools,
     "send_prompt",
     "save_finding",
     "update_finding",
@@ -4602,7 +4924,11 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     (featureFlags.jitSkills || (name !== "list_skills" && name !== "load_skill"))
     // Keep use_loot out of the audit/review "everything" set when the loot
     // ledger feature is off (parity with the JIT-skill gating above).
-    && (featureFlags.lootLedger || name !== "use_loot"),
+    && (featureFlags.lootLedger || name !== "use_loot")
+    // Scanner wrappers stay out of the audit/review "everything" set too,
+    // unless the engagement opted in. Without this they'd leak into
+    // allEnabledTools regardless of allowScanners (regression of pwnkit#217).
+    && (opts?.allowScanners || !SCANNER_TOOL_NAMES.includes(name)),
   );
 
   const roleTools: Record<string, string[]> = {

@@ -2650,8 +2650,8 @@ async function runNativeDiscovery(
     ? basePrompt + "\n\n" + apiSpecPromptText
     : basePrompt;
   const tools = isWeb
-    ? getToolsForRole("discovery", { webMode: true })
-    : getToolsForRole("discovery");
+    ? getToolsForRole("discovery", { webMode: true, allowScanners: config.allowScanners })
+    : getToolsForRole("discovery", { allowScanners: config.allowScanners });
 
   const state = await runNativeAgentLoop({
     config: {
@@ -2846,7 +2846,7 @@ async function runNativeAttack(
     .map((n) => TOOL_DEFINITIONS[n])
     .filter((t): t is import("./agent/types.js").ToolDefinition => t !== undefined);
 
-  const tools = isWeb ? shellTools : getToolsForRole("attack", { hasBrowser });
+  const tools = isWeb ? shellTools : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
 
   const effectiveMaxTurns = isWeb ? Math.max(maxTurns, 15) : maxTurns;
 
@@ -3206,7 +3206,7 @@ export async function runNativeVerify(
       config: {
         role: "verify",
         systemPrompt: verifyPromptSingleFinding(config.target, finding, config.auth),
-        tools: getToolsForRole("verify", { hasScope: !!config.repoPath }),
+        tools: getToolsForRole("verify", { hasScope: !!config.repoPath, allowScanners: config.allowScanners }),
         maxTurns: VERIFY_TURNS_PER_FINDING,
         target: config.target,
         scanId,
@@ -3271,8 +3271,8 @@ async function runLegacyDiscovery(
     ? basePrompt + "\n\n" + apiSpecPromptText
     : basePrompt;
   const tools = isWeb
-    ? getToolsForRole("discovery", { webMode: true })
-    : getToolsForRole("discovery");
+    ? getToolsForRole("discovery", { webMode: true, allowScanners: config.allowScanners })
+    : getToolsForRole("discovery", { allowScanners: config.allowScanners });
 
   const state = await runAgentLoop({
     config: {
@@ -3347,8 +3347,8 @@ async function runLegacyAttack(
   if (apiSpecPromptText) baseAttackPrompt += "\n\n" + apiSpecPromptText;
   const systemPrompt = baseAttackPrompt;
   const tools = isWeb
-    ? getToolsForRole("attack", { webMode: true, hasBrowser })
-    : getToolsForRole("attack", { hasBrowser });
+    ? getToolsForRole("attack", { webMode: true, hasBrowser, allowScanners: config.allowScanners })
+    : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
 
   const state = await runAgentLoop({
     config: {
@@ -3426,7 +3426,7 @@ async function runLegacyVerify(
     config: {
       role: "verify",
       systemPrompt: verifyPrompt(config.target, findings, config.auth),
-      tools: getToolsForRole("verify", { hasScope: !!config.repoPath }),
+      tools: getToolsForRole("verify", { hasScope: !!config.repoPath, allowScanners: config.allowScanners }),
       maxTurns: Math.min(findings.length * 3, 15),
       target: config.target,
       scanId,
