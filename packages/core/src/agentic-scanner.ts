@@ -47,6 +47,7 @@ import {
   extractFeatures,
   FEATURE_NAMES,
   verifyOracleByCategory,
+  type OracleResult,
   checkMultiModalAgreement,
   fuseTriageSignals,
   checkReachability,
@@ -64,7 +65,7 @@ import {
   type PublishabilityInputs,
 } from "./triage/index.js";
 import { runSelfConsistencyVerify } from "./triage/structured-verify.js";
-import { generatePov } from "./triage/pov-gate.js";
+import { generatePov, oracleForCategory } from "./triage/pov-gate.js";
 import { resolveJournalPaths } from "./agent/journal/writer.js";
 import { getCloudSinkConfig, postFinding, postFinalReport } from "./cloud-sink.js";
 import { eventBus } from "./events/bus.js";
@@ -1929,10 +1930,15 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // Categories without oracles fall through to the LLM-verify stage.
       const oracleStartedAt = Date.now();
       const oracleAllowed = routerAllowsLayer("oracle");
+      // Captured so the PoV gate can reuse a deterministic oracle run instead
+      // of firing the browser / collector a second time. Only set when the
+      // oracle actually executed (not router-skipped, not thrown).
+      let oracleOutcomeForPov: OracleResult | undefined;
       try {
         const oracle = oracleAllowed
           ? await verifyOracleByCategory(finding, config.target)
           : { verified: false, confidence: 0, evidence: "", reason: "skipped by dynamic_router" };
+        if (oracleAllowed) oracleOutcomeForPov = oracle;
         db.logEvent?.({
           scanId,
           stage: "verify",
@@ -2021,7 +2027,17 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       ) {
         const povStart = Date.now();
         try {
-          const pov = await generatePov(finding, config.target, nativeRuntime, 5);
+          // Reuse the deterministic oracle already run above when this category
+          // delegates to one (XSS → headless browser, SSRF / blind RCE / blind
+          // injection → OAST callback), so the PoV gate doesn't re-fire the
+          // browser / collector.
+          const povOracleKind = oracleForCategory(finding.category);
+          const pov = await generatePov(finding, config.target, nativeRuntime, 5, {
+            precomputedOracle:
+              povOracleKind !== "regex-fallback"
+                ? oracleOutcomeForPov
+                : undefined,
+          });
           db.logEvent?.({
             scanId,
             stage: "verify",
@@ -2036,6 +2052,22 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
               turnsUsed: pov.turnsUsed,
               reason: pov.reason,
               durationMs: Date.now() - povStart,
+            },
+            timestamp: Date.now(),
+          });
+          // Dashboard trace: which oracle decided the PoV verdict.
+          db.logEvent?.({
+            scanId,
+            stage: "verify",
+            eventType: "pov_oracle",
+            agentRole: "triage",
+            payload: {
+              findingId: finding.id,
+              category: finding.category,
+              oracle: pov.oracle,
+              hasPov: pov.hasPov,
+              inconclusive: pov.inconclusive ?? false,
+              reason: pov.reason,
             },
             timestamp: Date.now(),
           });
@@ -2058,9 +2090,31 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
               `${existing}${existing ? "\n\n" : ""}` +
               `## PoV Artifact (${pov.artifactType})\n${pov.povArtifact ?? ""}\n\n` +
               `## Execution Evidence\n${pov.executionEvidence}`;
-          } else if (pov.turnsUsed >= 5 || pov.reason.startsWith("max turns")) {
+          } else if (pov.inconclusive) {
+            // The deterministic oracle could not run to a conclusion (browser /
+            // collector errored). "Inconclusive on error, not a false pass":
+            // never downgrade on this signal — the verify agent gets a second
+            // shot.
+            finding.triageNote =
+              (finding.triageNote ? `${finding.triageNote}; ` : "") +
+              `pov_inconclusive(${pov.oracle}): ${pov.reason}`;
+            pushLayerVerdict(finding, {
+              layer: "pov_gate",
+              verdict: "pass",
+              confidence: pov.confidence,
+              reason: `inconclusive (${pov.oracle}): ${pov.reason}`,
+              startedAt: povStart,
+            });
+          } else if (
+            pov.oracle !== "regex-fallback" ||
+            pov.turnsUsed >= 5 ||
+            pov.reason.startsWith("max turns")
+          ) {
             const fromSev = finding.severity;
-            // Hard gate: no working PoC in budget → downgrade to info.
+            // Hard gate: either a deterministic oracle ran and the exploit did
+            // NOT reproduce (e.g. XSS reflected as text but never fired), or no
+            // working PoC was produced within the turn budget → downgrade to
+            // info.
             finding.severity = "info";
             finding.triageNote =
               (finding.triageNote ? `${finding.triageNote}; ` : "") + "no_pov";
@@ -2068,13 +2122,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
               layer: "pov_gate",
               verdict: "downgrade",
               confidence: pov.confidence,
-              reason: `no_pov in ${pov.turnsUsed} turns: ${pov.reason}`,
+              reason: `no_pov (${pov.oracle}): ${pov.reason}`,
               startedAt: povStart,
               changedSeverity: { from: fromSev, to: "info" },
             });
           } else {
-            // Agent gave up / runtime error / judge failed — annotate but don't
-            // downgrade (the verify agent gets a second shot).
+            // Regex-fallback category, agent gave up / runtime error — annotate
+            // but don't downgrade (the verify agent gets a second shot).
             finding.triageNote =
               (finding.triageNote ? `${finding.triageNote}; ` : "") +
               `pov_failed: ${pov.reason}`;

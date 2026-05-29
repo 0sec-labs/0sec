@@ -6,7 +6,8 @@ import type {
   NativeToolDef,
   NativeRuntimeResult,
 } from "../runtime/types.js";
-import { generatePov, judgePovEvidence } from "./pov-gate.js";
+import { generatePov, judgePovEvidence, oracleForCategory } from "./pov-gate.js";
+import type { OracleResult } from "./oracles.js";
 
 // ────────────────────────────────────────────────────────────────────
 // Helpers
@@ -338,5 +339,275 @@ describe("generatePov", () => {
 
     expect(result.hasPov).toBe(true);
     expect(result.artifactType).toBe("python");
+  });
+
+  it("tags regex-fallback categories with oracle:'regex-fallback'", async () => {
+    const runtime = scriptedRuntime([
+      {
+        content: [
+          {
+            type: "tool_use",
+            id: "s1",
+            name: "submit_pov",
+            input: {
+              artifact_type: "curl",
+              artifact: "curl -s 'http://example.com/search?q=foo%27'",
+              execution_evidence: EVIDENCE_SQL,
+            },
+          },
+        ],
+        stopReason: "tool_use",
+        durationMs: 10,
+      },
+    ]);
+
+    // sql-injection has no headless-browser / OAST oracle → regex fallback.
+    const result = await generatePov(
+      makeFinding({ category: "sql-injection" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      { disableBash: true, disableHttp: true },
+    );
+
+    expect(result.hasPov).toBe(true);
+    expect(result.oracle).toBe("regex-fallback");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// oracleForCategory
+// ────────────────────────────────────────────────────────────────────
+
+describe("oracleForCategory", () => {
+  it("routes xss to the headless browser oracle", () => {
+    expect(oracleForCategory("xss" as AttackCategory)).toBe("headless-browser");
+  });
+
+  it("routes ssrf and command/code injection to the OAST callback oracle", () => {
+    expect(oracleForCategory("ssrf" as AttackCategory)).toBe("oast-callback");
+    expect(oracleForCategory("command-injection" as AttackCategory)).toBe(
+      "oast-callback",
+    );
+    expect(oracleForCategory("code-injection" as AttackCategory)).toBe(
+      "oast-callback",
+    );
+  });
+
+  it("falls back to regex for categories without a deterministic oracle", () => {
+    expect(oracleForCategory("sql-injection" as AttackCategory)).toBe(
+      "regex-fallback",
+    );
+    expect(oracleForCategory("path-traversal" as AttackCategory)).toBe(
+      "regex-fallback",
+    );
+    expect(oracleForCategory("information-disclosure" as AttackCategory)).toBe(
+      "regex-fallback",
+    );
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// generatePov — deterministic oracle delegation
+//
+// The whole point of issue #553: for categories with a deterministic oracle
+// (XSS → browser, SSRF/blind-RCE → OAST), the verdict comes from the oracle,
+// NOT from regex over the agent's self-reported evidence.
+// ────────────────────────────────────────────────────────────────────
+
+/** A `submit_pov` turn carrying arbitrary evidence text. */
+function submitTurn(evidence: string, artifact = "<script>alert(1)</script>") {
+  return scriptedRuntime([
+    {
+      content: [
+        {
+          type: "tool_use",
+          id: "s1",
+          name: "submit_pov",
+          input: {
+            artifact_type: "javascript",
+            artifact,
+            execution_evidence: evidence,
+          },
+        },
+      ],
+      stopReason: "tool_use",
+      durationMs: 5,
+    },
+  ]);
+}
+
+describe("generatePov — oracle delegation (XSS / headless-browser)", () => {
+  it("INTENTIONAL REGRESSION: regex-passing <script>alert(1) text is hasPov:false when the browser oracle does not fire", async () => {
+    // The agent submits evidence that the OLD regex judge would have accepted
+    // (it literally contains "<script>alert(1)"), but the real browser oracle
+    // reports no dialog fired.
+    const runtime = submitTurn(
+      "Response body: <script>alert(1)</script> reflected unencoded",
+    );
+    // The browser oracle ran to completion (no infra error) and the dialog
+    // never fired — a clean negative, not inconclusive.
+    const mockedOracle = async (): Promise<OracleResult> => ({
+      verified: false,
+      confidence: 0,
+      evidence: "",
+      reason: "no xss reflection or alert captured",
+    });
+
+    const result = await generatePov(
+      makeFinding({ category: "xss" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      { disableBash: true, disableHttp: true, oracle: mockedOracle },
+    );
+
+    expect(result.hasPov).toBe(false);
+    expect(result.oracle).toBe("headless-browser");
+    expect(result.inconclusive).toBeFalsy();
+    expect(result.reason).toMatch(/did not reproduce/i);
+  });
+
+  it("real browser fire → hasPov:true with oracle:'headless-browser'", async () => {
+    const runtime = submitTurn("alert dialog observed");
+    const mockedOracle = async (): Promise<OracleResult> => ({
+      verified: true,
+      confidence: 1.0,
+      evidence: "playwright dialog captured token=pwnkit_abc message=\"abc\"",
+      reason: "",
+    });
+
+    const result = await generatePov(
+      makeFinding({ category: "xss" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      { disableBash: true, disableHttp: true, oracle: mockedOracle },
+    );
+
+    expect(result.hasPov).toBe(true);
+    expect(result.oracle).toBe("headless-browser");
+    expect(result.reason).toMatch(/playwright dialog captured/);
+    expect(result.executionEvidence).toMatch(/playwright dialog captured/);
+  });
+
+  it("oracle ERROR (thrown) → inconclusive, never a pass", async () => {
+    const runtime = submitTurn("<script>alert(1)</script>");
+    const throwingOracle = async (): Promise<OracleResult> => {
+      throw new Error("chromium failed to launch");
+    };
+
+    const result = await generatePov(
+      makeFinding({ category: "xss" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      { disableBash: true, disableHttp: true, oracle: throwingOracle },
+    );
+
+    expect(result.hasPov).toBe(false);
+    expect(result.inconclusive).toBe(true);
+    expect(result.oracle).toBe("headless-browser");
+    expect(result.reason).toMatch(/inconclusive/i);
+  });
+
+  it("oracle infra-error reason (browser launch failed) → inconclusive, not a clean fail", async () => {
+    const runtime = submitTurn("<script>alert(1)</script>");
+    const erroringOracle = async (): Promise<OracleResult> => ({
+      verified: false,
+      confidence: 0,
+      evidence: "",
+      reason: "playwright navigation failed: net::ERR_CONNECTION_REFUSED",
+    });
+
+    const result = await generatePov(
+      makeFinding({ category: "xss" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      { disableBash: true, disableHttp: true, oracle: erroringOracle },
+    );
+
+    expect(result.hasPov).toBe(false);
+    expect(result.inconclusive).toBe(true);
+    expect(result.oracle).toBe("headless-browser");
+  });
+});
+
+describe("generatePov — oracle delegation (SSRF / OAST callback)", () => {
+  it("blind SSRF passes only when the collector callback is observed", async () => {
+    const runtime = submitTurn("sent request to collector", "curl http://x");
+    const collectorHit = async (): Promise<OracleResult> => ({
+      verified: true,
+      confidence: 1.0,
+      evidence: "collector hit: nonce=ssrf123 path=/ssrf123",
+      reason: "",
+    });
+
+    const result = await generatePov(
+      makeFinding({ category: "ssrf" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      { disableBash: true, disableHttp: true, oracle: collectorHit },
+    );
+
+    expect(result.hasPov).toBe(true);
+    expect(result.oracle).toBe("oast-callback");
+    expect(result.reason).toMatch(/collector hit/);
+  });
+
+  it("blind SSRF with no collector hit → hasPov:false (clean negative)", async () => {
+    const runtime = submitTurn("sent request to collector", "curl http://x");
+    const noHit = async (): Promise<OracleResult> => ({
+      verified: false,
+      confidence: 0,
+      evidence: "",
+      reason: "collector never received a request for nonce=ssrf123",
+    });
+
+    const result = await generatePov(
+      makeFinding({ category: "ssrf" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      { disableBash: true, disableHttp: true, oracle: noHit },
+    );
+
+    expect(result.hasPov).toBe(false);
+    expect(result.inconclusive).toBeFalsy();
+    expect(result.oracle).toBe("oast-callback");
+  });
+
+  it("reuses a precomputed oracle result instead of re-running the oracle", async () => {
+    const runtime = submitTurn("sent request to collector", "curl http://x");
+    let ran = 0;
+    const countingOracle = async (): Promise<OracleResult> => {
+      ran += 1;
+      return { verified: false, confidence: 0, evidence: "", reason: "should not run" };
+    };
+
+    const result = await generatePov(
+      makeFinding({ category: "ssrf" as AttackCategory }),
+      "http://example.com",
+      runtime,
+      5,
+      {
+        disableBash: true,
+        disableHttp: true,
+        oracle: countingOracle,
+        precomputedOracle: {
+          verified: true,
+          confidence: 0.9,
+          evidence: "collector hit: nonce=ssrfPRE",
+          reason: "",
+        },
+      },
+    );
+
+    expect(ran).toBe(0); // oracle was NOT re-run
+    expect(result.hasPov).toBe(true);
+    expect(result.oracle).toBe("oast-callback");
+    expect(result.reason).toMatch(/ssrfPRE/);
   });
 });

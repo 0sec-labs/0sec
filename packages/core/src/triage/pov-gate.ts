@@ -23,6 +23,7 @@ import type {
   NativeToolDef,
 } from "../runtime/types.js";
 import type { Finding, AttackCategory } from "@pwnkit/shared";
+import { verifyOracleByCategory, type OracleResult } from "./oracles.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +38,16 @@ export type PovArtifactType =
   | "bash"
   | "none";
 
+/**
+ * Which oracle decided the verdict.
+ *  - `headless-browser`: real Playwright dialog/execution capture (XSS).
+ *  - `oast-callback`: out-of-band collector hit (SSRF / blind RCE / blind
+ *    injection).
+ *  - `regex-fallback`: no deterministic oracle for the category, so we fell
+ *    back to regex over the agent-supplied execution evidence.
+ */
+export type PovOracle = "headless-browser" | "oast-callback" | "regex-fallback";
+
 export interface PovResult {
   hasPov: boolean;
   /** The concrete working PoC (curl command, script, etc.) or null. */
@@ -50,6 +61,41 @@ export interface PovResult {
   turnsUsed: number;
   /** Short human-readable reason for the verdict. */
   reason: string;
+  /** Which oracle produced the verdict (deterministic vs regex fallback). */
+  oracle: PovOracle;
+  /**
+   * True when the deciding oracle could not run to a conclusion (e.g. browser
+   * launch failed, collector errored). Inconclusive means "do not trust the
+   * verdict" — we NEVER upgrade an inconclusive oracle to a pass.
+   */
+  inconclusive?: boolean;
+}
+
+/**
+ * Map a finding category to the deterministic oracle that should adjudicate
+ * its PoV, if any. Categories without a deterministic oracle fall back to the
+ * regex judge.
+ *
+ * This is the single source of truth the PoV gate uses to decide whether to
+ * delegate to `oracles.ts` or to regex-judge the agent's evidence. It is kept
+ * deliberately conservative: only categories whose oracle produces an
+ * out-of-model, reproducible artifact (a fired browser dialog or an OAST
+ * callback) are delegated. Response-pattern oracles (sqli error strings,
+ * /etc/passwd content, IDOR diffs) still flow through the regex judge here —
+ * they are run separately as the `oracle` triage layer in agentic-scanner and
+ * do not need to be re-run inside the PoV gate.
+ */
+export function oracleForCategory(category: AttackCategory): PovOracle {
+  switch (category) {
+    case "xss":
+      return "headless-browser";
+    case "ssrf":
+    case "command-injection":
+    case "code-injection":
+      return "oast-callback";
+    default:
+      return "regex-fallback";
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -473,12 +519,41 @@ async function runHttp(input: Record<string, unknown>): Promise<string> {
 // ────────────────────────────────────────────────────────────────────
 
 export interface GeneratePovOptions {
-  /** Override the default judge (useful for tests / custom oracles). */
+  /**
+   * Override the regex judge (used only for `regex-fallback` categories or as
+   * a last resort). Tests can inject a deterministic verdict here.
+   */
   judge?: (finding: Finding, evidence: string) => JudgeVerdict;
+  /**
+   * Override the deterministic oracle. Defaults to the shared
+   * `verifyOracleByCategory` from `oracles.ts`. Tests inject a mocked browser /
+   * collector here. If this throws, the verdict is INCONCLUSIVE (never a pass).
+   */
+  oracle?: (finding: Finding, target: string) => Promise<OracleResult>;
+  /**
+   * Pre-computed oracle result from an upstream stage (e.g. the `oracle` triage
+   * layer in agentic-scanner already ran `verifyOracleByCategory`). When
+   * supplied for a category that delegates to an oracle, the PoV gate reuses it
+   * instead of running the oracle a second time.
+   */
+  precomputedOracle?: OracleResult;
   /** Skip bash execution (tests). If set, bash returns a stub. */
   disableBash?: boolean;
   /** Skip http fetch (tests). If set, http_request returns a stub. */
   disableHttp?: boolean;
+}
+
+/**
+ * Heuristic: does an `OracleResult.reason` describe an *infrastructure* error
+ * (browser failed to launch, collector failed to bind, probe failed to send)
+ * rather than a clean "exploit did not reproduce"? Infra errors must surface as
+ * INCONCLUSIVE so we never silently fall through to a pass and never downgrade a
+ * real finding just because the oracle harness broke.
+ */
+function isOracleInfraError(reason: string): boolean {
+  return /\b(failed|error|threw|exception|unavailable|timed? ?out)\b/i.test(
+    reason,
+  );
 }
 
 export async function generatePov(
@@ -488,6 +563,7 @@ export async function generatePov(
   maxTurns: number = 5,
   opts: GeneratePovOptions = {},
 ): Promise<PovResult> {
+  const oracleKind = oracleForCategory(finding.category);
   const system = buildPovSystemPrompt(finding, target, maxTurns);
   const messages: NativeMessage[] = [
     {
@@ -525,6 +601,7 @@ export async function generatePov(
         confidence: 0,
         turnsUsed,
         reason: `runtime error: ${result.error}`,
+        oracle: oracleKind,
       };
     }
 
@@ -611,6 +688,7 @@ export async function generatePov(
       confidence: 0,
       turnsUsed,
       reason: `agent gave up: ${gaveUpReason}`,
+      oracle: oracleKind,
     };
   }
 
@@ -626,10 +704,31 @@ export async function generatePov(
         turnsUsed >= maxTurns
           ? `max turns (${maxTurns}) exceeded without a working PoC`
           : "agent exited without submitting a PoC",
+      oracle: oracleKind,
     };
   }
 
-  // Judge the submitted evidence.
+  // ── Adjudicate the submitted PoC ──
+  //
+  // The agent claims it has a working exploit. For categories with a
+  // deterministic oracle (XSS → headless browser, SSRF / blind RCE / blind
+  // injection → OAST callback) we DO NOT trust the regex over the agent's
+  // self-reported evidence — that is "an LLM guarding an LLM". Instead we
+  // delegate to the real oracle, which reproduces the exploit out-of-band.
+  // Regex remains the fallback only when no deterministic oracle applies.
+  if (oracleKind !== "regex-fallback") {
+    return adjudicateWithOracle(
+      finding,
+      target,
+      submitted,
+      turnsUsed,
+      maxTurns,
+      oracleKind,
+      opts,
+    );
+  }
+
+  // ── Regex fallback (no deterministic oracle for this category) ──
   const verdict = judge(finding, submitted.execution_evidence);
   if (!verdict.passed) {
     return {
@@ -640,6 +739,7 @@ export async function generatePov(
       confidence: 0.2,
       turnsUsed,
       reason: `submitted PoC did not contain category-specific proof (${verdict.label})`,
+      oracle: "regex-fallback",
     };
   }
 
@@ -655,5 +755,105 @@ export async function generatePov(
     confidence,
     turnsUsed,
     reason: `PoV confirmed: ${verdict.label}${verdict.matchedPattern ? ` (matched: ${verdict.matchedPattern.slice(0, 80)})` : ""}`,
+    oracle: "regex-fallback",
+  };
+}
+
+/**
+ * Adjudicate a submitted PoC by running the deterministic oracle for the
+ * finding's category, instead of regex-matching the agent's evidence.
+ *
+ * Contract:
+ *  - oracle verifies      → hasPov:true,  oracle tag set.
+ *  - oracle clean-fails   → hasPov:false (intentional regression of the regex
+ *                           pass: a reflected `<script>alert(1)` that never
+ *                           fires in the browser is NOT a PoV).
+ *  - oracle throws / infra
+ *    error in reason       → INCONCLUSIVE: hasPov:false, inconclusive:true,
+ *                           NEVER a silent pass ("inconclusive on error, not
+ *                           a false pass").
+ */
+async function adjudicateWithOracle(
+  finding: Finding,
+  target: string,
+  submitted: {
+    artifact_type: PovArtifactType;
+    artifact: string;
+    execution_evidence: string;
+  },
+  turnsUsed: number,
+  maxTurns: number,
+  oracleKind: Exclude<PovOracle, "regex-fallback">,
+  opts: GeneratePovOptions,
+): Promise<PovResult> {
+  const runOracle = opts.oracle ?? verifyOracleByCategory;
+
+  let oracleResult: OracleResult;
+  try {
+    // Reuse an upstream oracle run when available to avoid double-firing the
+    // browser / collector.
+    oracleResult =
+      opts.precomputedOracle ?? (await runOracle(finding, target));
+  } catch (err) {
+    // Oracle harness blew up → inconclusive, never a pass.
+    return {
+      hasPov: false,
+      povArtifact: submitted.artifact || null,
+      artifactType: submitted.artifact_type,
+      executionEvidence: submitted.execution_evidence,
+      confidence: 0,
+      turnsUsed,
+      reason: `oracle (${oracleKind}) errored, inconclusive: ${(err as Error).message}`,
+      oracle: oracleKind,
+      inconclusive: true,
+    };
+  }
+
+  if (oracleResult.verified) {
+    // Blend oracle confidence with how quickly the agent produced the PoC.
+    const speed = Math.max(
+      0.7,
+      1 - (turnsUsed - 1) * (0.3 / Math.max(1, maxTurns - 1)),
+    );
+    return {
+      hasPov: true,
+      povArtifact: submitted.artifact,
+      artifactType: submitted.artifact_type,
+      // Prefer the oracle's reproduced evidence; keep the agent's as context.
+      executionEvidence: oracleResult.evidence || submitted.execution_evidence,
+      confidence: Math.min(speed, oracleResult.confidence || speed),
+      turnsUsed,
+      reason: `PoV confirmed by ${oracleKind} oracle: ${oracleResult.evidence}`,
+      oracle: oracleKind,
+    };
+  }
+
+  // Not verified. Distinguish a clean "did not reproduce" from an infra error.
+  if (isOracleInfraError(oracleResult.reason)) {
+    return {
+      hasPov: false,
+      povArtifact: submitted.artifact || null,
+      artifactType: submitted.artifact_type,
+      executionEvidence: submitted.execution_evidence,
+      confidence: 0,
+      turnsUsed,
+      reason: `oracle (${oracleKind}) inconclusive: ${oracleResult.reason}`,
+      oracle: oracleKind,
+      inconclusive: true,
+    };
+  }
+
+  // Clean negative: the exploit genuinely did not fire under the oracle. This
+  // is the intentional regression — a payload reflected as text but never
+  // executed is hasPov:false.
+  return {
+    hasPov: false,
+    povArtifact: submitted.artifact || null,
+    artifactType: submitted.artifact_type,
+    executionEvidence: submitted.execution_evidence,
+    confidence: 0,
+    turnsUsed,
+    reason: `${oracleKind} oracle did not reproduce the exploit: ${oracleResult.reason}`,
+    oracle: oracleKind,
   };
 }
