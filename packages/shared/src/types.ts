@@ -352,6 +352,32 @@ export interface LayerVerdict {
   changedSeverity?: { from: Severity; to: Severity };
 }
 
+/**
+ * Supply-chain dependency attribution (issue #565). Optional and additive —
+ * stamped onto a Finding by the malicious-package oracles so a reviewer can
+ * tell whether a supply-chain finding originates from the audited root package
+ * itself (`direct`) or from a transitive dependency pulled in beneath it
+ * (`transitive`). Real-world supply-chain attacks ride transitive deps
+ * (event-stream was transitive), so attribution is the difference between
+ * "this package is malicious" and "something three levels down is malicious".
+ */
+export interface SupplyChainAttribution {
+  /** Whether the finding is about the audited root or a transitive dependency. */
+  relation: "direct" | "transitive";
+  /** The package the finding is actually about, formatted `name@version`. */
+  package: string;
+  /**
+   * Depth in the resolved dependency tree. 0 = the audited root package,
+   * 1 = a direct dependency of the root, 2+ = deeper transitive deps.
+   */
+  depth?: number;
+  /**
+   * Best-effort resolved path of package names from the audited root down to
+   * the package this finding is about, e.g. `["my-app", "a", "evil-pkg"]`.
+   */
+  dependencyPath?: string[];
+}
+
 export interface Finding {
   id: string;
   templateId: string;
@@ -456,6 +482,14 @@ export interface Finding {
    * {@link InlineValidationVerdict}.
    */
   inlineValidation?: InlineValidationVerdict;
+  /**
+   * Supply-chain dependency attribution (issue #565). Optional and additive —
+   * populated by the transitive malicious-package scan and the
+   * dependency-confusion check. When absent, the finding predates the
+   * attribution work or is not a supply-chain finding. See
+   * {@link SupplyChainAttribution}.
+   */
+  supplyChain?: SupplyChainAttribution;
   timestamp: number;
 }
 
@@ -925,6 +959,26 @@ export interface AuditConfig {
   model?: string;
   /** Hard cost ceiling in USD; aborts the audit when exceeded. Default: no ceiling. */
   costCeilingUsd?: number;
+  /**
+   * Transitive-dependency source-audit budget (issue #565). Maximum number of
+   * distinct (name@version) transitive packages whose source is scanned by the
+   * deterministic malicious-package oracles. Default 200.
+   * Set to 0 to disable the transitive walk entirely (root-only behaviour).
+   */
+  transitiveAuditBudget?: number;
+  /**
+   * Internal/private npm scopes the org owns, e.g. `["@acme", "@internal"]`
+   * (issue #565). A dependency whose name lives in one of these scopes but
+   * which ALSO resolves on the public registry is flagged as a
+   * dependency-confusion risk. Empty/undefined disables the check.
+   */
+  internalScopes?: string[];
+  /**
+   * Exact internal/private npm package names (unscoped) the org publishes
+   * privately (issue #565). Same dependency-confusion semantics as
+   * {@link internalScopes} but for names without an `@scope/` prefix.
+   */
+  internalPackages?: string[];
 }
 
 export interface SemgrepFinding {

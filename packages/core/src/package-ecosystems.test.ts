@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Mock node:child_process before importing the module under test. The
 // installNpmPackage path under test uses execFileSync for both:
@@ -21,7 +22,12 @@ vi.mock("./historical-package-fallback.js", () => ({
   restoreHistoricalPackageFixture: () => null,
 }));
 
-const { installPackageForEcosystem, runDependencyAuditForEcosystem } = await import("./package-ecosystems.js");
+const {
+  installPackageForEcosystem,
+  runDependencyAuditForEcosystem,
+  walkInstalledNpmTree,
+  probePublicNpmRegistry,
+} = await import("./package-ecosystems.js");
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -231,5 +237,100 @@ describe("runDependencyAuditForEcosystem — non-npm OSV lookup", () => {
 
     expect(findings).toEqual([]);
     expect(execFileSyncMock).toHaveBeenCalledOnce();
+  });
+});
+
+// ── walkInstalledNpmTree (issue #565) ───────────────────────────────────────
+
+describe("walkInstalledNpmTree", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "walk-tree-test-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function plant(relPath: string, name: string, version: string): void {
+    const dir = join(root, relPath);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version }), "utf-8");
+  }
+
+  it("returns hoisted transitive deps and excludes the audited root", () => {
+    plant("node_modules/my-app", "my-app", "1.0.0"); // the audited root
+    plant("node_modules/dep-a", "dep-a", "2.0.0");
+    plant("node_modules/dep-b", "dep-b", "3.1.0");
+
+    const tree = walkInstalledNpmTree(root, "my-app");
+    const names = tree.map((t) => t.name).sort();
+    expect(names).toEqual(["dep-a", "dep-b"]);
+    expect(tree.every((t) => t.depth === 1)).toBe(true);
+    const depA = tree.find((t) => t.name === "dep-a");
+    expect(depA?.version).toBe("2.0.0");
+    expect(depA?.dependencyPath).toEqual(["my-app", "dep-a"]);
+  });
+
+  it("handles scoped packages and nested node_modules with deeper depth", () => {
+    plant("node_modules/@acme/widgets", "@acme/widgets", "1.0.0");
+    plant("node_modules/dep-a", "dep-a", "2.0.0");
+    plant("node_modules/dep-a/node_modules/nested", "nested", "0.0.1");
+
+    const tree = walkInstalledNpmTree(root, "my-app");
+    const scoped = tree.find((t) => t.name === "@acme/widgets");
+    expect(scoped).toBeDefined();
+    expect(scoped?.depth).toBe(1);
+
+    const nested = tree.find((t) => t.name === "nested");
+    expect(nested).toBeDefined();
+    expect(nested?.depth).toBe(2);
+    expect(nested?.dependencyPath).toEqual(["my-app", "dep-a", "nested"]);
+  });
+
+  it("returns empty when node_modules is absent", () => {
+    expect(walkInstalledNpmTree(root, "my-app")).toEqual([]);
+  });
+
+  it("respects the maxPackages cap", () => {
+    for (let i = 0; i < 10; i++) plant(`node_modules/dep-${i}`, `dep-${i}`, "1.0.0");
+    const tree = walkInstalledNpmTree(root, "my-app", 4);
+    expect(tree.length).toBe(4);
+  });
+});
+
+// ── probePublicNpmRegistry (issue #565) ─────────────────────────────────────
+
+describe("probePublicNpmRegistry", () => {
+  it("reports exists + latest + maintainers from a 200 response", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          "dist-tags": { latest: "3.2.1" },
+          maintainers: [{ name: "alice" }, "bob"],
+        }),
+        { status: 200 },
+      ),
+    );
+    const res = await probePublicNpmRegistry("@acme/widgets", { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res.exists).toBe(true);
+    expect(res.latestVersion).toBe("3.2.1");
+    expect(res.maintainers).toEqual(["alice", "bob"]);
+    // Scoped slash must be percent-encoded in the registry path.
+    expect(fetchImpl.mock.calls[0][0]).toContain("@acme%2fwidgets");
+  });
+
+  it("reports exists:false on a 404", async () => {
+    const fetchImpl = vi.fn(async () => new Response("not found", { status: 404 }));
+    const res = await probePublicNpmRegistry("@acme/nope", { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res.exists).toBe(false);
+  });
+
+  it("fails soft (exists:false) when fetch throws", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const res = await probePublicNpmRegistry("@acme/widgets", { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res.exists).toBe(false);
   });
 });

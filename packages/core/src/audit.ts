@@ -14,7 +14,12 @@ import type { ScanEvent, ScanListener } from "./scanner.js";
 import { auditAgentPrompt } from "./analysis-prompts.js";
 import { runAnalysisAgent } from "./agent-runner.js";
 import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
-import { scanForMaliciousPatterns } from "./malicious-detector.js";
+import {
+  scanForMaliciousPatterns,
+  scanTransitiveDependencies,
+  checkDependencyConfusion,
+  isInternalPackageName,
+} from "./malicious-detector.js";
 import { postProcessPackageAuditFindings } from "./package-audit-suppressor.js";
 import { collectScopeFiles } from "./source-files.js";
 import { features as agentFeatures } from "./agent/features.js";
@@ -24,6 +29,8 @@ import {
   normalizeSeverity,
   formatFixAvailable,
   runDependencyAuditForEcosystem,
+  walkInstalledNpmTree,
+  probePublicNpmRegistry,
   type InstalledPackage,
 } from "./package-ecosystems.js";
 
@@ -695,6 +702,103 @@ async function runAuditAgent(
 }
 
 /**
+ * Transitive supply-chain pass (issue #565). npm-only — walks the resolved
+ * `node_modules` tree, runs the deterministic malicious-package oracles over
+ * each transitive dependency (budget-bounded, deduped, attributed), and runs a
+ * dependency-confusion check over the audited root + any dependency whose name
+ * matches the configured internal scopes/names.
+ *
+ * Findings are run through the same package-audit suppressor as agent findings
+ * so benign install hooks / known binary-bootstrap deps (esbuild &c.) don't
+ * flood the report once the whole tree is in scope.
+ */
+export async function runSupplyChainScan(
+  pkg: InstalledPackage,
+  config: AuditConfig,
+  emit: ScanListener,
+): Promise<Finding[]> {
+  if (pkg.ecosystem !== "npm") return [];
+
+  const findings: Finding[] = [];
+  const internalScopes = config.internalScopes ?? [];
+  const internalPackages = config.internalPackages ?? [];
+
+  // 1. Transitive source-audit of the resolved dependency tree.
+  const budget = config.transitiveAuditBudget ?? undefined; // undefined → module default
+  if (budget === undefined || budget > 0) {
+    emit({
+      type: "stage:start",
+      stage: "discovery",
+      message: "Walking resolved dependency tree for transitive supply-chain audit...",
+    });
+    const tree = walkInstalledNpmTree(pkg.tempDir, pkg.name);
+    const result = scanTransitiveDependencies({
+      rootName: pkg.name,
+      packages: tree,
+      maxPackages: budget,
+    });
+    const cleaned = postProcessPackageAuditFindings(result.findings);
+    findings.push(...cleaned);
+    emit({
+      type: "stage:end",
+      stage: "discovery",
+      message:
+        `Transitive supply-chain audit: ${cleaned.length} finding${cleaned.length === 1 ? "" : "s"} ` +
+        `across ${result.scanned} transitive package${result.scanned === 1 ? "" : "s"}` +
+        (result.skipped > 0 ? ` (${result.skipped} skipped — budget exhausted)` : ""),
+    });
+
+    // 2. Dependency-confusion: probe the public registry for internal names.
+    if (internalScopes.length > 0 || internalPackages.length > 0) {
+      // Candidate set: the audited root + every distinct transitive dep whose
+      // name the org claims as internal. Cheap allow-list filter first so we
+      // only hit the network for the handful of internal names.
+      const candidates = new Map<string, { name: string; version: string }>();
+      const consider = (name: string, version: string) => {
+        if (isInternalPackageName(name, internalScopes, internalPackages)) {
+          candidates.set(name, { name, version });
+        }
+      };
+      consider(pkg.name, pkg.version);
+      for (const dep of tree) consider(dep.name, dep.version);
+
+      if (candidates.size > 0) {
+        emit({
+          type: "stage:start",
+          stage: "discovery",
+          message: `Dependency-confusion check for ${candidates.size} internal package name${candidates.size === 1 ? "" : "s"}...`,
+        });
+        const confusionFindings = (
+          await Promise.all(
+            [...candidates.values()].map((c) =>
+              checkDependencyConfusion({
+                packageName: c.name,
+                version: c.version,
+                internalScopes,
+                internalPackages,
+                probe: (name) => probePublicNpmRegistry(name),
+                attribution:
+                  c.name === pkg.name
+                    ? { relation: "direct", package: `${pkg.name}@${pkg.version}`, depth: 0 }
+                    : { relation: "transitive", package: `${c.name}@${c.version}` },
+              }),
+            ),
+          )
+        ).filter((f): f is Finding => f !== null);
+        findings.push(...confusionFindings);
+        emit({
+          type: "stage:end",
+          stage: "discovery",
+          message: `Dependency-confusion check: ${confusionFindings.length} risk${confusionFindings.length === 1 ? "" : "s"} flagged`,
+        });
+      }
+    }
+  }
+
+  return findings;
+}
+
+/**
  * Main entry point: audit an npm package for security vulnerabilities.
  *
  * Pipeline:
@@ -765,6 +869,12 @@ export async function packageAudit(
           })()
         : [];
 
+    // Step 2.6: Transitive supply-chain audit + dependency-confusion (#565).
+    // Walks the resolved dependency tree and source-audits transitive deps —
+    // the event-stream class of attack the root-only scan is blind to — plus a
+    // namespace-substitution check for configured internal scopes/names.
+    const supplyChainFindings = await runSupplyChainScan(pkg, config, emit);
+
     // Step 3: AI agent analysis
     const agentResult = await runAuditAgent(
       pkg,
@@ -783,6 +893,7 @@ export async function packageAudit(
     const findings = [
       ...(advisoryFinding ? [advisoryFinding] : []),
       ...maliciousFindings,
+      ...supplyChainFindings,
       ...agentFindings,
     ];
 

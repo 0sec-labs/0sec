@@ -7,6 +7,7 @@ import type { NpmAuditFinding, Severity } from "@pwnkit/shared";
 import type { ScanListener } from "./scanner.js";
 import { restoreHistoricalPackageFixture, shouldUseHistoricalPackageFallback } from "./historical-package-fallback.js";
 import { bufferToString } from "./shared-analysis.js";
+import type { RegistryProbeResult, TransitivePackage } from "./malicious-detector.js";
 
 /**
  * Heuristic to spot npm's ERESOLVE peer-dependency conflict from a captured
@@ -941,4 +942,155 @@ export function runDependencyAuditForEcosystem(
   const findings = parseNpmAuditOutput(rawOutput);
   emit({ type: "stage:end", stage: "discovery", message: `npm audit: ${findings.length} advisories` });
   return findings;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Transitive dependency tree walk (issue #565)
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Walk the resolved `node_modules` tree of an installed npm project and return
+ * every installed package found on disk (excluding the audited root). This is
+ * the input to the transitive malicious-package source-audit: each entry has
+ * the on-disk `path` the install-script reader needs.
+ *
+ * npm hoists most deps to the top-level `node_modules`, so an exact tree depth
+ * isn't recoverable from disk alone; we record a best-effort depth (1 for
+ * top-level entries, +1 per nested `node_modules`) and a best-effort
+ * `dependencyPath` from the nesting structure. That's enough for attribution —
+ * the finding points at the right package even if the precise import chain for
+ * a hoisted dep is approximate.
+ *
+ * Scoped packages (`@scope/name`) and nested `node_modules` are handled. The
+ * walk is bounded by `maxPackages` so a pathological tree can't run unbounded.
+ */
+export function walkInstalledNpmTree(
+  projectDir: string,
+  rootName: string,
+  maxPackages = 5_000,
+): TransitivePackage[] {
+  const out: TransitivePackage[] = [];
+  const rootLower = rootName.toLowerCase();
+
+  function readPackage(pkgDir: string): { name: string; version: string } | null {
+    const pkgJsonPath = join(pkgDir, "package.json");
+    if (!existsSync(pkgJsonPath)) return null;
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { name?: string; version?: string };
+      if (!pkg.name) return null;
+      return { name: pkg.name, version: typeof pkg.version === "string" ? pkg.version : "unknown" };
+    } catch {
+      return null;
+    }
+  }
+
+  function listPackageDirs(nodeModulesDir: string): string[] {
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(nodeModulesDir);
+    } catch {
+      return [];
+    }
+    const dirs: string[] = [];
+    for (const entry of entries) {
+      if (entry === ".bin" || entry === ".cache" || entry === ".package-lock.json") continue;
+      const abs = join(nodeModulesDir, entry);
+      try {
+        if (!statSync(abs).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      if (entry.startsWith("@")) {
+        // Scope directory: its children are the actual packages.
+        let scoped: string[] = [];
+        try {
+          scoped = readdirSync(abs);
+        } catch {
+          continue;
+        }
+        for (const inner of scoped) {
+          const innerAbs = join(abs, inner);
+          try {
+            if (statSync(innerAbs).isDirectory()) dirs.push(innerAbs);
+          } catch {
+            // ignore unreadable entry
+          }
+        }
+      } else {
+        dirs.push(abs);
+      }
+    }
+    return dirs;
+  }
+
+  function walk(nodeModulesDir: string, depth: number, pathPrefix: string[]): void {
+    if (out.length >= maxPackages) return;
+    for (const pkgDir of listPackageDirs(nodeModulesDir)) {
+      if (out.length >= maxPackages) return;
+      const meta = readPackage(pkgDir);
+      if (!meta) continue;
+      const dependencyPath = [...pathPrefix, meta.name];
+      // Skip the audited root itself (top-level node_modules/<root>).
+      if (!(depth === 1 && meta.name.toLowerCase() === rootLower)) {
+        out.push({ name: meta.name, version: meta.version, path: pkgDir, depth, dependencyPath });
+      }
+      // Recurse into a nested node_modules if present (non-hoisted deps).
+      const nested = join(pkgDir, "node_modules");
+      if (existsSync(nested)) walk(nested, depth + 1, dependencyPath);
+    }
+  }
+
+  walk(join(projectDir, "node_modules"), 1, [rootName]);
+  return out;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Public-registry probe for dependency-confusion (issue #565)
+// ────────────────────────────────────────────────────────────────────
+
+interface NpmRegistryMetadata {
+  "dist-tags"?: { latest?: string };
+  maintainers?: Array<{ name?: string } | string>;
+}
+
+/**
+ * Probe the PUBLIC npm registry for a package name. Used by the
+ * dependency-confusion check to learn whether an internal/private package name
+ * is shadowable by a public package. Fail-soft: any error (offline, network,
+ * unparseable body) resolves to `{ exists: false }` so a probe failure can
+ * never invent a finding.
+ *
+ * `fetchImpl` is injectable so tests stay offline (mirrors
+ * `triage/publishability-sources.ts:resolveRepository`).
+ */
+export async function probePublicNpmRegistry(
+  packageName: string,
+  opts: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+): Promise<RegistryProbeResult> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  // Scoped names (@scope/pkg) must keep the slash encoded for the registry path.
+  const url = `https://registry.npmjs.org/${packageName.replace("/", "%2f")}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
+  try {
+    const res = await fetchImpl(url, {
+      headers: { Accept: "application/json", "User-Agent": "pwnkit-supply-chain/0.1" },
+      signal: controller.signal,
+    });
+    if (res.status === 404) return { exists: false };
+    if (!res.ok) return { exists: false };
+    const meta = (await res.json()) as NpmRegistryMetadata;
+    const maintainers = (meta.maintainers ?? [])
+      .map((m) => (typeof m === "string" ? m : m?.name))
+      .filter((m): m is string => typeof m === "string" && m.length > 0);
+    return {
+      exists: true,
+      latestVersion: meta["dist-tags"]?.latest,
+      maintainers: maintainers.length > 0 ? maintainers : undefined,
+    };
+  } catch {
+    return { exists: false };
+  } finally {
+    clearTimeout(timer);
+  }
 }

@@ -30,7 +30,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding, SupplyChainAttribution } from "@pwnkit/shared";
 
 // ────────────────────────────────────────────────────────────────────
 // Top-N npm package list for typosquat detection
@@ -413,6 +413,39 @@ export interface MaliciousScanOptions {
   packagePath: string;
   /** Optional weekly download count, used to weight typosquat severity */
   weeklyDownloads?: number;
+  /**
+   * Optional package version, used to format supply-chain attribution
+   * (`name@version`). When omitted, attribution falls back to the bare name.
+   */
+  packageVersion?: string;
+  /**
+   * Supply-chain attribution stamped onto every finding (issue #565). When
+   * omitted, findings are attributed as `direct` (the audited root package).
+   * The transitive walk passes a `transitive` attribution here so each
+   * finding carries its dependency path and depth.
+   */
+  attribution?: SupplyChainAttribution;
+}
+
+/**
+ * Stamp supply-chain attribution onto a finding and, for transitive
+ * dependencies, make the attribution legible in the title/description so the
+ * provenance survives even in renderers that ignore the structured field.
+ */
+function applyAttribution(finding: Finding, attribution: SupplyChainAttribution): Finding {
+  finding.supplyChain = attribution;
+  if (attribution.relation !== "transitive") return finding;
+
+  const pathSuffix =
+    attribution.dependencyPath && attribution.dependencyPath.length > 1
+      ? ` (dependency path: ${attribution.dependencyPath.join(" › ")})`
+      : "";
+  finding.title = `[transitive] ${finding.title}`;
+  finding.description =
+    `**Transitive dependency finding.** This issue is in \`${attribution.package}\`, a ` +
+    `transitive dependency (depth ${attribution.depth ?? "?"}) of the audited package, not the audited package itself${pathSuffix}.\n\n` +
+    finding.description;
+  return finding;
 }
 
 /**
@@ -424,6 +457,12 @@ export function scanForMaliciousPatterns(opts: MaliciousScanOptions): Finding[] 
   const { packageName, packagePath } = opts;
   const findings: Finding[] = [];
   const now = Date.now();
+  const attribution: SupplyChainAttribution =
+    opts.attribution ?? {
+      relation: "direct",
+      package: opts.packageVersion ? `${packageName}@${opts.packageVersion}` : packageName,
+      depth: 0,
+    };
 
   // 1. Historical-compromise oracle
   const historical = checkKnownCompromisedPackage(packageName);
@@ -512,5 +551,248 @@ export function scanForMaliciousPatterns(opts: MaliciousScanOptions): Finding[] 
     });
   }
 
-  return findings;
+  return findings.map((finding) => applyAttribution(finding, attribution));
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Transitive dependency source-audit (issue #565)
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Default number of distinct transitive packages whose source is run through
+ * the deterministic oracles in a single audit. Real dependency trees easily
+ * reach the thousands; a clean root with a malicious transitive dep is the
+ * threat we care about, and 200 distinct (name@version) packages is enough to
+ * cover the realistic blast radius without unbounded filesystem work.
+ */
+export const DEFAULT_TRANSITIVE_AUDIT_BUDGET = 200;
+
+/** A resolved transitive package discovered on disk under `node_modules`. */
+export interface TransitivePackage {
+  name: string;
+  version: string;
+  /** Absolute path to the package directory (where its package.json lives). */
+  path: string;
+  /** Depth in the resolved tree; 1 = a direct dep of the audited root. */
+  depth: number;
+  /**
+   * Best-effort resolved path of names from the audited root to this package.
+   * Always starts with the root name and ends with this package's name.
+   */
+  dependencyPath?: string[];
+}
+
+export interface TransitiveScanOptions {
+  /** The audited root package — excluded from the transitive walk + dedup. */
+  rootName: string;
+  /** Resolved transitive packages discovered on disk (e.g. via the walker). */
+  packages: TransitivePackage[];
+  /**
+   * Budget: maximum number of distinct (name@version) packages to source-audit.
+   * Defaults to {@link DEFAULT_TRANSITIVE_AUDIT_BUDGET}. 0 disables the scan.
+   */
+  maxPackages?: number;
+}
+
+export interface TransitiveScanResult {
+  /** Findings, each carrying `supplyChain.relation === "transitive"`. */
+  findings: Finding[];
+  /** Distinct (name@version) packages actually source-audited. */
+  scanned: number;
+  /** Distinct packages skipped because the budget was exhausted. */
+  skipped: number;
+}
+
+/**
+ * Run the deterministic malicious-package oracles over a resolved transitive
+ * dependency set and attribute every finding to the transitive package it came
+ * from. Dedups by (name@version) so a diamond dependency is audited once, and
+ * is budget-bounded so a pathological tree can't blow up the audit.
+ *
+ * Why this exists: pwnkit historically source-audited only the ROOT package,
+ * so a malicious transitive dependency (the event-stream pattern) sailed
+ * through. This walks the actual resolved tree and applies the same
+ * typosquat / known-compromise / install-script oracles to each dep.
+ */
+export function scanTransitiveDependencies(opts: TransitiveScanOptions): TransitiveScanResult {
+  const budget = opts.maxPackages ?? DEFAULT_TRANSITIVE_AUDIT_BUDGET;
+  const rootName = opts.rootName.toLowerCase();
+  const findings: Finding[] = [];
+  const seen = new Set<string>();
+  let scanned = 0;
+  let skipped = 0;
+
+  if (budget <= 0) return { findings, scanned, skipped };
+
+  // Deterministic order: shallowest first, then by name, so the budget keeps
+  // the deps closest to the root (highest blast radius) when it's exhausted.
+  const ordered = [...opts.packages].sort(
+    (a, b) => a.depth - b.depth || a.name.localeCompare(b.name) || a.version.localeCompare(b.version),
+  );
+
+  for (const pkg of ordered) {
+    if (pkg.name.toLowerCase() === rootName) continue; // never re-audit the root
+    const key = `${pkg.name}@${pkg.version}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    if (scanned >= budget) {
+      skipped++;
+      continue;
+    }
+    scanned++;
+
+    const dependencyPath = pkg.dependencyPath ?? [opts.rootName, pkg.name];
+    const pkgFindings = scanForMaliciousPatterns({
+      packageName: pkg.name,
+      packagePath: pkg.path,
+      packageVersion: pkg.version,
+      attribution: {
+        relation: "transitive",
+        package: key,
+        depth: pkg.depth,
+        dependencyPath,
+      },
+    });
+    findings.push(...pkgFindings);
+  }
+
+  return { findings, scanned, skipped };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Dependency-confusion / private-registry substitution (issue #565)
+// ────────────────────────────────────────────────────────────────────
+
+/** Result of probing the PUBLIC registry for a (possibly private) package name. */
+export interface RegistryProbeResult {
+  /** Does a package with this exact name exist on the public registry? */
+  exists: boolean;
+  /** Latest published version on the public registry, if known. */
+  latestVersion?: string;
+  /** Maintainer handles on the public package, if known. */
+  maintainers?: string[];
+}
+
+/** Async probe of the public registry for one package name. Injectable for tests. */
+export type RegistryProbe = (packageName: string) => Promise<RegistryProbeResult>;
+
+export interface DependencyConfusionOptions {
+  packageName: string;
+  version: string;
+  /** Scopes the org owns privately, e.g. `["@acme", "@internal"]`. */
+  internalScopes?: string[];
+  /** Exact private package names (unscoped) the org publishes internally. */
+  internalPackages?: string[];
+  /** Probe against the PUBLIC registry. */
+  probe: RegistryProbe;
+  /**
+   * Maintainer handles known to own the INTERNAL package, if available. When
+   * provided and the public package's maintainers don't intersect, the finding
+   * is escalated — a different publisher owning the public name is the textbook
+   * dependency-confusion setup.
+   */
+  internalMaintainers?: string[];
+  /** Attribution to stamp on the finding (defaults to direct). */
+  attribution?: SupplyChainAttribution;
+}
+
+/**
+ * Decide whether a package name is one the org claims as internal/private.
+ * Scoped match is by `@scope` prefix; unscoped match is exact (case-insensitive).
+ */
+export function isInternalPackageName(
+  packageName: string,
+  internalScopes: string[] = [],
+  internalPackages: string[] = [],
+): boolean {
+  const name = packageName.toLowerCase();
+  const scopeMatch = internalScopes.some((scope) => {
+    const s = scope.toLowerCase();
+    const prefix = s.endsWith("/") ? s : `${s}/`;
+    return name.startsWith(prefix);
+  });
+  if (scopeMatch) return true;
+  return internalPackages.some((p) => p.toLowerCase() === name);
+}
+
+/**
+ * Dependency-confusion check: for a dependency the org claims as internal,
+ * query the PUBLIC registry for a same-name package. If one exists, the
+ * internal name is shadowable by a public package — the dependency-confusion /
+ * namespace-substitution attack (Birsan, 2021). Returns a Finding or null.
+ *
+ * Only names matching `internalScopes` / `internalPackages` are probed; a
+ * public package that legitimately exists on the public registry (the common
+ * case) is never flagged. The check is fail-soft: a probe error yields null.
+ */
+export async function checkDependencyConfusion(
+  opts: DependencyConfusionOptions,
+): Promise<Finding | null> {
+  const { packageName, version } = opts;
+  if (!isInternalPackageName(packageName, opts.internalScopes, opts.internalPackages)) {
+    return null;
+  }
+
+  let probe: RegistryProbeResult;
+  try {
+    probe = await opts.probe(packageName);
+  } catch {
+    return null; // fail-soft: never invent a finding on a probe failure
+  }
+  if (!probe.exists) return null;
+
+  const internalMaintainers = (opts.internalMaintainers ?? []).map((m) => m.toLowerCase());
+  const publicMaintainers = (probe.maintainers ?? []).map((m) => m.toLowerCase());
+  const maintainerMismatch =
+    internalMaintainers.length > 0 &&
+    publicMaintainers.length > 0 &&
+    !publicMaintainers.some((m) => internalMaintainers.includes(m));
+
+  const attribution: SupplyChainAttribution =
+    opts.attribution ?? {
+      relation: "direct",
+      package: `${packageName}@${version}`,
+      depth: 0,
+    };
+
+  const finding: Finding = {
+    id: randomUUID(),
+    templateId: "malicious-dependency-confusion",
+    title: `Dependency-confusion risk: internal package \`${packageName}\` also exists on the public registry`,
+    description:
+      `\`${packageName}\` is declared internal/private (matched against the configured internal ` +
+      `scopes/names), but a package with the same name is published on the PUBLIC npm registry` +
+      (probe.latestVersion ? ` (public latest: ${probe.latestVersion})` : "") +
+      `.\n\n` +
+      `This is the dependency-confusion / namespace-substitution attack (Alex Birsan, 2021): if a ` +
+      `build ever resolves \`${packageName}\` from the public registry instead of the private one — a ` +
+      `misconfigured registry, a higher public version, or a scope not locked to the private feed — it ` +
+      `will pull attacker-controlled code.` +
+      (maintainerMismatch
+        ? `\n\n**Maintainer mismatch:** the public package is owned by a different publisher than the ` +
+          `internal one (public: ${publicMaintainers.join(", ") || "unknown"}), which is a strong ` +
+          `dependency-confusion indicator rather than an accidental name collision.`
+        : "") +
+      `\n\nMitigation: claim the name on the public registry, pin the private scope to the internal ` +
+      `feed in \`.npmrc\`, and verify the resolved registry for \`${packageName}\` in your lockfile.`,
+    severity: maintainerMismatch ? "critical" : "high",
+    category: "supply-chain",
+    status: "verified",
+    evidence: {
+      request: `GET https://registry.npmjs.org/${packageName.replace("/", "%2f")}`,
+      response:
+        `public package exists` +
+        (probe.latestVersion ? ` @ ${probe.latestVersion}` : "") +
+        (publicMaintainers.length > 0 ? ` — maintainers: ${publicMaintainers.join(", ")}` : ""),
+      analysis:
+        `Deterministic dependency-confusion oracle: \`${packageName}\` matched the configured internal ` +
+        `scope/name allow-list yet resolves on the public registry. ` +
+        (maintainerMismatch ? "Public maintainer set does not intersect the internal one." : "Maintainer comparison unavailable or inconclusive."),
+    },
+    confidence: maintainerMismatch ? 0.9 : 0.7,
+    timestamp: Date.now(),
+  };
+
+  return applyAttribution(finding, attribution);
 }
