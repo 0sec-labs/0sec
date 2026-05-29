@@ -4,7 +4,15 @@
 # self-hosted PwnKit CI runners (#610). Run once per job, right after
 # actions/setup-node, in place of a bare `corepack enable`.
 #
-# It does two things, both learned the hard way (2026-05-30):
+# It does three things, all learned the hard way (2026-05-30):
+#
+# 0. disk-space fail-fast.
+#    A titan runner filled its disk and the runner PROCESS itself crashed
+#    mid-job with `No space left on device` writing its own _diag log — a
+#    cryptic, late failure that also took down an unrelated dashboard
+#    boot-smoke the same night (PR #620). Check up front and fail with an
+#    actionable message naming the runner, so the operator knows which host to
+#    clean instead of chasing a mid-job ENOSPC.
 #
 # 1. corepack/pnpm via a runner-WRITABLE shim dir.
 #    On hosts where the matrix node is system-installed (root-owned /usr) —
@@ -26,6 +34,24 @@
 #    This is best-effort PREVENTION; the guaranteed fail-fast is the
 #    wasm-instantiate assertion in install-smoke (assert-sqlite-wasm.mjs).
 set -euo pipefail
+
+# ── 0. disk-space fail-fast ──────────────────────────────────────────────────
+# Measure the filesystem backing $HOME — where the runner work dir, npm
+# _cacache and the pnpm store all live on our self-hosted pool. Fail before
+# doing any work if free space is below the floor, so a near-full runner is
+# surfaced cleanly instead of crashing mid-install with ENOSPC. Override the
+# floor with MIN_FREE_GIB if a job legitimately needs less headroom.
+min_free_gib="${MIN_FREE_GIB:-3}"
+disk_target="${RUNNER_WORKSPACE:-$HOME}"
+avail_kib="$(df -Pk "$disk_target" | awk 'NR==2 {print $4}')"
+avail_gib=$(( avail_kib / 1024 / 1024 ))
+echo "::group::disk preflight (${disk_target})"
+echo "free space: ${avail_gib} GiB (floor ${min_free_gib} GiB, runner ${RUNNER_NAME:-unknown})"
+if [ "$avail_gib" -lt "$min_free_gib" ]; then
+  echo "::error::runner ${RUNNER_NAME:-unknown} has only ${avail_gib} GiB free on ${disk_target} (< ${min_free_gib} GiB floor). Clean its disk (docker/buildx cache, npm _cacache, pnpm store) before re-running — failing fast to avoid a mid-job ENOSPC crash (#610)."
+  exit 1
+fi
+echo "::endgroup::"
 
 shim_dir="${COREPACK_SHIM_DIR:-$HOME/.corepack-bin}"
 mkdir -p "$shim_dir"
