@@ -65,8 +65,15 @@ grep -q "pwnkit doctor" "$TMP/doctor.out" || fail "doctor did not produce the ex
 # listScans() query. This is the regression guard for the 0.7.0 → 0.7.1
 # native-bindings → WASM swap and the 0.7.4 WAL header migration.
 say "history (DB init)"
-$CLI history --db-path "$TMP/smoke.db" > "$TMP/history.out" 2>&1 \
-  || fail "history exited non-zero (DB layer broken)"
+if ! $CLI history --db-path "$TMP/smoke.db" > "$TMP/history.out" 2>&1; then
+  # Surface the REAL underlying error instead of swallowing it (#610). The DB
+  # layer is the most opaque failure mode: a corrupt node-sqlite3-wasm.wasm
+  # (e.g. from a poisoned runner cache) throws a WebAssembly CompileError here,
+  # and we want that exception in the log — not just "DB layer broken".
+  echo "--- history stdout+stderr ---" >&2
+  cat "$TMP/history.out" >&2 || true
+  fail "history exited non-zero (DB layer broken)"
+fi
 # An empty history run is fine; we're testing that it *runs*, not that it
 # finds anything.
 
