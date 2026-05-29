@@ -12,7 +12,9 @@ import type {
   VerificationCodePredicate,
   VerificationBehavior,
   VerificationBehaviorStep,
+  NamedIdentity,
 } from "@pwnkit/shared";
+import { resolveIdentities, compareRoles } from "@pwnkit/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import type { LootKind } from "./loot.js";
 import type { ScopePolicy } from "../scope/scope.js";
@@ -574,6 +576,34 @@ export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       },
     },
     required: ["url", "fields"],
+  },
+
+  access_control_probe: {
+    name: "access_control_probe",
+    description:
+      "Test for broken access control (BOLA/IDOR/BFLA, horizontal + vertical privilege escalation) by replaying ONE request across MULTIPLE identities and diffing the responses. " +
+      "Fetches the URL as an authorized baseline identity (whoever owns/can access the resource), then replays the SAME method/body/headers as each comparison identity, and reports whether each comparison identity could reach the resource. " +
+      "Use this when ≥2 identities are configured and you find an object reference (/api/users/123, /orders/42), an admin-only endpoint, or any resource that should be authorization-scoped. " +
+      "A comparison identity that gets a 2xx with the SAME body as the baseline = the resource leaked across an authorization boundary (broken object-level auth). A lower-privileged identity reaching an admin endpoint = vertical privesc. The tool returns full A-vs-B request/response evidence; call save_finding with it when a break is confirmed.",
+    parameters: {
+      url: { type: "string", description: "The URL to probe (e.g. https://target/api/users/123)." },
+      method: { type: "string", description: "HTTP method (default GET).", enum: ["GET", "POST", "PUT", "DELETE", "PATCH"] },
+      body: { type: "string", description: "Optional request body (sent verbatim to every identity)." },
+      headers: { type: "object", description: "Optional extra headers applied to every identity's request (auth/cookies are injected per-identity automatically)." },
+      baseline_identity: {
+        type: "string",
+        description: "Label of the identity that legitimately owns/can access the resource (the authorized baseline). Defaults to the active identity.",
+      },
+      compare_identities: {
+        type: "object",
+        description: "Optional array of identity labels to replay the request as. When omitted, every OTHER configured identity is used.",
+      },
+      expect_denied: {
+        type: "boolean",
+        description: "Set true when the comparison identities are NOT supposed to access this resource (the common case). When true, any comparison 2xx is flagged as a break even if the body differs from the baseline.",
+      },
+    },
+    required: ["url"],
   },
 
   bash: {
@@ -1876,6 +1906,167 @@ export function evaluateDoneCoverageGate(input: CoverageGateInput, env: NodeJS.P
   return { pass: false, reason: parts.join(" ") };
 }
 
+// ── Access-control probe helpers (pwnkit#564) ──
+
+/** A principal the access-control probe can issue requests as. */
+interface ProbePrincipal {
+  label: string;
+  role?: string;
+  /** Outbound auth + cookie headers for this principal. */
+  headers: () => Record<string, string>;
+  /** Capture session state (Set-Cookie / re-auth) from a response. */
+  capture: (res: Response) => void;
+}
+
+/** A single response captured by the probe. */
+export interface ProbeResponse {
+  identity: string;
+  role?: string;
+  url: string;
+  method: string;
+  status: number;
+  contentType: string;
+  body: string;
+}
+
+/** Normalize a response body for similarity comparison. */
+function normalizeBody(s: string): string {
+  return (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Token-Jaccard similarity of two response bodies in [0, 1]. 1 = identical
+ * (after whitespace/case normalization), 0 = no shared tokens. Deterministic;
+ * used to decide whether a comparison identity retrieved the SAME resource as
+ * the authorized baseline (the signature of broken object-level authorization).
+ */
+export function bodySimilarity(a: string, b: string): number {
+  const na = normalizeBody(a);
+  const nb = normalizeBody(b);
+  if (na === "" && nb === "") return 1;
+  if (na === nb) return 1;
+  const ta = new Set(na.split(" ").filter(Boolean));
+  const tb = new Set(nb.split(" ").filter(Boolean));
+  if (ta.size === 0 && tb.size === 0) return 1;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = new Set([...ta, ...tb]).size;
+  return union === 0 ? 0 : inter / union;
+}
+
+export interface AccessDiffResult {
+  broken: boolean;
+  verdict: string;
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  bodySimilarity: number;
+  statusMatch: boolean;
+  note: string;
+}
+
+const is2xx = (s: number): boolean => s >= 200 && s < 300;
+
+/**
+ * Diff an authorized baseline response against a comparison identity's
+ * response and decide whether an authorization boundary was broken.
+ *
+ * Logic:
+ *  - comparison 401/403 → `properly_denied` (the control works).
+ *  - baseline not 2xx → `inconclusive` (no authorized resource to leak).
+ *  - comparison 2xx + body ~identical to baseline → broken object-level authz
+ *    (BOLA/IDOR); annotated as vertical privesc when the comparison identity
+ *    is lower-privileged than the baseline.
+ *  - comparison 2xx + different body, but the caller said it SHOULD be denied
+ *    (or it's a lower-priv identity) → broken function-level authz (BFLA).
+ *  - comparison 2xx + different body otherwise → `accessible_distinct_resource`
+ *    (likely its own data; flagged for manual review, not a confirmed break).
+ */
+export function diffAccessResponses(
+  baseline: Pick<ProbeResponse, "status" | "body">,
+  comparison: Pick<ProbeResponse, "status" | "body">,
+  opts: { baselineRole?: string; comparisonRole?: string; expectDenied?: boolean },
+): AccessDiffResult {
+  const sim = bodySimilarity(baseline.body, comparison.body);
+  const statusMatch = baseline.status === comparison.status;
+  const vertical = compareRoles(opts.comparisonRole, opts.baselineRole) < 0;
+
+  if (comparison.status === 401 || comparison.status === 403) {
+    return {
+      broken: false,
+      verdict: "properly_denied",
+      severity: "info",
+      bodySimilarity: sim,
+      statusMatch,
+      note: `comparison identity was correctly denied (HTTP ${comparison.status})`,
+    };
+  }
+
+  if (!is2xx(baseline.status)) {
+    return {
+      broken: false,
+      verdict: "inconclusive",
+      severity: "info",
+      bodySimilarity: sim,
+      statusMatch,
+      note: `baseline identity did not return an authorized 2xx (HTTP ${baseline.status}); cannot establish a protected resource to leak`,
+    };
+  }
+
+  if (is2xx(comparison.status)) {
+    if (sim >= 0.9) {
+      return {
+        broken: true,
+        verdict: vertical ? "vertical_privilege_escalation" : "broken_object_level_authorization",
+        severity: "high",
+        bodySimilarity: sim,
+        statusMatch,
+        note: `comparison identity retrieved the SAME resource as the baseline (body similarity ${sim.toFixed(2)}) — broken access control confirmed`,
+      };
+    }
+    if (opts.expectDenied || vertical) {
+      return {
+        broken: true,
+        verdict: vertical ? "vertical_privilege_escalation" : "broken_function_level_authorization",
+        severity: "high",
+        bodySimilarity: sim,
+        statusMatch,
+        note: `comparison identity reached a resource it should not access (HTTP ${comparison.status}; body differs from baseline) — likely function-level authorization break`,
+      };
+    }
+    return {
+      broken: false,
+      verdict: "accessible_distinct_resource",
+      severity: "info",
+      bodySimilarity: sim,
+      statusMatch,
+      note: `comparison identity got HTTP ${comparison.status} but a distinct body — may be its OWN resource at this path; verify manually before flagging`,
+    };
+  }
+
+  return {
+    broken: false,
+    verdict: "inconclusive",
+    severity: "info",
+    bodySimilarity: sim,
+    statusMatch,
+    note: `comparison HTTP ${comparison.status} is neither a clear allow (2xx) nor deny (401/403)`,
+  };
+}
+
+/** Truncated, non-secret evidence snapshot of a probe response. */
+function probeEvidence(resp: ProbeResponse): Record<string, unknown> {
+  return {
+    identity: resp.identity,
+    role: resp.role,
+    request: { url: resp.url, method: resp.method },
+    response: {
+      status: resp.status,
+      contentType: resp.contentType,
+      bodyLength: resp.body.length,
+      bodyPreview: resp.body.slice(0, 1_000),
+    },
+  };
+}
+
 // ── Tool Executor ──
 
 export class ToolExecutor {
@@ -1921,6 +2112,35 @@ export class ToolExecutor {
       this._playwrightAvailable = false;
     }
     return this._playwrightAvailable;
+  }
+
+  /**
+   * Outbound auth headers for the CURRENTLY ACTIVE identity (pwnkit#564).
+   *
+   * When a stateful `SessionEngine` is wired into the context, this returns the
+   * active identity's static credential merged with any cookies its jar has
+   * captured this scan. With no session it falls back to the legacy stateless
+   * `buildAuthHeaders(authConfig)` path — byte-identical for single-credential
+   * scans. The target host keys the jar (every tool request is same-origin per
+   * `validateTargetUrl`, so the target host is always the right jar key).
+   */
+  private activeAuthHeaders(): Record<string, string> {
+    const session = this.ctx.session;
+    if (session) {
+      return session.headersFor(session.activeLabel, this.ctx.target);
+    }
+    return buildAuthHeaders(this.ctx.authConfig);
+  }
+
+  /**
+   * Capture `Set-Cookie` from a response into the active identity's jar and
+   * run the 401/403 re-auth handler (pwnkit#564). No-op without a session.
+   */
+  private captureActiveCookies(res: Response): void {
+    const session = this.ctx.session;
+    if (!session) return;
+    session.capture(session.activeLabel, res.headers, this.ctx.target);
+    session.handleAuthStatus(session.activeLabel, res.status, this.ctx.target);
   }
 
   /**
@@ -2023,6 +2243,8 @@ export class ToolExecutor {
           return await this.crawl(call.arguments);
         case "submit_form":
           return await this.submitForm(call.arguments);
+        case "access_control_probe":
+          return await this.accessControlProbe(call.arguments);
         case "update_target":
           return this.updateTarget(call.arguments);
         case "bash":
@@ -2070,7 +2292,7 @@ export class ToolExecutor {
     const url = validateTargetUrl(this.ctx.target, args.url as string, this.ctx.scope, this.ctx.enforcement);
     const method = (args.method as string) ?? "POST";
     const body = args.body as string | undefined;
-    const authHeaders = buildAuthHeaders(this.ctx.authConfig);
+    const authHeaders = this.activeAuthHeaders();
     const headers = { ...authHeaders, ...(args.headers as Record<string, string>) ?? {} };
 
     // Per-host rate limit (#214). Acquire token BEFORE the network call;
@@ -2097,9 +2319,18 @@ export class ToolExecutor {
         this.ctx.attribution,
         this.ctx.scope,
       )!;
+      // js/no-ssrf FP: `url` is the operator-specified scan target validated by
+      // validateTargetUrl() above (same-origin + scope policy + private-IP/
+      // localhost block + http_audit path allowlist) — exactly the
+      // validate+allowlist the rule asks for. pwnkit is an offensive web
+      // scanner; fetching the configured target is the intended behaviour.
+      // foxguard:ignore
       const res = await fetch(url, fetchInit);
 
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+      // Persist session state (pwnkit#564): capture Set-Cookie for the active
+      // identity and re-auth on 401/403. No-op when no SessionEngine is wired.
+      this.captureActiveCookies(res);
       clearTimeout(timer);
       const text = await res.text();
       const output = {
@@ -2324,7 +2555,7 @@ export class ToolExecutor {
       const timer = setTimeout(() => controller.abort(), 10_000);
 
       try {
-        const crawlAuthHeaders = buildAuthHeaders(this.ctx.authConfig);
+        const crawlAuthHeaders = this.activeAuthHeaders();
         // Attribution-header injection (pwnkit#216). Crawler hits every
         // discovered link, so this is the highest-volume fetch site —
         // attribution here is what most defenders will see in their logs.
@@ -2368,8 +2599,16 @@ export class ToolExecutor {
         // validated before we re-issue with attribution attached.
         while (true) {
           if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(currentUrl);
+          // js/no-ssrf FP: `currentUrl` is the validated crawl seed (or a
+          // same-origin, in-scope redirect target re-validated each hop below);
+          // cross-origin / out-of-scope / private-IP hops are refused. Crawling
+          // the in-scope target is intended pwnkit behaviour.
+          // foxguard:ignore
           res = await fetch(currentUrl, buildCrawlInit(currentUrl));
           if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(currentUrl, res);
+          // Capture cookies on every hop so authenticated crawls persist
+          // session state across pages (pwnkit#564).
+          this.captureActiveCookies(res);
 
           if (res.status < 300 || res.status >= 400) break;
           const location = res.headers.get("location");
@@ -2495,7 +2734,7 @@ export class ToolExecutor {
     const rawUrl = args.url as string;
     const method = ((args.method as string) ?? "POST").toUpperCase();
     const fields = (args.fields as Record<string, string>) ?? {};
-    const formAuthHeaders = buildAuthHeaders(this.ctx.authConfig);
+    const formAuthHeaders = this.activeAuthHeaders();
     const extraHeaders = { ...formAuthHeaders, ...(args.headers as Record<string, string>) ?? {} };
 
     // Validate URL against same-origin policy (same as http_request)
@@ -2542,8 +2781,15 @@ export class ToolExecutor {
       const submitInit = applyAttribution(fetchUrl, fetchOpts, this.ctx.attribution, this.ctx.scope)!;
       // #214: rate-limit the form submission before dispatching.
       if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(fetchUrl);
+      // js/no-ssrf FP: `fetchUrl` derives from validateTargetUrl() above
+      // (same-origin + scope + private-IP/localhost block). Submitting forms to
+      // the in-scope target is intended pwnkit behaviour.
+      // foxguard:ignore
       const res = await fetch(fetchUrl, submitInit);
       if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(fetchUrl, res);
+      // Capture the session cookie a login form sets, so the very next
+      // request is authenticated without manual `curl -c/-b` jars (pwnkit#564).
+      this.captureActiveCookies(res);
       clearTimeout(timer);
       const text = await res.text();
 
@@ -2564,6 +2810,187 @@ export class ToolExecutor {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: msg };
     }
+  }
+
+  // ── Access-control probe (pwnkit#564) ──
+
+  /**
+   * Resolve the principals this probe can act as. Prefers the live
+   * `SessionEngine` (so per-identity cookie jars + re-auth apply); falls back
+   * to the resolved identity list / legacy `authConfig` with static auth only.
+   */
+  private resolveProbeIdentities(): ProbePrincipal[] {
+    const session = this.ctx.session;
+    if (session) {
+      return session.all.map((s) => ({
+        label: s.label,
+        role: s.role,
+        headers: () => session.headersFor(s.label, this.ctx.target),
+        capture: (res: Response) => {
+          session.capture(s.label, res.headers, this.ctx.target);
+          session.handleAuthStatus(s.label, res.status, this.ctx.target);
+        },
+      }));
+    }
+    const identities = resolveIdentities({ auth: this.ctx.authConfig, identities: this.ctx.identities });
+    return identities.map((idn: NamedIdentity) => ({
+      label: idn.label,
+      role: idn.role,
+      headers: () => buildAuthHeaders(idn.auth),
+      capture: () => {},
+    }));
+  }
+
+  /** Issue one request to the target as a specific principal. */
+  private async fetchAs(
+    principal: ProbePrincipal,
+    rawUrl: string,
+    method: string,
+    body: string | undefined,
+    extraHeaders: Record<string, string>,
+  ): Promise<ProbeResponse> {
+    // Same-origin / scope / path-allowlist enforcement as every other tool.
+    const url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+    const headers = { "Content-Type": "application/json", ...principal.headers(), ...extraHeaders };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const fetchInit = applyAttribution(
+        url,
+        { method, headers, body: body ?? undefined, signal: controller.signal, redirect: "manual" },
+        this.ctx.attribution,
+        this.ctx.scope,
+      )!;
+      if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+      // js/no-ssrf FP: `url` is the operator-specified probe target validated by
+      // validateTargetUrl() above (same-origin + scope + private-IP/localhost
+      // block + path allowlist). The access-control probe replays requests to
+      // the in-scope target as different identities — intended behaviour.
+      // foxguard:ignore
+      const res = await fetch(url, fetchInit);
+      if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+      principal.capture(res);
+      const text = await res.text();
+      return {
+        identity: principal.label,
+        role: principal.role,
+        url,
+        method,
+        status: res.status,
+        contentType: res.headers.get("content-type") ?? "",
+        body: text.slice(0, 10_000),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async accessControlProbe(args: Record<string, unknown>): Promise<ToolResult> {
+    const rawUrl = args.url as string;
+    if (!rawUrl) return { success: false, output: null, error: "url is required" };
+    const method = ((args.method as string) ?? "GET").toUpperCase();
+    const body = args.body as string | undefined;
+    const extraHeaders = (args.headers as Record<string, string>) ?? {};
+    const expectDenied = args.expect_denied === true;
+
+    const principals = this.resolveProbeIdentities();
+    if (principals.length < 2) {
+      return {
+        success: false,
+        output: null,
+        error:
+          `access_control_probe needs at least 2 identities — configure scan \`identities\` ` +
+          `(label + role + auth) for the principals you want to diff. Currently available: ${principals.length}.`,
+      };
+    }
+
+    const baselineLabel = (args.baseline_identity as string) ?? this.ctx.session?.activeLabel ?? principals[0].label;
+    const baseline = principals.find((p) => p.label === baselineLabel);
+    if (!baseline) {
+      return {
+        success: false,
+        output: null,
+        error: `unknown baseline_identity "${baselineLabel}"; known identities: ${principals.map((p) => p.label).join(", ")}`,
+      };
+    }
+
+    let compareLabels: string[];
+    if (Array.isArray(args.compare_identities) && (args.compare_identities as unknown[]).length > 0) {
+      compareLabels = (args.compare_identities as unknown[]).map(String);
+    } else {
+      compareLabels = principals.filter((p) => p.label !== baselineLabel).map((p) => p.label);
+    }
+
+    // Authorized baseline request.
+    let baselineResp: ProbeResponse;
+    try {
+      baselineResp = await this.fetchAs(baseline, rawUrl, method, body, extraHeaders);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `baseline request failed: ${msg}` };
+    }
+
+    const comparisons: Record<string, unknown>[] = [];
+    for (const label of compareLabels) {
+      const principal = principals.find((p) => p.label === label);
+      if (!principal) {
+        comparisons.push({ identity: label, error: `unknown identity "${label}"` });
+        continue;
+      }
+      let resp: ProbeResponse;
+      try {
+        resp = await this.fetchAs(principal, rawUrl, method, body, extraHeaders);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        comparisons.push({ identity: label, role: principal.role, error: msg });
+        continue;
+      }
+      const diff = diffAccessResponses(baselineResp, resp, {
+        baselineRole: baseline.role,
+        comparisonRole: principal.role,
+        expectDenied,
+      });
+      comparisons.push({
+        identity: label,
+        role: principal.role,
+        status: resp.status,
+        ...diff,
+        evidence: probeEvidence(resp),
+      });
+    }
+
+    const broken = comparisons.filter((c) => c.broken === true);
+    const output = {
+      url: baselineResp.url,
+      method,
+      baseline: {
+        identity: baseline.label,
+        role: baseline.role,
+        status: baselineResp.status,
+        evidence: probeEvidence(baselineResp),
+      },
+      comparisons,
+      broken_count: broken.length,
+      verdict: broken.length > 0 ? "broken_access_control" : "no_break_detected",
+      summary:
+        broken.length > 0
+          ? `Authorization boundary broken: ${broken
+              .map((b) => `${b.identity} (${b.verdict})`)
+              .join(", ")} reached ${baseline.label}'s resource at ${baselineResp.url}. ` +
+            `Save a finding with the A-vs-B evidence below.`
+          : `No access-control break detected at ${baselineResp.url}: all comparison identities were denied or got distinct resources.`,
+    };
+
+    this.persistToolArtifact("access_control_probe", {
+      url: baselineResp.url,
+      method,
+      baseline: baseline.label,
+      compared: compareLabels,
+      broken_count: broken.length,
+    });
+
+    return { success: true, output };
   }
 
   private async shellExec(args: Record<string, unknown>): Promise<ToolResult> {
@@ -3788,8 +4215,9 @@ export class ToolExecutor {
     // Same-origin enforcement: only probe the scan target.
     const base = validateTargetUrl(this.ctx.target, this.ctx.target, this.ctx.scope);
 
-    // Build an auth-aware fetch wrapper that reuses the scan's credentials.
-    const authHeaders = buildAuthHeaders(this.ctx.authConfig);
+    // Build an auth-aware fetch wrapper that reuses the active identity's
+    // credentials + captured session cookies (pwnkit#564).
+    const authHeaders = this.activeAuthHeaders();
     const scope = this.ctx.scope;
     const rateLimiter = this.ctx.rateLimiter;
     const attribution = this.ctx.attribution;
@@ -4153,6 +4581,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     "http_request",
     "crawl",
     "submit_form",
+    "access_control_probe",
     "bash",
     ...browserTools,
     ...webSearchTools,

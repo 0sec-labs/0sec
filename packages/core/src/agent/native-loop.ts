@@ -8,7 +8,9 @@ import type {
   NativeRuntimeResult,
 } from "../runtime/types.js";
 import type { AuthConfig } from "@pwnkit/shared";
+import { resolveIdentities } from "@pwnkit/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
+import { SessionEngine } from "./session.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import type { AttributionConfig } from "../scope/attribution.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
@@ -121,6 +123,20 @@ export interface NativeAgentConfig {
   retryCount?: number;
   /** Authentication credentials to inject into tool context */
   authConfig?: AuthConfig;
+  /**
+   * Resolved named identities for access-control testing (pwnkit#564). When
+   * present, the loop builds a stateful per-identity `SessionEngine` and
+   * threads it onto the ToolContext so cookies persist and access_control_probe
+   * can replay as each principal. Reconciled from the legacy `authConfig` when
+   * omitted.
+   */
+  identities?: import("@pwnkit/shared").NamedIdentity[];
+  /**
+   * Pre-built session engine (pwnkit#564). Normally left unset — the loop
+   * constructs one from `identities`/`authConfig`. Provided only when a caller
+   * wants cookie state to persist across multiple loop invocations.
+   */
+  session?: import("./session.js").SessionEngine;
   /**
    * Per-host token-bucket rate limiter (#214). Threaded into the
    * ToolContext so every fetch chokepoint paces against it.
@@ -276,6 +292,15 @@ export async function runNativeAgentLoop(
   // results and re-injects a compact "known footholds" block each turn.
   const loot = features.lootLedger ? new LootLedger() : undefined;
 
+  // Stateful access-control session (pwnkit#564). Reconcile the legacy singular
+  // `authConfig` with the multi-identity `identities` list, then build (or
+  // reuse) a SessionEngine so HTTP tools persist cookies across turns and the
+  // access_control_probe can replay as each principal. No identities → no
+  // session → stateless behaviour unchanged.
+  const identities = config.identities ?? resolveIdentities({ auth: config.authConfig });
+  const session =
+    config.session ?? (identities.length > 0 ? new SessionEngine(identities) : undefined);
+
   const toolCtx: ToolContext = {
     target: config.target,
     scanId: config.scanId,
@@ -286,6 +311,8 @@ export async function runNativeAgentLoop(
     scopePath: config.scopePath,
     persistFindings: db !== null,
     authConfig: config.authConfig,
+    identities,
+    session,
     scope: config.scope,
     rateLimiter: config.rateLimiter,
     enforcement: config.enforcement,

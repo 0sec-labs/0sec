@@ -1,9 +1,10 @@
-import type { Finding, AttackResult, TargetInfo, AuthConfig } from "@pwnkit/shared";
+import type { Finding, AttackResult, TargetInfo, AuthConfig, NamedIdentity } from "@pwnkit/shared";
 import type { ScopePolicy } from "../scope/scope.js";
 import type { RateLimiter } from "../scope/rate-limit.js";
 import type { AttributionConfig } from "../scope/attribution.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import type { LootLedger } from "./loot.js";
+import type { SessionEngine } from "./session.js";
 
 // ── Agent Roles ──
 
@@ -60,6 +61,19 @@ export interface AgentConfig {
   attachTargetToolsMcp?: boolean;
   dbPath?: string;
   authConfig?: AuthConfig;
+  /**
+   * Resolved named identities for access-control testing (pwnkit#564).
+   * Passed through to the `ToolContext` so the prompt + `access_control_probe`
+   * can enumerate principals. The active identity's `auth` is mirrored into
+   * `authConfig` for back-compat with the env-var / fallback paths.
+   */
+  identities?: NamedIdentity[];
+  /**
+   * Stateful per-identity HTTP session engine (pwnkit#564). Built once per
+   * scan and shared across discovery/attack/verify phases so cookies persist.
+   * Passed straight through to the `ToolContext`.
+   */
+  session?: SessionEngine;
   /**
    * Programmatic engagement scope (pwnkit#215). When set, every URL the
    * agent touches — http_request, submit_form, browser navigate, crawl,
@@ -153,6 +167,21 @@ export interface ToolContext {
   scopePath?: string;
   persistFindings?: boolean;
   authConfig?: AuthConfig;
+  /**
+   * Resolved named identities for access-control testing (pwnkit#564).
+   * Present when the scan configured ≥1 identity (via `identities` or the
+   * legacy `auth` shim). Used by the prompt builder and `access_control_probe`
+   * to enumerate the principals it can replay requests as.
+   */
+  identities?: NamedIdentity[];
+  /**
+   * Stateful per-identity HTTP session engine (pwnkit#564). When present, the
+   * HTTP tools (`http_request`/`crawl`/`submit_form`) act as `session.activeLabel`,
+   * persist captured `Set-Cookie` across turns, and re-auth on 401/403. When
+   * absent, tools fall back to the stateless `buildAuthHeaders(authConfig)`
+   * path — behaviour identical to pre-#564 single-credential scans.
+   */
+  session?: SessionEngine;
   /**
    * See `AgentConfig.scope`. When present, every URL-touching tool
    * runs `policy.match()` before egress and refuses out-of-scope URLs

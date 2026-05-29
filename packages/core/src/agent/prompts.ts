@@ -1,4 +1,4 @@
-import type { TargetInfo, Finding, AuthConfig } from "@pwnkit/shared";
+import type { TargetInfo, Finding, AuthConfig, NamedIdentity } from "@pwnkit/shared";
 import { features as featureFlags } from "./features.js";
 
 /**
@@ -59,6 +59,40 @@ export function buildAuthHeaders(auth?: AuthConfig): Record<string, string> {
     default:
       return {};
   }
+}
+
+/**
+ * Build a prompt block describing the configured identities and the
+ * access_control_probe tool (pwnkit#564). Returns "" unless ≥2 identities are
+ * configured, so single-credential scans are unaffected.
+ */
+export function buildAccessControlPromptBlock(identities?: NamedIdentity[]): string {
+  if (!identities || identities.length < 2) return "";
+  const roster = identities
+    .map((idn) => `- \`${idn.label}\`${idn.role ? ` (role: ${idn.role})` : ""}${idn.auth ? "" : " — unauthenticated"}`)
+    .join("\n");
+  return `
+
+## Multi-Identity Access-Control Testing (CRITICAL — BOLA/IDOR/BFLA)
+
+This scan has MULTIPLE identities configured. Broken access control is the
+dominant API vulnerability class and is ONLY testable across identities — you
+MUST test it. The HTTP tools act as the active identity and persist its session
+cookies automatically (no manual curl jars needed).
+
+Configured identities:
+${roster}
+
+Use the **access_control_probe** tool to test authorization boundaries:
+1. Find an object reference owned by one identity (/api/users/{id}, /orders/{id},
+   ?id=…) or an admin-only endpoint.
+2. Call \`access_control_probe\` with that URL, \`baseline_identity\` = the
+   identity that legitimately owns/can access it, \`compare_identities\` = the
+   others, and \`expect_denied: true\`.
+3. The tool replays the same request as each identity and diffs status + body.
+   A comparison identity that gets the SAME resource = confirmed broken access
+   control; a lower-privileged identity reaching an admin endpoint = vertical
+   privilege escalation. Save a finding with the returned A-vs-B evidence.`;
 }
 
 // JIT skill tool mention (#458). Appended to attack / research / shell

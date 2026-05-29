@@ -28,7 +28,9 @@ import {
   webPentestDiscoveryPrompt,
   webPentestAttackPrompt,
   shellPentestPrompt,
+  buildAccessControlPromptBlock,
 } from "./agent/prompts.js";
+import { resolveIdentities } from "@pwnkit/shared";
 import { features } from "./agent/features.js";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "./runtime/types.js";
@@ -2638,9 +2640,12 @@ async function runNativeDiscovery(
   // additions are the env-driven scope/path/rate/kill enforcement layered on
   // via the EnforcementTracker. So it is "web" for every prompt/tool decision.
   const isWeb = config.mode === "web" || config.mode === "http_audit";
+  // Multi-identity access-control testing (pwnkit#564): reconcile legacy
+  // `auth` with `identities` and surface the access_control_probe guidance.
+  const identities = resolveIdentities(config);
   const basePrompt = isWeb
-    ? webPentestDiscoveryPrompt(config.target, config.auth)
-    : discoveryPrompt(config.target, config.auth);
+    ? webPentestDiscoveryPrompt(config.target, config.auth) + buildAccessControlPromptBlock(identities)
+    : discoveryPrompt(config.target, config.auth) + buildAccessControlPromptBlock(identities);
   const systemPrompt = apiSpecPromptText
     ? basePrompt + "\n\n" + apiSpecPromptText
     : basePrompt;
@@ -2658,6 +2663,7 @@ async function runNativeDiscovery(
       scanId,
       sessionId: db.getSession(scanId, "discovery")?.id,
       authConfig: config.auth,
+      identities,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
       enforcement: resolveEnforcementForConfig(config),
@@ -2732,9 +2738,11 @@ async function runNativeAttack(
   // Shell-first for web targets: minimal tool set (bash + save_finding + done)
   // White-box mode: add read_file + run_command when source code path is provided
   const hasSource = !!config.repoPath;
+  const identities = resolveIdentities(config);
   let basePrompt = isWeb
     ? shellPentestPrompt(config.target, config.repoPath, { hasBrowser, auth: config.auth })
     : attackPrompt(config.target, targetInfo, categories, config.auth);
+  basePrompt += buildAccessControlPromptBlock(identities);
   // Inject API spec knowledge if available
   if (apiSpecPromptText) basePrompt += "\n\n" + apiSpecPromptText;
 
@@ -2888,6 +2896,7 @@ async function runNativeAttack(
       sessionId: db.getSession(scanId, "attack")?.id,
       retryCount: 0,
       authConfig: config.auth,
+      identities,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
       enforcement: resolveEnforcementForConfig(config),
@@ -2955,6 +2964,7 @@ async function runNativeAttack(
         scopePath: config.repoPath,
         retryCount: 1,
         authConfig: config.auth,
+        identities,
         scope: resolveScopeForConfig(config),
         rateLimiter: getOrCreateRateLimiter(config),
         enforcement: resolveEnforcementForConfig(config),
@@ -3202,6 +3212,7 @@ export async function runNativeVerify(
         scanId,
         sessionId: db?.getSession?.(scanId, "verify")?.id,
         authConfig: config.auth,
+        identities: resolveIdentities(config),
         scope: resolveScopeForConfig(config),
         rateLimiter: getOrCreateRateLimiter(config),
         enforcement: resolveEnforcementForConfig(config),
@@ -3251,9 +3262,11 @@ async function runLegacyDiscovery(
   // additions are the env-driven scope/path/rate/kill enforcement layered on
   // via the EnforcementTracker. So it is "web" for every prompt/tool decision.
   const isWeb = config.mode === "web" || config.mode === "http_audit";
-  const basePrompt = isWeb
-    ? webPentestDiscoveryPrompt(config.target, config.auth)
-    : discoveryPrompt(config.target, config.auth);
+  const identities = resolveIdentities(config);
+  const basePrompt =
+    (isWeb
+      ? webPentestDiscoveryPrompt(config.target, config.auth)
+      : discoveryPrompt(config.target, config.auth)) + buildAccessControlPromptBlock(identities);
   const systemPrompt = apiSpecPromptText
     ? basePrompt + "\n\n" + apiSpecPromptText
     : basePrompt;
@@ -3273,6 +3286,7 @@ async function runLegacyDiscovery(
       attachTargetToolsMcp: true,
       dbPath,
       authConfig: config.auth,
+      identities,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
       enforcement: resolveEnforcementForConfig(config),
@@ -3325,9 +3339,11 @@ async function runLegacyAttack(
   // @ts-ignore — playwright is an optional dependency
   try { await import("playwright"); hasBrowser = true; } catch { /* playwright not installed */ }
 
+  const identities = resolveIdentities(config);
   let baseAttackPrompt = isWeb
     ? webPentestAttackPrompt(config.target, formatWebDiscoveryInfo(targetInfo), config.auth)
     : attackPrompt(config.target, targetInfo, categories, config.auth);
+  baseAttackPrompt += buildAccessControlPromptBlock(identities);
   if (apiSpecPromptText) baseAttackPrompt += "\n\n" + apiSpecPromptText;
   const systemPrompt = baseAttackPrompt;
   const tools = isWeb
@@ -3345,6 +3361,7 @@ async function runLegacyAttack(
       sessionId: db?.getSession(scanId, "attack")?.id,
       attachTargetToolsMcp: true,
       dbPath,
+      identities,
       authConfig: config.auth,
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
@@ -3417,6 +3434,7 @@ async function runLegacyVerify(
       attachTargetToolsMcp: true,
       dbPath,
       authConfig: config.auth,
+      identities: resolveIdentities(config),
       scope: resolveScopeForConfig(config),
       rateLimiter: getOrCreateRateLimiter(config),
       enforcement: resolveEnforcementForConfig(config),

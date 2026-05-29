@@ -36,6 +36,42 @@ export interface AuthConfigHeader {
 
 export type AuthConfig = AuthConfigBearer | AuthConfigCookie | AuthConfigBasic | AuthConfigHeader;
 
+// ── Multi-identity access-control testing (pwnkit#564) ──
+
+/**
+ * Privilege tier of a named identity, used for vertical-privilege-escalation
+ * reasoning (a `user`/`anonymous` identity reaching an `admin`-only endpoint
+ * is a BFLA / vertical privesc). Free-form strings are accepted so engagements
+ * can model bespoke role names, but the three canonical tiers carry meaning in
+ * the access-control probe's verdict logic.
+ */
+export type IdentityRole = "admin" | "user" | "anonymous" | (string & {});
+
+/**
+ * One named identity for broken-access-control testing (BOLA/IDOR/BFLA,
+ * pwnkit#564). Holds a human label, an optional privilege role, and the
+ * credential the engine acts with when this identity is active. An identity
+ * with no `auth` is treated as unauthenticated (anonymous) — exactly what you
+ * want as the negative-control principal in an authz diff.
+ */
+export interface NamedIdentity {
+  /**
+   * Stable, human-readable label (e.g. `"alice"`, `"admin"`, `"anon"`). Used
+   * verbatim in probe evidence and finding text, so keep it short + distinct.
+   */
+  label: string;
+  /**
+   * Privilege tier. Optional; defaults to `"anonymous"` when `auth` is unset
+   * and `"user"` otherwise. Drives vertical-privesc verdicts.
+   */
+  role?: IdentityRole;
+  /**
+   * Credential this identity authenticates with. Omit for an unauthenticated
+   * identity (the negative control in an A-vs-B authz diff).
+   */
+  auth?: AuthConfig;
+}
+
 export interface ScanConfig {
   target: string;
   depth: ScanDepth;
@@ -65,7 +101,26 @@ export interface ScanConfig {
   /** Whole-scan wallclock timeout for single-process runners. */
   scanTimeout?: number;
   verbose?: boolean;
+  /**
+   * Single credential the agent authenticates with. Legacy singular field,
+   * retained for back-compat: when `identities` is unset this is the only
+   * credential, and the engine internally wraps it into a one-entry identity
+   * list (see `resolveIdentities`). Prefer `identities` for any scan that
+   * needs broken-access-control testing.
+   */
   auth?: AuthConfig;
+  /**
+   * Named identities for multi-principal access-control testing (BOLA/IDOR/
+   * BFLA + horizontal/vertical privesc, pwnkit#564). When ≥2 entries are
+   * present the engine can act as identity A, capture an authorized response,
+   * replay the same request as identity B / unauthenticated, and diff
+   * status + body to flag broken object-/function-level authorization.
+   *
+   * Back-compat: `auth` and `identities` are reconciled by `resolveIdentities`
+   * — if only `auth` is set it becomes a single identity; if both are set
+   * `identities` wins and `auth` is ignored.
+   */
+  identities?: NamedIdentity[];
   /** Path to an OpenAPI 3.x / Swagger 2.0 spec file for pre-loaded endpoint knowledge */
   apiSpecPath?: string;
   /** Enable best-of-N strategy racing: run multiple attack strategies in parallel, take the first that succeeds */

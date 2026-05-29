@@ -37,6 +37,36 @@ export const PLAYBOOKS: Record<string, string> = {
 - Try negative IDs, very large IDs, string values where integers expected
 - Check indirect IDOR: change ID in one endpoint, observe result in another`,
 
+  access_control: `## Broken Access Control Playbook (BOLA / IDOR / BFLA — multi-identity)
+
+This is the highest-impact API vuln class (OWASP API #1 & #5) and is ONLY
+testable with ≥2 identities. If the scan configured multiple identities, use
+the **access_control_probe** tool — it captures a resource as the authorized
+identity, replays the SAME request as another identity, and diffs the result.
+
+### Horizontal (BOLA / IDOR) — read another user's object
+1. As identity A, find an object you legitimately own: /api/users/{A_id},
+   /api/orders/{A_order}, /account/{A_id}/settings, ?id={A_id}.
+2. Call \`access_control_probe\` with that URL, baseline_identity = A,
+   compare_identities = [B], expect_denied = true.
+3. If B gets a 2xx with the SAME body A saw → confirmed BOLA. The tool returns
+   A-vs-B request/response evidence — pass it straight into save_finding.
+4. Also try B's own id incremented/decremented to A's id in the path AND body
+   (user_id, owner_id, account_id) — IDOR often hides in the POST/PUT body.
+
+### Vertical (BFLA) — low-priv reaching admin-only function
+1. As the admin identity, hit an admin-only endpoint (/admin, /api/admin/users,
+   role-changing POSTs).
+2. \`access_control_probe\` baseline_identity = admin, compare_identities =
+   [low-priv user, anonymous], expect_denied = true.
+3. A 2xx for the low-priv / anonymous identity = vertical privilege escalation.
+
+### Tips
+- The HTTP tools are now stateful: a session cookie captured via submit_form is
+  auto-re-injected, so you do NOT need manual \`curl -c/-b\` jars.
+- A 200 alone isn't proof — the probe's body-similarity diff is what confirms
+  the SAME resource crossed the boundary. Save findings only on a real diff.`,
+
   xss: `## XSS Playbook
 
 ### Step 1: Identify Injection Points
@@ -709,6 +739,28 @@ const INDICATORS: VulnIndicator[] = [
       /user_id/i,
       /owner_id/i,
       /account_id/i,
+    ],
+  },
+  {
+    // Multi-identity access-control surface (pwnkit#564). Distinct from `idor`:
+    // these patterns point at object/function references that should be tested
+    // with the access_control_probe tool across identities, plus the authz
+    // signals (admin endpoints, role params, allow/deny status codes).
+    type: "access_control",
+    patterns: [
+      /\/api\/[a-z]+\/\d+/i,
+      /\/api\/admin\//i,
+      /\/admin\b/i,
+      /\bobject[_-]?id\b/i,
+      /\bresource[_-]?id\b/i,
+      /\borg(?:anization)?[_-]?id\b/i,
+      /\btenant[_-]?id\b/i,
+      /\bis[_-]?admin\b/i,
+      /\brole\s*[=:]/i,
+      /\bunauthorized\b/i,
+      /\bforbidden\b/i,
+      /\b403\b/,
+      /\b401\b/,
     ],
   },
   {
