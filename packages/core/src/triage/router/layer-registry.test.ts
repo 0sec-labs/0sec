@@ -12,8 +12,8 @@ import {
 } from "./layer-registry.js";
 
 describe("LAYER_REGISTRY", () => {
-  it("contains exactly 12 triage layers (11 from pwnkit#113 + publishability #539)", () => {
-    expect(LAYER_REGISTRY).toHaveLength(12);
+  it("contains exactly 10 triage layers (9 from pwnkit#113 after retiring memories+debate + publishability #539)", () => {
+    expect(LAYER_REGISTRY).toHaveLength(10);
   });
 
   it("every entry has an id, name, env_flag, cost_factor, description", () => {
@@ -69,8 +69,6 @@ describe("LAYER_REGISTRY", () => {
       "pov_gate",
       "structured_verify",
       "consensus",
-      "memories",
-      "debate",
       "kernel_oracle",
     ];
     const ids = LAYER_REGISTRY.map((e) => e.id);

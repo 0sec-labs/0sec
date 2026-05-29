@@ -9,10 +9,9 @@
  *   - `provisioner` — spins the target up / tears it down (Docker, QEMU, …).
  *   - `oracle`      — grades the scan result (defaults to ObjectiveOracle).
  *
- * The default provisioner reuses the same Docker patterns as
- * `agent/docker-executor.ts` and the XBOW runner (docker run / compose),
- * and the default scan adapter drives `agenticScan` — but both are optional
- * and replaced wholesale in tests.
+ * The default provisioner reuses the same Docker patterns as the XBOW
+ * runner (docker run / compose), and the default scan adapter drives
+ * `agenticScan` — but both are optional and replaced wholesale in tests.
  */
 
 import type { BenchCase, BenchManifest } from "./manifest.js";

@@ -11,8 +11,6 @@ export type { XmlDispatchParse } from "./xml-dispatch.js";
 export { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
 export { discoveryPrompt, attackPrompt, verifyPrompt, reportPrompt, sourceVerifyPrompt, researchPrompt, blindVerifyPrompt } from "./prompts.js";
 export { features } from "./features.js";
-export { DockerExecutor, execInDocker, generateContainerName, buildDockerRunArgs } from "./docker-executor.js";
-export type { DockerExecResult, BindMount } from "./docker-executor.js";
 export { PtySessionManager } from "./pty-session.js";
 export type { PtySession } from "./pty-session.js";
 export { estimateCost } from "./cost.js";

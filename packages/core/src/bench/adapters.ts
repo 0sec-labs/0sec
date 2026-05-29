@@ -8,7 +8,8 @@
  * testable).
  *
  * Layering note: this file lives in @pwnkit/core, so it may import core's
- * own engine (`agenticScan`) and Docker plumbing (`docker-executor.ts`). It
+ * own engine (`agenticScan`) and its own Docker plumbing (the `docker()`
+ * helper below). It
  * must NOT import the cloud verify runners in `services/` — services depends
  * on core, never the reverse (ADR-001). To grade with the cloud E2B/kernel
  * runners, implement a `BenchOracle` adapter on the services side against the
@@ -123,8 +124,7 @@ interface DockerWebHandle {
 // All docker invocations use execFileSync with an argument ARRAY (never an
 // interpolated shell string) so the shell is never involved — manifest-
 // supplied values like image refs and container names can't break out into
-// command injection. Mirrors the execFileSync pattern in
-// agent/docker-executor.ts.
+// command injection.
 function docker(args: string[], opts: { cwd?: string; timeoutMs: number; capture?: boolean }): string {
   return execFileSync("docker", args, {
     cwd: opts.cwd,

@@ -356,8 +356,6 @@ export type TriageLayerName =
   | "pov_gate"
   | "structured_verify"
   | "consensus"
-  | "memories"
-  | "debate"
   | "kernel_oracle"
   | "publishability";
 

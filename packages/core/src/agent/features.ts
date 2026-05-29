@@ -7,7 +7,6 @@
  *     script templates, progress handoff) default ON.
  *   - "experimental" features (playbooks, memory, web search) default OFF.
  *   - "v0.6.0 FP moat layers" (povGate, reachabilityGate, multiModal,
- *     adversarialDebate, triageMemories, egatsTreeSearch,
  *     selfConsistencyVerify) ALSO default OFF — they need explicit enablement
  *     in CI before any FP-moat A/B claim can be made.
  *   - "always-on triage filters" (`holdingItWrong`, `evidenceGate`) default
@@ -31,12 +30,8 @@ export const features = {
   progressHandoff: env("PWNKIT_FEATURE_PROGRESS_HANDOFF", true),
   /** Allow the agent to search the web for CVE details, docs, and technique references */
   webSearch: env("PWNKIT_FEATURE_WEB_SEARCH", false),
-  /** Run bash commands inside a Kali Docker container with full pentesting toolset */
-  dockerExecutor: env("PWNKIT_FEATURE_DOCKER_EXECUTOR", false),
   /** Interactive PTY sessions for exploits requiring interactivity (reverse shells, DB clients, SSH) */
   ptySession: env("PWNKIT_FEATURE_PTY_SESSION", false),
-  /** EGATS (Evidence-Gated Attack Tree Search) — beam-search exploration of attack hypotheses */
-  egatsTreeSearch: env("PWNKIT_FEATURE_EGATS", false),
   /**
    * EGATS specialist routing (#557, HPTSA-inspired). When ON, an EGATS branch
    * whose hypothesis names a concrete vuln class (SQLi/XSS/SSRF/SSTI/IDOR/
@@ -59,8 +54,6 @@ export const features = {
   },
   /** Self-consistency voting: run the structured verify pipeline N times and take the majority vote */
   selfConsistencyVerify: env("PWNKIT_FEATURE_CONSENSUS_VERIFY", false),
-  /** Adversarial debate: prosecutor vs defender agents debate each finding, skeptical judge decides */
-  adversarialDebate: env("PWNKIT_FEATURE_DEBATE", false),
   /** Multi-modal agreement: cross-validate findings against foxguard (Rust pattern scanner) */
   multiModalAgreement: env("PWNKIT_FEATURE_MULTIMODAL", false),
   /** Reachability gate: suppress findings whose sink is not reachable from an application entry point */
@@ -101,8 +94,6 @@ export const features = {
   get inlineValidation(): boolean {
     return env("PWNKIT_FEATURE_INLINE_VALIDATION", false);
   },
-  /** Semgrep-style per-target persistent FP memories injected into the verify pipeline */
-  triageMemories: env("PWNKIT_FEATURE_TRIAGE_MEMORIES", false),
   /**
    * WordPress plugin/theme fingerprinter + OSV CVE lookup.
    * Exposes the `wp_fingerprint` tool to the attack agent. Off by default —

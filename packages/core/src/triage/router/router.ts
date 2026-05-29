@@ -2,7 +2,7 @@
  * Dynamic Triage Router — v0 rule-based, with a seam for a learned
  * classifier landing in a follow-up PR (pwnkit#113 phase 2).
  *
- * The router decides **per finding** which subset of the 11 triage
+ * The router decides **per finding** which subset of the triage
  * layers to invoke. v0 ships explicit decision rules encoded from the
  * pwnkit#72 (2026-04-11) per-profile ablation comment; a later PR will
  * swap in a learned classifier (XGBoost or VulnBERT-style hybrid head)
@@ -164,8 +164,8 @@ function hasErrorBasedSqlSignal(finding: Finding): boolean {
  * The v0 rule-based router. Encodes the four rules from the pwnkit#113
  * issue body, in priority order:
  *
- *   1. High-confidence SQLi with error-based signal → skip
- *      `debate` (the ablation showed it removes real findings here).
+ *   1. High-confidence SQLi with error-based signal → invoke the
+ *      static layer set with high routing confidence.
  *
  *   2. Ambiguous logic bug (confidence in [0.3, 0.55]) → invoke
  *      `structured_verify` + `pov_gate`.
@@ -190,13 +190,12 @@ export class RuleBasedRouter implements RouterModel {
       conf >= RULE_SQLI_HIGH_CONFIDENCE &&
       hasErrorBasedSqlSignal(finding)
     ) {
-      const layers = DEFAULT_STATIC_LAYER_SET.filter((l) => l !== "debate");
       return {
-        layers_to_invoke: layers,
+        layers_to_invoke: [...DEFAULT_STATIC_LAYER_SET],
         confidence: 0.9,
         reasoning:
           "rule-1: high-confidence SQLi (conf>=0.8) with error-based signal — " +
-          "skip `debate` (ablation: removes real findings on this slice)",
+          "invoke the static layer set with high routing confidence",
         matchedRule: "rule-1-sqli-error-based",
       };
     }

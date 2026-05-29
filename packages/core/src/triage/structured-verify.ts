@@ -20,8 +20,6 @@ import type {
   NativeContentBlock,
 } from "../runtime/types.js";
 import type { MemoryStore, TriageMemory } from "./memories.js";
-import { runAdversarialDebate } from "./adversarial.js";
-import type { DebateResult, AdversarialDebateOptions } from "./adversarial.js";
 
 // ── Memory Integration ──
 
@@ -1023,80 +1021,4 @@ export async function runSelfConsistencyVerify(
       );
     }
   });
-}
-
-// ── Adversarial Debate Reconciliation ──
-
-export type DebateFn = (
-  finding: Finding,
-  target: string,
-  runtime: NativeRuntime,
-  options?: AdversarialDebateOptions,
-) => Promise<DebateResult>;
-
-export interface DebateGatedVerifyResult {
-  verdict: VerifyVerdict;
-  confidence: number;
-  verify: VerifyResult;
-  debate: DebateResult;
-  reconciliation: "agree" | "downgrade" | "escalate" | "unclear";
-  reasoning: string;
-}
-
-export interface DebateGatedVerifyOptions {
-  overrideThreshold?: number;
-  debateOptions?: AdversarialDebateOptions;
-  verifyFn?: VerifyFn;
-  debateFn?: DebateFn;
-}
-
-export function reconcileVerifyAndDebate(
-  verify: VerifyResult,
-  debate: DebateResult,
-  overrideThreshold = 0.7,
-): DebateGatedVerifyResult {
-  const verifySaysReal = verify.verdict === "confirmed";
-  const debateSaysReal = debate.verdict === "real";
-  const debateSaysFp = debate.verdict === "false_positive";
-  const debateUnclear = debate.verdict === "unclear";
-
-  if (verifySaysReal && debateSaysReal) {
-    const confidence = 0.6 * verify.confidence + 0.4 * debate.confidence;
-    return { verdict: "confirmed", confidence: Math.round(confidence * 100) / 100, verify, debate, reconciliation: "agree", reasoning: `Both verify and debate agree this finding is real. Verify confidence ${verify.confidence.toFixed(2)}, debate confidence ${debate.confidence.toFixed(2)}.` };
-  }
-  if (!verifySaysReal && debateSaysFp) {
-    const confidence = 0.6 * verify.confidence + 0.4 * debate.confidence;
-    return { verdict: "rejected", confidence: Math.round(confidence * 100) / 100, verify, debate, reconciliation: "agree", reasoning: `Both verify and debate agree this finding is a false positive. Verify confidence ${verify.confidence.toFixed(2)}, debate confidence ${debate.confidence.toFixed(2)}.` };
-  }
-  if (debateUnclear) {
-    return { verdict: verify.verdict, confidence: verify.confidence, verify, debate, reconciliation: "unclear", reasoning: `Debate judge returned "unclear". Falling back to verify verdict (${verify.verdict}).` };
-  }
-  if (verifySaysReal && debateSaysFp) {
-    if (debate.confidence >= overrideThreshold) {
-      return { verdict: "rejected", confidence: Math.round(debate.confidence * 100) / 100, verify, debate, reconciliation: "downgrade", reasoning: `Verify confirmed but adversarial debate ruled false positive with confidence ${debate.confidence.toFixed(2)} >= ${overrideThreshold}. Downgrading. Judge: ${debate.judgeReasoning.slice(0, 200)}` };
-    }
-    const confidence = Math.max(0, verify.confidence - 0.2);
-    return { verdict: "confirmed", confidence: Math.round(confidence * 100) / 100, verify, debate, reconciliation: "unclear", reasoning: `Verify confirmed but debate disagreed with low confidence (${debate.confidence.toFixed(2)} < ${overrideThreshold}). Keeping verify verdict with reduced confidence.` };
-  }
-  if (!verifySaysReal && debateSaysReal) {
-    if (debate.confidence >= overrideThreshold) {
-      return { verdict: "confirmed", confidence: Math.round(debate.confidence * 100) / 100, verify, debate, reconciliation: "escalate", reasoning: `Verify rejected but adversarial debate ruled real with confidence ${debate.confidence.toFixed(2)} >= ${overrideThreshold}. Escalating. Judge: ${debate.judgeReasoning.slice(0, 200)}` };
-    }
-    return { verdict: "rejected", confidence: verify.confidence, verify, debate, reconciliation: "unclear", reasoning: `Verify rejected and debate disagreed with low confidence (${debate.confidence.toFixed(2)} < ${overrideThreshold}). Keeping verify verdict.` };
-  }
-  return { verdict: verify.verdict, confidence: verify.confidence, verify, debate, reconciliation: "unclear", reasoning: `Unreconciled verdict combination (verify=${verify.verdict}, debate=${debate.verdict}). Keeping verify verdict.` };
-}
-
-export async function runVerifyWithDebate(
-  finding: Finding,
-  target: string,
-  runtime: NativeRuntime,
-  options?: DebateGatedVerifyOptions,
-): Promise<DebateGatedVerifyResult> {
-  const overrideThreshold = options?.overrideThreshold ?? 0.7;
-  const verifyFn = options?.verifyFn ?? runStructuredVerify;
-  const debateFn = options?.debateFn ?? runAdversarialDebate;
-  const verify = await verifyFn(finding, target, runtime);
-  const debate = await debateFn(finding, target, runtime, options?.debateOptions);
-  return reconcileVerifyAndDebate(verify, debate, overrideThreshold);
 }

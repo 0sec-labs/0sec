@@ -88,9 +88,9 @@ describe("Dynamic triage routing — integration with scanner dispatch site", ()
     const records = lines.map((l) => JSON.parse(l));
     const recById = Object.fromEntries(records.map((r) => [r.finding_id, r]));
 
-    // Rule 1: SQLi error-based — debate skipped, everything else in
+    // Rule 1: SQLi error-based — full static set with high confidence
     expect(recById["f-sqli"].matched_rule).toBe("rule-1-sqli-error-based");
-    expect(recById["f-sqli"].decided_layers).not.toContain("debate");
+    expect(recById["f-sqli"].decided_layers).toEqual([...DEFAULT_STATIC_LAYER_SET]);
     expect(recById["f-sqli"].subsystem).toBe("web");
 
     // Rule 2: ambiguous logic bug

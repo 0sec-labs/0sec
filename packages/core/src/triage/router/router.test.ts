@@ -2,7 +2,7 @@
  * Tests for the v0 rule-based router (pwnkit#113).
  *
  * Coverage:
- *   - Rule 1 (high-confidence SQLi with error-based signal → skip `debate`)
+ *   - Rule 1 (high-confidence SQLi with error-based signal → static set, high confidence)
  *   - Rule 2 (ambiguous logic bug → invoke structured_verify + pov_gate)
  *   - Rule 3 (strong FP-pattern match → empty layer set)
  *   - Default (unmatched → static layer set)
@@ -54,7 +54,7 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
 // ────────────────────────────────────────────────────────────────────
 
 describe("RuleBasedRouter — rule 1 (SQLi error-based)", () => {
-  it("skips `debate` for high-confidence SQLi with a SQL error in the response", () => {
+  it("invokes the static layer set with high confidence for high-confidence SQLi with a SQL error in the response", () => {
     const router = new RuleBasedRouter();
     const finding = makeFinding({
       category: "sql-injection",
@@ -69,12 +69,10 @@ describe("RuleBasedRouter — rule 1 (SQLi error-based)", () => {
     const decision = router.predict(finding, features);
 
     expect(decision.matchedRule).toBe("rule-1-sqli-error-based");
-    expect(decision.layers_to_invoke).not.toContain("debate");
-    // Should still include the rest of the static set
+    expect(decision.confidence).toBe(0.9);
+    // Should include the full static set
     for (const layer of DEFAULT_STATIC_LAYER_SET) {
-      if (layer !== "debate") {
-        expect(decision.layers_to_invoke).toContain(layer);
-      }
+      expect(decision.layers_to_invoke).toContain(layer);
     }
   });
 
