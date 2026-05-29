@@ -989,9 +989,14 @@ describe("runPipeline — report envelope", () => {
     // Returned in research phase; the verify phase then re-runs the agent
     // per finding. Our shared mock returns `findings: []` on the verify
     // call, which marks every research finding as `false-positive`.
-    // (See unified-pipeline.ts lines 1180-1196: empty verify → rejected.)
+    // (See unified-pipeline.ts: empty verify → rejected, routed through the
+    // disclosure predicate.) These findings are low-severity / low-impact, so
+    // the predicate allows the drop.
     runAnalysisAgentMock.mockResolvedValueOnce({
-      findings: [fakeFinding("a"), fakeFinding("b")],
+      findings: [
+        fakeFinding("a", { severity: "low", category: "security-misconfiguration" }),
+        fakeFinding("b", { severity: "low", category: "security-misconfiguration" }),
+      ],
     });
     // Subsequent calls (the per-finding verify wave) default to `findings: []`
     // via the beforeEach.
@@ -1009,6 +1014,31 @@ describe("runPipeline — report envelope", () => {
     // Both findings were rejected by the (empty-result) verify wave.
     expect(report.findings).toEqual([]);
     expect(report.summary.totalFindings).toBe(0);
+  });
+
+  it("holds a disclosure-grade finding rejected by blind verify instead of dropping it (#599)", async () => {
+    installPackageMock.mockReturnValue(fakeInstalledPackage("npm", "lodash", "4.17.21"));
+
+    // Research surfaces a high-impact-class finding; the per-finding verify
+    // wave returns empty (= rejected). A disclosure-grade finding must NOT be
+    // silently dropped on that verdict — it is held for human review.
+    runAnalysisAgentMock.mockResolvedValueOnce({
+      findings: [fakeFinding("a", { severity: "critical", category: "command-injection" })],
+    });
+
+    const report = await runPipeline({
+      target: "lodash",
+      targetType: "npm-package",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      dbPath: freshDbPath(),
+    });
+
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0]!.status).not.toBe("false-positive");
+    expect(report.findings[0]!.publishability).toBe("needs_verify");
   });
 
   it("LlmApiRuntime constructor receives apiKey + model + timeout from PipelineOptions", async () => {

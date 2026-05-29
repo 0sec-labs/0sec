@@ -20,6 +20,7 @@ import type {
   NativeContentBlock,
 } from "../runtime/types.js";
 import type { MemoryStore, TriageMemory } from "./memories.js";
+import type { VerifyOutcome, VerifyVerdict, VerifySignal } from "./verify-verdict.js";
 
 // ── Memory Integration ──
 
@@ -40,7 +41,13 @@ export interface VerifyMemoryOptions {
 
 // ── Public Types ──
 
-export type VerifyVerdict = "confirmed" | "rejected";
+/**
+ * @deprecated The structured-verify pipeline only ever produces a binary
+ * confirmed/rejected label. Prefer {@link VerifyOutcome} (which also models
+ * `inconclusive`) for new code; this alias is kept for the legacy step/consensus
+ * shapes below.
+ */
+export type StructuredOutcome = "confirmed" | "rejected";
 
 export type VerifyStepName =
   | "reachability"
@@ -57,7 +64,7 @@ export interface StepResult {
 }
 
 export interface VerifyResult {
-  verdict: VerifyVerdict;
+  verdict: StructuredOutcome;
   confidence: number;
   steps: StepResult[];
   reasoning: string;
@@ -860,7 +867,7 @@ export async function runStructuredVerify(
  */
 export interface ConsensusResult {
   /** Majority-vote verdict across all completed runs. */
-  verdict: VerifyVerdict;
+  verdict: StructuredOutcome;
   /** Fraction of completed runs whose verdict matched the majority (0-1). */
   confidence: number;
   /** All completed VerifyResult objects, in the order they finished. */
@@ -927,7 +934,7 @@ export function tallyConsensus(runs: VerifyResult[]): ConsensusResult {
 
   // Ties default to "rejected" — when the pipeline can't reach a clear
   // majority, the safer posture is to treat the finding as unverified.
-  const verdict: VerifyVerdict = confirmed > rejected ? "confirmed" : "rejected";
+  const verdict: StructuredOutcome = confirmed > rejected ? "confirmed" : "rejected";
   const majorityCount = Math.max(confirmed, rejected);
   const confidence = majorityCount / runs.length;
 
@@ -948,6 +955,10 @@ export function tallyConsensus(runs: VerifyResult[]): ConsensusResult {
  * cannot overturn — at that point we return immediately and let the pending
  * promises settle in the background. This keeps latency close to the single
  * fastest "decisive" run in the clear-cut case.
+ *
+ * Prefer the unified {@link verify} entrypoint (`verify(finding, target, runtime,
+ * { votes })`) in new code — it is the single public face of the verify funnel.
+ * This function remains the self-consistency implementation it delegates to.
  */
 export async function runSelfConsistencyVerify(
   finding: Finding,
@@ -1021,4 +1032,84 @@ export async function runSelfConsistencyVerify(
       );
     }
   });
+}
+
+// ── Unified verify entrypoint ──
+
+export interface VerifyOptions {
+  /**
+   * Number of self-consistency votes. Omit or `1` for a single structured
+   * 4-step pass; `>1` runs the pipeline N times in parallel and takes the
+   * majority verdict (the FP-reduction knob — see {@link runSelfConsistencyVerify}).
+   */
+  votes?: number;
+  /** Sampling temperature hint, forwarded to the self-consistency ensemble. */
+  temperature?: number;
+  /** Early-termination threshold for the vote (>1 disables early stop). */
+  earlyStopThreshold?: number;
+  /** Dependency-injectable per-pass verifier. Defaults to {@link runStructuredVerify}. */
+  verifyFn?: VerifyFn;
+  /** Memory store options forwarded to each pass. */
+  memoryOptions?: VerifyMemoryOptions;
+}
+
+/**
+ * The single canonical structured-verify entrypoint.
+ *
+ * Collapses the former `runStructuredVerify` / `runSelfConsistencyVerify`
+ * entrypoints behind one parametrized call. Self-consistency is a
+ * flag-gated param (`votes`), not a parallel code path: `votes <= 1` is a single
+ * structured pass, `votes > 1` is a majority vote. The result is always a
+ * {@link ConsensusResult}; use {@link toVerifyVerdict} to project it onto the
+ * unified {@link VerifyVerdict} contract.
+ */
+export async function verify(
+  finding: Finding,
+  target: string,
+  runtime: NativeRuntime,
+  options?: VerifyOptions,
+): Promise<ConsensusResult> {
+  const votes = Math.max(1, options?.votes ?? 1);
+  return runSelfConsistencyVerify(finding, target, runtime, {
+    numRuns: votes,
+    temperature: options?.temperature,
+    earlyStopThreshold: options?.earlyStopThreshold,
+    verifyFn: options?.verifyFn,
+    memoryOptions: options?.memoryOptions,
+  });
+}
+
+/**
+ * Project a structured {@link ConsensusResult} (or a single {@link VerifyResult})
+ * onto the unified {@link VerifyVerdict} contract, so the agentic/web verify path
+ * emits the exact same shape as the static/code path. The per-run verdicts (or
+ * the 4 structured steps) become the verdict's {@link VerifySignal}s.
+ */
+export function toVerifyVerdict(result: ConsensusResult | VerifyResult): VerifyVerdict {
+  if ("runs" in result) {
+    const signals: VerifySignal[] = result.runs.map((run, i) => ({
+      name: `vote_${i + 1}`,
+      passed: run.verdict === "confirmed",
+      confidence: run.confidence,
+      reasoning: run.reasoning,
+    }));
+    return {
+      verdict: result.verdict,
+      confidence: result.confidence,
+      reasoning: `self-consistency ${result.verdict} (${Math.round(result.agreement * 100)}% agreement across ${result.runs.length} run(s))`,
+      signals,
+    };
+  }
+  const signals: VerifySignal[] = result.steps.map((step) => ({
+    name: step.step,
+    passed: step.passed,
+    confidence: step.confidence,
+    reasoning: step.reasoning,
+  }));
+  return {
+    verdict: result.verdict,
+    confidence: result.confidence,
+    reasoning: result.reasoning,
+    signals,
+  };
 }

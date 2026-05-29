@@ -26,6 +26,8 @@ import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
 import { researchPrompt, researchPromptSingleFile, blindVerifyPrompt } from "./agent/prompts.js";
+import { isDisclosureWorthy } from "./triage/verify-verdict.js";
+import type { VerifyVerdict } from "./triage/verify-verdict.js";
 import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
 import { collectScopeFiles } from "./source-files.js";
 import { features as agentFeatures } from "./agent/features.js";
@@ -1526,12 +1528,35 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
               const verifiedFindings = agentResult.findings;
 
               const confirmed = verifiedFindings.length > 0;
-              const rejectionReason = confirmed ? undefined : "Could not independently reproduce";
-              return { finding, confirmed, verifiedFinding: verifiedFindings[0] ?? null, rejectionReason };
+              // Emit the unified VerifyVerdict contract so the static/code path
+              // converges on the same shape the agentic/web path emits.
+              const verdict: VerifyVerdict = confirmed
+                ? {
+                    verdict: "confirmed",
+                    confidence: verifiedFindings[0]?.confidence ?? finding.confidence ?? 0,
+                    reasoning: "Blind verifier independently reproduced the finding.",
+                    signals: [{ name: "blind_verify", passed: true }],
+                  }
+                : {
+                    verdict: "rejected",
+                    confidence: finding.confidence ?? 0,
+                    reasoning: "Could not independently reproduce",
+                    signals: [{ name: "blind_verify", passed: false, reasoning: "Could not independently reproduce" }],
+                  };
+              return { finding, verdict, verifiedFinding: verifiedFindings[0] ?? null };
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               warnings.push({ stage: "verify", message: `Verification failed for "${finding.title}": ${msg}` });
-              return { finding, confirmed: false, verifiedFinding: null, rejectionReason: `Verifier error: ${msg}` };
+              // A verifier that threw did NOT decide the finding is a false
+              // positive — it failed to decide. Emit `inconclusive` so the
+              // finding is never auto-dropped on an error (#599 / #518).
+              const verdict: VerifyVerdict = {
+                verdict: "inconclusive",
+                confidence: 0,
+                reasoning: `Verifier error: ${msg}`,
+                signals: [{ name: "blind_verify", passed: false, reasoning: `Verifier error: ${msg}` }],
+              };
+              return { finding, verdict, verifiedFinding: null };
             }
           }),
         );
@@ -1539,10 +1564,11 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         // Emit results and filter
         let confirmedCount = 0;
         let rejectedCount = 0;
+        let heldCount = 0;
 
         findings = verifyResults
-          .map(({ finding, confirmed, verifiedFinding, rejectionReason }) => {
-            if (confirmed) {
+          .map(({ finding, verdict, verifiedFinding }) => {
+            if (verdict.verdict === "confirmed") {
               confirmedCount++;
               emit({ type: "verify:result", message: `Confirmed: ${finding.title}`, data: { confirmed: true, title: finding.title } });
               return {
@@ -1551,11 +1577,24 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                 confidence: verifiedFinding?.confidence ?? finding.confidence,
                 severity: verifiedFinding?.severity ?? finding.severity,
               };
-            } else {
+            }
+            // Not confirmed (rejected or inconclusive). Route the drop through
+            // the one disclosure predicate: a disclosure-grade finding is held
+            // for human review (never silently dropped), and an inconclusive
+            // verdict is always kept. Everything else drops as a false positive.
+            const decision = isDisclosureWorthy(finding, verdict);
+            if (!decision.keep) {
               rejectedCount++;
-              emit({ type: "verify:result", message: `Rejected: ${finding.title}`, data: { confirmed: false, title: finding.title, reason: rejectionReason ?? "Could not independently reproduce" } });
+              emit({ type: "verify:result", message: `Rejected: ${finding.title}`, data: { confirmed: false, title: finding.title, reason: verdict.reasoning } });
               return { ...finding, status: "false-positive" as Finding["status"] };
             }
+            heldCount++;
+            emit({ type: "verify:result", message: `Held for review: ${finding.title}`, data: { confirmed: false, title: finding.title, reason: `${verdict.reasoning} — held (${decision.reason})` } });
+            return {
+              ...finding,
+              publishability: "needs_verify" as Finding["publishability"],
+              triageNote: `blind-verify ${verdict.verdict} but held for review (${decision.guard ?? "inconclusive"}): ${decision.reason}`,
+            };
           });
 
         // #416 Bug A: persist the verify verdict for each finding so a
@@ -1580,11 +1619,12 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         emit({
           type: "stage:end",
           stage: "verify",
-          message: `Verification complete: ${confirmedCount} confirmed, ${rejectedCount} rejected`,
+          message: `Verification complete: ${confirmedCount} confirmed, ${rejectedCount} rejected${heldCount > 0 ? `, ${heldCount} held for review` : ""}`,
         });
         logPipelineEvent("verify", "stage_complete", {
           confirmed: confirmedCount,
           rejected: rejectedCount,
+          heldForReview: heldCount,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

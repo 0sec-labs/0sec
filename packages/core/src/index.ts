@@ -267,21 +267,35 @@ export type {
   VulnerabilityIntel,
 } from "./intel/index.js";
 
-// Structured verification pipeline
+// Structured verification pipeline — `verify()` is the unified entrypoint;
+// the trio (runStructuredVerify / runSelfConsistencyVerify) remain as the
+// single-pass + self-consistency implementations it delegates to.
 export {
+  verify,
+  toVerifyVerdict,
   runStructuredVerify,
   runSelfConsistencyVerify,
   tallyConsensus,
 } from "./triage/structured-verify.js";
 export type {
   VerifyResult,
+  VerifyOptions,
   StepResult,
-  VerifyVerdict,
+  StructuredOutcome,
   VerifyStepName,
   ConsensusResult,
   SelfConsistencyOptions,
   VerifyMemoryOptions,
 } from "./triage/structured-verify.js";
+// Unified verify funnel — one verdict contract + one disclosure predicate.
+export { isDisclosureWorthy } from "./triage/verify-verdict.js";
+export type {
+  VerifyVerdict,
+  VerifyOutcome,
+  VerifySignal,
+  VerdictLike,
+  DisclosureDecision,
+} from "./triage/verify-verdict.js";
 
 // Triage memories (Semgrep-style persistent FP learning)
 export { MemoryStore, scoreMemory, inferPackage } from "./triage/memories.js";

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   runSelfConsistencyVerify,
   tallyConsensus,
+  verify,
+  toVerifyVerdict,
   type VerifyFn,
   type VerifyResult,
 } from "./structured-verify.js";
@@ -220,5 +222,51 @@ describe("runSelfConsistencyVerify", () => {
     expect(result.verdict).toBe("confirmed");
     expect(result.confidence).toBe(1.0);
     expect(result.runs).toHaveLength(1);
+  });
+});
+
+describe("verify (unified entrypoint)", () => {
+  const finding = makeFinding();
+
+  it("defaults to a single structured pass when votes is omitted", async () => {
+    let calls = 0;
+    const result = await verify(finding, "http://t", fakeRuntime, {
+      verifyFn: async () => {
+        calls += 1;
+        return fakeVerifyResult("confirmed");
+      },
+    });
+    expect(calls).toBe(1);
+    expect(result.verdict).toBe("confirmed");
+    expect(result.runs).toHaveLength(1);
+  });
+
+  it("runs N votes and takes the majority when votes > 1", async () => {
+    const result = await verify(finding, "http://t", fakeRuntime, {
+      votes: 5,
+      earlyStopThreshold: 2, // disable early stop for determinism
+      verifyFn: queueVerifier(["confirmed", "confirmed", "rejected", "rejected", "rejected"]),
+    });
+    expect(result.verdict).toBe("rejected");
+    expect(result.runs).toHaveLength(5);
+  });
+});
+
+describe("toVerifyVerdict", () => {
+  it("maps a single VerifyResult's steps onto signals", () => {
+    const vv = toVerifyVerdict(fakeVerifyResult("confirmed"));
+    expect(vv.verdict).toBe("confirmed");
+    expect(vv.confidence).toBe(0.9);
+    expect(Array.isArray(vv.signals)).toBe(true);
+  });
+
+  it("maps a ConsensusResult's runs onto vote signals", () => {
+    const consensus = tallyConsensus([
+      fakeVerifyResult("confirmed"),
+      fakeVerifyResult("rejected"),
+    ]);
+    const vv = toVerifyVerdict(consensus);
+    expect(vv.signals).toHaveLength(2);
+    expect(vv.signals[0]!.name).toBe("vote_1");
   });
 });

@@ -56,7 +56,7 @@ import {
   routeFinding,
   decideLayers,
   appendRoutingTraceRecord,
-  canAutoSuppressDetailed,
+  isDisclosureWorthy,
   checkPublishability,
   buildPublishabilityInputs,
   resolveRepository,
@@ -66,7 +66,7 @@ import {
   type DedupEcosystem,
   type PublishabilityInputs,
 } from "./triage/index.js";
-import { runSelfConsistencyVerify } from "./triage/structured-verify.js";
+import { verify, toVerifyVerdict } from "./triage/structured-verify.js";
 import { generatePov, oracleForCategory } from "./triage/pov-gate.js";
 import { resolveJournalPaths } from "./agent/journal/writer.js";
 import { getCloudSinkConfig, postFinding, postFinalReport } from "./cloud-sink.js";
@@ -1306,7 +1306,20 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
       // Layer telemetry: holding-it-wrong always runs (just may not enforce).
       // pwnkit#112 — feeds the dynamic routing model in #113.
-      if (hiw.isHoldingItWrong && features.holdingItWrong) {
+      //
+      // The blocklist drop is a heuristic, so it routes through the one
+      // disclosure predicate: a disclosure-grade finding is held for
+      // verification instead of being dropped on a pattern match alone (#518).
+      const hiwEnforces = hiw.isHoldingItWrong && features.holdingItWrong;
+      const hiwDecision = hiwEnforces ? isDisclosureWorthy(finding, "rejected") : null;
+      if (hiwEnforces && hiwDecision!.keep) {
+        pushLayerVerdict(finding, {
+          layer: "holding_it_wrong",
+          verdict: "downgrade",
+          reason: `matched holding-it-wrong (${hiw.reason}) but protected (${hiwDecision!.guard ?? "guard"}): held for verification`,
+          startedAt: hiwStartedAt,
+        });
+      } else if (hiwEnforces) {
         pushLayerVerdict(finding, {
           layer: "holding_it_wrong",
           verdict: "reject",
@@ -1342,8 +1355,8 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         timestamp: Date.now(),
       });
 
-      if (hiw.isHoldingItWrong && features.holdingItWrong) {
-        // Downgrade severity to info and mark rejected. Skip further verify.
+      if (hiwEnforces && !hiwDecision!.keep) {
+        // Suppressible: downgrade severity to info and mark rejected. Skip further verify.
         finding.severity = "info";
         finding.triageStatus = "suppressed";
         finding.triageNote = `rejected: holding-it-wrong — ${hiw.reason}`;
@@ -1357,6 +1370,32 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         });
         continue;
       }
+      if (hiwEnforces && hiwDecision!.keep) {
+        // Protected class/severity — hold for verification, never a silent
+        // drop on the blocklist. The finding falls through the pipeline.
+        finding.triageNote = `holding-it-wrong matched but protected (${hiwDecision!.guard ?? "guard"}): held for verification — ${hiw.reason}`;
+        db.logEvent?.({
+          scanId,
+          stage: "verify",
+          eventType: "auto_suppress_guard",
+          agentRole: "triage",
+          payload: {
+            findingId: finding.id,
+            path: "holding_it_wrong",
+            guard: hiwDecision!.guard,
+            reason: hiwDecision!.reason,
+            severity: finding.severity,
+            category: finding.category,
+          },
+          timestamp: Date.now(),
+        });
+        emit({
+          type: "stage:end",
+          stage: "attack",
+          message: `Triage held ${finding.id} for verification (holding-it-wrong, protected): ${hiwDecision!.reason}`,
+        });
+        // fall through to the remaining triage layers + verify
+      }
 
       const evidenceGateStartedAt = Date.now();
       const evidenceGateRejects = evidenceCompleteness <= 0.5;
@@ -1365,8 +1404,8 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // short-circuit — the finding falls through to the rest of the triage
       // pipeline (reachability / multi-modal / verify), which is exactly the
       // "route to verification instead of suppress" behavior we want.
-      const evidenceGuard = canAutoSuppressDetailed(finding);
-      if (evidenceGateRejects && features.evidenceGate && evidenceGuard.canSuppress) {
+      const evidenceGuard = isDisclosureWorthy(finding, "rejected");
+      if (evidenceGateRejects && features.evidenceGate && !evidenceGuard.keep) {
         pushLayerVerdict(finding, {
           layer: "evidence_gate",
           verdict: "reject",
@@ -1386,7 +1425,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         });
         continue;
       }
-      if (evidenceGateRejects && features.evidenceGate && !evidenceGuard.canSuppress) {
+      if (evidenceGateRejects && features.evidenceGate && evidenceGuard.keep) {
         // Guard bailed the auto-drop. Record it and let the finding proceed.
         pushLayerVerdict(finding, {
           layer: "evidence_gate",
@@ -1466,8 +1505,8 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           // (p<=0.25). It may never auto-drop a high-severity / high-impact
           // finding — those get at least one verification pass. When the guard
           // fires we record it and fall through to the remaining layers + verify.
-          const routerGuard = canAutoSuppressDetailed(finding);
-          if (routerGuard.canSuppress) {
+          const routerGuard = isDisclosureWorthy(finding, "rejected");
+          if (!routerGuard.keep) {
             finding.triageStatus = "suppressed";
             finding.triageNote = `router_auto_reject: ${routerResult.reason}`;
             db.updateFindingStatus?.(finding.id, "false-positive");
@@ -1544,8 +1583,8 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           // guard fires we record it and fall through; the finding still
           // reaches the agentic verify agent (Stage 3) — a real verification
           // pass — instead of being marked false-positive on a pattern alone.
-          const dynamicGuard = canAutoSuppressDetailed(finding);
-          if (dynamicGuard.canSuppress) {
+          const dynamicGuard = isDisclosureWorthy(finding, "rejected");
+          if (!dynamicGuard.keep) {
             finding.triageStatus = "suppressed";
             finding.triageNote = `dynamic_router_auto_reject: ${decision.reasoning ?? decision.matchedRule ?? "empty layer set"}`;
             db.updateFindingStatus?.(finding.id, "false-positive");
@@ -1620,34 +1659,71 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
             timestamp: Date.now(),
           });
           if (!reach.reachable && reach.confidence >= 0.7) {
+            // Unreachable is a confident verdict, but a disclosure-grade
+            // finding still routes through the one disclosure predicate so it
+            // is never dropped on the reachability heuristic alone (#518).
+            const reachDecision = isDisclosureWorthy(finding, "rejected");
+            if (!reachDecision.keep) {
+              pushLayerVerdict(finding, {
+                layer: "reachability",
+                verdict: "reject",
+                confidence: reach.confidence,
+                reason: `unreachable: ${reach.reason}`,
+                startedAt: reachStartedAt,
+              });
+              finding.triageStatus = "suppressed";
+              finding.triageNote = `unreachable: ${reach.reason}`;
+              db.updateFindingStatus?.(finding.id, "false-positive");
+              finding.status = "false-positive";
+              db.saveFinding?.(scanId, finding);
+              emit({
+                type: "stage:end",
+                stage: "attack",
+                message: `Reachability gate rejected ${finding.id}: ${reach.reason}`,
+              });
+              continue;
+            }
+            // Protected — hold for verification, never a silent drop.
             pushLayerVerdict(finding, {
               layer: "reachability",
-              verdict: "reject",
+              verdict: "downgrade",
               confidence: reach.confidence,
-              reason: `unreachable: ${reach.reason}`,
+              reason: `unreachable (${reach.reason}) but protected (${reachDecision.guard ?? "guard"}): held for verification`,
               startedAt: reachStartedAt,
             });
-            finding.triageStatus = "suppressed";
-            finding.triageNote = `unreachable: ${reach.reason}`;
-            db.updateFindingStatus?.(finding.id, "false-positive");
-            finding.status = "false-positive";
-            db.saveFinding?.(scanId, finding);
+            finding.triageNote = `unreachable but protected (${reachDecision.guard ?? "guard"}): held for verification — ${reach.reason}`;
+            db.logEvent?.({
+              scanId,
+              stage: "verify",
+              eventType: "auto_suppress_guard",
+              agentRole: "triage",
+              payload: {
+                findingId: finding.id,
+                path: "reachability",
+                guard: reachDecision.guard,
+                reason: reachDecision.reason,
+                severity: finding.severity,
+                category: finding.category,
+              },
+              timestamp: Date.now(),
+            });
             emit({
               type: "stage:end",
               stage: "attack",
-              message: `Reachability gate rejected ${finding.id}: ${reach.reason}`,
+              message: `Reachability gate held ${finding.id} for verification (protected): ${reachDecision.reason}`,
             });
-            continue;
+            // fall through to the remaining triage layers + verify
+          } else {
+            pushLayerVerdict(finding, {
+              layer: "reachability",
+              verdict: "pass",
+              confidence: reach.confidence,
+              reason: reach.reachable
+                ? `reachable from ${reach.entryPoints.length} entry point(s): ${reach.reason}`
+                : `low-confidence unreachable verdict (${reach.confidence.toFixed(2)} < 0.7), kept`,
+              startedAt: reachStartedAt,
+            });
           }
-          pushLayerVerdict(finding, {
-            layer: "reachability",
-            verdict: "pass",
-            confidence: reach.confidence,
-            reason: reach.reachable
-              ? `reachable from ${reach.entryPoints.length} entry point(s): ${reach.reason}`
-              : `low-confidence unreachable verdict (${reach.confidence.toFixed(2)} < 0.7), kept`,
-            startedAt: reachStartedAt,
-          });
         } catch (err) {
           // Reachability check errors must not drop findings silently —
           // let the rest of the pipeline continue.
@@ -1723,26 +1799,63 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
             finding.triageStatus = "accepted";
             finding.triageNote = `multi_modal_accept: ${fused.reasoning}`;
           } else if (fused.decision === "auto_reject") {
+            // Multi-modal disagreement is a fused signal, not a verification
+            // pass — so a disclosure-grade finding routes through the one
+            // disclosure predicate and is held for verification rather than
+            // dropped on the fused score alone (#518).
+            const mmDecision = isDisclosureWorthy(finding, "rejected");
+            if (!mmDecision.keep) {
+              pushLayerVerdict(finding, {
+                layer: "multi_modal",
+                verdict: "reject",
+                confidence: fused.confidence,
+                reason: `auto_reject: ${fused.reasoning}`,
+                startedAt: mmStartedAt,
+                changedSeverity: { from: finding.severity, to: "info" },
+              });
+              finding.severity = "info";
+              finding.triageStatus = "suppressed";
+              finding.triageNote = `multi_modal_reject: ${fused.reasoning}`;
+              db.updateFindingStatus?.(finding.id, "false-positive");
+              finding.status = "false-positive";
+              db.saveFinding?.(scanId, finding);
+              emit({
+                type: "stage:end",
+                stage: "attack",
+                message: `Multi-modal rejected ${finding.id}: ${fused.reasoning}`,
+              });
+              continue;
+            }
+            // Protected — hold for verification, never a silent drop.
             pushLayerVerdict(finding, {
               layer: "multi_modal",
-              verdict: "reject",
+              verdict: "downgrade",
               confidence: fused.confidence,
-              reason: `auto_reject: ${fused.reasoning}`,
+              reason: `auto_reject (${fused.reasoning}) but protected (${mmDecision.guard ?? "guard"}): held for verification`,
               startedAt: mmStartedAt,
-              changedSeverity: { from: finding.severity, to: "info" },
             });
-            finding.severity = "info";
-            finding.triageStatus = "suppressed";
-            finding.triageNote = `multi_modal_reject: ${fused.reasoning}`;
-            db.updateFindingStatus?.(finding.id, "false-positive");
-            finding.status = "false-positive";
-            db.saveFinding?.(scanId, finding);
+            finding.triageNote = `multi_modal_reject but protected (${mmDecision.guard ?? "guard"}): held for verification — ${fused.reasoning}`;
+            db.logEvent?.({
+              scanId,
+              stage: "verify",
+              eventType: "auto_suppress_guard",
+              agentRole: "triage",
+              payload: {
+                findingId: finding.id,
+                path: "multi_modal",
+                guard: mmDecision.guard,
+                reason: mmDecision.reason,
+                severity: finding.severity,
+                category: finding.category,
+              },
+              timestamp: Date.now(),
+            });
             emit({
               type: "stage:end",
               stage: "attack",
-              message: `Multi-modal rejected ${finding.id}: ${fused.reasoning}`,
+              message: `Multi-modal held ${finding.id} for verification (protected): ${mmDecision.reason}`,
             });
-            continue;
+            // fall through to the remaining triage layers + verify
           } else if (fused.decision === "verify_priority") {
             pushLayerVerdict(finding, {
               layer: "multi_modal",
@@ -1797,7 +1910,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // disclosure-worthiness so we stop filing by-design / duplicate /
       // dead-code / already-fixed findings. The layer itself only *computes* a
       // verdict; any SUPPRESSION decision (by_design / duplicate / fixed /
-      // unreachable) is routed through `canAutoSuppressDetailed` so a
+      // unreachable) is routed through `isDisclosureWorthy` so a
       // high-severity / high-impact finding is NEVER silently dropped — it is
       // downgraded to `needs_verify` + human review instead. `in_scope` and
       // `fix_bypass` are the green-to-file verdicts and are kept.
@@ -1854,8 +1967,8 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
             // A suppression verdict (by_design / duplicate / fixed /
             // unreachable). Route through the auto-suppress guard: a
             // disclosure-grade finding may NOT be dropped on a heuristic.
-            const guard = canAutoSuppressDetailed(finding);
-            if (guard.canSuppress) {
+            const guard = isDisclosureWorthy(finding, "rejected");
+            if (!guard.keep) {
               pushLayerVerdict(finding, {
                 layer: "publishability",
                 verdict: "reject",
@@ -2244,12 +2357,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         const survivors: Finding[] = [];
         for (const finding of verifyCandidates) {
           try {
-            const consensus = await runSelfConsistencyVerify(
+            const consensus = await verify(
               finding,
               config.target,
               nativeRuntime,
-              { numRuns: 3, temperature: 0.7, earlyStopThreshold: 0.8 },
+              { votes: 3, temperature: 0.7, earlyStopThreshold: 0.8 },
             );
+            const consensusVerdict = toVerifyVerdict(consensus);
             db.logEvent?.({
               scanId,
               stage: "verify",
@@ -2270,13 +2384,37 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
               stage: "verify",
               message: `Consensus ${consensus.verdict} for ${finding.id} (${Math.round(consensus.confidence * 100)}% agreement across ${consensus.runs.length} runs)`,
             });
-            if (consensus.verdict === "rejected") {
+            // Route the consensus verdict through the one disclosure predicate.
+            // A `rejected` vote drops only when the finding is auto-suppressible;
+            // a disclosure-grade finding (high/critical or high-impact class) is
+            // held and still handed to the agentic verify agent (a real pass),
+            // never silently buried on a vote alone (#518).
+            const consensusDecision = isDisclosureWorthy(finding, consensusVerdict);
+            if (consensus.verdict === "rejected" && !consensusDecision.keep) {
               finding.triageStatus = "suppressed";
               finding.triageNote = `rejected by self-consistency vote (${Math.round(consensus.confidence * 100)}% agreement, ${consensus.runs.length} runs)`;
               db.updateFindingStatus?.(finding.id, "false-positive");
               finding.status = "false-positive";
               db.saveFinding?.(scanId, finding);
               continue;
+            }
+            if (consensus.verdict === "rejected") {
+              finding.triageNote = `self-consistency vote rejected but protected (${consensusDecision.guard ?? "guard"}): held for agentic verify — ${consensusDecision.reason}`;
+              db.logEvent?.({
+                scanId,
+                stage: "verify",
+                eventType: "auto_suppress_guard",
+                agentRole: "verify",
+                payload: {
+                  findingId: finding.id,
+                  path: "self_consistency",
+                  guard: consensusDecision.guard,
+                  reason: consensusDecision.reason,
+                  severity: finding.severity,
+                  category: finding.category,
+                },
+                timestamp: Date.now(),
+              });
             }
             survivors.push(finding);
           } catch (err) {

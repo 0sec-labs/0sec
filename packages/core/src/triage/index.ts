@@ -13,6 +13,14 @@ export {
   AUTO_SUPPRESS_HIGH_IMPACT_CATEGORIES,
 } from "./can-auto-suppress.js";
 export type { AutoSuppressDecision, AutoSuppressGuard } from "./can-auto-suppress.js";
+export { isDisclosureWorthy } from "./verify-verdict.js";
+export type {
+  VerifyVerdict,
+  VerifyOutcome,
+  VerifySignal,
+  VerdictLike,
+  DisclosureDecision,
+} from "./verify-verdict.js";
 export { isHoldingItWrong } from "./holding-it-wrong.js";
 export type { HoldingItWrongResult } from "./holding-it-wrong.js";
 export {
