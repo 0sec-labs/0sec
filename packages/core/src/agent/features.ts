@@ -37,6 +37,26 @@ export const features = {
   ptySession: env("PWNKIT_FEATURE_PTY_SESSION", false),
   /** EGATS (Evidence-Gated Attack Tree Search) — beam-search exploration of attack hypotheses */
   egatsTreeSearch: env("PWNKIT_FEATURE_EGATS", false),
+  /**
+   * EGATS specialist routing (#557, HPTSA-inspired). When ON, an EGATS branch
+   * whose hypothesis names a concrete vuln class (SQLi/XSS/SSRF/SSTI/IDOR/
+   * auth-bypass) runs as a per-class SPECIALIST: a class system prompt built
+   * from the technique sections in prompts.ts, the matching methodology skill
+   * auto-loaded into context, and a class-tuned tool subset. Hypotheses that
+   * are ambiguous (zero or multiple classes) fall back to the generic branch
+   * agent — beam search / scoring are untouched. Emits an `egats_specialist`
+   * event per routed node.
+   *
+   * Default OFF: this changes how branch mini-loops are configured, so it must
+   * be explicitly opted into before any A/B / multiplier claim on the
+   * benchmark harness. Implemented as a getter so the CLI `--features` flag
+   * (which sets the env var inside the command action, AFTER this module has
+   * been imported) is honored at routing time. Enable via
+   * PWNKIT_FEATURE_SPECIALIST_ROUTING=1.
+   */
+  get specialistRouting(): boolean {
+    return env("PWNKIT_FEATURE_SPECIALIST_ROUTING", false);
+  },
   /** Self-consistency voting: run the structured verify pipeline N times and take the majority vote */
   selfConsistencyVerify: env("PWNKIT_FEATURE_CONSENSUS_VERIFY", false),
   /** Adversarial debate: prosecutor vs defender agents debate each finding, skeptical judge decides */

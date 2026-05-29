@@ -21,7 +21,10 @@ import type { NativeRuntime, NativeMessage, NativeContentBlock } from "../runtim
 import type { Finding } from "@pwnkit/shared";
 import { runNativeAgentLoop } from "./native-loop.js";
 import { getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
-import { shellPentestPrompt } from "./prompts.js";
+import { shellPentestPrompt, specialistSection, VULN_CLASS_LABELS } from "./prompts.js";
+import type { VulnClass } from "./prompts.js";
+import { skillIdForVulnClass } from "./skills/index.js";
+import { features } from "./features.js";
 import type { ToolDefinition } from "./types.js";
 import type { pwnkitDB } from "@pwnkit/db";
 
@@ -291,6 +294,129 @@ function buildBranchPrompt(node: AttackNode, config: EGATSConfig, hasBrowser: bo
   return prompt;
 }
 
+// ── Specialist routing (#557, HPTSA-inspired) ──
+
+/**
+ * Patterns that map a hypothesis string to a concrete vuln class. Each entry's
+ * regex must be specific enough that an unrelated hypothesis does not trip it
+ * (e.g. "login" alone is not auth-bypass — only "login bypass" is). Order does
+ * not matter: the classifier requires EXACTLY ONE distinct class to match.
+ */
+const CLASS_PATTERNS: Array<{ cls: VulnClass; re: RegExp }> = [
+  {
+    cls: "sqli",
+    re: /\bsql\s*-?\s*injection\b|\bsqli\b|\bunion\s+select\b|'\s*or\s+1\s*=\s*1|information_schema|\bblind\s+sql/i,
+  },
+  {
+    cls: "xss",
+    re: /\bxss\b|\bcross[-\s]?site\s+scripting\b|<script|onerror\s*=|onload\s*=|reflected\s+(?:script|payload|input|html)|stored\s+script/i,
+  },
+  {
+    cls: "ssrf",
+    re: /\bssrf\b|\bserver[-\s]?side\s+request\s+forgery\b|169\.254\.169\.254|\brequest\s+forgery\b|metadata\s+endpoint/i,
+  },
+  {
+    cls: "ssti",
+    re: /\bssti\b|\btemplate\s+injection\b|server[-\s]?side\s+template|\{\{\s*7\s*\*\s*7\s*\}\}|\bjinja2?\b|\bfreemarker\b|\btwig\b/i,
+  },
+  {
+    cls: "idor",
+    re: /\bidor\b|insecure\s+direct\s+object|object\s+reference|\buser_id\b|swap(?:ping)?\s+(?:the\s+)?id\b|broken\s+object[-\s]?level/i,
+  },
+  {
+    cls: "auth-bypass",
+    re: /\bauth(?:entication|orization)?\s+bypass\b|\bauth[-\s]?bypass\b|\bjwt\b|\bnone\s+algorithm\b|algorithm\s+confusion|session\s+fixation|login\s+bypass|privilege\s+escalation/i,
+  },
+];
+
+/**
+ * Classify a branch hypothesis into a single vuln class for specialist routing.
+ *
+ * Returns the class only when EXACTLY ONE class pattern matches — a hypothesis
+ * that implicates zero classes (too generic) or two-or-more classes (genuinely
+ * ambiguous) returns `null` so the caller falls back to the generic branch
+ * agent. This is the "team-manager" decision in the HPTSA framing.
+ */
+export function classifyHypothesis(hypothesis: string): VulnClass | null {
+  const matched = new Set<VulnClass>();
+  for (const { cls, re } of CLASS_PATTERNS) {
+    if (re.test(hypothesis)) matched.add(cls);
+  }
+  return matched.size === 1 ? [...matched][0]! : null;
+}
+
+/**
+ * Extra tools layered onto the base branch tool set for each specialist class.
+ * Names are resolved against TOOL_DEFINITIONS and silently dropped if missing,
+ * so this stays robust to tool-registry changes.
+ */
+const SPECIALIST_TOOL_EXTRAS: Record<VulnClass, string[]> = {
+  sqli: ["http_request", "payload_lookup"],
+  xss: ["http_request", "crawl", "submit_form", "payload_lookup"],
+  ssrf: ["http_request"],
+  ssti: ["http_request", "payload_lookup"],
+  idor: ["http_request", "submit_form", "crawl"],
+  "auth-bypass": ["http_request", "submit_form", "payload_lookup"],
+};
+
+/**
+ * Build the class-tuned tool subset for a specialist branch: the shared branch
+ * tools (bash, browser when available, source tools in white-box mode,
+ * save_finding, done) plus class-specific extras, the JIT-skill tools when that
+ * feature is on, and the ObjectId forge for IDOR work when that feature is on.
+ * Deduped by tool name.
+ */
+async function buildSpecialistTools(
+  vulnClass: VulnClass,
+  repoPath?: string,
+): Promise<ToolDefinition[]> {
+  const base = await buildBranchTools(repoPath);
+
+  const extraNames = [...SPECIALIST_TOOL_EXTRAS[vulnClass]];
+  if (vulnClass === "idor" && features.mongoObjectIdForge) extraNames.push("mongo_objectid");
+  if (features.jitSkills) extraNames.push("list_skills", "load_skill");
+
+  const merged: ToolDefinition[] = [...base];
+  const seen = new Set(merged.map((t) => t.name));
+  for (const name of extraNames) {
+    if (seen.has(name)) continue;
+    const def = TOOL_DEFINITIONS[name];
+    if (def) {
+      merged.push(def);
+      seen.add(name);
+    }
+  }
+  return merged;
+}
+
+/** Build the system prompt for a per-class specialist branch mini-loop. */
+function buildSpecialistPrompt(
+  node: AttackNode,
+  config: EGATSConfig,
+  hasBrowser: boolean,
+  vulnClass: VulnClass,
+): string {
+  const base = shellPentestPrompt(config.target, config.repoPath, { hasBrowser });
+  const label = VULN_CLASS_LABELS[vulnClass];
+  const header = [
+    "",
+    `## EGATS Specialist Branch — ${label}`,
+    `Depth: ${node.depth}/${config.maxDepth}`,
+    `Hypothesis to test: ${node.hypothesis}`,
+    "",
+    `You are a ${label} specialist. A team manager routed this branch to you because`,
+    "the hypothesis implicates your vulnerability class. Focus exclusively on it —",
+    "apply the class methodology below and gather concrete evidence (tool output, HTTP",
+    "responses, error traces) that either confirms or refutes this specific hypothesis.",
+    "Do not wander into other classes. If you find a flag, call save_finding and done immediately.",
+    "",
+    specialistSection(vulnClass),
+  ].join("\n");
+  let prompt = base + "\n" + header;
+  if (config.challengeHint) prompt += "\n" + config.challengeHint;
+  return prompt;
+}
+
 /** Run the mini-loop for a single attack tree node. */
 async function exploreNode(
   node: AttackNode,
@@ -310,19 +436,58 @@ async function exploreNode(
     hypothesis: node.hypothesis,
   });
 
-  const systemPrompt = buildBranchPrompt(node, config, hasBrowser);
+  // ── Team-manager routing (#557) ──
+  // When specialist routing is on and the hypothesis names exactly one vuln
+  // class, run this branch as a per-class SPECIALIST: a class system prompt
+  // built from prompts.ts, the matching methodology skill auto-loaded, and a
+  // class-tuned tool subset. Ambiguous hypotheses keep the generic branch
+  // agent. Evidence flows back to the EGATS scorer unchanged.
+  const vulnClass = features.specialistRouting ? classifyHypothesis(node.hypothesis) : null;
+  let systemPrompt: string;
+  let nodeTools = tools;
+  let preloadedSkillIds: string[] | undefined;
+
+  if (vulnClass) {
+    systemPrompt = buildSpecialistPrompt(node, config, hasBrowser, vulnClass);
+    nodeTools = await buildSpecialistTools(vulnClass, config.repoPath);
+    const skillId = skillIdForVulnClass(vulnClass);
+    preloadedSkillIds = skillId ? [skillId] : undefined;
+
+    const specialistPayload = {
+      nodeId: node.id,
+      depth: node.depth,
+      vulnClass,
+      skillId: skillId ?? null,
+      toolCount: nodeTools.length,
+      hypothesis: node.hypothesis,
+    };
+    onEvent?.("egats_specialist", specialistPayload);
+    if (db) {
+      db.logEvent({
+        scanId: config.scanId,
+        stage: "attack",
+        eventType: "egats_specialist",
+        agentRole: "attack",
+        payload: specialistPayload,
+        timestamp: Date.now(),
+      });
+    }
+  } else {
+    systemPrompt = buildBranchPrompt(node, config, hasBrowser);
+  }
 
   try {
     const state = await runNativeAgentLoop({
       config: {
         role: "attack",
         systemPrompt,
-        tools,
+        tools: nodeTools,
         maxTurns: turns,
         target: config.target,
         scanId: config.scanId,
         scopePath: config.repoPath,
         retryCount: 0,
+        preloadedSkillIds,
       },
       runtime,
       db,

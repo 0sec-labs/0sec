@@ -8,8 +8,28 @@ import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import type { SkillDefinition, SkillSummary } from "./types.js";
+import type { VulnClass } from "../prompts.js";
 
 export type { SkillDefinition, SkillSummary } from "./types.js";
+
+/**
+ * Maps an EGATS vuln class (#557) to the methodology skill that should be
+ * auto-loaded for a specialist branch. Only classes with a matching skill in
+ * the registry are listed — classes without a dedicated skill (xss, ssrf,
+ * idor) still route to a specialist prompt + tool subset, they just don't
+ * preload a skill. Skill IDs must match the `id:` of a YAML file under this
+ * directory tree (validated by the skill-integration test).
+ */
+export const VULN_CLASS_SKILL: Partial<Record<VulnClass, string>> = {
+  sqli: "sqli-advanced",
+  ssti: "ssti-exploitation",
+  "auth-bypass": "jwt-attacks",
+};
+
+/** Return the skill ID to auto-load for a vuln class, or undefined if none. */
+export function skillIdForVulnClass(vulnClass: VulnClass): string | undefined {
+  return VULN_CLASS_SKILL[vulnClass];
+}
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 

@@ -17,7 +17,7 @@ import { features } from "./features.js";
 import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
 import { loadJournal, rehydrateContext, renderSeedMessages } from "./journal/index.js";
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
-import { formatJitSkillsInstruction } from "./skills/index.js";
+import { formatJitSkillsInstruction, getSkillById } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
 import { eventBus, isCloudEventSinkActive } from "../events/bus.js";
 import {
@@ -139,6 +139,18 @@ export interface NativeAgentConfig {
    * without leaking attribution to out-of-scope hosts.
    */
   attribution?: AttributionConfig;
+  /**
+   * Methodology skill IDs to auto-load into context before the loop starts
+   * (#557). Used by EGATS specialist routing so a class branch begins with the
+   * matching playbook already in its system prompt. Each skill's content is
+   * appended to the system prompt and the ID is recorded in the loop's
+   * `loadedSkills` set, so a later `load_skill` call on the same ID is a no-op
+   * (`already_loaded`) — the preload is idempotent. Unknown IDs and skills not
+   * applicable to `role` are skipped silently. Independent of the `jitSkills`
+   * flag: the preload reads the registry directly, so the playbook lands even
+   * when the `list_skills` / `load_skill` tools are not exposed.
+   */
+  preloadedSkillIds?: string[];
 }
 
 export interface NativeAgentLoopOptions {
@@ -374,6 +386,30 @@ export async function runNativeAgentLoop(
   toolCtx.recentToolResultTexts = recentToolResultTexts;
   if (!toolCtx.loadedSkills) {
     toolCtx.loadedSkills = new Set<string>();
+  }
+
+  // ── Specialist skill pre-loading (#557) ──
+  // EGATS specialist routing passes the vuln-class methodology skill(s) so the
+  // branch agent starts with the right playbook already in its system prompt.
+  // Idempotent: a skill already in loadedSkills (or listed twice) is appended
+  // only once, and a later load_skill on the same ID returns already_loaded.
+  // Reads the registry directly so it works regardless of the jitSkills flag.
+  if (config.preloadedSkillIds && config.preloadedSkillIds.length > 0) {
+    for (const skillId of config.preloadedSkillIds) {
+      if (toolCtx.loadedSkills.has(skillId)) continue;
+      const skill = getSkillById(skillId);
+      if (!skill) continue;
+      if (!skill.applicable_roles.includes(config.role as "attack" | "audit" | "review")) {
+        continue;
+      }
+      config.systemPrompt += `\n\n## Loaded Skill: ${skill.name}\n\n${skill.content}`;
+      toolCtx.loadedSkills.add(skill.id);
+      onEvent?.("skill_preloaded", {
+        skillId: skill.id,
+        name: skill.name,
+        role: config.role,
+      });
+    }
   }
 
   // Loop / oscillation detection (BoxPwnr-inspired)

