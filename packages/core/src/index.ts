@@ -636,3 +636,8 @@ export type {
   UnifiedDiff,
   UnifiedDiffHunk,
 } from "./emit/index.js";
+
+// ── Scan-level pass@k bench harness (pwnkit#556) ──
+// Turns the per-finding verify oracles into a scan-level scorecard
+// (success rate, FP rate vs known-negatives, cost-per-success) + CI gate.
+export * from "./bench/index.js";
