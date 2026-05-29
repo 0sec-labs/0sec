@@ -54,8 +54,14 @@ import {
   decideLayers,
   appendRoutingTraceRecord,
   canAutoSuppressDetailed,
+  checkPublishability,
+  buildPublishabilityInputs,
+  resolveRepository,
+  inferPackage,
   type LayerId,
   type RoutingDecision,
+  type DedupEcosystem,
+  type PublishabilityInputs,
 } from "./triage/index.js";
 import { runSelfConsistencyVerify } from "./triage/structured-verify.js";
 import { generatePov } from "./triage/pov-gate.js";
@@ -1255,6 +1261,28 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     //      evidence_completeness > 0.5 get sent to the blind verify agent.
     const verifyCandidates: Finding[] = [];
     const evidenceCompletenessIdx = FEATURE_NAMES.indexOf("cross_evidence_completeness");
+
+    // ── Publishability dedup inputs (issue #537 / #539) ──
+    // Built once per scan (the package/repo is constant across findings) and
+    // only when the gate is enabled — `buildPublishabilityInputs` wires the four
+    // live dedup sources (published GHSA/OSV/CVE, our own prior submissions incl.
+    // declined, the repo's own security issues/PRs, and SECURITY.md). All are
+    // behind injectable seams. The source repository ("owner/repo") lights up
+    // the repo-issue + SECURITY.md sources; we take it from config when set,
+    // else best-effort resolve it from npm metadata. If it stays unresolved,
+    // those two sources no-op (conservative — never a guessed-repo false dup).
+    const pkgNameForScan = inferPackage(config.target);
+    const dedupEcosystem = (config.ecosystem ?? "npm") as DedupEcosystem;
+    let publishabilityInputs: PublishabilityInputs | undefined;
+    if (features.publishabilityGate) {
+      const repository =
+        config.repository ??
+        (await resolveRepository(pkgNameForScan, { ecosystem: dedupEcosystem }));
+      publishabilityInputs = buildPublishabilityInputs({
+        ecosystem: dedupEcosystem,
+        ...(repository ? { repository } : {}),
+      });
+    }
     // ── Dynamic per-finding triage routing (pwnkit#113) ──
     // When `PWNKIT_FEATURE_DYNAMIC_TRIAGE=1`, a per-finding decision says
     // which layers to skip. The decision is recorded in this map so we
@@ -1757,6 +1785,138 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           reason: features.multiModalAgreement
             ? "no repoPath available (black-box mode)"
             : "PWNKIT_FEATURE_MULTIMODAL=0",
+          startedAt: Date.now(),
+        });
+      }
+
+      // ── Publishability / in-scope gate (issue #537 / #539) ──
+      // Opt-in via PWNKIT_FEATURE_PUBLISHABILITY_GATE (default OFF). Decides
+      // disclosure-worthiness so we stop filing by-design / duplicate /
+      // dead-code / already-fixed findings. The layer itself only *computes* a
+      // verdict; any SUPPRESSION decision (by_design / duplicate / fixed /
+      // unreachable) is routed through `canAutoSuppressDetailed` so a
+      // high-severity / high-impact finding is NEVER silently dropped — it is
+      // downgraded to `needs_verify` + human review instead. `in_scope` and
+      // `fix_bypass` are the green-to-file verdicts and are kept.
+      //
+      // Network checks live behind injectable seams on `publishabilityInputs`,
+      // wired by `buildPublishabilityInputs` to the four live dedup sources:
+      // published GHSA/OSV/CVE, our own prior submissions (incl. declined), the
+      // target repo's open+closed security issues/PRs, and SECURITY.md. Each
+      // seam is fail-soft (network error → that source returns nothing), so a
+      // blip degrades dedup coverage but never drops or mis-suppresses a
+      // finding. When the gate is off, `publishabilityInputs` is undefined and
+      // the layer runs with no seams → `in_scope` (safe no-op).
+      if (features.publishabilityGate && routerAllowsLayer("publishability")) {
+        const pubStartedAt = Date.now();
+        try {
+          const result = await checkPublishability(
+            finding,
+            pkgNameForScan,
+            "",
+            publishabilityInputs ?? {},
+          );
+          finding.publishability = result.decision;
+          if (result.dedupRefs && result.dedupRefs.length > 0) {
+            finding.dedupRefs = result.dedupRefs;
+          }
+          db.logEvent?.({
+            scanId,
+            stage: "verify",
+            eventType: "publishability_check",
+            agentRole: "triage",
+            payload: {
+              findingId: finding.id,
+              decision: result.decision,
+              confidence: result.confidence,
+              reason: result.reason,
+              threatModelExclusion: result.threatModelExclusion,
+              dedupRefs: result.dedupRefs,
+              latestVersionFixed: result.latestVersionFixed,
+              publicApiReachable: result.publicApiReachable,
+            },
+            timestamp: Date.now(),
+          });
+
+          // Green verdicts — keep the finding, record a pass.
+          if (result.decision === "in_scope" || result.decision === "fix_bypass") {
+            pushLayerVerdict(finding, {
+              layer: "publishability",
+              verdict: "pass",
+              confidence: result.confidence,
+              reason: `${result.decision}: ${result.reason}`,
+              startedAt: pubStartedAt,
+            });
+          } else {
+            // A suppression verdict (by_design / duplicate / fixed /
+            // unreachable). Route through the auto-suppress guard: a
+            // disclosure-grade finding may NOT be dropped on a heuristic.
+            const guard = canAutoSuppressDetailed(finding);
+            if (guard.canSuppress) {
+              pushLayerVerdict(finding, {
+                layer: "publishability",
+                verdict: "reject",
+                confidence: result.confidence,
+                reason: `${result.decision}: ${result.reason}`,
+                startedAt: pubStartedAt,
+              });
+              finding.triageStatus = "suppressed";
+              finding.triageNote = `publishability_${result.decision}: ${result.reason}`;
+              db.updateFindingStatus?.(finding.id, "false-positive");
+              finding.status = "false-positive";
+              db.saveFinding?.(scanId, finding);
+              emit({
+                type: "stage:end",
+                stage: "attack",
+                message: `Publishability gate suppressed ${finding.id} (${result.decision}): ${result.reason}`,
+              });
+              continue;
+            }
+            // Protected class/severity — downgrade to needs_verify + human
+            // review, NEVER a silent drop. The finding stays in the pipeline.
+            finding.publishability = "needs_verify";
+            finding.triageNote = `publishability_${result.decision} held for review (${guard.reason}): ${result.reason}`;
+            pushLayerVerdict(finding, {
+              layer: "publishability",
+              verdict: "downgrade",
+              confidence: result.confidence,
+              reason: `${result.decision} but protected (${guard.guard ?? "guard"}): held as needs_verify for human review — ${result.reason}`,
+              startedAt: pubStartedAt,
+            });
+            db.saveFinding?.(scanId, finding);
+            emit({
+              type: "stage:end",
+              stage: "attack",
+              message: `Publishability gate held ${finding.id} for review (${result.decision} → needs_verify): ${guard.reason}`,
+            });
+          }
+        } catch (err) {
+          // Publishability errors must never drop a finding — log and keep.
+          pushLayerVerdict(finding, {
+            layer: "publishability",
+            verdict: "error",
+            reason: `publishability check threw: ${(err as Error).message}`,
+            startedAt: pubStartedAt,
+          });
+          db.logEvent?.({
+            scanId,
+            stage: "verify",
+            eventType: "publishability_check_error",
+            agentRole: "triage",
+            payload: {
+              findingId: finding.id,
+              error: (err as Error).message,
+            },
+            timestamp: Date.now(),
+          });
+        }
+      } else {
+        pushLayerVerdict(finding, {
+          layer: "publishability",
+          verdict: "skip",
+          reason: features.publishabilityGate
+            ? "skipped by dynamic_router"
+            : "PWNKIT_FEATURE_PUBLISHABILITY_GATE=0",
           startedAt: Date.now(),
         });
       }

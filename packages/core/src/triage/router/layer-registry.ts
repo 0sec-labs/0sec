@@ -1,5 +1,5 @@
 /**
- * Triage Layer Registry — catalog of the 11 triage layers the router can
+ * Triage Layer Registry — catalog of the 12 triage layers the router can
  * dispatch to. Each entry is **documentation in code**: the router uses the
  * `id` to refer to a layer, the runtime uses `env_flag` to read the existing
  * scan-level toggle, and the cost_factor is a normalized 0..1 estimate used
@@ -52,13 +52,14 @@ export interface LayerRegistryEntry {
 }
 
 /**
- * The eleven triage layers the v0 router can dispatch to.
+ * The twelve triage layers the v0 router can dispatch to.
  *
  * Order is the *canonical execution order* used by `agentic-scanner.ts`
  * today: free filters first (holding_it_wrong, evidence_gate), then static
  * analysis (reachability), then deterministic oracles (oracle, multi_modal,
- * memories), then LLM-driven layers (structured_verify, pov_gate,
- * consensus, debate), with kernel_oracle slotted in for kernel findings.
+ * publishability, memories), then LLM-driven layers (structured_verify,
+ * pov_gate, consensus, debate), with kernel_oracle slotted in for kernel
+ * findings.
  *
  * The router can choose ANY subset of these, but must respect the rule
  * that a downstream layer cannot run if an upstream layer rejected the
@@ -105,6 +106,14 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
     cost_factor: 0.3,
     description:
       "Cross-checks every finding against the foxguard Rust pattern scanner. Agreement boosts confidence; disagreement gates the verify pipeline.",
+  },
+  {
+    id: "publishability",
+    name: "Publishability / In-Scope Gate",
+    env_flag: "PWNKIT_FEATURE_PUBLISHABILITY_GATE",
+    cost_factor: 0.3,
+    description:
+      "Decides disclosure-worthiness (issue #539): SECURITY.md threat-model exclusion (by_design), global advisory dedup (duplicate) with the fix-bypass exception (advisory exists but reproduces on latest → fix_bypass), latest-version (fixed), and public-API reachability (unreachable). Never auto-drops high-severity/high-impact findings — routes them to needs_verify via canAutoSuppress.",
   },
   {
     id: "memories",

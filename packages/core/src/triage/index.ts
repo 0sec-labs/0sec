@@ -15,6 +15,40 @@ export {
 export type { AutoSuppressDecision, AutoSuppressGuard } from "./can-auto-suppress.js";
 export { isHoldingItWrong } from "./holding-it-wrong.js";
 export type { HoldingItWrongResult } from "./holding-it-wrong.js";
+export {
+  checkPublishability,
+  checkThreatModelExclusion,
+  classifyDedup,
+  isLatestVersion,
+  isPublicApiReachable,
+  isPublishable,
+  PUBLISHABLE_DECISIONS,
+} from "./publishability.js";
+export type {
+  PublishabilityResult,
+  PublishabilityInputs,
+  AdvisoryRef,
+  AdvisorySource,
+  AdvisoryStatus,
+  ThreatModelResult,
+  DedupResult,
+  DedupVerdict,
+} from "./publishability.js";
+export {
+  buildPublishabilityInputs,
+  makeGlobalAdvisoryLookup,
+  makeOwnSubmissionsLookup,
+  makeRepoIssueLookup,
+  makeSecurityPolicyFetch,
+  detectReportingChannel,
+  resolveRepository,
+  OWN_SUBMISSIONS_REGISTRY,
+} from "./publishability-sources.js";
+export type {
+  PublishabilitySourceOptions,
+  DedupEcosystem,
+  ReportingChannel,
+} from "./publishability-sources.js";
 export { checkReachability, extractSinkLocation } from "./reachability.js";
 export type { ReachabilityResult, SinkLocation } from "./reachability.js";
 export {

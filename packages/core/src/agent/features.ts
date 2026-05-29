@@ -45,6 +45,19 @@ export const features = {
   multiModalAgreement: env("PWNKIT_FEATURE_MULTIMODAL", false),
   /** Reachability gate: suppress findings whose sink is not reachable from an application entry point */
   reachabilityGate: env("PWNKIT_FEATURE_REACHABILITY_GATE", false),
+  /**
+   * Publishability / in-scope gate (issue #537 / #539). Decides
+   * disclosure-worthiness per finding: SECURITY.md threat-model exclusion
+   * (by_design), global advisory dedup (duplicate) with the fix-bypass
+   * exception, latest-version (fixed), and public-API reachability
+   * (unreachable). Never auto-drops high-severity/high-impact findings — those
+   * are routed to needs_verify + human review via canAutoSuppress.
+   *
+   * Default OFF: this gate can suppress reproducible findings, so it must be
+   * explicitly opted into before any A/B claim. Disable/enable via
+   * PWNKIT_FEATURE_PUBLISHABILITY_GATE.
+   */
+  publishabilityGate: env("PWNKIT_FEATURE_PUBLISHABILITY_GATE", false),
   /** PoV gate: require a working, executable PoC per finding or downgrade to info */
   povGate: env("PWNKIT_FEATURE_POV_GATE", false),
   /** Semgrep-style per-target persistent FP memories injected into the verify pipeline */

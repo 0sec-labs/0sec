@@ -12,8 +12,8 @@ import {
 } from "./layer-registry.js";
 
 describe("LAYER_REGISTRY", () => {
-  it("contains exactly 11 triage layers (matches pwnkit#113 issue body)", () => {
-    expect(LAYER_REGISTRY).toHaveLength(11);
+  it("contains exactly 12 triage layers (11 from pwnkit#113 + publishability #539)", () => {
+    expect(LAYER_REGISTRY).toHaveLength(12);
   });
 
   it("every entry has an id, name, env_flag, cost_factor, description", () => {
@@ -77,5 +77,15 @@ describe("LAYER_REGISTRY", () => {
     for (const id of expected) {
       expect(ids).toContain(id);
     }
+  });
+
+  it("registers the publishability layer after multi_modal, before pov_gate (issue #539)", () => {
+    const ids = LAYER_REGISTRY.map((e) => e.id);
+    expect(ids).toContain("publishability");
+    expect(ids.indexOf("publishability")).toBeGreaterThan(ids.indexOf("multi_modal"));
+    expect(ids.indexOf("publishability")).toBeLessThan(ids.indexOf("pov_gate"));
+    const entry = LAYER_REGISTRY_BY_ID["publishability"];
+    expect(entry.env_flag).toBe("PWNKIT_FEATURE_PUBLISHABILITY_GATE");
+    expect(entry.cost_factor).toBeCloseTo(0.3);
   });
 });

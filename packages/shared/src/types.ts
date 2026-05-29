@@ -43,6 +43,20 @@ export interface ScanConfig {
   runtime?: RuntimeMode;
   mode?: ScanMode;
   repoPath?: string;
+  /**
+   * Package ecosystem of the target (npm / pypi / cargo / …). Optional; when
+   * unset the publishability dedup gate (issue #537 / #539) defaults to npm.
+   * Used to resolve the advisory DB and the source repository.
+   */
+  ecosystem?: string;
+  /**
+   * Source repository as "owner/repo", for the publishability dedup gate's
+   * repo-issue + SECURITY.md sources. Optional; when unset the scanner
+   * best-effort resolves it from package metadata (npm only today) and leaves
+   * it undefined if it cannot resolve cleanly — those two sources then no-op
+   * rather than risk a false duplicate against a guessed repo.
+   */
+  repository?: string;
   apiKey?: string;
   model?: string;
   templateFilter?: string[];
@@ -289,7 +303,32 @@ export type TriageLayerName =
   | "consensus"
   | "memories"
   | "debate"
-  | "kernel_oracle";
+  | "kernel_oracle"
+  | "publishability";
+
+/**
+ * Disclosure-worthiness verdict for a finding (issue #537 / #539).
+ *
+ * "Reproduces" ≠ "in scope." A finding can be a real, reproducible behaviour
+ * and still not be worth filing — because the maintainer's threat model
+ * disclaims it (`by_design`), an advisory already covers it (`duplicate`), the
+ * latest version patched it (`fixed`), or the sink is only reachable from dead
+ * / unexported code (`unreachable`). The valuable exception is `fix_bypass`: an
+ * advisory exists, but our PoC still reproduces on the latest published version
+ * — those ARE worth disclosing and must never be dropped as duplicates.
+ *
+ * `needs_verify` is the conservative fallback: the gate wanted to suppress but
+ * the finding is severity/class-protected (see `canAutoSuppress`), so it is
+ * routed to human review instead of being silently dropped.
+ */
+export type PublishabilityDecision =
+  | "in_scope"
+  | "by_design"
+  | "duplicate"
+  | "fixed"
+  | "unreachable"
+  | "fix_bypass"
+  | "needs_verify";
 
 export type LayerVerdictKind =
   | "pass"      // layer ran and approved the finding
@@ -387,6 +426,22 @@ export interface Finding {
    * uses this when a crash-triggered subsystem review finds sibling bugs.
    */
   relatedFindingId?: string;
+  /**
+   * Disclosure-worthiness verdict from the publishability triage layer
+   * (issue #537 / #539). Optional and additive — undefined until the
+   * `publishability` layer runs (flag-gated, default OFF). When populated it
+   * is the single in-product signal of whether a reproducible finding is
+   * actually worth filing; the pre-file gate consumes it. See
+   * {@link PublishabilityDecision}.
+   */
+  publishability?: PublishabilityDecision;
+  /**
+   * Advisory references the dedup check matched against this finding (GHSA /
+   * CVE / OSV ids, issue #537 / #539). Optional and additive. Populated by the
+   * publishability layer's dedup step; carries the evidence behind a
+   * `duplicate` / `fix_bypass` decision so a reviewer can see what was matched.
+   */
+  dedupRefs?: string[];
   timestamp: number;
 }
 
