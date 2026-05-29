@@ -24,6 +24,10 @@ const EXPECTED_SKILL_IDS = [
   "race-condition",
   "deserialization-chains",
   "request-smuggling",
+  "llm-prompt-injection",
+  "llm-insecure-output-handling",
+  "llm-excessive-agency",
+  "llm-rag-poisoning",
 ];
 
 const VALID_ROLES = new Set(["attack", "audit", "review"]);

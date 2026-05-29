@@ -54,6 +54,62 @@ describe("PLAYBOOKS — live audit proof discipline", () => {
   });
 });
 
+describe("PLAYBOOKS — LLM-app breadth (#566)", () => {
+  it("ships LLM playbooks for the four breadth gaps", () => {
+    for (const key of [
+      "prompt_injection",
+      "rag_poisoning",
+      "insecure_output_handling",
+      "excessive_agency",
+    ]) {
+      expect(PLAYBOOKS[key], `missing playbook: ${key}`).toBeDefined();
+      expect(PLAYBOOKS[key].length).toBeGreaterThan(100);
+    }
+  });
+
+  it("LLM playbooks reference their OWASP LLM category", () => {
+    expect(PLAYBOOKS.prompt_injection).toContain("LLM01");
+    expect(PLAYBOOKS.insecure_output_handling).toContain("LLM02");
+    expect(PLAYBOOKS.excessive_agency).toContain("LLM06");
+    expect(PLAYBOOKS.rag_poisoning).toContain("LLM08");
+  });
+
+  it("insecure_output_handling playbook covers markdown-image exfil", () => {
+    expect(PLAYBOOKS.insecure_output_handling).toMatch(/!\[.*\]\(https?:\/\//);
+    expect(PLAYBOOKS.insecure_output_handling.toLowerCase()).toContain("exfil");
+  });
+
+  it("buildPlaybookInjection renders an LLM section when requested", () => {
+    const injection = buildPlaybookInjection(["excessive_agency"]);
+    expect(injection).toContain("Excessive Agency Playbook");
+    expect(injection).toContain("LLM06");
+  });
+
+  it("detectPlaybooks surfaces prompt_injection from chatbot/injection text", () => {
+    const out = detectPlaybooks([
+      "The chatbot assistant ignores all previous instructions when asked",
+      "We extracted the system prompt from the LLM",
+    ]);
+    expect(out).toContain("prompt_injection");
+  });
+
+  it("detectPlaybooks surfaces excessive_agency from tool/function text", () => {
+    const out = detectPlaybooks([
+      "The agent exposes function calling over MCP",
+      "It will send email and delete records via tool_call when asked",
+    ]);
+    expect(out).toContain("excessive_agency");
+  });
+
+  it("detectPlaybooks surfaces rag_poisoning from retrieval text", () => {
+    const out = detectPlaybooks([
+      "The app uses retrieval augmented generation over a knowledge base",
+      "Users can upload a document that gets indexed into the vector store",
+    ]);
+    expect(out).toContain("rag_poisoning");
+  });
+});
+
 describe("buildPlaybookInjection / detectPlaybooks (smoke)", () => {
   it("returns empty string when no types provided", () => {
     expect(buildPlaybookInjection([])).toBe("");
