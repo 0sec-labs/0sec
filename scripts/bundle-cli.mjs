@@ -118,7 +118,9 @@ const publishPkg = {
   bugs: rootPkg.bugs,
   repository: rootPkg.repository,
   license: rootPkg.license,
-  engines: { node: ">=20" },
+  // Track the root engines so the published tarball never drifts from the
+  // runtime we actually support (root is the source of truth: >=24.0.0).
+  engines: rootPkg.engines,
   dependencies: {
     "cfonts": "^3.3.1",
     "drizzle-orm": rootPkg.dependencies["drizzle-orm"],
