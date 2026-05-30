@@ -26,7 +26,7 @@ import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
 import { researchPrompt, researchPromptSingleFile, blindVerifyPrompt } from "./agent/prompts.js";
-import { isDisclosureWorthy } from "./triage/verify-verdict.js";
+import { isDisclosureWorthy, evidenceKindForFinding } from "./triage/verify-verdict.js";
 import type { VerifyVerdict } from "./triage/verify-verdict.js";
 import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
 import { collectScopeFiles } from "./source-files.js";
@@ -1528,6 +1528,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
               const verifiedFindings = agentResult.findings;
 
               const confirmed = verifiedFindings.length > 0;
+              // Evidence basis (#674): native emission of reproduced-poc vs
+              // source-only, derived from the finding's PoC signals — kept
+              // identical to the 0cloud derivation so they never diverge.
+              const evidenceKind = evidenceKindForFinding(finding);
               // Emit the unified VerifyVerdict contract so the static/code path
               // converges on the same shape the agentic/web path emits.
               const verdict: VerifyVerdict = confirmed
@@ -1536,12 +1540,14 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                     confidence: verifiedFindings[0]?.confidence ?? finding.confidence ?? 0,
                     reasoning: "Blind verifier independently reproduced the finding.",
                     signals: [{ name: "blind_verify", passed: true }],
+                    evidenceKind,
                   }
                 : {
                     verdict: "rejected",
                     confidence: finding.confidence ?? 0,
                     reasoning: "Could not independently reproduce",
                     signals: [{ name: "blind_verify", passed: false, reasoning: "Could not independently reproduce" }],
+                    evidenceKind,
                   };
               return { finding, verdict, verifiedFinding: verifiedFindings[0] ?? null };
             } catch (err) {
@@ -1555,6 +1561,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                 confidence: 0,
                 reasoning: `Verifier error: ${msg}`,
                 signals: [{ name: "blind_verify", passed: false, reasoning: `Verifier error: ${msg}` }],
+                evidenceKind: evidenceKindForFinding(finding),
               };
               return { finding, verdict, verifiedFinding: null };
             }

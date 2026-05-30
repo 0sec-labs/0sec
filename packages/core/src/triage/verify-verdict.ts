@@ -43,6 +43,57 @@ import {
 export type VerifyOutcome = "confirmed" | "rejected" | "inconclusive";
 
 /**
+ * Evidence basis behind a verdict (EPIC #674 / #666). Distinct from
+ * {@link VerifyOutcome}: a finding can be `confirmed` on source analysis alone
+ * (`source-only`) or because a PoC actually reproduced in an isolated env
+ * (`reproduced-poc`). The disclosure-eligibility gate (#674 Part C) promotes a
+ * finding to `in_scope` only when the verdict is `confirmed` AND
+ * `evidenceKind === "reproduced-poc"` — "there's something in the source" is
+ * never enough. `source-only` confirmations stay held (needs_verify), never
+ * silently dropped (#518).
+ *
+ * SINGLE SOURCE / PARITY (#650): the 0cloud side keeps the same union in
+ * `@0cloud/cloud-contracts` (`VerifyEvidenceKind`, PR #681). The engine and
+ * orchestrator are decoupled — neither imports the other — so the strings are
+ * parity-checked in `verify-evidence-kind.parity.test.ts` against the locked
+ * cloud table. Keep the two in lockstep.
+ *
+ * Exported as a runtime tuple so the parity test (and any exhaustive consumer)
+ * has a value to assert, mirroring the `AUTO_SUPPRESS_*` arrays in
+ * `can-auto-suppress.ts`.
+ */
+export const VERIFY_EVIDENCE_KINDS = ["reproduced-poc", "source-only"] as const;
+export type VerifyEvidenceKind = (typeof VERIFY_EVIDENCE_KINDS)[number];
+
+/**
+ * Layer verdicts whose `pass` outcome means a PoC actually reproduced (a
+ * working PoV, a deterministic oracle hit, or the #666 static-finding PoC-gen
+ * synthesising runnable `pocSteps`). Used by {@link evidenceKindForFinding}.
+ */
+const REPRODUCING_LAYERS = new Set(["poc_gen", "pov_gate", "oracle"]);
+
+/**
+ * Classify a finding's evidence basis from what the engine already emits —
+ * the same predicate the 0cloud worker derives, kept identical so native
+ * emission and cloud derivation never diverge:
+ *
+ *   `reproduced-poc` ⇔ the finding carries a non-empty `pocSteps` graph AND a
+ *                       reproducing layer (poc_gen / pov_gate / oracle) recorded
+ *                       a `pass`.
+ *   `source-only`    ⇔ everything else (no runnable PoC, `poc:none`, or only
+ *                       static signals).
+ */
+export function evidenceKindForFinding(finding: Finding): VerifyEvidenceKind {
+  const hasPocSteps = Array.isArray(finding.pocSteps) && finding.pocSteps.length > 0;
+  const reproduced =
+    hasPocSteps &&
+    (finding.layerVerdicts ?? []).some(
+      (v) => v.verdict === "pass" && REPRODUCING_LAYERS.has(v.layer),
+    );
+  return reproduced ? "reproduced-poc" : "source-only";
+}
+
+/**
  * One piece of evidence behind a verdict — a structured-verify step, a
  * self-consistency vote tally, an oracle result, a blind-verify reproduction
  * attempt, etc. Kept deliberately loose so every verify path can map its own
@@ -72,6 +123,14 @@ export interface VerifyVerdict {
   reasoning: string;
   /** The individual signals that produced the verdict. May be empty. */
   signals: VerifySignal[];
+  /**
+   * Evidence basis behind the verdict (EPIC #674 / #666). Optional and
+   * additive — undefined on verdicts emitted before this field existed, and on
+   * paths where the producer has no finding in scope (the cloud side derives it
+   * from the finding's `pocSteps` + layer verdicts in that case). When set, the
+   * disclosure gate reads it directly. See {@link evidenceKindForFinding}.
+   */
+  evidenceKind?: VerifyEvidenceKind;
 }
 
 /** Either the full verdict contract or just its outcome label. */

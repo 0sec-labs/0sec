@@ -60,6 +60,7 @@ import {
   decideLayers,
   appendRoutingTraceRecord,
   isDisclosureWorthy,
+  evidenceKindForFinding,
   checkPublishability,
   buildPublishabilityInputs,
   resolveRepository,
@@ -2510,6 +2511,9 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
               { votes: 3, temperature: 0.7, earlyStopThreshold: 0.8 },
             );
             const consensusVerdict = toVerifyVerdict(consensus);
+            // Stamp the evidence basis natively (#674) so the disclosure gate
+            // and 0cloud read one canonical value instead of re-deriving it.
+            consensusVerdict.evidenceKind = evidenceKindForFinding(finding);
             db.logEvent?.({
               scanId,
               stage: "verify",
