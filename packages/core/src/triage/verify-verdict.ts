@@ -16,6 +16,13 @@
  *      delegating the severity/class guard to {@link canAutoSuppressDetailed}.
  *
  * The two scan loops still run independently; only their *verdicts* are unified.
+ *
+ * SINGLE SOURCE / PARITY (#650): the 0cloud orchestrator keeps the same
+ * predicate in `@0cloud/cloud-contracts` `disclosure-worthiness.ts` (the engine
+ * and orchestrator are decoupled — neither can import the other's package). This
+ * module is the engine's authoritative copy; the guard data is parity-checked in
+ * `can-auto-suppress.parity.test.ts`. Keep the two `isDisclosureWorthy`
+ * implementations behaviour-compatible.
  */
 
 import type { Finding } from "@pwnkit/shared";

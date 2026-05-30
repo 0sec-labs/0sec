@@ -23,6 +23,14 @@
  *   - Verification-verdict suppressions (reachability analysis, multi-modal
  *     cross-validation, self-consistency vote). Those are real verification
  *     results, not score-only heuristics, and are out of scope for this guard.
+ *
+ * SINGLE SOURCE / PARITY (#650): the 0cloud side keeps the same predicate +
+ * severity/class guard in `@0cloud/cloud-contracts` `disclosure-worthiness.ts`
+ * (the orchestrator can't import this engine package, and vice versa — the two
+ * are decoupled by design). This module stays the engine's authoritative copy;
+ * `can-auto-suppress.parity.test.ts` asserts the two `PROTECTED_SEVERITIES` /
+ * `HIGH_IMPACT_CATEGORIES` lists agree. When you change a list here, update the
+ * 0cloud copy + both parity fixtures.
  */
 
 import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
