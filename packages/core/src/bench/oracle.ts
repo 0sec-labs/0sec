@@ -126,7 +126,93 @@ const OBJECTIVE_CLAIM_CATEGORIES: Record<BenchObjective["type"], string[]> = {
     "null-pointer-deref",
     "null-deref",
   ],
+  // finding-match's claim family is the case's own vulnClass (a dynamic value
+  // on the objective, not a static set), so this entry is intentionally empty;
+  // the finding-match path computes its family via {@link acceptableCategories}.
+  "finding-match": [],
 };
+
+// ── finding-match: vulnClass → acceptable finding categories ──────────
+//
+// A source-audit case is graded by the scanner emitting a finding of the
+// right CLASS at the right SINK. `vulnClass` on the objective is matched here
+// (with a small synonym map, since scanners label near-equivalent classes
+// differently) against the emitted finding's `category`. `other` is a wildcard
+// — a DoS/data-integrity finding can land in several buckets, so for `other`
+// we match on the sink marker alone. Returns null to signal "any category".
+
+function acceptableCategories(vulnClass: string): Set<string> | null {
+  const v = vulnClass.toLowerCase();
+  const SYNONYMS: Record<string, string[]> = {
+    "sql-injection": ["sql-injection"],
+    "prototype-pollution": ["prototype-pollution"],
+    "path-traversal": ["path-traversal", "information-disclosure"],
+    "information-disclosure": ["information-disclosure", "path-traversal"],
+    "command-injection": ["command-injection", "code-injection"],
+    "code-injection": ["code-injection", "command-injection"],
+    "regex-dos": ["regex-dos"],
+    "unsafe-deserialization": ["unsafe-deserialization"],
+    ssrf: ["ssrf"],
+    xss: ["xss"],
+    "security-misconfiguration": ["security-misconfiguration", "missing-validation", "cors"],
+    "missing-validation": ["missing-validation", "security-misconfiguration"],
+  };
+  if (v === "other") return null; // wildcard — sink-marker match only
+  return new Set(SYNONYMS[v] ?? [v]);
+}
+
+/**
+ * Does the scan emit a finding of the objective's class whose evidence names
+ * the expected sink? The deterministic positive-grade predicate for a
+ * source-audit (`finding-match`) case.
+ */
+function hasSinkClassMatch(
+  report: BenchScanResult,
+  vulnClass: string,
+  sinkMarkers: string[],
+): boolean {
+  const cats = acceptableCategories(vulnClass);
+  const needles = sinkMarkers.map((m) => m.toLowerCase());
+  for (const f of report.findings ?? []) {
+    const catOk = cats === null || (f.category != null && cats.has(f.category));
+    if (!catOk) continue;
+    const text = [
+      f.title,
+      f.description,
+      f.evidence?.request,
+      f.evidence?.response,
+      f.evidence?.analysis,
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase();
+    if (needles.some((n) => text.includes(n))) return true;
+  }
+  return false;
+}
+
+/**
+ * Does the scan ASSERT a high-confidence in-class finding (even without a
+ * sink-marker match)? On a known-negative source-audit case this is the
+ * over-claim false-positive signal — "vuln class X confirmed" on a patched /
+ * by-design-safe package.
+ */
+function hasInClassClaim(
+  report: BenchScanResult,
+  vulnClass: string,
+  claimConfidence: number,
+): boolean {
+  const cats = acceptableCategories(vulnClass);
+  for (const f of report.findings ?? []) {
+    const catOk = cats === null || (f.category != null && cats.has(f.category));
+    if (!catOk) continue;
+    const assertedVerified = f.status === "verified";
+    const highConfidence =
+      typeof f.confidence === "number" && f.confidence >= claimConfidence;
+    if (assertedVerified || highConfidence) return true;
+  }
+  return false;
+}
 
 // ── Evidence harvesting ───────────────────────────────────────────────
 
@@ -158,6 +244,8 @@ function objectiveMarker(objective: BenchObjective): string | null {
       return objective.token;
     case "kasan-hit":
       return null; // graded by crash-signature, not a marker
+    case "finding-match":
+      return null; // graded by finding class + sink marker, not a single marker
   }
 }
 
@@ -233,6 +321,39 @@ export class ObjectiveOracle implements BenchOracle {
         status: "refuted",
         confidence: 0.0,
         notes: `[objective:kasan-hit] no crash signature in scan evidence`,
+      };
+    }
+
+    // Source-audit cases: grade by emitted finding class + sink marker.
+    if (c.objective.type === "finding-match") {
+      const { vulnClass, sinkMarkers } = c.objective;
+      const sinkHit = hasSinkClassMatch(report, vulnClass, sinkMarkers);
+      if (sinkHit) {
+        // For a positive case this is the proof; for a known-negative it's a
+        // false positive (the scanner re-reported the class at the sink on a
+        // patched / by-design-safe / refuted target).
+        return {
+          status: "verified",
+          confidence: 0.95,
+          notes: c.knownNegative
+            ? `[objective:finding-match] FALSE POSITIVE: ${vulnClass} re-reported at the known sink on a known-negative target`
+            : `[objective:finding-match] ${vulnClass} finding observed at the expected sink`,
+        };
+      }
+      // Known-negatives also fail on a high-confidence in-class over-claim,
+      // even when no exact sink marker matched — that's still a false exploit
+      // assertion on a non-vulnerable target.
+      if (c.knownNegative && hasInClassClaim(report, vulnClass, this.claimConfidence)) {
+        return {
+          status: "verified",
+          confidence: 0.95,
+          notes: `[objective:finding-match] FALSE POSITIVE: high-confidence ${vulnClass} claimed on a known-negative target with no valid sink match`,
+        };
+      }
+      return {
+        status: "refuted",
+        confidence: 0.0,
+        notes: `[objective:finding-match] no ${vulnClass} finding at the expected sink; objective not met`,
       };
     }
 

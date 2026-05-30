@@ -18,7 +18,8 @@
 
 import { execFileSync } from "node:child_process";
 import { agenticScan } from "../agentic-scanner.js";
-import type { ScanReport, RuntimeMode } from "@pwnkit/shared";
+import { packageAudit } from "../audit.js";
+import type { ScanReport, RuntimeMode, AuditReport, ScanDepth } from "@pwnkit/shared";
 import type { BenchCase } from "./manifest.js";
 import type { BenchScanResult } from "./oracle.js";
 import type {
@@ -50,6 +51,100 @@ export function scanReportToBenchResult(report: ScanReport): BenchScanResult {
     trace: report.trace,
     benchmarkMeta: report.benchmarkMeta,
     durationMs: report.durationMs,
+  };
+}
+
+// ── AuditReport → BenchScanResult ─────────────────────────────────────
+
+/**
+ * Project a package-audit {@link AuditReport} onto the oracle's structural
+ * view. The audit report carries no `benchmarkMeta`, so we synthesize one
+ * from its token usage + cost so the scorecard's cost-per-success math works
+ * for source-audit cases too.
+ */
+export function auditReportToBenchResult(report: AuditReport): BenchScanResult {
+  return {
+    findings: (report.findings ?? []).map((f) => ({
+      category: f.category,
+      confidence: f.confidence,
+      status: f.status,
+      title: f.title,
+      description: f.description,
+      evidence: f.evidence
+        ? {
+            request: f.evidence.request,
+            response: f.evidence.response,
+            analysis: f.evidence.analysis,
+          }
+        : undefined,
+    })),
+    benchmarkMeta: {
+      attackTurns: 0,
+      estimatedCostUsd: report.estimatedCostUsd ?? 0,
+      totalTokens: report.usage
+        ? (report.usage.inputTokens ?? 0) + (report.usage.outputTokens ?? 0)
+        : 0,
+    },
+    durationMs: report.durationMs,
+  };
+}
+
+// ── Default source-audit scan adapter ─────────────────────────────────
+
+export interface PackageAuditAdapterOptions {
+  /** Runtime mode passed to the audit engine. Default "api". */
+  runtime?: RuntimeMode;
+  /** Model override. */
+  model?: string;
+  /** Audit depth. Default "deep". */
+  depth?: ScanDepth;
+  /** Per-attempt cost ceiling forwarded to the audit engine. */
+  costCeilingUsdPerAttempt?: number;
+  /** Optional db path; omit to let the engine pick its default. */
+  dbPath?: string;
+}
+
+/**
+ * Build a {@link BenchScan} backed by the real `packageAudit` engine — the
+ * default scan adapter for `kind: "source-audit"` cases.
+ *
+ * The audit engine fetches the package itself (`npm/pypi/cargo install` of
+ * `package@version`), runs the static scanner + dependency/advisory audit +
+ * the LLM audit agent, and returns an `AuditReport`. No provisioner is needed
+ * (the engine owns installation), so pair this with the runner's default
+ * no-op provisioner. Non-source-audit cases return an `error` result so they
+ * surface as `inconclusive` rather than being mis-run through the audit path.
+ */
+export function createPackageAuditScanAdapter(
+  opts: PackageAuditAdapterOptions = {},
+): BenchScan {
+  return async (input: BenchScanInput): Promise<BenchScanResult> => {
+    const { case: c } = input;
+    if (c.target.kind !== "source-audit") {
+      return {
+        error: `packageAudit adapter handles source-audit targets only; case "${c.id}" is a ${c.target.kind} target — inject a web/kernel adapter for it`,
+      };
+    }
+    try {
+      const report = await packageAudit({
+        config: {
+          package: c.target.package,
+          version: c.target.version,
+          ecosystem: c.target.ecosystem,
+          depth: opts.depth ?? "deep",
+          format: "json",
+          runtime: opts.runtime ?? "api",
+          model: opts.model,
+          dbPath: opts.dbPath,
+          ...(opts.costCeilingUsdPerAttempt != null
+            ? { costCeilingUsd: opts.costCeilingUsdPerAttempt }
+            : {}),
+        },
+      });
+      return auditReportToBenchResult(report);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
   };
 }
 

@@ -74,7 +74,7 @@ export interface BenchAttemptResult {
 export interface BenchCaseResult {
   id: string;
   name?: string;
-  kind: "web" | "kernel";
+  kind: "web" | "kernel" | "source-audit";
   objective: BenchCase["objective"]["type"];
   knownNegative: boolean;
   tags: string[];
@@ -119,7 +119,17 @@ const DEFAULT_MAX_TURNS = 40;
 
 const NOOP_PROVISIONER: TargetProvisioner = {
   async up(c) {
-    return { target: c.target.kind === "web" ? "" : c.target.reproducerRef };
+    // Hand the scan adapter a sensible locator per kind. Web → empty (the
+    // adapter provisions its own); kernel → reproducerRef; source-audit → the
+    // package coordinate (the audit engine installs it itself).
+    switch (c.target.kind) {
+      case "web":
+        return { target: "" };
+      case "kernel":
+        return { target: c.target.reproducerRef };
+      case "source-audit":
+        return { target: `${c.target.ecosystem}:${c.target.package}@${c.target.version}` };
+    }
   },
   async down() {
     /* nothing to tear down */

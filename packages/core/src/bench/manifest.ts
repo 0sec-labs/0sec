@@ -81,6 +81,35 @@ export const KasanHitObjectiveSchema = z.object({
   signature: z.string().optional(),
 });
 
+/**
+ * Match a static source-audit finding by vuln class + sink location.
+ *
+ * Unlike the runtime objectives above (which grade against a marker the
+ * exploit must surface), a source-audit case has no runnable target to plant
+ * a marker in — the "proof" is the scanner emitting a finding of the right
+ * CLASS at the right SINK. Grading stays deterministic and never LLM-judged:
+ * the oracle requires a finding whose `category` matches `vulnClass` AND
+ * whose evidence text contains at least one `sinkMarkers` substring (a real
+ * file path / function / symbol named in the disclosure as the sink).
+ */
+export const FindingMatchObjectiveSchema = z.object({
+  type: z.literal("finding-match"),
+  /**
+   * The AttackCategory the scanner must report (e.g. "sql-injection",
+   * "prototype-pollution"). Kept as a free string here so the bench schema
+   * doesn't hard-couple to the engine's category enum; the oracle matches it
+   * (with a small synonym map) against the emitted finding's `category`.
+   */
+  vulnClass: z.string().min(1),
+  /**
+   * Literal sink substrings (file path / function / symbol) drawn from the
+   * ground-truth disclosure. A positive grade requires an in-class finding
+   * whose evidence contains at least ONE of these — pinning the match to the
+   * actual sink, not just any finding of the same class anywhere in the pkg.
+   */
+  sinkMarkers: z.array(z.string().min(2)).min(1),
+});
+
 export const BenchObjectiveSchema = z.discriminatedUnion("type", [
   FileReadObjectiveSchema,
   FileWriteObjectiveSchema,
@@ -88,6 +117,7 @@ export const BenchObjectiveSchema = z.discriminatedUnion("type", [
   AdminLoginObjectiveSchema,
   SsrfCallbackObjectiveSchema,
   KasanHitObjectiveSchema,
+  FindingMatchObjectiveSchema,
 ]);
 
 export type BenchObjective = z.infer<typeof BenchObjectiveSchema>;
@@ -122,12 +152,47 @@ export const KernelTargetSchema = z.object({
   hint: z.string().optional(),
 });
 
+export const SourceAuditTargetSchema = z.object({
+  kind: z.literal("source-audit"),
+  /** Package name as published, e.g. "sequelize" or "@cloudflare/workers-sdk". */
+  package: z.string().min(1),
+  /**
+   * Pinned package version the case is labeled against, e.g. "6.37.8". This
+   * is a public registry coordinate (npm/pypi/cargo) — NOT exploit material —
+   * so it lives in the manifest directly; the engine `npm install`s it at run
+   * time. No out-of-repo corpus is needed for a source-audit case.
+   */
+  version: z.string().min(1),
+  /** Registry the package is fetched from. The engine's PackageEcosystem. */
+  ecosystem: z.enum(["npm", "pypi", "cargo", "oci"]).default("npm"),
+  /** Free-text hint surfaced to the audit agent. */
+  hint: z.string().optional(),
+});
+
 export const BenchTargetSchema = z.discriminatedUnion("kind", [
   WebTargetSchema,
   KernelTargetSchema,
+  SourceAuditTargetSchema,
 ]);
 
 export type BenchTarget = z.infer<typeof BenchTargetSchema>;
+
+// ── Objective ↔ target-kind pairing ───────────────────────────────────
+//
+// Each objective type is only meaningful against exactly one target kind.
+// The runtime-marker objectives grade a live web target; kasan-hit grades a
+// kernel reproducer; finding-match grades a static source-audit. The case
+// schema enforces this pairing at load time (see superRefine below).
+
+const OBJECTIVE_TARGET_KIND: Record<BenchObjectiveType, BenchTarget["kind"]> = {
+  "file-read": "web",
+  "file-write": "web",
+  "db-access": "web",
+  "admin-login": "web",
+  "ssrf-callback": "web",
+  "kasan-hit": "kernel",
+  "finding-match": "source-audit",
+};
 
 // ── Case + manifest ───────────────────────────────────────────────────
 
@@ -158,16 +223,19 @@ export const BenchCaseSchema = z
     tags: z.array(z.string()).default([]),
   })
   .superRefine((c, ctx) => {
-    // A kernel case must carry a kasan-hit objective; a kasan-hit objective
-    // only makes sense for a kernel target. Catch the mismatch at load time
-    // rather than at grade time.
-    const isKernelObjective = c.objective.type === "kasan-hit";
-    const isKernelTarget = c.target.kind === "kernel";
-    if (isKernelObjective !== isKernelTarget) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `case "${c.id}": kasan-hit objective requires a kernel target and vice versa (objective=${c.objective.type}, target=${c.target.kind})`,
-      });
+    // Each objective type is only meaningful against one target kind. Catch a
+    // mismatch (e.g. a finding-match objective on a web target, or a kasan-hit
+    // on a source-audit target) at load time rather than at grade time.
+    const expected = OBJECTIVE_TARGET_KIND[c.objective.type];
+    if (expected !== c.target.kind) {
+      // Preserve the legacy kasan/kernel diagnostic for any mismatch touching
+      // the kernel pairing, so existing callers/tests grepping for it keep
+      // working; emit a generic message for the other pairings.
+      const message =
+        c.objective.type === "kasan-hit" || c.target.kind === "kernel"
+          ? `case "${c.id}": kasan-hit objective requires a kernel target and vice versa (objective=${c.objective.type}, target=${c.target.kind})`
+          : `case "${c.id}": ${c.objective.type} objective requires a ${expected} target (got target=${c.target.kind})`;
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message });
     }
   });
 

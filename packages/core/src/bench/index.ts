@@ -24,6 +24,8 @@ export {
   BenchCaseSchema,
   BenchObjectiveSchema,
   BenchTargetSchema,
+  SourceAuditTargetSchema,
+  FindingMatchObjectiveSchema,
 } from "./manifest.js";
 export type {
   BenchManifest,
@@ -75,7 +77,12 @@ export type {
 
 export {
   createAgenticScanAdapter,
+  createPackageAuditScanAdapter,
   createDockerWebProvisioner,
   scanReportToBenchResult,
+  auditReportToBenchResult,
 } from "./adapters.js";
-export type { AgenticScanAdapterOptions } from "./adapters.js";
+export type {
+  AgenticScanAdapterOptions,
+  PackageAuditAdapterOptions,
+} from "./adapters.js";

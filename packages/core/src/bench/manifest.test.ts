@@ -117,6 +117,100 @@ describe("loadManifest (example-manifest.json)", () => {
   });
 });
 
+describe("parseManifest — source-audit + finding-match", () => {
+  const sourceAuditCase = (overrides: Record<string, unknown> = {}) => ({
+    id: "sa1",
+    target: { kind: "source-audit", package: "sequelize", version: "6.37.8" },
+    objective: {
+      type: "finding-match",
+      vulnClass: "sql-injection",
+      sinkMarkers: ["Sequelize.prototype.set"],
+    },
+    ...overrides,
+  });
+
+  it("accepts a well-formed source-audit case and defaults ecosystem to npm", () => {
+    const m = parseManifest({ id: "m1", cases: [sourceAuditCase()] });
+    expect(m.cases[0].target.kind).toBe("source-audit");
+    expect((m.cases[0].target as { ecosystem: string }).ecosystem).toBe("npm");
+  });
+
+  it("rejects a finding-match objective on a web target", () => {
+    expect(() =>
+      parseManifest({
+        id: "m1",
+        cases: [sourceAuditCase({ target: { kind: "web", image: "img:1", port: 80 } })],
+      }),
+    ).toThrow(/finding-match objective requires a source-audit target/);
+  });
+
+  it("rejects a non-finding-match objective on a source-audit target", () => {
+    expect(() =>
+      parseManifest({
+        id: "m1",
+        cases: [sourceAuditCase({ objective: { type: "file-read", marker: "MARKER_1234" } })],
+      }),
+    ).toThrow(/file-read objective requires a web target/);
+  });
+
+  it("rejects a finding-match objective with no sink markers", () => {
+    expect(() =>
+      parseManifest({
+        id: "m1",
+        cases: [
+          sourceAuditCase({
+            objective: { type: "finding-match", vulnClass: "sql-injection", sinkMarkers: [] },
+          }),
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("still rejects the legacy kasan/kernel mismatch with its original message", () => {
+    expect(() =>
+      parseManifest({
+        id: "m1",
+        cases: [baseCase({ objective: { type: "kasan-hit", signature: "uaf" } })],
+      }),
+    ).toThrow(/kasan-hit objective requires a kernel target/);
+  });
+});
+
+describe("loadManifest (corpus-v1.json — the real labeled corpus)", () => {
+  it("loads + validates the committed corpus", async () => {
+    const m = await loadManifest(join(__dirname, "corpus-v1.json"));
+    expect(m.id).toBe("0sec-bench-corpus-v1");
+    expect(m.cases.length).toBeGreaterThanOrEqual(30);
+    expect(m.cases.length).toBeLessThanOrEqual(60);
+  });
+
+  it("has ~1/3 known-negatives for a real FP-rate measurement", async () => {
+    const m = await loadManifest(join(__dirname, "corpus-v1.json"));
+    const { positives, knownNegatives } = partitionCases(m.cases);
+    expect(knownNegatives.length).toBeGreaterThanOrEqual(positives.length / 3 - 2);
+    const negFraction = knownNegatives.length / m.cases.length;
+    expect(negFraction).toBeGreaterThanOrEqual(0.25);
+    expect(negFraction).toBeLessThanOrEqual(0.45);
+  });
+
+  it("spans the ICP: source-audit (npm), kernel, and a CI subset", async () => {
+    const m = await loadManifest(join(__dirname, "corpus-v1.json"));
+    const sourceAudit = m.cases.filter((c) => c.target.kind === "source-audit");
+    const kernel = m.cases.filter((c) => c.target.kind === "kernel");
+    expect(sourceAudit.length).toBeGreaterThanOrEqual(20);
+    expect(kernel.length).toBeGreaterThanOrEqual(3);
+    expect(selectCiCases(m).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("carries no inline exploit/corpus content (references + sink labels only)", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const raw = await readFile(join(__dirname, "corpus-v1.json"), "utf8");
+    expect(raw).toMatch(/REFERENCES ONLY/);
+    expect(raw).not.toMatch(/<script>/i);
+    expect(raw).not.toMatch(/\bUNION\s+SELECT\b/i);
+  });
+});
+
 describe("selectCiCases", () => {
   it("returns only ci-flagged cases", () => {
     const m = parseManifest({
