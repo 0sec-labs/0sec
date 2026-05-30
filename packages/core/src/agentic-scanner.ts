@@ -68,6 +68,10 @@ import {
 } from "./triage/index.js";
 import { verify, toVerifyVerdict } from "./triage/structured-verify.js";
 import { generatePov, oracleForCategory } from "./triage/pov-gate.js";
+import {
+  generateStaticPoc,
+  applyStaticPocResult,
+} from "./agent/static-poc-gen.js";
 import { resolveJournalPaths } from "./agent/journal/writer.js";
 import { getCloudSinkConfig, postFinding, postFinalReport } from "./cloud-sink.js";
 import { eventBus } from "./events/bus.js";
@@ -2315,6 +2319,82 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
             : !(nativeApiAvailable || cliNativeRuntime)
               ? "no native runtime available"
               : "already accepted by upstream layer",
+          startedAt: Date.now(),
+        });
+      }
+
+      // ── Static-finding PoC generation gate (#666 / EPIC #674 Part A) ──
+      // Findings that reach here with NO executable PoC (`pocSteps` empty —
+      // the static / code-analysis path) are exactly the ones the cloud
+      // verify fan-out silently `skipped` (poc_steps IS NULL → never promoted
+      // to verify). Run an agentic PoC-gen pass: build + run a minimal PoC in
+      // the scan substrate (reuses the PoV mini-loop's bash / http / oracle
+      // execution path — no new infra). On reproduce, synthesize runnable
+      // pocSteps so the verify runner picks it up; on no-repro, flag
+      // `poc:none` so 0cloud routes it to manual / inconclusive — never a
+      // silent skip. Default OFF (PWNKIT_FEATURE_POC_GEN_STATIC), A/B-able via
+      // the #656 harness.
+      if (
+        features.pocGenStatic
+        && (nativeApiAvailable || cliNativeRuntime)
+        && !(finding.pocSteps && finding.pocSteps.length > 0)
+        && finding.severity !== "info"
+        && routerAllowsLayer("poc_gen")
+      ) {
+        const pocGenStart = Date.now();
+        try {
+          const pocResult = await generateStaticPoc(
+            finding,
+            config.target,
+            nativeRuntime,
+          );
+          applyStaticPocResult(finding, pocResult, pocGenStart);
+          db.logEvent?.({
+            scanId,
+            stage: "verify",
+            eventType: "poc_gen_result",
+            agentRole: "triage",
+            payload: {
+              findingId: finding.id,
+              category: finding.category,
+              reproduced: pocResult.reproduced,
+              artifactType: pocResult.pov.artifactType,
+              oracle: pocResult.pov.oracle,
+              turnsUsed: pocResult.pov.turnsUsed,
+              pocStepCount: pocResult.pocSteps?.length ?? 0,
+              marker: pocResult.marker,
+              durationMs: Date.now() - pocGenStart,
+            },
+            timestamp: Date.now(),
+          });
+        } catch (err) {
+          pushLayerVerdict(finding, {
+            layer: "poc_gen",
+            verdict: "error",
+            reason: `poc_gen threw: ${(err as Error).message}`,
+            startedAt: pocGenStart,
+          });
+          db.logEvent?.({
+            scanId,
+            stage: "verify",
+            eventType: "poc_gen_error",
+            agentRole: "triage",
+            payload: { findingId: finding.id, error: (err as Error).message },
+            timestamp: Date.now(),
+          });
+        }
+      } else if (features.pocGenStatic) {
+        // Flag is on but this finding wasn't eligible — record why.
+        pushLayerVerdict(finding, {
+          layer: "poc_gen",
+          verdict: "skip",
+          reason: !(nativeApiAvailable || cliNativeRuntime)
+            ? "no native runtime available"
+            : finding.pocSteps && finding.pocSteps.length > 0
+              ? "finding already has executable pocSteps"
+              : finding.severity === "info"
+                ? "severity=info (downgraded by upstream gate)"
+                : "router excluded poc_gen",
           startedAt: Date.now(),
         });
       }

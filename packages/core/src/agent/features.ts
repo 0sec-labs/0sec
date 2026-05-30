@@ -74,6 +74,21 @@ export const features = {
   /** PoV gate: require a working, executable PoC per finding or downgrade to info */
   povGate: env("PWNKIT_FEATURE_POV_GATE", false),
   /**
+   * Static-finding PoC generation (#666 / EPIC #674 Part A). For findings that
+   * ship with NO executable PoC (`pocSteps` empty — the static / code-analysis
+   * path), run an agentic PoC-gen pass that builds + runs a minimal PoC in the
+   * scan substrate (reuses the PoV mini-loop). On reproduce it synthesizes a
+   * runnable `pocSteps` graph so the verify runner stops skipping the finding;
+   * on no-repro it flags the finding `poc:none` for manual / inconclusive
+   * review instead of silently dropping it. Root cause: 112 high/crit findings
+   * with `poc_steps IS NULL` were silently `skipped` by the verify fan-out.
+   *
+   * Default OFF: it spends LLM + execution budget per static finding and must
+   * be explicitly opted into before any A/B claim (A/B-able via the #656
+   * harness). Toggle via PWNKIT_FEATURE_POC_GEN_STATIC.
+   */
+  pocGenStatic: env("PWNKIT_FEATURE_POC_GEN_STATIC", false),
+  /**
    * Inline validation / validate-on-save (#554). When ON, the native attack
    * loop runs a fast deterministic category oracle the moment a high/critical
    * finding is saved (`onFindingSaved` hook → `verifyOracleByCategory`, the

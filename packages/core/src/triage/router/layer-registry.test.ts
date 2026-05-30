@@ -12,8 +12,8 @@ import {
 } from "./layer-registry.js";
 
 describe("LAYER_REGISTRY", () => {
-  it("contains exactly 10 triage layers (9 from pwnkit#113 after retiring memories+debate + publishability #539)", () => {
-    expect(LAYER_REGISTRY).toHaveLength(10);
+  it("contains exactly 11 triage layers (10 prior + poc_gen #666)", () => {
+    expect(LAYER_REGISTRY).toHaveLength(11);
   });
 
   it("every entry has an id, name, env_flag, cost_factor, description", () => {

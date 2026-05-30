@@ -130,6 +130,14 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
       "Agentic loop (up to N turns) that tries to build a working PoC. No PoC → downgrade to info. Empirical FP discriminator per arXiv:2509.07225.",
   },
   {
+    id: "poc_gen",
+    name: "Static-Finding PoC Generation (#666)",
+    env_flag: "PWNKIT_FEATURE_POC_GEN_STATIC",
+    cost_factor: 0.55,
+    description:
+      "For static / no-PoC findings only: agentic loop that builds + runs a PoC, synthesizing runnable pocSteps on reproduce so the verify runner stops skipping them. No repro → flag poc:none for manual review, never silent-skip.",
+  },
+  {
     id: "consensus",
     name: "Self-Consistency Voting",
     env_flag: "PWNKIT_FEATURE_CONSENSUS_VERIFY",
@@ -177,6 +185,7 @@ export const DEFAULT_STATIC_LAYER_SET: readonly LayerId[] = [
   "multi_modal",
   "oracle",
   "pov_gate",
+  "poc_gen",
 ] as const;
 
 /**

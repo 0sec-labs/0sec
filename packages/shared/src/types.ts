@@ -354,6 +354,7 @@ export type TriageLayerName =
   | "multi_modal"
   | "oracle"
   | "pov_gate"
+  | "poc_gen"
   | "structured_verify"
   | "consensus"
   | "kernel_oracle"
