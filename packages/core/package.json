@@ -8,7 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && cp -R src/triage/kernel-vm dist/triage/kernel-vm",
+    "build": "tsc && cp -R src/triage/kernel-vm dist/triage/kernel-vm && cp src/bench/*.json dist/bench/",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",

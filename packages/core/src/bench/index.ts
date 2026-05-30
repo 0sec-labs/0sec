@@ -86,3 +86,41 @@ export type {
   AgenticScanAdapterOptions,
   PackageAuditAdapterOptions,
 } from "./adapters.js";
+
+export { corpusV1Path, exampleManifestPath } from "./paths.js";
+
+export { createDefaultVariantScan } from "./variant.js";
+export type {
+  BenchVariant,
+  VariantScanFactory,
+  DefaultVariantScanOptions,
+} from "./variant.js";
+
+export {
+  runTournament,
+  compareScorecards,
+  pickChampion,
+  pairwiseDeltas,
+  formatTournamentSummary,
+} from "./tournament.js";
+export type {
+  VariantRunResult,
+  PairwiseDelta,
+  TournamentResult,
+  RunTournamentOptions,
+} from "./tournament.js";
+
+export {
+  emptyLedger,
+  appendLedgerEntry,
+  lastGreen,
+  evaluateRegression,
+  loadLedger,
+  saveLedger,
+} from "./ledger.js";
+export type {
+  LedgerEntry,
+  BenchmarkLedger,
+  RegressionThresholds,
+  RegressionResult,
+} from "./ledger.js";

@@ -13,6 +13,7 @@ export { registerDbCommand } from "./db.js";
 export { registerMcpServerCommand } from "./mcp-server.js";
 export { registerTriageCommand } from "./triage.js";
 export { registerEvalCommand } from "./eval.js";
+export { registerBenchCommand } from "./bench.js";
 export { registerIngestCommand } from "./ingest.js";
 export { registerKernelCommand } from "./kernel.js";
 export { registerDiscloseCommand } from "./disclose.js";
