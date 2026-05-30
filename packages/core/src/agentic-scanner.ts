@@ -53,6 +53,9 @@ import {
   checkMultiModalAgreement,
   fuseTriageSignals,
   checkReachability,
+  analyzeInputControllability,
+  controllabilityDowngradeTarget,
+  canAutoSuppressDetailed,
   routeFinding,
   decideLayers,
   appendRoutingTraceRecord,
@@ -1727,6 +1730,69 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
                 : `low-confidence unreachable verdict (${reach.confidence.toFixed(2)} < 0.7), kept`,
               startedAt: reachStartedAt,
             });
+
+            // ── Reachability v2: input-controllability (issue #658) ──
+            // File-reachability says the sink is in live code, but for
+            // injection classes the *injected value* can still be a developer-
+            // supplied identifier (ORM table/column/constraint name) rather
+            // than attacker input. These ORM-internal identifier-injection
+            // findings flood triage with non-exploitable noise. We DOWNGRADE +
+            // annotate — never drop: sql-injection is a #518-protected class, so
+            // `canAutoSuppress` refuses to suppress it; this only lowers the
+            // severity/priority so it stops over-promoting into disclosure while
+            // staying visible for human review.
+            const ctrl = analyzeInputControllability(finding, config.repoPath);
+            if (
+              ctrl.controllability === "internal-identifier" &&
+              ctrl.confidence >= 0.75
+            ) {
+              const guard = canAutoSuppressDetailed(finding);
+              const fromSev = finding.severity;
+              const toSev = controllabilityDowngradeTarget(fromSev, ctrl.confidence);
+              if (toSev && toSev !== fromSev) {
+                finding.severity = toSev;
+                finding.triageNote = `internal-identifier (not attacker-controllable): ${ctrl.reason}`;
+                pushLayerVerdict(finding, {
+                  layer: "reachability",
+                  verdict: "downgrade",
+                  confidence: ctrl.confidence,
+                  reason: `internal-identifier injection (${ctrl.taintedParam ?? "object name"}); downgraded ${fromSev}→${toSev}, kept for review — ${ctrl.reason}`,
+                  startedAt: reachStartedAt,
+                  changedSeverity: { from: fromSev, to: toSev },
+                });
+              } else {
+                // Already low-priority, or below the per-tier confidence bar:
+                // annotate only, never change severity, never drop.
+                finding.triageNote = `internal-identifier (not attacker-controllable), severity unchanged: ${ctrl.reason}`;
+                pushLayerVerdict(finding, {
+                  layer: "reachability",
+                  verdict: "downgrade",
+                  confidence: ctrl.confidence,
+                  reason: `internal-identifier injection (${ctrl.taintedParam ?? "object name"}); flagged, severity unchanged — ${ctrl.reason}`,
+                  startedAt: reachStartedAt,
+                });
+              }
+              db.logEvent?.({
+                scanId,
+                stage: "verify",
+                eventType: "controllability_check",
+                agentRole: "triage",
+                payload: {
+                  findingId: finding.id,
+                  controllability: ctrl.controllability,
+                  confidence: ctrl.confidence,
+                  taintedParam: ctrl.taintedParam,
+                  ormInternal: ctrl.ormInternal,
+                  evidence: ctrl.evidence,
+                  fromSeverity: fromSev,
+                  toSeverity: finding.severity,
+                  guard: guard.guard ?? null,
+                  canSuppress: guard.canSuppress,
+                  reason: ctrl.reason,
+                },
+                timestamp: Date.now(),
+              });
+            }
           }
         } catch (err) {
           // Reachability check errors must not drop findings silently —

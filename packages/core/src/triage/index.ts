@@ -60,6 +60,15 @@ export type {
 export { checkReachability, extractSinkLocation } from "./reachability.js";
 export type { ReachabilityResult, SinkLocation } from "./reachability.js";
 export {
+  analyzeInputControllability,
+  extractTaintedParam,
+  controllabilityDowngradeTarget,
+  isLowerSeverity,
+  CONTROLLABILITY_IDENTIFIER_PARAMS,
+  CONTROLLABILITY_ANALYZABLE_CATEGORIES,
+} from "./input-controllability.js";
+export type { Controllability, ControllabilityResult } from "./input-controllability.js";
+export {
   verifySqli,
   verifyReflectedXss,
   verifySsrf,
