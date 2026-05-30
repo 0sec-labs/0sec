@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import type { ScanReport, Finding, Severity } from "@pwnkit/shared";
+import { severityRank } from "@pwnkit/shared";
 import { buildShareUrl } from "../utils.js";
 
 // ── Severity Design System ──
@@ -117,8 +118,11 @@ export function formatTerminal(report: ScanReport): string {
     lines.push(`  ${chalk.bold.white("FINDINGS")}`);
     lines.push("");
 
+    // Critical first. #629: the shared severityRank is critical=4 (the local
+    // copy this replaced was critical=0), so sort DESCENDING to keep the
+    // identical critical→info order — do not flip back to a-b.
     const sorted = [...report.findings].sort(
-      (a, b) => severityRank(a.severity) - severityRank(b.severity)
+      (a, b) => severityRank(b.severity) - severityRank(a.severity)
     );
 
     for (const finding of sorted) {
@@ -213,17 +217,6 @@ function formatCategory(cat: string): string {
     .split("-")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
-}
-
-function severityRank(s: Severity): number {
-  const order: Record<Severity, number> = {
-    critical: 0,
-    high: 1,
-    medium: 2,
-    low: 3,
-    info: 4,
-  };
-  return order[s];
 }
 
 function formatDuration(ms: number): string {

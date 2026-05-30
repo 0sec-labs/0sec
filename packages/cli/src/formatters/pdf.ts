@@ -8,6 +8,7 @@
 import { createRequire } from "node:module";
 import { createWriteStream } from "node:fs";
 import type { ScanReport, Finding, Severity, ReportSummary } from "@pwnkit/shared";
+import { severityRank } from "@pwnkit/shared";
 import type PDFDocumentType from "pdfkit";
 
 type PDFDoc = InstanceType<typeof PDFDocumentType>;
@@ -289,9 +290,11 @@ function renderFindingsTable(doc: PDFDoc, report: ScanReport): void {
 
   doc.y = headerY + 22;
 
-  // Sort findings by severity
-  const sevOrder: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-  const sorted = [...report.findings].sort((a, b) => sevOrder[a.severity] - sevOrder[b.severity]);
+  // Sort findings by severity, critical first (#629: shared severityRank,
+  // critical=4, so sort descending — replaces the local critical=0 map).
+  const sorted = [...report.findings].sort(
+    (a, b) => severityRank(b.severity) - severityRank(a.severity),
+  );
 
   for (let i = 0; i < sorted.length; i++) {
     const finding = sorted[i];
@@ -337,8 +340,10 @@ function renderFindingsTable(doc: PDFDoc, report: ScanReport): void {
 function renderFindingDetails(doc: PDFDoc, report: ScanReport): void {
   if (report.findings.length === 0) return;
 
-  const sevOrder: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-  const sorted = [...report.findings].sort((a, b) => sevOrder[a.severity] - sevOrder[b.severity]);
+  // Critical first (#629: shared severityRank, critical=4 → sort descending).
+  const sorted = [...report.findings].sort(
+    (a, b) => severityRank(b.severity) - severityRank(a.severity),
+  );
 
   for (const finding of sorted) {
     doc.addPage();

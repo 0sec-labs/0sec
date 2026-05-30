@@ -1,6 +1,11 @@
 import type { Finding, Severity } from "@pwnkit/shared";
+import { SEVERITY_RANK } from "@pwnkit/shared";
 
-const SEVERITY_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
+// Ascending severity order (info … critical), derived from the shared
+// SEVERITY_RANK so this file no longer carries its own copy (#629).
+const SEVERITY_ORDER: Severity[] = (Object.keys(SEVERITY_RANK) as Severity[]).sort(
+  (a, b) => SEVERITY_RANK[a]! - SEVERITY_RANK[b]!,
+);
 
 interface PostProcessDecision {
   action: "suppress" | "downgrade";

@@ -49,24 +49,17 @@ export const DEPTH_CONFIG = {
   deep: { maxTemplates: Infinity, maxPayloadsPerTemplate: Infinity, multiTurn: true },
 } as const;
 
-export const SEVERITY_ORDER: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-  info: 4,
-};
-
-// ── Severity floor (#582) ────────────────────────────────────────
+// ── Severity rank + display order (#582; reconciled #629) ────────
 //
-// Single source of truth for the severity FLOOR that gates which findings
-// advance into triage / disclosure. Findings below the floor (by default
-// `low` / `info`) are recorded but NOT routed into the disclosure funnel —
-// they don't get to spend maintainer goodwill on low-quality reports.
+// SEVERITY_RANK is the single source of truth: an ASCENDING rank where
+// `critical` is highest (4). It gates which findings advance into triage /
+// disclosure — compare via `meetsSeverityFloor`, never hard-coded integers.
 //
-// NOTE: this rank is ASCENDING by severity (critical highest), the opposite
-// of `SEVERITY_ORDER` above (a critical-first DISPLAY sort). Compare floors
-// via `meetsSeverityFloor` rather than hard-coding integers.
+// SEVERITY_ORDER is the DISPLAY sort (critical first, so `critical` = 0). It
+// is the exact inverse of SEVERITY_RANK and is DERIVED from it here so the
+// two can never drift — the old hand-maintained inverted literal living
+// beside the rank was the #629 footgun. To sort critical-first: sort
+// ascending by SEVERITY_ORDER, or descending by `severityRank`.
 
 export const SEVERITY_RANK: Record<string, number> = {
   info: 0,
@@ -75,6 +68,15 @@ export const SEVERITY_RANK: Record<string, number> = {
   high: 3,
   critical: 4,
 };
+
+const MAX_SEVERITY_RANK = Math.max(...Object.values(SEVERITY_RANK));
+
+export const SEVERITY_ORDER: Record<string, number> = Object.fromEntries(
+  Object.keys(SEVERITY_RANK)
+    // critical-first key order preserved for any consumer that iterates keys
+    .sort((a, b) => SEVERITY_RANK[b]! - SEVERITY_RANK[a]!)
+    .map((sev) => [sev, MAX_SEVERITY_RANK - SEVERITY_RANK[sev]!]),
+);
 
 /**
  * Default severity floor. Anything below `medium` (i.e. `low` / `info`) is

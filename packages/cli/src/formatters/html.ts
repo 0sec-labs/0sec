@@ -1,4 +1,5 @@
 import type { ScanReport, Finding, Severity } from "@pwnkit/shared";
+import { SEVERITY_RANK } from "@pwnkit/shared";
 
 function escapeHtml(str: string): string {
   return str
@@ -16,7 +17,11 @@ const SEVERITY_COLORS: Record<Severity, { bg: string; text: string; accent: stri
   info: { bg: "#4b5563", text: "#ffffff", accent: "#9ca3af" },
 };
 
-const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
+// Descending display order (critical → info), derived from the shared
+// SEVERITY_RANK so it can't drift from the canonical rank (#629).
+const SEVERITY_ORDER: Severity[] = (Object.keys(SEVERITY_RANK) as Severity[]).sort(
+  (a, b) => SEVERITY_RANK[b]! - SEVERITY_RANK[a]!,
+);
 
 function formatCategory(cat: string): string {
   return cat

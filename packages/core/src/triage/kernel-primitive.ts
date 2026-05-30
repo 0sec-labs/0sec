@@ -23,6 +23,7 @@
  */
 
 import type { CrashReport, CrashType, Severity } from "@pwnkit/shared";
+import { severityRank } from "@pwnkit/shared";
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -85,12 +86,9 @@ export interface KernelPrimitive {
 }
 
 // ── Severity ordering helpers ──────────────────────────────────────────────
-
-const SEVERITY_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
-
-function severityRank(sev: Severity): number {
-  return SEVERITY_ORDER.indexOf(sev);
-}
+// Uses the shared `severityRank` (#629) — the local SEVERITY_ORDER array +
+// severityRank() copy that lived here was an exact duplicate of the shared
+// ascending rank (info=0 … critical=4).
 
 /** Return the higher of two severities (never downgrades). */
 export function maxSeverity(a: Severity, b: Severity): Severity {
