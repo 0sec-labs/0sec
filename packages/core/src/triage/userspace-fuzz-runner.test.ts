@@ -2,8 +2,41 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   parseCrashOutput,
   runUserspaceFuzzLoop,
+  cargoFuzzRunArgs,
 } from "./userspace-fuzz-runner.js";
 import type { MemSafetyTarget } from "./memsafety-types.js";
+
+// ────────────────────────────────────────────────────────────────────
+// cargoFuzzRunArgs — `--fuzz-dir` routing for non-standard layouts
+// ────────────────────────────────────────────────────────────────────
+
+describe("cargoFuzzRunArgs", () => {
+  it("omits --fuzz-dir for the conventional fuzz/ layout", () => {
+    const args = cargoFuzzRunArgs("string_input_panic", undefined, 60);
+    expect(args).not.toContain("--fuzz-dir");
+    expect(args).toEqual([
+      "fuzz",
+      "run",
+      "string_input_panic",
+      "--",
+      "-max_total_time=60",
+    ]);
+  });
+
+  it("threads --fuzz-dir for non-standard crates (e.g. Monty's crates/fuzz), before the target", () => {
+    const args = cargoFuzzRunArgs("string_input_panic", "crates/fuzz", 60);
+    const fdIdx = args.indexOf("--fuzz-dir");
+    expect(fdIdx).toBeGreaterThanOrEqual(0);
+    expect(args[fdIdx + 1]).toBe("crates/fuzz");
+    // the dir flag must precede the target name
+    expect(fdIdx).toBeLessThan(args.indexOf("string_input_panic"));
+  });
+
+  it("floors a fractional timeout into -max_total_time seconds", () => {
+    const args = cargoFuzzRunArgs("t", undefined, 60.9);
+    expect(args).toContain("-max_total_time=60");
+  });
+});
 
 // ────────────────────────────────────────────────────────────────────
 // parseCrashOutput — raw run output → CrashArtifact.kind / .primitive

@@ -435,6 +435,28 @@ interface LoopCtx {
   start: number;
 }
 
+/**
+ * Build the `cargo fuzz run` argument vector. Pure + exported so the
+ * `--fuzz-dir` routing is unit-testable. `--fuzz-dir` lets projects keep
+ * their fuzz crate off the conventional `fuzz/` path (e.g. Monty's
+ * `crates/fuzz`); omitted → cargo-fuzz default.
+ */
+export function cargoFuzzRunArgs(
+  harnessEntry: string,
+  fuzzDir: string | undefined,
+  timeoutSec: number,
+): string[] {
+  const fuzzDirArgs = fuzzDir ? ["--fuzz-dir", fuzzDir] : [];
+  return [
+    "fuzz",
+    "run",
+    ...fuzzDirArgs,
+    harnessEntry,
+    "--",
+    `-max_total_time=${Math.floor(timeoutSec)}`,
+  ];
+}
+
 async function runRustLoop(
   opts: UserspaceFuzzOptions,
   ctx: LoopCtx,
@@ -463,13 +485,7 @@ async function runRustLoop(
     ctx.log(`[userspace-fuzz] cargo fuzz run ${target.harnessEntry} (<=${ctx.timeoutMs / 1000}s)`);
     const res = await runChild(
       "cargo",
-      [
-        "fuzz",
-        "run",
-        target.harnessEntry,
-        "--",
-        `-max_total_time=${Math.floor(ctx.timeoutMs / 1000)}`,
-      ],
+      cargoFuzzRunArgs(target.harnessEntry, target.fuzzDir, ctx.timeoutMs / 1000),
       sourceRoot,
       ctx.timeoutMs + 30_000, // grace beyond libFuzzer's own budget
     );
@@ -501,10 +517,11 @@ async function runRustLoop(
     }
   }
 
-  // cargo-fuzz stores its corpus under fuzz/corpus/<target>.
+  // cargo-fuzz stores its corpus under <fuzzDir>/corpus/<target> (default `fuzz`).
+  const fuzzBase = target.fuzzDir ?? "fuzz";
   const corpusDir = target.harnessEntry
-    ? join(sourceRoot, "fuzz", "corpus", target.harnessEntry)
-    : join(sourceRoot, "fuzz", "corpus");
+    ? join(sourceRoot, fuzzBase, "corpus", target.harnessEntry)
+    : join(sourceRoot, fuzzBase, "corpus");
   return finishWithCorpus(crashes, iterations, corpusDir, ctx);
 }
 

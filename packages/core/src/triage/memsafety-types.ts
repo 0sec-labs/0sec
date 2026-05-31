@@ -12,6 +12,13 @@ export interface MemSafetyTarget {
   buildSystem: "cargo" | "cmake" | "autotools" | "meson" | "make";
   /** libFuzzer / cargo-fuzz target name, when known. */
   harnessEntry?: string;
+  /**
+   * Non-standard cargo-fuzz directory, relative to `sourceRoot`, for projects
+   * that don't keep their fuzz crate at the conventional `fuzz/` (e.g. Monty
+   * uses `crates/fuzz`). Passed to `cargo fuzz` as `--fuzz-dir` and used to
+   * locate the corpus. Defaults to `fuzz` when omitted.
+   */
+  fuzzDir?: string;
 }
 
 /** Memory-safety primitive classes (userspace analogue of KernelPrimitive). */
