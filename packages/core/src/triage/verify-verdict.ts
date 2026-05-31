@@ -61,9 +61,35 @@ export type VerifyOutcome = "confirmed" | "rejected" | "inconclusive";
  * Exported as a runtime tuple so the parity test (and any exhaustive consumer)
  * has a value to assert, mirroring the `AUTO_SUPPRESS_*` arrays in
  * `can-auto-suppress.ts`.
+ *
+ * NOTE: this tuple is the 0cloud-PARITY-LOCKED set — it is asserted verbatim in
+ * `verify-evidence-kind.parity.test.ts` against the cloud-contracts table. Do
+ * NOT add engine-only kinds here or the parity check breaks. Additive,
+ * engine-local kinds (those the cloud side does not yet derive) live in
+ * {@link VERIFY_EVIDENCE_KINDS_ENGINE_EXT} and are folded into the
+ * {@link VerifyEvidenceKind} union below.
  */
 export const VERIFY_EVIDENCE_KINDS = ["reproduced-poc", "source-only"] as const;
-export type VerifyEvidenceKind = (typeof VERIFY_EVIDENCE_KINDS)[number];
+
+/**
+ * Engine-only evidence kinds, additive over the parity-locked cloud set (#698,
+ * userspace/Rust memory-safety pipeline — Track C):
+ *
+ *   `reproduced-memcorruption-poc` ⇔ a PoC actually fired under the sanitizer /
+ *       Miri build — a real {@link CrashArtifact} reproduced (ASan/UBSan/MSan/
+ *       Miri), not just a static or source signal. This is the memory-safety
+ *       analogue of `reproduced-poc`, kept distinct so the disclosure/telemetry
+ *       layers can tell a sanitizer-reproduced crash apart from a web/static
+ *       PoC. Engine-local until the cloud contract adopts it — kept out of the
+ *       parity-locked tuple above on purpose.
+ */
+export const VERIFY_EVIDENCE_KINDS_ENGINE_EXT = [
+  "reproduced-memcorruption-poc",
+] as const;
+
+export type VerifyEvidenceKind =
+  | (typeof VERIFY_EVIDENCE_KINDS)[number]
+  | (typeof VERIFY_EVIDENCE_KINDS_ENGINE_EXT)[number];
 
 /**
  * Layer verdicts whose `pass` outcome means a PoC actually reproduced (a

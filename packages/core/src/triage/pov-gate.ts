@@ -24,6 +24,9 @@ import type {
 } from "../runtime/types.js";
 import type { Finding, AttackCategory } from "@pwnkit/shared";
 import { verifyOracleByCategory, type OracleResult } from "./oracles.js";
+import type { VerifyVerdict } from "./verify-verdict.js";
+import type { CrashArtifact } from "./memsafety-types.js";
+import { classifyUserspacePrimitive } from "./userspace-primitive.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -855,5 +858,102 @@ async function adjudicateWithOracle(
     turnsUsed,
     reason: `${oracleKind} oracle did not reproduce the exploit: ${oracleResult.reason}`,
     oracle: oracleKind,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Memory-safety PoV verdict (pwnkit#698, Track C)
+//
+// The userspace / Rust analogue of the web PoV verdict above. Where the web
+// path proves exploitation by capturing category-specific output, the
+// memory-safety path proves it by reproducing a real crash UNDER THE SANITIZER
+// BUILD: an ASan/UBSan/MSan report or a Miri UB diagnostic that fired from a
+// saved reproducing input. That is the `reproduced-memcorruption-poc` evidence
+// kind — the strongest basis the userspace pipeline can carry.
+//
+// SCOPE / DISCIPLINE: this function ONLY adjudicates a verdict. It does not
+// submit, drop, or disclose anything (the operator + disclosure gate own that),
+// and it does not synthesise an exploit. Assume-FP holds: a CrashArtifact is
+// only treated as a reproduced PoC when it carries a saved reproducing input
+// AND its raw output actually shows a sanitizer/Miri corruption signature.
+// Anything weaker (a bare panic, a timeout/OOM, no saved input, no signature)
+// is INCONCLUSIVE — never a confirmation, never a rejection.
+// ────────────────────────────────────────────────────────────────────
+
+/** Crash kinds whose raw output is a genuine memory-corruption signal. */
+const MEMCORRUPTION_CRASH_KINDS = new Set<CrashArtifact["kind"]>([
+  "asan",
+  "ubsan",
+  "msan",
+  "miri",
+  "segfault",
+]);
+
+/**
+ * Does a crash artifact constitute a reproduced memory-corruption PoC? True only
+ * when a reproducing input was saved AND the crash kind is a real corruption
+ * detector hit (sanitizer / Miri / segfault) with non-empty raw output. A Rust
+ * panic, a timeout, or an OOM is a robustness/availability bug, not a
+ * memory-corruption PoC — those return false.
+ */
+export function isReproducedMemCorruption(crash: CrashArtifact): boolean {
+  return (
+    Boolean(crash.inputPath) &&
+    MEMCORRUPTION_CRASH_KINDS.has(crash.kind) &&
+    Boolean(crash.rawOutput && crash.rawOutput.trim().length > 0)
+  );
+}
+
+/**
+ * Map a captured {@link CrashArtifact} onto the unified {@link VerifyVerdict},
+ * mirroring how a reproduced web PoC yields a `confirmed` verdict tagged
+ * `reproduced-poc`.
+ *
+ *   - A reproduced memory-corruption crash (see {@link isReproducedMemCorruption})
+ *     → `confirmed`, `evidenceKind: "reproduced-memcorruption-poc"`, with the
+ *     classified primitive folded into the reasoning.
+ *   - Anything weaker → `inconclusive` (NEVER `rejected`). A non-reproducing
+ *     crash artifact did not prove the finding is a false positive; it just
+ *     failed to prove it real. Treating it as a rejection is the #518 failure
+ *     mode (silently burying a real finding).
+ */
+export function memCorruptionVerdict(crash: CrashArtifact): VerifyVerdict {
+  const reproduced = isReproducedMemCorruption(crash);
+  const exploit = classifyUserspacePrimitive(crash);
+
+  if (!reproduced) {
+    return {
+      verdict: "inconclusive",
+      confidence: 0,
+      reasoning:
+        `Crash artifact (kind=${crash.kind}) is not a reproduced memory-corruption` +
+        ` PoC — ${crash.inputPath ? "no sanitizer/Miri corruption signature" : "no saved reproducing input"}.` +
+        " Inconclusive, not a rejection.",
+      signals: [
+        {
+          name: "memcorruption_repro",
+          passed: false,
+          confidence: 0,
+          reasoning: `kind=${crash.kind}, primitive=${exploit.primitive}, savedInput=${Boolean(crash.inputPath)}`,
+        },
+      ],
+    };
+  }
+
+  return {
+    verdict: "confirmed",
+    confidence: 0.95,
+    reasoning:
+      `Reproduced under the sanitizer/Miri build (kind=${crash.kind}): ` +
+      `${exploit.primitive} (${exploit.readWrite}). ${exploit.rationale}`,
+    signals: [
+      {
+        name: "memcorruption_repro",
+        passed: true,
+        confidence: 0.95,
+        reasoning: `signature=${crash.signature}, input=${crash.inputPath}`,
+      },
+    ],
+    evidenceKind: "reproduced-memcorruption-poc",
   };
 }

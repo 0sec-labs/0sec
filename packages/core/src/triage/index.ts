@@ -17,6 +17,7 @@ export {
   isDisclosureWorthy,
   evidenceKindForFinding,
   VERIFY_EVIDENCE_KINDS,
+  VERIFY_EVIDENCE_KINDS_ENGINE_EXT,
 } from "./verify-verdict.js";
 export type {
   VerifyVerdict,
@@ -84,7 +85,12 @@ export {
   parseRequest,
 } from "./oracles.js";
 export type { OracleResult } from "./oracles.js";
-export { generatePov, judgePovEvidence } from "./pov-gate.js";
+export {
+  generatePov,
+  judgePovEvidence,
+  isReproducedMemCorruption,
+  memCorruptionVerdict,
+} from "./pov-gate.js";
 export type { PovResult, PovArtifactType, GeneratePovOptions } from "./pov-gate.js";
 export {
   checkMultiModalAgreement,
@@ -153,6 +159,19 @@ export type {
   PrimitiveControl,
   ControlDemoStep,
 } from "./kernel-primitive.js";
+export {
+  classifyUserspacePrimitive,
+  sniffMemPrimitive,
+  describeExploitabilityVerdict,
+  maxMemSeverity,
+} from "./userspace-primitive.js";
+export type {
+  MemSafetyTarget,
+  MemPrimitive,
+  CrashArtifact,
+  FuzzLoopResult,
+  ExploitabilityVerdict,
+} from "./memsafety-types.js";
 export type {
   TriageMemory,
   MemoryScope,

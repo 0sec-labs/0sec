@@ -90,6 +90,9 @@ import {
 } from "./scope/attribution.js";
 import type { AttributionConfig } from "./scope/attribution.js";
 import { resolveLocalTargetPath } from "./path-resolution.js";
+import { runMemSafetyScan } from "./stages/memsafety-scan.js";
+import type { MemSafetyScanOptions } from "./stages/memsafety-scan.js";
+import type { MemSafetyTarget } from "./triage/memsafety-types.js";
 
 /**
  * Per-scan rate-limiter cache (#214). The limiter is stateful — buckets
@@ -215,6 +218,17 @@ export interface AgenticScanOptions {
   challengeHint?: string;
   /** Resume from a previous scan (uses persisted sessions) */
   resumeScanId?: string;
+  /**
+   * Userspace / Rust memory-safety scan role ("Monty-mode", pwnkit#700). When
+   * set, the scan dispatches to the focused `runMemSafetyScan` stage
+   * (audit-playbook → closed fuzz loop → crash triage) and returns early,
+   * BEFORE any of the live-target / DB / runtime machinery below runs. The
+   * existing web/API/audit flows are byte-for-byte unaffected when this is
+   * undefined. Optional knobs for the fuzz loop ride along in `memSafety`.
+   */
+  memSafetyTarget?: MemSafetyTarget;
+  /** Optional fuzz-loop / logging knobs forwarded to `runMemSafetyScan`. */
+  memSafety?: Omit<MemSafetyScanOptions, "target">;
 }
 
 /**
@@ -389,9 +403,84 @@ async function normalizeScanConfig(config: ScanConfig): Promise<ScanConfig> {
  * All findings persist to SQLite between stages and across scans.
  * Sessions are saved so interrupted scans can be resumed.
  */
+/**
+ * Memory-safety scan dispatch ("Monty-mode", pwnkit#700). Adapts the focused
+ * `runMemSafetyScan` stage result into the unified `ScanReport` the rest of the
+ * product consumes. Lives here only as the thin bridge between the scan entry
+ * point and the stage module; all real orchestration is in
+ * `stages/memsafety-scan.ts`. Does no DB / runtime / live-target work — the
+ * fuzz loop owns its own (artifact-dir-scoped) side effects and degrades
+ * honestly when tooling is absent.
+ */
+async function runMemSafetyScanStage(
+  config: ScanConfig,
+  target: MemSafetyTarget,
+  memSafety: Omit<MemSafetyScanOptions, "target"> | undefined,
+  emit: ScanListener,
+): Promise<ScanReport> {
+  const startedAt = Date.now();
+  emit({
+    type: "stage:start",
+    stage: "attack",
+    message: `Memory-safety scan: ${target.language} target at ${target.sourceRoot}`,
+  });
+
+  const result = await runMemSafetyScan({ ...memSafety, target });
+
+  for (const finding of result.findings) {
+    emit({ type: "finding", message: finding.title, data: finding });
+  }
+
+  const completedAt = Date.now();
+  const findings = result.findings;
+  const summary = {
+    totalAttacks: result.loop.iterations,
+    totalFindings: findings.length,
+    critical: findings.filter((f) => f.severity === "critical").length,
+    high: findings.filter((f) => f.severity === "high").length,
+    medium: findings.filter((f) => f.severity === "medium").length,
+    low: findings.filter((f) => f.severity === "low").length,
+    info: findings.filter((f) => f.severity === "info").length,
+  };
+
+  emit({
+    type: "stage:end",
+    stage: "attack",
+    message:
+      result.toolingMissing.length > 0
+        ? `Memory-safety scan could not run (missing: ${result.toolingMissing.join(", ")})`
+        : `Memory-safety scan complete: ${findings.length} finding(s)`,
+  });
+
+  return {
+    target: config.target || target.sourceRoot,
+    scanDepth: config.depth,
+    startedAt: new Date(startedAt).toISOString(),
+    completedAt: new Date(completedAt).toISOString(),
+    durationMs: completedAt - startedAt,
+    summary,
+    findings,
+    warnings: result.warnings.map((message) => ({
+      stage: "attack" as const,
+      message,
+    })),
+  };
+}
+
 export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport> {
   const { dbPath, onEvent, getPendingUserMessages, resumeScanId } = opts;
   const emit = onEvent ?? (() => {});
+
+  // Memory-safety scan role ("Monty-mode", pwnkit#700). This is the minimal
+  // dispatch seam for the userspace/Rust pipeline: when a `memSafetyTarget` is
+  // supplied we delegate to the focused `runMemSafetyScan` stage and return,
+  // before the DB / runtime / live-target machinery below. Keeping the actual
+  // orchestration in `stages/memsafety-scan.ts` (not another branch in this
+  // 3800-line module) is deliberate — see that module + CLAUDE.md.
+  if (opts.memSafetyTarget) {
+    return runMemSafetyScanStage(opts.config, opts.memSafetyTarget, opts.memSafety, emit);
+  }
+
   const config = await normalizeScanConfig(opts.config);
 
   // Programmatic scope ingestion (pwnkit#215). Load once at the top and

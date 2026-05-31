@@ -682,6 +682,69 @@ When discovery shows the target has tools / function-calling / plugins / MCP, th
 - Confirm side effects: the email was sent, the request hit your listener, the record changed, the internal URL was fetched. Prefer benign proof (a no-op recipient you control, a canary URL) over destructive actions.
 - Probe for missing guardrails: no allowlist on tool args, no human-in-the-loop on high-risk calls, no scoping on which tools untrusted content can reach.
 - Save with the injection payload, the tool call it produced (name + args), and the observed side effect.`,
+
+  rust_memsafety: `## Rust / Userspace Memory-Safety & Sandbox-Escape Playbook ("Monty-mode")
+
+The target is a memory-safe-by-default language runtime (e.g. a Rust-written
+Python interpreter / sandbox such as Pydantic Monty). The bug class is memory
+corruption reachable from attacker-controlled scripting: use-after-free,
+double-free, type confusion, OOB, and **GC-root gaps**. This is discovery +
+classification, NOT autonomous exploit synthesis (see
+docs/pwnkit-rust-memsafety-pipeline.md).
+
+### HARD CONSTRAINTS — bounty rules (never violate)
+1. **Never open a PR or change code** in the target or any of its dependencies.
+   You are auditing, not patching — do not push, fork-and-PR, or submit upstream.
+2. **Never DoS the live endpoint.** No fuzzing, flooding, resource-exhaustion,
+   or load against the hosted/live service (e.g. hackmonty.com).
+3. **Discovery happens against a LOCAL instrumented build only** — clone the
+   source, build with sanitizers (ASAN/UBSAN) or run under \`cargo fuzz\` / \`miri\`,
+   and reproduce locally. The live site is only for confirming scope, never the hunt.
+
+### Step 1: Unsafe-block + boundary enumeration
+- Enumerate every \`unsafe\` block: \`grep -rn "unsafe" --include=*.rs\` and read each
+  one. \`unsafe\` is where Rust's guarantees are hand-waved — that is the audit surface.
+- Audit the PyO3 / C-API / FFI boundary specifically: \`Py_INCREF\`/\`Py_DECREF\`,
+  \`PyObject\` raw pointers, \`from_raw\`/\`into_raw\`, \`transmute\`, \`MaybeUninit\`,
+  \`mem::forget\`, \`ManuallyDrop\`, raw \`*mut\`/\`*const\` deref, and any place a Python
+  object's lifetime is managed by hand rather than by the borrow checker.
+- Flag refcount math done manually (incref/decref imbalance → UAF or leak) and any
+  \`&mut\` aliasing smuggled across the FFI line (→ type confusion / aliasing UB).
+
+### Step 2: GC-root variant-hunt (the round-1 methodology)
+Round-1 win was a use-after-free via a **missing GC root**: \`list.sort\` held a
+reference to an object the garbage collector did not trace, so it was freed
+mid-operation and then used. The patch "extended the GC root set" — which means
+the fix is narrow and **adjacent objects are likely still unrooted**.
+- Start from the patched roots. Enumerate every object/temporary that lives
+  *next to* what the patch just rooted: other intrinsics that hold borrowed
+  references across a callback, re-entrancy points, iterators / sort / comparator
+  callbacks, \`__del__\` / finalizer hooks, and any C-side temporary not registered
+  with the collector.
+- For each candidate ask: can the attacker script trigger a GC (allocate pressure,
+  explicit \`gc.collect()\`, drop a large object) *while* this reference is live but
+  untraced? If yes → candidate UAF.
+- Type-confusion variant: where the patch rooted an object of one type, check
+  whether a sibling path can swap the object's type between the root and the use.
+
+### Step 3: Fuzz + sanitize the LOCAL build
+- Build the cloned tree with sanitizers and drive the suspect entry points
+  (the \`unsafe\` slices and Step-2 candidates) under \`cargo fuzz\` (libFuzzer) and
+  \`miri\` for UB on the unsafe paths. ASAN/UBSAN catch UAF/OOB; miri catches
+  aliasing / uninit UB the sanitizers miss.
+- If \`cargo-fuzz\` / \`miri\` / sanitizer toolchains are not installed, say so and
+  request them — do NOT fabricate a fuzzing result. The pipeline degrades and
+  reports the missing tooling rather than faking success.
+- Reproduce every crash to a minimal input before claiming it.
+
+### Step 4: Triage, don't over-claim
+- For each reproduced crash, classify the primitive (use-after-free, type-confusion,
+  heap-oob-*, …) and whether the offset / value is attacker-controllable.
+- A crash under the sanitizer is a *finding*; a full UAF→leak→arbitrary-read chain
+  is NOT auto-synthesised — that stays human/agent-authored and gated by verify.
+- save_finding with: the unsafe block / GC-root gap, the minimal reproducing input,
+  the sanitizer/miri output, and the local build commit. Assume false-positive until
+  the local instrumented build reproduces it deterministically.`,
 };
 
 // ── Vuln type indicators — pattern-match on tool result strings ──
@@ -1068,6 +1131,38 @@ const INDICATORS: VulnIndicator[] = [
       /tool[_-]?call/i,
       /autonomous/i,
       /human.in.the.loop/i,
+    ],
+  },
+  {
+    // Rust / userspace memory-safety + sandbox-escape (pwnkit#696, Monty-mode).
+    // Fires on Rust unsafe / FFI surface, memory-corruption signals (sanitizer
+    // and miri output, GC-root / refcount language), and the language-runtime
+    // sandbox context the round-1 UAF lived in.
+    type: "rust_memsafety",
+    patterns: [
+      /\bunsafe\b/i,
+      /\bPyO3\b/i,
+      /\bcargo[\s-]?fuzz\b/i,
+      /\blibfuzzer\b/i,
+      /\bmiri\b/i,
+      /AddressSanitizer/i,
+      /\bASAN\b/i,
+      /\bUBSAN\b/i,
+      /heap-use-after-free/i,
+      /use[\s-]?after[\s-]?free/i,
+      /double[\s-]?free/i,
+      /type[\s-]?confusion/i,
+      /\btransmute\b/i,
+      /from_raw\b/i,
+      /\bPy_(?:INCREF|DECREF)\b/i,
+      /\brefcount\b/i,
+      /\bgc[\s_-]?root\b/i,
+      /gc\.collect\(/i,
+      /garbage collector/i,
+      /\.rs\b/,
+      /\bcargo\b/i,
+      /\bsegfault\b/i,
+      /sandbox escape/i,
     ],
   },
 ];

@@ -89,6 +89,30 @@ export type {
   Tier3ValidationResult,
 } from "./review/c-cpp-tier3.js";
 
+// Userspace / Rust memory-safety pipeline ("Monty-mode") — closed fuzz loop
+// + shared contract (docs/pwnkit-rust-memsafety-pipeline.md, Track B).
+export { runUserspaceFuzzLoop, parseCrashOutput } from "./triage/userspace-fuzz-runner.js";
+export type { UserspaceFuzzOptions } from "./triage/userspace-fuzz-runner.js";
+export type {
+  MemSafetyTarget,
+  MemPrimitive,
+  CrashArtifact,
+  FuzzLoopResult,
+  ExploitabilityVerdict,
+} from "./triage/memsafety-types.js";
+// Integration spine (pwnkit#700): the A→B→C memory-safety scan stage that
+// chains the playbook, fuzz loop, and crash triage into Findings.
+export {
+  runMemSafetyScan,
+  crashArtifactToFinding,
+  memPrimitiveToCategory,
+} from "./stages/memsafety-scan.js";
+export type {
+  MemSafetyScanOptions,
+  MemSafetyScanResult,
+  MemSafetyFinding,
+} from "./stages/memsafety-scan.js";
+
 // Unified pipeline: prepare + static analysis
 export { prepare, detectTargetType } from "./prepare.js";
 export type { TargetType, PrepareResult, PrepareOptions } from "./prepare.js";
@@ -307,8 +331,22 @@ export type {
 } from "./triage/memories.js";
 
 // PoV (Proof-of-Vulnerability) gate
-export { generatePov, judgePovEvidence } from "./triage/pov-gate.js";
+export {
+  generatePov,
+  judgePovEvidence,
+  isReproducedMemCorruption,
+  memCorruptionVerdict,
+} from "./triage/pov-gate.js";
 export type { PovResult, PovArtifactType, GeneratePovOptions } from "./triage/pov-gate.js";
+
+// Userspace / Rust memory-safety pipeline (#698)
+export {
+  classifyUserspacePrimitive,
+  sniffMemPrimitive,
+  describeExploitabilityVerdict,
+  maxMemSeverity,
+} from "./triage/userspace-primitive.js";
+// (shared memsafety-types are re-exported above, beside the Track B fuzz-loop exports)
 
 // Handcrafted feature extractor (45-element vector for triage classifiers)
 export { extractFeatures, FEATURE_NAMES } from "./triage/feature-extractor.js";
