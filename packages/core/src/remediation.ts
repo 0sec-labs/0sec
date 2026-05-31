@@ -55,6 +55,28 @@ const KNOWLEDGE_BASE: Partial<Record<AttackCategory, KBEntry>> = {
     ],
   },
 
+  "crypto-misuse": {
+    summary:
+      "Replace broken primitives and remove hardcoded/predictable secrets: strong hashes for security, authenticated cipher modes with random IVs, CSPRNGs for secrets, and pinned JWT algorithms.",
+    steps: [
+      "Replace MD5/SHA-1 on security paths: argon2id/scrypt/bcrypt for passwords, SHA-256+ for integrity, HMAC-SHA-256+ for MACs.",
+      "Move hardcoded keys/secrets to a secret manager or environment; generate a fresh random IV per message with a CSPRNG and never reuse a GCM nonce.",
+      "Use an authenticated mode (AES-256-GCM / ChaCha20-Poly1305) instead of ECB, and verify the auth tag on every decryption.",
+      "Use crypto.randomBytes / crypto.randomUUID / getRandomValues (Node) or the secrets module (Python) for tokens, keys, and nonces — never Math.random / random.",
+      "Pin JWT verification to a single explicit algorithm (algorithms: ['RS256']); never accept alg=none or a mixed HS+RS allow-list.",
+    ],
+    codeExample: {
+      before: `// VULNERABLE — weak hash + hardcoded key + alg confusion\nconst h = crypto.createHash('md5').update(password).digest('hex');\nconst c = crypto.createCipheriv('aes-256-ecb', 'hardcoded-key-here', null);\njwt.verify(token, pub, { algorithms: ['HS256', 'RS256'] });`,
+      after: `// FIXED\nconst h = await argon2.hash(password);\nconst iv = crypto.randomBytes(12);\nconst c = crypto.createCipheriv('aes-256-gcm', keyFromKms, iv);\njwt.verify(token, pub, { algorithms: ['RS256'] });`,
+      language: "javascript",
+    },
+    references: [
+      "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html",
+      "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/",
+      "https://cwe.mitre.org/data/definitions/327.html",
+    ],
+  },
+
   xss: {
     summary:
       "Escape or sanitize all user-supplied data before rendering it in HTML. Use context-aware output encoding.",

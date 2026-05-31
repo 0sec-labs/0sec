@@ -99,6 +99,14 @@ const CWE_MAP: Record<AttackCategory, CweEntry[]> = {
   "missing-validation": [
     { id: "CWE-20", name: "Improper Input Validation", role: "primary" },
   ],
+  "crypto-misuse": [
+    { id: "CWE-327", name: "Use of a Broken or Risky Cryptographic Algorithm", role: "primary" },
+    { id: "CWE-328", name: "Use of Weak Hash", role: "secondary" },
+    { id: "CWE-321", name: "Use of Hard-coded Cryptographic Key", role: "secondary" },
+    { id: "CWE-329", name: "Generation of Predictable IV with CBC Mode", role: "secondary" },
+    { id: "CWE-330", name: "Use of Insufficiently Random Values", role: "secondary" },
+    { id: "CWE-347", name: "Improper Verification of Cryptographic Signature", role: "secondary" },
+  ],
 
   // Memory corruption / binary
   "heap-overflow": [

@@ -231,6 +231,9 @@ export type AttackCategory =
   | "cors"
   | "security-misconfiguration"
   | "missing-validation"
+  // Cryptographic misuse (static source audit — weak hash, hardcoded keys/IV,
+  // ECB mode, JWT alg-confusion, predictable RNG for secrets)
+  | "crypto-misuse"
   // Memory corruption / binary categories (kernel crash validation)
   | "heap-overflow"
   | "out-of-bounds-read"

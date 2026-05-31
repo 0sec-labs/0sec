@@ -44,6 +44,7 @@ const CANONICAL_HIGH_IMPACT_CATEGORIES = [
   "known-vulnerable-package",
   "supply-chain",
   "prototype-pollution",
+  "crypto-misuse",
   "prompt-injection",
   "data-exfiltration",
   "tool-misuse",

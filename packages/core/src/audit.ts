@@ -20,6 +20,7 @@ import {
   checkDependencyConfusion,
   isInternalPackageName,
 } from "./malicious-detector.js";
+import { scanForCryptoMisuse } from "./crypto-misuse-detector.js";
 import { postProcessPackageAuditFindings } from "./package-audit-suppressor.js";
 import { collectScopeFiles } from "./source-files.js";
 import { features as agentFeatures } from "./agent/features.js";
@@ -869,6 +870,29 @@ export async function packageAudit(
           })()
         : [];
 
+    // Step 2.55: Deterministic crypto-misuse source audit (#662). Pure static
+    // pattern pass over the package source — weak hashes on security paths,
+    // hardcoded keys/IVs, ECB mode, JWT alg-confusion, predictable RNG for
+    // secrets. Runs before the LLM, ecosystem-agnostic (JS/TS + Python), and
+    // emits self-evidencing `verified` findings.
+    const cryptoFindings = (() => {
+      emit({
+        type: "stage:start",
+        stage: "discovery",
+        message: "Running deterministic crypto-misuse source audit...",
+      });
+      const findings = scanForCryptoMisuse({
+        packagePath: pkg.path,
+        packageName: pkg.name,
+      });
+      emit({
+        type: "stage:end",
+        stage: "discovery",
+        message: `Crypto-misuse audit: ${findings.length} finding${findings.length === 1 ? "" : "s"}`,
+      });
+      return findings;
+    })();
+
     // Step 2.6: Transitive supply-chain audit + dependency-confusion (#565).
     // Walks the resolved dependency tree and source-audits transitive deps —
     // the event-stream class of attack the root-only scan is blind to — plus a
@@ -893,6 +917,7 @@ export async function packageAudit(
     const findings = [
       ...(advisoryFinding ? [advisoryFinding] : []),
       ...maliciousFindings,
+      ...cryptoFindings,
       ...supplyChainFindings,
       ...agentFindings,
     ];

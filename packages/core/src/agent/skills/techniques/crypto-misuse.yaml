@@ -1,0 +1,88 @@
+id: crypto-misuse
+name: "Cryptographic Misuse Detection"
+description: "Static source patterns for crypto misuse: weak hashes (MD5/SHA1) on security paths, hardcoded keys/IVs, ECB mode, static IVs, predictable RNG for secrets, weak KDF params, and missing auth-tag verification."
+version: 1
+applicable_roles:
+  - audit
+  - review
+  - attack
+tags:
+  - cryptography
+  - crypto-misuse
+  - weak-hash
+  - hardcoded-key
+  - ecb
+  - predictable-rng
+  - kdf
+  - auth-bypass
+triggers:
+  - "createHash\\s*\\(\\s*['\"]md5"
+  - "createHash\\s*\\(\\s*['\"]sha-?1"
+  - "hashlib\\.(md5|sha1)"
+  - "createCipheriv"
+  - "aes-\\d+-ecb"
+  - "MODE_ECB"
+  - "Math\\.random"
+  - "crypto-js"
+  - "node-forge"
+  - "pbkdf2"
+  - "createHmac"
+estimated_tokens: 700
+content: |
+  ## Cryptographic Misuse — Static Source Audit
+
+  Crypto bugs are high-signal and deterministically provable: the weakness is in
+  the code, not behaviour-dependent. Gate every check on *security-relevant*
+  usage so you do not flood findings (a plain content checksum with MD5 is fine;
+  MD5 over a password is not).
+
+  ### 1. Weak hash for a security purpose
+  - `crypto.createHash('md5'|'sha1')` / `hashlib.md5|sha1` used for a password,
+    token, signature, salt, or key-derivation value → broken (collision/preimage).
+  - `createHmac('md5'|'sha1', ...)` is always keyed → flag regardless of context.
+  - Remediation: argon2id / scrypt / bcrypt for passwords; SHA-256+ for
+    integrity/signing; HMAC-SHA-256+ for MACs.
+  - DO NOT flag: MD5/SHA-1 used purely as a non-security content checksum / ETag.
+
+  ### 2. Hardcoded keys / IVs / secrets
+  - `createCipheriv(algo, '<literal>', '<literal>')` — hardcoded key (anyone with
+    source can decrypt) and a static IV (defeats semantic security; a reused IV
+    in CTR/GCM is catastrophic — GCM nonce reuse enables key/forgery recovery).
+  - Literal HMAC/JWT signing secret, or a high-entropy literal assigned to a
+    `secret`/`privateKey`/`apiKey`/`jwtSecret` identifier → forgeable signatures.
+  - Gate on entropy + length to skip placeholders (`changeme`, `<your-secret>`)
+    and `process.env.*` references.
+  - Remediation: KMS / secret manager; generate a fresh random IV per message.
+
+  ### 3. ECB block-cipher mode
+  - `aes-*-ecb`, `mode: ECB`, `AES.MODE_ECB` → identical plaintext blocks map to
+    identical ciphertext blocks (the "ECB penguin"); no semantic security.
+  - Remediation: AES-256-GCM (authenticated), or AES-CBC with random IV + a MAC.
+
+  ### 4. JWT algorithm confusion
+  - `alg: "none"` / `algorithms: ["none"]` → unsigned-token forgery → full auth
+    bypass. Craft `{"alg":"none"}` + empty signature with arbitrary claims.
+  - `algorithms` allow-list mixing HS* (symmetric) with RS/ES/PS* (asymmetric) →
+    HS-vs-RS confusion: sign a forged token with the public key as the HMAC
+    secret and the RSA-verifying server accepts it.
+  - `jwt.verify(token, key)` with NO `algorithms` option → library trusts the
+    attacker-controlled header `alg`, enabling both attacks above.
+  - Remediation: pin a single explicit algorithm in `algorithms`.
+  - To prove: forge a token and submit it (see `jwt-attacks` skill).
+
+  ### 5. Predictable RNG for secrets
+  - `Math.random()` (xorshift128+, state recoverable) or Python `random` module
+    (Mersenne Twister, predictable) used for a token / key / nonce / OTP /
+    password-reset value → guessable secret.
+  - Remediation: `crypto.randomBytes` / `crypto.randomUUID` /
+    `crypto.getRandomValues`; Python `secrets`.
+  - DO NOT flag: `Math.random()` for UI jitter / sampling / animation.
+
+  ### 6. Weak KDF parameters (review when present)
+  - `pbkdf2` with a low iteration count (< 100k for SHA-256), short/empty salt,
+    or a non-random salt. Prefer argon2id / scrypt with tuned cost params.
+
+  ### 7. Missing authenticated-decryption checks
+  - GCM/ChaCha20-Poly1305 decryption that never verifies the auth tag (e.g.
+    ignoring `decipher.setAuthTag` / catching and swallowing the tag-mismatch
+    error) → ciphertext tampering goes undetected.

@@ -31,6 +31,7 @@ const IMPACT_BY_CATEGORY: Record<AttackCategory, { C: "N" | "L" | "H"; I: "N" | 
   "cors":                    { C: "L", I: "L", A: "N", scope: "U" },
   "security-misconfiguration": { C: "L", I: "L", A: "N", scope: "U" },
   "missing-validation":      { C: "L", I: "L", A: "L", scope: "U" },
+  "crypto-misuse":           { C: "H", I: "H", A: "N", scope: "U" },
   "heap-overflow":           { C: "H", I: "H", A: "H", scope: "U" },
   "out-of-bounds-read":      { C: "H", I: "N", A: "L", scope: "U" },
   "out-of-bounds-write":     { C: "H", I: "H", A: "H", scope: "U" },
