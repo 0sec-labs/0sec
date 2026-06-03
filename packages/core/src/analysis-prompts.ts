@@ -167,6 +167,38 @@ Rate based on REAL exploitability, not theoretical risk:
 - **low**: Minor information leaks, theoretical issues requiring unlikely configurations
 - **info**: Hardening suggestions, deprecated API usage, code quality
 
+## Before you save: the intended-use gate
+
+A sink doing exactly what it is **documented to do** is NOT a vulnerability —
+even if it executes attacker-supplied code. "Reachable + it executes" is not
+enough. Before you \`save_finding\` on any code-injection / SSTI / sandbox-escape
+/ "RCE" candidate, rule out these by-design cases:
+
+1. **The input IS the code.** Is the untrusted input *itself* the
+   template / expression / script the API exists to evaluate? (template engines
+   compiling a template, \`eval\` / \`new Function\` / \`vm.*\` by contract,
+   \`expr-eval.toJSFunction\`.) → documented behavior, NOT a finding.
+2. **Opt-in unsafe.** Is it only reachable under a **non-default** option the
+   application must explicitly enable (e.g. \`eval: 'native'\`)? The default path
+   is safe. → at most \`info\`.
+3. **Caller hands it the dangerous arg.** Does the PoC require the
+   caller/developer to pass the dangerous argument directly, or to pass a
+   callback / constructor / function? Then the "attacker" is already running
+   code. → NOT a finding.
+4. **Already inside the sandbox / trusted backend.** Does the "escape"
+   presuppose already executing inside the sandbox, or a malicious/compromised
+   backend / provider SDK? → no trust boundary is crossed.
+
+It **IS** a real finding when untrusted **DATA** (a filename, URL, query
+param, header, path) is interpolated or concatenated into a code / command /
+query context that was never meant to be code — e.g. an attacker-controlled
+filename interpolated into \`execSync\`, or an unescaped git URL baked into a JS
+string. Those cross a real trust boundary — save them.
+
+When unsure which side a candidate falls on, **state the precondition
+explicitly** in the finding ("requires the app to pass user input as the
+template source") rather than silently inflating it to \`critical\`.
+
 ## Rules
 - Use read_file to examine source code
 - Use run_command with rg/foxguard/semgrep for targeted searches
@@ -373,6 +405,38 @@ Rate based on REAL exploitability:
 - **medium**: ReDoS with measurable impact, information disclosure, injection requiring non-default config, reflected XSS
 - **low**: Minor information leaks, theoretical issues requiring unlikely configs
 - **info**: Hardening suggestions, deprecated API usage, code quality
+
+## Before you save: the intended-use gate
+
+A sink doing exactly what it is **documented to do** is NOT a vulnerability —
+even if it executes attacker-supplied code. "Reachable + it executes" is not
+enough. Before you \`save_finding\` on any code-injection / SSTI / sandbox-escape
+/ "RCE" candidate, rule out these by-design cases:
+
+1. **The input IS the code.** Is the untrusted input *itself* the
+   template / expression / script the API exists to evaluate? (template engines
+   compiling a template, \`eval\` / \`new Function\` / \`vm.*\` by contract,
+   \`expr-eval.toJSFunction\`.) → documented behavior, NOT a finding.
+2. **Opt-in unsafe.** Is it only reachable under a **non-default** option the
+   application must explicitly enable (e.g. \`eval: 'native'\`)? The default path
+   is safe. → at most \`info\`.
+3. **Caller hands it the dangerous arg.** Does the PoC require the
+   caller/developer to pass the dangerous argument directly, or to pass a
+   callback / constructor / function? Then the "attacker" is already running
+   code. → NOT a finding.
+4. **Already inside the sandbox / trusted backend.** Does the "escape"
+   presuppose already executing inside the sandbox, or a malicious/compromised
+   backend / provider SDK? → no trust boundary is crossed.
+
+It **IS** a real finding when untrusted **DATA** (a filename, URL, query
+param, header, path) is interpolated or concatenated into a code / command /
+query context that was never meant to be code — e.g. an attacker-controlled
+filename interpolated into \`execSync\`, or an unescaped git URL baked into a JS
+string. Those cross a real trust boundary — save them.
+
+When unsure which side a candidate falls on, **state the precondition
+explicitly** in the finding ("requires the app to pass user input as the
+template source") rather than silently inflating it to \`critical\`.
 
 ## Rules
 - Use read_file to examine source code — read enough context (50+ lines) to understand the code

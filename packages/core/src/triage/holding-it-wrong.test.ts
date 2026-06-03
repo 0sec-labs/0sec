@@ -158,3 +158,92 @@ describe("isHoldingItWrong", () => {
     expect(isHoldingItWrong(f).isHoldingItWrong).toBe(false);
   });
 });
+
+// ── Regression: the 2026-03 npm "criticals" that disclosure verification
+//    (2026-06-03) found to be by-design / moot. The gate must now catch all
+//    five, AND must NOT suppress the two genuinely-real injections that share
+//    a documented sink name (execSync / JS-string build) — see #802.
+describe("isHoldingItWrong — verified-by-design npm duds (#802 regression)", () => {
+  it("eta SSTI: attacker-controlled template compiled via new Function (by design)", () => {
+    const f = makeFinding({
+      title: "SSTI to RCE in Eta template compilation",
+      description:
+        "Eta compiles templates with new Function() via compileToString(). An attacker-controlled template string passed to render() yields RCE — the documented behavior of a template engine.",
+      category: "code-injection" as AttackCategory,
+    });
+    expect(isHoldingItWrong(f).isHoldingItWrong).toBe(true);
+  });
+
+  it("nunjucks SSTI: renderString on an attacker-controlled template (by design)", () => {
+    const f = makeFinding({
+      title: "SSTI to RCE in nunjucks",
+      description:
+        "nunjucks renderString() evaluates an attacker-controlled template; memberLookup (obj[val]) exposes the constructor, enabling RCE when an application uses the template source as user input.",
+      category: "code-injection" as AttackCategory,
+    });
+    expect(isHoldingItWrong(f).isHoldingItWrong).toBe(true);
+  });
+
+  it("expr-eval: toJSFunction compiles an attacker expression via new Function (opt-in)", () => {
+    const f = makeFinding({
+      title: "Sandbox escape in expr-eval toJSFunction",
+      description:
+        "Parser.parse(expr).toJSFunction() builds a function via new Function(); an attacker-controlled expression escapes to global scope. toJSFunction is an opt-in compile-to-JS escape hatch.",
+      category: "code-injection" as AttackCategory,
+    });
+    expect(isHoldingItWrong(f).isHoldingItWrong).toBe(true);
+  });
+
+  it("jsonpath-plus: only reachable under the non-default eval:'native' option", () => {
+    const f = makeFinding({
+      title: "RCE in jsonpath-plus with native eval",
+      description:
+        "With the non-default eval: 'native' option an attacker-controlled JSONPath expression runs via new vm.Script().runInNewContext(). The default 'safe' evaluator blocks this; native is opt-in unsafe.",
+      category: "code-injection" as AttackCategory,
+    });
+    expect(isHoldingItWrong(f).isHoldingItWrong).toBe(true);
+  });
+
+  it("vm2: sandboxed code escapes only when the vm builtin is configured in (moot)", () => {
+    const f = makeFinding({
+      title: "Sandbox escape in vm2 via vm builtin",
+      description:
+        "When NodeVM is configured with require: { builtin: ['vm'] }, sandboxed code escapes the sandbox via runInNewContext(). vm2 is deprecated and discontinued; the maintainer recommends isolated-vm.",
+      category: "code-injection" as AttackCategory,
+    });
+    expect(isHoldingItWrong(f).isHoldingItWrong).toBe(true);
+  });
+
+  // ── The two that are GENUINELY real — must survive the gate ──
+
+  it("dd-trace-js: unescaped git URL interpolated into a JS banner is REAL (not suppressed)", () => {
+    const f = makeFinding({
+      title: "Code injection in dd-trace-js esbuild banner",
+      description:
+        "datadog-esbuild interpolates an unescaped git remote.origin.url into a single-quoted JS banner string; a malicious repository URL injects arbitrary JS into every shipped bundle.",
+      category: "code-injection" as AttackCategory,
+      evidence: {
+        request:
+          "banner: { js: `process.env.DD_GIT_REPOSITORY_URL = '${gitMetadata.repositoryURL}';` }",
+        response: "",
+      },
+    });
+    const r = isHoldingItWrong(f);
+    expect(r.isHoldingItWrong).toBe(false);
+    expect(r.reason).toBeNull();
+  });
+
+  it("justeattakeaway: attacker filename interpolated into execSync is REAL (not suppressed)", () => {
+    const f = makeFinding({
+      title: "Command injection in @justeattakeaway/eslint-plugin via filename",
+      description:
+        "git-utils.js runs git show with an attacker-controlled filename from the linted repository; a crafted filename injects shell commands when CI lints the repo.",
+      category: "command-injection" as AttackCategory,
+      evidence: {
+        request: 'execSync(`git cat-file -e HEAD:"${relativeFilePath}"`)',
+        response: "",
+      },
+    });
+    expect(isHoldingItWrong(f).isHoldingItWrong).toBe(false);
+  });
+});

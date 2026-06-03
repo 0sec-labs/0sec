@@ -39,7 +39,10 @@ const SINK_NAME_BLOCKLIST: string[] = [
   "compile",
   "renderFile",
   "render",
+  "renderString",
   "toFunction",
+  "toJSFunction",
+  "compileToString",
   "template",
   // filesystem (documented write sinks)
   "writeFile",
@@ -126,6 +129,53 @@ const TRUSTED_BACKEND_ATTACKER_PATTERNS: RegExp[] = [
   /host\s+application\s+(?:pipes?|passes?|forwards?)/i,
 ];
 
+/**
+ * Real-injection signals (#802): untrusted DATA is interpolated / concatenated
+ * into a code/command/string sink by the library's OWN code path. This is a
+ * genuine injection (attacker data → sink), the opposite of "holding it wrong"
+ * (caller hands the sink its documented argument). Paired with the ABSENCE of
+ * conditional-misuse language ("if the caller passes…") so the override only
+ * fires for real automatic data flow — and so a documented sink name such as
+ * `execSync` cannot mask a true command/code injection where attacker input is
+ * interpolated in.
+ */
+const REAL_INJECTION_SIGNALS: RegExp[] = [
+  /\$\{[^}]*\}/, // template-literal interpolation in the PoC
+  /\b(?:interpolat|concatenat)\w*/i,
+  /\bunescap\w+/i,
+  /\bunsanitiz\w+\s+(?:file\s*name|filename|path|url|uri|parameter|param|input|argument|value|hostname|host)\b/i,
+  /\bshell\s+metacharacter/i,
+  /attacker[- ]controlled\s+(?:file\s*name|filename|url|uri|hostname|host|parameter|param|query|header)\b/i,
+];
+
+/**
+ * Opt-in unsafe APIs: the finding only triggers under a NON-DEFAULT option the
+ * application must explicitly enable (e.g. jsonpath-plus `eval:'native'`, an
+ * unsafe sandbox config). The default path is safe, so it is not a defect.
+ */
+const OPT_IN_UNSAFE_PATTERNS: RegExp[] = [
+  /\b(?:non-?default|opt-?in)\b[^.]{0,40}\b(?:option|mode|config\w*|flag|api|evaluator|setting)/i,
+  /\bopt-?in\s+unsafe\b/i,
+  /\beval\s*[:=]\s*['"]native['"]/i,
+  /\bmust\s+(?:explicitly\s+)?(?:enable|configure|opt[\s-]?in\s+to)\b/i,
+  /\bnon-?default\b[^.]{0,30}\b(?:eval|native|unsafe)/i,
+];
+
+/**
+ * Template-engine SSTI / sandbox-escape where the untrusted input IS the
+ * template/expression/sandboxed code the API exists to evaluate, or the
+ * "escape" presupposes already running inside the sandbox. (A *real* SSTI that
+ * interpolates user data into a template is caught earlier by the real-injection
+ * override, so these patterns only fire on the documented-behaviour case.)
+ */
+const TEMPLATE_SSTI_OR_SANDBOX_PATTERNS: RegExp[] = [
+  /attacker[- ]controlled\s+(?:template|expression)\b/i,
+  /\btemplate\s+(?:source|string)\b/i,
+  /sandbox\w*\s+(?:code\s+)?escape/i,
+  /escape\w*\s+the\s+sandbox/i,
+  /already\s+(?:running|executing)\s+(?:inside|within)\s+the\s+sandbox/i,
+];
+
 // ────────────────────────────────────────────────────────────────────
 // Public API
 // ────────────────────────────────────────────────────────────────────
@@ -151,6 +201,22 @@ export function isHoldingItWrong(finding: Finding): HoldingItWrongResult {
   const response = finding.evidence?.response ?? "";
   const allText = `${title}\n${description}\n${analysis}`;
   const codeText = `${allText}\n${request}\n${response}`;
+
+  // 0. Real-injection override (#802). If untrusted DATA is interpolated /
+  //    concatenated into a sink by the library's own code path — and the
+  //    finding is NOT describing the "if the caller passes the dangerous arg"
+  //    contract — it is a genuine injection, not "holding it wrong". This runs
+  //    first so a documented sink name (e.g. `execSync`) cannot mask a real
+  //    command/code injection where attacker input is interpolated in.
+  const hasConditionalMisuse = DEVELOPER_PASSES_UNTRUSTED_PATTERNS.some((p) =>
+    p.test(allText),
+  );
+  if (
+    !hasConditionalMisuse &&
+    REAL_INJECTION_SIGNALS.some((p) => p.test(codeText))
+  ) {
+    return { isHoldingItWrong: false, reason: null };
+  }
 
   // 1. Sink-name blocklist — is the flagged sink just a documented I/O fn?
   const sinkMatch = codeText.match(SINK_NAME_REGEX);
@@ -187,6 +253,29 @@ export function isHoldingItWrong(finding: Finding): HoldingItWrongResult {
       return {
         isHoldingItWrong: true,
         reason: `The described "attacker" is actually a trusted backend / provider SDK / host application. No untrusted data crosses a real trust boundary.`,
+      };
+    }
+  }
+
+  // 5. Opt-in unsafe API — only reachable under a non-default, explicitly
+  //    enabled unsafe option (e.g. jsonpath-plus `eval:'native'`). Default safe.
+  for (const pattern of OPT_IN_UNSAFE_PATTERNS) {
+    if (pattern.test(allText)) {
+      return {
+        isHoldingItWrong: true,
+        reason: `Only reachable via a non-default, opt-in unsafe option the application must explicitly enable; the default configuration is safe.`,
+      };
+    }
+  }
+
+  // 6. Template-engine SSTI / sandbox escape — the untrusted input IS the
+  //    template/expression/sandboxed code the API is contracted to evaluate, or
+  //    the escape presupposes already executing inside the sandbox.
+  for (const pattern of TEMPLATE_SSTI_OR_SANDBOX_PATTERNS) {
+    if (pattern.test(allText)) {
+      return {
+        isHoldingItWrong: true,
+        reason: `The untrusted input is itself the template/expression/sandboxed code the API is contracted to evaluate (or the escape presupposes already executing inside the sandbox) — not a trust-boundary crossing.`,
       };
     }
   }
