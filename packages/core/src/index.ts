@@ -705,3 +705,22 @@ export type {
 // Turns the per-finding verify oracles into a scan-level scorecard
 // (success rate, FP rate vs known-negatives, cost-per-success) + CI gate.
 export * from "./bench/index.js";
+
+// ── Recon mode: domain surface enumeration (pwnkit#769) ──
+// Given a domain, probes well-known OpenAPI/Swagger + MCP endpoints and emits
+// a deduped, structured asset inventory consumable as discovered_assets.
+export {
+  runRecon,
+  dedupeAssets,
+  apiSpecToAssets,
+  normalizeDomain,
+  enumerateSubdomains,
+  DEFAULT_SPEC_PATHS,
+  DEFAULT_MCP_PATHS,
+} from "./recon/recon.js";
+export type {
+  ReconAsset,
+  ReconAssetKind,
+  ReconResult,
+  ReconOptions,
+} from "./recon/recon.js";

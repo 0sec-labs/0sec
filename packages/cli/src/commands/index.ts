@@ -23,4 +23,5 @@ export { registerUpgradeCommand } from "./upgrade.js";
 export { registerH1Command } from "./h1.js";
 export { registerAuthCommand } from "./auth.js";
 export { registerIntelCommand } from "./intel.js";
+export { registerReconCommand } from "./recon.js";
 export { runUnified } from "./run.js";

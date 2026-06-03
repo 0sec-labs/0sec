@@ -39,6 +39,7 @@ import {
   registerH1Command,
   registerAuthCommand,
   registerIntelCommand,
+  registerReconCommand,
 } from "./commands/index.js";
 import { detectAndRoute } from "./routing.js";
 import { preloadBanner } from "./ui/banner.js";
@@ -88,6 +89,7 @@ registerUpgradeCommand(program);
 registerH1Command(program);
 registerAuthCommand(program);
 registerIntelCommand(program);
+registerReconCommand(program);
 
 // ── Interactive menu ──
 //
