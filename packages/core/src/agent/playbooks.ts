@@ -693,6 +693,64 @@ When discovery shows the target has tools / function-calling / plugins / MCP, th
 - Probe for missing guardrails: no allowlist on tool args, no human-in-the-loop on high-risk calls, no scoping on which tools untrusted content can reach.
 - Save with the injection payload, the tool call it produced (name + args), and the observed side effect.`,
 
+  prompt_layer_write: `## AI Prompt-Layer Write Playbook (system-prompts-in-DB — OWASP LLM01/LLM06 via DB foothold)
+When you already hold a DB foothold (SQLi, leaked creds, exposed Mongo/Redis,
+an admin panel that writes the DB) on an LLM-backed app, the highest-leverage
+target is the **prompt layer**: the rows that hold the system prompt, guardrail
+text, tool/function configs, RAG source documents, and model parameters. If those
+are WRITABLE from your foothold, you can poison every future model response —
+a persistent, server-side prompt injection that no end-user can see.
+
+**Verification-only. Read and flag — do NOT perform destructive writes.** Prove
+the write path exists (column is user-writable, app re-reads it at inference)
+without actually mutating production prompt rows.
+
+### Step 1: Locate the prompt layer in the DB
+Enumerate tables/collections/keys whose names or contents look like a prompt store:
+- Name signals: \`system_prompt\`, \`prompt\`, \`prompts\`, \`prompt_template(s)\`,
+  \`instructions\`, \`persona\`, \`assistant_config\`, \`agent_config\`, \`model_config\`,
+  \`guardrail(s)\`, \`safety_settings\`, \`policy\`, \`llm_settings\`, \`completion_config\`.
+- Content signals: a long text column that reads like an instruction —
+  "You are a helpful assistant…", "Never reveal…", "You must refuse…",
+  temperature / top_p / model-name fields next to a big text blob.
+- RAG side: \`documents\`, \`knowledge_base\`, \`embeddings\`, \`chunks\`, \`sources\`
+  feeding a retriever (see \`rag_poisoning\`).
+Prefer read-only introspection: \`information_schema.columns\`, \`SHOW TABLES\`,
+\`db.getCollectionNames()\`, \`SELECT … LIMIT 1\`. Just SAMPLE one row to confirm shape.
+
+### Step 2: Confirm the WRITE path without writing
+- Check privileges, not by mutating: \`SHOW GRANTS\`, \`has_table_privilege(...,'UPDATE')\`,
+  the app's own admin "edit prompt" endpoint, an ORM that exposes the column.
+- Confirm the app **re-reads** the row at inference (the prompt isn't baked into
+  code / env). Evidence: the prompt text appears in a DB row AND in model behavior;
+  an admin UI edits it live; a settings table the worker queries per request.
+- The finding is "this prompt row is attacker-writable and consumed at inference",
+  proven by privilege + re-read evidence — not by a destructive UPDATE.
+
+### Step 3: Model the impact (classify, narrate — no live tampering)
+Map each writable prompt-layer asset to its impact class:
+- **prompt_poisoning** — rewriting the system prompt / persona / instructions →
+  full hijack of every response (exfil instructions, scams, malware links,
+  brand-damaging output) for all users, persistently.
+- **guardrail_removal** — editing safety/refusal/policy text or flipping a
+  \`safety_settings\`/\`moderation\` flag → jailbreak-by-config; the model now
+  answers what it used to refuse.
+- **output_channel_exfil** — injecting an instruction that makes the model emit
+  attacker URLs (markdown-image / link exfil) or push data into an output sink →
+  silent data exfiltration on every conversation (pairs with
+  \`insecure_output_handling\`).
+- **model_config_tamper** — swapping the model name, raising temperature, or
+  rewiring tool/function config → degraded safety, or steering the agent toward
+  attacker-chosen tools (pairs with \`excessive_agency\`).
+
+### Step 4: Produce the impact narrative + save
+- Write the narrative: which row/column, which impact class(es), blast radius
+  (all users / one tenant), persistence (survives restarts because it's in the DB),
+  and the proof that it's writable + re-read.
+- \`save_finding\` with: the table/column/key, a read-only sample of the current
+  prompt, the privilege/re-read evidence, the impact classification, and the
+  narrative. Explicitly note that NO destructive write was performed.`,
+
   rust_memsafety: `## Rust / Userspace Memory-Safety & Sandbox-Escape Playbook ("Monty-mode")
 
 The target is a memory-safe-by-default language runtime (e.g. a Rust-written
@@ -1162,6 +1220,35 @@ const INDICATORS: VulnIndicator[] = [
     ],
   },
   {
+    // AI prompt-layer write target (pwnkit#775). Fires when a DB foothold
+    // coincides with LLM-app + prompt-store signals: the system prompt /
+    // guardrails / model config live in a writable DB row. Distinct from
+    // rag_poisoning (writable retrieval docs) — this is the *control* layer.
+    type: "prompt_layer_write",
+    patterns: [
+      /system[_\s-]?prompt/i,
+      /\bguardrail/i,
+      /prompt[_\s-]?template/i,
+      /\bpersona\b/i,
+      /assistant[_\s-]?config/i,
+      /agent[_\s-]?config/i,
+      /model[_\s-]?config/i,
+      /safety[_\s-]?settings/i,
+      /\bllm[_\s-]?settings/i,
+      /\bLLM\b/,
+      /\bchatbot\b/i,
+      /you are (?:a|an|now)/i,
+      // DB-foothold co-signals
+      /\bSQLi\b/i,
+      /information_schema/i,
+      /SHOW\s+TABLES/i,
+      /\bUPDATE\s+\w+\s+SET/i,
+      /getCollectionNames/i,
+      /\bGRANT\b/i,
+      /\bUPDATE\b.*privilege/i,
+    ],
+  },
+  {
     // Rust / userspace memory-safety + sandbox-escape (pwnkit#696, Monty-mode).
     // Fires on Rust unsafe / FFI surface, memory-corruption signals (sanitizer
     // and miri output, GC-root / refcount language), and the language-runtime
@@ -1240,4 +1327,201 @@ export function buildPlaybookInjection(types: string[]): string {
     "",
     ...sections,
   ].join("\n");
+}
+
+// ── AI prompt-layer write impact classification (pwnkit#775) ──
+//
+// First slice of the "system-prompts-in-DB write target" playbook. Pure,
+// verification-only detection + impact classification on a discovered DB asset.
+// NO writes are performed here — this models the WRITE impact from read-only
+// evidence (names, a sampled value, and an asserted write capability).
+
+/** Impact classes a writable prompt-layer asset can map to. */
+export type PromptLayerImpact =
+  | "prompt_poisoning"
+  | "guardrail_removal"
+  | "output_channel_exfil"
+  | "model_config_tamper";
+
+/**
+ * A candidate prompt-layer asset surfaced from a DB foothold. All fields are
+ * gathered read-only — `writable` is the *asserted* write capability (e.g. from
+ * SHOW GRANTS / an admin edit endpoint), not the result of an actual write.
+ */
+export interface PromptLayerAsset {
+  /** table / collection name */
+  table?: string;
+  /** column / field / key name */
+  column?: string;
+  /** a read-only SAMPLE of the current value (truncate before passing in) */
+  sample?: string;
+  /** whether the foothold can write this asset (privilege/endpoint evidence) */
+  writable: boolean;
+  /** whether the app re-reads this row at inference (vs. baked into code/env) */
+  reReadAtInference?: boolean;
+}
+
+export interface PromptLayerImpactResult {
+  /** true if names/content look like a prompt-layer control asset at all */
+  isPromptLayer: boolean;
+  /** distinct impact classes this writable asset enables (empty if not writable) */
+  impacts: PromptLayerImpact[];
+  /** coarse severity: high only when writable AND re-read at inference */
+  severity: "info" | "low" | "high";
+  /** human-readable, save_finding-ready impact narrative */
+  narrative: string;
+}
+
+interface ImpactRule {
+  impact: PromptLayerImpact;
+  patterns: RegExp[];
+}
+
+// Name/content signals per impact class. Matched against table+column+sample.
+const PROMPT_LAYER_IMPACT_RULES: ImpactRule[] = [
+  {
+    impact: "guardrail_removal",
+    patterns: [
+      /\bguardrail/i,
+      /safety[_\s-]?settings?/i,
+      /\bmoderation\b/i,
+      /\bpolicy\b/i,
+      /\brefus/i,
+      /\bnever (?:reveal|disclose|share|answer)/i,
+      /you must (?:refuse|not)/i,
+      /content[_\s-]?filter/i,
+    ],
+  },
+  {
+    impact: "output_channel_exfil",
+    patterns: [
+      /output[_\s-]?(?:channel|template|format)/i,
+      /webhook/i,
+      /\bcallback\b/i,
+      /markdown/i,
+      /!\[[^\]]*\]\(https?:\/\//,
+      /append .*(?:url|link|http)/i,
+    ],
+  },
+  {
+    impact: "model_config_tamper",
+    patterns: [
+      /model[_\s-]?(?:config|name|id)/i,
+      /\btemperature\b/i,
+      /\btop[_\s-]?p\b/i,
+      /\bmax[_\s-]?tokens\b/i,
+      /tool[_\s-]?(?:config|choice|s)\b/i,
+      /function[_\s-]?(?:config|call)/i,
+      /assistant[_\s-]?config/i,
+      /agent[_\s-]?config/i,
+    ],
+  },
+  {
+    impact: "prompt_poisoning",
+    patterns: [
+      /system[_\s-]?prompt/i,
+      /prompt[_\s-]?template/i,
+      /\bprompts?\b/i,
+      /\binstructions?\b/i,
+      /\bpersona\b/i,
+      /you are (?:a|an|now|the)/i,
+    ],
+  },
+];
+
+/** Any signal at all that this asset belongs to the prompt/control layer. */
+function looksLikePromptLayer(haystack: string): boolean {
+  return PROMPT_LAYER_IMPACT_RULES.some((rule) =>
+    rule.patterns.some((p) => p.test(haystack)),
+  );
+}
+
+/**
+ * Classify the WRITE impact of a discovered prompt-layer DB asset.
+ *
+ * Verification-only: derives impact from read-only evidence; performs no writes.
+ * Severity is `high` only when the asset is both writable AND re-read at
+ * inference (persistent, server-side prompt injection affecting every response).
+ */
+export function classifyPromptLayerImpact(
+  asset: PromptLayerAsset,
+): PromptLayerImpactResult {
+  const haystack = [asset.table, asset.column, asset.sample]
+    .filter(Boolean)
+    .join(" ");
+
+  const isPromptLayer = looksLikePromptLayer(haystack);
+
+  if (!isPromptLayer) {
+    return {
+      isPromptLayer: false,
+      impacts: [],
+      severity: "info",
+      narrative:
+        "No prompt-layer signal: the asset does not look like a system prompt, " +
+        "guardrail, model config, or output-channel store. Not a prompt-layer write target.",
+    };
+  }
+
+  // Collect every impact class whose signals match. Order = rule order so the
+  // narrative reads guardrail → exfil → config → poisoning, but de-dup.
+  const impacts: PromptLayerImpact[] = [];
+  for (const rule of PROMPT_LAYER_IMPACT_RULES) {
+    if (rule.patterns.some((p) => p.test(haystack))) {
+      impacts.push(rule.impact);
+    }
+  }
+
+  if (!asset.writable) {
+    return {
+      isPromptLayer: true,
+      impacts: [],
+      severity: "low",
+      narrative:
+        `Prompt-layer asset detected (${describeAsset(asset)}) but no write path was ` +
+        "confirmed from this foothold. Read exposure only — flag for review; " +
+        "re-check write privileges (SHOW GRANTS / admin edit endpoint) before claiming impact.",
+    };
+  }
+
+  const reRead = asset.reReadAtInference === true;
+  const severity: PromptLayerImpactResult["severity"] = reRead ? "high" : "low";
+
+  const impactLabels = impacts.map((i) => IMPACT_NARRATIVE[i]);
+  const narrative = [
+    `WRITABLE prompt-layer asset (${describeAsset(asset)}).`,
+    reRead
+      ? "The app re-reads this row at inference, so a write persists as a " +
+        "server-side prompt injection affecting EVERY future response for all " +
+        "users until reverted — invisible to end users and surviving restarts."
+      : "Re-read-at-inference was NOT confirmed; impact may be limited if the " +
+        "prompt is cached or baked into code/env. Confirm the worker queries " +
+        "this row per request before escalating.",
+    `Impact class(es): ${impacts.join(", ")}.`,
+    ...impactLabels.map((l) => `- ${l}`),
+    "Verification-only: NO destructive write was performed; write capability is " +
+      "asserted from privilege/endpoint evidence.",
+  ].join("\n");
+
+  return { isPromptLayer: true, impacts, severity, narrative };
+}
+
+const IMPACT_NARRATIVE: Record<PromptLayerImpact, string> = {
+  prompt_poisoning:
+    "prompt_poisoning: rewriting the system prompt / persona hijacks every " +
+    "response (exfil instructions, scams, malicious links, brand damage).",
+  guardrail_removal:
+    "guardrail_removal: editing safety/refusal/policy text or flipping a " +
+    "moderation flag jailbreaks the model by config — it answers what it refused.",
+  output_channel_exfil:
+    "output_channel_exfil: injecting markdown-image/link or output-sink " +
+    "instructions silently exfiltrates conversation data on every turn.",
+  model_config_tamper:
+    "model_config_tamper: swapping model name, raising temperature, or rewiring " +
+    "tool/function config degrades safety or steers the agent to attacker tools.",
+};
+
+function describeAsset(asset: PromptLayerAsset): string {
+  const loc = [asset.table, asset.column].filter(Boolean).join(".");
+  return loc || "unnamed asset";
 }

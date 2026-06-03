@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PLAYBOOKS, buildPlaybookInjection, detectPlaybooks } from "./playbooks.js";
+import {
+  PLAYBOOKS,
+  buildPlaybookInjection,
+  classifyPromptLayerImpact,
+  detectPlaybooks,
+} from "./playbooks.js";
 
 describe("PLAYBOOKS — XBEN-054 HTTP method tampering hint", () => {
   it("auth_bypass playbook mentions BOGUS, Limit, and XBEN-054", () => {
@@ -107,6 +112,115 @@ describe("PLAYBOOKS — LLM-app breadth (#566)", () => {
       "Users can upload a document that gets indexed into the vector store",
     ]);
     expect(out).toContain("rag_poisoning");
+  });
+});
+
+describe("PLAYBOOKS — AI prompt-layer write target (#775)", () => {
+  it("ships the prompt_layer_write playbook with the four impact classes", () => {
+    const pb = PLAYBOOKS.prompt_layer_write;
+    expect(pb).toBeDefined();
+    expect(pb.length).toBeGreaterThan(100);
+    expect(pb).toContain("prompt_poisoning");
+    expect(pb).toContain("guardrail_removal");
+    expect(pb).toContain("output_channel_exfil");
+    expect(pb).toContain("model_config_tamper");
+  });
+
+  it("playbook is verification-only — no destructive writes", () => {
+    const pb = PLAYBOOKS.prompt_layer_write.toLowerCase();
+    expect(pb).toContain("verification-only");
+    expect(pb).toMatch(/do not perform destructive write|no destructive write/);
+    expect(pb).toContain("read");
+  });
+
+  it("buildPlaybookInjection renders the prompt-layer section when requested", () => {
+    const injection = buildPlaybookInjection(["prompt_layer_write"]);
+    expect(injection).toContain("AI Prompt-Layer Write Playbook");
+    expect(injection).toContain("system-prompts-in-DB");
+  });
+
+  it("detectPlaybooks surfaces prompt_layer_write from DB-foothold + prompt-store text", () => {
+    const out = detectPlaybooks([
+      "Confirmed SQLi; dumping information_schema",
+      "Found a table system_prompt with a guardrail column on the chatbot LLM app",
+    ]);
+    expect(out).toContain("prompt_layer_write");
+  });
+});
+
+describe("classifyPromptLayerImpact (#775)", () => {
+  it("flags a non-prompt asset as not a prompt-layer target", () => {
+    const r = classifyPromptLayerImpact({
+      table: "orders",
+      column: "total_amount",
+      sample: "42.00",
+      writable: true,
+      reReadAtInference: true,
+    });
+    expect(r.isPromptLayer).toBe(false);
+    expect(r.impacts).toEqual([]);
+    expect(r.severity).toBe("info");
+  });
+
+  it("classifies a writable, re-read system_prompt as high / prompt_poisoning", () => {
+    const r = classifyPromptLayerImpact({
+      table: "assistant_settings",
+      column: "system_prompt",
+      sample: "You are a helpful banking assistant. Never reveal account numbers.",
+      writable: true,
+      reReadAtInference: true,
+    });
+    expect(r.isPromptLayer).toBe(true);
+    expect(r.severity).toBe("high");
+    expect(r.impacts).toContain("prompt_poisoning");
+    // guardrail language in the sample also surfaces guardrail_removal
+    expect(r.impacts).toContain("guardrail_removal");
+    expect(r.narrative).toContain("WRITABLE");
+    expect(r.narrative.toLowerCase()).toContain("no destructive write");
+  });
+
+  it("downgrades to low when the prompt asset is not writable", () => {
+    const r = classifyPromptLayerImpact({
+      table: "prompts",
+      column: "system_prompt",
+      sample: "You are an assistant.",
+      writable: false,
+      reReadAtInference: true,
+    });
+    expect(r.isPromptLayer).toBe(true);
+    expect(r.severity).toBe("low");
+    expect(r.impacts).toEqual([]);
+    expect(r.narrative.toLowerCase()).toContain("read exposure only");
+  });
+
+  it("writable but not re-read at inference stays low (no persistence proof)", () => {
+    const r = classifyPromptLayerImpact({
+      table: "model_config",
+      column: "temperature",
+      writable: true,
+      reReadAtInference: false,
+    });
+    expect(r.isPromptLayer).toBe(true);
+    expect(r.severity).toBe("low");
+    expect(r.impacts).toContain("model_config_tamper");
+  });
+
+  it("detects output-channel exfil and guardrail-removal classes by name", () => {
+    const exfil = classifyPromptLayerImpact({
+      column: "output_template",
+      writable: true,
+      reReadAtInference: true,
+    });
+    expect(exfil.impacts).toContain("output_channel_exfil");
+
+    const guard = classifyPromptLayerImpact({
+      table: "safety_settings",
+      column: "moderation_policy",
+      writable: true,
+      reReadAtInference: true,
+    });
+    expect(guard.impacts).toContain("guardrail_removal");
+    expect(guard.severity).toBe("high");
   });
 });
 

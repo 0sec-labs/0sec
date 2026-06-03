@@ -30,6 +30,7 @@ const EXPECTED_SKILL_IDS = [
   "llm-insecure-output-handling",
   "llm-excessive-agency",
   "llm-rag-poisoning",
+  "llm-prompt-layer-write",
 ];
 
 const VALID_ROLES = new Set(["attack", "audit", "review"]);
