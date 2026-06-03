@@ -265,6 +265,77 @@ function clearStaleLockIfAny(path: string): void {
   }
 }
 
+// ── Persistent credential store + trust graph (pwnkit#771) ──
+
+/** A stored persistent-credential row. NEVER carries the plaintext secret. */
+export interface PersistentCredentialRow {
+  id: string;
+  credentialKind: string;
+  valueHash: string;
+  valuePreview: string;
+  context: string | null;
+  target: string | null;
+  firstScanId: string | null;
+  firstFindingId: string | null;
+  firstSource: string | null;
+  firstTurn: number | null;
+  lastScanId: string | null;
+  timesSeen: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/**
+ * Input to {@link pwnkitDB.upsertPersistentCredential}. The caller is
+ * responsible for hashing the secret — `valueHash` + `valuePreview` are the
+ * only representations of the value that reach the DB. Plaintext must never be
+ * passed here.
+ */
+export interface PersistentCredentialUpsert {
+  credentialKind: string;
+  valueHash: string;
+  valuePreview: string;
+  context?: string | null;
+  target?: string | null;
+  scanId?: string | null;
+  findingId?: string | null;
+  source?: string | null;
+  turn?: number | null;
+}
+
+export interface PersistentCredentialQuery {
+  credentialKind?: string;
+  target?: string;
+  limit?: number;
+}
+
+export interface TrustGraphEdgeRow {
+  id: string;
+  srcKind: string;
+  srcId: string;
+  dstKind: string;
+  dstId: string;
+  relation: string;
+  scanId: string | null;
+  findingId: string | null;
+  confidence: number | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TrustGraphEdgeInput {
+  srcKind: string;
+  srcId: string;
+  dstKind: string;
+  dstId: string;
+  relation: string;
+  scanId?: string | null;
+  findingId?: string | null;
+  confidence?: number | null;
+  note?: string | null;
+}
+
 export class pwnkitDB {
   private sqlite!: ShimmedDatabase;
   private db!: ReturnType<typeof createDrizzleFromShim<typeof schema>>;
@@ -1890,6 +1961,202 @@ export class pwnkitDB {
     return result.changes;
   }
 
+  // ── Persistent credential store (pwnkit#771) ──
+
+  /**
+   * Upsert a discovered foothold keyed by (credentialKind, valueHash). First
+   * write records the discovery attribution (target/finding/scan/turn);
+   * subsequent sightings bump `timesSeen` and refresh `lastScanId`/`lastSeenAt`
+   * without overwriting the original discovery columns. Returns the stored row.
+   *
+   * Plaintext is never accepted here — the caller passes a precomputed
+   * `valueHash` and a redacted `valuePreview`.
+   */
+  upsertPersistentCredential(input: PersistentCredentialUpsert): PersistentCredentialRow {
+    const now = new Date().toISOString();
+    const existing = this.getPersistentCredential(input.credentialKind, input.valueHash);
+    if (existing) {
+      this.sqlite
+        .prepare(
+          `UPDATE persistent_credentials
+             SET timesSeen = timesSeen + 1,
+                 lastScanId = @lastScanId,
+                 lastSeenAt = @lastSeenAt,
+                 context = COALESCE(context, @context)
+           WHERE id = @id`,
+        )
+        .run({
+          id: existing.id,
+          lastScanId: input.scanId ?? existing.lastScanId ?? null,
+          lastSeenAt: now,
+          context: input.context ?? null,
+        });
+      return this.getPersistentCredential(input.credentialKind, input.valueHash)!;
+    }
+
+    const id = randomUUID();
+    this.sqlite
+      .prepare(
+        `INSERT INTO persistent_credentials
+           (id, credentialKind, valueHash, valuePreview, context, target,
+            firstScanId, firstFindingId, firstSource, firstTurn, lastScanId,
+            timesSeen, firstSeenAt, lastSeenAt)
+         VALUES
+           (@id, @credentialKind, @valueHash, @valuePreview, @context, @target,
+            @firstScanId, @firstFindingId, @firstSource, @firstTurn, @lastScanId,
+            1, @firstSeenAt, @lastSeenAt)`,
+      )
+      .run({
+        id,
+        credentialKind: input.credentialKind,
+        valueHash: input.valueHash,
+        valuePreview: input.valuePreview,
+        context: input.context ?? null,
+        target: input.target ?? null,
+        firstScanId: input.scanId ?? null,
+        firstFindingId: input.findingId ?? null,
+        firstSource: input.source ?? null,
+        firstTurn: input.turn ?? null,
+        lastScanId: input.scanId ?? null,
+        firstSeenAt: now,
+        lastSeenAt: now,
+      });
+    return this.getPersistentCredential(input.credentialKind, input.valueHash)!;
+  }
+
+  getPersistentCredential(credentialKind: string, valueHash: string): PersistentCredentialRow | undefined {
+    return this.sqlite
+      .prepare(
+        `SELECT * FROM persistent_credentials WHERE credentialKind = ? AND valueHash = ?`,
+      )
+      .get(credentialKind, valueHash) as PersistentCredentialRow | undefined;
+  }
+
+  listPersistentCredentials(query: PersistentCredentialQuery = {}): PersistentCredentialRow[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (query.credentialKind) {
+      where.push("credentialKind = ?");
+      params.push(query.credentialKind);
+    }
+    if (query.target) {
+      where.push("target = ?");
+      params.push(query.target);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const limit = query.limit ?? 500;
+    return this.sqlite
+      .prepare(
+        `SELECT * FROM persistent_credentials ${whereSql} ORDER BY lastSeenAt DESC LIMIT ${limit}`,
+      )
+      .all(...params) as PersistentCredentialRow[];
+  }
+
+  // ── Trust graph edges (pwnkit#771) ──
+
+  /**
+   * Upsert a directed trust edge keyed by
+   * (srcKind, srcId, dstKind, dstId, relation). Re-observing an edge refreshes
+   * `updatedAt` (and `confidence`/`note`/attribution when provided) rather than
+   * inserting a duplicate. Returns the stored row.
+   */
+  upsertTrustGraphEdge(input: TrustGraphEdgeInput): TrustGraphEdgeRow {
+    const now = new Date().toISOString();
+    const existing = this.sqlite
+      .prepare(
+        `SELECT * FROM trust_graph_edges
+          WHERE srcKind = ? AND srcId = ? AND dstKind = ? AND dstId = ? AND relation = ?`,
+      )
+      .get(input.srcKind, input.srcId, input.dstKind, input.dstId, input.relation) as
+      | TrustGraphEdgeRow
+      | undefined;
+
+    if (existing) {
+      this.sqlite
+        .prepare(
+          `UPDATE trust_graph_edges
+              SET scanId = COALESCE(@scanId, scanId),
+                  findingId = COALESCE(@findingId, findingId),
+                  confidence = COALESCE(@confidence, confidence),
+                  note = COALESCE(@note, note),
+                  updatedAt = @updatedAt
+            WHERE id = @id`,
+        )
+        .run({
+          id: existing.id,
+          scanId: input.scanId ?? null,
+          findingId: input.findingId ?? null,
+          confidence: input.confidence ?? null,
+          note: input.note ?? null,
+          updatedAt: now,
+        });
+      return { ...existing, updatedAt: now };
+    }
+
+    const id = randomUUID();
+    this.sqlite
+      .prepare(
+        `INSERT INTO trust_graph_edges
+           (id, srcKind, srcId, dstKind, dstId, relation, scanId, findingId,
+            confidence, note, createdAt, updatedAt)
+         VALUES
+           (@id, @srcKind, @srcId, @dstKind, @dstId, @relation, @scanId,
+            @findingId, @confidence, @note, @createdAt, @updatedAt)`,
+      )
+      .run({
+        id,
+        srcKind: input.srcKind,
+        srcId: input.srcId,
+        dstKind: input.dstKind,
+        dstId: input.dstId,
+        relation: input.relation,
+        scanId: input.scanId ?? null,
+        findingId: input.findingId ?? null,
+        confidence: input.confidence ?? null,
+        note: input.note ?? null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    return {
+      id,
+      srcKind: input.srcKind,
+      srcId: input.srcId,
+      dstKind: input.dstKind,
+      dstId: input.dstId,
+      relation: input.relation,
+      scanId: input.scanId ?? null,
+      findingId: input.findingId ?? null,
+      confidence: input.confidence ?? null,
+      note: input.note ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  listTrustGraphEdges(query: { srcKind?: string; srcId?: string; relation?: string; limit?: number } = {}): TrustGraphEdgeRow[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (query.srcKind) {
+      where.push("srcKind = ?");
+      params.push(query.srcKind);
+    }
+    if (query.srcId) {
+      where.push("srcId = ?");
+      params.push(query.srcId);
+    }
+    if (query.relation) {
+      where.push("relation = ?");
+      params.push(query.relation);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const limit = query.limit ?? 500;
+    return this.sqlite
+      .prepare(
+        `SELECT * FROM trust_graph_edges ${whereSql} ORDER BY updatedAt DESC LIMIT ${limit}`,
+      )
+      .all(...params) as TrustGraphEdgeRow[];
+  }
+
   // ── Utilities ──
 
   close(): void {
@@ -2156,6 +2423,40 @@ CREATE TABLE IF NOT EXISTS workers (
   startedAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS persistent_credentials (
+  id TEXT PRIMARY KEY,
+  credentialKind TEXT NOT NULL,
+  valueHash TEXT NOT NULL,
+  valuePreview TEXT NOT NULL,
+  context TEXT,
+  target TEXT,
+  firstScanId TEXT,
+  firstFindingId TEXT,
+  firstSource TEXT,
+  firstTurn INTEGER,
+  lastScanId TEXT,
+  timesSeen INTEGER NOT NULL DEFAULT 1,
+  firstSeenAt TEXT NOT NULL,
+  lastSeenAt TEXT NOT NULL,
+  UNIQUE(credentialKind, valueHash)
+);
+
+CREATE TABLE IF NOT EXISTS trust_graph_edges (
+  id TEXT PRIMARY KEY,
+  srcKind TEXT NOT NULL,
+  srcId TEXT NOT NULL,
+  dstKind TEXT NOT NULL,
+  dstId TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  scanId TEXT,
+  findingId TEXT,
+  confidence REAL,
+  note TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  UNIQUE(srcKind, srcId, dstKind, dstId, relation)
+);
 `;
 
 const SCHEMA_INDEXES_SQL = `
@@ -2186,6 +2487,12 @@ CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
 CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(heartbeatAt);
 CREATE INDEX IF NOT EXISTS idx_memories_category ON triage_memories(category, scope);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON triage_memories(scope, scope_value);
+CREATE INDEX IF NOT EXISTS idx_pcred_kind_hash ON persistent_credentials(credentialKind, valueHash);
+CREATE INDEX IF NOT EXISTS idx_pcred_target ON persistent_credentials(target);
+CREATE INDEX IF NOT EXISTS idx_pcred_kind ON persistent_credentials(credentialKind);
+CREATE INDEX IF NOT EXISTS idx_tge_src ON trust_graph_edges(srcKind, srcId);
+CREATE INDEX IF NOT EXISTS idx_tge_dst ON trust_graph_edges(dstKind, dstId);
+CREATE INDEX IF NOT EXISTS idx_tge_relation ON trust_graph_edges(relation);
 `;
 
 function normalizeWorkflowStatus(

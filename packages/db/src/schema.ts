@@ -43,6 +43,23 @@ export type ArtifactKindDB = (typeof artifactKinds)[number];
 export const workerStatuses = ["idle", "claiming", "running", "sleeping", "stopped", "error"] as const;
 export type WorkerStatusDB = (typeof workerStatuses)[number];
 
+// ── Persistent credential store (pwnkit#771, extends #687) ──
+//
+// Durable cross-scan home for the footholds the in-memory LootLedger
+// (single-scan; core/src/agent/loot.ts) harvests. The `credentialKinds` mirror
+// the LootLedger `LootKind` union so the two can sync without a lossy mapping.
+// NOTE: never persist the plaintext secret — the store keys on a SHA-256
+// `valueHash` and keeps only a short `valuePreview` for human/agent recognition.
+export const credentialKinds = [
+  "credential",
+  "token",
+  "path",
+  "endpoint",
+  "hash",
+  "cookie",
+] as const;
+export type CredentialKindDB = (typeof credentialKinds)[number];
+
 // ── Tables ──
 
 export const scans = sqliteTable("scans", {
@@ -326,5 +343,77 @@ export const workers = sqliteTable(
   (table) => [
     index("idx_workers_status").on(table.status),
     index("idx_workers_heartbeat").on(table.heartbeatAt),
+  ]
+);
+
+// ── Persistent credentials (pwnkit#771) ──
+//
+// Durable, cross-scan store of discovered footholds keyed by
+// (credentialKind, valueHash). A row is upserted the first time a value is
+// seen; `timesSeen` / `lastSeenAt` and the attribution columns track WHERE it
+// was discovered (which target / finding / scan / agent turn) so a later scan
+// can reuse a credential harvested in an earlier one. The plaintext secret is
+// NEVER stored — only its SHA-256 `valueHash` and a short `valuePreview`.
+export const persistentCredentials = sqliteTable(
+  "persistent_credentials",
+  {
+    id: text("id").primaryKey(),
+    credentialKind: text("credentialKind").notNull(),
+    /** SHA-256 hex of the normalized value. Half of the natural key. */
+    valueHash: text("valueHash").notNull(),
+    /** Short, redacted preview for recognition (e.g. `admin:hun…`). Not a secret. */
+    valuePreview: text("valuePreview").notNull(),
+    /** Optional short label the value sat behind (e.g. `password`, `jwt`). */
+    context: text("context"),
+    /** Target the value was first discovered against. */
+    target: text("target"),
+    /** Discovery attribution — first sighting. */
+    firstScanId: text("firstScanId"),
+    firstFindingId: text("firstFindingId"),
+    firstSource: text("firstSource"),
+    firstTurn: integer("firstTurn"),
+    /** Most-recent sighting attribution. */
+    lastScanId: text("lastScanId"),
+    timesSeen: integer("timesSeen").notNull().default(1),
+    firstSeenAt: text("firstSeenAt").notNull(),
+    lastSeenAt: text("lastSeenAt").notNull(),
+  },
+  (table) => [
+    index("idx_pcred_kind_hash").on(table.credentialKind, table.valueHash),
+    index("idx_pcred_target").on(table.target),
+    index("idx_pcred_kind").on(table.credentialKind),
+  ]
+);
+
+// ── Trust graph edges (pwnkit#771) ──
+//
+// Directed edges describing how one node (a credential, target, finding, or
+// host) grants reach to another — the substrate for "leaked here, reused
+// there" exploit chains. Nodes are opaque `kind:id` strings so the table can
+// reference persistent_credentials rows, targets, findings, etc. without a
+// hard FK to any one of them. `relation` describes the edge (e.g.
+// `authenticates_to`, `discovered_on`, `reused_on`).
+export const trustGraphEdges = sqliteTable(
+  "trust_graph_edges",
+  {
+    id: text("id").primaryKey(),
+    srcKind: text("srcKind").notNull(),
+    srcId: text("srcId").notNull(),
+    dstKind: text("dstKind").notNull(),
+    dstId: text("dstId").notNull(),
+    relation: text("relation").notNull(),
+    /** Optional attribution for when/where this edge was observed. */
+    scanId: text("scanId"),
+    findingId: text("findingId"),
+    /** 0.0-1.0 confidence the edge is real. */
+    confidence: real("confidence"),
+    note: text("note"),
+    createdAt: text("createdAt").notNull(),
+    updatedAt: text("updatedAt").notNull(),
+  },
+  (table) => [
+    index("idx_tge_src").on(table.srcKind, table.srcId),
+    index("idx_tge_dst").on(table.dstKind, table.dstId),
+    index("idx_tge_relation").on(table.relation),
   ]
 );

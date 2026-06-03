@@ -300,6 +300,28 @@ export async function runNativeAgentLoop(
   // results and re-injects a compact "known footholds" block each turn.
   const loot = features.lootLedger ? new LootLedger() : undefined;
 
+  // pwnkit#771 (extends #687) — STUB: durable PersistentCredentialStore wiring.
+  //
+  // FIRST SLICE: the store + schema (persistent_credentials, trust_graph_edges)
+  // exist and are unit-tested in `credential-store.ts` / `@pwnkit/db`, but the
+  // loop is NOT yet wired to sync to/from them. Intended wiring, to be done in a
+  // follow-up so we don't rewrite the loop here:
+  //
+  //   import { PersistentCredentialStore } from "./credential-store.js";
+  //   const credStore = db ? new PersistentCredentialStore(db) : undefined;
+  //   // 1. On startup: inject prior-scan footholds for this target —
+  //   //      credStore?.renderPriorFootholds({ target: config.target })
+  //   //      pushed as a context block alongside the loot ledger render.
+  //   // 2. On scan completion (or each loot.harvest): persist the ledger —
+  //   //      credStore?.saveLedger(loot, {
+  //   //        target: config.target, scanId: config.scanId,
+  //   //      });
+  //   // 3. Record trust edges as chains are discovered via
+  //   //      credStore?.addTrustEdge({ ... }).
+  //
+  // Acceptance (#771): creds harvested in one scan persist and are queryable by
+  // a later scan; no plaintext secret leakage (store keeps hash + preview only).
+
   // Stateful access-control session (pwnkit#564). Reconcile the legacy singular
   // `authConfig` with the multi-identity `identities` list, then build (or
   // reuse) a SessionEngine so HTTP tools persist cookies across turns and the

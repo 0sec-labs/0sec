@@ -12,6 +12,9 @@ export {
   artifacts,
   workers,
   triageMemories,
+  persistentCredentials,
+  trustGraphEdges,
+  credentialKinds,
   findingStatuses,
   findingTriageStatuses,
   caseStatuses,
@@ -26,4 +29,12 @@ export {
   type WorkItemStatusDB,
   type ArtifactKindDB,
   type WorkerStatusDB,
+  type CredentialKindDB,
 } from "./schema.js";
+export type {
+  PersistentCredentialRow,
+  PersistentCredentialUpsert,
+  PersistentCredentialQuery,
+  TrustGraphEdgeRow,
+  TrustGraphEdgeInput,
+} from "./database.js";
