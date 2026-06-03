@@ -25,6 +25,7 @@ const EXPECTED_SKILL_IDS = [
   "race-condition",
   "deserialization-chains",
   "request-smuggling",
+  "structural-sqli",
   "llm-prompt-injection",
   "llm-insecure-output-handling",
   "llm-excessive-agency",

@@ -20,6 +20,16 @@ export const PLAYBOOKS: Record<string, string> = {
 - Try different SQL dialects: MySQL (SLEEP), PostgreSQL (pg_sleep), SQLite (sqlite_version())
 - If WAF blocks quotes, try: 1 OR 1=1, numeric injection without quotes`,
 
+  structural_sqli: `## Structural / JSON-Key SQLi Playbook (#774)
+The injectable surface is a JSON KEY / field name concatenated into SQL (ORDER BY \${key}, SELECT \${key}, dynamic WHERE \${key}=?) — NOT a parameterised value. Value-fuzzing scanners miss this; the key is what's injected.
+- Target keys that name columns: sort, sort_by, sortField, order, order_by, orderBy, column, field, group_by, columns[], filter[<key>].
+- Tell in errors: "Unknown column '...'", 'column "..." does not exist', "Invalid column name", "no such column" — the server used your KEY as an identifier.
+- Run the blind error-iteration loop (load the structural-sqli skill for the full algorithm):
+  1. Break: inject key with a trailing quote (name') — unbalances the statement, elicits a DB error that confirms the key reaches the parser.
+  2. Fingerprint the dialect from the error (MySQL "error in your SQL syntax" / Postgres "unterminated quoted string" / MSSQL "Unclosed quotation mark" / Oracle ORA-NNNNN / SQLite "unrecognized token").
+  3. Balance: re-close the quote + comment the tail with the DISCOVERED dialect's syntax (MySQL needs "-- " with a space → name'-- -). No error on the balanced key while the broken key errored ⇒ structural SQLi confirmed.
+- Prove with an ORDER BY boolean/error oracle (no quotes needed); extract minimal non-sensitive proof; save the finding WITH the ordered iteration trail.`,
+
   ssti: `## SSTI Playbook
 - Confirm with: {{7*7}}, \${7*7}, <%= 7*7 %>
 - Identify engine: {{config}} (Jinja2), #{7*7} (Ruby), {{self}} (Twig)
@@ -773,6 +783,24 @@ const INDICATORS: VulnIndicator[] = [
       /SELECT\s+.*FROM\s+/i,
       /information_schema/i,
       /UNION\s+SELECT/i,
+    ],
+  },
+  {
+    // Structural / JSON-key SQLi (#774): the injectable surface is a key /
+    // field name concatenated into SQL (ORDER BY, dynamic column). These
+    // patterns point at identifier-position injection + the column-name error
+    // shapes that value-fuzz SQLi detection does not key on.
+    type: "structural_sqli",
+    patterns: [
+      /ORDER\s+BY/i,
+      /GROUP\s+BY/i,
+      /Unknown column '[^']*' in/i,
+      /column "[^"]*" does not exist/i,
+      /Invalid column name/i,
+      /no such column/i,
+      /\b(sort|order)(_?by|_?field|field|_?column|_?dir)\b/i,
+      /"(sort|order|column|field|groupBy|orderBy)"\s*:/i,
+      /unrecognized token/i,
     ],
   },
   {
