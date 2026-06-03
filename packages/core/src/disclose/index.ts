@@ -33,3 +33,18 @@ export {
   dropSlug,
 } from "./bundle.js";
 export type { FilingState, BundleEntry, AssembleIndexOptions } from "./bundle.js";
+export {
+  parseDisclosure,
+  generateWriteup,
+  extractSections,
+  sanitizeWriteup,
+  redactPii,
+  EmbargoedFindingError,
+  PUBLISHABLE_STATUSES,
+} from "./writeup.js";
+export type {
+  ParsedDisclosure,
+  DisclosureFrontmatter,
+  GeneratedWriteup,
+  WriteupOptions,
+} from "./writeup.js";
