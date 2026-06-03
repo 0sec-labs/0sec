@@ -126,6 +126,18 @@ export type { LocalPathResolutionOptions } from "./path-resolution.js";
 export { runStaticAnalysis } from "./static-analysis.js";
 export type { StaticAnalysisResult } from "./static-analysis.js";
 
+// Passive mobile app static intake.
+export { runMobileStaticIntake } from "./mobile/intake.js";
+export type {
+  AndroidMetadata,
+  IosMetadata,
+  MobileEndpointIndicator,
+  MobilePlatform,
+  MobileRiskIndicator,
+  MobileStaticIntakeOptions,
+  MobileStaticIntakeReport,
+} from "./mobile/intake.js";
+
 // Unified pipeline
 export { runPipeline, parseSubsystems } from "./unified-pipeline.js";
 export type { PipelineOptions, PipelineReport } from "./unified-pipeline.js";
