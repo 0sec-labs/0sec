@@ -1034,6 +1034,15 @@ export async function runNativeAgentLoop(
           finding: { ...(f ?? {}), ...input },
         });
 
+        // TODO(#773): emit `credential_shared` here when a credential surfaced
+        // by this finding is later reused across a target boundary. The kind +
+        // `appendCredentialShared(shadowJournal, { sourceTarget, destTarget,
+        // credentialKind, originatingFindingId })` helper exist in
+        // ./journal/credential-shared.ts; wiring the actual emit needs the
+        // cross-target reuse detection that this single-target loop does not
+        // yet have (it has no notion of a second target or a credential store).
+        // Left as a stub per the first-slice scope of #773.
+
         // ── onFindingSaved hook: inline validation (#554) ──
         // The moment a high/critical finding is saved, run the cheap
         // deterministic category oracle (the #553 PoV-gate→oracle delegation)

@@ -14,6 +14,12 @@ export type JournalSchemaVersion = typeof JOURNAL_SCHEMA_VERSION;
  * same JSONL stream so an orchestrator can route off the high-level kinds
  * while a specialist's fine-grained trace lives alongside it. Adding a kind is
  * a backward-compatible change: readers ignore kinds they do not recognise.
+ *
+ * `credential_shared` (#773) is a chain-attribution kind: it records when a
+ * foothold (credential, token, key, …) recovered on one target is reused
+ * across a target boundary against another, so an explainable attack chain can
+ * draw the trust edge between the two targets back to the finding that first
+ * yielded the credential.
  */
 export type JournalEntryKind =
   | "dispatch"
@@ -25,7 +31,8 @@ export type JournalEntryKind =
   | "tool_call"
   | "tool_result"
   | "hypothesis"
-  | "note";
+  | "note"
+  | "credential_shared";
 
 export interface JournalArtifactInput {
   name?: string;
@@ -176,6 +183,35 @@ export interface JournalNoteEntry extends JournalEntryBase {
   turn?: number;
 }
 
+/**
+ * A foothold reused across a target boundary (#773).
+ *
+ * Emitted when a credential (or token/key/session) recovered while working one
+ * target is replayed against a different target, establishing a trust edge in
+ * the attack chain. Captures both ends of the edge plus the finding that first
+ * yielded the credential, so a report can explain *why* the second target was
+ * reachable: "the DB password leaked by finding F-12 on `web-01` also
+ * authenticated to `db-01`".
+ */
+export interface JournalCredentialSharedEntry extends JournalEntryBase {
+  kind: "credential_shared";
+  /** Target the credential was originally recovered from. */
+  sourceTarget: string;
+  /** Target the credential was reused against. */
+  destTarget: string;
+  /**
+   * Kind of foothold reused (e.g. `"password"`, `"ssh_key"`, `"api_token"`,
+   * `"session_cookie"`). Free-form so new credential classes need no schema
+   * change; readers should treat unknown values as opaque.
+   */
+  credentialKind: string;
+  /** Id of the finding that first surfaced the credential. */
+  originatingFindingId: string;
+  /** Optional human-readable explanation of the trust edge. */
+  rationale?: string;
+  turn?: number;
+}
+
 export type JournalEntry =
   | JournalDispatchEntry
   | JournalObservationEntry
@@ -186,7 +222,8 @@ export type JournalEntry =
   | JournalToolCallEntry
   | JournalToolResultEntry
   | JournalHypothesisEntry
-  | JournalNoteEntry;
+  | JournalNoteEntry
+  | JournalCredentialSharedEntry;
 
 export type JournalEntryInput =
   | (JournalEntryInputBase & Pick<JournalDispatchEntry, "kind" | "targetAgent" | "objective" | "context">)
@@ -198,7 +235,12 @@ export type JournalEntryInput =
   | (JournalEntryInputBase & Pick<JournalToolCallEntry, "kind" | "tool" | "arguments" | "turn" | "callId">)
   | (JournalEntryInputBase & Pick<JournalToolResultEntry, "kind" | "tool" | "ok" | "output" | "error" | "turn" | "callId">)
   | (JournalEntryInputBase & Pick<JournalHypothesisEntry, "kind" | "statement" | "rationale" | "confidence" | "status" | "turn">)
-  | (JournalEntryInputBase & Pick<JournalNoteEntry, "kind" | "text" | "turn">);
+  | (JournalEntryInputBase & Pick<JournalNoteEntry, "kind" | "text" | "turn">)
+  | (JournalEntryInputBase &
+      Pick<
+        JournalCredentialSharedEntry,
+        "kind" | "sourceTarget" | "destTarget" | "credentialKind" | "originatingFindingId" | "rationale" | "turn"
+      >);
 
 export interface JournalPaths {
   runDir: string;

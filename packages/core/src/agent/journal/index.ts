@@ -7,6 +7,7 @@ export type {
   JournalArtifactInline,
   JournalArtifactInput,
   JournalArtifactRef,
+  JournalCredentialSharedEntry,
   JournalDecisionEntry,
   JournalDispatchEntry,
   JournalDoneEntry,
@@ -24,6 +25,14 @@ export type {
   JournalToolResultEntry,
 } from "./types.js";
 export { migrateJournalEntry } from "./migrate.js";
+export {
+  appendCredentialShared,
+  buildCredentialSharedEntry,
+} from "./credential-shared.js";
+export type {
+  CredentialSharedRecord,
+  CredentialSharedSink,
+} from "./credential-shared.js";
 export {
   buildSpecialistDispatch,
   selectNextDispatch,
