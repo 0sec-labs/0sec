@@ -54,8 +54,8 @@ describe("Skill Tools (#457)", () => {
         skills: Array<{ id: string; name: string; suggested: boolean }>;
         total: number;
       };
-      expect(output.total).toBe(16);
-      expect(output.skills.length).toBe(16);
+      expect(output.total).toBe(17);
+      expect(output.skills.length).toBe(17);
 
       // Every skill should have the expected shape
       for (const s of output.skills) {
