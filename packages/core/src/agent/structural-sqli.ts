@@ -341,3 +341,70 @@ export function runStructuralSqliProbe(
   const finalVerdict: ProbeVerdict = sawBreakError ? "error_signal" : "exhausted";
   return { baseKey, verdict: finalVerdict, dialect, trail };
 }
+
+/**
+ * Async sibling of {@link runStructuralSqliProbe} for driving the loop over
+ * real HTTP from the agent tool layer (`structural_sqli_probe`). The decision
+ * logic is byte-identical — only `sendKey` is awaited — so the sync version
+ * (used by the skill methodology + its unit tests) stays untouched. A parity
+ * test pins the two against the same oracle sequence.
+ */
+export async function runStructuralSqliProbeAsync(
+  config: ProbeConfig,
+  sendKey: (payload: KeyPayload) => Promise<ProbeObservation>,
+): Promise<ProbeResult> {
+  const baseKey = config.baseKey;
+  const maxIterations = Math.max(2, config.maxIterations ?? 6);
+  const trail: ProbeStep[] = [];
+
+  let dialect: SqlDialect | null = null;
+  let sawBreakError = false;
+  let iteration = 0;
+
+  while (iteration < maxIterations) {
+    iteration++;
+    const phase: "break" | "balance" = sawBreakError ? "balance" : "break";
+    const payload = nextKeyPayload(baseKey, phase, dialect);
+    const obs = await sendKey(payload);
+
+    const observedDialect = fingerprintDialect(obs.responseText);
+    if (observedDialect) dialect = observedDialect;
+    const sqlError = looksLikeSqlError(obs.responseText);
+
+    let verdict: ProbeVerdict = "iterate";
+    let note = payload.note;
+
+    if (phase === "break") {
+      if (sqlError) {
+        sawBreakError = true;
+        verdict = "error_signal";
+        note = dialect
+          ? `broken key triggered a ${dialect} SQL error — key reaches the parser`
+          : `broken key triggered a SQL error (dialect not yet pinned)`;
+      } else {
+        verdict = "iterate";
+        note = `broken key produced no SQL error — keep probing`;
+      }
+    } else {
+      if (!sqlError) {
+        verdict = "confirmed";
+        note = dialect
+          ? `balanced ${dialect} key parsed cleanly while broken key errored — structural SQLi confirmed`
+          : `balanced key parsed cleanly while broken key errored — structural SQLi confirmed`;
+      } else {
+        sawBreakError = false;
+        verdict = "iterate";
+        note = `balanced close still errored — refining dialect/syntax`;
+      }
+    }
+
+    trail.push({ iteration, payload, dialect, sqlError, verdict, note });
+
+    if (verdict === "confirmed") {
+      return { baseKey, verdict, dialect, trail };
+    }
+  }
+
+  const finalVerdict: ProbeVerdict = sawBreakError ? "error_signal" : "exhausted";
+  return { baseKey, verdict: finalVerdict, dialect, trail };
+}

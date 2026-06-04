@@ -30,6 +30,14 @@ import { detectScannerBinary } from "../scope/scanner-binaries.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
 import { sendPrompt, extractResponseText } from "../http.js";
 import { buildAuthHeaders } from "./prompts.js";
+import {
+  runStructuralSqliProbeAsync,
+  type ProbeObservation,
+} from "./structural-sqli.js";
+import {
+  classifyPromptLayerImpact,
+  type PromptLayerAsset,
+} from "./playbooks.js";
 import type { pwnkitDB } from "@pwnkit/db";
 import { features as featureFlags } from "./features.js";
 import { PtySessionManager } from "./pty-session.js";
@@ -2500,6 +2508,140 @@ export class ToolExecutor {
     });
 
     return { success: true, output };
+  }
+
+  /**
+   * Scope-validated request returning status + body text, mirroring the
+   * enforcement path of `fetchAs`/`httpRequest` (validateTargetUrl + scope +
+   * SSRF guard + attribution + rate limiter). No identity auth is injected —
+   * the caller passes any auth via `headers`. Used by the detection probes.
+   */
+  private async scopedFetchText(
+    rawUrl: string,
+    method: string,
+    body: string | undefined,
+    headers: Record<string, string>,
+  ): Promise<{ status: number; text: string }> {
+    const url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const fetchInit = applyAttribution(
+        url,
+        { method, headers, body: body ?? undefined, signal: controller.signal, redirect: "manual" },
+        this.ctx.attribution,
+        this.ctx.scope,
+      )!;
+      if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+      // foxguard:ignore — `url` validated by validateTargetUrl above
+      // (same-origin + scope + private-IP/localhost block + path allowlist).
+      const res = await fetch(url, fetchInit);
+      if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+      const text = await res.text();
+      return { status: res.status, text };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * #774 — drive the structural / JSON-key SQLi break→balance loop over live
+   * HTTP and return the verdict + iteration trail. The KEY (`base_key`) is the
+   * injection surface; each iteration mutates it into a copy of `body`.
+   */
+  private async structuralSqliProbe(args: Record<string, unknown>): Promise<ToolResult> {
+    const url = args.url as string;
+    const baseKey = args.base_key as string;
+    if (!url) return { success: false, output: null, error: "url is required" };
+    if (!baseKey) return { success: false, output: null, error: "base_key is required" };
+    const method = ((args.method as string) ?? "POST").toUpperCase();
+    const baseBody =
+      args.body && typeof args.body === "object"
+        ? (args.body as Record<string, unknown>)
+        : {};
+    const maxIterations =
+      typeof args.max_iterations === "number" ? args.max_iterations : undefined;
+
+    const sendKey = async (payload: {
+      key: string;
+    }): Promise<ProbeObservation> => {
+      // The key is the injection surface — set the mutated key with a benign
+      // value in a copy of the base body; other fields go verbatim.
+      const bodyObj: Record<string, unknown> = { ...baseBody, [payload.key]: "1" };
+      const json = JSON.stringify(bodyObj);
+      try {
+        const { status, text } = await this.scopedFetchText(url, method, json, {
+          "Content-Type": "application/json",
+        });
+        return { payloadKey: payload.key, responseText: text, status };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { payloadKey: payload.key, responseText: msg };
+      }
+    };
+
+    let result;
+    try {
+      result = await runStructuralSqliProbeAsync({ baseKey, maxIterations }, sendKey);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `structural_sqli_probe failed: ${msg}` };
+    }
+
+    this.persistToolArtifact("structural_sqli_probe", {
+      url,
+      base_key: baseKey,
+      verdict: result.verdict,
+      dialect: result.dialect,
+    });
+
+    const summary =
+      result.verdict === "confirmed"
+        ? `Structural SQL injection CONFIRMED on JSON key "${baseKey}" at ${url} (${result.dialect ?? "dialect unpinned"}): a balanced key parsed cleanly while the broken key errored. Save a finding with the iteration trail.`
+        : result.verdict === "error_signal"
+          ? `Key "${baseKey}" reaches the SQL parser (broken key errored, ${result.dialect ?? "dialect unpinned"}) but no clean differential confirmation within ${result.trail.length} iterations — likely structural SQLi; inspect the trail or re-probe.`
+          : `No structural SQLi signal on key "${baseKey}" at ${url}: the broken key never triggered a SQL error (surface is not concatenating the key into SQL).`;
+
+    return {
+      success: true,
+      output: {
+        url,
+        base_key: baseKey,
+        verdict: result.verdict,
+        dialect: result.dialect,
+        iterations: result.trail.length,
+        trail: result.trail,
+        summary,
+      },
+    };
+  }
+
+  /**
+   * #775 — classify the WRITE impact of a prompt-layer DB asset the agent has
+   * already read. Verification-only: pure classification over read-only
+   * evidence, no writes.
+   */
+  private async promptLayerProbe(args: Record<string, unknown>): Promise<ToolResult> {
+    if (typeof args.writable !== "boolean") {
+      return { success: false, output: null, error: "writable (boolean) is required" };
+    }
+    const asset: PromptLayerAsset = {
+      table: args.table as string | undefined,
+      column: args.column as string | undefined,
+      sample: args.sample as string | undefined,
+      writable: args.writable,
+      reReadAtInference: args.re_read_at_inference === true,
+    };
+    const result = classifyPromptLayerImpact(asset);
+    return {
+      success: true,
+      output: {
+        is_prompt_layer: result.isPromptLayer,
+        impacts: result.impacts,
+        severity: result.severity,
+        narrative: result.narrative,
+      },
+    };
   }
 
   private async shellExec(args: Record<string, unknown>): Promise<ToolResult> {

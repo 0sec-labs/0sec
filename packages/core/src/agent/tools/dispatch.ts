@@ -18,6 +18,7 @@ import { exploitDispatch } from "./exploit.js";
 import { intelDispatch } from "./intel.js";
 import { skillsDispatch } from "./skills.js";
 import { scannerDispatch } from "./scanner.js";
+import { detectionDispatch } from "./detections.js";
 
 export const TOOL_DISPATCH: Record<string, string> = {
   ...reconDispatch,
@@ -28,4 +29,5 @@ export const TOOL_DISPATCH: Record<string, string> = {
   ...intelDispatch,
   ...skillsDispatch,
   ...scannerDispatch,
+  ...detectionDispatch,
 };

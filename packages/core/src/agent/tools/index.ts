@@ -20,6 +20,7 @@ import { exploitToolDefinitions } from "./exploit.js";
 import { intelToolDefinitions } from "./intel.js";
 import { skillsToolDefinitions } from "./skills.js";
 import { scannerToolDefinitions, SCANNER_TOOL_NAMES } from "./scanner.js";
+import { detectionToolDefinitions } from "./detections.js";
 
 export { SCANNER_TOOL_NAMES };
 
@@ -34,6 +35,7 @@ const DOMAIN_DEFINITIONS: Record<string, ToolDefinition> = {
   ...intelToolDefinitions,
   ...skillsToolDefinitions,
   ...scannerToolDefinitions,
+  ...detectionToolDefinitions,
 };
 
 // Canonical registry order, preserved verbatim from the pre-split tools.ts.
@@ -74,6 +76,8 @@ const TOOL_REGISTRY_ORDER = [
   "run_nmap",
   "run_ffuf",
   "run_nuclei",
+  "structural_sqli_probe",
+  "prompt_layer_probe",
 ] as const;
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = Object.fromEntries(

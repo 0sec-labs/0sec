@@ -47,6 +47,8 @@ const EXPECTED_ROUTING: Record<string, string> = {
   run_nmap: "runNmap",
   run_ffuf: "runFfuf",
   run_nuclei: "runNuclei",
+  structural_sqli_probe: "structuralSqliProbe",
+  prompt_layer_probe: "promptLayerProbe",
 };
 
 describe("TOOL_DISPATCH (pwnkit#614)", () => {
