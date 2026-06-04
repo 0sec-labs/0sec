@@ -39,6 +39,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   payload_lookup: "payloadLookup",
   pty_session: "ptySession",
   wp_fingerprint: "wpFingerprint",
+  discover_api_surface: "discoverApiSurface",
   mongo_objectid: "mongoObjectIdForge",
   list_skills: "listSkills",
   load_skill: "loadSkill",

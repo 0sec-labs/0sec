@@ -131,6 +131,19 @@ export const reconToolDefinitions: Record<string, ToolDefinition> = {
       },
     },
   },
+  discover_api_surface: {
+    name: "discover_api_surface",
+    description:
+      "Map the target's API surface in one call: probes well-known OpenAPI/Swagger spec locations (/openapi.json, /v3/api-docs, …) and MCP mount points, parses any spec found, and returns a deduped inventory of endpoints (METHOD /path), specs, and MCP servers. " +
+      "This is how a real attacker starts — find the docs, enumerate every endpoint, THEN probe each for auth boundaries (auth_boundary_probe) and injection (structural_sqli_probe). Every probe is scope-validated, so it only touches the in-scope target. " +
+      "Use at the start of a web/API engagement to enumerate the surface before targeting individual endpoints. Returns assets with kind (endpoint / openapi_spec / mcp_server) + metadata (HTTP method, spec title); feed the endpoint list straight into auth_boundary_probe.",
+    parameters: {
+      domain: {
+        type: "string",
+        description: "The target host or base URL to map (e.g. https://api.target.com or target.com). Must be in scope; defaults to the scan target when omitted.",
+      },
+    },
+  },
 };
 
 // Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
@@ -145,4 +158,5 @@ export const reconDispatch: Record<string, string> = {
   browser: "browserAction",
   web_search: "webSearch",
   wp_fingerprint: "wpFingerprint",
+  discover_api_surface: "discoverApiSurface",
 };

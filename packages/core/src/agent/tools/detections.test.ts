@@ -149,3 +149,66 @@ describe("auth_boundary_probe tool (#770)", () => {
     expect(res.success).toBe(false);
   });
 });
+
+describe("discover_api_surface tool (#769)", () => {
+  function ctx(): ToolContext {
+    return {
+      target: "https://example.com",
+      scanId: "disc-test",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+    };
+  }
+
+  it("registers in the canonical registry", () => {
+    expect(TOOL_DEFINITIONS.discover_api_surface).toBeDefined();
+  });
+
+  it("discovers an OpenAPI spec + its endpoints through the executor", async () => {
+    const spec = JSON.stringify({
+      openapi: "3.0.0",
+      info: { title: "Test API" },
+      paths: { "/users": { get: {} }, "/orders": { post: {} } },
+    });
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/openapi.json")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (n: string) => (n.toLowerCase() === "content-type" ? "application/json" : null) },
+          text: async () => spec,
+          json: async () => JSON.parse(spec),
+        };
+      }
+      return {
+        ok: false,
+        status: 404,
+        headers: { get: () => null },
+        text: async () => "not found",
+        json: async () => ({}),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const exec = new ToolExecutor(ctx(), null);
+      const res = await exec.execute({
+        name: "discover_api_surface",
+        arguments: { domain: "https://example.com" },
+      });
+      expect(res.success).toBe(true);
+      const out = res.output as {
+        by_kind: Record<string, number>;
+        assets: Array<{ kind: string; value: string }>;
+      };
+      expect(out.by_kind.openapi_spec).toBeGreaterThanOrEqual(1);
+      expect(out.by_kind.endpoint).toBeGreaterThanOrEqual(2);
+      const endpointValues = out.assets.filter((a) => a.kind === "endpoint").map((a) => a.value);
+      expect(endpointValues.join(" ")).toContain("/users");
+      expect(endpointValues.join(" ")).toContain("/orders");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

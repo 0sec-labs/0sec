@@ -68,6 +68,7 @@ const TOOL_REGISTRY_ORDER = [
   "payload_lookup",
   "pty_session",
   "wp_fingerprint",
+  "discover_api_surface",
   "mongo_objectid",
   "list_skills",
   "load_skill",

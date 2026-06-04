@@ -39,6 +39,7 @@ import {
   type FetchLike as AuthBoundaryFetchLike,
   type ProbeEndpoint as AuthBoundaryEndpoint,
 } from "./auth-boundary-prober.js";
+import { runRecon } from "../recon/recon.js";
 import {
   classifyPromptLayerImpact,
   type PromptLayerAsset,
@@ -2735,6 +2736,76 @@ export class ToolExecutor {
         endpoint_count: report.endpointCount,
         unauth_reachable_count: report.unauthReachableCount,
         results: report.results,
+        summary,
+      },
+    };
+  }
+
+  /**
+   * #769 — map the target's API surface (OpenAPI/Swagger spec discovery +
+   * endpoint enumeration + MCP probe) in one call, so the agent can recon the
+   * surface mid-scan and feed the endpoint list into auth_boundary_probe /
+   * structural_sqli_probe. All probes go through the scope-validated fetch, so
+   * out-of-scope candidates are naturally dropped (recon records them as
+   * warnings rather than probing them).
+   */
+  private async discoverApiSurface(args: Record<string, unknown>): Promise<ToolResult> {
+    const domain = (args.domain as string) ?? this.ctx.target;
+    if (!domain) {
+      return { success: false, output: null, error: "domain is required (or set the scan target)" };
+    }
+
+    // Scope-validated fetch matching `typeof fetch` — recon only reaches paths
+    // validateTargetUrl accepts; anything out of scope throws and recon folds
+    // it into `warnings` instead of probing it.
+    const scopedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.href : String(input);
+      const url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+      const fetchInit = applyAttribution(
+        url,
+        { ...init, redirect: "manual" },
+        this.ctx.attribution,
+        this.ctx.scope,
+      )!;
+      if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+      // foxguard:ignore — `url` validated by validateTargetUrl above.
+      const res = await fetch(url, fetchInit);
+      if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+      return res;
+    }) as typeof fetch;
+
+    let result;
+    try {
+      result = await runRecon(domain, { fetchImpl: scopedFetch });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `discover_api_surface failed: ${msg}` };
+    }
+
+    this.persistToolArtifact("discover_api_surface", {
+      domain: result.domain,
+      total: result.summary.total,
+      by_kind: result.summary.byKind,
+    });
+
+    const endpoints = result.assets.filter((a) => a.kind === "endpoint").length;
+    const specs = result.assets.filter((a) => a.kind === "openapi_spec").length;
+    const summary =
+      result.assets.length > 0
+        ? `Mapped ${result.assets.length} asset(s) on ${result.domain}: ${specs} API spec(s), ${endpoints} endpoint(s)` +
+          (result.summary.byKind.mcp_server ? `, ${result.summary.byKind.mcp_server} MCP server(s)` : "") +
+          `. Feed the endpoint list into auth_boundary_probe to find unauthenticated ones, then structural_sqli_probe the dynamic params.`
+        : `No API spec or MCP surface found at ${result.domain}${result.warnings.length ? ` (${result.warnings.length} probe warning(s))` : ""}.`;
+
+    return {
+      success: true,
+      output: {
+        domain: result.domain,
+        total: result.summary.total,
+        by_kind: result.summary.byKind,
+        assets: result.assets,
+        warnings: result.warnings,
         summary,
       },
     };
