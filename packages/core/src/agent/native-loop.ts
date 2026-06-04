@@ -18,6 +18,10 @@ import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
 import { LootLedger } from "./loot.js";
+import {
+  maybeCreateTrustGraphSession,
+  type TrustGraphConfig,
+} from "./trust-graph-runtime.js";
 import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
 import { loadJournal, rehydrateContext, renderSeedMessages } from "./journal/index.js";
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
@@ -199,6 +203,21 @@ export interface NativeAgentConfig {
    * when the `list_skills` / `load_skill` tools are not exposed.
    */
   preloadedSkillIds?: string[];
+  /**
+   * Durable cross-scan credential store wiring (pwnkit#771, connects #786 +
+   * #780). OPT-IN and OFF BY DEFAULT: when omitted, the loop behaves exactly as
+   * today — no durable store is constructed, no prior footholds are loaded, the
+   * ledger is never persisted, and no `credential_shared` journal entry is
+   * emitted (zero new I/O, byte-identical behaviour; asserted by test).
+   *
+   * When set, the loop (a) injects this target's prior-scan footholds at start,
+   * (b) persists the in-scan ledger (hash + redacted preview only — never
+   * plaintext) on harvest growth and at completion, and (c) emits a
+   * `credential_shared` journal entry when a prior-scan credential from a
+   * different source target is re-found against this target. See
+   * `trust-graph-runtime.ts` for the full contract.
+   */
+  trustGraph?: TrustGraphConfig;
 }
 
 export interface NativeAgentLoopOptions {
@@ -300,27 +319,18 @@ export async function runNativeAgentLoop(
   // results and re-injects a compact "known footholds" block each turn.
   const loot = features.lootLedger ? new LootLedger() : undefined;
 
-  // pwnkit#771 (extends #687) — STUB: durable PersistentCredentialStore wiring.
-  //
-  // FIRST SLICE: the store + schema (persistent_credentials, trust_graph_edges)
-  // exist and are unit-tested in `credential-store.ts` / `@pwnkit/db`, but the
-  // loop is NOT yet wired to sync to/from them. Intended wiring, to be done in a
-  // follow-up so we don't rewrite the loop here:
-  //
-  //   import { PersistentCredentialStore } from "./credential-store.js";
-  //   const credStore = db ? new PersistentCredentialStore(db) : undefined;
-  //   // 1. On startup: inject prior-scan footholds for this target —
-  //   //      credStore?.renderPriorFootholds({ target: config.target })
-  //   //      pushed as a context block alongside the loot ledger render.
-  //   // 2. On scan completion (or each loot.harvest): persist the ledger —
-  //   //      credStore?.saveLedger(loot, {
-  //   //        target: config.target, scanId: config.scanId,
-  //   //      });
-  //   // 3. Record trust edges as chains are discovered via
-  //   //      credStore?.addTrustEdge({ ... }).
-  //
-  // Acceptance (#771): creds harvested in one scan persist and are queryable by
-  // a later scan; no plaintext secret leakage (store keeps hash + preview only).
+  // pwnkit#771 (extends #687, connects #786 + #780) — durable cross-scan
+  // credential store wiring. OPT-IN: `config.trustGraph` is undefined by default,
+  // in which case `maybeCreateTrustGraphSession` returns undefined and every
+  // `trustGraph?.` call site below is a no-op — the loop is byte-identical to the
+  // single-scan path. When present, the session (constructed once the shadow
+  // journal exists, below) loads this target's prior footholds, persists the
+  // in-scan ledger (hash + preview only, never plaintext), and emits a
+  // `credential_shared` journal entry on cross-target credential reuse. The full
+  // contract lives in `trust-graph-runtime.ts`. `trustGraph` is declared here so
+  // it is in scope for the loop; it is assigned after `shadowJournal` is created
+  // (the default journal sink for credential_shared entries).
+  let trustGraph: ReturnType<typeof maybeCreateTrustGraphSession>;
 
   // Stateful access-control session (pwnkit#564). Reconcile the legacy singular
   // `authConfig` with the multi-identity `identities` list, then build (or
@@ -387,6 +397,22 @@ export async function runNativeAgentLoop(
     });
   }
 
+  // pwnkit#771 — construct the trust-graph session iff opted in (above). The
+  // shadow journal is the default sink for `credential_shared` entries. Loading
+  // prior footholds is the ONLY store read here; it happens once. Best-effort:
+  // a store failure here must never abort the loop, so it falls back to no
+  // session (identical to the opted-out path).
+  if (config.trustGraph) {
+    try {
+      trustGraph = maybeCreateTrustGraphSession(config.trustGraph, {
+        target: config.target,
+        defaultJournalSink: shadowJournal,
+      });
+    } catch {
+      trustGraph = undefined;
+    }
+  }
+
   // ── Execution-journal context routing (#494, slice 2, flag-gated, OFF) ──
   // When PWNKIT_FEATURE_JOURNAL_REHYDRATE is on, seed the loop's context off
   // the durable on-disk journal (rehydrateContext + renderSeedMessages)
@@ -444,6 +470,29 @@ export async function runNativeAgentLoop(
       role: "user",
       content: [{ type: "text", text: buildInitialPrompt(config) }],
     });
+
+    // pwnkit#771 — on a fresh start, inject this target's prior-scan footholds
+    // (hash + redacted preview only) alongside the normal in-scan loot render.
+    // Gated on the opt-in `trustGraph` session: when absent this whole block is
+    // skipped, so the fresh-start prompt is byte-identical to today. "" render
+    // (no prior footholds) is also skipped — no empty message is pushed.
+    if (trustGraph) {
+      try {
+        const priorText = trustGraph.renderPriorFootholds(config.target);
+        if (priorText) {
+          messages.push({
+            role: "user",
+            content: [{ type: "text", text: priorText }],
+          });
+          onEvent?.("prior_footholds_injected", {
+            scanId: config.scanId,
+            count: trustGraph.priorCount,
+          });
+        }
+      } catch {
+        /* prior-footholds injection is best-effort */
+      }
+    }
 
     // Clean up external memory file at the start of a new scan (not between retries)
     if (features.externalMemory && (config.retryCount ?? 0) === 0) {
@@ -1034,14 +1083,14 @@ export async function runNativeAgentLoop(
           finding: { ...(f ?? {}), ...input },
         });
 
-        // TODO(#773): emit `credential_shared` here when a credential surfaced
-        // by this finding is later reused across a target boundary. The kind +
-        // `appendCredentialShared(shadowJournal, { sourceTarget, destTarget,
-        // credentialKind, originatingFindingId })` helper exist in
-        // ./journal/credential-shared.ts; wiring the actual emit needs the
-        // cross-target reuse detection that this single-target loop does not
-        // yet have (it has no notion of a second target or a credential store).
-        // Left as a stub per the first-slice scope of #773.
+        // pwnkit#771/#773 — cross-target `credential_shared` emit is now wired
+        // (opt-in) at the loot-harvest site: when `config.trustGraph` is set, a
+        // newly-harvested value whose hash matches a prior scan's credential
+        // from a DIFFERENT source target emits a `credential_shared` entry via
+        // `trustGraph.noteHarvest` (see the harvest block below). It hangs off
+        // the durable store rather than save_finding because the reuse signal is
+        // the recovered VALUE, not the finding shape. No-op when trustGraph is
+        // not opted in, so this single-target finding path is unchanged.
 
         // ── onFindingSaved hook: inline validation (#554) ──
         // The moment a high/critical finding is saved, run the cheap
@@ -1132,7 +1181,18 @@ export async function runNativeAgentLoop(
       // a harvest failure must never abort the agent loop.
       if (loot && toolResult.success && shouldHarvestLoot(block.name)) {
         try {
-          loot.harvest(resultContent, block.name, state.turnCount);
+          const harvested = loot.harvest(resultContent, block.name, state.turnCount);
+          // pwnkit#771 — if any newly-harvested value matches a credential a
+          // PRIOR scan recovered from a DIFFERENT source target, that's a
+          // cross-target reuse → emit a `credential_shared` journal entry. No-op
+          // when trustGraph is not opted in. Best-effort: never abort the loop.
+          if (trustGraph && harvested.length > 0) {
+            try {
+              trustGraph.noteHarvest(harvested, state.turnCount);
+            } catch {
+              /* credential_shared emit is best-effort */
+            }
+          }
         } catch {
           /* harvesting is best-effort */
         }
@@ -1425,6 +1485,26 @@ export async function runNativeAgentLoop(
   state.findings = toolCtx.findings;
   state.attackResults = toolCtx.attackResults;
   state.targetInfo = toolCtx.targetInfo;
+
+  // pwnkit#771 — on loop completion, persist this scan's in-memory loot ledger
+  // to the durable store (hash + redacted preview only; the plaintext never
+  // leaves the in-memory ledger). No-op when trustGraph is not opted in or the
+  // ledger is empty. Best-effort: a persist failure must never break the return
+  // path or the final session save below.
+  if (trustGraph && loot && loot.size > 0) {
+    try {
+      const persisted = trustGraph.persist(loot, {
+        target: config.target,
+        scanId: config.scanId,
+      });
+      onEvent?.("credentials_persisted", {
+        scanId: config.scanId,
+        count: persisted,
+      });
+    } catch {
+      /* durable persist is best-effort */
+    }
+  }
 
   // Compute estimated cost
   state.estimatedCostUsd = estimateCost(state.totalUsage);
