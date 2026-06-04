@@ -35,6 +35,11 @@ import {
   type ProbeObservation,
 } from "./structural-sqli.js";
 import {
+  runAuthBoundaryProbe,
+  type FetchLike as AuthBoundaryFetchLike,
+  type ProbeEndpoint as AuthBoundaryEndpoint,
+} from "./auth-boundary-prober.js";
+import {
   classifyPromptLayerImpact,
   type PromptLayerAsset,
 } from "./playbooks.js";
@@ -2561,6 +2566,12 @@ export class ToolExecutor {
         : {};
     const maxIterations =
       typeof args.max_iterations === "number" ? args.max_iterations : undefined;
+    // Inject the scan's configured auth so the probe works on authenticated
+    // endpoints (not just the unauthenticated McKinsey case). Empty when the
+    // engagement configured no creds — buildAuthHeaders tolerates undefined.
+    const authHeaders = this.ctx.authConfig
+      ? buildAuthHeaders(this.ctx.authConfig)
+      : {};
 
     const sendKey = async (payload: {
       key: string;
@@ -2572,6 +2583,7 @@ export class ToolExecutor {
       try {
         const { status, text } = await this.scopedFetchText(url, method, json, {
           "Content-Type": "application/json",
+          ...authHeaders,
         });
         return { payloadKey: payload.key, responseText: text, status };
       } catch (err) {
@@ -2640,6 +2652,90 @@ export class ToolExecutor {
         impacts: result.impacts,
         severity: result.severity,
         narrative: result.narrative,
+      },
+    };
+  }
+
+  /**
+   * #770 — probe a set of endpoints for unauthenticated reachability (the
+   * "N of M endpoints require no auth" class). Sends each endpoint unauthed
+   * (auth stripped) and, when the scan configured creds, authed, then diffs.
+   * Every request goes through the scope-validated fetch path.
+   */
+  private async authBoundaryProbe(args: Record<string, unknown>): Promise<ToolResult> {
+    const rawEndpoints = args.endpoints;
+    if (!Array.isArray(rawEndpoints) || rawEndpoints.length === 0) {
+      return { success: false, output: null, error: "endpoints (non-empty array of url strings or {url,method,body}) is required" };
+    }
+    const endpoints = rawEndpoints as Array<AuthBoundaryEndpoint | string>;
+
+    // Scope-validated FetchLike — the prober owns the authed/unauthed diff
+    // logic; this only enforces scope/SSRF/attribution and shapes the response.
+    const fetchImpl: AuthBoundaryFetchLike = async (rawUrl, init) => {
+      const url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const fetchInit = applyAttribution(
+          url,
+          {
+            method: init?.method ?? "GET",
+            headers: init?.headers ?? {},
+            body: init?.body,
+            signal: controller.signal,
+            redirect: "manual",
+          },
+          this.ctx.attribution,
+          this.ctx.scope,
+        )!;
+        if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+        // foxguard:ignore — `url` validated by validateTargetUrl above.
+        const res = await fetch(url, fetchInit);
+        if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+        const bodyText = await res.text();
+        return {
+          ok: res.ok,
+          status: res.status,
+          headers: res.headers,
+          text: async () => bodyText,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    let report;
+    try {
+      report = await runAuthBoundaryProbe({
+        endpoints,
+        auth: this.ctx.authConfig,
+        fetchImpl,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `auth_boundary_probe failed: ${msg}` };
+    }
+
+    this.persistToolArtifact("auth_boundary_probe", {
+      endpoint_count: report.endpointCount,
+      unauth_reachable_count: report.unauthReachableCount,
+    });
+
+    const leaks = report.results.filter((r) => r.unauthReachable);
+    const summary =
+      leaks.length > 0
+        ? `${leaks.length}/${report.endpointCount} endpoint(s) reachable WITHOUT authentication: ${leaks
+            .map((l) => `${l.method} ${l.url} (${l.severity})`)
+            .join(", ")}. Save a finding for each unauth-reachable break with the evidence below.`
+        : `All ${report.endpointCount} endpoint(s) gated: none were reachable unauthenticated.`;
+
+    return {
+      success: true,
+      output: {
+        endpoint_count: report.endpointCount,
+        unauth_reachable_count: report.unauthReachableCount,
+        results: report.results,
+        summary,
       },
     };
   }

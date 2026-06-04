@@ -78,6 +78,7 @@ const TOOL_REGISTRY_ORDER = [
   "run_nuclei",
   "structural_sqli_probe",
   "prompt_layer_probe",
+  "auth_boundary_probe",
 ] as const;
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = Object.fromEntries(

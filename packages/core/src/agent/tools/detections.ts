@@ -52,10 +52,25 @@ export const detectionToolDefinitions: Record<string, ToolDefinition> = {
     },
     required: ["writable"],
   },
+  auth_boundary_probe: {
+    name: "auth_boundary_probe",
+    description:
+      "Detect unauthenticated-reachable endpoints (the McKinsey '22 of 200 endpoints required no auth' class). For each endpoint, sends an UNAUTHENTICATED request (auth stripped) and, when the scan has credentials, an AUTHENTICATED baseline, then diffs them. " +
+      "Reports per endpoint whether it is reachable with no credentials (`unauth-reachable`), the boundary holds (`auth-required` 401/403), or it is `not-found`/`inconclusive`. HIGH severity when an anonymous caller gets the SAME protected resource the authed baseline did. " +
+      "Use after enumerating an API surface (recon / OpenAPI docs) to find which endpoints leak without auth. Returns full unauth-vs-auth evidence per endpoint; call save_finding for each unauth-reachable break.",
+    parameters: {
+      endpoints: {
+        type: "object",
+        description: "Array of endpoints to probe. Each item is a URL string or { url, method, body }. All must be in scope.",
+      },
+    },
+    required: ["endpoints"],
+  },
 };
 
 // Tool-name → ToolExecutor handler-method name (pwnkit#614).
 export const detectionDispatch: Record<string, string> = {
   structural_sqli_probe: "structuralSqliProbe",
   prompt_layer_probe: "promptLayerProbe",
+  auth_boundary_probe: "authBoundaryProbe",
 };
