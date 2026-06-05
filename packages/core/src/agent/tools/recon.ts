@@ -144,6 +144,19 @@ export const reconToolDefinitions: Record<string, ToolDefinition> = {
       },
     },
   },
+  surface_sweep: {
+    name: "surface_sweep",
+    description:
+      "One-call attack-surface sweep: maps the API surface (like discover_api_surface) AND probes every discovered endpoint for unauthenticated reachability (like auth_boundary_probe) in a single step. " +
+      "Fastest way to start an engagement — point it at a host and get the full endpoint inventory plus which endpoints leak without auth, ready to drill into with structural_sqli_probe. Every request is scope-validated. " +
+      "Returns the discovered surface, per-endpoint auth-boundary verdicts, and pre-drafted findings for each unauthenticated-reachable endpoint.",
+    parameters: {
+      domain: {
+        type: "string",
+        description: "The target host or base URL to sweep (defaults to the scan target).",
+      },
+    },
+  },
 };
 
 // Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
@@ -159,4 +172,5 @@ export const reconDispatch: Record<string, string> = {
   web_search: "webSearch",
   wp_fingerprint: "wpFingerprint",
   discover_api_surface: "discoverApiSurface",
+  surface_sweep: "surfaceSweep",
 };

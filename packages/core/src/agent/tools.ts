@@ -2615,6 +2615,19 @@ export class ToolExecutor {
           ? `Key "${baseKey}" reaches the SQL parser (broken key errored, ${result.dialect ?? "dialect unpinned"}) but no clean differential confirmation within ${result.trail.length} iterations — likely structural SQLi; inspect the trail or re-probe.`
           : `No structural SQLi signal on key "${baseKey}" at ${url}: the broken key never triggered a SQL error (surface is not concatenating the key into SQL).`;
 
+    // On a confirmed break, pre-draft the finding so the agent can save_finding
+    // without re-deriving the evidence (a common drop point). Advisory only —
+    // the agent still decides whether/when to save.
+    const suggested_finding =
+      result.verdict === "confirmed"
+        ? {
+            title: `Structural SQL injection via JSON key "${baseKey}"`,
+            severity: "high",
+            category: "sql_injection",
+            description: summary,
+          }
+        : null;
+
     return {
       success: true,
       output: {
@@ -2625,6 +2638,7 @@ export class ToolExecutor {
         iterations: result.trail.length,
         trail: result.trail,
         summary,
+        suggested_finding,
       },
     };
   }
@@ -2646,6 +2660,15 @@ export class ToolExecutor {
       reReadAtInference: args.re_read_at_inference === true,
     };
     const result = classifyPromptLayerImpact(asset);
+    const suggested_finding =
+      result.severity === "high"
+        ? {
+            title: `Writable prompt-layer asset${asset.table ? ` (${asset.table}${asset.column ? `.${asset.column}` : ""})` : ""} — persistent prompt injection`,
+            severity: "high",
+            category: "prompt_injection",
+            description: result.narrative,
+          }
+        : null;
     return {
       success: true,
       output: {
@@ -2653,6 +2676,7 @@ export class ToolExecutor {
         impacts: result.impacts,
         severity: result.severity,
         narrative: result.narrative,
+        suggested_finding,
       },
     };
   }
@@ -2730,6 +2754,15 @@ export class ToolExecutor {
             .join(", ")}. Save a finding for each unauth-reachable break with the evidence below.`
         : `All ${report.endpointCount} endpoint(s) gated: none were reachable unauthenticated.`;
 
+    // Pre-draft a finding per unauthenticated-reachable endpoint so the agent
+    // can save_finding directly. Advisory only.
+    const suggested_findings = leaks.map((l) => ({
+      title: `Unauthenticated access to ${l.method} ${l.url}`,
+      severity: l.severity === "high" ? "high" : "medium",
+      category: "broken_access_control",
+      description: `${l.method} ${l.url} is reachable without authentication (verdict: ${l.verdict}). ${l.note}`,
+    }));
+
     return {
       success: true,
       output: {
@@ -2737,6 +2770,7 @@ export class ToolExecutor {
         unauth_reachable_count: report.unauthReachableCount,
         results: report.results,
         summary,
+        suggested_findings,
       },
     };
   }
@@ -2807,6 +2841,140 @@ export class ToolExecutor {
         assets: result.assets,
         warnings: result.warnings,
         summary,
+      },
+    };
+  }
+
+  /**
+   * #761 — one-call attack-surface sweep: discover_api_surface +
+   * auth_boundary_probe composed. Maps the surface, then probes every
+   * discovered endpoint for unauthenticated reachability, returning the
+   * inventory + per-endpoint verdicts + pre-drafted findings for the leaks.
+   */
+  private async surfaceSweep(args: Record<string, unknown>): Promise<ToolResult> {
+    const domain = (args.domain as string) ?? this.ctx.target;
+    if (!domain) {
+      return { success: false, output: null, error: "domain is required (or set the scan target)" };
+    }
+
+    // Scope-validated fetch for the recon leg (typeof fetch).
+    const scopedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.href : String(input);
+      const url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+      const fetchInit = applyAttribution(
+        url,
+        { ...init, redirect: "manual" },
+        this.ctx.attribution,
+        this.ctx.scope,
+      )!;
+      if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+      // foxguard:ignore — `url` validated by validateTargetUrl above.
+      const res = await fetch(url, fetchInit);
+      if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+      return res;
+    }) as typeof fetch;
+
+    let recon;
+    try {
+      recon = await runRecon(domain, { fetchImpl: scopedFetch });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `surface_sweep recon failed: ${msg}` };
+    }
+
+    // Turn discovered "METHOD /path" endpoints into absolute probe endpoints.
+    const origin = recon.domain.replace(/\/+$/, "");
+    const endpoints: AuthBoundaryEndpoint[] = recon.assets
+      .filter((a) => a.kind === "endpoint")
+      .map((a) => {
+        const [maybeMethod, ...rest] = a.value.trim().split(/\s+/);
+        const hasMethod = rest.length > 0;
+        const method = hasMethod ? maybeMethod : "GET";
+        const path = (hasMethod ? rest.join(" ") : a.value).trim();
+        const url = path.startsWith("http")
+          ? path
+          : `${origin}${path.startsWith("/") ? "" : "/"}${path}`;
+        return { url, method };
+      });
+
+    // No endpoints to probe — return the surface map alone.
+    if (endpoints.length === 0) {
+      return {
+        success: true,
+        output: {
+          domain: recon.domain,
+          surface: { total: recon.summary.total, by_kind: recon.summary.byKind, assets: recon.assets },
+          endpoint_count: 0,
+          unauth_reachable_count: 0,
+          results: [],
+          suggested_findings: [],
+          summary: `Mapped ${recon.summary.total} asset(s) on ${recon.domain} but found no concrete endpoints to auth-probe (no parseable API spec).`,
+        },
+      };
+    }
+
+    // Scope-validated FetchLike for the boundary leg.
+    const fetchLike: AuthBoundaryFetchLike = async (rawUrl, init) => {
+      const url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const fetchInit = applyAttribution(
+          url,
+          { method: init?.method ?? "GET", headers: init?.headers ?? {}, body: init?.body, signal: controller.signal, redirect: "manual" },
+          this.ctx.attribution,
+          this.ctx.scope,
+        )!;
+        if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+        // foxguard:ignore — `url` validated by validateTargetUrl above.
+        const res = await fetch(url, fetchInit);
+        if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+        const bodyText = await res.text();
+        return { ok: res.ok, status: res.status, headers: res.headers, text: async () => bodyText };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    let report;
+    try {
+      report = await runAuthBoundaryProbe({ endpoints, auth: this.ctx.authConfig, fetchImpl: fetchLike });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `surface_sweep boundary probe failed: ${msg}` };
+    }
+
+    this.persistToolArtifact("surface_sweep", {
+      domain: recon.domain,
+      assets: recon.summary.total,
+      endpoints: report.endpointCount,
+      unauth_reachable: report.unauthReachableCount,
+    });
+
+    const leaks = report.results.filter((r) => r.unauthReachable);
+    const suggested_findings = leaks.map((l) => ({
+      title: `Unauthenticated access to ${l.method} ${l.url}`,
+      severity: l.severity === "high" ? "high" : "medium",
+      category: "broken_access_control",
+      description: `${l.method} ${l.url} is reachable without authentication (verdict: ${l.verdict}). ${l.note}`,
+    }));
+
+    return {
+      success: true,
+      output: {
+        domain: recon.domain,
+        surface: { total: recon.summary.total, by_kind: recon.summary.byKind, assets: recon.assets },
+        endpoint_count: report.endpointCount,
+        unauth_reachable_count: report.unauthReachableCount,
+        results: report.results,
+        suggested_findings,
+        summary:
+          `Swept ${recon.domain}: ${recon.summary.total} asset(s), ${report.endpointCount} endpoint(s) probed, ` +
+          `${report.unauthReachableCount} reachable WITHOUT auth` +
+          (leaks.length > 0
+            ? `: ${leaks.map((l) => `${l.method} ${l.url}`).join(", ")}. Drill into dynamic params with structural_sqli_probe.`
+            : `. Surface gated.`),
       },
     };
   }

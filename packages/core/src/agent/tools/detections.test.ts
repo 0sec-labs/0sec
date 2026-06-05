@@ -212,3 +212,93 @@ describe("discover_api_surface tool (#769)", () => {
     }
   });
 });
+
+describe("suggested_finding evidence drafts", () => {
+  function ctx(): ToolContext {
+    return { target: "https://example.com", scanId: "sf-test", findings: [], attackResults: [], targetInfo: {} };
+  }
+
+  it("prompt_layer_probe drafts a finding on a writable, re-read asset (high)", async () => {
+    const exec = new ToolExecutor(ctx(), null);
+    const res = await exec.execute({
+      name: "prompt_layer_probe",
+      arguments: { table: "system_prompts", column: "content", sample: "You are a helpful assistant", writable: true, re_read_at_inference: true },
+    });
+    const out = res.output as { severity: string; suggested_finding: { category: string; severity: string } | null };
+    expect(out.severity).toBe("high");
+    expect(out.suggested_finding).not.toBeNull();
+    expect(out.suggested_finding!.category).toBe("prompt_injection");
+  });
+
+  it("prompt_layer_probe does NOT draft a finding for a non-writable asset", async () => {
+    const exec = new ToolExecutor(ctx(), null);
+    const res = await exec.execute({
+      name: "prompt_layer_probe",
+      arguments: { table: "system_prompts", column: "content", writable: false },
+    });
+    const out = res.output as { suggested_finding: unknown };
+    expect(out.suggested_finding).toBeNull();
+  });
+
+  it("auth_boundary_probe drafts a finding per unauth-reachable endpoint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => '{"x":1}' })),
+    );
+    try {
+      const exec = new ToolExecutor(ctx(), null);
+      const res = await exec.execute({ name: "auth_boundary_probe", arguments: { endpoints: ["https://example.com/api/users"] } });
+      const out = res.output as { suggested_findings: Array<{ category: string }> };
+      expect(out.suggested_findings).toHaveLength(1);
+      expect(out.suggested_findings[0]!.category).toBe("broken_access_control");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("surface_sweep tool (#761)", () => {
+  function ctx(): ToolContext {
+    return { target: "https://example.com", scanId: "sweep-test", findings: [], attackResults: [], targetInfo: {} };
+  }
+
+  it("registers in the canonical registry", () => {
+    expect(TOOL_DEFINITIONS.surface_sweep).toBeDefined();
+  });
+
+  it("maps the surface AND flags unauth-reachable endpoints in one call", async () => {
+    const spec = JSON.stringify({
+      openapi: "3.0.0",
+      info: { title: "Test API" },
+      paths: { "/users": { get: {} }, "/orders": { post: {} } },
+    });
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/openapi.json")) {
+        return { ok: true, status: 200, headers: { get: (n: string) => (n.toLowerCase() === "content-type" ? "application/json" : null) }, text: async () => spec, json: async () => JSON.parse(spec) };
+      }
+      // Discovered endpoints answer 200 unauthenticated → reachable.
+      if (url.includes("/users") || url.includes("/orders")) {
+        return { ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => '{"data":[]}', json: async () => ({}) };
+      }
+      return { ok: false, status: 404, headers: { get: () => null }, text: async () => "nf", json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const exec = new ToolExecutor(ctx(), null);
+      const res = await exec.execute({ name: "surface_sweep", arguments: { domain: "https://example.com" } });
+      expect(res.success).toBe(true);
+      const out = res.output as {
+        endpoint_count: number;
+        unauth_reachable_count: number;
+        suggested_findings: Array<{ category: string }>;
+      };
+      expect(out.endpoint_count).toBeGreaterThanOrEqual(2);
+      expect(out.unauth_reachable_count).toBeGreaterThanOrEqual(2);
+      expect(out.suggested_findings.length).toBeGreaterThanOrEqual(2);
+      expect(out.suggested_findings[0]!.category).toBe("broken_access_control");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

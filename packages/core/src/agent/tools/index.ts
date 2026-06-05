@@ -69,6 +69,7 @@ const TOOL_REGISTRY_ORDER = [
   "pty_session",
   "wp_fingerprint",
   "discover_api_surface",
+  "surface_sweep",
   "mongo_objectid",
   "list_skills",
   "load_skill",

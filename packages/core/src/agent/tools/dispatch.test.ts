@@ -40,6 +40,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   pty_session: "ptySession",
   wp_fingerprint: "wpFingerprint",
   discover_api_surface: "discoverApiSurface",
+  surface_sweep: "surfaceSweep",
   mongo_objectid: "mongoObjectIdForge",
   list_skills: "listSkills",
   load_skill: "loadSkill",
