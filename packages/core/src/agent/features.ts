@@ -249,6 +249,24 @@ export const features = {
   preReconCve: env("PWNKIT_FEATURE_PRE_RECON_CVE", true),
 
   /**
+   * Deterministic web-recon pre-pass (`packages/core/src/stages/web-recon-prepass.ts`).
+   * On web scans, runs cheap non-destructive HTTP/DNS probes before the attack
+   * agent's first turn: baseline web checks, stack fingerprint → version→CVE
+   * lookup, JS source-map/secret scan, DNS/email posture, passive subdomain
+   * enumeration, and (Next.js only, on positive proof) framework-CVE active
+   * checks. It EMITS findings directly for what it can prove and injects a
+   * "pursue these leads" block into the system prompt for what it can only hint.
+   *
+   * Default ON (no-op in non-web modes). Gated behind PWNKIT_FEATURE_WEB_RECON
+   * so it can be disabled for ablation or offline runs. Implemented as a getter
+   * so the CLI `--features` flag (which sets the env var inside the command
+   * action, AFTER this module has been imported) is honored at stage time.
+   */
+  get webRecon(): boolean {
+    return env("PWNKIT_FEATURE_WEB_RECON", true);
+  },
+
+  /**
    * Best-effort target-history preflight for source review. When a local repo
    * path is known, pwnkit infers repository/package/product hints, queries live
    * prior-vulnerability intel, and injects a compact audit-graph summary into

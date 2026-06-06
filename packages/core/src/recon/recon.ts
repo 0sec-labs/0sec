@@ -10,6 +10,10 @@
 // can be exercised end-to-end before the wordlist/DNS machinery lands.
 
 import { parseApiSpec, type ApiSpecSummary } from "../api-spec.js";
+import {
+  enumerateSubdomains as enumerateDiscoveredHosts,
+  type EnumerateSubdomainsOptions,
+} from "./subdomains.js";
 
 /** Kinds of asset the recon surface can surface. */
 export type ReconAssetKind =
@@ -273,15 +277,38 @@ async function discoverMcpServers(
 }
 
 /**
- * STUB (pwnkit#769): subdomain brute-force / passive enumeration.
+ * Passive subdomain enumeration (pwnkit#769, wired to `./subdomains.ts`).
  *
- * TODO: wire up a wordlist + DNS resolver (and/or crt.sh / passive DNS) to
- * enumerate live subdomains and emit them as `subdomain` assets that feed
- * back into the spec/MCP probes. For now this returns an empty list so the
- * dedup + merge pipeline can be exercised against the OpenAPI/MCP slice.
+ * Delegates to the CT-log + DNS enumerator and maps each discovered host onto
+ * a `subdomain` ReconAsset. The CT/DNS layer is passive (no brute-force) and
+ * degrades gracefully to an empty list on failure, so this keeps the existing
+ * `(domain) => Promise<ReconAsset[]>` contract and never throws.
  */
-export async function enumerateSubdomains(_domain: string): Promise<ReconAsset[]> {
-  return [];
+export async function enumerateSubdomains(
+  domain: string,
+  hooks?: Pick<EnumerateSubdomainsOptions, "fetchJson" | "resolve">,
+): Promise<ReconAsset[]> {
+  let apex: string;
+  try {
+    apex = new URL(normalizeDomain(domain)).hostname;
+  } catch {
+    return [];
+  }
+  let hosts: Awaited<ReturnType<typeof enumerateDiscoveredHosts>>;
+  try {
+    hosts = await enumerateDiscoveredHosts({ domain: apex, ...hooks });
+  } catch {
+    return [];
+  }
+  return hosts.map((host) => ({
+    kind: "subdomain" as const,
+    value: host.host,
+    source: host.source,
+    metadata: {
+      ...(host.addresses?.length ? { addresses: host.addresses.join(",") } : {}),
+      ...(host.cname ? { cname: host.cname } : {}),
+    },
+  }));
 }
 
 /**
@@ -298,7 +325,20 @@ export async function runRecon(domain: string, options: ReconOptions = {}): Prom
   const warnings: string[] = [];
 
   const collected: ReconAsset[] = [];
-  collected.push(...(await enumerateSubdomains(domain)));
+  // Route subdomain enumeration's CT-log fetch through the same injectable
+  // `fetchImpl` so callers (and tests) stay deterministic/offline. A custom
+  // fetch that 404s or throws on the crt.sh URL yields zero candidates, so the
+  // passive resolver is never invoked.
+  const subdomainHooks =
+    options.fetchImpl
+      ? {
+          fetchJson: async (url: string) => {
+            const res = await fetchImpl(url);
+            return res.json();
+          },
+        }
+      : undefined;
+  collected.push(...(await enumerateSubdomains(domain, subdomainHooks)));
   collected.push(...(await discoverApiSpecs(origin, specPaths, timeout, fetchImpl, warnings)));
   collected.push(...(await discoverMcpServers(origin, mcpPaths, timeout, fetchImpl, warnings)));
 

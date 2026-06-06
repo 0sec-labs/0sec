@@ -3038,12 +3038,35 @@ async function runNativeDiscovery(
   const basePrompt = isWeb
     ? webPentestDiscoveryPrompt(config.target, config.auth) + buildAccessControlPromptBlock(identities)
     : discoveryPrompt(config.target, config.auth) + buildAccessControlPromptBlock(identities);
-  const systemPrompt = apiSpecPromptText
+  let systemPrompt = apiSpecPromptText
     ? basePrompt + "\n\n" + apiSpecPromptText
     : basePrompt;
   const tools = isWeb
     ? getToolsForRole("discovery", { webMode: true, allowScanners: config.allowScanners })
     : getToolsForRole("discovery", { allowScanners: config.allowScanners });
+
+  // Deterministic web-recon pre-pass (web modes only). Mirrors the preReconCve
+  // pattern: never breaks the scan, emits findings directly, and folds a leads
+  // block into the system prompt. Gated by the webRecon feature flag.
+  let reconFindings: import("@pwnkit/shared").Finding[] = [];
+  if (isWeb && features.webRecon) {
+    try {
+      const { runWebReconPrePass } = await import("./stages/web-recon-prepass.js");
+      const { findings, promptBlock } = await runWebReconPrePass(config);
+      reconFindings = findings;
+      if (promptBlock) systemPrompt += "\n\n" + promptBlock;
+      emit({
+        type: "stage:end",
+        stage: "discovery",
+        message: `Web recon pre-pass: ${reconFindings.length} finding${reconFindings.length === 1 ? "" : "s"} emitted`,
+      });
+    } catch (err) {
+      // Pre-pass must never break the scan.
+      console.error(
+        `[web-recon-prepass] failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
 
   const state = await runNativeAgentLoop({
     config: {
@@ -3093,7 +3116,7 @@ async function runNativeDiscovery(
     },
   });
   return {
-    findings: state.findings,
+    findings: [...reconFindings, ...state.findings],
     targetInfo: state.targetInfo,
     summary: state.summary,
     turnCount: state.turnCount,
