@@ -983,9 +983,46 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       timestamp: Date.now(),
     });
 
+    // Deterministic web-recon pre-pass — runs ONCE here on the common path so it
+    // applies to BOTH native and legacy discovery. The cloud worker invokes pwnkit
+    // with `--runtime codex`, which resolves to the legacy discovery loop; a hook
+    // wired only into runNativeDiscovery never fires there (the reason the pre-pass
+    // produced nothing in cloud scans). Never breaks the scan; emits findings
+    // directly and folds its leads into apiSpecPromptText, which both discovery
+    // paths already inject into the agent system prompt.
+    let reconFindings: Finding[] = [];
+    const isWebPrepass = config.mode === "web" || config.mode === "http_audit";
+    if (isWebPrepass && features.webRecon) {
+      try {
+        const { runWebReconPrePass } = await import("./stages/web-recon-prepass.js");
+        const { findings: rf, promptBlock } = await runWebReconPrePass(config);
+        reconFindings = rf;
+        if (promptBlock) {
+          apiSpecPromptText = apiSpecPromptText
+            ? apiSpecPromptText + "\n\n" + promptBlock
+            : promptBlock;
+        }
+        emit({
+          type: "stage:end",
+          stage: "discovery",
+          message: `Web recon pre-pass: ${reconFindings.length} finding${reconFindings.length === 1 ? "" : "s"} emitted`,
+        });
+      } catch (err) {
+        // Pre-pass must never break the scan.
+        console.error(
+          `[web-recon-prepass] failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
     const discoveryState = useNative
       ? await runNativeDiscovery(nativeRuntime, db, config, scanId, emit, apiSpecPromptText, getPendingUserMessages)
       : await runLegacyDiscovery(legacyRuntime, db, config, scanId, emit, dbPath, apiSpecPromptText);
+
+    // Merge the deterministic pre-pass findings into discovery output (once).
+    if (reconFindings.length) {
+      discoveryState.findings = [...reconFindings, ...discoveryState.findings];
+    }
 
     // Persist target profile
     if (discoveryState.targetInfo.type) {
@@ -3045,28 +3082,9 @@ async function runNativeDiscovery(
     ? getToolsForRole("discovery", { webMode: true, allowScanners: config.allowScanners })
     : getToolsForRole("discovery", { allowScanners: config.allowScanners });
 
-  // Deterministic web-recon pre-pass (web modes only). Mirrors the preReconCve
-  // pattern: never breaks the scan, emits findings directly, and folds a leads
-  // block into the system prompt. Gated by the webRecon feature flag.
-  let reconFindings: import("@pwnkit/shared").Finding[] = [];
-  if (isWeb && features.webRecon) {
-    try {
-      const { runWebReconPrePass } = await import("./stages/web-recon-prepass.js");
-      const { findings, promptBlock } = await runWebReconPrePass(config);
-      reconFindings = findings;
-      if (promptBlock) systemPrompt += "\n\n" + promptBlock;
-      emit({
-        type: "stage:end",
-        stage: "discovery",
-        message: `Web recon pre-pass: ${reconFindings.length} finding${reconFindings.length === 1 ? "" : "s"} emitted`,
-      });
-    } catch (err) {
-      // Pre-pass must never break the scan.
-      console.error(
-        `[web-recon-prepass] failed: ${err instanceof Error ? err.message : err}`,
-      );
-    }
-  }
+  // NOTE: the deterministic web-recon pre-pass runs once on the COMMON discovery
+  // path in agenticScan (so it covers both native and legacy/codex runtimes) —
+  // not here. Its leads arrive via apiSpecPromptText, injected into systemPrompt above.
 
   const state = await runNativeAgentLoop({
     config: {
@@ -3116,7 +3134,7 @@ async function runNativeDiscovery(
     },
   });
   return {
-    findings: [...reconFindings, ...state.findings],
+    findings: state.findings,
     targetInfo: state.targetInfo,
     summary: state.summary,
     turnCount: state.turnCount,
