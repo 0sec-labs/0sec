@@ -1022,6 +1022,16 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     // Merge the deterministic pre-pass findings into discovery output (once).
     if (reconFindings.length) {
       discoveryState.findings = [...reconFindings, ...discoveryState.findings];
+      // In cloud mode, findings reach the orchestrator DB only via postFinding —
+      // which is otherwise fired solely by the agent's `save_finding` tool calls.
+      // The pre-pass findings never go through that tool, so post them explicitly
+      // here, or they'd be silently dropped in cloud scans (present in the local
+      // report but absent from the 0cloud DB). postFinding no-ops when there is
+      // no cloud sink config (local CLI), so this is a safe cloud-only emission.
+      const sinkCfg = getCloudSinkConfig();
+      if (sinkCfg) {
+        for (const f of reconFindings) void postFinding(f, sinkCfg);
+      }
     }
 
     // Persist target profile
