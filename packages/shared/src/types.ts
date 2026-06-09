@@ -1269,8 +1269,13 @@ export interface AuditReport {
  *   BSD syscall/copyin discipline, Mach port refcount + OOL descriptor
  *   bugs, Mach VM aliasing. Static-only hypotheses; verification on
  *   Apple hardware (KASAN research kernel) is decoupled, not in-loop.
+ * - `xnu-re`: review of DECOMPILED Apple kext pseudo-C (closed kexts from
+ *   a kernelcache, where the real LPE surface lives). Input is type-less
+ *   r2ghidra output (see scripts/xnu-re-extract.sh); the profile is tuned
+ *   to read offset-soup + recover IOKit ABI fields, and gates findings
+ *   behind binary re-verification.
  */
-export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel";
+export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel" | "xnu-re";
 
 /**
  * A known bug to anchor a review on for variant analysis. Project Zero's

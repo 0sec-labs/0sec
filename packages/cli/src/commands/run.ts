@@ -102,9 +102,10 @@ export interface RunOptions {
    * validator logic bugs (double satisfaction, missing signer checks,
    * unconserved value, unauthorized mint). "xnu-kernel" tunes for Apple
    * XNU (Mach trap/MIG, IOKit externalMethod, BSD copyin, Mach port/VM).
-   * Default: "default".
+   * "xnu-re" reviews DECOMPILED Apple kext pseudo-C (closed kexts from a
+   * kernelcache). Default: "default".
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel" | "xnu-re";
   /**
    * Review the source of a published package: `target` is a package NAME and
    * the pipeline installs it (npm/pypi/cargo/oci) before reviewing its

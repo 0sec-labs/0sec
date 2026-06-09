@@ -78,6 +78,12 @@ describe("pwnkit review --profile validator", () => {
     expect(runUnifiedMock.mock.calls[0]![0].reviewProfile).toBe("xnu-kernel");
   });
 
+  it("accepts --profile xnu-re and forwards it", async () => {
+    await runCli(["review", "./somerepo", "--profile", "xnu-re"]);
+    expect(runUnifiedMock).toHaveBeenCalledTimes(1);
+    expect(runUnifiedMock.mock.calls[0]![0].reviewProfile).toBe("xnu-re");
+  });
+
   it("rejects --profile linux-kernel-typo with a clear error", async () => {
     await expect(
       runCli(["review", "./somerepo", "--profile", "linux-kernel-typo"]),
