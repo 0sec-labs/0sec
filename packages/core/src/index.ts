@@ -424,6 +424,59 @@ export type {
   EnumerateAttackSurfacesOptions,
 } from "./kernel/index.js";
 
+// Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
+// primitive strategy library + C templates, deterministic success oracle,
+// kernel-VM harness, and the control-demo probe that backs `attemptControlDemo`.
+// P2 (0cloud dispatch) / P3 (autonomy) build on this surface.
+export {
+  ESCALATION_LADDER,
+  maxRung,
+  ratchet,
+  rungAtLeast,
+  ladderUpTo,
+  RUNG_MARKER_TAG,
+  markerLine,
+  markerFired,
+  adjudicate,
+  emitWeaponizationC,
+  PRIMITIVE_LIBRARY,
+  selectStrategies,
+  getStrategy,
+  runWeaponization,
+  runStrategy,
+  kernelVmArtifactsReady,
+  mintCanary,
+  makeKernelVmProbe,
+  controlRungForDemo,
+} from "./kernel/index.js";
+export { rungRank as escalationRungRank } from "./kernel/exploit/index.js";
+export type {
+  EscalationRung,
+  OracleVerdict,
+  AdjudicateInput,
+  ExploitTemplateParams,
+  PrimitiveStrategy,
+  RootTail,
+  KernelVmRunner,
+  RunWeaponizationOptions,
+  StrategyAttempt,
+  WeaponizationResult,
+  KernelVmProbeOptions,
+} from "./kernel/index.js";
+
+// Bug-to-primitive classifier (the input to the weaponization harness).
+export {
+  classifyKernelPrimitive,
+  classifyPrimitiveFromDmesg,
+  describeKernelPrimitive,
+} from "./triage/kernel-primitive.js";
+export type {
+  KernelPrimitive,
+  KernelPrimitiveKind,
+  PrimitiveControl,
+  ControlDemoStep,
+} from "./triage/kernel-primitive.js";
+
 // Kernel crash verification oracle
 export { verifyKernelCrash, verifyStandaloneKernelReproducer, compileAndRunReproducer, matchCrashSignature, validateCrashReportConsistency } from "./triage/kernel-oracle.js";
 export type { KernelOracleResult, ReproducerResult, CrashSignatureMatch, ConsistencyResult } from "./triage/kernel-oracle.js";
