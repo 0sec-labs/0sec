@@ -19,6 +19,7 @@ import { features } from "./agent/features.js";
 import { runSelectedStaticScan } from "./shared-analysis.js";
 import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
+import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
 import {
   runKernelVariantHunt,
   huntIncompleteFixSiblings,
@@ -174,6 +175,54 @@ reproducer: <syz program, C-syscall snippet, or "static-only — see hypothesis 
 Output as many blocks as needed. Severity reflects the primitive (LPE potential vs info-leak vs DoS), not patch difficulty.`;
   }
 
+  if (profile === "xnu-kernel") {
+    const subsystemDirs = subsystem
+      ? subsystem.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    const subsystemScope = subsystemDirs.length > 0
+      ? `\nSCOPE: Begin analysis in: ${subsystemDirs.map((d) => `\`${d}\``).join(", ")}. You may read files outside these directories when following cross-references, but always return here for your next investigation.\n`
+      : "";
+    const turnBudget = subsystemDirs.length > 0
+      ? "CRITICAL — Turn Budget Discipline: Do NOT call done/finish early. Use your ENTIRE turn budget. Exhaust every entry point, error path, and cross-reference within the scoped subsystem(s). Keep searching until turns run out."
+      : "CRITICAL — Turn Budget Discipline: Do NOT call done/finish early. Use your ENTIRE turn budget. If one subsystem looks clean, move to the next. Rotate through iokit/, osfmk/ipc/, osfmk/vm/, osfmk/kern/, bsd/kern/, bsd/net/, bsd/vfs/, bsd/dev/, libkern/, security/. Never conclude \"this kernel is secure.\" Keep searching until turns run out.";
+    const hypothesisSection = hypothesis
+      ? `\nOPERATOR HYPOTHESIS — PRIMARY RESEARCH DIRECTION: The operator has identified a specific attack surface insight. This is your PRIMARY research direction. Spend at least 60% of your turns investigating this hypothesis before broadening:\n> ${hypothesis}\nStart by understanding the codepath described, then look for violations, missing checks, or unintended interactions along that path.\n`
+      : "";
+    return `Audit the Apple XNU (macOS/iOS) kernel source tree at ${repoPath} for memory-safety, concurrency, and userspace-boundary vulnerabilities. XNU is published open source by Apple; this is an authorized review for Apple Security Bounty / coordinated disclosure.
+${subsystemScope}${hypothesisSection}
+${turnBudget}
+
+First confirm this is an XNU tree (look for osfmk/, bsd/, iokit/, libkern/, pexpert/). If it's not, refuse and stop. Note the XNU version (config/MasterVersion, README.md, or Makefile) — it tells you which fixes should already be present.
+
+Map the attack surface: IOKit user clients (externalMethod / getTargetAndMethodForIndex / IOExternalMethodDispatch, reached via IOConnectCallMethod), Mach traps (mach_trap_table in osfmk/kern/syscall_sw.c), MIG routines (.defs server stubs, the is_io_* IOKit family), BSD syscalls (copyin/copyout in bsd/kern/), cdevsw .d_ioctl handlers (bsd/dev/), sysctl handlers, and Mach VM (vm_user.c: vm_allocate/vm_copy/vm_remap/mach_make_memory_entry).
+
+Prioritize: IOKit externalMethod selector/count confusion (selector indexes the method table without a bounds check → OOB function-pointer call; scalarInputCount/structureInputSize not validated against the dispatch entry), copyin length not bounded against the kalloc/IOMalloc destination, copyout of uninitialized kernel struct (infoleak), integer overflow in kalloc/IOMalloc(count*size), Mach port refcount imbalance (ip_release skipped or doubled on an error path → leak/UAF), MIG/mach_msg OOL descriptor type/size confusion, Mach VM aliasing (vm_map_copy reuse, named-entry size/prot confusion), OSDynamicCast result used without NULL check (type confusion).
+
+Validation: every finding must point to a C reproducer SHAPE — IOKit: IOServiceOpen + IOConnectCallMethod(conn, selector, scalarIn, scalarInCnt, structIn, structInSize, ...); Mach: a mach_msg / MIG sequence; BSD: syscall()/ioctl()/sysctlbyname(). NOT libFuzzer — kernel state isn't reachable from a libFuzzer harness. State the privilege required (app-sandbox/unprivileged reach = highest value; root/entitlement/SIP-off = lower). Static-only findings flagged confidence: 0.4 hypothesis: true — there is no in-loop XNU oracle. Do NOT compile XNU or boot QEMU from this loop.
+
+Tag findings with an XNU subsystem label: iokit/userclient, iokit/driver, osfmk/ipc, osfmk/vm, osfmk/kern, bsd/kern, bsd/vfs, bsd/net, bsd/dev, libkern, security, pexpert, or unknown.
+
+The static scanner already found these leads:
+${semgrepContext}
+
+For EACH finding output a block in this exact format:
+
+---FINDING---
+title: <clear title>
+severity: <critical|high|medium|low|info>
+category: <use-after-free|race-condition|integer-overflow|stack-buffer-overflow|heap-overflow|null-pointer-deref|type-confusion|double-free|other>
+subsystem: <iokit/userclient, iokit/driver, osfmk/ipc, osfmk/vm, osfmk/kern, bsd/kern, bsd/vfs, bsd/net, bsd/dev, libkern, security, pexpert, unknown>
+description: <what the bug is, the trigger sequence (IOConnectCall*/mach_msg/syscall, step by step), primitive (read/write/both), attacker control bounds, privilege required, severity reasoning>
+file: <path/to/file.c:lineNumber>
+hypothesis: <true|false>
+confidence: <0.0-1.0; 0.4 for static-only>
+reproducer_shape: <iokit-c|mach-msg|bsd-syscall|none>
+reproducer: <C reproducer snippet, or "static-only — see hypothesis flag">
+---END---
+
+Output as many blocks as needed. Severity reflects the primitive and the privilege gap crossed (app sandbox → kernel write = critical), not patch difficulty.`;
+  }
+
   if (profile === "c-library") {
     const cLibHypothesisSection = hypothesis
       ? `\nOPERATOR HYPOTHESIS — PRIMARY RESEARCH DIRECTION: The operator has identified a specific attack surface insight. This is your PRIMARY research direction. Spend at least 60% of your turns investigating this hypothesis before broadening:\n> ${hypothesis}\nStart by understanding the codepath described, then look for violations, missing checks, or unintended interactions along that path.\n`
@@ -275,12 +324,16 @@ async function runReviewAgent(
   const baseAgentSystemPrompt =
     profile === "linux-kernel"
       ? kernelReviewAgentPrompt(repoPath, semgrepFindings, foxguardFindings, config.subsystem, config.hypothesis, attackSurfaceContext, config.anchors)
+      : profile === "xnu-kernel"
+      ? xnuKernelReviewAgentPrompt(repoPath, semgrepFindings, foxguardFindings, config.subsystem, config.hypothesis)
       : profile === "c-library"
       ? cppReviewAgentPrompt(repoPath, semgrepFindings, config.hypothesis)
       : reviewAgentPrompt(repoPath, semgrepFindings, undefined, false, config.hypothesis);
   const cliSystemPrompt =
     profile === "linux-kernel"
       ? "You are a security researcher performing an authorized review of a Linux kernel source tree. Confirm the tree is actually a kernel tree before doing anything. Findings must be grounded at file:line and accompanied by a syzkaller-style or C-syscall reproducer shape — libFuzzer harnesses don't apply. Static-only findings are confidence 0.4 hypotheses until the kernel oracle (#271) verifies them. Do NOT compile or boot the kernel from this loop."
+      : profile === "xnu-kernel"
+      ? "You are a security researcher performing an authorized review of an Apple XNU (macOS/iOS) kernel source tree. Confirm the tree is actually an XNU tree (osfmk/, bsd/, iokit/) before doing anything. Findings must be grounded at file:line and accompanied by a C reproducer shape — IOConnectCallMethod for IOKit, mach_msg/MIG for Mach, syscall/ioctl for BSD; libFuzzer harnesses don't apply. State the privilege required (app-sandbox reach is highest value). Static-only findings are confidence 0.4 hypotheses; on-hardware verification (KASAN research kernel) is decoupled. Do NOT compile or boot XNU from this loop."
       : profile === "c-library"
       ? "You are a security researcher performing an authorized review of a C/C++ source tree for memory-safety and arithmetic vulnerabilities. Validate every finding by execution under ASan/UBSan — a static-analysis-only finding is a hypothesis, not a finding."
       : "You are a security researcher performing an authorized source code review. Be thorough and precise. Only report real, exploitable vulnerabilities.";

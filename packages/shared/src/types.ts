@@ -1264,8 +1264,13 @@ export interface AuditReport {
  *   missing signer checks, unconserved value, unauthorized mint, datum
  *   trust, staking/withdrawal tricks. No memory-safety surface; verification
  *   is a transaction the validator wrongly admits.
+ * - `xnu-kernel`: Apple XNU (macOS/iOS) kernel source review — Mach
+ *   trap + MIG surface, IOKit user-client externalMethod dispatch,
+ *   BSD syscall/copyin discipline, Mach port refcount + OOL descriptor
+ *   bugs, Mach VM aliasing. Static-only hypotheses; verification on
+ *   Apple hardware (KASAN research kernel) is decoupled, not in-loop.
  */
-export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain";
+export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel";
 
 /**
  * A known bug to anchor a review on for variant analysis. Project Zero's

@@ -5,9 +5,9 @@ import { runUnified } from "./run.js";
 import { runHarnessTier2 } from "./review-harness-tier2.js";
 import { runHarnessTier3 } from "./review-harness-tier3.js";
 
-type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain";
+type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel";
 
-const REVIEW_PROFILES = new Set<ReviewProfile>(["default", "c-library", "linux-kernel", "cardano-onchain"]);
+const REVIEW_PROFILES = new Set<ReviewProfile>(["default", "c-library", "linux-kernel", "cardano-onchain", "xnu-kernel"]);
 
 const VALID_HARNESS_TIERS = new Set(["1", "2", "3"]);
 
@@ -47,7 +47,7 @@ function normalizeReviewProfile(value: string | undefined, flag: "--profile" | "
     return value as ReviewProfile;
   }
   throw new Error(
-    `Invalid review ${flag === "--target" ? "target" : "profile"} '${value}'. Supported: default, app, c-library, linux-kernel, cardano-onchain.`,
+    `Invalid review ${flag === "--target" ? "target" : "profile"} '${value}'. Supported: default, app, c-library, linux-kernel, cardano-onchain, xnu-kernel.`,
   );
 }
 
@@ -68,7 +68,7 @@ export function registerReviewCommand(program: Command): void {
     .option("--changed-only", "Restrict static scanner leads + prioritization to changed files", false)
     .option(
       "--profile <profile>",
-      "Review profile: default (web/JS/TS/Python), c-library (C/C++ memory safety, tier-1/2/3 harness), linux-kernel (kernel-aware static review), or cardano-onchain (Aiken/Plutus validator logic)",
+      "Review profile: default (web/JS/TS/Python), c-library (C/C++ memory safety, tier-1/2/3 harness), linux-kernel (kernel-aware static review), cardano-onchain (Aiken/Plutus validator logic), or xnu-kernel (Apple XNU macOS/iOS source review)",
       "default",
     )
     .option(

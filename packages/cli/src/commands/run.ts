@@ -100,9 +100,11 @@ export interface RunOptions {
    * review (syscall/ioctl surface, copy_from_user, refcount races,
    * Dirty Frag class). "cardano-onchain" tunes for Aiken/Plutus EUTXO
    * validator logic bugs (double satisfaction, missing signer checks,
-   * unconserved value, unauthorized mint). Default: "default".
+   * unconserved value, unauthorized mint). "xnu-kernel" tunes for Apple
+   * XNU (Mach trap/MIG, IOKit externalMethod, BSD copyin, Mach port/VM).
+   * Default: "default".
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel";
   /**
    * Review the source of a published package: `target` is a package NAME and
    * the pipeline installs it (npm/pypi/cargo/oci) before reviewing its
