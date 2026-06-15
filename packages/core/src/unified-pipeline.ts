@@ -78,6 +78,18 @@ export interface PipelineOptions {
    */
   reviewProfile?: "default" | "c-library" | "linux-kernel";
   /**
+   * Review the SOURCE of a published package. When set, `target` is a
+   * package NAME (not a repo path / git URL): the pipeline installs the
+   * package via the ecosystem installer (npm/pypi/cargo/oci), then reviews
+   * its extracted source tree. Crucially `resolvedType` stays
+   * `"source-code"` so the full review pipeline applies (profile prompt,
+   * review report, "review" resume-session key) — unlike `targetType`
+   * package kinds, which key the analysis to the audit path. Only consulted
+   * when `targetType === "source-code"` (the `review` command sets both).
+   * `packageVersion` pins the version; unset installs latest.
+   */
+  reviewPackageEcosystem?: "npm" | "pypi" | "cargo" | "oci";
+  /**
    * Restrict the kernel-review agent to files under this subdirectory
    * (e.g. `crypto/`, `net/tcp/`). Only meaningful when
    * `reviewProfile === "linux-kernel"`. Injected into the agent prompt
@@ -276,6 +288,18 @@ function prepareTarget(
   }
 
   if (targetType === "source-code") {
+    // Package-source review (#317 follow-up): when `reviewPackageEcosystem`
+    // is set, `target` is a package NAME — install it and review its
+    // extracted source, keeping `resolvedType: "source-code"` so the review
+    // pipeline (profile prompt + review report) drives instead of audit.
+    if (opts.reviewPackageEcosystem) {
+      return prepareReviewPackage(
+        opts.target,
+        opts.reviewPackageEcosystem,
+        opts.packageVersion,
+        emit,
+      );
+    }
     return prepareSourceCode(opts.target, emit);
   }
 
@@ -367,6 +391,34 @@ function prepareOciImage(
     packageName: pkg.name,
     packageVersion: pkg.version,
     packageEcosystem: "oci",
+    tempDir: pkg.tempDir,
+    needsCleanup: true,
+  };
+}
+
+/**
+ * Acquire a published package's source for REVIEW. Installs the package via
+ * the shared ecosystem installer (same code the audit path uses) but reports
+ * `resolvedType: "source-code"` so the downstream pipeline runs the review
+ * agent + emits a review report rather than the package-audit flow. Install
+ * progress streams through `emit`, so the cloud relay sees heartbeat events
+ * during install (the reaper's no-event window stays satisfied). The temp
+ * install dir is cleaned up by the caller via `needsCleanup`.
+ */
+function prepareReviewPackage(
+  rawPackageName: string,
+  ecosystem: "npm" | "pypi" | "cargo" | "oci",
+  requestedVersion: string | undefined,
+  emit: ScanListener,
+): PrepareResult {
+  const pkg = installPackageForEcosystem(ecosystem, rawPackageName, requestedVersion, emit);
+  return {
+    scopePath: pkg.path,
+    resolvedTarget: `${ecosystem}:${pkg.name}@${pkg.version}`,
+    resolvedType: "source-code",
+    packageName: pkg.name,
+    packageVersion: pkg.version,
+    packageEcosystem: ecosystem,
     tempDir: pkg.tempDir,
     needsCleanup: true,
   };
