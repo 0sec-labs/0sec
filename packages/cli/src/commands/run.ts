@@ -102,6 +102,13 @@ export interface RunOptions {
    */
   reviewProfile?: "default" | "c-library" | "linux-kernel";
   /**
+   * Review the source of a published package: `target` is a package NAME and
+   * the pipeline installs it (npm/pypi/cargo/oci) before reviewing its
+   * extracted source. `packageVersion` pins the version. Only honored with
+   * `targetType === "source-code"`. See unified-pipeline `reviewPackageEcosystem`.
+   */
+  reviewPackageEcosystem?: "npm" | "pypi" | "cargo" | "oci";
+  /**
    * Restrict analysis to files under this subdirectory. Only meaningful when
    * `reviewProfile === "linux-kernel"`. The value is injected into the agent
    * prompt as a scope restriction (e.g. `crypto/`, `net/tcp/`).
@@ -478,6 +485,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
           timeout,
           packageVersion: opts.packageVersion,
           reviewProfile: opts.reviewProfile,
+          reviewPackageEcosystem: opts.reviewPackageEcosystem,
           subsystem: opts.subsystem,
           hypothesis: opts.hypothesis,
           // External seeds (e.g. `gemmaforge scan` leads) — the pipeline

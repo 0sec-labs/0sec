@@ -11,6 +11,23 @@ const REVIEW_PROFILES = new Set<ReviewProfile>(["default", "c-library", "linux-k
 
 const VALID_HARNESS_TIERS = new Set(["1", "2", "3"]);
 
+type PackageEcosystem = "npm" | "pypi" | "cargo" | "oci";
+
+const PACKAGE_ECOSYSTEMS = new Set<PackageEcosystem>(["npm", "pypi", "cargo", "oci"]);
+
+function normalizePackageEcosystem(value: string | undefined): PackageEcosystem | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (PACKAGE_ECOSYSTEMS.has(normalized as PackageEcosystem)) {
+    return normalized as PackageEcosystem;
+  }
+  throw new Error(
+    `Invalid --ecosystem '${value}'. Supported: npm, pypi, cargo, oci. Omit it to review a local path or git URL.`,
+  );
+}
+
 function normalizeHarnessTier(value: string | undefined): 1 | 2 | 3 {
   if (value === undefined) return 1;
   if (!VALID_HARNESS_TIERS.has(value)) {
@@ -57,6 +74,14 @@ export function registerReviewCommand(program: Command): void {
     .option(
       "--target <target>",
       "Review target alias: app/default, c-library, or linux-kernel",
+    )
+    .option(
+      "--ecosystem <ecosystem>",
+      "Review the SOURCE of a published package instead of a repo: npm, pypi, cargo, or oci. When set, <repo> is the package NAME — pwnkit installs it and reviews its extracted source. Omit for a local path or git URL.",
+    )
+    .option(
+      "--package-version <version>",
+      "Pin the package version to review (only with --ecosystem). Defaults to latest.",
     )
     .option(
       "--seed-findings <path>",
@@ -210,10 +235,14 @@ export function registerReviewCommand(program: Command): void {
         throw new Error(`Unknown --emit target '${value}'. Supported: pr.`);
       })();
 
+      const reviewPackageEcosystem = normalizePackageEcosystem(opts.ecosystem as string | undefined);
+
       const branchFrom = opts.branchFrom as string | undefined;
       await runUnified({
         target: repo,
         targetType: "source-code",
+        reviewPackageEcosystem,
+        packageVersion: opts.packageVersion as string | undefined,
         resumeScanId: opts.resume as string | undefined,
         branchFromEntry: branchFrom !== undefined ? parseInt(branchFrom, 10) : undefined,
         diffBase: opts.diffBase as string | undefined,

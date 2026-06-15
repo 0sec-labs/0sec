@@ -762,6 +762,59 @@ describe("runPipeline — research phase + review profile", () => {
     expect(args.cliPrompt).toContain("lodash");
   });
 
+  it("source-code + reviewPackageEcosystem='npm': installs the package but runs the REVIEW agent (role='review'), not audit", async () => {
+    // Package-source review: the bare name is installed via the shared
+    // ecosystem installer, then the EXTRACTED SOURCE is reviewed. This is
+    // the fix for npm/pypi targets queued as scan_mode='review' — without
+    // it the engine treated the package name as a repo path and died with
+    // "Repository path not found".
+    installPackageMock.mockReturnValue(fakeInstalledPackage("npm", "ws", "8.16.0"));
+
+    const report = await runPipeline({
+      target: "ws",
+      targetType: "source-code",
+      reviewPackageEcosystem: "npm",
+      depth: "default",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      dbPath: freshDbPath(),
+    });
+
+    // The package source was installed via the shared ecosystem installer…
+    expect(installPackageMock).toHaveBeenCalledTimes(1);
+    expect(installPackageMock.mock.calls[0]![0]).toBe("npm");
+    expect(installPackageMock.mock.calls[0]![1]).toBe("ws");
+    // …but the analysis ran as a REVIEW (role='review'), not an audit —
+    // and resolvedType stays source-code so the review report path drives.
+    const args = runAnalysisAgentMock.mock.calls[0]![0];
+    expect(args.role).toBe("review");
+    expect(report.targetType).toBe("source-code");
+  });
+
+  it("source-code + reviewPackageEcosystem + packageVersion pins the installed version", async () => {
+    installPackageMock.mockReturnValue(fakeInstalledPackage("pypi", "pillow", "10.2.0"));
+
+    await runPipeline({
+      target: "pillow",
+      targetType: "source-code",
+      reviewPackageEcosystem: "pypi",
+      packageVersion: "10.2.0",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      dbPath: freshDbPath(),
+    });
+
+    expect(installPackageMock).toHaveBeenCalledWith(
+      "pypi",
+      "pillow",
+      "10.2.0",
+      expect.any(Function),
+    );
+  });
+
   it("apiKey + model + timeout + costCeilingUsd are threaded into runAnalysisAgent.config", async () => {
     installPackageMock.mockReturnValue(fakeInstalledPackage("npm", "lodash", "4.17.21"));
 
