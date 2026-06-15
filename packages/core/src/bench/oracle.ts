@@ -32,6 +32,31 @@ export interface BenchOracleOutcome {
 }
 
 /**
+ * Reproducibility provenance of a benchmarked source-audit target, threaded
+ * into `benchmarkMeta`. Captures the requested-vs-resolved version (drift),
+ * the source registry/tarball/integrity, and how reproducible the run is:
+ * - `complete`: source provenance captured AND tarball integrity verified.
+ * - `partial`:  provenance captured but integrity not (yet) verified.
+ * - `none`:     no source provenance captured for this run.
+ */
+export interface BenchTargetProvenance {
+  kind: "source-audit";
+  ecosystem?: string;
+  package: string;
+  /** Version the case asked for. */
+  requestedVersion: string;
+  /** Version that actually resolved/installed (may differ ⇒ drift). */
+  resolvedVersion: string;
+  registry?: string;
+  tarballUrl?: string;
+  integrity?: string;
+  integrityVerified?: boolean;
+  reproducibilityStatus: "complete" | "partial" | "none";
+  /** Human-readable provenance notes (drift, unverified integrity, etc.). */
+  notes: string[];
+}
+
+/**
  * Minimal structural view of a scan result the oracle needs. A real
  * `@pwnkit/shared` `ScanReport` is assignable to this; tests can also hand
  * a hand-built object. `error` set ⇒ the scan failed ⇒ inconclusive.
@@ -50,6 +75,12 @@ export interface BenchScanResult {
     attackTurns?: number;
     estimatedCostUsd?: number;
     totalTokens?: number;
+    /**
+     * Provenance of the audited target — which version actually resolved,
+     * registry/tarball/integrity, and how reproducible the run is. Threaded
+     * from the scan adapter so the scorecard can report reproducibility.
+     */
+    targetProvenance?: BenchTargetProvenance;
   };
   /** Per-attempt wall-clock, threaded through from the scan adapter. */
   durationMs?: number;

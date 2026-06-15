@@ -21,7 +21,7 @@ import { agenticScan } from "../agentic-scanner.js";
 import { packageAudit } from "../audit.js";
 import type { ScanReport, RuntimeMode, AuditReport, ScanDepth } from "@pwnkit/shared";
 import type { BenchCase } from "./manifest.js";
-import type { BenchScanResult } from "./oracle.js";
+import type { BenchScanResult, BenchTargetProvenance } from "./oracle.js";
 import type {
   BenchScan,
   BenchScanInput,
@@ -56,13 +56,71 @@ export function scanReportToBenchResult(report: ScanReport): BenchScanResult {
 
 // ── AuditReport → BenchScanResult ─────────────────────────────────────
 
+type SourceAuditTarget = Extract<BenchCase["target"], { kind: "source-audit" }>;
+
+/**
+ * Build the reproducibility provenance for a benchmarked source-audit run from
+ * the case's requested target + the report's resolved version and (optional)
+ * captured source provenance. Records version drift, registry/tarball/integrity,
+ * and a reproducibility status (see {@link BenchTargetProvenance}).
+ */
+function buildTargetProvenance(
+  report: AuditReport,
+  target: SourceAuditTarget,
+): BenchTargetProvenance {
+  const requestedVersion = target.version;
+  const resolvedVersion = report.version;
+  const sp = report.sourceProvenance;
+  const notes: string[] = [];
+
+  if (requestedVersion !== resolvedVersion) {
+    notes.push(`Requested version ${requestedVersion} resolved as ${resolvedVersion}.`);
+  }
+
+  let reproducibilityStatus: BenchTargetProvenance["reproducibilityStatus"];
+  if (sp) {
+    if (sp.integrityVerified) {
+      reproducibilityStatus = "complete";
+    } else {
+      reproducibilityStatus = "partial";
+      notes.push(`Tarball integrity (${sp.integrity}) has not been verified.`);
+    }
+  } else {
+    reproducibilityStatus = "none";
+    notes.push("Source provenance not captured yet.");
+  }
+
+  return {
+    kind: "source-audit",
+    ecosystem: target.ecosystem,
+    package: target.package,
+    requestedVersion,
+    resolvedVersion,
+    ...(sp
+      ? {
+          registry: sp.registry,
+          tarballUrl: sp.tarballUrl,
+          integrity: sp.integrity,
+          integrityVerified: sp.integrityVerified,
+        }
+      : {}),
+    reproducibilityStatus,
+    notes,
+  };
+}
+
 /**
  * Project a package-audit {@link AuditReport} onto the oracle's structural
  * view. The audit report carries no `benchmarkMeta`, so we synthesize one
  * from its token usage + cost so the scorecard's cost-per-success math works
- * for source-audit cases too.
+ * for source-audit cases too. When the originating `target` is supplied, the
+ * report's resolved version + source provenance are threaded into
+ * `benchmarkMeta.targetProvenance` for reproducibility reporting.
  */
-export function auditReportToBenchResult(report: AuditReport): BenchScanResult {
+export function auditReportToBenchResult(
+  report: AuditReport,
+  target?: SourceAuditTarget,
+): BenchScanResult {
   return {
     findings: (report.findings ?? []).map((f) => ({
       category: f.category,
@@ -84,6 +142,7 @@ export function auditReportToBenchResult(report: AuditReport): BenchScanResult {
       totalTokens: report.usage
         ? (report.usage.inputTokens ?? 0) + (report.usage.outputTokens ?? 0)
         : 0,
+      ...(target ? { targetProvenance: buildTargetProvenance(report, target) } : {}),
     },
     durationMs: report.durationMs,
   };
@@ -141,7 +200,7 @@ export function createPackageAuditScanAdapter(
             : {}),
         },
       });
-      return auditReportToBenchResult(report);
+      return auditReportToBenchResult(report, c.target);
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }

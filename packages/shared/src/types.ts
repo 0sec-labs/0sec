@@ -1069,6 +1069,27 @@ export interface TokenUsage {
   outputTokens: number;
 }
 
+/**
+ * Provenance of the exact package source an audit ran against — registry,
+ * tarball, and integrity of the artifact installed. Captured so a benchmark
+ * result is reproducible (you can re-fetch the identical bytes that were
+ * audited). Optional: not every install path captures it yet.
+ */
+export interface SourceProvenance {
+  /** Registry the package source was fetched from (e.g. https://registry.npmjs.org). */
+  registry: string;
+  /** Tarball URL of the exact artifact installed + audited. */
+  tarballUrl: string;
+  /** Subresource integrity of the tarball (e.g. `sha512-…`). */
+  integrity: string;
+  /** True once the downloaded tarball's hash was checked against `integrity`. */
+  integrityVerified?: boolean;
+  /** The version spec originally requested (e.g. `sequelize@6.37.8`). */
+  requestedSpec: string;
+  /** How the resolved version was pinned (e.g. `npm-package-lock`, `pypi-json`). */
+  resolvedFrom: string;
+}
+
 export interface AuditReport {
   package: string;
   version: string;
@@ -1084,6 +1105,11 @@ export interface AuditReport {
   usage?: TokenUsage;
   /** Estimated USD cost from token usage at the configured model rates. */
   estimatedCostUsd?: number;
+  /**
+   * Provenance of the audited package source. Undefined when the install path
+   * didn't capture it; consumers must handle absence.
+   */
+  sourceProvenance?: SourceProvenance;
 }
 
 // ── Source Code Review (pwnkit review) ──
