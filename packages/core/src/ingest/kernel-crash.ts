@@ -7,6 +7,8 @@ import {
   classifyKernelPrimitive,
   exploitabilityAdjustedSeverity,
   describeKernelPrimitive,
+  parseFaultingPc,
+  parseSlabCache,
 } from "../triage/kernel-primitive.js";
 
 export interface KernelCrashArtifact {
@@ -253,6 +255,12 @@ export function parseCrashReport(text: string): CrashReport {
     const sites = extractAllocFreeSites(text);
     report.allocSite = sites.allocSite;
     report.freeSite = sites.freeSite;
+
+    // Cheap dmesg-derived exploit fields (kernel-autonomy Phase 1).
+    const faultingPc = parseFaultingPc(text);
+    if (faultingPc) report.faultingPc = faultingPc;
+    const slabCache = parseSlabCache(text);
+    if (slabCache) report.slabCache = slabCache;
   } else if (UBSAN_HEADER.test(text)) {
     const ubMatch = text.match(UBSAN_HEADER)!;
     report.crashType = ubsanSubType(ubMatch[1]);

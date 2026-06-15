@@ -18,7 +18,11 @@ import { features } from "./agent/features.js";
 import { runSelectedStaticScan } from "./shared-analysis.js";
 import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
-import { runKernelVariantHunt } from "./kernel/index.js";
+import {
+  runKernelVariantHunt,
+  huntIncompleteFixSiblings,
+  incompleteFixLeadToFinding,
+} from "./kernel/index.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
 import { resolveLocalTargetPath } from "./path-resolution.js";
 import { formatTargetHistoryForPrompt, searchTargetHistory } from "./intel/index.js";
@@ -386,6 +390,37 @@ export async function sourceReview(
           type: "stage:start",
           stage: "discovery",
           message: `Foxguard variant-hunt unavailable: ${reason}`,
+        });
+      }
+
+      // Step 2c: incomplete-fix variant hunt. Mine recent security/`Fixes:`
+      // commits and surface untouched same-family siblings (the "encrypt got
+      // the guard, decrypt didn't" lead). This is the technique that produced
+      // the engine's one real kernel lead when breadth-first auditing was
+      // saturated. Read-only git; fails soft on a non-git / shallow tree.
+      try {
+        const leads = huntIncompleteFixSiblings({
+          tree: repoPath,
+          ...(config.subsystem
+            ? { paths: config.subsystem.split(",").map((s) => s.trim()).filter(Boolean) }
+            : {}),
+        });
+        if (leads.length > 0) {
+          foxguardFindings = foxguardFindings.concat(
+            leads.map(incompleteFixLeadToFinding),
+          );
+          emit({
+            type: "stage:end",
+            stage: "discovery",
+            message: `Incomplete-fix hunt: ${leads.length} unfixed-sibling lead(s)`,
+          });
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        emit({
+          type: "stage:start",
+          stage: "discovery",
+          message: `Incomplete-fix hunt unavailable: ${reason}`,
         });
       }
     }

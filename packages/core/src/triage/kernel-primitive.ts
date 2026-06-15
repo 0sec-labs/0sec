@@ -24,6 +24,7 @@
 
 import type { CrashReport, CrashType, Severity } from "@pwnkit/shared";
 import { severityRank } from "@pwnkit/shared";
+import type { WritePrimitiveProfile } from "../kernel/exploit/exploit-context.js";
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -83,6 +84,24 @@ export interface KernelPrimitive {
   rationale: string[];
   /** The allocation object / cache the primitive operates on, when derivable. */
   objectHint?: string;
+  /**
+   * Derived shape of the controlled write primitive (kernel-autonomy Phase 1).
+   * Optional and additive — populated by later weaponization stages; the cheap
+   * classifier leaves it undefined.
+   */
+  writeProfile?: WritePrimitiveProfile;
+  /**
+   * Slab cache the faulting object lives in (e.g. `kmalloc-192`), parsed from
+   * the KASAN splat when present. Optional and additive — drives spray-bucket
+   * matching downstream.
+   */
+  slabCache?: string;
+  /**
+   * Faulting program counter as `symbol+0xoffset/0xsize` (e.g.
+   * `snd_rawmidi_kernel_write1+0x1ba/0x210`), parsed from the `BUG: KASAN:`
+   * line when present. Optional and additive.
+   */
+  faultingPc?: string;
 }
 
 // ── Severity ordering helpers ──────────────────────────────────────────────
@@ -252,6 +271,12 @@ export function classifyKernelPrimitive(report: CrashReport): KernelPrimitive {
 
   const objectHint = report.allocSite ?? report.freeSite ?? undefined;
 
+  // Cheap, defensive dmesg-derived fields (kernel-autonomy Phase 1). Prefer an
+  // already-parsed value on the report (the ingest path sets these), and fall
+  // back to sniffing the raw splat so the verify/dmesg path is covered too.
+  const faultingPc = report.faultingPc ?? parseFaultingPc(report.rawText);
+  const slabCache = report.slabCache ?? parseSlabCache(report.rawText);
+
   return {
     kind,
     control,
@@ -260,7 +285,44 @@ export function classifyKernelPrimitive(report: CrashReport): KernelPrimitive {
     controlDemo: buildControlDemo(kind, control, report),
     rationale,
     objectHint,
+    ...(faultingPc ? { faultingPc } : {}),
+    ...(slabCache ? { slabCache } : {}),
   };
+}
+
+/**
+ * Parse the faulting program counter from a KASAN splat's `BUG:` line, e.g.
+ *
+ *   BUG: KASAN: use-after-free in snd_rawmidi_kernel_write1+0x1ba/0x210
+ *
+ * yields `snd_rawmidi_kernel_write1+0x1ba/0x210`. Defensive: returns undefined
+ * on any non-match and never throws (callers pass possibly-empty raw text).
+ */
+export function parseFaultingPc(dmesg: string | undefined): string | undefined {
+  if (!dmesg) return undefined;
+  // `in <symbol>+0xHEX[/0xHEX]` on the BUG: KASAN: header line.
+  const m = dmesg.match(
+    /BUG:\s*KASAN:[^\n]*?\bin\s+([A-Za-z_][\w.$]*\+0x[0-9a-fA-F]+(?:\/0x[0-9a-fA-F]+)?)/,
+  );
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Parse the slab cache name from a KASAN splat, e.g. `cache kmalloc-192` on the
+ * report line or `Allocated by task 123 … kmalloc-192`. Returns the bucket name
+ * (`kmalloc-192`, `dma-kmalloc-512`, a named cache like `kmalloc-cg-96`, etc.).
+ * Defensive: undefined on any non-match, never throws.
+ */
+export function parseSlabCache(dmesg: string | undefined): string | undefined {
+  if (!dmesg) return undefined;
+  // Preferred: explicit `cache <name>` token KASAN prints on the report line.
+  const cacheTok = dmesg.match(/\bcache\s+([A-Za-z][\w-]*-\d+|[A-Za-z][\w-]*)\b/);
+  if (cacheTok && /\d/.test(cacheTok[1]!)) return cacheTok[1];
+  // Fallback: a kmalloc bucket mentioned anywhere (alloc-by-task blocks).
+  const kmallocTok = dmesg.match(/\b((?:dma-|cg-)?kmalloc(?:-cg)?-\d+)\b/);
+  if (kmallocTok) return kmallocTok[1];
+  // Last resort: the named-cache form from `cache <name>` even without digits.
+  return cacheTok ? cacheTok[1] : undefined;
 }
 
 /**

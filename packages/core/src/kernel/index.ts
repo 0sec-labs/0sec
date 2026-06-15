@@ -8,6 +8,30 @@ export type {
 } from "./variant-hunt.js";
 
 export {
+  isKernelGitTree,
+  mineFixCommits,
+  checkAlreadyFixed,
+} from "./fix-commit-intel.js";
+export type {
+  FixCommit,
+  AlreadyFixedResult,
+  MineFixCommitsOptions,
+  CheckAlreadyFixedOptions,
+} from "./fix-commit-intel.js";
+
+export {
+  familyStem,
+  siblingDefsForStem,
+  huntIncompleteFixSiblings,
+  incompleteFixLeadToFinding,
+} from "./incomplete-fix-hunt.js";
+export type {
+  SiblingDef,
+  IncompleteFixLead,
+  IncompleteFixHuntOptions,
+} from "./incomplete-fix-hunt.js";
+
+export {
   KNOWN_ATTACK_SURFACES,
   DISTRO_DEFAULTS,
   parseKernelConfig,

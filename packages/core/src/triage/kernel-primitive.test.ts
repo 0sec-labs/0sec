@@ -7,6 +7,8 @@ import {
   exploitabilityAdjustedSeverity,
   describeKernelPrimitive,
   maxSeverity,
+  parseFaultingPc,
+  parseSlabCache,
 } from "./kernel-primitive.js";
 
 function makeReport(overrides: Partial<CrashReport>): CrashReport {
@@ -149,6 +151,111 @@ describe("classifyPrimitiveFromDmesg", () => {
     expect(p.kind).toBe("use-after-free");
     expect(p.control).toBe("write");
     expect(p.exploitability).toBeGreaterThanOrEqual(0.85);
+  });
+});
+
+// A realistic KASAN slab-UAF splat (trimmed) used across the parsing tests.
+const KASAN_SPLAT = [
+  "==================================================================",
+  "BUG: KASAN: slab-use-after-free in snd_rawmidi_kernel_write1+0x1ba/0x210",
+  "Write of size 4 at addr ffff88810a3b2040 by task poc/431",
+  "",
+  "CPU: 2 PID: 431 Comm: poc Not tainted 6.12.0 #1",
+  "Call Trace:",
+  " snd_rawmidi_kernel_write1+0x1ba/0x210",
+  " snd_rawmidi_write+0x2c0/0x5a0",
+  "",
+  "Allocated by task 431:",
+  " kmalloc_trace+0x1d/0x40",
+  " snd_rawmidi_new+0x9c/0x420",
+  "",
+  "The buggy address belongs to the object at ffff88810a3b2000",
+  " which belongs to the cache kmalloc-192 of size 192",
+  "==================================================================",
+].join("\n");
+
+describe("parseFaultingPc", () => {
+  it("extracts the symbol+offset/size token from the BUG: KASAN line", () => {
+    expect(parseFaultingPc(KASAN_SPLAT)).toBe(
+      "snd_rawmidi_kernel_write1+0x1ba/0x210",
+    );
+  });
+
+  it("accepts a symbol+offset with no /size", () => {
+    expect(
+      parseFaultingPc("BUG: KASAN: use-after-free in tcp_close+0x10"),
+    ).toBe("tcp_close+0x10");
+  });
+
+  it("returns undefined defensively on no match / empty input", () => {
+    expect(parseFaultingPc("")).toBeUndefined();
+    expect(parseFaultingPc(undefined)).toBeUndefined();
+    expect(parseFaultingPc("some unrelated dmesg line")).toBeUndefined();
+  });
+});
+
+describe("parseSlabCache", () => {
+  it("extracts the kmalloc bucket from the `cache kmalloc-NNN` token", () => {
+    expect(parseSlabCache(KASAN_SPLAT)).toBe("kmalloc-192");
+  });
+
+  it("falls back to a kmalloc bucket mentioned in an alloc block", () => {
+    const dmesg = [
+      "Allocated by task 9:",
+      " __kmalloc+0x1/0x2",
+      " object lives in dma-kmalloc-512",
+    ].join("\n");
+    expect(parseSlabCache(dmesg)).toBe("dma-kmalloc-512");
+  });
+
+  it("returns undefined defensively on no match / empty input", () => {
+    expect(parseSlabCache("")).toBeUndefined();
+    expect(parseSlabCache(undefined)).toBeUndefined();
+    expect(parseSlabCache("no slab info here")).toBeUndefined();
+  });
+});
+
+describe("classifyKernelPrimitive — dmesg-derived fields", () => {
+  it("populates faultingPc and slabCache from report.rawText", () => {
+    const p = classifyKernelPrimitive(
+      makeReport({
+        crashType: "kasan-uaf",
+        accessType: "write",
+        rawText: KASAN_SPLAT,
+      }),
+    );
+    expect(p.faultingPc).toBe("snd_rawmidi_kernel_write1+0x1ba/0x210");
+    expect(p.slabCache).toBe("kmalloc-192");
+  });
+
+  it("prefers pre-parsed report fields over a raw re-sniff", () => {
+    const p = classifyKernelPrimitive(
+      makeReport({
+        crashType: "kasan-uaf",
+        accessType: "write",
+        rawText: KASAN_SPLAT,
+        faultingPc: "already_parsed+0x1/0x2",
+        slabCache: "kmalloc-cg-96",
+      }),
+    );
+    expect(p.faultingPc).toBe("already_parsed+0x1/0x2");
+    expect(p.slabCache).toBe("kmalloc-cg-96");
+  });
+
+  it("leaves the fields undefined when the splat has no such tokens", () => {
+    const p = classifyKernelPrimitive(
+      makeReport({ crashType: "kasan-uaf", accessType: "write", rawText: "" }),
+    );
+    expect(p.faultingPc).toBeUndefined();
+    expect(p.slabCache).toBeUndefined();
+  });
+});
+
+describe("classifyPrimitiveFromDmesg — dmesg-derived fields", () => {
+  it("threads faultingPc and slabCache through the dmesg path", () => {
+    const p = classifyPrimitiveFromDmesg(KASAN_SPLAT, "kasan-uaf");
+    expect(p.faultingPc).toBe("snd_rawmidi_kernel_write1+0x1ba/0x210");
+    expect(p.slabCache).toBe("kmalloc-192");
   });
 });
 

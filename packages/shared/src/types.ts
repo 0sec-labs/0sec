@@ -547,7 +547,90 @@ export interface Finding {
    * {@link SupplyChainAttribution}.
    */
   supplyChain?: SupplyChainAttribution;
+  /**
+   * Structured kernel-exploit state carried forward between weaponization
+   * stages (kernel-autonomy Phase 1). Optional and additive — undefined for
+   * non-kernel findings and for kernel findings that never reached
+   * weaponization. The canonical typed shape (`KernelExploitContext`) lives in
+   * `@pwnkit/core/kernel/exploit`; shared must not import from core (the
+   * dependency only runs core → shared), so we mirror it here with a
+   * structurally-identical lightweight interface. Core consumers can assign a
+   * `KernelExploitContext` into this field and read it back without a cast
+   * because the shapes match field-for-field. See {@link KernelExploitState}.
+   */
+  kernelExploit?: KernelExploitState;
   timestamp: number;
+}
+
+/**
+ * Lightweight, dependency-free mirror of `@pwnkit/core`'s `KernelExploitContext`
+ * so the shared `Finding` can carry kernel-exploit state without importing from
+ * core (which would invert the workspace dependency direction). Kept
+ * structurally identical to the core type — when one changes, change both.
+ */
+export interface KernelExploitState {
+  /** Derived shape of the controlled write primitive. */
+  writeProfile?: KernelWritePrimitiveProfile;
+  /** Candidate heap-spray reclaim plans. */
+  sprayPlans?: KernelSprayPlan[];
+  /** The targeted root-tail finisher plan. */
+  rootTailPlan?: KernelRootTailPlan;
+  /** Highest escalation rung any run has actually reached (monotone). */
+  highestRung?: KernelEscalationRung;
+  /** Whether a controlled reclaim was observed to land. */
+  reclaimLanded?: boolean;
+  /** Whether local privilege escalation (root) was deterministically achieved. */
+  lpeAchieved?: boolean;
+  /** Reference (path / id) to a proof artifact for the achieved capability. */
+  proofArtifactRef?: string;
+}
+
+/** Mirror of core's `EscalationRung` (weakest → strongest). */
+export type KernelEscalationRung =
+  | "none"
+  | "attempted"
+  | "reclaim"
+  | "arb-read"
+  | "arb-write"
+  | "root";
+
+/** Mirror of core's `WritePrimitiveProfile`. */
+export interface KernelWritePrimitiveProfile {
+  dstOffset?: number;
+  lenOffset?: number;
+  srcOffset?: number;
+  writeWidth?: "controlled" | "fixed";
+  controllable?: boolean;
+  conclusion?: string;
+}
+
+/** Mirror of core's `SprayPlan`. */
+export interface KernelSprayPlan {
+  primitive: string;
+  bucketMatch?: boolean;
+  contentControlled?: boolean;
+  unprivileged?: boolean;
+  sameCpuPinnable?: boolean;
+  persistence?: "transient" | "persistent";
+  viabilityReason?: string;
+}
+
+/** Mirror of core's `RootTailPlan`. */
+export interface KernelRootTailPlan {
+  tail: "modprobe_path" | "core_pattern" | "cred";
+  targetSymbol?: string;
+  /** Resolved target symbol address as a `0x…` hex string (unslid under KASLR). */
+  targetAddr?: string;
+  /** Unslid kernel base (`_text`) as a `0x…` hex string, for slide computation. */
+  unslidBase?: string;
+  /** Whether KASLR (`RANDOMIZE_BASE`) is on for the target kernel. */
+  kaslrOn?: boolean;
+  /** Whether the chain has an established kernel-address leak. */
+  hasLeak?: boolean;
+  pathString?: string;
+  byteFidelityOk?: boolean;
+  dropUidTrigger?: boolean;
+  reason?: string;
 }
 
 /**
@@ -883,6 +966,19 @@ export interface CrashReport {
   kernelVersion?: string;
   commitHash?: string;
   configFragment?: string;
+  /**
+   * Faulting program counter as `symbol+0xoffset/0xsize` (e.g.
+   * `snd_rawmidi_kernel_write1+0x1ba/0x210`), parsed from the `in <sym>` token
+   * on the `BUG: KASAN:` line. Optional and additive — undefined when the
+   * splat has no such token. Distinct from `faultingFunction` (symbol only).
+   */
+  faultingPc?: string;
+  /**
+   * Slab cache the faulting object lives in (e.g. `kmalloc-192`), parsed from
+   * the KASAN `cache kmalloc-NNN` / `Allocated by task … kmalloc-NNN` token.
+   * Optional and additive — drives spray-bucket matching in later phases.
+   */
+  slabCache?: string;
 }
 
 export interface IngestConfig {

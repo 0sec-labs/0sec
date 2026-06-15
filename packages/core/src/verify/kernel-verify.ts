@@ -60,6 +60,13 @@ import {
   extractKernelFindingMetadata,
   selectSubsystemSourceSlice,
 } from "./kernel-prompts.js";
+import { checkAlreadyFixed } from "../kernel/fix-commit-intel.js";
+import type {
+  WeaponizationSummary,
+  KernelExploitContext,
+} from "../kernel/exploit/exploit-context.js";
+import { runKernelExploitChain } from "../kernel/exploit/run-chain.js";
+import type { KernelVmRunner } from "../kernel/exploit/harness.js";
 import {
   classifyPrimitiveFromDmesg,
   describeKernelPrimitive,
@@ -78,6 +85,7 @@ export type KernelVerifyStatus =
   | "confirmed"
   | "soft_hit"
   | "no_signal"
+  | "likely_already_fixed"
   | "budget_exhausted"
   | "error";
 
@@ -119,12 +127,37 @@ export interface KernelVerifyResult {
   reason?: string;
   /** Set when `status === "error"`. */
   errorMessage?: string;
+  /**
+   * Weaponization climb summary (kernel-autonomy Phase 1). Optional and
+   * additive — populated only when a weaponization run drove the escalation
+   * ladder for this finding; undefined for plain verify results. See
+   * {@link WeaponizationSummary}.
+   */
+  weaponization?: WeaponizationSummary;
+  /**
+   * Structured kernel-exploit state derived from the weaponization run
+   * (kernel-autonomy Phase 2a). Carried onto `Finding.kernelExploit` by
+   * {@link applyVerificationToFinding}. Populated alongside `weaponization`;
+   * undefined when no weaponization run drove this finding. The
+   * planner-rationale lines are kept separately for the evidence block.
+   */
+  kernelExploit?: KernelExploitContext;
+  /** Planner "what's still missing" lines, for the `---weaponization---` block. */
+  weaponizationRationale?: string[];
 }
 
 export interface KernelVerifyOptions {
   kernelTree: string;
   kernelConfig?: string;
   forceBuild?: boolean;
+  /**
+   * Disable the already-fixed git gate (default: enabled). The gate
+   * short-circuits findings whose faulting function was changed by a recent
+   * security/`Fixes:` commit in the local tree, before any QEMU boot. Tests
+   * that run against a real git checkout can set this to keep behaviour
+   * deterministic.
+   */
+  disableFixCommitGate?: boolean;
   /**
    * Agent driver — defaults to the real native runtime adapter created by the
    * caller. Mockable in tests via the `agentInvoker` field. We accept either a
@@ -150,6 +183,29 @@ export interface KernelVerifyOptions {
   minimize?: boolean;
   /** Oracle-call budget for the minimization pass. Default 60. */
   minimizeMaxOracleCalls?: number;
+  /**
+   * Drive the confirmed finding through the verify → weaponization chain
+   * (kernel-autonomy Phase 2a). Off by default — cost-bounded and
+   * operator-gated by this flag. When set AND the confirmed primitive is
+   * write-capable (write control / UAF / OOB-write), `runKernelExploitChain`
+   * climbs the escalation ladder and the result carries a
+   * {@link WeaponizationSummary}; the finding gets `kernelExploit` state and a
+   * `---weaponization---` evidence block. Default-safe: with no QEMU artifacts
+   * the chain runs plan-only (no boot, no cost) and only records the static
+   * reachable rung. When false/absent, verify behaviour is byte-for-byte
+   * unchanged.
+   */
+  weaponize?: boolean;
+  /**
+   * Injectable VM runner forwarded to the weaponization chain (tests). Has no
+   * effect unless `weaponize` is set.
+   */
+  weaponizeVmRunner?: KernelVmRunner;
+  /**
+   * Injectable artifacts-readiness probe forwarded to the weaponization chain
+   * (tests). Has no effect unless `weaponize` is set.
+   */
+  weaponizeArtifactsReady?: () => boolean;
 }
 
 /**
@@ -339,6 +395,33 @@ export async function verifyStaticKernelFinding(
   const deadline = startedAt + wallClockMs;
 
   const metadata = extractKernelFindingMetadata(finding);
+
+  // Already-fixed gate (incomplete-fix intel): before spending a QEMU/KASAN
+  // boot, ask the local kernel tree whether a recent security/`Fixes:` commit
+  // already touched the EXACT faulting function. This deterministically kills
+  // the "real bug, but patched N days ago" FP class (e.g. ksmbd UAF fixed 8
+  // days before re-discovery, the skb shared-frag cluster) that otherwise burns
+  // a full verification cycle. Fails soft — only short-circuits on a
+  // function-level pickaxe hit, never on a non-git tree or a mere file-level
+  // touch, so a genuinely novel finding is never gated out. Opt-out for tests.
+  if (!opts.disableFixCommitGate && metadata.filePath) {
+    const fixed = checkAlreadyFixed({
+      tree: opts.kernelTree,
+      filePath: metadata.filePath,
+      ...(metadata.faultingFunction
+        ? { faultingFunction: metadata.faultingFunction }
+        : {}),
+    });
+    if (fixed.functionLevelMatch) {
+      return finalize({
+        status: "likely_already_fixed",
+        finding,
+        attempts: [],
+        reason: fixed.reason,
+      });
+    }
+  }
+
   const sourceSlice =
     opts.sourceSlice ??
     selectSubsystemSourceSlice({ kernelTree: opts.kernelTree, metadata });
@@ -508,9 +591,15 @@ export async function verifyStaticKernelFinding(
             lastSoftHit,
             winning: attempt,
           });
-          return opts.minimize
+          const finalized = opts.minimize
             ? await minimizeConfirmedReproducer(confirmed, attempt, opts, runner, finding)
             : confirmed;
+          return await maybeWeaponizeConfirmed(
+            finalized,
+            finding,
+            opts,
+            attempt.oracle?.dmesgExcerpt,
+          );
         }
 
         // Soft hit: a kernel crash fired but signature didn't match. Track
@@ -594,6 +683,17 @@ function finalize(args: FinalizeArgs): KernelVerifyResult {
         attempts: args.attempts,
         reason: args.reason ?? "no reproducer produced any kernel crash",
       };
+    case "likely_already_fixed":
+      // A recent upstream fix touched the faulting function — almost certainly a
+      // duplicate of patched work, not a novel bug. Deprioritise hard (but don't
+      // zero it: the gate is heuristic) and skip the expensive boot entirely.
+      return {
+        status: "likely_already_fixed",
+        new_confidence: Math.min(baseConf, 0.2),
+        attempts: args.attempts,
+        reason:
+          args.reason ?? "faulting function changed by a recent upstream fix",
+      };
     case "budget_exhausted":
       return {
         status: "budget_exhausted",
@@ -669,6 +769,91 @@ async function minimizeConfirmedReproducer(
   } catch {
     // Best-effort: never fail a confirmed verification because minimization
     // tripped.
+    return confirmed;
+  }
+}
+
+/** Primitive kinds whose corruption is a controlled-write candidate. */
+const WRITE_CAPABLE_KINDS = new Set(["use-after-free", "out-of-bounds-write"]);
+
+/**
+ * Is this confirmed primitive worth weaponizing? We only spend a chain run on a
+ * write-capable bug — a `write` control, or a UAF / OOB-write kind (a UAF can
+ * be classified `read` from the faulting access yet still carry a write lever
+ * once reclaimed). Read-only / DoS primitives are not chained toward root.
+ */
+function isWriteCapable(primitive: KernelPrimitive | undefined): boolean {
+  if (!primitive) return false;
+  return primitive.control === "write" || WRITE_CAPABLE_KINDS.has(primitive.kind);
+}
+
+/**
+ * Optionally drive a confirmed, write-capable finding through the verify →
+ * weaponization chain (kernel-autonomy Phase 2a).
+ *
+ * Gated on `opts.weaponize`. Default-safe in every other dimension:
+ *   - not confirmed, or primitive not write-capable → returns `confirmed`
+ *     unchanged (no chain run),
+ *   - chain throws → swallowed; `confirmed` returned unchanged (a verify result
+ *     is never failed because weaponization tripped),
+ *   - no QEMU artifacts → the chain itself runs plan-only (no boot, no cost)
+ *     and we still attach the static rung + planner rationale.
+ *
+ * On success it attaches `weaponization` (the summary), `kernelExploit` (the
+ * carried state), and `weaponizationRationale` (the planner's missing-capability
+ * lines) to the result. `applyVerificationToFinding` materialises these onto
+ * the finding.
+ */
+async function maybeWeaponizeConfirmed(
+  confirmed: KernelVerifyResult,
+  finding: Finding,
+  opts: KernelVerifyOptions,
+  crashDmesg?: string,
+): Promise<KernelVerifyResult> {
+  if (!opts.weaponize) return confirmed;
+  if (confirmed.status !== "confirmed") return confirmed;
+  if (!isWriteCapable(confirmed.primitive)) return confirmed;
+
+  try {
+    // Carry the confirmed crash DMESG onto the finding so the chain's
+    // finding→node lift re-classifies the same primitive. The KASAN splat (not
+    // the syz/C reproducer) is what the classifier reads; prefer it, falling
+    // back to the analysis block on a finding that already carries crash text.
+    const chainFinding: Finding =
+      crashDmesg && /KASAN|BUG:/i.test(crashDmesg)
+        ? {
+            ...finding,
+            evidence: { ...finding.evidence, response: crashDmesg },
+          }
+        : finding;
+
+    const chain = await runKernelExploitChain([chainFinding], {
+      ...(opts.weaponizeVmRunner ? { vmRunner: opts.weaponizeVmRunner } : {}),
+      ...(opts.weaponizeArtifactsReady
+        ? { artifactsReady: opts.weaponizeArtifactsReady }
+        : {}),
+      ...(confirmed.generated_program
+        ? { reproducer: confirmed.generated_program }
+        : {}),
+    });
+
+    const kernelExploit: KernelExploitContext = {
+      highestRung: chain.highestRung,
+      reclaimLanded: chain.reclaimLanded,
+      lpeAchieved: chain.lpeAchieved,
+      ...(chain.summary.artifactC
+        ? { proofArtifactRef: chain.summary.artifactC }
+        : {}),
+    };
+
+    return {
+      ...confirmed,
+      weaponization: chain.summary,
+      kernelExploit,
+      weaponizationRationale: chain.rationale,
+    };
+  } catch {
+    // Best-effort: never fail a confirmed verification because the chain tripped.
     return confirmed;
   }
 }
@@ -765,6 +950,34 @@ export function applyVerificationToFinding(
     lines.push("", "---primitive---", ...describeKernelPrimitive(result.primitive));
   }
 
+  // Weaponization climb (kernel-autonomy Phase 2a). Only present when a
+  // weaponization chain drove this finding (opts.weaponize). Emits the highest
+  // rung reached, the planner's missing-capability rationale, and the canary-
+  // bound proof artifact reference when one exists. Additive — when absent the
+  // evidence block is byte-for-byte the pre-Phase-2a output.
+  const weaponizationLines: string[] = [];
+  if (result.weaponization) {
+    const w = result.weaponization;
+    weaponizationLines.push(
+      `Highest rung: ${w.highestRung}` +
+        ` (reclaimLanded=${w.reclaimLanded}, lpeAchieved=${w.lpeAchieved})`,
+    );
+    if (typeof w.attempts === "number") {
+      weaponizationLines.push(`Attempts: ${w.attempts}`);
+    }
+    if (result.weaponizationRationale?.length) {
+      weaponizationLines.push("Planner rationale:");
+      for (const r of result.weaponizationRationale) {
+        weaponizationLines.push(`- ${r}`);
+      }
+    }
+    if (w.artifactC) {
+      weaponizationLines.push(
+        `Proof artifact: ${w.artifactC.length} bytes of canary-bound C scaffold`,
+      );
+    }
+  }
+
   // Flip the hypothesis flag (mirrored in evidence.analysis by the parser) on
   // confirmed/soft-hit promotion — those are no longer static-only.
   const existingAnalysis = next.evidence.analysis ?? "";
@@ -778,9 +991,19 @@ export function applyVerificationToFinding(
     "",
     "---verification---",
     ...lines,
+    ...(weaponizationLines.length
+      ? ["", "---weaponization---", ...weaponizationLines]
+      : []),
   ]
     .filter(Boolean)
     .join("\n");
+
+  // Carry the structured kernel-exploit state forward (kernel-autonomy Phase
+  // 2a). The core `KernelExploitContext` is structurally assignable to the
+  // shared `KernelExploitState` mirror (guarded in exploit-context.ts).
+  if (result.kernelExploit) {
+    next.kernelExploit = result.kernelExploit;
+  }
 
   if (
     (result.status === "confirmed" || result.status === "soft_hit") &&
@@ -800,6 +1023,16 @@ export function applyVerificationToFinding(
     (result.status === "confirmed" || result.status === "soft_hit")
   ) {
     next.severity = exploitabilityAdjustedSeverity(next.severity, result.primitive);
+  }
+
+  // A deterministically-achieved LPE is the strongest exploitability signal we
+  // have: fold it through the same severity helper (which only ever escalates)
+  // by treating the primitive as demonstrated. Never downgrades.
+  if (result.kernelExploit?.lpeAchieved && result.primitive) {
+    next.severity = exploitabilityAdjustedSeverity(next.severity, {
+      ...result.primitive,
+      controlDemo: { ...result.primitive.controlDemo, demonstrated: true },
+    });
   }
 
   return next;

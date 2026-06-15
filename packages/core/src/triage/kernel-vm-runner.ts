@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync, chmodSync } from "node:fs";
 import type { ReproducerResult, CrashReport } from "./kernel-oracle.js";
 
 export interface KernelVmConfig {
@@ -20,6 +20,28 @@ export interface KernelVmConfig {
   timeoutSec: number;
   shareTag: string;
   artifactDir?: string;
+  /**
+   * KASLR control. Default `false` keeps the historical `nokaslr` boot (stable
+   * symbol addresses for verification). Set `true` (PWNKIT_KERNEL_QEMU_KASLR=1)
+   * to boot with KASLR ON — exercises a leak-dependent exploit under randomized
+   * base. Only meaningful when the env append does not already pin (no)kaslr.
+   */
+  kaslr?: boolean;
+  /**
+   * Race-widening: inject `mdelay(<delayMs>)` at `<widenSymbol>+<widenOffset>`
+   * via a kprobe module so the UAF/race window is best-effort widened. Wired
+   * only when a kernel build tree is present in the guest; FAIL-SOFT otherwise
+   * (the runner boots without widening and notes it). Parameterized here so the
+   * harness can pass the finding's faulting PC + a delay.
+   */
+  widenSymbol?: string;
+  widenOffset?: number;
+  widenDelayMs?: number;
+  /**
+   * Guest kernel build tree (e.g. `/usr/src/linux`) used to compile the
+   * race-widening kprobe module in-guest. Absent ⇒ widening is skipped.
+   */
+  guestKernelBuildDir?: string;
 }
 
 /**
@@ -214,6 +236,17 @@ export function loadKernelVmConfigFromEnv(): KernelVmConfig {
   const resolvedKernelImage = kernelImage!;
   const resolvedDiskImage = diskImage!;
 
+  // KASLR knob: default OFF (nokaslr) for stable verification; opt in with
+  // PWNKIT_KERNEL_QEMU_KASLR=1. An explicit env append always wins (the operator
+  // pinned the cmdline by hand), so we only inject (no)kaslr into the default.
+  const kaslr = /^(1|true|on|yes)$/i.test(process.env.PWNKIT_KERNEL_QEMU_KASLR?.trim() ?? "");
+  const explicitAppend = process.env.PWNKIT_KERNEL_QEMU_APPEND?.trim();
+  const kernelAppend = explicitAppend || buildKernelAppend(kaslr);
+
+  const widenSymbol = process.env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL?.trim() || undefined;
+  const widenOffsetRaw = process.env.PWNKIT_KERNEL_QEMU_WIDEN_OFFSET?.trim();
+  const widenDelayRaw = process.env.PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS?.trim();
+
   return {
     qemuBinary: process.env.PWNKIT_KERNEL_QEMU_BINARY?.trim() || "qemu-system-x86_64",
     kernelImage: resolvedKernelImage,
@@ -222,13 +255,84 @@ export function loadKernelVmConfigFromEnv(): KernelVmConfig {
     bootTimeoutSec: parseInt(process.env.PWNKIT_KERNEL_QEMU_BOOT_TIMEOUT_SEC?.trim() || "120", 10),
     memoryMb: parseInt(process.env.PWNKIT_KERNEL_QEMU_MEMORY_MB?.trim() || "2048", 10),
     smp: parseInt(process.env.PWNKIT_KERNEL_QEMU_SMP?.trim() || "2", 10),
-    kernelAppend: process.env.PWNKIT_KERNEL_QEMU_APPEND?.trim() || "console=ttyS0 root=/dev/vda rw nokaslr panic=-1 init=/sbin/pwnkit-init",
+    kernelAppend,
     qemuAccel: process.env.PWNKIT_KERNEL_QEMU_ACCEL?.trim() || undefined,
     initrdPath: process.env.PWNKIT_KERNEL_QEMU_INITRD?.trim() || undefined,
     timeoutSec: parseInt(process.env.PWNKIT_KERNEL_QEMU_TIMEOUT_SEC?.trim() || "60", 10),
     shareTag: process.env.PWNKIT_KERNEL_QEMU_SHARE_TAG?.trim() || "pwnkitshare",
     artifactDir: process.env.PWNKIT_KERNEL_QEMU_ARTIFACT_DIR?.trim() || undefined,
+    kaslr,
+    ...(widenSymbol ? { widenSymbol } : {}),
+    ...(widenOffsetRaw && Number.isFinite(parseInt(widenOffsetRaw, 16))
+      ? { widenOffset: parseInt(widenOffsetRaw, 16) }
+      : {}),
+    ...(widenDelayRaw && Number.isFinite(parseInt(widenDelayRaw, 10))
+      ? { widenDelayMs: parseInt(widenDelayRaw, 10) }
+      : {}),
+    ...(process.env.PWNKIT_KERNEL_QEMU_GUEST_BUILD_DIR?.trim()
+      ? { guestKernelBuildDir: process.env.PWNKIT_KERNEL_QEMU_GUEST_BUILD_DIR!.trim() }
+      : {}),
   };
+}
+
+/**
+ * Build the default kernel cmdline, parameterized by the KASLR knob. The only
+ * difference from the historical default is `nokaslr` (off) vs `kaslr` (on);
+ * everything else (console, root, panic, init) is unchanged.
+ */
+export function buildKernelAppend(kaslr: boolean): string {
+  const base = "console=ttyS0 root=/dev/vda rw";
+  const tail = "panic=-1 init=/sbin/pwnkit-init";
+  return `${base} ${kaslr ? "kaslr" : "nokaslr"} ${tail}`;
+}
+
+/**
+ * Source of a minimal kprobe module that injects `mdelay(<delayMs>)` at the
+ * faulting `<symbol>+<offset>` to best-effort widen a UAF/race window. Returns
+ * the C source; the guest runner compiles + insmods it against an in-guest
+ * kernel build tree, and FAILS SOFT (boots without widening) when no tree is
+ * present. Pure string builder — exposed for unit testing the emitted source.
+ */
+export function renderRaceWidenModuleSource(
+  symbol: string,
+  offset: number,
+  delayMs: number,
+): string {
+  const off = `0x${offset.toString(16)}`;
+  return [
+    "// pwnkit race-widening kprobe: inject mdelay() at the faulting PC to widen",
+    "// the UAF/race window. Best-effort; harmless if the probe fails to register.",
+    "#include <linux/module.h>",
+    "#include <linux/kernel.h>",
+    "#include <linux/kprobes.h>",
+    "#include <linux/delay.h>",
+    "",
+    "MODULE_LICENSE(\"GPL\");",
+    "",
+    `static unsigned long widen_delay_ms = ${delayMs};`,
+    "module_param(widen_delay_ms, ulong, 0644);",
+    "",
+    "static struct kprobe kp = {",
+    `    .symbol_name = "${symbol}",`,
+    `    .offset = ${off},`,
+    "};",
+    "",
+    "static int handler_pre(struct kprobe *p, struct pt_regs *regs) {",
+    "    mdelay(widen_delay_ms);",
+    "    return 0;",
+    "}",
+    "",
+    "static int __init widen_init(void) {",
+    "    kp.pre_handler = handler_pre;",
+    `    pr_info("pwnkit-widen: probing ${symbol}+${off} delay=%lums\\n", widen_delay_ms);`,
+    "    return register_kprobe(&kp);",
+    "}",
+    "",
+    "static void __exit widen_exit(void) { unregister_kprobe(&kp); }",
+    "",
+    "module_init(widen_init);",
+    "module_exit(widen_exit);",
+  ].join("\n");
 }
 
 export function buildQemuCommand(
@@ -320,9 +424,44 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
     ].join("\n");
   }
 
+  // Optional race-widening prologue: compile + insmod a kprobe module that
+  // injects mdelay() at the faulting PC. FAIL-SOFT — every failure path notes it
+  // in widen.log and proceeds without widening (the run still happens).
+  const widenLines: string[] =
+    config.widenSymbol !== undefined &&
+    config.widenOffset !== undefined &&
+    config.widenDelayMs !== undefined &&
+    config.guestKernelBuildDir
+      ? [
+          "# ── Race-widening (best-effort, fail-soft) ─────────────────────────",
+          `KBUILD_DIR=${shellQuote(config.guestKernelBuildDir)}`,
+          "widened=0",
+          'if [ -d "$KBUILD_DIR" ] && command -v make >/dev/null 2>&1; then',
+          '  cp "$SHARE_DIR/pwnkit_widen.c" "$WORK_DIR/pwnkit_widen.c" 2>/dev/null || true',
+          '  printf "obj-m += pwnkit_widen.o\\n" > "$WORK_DIR/Makefile"',
+          '  if make -C "$KBUILD_DIR" M="$WORK_DIR" modules >"$SHARE_DIR/widen.log" 2>&1 \\',
+          '     && insmod "$WORK_DIR/pwnkit_widen.ko" >>"$SHARE_DIR/widen.log" 2>&1; then',
+          "    widened=1",
+          '    printf "%s\\n" "pwnkit-widen: insmod ok" >> "$SHARE_DIR/widen.log"',
+          "  else",
+          '    printf "%s\\n" "pwnkit-widen: build/insmod failed — running WITHOUT widening" >> "$SHARE_DIR/widen.log"',
+          "  fi",
+          "else",
+          '  printf "%s\\n" "pwnkit-widen: no kernel build tree in guest — running WITHOUT widening" > "$SHARE_DIR/widen.log"',
+          "fi",
+          'printf "%s\\n" "$widened" > "$SHARE_DIR/widened.ok"',
+        ]
+      : [];
+
   return [
     "#!/bin/sh",
     "set -eu",
+    "# uid-drop exec contract: this runner executes the reproducer as the guest",
+    "# init (uid 0). A weaponization exploit drops to an unprivileged uid itself",
+    "# (setuid(65534)) BEFORE firing its root tail, then re-checks getuid()==0",
+    "# after — so the captured output carries an ordered DROP(uid!=0)→ROOT(uid=0)",
+    "# witness the oracle uses to confirm a genuine escalation. We must therefore",
+    "# run it directly (as root), NOT via su/sudo to a lower uid.",
     "SHARE_DIR=/mnt/pwnkit",
     "WORK_DIR=/tmp/pwnkit-run",
     "mkdir -p \"$WORK_DIR\"",
@@ -331,6 +470,7 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
     "exit_code=0",
     "timed_out=0",
     "cp \"$SHARE_DIR/repro.c\" \"$WORK_DIR/repro.c\"",
+    ...widenLines,
     `if /usr/bin/gcc -B/usr/bin/ -O0 -g -o "$WORK_DIR/repro" "$WORK_DIR/repro.c" -lpthread >"$SHARE_DIR/compile.log" 2>&1; then`,
     "  compiled=1",
     "else",
@@ -411,6 +551,21 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
   const serialLogPath = join(hostTmpDir, "serial.log");
   writeFileSync(sourcePath, report.reproducer, "utf-8");
   writeFileSync(runnerScriptPath, renderGuestRunnerScript(config, language), "utf-8");
+
+  // Stage the race-widening kprobe module source for the guest to (best-effort)
+  // build + insmod. Only written when fully parameterized; the guest fails soft
+  // when its kernel build tree is absent.
+  if (
+    config.widenSymbol !== undefined &&
+    config.widenOffset !== undefined &&
+    config.widenDelayMs !== undefined
+  ) {
+    writeFileSync(
+      join(hostTmpDir, "pwnkit_widen.c"),
+      renderRaceWidenModuleSource(config.widenSymbol, config.widenOffset, config.widenDelayMs),
+      "utf-8",
+    );
+  }
 
   const { command, args } = buildQemuCommand(config, serialLogPath, hostTmpDir);
   const vmProc = spawn(command, args, {
@@ -537,9 +692,27 @@ function detectKernelSignature(dmesg: string): string | undefined {
   return undefined;
 }
 
-function defaultDmesgOutPath(): string {
+export function defaultDmesgOutPath(): string {
+  // Nanosecond-unique: several proofs written within the same millisecond must
+  // not collide on the same filename (the old `Date.now()` ms stamp could).
+  const ns = process.hrtime.bigint().toString();
   const random = Math.random().toString(36).slice(2, 10);
-  return join(tmpdir(), `pwnkit-verify-${Date.now()}-${random}.dmesg`);
+  return join(tmpdir(), `pwnkit-verify-${ns}-${random}.dmesg`);
+}
+
+/**
+ * Write a proof artifact and make it READ-ONLY (mode 0444) so a preserved proof
+ * cannot be silently mutated after the fact. Fail-soft on chmod (some
+ * filesystems reject it) — the proof is still written.
+ */
+export function writeProofFileReadOnly(path: string, content: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, "utf-8");
+  try {
+    chmodSync(path, 0o444);
+  } catch {
+    // chmod can fail on exotic filesystems; the proof bytes are already on disk.
+  }
 }
 
 /**
@@ -582,11 +755,9 @@ export async function verifyKernelFinding(
       buildRunner: opts.buildRunner,
     });
   } catch (err) {
-    mkdirSync(dirname(dmesgOutPath), { recursive: true });
-    writeFileSync(
+    writeProofFileReadOnly(
       dmesgOutPath,
       `[build_failed] ${err instanceof Error ? err.message : String(err)}\n`,
-      "utf-8",
     );
     return {
       status: "build_failed",
@@ -603,12 +774,17 @@ export async function verifyKernelFinding(
     kernel: process.env.PWNKIT_KERNEL_QEMU_KERNEL,
     disk: process.env.PWNKIT_KERNEL_QEMU_DISK,
     cfg: process.env.PWNKIT_KERNEL_QEMU_CONFIG,
+    cacheKey: process.env.PWNKIT_KERNEL_QEMU_CACHEKEY,
   };
   process.env.PWNKIT_KERNEL_QEMU = "1";
   process.env.PWNKIT_KERNEL_QEMU_KERNEL = artifacts.kernelImage;
   process.env.PWNKIT_KERNEL_QEMU_DISK = artifacts.diskImage;
   if (artifacts.kernelConfig) {
     process.env.PWNKIT_KERNEL_QEMU_CONFIG = artifacts.kernelConfig;
+  }
+  // Booted-image identity for the weaponization oracle's wrong-kernel binding.
+  if (artifacts.cacheKey) {
+    process.env.PWNKIT_KERNEL_QEMU_CACHEKEY = artifacts.cacheKey;
   }
 
   let runResult: ReproducerResult;
@@ -624,11 +800,9 @@ export async function verifyKernelFinding(
     const runner = opts.vmRunner ?? runReproducerInKernelVm;
     runResult = await runner(report);
   } catch (err) {
-    mkdirSync(dirname(dmesgOutPath), { recursive: true });
-    writeFileSync(
+    writeProofFileReadOnly(
       dmesgOutPath,
       `[run_failed] ${err instanceof Error ? err.message : String(err)}\n`,
-      "utf-8",
     );
     return {
       status: "run_failed",
@@ -640,12 +814,12 @@ export async function verifyKernelFinding(
     process.env.PWNKIT_KERNEL_QEMU_KERNEL = previousEnv.kernel;
     process.env.PWNKIT_KERNEL_QEMU_DISK = previousEnv.disk;
     process.env.PWNKIT_KERNEL_QEMU_CONFIG = previousEnv.cfg;
+    process.env.PWNKIT_KERNEL_QEMU_CACHEKEY = previousEnv.cacheKey;
   }
 
   // ── Persist dmesg + decide verdict ──────────────────────────
-  mkdirSync(dirname(dmesgOutPath), { recursive: true });
   const dmesgContent = runResult.dmesg || runResult.output || "";
-  writeFileSync(dmesgOutPath, dmesgContent, "utf-8");
+  writeProofFileReadOnly(dmesgOutPath, dmesgContent);
 
   if (!runResult.compiled || !runResult.executed) {
     return {

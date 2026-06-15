@@ -19,6 +19,7 @@
 import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Finding } from "@pwnkit/shared";
+import { parseFaultingPc, parseSlabCache } from "../triage/kernel-primitive.js";
 
 /**
  * Static cap on a single subsystem-source slice we ship to the agent. The
@@ -45,6 +46,17 @@ export interface KernelFindingMetadata {
   faultingFunction?: string;
   filePath?: string;
   fileLine?: number;
+  /**
+   * Faulting program counter (`symbol+0xoffset/0xsize`), surfaced from any
+   * KASAN splat embedded in the finding's evidence (kernel-autonomy Phase 1).
+   * Optional and additive.
+   */
+  faultingPc?: string;
+  /**
+   * Slab cache (`kmalloc-NNN`) the faulting object lives in, surfaced from the
+   * embedded splat. Optional and additive.
+   */
+  slabCache?: string;
 }
 
 /**
@@ -75,6 +87,22 @@ export function extractKernelFindingMetadata(finding: Finding): KernelFindingMet
   // agent has something concrete to target even if `evidence.request` is bare.
   const titleFn = finding.title?.match(/^([a-zA-Z_][\w]*)\b/);
   if (titleFn) out.faultingFunction = titleFn[1];
+
+  // Surface dmesg-derived exploit fields when the finding embeds a KASAN splat
+  // (kernel-autonomy Phase 1). The splat may live in any of the evidence
+  // strings, so sniff across all three; the parsers are defensive (undefined
+  // on no-match).
+  const evidenceText = [
+    finding.evidence?.analysis,
+    finding.evidence?.response,
+    finding.evidence?.request,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const faultingPc = parseFaultingPc(evidenceText);
+  if (faultingPc) out.faultingPc = faultingPc;
+  const slabCache = parseSlabCache(evidenceText);
+  if (slabCache) out.slabCache = slabCache;
 
   return out;
 }

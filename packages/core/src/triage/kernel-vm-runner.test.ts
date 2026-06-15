@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   prepareKernelVmArtifacts,
   verifyKernelFinding,
+  buildKernelAppend,
+  renderRaceWidenModuleSource,
+  defaultDmesgOutPath,
+  writeProofFileReadOnly,
 } from "./kernel-vm-runner.js";
 
 describe("prepareKernelVmArtifacts", () => {
@@ -330,4 +334,66 @@ describe("verifyKernelFinding", () => {
       },
     });
   }
+});
+
+describe("buildKernelAppend — KASLR knob", () => {
+  it("boots nokaslr by default (stable verification addresses)", () => {
+    const append = buildKernelAppend(false);
+    expect(append).toContain("nokaslr");
+    expect(append).not.toMatch(/\bkaslr\b(?<!nokaslr)/);
+    // historical contract preserved otherwise.
+    expect(append).toContain("init=/sbin/pwnkit-init");
+    expect(append).toContain("root=/dev/vda");
+  });
+
+  it("boots with KASLR on when the kaslr flag is set", () => {
+    const append = buildKernelAppend(true);
+    expect(append).toContain(" kaslr ");
+    expect(append).not.toContain("nokaslr");
+  });
+});
+
+describe("renderRaceWidenModuleSource — kprobe widen module", () => {
+  it("injects mdelay at the faulting symbol+offset", () => {
+    const src = renderRaceWidenModuleSource("snd_rawmidi_kernel_write1", 0x1ba, 50);
+    // contains the mdelay widen + the faulting symbol + the offset.
+    expect(src).toContain("mdelay(widen_delay_ms)");
+    expect(src).toContain('.symbol_name = "snd_rawmidi_kernel_write1"');
+    expect(src).toContain(".offset = 0x1ba");
+    expect(src).toContain("register_kprobe");
+    expect(src).toContain("widen_delay_ms = 50");
+    // it is a real, buildable kprobe module skeleton.
+    expect(src).toContain("#include <linux/kprobes.h>");
+    expect(src).toContain("MODULE_LICENSE(\"GPL\")");
+  });
+});
+
+describe("defaultDmesgOutPath — collision-free proof filenames", () => {
+  it("returns DISTINCT paths for several calls in the same millisecond", () => {
+    const before = Date.now();
+    const paths = new Set<string>();
+    for (let i = 0; i < 1000; i++) paths.add(defaultDmesgOutPath());
+    const after = Date.now();
+    // Sanity: the loop completed inside (at most) a few ms — the old Date.now()
+    // stamp would have collided heavily here. hrtime.bigint() keeps them unique.
+    expect(after - before).toBeLessThan(50);
+    expect(paths.size).toBe(1000);
+  });
+});
+
+describe("writeProofFileReadOnly — read-only proof artifact", () => {
+  it("writes the proof and makes it mode 0444", () => {
+    const path = defaultDmesgOutPath();
+    try {
+      writeProofFileReadOnly(path, "BUG: KASAN: use-after-free proof\n");
+      expect(existsSync(path)).toBe(true);
+      expect(readFileSync(path, "utf-8")).toContain("use-after-free proof");
+      // Mode is read-only (0444): mask off the file-type bits.
+      const mode = statSync(path).mode & 0o777;
+      expect(mode).toBe(0o444);
+    } finally {
+      // Read-only files need force removal.
+      rmSync(path, { force: true });
+    }
+  });
 });
