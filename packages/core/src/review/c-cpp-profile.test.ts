@@ -84,6 +84,18 @@ describe("cppReviewAgentPrompt — hypothesis seeding (#467)", () => {
     expect(prompt).not.toContain("OPERATOR HYPOTHESIS");
     expect(prompt).not.toContain("PRIMARY RESEARCH DIRECTION");
   });
+
+  it("requires self-contained poc_steps that replay in a fresh sandbox", () => {
+    // The tier-1 false-refute root cause: poc_steps referenced ephemeral
+    // scan-sandbox paths (/tmp/pwnkit-harness/<id>/harness.c) that don't exist
+    // when verify replays in a fresh sandbox → cc1 'No such file' → false refute.
+    const prompt = cppReviewAgentPrompt("/tmp/libfoo", []);
+    expect(prompt).toContain("SELF-CONTAINED");
+    expect(prompt).toContain("FRESH sandbox");
+    expect(prompt).toMatch(/git clone/);
+    expect(prompt).toMatch(/PWNKIT_EOF/);
+    expect(prompt).toContain("No such file");
+  });
 });
 
 describe("scaffoldTier1Harness", () => {

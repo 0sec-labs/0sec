@@ -93,6 +93,10 @@ When you build a harness:
 - Compile with \`clang -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer\`
 - Run with \`-runs=100000 -timeout=10\` (libFuzzer) or until the sanitizer trips
 - Capture the sanitizer log as evidence
+- These \`/tmp/pwnkit-harness/...\` and cloned-repo paths exist ONLY in this scan
+  sandbox. Do NOT reference them in poc_steps — the verify replay runs in a fresh
+  sandbox. The poc_steps must clone the source + write the harness inline first
+  (see the self-contained poc_steps rules below).
 
 If the bug needs context the tier-1 harness can't reach, escalate to tier 2: link in the next layer of the library (parser, demuxer, allocator).
 
@@ -113,26 +117,57 @@ For each finding, call save_finding with these parameters:
 - evidence_analysis: the harness path, tier (1/2/3), and data-flow trace showing how attacker input reaches the sink
 - poc_steps: MANDATORY — a JSON-encoded PocStep[] array providing structured proof-of-concept steps. Every finding MUST include at least one step, even if it is just a description step explaining how the bug triggers. Each step has: { id, kind, summary, action, expect? }.
 
+  CRITICAL — poc_steps MUST be SELF-CONTAINED. They are replayed VERBATIM in a
+  FRESH sandbox during verification, where NOTHING from this scan exists: not the
+  harness file you wrote, not the cloned repo, not any \`/tmp/pwnkit-harness/...\`
+  or \`/tmp/pwnkit-pipeline-.../repo\` path. A step that only runs
+  \`gcc /tmp/pwnkit-harness/<id>/harness.c ...\` will fail with
+  "No such file or directory" and your finding will be discarded as unproven.
+  Each poc_steps array must RECREATE everything it needs, in order:
+
+    1. Fetch the target source. A shell step that clones the EXACT ref you
+       reviewed, e.g. \`git clone --depth 1 <repo-url> /tmp/t && git -C /tmp/t
+       checkout <commit-or-tag>\` (or installs the exact package version).
+    2. Write the harness INLINE with a heredoc — the FULL harness source, never
+       a bare path reference, e.g. \`mkdir -p /tmp/h && cat > /tmp/h/harness.c
+       <<'PWNKIT_EOF'\\n<entire harness source>\\nPWNKIT_EOF\`.
+    3. Compile + run, referencing ONLY paths steps 1-2 created.
+    4. A \`"note"\` step describing the trigger path + expected sanitizer output.
+
   For C/C++ library findings, structure your poc_steps like this example:
   \`\`\`json
   [
     {
+      "id": "fetch-source",
+      "kind": "exploit",
+      "summary": "Clone the exact library source under review",
+      "action": { "type": "shell", "cmd": "git clone --depth 1 https://github.com/acme/parser /tmp/t && git -C /tmp/t checkout v1.2.3" },
+      "expect": { "type": "exit-zero" }
+    },
+    {
+      "id": "write-harness",
+      "kind": "exploit",
+      "summary": "Write the tier-1 harness inline (self-contained, no scan-sandbox paths)",
+      "action": { "type": "shell", "cmd": "mkdir -p /tmp/h && cat > /tmp/h/harness.c <<'PWNKIT_EOF'\\n#include \\"/tmp/t/src/parser.c\\"\\nint main(){ unsigned char in[1]={0x01}; parse_header(in, sizeof in); return 0; }\\nPWNKIT_EOF" },
+      "expect": { "type": "exit-zero" }
+    },
+    {
       "id": "build-and-run",
       "kind": "exploit",
-      "summary": "Compile the harness with ASan and trigger the OOB read",
-      "action": { "type": "shell", "cmd": "gcc -fsanitize=address test.c -o test && ./test" },
+      "summary": "Compile with ASan and trigger the OOB read in the real parser",
+      "action": { "type": "shell", "cmd": "gcc -O1 -g -fsanitize=address,undefined -I/tmp/t/src /tmp/h/harness.c -o /tmp/h/harness && /tmp/h/harness" },
       "expect": { "type": "body-contains", "text": "AddressSanitizer" }
     },
     {
       "id": "describe-trigger",
       "kind": "exploit",
       "summary": "Describe the OOB read trigger path",
-      "action": { "type": "note", "text": "The OOB read triggers when parse_header() receives a length field of 0xFFFFFFFF from attacker-controlled input. The signed comparison (len < buf_size) passes for negative values, then the implicit cast to size_t in memcpy produces a massive read." }
+      "action": { "type": "note", "text": "parse_header() reads a length field from byte 0 of attacker input and dereferences past a 1-byte buffer before any bounds check, producing an ASan heap-buffer-overflow read." }
     }
   ]
   \`\`\`
 
-  At minimum, always include a \`"note"\` step describing the trigger path and expected sanitizer output. Add a \`"shell"\` step with the actual build+run command when you have a working harness. Every finding — even tier-1 — MUST have at least one poc_step.
+  At minimum, always include a \`"note"\` step describing the trigger path and expected sanitizer output. Whenever you have a working harness, include the fetch-source + write-harness(inline) + build-and-run shell steps above so the proof REPLAYS in a clean sandbox. Every finding — even tier-1 — MUST have at least one poc_step.
 
 IMPORTANT: Do NOT simply write findings into your reasoning or output text. Each
 finding MUST be persisted via a save_finding tool call or it will be invisible to the
