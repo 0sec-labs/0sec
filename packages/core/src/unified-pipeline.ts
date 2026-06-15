@@ -28,6 +28,7 @@ import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/
 import { researchPrompt, researchPromptSingleFile, blindVerifyPrompt } from "./agent/prompts.js";
 import { isDisclosureWorthy, evidenceKindForFinding } from "./triage/verify-verdict.js";
 import type { VerifyVerdict } from "./triage/verify-verdict.js";
+import { resolveNovelty } from "./triage/index.js";
 import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
 import { collectScopeFiles } from "./source-files.js";
 import { features as agentFeatures } from "./agent/features.js";
@@ -1718,6 +1719,51 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
 
     // ── BUILD REPORT ──
     const confirmedFindings = findings.filter((f) => f.status !== "false-positive");
+
+    // Public-advisory novelty gate (issue #851) on the OSS-package scan path.
+    // agenticScan only runs this for url/web-app targets (mostly private → the
+    // gate no-ops there); the findings that actually need it are OSS package
+    // findings (npm/pypi/cargo), which route through runPipeline and never hit
+    // the gate. Resolve ONCE per scan — the package+version is identical for
+    // every finding on this target — then stamp each confirmed finding.
+    //
+    // Guardrails mirror agentic-scanner.ts: gated on the publishabilityGate
+    // feature flag, OSS ecosystems only (npm/pypi/cargo; `oci`/unset map to no
+    // OSV ecosystem so resolveNovelty no-ops), and fail-soft — any error leaves
+    // the verdict undefined and behavior unchanged (never drops a finding).
+    if (
+      agentFeatures.publishabilityGate &&
+      confirmedFindings.length > 0 &&
+      (prepared.packageEcosystem === "npm" ||
+        prepared.packageEcosystem === "pypi" ||
+        prepared.packageEcosystem === "cargo") &&
+      prepared.packageName
+    ) {
+      try {
+        const novelty = await resolveNovelty(
+          prepared.packageName,
+          prepared.packageEcosystem,
+          prepared.packageVersion,
+        );
+        if (novelty) {
+          // Stamp every confirmed finding. The verdict rides on the returned
+          // Finding objects (report.findings); the cloud worker that invokes
+          // runPipeline persists them via the orchestrator PATCH
+          // /findings/:id/publishability path wired in the prior commit (the
+          // local SQLite resume store has no novelty column, so there is
+          // nothing extra to re-save here).
+          for (const finding of confirmedFindings) {
+            finding.noveltyVerdict = novelty.verdict;
+            if (novelty.advisoryMatches.length > 0) {
+              finding.advisoryMatches = novelty.advisoryMatches;
+            }
+          }
+        }
+      } catch {
+        // novelty is advisory-only; a network blip must never fail the scan
+      }
+    }
+
     const durationMs = Date.now() - startTime;
     const summary = buildSummary(confirmedFindings, semgrepFindings.length + npmAuditFindings.length);
 
