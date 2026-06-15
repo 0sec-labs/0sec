@@ -953,6 +953,15 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     format: opts.format,
     runtime: opts.runtime ?? "api",
     mode: opts.mode ?? "deep",
+    // Thread the resolved package identity through to the publishability /
+    // novelty gate (issue #851). Without this the gate defaulted ecosystem to
+    // npm and dropped the version, so it could only do package-level dedup. We
+    // map the pipeline's `oci` to undefined (not an OSV ecosystem) so the gate
+    // stays conservative on container images.
+    ...(prepared.packageEcosystem && prepared.packageEcosystem !== "oci"
+      ? { ecosystem: prepared.packageEcosystem }
+      : {}),
+    ...(prepared.packageVersion ? { version: prepared.packageVersion } : {}),
   };
 
   if (db) {

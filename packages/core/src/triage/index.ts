@@ -56,12 +56,15 @@ export {
   makeSecurityPolicyFetch,
   detectReportingChannel,
   resolveRepository,
+  resolveNovelty,
   OWN_SUBMISSIONS_REGISTRY,
 } from "./publishability-sources.js";
 export type {
   PublishabilitySourceOptions,
   DedupEcosystem,
   ReportingChannel,
+  NoveltyResult,
+  ResolveNoveltyOptions,
 } from "./publishability-sources.js";
 export { checkReachability, extractSinkLocation } from "./reachability.js";
 export type { ReachabilityResult, SinkLocation } from "./reachability.js";

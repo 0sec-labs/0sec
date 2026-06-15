@@ -86,6 +86,14 @@ export interface ScanConfig {
    */
   ecosystem?: string;
   /**
+   * Resolved package version of the target (e.g. "4.17.4"). Optional; when set
+   * the publishability novelty gate (issue #851) scopes its OSV / GitHub
+   * Advisory lookup to advisories that actually affect THIS version, instead of
+   * matching any historical advisory for the package. Unset → the gate falls
+   * back to a package-level lookup (less precise → `possibly-known` on a hit).
+   */
+  version?: string;
+  /**
    * Source repository as "owner/repo", for the publishability dedup gate's
    * repo-issue + SECURITY.md sources. Optional; when unset the scanner
    * best-effort resolves it from package metadata (npm only today) and leaves
@@ -525,6 +533,36 @@ export interface Finding {
    * `duplicate` / `fix_bypass` decision so a reviewer can see what was matched.
    */
   dedupRefs?: string[];
+  /**
+   * Public-advisory novelty verdict (issue #851). Optional and additive —
+   * undefined until the publishability layer's novelty step runs (flag-gated
+   * via `PWNKIT_FEATURE_PUBLISHABILITY_GATE`, OSS ecosystems only). The
+   * structured counterpart to the old text-over-notes heuristic the disclosure
+   * cockpit used: `matches-CVE-…` / `matches-GHSA-…` mean a live OSV / GitHub
+   * Advisory DB lookup found a published advisory covering this package+version
+   * (downgrade send → courtesy), `novel` means the lookup ran and found nothing
+   * (keep in the send lane), and `possibly-known` means the lookup was
+   * inconclusive or skipped (private/SaaS target, no version, etc.). The
+   * evidence behind a `matches-*` verdict lives in {@link advisoryMatches}.
+   */
+  noveltyVerdict?:
+    | "novel"
+    | "possibly-known"
+    | `matches-GHSA-${string}`
+    | `matches-CVE-${string}`;
+  /**
+   * Advisory links backing a `matches-*` {@link noveltyVerdict} (issue #851).
+   * Optional and additive — each entry is a published advisory (OSV / GHSA /
+   * CVE) covering this finding's package+version, with the advisory id and a
+   * link a reviewer can open. Empty/undefined when the verdict is `novel` /
+   * `possibly-known`.
+   */
+  advisoryMatches?: Array<{
+    source: "OSV" | "GHSA" | "CVE";
+    id: string;
+    url?: string;
+    version?: string;
+  }>;
   /**
    * Inline (in-loop) validation verdict (issue #554). Optional and additive.
    * Set by the native attack loop's onFindingSaved hook when

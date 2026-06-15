@@ -8,7 +8,10 @@
  * right verdicts for the regression-corpus cases.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildPublishabilityInputs,
   makeOwnSubmissionsLookup,
@@ -17,6 +20,7 @@ import {
   makeGlobalAdvisoryLookup,
   detectReportingChannel,
   resolveRepository,
+  resolveNovelty,
   OWN_SUBMISSIONS_REGISTRY,
 } from "./publishability-sources.js";
 import { checkPublishability } from "./publishability.js";
@@ -275,5 +279,122 @@ describe("buildPublishabilityInputs end-to-end", () => {
       inputs,
     );
     expect(r.decision).toBe("in_scope");
+  });
+});
+
+// ── Public-advisory novelty gate (issue #851) ──────────────────────────────
+
+describe("resolveNovelty (issue #851)", () => {
+  let cacheDir: string;
+  beforeEach(() => {
+    cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-novelty-test-"));
+  });
+  afterEach(() => {
+    rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  // A real-shaped OSV /v1/query response (version-scoped): one CVE-keyed GHSA.
+  const OSV_HIT = {
+    vulns: [
+      {
+        id: "GHSA-f82v-jwr5-mffw",
+        aliases: ["CVE-2025-29927"],
+        summary: "Authorization Bypass in Next.js Middleware",
+        database_specific: { severity: "CRITICAL" },
+        references: [
+          { type: "ADVISORY", url: "https://github.com/advisories/GHSA-f82v-jwr5-mffw" },
+        ],
+        affected: [
+          {
+            package: { ecosystem: "npm", name: "next" },
+            ranges: [{ type: "SEMVER", events: [{ introduced: "15.0.0" }, { fixed: "15.2.3" }] }],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("returns matches-CVE-… for a stubbed OSV hit (version-scoped)", async () => {
+    const result = await resolveNovelty("next", "npm", "15.1.0", {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: OSV_HIT }]),
+    });
+    expect(result?.verdict).toBe("matches-CVE-2025-29927");
+    expect(result?.advisoryMatches.length).toBeGreaterThan(0);
+    expect(result?.advisoryMatches[0]).toMatchObject({
+      source: "CVE",
+      id: "CVE-2025-29927",
+      url: "https://github.com/advisories/GHSA-f82v-jwr5-mffw",
+    });
+  });
+
+  it("returns matches-GHSA-… when the advisory has no CVE alias", async () => {
+    const ghsaOnly = {
+      vulns: [
+        {
+          id: "GHSA-abcd-efgh-ijkl",
+          aliases: [],
+          summary: "Some published advisory with no CVE yet",
+          references: [{ type: "WEB", url: "https://example.com/adv" }],
+          affected: [{ package: { ecosystem: "npm", name: "leftpad" } }],
+        },
+      ],
+    };
+    const result = await resolveNovelty("leftpad", "npm", "1.0.0", {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: ghsaOnly }]),
+    });
+    // OSV ids are upper-cased by parseOsvResponse, so the verdict carries the
+    // normalized id (real intel-module behavior).
+    expect(result?.verdict).toBe("matches-GHSA-ABCD-EFGH-IJKL");
+    expect(result?.advisoryMatches[0]?.source).toBe("GHSA");
+  });
+
+  it("returns novel for an empty version-scoped OSV result", async () => {
+    const result = await resolveNovelty("totally-novel-pkg", "npm", "1.0.0", {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: { vulns: [] } }]),
+    });
+    expect(result?.verdict).toBe("novel");
+    expect(result?.advisoryMatches).toEqual([]);
+  });
+
+  it("returns possibly-known for an empty result when no version was supplied", async () => {
+    const result = await resolveNovelty("some-pkg", "npm", undefined, {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: { vulns: [] } }]),
+    });
+    expect(result?.verdict).toBe("possibly-known");
+  });
+
+  it("returns undefined for a non-OSS ecosystem without touching the network", async () => {
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      return {} as Response;
+    }) as unknown as typeof fetch;
+    // "rubygems" is not an OSV-resolvable ecosystem in toOsvEcosystem.
+    expect(await resolveNovelty("rails", "rubygems", "7.0.0", { cacheDir, fetchImpl })).toBeUndefined();
+    // unset ecosystem (private/SaaS target) → no verdict, no query
+    expect(await resolveNovelty("internal-svc", undefined, "1.0.0", { cacheDir, fetchImpl })).toBeUndefined();
+    expect(called).toBe(false);
+  });
+
+  it("returns undefined when offline (never leaks the target to the public DB)", async () => {
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      return {} as Response;
+    }) as unknown as typeof fetch;
+    expect(await resolveNovelty("next", "npm", "15.1.0", { cacheDir, offline: true, fetchImpl })).toBeUndefined();
+    expect(called).toBe(false);
+  });
+
+  it("fails soft to possibly-known when the lookup throws", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("boom");
+    }) as unknown as typeof fetch;
+    const result = await resolveNovelty("next", "npm", "15.1.0", { cacheDir, fetchImpl });
+    expect(result?.verdict).toBe("possibly-known");
   });
 });

@@ -24,10 +24,30 @@
  * calls this when `PWNKIT_FEATURE_PUBLISHABILITY_GATE` is on.
  */
 
-import type { AttackCategory } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@pwnkit/shared";
 import { searchAdvisories, normalizeRepositoryHint, type VulnerabilityIntel } from "../intel/index.js";
-import { toOsvEcosystem } from "../intel/osv.js";
+import { toOsvEcosystem, queryOsvAdvisories } from "../intel/osv.js";
 import type { AdvisoryRef, PublishabilityInputs } from "./publishability.js";
+
+type NoveltyVerdict = NonNullable<Finding["noveltyVerdict"]>;
+type AdvisoryMatch = NonNullable<Finding["advisoryMatches"]>[number];
+
+/** Structured result of the public-advisory novelty lookup (issue #851). */
+export interface NoveltyResult {
+  verdict: NoveltyVerdict;
+  advisoryMatches: AdvisoryMatch[];
+}
+
+export interface ResolveNoveltyOptions {
+  /** Injected fetch (tests pass a stub). Defaults to the global `fetch`. */
+  fetchImpl?: typeof fetch;
+  /** When true, never hit the network — returns `undefined` (no verdict). */
+  offline?: boolean;
+  /** Per-request timeout in ms. Default 15s. */
+  timeoutMs?: number;
+  /** Cache dir for the intel module. Defaults to the intel module default. */
+  cacheDir?: string;
+}
 
 /** Package ecosystem the dedup sources understand. Defaults to npm. */
 export type DedupEcosystem = "npm" | "pypi" | "cargo" | "go" | "maven";
@@ -444,4 +464,133 @@ export function buildPublishabilityInputs(
     lookupOwnSubmissions: makeOwnSubmissionsLookup(opts),
     lookupRepoIssues: makeRepoIssueLookup(opts),
   };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Public-advisory novelty gate (issue #851)
+// ────────────────────────────────────────────────────────────────────
+
+/** First CVE alias on an advisory (OSV aliases are upper-cased on parse). */
+function cveAlias(v: VulnerabilityIntel): string | undefined {
+  if (/^CVE-\d{4}-\d+$/.test(v.id)) return v.id;
+  return v.aliases.find((a) => /^CVE-\d{4}-\d+$/.test(a));
+}
+
+/** First GHSA id on an advisory (OSV ids are GHSA-… for GitHub-sourced vulns). */
+function ghsaAlias(v: VulnerabilityIntel): string | undefined {
+  if (/^GHSA-/i.test(v.id)) return v.id;
+  return v.aliases.find((a) => /^GHSA-/i.test(a));
+}
+
+/**
+ * Map a merged OSV/GHSA advisory to a structured {@link AdvisoryMatch}. Prefers
+ * the CVE id as the canonical identifier when present (so the verdict reads
+ * `matches-CVE-…`), else the GHSA id, else the advisory's own id. The link is
+ * the first reference url the advisory carries, falling back to a canonical
+ * OSV / GitHub-advisory permalink derived from the id.
+ */
+function intelToAdvisoryMatch(v: VulnerabilityIntel): AdvisoryMatch {
+  const cve = cveAlias(v);
+  const ghsa = ghsaAlias(v);
+  const id = cve ?? ghsa ?? v.id;
+  const source: AdvisoryMatch["source"] = cve ? "CVE" : ghsa ? "GHSA" : "OSV";
+  const url =
+    v.references[0]?.url ??
+    (cve
+      ? `https://nvd.nist.gov/vuln/detail/${cve}`
+      : ghsa
+        ? `https://github.com/advisories/${ghsa}`
+        : `https://osv.dev/vulnerability/${v.id}`);
+  const match: AdvisoryMatch = { source, id };
+  if (url) match.url = url;
+  return match;
+}
+
+/** The structured verdict string for the canonical id of a matched advisory. */
+function verdictFor(match: AdvisoryMatch): NoveltyVerdict | undefined {
+  if (match.source === "CVE") return `matches-${match.id as `CVE-${string}`}`;
+  if (match.source === "GHSA") return `matches-${match.id as `GHSA-${string}`}`;
+  return undefined;
+}
+
+/**
+ * Resolve the public-advisory novelty of a package+version against the live
+ * OSV / GitHub Advisory DB (issue #851).
+ *
+ * Pure logic over the injected `searchAdvisories` lookup seam — it reuses the
+ * intel module's `fetchJson`/`fetchImpl` injection (no hand-rolled fetch), so
+ * tests stay deterministic and offline by passing a stub `fetchImpl`.
+ *
+ * Guardrail: ONLY OSS ecosystems OSV understands are queried. A private / SaaS
+ * target (or an ecosystem OSV can't resolve, like `oci`) returns `undefined` —
+ * no verdict, no query — so we never leak a closed-source target's identity to
+ * the public advisory DB.
+ *
+ * Verdict mapping:
+ *   - `matches-CVE-…` / `matches-GHSA-…` when the lookup returns at least one
+ *     published advisory covering this package (version-scoped when `version`
+ *     is supplied — OSV's /v1/query filters to advisories affecting it).
+ *   - `novel` when the lookup ran with a concrete `version` and OSV returned
+ *     nothing affecting it.
+ *   - `possibly-known` when the lookup was inconclusive: no `version` to scope
+ *     by (a package-level "no hit" can't prove this version is unaffected), or
+ *     the query failed soft.
+ *   - `undefined` when the lookup was skipped (offline / non-OSS ecosystem).
+ */
+export async function resolveNovelty(
+  pkg: string,
+  ecosystem: string | undefined,
+  version: string | undefined,
+  opts: ResolveNoveltyOptions = {},
+): Promise<NoveltyResult | undefined> {
+  const name = pkg?.trim();
+  if (!name) return undefined;
+  // #851 guardrail — OSS ecosystems only. Private/SaaS/unknown → no verdict.
+  if (!ecosystem || !toOsvEcosystem(ecosystem)) return undefined;
+  if (opts.offline) return undefined;
+
+  // Reuse the intel module's OSV query (version-scoped: OSV's /v1/query filters
+  // to advisories that actually affect this build, and OSV already aggregates
+  // GitHub Security Advisories — GHSA ids come through it). We call
+  // `queryOsvAdvisories` directly rather than `searchAdvisories` precisely so a
+  // hard lookup failure THROWS (searchAdvisories swallows per-source errors via
+  // allSettled, which would make a network outage indistinguishable from a
+  // genuinely-empty "no advisory" result and falsely mark a real dup `novel`).
+  // The throw → `possibly-known` (inconclusive) below keeps us conservative.
+  let advisories: VulnerabilityIntel[];
+  try {
+    advisories = await queryOsvAdvisories(
+      {
+        ecosystem,
+        packageName: name,
+        ...(version ? { version } : {}),
+        offline: opts.offline,
+        cacheDir: opts.cacheDir,
+      },
+      { timeoutMs: opts.timeoutMs ?? 15_000, fetchImpl: opts.fetchImpl },
+    );
+  } catch {
+    // Fail-soft: a network blip must never mark a finding novel (that would
+    // push a real duplicate into the send lane). Inconclusive instead.
+    return { verdict: "possibly-known", advisoryMatches: [] };
+  }
+
+  if (advisories.length === 0) {
+    // Version-scoped empty result is a real "no published advisory affects this
+    // version" → novel. Package-level (no version) empty result can't prove
+    // that → inconclusive.
+    return { verdict: version ? "novel" : "possibly-known", advisoryMatches: [] };
+  }
+
+  const advisoryMatches = advisories.map(intelToAdvisoryMatch);
+  // Prefer a CVE-keyed verdict (most recognizable), else GHSA, else the lookup
+  // hit something un-keyable (OSV-only id) → known but not citable as CVE/GHSA.
+  const cveMatch = advisoryMatches.find((m) => m.source === "CVE");
+  const ghsaMatch = advisoryMatches.find((m) => m.source === "GHSA");
+  const chosen = cveMatch ?? ghsaMatch;
+  const verdict = chosen ? verdictFor(chosen) : undefined;
+  if (verdict) return { verdict, advisoryMatches };
+  // Hit an advisory we can't express as matches-CVE/GHSA (OSV-only id). It IS a
+  // published advisory for this version, so it is not novel — possibly-known.
+  return { verdict: "possibly-known", advisoryMatches };
 }

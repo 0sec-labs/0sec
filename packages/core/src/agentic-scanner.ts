@@ -63,6 +63,7 @@ import {
   evidenceKindForFinding,
   checkPublishability,
   buildPublishabilityInputs,
+  resolveNovelty,
   resolveRepository,
   inferPackage,
   type LayerId,
@@ -465,6 +466,30 @@ async function runMemSafetyScanStage(
       message,
     })),
   };
+}
+
+/**
+ * Parse a resolved package target of the shape `eco:name@version` (e.g.
+ * `npm:lodash@4.17.4`, `pypi:requests@2.31.0`) that the unified pipeline emits
+ * as `resolvedTarget`. Returns the OSS ecosystem / package name / version for
+ * the #851 novelty gate, or undefined when the target is not a package
+ * (URLs, bare hostnames, repo paths). Pure and conservative — a target it
+ * cannot confidently parse yields undefined, so the gate stays a safe no-op.
+ */
+function parsePackageTarget(
+  target: string,
+): { ecosystem: string; name: string; version?: string } | undefined {
+  const m = /^(npm|pypi|cargo|go|maven):(.+)$/.exec(target.trim());
+  if (!m) return undefined;
+  const ecosystem = m[1];
+  const rest = m[2];
+  // Split name@version, honoring npm scoped names (@scope/pkg@version): the
+  // version `@` is the LAST one, and only when it follows a non-`/` char.
+  const at = rest.lastIndexOf("@");
+  if (at > 0) {
+    return { ecosystem, name: rest.slice(0, at), version: rest.slice(at + 1) || undefined };
+  }
+  return { ecosystem, name: rest };
 }
 
 export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport> {
@@ -1420,6 +1445,16 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     // those two sources no-op (conservative — never a guessed-repo false dup).
     const pkgNameForScan = inferPackage(config.target);
     const dedupEcosystem = (config.ecosystem ?? "npm") as DedupEcosystem;
+    // For the novelty gate (issue #851) we resolve the package identity from
+    // the config first, falling back to the resolved `eco:name@version` target
+    // shape (e.g. "npm:lodash@4.17.4") that the unified pipeline produces. We
+    // must NOT default the ecosystem to npm — defaulting would query the public
+    // advisory DB for a private/SaaS target; resolveNovelty returns undefined
+    // for any non-OSS / unset ecosystem, so leaving it unset is the safe no-op.
+    const parsedTarget = parsePackageTarget(config.target);
+    const noveltyEcosystem = config.ecosystem ?? parsedTarget?.ecosystem;
+    const noveltyVersion = config.version ?? parsedTarget?.version;
+    const noveltyPackage = parsedTarget?.name ?? pkgNameForScan;
     let publishabilityInputs: PublishabilityInputs | undefined;
     if (features.publishabilityGate) {
       const repository =
@@ -2142,6 +2177,27 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           finding.publishability = result.decision;
           if (result.dedupRefs && result.dedupRefs.length > 0) {
             finding.dedupRefs = result.dedupRefs;
+          }
+          // Public-advisory novelty gate (issue #851). Live OSV / GitHub
+          // Advisory DB lookup, OSS ecosystems only, version-scoped when known.
+          // Default-safe: absent/non-OSS ecosystem → resolveNovelty returns
+          // undefined and the finding's verdict stays unset (behavior
+          // unchanged). Fail-soft: any error must never drop a finding, so we
+          // swallow and leave the verdict undefined.
+          try {
+            const novelty = await resolveNovelty(
+              noveltyPackage,
+              noveltyEcosystem,
+              noveltyVersion,
+            );
+            if (novelty) {
+              finding.noveltyVerdict = novelty.verdict;
+              if (novelty.advisoryMatches.length > 0) {
+                finding.advisoryMatches = novelty.advisoryMatches;
+              }
+            }
+          } catch {
+            // novelty is advisory-only; never let it disturb the finding
           }
           db.logEvent?.({
             scanId,
