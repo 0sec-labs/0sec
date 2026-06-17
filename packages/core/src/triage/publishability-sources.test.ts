@@ -359,12 +359,99 @@ describe("resolveNovelty (issue #851)", () => {
     expect(result?.advisoryMatches).toEqual([]);
   });
 
-  it("returns possibly-known for an empty result when no version was supplied", async () => {
+  it("returns novel for an empty package-level result when no version was supplied (#851)", async () => {
+    // No version → package-level OSV query (all versions). ZERO advisories back
+    // means the package genuinely has no known issues → novel, not possibly-known.
     const result = await resolveNovelty("some-pkg", "npm", undefined, {
       cacheDir,
       fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: { vulns: [] } }]),
     });
+    expect(result?.verdict).toBe("novel");
+  });
+
+  it("returns possibly-known WITH advisories for a package-level hit when no version was supplied (#851)", async () => {
+    // No version → package-level query that DID return advisories → the package
+    // has a known-CVE history we can't version-confirm → possibly-known + matches.
+    const result = await resolveNovelty("next", "npm", undefined, {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: OSV_HIT }]),
+    });
     expect(result?.verdict).toBe("possibly-known");
+    expect(result?.advisoryMatches.length).toBeGreaterThan(0);
+  });
+
+  // ── #851 fast-follow: `latest`/non-semver degeneracy ──────────────────────
+  // Our scan targets pin `latest`, which OSV can't range-match. A floating tag
+  // must NOT be sent as a version-scoped query (→ false `novel`); instead we do
+  // a package-level query and treat hits conservatively.
+
+  it("does NOT send `latest` as a version (package-level query, not version-scoped)", async () => {
+    let sentBody: Record<string, unknown> | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      sentBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ vulns: [] }),
+        text: async () => JSON.stringify({ vulns: [] }),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+    await resolveNovelty("some-pkg", "npm", "latest", { cacheDir, fetchImpl });
+    expect(sentBody).toBeDefined();
+    // No `version` key → OSV runs a package-level lookup across all versions.
+    expect(sentBody).not.toHaveProperty("version");
+    expect(sentBody).toMatchObject({ package: { ecosystem: "npm", name: "some-pkg" } });
+  });
+
+  it("returns novel for a `latest`-pinned package with a package-level empty result (#851)", async () => {
+    const result = await resolveNovelty("totally-novel-pkg", "npm", "latest", {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: { vulns: [] } }]),
+    });
+    // latest = package-level query; ZERO advisories across all versions → novel.
+    expect(result?.verdict).toBe("novel");
+    expect(result?.advisoryMatches).toEqual([]);
+  });
+
+  it("returns possibly-known WITH advisories for a `latest`-pinned known-vulnerable package", async () => {
+    // Package-level hit: the package has a known-CVE history but we can't
+    // version-confirm `latest` → flag for review, do NOT emit matches-CVE-….
+    const result = await resolveNovelty("next", "npm", "latest", {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: OSV_HIT }]),
+    });
+    expect(result?.verdict).toBe("possibly-known");
+    expect(result?.advisoryMatches.length).toBeGreaterThan(0);
+    expect(result?.advisoryMatches[0]).toMatchObject({ source: "CVE", id: "CVE-2025-29927" });
+  });
+
+  it("treats `*` and a non-numeric dist-tag like `latest` — package-level query (empty → novel)", async () => {
+    for (const v of ["*", "next", ""]) {
+      const result = await resolveNovelty("some-pkg", "npm", v, {
+        cacheDir,
+        fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: { vulns: [] } }]),
+      });
+      // Floating tag → package-level query; empty → novel (no known issues).
+      expect(result?.verdict, `version=${JSON.stringify(v)}`).toBe("novel");
+    }
+  });
+
+  it("a non-numeric dist-tag with a package-level HIT → possibly-known + advisories (#851)", async () => {
+    const result = await resolveNovelty("next", "npm", "next", {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: OSV_HIT }]),
+    });
+    expect(result?.verdict).toBe("possibly-known");
+    expect(result?.advisoryMatches.length).toBeGreaterThan(0);
+  });
+
+  it("still version-scopes a `v`-prefixed concrete semver (→ matches-CVE-…)", async () => {
+    const result = await resolveNovelty("next", "npm", "v15.1.0", {
+      cacheDir,
+      fetchImpl: stubFetch([{ match: /api\.osv\.dev/, json: OSV_HIT }]),
+    });
+    // `v15.1.0` normalizes to a concrete semver → real version-scoped verdict.
+    expect(result?.verdict).toBe("matches-CVE-2025-29927");
   });
 
   it("returns undefined for a non-OSS ecosystem without touching the network", async () => {

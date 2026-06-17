@@ -514,6 +514,29 @@ function verdictFor(match: AdvisoryMatch): NoveltyVerdict | undefined {
 }
 
 /**
+ * A version OSV's `/v1/query` can range-match against. OSV needs a concrete
+ * semver (e.g. `1.2.3`, `4.17.4-beta.1`, `v2.0.0`) to decide whether a build
+ * falls inside an advisory's affected range. A floating tag like `latest`,
+ * `*`, `next`, a dist-tag, or an empty/undefined value is NOT range-matchable —
+ * sending it as a version makes OSV return nothing, which the caller would
+ * otherwise misread as "no advisory affects this version" → false `novel` for a
+ * package that may well have a known-CVE history.
+ *
+ * When this returns undefined we drop to a PACKAGE-LEVEL OSV query (ecosystem +
+ * name, no version) instead, and treat its results conservatively
+ * (`possibly-known` on a hit, `novel` only when the package has zero advisories
+ * across all versions). Deliberately lenient on the semver shape (no full
+ * semver parse) because OSV itself does the authoritative range comparison —
+ * we only need to reject obviously non-numeric tags like `latest`.
+ */
+function concreteSemver(version: string | undefined): string | undefined {
+  if (!version) return undefined;
+  const v = version.trim().replace(/^[v=]+/, "");
+  // Must start with a numeric major (1, 1.2, 1.2.3, 1.2.3-rc.1, 1.2.3+build).
+  return /^\d+(\.\d+)*([-+].*)?$/.test(v) ? v : undefined;
+}
+
+/**
  * Resolve the public-advisory novelty of a package+version against the live
  * OSV / GitHub Advisory DB (issue #851).
  *
@@ -527,14 +550,18 @@ function verdictFor(match: AdvisoryMatch): NoveltyVerdict | undefined {
  * the public advisory DB.
  *
  * Verdict mapping:
- *   - `matches-CVE-…` / `matches-GHSA-…` when the lookup returns at least one
- *     published advisory covering this package (version-scoped when `version`
- *     is supplied — OSV's /v1/query filters to advisories affecting it).
- *   - `novel` when the lookup ran with a concrete `version` and OSV returned
- *     nothing affecting it.
- *   - `possibly-known` when the lookup was inconclusive: no `version` to scope
- *     by (a package-level "no hit" can't prove this version is unaffected), or
- *     the query failed soft.
+ *   - `matches-CVE-…` / `matches-GHSA-…` when a CONCRETE semver `version` is
+ *     supplied and OSV's version-scoped /v1/query returns a published advisory
+ *     whose affected range covers this build.
+ *   - `novel` when OSV returns nothing: either a concrete `version` was scoped
+ *     and no advisory affects it, OR the `version` is floating/missing and the
+ *     PACKAGE-LEVEL query found ZERO advisories across all versions (genuinely
+ *     no known issues for the package).
+ *   - `possibly-known` when the `version` is a floating tag (`latest`, dist-tag,
+ *     `*`) or missing AND the package-level query DID return advisories — the
+ *     package has a known-CVE history we can't version-confirm, so we flag it
+ *     for review (with `advisoryMatches`) rather than emit an unprovable
+ *     matches-CVE/GHSA. Also the fail-soft (lookup-threw) branch.
  *   - `undefined` when the lookup was skipped (offline / non-OSS ecosystem).
  */
 export async function resolveNovelty(
@@ -548,6 +575,13 @@ export async function resolveNovelty(
   // #851 guardrail — OSS ecosystems only. Private/SaaS/unknown → no verdict.
   if (!ecosystem || !toOsvEcosystem(ecosystem)) return undefined;
   if (opts.offline) return undefined;
+
+  // #851 fast-follow: our scan targets pin `latest`, which OSV can't
+  // range-match. Normalize to a concrete semver or fall back to a PACKAGE-LEVEL
+  // query (no version). `latest`/`*`/dist-tags/missing → packageLevel = true →
+  // an empty result is inconclusive (`possibly-known`), never a false `novel`.
+  const concreteVersion = concreteSemver(version);
+  const packageLevel = concreteVersion === undefined;
 
   // Reuse the intel module's OSV query (version-scoped: OSV's /v1/query filters
   // to advisories that actually affect this build, and OSV already aggregates
@@ -563,7 +597,9 @@ export async function resolveNovelty(
       {
         ecosystem,
         packageName: name,
-        ...(version ? { version } : {}),
+        // Concrete semver → version-scoped query (OSV range-filters). Floating
+        // tag / missing → omit version → package-level query (all advisories).
+        ...(concreteVersion ? { version: concreteVersion } : {}),
         offline: opts.offline,
         cacheDir: opts.cacheDir,
       },
@@ -576,10 +612,19 @@ export async function resolveNovelty(
   }
 
   if (advisories.length === 0) {
-    // Version-scoped empty result is a real "no published advisory affects this
-    // version" → novel. Package-level (no version) empty result can't prove
-    // that → inconclusive.
-    return { verdict: version ? "novel" : "possibly-known", advisoryMatches: [] };
+    // No advisory came back either way → novel. For a version-scoped query this
+    // means "no published advisory affects this version"; for a package-level
+    // query (floating/`latest`) it means the package has ZERO advisories across
+    // ALL versions — genuinely no known issues, so `novel` is correct (#851).
+    return { verdict: "novel", advisoryMatches: [] };
+  }
+
+  // Package-level query (floating/`latest` version) that DID return advisories:
+  // the package has a known-CVE history but we can't version-confirm THIS build.
+  // Flag for human review (`possibly-known` + the advisories) rather than
+  // citing a specific matches-CVE/GHSA we can't prove applies to this version.
+  if (packageLevel) {
+    return { verdict: "possibly-known", advisoryMatches: advisories.map(intelToAdvisoryMatch) };
   }
 
   const advisoryMatches = advisories.map(intelToAdvisoryMatch);

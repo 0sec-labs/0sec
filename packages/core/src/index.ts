@@ -342,6 +342,17 @@ export type {
   MemoryDbHandle,
 } from "./triage/memories.js";
 
+// Public-advisory novelty gate (issue #851). The `0cloud findings
+// novelty-recheck` command resolves `mod.resolveNovelty` off this root import
+// (a non-literal dynamic `import("@pwnkit/core")`), so it MUST be re-exported
+// here, not only via the triage barrel — otherwise the recheck throws
+// "mod.resolveNovelty is not a function" for every finding.
+export { resolveNovelty } from "./triage/publishability-sources.js";
+export type {
+  NoveltyResult,
+  ResolveNoveltyOptions,
+} from "./triage/publishability-sources.js";
+
 // PoV (Proof-of-Vulnerability) gate
 export {
   generatePov,

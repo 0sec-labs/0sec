@@ -47,6 +47,53 @@ describe("resolveNovelty — LIVE OSV smoke (#851)", () => {
   );
 
   it.skipIf(!LIVE)(
+    "a `latest`-pinned known-vulnerable package → possibly-known (+advisories), not a false matches-/novel",
+    async () => {
+      // #851 fast-follow: `latest` is not OSV-range-matchable, so resolveNovelty
+      // drops to a PACKAGE-LEVEL query. lodash has a deep advisory history, so a
+      // package-level lookup MUST return advisories → possibly-known (flag for
+      // review), never a false `novel` and never an unprovable matches-CVE-….
+      const result = await resolveNovelty("lodash", "npm", "latest", { cacheDir });
+      // eslint-disable-next-line no-console
+      console.log("[live-osv] lodash@latest →", JSON.stringify(result, null, 2));
+      expect(result).toBeDefined();
+      expect(result?.verdict).toBe("possibly-known");
+      expect(result?.advisoryMatches.length).toBeGreaterThan(0);
+    },
+    30_000,
+  );
+
+  it.skipIf(!LIVE)(
+    "a known-vulnerable package with NO version → possibly-known (+advisories)",
+    async () => {
+      const result = await resolveNovelty("lodash", "npm", undefined, { cacheDir });
+      // eslint-disable-next-line no-console
+      console.log("[live-osv] lodash@<none> →", JSON.stringify(result, null, 2));
+      expect(result?.verdict).toBe("possibly-known");
+      expect(result?.advisoryMatches.length).toBeGreaterThan(0);
+    },
+    30_000,
+  );
+
+  it.skipIf(!LIVE)(
+    "a clean package with no advisories → novel (genuinely no known issues)",
+    async () => {
+      const result = await resolveNovelty(
+        "pwnkit-nonexistent-package-zzz-851",
+        "npm",
+        "latest",
+        { cacheDir },
+      );
+      // eslint-disable-next-line no-console
+      console.log("[live-osv] clean@latest →", JSON.stringify(result, null, 2));
+      // Package-level query, zero advisories → novel (the genuine-no-issues case).
+      expect(result?.verdict).toBe("novel");
+      expect(result?.advisoryMatches).toEqual([]);
+    },
+    30_000,
+  );
+
+  it.skipIf(!LIVE)(
     "returns a verdict (novel | possibly-known) for a clean nonexistent package without throwing",
     async () => {
       const result = await resolveNovelty(
