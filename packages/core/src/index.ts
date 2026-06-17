@@ -805,3 +805,27 @@ export {
   DEFAULT_MAX_DURATION_MS,
 } from "./recon/active-subdomains.js";
 export type { ActiveEnumerateOptions } from "./recon/active-subdomains.js";
+// JS-driven endpoint + secret discovery (pwnkit#927) — scope-gated,
+// deny-by-default; mines a site's JS bundles for endpoints + redacted secrets.
+export { runJsRecon, MAX_JS_FILES } from "./recon/js-recon.js";
+export type { JsReconOptions, JsReconResult } from "./recon/js-recon.js";
+export type { SecretHit, FetchTextResult } from "./recon/js-artifacts.js";
+// Extract JS chunk URLs from a page's HTML (resolves relative, dedupes,
+// .js/.mjs only) — feeds runJsRecon's scriptUrls from a single page fetch.
+export { enumerateJsChunkUrls } from "./recon/stack-fingerprint.js";
+// Live cloud-surface probes (pwnkit#925) — read-only, gated behind the
+// PWNKIT_FEATURE_CLOUD_SURFACE flag AND an engagement ScopePolicy.
+export {
+  probeS3Bucket,
+  classifyTakeover,
+  bucketInScope,
+  bucketEndpoint,
+  validateAwsCredentials,
+  assertReadOnlyAction,
+} from "./agent/cloud-surface.js";
+export type {
+  BucketProbeResult,
+  TakeoverVerdict,
+  CredentialValidationResult,
+  CloudScopeMatcher,
+} from "./agent/cloud-surface.js";

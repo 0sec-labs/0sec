@@ -41,6 +41,8 @@ import {
   registerAuthCommand,
   registerIntelCommand,
   registerReconCommand,
+  registerJsReconCommand,
+  registerCloudCommand,
 } from "./commands/index.js";
 import { detectAndRoute } from "./routing.js";
 import { preloadBanner } from "./ui/banner.js";
@@ -92,6 +94,8 @@ registerH1Command(program);
 registerAuthCommand(program);
 registerIntelCommand(program);
 registerReconCommand(program);
+registerJsReconCommand(program);
+registerCloudCommand(program);
 
 // ── Interactive menu ──
 //
@@ -127,7 +131,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "cve", "upgrade", "h1", "auth", "intel", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "cloud", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {
