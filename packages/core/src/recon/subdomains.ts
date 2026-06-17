@@ -15,7 +15,7 @@ export interface DiscoveredHost {
   /** Lowercased hostname, e.g. `dev.example.com`. */
   host: string;
   /** How this host first surfaced. */
-  source: "crt.sh" | "dns";
+  source: "crt.sh" | "dns" | "dns-bruteforce";
   /** A/AAAA addresses, present when DNS resolution succeeded. */
   addresses?: string[];
   /** CNAME target, when the host is a DNS alias. */
