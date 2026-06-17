@@ -48,3 +48,29 @@ export type {
   GeneratedWriteup,
   WriteupOptions,
 } from "./writeup.js";
+export {
+  DISCLOSURE_STATUSES,
+  TERMINAL_STATUSES,
+  PUBLIC_STATUSES,
+  allowedNextStatuses,
+  canTransition,
+  createDisclosureRecord,
+  transition,
+  isPubliclyDisclosed,
+  IllegalTransitionError,
+} from "./tracking.js";
+export type {
+  DisclosureStatus,
+  DisclosureRecord,
+  DisclosureTimelineEvent,
+  TransitionInput,
+} from "./tracking.js";
+export {
+  assembleEvidencePack,
+  renderVendorNotificationMarkdown,
+  UnreproducedFindingError,
+} from "./evidence-pack.js";
+export type {
+  VendorNotificationDraft,
+  EvidencePackOptions,
+} from "./evidence-pack.js";

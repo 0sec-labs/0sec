@@ -732,6 +732,12 @@ export type {
 export { suggestCwesForCategory, formatCweSection, suggestCvss, renderAdvisoryMarkdown, EmptyPocError, redactSensitiveHeaders, renderExploitScreenshot, isFreezeAvailable, composeExploitSession, composeStepSession, verifyAgainstRef, extractFileRefs, formatPatchStatusSection, detectVersionRange, formatVersionRangeLine, extractSiblingFix, executePocSteps, setRuntimeDeps, MAX_CAPTURE_BYTES, DEFAULT_STEP_TIMEOUT_MS, decideFilingState, assembleBundleIndex, formatDroppedReason, droppedFilename, dropSlug } from "./disclose/index.js";
 export type { CweEntry, CvssSuggestion, AdvisoryContext, AdvisoryScreenshot, RenderedAdvisory, ScreenshotResult, ScreenshotOptions, PatchStatus, FileRef, ReverifyResult, ReverifyOptions, VersionRangeResult, VersionRangeOptions, SiblingFixCandidate, SiblingFixOptions, PocExecutionTarget, PocExecutionReport, PocStepResult, PocStepVerdict, PocOverallVerdict, FilingState, BundleEntry, AssembleIndexOptions } from "./disclose/index.js";
 
+// #928 — disclosure-process tracking (status state machine + timeline) and the
+// evidence-pack assembler (finding → vendor-notification draft). DRAFT-only,
+// never sends.
+export { DISCLOSURE_STATUSES, TERMINAL_STATUSES, PUBLIC_STATUSES, allowedNextStatuses, canTransition, createDisclosureRecord, transition, isPubliclyDisclosed, IllegalTransitionError, assembleEvidencePack, renderVendorNotificationMarkdown, UnreproducedFindingError } from "./disclose/index.js";
+export type { DisclosureStatus, DisclosureRecord, DisclosureTimelineEvent, TransitionInput, VendorNotificationDraft, EvidencePackOptions } from "./disclose/index.js";
+
 // PR-shaped finding output (pwnkit#377). `emitFindingsAsPRs` turns reproduced
 // findings into one GitHub PR each (repro + suggested patch from a fix-template
 // registry); non-reproduced findings roll up into a single hypotheses.md.
