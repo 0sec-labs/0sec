@@ -230,8 +230,32 @@ const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const FREE_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "chatgpt-codex";
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "chatgpt-codex" | "z-ai";
 type WireApi = "chat_completions" | "responses";
+
+// ── Z.ai GLM (flat-rate Coding Plan key) ───────────────────────────────
+//
+// GLM ships an Anthropic-compatible Messages endpoint, so z-ai rides the
+// exact same `/v1/messages` wire + parser the `anthropic` provider uses —
+// it is NOT OpenAI-compatible. The only z-ai-specific behaviour is:
+//   - default base URL + model below (override via Z_AI_BASE_URL / PWNKIT_MODEL)
+//   - GLM's hybrid reasoning is OFF by default on this endpoint; we turn it
+//     ON via the Anthropic `thinking` body field (a hacking engine wants the
+//     model thinking). GLM is lenient about NOT echoing `thinking` blocks on
+//     follow-up tool turns (verified 2026-06-17), so we simply drop them from
+//     parsed output instead of round-tripping them through the agent loop.
+const ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic";
+const ZAI_DEFAULT_MODEL = "glm-5.2";
+// Thinking token budget for GLM. 0 (or unset → default) disables thinking.
+// Must stay below the 8192 max_tokens the Anthropic body sends below.
+const ZAI_DEFAULT_THINKING_BUDGET = 2048;
+
+function zaiThinkingBudget(): number {
+  const raw = process.env.PWNKIT_ZAI_THINKING_BUDGET;
+  if (raw == null || raw.trim().length === 0) return ZAI_DEFAULT_THINKING_BUDGET;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : ZAI_DEFAULT_THINKING_BUDGET;
+}
 
 // ── ChatGPT Codex backend (subscription auth) ──────────────────────────
 //
@@ -632,6 +656,20 @@ function detectProvider(configApiKey?: string): {
     };
   }
 
+  // Z.ai GLM — Anthropic-compatible wire. Selected by Z_AI_API_KEY; in the
+  // cloud path the worker injects exactly this one key when the operator
+  // picks the z-ai provider. Rides the anthropic header/url/parser paths.
+  const zaiKey = process.env.Z_AI_API_KEY;
+  if (zaiKey) {
+    return {
+      provider: "z-ai",
+      apiKey: zaiKey,
+      baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL,
+      defaultModel: ZAI_DEFAULT_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
+
   const azureKey = process.env.AZURE_OPENAI_API_KEY;
   if (azureKey) {
     const azureConfig = parseCodexAzureConfig();
@@ -849,6 +887,23 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       : "max_tokens";
   }
 
+  /**
+   * Anthropic `thinking` body fragment for the z-ai/GLM provider. GLM's
+   * hybrid reasoning is OFF by default on its Anthropic endpoint; we enable
+   * it (a hacking engine wants the model reasoning) via the standard
+   * Anthropic extended-thinking field. Returns {} for every other provider
+   * (real Anthropic Claude already reasons; we don't change its behaviour)
+   * and when the budget is set to 0. The returned `thinking` blocks are
+   * dropped from parsed output (GLM doesn't require echoing them back —
+   * verified 2026-06-17), so this never perturbs the agent loop's history.
+   */
+  private anthropicThinkingField(): Record<string, unknown> {
+    if (this.provider !== "z-ai") return {};
+    const budget = zaiThinkingBudget();
+    if (budget <= 0) return {};
+    return { thinking: { type: "enabled", budget_tokens: budget } };
+  }
+
   /** Friendly provider name for error messages. */
   private get providerLabel(): string {
     switch (this.provider) {
@@ -857,6 +912,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "openai": return "OpenAI";
       case "azure": return "Azure OpenAI";
       case "chatgpt-codex": return "ChatGPT (Codex backend)";
+      case "z-ai": return "Z.ai (GLM)";
     }
   }
 
@@ -867,7 +923,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export OPENROUTER_API_KEY=sk-or-...   (OpenRouter — many models, one key)\n" +
       "  export ANTHROPIC_API_KEY=sk-ant-...    (Anthropic — direct Claude access)\n" +
       "  export AZURE_OPENAI_API_KEY=...        (Azure OpenAI — reuse your Codex Azure provider)\n" +
-      "  export OPENAI_API_KEY=sk-...           (OpenAI — direct GPT access)"
+      "  export OPENAI_API_KEY=sk-...           (OpenAI — direct GPT access)\n" +
+      "  export Z_AI_API_KEY=...                (Z.ai GLM — flat-rate Coding Plan, Anthropic-compatible)"
     );
   }
 
@@ -1009,13 +1066,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           signal: controller.signal,
         });
       } else {
-        // Anthropic Messages API format
+        // Anthropic Messages API format (also serves the z-ai/GLM provider).
         res = await fetch(this.buildUrl(), {
           method: "POST",
           headers: await this.ensureFreshHeaders(),
           body: JSON.stringify({
             model: this.model,
             max_tokens: 8192,
+            ...this.anthropicThinkingField(),
             ...(systemPrompt ? { system: systemPrompt } : {}),
             messages: [{ role: "user", content: prompt }],
           }),
@@ -1372,6 +1430,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         const body: Record<string, unknown> = {
           model: this.model,
           max_tokens: 8192,
+          ...this.anthropicThinkingField(),
           system,
           messages: apiMessages,
         };
@@ -1503,9 +1562,25 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           };
         }
       } else {
-        // Anthropic format
-        content = (json.content ?? []).map(
-          (block: Record<string, unknown>) => {
+        // Anthropic format (also serves the z-ai/GLM provider).
+        const rawBlocks = (json.content ?? []) as Array<Record<string, unknown>>;
+        // GLM (thinking enabled) streams a leading `thinking` block. Surface
+        // it as reasoning for the UI, then DROP it from the content blocks:
+        // GLM does not require echoing thinking blocks back on follow-up tool
+        // turns (verified 2026-06-17), so keeping them out of `content` means
+        // the agent loop never replays them — and the fallthrough below never
+        // JSON-stringifies them into visible output.
+        if (callbacks?.onThinking) {
+          const thinkingText = rawBlocks
+            .filter((b) => b.type === "thinking")
+            .map((b) => (typeof b.thinking === "string" ? b.thinking : ""))
+            .join("")
+            .trim();
+          if (thinkingText) callbacks.onThinking(thinkingText);
+        }
+        content = rawBlocks
+          .filter((block) => block.type !== "thinking" && block.type !== "redacted_thinking")
+          .map((block: Record<string, unknown>) => {
             if (block.type === "text") {
               return { type: "text", text: block.text as string };
             }
@@ -1518,8 +1593,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
               };
             }
             return { type: "text", text: JSON.stringify(block) };
-          },
-        );
+          });
 
         stopReason = json.stop_reason === "tool_use" ? "tool_use" as const
           : json.stop_reason === "max_tokens" ? "max_tokens" as const
