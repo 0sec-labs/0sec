@@ -71,8 +71,10 @@ vi.mock("./agent-runner.js", () => ({
 }));
 
 const collectScopeFilesMock = vi.fn();
+const countScopeFilesUpToMock = vi.fn();
 vi.mock("./source-files.js", () => ({
   collectScopeFiles: collectScopeFilesMock,
+  countScopeFilesUpTo: countScopeFilesUpToMock,
 }));
 
 const detectAvailableRuntimesMock = vi.fn();
@@ -162,6 +164,7 @@ beforeEach(() => {
   runFoxguardScanMock.mockReset();
   runAnalysisAgentMock.mockReset();
   collectScopeFilesMock.mockReset();
+  countScopeFilesUpToMock.mockReset();
   detectAvailableRuntimesMock.mockReset();
 
   runSemgrepScanMock.mockReturnValue([]);
@@ -169,6 +172,7 @@ beforeEach(() => {
   runDependencyAuditMock.mockReturnValue([]);
   runAnalysisAgentMock.mockResolvedValue({ findings: [] });
   collectScopeFilesMock.mockReturnValue([]);
+  countScopeFilesUpToMock.mockReturnValue(0);
   detectAvailableRuntimesMock.mockResolvedValue(new Set<string>());
 
   // Default: valid API runtime (with key). Individual tests can flip this.

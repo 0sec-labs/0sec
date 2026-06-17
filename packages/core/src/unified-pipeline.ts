@@ -30,7 +30,7 @@ import { isDisclosureWorthy, evidenceKindForFinding } from "./triage/verify-verd
 import type { VerifyVerdict } from "./triage/verify-verdict.js";
 import { resolveNovelty } from "./triage/index.js";
 import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
-import { collectScopeFiles } from "./source-files.js";
+import { collectScopeFiles, countScopeFilesUpTo } from "./source-files.js";
 import { features as agentFeatures } from "./agent/features.js";
 import { relative as pathRelative } from "node:path";
 import { detectAvailableRuntimes } from "./runtime/registry.js";
@@ -48,6 +48,29 @@ import {
   resolveLocalTargetPath,
 } from "./path-resolution.js";
 import { eventBus, isCloudEventSinkActive } from "./events/bus.js";
+
+/**
+ * Default ceiling on how many source files a `review` (source-code) target may
+ * contain before the pipeline refuses to run. A whole-repo review feeds the
+ * tree to a single agent session under a fixed time budget (default 300s); on
+ * an oversized target (e.g. `torvalds/linux`, ~80k source files) the session
+ * burns the entire budget producing 0 tokens + 0 findings, then times out
+ * silently. We'd rather fail fast with an actionable error telling the
+ * operator to scope to a subsystem/path. Overridable via
+ * `PWNKIT_REVIEW_MAX_FILES`. 5000 catches the kernel while leaving any normal
+ * library / service repo (typically well under ~2k source files) untouched.
+ */
+const REVIEW_MAX_FILES = 5000;
+
+/** Resolve the review file-count cap, honoring `PWNKIT_REVIEW_MAX_FILES`. */
+function reviewMaxFiles(): number {
+  const raw = process.env.PWNKIT_REVIEW_MAX_FILES;
+  if (raw !== undefined) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return REVIEW_MAX_FILES;
+}
 
 // ── Public types ──
 
@@ -947,6 +970,27 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   }
 
   emit({ type: "stage:end", stage: "prepare", message: `Target ready: ${prepared.resolvedType}` });
+
+  // Oversized-review guard (pwnkit). A whole-repo `review` feeds the source
+  // tree to a single agent session under a fixed time budget; on a target the
+  // size of the Linux kernel (~80k source files) the session exhausts the
+  // budget with 0 tokens + 0 findings and times out silently. Count the scope
+  // files up front (short-circuiting once the cap is passed, so we don't walk
+  // all 80k just to reject) and fail fast with an actionable error instead.
+  // Source-code review only — package audits are already file-bounded.
+  if (prepared.resolvedType === "source-code" && !opts.resumeScanId) {
+    const cap = reviewMaxFiles();
+    const fileCount = countScopeFilesUpTo(prepared.scopePath, cap);
+    if (fileCount > cap) {
+      const msg =
+        `review target too large: over ${cap} source files exceeds the ${cap} ` +
+        `review cap — scope to a subsystem/path (e.g. a specific directory) or ` +
+        `use a smaller target (override with PWNKIT_REVIEW_MAX_FILES)`;
+      logPipelineEvent("prepare", "stage_error", { error: msg, fileCount: `>${cap}`, cap });
+      emit({ type: "error", stage: "prepare", message: msg });
+      throw new Error(msg);
+    }
+  }
 
   const scanConfig: ScanConfig = {
     target: prepared.resolvedTarget,

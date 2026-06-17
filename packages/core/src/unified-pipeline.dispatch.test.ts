@@ -84,8 +84,10 @@ vi.mock("./agent-runner.js", () => ({
 }));
 
 const collectScopeFilesMock = vi.fn();
+const countScopeFilesUpToMock = vi.fn();
 vi.mock("./source-files.js", () => ({
   collectScopeFiles: collectScopeFilesMock,
+  countScopeFilesUpTo: countScopeFilesUpToMock,
 }));
 
 const detectAvailableRuntimesMock = vi.fn();
@@ -201,6 +203,7 @@ beforeEach(() => {
   runFoxguardScanMock.mockReset();
   runAnalysisAgentMock.mockReset();
   collectScopeFilesMock.mockReset();
+  countScopeFilesUpToMock.mockReset();
   detectAvailableRuntimesMock.mockReset();
   apiRuntimeConstructorCalls.length = 0;
 
@@ -210,6 +213,9 @@ beforeEach(() => {
   runDependencyAuditMock.mockReturnValue([]);
   runAnalysisAgentMock.mockResolvedValue({ findings: [] });
   collectScopeFilesMock.mockReturnValue([]);
+  // Default: under the review cap (the oversized-review guard only trips when
+  // the count exceeds the cap). Individual tests override to exercise the guard.
+  countScopeFilesUpToMock.mockReturnValue(0);
   detectAvailableRuntimesMock.mockResolvedValue(new Set<string>());
 
   // Force the single-shot agent path. Per-file orchestration is covered
@@ -413,6 +419,105 @@ describe("runPipeline — targetType dispatch", () => {
         dbPath: freshDbPath(),
       }),
     ).rejects.toThrow(/Prepare failed.*Repository path not found/);
+  });
+});
+
+// ── Oversized-review guard ──────────────────────────────────────────────────
+//
+// A whole-repo `review` (source-code target) feeds the tree to a single agent
+// session under a fixed time budget. On an oversized target (the Linux kernel
+// is ~80k source files) the session burns the entire budget producing 0 tokens
+// + 0 findings, then times out silently. The guard counts the scope files up
+// front and fails fast with an actionable error instead.
+
+describe("runPipeline — oversized-review guard", () => {
+  function reviewRepo() {
+    const repoDir = freshTmpDir("oversized-repo");
+    writeFileSync(join(repoDir, "README.md"), "# fixture");
+    return repoDir;
+  }
+
+  it("source-code review over the file cap fails fast with a clear, actionable error (no agent run)", async () => {
+    // Simulate the kernel: the count walker reports it blew past the cap.
+    countScopeFilesUpToMock.mockReturnValue(5001);
+
+    await expect(
+      runPipeline({
+        target: reviewRepo(),
+        targetType: "source-code",
+        depth: "quick",
+        format: "json",
+        runtime: "api",
+        apiKey: "sk-fake",
+        dbPath: freshDbPath(),
+      }),
+    ).rejects.toThrow(/review target too large.*5000 review cap.*scope to a subsystem/);
+
+    // The expensive agent loop never ran — we failed before research.
+    expect(runAnalysisAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("source-code review under the file cap proceeds unchanged (agent runs)", async () => {
+    // Under the cap — the guard is a no-op and the review proceeds.
+    countScopeFilesUpToMock.mockReturnValue(42);
+
+    const report = await runPipeline({
+      target: reviewRepo(),
+      targetType: "source-code",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      dbPath: freshDbPath(),
+    });
+
+    expect(report.targetType).toBe("source-code");
+    expect(runAnalysisAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("PWNKIT_REVIEW_MAX_FILES overrides the cap (count above the override trips the guard)", async () => {
+    const prev = process.env.PWNKIT_REVIEW_MAX_FILES;
+    process.env.PWNKIT_REVIEW_MAX_FILES = "10";
+    try {
+      // 11 > the overridden cap of 10.
+      countScopeFilesUpToMock.mockReturnValue(11);
+
+      await expect(
+        runPipeline({
+          target: reviewRepo(),
+          targetType: "source-code",
+          depth: "quick",
+          format: "json",
+          runtime: "api",
+          apiKey: "sk-fake",
+          dbPath: freshDbPath(),
+        }),
+      ).rejects.toThrow(/review target too large.*10 review cap/);
+
+      expect(runAnalysisAgentMock).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.PWNKIT_REVIEW_MAX_FILES;
+      else process.env.PWNKIT_REVIEW_MAX_FILES = prev;
+    }
+  });
+
+  it("package audit (npm) is unaffected by the review cap (guard is source-code only)", async () => {
+    installPackageMock.mockReturnValue(fakeInstalledPackage("npm", "lodash", "4.17.21"));
+    // Even an absurd count must not trip the guard for a package audit.
+    countScopeFilesUpToMock.mockReturnValue(999999);
+
+    const report = await runPipeline({
+      target: "lodash",
+      targetType: "npm-package",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      dbPath: freshDbPath(),
+    });
+
+    expect(report.targetType).toBe("npm-package");
+    expect(runAnalysisAgentMock).toHaveBeenCalledTimes(1);
   });
 });
 

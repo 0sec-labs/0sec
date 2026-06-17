@@ -84,3 +84,57 @@ export function collectScopeFiles(
   walk(dir);
   return files;
 }
+
+/**
+ * Count source files under `dir`, short-circuiting once the running count
+ * exceeds `limit`. Returns the exact count when it is ≤ `limit`, or
+ * `limit + 1` as soon as the cap is exceeded (the walk stops early — it does
+ * not enumerate the rest of the tree).
+ *
+ * This is the pre-flight size signal for the review pipeline: walking the
+ * full Linux kernel (~80k files) just to learn "it's too big" would itself be
+ * wasteful, so the walk bails the moment the cap is passed. Uses the same
+ * skip-dir / extension filters as {@link collectScopeFiles} so the count
+ * matches what the review agent would actually see.
+ */
+export function countScopeFilesUpTo(
+  dir: string,
+  limit: number,
+  opts: { maxFileSize?: number; extensions?: Set<string> } = {},
+): number {
+  const maxFileSize = opts.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
+  const exts = opts.extensions ?? DEFAULT_SOURCE_EXTS;
+  let count = 0;
+
+  function walk(d: string): void {
+    if (count > limit) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (count > limit) return;
+      if (SKIP_DIRS.has(entry)) continue;
+      const full = join(d, entry);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) {
+          walk(full);
+        } else if (st.isFile() && st.size < maxFileSize) {
+          const ext = full.slice(full.lastIndexOf("."));
+          if (exts.has(ext)) {
+            count += 1;
+            if (count > limit) return;
+          }
+        }
+      } catch {
+        // skip unreadable
+      }
+    }
+  }
+
+  walk(dir);
+  return count;
+}

@@ -52,8 +52,10 @@ vi.mock("./agent-runner.js", () => ({
 }));
 
 const collectScopeFilesMock = vi.fn();
+const countScopeFilesUpToMock = vi.fn();
 vi.mock("./source-files.js", () => ({
   collectScopeFiles: collectScopeFilesMock,
+  countScopeFilesUpTo: countScopeFilesUpToMock,
 }));
 
 const detectAvailableRuntimesMock = vi.fn();
@@ -185,11 +187,13 @@ beforeEach(() => {
   runFoxguardScanMock.mockReset();
   runAnalysisAgentMock.mockReset();
   collectScopeFilesMock.mockReset();
+  countScopeFilesUpToMock.mockReset();
   detectAvailableRuntimesMock.mockReset();
 
   runFoxguardScanMock.mockReturnValue([]);
   runDependencyAuditMock.mockReturnValue([]);
   collectScopeFilesMock.mockReturnValue([]);
+  countScopeFilesUpToMock.mockReturnValue(0);
   detectAvailableRuntimesMock.mockResolvedValue(new Set<string>());
   // Research wave surfaces one high-impact finding; verify wave returns empty
   // (held, not dropped — mirrors the #599 dispatch-test path), so the finding

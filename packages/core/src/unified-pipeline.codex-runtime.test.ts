@@ -60,8 +60,10 @@ vi.mock("./agent-runner.js", () => ({
 }));
 
 const collectScopeFilesMock = vi.fn();
+const countScopeFilesUpToMock = vi.fn();
 vi.mock("./source-files.js", () => ({
   collectScopeFiles: collectScopeFilesMock,
+  countScopeFilesUpTo: countScopeFilesUpToMock,
 }));
 
 const detectAvailableRuntimesMock = vi.fn();
@@ -132,6 +134,7 @@ beforeEach(() => {
   runFoxguardScanMock.mockReset();
   runAnalysisAgentMock.mockReset();
   collectScopeFilesMock.mockReset();
+  countScopeFilesUpToMock.mockReset();
   detectAvailableRuntimesMock.mockReset();
 
   runSemgrepScanMock.mockReturnValue([]);
@@ -139,6 +142,7 @@ beforeEach(() => {
   runDependencyAuditMock.mockReturnValue([]);
   runAnalysisAgentMock.mockResolvedValue({ findings: [] });
   collectScopeFilesMock.mockReturnValue([]);
+  countScopeFilesUpToMock.mockReturnValue(0);
   // CRITICAL: simulate "codex CLI binary not installed". The whole point
   // of #402 is that subscription auth alone should be enough — the
   // pipeline must NOT need the `codex` CLI on PATH to honour
