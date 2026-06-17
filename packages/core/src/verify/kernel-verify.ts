@@ -56,6 +56,7 @@ import type {
   KernelVerifyRunnerInput,
 } from "./kernel-verify-types.js";
 import {
+  buildCoverageFeedbackPrompt,
   buildKernelVerifyInitialPrompt,
   buildKernelVerifySystemPrompt,
   extractKernelFindingMetadata,
@@ -343,6 +344,12 @@ export function tier1VerdictToOracleResult(
   const buildStatus: KernelVerifyOracleResult["buildStatus"] = verdict.build_cache_hit
     ? "hit"
     : "miss";
+  // KCOV coverage threaded through additively (AIxCC T1) — undefined unless the
+  // Tier-1 run collected it. `newEdges` is stamped later by the verify loop.
+  const cov: Pick<KernelVerifyOracleResult, "coveragePcs"> =
+    verdict.coveragePcs && verdict.coveragePcs.length > 0
+      ? { coveragePcs: verdict.coveragePcs }
+      : {};
 
   switch (verdict.status) {
     case "reproduced":
@@ -355,6 +362,7 @@ export function tier1VerdictToOracleResult(
         reason: `reproduced (signature=${verdict.signature ?? "?"})`,
         oracleConfidence: 1.0,
         buildStatus,
+        ...cov,
       };
     case "run_failed":
       // Tier 1 sets `signature` here when the reproducer crashed but didn't
@@ -371,6 +379,7 @@ export function tier1VerdictToOracleResult(
           : "reproducer failed to compile or execute",
         oracleConfidence: verdict.signature ? 0.5 : 0,
         buildStatus,
+        ...cov,
       };
     case "no_signal":
       return {
@@ -381,6 +390,7 @@ export function tier1VerdictToOracleResult(
         reason: "reproducer ran but did not trigger any recognised kernel crash",
         oracleConfidence: 0,
         buildStatus,
+        ...cov,
       };
     case "build_failed":
       return {
@@ -493,6 +503,12 @@ export async function verifyStaticKernelFinding(
   const phaseConfig = (p: KernelVerifyPhase): string | undefined =>
     p === "reach" ? (opts.reachConfig ?? "reach") : (opts.kernelConfig ?? "kasan");
 
+  // Coverage-feedback accumulator (AIxCC T1). The set of KCOV PCs seen across all
+  // attempts of this run; each attempt's new edges are diffed against it and fed
+  // back to the LLM as a directed-search signal.
+  const seenEdges = new Set<string>();
+  const sinkHint = metadata.faultingFunction;
+
   try {
     while (turn < maxTurns) {
       turn++;
@@ -603,6 +619,16 @@ export async function verifyStaticKernelFinding(
         // the reach→refine escalation (AIxCC T3).
         if (result.oracle) result.oracle.phase = attemptPhase;
 
+        // Coverage diff (AIxCC T1): compute which PCs this attempt newly reached
+        // vs everything seen so far, stamp `newEdges`, and fold them into the
+        // run-wide seen set. Drives the coverage-feedback re-prompt below.
+        let newEdges: string[] = [];
+        if (result.oracle?.coveragePcs && result.oracle.coveragePcs.length > 0) {
+          newEdges = result.oracle.coveragePcs.filter((pc) => !seenEdges.has(pc));
+          for (const pc of result.oracle.coveragePcs) seenEdges.add(pc);
+          if (newEdges.length > 0) result.oracle.newEdges = newEdges;
+        }
+
         const attempt: KernelVerifyAttempt = {
           index: kernelRunCalls - 1,
           program: validated.args.program,
@@ -689,6 +715,21 @@ export async function verifyStaticKernelFinding(
           lastSoftHit = attempt;
         }
 
+        // Coverage-feedback re-prompt (AIxCC T1): when the Tier-1 run collected
+        // KCOV coverage, hand the LLM a directed-search signal — how many new
+        // edges it reached toward the sink and a representative sample — so the
+        // next attempt is guided by real execution coverage, not blind retry.
+        // Omitted entirely when no coverage was collected (unchanged behaviour).
+        const coverageFeedback =
+          result.oracle.coveragePcs && result.oracle.coveragePcs.length > 0
+            ? buildCoverageFeedbackPrompt({
+                newEdgeCount: newEdges.length,
+                totalEdges: seenEdges.size,
+                ...(sinkHint ? { sinkHint } : {}),
+                sampleNewEdges: newEdges,
+              })
+            : undefined;
+
         toolResults.push({
           type: "tool_result",
           tool_use_id: use.id,
@@ -699,6 +740,7 @@ export async function verifyStaticKernelFinding(
             detected_crash_type: result.oracle.detectedCrashType,
             dmesg_excerpt: result.oracle.dmesgExcerpt,
             reason: result.oracle.reason,
+            ...(coverageFeedback ? { coverage_feedback: coverageFeedback } : {}),
           }),
         });
       }

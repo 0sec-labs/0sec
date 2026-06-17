@@ -54,6 +54,21 @@ export interface KernelVerifyOracleResult {
    * single-phase paths and on raw runner results before the loop stamps it.
    */
   phase?: KernelVerifyPhase;
+  /**
+   * KCOV / syz-execprog coverage PCs the reproducer exercised (AIxCC T1 — LLM
+   * PoV-gen with real coverage feedback). Deduped, sorted program counters from
+   * the Tier-1 run. Undefined when no coverage was collected (C path, no-KCOV
+   * kernel). The verify loop diffs successive attempts' PC sets to compute
+   * {@link newEdges}.
+   */
+  coveragePcs?: string[];
+  /**
+   * PCs in this attempt's {@link coveragePcs} that were NOT seen in any prior
+   * attempt of the same verify run (AIxCC T1). Stamped by the verify loop, not
+   * the runner — it's a cross-attempt diff. Drives the coverage-feedback prompt
+   * ("you reached N new edges near sink X; sink Y not yet reached").
+   */
+  newEdges?: string[];
 }
 
 /**

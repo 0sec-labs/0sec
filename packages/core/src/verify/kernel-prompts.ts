@@ -308,3 +308,56 @@ export function buildKernelVerifyInitialPrompt(args: {
 
   return lines.join("\n");
 }
+
+/**
+ * Render a KCOV coverage-feedback prompt fragment for the next re-prompt turn
+ * (AIxCC / Shellphish T1 — LLM PoV-gen with REAL coverage feedback).
+ *
+ * After a `kernel_run` that ran without firing the target signature, the loop
+ * computed which NEW edges (PCs) the last attempt reached versus everything seen
+ * so far. We hand that diff back to the LLM as a closed-loop signal — "you got
+ * deeper here, you didn't reach the sink yet" — so the next reproducer is guided
+ * by real execution coverage instead of blind retrying. This is the single
+ * biggest lever turning a coverage-blind retry loop into a directed search.
+ *
+ * `newEdgeCount` is the number of PCs the last attempt newly reached;
+ * `totalEdges` the cumulative deduped PC count across the run; `sinkHint` is the
+ * faulting function / target we're trying to reach (from finding metadata).
+ */
+export function buildCoverageFeedbackPrompt(args: {
+  newEdgeCount: number;
+  totalEdges: number;
+  sinkHint?: string;
+  /** A few representative new-edge PCs (normalized hex strings) for concreteness. */
+  sampleNewEdges?: string[];
+}): string {
+  const { newEdgeCount, totalEdges, sinkHint, sampleNewEdges } = args;
+  const sink = sinkHint ? `the sink '${sinkHint}'` : "the target sink";
+  const lines: string[] = ["## Coverage feedback (KCOV)"];
+
+  if (newEdgeCount > 0) {
+    lines.push(
+      `Your last reproducer reached ${newEdgeCount} NEW kernel edge(s) ` +
+        `(${totalEdges} total covered this run) but did NOT yet trigger the ` +
+        `crash at ${sink}.`,
+    );
+    if (sampleNewEdges && sampleNewEdges.length > 0) {
+      const sample = sampleNewEdges.slice(0, 8).join(", ");
+      lines.push(`New edges include: ${sample}.`);
+    }
+    lines.push(
+      `You are making progress into the subsystem. Push DEEPER toward ${sink}: ` +
+        `vary the syscall arguments / ordering that got you these new edges so ` +
+        `the next attempt reaches the faulting path, not the same edges again.`,
+    );
+  } else {
+    lines.push(
+      `Your last reproducer reached NO new edges (${totalEdges} total covered ` +
+        `this run) and did not reach ${sink}. You are re-treading covered code.`,
+      `Change approach: exercise a DIFFERENT syscall path / argument shape to ` +
+        `open new edges toward ${sink} rather than repeating the same trace.`,
+    );
+  }
+
+  return lines.join("\n");
+}

@@ -10,6 +10,7 @@ import {
   renderRaceWidenModuleSource,
   defaultDmesgOutPath,
   writeProofFileReadOnly,
+  parseCoveragePcs,
 } from "./kernel-vm-runner.js";
 
 describe("prepareKernelVmArtifacts", () => {
@@ -490,6 +491,33 @@ describe("verifyAcrossBoots — N-boot reproducibility gate (AIxCC T2)", () => {
     // boot0: hits=0, remaining=4 → 0+4=4 >= 4, continue
     // boot1: hits=0, remaining=3 → 0+3=3 < 4, stop
     expect(calls).toBe(2);
+  });
+});
+
+describe("parseCoveragePcs — KCOV coverage parsing (AIxCC T1)", () => {
+  it("parses hex and decimal PCs as normalized hex strings, dedupes, and sorts", () => {
+    const raw = [
+      "0xffffffff81234560",
+      "0xffffffff81234560", // dup
+      "4096",
+      "0xffffffff81234500",
+      "",
+      "  0xffffffff81234540  trailing junk",
+    ].join("\n");
+    const pcs = parseCoveragePcs(raw);
+    // Full 64-bit kernel PCs are preserved as strings (a number rep collapses
+    // them past Number.MAX_SAFE_INTEGER).
+    expect(pcs).toEqual([
+      "0x1000", // 4096
+      "0xffffffff81234500",
+      "0xffffffff81234540",
+      "0xffffffff81234560",
+    ]);
+  });
+
+  it("skips garbage lines and returns empty for no PCs", () => {
+    expect(parseCoveragePcs("not-a-pc\n#comment\n\n")).toEqual([]);
+    expect(parseCoveragePcs("")).toEqual([]);
   });
 });
 

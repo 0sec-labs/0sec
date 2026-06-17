@@ -401,7 +401,12 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
       "fi",
       "if [ \"$compiled\" = \"1\" ]; then",
       "  dmesg -C 2>/dev/null || true",
-      `  if timeout ${shellQuote(String(config.timeoutSec))}s syz-execprog "$WORK_DIR/repro.syz" >"$SHARE_DIR/run.log" 2>&1; then`,
+      // KCOV coverage collection (AIxCC T1): ask syz-execprog to collect coverage
+      // and dump the per-call PC set to coverage.raw on the share. `-cover=1`
+      // enables KCOV; `-coverfile` writes the deduped PCs. Both flags are no-ops
+      // (or rejected) on a non-KCOV kernel / older syz-execprog — fail-soft so a
+      // run without coverage still records its crash result.
+      `  if timeout ${shellQuote(String(config.timeoutSec))}s syz-execprog -cover=1 -coverfile="$SHARE_DIR/coverage" "$WORK_DIR/repro.syz" >"$SHARE_DIR/run.log" 2>&1; then`,
       "    executed=1",
       "    exit_code=0",
       "  else",
@@ -412,6 +417,10 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
       "      executed=1",
       "    fi",
       "  fi",
+      "  # Consolidate coverage: syz-execprog -coverfile may write the PC set to",
+      "  # `coverage` and/or per-call `coverage.N` shards. Concatenate whatever",
+      "  # landed into coverage.log for the host to parse (fail-soft if none).",
+      "  cat \"$SHARE_DIR/coverage\" \"$SHARE_DIR/coverage.\"* > \"$SHARE_DIR/coverage.log\" 2>/dev/null || true",
       "else",
       "  : > \"$SHARE_DIR/run.log\"",
       "fi",
@@ -526,6 +535,42 @@ async function waitForVmResult(
   throw new Error(`timed out waiting for kernel VM results in shared dir ${hostTmpDir} after ${totalBudgetSec}s.\n${bootLog}`);
 }
 
+/**
+ * Parse a syz-execprog / KCOV coverage dump into a deduped, sorted PC set
+ * (AIxCC T1). The dump is one program counter per line — hex (`0xffffffff…`)
+ * or decimal — possibly with surrounding whitespace or trailing comments.
+ *
+ * PCs are returned as NORMALIZED HEX STRINGS (`0x…`), not numbers: kernel PCs
+ * are full 64-bit values (`0xffffffff8…`) that exceed `Number.MAX_SAFE_INTEGER`,
+ * so a number representation silently collapses distinct edges. Strings keep the
+ * edge set exact. Lines that don't parse are skipped (fail-soft). Exported for
+ * unit testing the parser without booting a VM.
+ */
+export function parseCoveragePcs(raw: string): string[] {
+  const pcs = new Set<string>();
+  for (const line of raw.split(/\r?\n/)) {
+    const token = line.trim().split(/\s+/)[0];
+    if (!token) continue;
+    let value: bigint;
+    try {
+      value =
+        token.startsWith("0x") || token.startsWith("0X")
+          ? BigInt(token)
+          : /^[0-9]+$/.test(token)
+            ? BigInt(token)
+            : -1n;
+    } catch {
+      continue;
+    }
+    if (value > 0n) pcs.add(`0x${value.toString(16)}`);
+  }
+  return [...pcs].sort((a, b) => {
+    const av = BigInt(a);
+    const bv = BigInt(b);
+    return av < bv ? -1 : av > bv ? 1 : 0;
+  });
+}
+
 export async function runReproducerInKernelVm(report: CrashReport): Promise<ReproducerResult> {
   if (!report.reproducer) {
     return {
@@ -594,6 +639,9 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
     const dmesg = existsSync(join(hostTmpDir, "dmesg.log"))
       ? readFileSync(join(hostTmpDir, "dmesg.log"), "utf-8").trim()
       : "";
+    const coveragePcs = existsSync(join(hostTmpDir, "coverage.log"))
+      ? parseCoveragePcs(readFileSync(join(hostTmpDir, "coverage.log"), "utf-8"))
+      : undefined;
 
     return {
       compiled,
@@ -602,6 +650,7 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
       dmesg,
       exitCode: Number.isFinite(exitCode) ? exitCode : 1,
       timedOut,
+      ...(coveragePcs && coveragePcs.length > 0 ? { coveragePcs } : {}),
     };
   } finally {
     await stopVm(vmProc);
@@ -634,6 +683,14 @@ export interface KernelFindingVerification {
   signature?: string;
   dmesg_path: string;
   build_cache_hit: boolean;
+  /**
+   * KCOV / syz-execprog coverage PCs collected during the run (AIxCC T1 — LLM
+   * PoV-gen with real coverage feedback). Deduped, sorted program counters the
+   * reproducer exercised. Undefined when no coverage was collected (C path, no
+   * KCOV kernel, build/run failure). Threaded up to the verify loop so it can
+   * diff against previously-seen edges and feed coverage back to the LLM.
+   */
+  coveragePcs?: string[];
 }
 
 export interface VerifyKernelFindingOptions {
@@ -821,11 +878,20 @@ export async function verifyKernelFinding(
   const dmesgContent = runResult.dmesg || runResult.output || "";
   writeProofFileReadOnly(dmesgOutPath, dmesgContent);
 
+  // KCOV coverage threaded through to every post-run verdict (AIxCC T1) so the
+  // verify loop can compute new edges and feed them back to the LLM. Spread
+  // additively — undefined when no coverage was collected.
+  const cov: Pick<KernelFindingVerification, "coveragePcs"> =
+    runResult.coveragePcs && runResult.coveragePcs.length > 0
+      ? { coveragePcs: runResult.coveragePcs }
+      : {};
+
   if (!runResult.compiled || !runResult.executed) {
     return {
       status: "run_failed",
       dmesg_path: dmesgOutPath,
       build_cache_hit,
+      ...cov,
     };
   }
 
@@ -838,6 +904,7 @@ export async function verifyKernelFinding(
         signature: opts.expectedSignature,
         dmesg_path: dmesgOutPath,
         build_cache_hit,
+        ...cov,
       };
     }
     const detected = detectKernelSignature(dmesgContent);
@@ -848,12 +915,14 @@ export async function verifyKernelFinding(
         signature: detected,
         dmesg_path: dmesgOutPath,
         build_cache_hit,
+        ...cov,
       };
     }
     return {
       status: "no_signal",
       dmesg_path: dmesgOutPath,
       build_cache_hit,
+      ...cov,
     };
   }
 
@@ -864,6 +933,7 @@ export async function verifyKernelFinding(
       signature: detected,
       dmesg_path: dmesgOutPath,
       build_cache_hit,
+      ...cov,
     };
   }
 
@@ -871,6 +941,7 @@ export async function verifyKernelFinding(
     status: "no_signal",
     dmesg_path: dmesgOutPath,
     build_cache_hit,
+    ...cov,
   };
 }
 

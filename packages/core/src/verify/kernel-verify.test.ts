@@ -11,6 +11,7 @@ import {
   type KernelVerifyRunner,
 } from "./kernel-verify.js";
 import {
+  buildCoverageFeedbackPrompt,
   buildKernelVerifyInitialPrompt,
   buildKernelVerifySystemPrompt,
   extractKernelFindingMetadata,
@@ -366,6 +367,101 @@ describe("verifyStaticKernelFinding — two-phase trigger (AIxCC T3)", () => {
     expect(result.status).toBe("confirmed");
     expect(result.attempts[0]?.oracle?.phase).toBe("refine");
     expect(seenConfigs).toEqual(["kasan"]);
+  });
+});
+
+describe("buildCoverageFeedbackPrompt — KCOV feedback fragment (AIxCC T1)", () => {
+  it("reports new edges + a sample and names the sink when progress was made", () => {
+    const prompt = buildCoverageFeedbackPrompt({
+      newEdgeCount: 3,
+      totalEdges: 12,
+      sinkHint: "tcp_input",
+      sampleNewEdges: ["0xffffffff81234560", "0xffffffff81234540"],
+    });
+    expect(prompt).toContain("3 NEW kernel edge");
+    expect(prompt).toContain("12 total");
+    expect(prompt).toContain("tcp_input");
+    expect(prompt).toContain("0xffffffff81234560");
+    expect(prompt).toContain("DEEPER");
+  });
+
+  it("tells the agent to change approach when no new edges were reached", () => {
+    const prompt = buildCoverageFeedbackPrompt({ newEdgeCount: 0, totalEdges: 9 });
+    expect(prompt).toContain("NO new edges");
+    expect(prompt).toContain("DIFFERENT");
+  });
+});
+
+describe("verifyStaticKernelFinding — coverage feedback loop (AIxCC T1)", () => {
+  it("feeds new-edge coverage back into the re-prompt and terminates on signature", async () => {
+    // Attempt 1: ran, no crash, but reached coverage edges A,B.
+    // Attempt 2: ran, no crash, reached A,B,C (one NEW edge: C).
+    // Attempt 3: signature match → confirmed.
+    const oracles: KernelVerifyOracleResult[] = [
+      fakeOracle({
+        crashed: false,
+        signatureMatched: false,
+        coveragePcs: ["0x1000", "0x2000"],
+        reason: "no crash yet",
+      }),
+      fakeOracle({
+        crashed: false,
+        signatureMatched: false,
+        coveragePcs: ["0x1000", "0x2000", "0x3000"],
+        reason: "deeper, still no crash",
+      }),
+      fakeOracle({
+        crashed: true,
+        signatureMatched: true,
+        detectedCrashType: "kasan-uaf",
+        dmesgExcerpt: "BUG: KASAN: use-after-free in tcp_input",
+        reason: "matched",
+      }),
+    ];
+    let call = 0;
+    const runner: KernelVerifyRunner = vi.fn(async () => oracles[call++]!) as unknown as KernelVerifyRunner;
+
+    // Capture the messages each invoker turn sees so we can assert the coverage
+    // feedback was threaded into the conversation.
+    const seenUserContent: string[] = [];
+    const prog = (n: string) => [toolUse(n, { program: `p${n}\n`, program_lang: "syz", expected_signature: "kasan-uaf" })];
+    const turns = [prog("u1"), prog("u2"), prog("u3")];
+    let turn = 0;
+    const agentInvoker = async (ctx: { messages: { role: string; content: unknown }[] }) => {
+      for (const m of ctx.messages) {
+        if (m.role === "user" && Array.isArray(m.content)) {
+          for (const block of m.content as Array<{ type?: string; content?: unknown }>) {
+            if (block.type === "tool_result" && typeof block.content === "string") {
+              seenUserContent.push(block.content);
+            }
+          }
+        }
+      }
+      return turns[turn++]!;
+    };
+
+    const result = await verifyStaticKernelFinding(
+      staticKernelFinding({ title: "tcp_input: UAF in input path" }),
+      {
+        kernelTree: "/tmp/linux",
+        sourceSlice: [],
+        attempts: 5,
+        runner,
+        agentInvoker: agentInvoker as unknown as KernelVerifyAgentInvoker,
+      },
+    );
+
+    expect(result.status).toBe("confirmed");
+    expect(result.attempts).toHaveLength(3);
+    // Attempt 1 opened 2 edges; attempt 2 added exactly 1 new edge (0x3000).
+    expect(result.attempts[0]?.oracle?.newEdges).toEqual(["0x1000", "0x2000"]);
+    expect(result.attempts[1]?.oracle?.newEdges).toEqual(["0x3000"]);
+    // The coverage feedback for attempt 2 (1 new edge, sink tcp_input) reached
+    // the LLM before attempt 3's turn.
+    const allFeedback = seenUserContent.join("\n");
+    expect(allFeedback).toContain("coverage_feedback");
+    expect(allFeedback).toContain("1 NEW kernel edge");
+    expect(allFeedback).toContain("tcp_input");
   });
 });
 

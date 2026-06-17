@@ -63,6 +63,15 @@ export interface ReproducerResult {
   dmesg: string;
   exitCode: number;
   timedOut: boolean;
+  /**
+   * KCOV / syz-execprog coverage PCs collected during the run (AIxCC / Shellphish
+   * T1 — LLM PoV-gen with real coverage feedback). The deduped, sorted set of
+   * program counters the reproducer exercised. Only populated for the syz guest
+   * path with a KCOV-enabled kernel + `syz-execprog -cover`; undefined otherwise
+   * (C reproducers, no-KCOV kernels). The verify loop diffs this against
+   * previously-seen PCs to compute new edges and feed coverage back to the LLM.
+   */
+  coveragePcs?: string[];
 }
 
 export interface CrashSignatureMatch {
