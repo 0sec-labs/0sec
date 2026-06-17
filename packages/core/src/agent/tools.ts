@@ -73,6 +73,7 @@ import {
   type ScannerParsedResult,
   type ScannerRunStats,
 } from "./scanner-tools.js";
+import { scannerEngagementGate } from "./scanner-profile.js";
 import { validateFlagShape } from "./flag-validator.js";
 import { extractPocStepsFromProse } from "./poc-steps-from-prose.js";
 import { isUntrustedSourceTool } from "../untrusted-sanitizer.js";
@@ -4508,37 +4509,32 @@ export class ToolExecutor {
   // blobs back to the model.
 
   /**
-   * Common preflight for every scanner wrapper:
-   *   - hard-refuse unless ctx.allowScanners (defense-in-depth; the tool is
-   *     also absent from the tool set in that case — see getToolsForRole);
-   *   - scope-check the URL/host (out-of-scope → refuse);
-   *   - acquire a per-host rate-limit token (best-effort; see the subprocess
-   *     gap note in scanner-tools.ts).
-   * Returns an error ToolResult to short-circuit, or null to proceed.
+   * Common preflight for every scanner wrapper — the authorized-engagement
+   * profile gate (pwnkit#926). Delegates the allow/deny decision to the pure
+   * `scannerEngagementGate`, which enforces, in order:
+   *   - ctx.allowScanners must be true (defense-in-depth; the tool is also
+   *     absent from the tool set otherwise — see getToolsForRole);
+   *   - an engagement scope policy MUST be present (deny-by-default — an
+   *     authorized engagement is always explicitly scoped);
+   *   - the per-invocation target host is in scope, its path is in the
+   *     http_audit path allowlist (when one is set), and the wall-clock kill
+   *     switch has not fired.
+   * On a pass we acquire a per-host rate-limit token (best-effort; see the
+   * subprocess gap note in scanner-tools.ts). Returns an error ToolResult to
+   * short-circuit, or null to proceed.
    */
   private async scannerPreflight(
     tool: string,
     scopeUrl: string,
   ): Promise<ToolResult | null> {
-    if (!this.ctx.allowScanners) {
-      return {
-        success: false,
-        output: null,
-        error:
-          `${tool} is disabled: generic scanners are suppressed unless the engagement was ` +
-          `started with --allow-scanners (pwnkit#217). Use http_request/crawl for manual probing.`,
-      };
-    }
-    if (this.ctx.scope) {
-      const verdict = this.ctx.scope.match(scopeUrl);
-      if (!verdict.allowed) {
-        this.ctx.enforcement?.noteOutOfScopeBlocked();
-        return {
-          success: false,
-          output: null,
-          error: `${tool} refused: target out-of-scope '${scopeUrl}' (${verdict.reason})`,
-        };
-      }
+    const verdict = scannerEngagementGate(tool, scopeUrl, {
+      allowScanners: this.ctx.allowScanners,
+      scope: this.ctx.scope,
+      enforcement: this.ctx.enforcement,
+    });
+    if (!verdict.allowed) {
+      if (verdict.countsAsBlocked) this.ctx.enforcement?.noteOutOfScopeBlocked();
+      return { success: false, output: null, error: verdict.reason };
     }
     if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(scopeUrl);
     return null;
