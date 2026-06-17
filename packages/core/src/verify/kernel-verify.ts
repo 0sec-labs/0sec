@@ -65,7 +65,10 @@ import type {
   WeaponizationSummary,
   KernelExploitContext,
 } from "../kernel/exploit/exploit-context.js";
-import { runKernelExploitChain } from "../kernel/exploit/run-chain.js";
+import {
+  runKernelExploitChain,
+  type ChainRunStep,
+} from "../kernel/exploit/run-chain.js";
 import type { KernelVmRunner } from "../kernel/exploit/harness.js";
 import {
   classifyPrimitiveFromDmesg,
@@ -144,6 +147,14 @@ export interface KernelVerifyResult {
   kernelExploit?: KernelExploitContext;
   /** Planner "what's still missing" lines, for the `---weaponization---` block. */
   weaponizationRationale?: string[];
+  /**
+   * Full per-step records of the weaponization chain run (kernel-autonomy
+   * training-data capture). Carries the oracle-REFUSED negative cases via each
+   * step's `reason` / `reachedRung < targetRung`, which the flattened
+   * `weaponization` summary discards. Optional and additive — populated only
+   * alongside a weaponization run; undefined for plain verify results.
+   */
+  weaponizationSteps?: ChainRunStep[];
 }
 
 export interface KernelVerifyOptions {
@@ -837,7 +848,13 @@ async function maybeWeaponizeConfirmed(
         : {}),
     });
 
+    // Carry the full structured exploit plan the chain derived
+    // (`writeProfile`/`sprayPlans[]`/`rootTailPlan`) forward instead of dropping
+    // it — this is the training-signal-rich half of the run. Spread the chain's
+    // `exploitContext` first, then overlay the run-outcome scalars so the
+    // freshly-computed rung/landed/lpe always win.
     const kernelExploit: KernelExploitContext = {
+      ...(chain.exploitContext ?? {}),
       highestRung: chain.highestRung,
       reclaimLanded: chain.reclaimLanded,
       lpeAchieved: chain.lpeAchieved,
@@ -851,6 +868,9 @@ async function maybeWeaponizeConfirmed(
       weaponization: chain.summary,
       kernelExploit,
       weaponizationRationale: chain.rationale,
+      // Per-step records (incl. oracle-REFUSED negatives via `reason` /
+      // `reachedRung < targetRung`) — the corpus writer's label source.
+      weaponizationSteps: chain.perStep,
     };
   } catch {
     // Best-effort: never fail a confirmed verification because the chain tripped.
