@@ -72,6 +72,7 @@ const TOOL_REGISTRY_ORDER = [
   "wp_fingerprint",
   "discover_api_surface",
   "surface_sweep",
+  "js_recon",
   "mongo_objectid",
   "list_skills",
   "load_skill",

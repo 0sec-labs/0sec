@@ -55,6 +55,26 @@ describe("scanBody — secret classification", () => {
     expect(hits.find((h) => h.kind === "aws_access_key_id")?.match).not.toContain("EXAMPLE");
   });
 
+  it("detects the patterns ported from foxguard (GitLab, npm, GitHub fine-grained, private key, generic api_key, bearer)", () => {
+    const body = [
+      "glpat-abcdefghijklmnopqrstuvwx",
+      "***REMOVED***",
+      "***REMOVED***",
+      "-----BEGIN RSA PRIVATE KEY-----",
+      `aws_secret_access_key = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY1234"`,
+      `const o = { apiKey: "abcdef0123456789abcdef" };`,
+      "Authorization: Bearer ***REMOVED***",
+    ].join("\n");
+    const kinds = new Set(scanBody("https://e/app.js", body).map((h) => h.kind));
+    expect(kinds.has("gitlab_token")).toBe(true);
+    expect(kinds.has("npm_token")).toBe(true);
+    expect(kinds.has("github_token")).toBe(true);
+    expect(kinds.has("private_key")).toBe(true);
+    expect(kinds.has("aws_secret_access_key")).toBe(true);
+    expect(kinds.has("generic_api_key")).toBe(true);
+    expect(kinds.has("bearer_token")).toBe(true);
+  });
+
   it("classifies a PostHog public key as low confidence (expected-public)", () => {
     const body = "posthog.init('phc_AbCdEf0123456789AbCdEf0123456789xyz')";
     const hits = scanBody("https://e/app.js", body);

@@ -39,6 +39,14 @@ export interface SecretPattern {
  *
  * Each `source` is written without the `g` flag here; `scanBody` clones it
  * with `g` so a shared definition is never mutated by `lastIndex`.
+ *
+ * CANONICAL SOURCE: foxguard (the 0sec Rust scanner, `src/secrets.rs`) holds
+ * the authoritative, maintained secret-rule catalog. We cannot import Rust
+ * into this TS engine, so the high-signal patterns below are PORTED from
+ * foxguard v0.9.0 (AWS AKIA + secret key, GitHub/GitLab/npm/Slack/Stripe
+ * tokens, private-key headers, generic api_key/bearer). When foxguard's set
+ * grows, mirror the new rule here rather than inventing a divergent one — the
+ * long-term plan is a single shared catalog, with foxguard as the SoT.
  */
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // ---- Known-public / expected keys (noise, never a real finding) ----
@@ -47,17 +55,46 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // Vercel Web Analytics / Speed Insights public token.
   { kind: "vercel_analytics_key", source: /\b(?:va_pub_|vercel_analytics_)[A-Za-z0-9]{16,}\b/, confidence: "low" },
 
-  // ---- High-signal credentials ----
+  // ---- High-signal credentials (ported from foxguard src/secrets.rs) ----
   // Stripe live secret / restricted key.
   { kind: "stripe_live_key", source: /\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b/, confidence: "high" },
   // AWS access key id.
   { kind: "aws_access_key_id", source: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/, confidence: "high" },
+  // AWS secret access key — assignment form (the 40-char secret is meaningless
+  // without the `aws_secret_access_key =` anchor, so we require it).
+  {
+    kind: "aws_secret_access_key",
+    source: /aws_secret_access_key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?/i,
+    confidence: "high",
+  },
   // Google API key.
   { kind: "google_api_key", source: /\bAIza[A-Za-z0-9_-]{35}\b/, confidence: "high" },
-  // GitHub personal-access / app tokens.
-  { kind: "github_token", source: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/, confidence: "high" },
+  // GitHub personal-access / app tokens (ghp_/gho_/ghu_/ghs_/ghr_ + fine-grained github_pat_).
+  { kind: "github_token", source: /\bgh[pousr]_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b/, confidence: "high" },
+  // GitLab personal-access token.
+  { kind: "gitlab_token", source: /\bglpat-[A-Za-z0-9\-_]{20,}\b/, confidence: "high" },
+  // npm access token.
+  { kind: "npm_token", source: /\bnpm_[A-Za-z0-9]{36}\b/, confidence: "high" },
   // Slack token.
   { kind: "slack_token", source: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/, confidence: "high" },
+  // Private-key material (RSA/DSA/EC/OpenSSH/PKCS#8 PEM header).
+  { kind: "private_key", source: /-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----/, confidence: "high" },
+  // Generic credential assignment: `api_key`/`apikey`/`secret`/`token`/`password`
+  // assigned a non-trivial quoted literal. Lower-precision than the vendor
+  // patterns above, so it sits last and is the catch-all for a hardcoded
+  // `const API_KEY = "…"` in a bundle (the CodeWall Bain move). Still `high`:
+  // a quoted 16+ char credential literal in served JS is a real leak.
+  {
+    kind: "generic_api_key",
+    source: /\b(?:api[_-]?key|apikey|secret|token|passwd|password)\b\s*[:=]\s*["'][A-Za-z0-9_\-./+=]{16,}["']/i,
+    confidence: "high",
+  },
+  // HTTP Authorization bearer token embedded in a bundle.
+  {
+    kind: "bearer_token",
+    source: /\bbearer\s+[A-Za-z0-9_\-.=]{20,}\b/i,
+    confidence: "high",
+  },
   // JWT (three base64url segments). Catches Supabase service_role keys, which
   // are JWTs — a service_role key in a client bundle is a serious leak.
   {
@@ -141,7 +178,14 @@ export function scanBody(chunkUrl: string, body: string): SecretHit[] {
   const hits: SecretHit[] = [];
   const seen = new Set<string>();
   for (const pattern of SECRET_PATTERNS) {
-    const re = new RegExp(pattern.source.source, "g");
+    // Preserve the pattern's own flags (e.g. `i` for the case-insensitive
+    // generic/bearer rules) and add `g` for iteration — without re-merging the
+    // source flags, a pattern written with `i` would silently become
+    // case-sensitive here.
+    const flags = pattern.source.flags.includes("g")
+      ? pattern.source.flags
+      : `${pattern.source.flags}g`;
+    const re = new RegExp(pattern.source.source, flags);
     let m: RegExpExecArray | null;
     while ((m = re.exec(body)) !== null) {
       const raw = m[0];
