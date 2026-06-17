@@ -11,7 +11,9 @@ import {
   signSigV4,
   parseCallerIdentity,
   currentAmzDate,
+  bucketInScope,
   type CloudFetchLike,
+  type CloudScopeMatcher,
 } from "./cloud-surface.js";
 
 // pwnkit#925 — every test mocks the fetch layer. NO live cloud calls.
@@ -77,6 +79,49 @@ describe("bucketEndpoint", () => {
   });
   it("uses a regional endpoint otherwise", () => {
     expect(bucketEndpoint("acme", "eu-central-1")).toBe("https://acme.s3.eu-central-1.amazonaws.com");
+  });
+});
+
+describe("bucketInScope (deny-by-default scope gate, #924 parity)", () => {
+  // Stub matcher: allows only hosts containing a substring.
+  const matcherFor = (allowSubstr: string): CloudScopeMatcher => ({
+    match: (url) => {
+      const host = new URL(url).hostname;
+      return host.includes(allowSubstr)
+        ? { allowed: true, reason: `in-scope: ${host}` }
+        : { allowed: false, reason: `out-of-scope: ${host}` };
+    },
+  });
+
+  it("DENIES every bucket when no scope policy is configured", () => {
+    const r = bucketInScope("acme-exports", undefined);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/no engagement scope|deny-by-default/i);
+  });
+
+  it("allows a bucket whose S3 endpoint the policy authorizes", () => {
+    // Operator put `*.amazonaws.com` (or the exact endpoint) in scope.
+    const r = bucketInScope("acme-exports", matcherFor("amazonaws.com"));
+    expect(r.allowed).toBe(true);
+  });
+
+  it("denies a bucket the policy does not authorize", () => {
+    // Policy only authorizes the app host, not the S3 endpoint.
+    const r = bucketInScope("acme-exports", matcherFor("acme.com"));
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/out-of-scope/i);
+  });
+
+  it("checks the regional endpoint when a region is given", () => {
+    const seen: string[] = [];
+    const matcher: CloudScopeMatcher = {
+      match: (url) => {
+        seen.push(url);
+        return { allowed: true, reason: "ok" };
+      },
+    };
+    bucketInScope("acme", matcher, "eu-central-1");
+    expect(seen[0]).toBe("https://acme.s3.eu-central-1.amazonaws.com");
   });
 });
 

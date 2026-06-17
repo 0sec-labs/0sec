@@ -38,6 +38,16 @@
  *   - Object listings are capped (`max-keys=…`) and bodies truncated — minimal
  *     proof, never bulk exfiltration.
  *
+ * SCOPE GATING — deny-by-default, mirroring recon/scope.ts (#924):
+ *   Probing a target org's bucket-name space or validating a harvested
+ *   credential is RECON AGAINST THAT ORG, not an infra call like web_search —
+ *   so it must respect the engagement scope, never the validateTargetUrl
+ *   external-service exemption. `bucketInScope` is a pure predicate that:
+ *     - returns FALSE when no scope policy is configured (deny-by-default), and
+ *     - otherwise checks the bucket's virtual-host endpoint against the policy.
+ *   The tool handlers (agent/tools.ts) skip out-of-scope buckets as a no-op and
+ *   refuse credential validation entirely when no engagement scope exists.
+ *
  * SCOPE: AWS/S3 is the MVP per the issue. Azure (Blob Storage SAS / orphaned
  * CNAME) and GCP (GCS uniform/ACL) are deferred follow-ups — the verdict
  * vocabulary here (`public` / `takeover` / `over-privileged`) is provider
@@ -59,9 +69,10 @@ export type CloudFetchLike = (
 }>;
 
 const DEFAULT_FETCH: CloudFetchLike = (url, init) =>
-  // foxguard:ignore — cloud endpoints (s3.amazonaws.com / sts.amazonaws.com)
-  // are AWS-controlled recon targets, not the in-scope app host; same external
-  // model as web_search / intel_* tools.
+  // foxguard:ignore — the URL is a fixed AWS service endpoint
+  // (s3/sts/iam.amazonaws.com). The TARGET authorization happens upstream in
+  // the tool handler (`bucketInScope` / scope-presence gate), NOT here — this
+  // is the transport, after the deny-by-default scope check has passed.
   fetch(url, init as RequestInit) as unknown as ReturnType<CloudFetchLike>;
 
 const PROBE_TIMEOUT_MS = 15_000;
@@ -149,6 +160,39 @@ export function bucketEndpoint(bucket: string, region?: string): string {
     return `https://${bucket}.s3.${region}.amazonaws.com`;
   }
   return `https://${bucket}.s3.amazonaws.com`;
+}
+
+/**
+ * Minimal scope-matcher shape — the subset of `ScopePolicy` this module needs.
+ * Declared structurally so cloud-surface stays decoupled from the scope module
+ * and is unit-testable with a stub matcher (no ScopePolicy construction).
+ */
+export interface CloudScopeMatcher {
+  match(url: string): { allowed: boolean; reason: string };
+}
+
+/**
+ * Deny-by-default scope predicate for a bucket probe (mirrors recon/#924).
+ *
+ * Probing a target org's bucket is recon against that org, so it must clear the
+ * engagement scope — NOT the validateTargetUrl external-service exemption.
+ *
+ *   - No scope policy configured → DENY (false). This is the deny-by-default
+ *     rule: cloud probing is opt-in and an authorized engagement always carries
+ *     a scope. An operator authorizes cloud surface by adding the bucket's S3
+ *     endpoint (or `*.amazonaws.com`) to the scope's `in_scope` list.
+ *   - Policy present → defer to `policy.match()` on the bucket's virtual-host
+ *     endpoint. Out-of-scope wins (the policy's own conservative default).
+ */
+export function bucketInScope(
+  bucket: string,
+  scope: CloudScopeMatcher | undefined,
+  region?: string,
+): { allowed: boolean; reason: string } {
+  if (!scope) {
+    return { allowed: false, reason: "denied: no engagement scope configured (cloud probing is deny-by-default)" };
+  }
+  return scope.match(bucketEndpoint(bucket, region));
 }
 
 /**

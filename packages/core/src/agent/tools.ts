@@ -44,6 +44,7 @@ import {
   probeS3Bucket,
   classifyTakeover,
   validateAwsCredentials,
+  bucketInScope,
 } from "./cloud-surface.js";
 import {
   classifyPromptLayerImpact,
@@ -2991,9 +2992,12 @@ export class ToolExecutor {
    * the bucket is never re-created — pwnkit only flags it. Returns per-bucket
    * verdicts + pre-drafted findings for public buckets and takeover-able refs.
    *
-   * Cloud endpoints (*.s3.amazonaws.com) are AWS-controlled recon targets, not
-   * the in-scope app host — the same external-service model as web_search /
-   * intel_*, so no validateTargetUrl scope check applies.
+   * SCOPE-GATED, deny-by-default (#924 parity): probing a target org's bucket
+   * is recon against that org, NOT an infra call, so each bucket must clear the
+   * engagement ScopePolicy via `bucketInScope`. With no scope configured every
+   * bucket is denied (no-op skip); out-of-scope buckets are skipped and
+   * reported under `skipped`. The operator authorizes cloud probing by adding
+   * the bucket's S3 endpoint (or `*.amazonaws.com`) to the scope's in_scope.
    */
   private async cloudS3Probe(args: Record<string, unknown>): Promise<ToolResult> {
     if (!featureFlags.cloudSurface) {
@@ -3012,8 +3016,16 @@ export class ToolExecutor {
     const region = typeof args.region === "string" ? args.region : undefined;
     const maxKeys = typeof args.max_keys === "number" ? args.max_keys : undefined;
 
+    // Deny-by-default scope gate: only probe buckets the engagement scope
+    // authorizes. No scope policy → every bucket is denied (no-op).
     const results = [];
+    const skipped: Array<{ bucket: string; reason: string }> = [];
     for (const bucket of buckets) {
+      const gate = bucketInScope(bucket, this.ctx.scope, region);
+      if (!gate.allowed) {
+        skipped.push({ bucket, reason: gate.reason });
+        continue;
+      }
       const probe = await probeS3Bucket(bucket, { region, maxKeys });
       const takeover = classifyTakeover(probe);
       results.push({ ...probe, takeoverable: takeover.takeoverable, takeover_note: takeover.note });
@@ -3026,6 +3038,7 @@ export class ToolExecutor {
       bucket_count: results.length,
       public_count: publicBuckets.length,
       takeoverable_count: takeoverable.length,
+      skipped_count: skipped.length,
     });
 
     const suggested_findings = [
@@ -3043,10 +3056,27 @@ export class ToolExecutor {
       })),
     ];
 
+    // All buckets out of scope → make the deny-by-default outcome explicit
+    // rather than silently returning a zero-result success.
+    if (results.length === 0 && skipped.length > 0) {
+      return {
+        success: true,
+        output: {
+          bucket_count: 0,
+          public_count: 0,
+          takeoverable_count: 0,
+          results: [],
+          skipped,
+          suggested_findings: [],
+          summary: `All ${skipped.length} bucket(s) skipped — none in engagement scope. ${skipped[0].reason}. Add the bucket's S3 endpoint to the scope's in_scope to authorize probing.`,
+        },
+      };
+    }
+
     const summary =
       publicBuckets.length || takeoverable.length
-        ? `${results.length} bucket(s) probed: ${publicBuckets.length} PUBLIC, ${takeoverable.length} takeover-able (NoSuchBucket). Save a finding for each. Read-only — no buckets were written or created.`
-        : `${results.length} bucket(s) probed: none public, none takeover-able.`;
+        ? `${results.length} bucket(s) probed: ${publicBuckets.length} PUBLIC, ${takeoverable.length} takeover-able (NoSuchBucket)${skipped.length ? `, ${skipped.length} out-of-scope skipped` : ""}. Save a finding for each. Read-only — no buckets were written or created.`
+        : `${results.length} bucket(s) probed: none public, none takeover-able${skipped.length ? `, ${skipped.length} out-of-scope skipped` : ""}.`;
 
     return {
       success: true,
@@ -3055,6 +3085,7 @@ export class ToolExecutor {
         public_count: publicBuckets.length,
         takeoverable_count: takeoverable.length,
         results,
+        skipped,
         suggested_findings,
         summary,
       },
@@ -3066,10 +3097,23 @@ export class ToolExecutor {
    * over-privilege. sts:GetCallerIdentity confirms liveness + identity; a few
    * read-only List* probes measure effective permissions. The action allowlist
    * is enforced in cloud-surface.ts so no mutating API can be reached.
+   *
+   * SCOPE-GATED, deny-by-default (#924 parity): validating a harvested credential
+   * is recon against the target org's cloud account, so it requires an
+   * authorized engagement. With no engagement ScopePolicy configured the tool
+   * refuses (deny-by-default) — the same authorization signal recon uses.
    */
   private async cloudValidateCredentials(args: Record<string, unknown>): Promise<ToolResult> {
     if (!featureFlags.cloudSurface) {
       return { success: false, output: null, error: "cloud_validate_credentials is disabled. Set PWNKIT_FEATURE_CLOUD_SURFACE=1 to enable." };
+    }
+    if (!this.ctx.scope) {
+      return {
+        success: false,
+        output: null,
+        error:
+          "cloud_validate_credentials denied: no engagement scope configured (cloud credential validation is deny-by-default — it requires an authorized engagement scope).",
+      };
     }
     const accessKeyId = typeof args.access_key_id === "string" ? args.access_key_id.trim() : "";
     const secretAccessKey = typeof args.secret_access_key === "string" ? args.secret_access_key.trim() : "";

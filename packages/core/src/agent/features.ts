@@ -150,15 +150,18 @@ export const features = {
    * AWS credentials (read-only). All probes are anonymous or read/verify-only —
    * no writes, no data exfiltration beyond minimal proof.
    *
-   * Default ON: every probe is read-only and the credential validator enforces
-   * a mutation-free action allowlist in code. Disable via
-   * PWNKIT_FEATURE_CLOUD_SURFACE=0 for ablation. Getter so the CLI `--features`
-   * flag (set AFTER this module loads) is honored at dispatch time — matches
-   * the wpFingerprint / mongoObjectIdForge pattern above. See
-   * packages/core/src/agent/cloud-surface.ts.
+   * Default OFF (opt-in via PWNKIT_FEATURE_CLOUD_SURFACE=1). Probing a target
+   * org's bucket-name space or validating its harvested credentials is recon
+   * AGAINST THAT ORG, so it is deny-by-default at two layers: this enablement
+   * flag, AND an engagement-scope check in the tool handlers (a configured
+   * ScopePolicy that authorizes the bucket endpoint — see cloud-surface.ts
+   * `bucketInScope`). The read-only action allowlist (`assertReadOnlyAction`)
+   * stays on top of both. Getter so the CLI `--features` flag (set AFTER this
+   * module loads) is honored at dispatch time — matches the wpFingerprint /
+   * mongoObjectIdForge pattern above. See packages/core/src/agent/cloud-surface.ts.
    */
   get cloudSurface(): boolean {
-    return env("PWNKIT_FEATURE_CLOUD_SURFACE", true);
+    return env("PWNKIT_FEATURE_CLOUD_SURFACE", false);
   },
 
   /**
