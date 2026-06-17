@@ -456,9 +456,11 @@ export {
   runWeaponization,
   runStrategy,
   kernelVmArtifactsReady,
+  bootedCacheKey,
   mintCanary,
   makeKernelVmProbe,
   controlRungForDemo,
+  runKernelExploitChain,
 } from "./kernel/index.js";
 export { rungRank as escalationRungRank } from "./kernel/exploit/index.js";
 export type {
@@ -473,6 +475,11 @@ export type {
   StrategyAttempt,
   WeaponizationResult,
   KernelVmProbeOptions,
+  RunKernelExploitChainOptions,
+  RunKernelExploitChainResult,
+  ChainRunStep,
+  KernelExploitContext,
+  WeaponizationSummary,
 } from "./kernel/index.js";
 
 // Bug-to-primitive classifier (the input to the weaponization harness).
@@ -491,7 +498,7 @@ export type {
 // Kernel crash verification oracle
 export { verifyKernelCrash, verifyStandaloneKernelReproducer, compileAndRunReproducer, matchCrashSignature, validateCrashReportConsistency } from "./triage/kernel-oracle.js";
 export type { KernelOracleResult, ReproducerResult, CrashSignatureMatch, ConsistencyResult } from "./triage/kernel-oracle.js";
-export { prepareKernelVmArtifacts, verifyKernelFinding } from "./triage/kernel-vm-runner.js";
+export { prepareKernelVmArtifacts, verifyKernelFinding, writeProofFileReadOnly, defaultDmesgOutPath, loadKernelVmConfigFromEnv } from "./triage/kernel-vm-runner.js";
 export type {
   KernelVmArtifacts,
   KernelBuildOptions,
