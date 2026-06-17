@@ -41,6 +41,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   wp_fingerprint: "wpFingerprint",
   discover_api_surface: "discoverApiSurface",
   surface_sweep: "surfaceSweep",
+  js_recon: "jsRecon",
   mongo_objectid: "mongoObjectIdForge",
   list_skills: "listSkills",
   load_skill: "loadSkill",

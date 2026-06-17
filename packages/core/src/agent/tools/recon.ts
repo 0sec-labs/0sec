@@ -157,6 +157,23 @@ export const reconToolDefinitions: Record<string, ToolDefinition> = {
       },
     },
   },
+  js_recon: {
+    name: "js_recon",
+    description:
+      "Mine the JavaScript a site serves for endpoints AND embedded secrets — the 'read the public JS file' move that finds routes never published in an API spec, plus hardcoded credentials shipped to the browser. " +
+      "Give it the `scripts` URLs a `crawl` already found (or it falls back to the scripts on the target page); it fetches each in-scope JS file and returns (a) discovered endpoints in the same shape as discover_api_surface (feed them straight into surface_sweep / auth_boundary_probe) and (b) any leaked API keys / tokens / cloud creds / private keys, REDACTED. " +
+      "Every JS URL is scope-validated; out-of-scope scripts are skipped. Run after crawl on a web/API engagement to expand the endpoint surface and catch credential leaks.",
+    parameters: {
+      scripts: {
+        type: "object",
+        description: "Array of JS file URLs to mine (e.g. the `scripts` array returned by crawl). When omitted, the target page is fetched and its <script src> URLs are used.",
+      },
+      max_files: {
+        type: "number",
+        description: "Maximum JS files to fetch (default 100, hard cap 100).",
+      },
+    },
+  },
 };
 
 // Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
@@ -173,4 +190,5 @@ export const reconDispatch: Record<string, string> = {
   wp_fingerprint: "wpFingerprint",
   discover_api_surface: "discoverApiSurface",
   surface_sweep: "surfaceSweep",
+  js_recon: "jsRecon",
 };

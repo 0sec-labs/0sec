@@ -40,6 +40,7 @@ import {
   type ProbeEndpoint as AuthBoundaryEndpoint,
 } from "./auth-boundary-prober.js";
 import { runRecon } from "../recon/recon.js";
+import { runJsRecon } from "../recon/js-recon.js";
 import {
   probeS3Bucket,
   classifyTakeover,
@@ -2981,6 +2982,205 @@ export class ToolExecutor {
           (leaks.length > 0
             ? `: ${leaks.map((l) => `${l.method} ${l.url}`).join(", ")}. Drill into dynamic params with structural_sqli_probe.`
             : `. Surface gated.`),
+      },
+    };
+  }
+
+  /**
+   * #927 — JS/crawl-based endpoint + runtime secret discovery (the CodeWall
+   * "credentials in a public JS file" move). Fetches the in-scope JS the
+   * target serves (the `scripts` a crawl found, or the target page's scripts
+   * when none are passed), mines each bundle for endpoint/route strings + API
+   * bases and for embedded secrets, then auto-probes the discovered endpoints
+   * with auth_boundary_probe. Endpoints come back in the discover_api_surface
+   * shape; secrets come back redacted (the raw value never leaves the body).
+   */
+  private async jsRecon(args: Record<string, unknown>): Promise<ToolResult> {
+    // Resolve the candidate JS URLs: explicit `scripts` arg, else crawl the
+    // target page once and use its <script src> URLs.
+    let scriptUrls: string[] = Array.isArray(args.scripts)
+      ? (args.scripts as unknown[]).filter((s): s is string => typeof s === "string")
+      : [];
+
+    if (scriptUrls.length === 0) {
+      if (!this.ctx.target) {
+        return { success: false, output: null, error: "js_recon needs `scripts` (or a scan target to crawl for them)" };
+      }
+      const crawlResult = await this.crawl({ url: this.ctx.target, depth: 1 });
+      if (crawlResult.success && crawlResult.output) {
+        const pages = (crawlResult.output as { pages?: Array<{ scripts?: string[] }> }).pages ?? [];
+        scriptUrls = [...new Set(pages.flatMap((p) => p.scripts ?? []))];
+      }
+    }
+
+    if (scriptUrls.length === 0) {
+      return {
+        success: true,
+        output: {
+          scanned: [],
+          endpoints: [],
+          api_base_urls: [],
+          secrets: [],
+          suggested_findings: [],
+          summary: "js_recon found no JS files to mine (no scripts on the target page).",
+        },
+      };
+    }
+
+    const maxFiles = typeof args.max_files === "number" ? args.max_files : undefined;
+
+    // Scope-validated fetchText. Out-of-scope URLs throw inside
+    // validateTargetUrl; runJsRecon also pre-filters via the ScopePolicy, so
+    // an out-of-scope script is skipped rather than fetched.
+    const fetchText = async (rawUrl: string): Promise<{ status: number; body: string }> => {
+      let url: string;
+      try {
+        url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+      } catch {
+        return { status: 0, body: "" };
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const fetchInit = applyAttribution(
+          url,
+          { method: "GET", signal: controller.signal, redirect: "manual", headers: { Accept: "*/*" } },
+          this.ctx.attribution,
+          this.ctx.scope,
+        )!;
+        if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+        // foxguard:ignore — `url` validated by validateTargetUrl above.
+        const res = await fetch(url, fetchInit);
+        if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+        const body = await res.text();
+        return { status: res.status, body };
+      } catch {
+        return { status: 0, body: "" };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    let recon;
+    try {
+      recon = await runJsRecon({ scriptUrls, scope: this.ctx.scope, fetchText, maxFiles });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `js_recon failed: ${msg}` };
+    }
+
+    this.persistToolArtifact("js_recon", {
+      scanned: recon.scanned.length,
+      endpoints: recon.endpoints.length,
+      secrets: recon.secrets.length,
+    });
+
+    // Auto-probe the discovered endpoints for unauthenticated reachability —
+    // the issue's acceptance criterion ("then auto-probes the discovered
+    // endpoints"). Reuse the same scope-validated FetchLike as surface_sweep.
+    let authResults: Array<{
+      url: string;
+      method: string;
+      unauthReachable: boolean;
+      verdict: string;
+      note: string;
+      severity?: string;
+    }> = [];
+    if (recon.endpoints.length > 0) {
+      const probeEndpoints: AuthBoundaryEndpoint[] = recon.endpoints.map((a) => {
+        const method = a.metadata?.method ?? "GET";
+        const path = a.metadata?.path ?? a.value;
+        const url = path.startsWith("http")
+          ? path
+          : `${(this.ctx.target ?? "").replace(/\/+$/, "")}${path.startsWith("/") ? "" : "/"}${path}`;
+        return { url, method };
+      });
+
+      const fetchLike: AuthBoundaryFetchLike = async (rawUrl, init) => {
+        const url = validateTargetUrl(this.ctx.target, rawUrl, this.ctx.scope, this.ctx.enforcement);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15_000);
+        try {
+          const fetchInit = applyAttribution(
+            url,
+            { method: init?.method ?? "GET", headers: init?.headers ?? {}, body: init?.body, signal: controller.signal, redirect: "manual" },
+            this.ctx.attribution,
+            this.ctx.scope,
+          )!;
+          if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(url);
+          // foxguard:ignore — `url` validated by validateTargetUrl above.
+          const res = await fetch(url, fetchInit);
+          if (this.ctx.rateLimiter) this.ctx.rateLimiter.noteResponse(url, res);
+          const bodyText = await res.text();
+          return { ok: res.ok, status: res.status, headers: res.headers, text: async () => bodyText };
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
+      try {
+        const report = await runAuthBoundaryProbe({
+          endpoints: probeEndpoints,
+          auth: this.ctx.authConfig,
+          fetchImpl: fetchLike,
+        });
+        authResults = report.results.map((r) => ({
+          url: r.url,
+          method: r.method,
+          unauthReachable: r.unauthReachable,
+          verdict: r.verdict,
+          note: r.note,
+          severity: r.severity,
+        }));
+      } catch {
+        // Boundary probe failed — still return endpoints + secrets.
+        authResults = [];
+      }
+    }
+
+    // Pre-drafted findings: every high-confidence leaked secret + every
+    // unauthenticated-reachable endpoint discovered from JS. Secrets are
+    // already redacted by scanBody/redactSecret.
+    const secretFindings = recon.secrets
+      .filter((s) => s.confidence === "high")
+      .map((s) => ({
+        title: `Leaked credential in served JavaScript (${s.kind})`,
+        severity: "high",
+        category: "information-disclosure",
+        description:
+          `A high-confidence ${s.kind} value (${s.match}) is hardcoded in a JavaScript file served to the browser: ${s.chunk}. ` +
+          `A genuine credential shipped client-side must be treated as compromised and rotated.`,
+        evidence: { file: s.chunk, kind: s.kind, match: s.match },
+      }));
+
+    const leaks = authResults.filter((r) => r.unauthReachable);
+    const endpointFindings = leaks.map((l) => ({
+      title: `Unauthenticated access to ${l.method} ${l.url} (discovered via JS)`,
+      severity: l.severity === "high" ? "high" : "medium",
+      category: "broken_access_control",
+      description: `${l.method} ${l.url} — extracted from served JS, reachable without authentication (verdict: ${l.verdict}). ${l.note}`,
+    }));
+
+    const highSecrets = secretFindings.length;
+    return {
+      success: true,
+      output: {
+        scanned: recon.scanned,
+        skipped: recon.skipped,
+        endpoints: recon.endpoints,
+        api_base_urls: recon.apiBaseUrls,
+        secrets: recon.secrets,
+        auth_boundary_results: authResults,
+        unauth_reachable_count: leaks.length,
+        suggested_findings: [...secretFindings, ...endpointFindings],
+        summary:
+          `Mined ${recon.scanned.length} JS file(s): ${recon.endpoints.length} endpoint(s), ` +
+          `${recon.apiBaseUrls.length} API base URL(s), ${recon.secrets.length} secret hit(s) ` +
+          `(${highSecrets} high-confidence). ` +
+          (recon.endpoints.length > 0
+            ? `${leaks.length} discovered endpoint(s) reachable WITHOUT auth. `
+            : "") +
+          `Feed endpoints into surface_sweep / structural_sqli_probe; save any high-confidence secret as a finding.`,
       },
     };
   }
