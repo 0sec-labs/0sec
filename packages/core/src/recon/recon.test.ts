@@ -143,6 +143,47 @@ describe("runRecon (with injected fetch)", () => {
     expect(mcp[0].metadata).toEqual({ status: "405" });
   });
 
+  it("merges active brute-force subdomains into the inventory when enabled + scoped", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const result = await runRecon("svc.test", {
+      specPaths: [],
+      mcpPaths: [],
+      // crt.sh fetch returns 404 → no passive hosts; active leg drives discovery
+      fetchImpl: fakeFetch({}),
+      activeSubdomains: {
+        enabled: true,
+        scope: ScopePolicy.fromJson({ in_scope: ["*.svc.test"] }),
+        wordlist: ["api", "admin"],
+        resolve: async (host: string) => {
+          if (host === "api.svc.test") return { addresses: ["10.0.0.1"] };
+          throw new Error("no records");
+        },
+      },
+    });
+    const subs = result.assets.filter((a) => a.kind === "subdomain");
+    expect(subs).toHaveLength(1);
+    expect(subs[0]).toMatchObject({ value: "api.svc.test", source: "dns-bruteforce" });
+  });
+
+  it("does not run active brute-force by default (no resolve calls)", async () => {
+    let resolveCalls = 0;
+    const result = await runRecon("svc.test", {
+      specPaths: [],
+      mcpPaths: [],
+      fetchImpl: fakeFetch({}),
+      activeSubdomains: {
+        // enabled omitted → OFF
+        scope: undefined,
+        resolve: async () => {
+          resolveCalls++;
+          return { addresses: ["1.1.1.1"] };
+        },
+      },
+    });
+    expect(resolveCalls).toBe(0);
+    expect(result.assets.filter((a) => a.kind === "subdomain")).toHaveLength(0);
+  });
+
   it("records a warning on a network error instead of throwing", async () => {
     const throwingFetch = (async () => {
       throw new Error("ECONNREFUSED");

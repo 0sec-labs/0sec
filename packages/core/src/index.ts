@@ -788,3 +788,14 @@ export type {
   ReconResult,
   ReconOptions,
 } from "./recon/recon.js";
+// Active subdomain brute-force (pwnkit#924) — OFF by default, scope-gated +
+// time-boxed; merges into runRecon's subdomain assets when enabled.
+export {
+  enumerateSubdomainsActive,
+  buildCandidateHosts,
+  DEFAULT_SUBDOMAIN_WORDLIST,
+  MAX_CANDIDATES,
+  DEFAULT_CONCURRENCY,
+  DEFAULT_MAX_DURATION_MS,
+} from "./recon/active-subdomains.js";
+export type { ActiveEnumerateOptions } from "./recon/active-subdomains.js";

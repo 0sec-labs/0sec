@@ -1,19 +1,27 @@
-// Recon mode — surface enumeration for a domain/org (pwnkit#769).
+// Recon mode — surface enumeration for a domain/org (pwnkit#769, #924).
 //
-// First slice: given a domain, probe a set of well-known OpenAPI/Swagger
-// paths and MCP endpoints, extract API endpoints from any spec found, and
-// emit a deduped, structured asset inventory as JSON. The shape is designed
-// to be consumable as `discovered_assets`.
+// Given a domain, probe a set of well-known OpenAPI/Swagger paths and MCP
+// endpoints, extract API endpoints from any spec found, enumerate subdomains
+// (passive CT+DNS always; active wordlist brute-force when explicitly turned
+// on), and emit a deduped, structured asset inventory as JSON. The shape is
+// designed to be consumable as `discovered_assets`.
 //
-// Subdomain brute-force is intentionally stubbed (see `enumerateSubdomains`)
-// — it returns an empty list with a TODO so the asset-merge/dedup pipeline
-// can be exercised end-to-end before the wordlist/DNS machinery lands.
+// Active subdomain brute-force (#924) is OFF by default and gated behind an
+// authorized `ScopePolicy` + a wall-clock kill-switch — see
+// `./active-subdomains.ts`. When enabled, its resolving hosts merge into the
+// same subdomain-asset stream and dedupe against the passive results.
 
 import { parseApiSpec, type ApiSpecSummary } from "../api-spec.js";
+import type { ScopePolicy } from "../scope/scope.js";
 import {
   enumerateSubdomains as enumerateDiscoveredHosts,
+  type DiscoveredHost,
   type EnumerateSubdomainsOptions,
 } from "./subdomains.js";
+import {
+  enumerateSubdomainsActive,
+  type ActiveEnumerateOptions,
+} from "./active-subdomains.js";
 
 /** Kinds of asset the recon surface can surface. */
 export type ReconAssetKind =
@@ -62,6 +70,17 @@ export interface ReconOptions {
    * network surface deterministically without hitting the wire.
    */
   fetchImpl?: typeof fetch;
+  /**
+   * Active subdomain brute-force config (pwnkit#924). OFF by default: omit it
+   * (or leave `enabled` unset/false) and recon stays purely passive. When
+   * enabled, the resolving hosts merge into the subdomain asset stream and
+   * dedupe against the passive (CT+DNS) results. Every candidate is gated by
+   * `scope` + a wall-clock kill-switch — see `enumerateSubdomainsActive`.
+   */
+  activeSubdomains?: Pick<
+    ActiveEnumerateOptions,
+    "enabled" | "scope" | "wordlist" | "resolve" | "concurrency" | "maxDurationMs" | "now"
+  >;
 }
 
 /** Well-known locations where OpenAPI / Swagger specs commonly live. */
@@ -276,6 +295,19 @@ async function discoverMcpServers(
   return assets;
 }
 
+/** Map a `DiscoveredHost` (passive or active) onto a `subdomain` ReconAsset. */
+function hostToAsset(host: DiscoveredHost): ReconAsset {
+  return {
+    kind: "subdomain",
+    value: host.host,
+    source: host.source,
+    metadata: {
+      ...(host.addresses?.length ? { addresses: host.addresses.join(",") } : {}),
+      ...(host.cname ? { cname: host.cname } : {}),
+    },
+  };
+}
+
 /**
  * Passive subdomain enumeration (pwnkit#769, wired to `./subdomains.ts`).
  *
@@ -294,30 +326,24 @@ export async function enumerateSubdomains(
   } catch {
     return [];
   }
-  let hosts: Awaited<ReturnType<typeof enumerateDiscoveredHosts>>;
+  let hosts: DiscoveredHost[];
   try {
     hosts = await enumerateDiscoveredHosts({ domain: apex, ...hooks });
   } catch {
     return [];
   }
-  return hosts.map((host) => ({
-    kind: "subdomain" as const,
-    value: host.host,
-    source: host.source,
-    metadata: {
-      ...(host.addresses?.length ? { addresses: host.addresses.join(",") } : {}),
-      ...(host.cname ? { cname: host.cname } : {}),
-    },
-  }));
+  return hosts.map(hostToAsset);
 }
 
 /**
- * Run recon against a single domain. Probes OpenAPI/Swagger specs and MCP
- * endpoints (subdomain enumeration stubbed), then returns a deduped,
+ * Run recon against a single domain. Enumerates subdomains (passive CT+DNS
+ * always, active brute-force when `activeSubdomains.enabled` is set + scoped),
+ * probes OpenAPI/Swagger specs and MCP endpoints, then returns a deduped,
  * structured asset inventory consumable as `discovered_assets`.
  */
 export async function runRecon(domain: string, options: ReconOptions = {}): Promise<ReconResult> {
   const origin = normalizeDomain(domain);
+  const apex = new URL(origin).hostname;
   const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = options.fetchImpl ?? fetch;
   const specPaths = options.specPaths ?? DEFAULT_SPEC_PATHS;
@@ -338,7 +364,31 @@ export async function runRecon(domain: string, options: ReconOptions = {}): Prom
           },
         }
       : undefined;
-  collected.push(...(await enumerateSubdomains(domain, subdomainHooks)));
+  const passiveHosts = await enumerateSubdomains(domain, subdomainHooks);
+  collected.push(...passiveHosts);
+
+  // Active subdomain brute-force (pwnkit#924). OFF unless the caller opted in
+  // AND supplied an authorized scope policy — `enumerateSubdomainsActive`
+  // enforces both rails internally and returns [] otherwise, so an
+  // unauthorized/unconfigured run never issues a DNS query. Seed permutations
+  // off whatever the passive pass already found.
+  const active = options.activeSubdomains;
+  if (active?.enabled) {
+    try {
+      const knownHosts = passiveHosts.map((a) => a.value);
+      const activeHosts = await enumerateSubdomainsActive({
+        domain: apex,
+        knownHosts,
+        ...active,
+      });
+      collected.push(...activeHosts.map(hostToAsset));
+    } catch (err) {
+      warnings.push(
+        `active subdomain enum: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   collected.push(...(await discoverApiSpecs(origin, specPaths, timeout, fetchImpl, warnings)));
   collected.push(...(await discoverMcpServers(origin, mcpPaths, timeout, fetchImpl, warnings)));
 
