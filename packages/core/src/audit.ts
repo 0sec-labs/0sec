@@ -21,6 +21,7 @@ import {
   isInternalPackageName,
 } from "./malicious-detector.js";
 import { scanForCryptoMisuse } from "./crypto-misuse-detector.js";
+import { scanForUnsafeDeser } from "./unsafe-deser-detector.js";
 import { postProcessPackageAuditFindings } from "./package-audit-suppressor.js";
 import { collectScopeFiles } from "./source-files.js";
 import { features as agentFeatures } from "./agent/features.js";
@@ -893,6 +894,31 @@ export async function packageAudit(
       return findings;
     })();
 
+    // Step 2.56: Deterministic unsafe-deserialization / dynamic-code-exec audit
+    // (#688 wedge — the `unsafe-deserialization` / `code-injection` classes were
+    // LLM-only). Pure static pattern pass over the package source — Python
+    // pickle/marshal/dill/shelve, unsafe PyYAML loaders, Node insecure-deserialize
+    // libraries + `vm` eval sinks, and dynamic `eval`/`new Function`. Runs before
+    // the LLM, ecosystem-agnostic (JS/TS + Python), and emits self-evidencing
+    // `verified` findings.
+    const deserFindings = (() => {
+      emit({
+        type: "stage:start",
+        stage: "discovery",
+        message: "Running deterministic unsafe-deserialization source audit...",
+      });
+      const findings = scanForUnsafeDeser({
+        packagePath: pkg.path,
+        packageName: pkg.name,
+      });
+      emit({
+        type: "stage:end",
+        stage: "discovery",
+        message: `Unsafe-deserialization audit: ${findings.length} finding${findings.length === 1 ? "" : "s"}`,
+      });
+      return findings;
+    })();
+
     // Step 2.6: Transitive supply-chain audit + dependency-confusion (#565).
     // Walks the resolved dependency tree and source-audits transitive deps —
     // the event-stream class of attack the root-only scan is blind to — plus a
@@ -918,6 +944,7 @@ export async function packageAudit(
       ...(advisoryFinding ? [advisoryFinding] : []),
       ...maliciousFindings,
       ...cryptoFindings,
+      ...deserFindings,
       ...supplyChainFindings,
       ...agentFindings,
     ];
