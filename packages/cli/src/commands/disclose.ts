@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
@@ -29,6 +29,14 @@ import {
   formatDroppedReason,
   droppedFilename,
   type BundleEntry,
+  assembleEvidencePack,
+  renderVendorNotificationMarkdown,
+  UnreproducedFindingError,
+  createDisclosureRecord,
+  transition,
+  DISCLOSURE_STATUSES,
+  type DisclosureRecord,
+  type DisclosureStatus,
 } from "@pwnkit/core";
 
 interface DiscloseOptions {
@@ -507,8 +515,124 @@ async function disclose(findingId: string | undefined, opts: DiscloseOptions): P
   }
 }
 
+interface EvidencePackOptions {
+  target?: string;
+  affectedRef?: string;
+  allowUnreproduced?: boolean;
+  out?: string;
+}
+
+/**
+ * `disclose evidence-pack <finding.json>` — assemble a DRAFT vendor-notification
+ * from a single finding JSON and emit the markdown to stdout (or `--out`). The
+ * rendered markdown ALWAYS carries the mandatory `DRAFT — NOT SENT` banner;
+ * this command never sends or publishes anything (operator-gated by design).
+ */
+function discloseEvidencePack(findingPath: string, opts: EvidencePackOptions): void {
+  let finding: Finding;
+  try {
+    const raw = readFileSync(resolve(findingPath), "utf8");
+    finding = JSON.parse(raw) as Finding;
+  } catch (err) {
+    console.error(chalk.red(`Failed to read finding JSON '${findingPath}': ${err instanceof Error ? err.message : String(err)}`));
+    process.exitCode = 2;
+    return;
+  }
+  if (!finding || typeof finding.id !== "string" || typeof finding.title !== "string") {
+    console.error(chalk.red(`'${findingPath}' is not a valid Finding (missing id/title).`));
+    process.exitCode = 2;
+    return;
+  }
+
+  let md: string;
+  try {
+    const draft = assembleEvidencePack(finding, {
+      target: opts.target,
+      affectedRef: opts.affectedRef,
+      allowUnreproduced: !!opts.allowUnreproduced,
+    });
+    md = renderVendorNotificationMarkdown(draft);
+  } catch (err) {
+    if (err instanceof UnreproducedFindingError) {
+      console.error(
+        chalk.red(
+          `${err.message}\nRefusing to draft a vendor notification for an unreproduced finding. Pass --allow-unreproduced to stage an internal draft.`,
+        ),
+      );
+    } else {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+    }
+    process.exitCode = 2;
+    return;
+  }
+
+  if (opts.out) {
+    writeFileSync(resolve(opts.out), md, "utf8");
+    console.log(chalk.gray(`DRAFT vendor-notification written to ${resolve(opts.out)} (not sent).`));
+    return;
+  }
+  console.log(md);
+}
+
+interface TrackOptions {
+  record?: string;
+  to?: string;
+  actor?: string;
+  message?: string;
+  disclosedTo?: string;
+  cveId?: string;
+  out?: string;
+}
+
+/**
+ * `disclose track <findingId>` — drive the disclosure tracking state machine.
+ * With no `--record`, opens a fresh draft record. With `--record <file> --to
+ * <status>`, applies one legal transition and re-emits the record. Records
+ * intent only — sends nothing (the operator performs the real-world action).
+ */
+function discloseTrack(findingId: string, opts: TrackOptions): void {
+  let record: DisclosureRecord;
+  try {
+    if (opts.record) {
+      const raw = readFileSync(resolve(opts.record), "utf8");
+      const loaded = JSON.parse(raw) as DisclosureRecord;
+      if (!opts.to) {
+        console.error(chalk.red("--record requires --to <status> to apply a transition."));
+        process.exitCode = 2;
+        return;
+      }
+      if (!(DISCLOSURE_STATUSES as readonly string[]).includes(opts.to)) {
+        console.error(chalk.red(`Invalid --to '${opts.to}'. Valid statuses: ${DISCLOSURE_STATUSES.join(", ")}.`));
+        process.exitCode = 2;
+        return;
+      }
+      record = transition(loaded, {
+        to: opts.to as DisclosureStatus,
+        actor: opts.actor,
+        message: opts.message,
+        disclosedTo: opts.disclosedTo,
+        cveId: opts.cveId,
+      });
+    } else {
+      record = createDisclosureRecord(findingId, { actor: opts.actor, message: opts.message });
+    }
+  } catch (err) {
+    console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+    process.exitCode = 2;
+    return;
+  }
+
+  const json = JSON.stringify(record, null, 2);
+  if (opts.out) {
+    writeFileSync(resolve(opts.out), json, "utf8");
+    console.log(chalk.gray(`Disclosure record (status: ${record.status}) written to ${resolve(opts.out)} — intent only, nothing sent.`));
+    return;
+  }
+  console.log(json);
+}
+
 export function registerDiscloseCommand(program: Command): void {
-  program
+  const discloseCmd = program
     .command("disclose")
     .description("Assemble GHSA-ready advisory drafts from persisted findings")
     .argument("[findingId]", "Finding ID (or prefix). Omit to batch every finding at or above --severity-floor.")
@@ -530,5 +654,40 @@ export function registerDiscloseCommand(program: Command): void {
     .option("--dry-run", "Show what would be written without writing files", false)
     .action(async (findingId: string | undefined, opts: DiscloseOptions) => {
       await disclose(findingId, opts);
+    });
+
+  discloseCmd
+    .command("evidence-pack")
+    .description(
+      "Assemble a DRAFT vendor-notification (what/where/impact/repro/remediation) from a single finding JSON. Emits the mandatory 'DRAFT — NOT SENT' banner. Never sends. #928",
+    )
+    .argument("<finding.json>", "Path to a Finding JSON file")
+    .option("--target <label>", "Affected target/package label for the 'where' line, e.g. lodash@4.17.21")
+    .option("--affected-ref <ref>", "Git ref / version range string for the 'where' line")
+    .option(
+      "--allow-unreproduced",
+      "Stage an internal draft even when the finding's PoC did not reproduce (default off — unreproduced findings are a low-signal disclosure trip-wire)",
+      false,
+    )
+    .option("--out <file>", "Write the DRAFT markdown to a file instead of stdout")
+    .action((findingPath: string, opts: EvidencePackOptions) => {
+      discloseEvidencePack(findingPath, opts);
+    });
+
+  discloseCmd
+    .command("track")
+    .description(
+      "Drive the disclosure tracking state machine. With no --record, opens a fresh draft record; with --record + --to, applies one legal transition. Records intent only — sends nothing.",
+    )
+    .argument("<findingId>", "Finding ID the disclosure record is for")
+    .option("--record <file>", "Existing disclosure-record JSON to transition (omit to open a fresh draft)")
+    .option("--to <status>", "Target status for the transition (requires --record)")
+    .option("--actor <actor>", "Actor recorded on the timeline event (default 'operator')")
+    .option("--message <text>", "Free-text note recorded on the timeline event")
+    .option("--disclosed-to <vendor>", "Vendor/contact stamped when transitioning into 'sent'")
+    .option("--cve-id <cve>", "CVE id stamped when transitioning into 'cve_assigned'")
+    .option("--out <file>", "Write the record JSON to a file instead of stdout")
+    .action((findingId: string, opts: TrackOptions) => {
+      discloseTrack(findingId, opts);
     });
 }
