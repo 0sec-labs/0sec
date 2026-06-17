@@ -347,7 +347,7 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
 
   out.push("## Credits", "");
   out.push(
-    "Discovered by **pwnkit**, an AI-assisted security scanner ([github.com/0sec-labs/pwnkit](https://github.com/0sec-labs/pwnkit)).",
+    "Discovered by **pwnkit**, 0sec's AI-assisted security engine ([0sec.ai](https://0sec.ai)).",
     "",
     "Reporter: _(your github handle)_",
     "",
