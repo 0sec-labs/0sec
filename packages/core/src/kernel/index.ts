@@ -67,6 +67,19 @@ export type {
   CrossSubsystemScanOptions,
 } from "./cross-subsystem-flow.js";
 
+// Static sink → syscall reachability ranking (technique #5). Ranked HINTS to
+// direct fuzzing/repro at LLM-flagged sinks; see the honesty caveat in the
+// module. Planned consumer: kernel-prompts.ts (separate PR).
+export { rankSinkReachability } from "./reachability-rank.js";
+export type {
+  SinkLocation,
+  CallEdge,
+  EdgeConfidence,
+  ReachabilityCandidate,
+  RankSinkReachabilityResult,
+  RankSinkReachabilityOptions,
+} from "./reachability-rank.js";
+
 // Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
 // primitive strategy library + C templates, deterministic success oracle,
 // kernel-VM harness, and the control-demo probe. P2 (0cloud dispatch) and P3
