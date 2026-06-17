@@ -94,14 +94,19 @@ describe("getToolsForRole", () => {
     // env: use_loot (pwnkit#567) is then in the enabled set, leaving exactly
     // the two JIT-skill tools gated out below.
     process.env.PWNKIT_FEATURE_LOOT_LEDGER = "1";
+    // Pin the cloud-surface flag ON too (pwnkit#925): the cloud tools are then
+    // in the enabled set, so they cancel out of both sides of the count below
+    // and the assertion stays deterministic regardless of ambient env.
+    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
     const tools = getToolsForRole("audit");
     const names = tools.map((t) => t.name);
     expect(names).not.toContain("list_skills");
     expect(names).not.toContain("load_skill");
     expect(names).toContain("use_loot");
+    expect(names).toContain("cloud_s3_probe");
     // -2 JIT-skill tools (gated off above) and -N scanner tools (pwnkit#555,
-    // engagement-gated, off by default). use_loot stays IN (loot flag pinned
-    // on), so it is not subtracted here.
+    // engagement-gated, off by default). use_loot + cloud tools stay IN (flags
+    // pinned on), so they are not subtracted here.
     expect(tools.length).toBe(
       Object.keys(TOOL_DEFINITIONS).length - 2 - SCANNER_TOOL_NAMES.length,
     );

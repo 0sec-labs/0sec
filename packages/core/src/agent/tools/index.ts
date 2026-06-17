@@ -21,8 +21,9 @@ import { intelToolDefinitions } from "./intel.js";
 import { skillsToolDefinitions } from "./skills.js";
 import { scannerToolDefinitions, SCANNER_TOOL_NAMES } from "./scanner.js";
 import { detectionToolDefinitions } from "./detections.js";
+import { cloudToolDefinitions, CLOUD_TOOL_NAMES } from "./cloud.js";
 
-export { SCANNER_TOOL_NAMES };
+export { SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES };
 
 // Every per-domain definition map, merged. Key collisions are impossible —
 // each tool name is owned by exactly one domain module.
@@ -36,6 +37,7 @@ const DOMAIN_DEFINITIONS: Record<string, ToolDefinition> = {
   ...skillsToolDefinitions,
   ...scannerToolDefinitions,
   ...detectionToolDefinitions,
+  ...cloudToolDefinitions,
 };
 
 // Canonical registry order, preserved verbatim from the pre-split tools.ts.
@@ -81,6 +83,8 @@ const TOOL_REGISTRY_ORDER = [
   "structural_sqli_probe",
   "prompt_layer_probe",
   "auth_boundary_probe",
+  "cloud_s3_probe",
+  "cloud_validate_credentials",
 ] as const;
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = Object.fromEntries(

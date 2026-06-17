@@ -144,6 +144,24 @@ export const features = {
   },
 
   /**
+   * Live cloud-surface testing (pwnkit#925). Exposes `cloud_s3_probe` and
+   * `cloud_validate_credentials` to the attack agent so it can test S3 buckets
+   * for public access + orphaned-bucket takeover and safely validate harvested
+   * AWS credentials (read-only). All probes are anonymous or read/verify-only —
+   * no writes, no data exfiltration beyond minimal proof.
+   *
+   * Default ON: every probe is read-only and the credential validator enforces
+   * a mutation-free action allowlist in code. Disable via
+   * PWNKIT_FEATURE_CLOUD_SURFACE=0 for ablation. Getter so the CLI `--features`
+   * flag (set AFTER this module loads) is honored at dispatch time — matches
+   * the wpFingerprint / mongoObjectIdForge pattern above. See
+   * packages/core/src/agent/cloud-surface.ts.
+   */
+  get cloudSurface(): boolean {
+    return env("PWNKIT_FEATURE_CLOUD_SURFACE", true);
+  },
+
+  /**
    * Anti-honeypot flag-shape validator. When the agent calls the `done`
    * tool with a proposed `FLAG{...}`, the tool runs `validateFlagShape`
    * first; low-confidence ("looks like a decoy") flags are rejected once
