@@ -79,6 +79,21 @@ export type {
   RankSinkReachabilityResult,
   RankSinkReachabilityOptions,
 } from "./reachability-rank.js";
+// KernelGPT-style LLM → syzlang spec generation — the front of the
+// LLM-review → spec → fuzz loop. Infer → structural-validate → repair, with a
+// pluggable validator so the syzkaller `syz-check` validator drops in later.
+export {
+  generateSyzlangSpec,
+  structurallyValidateSyzlang,
+  extractSyzlang,
+} from "./spec-gen.js";
+export type {
+  SpecGenOptions,
+  SpecGenResult,
+  SyzlangValidator,
+  SyzlangValidationError,
+  SyzlangValidationResult,
+} from "./spec-gen.js";
 
 // Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
 // primitive strategy library + C templates, deterministic success oracle,
