@@ -95,6 +95,28 @@ export type {
   SyzlangValidationResult,
 } from "./spec-gen.js";
 
+// SyzBridge-style upstream PoC → downstream distro/LTS adaptation (NDSS'24).
+// Analysis-only: produces a config/env delta + precondition plan (and optional
+// LLM-suggested source adjustments) to run an upstream reproducer on an older
+// distro/LTS kernel. Serves the older-LTS/distro hunt (CopyFail page-cache LPE,
+// rxrpc CVE-2026-43500). Intended consumer: triage/kernel-vm-runner.ts.
+export {
+  adaptReproForDistro,
+  detectReproFeatures,
+  detectSubsystems,
+  DISTRO_PROFILES,
+} from "./distro-adapt.js";
+export type {
+  AdaptKernel,
+  AdaptReproOptions,
+  AdaptationPlan,
+  ConfigDelta,
+  DistroProfile,
+  Precondition,
+  ReproAdjustment,
+  ReproFeature,
+} from "./distro-adapt.js";
+
 // Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
 // primitive strategy library + C templates, deterministic success oracle,
 // kernel-VM harness, and the control-demo probe. P2 (0cloud dispatch) and P3
