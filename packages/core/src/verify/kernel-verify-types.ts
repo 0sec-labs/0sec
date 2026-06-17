@@ -10,6 +10,22 @@
 import type { Finding } from "@pwnkit/shared";
 
 /**
+ * Two-phase trigger phase (AIxCC / Shellphish T3 — sanitizer "loosening").
+ *
+ *   - `reach`  — Phase 1. Prove the deep code path is REACHABLE under a cheap,
+ *                crude build (an oops/WARN/printk probe, no KASAN). Any kernel
+ *                crash signal counts; we are answering "can the reproducer even
+ *                get there?" before paying for the expensive sanitizer build.
+ *   - `refine` — Phase 2. Refine to the EXACT KASAN signature under the
+ *                sanitizer build, now that reachability is established.
+ *
+ * The loop starts in `reach` and escalates to `refine` once a phase-1 attempt
+ * lands the path. A single-phase caller (no two-phase opts) runs everything in
+ * `refine`, which is byte-for-byte the pre-T3 behaviour.
+ */
+export type KernelVerifyPhase = "reach" | "refine";
+
+/**
  * Outcome of a single reproducer attempt against the Tier 1 oracle. This is
  * the structured signal the agent sees inside its `tool_result` so it can
  * decide whether to refine the next attempt.
@@ -31,6 +47,13 @@ export interface KernelVerifyOracleResult {
   oracleConfidence: number;
   /** Did the Tier 1 build use a cached kernel image? */
   buildStatus?: "env" | "hit" | "miss" | "unknown";
+  /**
+   * Which two-phase trigger phase produced this result (AIxCC T3). Set by the
+   * verify loop on each attempt — `reach` for a phase-1 reachability probe,
+   * `refine` for a phase-2 KASAN-signature attempt. Undefined on legacy
+   * single-phase paths and on raw runner results before the loop stamps it.
+   */
+  phase?: KernelVerifyPhase;
 }
 
 /**

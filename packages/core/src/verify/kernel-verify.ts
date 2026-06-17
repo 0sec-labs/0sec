@@ -51,6 +51,7 @@ import {
 } from "../agent/tools/kernel-run.js";
 import type {
   KernelVerifyOracleResult,
+  KernelVerifyPhase,
   KernelVerifyRunner,
   KernelVerifyRunnerInput,
 } from "./kernel-verify-types.js";
@@ -217,6 +218,24 @@ export interface KernelVerifyOptions {
    * (tests). Has no effect unless `weaponize` is set.
    */
   weaponizeArtifactsReady?: () => boolean;
+  /**
+   * Two-phase trigger (AIxCC / Shellphish T3 — sanitizer "loosening"). When
+   * set, the loop runs PHASE 1 ("reach") under a cheap, crude build (an
+   * oops/WARN/printk probe, no KASAN) to first prove the deep path is REACHABLE,
+   * then ESCALATES to PHASE 2 ("refine") under the KASAN build to nail the exact
+   * signature. The cheap reach build is faster + flakier-tolerant; only once the
+   * path is landed do we pay for the sanitizer build. Off by default: every run
+   * stays in `refine` with `opts.kernelConfig`, which is byte-for-byte the
+   * pre-T3 behaviour.
+   */
+  twoPhase?: boolean;
+  /**
+   * Build profile for the phase-1 reachability probe. Defaults to `"reach"` (a
+   * cheap oops/WARN config the build script maps; see {@link KernelConfigProfile}).
+   * Only consulted when `twoPhase` is set. Passed through verbatim to the
+   * runner's `kernelConfig` for phase-1 attempts.
+   */
+  reachConfig?: string;
 }
 
 /**
@@ -466,6 +485,14 @@ export async function verifyStaticKernelFinding(
   let turn = 0;
   const maxTurns = attemptsCap * MAX_AGENT_TURNS_PER_ATTEMPT + 2;
 
+  // Two-phase trigger (AIxCC T3). When `twoPhase` is on we start in the cheap
+  // `reach` phase (a crude oops/WARN build that only proves the path is
+  // reachable) and escalate to `refine` (the KASAN build) once a phase-1 attempt
+  // lands the path. Off ⇒ everything runs in `refine`, the pre-T3 behaviour.
+  let phase: KernelVerifyPhase = opts.twoPhase ? "reach" : "refine";
+  const phaseConfig = (p: KernelVerifyPhase): string | undefined =>
+    p === "reach" ? (opts.reachConfig ?? "reach") : (opts.kernelConfig ?? "kasan");
+
   try {
     while (turn < maxTurns) {
       turn++;
@@ -563,14 +590,18 @@ export async function verifyStaticKernelFinding(
         }
 
         kernelRunCalls++;
+        const attemptPhase = phase;
         const result: KernelRunResult = await executeKernelRun({
           args: validated.args,
           finding,
           runner,
           kernelTree: opts.kernelTree,
-          kernelConfig: opts.kernelConfig,
+          kernelConfig: phaseConfig(attemptPhase),
           forceBuild: opts.forceBuild,
         });
+        // Stamp the phase the attempt ran in so the agent + audit trail can see
+        // the reach→refine escalation (AIxCC T3).
+        if (result.oracle) result.oracle.phase = attemptPhase;
 
         const attempt: KernelVerifyAttempt = {
           index: kernelRunCalls - 1,
@@ -592,7 +623,46 @@ export async function verifyStaticKernelFinding(
           continue;
         }
 
-        // Win condition.
+        // Phase 1 (reach): we only need to prove the deep path is REACHABLE —
+        // any kernel crash signal (a crash, or even a matched signature under
+        // the crude build) lands the path. Escalate to phase 2 (refine) under
+        // the KASAN build; we do NOT confirm here (the cheap build can't be
+        // trusted for the exact sanitizer signature). The agent is told the
+        // path is reached and to refine for KASAN.
+        if (attemptPhase === "reach") {
+          if (result.oracle.crashed || result.oracle.signatureMatched) {
+            phase = "refine";
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: use.id,
+              content: JSON.stringify({
+                phase: "reach",
+                reached: true,
+                detected_crash_type: result.oracle.detectedCrashType,
+                dmesg_excerpt: result.oracle.dmesgExcerpt,
+                note:
+                  "Phase 1 (reach) confirmed the path is REACHABLE under the " +
+                  "cheap build. Escalating to phase 2 (refine) under KASAN — " +
+                  "resubmit the same/refined program to nail the exact signature.",
+              }),
+            });
+          } else {
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: use.id,
+              content: JSON.stringify({
+                phase: "reach",
+                reached: false,
+                dmesg_excerpt: result.oracle.dmesgExcerpt,
+                reason: result.oracle.reason,
+                note: "Phase 1 (reach) did not land the path — refine and retry.",
+              }),
+            });
+          }
+          continue;
+        }
+
+        // Win condition (phase 2 / refine).
         if (result.oracle.signatureMatched) {
           messages.push({ role: "user", content: toolResults });
           const confirmed = finalize({
@@ -1059,4 +1129,8 @@ export function applyVerificationToFinding(
 }
 
 // Re-export so the CLI can import the canonical type names from one place.
-export type { KernelVerifyOracleResult, KernelVerifyRunner } from "./kernel-verify-types.js";
+export type {
+  KernelVerifyOracleResult,
+  KernelVerifyPhase,
+  KernelVerifyRunner,
+} from "./kernel-verify-types.js";

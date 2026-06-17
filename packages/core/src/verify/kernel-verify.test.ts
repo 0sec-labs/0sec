@@ -249,6 +249,126 @@ describe("verifyStaticKernelFinding", () => {
   });
 });
 
+describe("verifyStaticKernelFinding — two-phase trigger (AIxCC T3)", () => {
+  it("escalates reach→refine: phase-1 lands the path, phase-2 confirms KASAN", async () => {
+    const seenConfigs: Array<string | undefined> = [];
+    // Mock runner that keys off the per-phase kernelConfig the loop passes:
+    //   - phase 1 (kernelConfig="reach"): cheap build → crash (path reached)
+    //     but no KASAN signature match.
+    //   - phase 2 (kernelConfig="kasan"): sanitizer build → signature match.
+    const runner: KernelVerifyRunner = vi.fn(async (input) => {
+      seenConfigs.push(input.kernelConfig);
+      if (input.kernelConfig === "reach") {
+        return fakeOracle({
+          crashed: true,
+          signatureMatched: false,
+          detectedCrashType: "general-protection",
+          dmesgExcerpt: "general protection fault in tcp_input",
+          reason: "reached under cheap build",
+        });
+      }
+      return fakeOracle({
+        crashed: true,
+        signatureMatched: true,
+        detectedCrashType: "kasan-uaf",
+        dmesgExcerpt: "BUG: KASAN: use-after-free in tcp_input+0x123",
+        reason: "matched under KASAN",
+      });
+    }) as unknown as KernelVerifyRunner;
+
+    const sameProgram = {
+      program: "socket$inet(0x2,0x1,0x0)\n",
+      program_lang: "syz",
+      expected_signature: "kasan-uaf",
+    };
+
+    const result = await verifyStaticKernelFinding(staticKernelFinding(), {
+      kernelTree: "/tmp/linux",
+      sourceSlice: [],
+      attempts: 5,
+      runner,
+      twoPhase: true,
+      agentInvoker: queueInvoker([
+        [toolUse("u1", sameProgram)], // phase 1 (reach)
+        [toolUse("u2", sameProgram)], // phase 2 (refine)
+      ]),
+    });
+
+    expect(result.status).toBe("confirmed");
+    expect(result.signature).toBe("kasan-uaf");
+    // Two attempts: the reach probe then the refine confirm.
+    expect(result.attempts).toHaveLength(2);
+    expect(result.attempts[0]?.oracle?.phase).toBe("reach");
+    expect(result.attempts[1]?.oracle?.phase).toBe("refine");
+    // The loop passed the cheap reach config first, then the KASAN config.
+    expect(seenConfigs).toEqual(["reach", "kasan"]);
+  });
+
+  it("does not confirm in phase 1 even when the crude build reports a signature match", async () => {
+    // A signature match under the cheap reach build is NOT trusted — it only
+    // escalates to refine. Phase 2 then refuses (no_signal) so the loop must NOT
+    // have confirmed on the phase-1 'match'.
+    const runner: KernelVerifyRunner = vi.fn(async (input) => {
+      if (input.kernelConfig === "reach") {
+        return fakeOracle({
+          crashed: true,
+          signatureMatched: true, // crude build "matched" — must be distrusted
+          detectedCrashType: "kasan-uaf",
+          dmesgExcerpt: "looks like KASAN but cheap build",
+          reason: "crude match",
+        });
+      }
+      return fakeOracle({ crashed: false, signatureMatched: false, reason: "clean under KASAN" });
+    }) as unknown as KernelVerifyRunner;
+
+    const prog = { program: "x\n", program_lang: "syz", expected_signature: "kasan-uaf" };
+    const result = await verifyStaticKernelFinding(staticKernelFinding(), {
+      kernelTree: "/tmp/linux",
+      sourceSlice: [],
+      attempts: 3,
+      runner,
+      twoPhase: true,
+      agentInvoker: queueInvoker([
+        [toolUse("u1", prog)], // phase 1 reach → escalates
+        [toolUse("u2", prog)], // phase 2 refine → no signal
+        [{ type: "text", text: "GIVE_UP" }],
+      ]),
+    });
+
+    expect(result.status).not.toBe("confirmed");
+    expect(result.attempts[0]?.oracle?.phase).toBe("reach");
+    expect(result.attempts[1]?.oracle?.phase).toBe("refine");
+  });
+
+  it("single-phase (default) runs every attempt in refine with the kasan config", async () => {
+    const seenConfigs: Array<string | undefined> = [];
+    const runner: KernelVerifyRunner = vi.fn(async (input) => {
+      seenConfigs.push(input.kernelConfig);
+      return fakeOracle({
+        crashed: true,
+        signatureMatched: true,
+        detectedCrashType: "kasan-uaf",
+        dmesgExcerpt: "BUG: KASAN: use-after-free",
+        reason: "matched",
+      });
+    }) as unknown as KernelVerifyRunner;
+
+    const result = await verifyStaticKernelFinding(staticKernelFinding(), {
+      kernelTree: "/tmp/linux",
+      sourceSlice: [],
+      attempts: 5,
+      runner,
+      agentInvoker: queueInvoker([
+        [toolUse("u1", { program: "x\n", program_lang: "syz", expected_signature: "kasan-uaf" })],
+      ]),
+    });
+
+    expect(result.status).toBe("confirmed");
+    expect(result.attempts[0]?.oracle?.phase).toBe("refine");
+    expect(seenConfigs).toEqual(["kasan"]);
+  });
+});
+
 describe("applyVerificationToFinding (confidence promotion)", () => {
   it("promotes to confirmed with confidence=1.0 and flips Hypothesis flag", () => {
     const f = staticKernelFinding();
