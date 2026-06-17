@@ -19,9 +19,20 @@ export type {
 } from "./kernel-verify.js";
 export type {
   KernelVerifyOracleResult,
+  KernelVerifyPhase,
   KernelVerifyRunner,
   KernelVerifyRunnerInput,
 } from "./kernel-verify-types.js";
+export { validatePatchRemovesCrash } from "./patch-validate.js";
+export type {
+  CandidatePatch,
+  PatchGenerator,
+  PatchApplier,
+  PatchReverter,
+  PatchValidateStatus,
+  PatchValidateResult,
+  PatchValidateOptions,
+} from "./patch-validate.js";
 export {
   minimizeReproducer,
   splitProgram,
@@ -40,6 +51,7 @@ export type {
 export {
   buildKernelVerifySystemPrompt,
   buildKernelVerifyInitialPrompt,
+  buildCoverageFeedbackPrompt,
   extractKernelFindingMetadata,
   selectSubsystemSourceSlice,
   subsystemToKernelPath,
