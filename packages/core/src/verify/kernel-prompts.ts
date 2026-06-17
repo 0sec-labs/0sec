@@ -20,6 +20,15 @@ import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Finding } from "@pwnkit/shared";
 import { parseFaultingPc, parseSlabCache } from "../triage/kernel-primitive.js";
+import {
+  rankSinkReachability,
+  type RankSinkReachabilityOptions,
+} from "../kernel/reachability-rank.js";
+import {
+  generateSyzlangSpec,
+  type SpecGenOptions,
+} from "../kernel/spec-gen.js";
+import type { NativeRuntime } from "../runtime/types.js";
 
 /**
  * Static cap on a single subsystem-source slice we ship to the agent. The
@@ -217,6 +226,128 @@ export function selectSubsystemSourceSlice(args: {
 }
 
 /**
+ * Build a "ranked entry syscalls" hint block for the repro prompt by walking
+ * the static call graph backwards from the flagged sink to the syscalls that
+ * can (plausibly) reach it (`rankSinkReachability`, technique #5).
+ *
+ * The verify loop knows the sink as `metadata.filePath:metadata.fileLine` plus
+ * the faulting function. We hand the ranker that sink and the kernel tree, then
+ * render the top-K candidate syscalls so the agent targets entry points that
+ * actually reach the bug instead of fuzzing blind.
+ *
+ * Returns `undefined` (no block) when:
+ *   - the finding has no file location to anchor the sink, or
+ *   - the ranker produced no candidates, or
+ *   - the ranker threw (e.g. tree missing) — this is a best-effort HINT, never
+ *     a hard dependency, so a failure must not break the verify loop.
+ *
+ * **HONESTY.** These are RANKED HINTS, not soundness. The underlying call graph
+ * is regex-extracted and cannot resolve indirect (function-pointer) calls — the
+ * common case for ioctl/netlink handlers — so the true entry may be missing or
+ * low-confidence. The block says so, and the agent is told to fall back to
+ * broad reproduction if the hints don't pan out. See the caveat in
+ * `kernel/reachability-rank.ts`.
+ */
+export async function buildReachabilityHint(args: {
+  metadata: KernelFindingMetadata;
+  kernelTree: string;
+  topK?: number;
+  rankOptions?: RankSinkReachabilityOptions;
+}): Promise<string | undefined> {
+  const { metadata, kernelTree } = args;
+  const topK = args.topK ?? 5;
+  if (!metadata.filePath) return undefined;
+
+  let result;
+  try {
+    result = await rankSinkReachability(
+      {
+        file: metadata.filePath,
+        line: metadata.fileLine ?? 1,
+        ...(metadata.faultingFunction ? { function: metadata.faultingFunction } : {}),
+      },
+      kernelTree,
+      args.rankOptions ?? {},
+    );
+  } catch {
+    // Best-effort: a missing tree / scan failure must never break verify.
+    return undefined;
+  }
+
+  const top = result.candidates.slice(0, topK);
+  if (top.length === 0) return undefined;
+
+  const lines: string[] = [
+    "## Reachable entry syscalls (ranked HINTS — not soundness)",
+    `Static call-graph analysis ranked the syscalls most likely to reach the` +
+      ` flagged sink (${metadata.filePath}${metadata.fileLine ? `:${metadata.fileLine}` : ""}).` +
+      ` Target these entry points first.`,
+  ];
+  for (const c of top) {
+    const api = c.entry.userspaceApi ? ` — ${c.entry.userspaceApi}` : "";
+    lines.push(
+      `  - ${c.entry.name}${api} (${c.confidence}, ${c.pathLength} hop${c.pathLength === 1 ? "" : "s"}, score ${c.score.toFixed(2)})`,
+    );
+  }
+  lines.push(
+    "These are heuristic hints from a regex call graph that cannot see indirect" +
+      " (function-pointer) calls — the true entry may be missing or only" +
+      " `same-file-fallback` confidence. If they don't pan out, fall back to" +
+      " broad reproduction across the subsystem.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Generate an extra syzlang-spec context block for an under-described subsystem
+ * (KernelGPT-style, `generateSyzlangSpec`). OPT-IN: callers pass this only when
+ * they want to spend an LLM round inferring a syscall description from the
+ * source slice — it is *not* part of the default repro prompt because it costs
+ * model calls and can mislead if the inferred spec is wrong.
+ *
+ * Returns `undefined` when the subsystem is unknown, no source slice is
+ * available to infer from, or spec-gen fails / produces no valid spec — the
+ * block is additive context, never a hard dependency.
+ */
+export async function buildSyzlangSpecContext(args: {
+  metadata: KernelFindingMetadata;
+  subsystemSlice: Array<{ relativePath: string; content: string }>;
+  llm: NativeRuntime;
+  specGenOptions?: SpecGenOptions;
+}): Promise<string | undefined> {
+  const { metadata, subsystemSlice, llm } = args;
+  if (!metadata.subsystem || subsystemSlice.length === 0) return undefined;
+
+  const sourceSlice = subsystemSlice
+    .map((f) => `// ${f.relativePath}\n${f.content}`)
+    .join("\n\n");
+
+  let result;
+  try {
+    result = await generateSyzlangSpec(metadata.subsystem, sourceSlice, llm, {
+      ...(metadata.faultingFunction ? { focusHint: metadata.faultingFunction } : {}),
+      ...args.specGenOptions,
+    });
+  } catch {
+    return undefined;
+  }
+
+  // Even a best-effort (non-`ok`) spec is useful context, but skip an empty one.
+  if (!result.spec.trim()) return undefined;
+
+  return [
+    "## Inferred syzlang description (KernelGPT-style — additional context)",
+    `An LLM inferred this syzkaller description for the '${metadata.subsystem}'` +
+      ` surface from the source slice${result.ok ? "" : " (did NOT fully validate — treat as a rough sketch)"}.` +
+      ` Use it as a starting shape for syscall args/resources; verify against the` +
+      ` source before relying on it.`,
+    "```",
+    result.spec.trim(),
+    "```",
+  ].join("\n");
+}
+
+/**
  * Render the system prompt the kernel-verify agent runs against. Mentions the
  * available tools by name (the runtime separately enforces the tool surface)
  * and pins the success criterion to a `kernel_run` signature match.
@@ -264,6 +395,17 @@ export function buildKernelVerifyInitialPrompt(args: {
   subsystemSlice: Array<{ relativePath: string; content: string }>;
   attempts: number;
   wallClockMs: number;
+  /**
+   * Pre-rendered "ranked entry syscalls" block from {@link buildReachabilityHint}.
+   * Injected verbatim so the agent targets syscalls that reach the sink. Omitted
+   * when reachability ranking produced nothing (best-effort hint).
+   */
+  reachabilityHint?: string;
+  /**
+   * Pre-rendered inferred-syzlang block from {@link buildSyzlangSpecContext}.
+   * Opt-in extra context for under-described subsystems; omitted by default.
+   */
+  syzlangSpecContext?: string;
 }): string {
   const { finding, metadata, subsystemSlice, attempts, wallClockMs } = args;
 
@@ -296,6 +438,13 @@ export function buildKernelVerifyInitialPrompt(args: {
       lines.push(file.content);
       lines.push("```");
     }
+  }
+
+  if (args.reachabilityHint) {
+    lines.push("", args.reachabilityHint);
+  }
+  if (args.syzlangSpecContext) {
+    lines.push("", args.syzlangSpecContext);
   }
 
   lines.push(

@@ -9,8 +9,13 @@
  * Contract:
  *   - Args: `{ program: string, program_lang: "syz" | "c", expected_signature?: string }`
  *   - Calls the Tier 1 plumbing (`verifyKernelFinding`) and returns its result.
+ *   - Every submission is parsed against a Zod schema ({@link kernelRunArgsSchema})
+ *     and *rejected* on a mismatch before any subprocess is spawned — Theori's
+ *     AIxCC T9 structured-output discipline: never trust free-form model output,
+ *     validate the shape and refuse malformed PoV submissions.
  *   - Rejects oversized programs (> KERNEL_RUN_PROGRAM_MAX_BYTES) and invalid
- *     program_lang values before any subprocess is spawned.
+ *     program_lang values; strips unknown top-level keys so model-emitted
+ *     `argv`/`cwd` can never propagate downstream.
  *
  * The result shape matches `KernelVerifyResult` from `../verify/kernel-verify.ts`
  * so the agent gets back everything it needs to decide whether to retry or
@@ -18,6 +23,7 @@
  * and the matched/mismatched signature fields.
  */
 
+import { z } from "zod";
 import type { ToolDefinition } from "../types.js";
 import type { Finding } from "@pwnkit/shared";
 import type { KernelVerifyOracleResult, KernelVerifyRunner } from "../../verify/kernel-verify-types.js";
@@ -72,6 +78,56 @@ export interface KernelRunArgs {
   expected_signature?: string;
 }
 
+/**
+ * Zod schema for a `kernel_run` tool-call payload (AIxCC T9 — Theori's
+ * structured-output discipline: every agent submission is parsed against an
+ * explicit schema and *rejected* on a mismatch, rather than trusting free-form
+ * model output). This is the single source of truth for the contract; the
+ * hand-rolled checks below were folded into it so there is exactly one place
+ * the shape is defined.
+ *
+ * `.strip()` (zod's default for object schemas) drops any unknown top-level
+ * keys — the model occasionally emits `argv`/`cwd`/`args` that must never
+ * propagate downstream. `expected_signature` is normalised to a trimmed string,
+ * and an empty/whitespace-only signature collapses to `undefined` (treat as
+ * "any crash is a soft hit").
+ */
+export const kernelRunArgsSchema = z
+  .object({
+    program: z
+      .string({
+        required_error: "kernel_run: 'program' must be a non-empty string",
+        invalid_type_error: "kernel_run: 'program' must be a non-empty string",
+      })
+      .min(1, "kernel_run: 'program' must be a non-empty string")
+      .refine(
+        (p) => Buffer.byteLength(p, "utf8") <= KERNEL_RUN_PROGRAM_MAX_BYTES,
+        (p) => ({
+          message: `kernel_run: 'program' exceeds ${KERNEL_RUN_PROGRAM_MAX_BYTES} bytes (got ${Buffer.byteLength(p, "utf8")})`,
+        }),
+      ),
+    program_lang: z.enum(["syz", "c"], {
+      errorMap: () => ({
+        message: "kernel_run: 'program_lang' must be exactly 'syz' or 'c'",
+      }),
+    }),
+    expected_signature: z
+      .string({ invalid_type_error: "kernel_run: 'expected_signature' must be a string when provided" })
+      .nullish()
+      .transform((s) => {
+        const trimmed = s?.trim();
+        return trimmed && trimmed.length > 0 ? trimmed : undefined;
+      }),
+  })
+  .strip()
+  .transform((parsed): KernelRunArgs => ({
+    program: parsed.program,
+    program_lang: parsed.program_lang,
+    ...(parsed.expected_signature !== undefined
+      ? { expected_signature: parsed.expected_signature }
+      : {}),
+  }));
+
 export interface KernelRunInvocation {
   args: KernelRunArgs;
   /** The finding under verification — supplied by the kernel-verify loop. */
@@ -111,50 +167,22 @@ export interface KernelRunResult {
 export function validateKernelRunArgs(raw: unknown):
   | { ok: true; args: KernelRunArgs }
   | { ok: false; error: string } {
-  if (!raw || typeof raw !== "object") {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, error: "kernel_run: arguments must be an object" };
   }
-  const bag = raw as Record<string, unknown>;
 
-  const program = bag.program;
-  if (typeof program !== "string" || program.length === 0) {
-    return { ok: false, error: "kernel_run: 'program' must be a non-empty string" };
-  }
-  if (Buffer.byteLength(program, "utf8") > KERNEL_RUN_PROGRAM_MAX_BYTES) {
+  const parsed = kernelRunArgsSchema.safeParse(raw);
+  if (!parsed.success) {
+    // Surface the first issue's message — our schema messages are already
+    // self-describing ("kernel_run: 'program' …"), so we don't re-wrap them.
+    const first = parsed.error.issues[0];
     return {
       ok: false,
-      error: `kernel_run: 'program' exceeds ${KERNEL_RUN_PROGRAM_MAX_BYTES} bytes (got ${Buffer.byteLength(program, "utf8")})`,
+      error: first?.message ?? "kernel_run: invalid arguments",
     };
   }
 
-  const lang = bag.program_lang;
-  if (lang !== "syz" && lang !== "c") {
-    return {
-      ok: false,
-      error: "kernel_run: 'program_lang' must be exactly 'syz' or 'c'",
-    };
-  }
-
-  let expectedSignature: string | undefined;
-  if (bag.expected_signature !== undefined && bag.expected_signature !== null) {
-    if (typeof bag.expected_signature !== "string") {
-      return {
-        ok: false,
-        error: "kernel_run: 'expected_signature' must be a string when provided",
-      };
-    }
-    const trimmed = bag.expected_signature.trim();
-    if (trimmed.length > 0) expectedSignature = trimmed;
-  }
-
-  return {
-    ok: true,
-    args: {
-      program,
-      program_lang: lang,
-      ...(expectedSignature !== undefined ? { expected_signature: expectedSignature } : {}),
-    },
-  };
+  return { ok: true, args: parsed.data };
 }
 
 /**

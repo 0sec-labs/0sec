@@ -37,6 +37,7 @@ import type {
   NativeMessage,
   NativeContentBlock,
   NativeToolDef,
+  NativeRuntime,
 } from "../runtime/types.js";
 import {
   verifyKernelFinding,
@@ -59,6 +60,8 @@ import {
   buildCoverageFeedbackPrompt,
   buildKernelVerifyInitialPrompt,
   buildKernelVerifySystemPrompt,
+  buildReachabilityHint,
+  buildSyzlangSpecContext,
   extractKernelFindingMetadata,
   selectSubsystemSourceSlice,
 } from "./kernel-prompts.js";
@@ -237,6 +240,31 @@ export interface KernelVerifyOptions {
    * runner's `kernelConfig` for phase-1 attempts.
    */
   reachConfig?: string;
+  /**
+   * Disable the static sink→syscall reachability hint (technique #5). On by
+   * default: before the loop starts we walk the call graph backwards from the
+   * flagged sink to the syscalls that reach it and inject the top-K ranked
+   * entry points into the initial prompt so the agent targets the right
+   * syscalls. These are RANKED HINTS, not soundness (regex call graph can't see
+   * indirect calls) — best-effort, so a ranking failure never breaks verify.
+   * Set true to suppress the block (e.g. deterministic tests).
+   */
+  disableReachabilityHint?: boolean;
+  /** Number of ranked entry syscalls to inject. Default 5. */
+  reachabilityTopK?: number;
+  /**
+   * Opt-in KernelGPT-style syzlang spec context. OFF by default — when set with
+   * an LLM runtime, the loop spends one inference round generating a syzlang
+   * description for an under-described subsystem and injects it as additional
+   * prompt context. Costs model calls and can mislead if the inferred spec is
+   * wrong, so it stays opt-in and never changes default behaviour.
+   */
+  syzlangSpecContext?: boolean;
+  /**
+   * LLM runtime used to generate the opt-in syzlang spec context. Required for
+   * `syzlangSpecContext` to do anything; absent ⇒ the block is silently skipped.
+   */
+  specGenRuntime?: NativeRuntime;
 }
 
 /**
@@ -466,6 +494,29 @@ export async function verifyStaticKernelFinding(
     opts.sourceSlice ??
     selectSubsystemSourceSlice({ kernelTree: opts.kernelTree, metadata });
 
+  // Static sink→syscall reachability hint (technique #5). Best-effort: walk the
+  // call graph backwards from the flagged sink to the reaching syscalls and
+  // inject the top-K ranked entries so the agent targets the right entry points.
+  // RANKED HINTS, not soundness — a failure never breaks verify.
+  const reachabilityHint =
+    opts.disableReachabilityHint || !metadata.filePath
+      ? undefined
+      : await buildReachabilityHint({
+          metadata,
+          kernelTree: opts.kernelTree,
+          ...(opts.reachabilityTopK !== undefined ? { topK: opts.reachabilityTopK } : {}),
+        });
+
+  // Opt-in KernelGPT-style syzlang spec context (additive; off by default).
+  const syzlangSpecContext =
+    opts.syzlangSpecContext && opts.specGenRuntime
+      ? await buildSyzlangSpecContext({
+          metadata,
+          subsystemSlice: sourceSlice,
+          llm: opts.specGenRuntime,
+        })
+      : undefined;
+
   const systemPrompt = buildKernelVerifySystemPrompt();
   const initialUser = buildKernelVerifyInitialPrompt({
     finding,
@@ -473,6 +524,8 @@ export async function verifyStaticKernelFinding(
     subsystemSlice: sourceSlice,
     attempts: attemptsCap,
     wallClockMs,
+    ...(reachabilityHint ? { reachabilityHint } : {}),
+    ...(syzlangSpecContext ? { syzlangSpecContext } : {}),
   });
 
   const messages: NativeMessage[] = [

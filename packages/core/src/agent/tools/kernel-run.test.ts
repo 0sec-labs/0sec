@@ -3,6 +3,7 @@ import {
   KERNEL_RUN_PROGRAM_MAX_BYTES,
   KERNEL_RUN_TOOL_DEFINITION,
   executeKernelRun,
+  kernelRunArgsSchema,
   validateKernelRunArgs,
 } from "./kernel-run.js";
 import type { Finding } from "@pwnkit/shared";
@@ -98,6 +99,47 @@ describe("validateKernelRunArgs", () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(Object.keys(r.args).sort()).toEqual(["program", "program_lang"]);
+    }
+  });
+});
+
+describe("kernelRunArgsSchema (AIxCC T9 structured output)", () => {
+  it("rejects a missing program_lang with the contract message", () => {
+    const r = validateKernelRunArgs({ program: "p" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/program_lang/);
+  });
+
+  it("collapses a whitespace-only expected_signature to undefined", () => {
+    const r = validateKernelRunArgs({
+      program: "p",
+      program_lang: "syz",
+      expected_signature: "   ",
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.expected_signature).toBeUndefined();
+  });
+
+  it("accepts a null expected_signature (model omission idiom)", () => {
+    const r = validateKernelRunArgs({
+      program: "p",
+      program_lang: "c",
+      expected_signature: null,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.expected_signature).toBeUndefined();
+  });
+
+  it("the schema itself strips unknown keys (single source of truth)", () => {
+    const parsed = kernelRunArgsSchema.safeParse({
+      program: "p",
+      program_lang: "syz",
+      cwd: "/tmp/escape",
+      argv: ["x"],
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(Object.keys(parsed.data).sort()).toEqual(["program", "program_lang"]);
     }
   });
 });
