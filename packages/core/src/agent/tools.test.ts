@@ -1731,6 +1731,25 @@ describe("ToolExecutor — structured scanner wrappers (pwnkit#555)", () => {
     });
   }
 
+  it("run_sqlmap refuses (deny-by-default) when allowScanners=true but NO scope is configured (pwnkit#926)", async () => {
+    const ctx: ToolContext = {
+      target: "https://api.example.com",
+      scanId: `test-noscope-${Math.random().toString(36).slice(2)}`,
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      allowScanners: true,
+      // scope intentionally omitted — an authorized engagement must be scoped.
+    };
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "run_sqlmap",
+      arguments: { url: "https://api.example.com/?id=1" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no engagement scope|deny-by-default/i);
+  });
+
   it("run_sqlmap refuses an out-of-scope target even with allowScanners", async () => {
     const ctx = await makeCtx({ allowScanners: true });
     const ex = new ToolExecutor(ctx, null);
