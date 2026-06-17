@@ -19,6 +19,7 @@ import { intelDispatch } from "./intel.js";
 import { skillsDispatch } from "./skills.js";
 import { scannerDispatch } from "./scanner.js";
 import { detectionDispatch } from "./detections.js";
+import { cloudDispatch } from "./cloud.js";
 
 export const TOOL_DISPATCH: Record<string, string> = {
   ...reconDispatch,
@@ -30,4 +31,5 @@ export const TOOL_DISPATCH: Record<string, string> = {
   ...skillsDispatch,
   ...scannerDispatch,
   ...detectionDispatch,
+  ...cloudDispatch,
 };

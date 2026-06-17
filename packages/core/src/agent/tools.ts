@@ -41,6 +41,12 @@ import {
 } from "./auth-boundary-prober.js";
 import { runRecon } from "../recon/recon.js";
 import {
+  probeS3Bucket,
+  classifyTakeover,
+  validateAwsCredentials,
+  bucketInScope,
+} from "./cloud-surface.js";
+import {
   classifyPromptLayerImpact,
   type PromptLayerAsset,
 } from "./playbooks.js";
@@ -116,8 +122,8 @@ import {
 // ToolExecutor below see them as local bindings. Splitting the old 600-line
 // literal lets parallel feature PRs touch disjoint domain files instead of
 // serializing on one merge-conflict chokepoint.
-import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES } from "./tools/index.js";
-export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES };
+import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES } from "./tools/index.js";
+export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES };
 
 // Tool-name → handler-method-name routing table (pwnkit#614), assembled from
 // per-domain `*Dispatch` maps. `ToolExecutor._dispatch` resolves the handler
@@ -2979,6 +2985,187 @@ export class ToolExecutor {
     };
   }
 
+  /**
+   * #925 — test S3 buckets for public access + orphaned-bucket takeover.
+   * Anonymous, read-only: GET / and GET /?acl per bucket. NoSuchBucket (404)
+   * is classified as takeover-able (the BCG orphaned-integration finding) but
+   * the bucket is never re-created — pwnkit only flags it. Returns per-bucket
+   * verdicts + pre-drafted findings for public buckets and takeover-able refs.
+   *
+   * SCOPE-GATED, deny-by-default (#924 parity): probing a target org's bucket
+   * is recon against that org, NOT an infra call, so each bucket must clear the
+   * engagement ScopePolicy via `bucketInScope`. With no scope configured every
+   * bucket is denied (no-op skip); out-of-scope buckets are skipped and
+   * reported under `skipped`. The operator authorizes cloud probing by adding
+   * the bucket's S3 endpoint (or `*.amazonaws.com`) to the scope's in_scope.
+   */
+  private async cloudS3Probe(args: Record<string, unknown>): Promise<ToolResult> {
+    if (!featureFlags.cloudSurface) {
+      return { success: false, output: null, error: "cloud_s3_probe is disabled. Set PWNKIT_FEATURE_CLOUD_SURFACE=1 to enable." };
+    }
+    const rawBuckets = args.buckets;
+    if (!Array.isArray(rawBuckets) || rawBuckets.length === 0) {
+      return { success: false, output: null, error: "buckets (non-empty array of bucket name strings) is required" };
+    }
+    const buckets = rawBuckets
+      .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+      .map((b) => b.trim());
+    if (buckets.length === 0) {
+      return { success: false, output: null, error: "buckets must contain at least one non-empty bucket name string" };
+    }
+    const region = typeof args.region === "string" ? args.region : undefined;
+    const maxKeys = typeof args.max_keys === "number" ? args.max_keys : undefined;
+
+    // Deny-by-default scope gate: only probe buckets the engagement scope
+    // authorizes. No scope policy → every bucket is denied (no-op).
+    const results = [];
+    const skipped: Array<{ bucket: string; reason: string }> = [];
+    for (const bucket of buckets) {
+      const gate = bucketInScope(bucket, this.ctx.scope, region);
+      if (!gate.allowed) {
+        skipped.push({ bucket, reason: gate.reason });
+        continue;
+      }
+      const probe = await probeS3Bucket(bucket, { region, maxKeys });
+      const takeover = classifyTakeover(probe);
+      results.push({ ...probe, takeoverable: takeover.takeoverable, takeover_note: takeover.note });
+    }
+
+    const publicBuckets = results.filter((r) => r.verdict === "public");
+    const takeoverable = results.filter((r) => r.takeoverable);
+
+    this.persistToolArtifact("cloud_s3_probe", {
+      bucket_count: results.length,
+      public_count: publicBuckets.length,
+      takeoverable_count: takeoverable.length,
+      skipped_count: skipped.length,
+    });
+
+    const suggested_findings = [
+      ...publicBuckets.map((r) => ({
+        title: `Public S3 bucket: ${r.bucket}`,
+        severity: r.severity === "high" ? "high" : "medium",
+        category: "security-misconfiguration",
+        description: `${r.endpoint} is anonymously listable (HTTP ${r.listStatus}${r.aclReadable ? ", ACL publicly readable" : ""}). ${r.note}${r.sampleKeys.length ? ` Sample keys: ${r.sampleKeys.slice(0, 5).join(", ")}.` : ""}`,
+      })),
+      ...takeoverable.map((r) => ({
+        title: `Orphaned S3 bucket takeover: ${r.bucket}`,
+        severity: "high",
+        category: "security-misconfiguration",
+        description: r.takeover_note,
+      })),
+    ];
+
+    // All buckets out of scope → make the deny-by-default outcome explicit
+    // rather than silently returning a zero-result success.
+    if (results.length === 0 && skipped.length > 0) {
+      return {
+        success: true,
+        output: {
+          bucket_count: 0,
+          public_count: 0,
+          takeoverable_count: 0,
+          results: [],
+          skipped,
+          suggested_findings: [],
+          summary: `All ${skipped.length} bucket(s) skipped — none in engagement scope. ${skipped[0].reason}. Add the bucket's S3 endpoint to the scope's in_scope to authorize probing.`,
+        },
+      };
+    }
+
+    const summary =
+      publicBuckets.length || takeoverable.length
+        ? `${results.length} bucket(s) probed: ${publicBuckets.length} PUBLIC, ${takeoverable.length} takeover-able (NoSuchBucket)${skipped.length ? `, ${skipped.length} out-of-scope skipped` : ""}. Save a finding for each. Read-only — no buckets were written or created.`
+        : `${results.length} bucket(s) probed: none public, none takeover-able${skipped.length ? `, ${skipped.length} out-of-scope skipped` : ""}.`;
+
+    return {
+      success: true,
+      output: {
+        bucket_count: results.length,
+        public_count: publicBuckets.length,
+        takeoverable_count: takeoverable.length,
+        results,
+        skipped,
+        suggested_findings,
+        summary,
+      },
+    };
+  }
+
+  /**
+   * #925 — validate a harvested AWS credential safely (read-only) and gauge
+   * over-privilege. sts:GetCallerIdentity confirms liveness + identity; a few
+   * read-only List* probes measure effective permissions. The action allowlist
+   * is enforced in cloud-surface.ts so no mutating API can be reached.
+   *
+   * SCOPE-GATED, deny-by-default (#924 parity): validating a harvested credential
+   * is recon against the target org's cloud account, so it requires an
+   * authorized engagement. With no engagement ScopePolicy configured the tool
+   * refuses (deny-by-default) — the same authorization signal recon uses.
+   */
+  private async cloudValidateCredentials(args: Record<string, unknown>): Promise<ToolResult> {
+    if (!featureFlags.cloudSurface) {
+      return { success: false, output: null, error: "cloud_validate_credentials is disabled. Set PWNKIT_FEATURE_CLOUD_SURFACE=1 to enable." };
+    }
+    if (!this.ctx.scope) {
+      return {
+        success: false,
+        output: null,
+        error:
+          "cloud_validate_credentials denied: no engagement scope configured (cloud credential validation is deny-by-default — it requires an authorized engagement scope).",
+      };
+    }
+    const accessKeyId = typeof args.access_key_id === "string" ? args.access_key_id.trim() : "";
+    const secretAccessKey = typeof args.secret_access_key === "string" ? args.secret_access_key.trim() : "";
+    if (!accessKeyId || !secretAccessKey) {
+      return { success: false, output: null, error: "access_key_id and secret_access_key are required" };
+    }
+    const sessionToken = typeof args.session_token === "string" ? args.session_token : undefined;
+    const region = typeof args.region === "string" ? args.region : undefined;
+
+    let result;
+    try {
+      result = await validateAwsCredentials({ accessKeyId, secretAccessKey, sessionToken, region });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `cloud_validate_credentials failed: ${msg}` };
+    }
+
+    // Never persist the secret — only the non-secret outcome.
+    this.persistToolArtifact("cloud_validate_credentials", {
+      valid: result.valid,
+      over_privileged: result.effectivePermissions.length > 1,
+      severity: result.severity,
+    });
+
+    const suggested_findings = result.valid
+      ? [
+          {
+            title:
+              result.effectivePermissions.length > 1
+                ? `Over-privileged AWS credential (${result.arn ?? accessKeyId})`
+                : `Live AWS credential (${result.arn ?? accessKeyId})`,
+            severity: result.severity === "high" ? "high" : result.severity === "medium" ? "medium" : "low",
+            category: "security-misconfiguration",
+            description: `${result.note} Effective read-only permissions: ${result.effectivePermissions.join(", ")}.`,
+          },
+        ]
+      : [];
+
+    return {
+      success: true,
+      output: {
+        valid: result.valid,
+        account: result.account,
+        arn: result.arn,
+        effective_permissions: result.effectivePermissions,
+        severity: result.severity,
+        note: result.note,
+        suggested_findings,
+      },
+    };
+  }
+
   private async shellExec(args: Record<string, unknown>): Promise<ToolResult> {
     let command = (args.command as string)?.trim();
     if (!command) {
@@ -4806,6 +4993,9 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   // pwnkit#555: scanner wrappers only when the engagement explicitly permits
   // generic-scanner traffic. Default-off preserves pwnkit#217 stealth.
   const scannerTools = opts?.allowScanners ? [...SCANNER_TOOL_NAMES] : [];
+  // pwnkit#925: live cloud-surface tools (S3 public/takeover + read-only cred
+  // validation), gated behind the cloud-surface feature flag (default on).
+  const cloudTools = featureFlags.cloudSurface ? [...CLOUD_TOOL_NAMES] : [];
   const networkTools = [
     "http_request",
     "crawl",
@@ -4821,6 +5011,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     ...skillTools,
     ...lootTools,
     ...scannerTools,
+    ...cloudTools,
     "send_prompt",
     "save_finding",
     "update_finding",
@@ -4836,7 +5027,10 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // Scanner wrappers stay out of the audit/review "everything" set too,
     // unless the engagement opted in. Without this they'd leak into
     // allEnabledTools regardless of allowScanners (regression of pwnkit#217).
-    && (opts?.allowScanners || !SCANNER_TOOL_NAMES.includes(name)),
+    && (opts?.allowScanners || !SCANNER_TOOL_NAMES.includes(name))
+    // Cloud-surface tools follow the same gating: out of the audit/review
+    // "everything" set when the feature flag is off (pwnkit#925).
+    && (featureFlags.cloudSurface || !CLOUD_TOOL_NAMES.includes(name)),
   );
 
   const roleTools: Record<string, string[]> = {

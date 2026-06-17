@@ -13,12 +13,16 @@ import { join } from "node:path";
 
 const ORIGINAL_JIT_SKILLS_ENV = process.env.PWNKIT_FEATURE_JIT_SKILLS;
 const ORIGINAL_LOOT_LEDGER_ENV = process.env.PWNKIT_FEATURE_LOOT_LEDGER;
+const ORIGINAL_CLOUD_SURFACE_ENV = process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
 
 afterEach(() => {
   if (ORIGINAL_JIT_SKILLS_ENV === undefined) delete process.env.PWNKIT_FEATURE_JIT_SKILLS;
   else process.env.PWNKIT_FEATURE_JIT_SKILLS = ORIGINAL_JIT_SKILLS_ENV;
   if (ORIGINAL_LOOT_LEDGER_ENV === undefined) delete process.env.PWNKIT_FEATURE_LOOT_LEDGER;
   else process.env.PWNKIT_FEATURE_LOOT_LEDGER = ORIGINAL_LOOT_LEDGER_ENV;
+  // pwnkit#925: cloud-surface defaults OFF; reset so tests that pin it ON don't leak.
+  if (ORIGINAL_CLOUD_SURFACE_ENV === undefined) delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
+  else process.env.PWNKIT_FEATURE_CLOUD_SURFACE = ORIGINAL_CLOUD_SURFACE_ENV;
 });
 
 // ── Tool Registry ──
@@ -94,14 +98,19 @@ describe("getToolsForRole", () => {
     // env: use_loot (pwnkit#567) is then in the enabled set, leaving exactly
     // the two JIT-skill tools gated out below.
     process.env.PWNKIT_FEATURE_LOOT_LEDGER = "1";
+    // Pin the cloud-surface flag ON too (pwnkit#925): the cloud tools are then
+    // in the enabled set, so they cancel out of both sides of the count below
+    // and the assertion stays deterministic regardless of ambient env.
+    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
     const tools = getToolsForRole("audit");
     const names = tools.map((t) => t.name);
     expect(names).not.toContain("list_skills");
     expect(names).not.toContain("load_skill");
     expect(names).toContain("use_loot");
+    expect(names).toContain("cloud_s3_probe");
     // -2 JIT-skill tools (gated off above) and -N scanner tools (pwnkit#555,
-    // engagement-gated, off by default). use_loot stays IN (loot flag pinned
-    // on), so it is not subtracted here.
+    // engagement-gated, off by default). use_loot + cloud tools stay IN (flags
+    // pinned on), so they are not subtracted here.
     expect(tools.length).toBe(
       Object.keys(TOOL_DEFINITIONS).length - 2 - SCANNER_TOOL_NAMES.length,
     );
@@ -145,6 +154,97 @@ describe("getToolsForRole", () => {
     const on = getToolsForRole("audit", { allowScanners: true }).map((t) => t.name);
     expect(on).toContain("run_sqlmap");
     expect(on).toContain("run_nuclei");
+  });
+
+  // ── Cloud-surface tools (pwnkit#925) — default OFF, opt-in ──
+  it("omits cloud-surface tools from every role when the flag is unset (default OFF)", () => {
+    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE; // exercise the default
+    for (const role of ["discovery", "attack", "verify", "audit", "review"]) {
+      const names = getToolsForRole(role, { hasScope: true }).map((t) => t.name);
+      expect(names).not.toContain("cloud_s3_probe");
+      expect(names).not.toContain("cloud_validate_credentials");
+    }
+  });
+
+  it("exposes cloud-surface tools for network roles only when the flag is on", () => {
+    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    for (const role of ["discovery", "attack"]) {
+      const names = getToolsForRole(role).map((t) => t.name);
+      expect(names).toContain("cloud_s3_probe");
+      expect(names).toContain("cloud_validate_credentials");
+    }
+  });
+});
+
+// ── Cloud-surface handlers (pwnkit#925) — enablement + deny-by-default scope ──
+// These exercise ONLY the gate paths (flag-off, no-scope, out-of-scope), which
+// short-circuit BEFORE any network call — so no live cloud traffic occurs.
+
+describe("ToolExecutor cloud-surface gating (pwnkit#925)", () => {
+  const baseCtx = (scope?: unknown): ToolContext =>
+    ({
+      target: "https://target.test",
+      scanId: "cloud-gate-test",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      ...(scope ? { scope: scope as ToolContext["scope"] } : {}),
+    }) as ToolContext;
+
+  it("cloud_s3_probe refuses when the feature flag is OFF (default)", async () => {
+    delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
+    const exec = new ToolExecutor(baseCtx(), null);
+    const r = await exec.execute({ name: "cloud_s3_probe", arguments: { buckets: ["acme-x"] } });
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/disabled.*PWNKIT_FEATURE_CLOUD_SURFACE/i);
+  });
+
+  it("cloud_s3_probe skips ALL buckets (no-op) when no scope is configured, even with the flag ON", async () => {
+    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    const exec = new ToolExecutor(baseCtx(/* no scope */), null);
+    const r = await exec.execute({ name: "cloud_s3_probe", arguments: { buckets: ["acme-x", "acme-y"] } });
+    expect(r.success).toBe(true);
+    const out = r.output as { bucket_count: number; skipped: Array<{ bucket: string; reason: string }>; summary: string };
+    expect(out.bucket_count).toBe(0);
+    expect(out.skipped.map((s) => s.bucket)).toEqual(["acme-x", "acme-y"]);
+    expect(out.skipped[0].reason).toMatch(/no engagement scope|deny-by-default/i);
+  });
+
+  it("cloud_s3_probe skips out-of-scope buckets when a scope is configured", async () => {
+    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    const { ScopePolicy } = await import("../scope/scope.js");
+    // Scope authorizes only the app host, NOT the S3 endpoint → bucket skipped.
+    const scope = ScopePolicy.fromJson({ in_scope: ["target.test"] });
+    const exec = new ToolExecutor(baseCtx(scope), null);
+    const r = await exec.execute({ name: "cloud_s3_probe", arguments: { buckets: ["acme-exports"] } });
+    expect(r.success).toBe(true);
+    const out = r.output as { bucket_count: number; skipped: Array<{ bucket: string }> };
+    expect(out.bucket_count).toBe(0);
+    expect(out.skipped.map((s) => s.bucket)).toEqual(["acme-exports"]);
+  });
+
+  it("cloud_validate_credentials refuses when the feature flag is OFF (default)", async () => {
+    delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
+    const exec = new ToolExecutor(baseCtx(), null);
+    const r = await exec.execute({
+      name: "cloud_validate_credentials",
+      arguments: { access_key_id: "AKIA", secret_access_key: "s" },
+    });
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/disabled.*PWNKIT_FEATURE_CLOUD_SURFACE/i);
+  });
+
+  it("cloud_validate_credentials refuses (deny-by-default) when no scope is configured", async () => {
+    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    const exec = new ToolExecutor(baseCtx(/* no scope */), null);
+    const r = await exec.execute({
+      name: "cloud_validate_credentials",
+      arguments: { access_key_id: "AKIA", secret_access_key: "s" },
+    });
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/no engagement scope|deny-by-default/i);
   });
 });
 

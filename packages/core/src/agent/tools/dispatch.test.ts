@@ -52,6 +52,9 @@ const EXPECTED_ROUTING: Record<string, string> = {
   structural_sqli_probe: "structuralSqliProbe",
   prompt_layer_probe: "promptLayerProbe",
   auth_boundary_probe: "authBoundaryProbe",
+  // pwnkit#925 — live cloud-surface tools.
+  cloud_s3_probe: "cloudS3Probe",
+  cloud_validate_credentials: "cloudValidateCredentials",
 };
 
 describe("TOOL_DISPATCH (pwnkit#614)", () => {
