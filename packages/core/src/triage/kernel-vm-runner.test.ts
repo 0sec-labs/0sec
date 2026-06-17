@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   prepareKernelVmArtifacts,
   verifyKernelFinding,
+  verifyAcrossBoots,
   buildKernelAppend,
   renderRaceWidenModuleSource,
   defaultDmesgOutPath,
@@ -334,6 +335,162 @@ describe("verifyKernelFinding", () => {
       },
     });
   }
+});
+
+describe("verifyAcrossBoots — N-boot reproducibility gate (AIxCC T2)", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.PWNKIT_KERNEL_QEMU_KERNEL;
+    delete process.env.PWNKIT_KERNEL_QEMU_DISK;
+    delete process.env.PWNKIT_KERNEL_QEMU_CONFIG;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  function makeTree(): string {
+    const tree = mkdtempSync(join(tmpdir(), "pwnkit-kernel-tree-"));
+    writeFileSync(join(tree, "Makefile"), "VERSION = 6\nPATCHLEVEL = 8\n");
+    return tree;
+  }
+
+  function makeReproducer(name: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-repro-"));
+    const repro = join(dir, name);
+    writeFileSync(repro, "int main(void) { return 0; }\n", "utf-8");
+    return repro;
+  }
+
+  function primeCacheForTree(tree: string, cacheDir: string): void {
+    prepareKernelVmArtifacts({
+      kernelTree: tree,
+      cacheDir,
+      configProfile: "kasan",
+      logger: () => undefined,
+      buildRunner: ({ outDir }) => {
+        writeFileSync(join(outDir, "bzImage"), "kernel");
+        writeFileSync(join(outDir, "rootfs.img"), "disk");
+        writeFileSync(join(outDir, "kernel.config"), "config");
+      },
+    });
+  }
+
+  /**
+   * vmRunner that reproduces (KASAN splat) on a fixed set of boot indices and
+   * comes back clean otherwise. Lets us assert the M-of-K threshold logic.
+   */
+  function bootPatternRunner(hitsOn: Set<number>) {
+    let boot = 0;
+    return async () => {
+      const fires = hitsOn.has(boot);
+      boot++;
+      return {
+        compiled: true,
+        executed: true,
+        output: "ran",
+        dmesg: fires
+          ? "BUG: KASAN: slab-use-after-free in vulnerable_path+0x10/0x20"
+          : "[    0.000000] Linux version 6.8.0\nclean boot\n",
+        exitCode: 0,
+        timedOut: false,
+      };
+    };
+  }
+
+  it("declares reproduced + nbootStable when the signature fires in 2 of 3 boots", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree();
+    primeCacheForTree(tree, cacheDir);
+
+    const result = await verifyAcrossBoots({
+      reproducerPath: makeReproducer("poc.c"),
+      kernelTree: tree,
+      cacheDir,
+      boots: 3,
+      minHits: 2,
+      expectedSignature: "KASAN: slab-use-after-free",
+      logger: () => undefined,
+      buildRunner: () => {
+        throw new Error("cache hit should not rebuild");
+      },
+      // Fires on boots 0 and 2, clean on boot 1 → 2/3 hits.
+      vmRunner: bootPatternRunner(new Set([0, 2])),
+    });
+
+    expect(result.bootTotal).toBe(3);
+    expect(result.bootHits).toBe(2);
+    expect(result.nbootStable).toBe(true);
+    expect(result.status).toBe("reproduced");
+    expect(result.signature).toBe("KASAN: slab-use-after-free");
+    expect(result.bootStatuses).toEqual(["reproduced", "no_signal", "reproduced"]);
+  });
+
+  it("declares NOT stable when the signature fires in only 1 of 3 boots", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree();
+    primeCacheForTree(tree, cacheDir);
+
+    const result = await verifyAcrossBoots({
+      reproducerPath: makeReproducer("poc.c"),
+      kernelTree: tree,
+      cacheDir,
+      boots: 3,
+      minHits: 2,
+      expectedSignature: "KASAN: slab-use-after-free",
+      logger: () => undefined,
+      buildRunner: () => {
+        throw new Error("cache hit should not rebuild");
+      },
+      // Fires only on boot 0 → 1/3 hits, below the threshold.
+      vmRunner: bootPatternRunner(new Set([0])),
+    });
+
+    expect(result.bootHits).toBe(1);
+    expect(result.nbootStable).toBe(false);
+    // A one-off splat is not a reproduction — surfaced as the worst per-boot
+    // status (no_signal here), never silently promoted to `reproduced`.
+    expect(result.status).toBe("no_signal");
+  });
+
+  it("stops early once the M-of-K threshold is unreachable", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree();
+    primeCacheForTree(tree, cacheDir);
+
+    let calls = 0;
+    const result = await verifyAcrossBoots({
+      reproducerPath: makeReproducer("poc.c"),
+      kernelTree: tree,
+      cacheDir,
+      boots: 5,
+      minHits: 4,
+      expectedSignature: "KASAN: slab-use-after-free",
+      logger: () => undefined,
+      buildRunner: () => {
+        throw new Error("cache hit should not rebuild");
+      },
+      // Never fires — after 2 clean boots, 4-of-5 is impossible (5-2=3 < 4).
+      vmRunner: async () => {
+        calls++;
+        return {
+          compiled: true,
+          executed: true,
+          output: "ran",
+          dmesg: "clean boot\n",
+          exitCode: 0,
+          timedOut: false,
+        };
+      },
+    });
+
+    expect(result.nbootStable).toBe(false);
+    // boot0: hits=0, remaining=4 → 0+4=4 >= 4, continue
+    // boot1: hits=0, remaining=3 → 0+3=3 < 4, stop
+    expect(calls).toBe(2);
+  });
 });
 
 describe("buildKernelAppend — KASLR knob", () => {

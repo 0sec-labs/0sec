@@ -873,3 +873,129 @@ export async function verifyKernelFinding(
     build_cache_hit,
   };
 }
+
+// ────────────────────────────────────────────────────────────────────
+// N-boot reproducibility gate (AIxCC T2: PoV-mandatory + reproducibility)
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-boot verification across K fresh boots (AIxCC / Shellphish T2).
+ *
+ * A single KASAN hit can be a one-off (boot-order luck, an ambient sanitizer
+ * splat, a flaky race). The AIxCC PoV-mandatory rule treats a finding as
+ * *reproducible* only when the SAME crash signature fires in at least `M` of
+ * `K` independent boots. Because the kernel-VM runs with `snapshot=on`, every
+ * boot gets a fresh ephemeral rootfs overlay — so each `verifyKernelFinding`
+ * call is a genuinely independent trial, not a re-read of one dirty disk.
+ *
+ * This wraps {@link verifyKernelFinding}: it runs it `K` times and counts how
+ * many boots came back `reproduced`. The aggregate verdict is `reproduced` ONLY
+ * when `bootHits >= M`; otherwise the worst observed per-boot status is surfaced
+ * (so a build failure or a run failure is not silently downgraded to
+ * `no_signal`). The `nbootStable` flag records whether the threshold was met,
+ * for the disclosure gate.
+ */
+export interface VerifyAcrossBootsOptions extends VerifyKernelFindingOptions {
+  /** Total number of fresh boots to attempt. Default 3. */
+  boots?: number;
+  /** Minimum boots that must reproduce the signature. Default 2. */
+  minHits?: number;
+}
+
+export interface KernelFindingNbootVerification extends KernelFindingVerification {
+  /** How many of the `bootTotal` boots reproduced the signature. */
+  bootHits: number;
+  /** Total boots attempted. */
+  bootTotal: number;
+  /**
+   * True when `bootHits >= minHits` — the finding cleared the N-boot
+   * reproducibility threshold and is stable enough to disclose (AIxCC T2).
+   */
+  nbootStable: boolean;
+  /** Per-boot statuses, in boot order, for the audit trail. */
+  bootStatuses: KernelFindingStatus[];
+}
+
+/**
+ * Run {@link verifyKernelFinding} across `K` fresh boots and require the crash
+ * signature in at least `M` of them before declaring `reproduced` (AIxCC T2).
+ *
+ * Each boot gets its own `dmesgOutPath` (the caller's `dmesgOutPath`, when set,
+ * is used for the winning/first boot only) so a per-boot proof is preserved. The
+ * winning boot's `signature` / `dmesg_path` are surfaced on the aggregate.
+ */
+export async function verifyAcrossBoots(
+  opts: VerifyAcrossBootsOptions,
+): Promise<KernelFindingNbootVerification> {
+  const log = opts.logger ?? ((line: string) => console.log(line));
+  const bootTotal = Math.max(1, opts.boots ?? 3);
+  const minHits = Math.max(1, Math.min(opts.minHits ?? 2, bootTotal));
+
+  const { boots: _boots, minHits: _minHits, dmesgOutPath, ...baseOpts } = opts;
+
+  const bootStatuses: KernelFindingStatus[] = [];
+  let bootHits = 0;
+  let firstReproduced: KernelFindingVerification | undefined;
+  let lastResult: KernelFindingVerification | undefined;
+
+  for (let i = 0; i < bootTotal; i++) {
+    // Each boot writes its own proof; reuse the caller's path only for boot 0 so
+    // a single-shot caller still gets the file it asked for.
+    const perBootDmesg = i === 0 ? dmesgOutPath : undefined;
+    const result = await verifyKernelFinding({
+      ...baseOpts,
+      ...(perBootDmesg ? { dmesgOutPath: perBootDmesg } : {}),
+    });
+    lastResult = result;
+    bootStatuses.push(result.status);
+    if (result.status === "reproduced") {
+      bootHits++;
+      if (!firstReproduced) firstReproduced = result;
+    }
+    log(
+      `[nboot] boot ${i + 1}/${bootTotal}: ${result.status}` +
+        ` (hits=${bootHits}/${minHits} required)`,
+    );
+    // Early-exit once the threshold is mathematically unreachable — no point
+    // booting the remaining VMs if even all-pass can't reach `minHits`.
+    if (bootHits + (bootTotal - i - 1) < minHits && bootHits < minHits) {
+      log(`[nboot] threshold ${minHits} unreachable — stopping early`);
+      break;
+    }
+  }
+
+  const nbootStable = bootHits >= minHits;
+  const winning = firstReproduced ?? lastResult!;
+
+  // When the threshold isn't met, surface the most informative per-boot status
+  // (a build/run failure outranks a no_signal) so the caller sees WHY it failed.
+  const aggregateStatus: KernelFindingStatus = nbootStable
+    ? "reproduced"
+    : pickWorstStatus(bootStatuses);
+
+  return {
+    status: aggregateStatus,
+    ...(winning.signature ? { signature: winning.signature } : {}),
+    dmesg_path: winning.dmesg_path,
+    build_cache_hit: winning.build_cache_hit,
+    bootHits,
+    bootTotal,
+    nbootStable,
+    bootStatuses,
+  };
+}
+
+/** Status precedence (worst first) for a non-stable aggregate verdict. */
+const STATUS_PRECEDENCE: KernelFindingStatus[] = [
+  "build_failed",
+  "run_failed",
+  "no_signal",
+  "reproduced",
+];
+
+function pickWorstStatus(statuses: KernelFindingStatus[]): KernelFindingStatus {
+  for (const candidate of STATUS_PRECEDENCE) {
+    if (statuses.includes(candidate)) return candidate;
+  }
+  return "no_signal";
+}

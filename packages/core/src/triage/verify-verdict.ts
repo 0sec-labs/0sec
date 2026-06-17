@@ -157,6 +157,21 @@ export interface VerifyVerdict {
    * disclosure gate reads it directly. See {@link evidenceKindForFinding}.
    */
   evidenceKind?: VerifyEvidenceKind;
+  /**
+   * N-boot reproducibility flag (AIxCC / Shellphish T2: PoV-mandatory +
+   * reproducibility gate). True when the kernel crash signature reproduced in
+   * at least M of K fresh boots (each with a clean `snapshot=on` overlay) —
+   * i.e. it is stable, not a one-off boot-luck splat. Produced by
+   * {@link verifyAcrossBoots} in `kernel-vm-runner.ts`. Optional and additive:
+   * undefined on every non-kernel verify path and on legacy single-boot kernel
+   * verdicts. When the disclosure gate is run with `requireNbootStable`, a
+   * kernel finding must carry `nbootStable === true` to be disclosure-eligible.
+   *
+   * SINGLE SOURCE / PARITY (#650): mirrored on the 0cloud side in
+   * `@0cloud/cloud-contracts` (`DisclosureVerdictLike`). Keep the two in
+   * lockstep.
+   */
+  nbootStable?: boolean;
 }
 
 /** Either the full verdict contract or just its outcome label. */
