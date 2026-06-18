@@ -117,6 +117,35 @@ export type {
   ReproFeature,
 } from "./distro-adapt.js";
 
+// ACTOR-style bug-template DSL (USENIX Sec'23). Encode a known bug CLASS as a
+// temporal pattern of actions over a shared data structure, then derive (a) a
+// static matcher hint for variant-hunt and (b) a structured fuzzing objective
+// (syscall action-sequence) for spec-gen / the fuzzer. Analysis/encoding only —
+// produces objectives, does not run the fuzzer. Grounds: CopyFail
+// (CVE-2026-31431), skb in-place splice, UAF/refcount classes.
+export {
+  BUG_TEMPLATES,
+  BUG_TEMPLATE_LIST,
+  COPYFAIL_INPLACE_PAGECACHE,
+  SKB_INPLACE_SPLICE,
+  UAF_CROSS_THREAD,
+  REFCOUNT_UNDERFLOW,
+  getBugTemplate,
+  matchTemplate,
+  matchAllTemplates,
+  templateToFuzzObjective,
+  allFuzzObjectives,
+} from "./bug-templates.js";
+export type {
+  ActionKind,
+  TemplateAction,
+  VariantSignal,
+  BugTemplate,
+  TemplateMatch,
+  FuzzObjectiveStep,
+  FuzzObjective,
+} from "./bug-templates.js";
+
 // Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
 // primitive strategy library + C templates, deterministic success oracle,
 // kernel-VM harness, and the control-demo probe. P2 (0cloud dispatch) and P3
