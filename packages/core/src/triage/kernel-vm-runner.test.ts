@@ -519,6 +519,43 @@ describe("parseCoveragePcs — KCOV coverage parsing (AIxCC T1)", () => {
     expect(parseCoveragePcs("not-a-pc\n#comment\n\n")).toEqual([]);
     expect(parseCoveragePcs("")).toEqual([]);
   });
+
+  it("collects and dedupes PCs across per-program coverage_prog* shards", () => {
+    // syz-execprog -coverfile=<prefix> writes per-program/per-call shards named
+    // `coverage_prog<N>.<call>` (e.g. coverage_prog0.0). The guest cats every
+    // shard into coverage.log; parseCoveragePcs dedupes PCs across them. This
+    // simulates that concatenation end-to-end so #948's feedback loop sees PCs.
+    const share = mkdtempSync(join(tmpdir(), "pwnkit-cov-shards-"));
+    try {
+      writeFileSync(
+        join(share, "coverage_prog0.0"),
+        "0xffffffff81234500\n0xffffffff81234540\n",
+      );
+      writeFileSync(
+        join(share, "coverage_prog0.1"),
+        "0xffffffff81234540\n0xffffffff81234560\n", // overlaps prog0.0
+      );
+      writeFileSync(
+        join(share, "coverage_prog1.0"),
+        "0xffffffff81234560\n0x1000\n", // overlaps prog0.1
+      );
+
+      // Mirror the guest cat over the coverage_prog* shards.
+      const shards = ["coverage_prog0.0", "coverage_prog0.1", "coverage_prog1.0"]
+        .map((f) => readFileSync(join(share, f), "utf-8"))
+        .join("");
+      const pcs = parseCoveragePcs(shards);
+
+      expect(pcs).toEqual([
+        "0x1000",
+        "0xffffffff81234500",
+        "0xffffffff81234540",
+        "0xffffffff81234560",
+      ]);
+    } finally {
+      rmSync(share, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildKernelAppend — KASLR knob", () => {

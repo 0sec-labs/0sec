@@ -402,8 +402,8 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
       "if [ \"$compiled\" = \"1\" ]; then",
       "  dmesg -C 2>/dev/null || true",
       // KCOV coverage collection (AIxCC T1): ask syz-execprog to collect coverage
-      // and dump the per-call PC set to coverage.raw on the share. `-cover=1`
-      // enables KCOV; `-coverfile` writes the deduped PCs. Both flags are no-ops
+      // and dump the per-call PC set to coverage_prog* shards on the share.
+      // `-cover=1` enables KCOV; `-coverfile` is the shard prefix. Both flags are no-ops
       // (or rejected) on a non-KCOV kernel / older syz-execprog — fail-soft so a
       // run without coverage still records its crash result.
       `  if timeout ${shellQuote(String(config.timeoutSec))}s syz-execprog -cover=1 -coverfile="$SHARE_DIR/coverage" "$WORK_DIR/repro.syz" >"$SHARE_DIR/run.log" 2>&1; then`,
@@ -417,10 +417,12 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
       "      executed=1",
       "    fi",
       "  fi",
-      "  # Consolidate coverage: syz-execprog -coverfile may write the PC set to",
-      "  # `coverage` and/or per-call `coverage.N` shards. Concatenate whatever",
-      "  # landed into coverage.log for the host to parse (fail-soft if none).",
-      "  cat \"$SHARE_DIR/coverage\" \"$SHARE_DIR/coverage.\"* > \"$SHARE_DIR/coverage.log\" 2>/dev/null || true",
+      "  # Consolidate coverage: syz-execprog -coverfile writes the PC set to",
+      "  # per-program/per-call shards named `coverage_prog<N>.<call>` (e.g.",
+      "  # `coverage_prog0.0`), and may also leave a bare `coverage` / `coverage.N`.",
+      "  # Concatenate every shard into coverage.log for the host to parse; PCs are",
+      "  # deduped downstream by parseCoveragePcs (fail-soft if none landed).",
+      "  cat \"$SHARE_DIR/coverage\" \"$SHARE_DIR/coverage.\"* \"$SHARE_DIR/coverage_prog\"* > \"$SHARE_DIR/coverage.log\" 2>/dev/null || true",
       "else",
       "  : > \"$SHARE_DIR/run.log\"",
       "fi",
