@@ -6,6 +6,7 @@ import { LlmApiRuntime } from "./runtime/llm-api.js";
 import { detectAvailableRuntimes, pickRuntimeForStage } from "./runtime/registry.js";
 import { runAgentLoop } from "./agent/loop.js";
 import { runNativeAgentLoop } from "./agent/native-loop.js";
+import { maybeStartCloudInboxPoller } from "./agent/cloud-inbox.js";
 import { toolCallPreview } from "./agent/tool-preview.js";
 import { getToolsForRole } from "./agent/tools.js";
 import type { NativeRuntime } from "./runtime/types.js";
@@ -300,6 +301,14 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
     if (supportsNative) {
       const maxTurns = getMaxTurns(role, config.depth, "native", purpose);
 
+      // #978 (ADR-060) — cloud control channel. unified-pipeline.ts (the
+      // package/source audit + review path) runs the agent here, NOT through
+      // agenticScan, so the inbox drain must be wired in BOTH entries. In
+      // cloud mode, default getPendingUserMessages to the scan-inbox poller so
+      // operator steers ("Steer this scan") reach the agent mid-run. null in
+      // local mode (no cloud sink). unref'd, so the process still exits clean.
+      const cloudInbox = maybeStartCloudInboxPoller();
+
       const agentState = await runNativeAgentLoop({
         config: {
           role,
@@ -315,6 +324,7 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
         },
         runtime: apiRuntime as NativeRuntime,
         db,
+        getPendingUserMessages: cloudInbox?.drain,
         onTurn: (turn, toolCalls, _results) => {
           const cloudSinkCfg = getCloudSinkConfig();
           if (toolCalls.length === 0) {
