@@ -17,6 +17,7 @@ import { detectAvailableRuntimes } from "./runtime/registry.js";
 // DB lazy-loaded to avoid native module issues
 import { runAgentLoop } from "./agent/loop.js";
 import { runNativeAgentLoop } from "./agent/native-loop.js";
+import { maybeStartCloudInboxPoller } from "./agent/cloud-inbox.js";
 import { toolCallPreview } from "./agent/tool-preview.js";
 import { getToolsForRole, TOOL_DEFINITIONS, parsePocStepsArg } from "./agent/tools.js";
 import {
@@ -493,8 +494,26 @@ function parsePackageTarget(
 }
 
 export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport> {
-  const { dbPath, onEvent, getPendingUserMessages, resumeScanId } = opts;
+  const {
+    dbPath,
+    onEvent,
+    getPendingUserMessages: optsGetPendingUserMessages,
+    resumeScanId,
+  } = opts;
   const emit = onEvent ?? (() => {});
+
+  // #978 (ADR-060) — cloud control channel. The agent loop injects "pending
+  // user messages" each turn via getPendingUserMessages (originally the local
+  // TUI interrupt hook). In cloud mode there is no TUI; operator steers arrive
+  // in the scan inbox (the dashboard's "Steer this scan"). Default the source
+  // to a background inbox poller so a steer flips pending → consumed and lands
+  // in the agent's context mid-run. Callers that pass their own callback (TUI)
+  // keep it. The poller is unref'd, so the sandbox process still exits cleanly.
+  const cloudInbox = optsGetPendingUserMessages
+    ? null
+    : maybeStartCloudInboxPoller();
+  const getPendingUserMessages =
+    optsGetPendingUserMessages ?? cloudInbox?.drain;
 
   // Memory-safety scan role ("Monty-mode", pwnkit#700). This is the minimal
   // dispatch seam for the userspace/Rust pipeline: when a `memSafetyTarget` is
