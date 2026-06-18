@@ -836,3 +836,29 @@ export type {
   CredentialValidationResult,
   CloudScopeMatcher,
 } from "./agent/cloud-surface.js";
+
+// Protocol-conformance capability (issue #972) — Tier-1 HTTP spec-vs-impl
+// differential: LLM hypothesizes divergences, a deterministic oracle confirms.
+export {
+  generateConformanceModel,
+  structurallyValidateConformanceModel,
+  judgeHttpDivergence,
+  runHttpConformanceCheck,
+} from "./protocol/index.js";
+export type {
+  ProtocolModel,
+  ConformanceRule,
+  ConformancePrediction,
+  DivergenceHypothesis,
+  DivergenceVerdict,
+  DivergenceStatus,
+  ObservedHttpResponse,
+  HttpExercise,
+  RequirementLevel,
+  ConformanceModel,
+  ConformanceGenResult,
+  ConformanceValidator,
+  HttpSender,
+  HttpConformanceResult,
+  ConformanceAttempt,
+} from "./protocol/index.js";
