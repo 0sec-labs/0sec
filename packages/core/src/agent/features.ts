@@ -165,6 +165,19 @@ export const features = {
   },
 
   /**
+   * #978 (ADR-060) — agent fan-out. When ON, the agent gets the `start_scan`
+   * tool: it can dispatch CHILD scans (via the same POST /scans the UI uses)
+   * that run independently and report up the scan tree — the recursive
+   * sub-agent orchestration. Default OFF: fan-out multiplies scans/cost, so it
+   * stays opt-in even though the orchestrator enforces budget + a tree-level
+   * cap (max children/depth). Enable with PWNKIT_FEATURE_AGENT_FANOUT=1.
+   * Getter so the CLI `--features` flag is honored at dispatch time.
+   */
+  get agentFanout(): boolean {
+    return env("PWNKIT_FEATURE_AGENT_FANOUT", false);
+  },
+
+  /**
    * Anti-honeypot flag-shape validator. When the agent calls the `done`
    * tool with a proposed `FLAG{...}`, the tool runs `validateFlagShape`
    * first; low-confidence ("looks like a decoy") flags are rejected once

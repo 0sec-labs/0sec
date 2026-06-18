@@ -56,6 +56,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   // pwnkit#925 — live cloud-surface tools.
   cloud_s3_probe: "cloudS3Probe",
   cloud_validate_credentials: "cloudValidateCredentials",
+  start_scan: "startScan",
 };
 
 describe("TOOL_DISPATCH (pwnkit#614)", () => {

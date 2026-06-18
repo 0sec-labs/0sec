@@ -124,8 +124,9 @@ import {
 // ToolExecutor below see them as local bindings. Splitting the old 600-line
 // literal lets parallel feature PRs touch disjoint domain files instead of
 // serializing on one merge-conflict chokepoint.
-import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES } from "./tools/index.js";
-export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES };
+import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES } from "./tools/index.js";
+export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES };
+import { executeStartScan } from "./tools/orchestrator.js";
 
 // Tool-name → handler-method-name routing table (pwnkit#614), assembled from
 // per-domain `*Dispatch` maps. `ToolExecutor._dispatch` resolves the handler
@@ -3187,6 +3188,18 @@ export class ToolExecutor {
   }
 
   /**
+   * #978 (ADR-060) — fan out a CHILD scan. Thin delegate to executeStartScan
+   * (agent/tools/orchestrator.ts), which POSTs /scans on the cloud sink tagged
+   * with this scan as parent. Gated into the tool set by featureFlags.agentFanout
+   * (getToolsForRole), so it only reaches the model when fan-out is enabled.
+   */
+  private async startScan(
+    args: Record<string, unknown>,
+  ): Promise<ToolResult> {
+    return executeStartScan(args);
+  }
+
+  /**
    * #925 — test S3 buckets for public access + orphaned-bucket takeover.
    * Anonymous, read-only: GET / and GET /?acl per bucket. NoSuchBucket (404)
    * is classified as takeover-able (the BCG orphaned-integration finding) but
@@ -5192,6 +5205,11 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   // pwnkit#925: live cloud-surface tools (S3 public/takeover + read-only cred
   // validation), gated behind the cloud-surface feature flag (default on).
   const cloudTools = featureFlags.cloudSurface ? [...CLOUD_TOOL_NAMES] : [];
+  // #978 — agent fan-out (start_scan), opt-in (default off). Server enforces
+  // budget + tree cap; default-off keeps existing scans unchanged.
+  const orchestratorTools = featureFlags.agentFanout
+    ? [...ORCHESTRATOR_TOOL_NAMES]
+    : [];
   const networkTools = [
     "http_request",
     "crawl",
@@ -5208,6 +5226,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     ...lootTools,
     ...scannerTools,
     ...cloudTools,
+    ...orchestratorTools,
     "send_prompt",
     "save_finding",
     "update_finding",
@@ -5226,7 +5245,9 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     && (opts?.allowScanners || !SCANNER_TOOL_NAMES.includes(name))
     // Cloud-surface tools follow the same gating: out of the audit/review
     // "everything" set when the feature flag is off (pwnkit#925).
-    && (featureFlags.cloudSurface || !CLOUD_TOOL_NAMES.includes(name)),
+    && (featureFlags.cloudSurface || !CLOUD_TOOL_NAMES.includes(name))
+    // #978 — fan-out (start_scan) likewise stays out unless agentFanout is on.
+    && (featureFlags.agentFanout || !ORCHESTRATOR_TOOL_NAMES.includes(name)),
   );
 
   const roleTools: Record<string, string[]> = {
