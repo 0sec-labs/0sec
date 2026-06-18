@@ -145,6 +145,29 @@ export type {
   FuzzObjectiveStep,
   FuzzObjective,
 } from "./bug-templates.js";
+// Patch-to-PoC directed n-day pipeline (arXiv:2602.07287 + Project Zero Big
+// Sleep). Analysis-only: turns an upstream security fix commit/diff into a PoC
+// PLAN (bug class + sink + reaching syscalls + trigger steps + reproducer
+// skeleton) for an unpatched downstream LTS/distro target, then hands off to the
+// EXISTING verify lane for KASAN-confirm. Reuses reachability-rank (sink→syscall)
+// and the fix-commit-intel bug/Fixes: vocabulary; pairs with distro-adapt (#953,
+// downstream targeting). Serves the older-LTS / CopyFail / rxrpc hunt.
+export {
+  analyzePatch,
+  patchToPocPlan,
+  handoffToVerifyInput,
+} from "./patch-to-poc.js";
+export type {
+  BugClass,
+  TouchedFile,
+  PatchAnalysis,
+  TargetKernel,
+  TargetApplicability,
+  TriggerStep,
+  VerifyHandoff,
+  PatchToPocPlan,
+  PatchToPocOptions,
+} from "./patch-to-poc.js";
 
 // Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
 // primitive strategy library + C templates, deterministic success oracle,
