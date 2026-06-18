@@ -11,14 +11,16 @@ import {
   VMSPLICE_KERNEL_CONSUMER_ALIAS,
   AF_ALG_ANY_ALGORITHM_SPLICE,
   GENERIC_PAGE_WRITE_NO_OWNERSHIP,
+  PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS,
+  RELEASE_PATH_UNCANCELLED_WORK_UAF,
   type DirtyFragPattern,
 } from "./dirty-frag-patterns.js";
 
 // ── Pattern library structure ───────────────────────────────────────────────
 
 describe("DIRTY_FRAG_PATTERN_LIST", () => {
-  it("contains exactly 6 patterns", () => {
-    expect(DIRTY_FRAG_PATTERN_LIST).toHaveLength(6);
+  it("contains exactly 8 patterns", () => {
+    expect(DIRTY_FRAG_PATTERN_LIST).toHaveLength(8);
   });
 
   it("all patterns have unique ids", () => {
@@ -168,6 +170,56 @@ describe("GENERIC_PAGE_WRITE_NO_OWNERSHIP (pattern e — abstract)", () => {
     expect(hints.some((re) => re.test("page_address"))).toBe(true);
     expect(hints.some((re) => re.test("page_count"))).toBe(true);
     expect(hints.some((re) => re.test("copy_highpage"))).toBe(true);
+  });
+});
+
+describe("PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS (pattern f — Copy Fail recipe)", () => {
+  it("references the 2026 page-cache CVEs", () => {
+    expect(PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.knownCves).toContain("CVE-2026-43284");
+    expect(PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.knownCves).toContain("CVE-2026-46300");
+    expect(PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.knownCves).toContain("CVE-2026-31431");
+  });
+
+  it("targets crypto / splice / net subsystems", () => {
+    expect(PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.subsystems).toContain("crypto");
+    expect(PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.subsystems).toContain("fs/splice");
+    expect(PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.subsystems).toContain("net/core");
+  });
+
+  it("source hints match zero-copy ingress + shared-frag markers", () => {
+    const hints = PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.sourceHints;
+    expect(hints.some((re) => re.test("MSG_SPLICE_PAGES"))).toBe(true);
+    expect(hints.some((re) => re.test("SKBFL_SHARED_FRAG"))).toBe(true);
+    expect(hints.some((re) => re.test("skb_has_shared_frag"))).toBe(true);
+    expect(hints.some((re) => re.test("skb_cow_data"))).toBe(true);
+  });
+
+  it("lists shared-frag / COW gates as mitigations", () => {
+    const text = PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.mitigations.join(" ");
+    expect(text).toMatch(/skb_cow_data|skb_unshare/);
+    expect(text).toMatch(/skb_has_shared_frag/);
+  });
+});
+
+describe("RELEASE_PATH_UNCANCELLED_WORK_UAF (pattern g — release-work UAF)", () => {
+  it("targets the driver / sound release-work seam", () => {
+    expect(RELEASE_PATH_UNCANCELLED_WORK_UAF.subsystems).toContain("drivers/media");
+    expect(RELEASE_PATH_UNCANCELLED_WORK_UAF.subsystems).toContain("sound");
+    expect(RELEASE_PATH_UNCANCELLED_WORK_UAF.subsystems).toContain("drivers/usb");
+  });
+
+  it("source hints match work primitives and the cancel/release markers", () => {
+    const hints = RELEASE_PATH_UNCANCELLED_WORK_UAF.sourceHints;
+    expect(hints.some((re) => re.test("work_struct"))).toBe(true);
+    expect(hints.some((re) => re.test("cancel_work_sync"))).toBe(true);
+    expect(hints.some((re) => re.test("del_timer_sync"))).toBe(true);
+    expect(hints.some((re) => re.test(".release ="))).toBe(true);
+  });
+
+  it("lists cancel_*_sync and disable_*_sync as mitigations", () => {
+    const text = RELEASE_PATH_UNCANCELLED_WORK_UAF.mitigations.join(" ");
+    expect(text).toMatch(/cancel_work_sync|cancel_delayed_work_sync/);
+    expect(text).toMatch(/disable_work_sync|disable_delayed_work_sync/);
   });
 });
 

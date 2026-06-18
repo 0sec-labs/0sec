@@ -317,6 +317,119 @@ export const GENERIC_PAGE_WRITE_NO_OWNERSHIP: DirtyFragPattern = {
   ],
 };
 
+/**
+ * Pattern (f): page-cache provenance via zero-copy ingress.
+ *
+ * The Copy Fail recipe as a first-class pattern: an attacker uses a zero-copy
+ * ingress API (splice / MSG_SPLICE_PAGES / vmsplice / sendfile / AF_ALG) to
+ * deliver page-cache pages of a file it can read into a kernel scatterlist or
+ * skb frag, then the kernel performs an in-place STORE on that page without a
+ * copy-on-write — because the page's *provenance* (it came from the page cache
+ * of a file the caller cannot write) is never checked. The differentiator from
+ * the generic struct-page pattern is the SOURCE: the page is a borrowed
+ * page-cache page reached through zero-copy ingress, which is what turns an
+ * in-place op into an arbitrary-file write primitive.
+ */
+export const PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS: DirtyFragPattern = {
+  id: "pagecache-provenance-zerocopy-ingress",
+  name: "Page-cache provenance not verified on zero-copy ingress before in-place store",
+  description:
+    "A zero-copy ingress API (splice, MSG_SPLICE_PAGES, vmsplice, sendfile, " +
+    "or AF_ALG algif_* recvmsg/sendmsg) delivers page-cache pages of a " +
+    "file the attacker can read into a kernel scatterlist or skb frag. The " +
+    "kernel then performs an in-place STORE (crypto decrypt with src == dst, " +
+    "header rewrite, memcpy through kmap) without proving the page is owned " +
+    "or copying it first. Because the page is a borrowed page-cache page, the " +
+    "in-place write corrupts file contents the caller could not otherwise " +
+    "modify — a page-cache write primitive (Copy Fail). Audit the " +
+    "SKBFL_SHARED_FRAG set-vs-checked asymmetry, skb_cow_data/skb_unshare " +
+    "COW-skip fast paths, and req->src == req->dst in-place crypto.",
+  triggerConditions: [
+    "Zero-copy ingress (splice / MSG_SPLICE_PAGES / vmsplice / sendfile / AF_ALG) supplies page-cache pages",
+    "Pages reach a scatterlist or skb frag and are stored in-place (req->src == req->dst, or set SKBFL_SHARED_FRAG)",
+    "No skb_has_shared_frag / skb->data_len check before the in-place op",
+    "No page provenance / ownership proof: page_mapcount, folio mapping, or copy-on-write",
+  ],
+  mitigations: [
+    "skb_cow_data() / skb_unshare() before the in-place op (no shared-frag COW-skip fast path)",
+    "skb_has_shared_frag(skb) / skb->data_len gate before in-place store",
+    "Distinct destination scatterlist (req->dst != req->src) for page-cache-backed sources",
+    "page_mapcount() / folio->mapping check to reject page-cache pages",
+    "copy_highpage() / copy_user_highpage() to a private page before modification",
+  ],
+  kernelConfigDeps: [
+    "CONFIG_CRYPTO_USER_API",
+    "CONFIG_CRYPTO_USER_API_AEAD",
+    "CONFIG_CRYPTO_USER_API_SKCIPHER",
+  ],
+  subsystems: ["crypto", "fs/splice", "net/core", "net/ipv4", "net/ipv6", "mm"],
+  knownCves: ["CVE-2026-43284", "CVE-2026-46300", "CVE-2026-31431"],
+  ruleIdPrefix: "kernel/dirty-frag-class",
+  sourceHints: [
+    /MSG_SPLICE_PAGES/,
+    /SKBFL_SHARED_FRAG/,
+    /skb_has_shared_frag/,
+    /skb_cow_data/,
+    /skb_unshare/,
+    /sendpage|splice_to_pipe|generic_file_splice_read/,
+    /req->src|->src\s*==\s*->dst|sg_init_one/,
+  ],
+};
+
+/**
+ * Pattern (g): release-path uncancelled work → use-after-free / controlled
+ * indirect call.
+ *
+ * The meson-vdec / seq_midi shape (and the mtk-jpeg / media release-work
+ * family): an object owns a work_struct / delayed_work / timer / tasklet or an
+ * ops function pointer, and the release/remove/disconnect/close teardown frees
+ * the object WITHOUT first cancelling the pending work with the matching
+ * cancel_*_sync / del_timer_sync / tasklet_kill. A work item that fires after
+ * the free dereferences — and indirect-calls through — freed memory, giving a
+ * controlled indirect call. Copy-paste sibling drivers rarely all receive the
+ * cancel fix, so this pairs with the incomplete-fix variant hunt.
+ */
+export const RELEASE_PATH_UNCANCELLED_WORK_UAF: DirtyFragPattern = {
+  id: "release-path-uncancelled-work-uaf",
+  name: "Object freed in release path without cancelling its pending work (UAF / controlled indirect call)",
+  description:
+    "An object that owns a work_struct, delayed_work, timer_list, tasklet, or " +
+    "an ops/callback function pointer is freed in a ->release / ->remove / " +
+    "->disconnect / ->close path or an error label WITHOUT a preceding " +
+    "cancel_work_sync / cancel_delayed_work_sync / del_timer_sync / " +
+    "tasklet_kill / flush_workqueue. The still-queued work fires after the " +
+    "free and dereferences (and indirect-calls through) freed memory — a " +
+    "use-after-free that yields a controlled indirect call. Richest in " +
+    "drivers/media, sound/, and drivers/usb where sibling drivers copy the " +
+    "release path. Note the cancel_*_work_sync -> disable_*_work_sync " +
+    "migration: a re-queue after a plain cancel is the same UAF.",
+  triggerConditions: [
+    "Object owns a work_struct / delayed_work / timer_list / tasklet / ops fn-ptr",
+    "Object is freed (kfree/kvfree/put_device/*_free) in ->release/->remove/->disconnect/->close or an error label",
+    "No cancel_work_sync / cancel_delayed_work_sync / del_timer_sync / tasklet_kill before the free",
+    "Userspace can trigger the teardown (close(2), unbind, device removal) while work is queued",
+  ],
+  mitigations: [
+    "cancel_work_sync() / cancel_delayed_work_sync() before freeing the owner",
+    "del_timer_sync() / timer_shutdown_sync() before free",
+    "tasklet_kill() before free",
+    "flush_workqueue() / destroy_workqueue() on the owning workqueue before free",
+    "disable_work_sync() / disable_delayed_work_sync() to also prevent re-queue",
+  ],
+  kernelConfigDeps: [],
+  subsystems: ["drivers/media", "sound", "drivers/usb", "drivers/gpu", "net/core"],
+  knownCves: [],
+  ruleIdPrefix: "kernel/dirty-frag-class",
+  sourceHints: [
+    /work_struct|delayed_work|timer_list|tasklet_struct/,
+    /cancel_work_sync|cancel_delayed_work_sync/,
+    /del_timer_sync|timer_shutdown_sync|tasklet_kill/,
+    /disable_work_sync|disable_delayed_work_sync/,
+    /\.release\s*=|\.remove\s*=|\.disconnect\s*=/,
+    /flush_workqueue|destroy_workqueue/,
+  ],
+};
+
 // ── Pattern library ─────────────────────────────────────────────────────────
 
 /** All dirty-frag patterns, indexed by stable id. */
@@ -327,6 +440,8 @@ export const DIRTY_FRAG_PATTERNS: ReadonlyMap<string, DirtyFragPattern> = new Ma
   [VMSPLICE_KERNEL_CONSUMER_ALIAS.id, VMSPLICE_KERNEL_CONSUMER_ALIAS],
   [AF_ALG_ANY_ALGORITHM_SPLICE.id, AF_ALG_ANY_ALGORITHM_SPLICE],
   [GENERIC_PAGE_WRITE_NO_OWNERSHIP.id, GENERIC_PAGE_WRITE_NO_OWNERSHIP],
+  [PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS.id, PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS],
+  [RELEASE_PATH_UNCANCELLED_WORK_UAF.id, RELEASE_PATH_UNCANCELLED_WORK_UAF],
 ]);
 
 /** All dirty-frag patterns as an array. */
@@ -337,6 +452,8 @@ export const DIRTY_FRAG_PATTERN_LIST: readonly DirtyFragPattern[] = [
   VMSPLICE_KERNEL_CONSUMER_ALIAS,
   AF_ALG_ANY_ALGORITHM_SPLICE,
   GENERIC_PAGE_WRITE_NO_OWNERSHIP,
+  PAGECACHE_PROVENANCE_ZEROCOPY_INGRESS,
+  RELEASE_PATH_UNCANCELLED_WORK_UAF,
 ];
 
 // ── Matching helpers ────────────────────────────────────────────────────────

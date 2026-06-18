@@ -10,6 +10,7 @@ import type {
   Finding,
   ScanConfig,
   ReviewProfile,
+  ReviewAnchor,
 } from "@pwnkit/shared";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import { reviewAgentPrompt } from "./analysis-prompts.js";
@@ -22,6 +23,9 @@ import {
   runKernelVariantHunt,
   huntIncompleteFixSiblings,
   incompleteFixLeadToFinding,
+  scanCrossSubsystemFlows,
+  formatCrossSubsystemFlowsForPrompt,
+  mineFixCommits,
 } from "./kernel/index.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
 import { resolveLocalTargetPath } from "./path-resolution.js";
@@ -89,7 +93,7 @@ function resolveRepo(
   return { repoPath, cloned: true, tempDir };
 }
 
-function buildCliReviewPrompt(
+export function buildCliReviewPrompt(
   repoPath: string,
   semgrepFindings: SemgrepFinding[],
   profile: ReviewProfile,
@@ -135,7 +139,14 @@ First confirm this is a kernel tree (look for MAINTAINERS, top-level Kconfig, KE
 
 Map the attack surface: SYSCALL_DEFINE* macros, .unlocked_ioctl/.compat_ioctl handlers, genl_family/netlink_kernel_create, char-device file_operations, eBPF (kernel/bpf/), netfilter hooks (nf_register_net_hook).
 
+Step 2a — pick a target PRIMITIVE first, then reason BACKWARD. Before free-reading, decide what you are hunting: a page-cache write, a controlled indirect call (ops->/work_struct->func/->release fn-ptr), a refcount underflow, or an arbitrary write. Then reason backward from the primitive to its sink, the data flow that reaches it, and the UNPRIVILEGED syscall/ioctl/netlink/socket op that starts that flow. Prefer write / controlled-indirect-call primitives over read-only leaks. PRIVILEGE IS LOAD-BEARING — a chain behind CAP_SYS_ADMIN or a root-only node is NOT a finding; verify unprivileged reachability (optionally unshare(CLONE_NEWUSER)) — the keyctl/AF_ALG lesson — and state the privilege precondition for every finding.
+
 Prioritize: missing copy_from_user length validation, signed/unsigned int comparison on user-controlled length, UAF across __free_pages/kfree_skb error paths, refcount races (get_task_struct without matching put_task_struct), TOCTOU on inode->i_*, unsafe_get_user/unsafe_put_user outside a user_access_begin/end block, shared-memory aliasing / Dirty Frag class — any in-place operation on shared/aliased memory without ownership verification: (0) in-place AEAD/cipher on shared skb frag without skb_cow_data/skb_unshare, (a) splice + in-place crypto on non-COW page-cache pages (Copy Fail / CVE-2026-31431), (b) sendfile/splice into io_uring fixed buffers aliasing page cache, (c) vmsplice user-page aliasing with in-kernel pipe consumers, (d) any AF_ALG algorithm type (skcipher/hash/rng/aead/akcipher) operating in-place on spliced pages, (e) generic writes to struct page * without page_count/PagePrivate ownership check.
+
+Step 2b — concrete hunt recipes (highest-yield classes):
+(a) Page-cache provenance / zero-copy ingress (Copy Fail; CVE-2026-43284, CVE-2026-46300, CVE-2026-31431): start at a zero-copy ingress API (splice / MSG_SPLICE_PAGES / vmsplice / sendfile / AF_ALG algif_* recvmsg/sendmsg), follow page refs forward to any in-place STORE on an sg/scatterlist entry or skb frag WITHOUT a COW. Audit the SKBFL_SHARED_FRAG set-vs-checked asymmetry (set sites vs skb_has_shared_frag/skb->data_len check sites), skb_cow_data/skb_unshare COW-skip fast paths (can the fast path be entered with a shared frag?), and req->src == req->dst in-place crypto on a page-cache-backed source SGL.
+(b) Release-path uncancelled-work UAF / controlled indirect call (the meson-vdec / seq_midi shape; mtk-jpeg / media release-work family): an object owning a work_struct/delayed_work/timer_list/tasklet/ops fn-ptr is freed in a ->release/->remove/->disconnect/->close path or error label WITHOUT a preceding cancel_work_sync/cancel_delayed_work_sync/del_timer_sync/tasklet_kill — the queued work fires after the free → controlled indirect call. Richest in drivers/media, sound/, drivers/usb; cancel_*_work_sync → disable_*_work_sync re-queue is the same UAF.
+(c) Write-before-validate in crypto/verify paths: in AEAD/MAC/signature verify (crypto_aead_decrypt, *_verify, ESP/IPsec input, fs-verity, dm-verity, module-sig, rxrpc/Kerberos), check whether plaintext/output is written to a caller-visible buffer or committed to page cache/skb BEFORE the tag/signature is verified (crypto_memneq/memcmp). Decrypt-then-write-before-check = unverified-plaintext write primitive + oracle. The fix marker is the verify gating the write.
 
 Validation: every finding must point to either a syzkaller-style program (.syz) or a C reproducer using syscall(SYS_*, ...). NOT libFuzzer — kernel state isn't reachable from a libFuzzer harness. Static-only findings flagged confidence: 0.4 hypothesis: true (until verification phase #271 lands). Do NOT compile the kernel from this loop.
 
@@ -228,6 +239,7 @@ async function runReviewAgent(
   scanId: string,
   config: ReviewConfig,
   emit: ScanListener,
+  crossSubsystemContext?: string,
 ): Promise<{ findings: Finding[]; usage?: { inputTokens: number; outputTokens: number }; estimatedCostUsd?: number }> {
   const profile = config.profile ?? "default";
 
@@ -249,6 +261,14 @@ async function runReviewAgent(
       }
     } catch {
       // Non-fatal; the review agent can still run without this context.
+    }
+    // Cross-subsystem data-flow context (pwnkit#469). Computed in the seed
+    // block and threaded in here so it rides the same kernel prompt-context
+    // channel as the attack-surface block.
+    if (crossSubsystemContext) {
+      attackSurfaceContext = attackSurfaceContext
+        ? `${attackSurfaceContext}\n\n${crossSubsystemContext}`
+        : crossSubsystemContext;
     }
   }
 
@@ -370,6 +390,9 @@ export async function sourceReview(
 
     // Step 2b: foxguard variant-hunt (linux-kernel profile only)
     let foxguardFindings: Finding[] = [];
+    // Cross-subsystem data-flow prompt block (pwnkit#469); populated below for
+    // the linux-kernel profile and threaded into the review agent prompt.
+    let crossSubsystemContext: string | undefined;
     if ((config.profile ?? "default") === "linux-kernel") {
       try {
         emit({
@@ -423,6 +446,79 @@ export async function sourceReview(
           message: `Incomplete-fix hunt unavailable: ${reason}`,
         });
       }
+
+      // Step 2d: cross-subsystem data-flow seed (pwnkit#469). Copy Fail and its
+      // siblings live on subsystem boundaries — no single function holds the
+      // bug. Map where this tree's code crosses subsystem boundaries (crypto →
+      // splice → mm → crypto, etc.) and feed the agent the "trace data across
+      // the boundary, find the assumption mismatch" protocol plus the detected
+      // crossings. Fails soft to the static (no-scan) flow catalog on error.
+      try {
+        const flowScan = scanCrossSubsystemFlows({
+          tree: repoPath,
+          ...(config.subsystem ? { subsystem: config.subsystem } : {}),
+        });
+        crossSubsystemContext = formatCrossSubsystemFlowsForPrompt(flowScan);
+        emit({
+          type: "stage:end",
+          stage: "discovery",
+          message: `Cross-subsystem flow scan: ${flowScan.crossings.length} boundary crossing(s) across ${flowScan.flowSummaries.length} flow direction(s)`,
+        });
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        // Still give the agent the static flow catalog (the known-CVE patterns)
+        // even when the source scan fails — the catalog needs no tree access.
+        crossSubsystemContext = formatCrossSubsystemFlowsForPrompt();
+        emit({
+          type: "stage:start",
+          stage: "discovery",
+          message: `Cross-subsystem flow scan unavailable (using static catalog): ${reason}`,
+        });
+      }
+
+      // Step 2e: auto-anchor from recent fix commits (pwnkit#469 / Naptime
+      // variant framing). When the operator did not supply anchors, derive a
+      // bounded set of variant anchors from the most recent security/`Fixes:`
+      // commits in the tree so the review auto-populates variant-anchored mode
+      // instead of being operator-only. Read-only git; fails soft on a non-git
+      // or shallow tree (mineFixCommits returns []).
+      if (!config.anchors || config.anchors.length === 0) {
+        try {
+          const fixCommits = mineFixCommits({
+            tree: repoPath,
+            limit: 200,
+            securityOnly: true,
+            ...(config.subsystem
+              ? { paths: config.subsystem.split(",").map((s) => s.trim()).filter(Boolean) }
+              : {}),
+          });
+          const autoAnchors: ReviewAnchor[] = fixCommits
+            .slice(0, 5)
+            .map((c) => {
+              const anchor: ReviewAnchor = {
+                pattern: `${c.securityKeyword ?? "security fix"}: ${c.subject}`,
+                id: c.sha.slice(0, 12),
+                ...(c.fixesTag ? { fix: `Fixes: ${c.fixesTag}` } : {}),
+              };
+              return anchor;
+            });
+          if (autoAnchors.length > 0) {
+            config.anchors = autoAnchors;
+            emit({
+              type: "stage:end",
+              stage: "discovery",
+              message: `Auto-anchored variant review on ${autoAnchors.length} recent fix commit(s)`,
+            });
+          }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          emit({
+            type: "stage:start",
+            stage: "discovery",
+            message: `Fix-commit auto-anchor unavailable: ${reason}`,
+          });
+        }
+      }
     }
 
     // Log operator hypothesis for post-hoc analysis (#467)
@@ -443,6 +539,7 @@ export async function sourceReview(
       scanId,
       config,
       emit,
+      crossSubsystemContext,
     );
     const findings = agentResult.findings;
 

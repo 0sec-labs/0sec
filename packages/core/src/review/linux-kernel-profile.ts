@@ -171,6 +171,19 @@ rg -n '\\.unlocked_ioctl\\s*=|\\.compat_ioctl\\s*=' --type c
 
 **Netfilter hooks.** \`nf_register_net_hook\`, \`nf_register_net_hooks\`. The hook function gets a \`struct sk_buff\` straight from the wire.
 
+## Step 2a — Pick a target PRIMITIVE first, then reason BACKWARD
+
+Before free-reading code, decide what you are HUNTING. The highest-yield kernel bugs (Copy Fail / CVE-2026-31431, the ksmbd UAF) were found by a researcher who named a dangerous *primitive* first and reasoned BACKWARD to a reachable entry point — not by reading top-down hoping a bug falls out. Pick ONE primitive per investigation pass:
+
+- **page-cache write** — a write that lands on a file-backed / shared page the caller does not own (Copy Fail class).
+- **controlled indirect call** — a function pointer (\`ops->\`, \`work_struct->func\`, \`->release\`, \`->complete\`) whose target the attacker can influence, or that fires after the backing object is freed.
+- **refcount underflow** — a \`*_put\`/\`*_get\` imbalance that drives a refcount to 0 (or below) while a live reference remains → UAF.
+- **arbitrary write** — any path where an attacker-controlled offset/length/value reaches a kernel store.
+
+Then reason BACKWARD from the primitive: "what sink gives me this primitive? what data flow reaches that sink? what UNPRIVILEGED syscall/ioctl/netlink/socket op starts that flow?" A write or controlled-indirect-call primitive outranks a read-only leak — prefer it.
+
+PRIVILEGE IS LOAD-BEARING. A beautiful chain behind \`CAP_SYS_ADMIN\` or a root-only device node is NOT a finding. Verify the entry point is reachable from an UNPRIVILEGED process (optionally with \`unshare(CLONE_NEWUSER)\`) — this is the keyctl/AF_ALG lesson: the bug only matters if a normal user can reach it. State the exact privilege precondition for every finding.
+
 ## Step 2 — Hypothesis classes
 
 Prioritize these, in roughly this order. For each class the goal is: cite a specific file:line where the pattern occurs AND describe the userspace shape that triggers it.
@@ -190,6 +203,20 @@ Prioritize these, in roughly this order. For each class the goal is: cite a spec
 **skb cow/share violations — the Dirty Frag class.** Per the May 2026 Dirty Frag advisory: any in-place modification of an \`sk_buff\`'s payload (e.g. in-place AEAD/cipher decrypt, in-place header rewrite) that doesn't first call \`skb_cow_data\` / \`skb_unshare\` on the path is a candidate for the \`SKBFL_SHARED_FRAG\` confused-deputy class. Watch especially: ESP / IPSec input paths (\`net/ipv4/esp4.c\`, \`net/ipv6/esp6.c\`), AEAD/MAC verification paths (\`net/rxrpc/rxkad.c\`), any \`crypto_*_decrypt\` where \`src == dst\`. The fix marker is the \`!skb_has_shared_frag(skb)\` (or \`skb->data_len\`) gate added before the in-place op. Missing gate = candidate finding.
 
 **Page-cache write primitive without ownership/COW proof — the Copy Fail / Dirty Pipe / Dirty COW class.** Any path that obtains a \`struct page *\` or \`struct folio *\` from file-backed page cache (\`find_get_page\`, \`filemap_get_folio\`, \`grab_cache_page\`, \`read_mapping_page\`, \`pagecache_get_page\`) or from a splice/pipe buffer (\`pipe_buffer.page\`), then writes through it, is high-value. Watch for \`kmap\`/\`kmap_local_page\` followed by \`memcpy\`/\`memset\`, or \`sg_set_page\` followed by in-place crypto/DMA. Before reporting, verify the path lacks an ownership or COW proof such as \`page_count\`/\`page_ref_count\`/\`folio_ref_count\`, \`folio_lock\` + \`folio_test_uptodate\`, \`PagePrivate\`/\`PageWriteback\`, \`page_mkwrite\`, or copying through \`copy_highpage\`/\`copy_user_highpage\`. Missing proof = candidate page-cache corruption/write-primitive finding.
+
+## Step 2b — Concrete hunt recipes (highest-yield classes)
+
+These are the three classes that produced the leaders' best 2026 kernel results. Run them as explicit recipes, not as vague reading:
+
+**Recipe (a) — Page-cache provenance / zero-copy ingress (the Copy Fail recipe; CVE-2026-43284, CVE-2026-46300, CVE-2026-31431).** Start at a *zero-copy ingress* API: \`splice\`, \`MSG_SPLICE_PAGES\`, \`vmsplice\`, \`sendfile\`, or any \`AF_ALG\` (\`algif_*\`) recvmsg/sendmsg path. Follow the page references it produces FORWARD to any in-place STORE on an \`sg\`/scatterlist entry or an \`skb\` frag. The bug exists when that store happens WITHOUT a copy-on-write. Audit three specific asymmetries:
+1. **\`SKBFL_SHARED_FRAG\` set-vs-checked asymmetry** — grep for sites that SET \`SKBFL_SHARED_FRAG\` (or build a frag from a page-cache page) and compare against sites that CHECK \`skb_has_shared_frag\`/\`skb->data_len\` before an in-place op. A set with no matching check on the consume path = candidate.
+2. **\`skb_cow_data\` COW-skip fast paths** — find the \`if (...) goto no_cow;\` / "linear, not cloned, skip the copy" fast paths around \`skb_cow_data\`/\`skb_unshare\` and prove the fast path can be entered with a *shared* frag.
+3. **\`req->src == req->dst\` in-place crypto** — any \`crypto_*_{en,de}crypt\` where the source and destination scatterlist are the same object AND the source SGL can be a page-cache page (reached via splice/AF_ALG). In-place on a borrowed page-cache page is the Copy Fail primitive.
+Confirm UNPRIVILEGED reachability of the ingress syscall before reporting.
+
+**Recipe (b) — Release-path uncancelled-work UAF / controlled indirect call (the meson-vdec / seq_midi shape; the mtk-jpeg / media release-work family).** Find an object that owns a \`struct work_struct\`, \`struct delayed_work\`, \`struct timer_list\`, \`struct tasklet_struct\`, or an \`ops\`/callback function pointer, and that is freed (\`kfree\`/\`kvfree\`/\`put_device\`/\`*_free\`) in a \`->release\`/\`->remove\`/\`->disconnect\`/\`->close\` path or an error label. Then prove the teardown does NOT \`cancel_work_sync\`/\`cancel_delayed_work_sync\`/\`del_timer_sync\`/\`tasklet_kill\`/\`flush_workqueue\` that work BEFORE the free. A queued work item firing after the free dereferences (and indirect-calls through) freed memory → controlled indirect call. Driver \`->remove\` and char-device \`->release\` paths in \`drivers/media\`, \`sound/\`, \`drivers/usb\` are the richest seam (copy-paste sibling drivers rarely all get the \`cancel_*_sync\` fix — pair this with the incomplete-fix leads). Note the \`cancel_*_work_sync\` → \`disable_*_work_sync\` migration: a re-queue after cancel is the same UAF.
+
+**Recipe (c) — Write-before-validate in crypto / verify paths.** In AEAD/MAC/signature verification (\`crypto_aead_decrypt\`, \`crypto_shash_*\`, \`*_verify\`, ESP/IPsec input, fs-verity, dm-verity, module-sig, \`rxrpc\`/Kerberos), check the ORDER of operations: is the plaintext/output written to a caller-visible buffer (or committed to the page cache / skb) BEFORE the authentication tag or signature is verified? If decrypt-then-write happens before \`memcmp\`/\`crypto_memneq\`-style tag check, an attacker who supplies a bad tag still gets the unverified plaintext written — a write primitive plus an oracle. The fix marker is the tag/sig check gating the write (the write happens only on the success path).
 
 ## Step 3 — Subsystem tagging
 

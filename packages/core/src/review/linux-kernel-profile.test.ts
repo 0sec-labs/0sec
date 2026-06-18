@@ -205,6 +205,37 @@ describe("kernelReviewAgentPrompt", () => {
     expect(withBlank).not.toContain("VARIANT-ANCHORED REVIEW");
   });
 
+  it("frames the review backward-from-primitive and enforces unprivileged reachability (Step 2a)", () => {
+    const prompt = kernelReviewAgentPrompt("/tmp/repo", []);
+    expect(prompt).toContain("target PRIMITIVE first");
+    expect(prompt).toMatch(/reason BACKWARD/i);
+    // The four primitive types are named.
+    expect(prompt).toMatch(/page-cache write/);
+    expect(prompt).toMatch(/controlled indirect call/);
+    expect(prompt).toMatch(/refcount underflow/);
+    expect(prompt).toMatch(/arbitrary write/);
+    // Unprivileged reachability is load-bearing (the keyctl/AF_ALG lesson).
+    expect(prompt).toMatch(/UNPRIVILEGED/);
+    expect(prompt).toMatch(/CLONE_NEWUSER/);
+    expect(prompt).toMatch(/keyctl|AF_ALG/);
+  });
+
+  it("includes the three high-yield hunt recipes (Step 2b)", () => {
+    const prompt = kernelReviewAgentPrompt("/tmp/repo", []);
+    // (a) page-cache provenance / zero-copy ingress
+    expect(prompt).toMatch(/MSG_SPLICE_PAGES/);
+    expect(prompt).toMatch(/SKBFL_SHARED_FRAG/);
+    expect(prompt).toMatch(/req->src == req->dst|req->src/);
+    expect(prompt).toMatch(/CVE-2026-43284/);
+    expect(prompt).toMatch(/CVE-2026-46300/);
+    // (b) release-path uncancelled work
+    expect(prompt).toMatch(/cancel_work_sync/);
+    expect(prompt).toMatch(/meson-vdec|seq_midi|mtk-jpeg/);
+    // (c) write-before-validate in crypto/verify
+    expect(prompt).toMatch(/write-before-validate|Write-before-validate|before the tag|verified.*before|before.*verified/i);
+    expect(prompt).toMatch(/crypto_memneq|fs-verity|dm-verity/);
+  });
+
   it("renders semgrep leads when provided", () => {
     const prompt = kernelReviewAgentPrompt("/tmp/repo", [
       {
