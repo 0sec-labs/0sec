@@ -163,6 +163,19 @@ export type {
   ControlDemoStep,
 } from "./kernel-primitive.js";
 export {
+  assessEscalation,
+  shouldWeaponize,
+  describeEscalation,
+  maxCeiling,
+  parseLlmEscalation,
+} from "./escalation-gate.js";
+export type {
+  EscalationVerdict,
+  ImpactCeiling,
+  EscalationBasis,
+  AssessEscalationOptions,
+} from "./escalation-gate.js";
+export {
   classifyUserspacePrimitive,
   sniffMemPrimitive,
   describeExploitabilityVerdict,
