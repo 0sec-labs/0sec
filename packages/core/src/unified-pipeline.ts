@@ -1251,7 +1251,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         ? "Explicit runtime 'api' requested without an API key. AI analysis skipped."
         : opts.runtime && opts.runtime !== "auto"
           ? `Requested runtime '${opts.runtime}' is not available. AI analysis skipped.`
-          : "No API key or CLI runtime available. AI analysis skipped. Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY, or OPENAI_API_KEY.";
+          : "No API key or CLI runtime available. AI analysis skipped. Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY, OPENAI_API_KEY, or Z_AI_API_KEY.";
       warnings.push({ stage: "research", message: skipMessage });
       emit({ type: "stage:end", stage: "research", message: "Skipped — no compatible AI runtime" });
       emit({ type: "stage:end", stage: "verify", message: "Skipped" });
