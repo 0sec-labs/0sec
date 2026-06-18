@@ -1,5 +1,7 @@
-import type { SemgrepFinding, Finding } from "@pwnkit/shared";
+import type { SemgrepFinding, Finding, ReviewAnchor } from "@pwnkit/shared";
 import { SUBSYSTEM_PATTERNS } from "../ingest/kernel-crash.js";
+
+export type { ReviewAnchor };
 
 /**
  * Prompt for the Linux-kernel source-review profile. Tunes the agent
@@ -31,6 +33,7 @@ export function kernelReviewAgentPrompt(
   subsystem?: string,
   hypothesis?: string,
   attackSurfaceContext?: string,
+  anchors?: ReviewAnchor[],
 ): string {
   const semgrepSection =
     semgrepResults.length > 0
@@ -76,6 +79,25 @@ export function kernelReviewAgentPrompt(
     ? `\n\n## OPERATOR HYPOTHESIS — PRIMARY RESEARCH DIRECTION\n\nThe operator has identified a specific attack surface insight. This is your PRIMARY research direction. Spend at least 60% of your turns investigating this hypothesis before broadening:\n\n> ${hypothesis}\n\nStart by understanding the codepath described, then look for violations, missing checks, or unintended interactions along that path.\n`
     : "";
 
+  // Variant-anchored mode (Project Zero Naptime / Big Sleep framing). When the
+  // operator (or fix-commit-intel / a recent CVE) supplies one or more known
+  // bugs, reframe the whole review from open-ended discovery to "find structural
+  // VARIANTS of this exact bug across the tree". Anchoring on a concrete,
+  // confirmed defect is the precision unlock — the agent already knows what a
+  // real bug of this shape looks like, so it can match the structure instead of
+  // guessing at what might be wrong. Default (no anchor) behavior is unchanged.
+  const validAnchors = (anchors ?? []).filter((a) => a && a.pattern.trim());
+  const anchorBlock = validAnchors.length > 0
+    ? `\n\n## VARIANT-ANCHORED REVIEW — PRIMARY DIRECTIVE\n\nThis is a VARIANT ANALYSIS, not open-ended bug discovery. You are anchored on ${validAnchors.length === 1 ? "a known, confirmed bug" : `${validAnchors.length} known, confirmed bugs`}. Your job is NOT to "find any bug" — it is to find structural VARIANTS of the exact pattern(s) below elsewhere in this tree. This framing raises precision: you already know what a real bug of this shape looks like, so match the STRUCTURE, do not free-hunt.\n\n${validAnchors
+        .map((a, i) => {
+          const lines = [`### Anchor ${i + 1}${a.id ? ` — ${a.id}` : ""}`, ``, `- Root-cause pattern: ${a.pattern}`];
+          if (a.origin) lines.push(`- Original location: ${a.origin}`);
+          if (a.fix) lines.push(`- Fix marker (its ABSENCE elsewhere is the variant signal): ${a.fix}`);
+          return lines.join("\n");
+        })
+        .join("\n\n")}\n\nMethod for each anchor:\n1. Read the anchor's root cause until you can state the structural invariant that, when violated, produces the bug.\n2. Enumerate every site in this tree with the same shape (same API sequence, same missing guard, same data-flow), not just the original location.\n3. For each candidate, prove whether the fix marker / safety check is present. Missing guard on a reachable path = a variant finding; present guard = a grounded negative, note it and move on.\n4. Spend the bulk of your turns expanding the variant set. Only broaden to unrelated bug classes after the anchored variant search is exhausted.\n`
+    : "";
+
   const turnBudgetRules = subsystemDirs.length > 0
     ? `Rules:
 - NEVER conclude "this subsystem is secure" or "I haven't found a provable bug"
@@ -101,7 +123,7 @@ export function kernelReviewAgentPrompt(
   return `You are a security researcher performing an authorized review of a Linux kernel source tree to find memory-safety, concurrency, and userspace-boundary vulnerabilities.
 
 REPOSITORY: ${repoPath}
-${subsystemBlock}${hypothesisBlock}${attackSurfaceContext ? `\n${attackSurfaceContext}\n` : ""}
+${subsystemBlock}${anchorBlock}${hypothesisBlock}${attackSurfaceContext ? `\n${attackSurfaceContext}\n` : ""}
 ## CRITICAL — Turn Budget Discipline
 
 Do NOT call done/finish early. You MUST use your ENTIRE turn budget. The Linux

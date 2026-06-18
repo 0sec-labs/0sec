@@ -254,7 +254,7 @@ async function runReviewAgent(
 
   const baseAgentSystemPrompt =
     profile === "linux-kernel"
-      ? kernelReviewAgentPrompt(repoPath, semgrepFindings, foxguardFindings, config.subsystem, config.hypothesis, attackSurfaceContext)
+      ? kernelReviewAgentPrompt(repoPath, semgrepFindings, foxguardFindings, config.subsystem, config.hypothesis, attackSurfaceContext, config.anchors)
       : profile === "c-library"
       ? cppReviewAgentPrompt(repoPath, semgrepFindings, config.hypothesis)
       : reviewAgentPrompt(repoPath, semgrepFindings, undefined, false, config.hypothesis);

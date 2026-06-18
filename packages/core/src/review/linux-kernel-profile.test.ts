@@ -128,6 +128,83 @@ describe("kernelReviewAgentPrompt", () => {
     expect(prompt).not.toContain("Known Attack Surfaces");
   });
 
+  it("reframes the review around the anchor when one is provided (variant-analysis default)", () => {
+    const anchor = {
+      id: "CVE-2026-31431",
+      pattern: "page-cache write primitive without ownership/COW proof",
+      origin: "fs/foo/bar.c:512",
+      fix: "folio_test_uptodate + folio_lock gate added before the write",
+    };
+    const prompt = kernelReviewAgentPrompt(
+      "/tmp/repo",
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [anchor],
+    );
+
+    // Naptime/Big Sleep variant framing — anchor on a known bug, hunt variants.
+    expect(prompt).toContain("VARIANT-ANCHORED REVIEW");
+    expect(prompt).toMatch(/VARIANT.*not open-ended|not open-ended bug discovery/i);
+    expect(prompt).toMatch(/variant/i);
+    // The anchor's concrete details are surfaced to the agent.
+    expect(prompt).toContain("CVE-2026-31431");
+    expect(prompt).toContain("page-cache write primitive without ownership/COW proof");
+    expect(prompt).toContain("fs/foo/bar.c:512");
+    expect(prompt).toContain("folio_test_uptodate + folio_lock gate added before the write");
+  });
+
+  it("supports multiple anchors and counts them", () => {
+    const prompt = kernelReviewAgentPrompt(
+      "/tmp/repo",
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [
+        { pattern: "missing skb_cow_data before in-place AEAD decrypt", id: "ANCHOR-A" },
+        { pattern: "signed/unsigned length comparison on user-controlled count", id: "ANCHOR-B" },
+      ],
+    );
+    expect(prompt).toContain("2 known, confirmed bugs");
+    expect(prompt).toContain("ANCHOR-A");
+    expect(prompt).toContain("ANCHOR-B");
+    expect(prompt).toContain("Anchor 1");
+    expect(prompt).toContain("Anchor 2");
+  });
+
+  it("leaves the unanchored prompt unchanged (default behavior)", () => {
+    const baseline = kernelReviewAgentPrompt("/tmp/repo", []);
+    expect(baseline).not.toContain("VARIANT-ANCHORED REVIEW");
+
+    // Passing an empty/whitespace-only anchor list must be a no-op.
+    const withEmpty = kernelReviewAgentPrompt(
+      "/tmp/repo",
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+    );
+    expect(withEmpty).toBe(baseline);
+
+    const withBlank = kernelReviewAgentPrompt(
+      "/tmp/repo",
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [{ pattern: "   " }],
+    );
+    expect(withBlank).toBe(baseline);
+    expect(withBlank).not.toContain("VARIANT-ANCHORED REVIEW");
+  });
+
   it("renders semgrep leads when provided", () => {
     const prompt = kernelReviewAgentPrompt("/tmp/repo", [
       {

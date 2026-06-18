@@ -1262,6 +1262,25 @@ export interface AuditReport {
  */
 export type ReviewProfile = "default" | "c-library" | "linux-kernel";
 
+/**
+ * A known bug to anchor a review on for variant analysis. Project Zero's
+ * Naptime / Big Sleep framing: anchoring the agent on ONE concrete, confirmed
+ * bug and asking "where else does this exact pattern occur?" is dramatically
+ * more precise than open-ended "find bugs" discovery. The anchor can be sourced
+ * from a recent CVE, a fix-commit-intel record, or any known vulnerability
+ * pattern. Only `pattern` is required; the other fields sharpen the search.
+ */
+export interface ReviewAnchor {
+  /** The structural root cause to hunt variants of, e.g. "missing skb_cow_data before in-place AEAD decrypt". */
+  pattern: string;
+  /** CVE id or advisory identifier, if known, e.g. "CVE-2026-31431". */
+  id?: string;
+  /** Where the original bug lives, e.g. "net/ipv4/esp4.c:123" or "ESP/IPsec input path". */
+  origin?: string;
+  /** The fix marker that closed the original — its absence elsewhere is the variant signal. */
+  fix?: string;
+}
+
 export interface ReviewConfig {
   repo: string;
   depth: ScanDepth;
@@ -1285,6 +1304,16 @@ export interface ReviewConfig {
   /** Operator hypothesis to seed the agent with a specific research direction.
    *  Inspired by Xint Code's operator prompt that found CVE-2026-31431. */
   hypothesis?: string;
+  /**
+   * Known bug(s) to anchor the review on for variant analysis. When provided,
+   * the linux-kernel review reframes from open-ended discovery to hunting
+   * structural VARIANTS of these exact patterns across the tree (Project Zero
+   * Naptime / Big Sleep framing — the precision unlock). Sourced from a recent
+   * CVE, a fix-commit-intel record, or any known vulnerability pattern. Empty
+   * or omitted = unchanged open-ended review. Only meaningful for the
+   * `"linux-kernel"` profile.
+   */
+  anchors?: ReviewAnchor[];
   /**
    * External candidate vulnerable spans to seed the agent's worklist before
    * static scanner prioritisation runs. Today the only first-class producer is
