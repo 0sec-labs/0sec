@@ -1,0 +1,99 @@
+id: command-injection
+name: "OS Command Injection"
+description: "Untrusted data reaching a shell/subprocess — via filenames, URLs, archive entries, config values, and tool delegates. The single highest-disclosure bug class in our corpus (ImageMagick delegates, ESLint processors, whisper examples)."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+tags:
+  - command-injection
+  - rce
+  - subprocess
+  - shell
+  - delegate
+  - argument-injection
+  - nodejs
+  - python
+  - c
+triggers:
+  - "command.?inject"
+  - "child_process"
+  - "exec\\("
+  - "execSync"
+  - "spawn\\("
+  - "spawnSync"
+  - "shell\\s*[:=]\\s*true"
+  - "os\\.system"
+  - "subprocess"
+  - "popen"
+  - "Runtime\\.getRuntime"
+  - "ProcessBuilder"
+  - "system\\("
+  - "execve|execvp|execlp"
+  - "delegate"
+  - "ImageMagick|convert\\b|ffmpeg|gs\\b|ghostscript"
+  - "eslint|processor"
+  - "backtick|`\\$"
+estimated_tokens: 950
+content: |
+  ## OS Command Injection Methodology
+
+  This is the highest-yield, most-frequently-accepted bug class in our corpus.
+  The win is almost never a literal `;rm -rf` in obvious code — it's **untrusted
+  data that flows into a subprocess through a non-obvious channel**: a filename,
+  a URL, an archive member name, a config field, or a tool "delegate" template.
+
+  ### Phase 1: Find the subprocess sinks
+  - **Node**: `child_process.exec`/`execSync` (runs via `/bin/sh -c` → shell
+    metachars live), `spawn`/`execFile` with `shell: true`, template literals
+    built into an `exec` string.
+  - **Python**: `os.system`, `subprocess.*(…, shell=True)`, `os.popen`,
+    `commands.*`. Also `subprocess.run([...])` where an attacker controls
+    `argv[0]` or can inject a leading `-flag` (argument injection).
+  - **C/C++**: `system()`, `popen()`, `execlp/execvp` with a PATH-resolved name,
+    or building a command string then handing it to a shell.
+  - **Delegates / external tools**: ImageMagick `delegates.xml`, ffmpeg/gs
+    invocations, git hooks, `eslint` custom processors, build scripts. These
+    expand `%f`/`%u`/`{filename}` style placeholders into a shell command.
+
+  ### Phase 2: Trace the source (the part people miss)
+  Ask: *what attacker-controlled value reaches the sink, and through how many
+  hops?* Productive sources in our verified findings:
+  - **Filenames** — an uploaded/processed file's name interpolated into a
+    command (ESLint processor on a crafted filename; ImageMagick on `name.png`).
+  - **URLs / remote refs** — a git remote URL, a download URL, a redirect target
+    passed to a fetch+process step.
+  - **Archive member names** — extracted entries used in a later command.
+  - **Config / manifest fields** — a value from `package.json`, a YAML/JSON
+    config, or an icon/asset path used unquoted in a sync/build script.
+  - **Auth / header values** — usernames or tokens echoed into a command.
+
+  ### Phase 3: Argument injection (don't stop at metachars)
+  Even with no shell, a parameterized subprocess is exploitable if the attacker
+  controls a value that becomes a **flag**: a filename starting with `-` becomes
+  an option (`--output=…`, `-o`), `git`'s `--upload-pack`, `curl`'s `-K`/`-o`,
+  `ssh`'s `-o ProxyCommand=…`. Look for `argv` arrays where an untrusted string
+  lands in a position that the tool will parse as an option.
+
+  ### Phase 4: Confirm before save_finding (mandatory)
+  A real, savable command-injection needs a concrete trigger path:
+  - the exact source → sink dataflow (file:line for each hop),
+  - the metachar/flag that breaks out and why the surrounding quoting/escaping
+    doesn't stop it (check for `shellescape`, `shlex.quote`, array-argv, allowlist),
+  - a minimal PoC input (a filename / URL / config value) and the resulting
+    command string. If you can run it in the sandbox, do — a captured
+    `id`/`echo PWNED` is the gold standard.
+
+  ### Anti-false-positive checklist
+  - Is the input actually attacker-controlled, or developer-supplied at build?
+  - Is there an allowlist / `execFile` (no shell) / proper quoting upstream?
+  - Does the "untrusted" value get validated/canonicalized before the sink?
+  If quoting is correct and the value is array-passed without shell, it is NOT
+  command injection — say so and move on; don't pad the report.
+
+  ### Real wins from this engine (the shape that lands)
+  - ImageMagick delegate command expansion via crafted filename/URL.
+  - ESLint custom processor command injection via crafted filename (acknowledged
+    by the maintainer).
+  - `whisper` example: untrusted filename → subprocess.
+  - GitHub Actions supply-chain command injection via a malicious value.

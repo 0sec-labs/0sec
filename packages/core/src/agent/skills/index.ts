@@ -15,14 +15,15 @@ export type { SkillDefinition, SkillSummary } from "./types.js";
 /**
  * Maps an EGATS vuln class (#557) to the methodology skill that should be
  * auto-loaded for a specialist branch. Only classes with a matching skill in
- * the registry are listed — classes without a dedicated skill (xss, ssrf,
- * idor) still route to a specialist prompt + tool subset, they just don't
- * preload a skill. Skill IDs must match the `id:` of a YAML file under this
- * directory tree (validated by the skill-integration test).
+ * the registry are listed — classes without a dedicated skill (xss, idor)
+ * still route to a specialist prompt + tool subset, they just don't preload a
+ * skill. Skill IDs must match the `id:` of a YAML file under this directory
+ * tree (validated by the skill-integration test).
  */
 export const VULN_CLASS_SKILL: Partial<Record<VulnClass, string>> = {
   sqli: "sqli-advanced",
   ssti: "ssti-exploitation",
+  ssrf: "ssrf-bypass",
   "auth-bypass": "jwt-attacks",
 };
 
