@@ -159,6 +159,43 @@ describe("structurallyValidateConformanceModel", () => {
     expect(r.valid).toBe(false);
   });
 
+  // FP guard #2: a status cannot be both conformant and a violation.
+  it("rejects a prediction with overlapping expected/forbidden status sets", () => {
+    const r = structurallyValidateConformanceModel({
+      rules: VALID_MODEL.rules,
+      hypotheses: [
+        {
+          ...VALID_MODEL.hypotheses[0],
+          predictedObservable: {
+            surface: "method",
+            expectedStatusIn: [405],
+            forbiddenStatusIn: [405],
+          },
+        },
+      ],
+    });
+    expect(r.valid).toBe(false);
+    expect(r.errors.some((e) => /overlapping/.test(e.message))).toBe(true);
+  });
+
+  // FP guard #3: the header applicability guards are accepted by the schema.
+  it("accepts header rules carrying whenStatusIn / unlessStatusIn guards", () => {
+    const r = structurallyValidateConformanceModel({
+      rules: VALID_MODEL.rules,
+      hypotheses: [
+        {
+          ...VALID_MODEL.hypotheses[0],
+          predictedObservable: {
+            surface: "header",
+            requiredHeader: "Location",
+            whenStatusIn: [201],
+          },
+        },
+      ],
+    });
+    expect(r.valid).toBe(true);
+  });
+
   it("rejects non-object input", () => {
     expect(structurallyValidateConformanceModel("not an object").valid).toBe(false);
   });

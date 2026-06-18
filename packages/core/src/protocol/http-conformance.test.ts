@@ -197,6 +197,8 @@ describe("runHttpConformanceCheck", () => {
       rules: MODEL.rules,
       hypotheses: [
         MODEL.hypotheses[0],
+        // Verb-swapped copy — but it references rule `trace-must-405`, so after
+        // reconciliation the SENT method must be the rule's TRACE, not "TRACK".
         { ...MODEL.hypotheses[0], ruleId: "trace-must-405", exercise: { method: "TRACK", path: "/" } },
       ],
     };
@@ -215,5 +217,114 @@ describe("runHttpConformanceCheck", () => {
 
     expect(result.attempts).toHaveLength(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  // FP guard #1: the rule, not the hypothesis's copies, is authoritative. A
+  // hypothesis that "upgrades" a SHOULD rule to MUST (or verb-swaps the
+  // exercise) must NOT yield a confirmed finding.
+  it("derives level + exercise from the rule, refusing a hypothesis 'upgrade'", async () => {
+    const upgraded = {
+      rules: [
+        {
+          id: "trace-should-405",
+          specCitation: "RFC 9110 §9.3.8",
+          // The HONEST rule is only SHOULD-level → can never be confirmed.
+          level: "SHOULD",
+          surface: "method",
+          mandate: "SHOULD respond 405 to unsupported TRACE",
+          // The honest exercise is a benign GET, not TRACE.
+          exercise: { method: "GET", path: "/" },
+        },
+      ],
+      hypotheses: [
+        {
+          ruleId: "trace-should-405",
+          specCitation: "RFC 9110 §9.3.8",
+          // Hypothesis tries to upgrade to MUST and swap to TRACE.
+          level: "MUST",
+          implLocation: "handle()",
+          rationale: "attempts to upgrade a SHOULD rule to MUST",
+          predictedObservable: {
+            surface: "method",
+            expectedStatusIn: [405],
+            forbiddenStatusIn: [200],
+          },
+          exercise: { method: "TRACE", path: "/" },
+          confidence: 0.5,
+        },
+      ],
+    };
+    const llm = mockLlm(upgraded);
+    // Target returns 200 — would be "confirmed" IF the MUST upgrade were trusted.
+    const send: HttpSender = vi.fn(async () => ({ success: true, output: { status: 200 } }));
+
+    const result = await runHttpConformanceCheck(
+      SPEC,
+      IMPL,
+      "https://target.test",
+      llm,
+      send,
+      PROTOCOL,
+    );
+
+    expect(result.ok).toBe(true);
+    // The rule is SHOULD → the 200 is at most inconclusive, never confirmed.
+    expect(result.attempts[0].verdict.status).toBe("inconclusive");
+    expect(result.findings).toHaveLength(0);
+    // And the SENT method is the rule's GET, not the hypothesis's TRACE.
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  // FP guard #1b: surface drift (header matcher on a method rule) cannot be
+  // safely reconciled → inconclusive, not exercised, never confirmed.
+  it("treats a hypothesis whose surface drifts from its rule as inconclusive", async () => {
+    const drift = {
+      rules: [
+        {
+          id: "trace-must-405",
+          specCitation: "RFC 9110 §9.3.8",
+          level: "MUST",
+          surface: "method",
+          mandate: "MUST respond 405 to unsupported TRACE",
+          exercise: { method: "TRACE", path: "/" },
+        },
+      ],
+      hypotheses: [
+        {
+          ruleId: "trace-must-405",
+          specCitation: "RFC 9110 §9.3.8",
+          level: "MUST",
+          implLocation: "handle()",
+          rationale: "surface drift: claims a header matcher on a method rule",
+          predictedObservable: {
+            surface: "header",
+            forbiddenHeader: "x-powered-by",
+          },
+          exercise: { method: "TRACE", path: "/" },
+          confidence: 0.5,
+        },
+      ],
+    };
+    const llm = mockLlm(drift);
+    const send: HttpSender = vi.fn(async () => ({
+      success: true,
+      output: { status: 200, headers: { "x-powered-by": "Express" } },
+    }));
+
+    const result = await runHttpConformanceCheck(
+      SPEC,
+      IMPL,
+      "https://target.test",
+      llm,
+      send,
+      PROTOCOL,
+    );
+
+    expect(result.attempts[0].verdict.status).toBe("inconclusive");
+    expect(result.findings).toHaveLength(0);
+    // Drifted hypothesis is NOT exercised at all.
+    expect(send).not.toHaveBeenCalled();
   });
 });

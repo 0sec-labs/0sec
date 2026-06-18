@@ -35,6 +35,7 @@ import {
   registerDiscloseCommand,
   registerVerifyCommand,
   registerExploitCommand,
+  registerProtocolCheckCommand,
   registerCveCommand,
   registerUpgradeCommand,
   registerH1Command,
@@ -88,6 +89,7 @@ registerKernelCommand(program);
 registerDiscloseCommand(program);
 registerVerifyCommand(program);
 registerExploitCommand(program);
+registerProtocolCheckCommand(program);
 registerCveCommand(program);
 registerUpgradeCommand(program);
 registerH1Command(program);
@@ -131,7 +133,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "cloud", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "cloud", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {

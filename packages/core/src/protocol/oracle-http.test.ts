@@ -161,3 +161,102 @@ describe("judgeHttpDivergence — header surface", () => {
     expect(v.confidence).toBe(0.3);
   });
 });
+
+// FP guard #2: a prediction where the same status is BOTH expected (conformant)
+// and forbidden (a violation) is contradictory. The oracle must never confirm
+// on it — defense in depth even though conformance-gen's validator rejects it.
+describe("judgeHttpDivergence — contradictory status prediction (FP guard #2)", () => {
+  it("does NOT confirm when expectedStatusIn and forbiddenStatusIn overlap", () => {
+    const h = hyp({
+      level: "MUST",
+      surface: "method",
+      predictedObservable: {
+        surface: "method",
+        expectedStatusIn: [405],
+        forbiddenStatusIn: [405], // same status flagged both ways
+      },
+      confidence: 0.7,
+    });
+    const v = judgeHttpDivergence(h, res(405));
+    expect(v.status).toBe("inconclusive");
+    expect(v.confidence).toBe(0.7);
+    expect(v.evidence).toMatch(/contradictory/i);
+  });
+
+  it("does NOT confirm on a partial overlap either", () => {
+    const h = hyp({
+      level: "MUST",
+      surface: "status",
+      predictedObservable: {
+        surface: "status",
+        expectedStatusIn: [200, 204],
+        forbiddenStatusIn: [204, 500], // 204 overlaps
+      },
+    });
+    // 500 is in the forbidden set, but the prediction is contradictory overall.
+    expect(judgeHttpDivergence(h, res(500)).status).toBe("inconclusive");
+  });
+});
+
+// FP guard #3: header rules are conditional on status. A required/forbidden
+// header rule must only be judged when the response status satisfies the rule's
+// applicability guard — otherwise an unrelated response (e.g. a 500) is falsely
+// promoted as "missing the required Location" of a 201.
+describe("judgeHttpDivergence — header applicability guard (FP guard #3)", () => {
+  it("does NOT confirm a missing required header when the status is out of guard", () => {
+    const h = hyp({
+      level: "MUST",
+      surface: "header",
+      predictedObservable: {
+        surface: "header",
+        requiredHeader: "Location",
+        whenStatusIn: [201], // Location is required only on 201
+      },
+    });
+    // A 500 is missing Location, but the rule does not apply → inconclusive.
+    const v = judgeHttpDivergence(h, res(500, {}));
+    expect(v.status).toBe("inconclusive");
+    expect(v.evidence).toMatch(/does not apply/i);
+  });
+
+  it("CONFIRMS the same rule when the status IS in the guard and header is missing", () => {
+    const h = hyp({
+      level: "MUST",
+      surface: "header",
+      predictedObservable: {
+        surface: "header",
+        requiredHeader: "Location",
+        whenStatusIn: [201],
+      },
+    });
+    const v = judgeHttpDivergence(h, res(201, {}));
+    expect(v.status).toBe("confirmed");
+  });
+
+  it("REFUTES when the status is in the guard and the required header IS present", () => {
+    const h = hyp({
+      level: "MUST",
+      surface: "header",
+      predictedObservable: {
+        surface: "header",
+        requiredHeader: "Location",
+        whenStatusIn: [201],
+      },
+    });
+    expect(judgeHttpDivergence(h, res(201, { location: "/x" })).status).toBe("refuted");
+  });
+
+  it("honors unlessStatusIn: a forbidden header on an excluded status is inconclusive", () => {
+    const h = hyp({
+      level: "MUST NOT",
+      surface: "header",
+      predictedObservable: {
+        surface: "header",
+        forbiddenHeader: "Content-Length",
+        unlessStatusIn: [304], // a 304 MAY carry Content-Length, so don't judge it
+      },
+    });
+    const v = judgeHttpDivergence(h, res(304, { "content-length": "0" }));
+    expect(v.status).toBe("inconclusive");
+  });
+});

@@ -844,6 +844,7 @@ export {
   structurallyValidateConformanceModel,
   judgeHttpDivergence,
   runHttpConformanceCheck,
+  createLiveHttpSender,
 } from "./protocol/index.js";
 export type {
   ProtocolModel,
@@ -858,7 +859,10 @@ export type {
   ConformanceModel,
   ConformanceGenResult,
   ConformanceValidator,
+  ConformanceGenOptions,
   HttpSender,
   HttpConformanceResult,
+  HttpConformanceOptions,
   ConformanceAttempt,
+  LiveHttpSenderOptions,
 } from "./protocol/index.js";

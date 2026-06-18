@@ -144,6 +144,27 @@ export interface ConformancePrediction {
   requiredHeader?: string;
   /** Header name a conformant response MUST NOT carry. */
   forbiddenHeader?: string;
+  /**
+   * Applicability guard for header rules (and any conditional rule). Real RFC
+   * header requirements are almost never unconditional — `Location` is required
+   * only on a 201/3xx, `Content-Range` forbidden except on 206/416, etc. When
+   * set, the oracle only judges the header matcher if the observed status is in
+   * this set; any other status → `inconclusive` (the rule did not apply, so
+   * absence/presence of the header proves nothing).
+   *
+   * Omitting both guards means "applies to every response" — which is correct
+   * for a genuinely unconditional rule, but the model is steered (see the system
+   * prompt) to carry a guard for header rules so a 500 can never be mistaken for
+   * a conformant 201 missing its `Location`.
+   */
+  whenStatusIn?: number[];
+  /**
+   * Inverse applicability guard: the rule applies UNLESS the observed status is
+   * in this set. Lets a rule say "this header is required on every response
+   * except a 304/204". When the observed status is in this set, the oracle
+   * returns `inconclusive` (rule not applicable).
+   */
+  unlessStatusIn?: number[];
 }
 
 /**

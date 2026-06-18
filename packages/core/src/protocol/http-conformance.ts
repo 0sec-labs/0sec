@@ -33,6 +33,7 @@ import {
 } from "./conformance-gen.js";
 import { judgeHttpDivergence } from "./oracle-http.js";
 import type {
+  ConformanceRule,
   DivergenceHypothesis,
   DivergenceVerdict,
   HttpExercise,
@@ -162,6 +163,47 @@ function confirmedDivergenceToFinding(
 }
 
 /**
+ * FP guard (#972 oracle-hardening): the LLM emits BOTH the rules and the
+ * hypotheses, and a hypothesis carries its own copies of `level`,
+ * `specCitation`, `exercise`, and `predictedObservable.surface`. The validator
+ * only checks that `ruleId` references a real rule — so the model could emit an
+ * honest `SHOULD` (or GET-exercised) rule and then a hypothesis for that same
+ * ruleId "upgraded" to `MUST` / verb-swapped to a different exercise, and the
+ * oracle (which trusts the hypothesis) would `confirm` on the upgraded copy.
+ *
+ * This reconciles each hypothesis against its authoritative `ConformanceRule`:
+ * the rule is the source of truth for `level`, `specCitation`, `exercise`, and
+ * the matcher `surface`. The hypothesis contributes ONLY the oracle-checkable
+ * matcher details (status sets / header guards), its rationale, locus and prior.
+ *
+ * If the hypothesis's declared `predictedObservable.surface` disagrees with the
+ * rule's `surface`, that is drift we cannot safely reconcile (we'd be applying a
+ * header matcher to a method rule, or vice-versa) → the caller must treat it as
+ * inconclusive and never confirm. Returns `null` on that drift.
+ */
+function reconcileHypothesisWithRule(
+  hypothesis: DivergenceHypothesis,
+  rule: ConformanceRule,
+): DivergenceHypothesis | null {
+  // The matcher's surface must match the rule it claims to test, or the oracle
+  // would judge the wrong dimension. Do not silently rewrite it — bail.
+  if (hypothesis.predictedObservable.surface !== rule.surface) {
+    return null;
+  }
+  return {
+    ...hypothesis,
+    // Authoritative fields come from the RULE, not the hypothesis's copies.
+    level: rule.level,
+    specCitation: rule.specCitation,
+    exercise: rule.exercise,
+    predictedObservable: {
+      ...hypothesis.predictedObservable,
+      surface: rule.surface,
+    },
+  };
+}
+
+/**
  * Run the Tier-1 HTTP conformance check end-to-end.
  *
  *   1. conformance-gen infers + validates a ConformanceModel from the spec +
@@ -211,12 +253,48 @@ export async function runHttpConformanceCheck(
   }
 
   const cap = Math.max(0, opts.maxExercises ?? DEFAULT_MAX_EXERCISES);
-  const hypotheses = gen.model.hypotheses.slice(0, cap);
+  const rawHypotheses = gen.model.hypotheses.slice(0, cap);
+
+  // Source-of-truth rule lookup. The validator already guarantees every
+  // hypothesis references a known ruleId, so this resolves for every entry.
+  const rulesById = new Map(gen.model.rules.map((r) => [r.id, r]));
 
   const attempts: ConformanceAttempt[] = [];
   const findings: Finding[] = [];
 
-  for (const hypothesis of hypotheses) {
+  for (const rawHypothesis of rawHypotheses) {
+    const rule = rulesById.get(rawHypothesis.ruleId);
+    // Reconcile the hypothesis against its authoritative rule so the oracle
+    // judges the RULE's level/citation/exercise/surface, not the LLM's
+    // (possibly upgraded) copies on the hypothesis. Surface drift ⇒ null.
+    const hypothesis = rule
+      ? reconcileHypothesisWithRule(rawHypothesis, rule)
+      : null;
+
+    if (!hypothesis) {
+      // Drift we can't safely reconcile (missing rule or surface mismatch).
+      // Record it as inconclusive — NEVER confirmed — and move on.
+      const observed: ObservedHttpResponse = {
+        status: 0,
+        error: rule
+          ? `hypothesis surface "${rawHypothesis.predictedObservable.surface}" ` +
+            `disagrees with rule "${rule.id}" surface "${rule.surface}"; ` +
+            `not exercised (cannot confirm on drifted hypothesis)`
+          : `hypothesis references unknown rule "${rawHypothesis.ruleId}"; not exercised`,
+      };
+      attempts.push({
+        hypothesis: rawHypothesis,
+        observed,
+        verdict: {
+          ruleId: rawHypothesis.ruleId,
+          status: "inconclusive",
+          confidence: rawHypothesis.confidence,
+          evidence: observed.error ?? "drifted hypothesis; not exercised",
+        },
+      });
+      continue;
+    }
+
     const url = exerciseUrl(targetUrl, hypothesis.exercise);
     let observed: ObservedHttpResponse;
     try {

@@ -48,3 +48,6 @@ export type {
   HttpConformanceOptions,
   ConformanceAttempt,
 } from "./http-conformance.js";
+
+export { createLiveHttpSender } from "./http-sender.js";
+export type { LiveHttpSenderOptions } from "./http-sender.js";

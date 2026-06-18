@@ -78,6 +78,8 @@ const predictionSchema = z
     forbiddenStatusIn: z.array(z.number().int()).optional(),
     requiredHeader: z.string().optional(),
     forbiddenHeader: z.string().optional(),
+    whenStatusIn: z.array(z.number().int()).optional(),
+    unlessStatusIn: z.array(z.number().int()).optional(),
   })
   .strict()
   // A prediction is useless to the oracle unless it carries at least one
@@ -89,6 +91,23 @@ const predictionSchema = z
       Boolean(p.requiredHeader) ||
       Boolean(p.forbiddenHeader),
     { message: "predictedObservable carries no matcher (status set or header)" },
+  )
+  // FP guard (#972 oracle-hardening): a status that is BOTH "expected"
+  // (conformant) and "forbidden" (proves a violation) is self-contradictory.
+  // The oracle's forbidden branch would fire first and falsely `confirm` a
+  // status the same prediction calls conformant. Reject the overlap so the
+  // model self-corrects rather than emitting an unsafe prediction.
+  .refine(
+    (p) => {
+      if (!p.expectedStatusIn || !p.forbiddenStatusIn) return true;
+      const forbidden = new Set(p.forbiddenStatusIn);
+      return !p.expectedStatusIn.some((s) => forbidden.has(s));
+    },
+    {
+      message:
+        "predictedObservable has overlapping expectedStatusIn and forbiddenStatusIn " +
+        "(a status cannot be both conformant and a violation)",
+    },
   );
 
 const divergenceHypothesisSchema = z
@@ -221,9 +240,16 @@ const SYSTEM_PROMPT = [
   "  - `ruleId` MUST reference one of the rules you emitted.",
   "  - `predictedObservable` is the deterministic, machine-checkable shape a",
   "    CONFORMANT response must have: { surface, expectedStatusIn?,",
-  "    forbiddenStatusIn?, requiredHeader?, forbiddenHeader? }. It MUST carry at",
-  "    least one matcher. Use `forbiddenStatusIn` for codes that CONCRETELY",
-  "    prove a violation (e.g. a 2xx to a method the spec says MUST be rejected).",
+  "    forbiddenStatusIn?, requiredHeader?, forbiddenHeader?, whenStatusIn?,",
+  "    unlessStatusIn? }. It MUST carry at least one matcher. Use",
+  "    `forbiddenStatusIn` for codes that CONCRETELY prove a violation (e.g. a",
+  "    2xx to a method the spec says MUST be rejected). `expectedStatusIn` and",
+  "    `forbiddenStatusIn` MUST NOT share any code.",
+  "  - For a HEADER rule, the requirement is almost always CONDITIONAL on the",
+  "    status (e.g. `Location` is required only on a 201/3xx; `Content-Range` is",
+  "    forbidden except on 206). Carry `whenStatusIn` (rule applies only on these",
+  "    statuses) so an unrelated response (e.g. a 500) is not mistaken for a",
+  "    conformant 201 missing its header. Use `unlessStatusIn` for the inverse.",
   "  - `confidence` is your prior plausibility (0–1) that the impl diverges. It",
   "    is NOT a verdict — a deterministic oracle decides confirmed/refuted.",
   "- Prefer MUST/MUST NOT rules: only those can be confirmed by the oracle.",
