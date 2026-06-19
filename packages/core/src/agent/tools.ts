@@ -41,6 +41,13 @@ import {
 } from "./auth-boundary-prober.js";
 import { runRecon } from "../recon/recon.js";
 import { runJsRecon } from "../recon/js-recon.js";
+import type { ReconAsset } from "../recon/recon.js";
+import {
+  getCloudSinkConfig,
+  postAssets,
+  reconAssetToCloudSinkAsset,
+  type CloudSinkAsset,
+} from "../cloud-sink.js";
 import {
   probeS3Bucket,
   classifyTakeover,
@@ -162,6 +169,23 @@ function sanitizedEnv(): Record<string, string> {
       ([key]) => !SENSITIVE_ENV_PATTERNS.some((p) => key.includes(p)),
     ),
   ) as Record<string, string>;
+}
+
+/**
+ * Normalize a recon target/origin/URL into the host used as the
+ * `discovered_assets.ecosystem` value (pwnkit#768). recon emits `domain` as an
+ * `https://host` origin; this strips the scheme/path down to the bare host so
+ * every asset from one target shares a stable ecosystem key. Falls back to the
+ * trimmed input when it isn't URL-parseable.
+ */
+function reconEcosystem(target: string | undefined): string {
+  const t = (target ?? "").trim();
+  if (!t) return "unknown";
+  try {
+    return new URL(/^https?:\/\//i.test(t) ? t : `https://${t}`).host || t;
+  } catch {
+    return t;
+  }
 }
 
 // ── Bash tool wallclock ceiling ──
@@ -1926,6 +1950,44 @@ export class ToolExecutor {
     }
   }
 
+  /**
+   * Bridge recon output into the orchestrator's `discovered_assets` inventory
+   * (pwnkit#768 / #761). Maps each `ReconAsset` to the `POST /assets` wire
+   * shape and pushes it through the SAME authenticated cloud-sink client the
+   * findings use (same bearer token + org resolution). No-ops when the sink is
+   * unconfigured (local-only runs). Fire-and-forget and NON-FATAL: a push
+   * failure is swallowed inside `postAssets`/`postAsset` and never aborts the
+   * tool call or the scan.
+   *
+   * `ecosystem` is the recon target/host the assets belong to. `opts.fromJs`
+   * tags js-recon endpoints (`discovery_source: js-recon`); `opts.secretHits`
+   * stamps a per-asset `secret_hits` count so the dashboard's secret-hit badge
+   * lights up.
+   */
+  private pushReconAssets(
+    assets: readonly ReconAsset[],
+    ecosystem: string,
+    opts: { fromJs?: boolean; secretHits?: number } = {},
+  ): void {
+    const cfg = getCloudSinkConfig();
+    if (!cfg || assets.length === 0) return;
+    const payloads = assets.map((a) => reconAssetToCloudSinkAsset(a, ecosystem, opts));
+    // Detached: never await on the tool's critical path; postAssets swallows
+    // every per-asset error internally.
+    void postAssets(payloads, cfg);
+  }
+
+  /**
+   * Push non-ReconAsset discovered assets (e.g. cloud-surface bucket probes)
+   * already shaped as `CloudSinkAsset`. Same best-effort, non-fatal posture as
+   * {@link pushReconAssets}.
+   */
+  private pushAssets(assets: readonly CloudSinkAsset[]): void {
+    const cfg = getCloudSinkConfig();
+    if (!cfg || assets.length === 0) return;
+    void postAssets(assets, cfg);
+  }
+
   // ── Crawl helpers ──
 
   private parseHtml(html: string, baseUrl: string): {
@@ -2832,6 +2894,10 @@ export class ToolExecutor {
       by_kind: result.summary.byKind,
     });
 
+    // #768 — bridge the recon inventory into discovered_assets. Best-effort,
+    // non-fatal: a sink failure never affects the tool result.
+    this.pushReconAssets(result.assets, reconEcosystem(result.domain));
+
     const endpoints = result.assets.filter((a) => a.kind === "endpoint").length;
     const specs = result.assets.filter((a) => a.kind === "openapi_spec").length;
     const summary =
@@ -2909,6 +2975,9 @@ export class ToolExecutor {
 
     // No endpoints to probe — return the surface map alone.
     if (endpoints.length === 0) {
+      // #768 — still bridge whatever surface recon mapped (subdomains, spec,
+      // mcp) into discovered_assets even when there's nothing to auth-probe.
+      this.pushReconAssets(recon.assets, reconEcosystem(recon.domain));
       return {
         success: true,
         output: {
@@ -2960,6 +3029,9 @@ export class ToolExecutor {
       endpoints: report.endpointCount,
       unauth_reachable: report.unauthReachableCount,
     });
+
+    // #768 — bridge the swept recon inventory into discovered_assets.
+    this.pushReconAssets(recon.assets, reconEcosystem(recon.domain));
 
     const leaks = report.results.filter((r) => r.unauthReachable);
     const suggested_findings = leaks.map((l) => ({
@@ -3075,6 +3147,15 @@ export class ToolExecutor {
       scanned: recon.scanned.length,
       endpoints: recon.endpoints.length,
       secrets: recon.secrets.length,
+    });
+
+    // #768 — bridge js-recon endpoints into discovered_assets, tagged
+    // discovery_source=js-recon and carrying the high-confidence secret-hit
+    // count so the dashboard's secret-hit badge lights up. Best-effort.
+    const jsSecretHits = recon.secrets.filter((s) => s.confidence === "high").length;
+    this.pushReconAssets(recon.endpoints, reconEcosystem(this.ctx.target), {
+      fromJs: true,
+      secretHits: jsSecretHits,
     });
 
     // Auto-probe the discovered endpoints for unauthenticated reachability —
@@ -3254,6 +3335,27 @@ export class ToolExecutor {
       takeoverable_count: takeoverable.length,
       skipped_count: skipped.length,
     });
+
+    // #768 — bridge probed buckets into discovered_assets (discovery_source=
+    // cloud). These are NOT ReconAssets, so they're mapped directly to the
+    // CloudSinkAsset wire shape with a cloud-specific metadata bag
+    // (service, url, verdict, takeover_status). Best-effort, non-fatal.
+    if (results.length > 0) {
+      const bucketAssets: CloudSinkAsset[] = results.map((r) => ({
+        discovery_source: "cloud",
+        ecosystem: this.ctx.target ? reconEcosystem(this.ctx.target) : "aws-s3",
+        name: r.bucket,
+        metadata: {
+          kind: "s3_bucket",
+          service: "s3",
+          url: r.endpoint,
+          verdict: r.verdict,
+          takeover_status: r.takeoverable ? "takeoverable" : "owned",
+          ...(r.aclReadable ? { acl_readable: true } : {}),
+        },
+      }));
+      this.pushAssets(bucketAssets);
+    }
 
     const suggested_findings = [
       ...publicBuckets.map((r) => ({

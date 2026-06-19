@@ -29,6 +29,7 @@ import type {
   CloudSinkFinding,
   CloudSinkSeverity,
 } from "./cloud-contracts.js";
+import type { ReconAsset, ReconAssetKind } from "./recon/recon.js";
 
 export type {
   CloudSinkEvidence,
@@ -59,6 +60,16 @@ export interface CloudSinkConfig {
   scanId: string;
   /** Optional bearer token sent as Authorization header */
   token?: string;
+  /**
+   * Optional owning-org id. Forwarded as `X-Pwnkit-Org-Id` on requests that
+   * are NOT scan-id-pathed (the discovered-asset push) so the orchestrator
+   * resolves the same tenant the scan runs under. The findings path derives
+   * org server-side from the scan-id in the URL, so it does NOT need this; the
+   * `/assets` route has no scan-id, hence the explicit header. When unset, the
+   * orchestrator falls back to the operator org (the bearer token's tenant),
+   * which is correct for single-tenant Phase-1 operation. See pwnkit#768.
+   */
+  orgId?: string;
 }
 
 /**
@@ -75,7 +86,8 @@ export function getCloudSinkConfig(): CloudSinkConfig | null {
   if (!scanId) return null;
 
   const token = process.env.PWNKIT_CLOUD_TOKEN?.trim() || undefined;
-  return { sinkUrl, scanId, token };
+  const orgId = process.env.PWNKIT_CLOUD_ORG_ID?.trim() || undefined;
+  return { sinkUrl, scanId, token, orgId };
 }
 
 function buildHeaders(config: CloudSinkConfig): Record<string, string> {
@@ -85,6 +97,12 @@ function buildHeaders(config: CloudSinkConfig): Record<string, string> {
     "x-cloud-sink-version": "1",
   };
   if (config.token) headers["Authorization"] = `Bearer ${config.token}`;
+  // Tenant scope for non-scan-id-pathed writes (the asset push). The
+  // orchestrator's resolveOrgId() prefers an authenticated-token org, then this
+  // header, then the operator-org fallback — so forwarding it lands assets in
+  // the same tenant as the scan when an org id is configured. Harmless on the
+  // findings path (that route ignores it and derives org from the scan-id).
+  if (config.orgId) headers["X-Pwnkit-Org-Id"] = config.orgId;
   return headers;
 }
 
@@ -388,4 +406,157 @@ export async function postFinalReport(
   if (!config) return;
   const url = `${config.sinkUrl.replace(/\/+$/, "")}/scans/${encodeURIComponent(config.scanId)}/findings`;
   await postJson(url, { report, final: true }, config, "report");
+}
+
+// ── Discovered-asset push (pwnkit#768 / #761) ──
+//
+// Recon (recon.ts), js-recon (js-recon.ts), and cloud-surface (cloud-surface.ts)
+// each produce a structured inventory the dashboard's Recon view + attack graph
+// fill from `discovered_assets`. Nothing pushed those rows to the orchestrator;
+// findings flowed but assets did not. These helpers close that gap by POSTing
+// each asset to the orchestrator's `POST /assets` upsert (keyed on
+// (org, ecosystem, name)) through the SAME authenticated cloud-sink client the
+// findings use — same bearer token, same org resolution, same best-effort
+// non-fatal posture. An asset-push failure NEVER aborts the scan.
+
+/** Wire shape for the orchestrator's `POST /assets` createAssetSchema. */
+export interface CloudSinkAsset {
+  /** e.g. dns-bruteforce | js-recon | openapi | mcp | cloud. */
+  discovery_source: string;
+  /** The target/host the asset belongs to (the orchestrator's "ecosystem"). */
+  ecosystem: string;
+  /** The asset value (subdomain host, `METHOD /path`, spec URL, bucket, …). */
+  name: string;
+  /**
+   * Structured provenance bag. Keys are chosen so the dashboard's
+   * `describeMetadata` / `hasSecretHits` probes light up: `url` (single
+   * endpoint/spec), `endpoints` (array), `secret_hits` (count), plus
+   * `service` / `takeover_status` for cloud assets.
+   */
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * Map a recon `discovery_source` onto the orchestrator's vocabulary. recon.ts
+ * tags every asset with a free-form `source` (a probe URL / parent host), so we
+ * derive the source from the asset KIND instead, which is stable and matches
+ * the dashboard's `discovery_source` filter chips (dns-bruteforce, js-recon,
+ * openapi, mcp).
+ */
+function reconKindToDiscoverySource(kind: ReconAssetKind, fromJs: boolean): string {
+  if (fromJs) return "js-recon";
+  switch (kind) {
+    case "subdomain":
+      return "dns-bruteforce";
+    case "endpoint":
+      return "openapi";
+    case "openapi_spec":
+    case "swagger_ui":
+      return "openapi";
+    case "mcp_server":
+      return "mcp";
+    default:
+      return "recon";
+  }
+}
+
+/**
+ * Turn a single `ReconAsset` into a `CloudSinkAsset` ready for `POST /assets`.
+ *
+ * The `ecosystem` is the host the asset belongs to (the recon target). The
+ * `metadata` bag is shaped per kind so the dashboard's free-form-jsonb probes
+ * render useful detail:
+ *   - endpoint            → { url, method, path, kind }
+ *   - openapi_spec/swagger→ { url, kind, endpoints?: [...] } (spec route + its
+ *                            operation count surfaced as an `endpoints` array)
+ *   - mcp_server          → { url, service: "mcp", kind, status? }
+ *   - subdomain           → { host, kind, addresses?, cname? }
+ *
+ * `opts.fromJs` flags js-recon endpoints (so `discovery_source` is `js-recon`)
+ * and `opts.secretHits` stamps a `secret_hits` count on the asset so
+ * `hasSecretHits` flips the warning badge.
+ */
+export function reconAssetToCloudSinkAsset(
+  asset: ReconAsset,
+  ecosystem: string,
+  opts: { fromJs?: boolean; secretHits?: number } = {},
+): CloudSinkAsset {
+  const md = asset.metadata ?? {};
+  const metadata: Record<string, unknown> = { kind: asset.kind };
+
+  switch (asset.kind) {
+    case "endpoint": {
+      // `value` is `METHOD /path`; carry the parsed method/path + a `url`
+      // (the raw value) so describeMetadata's url probe renders the route.
+      metadata.url = asset.value;
+      if (md.method) metadata.method = md.method;
+      if (md.path) metadata.path = md.path;
+      break;
+    }
+    case "openapi_spec":
+    case "swagger_ui": {
+      metadata.url = asset.value;
+      if (md.title) metadata.title = md.title;
+      if (md.version) metadata.version = md.version;
+      // Surface the operation count as an `endpoints` array (length only —
+      // the individual operations land as their own endpoint assets) so the
+      // describeMetadata "N endpoints" probe fires.
+      const count = Number(md.endpointCount);
+      if (Number.isFinite(count) && count > 0) {
+        metadata.endpoints = Array.from({ length: count }, (_, i) => i);
+      }
+      break;
+    }
+    case "mcp_server": {
+      metadata.url = asset.value;
+      metadata.service = "mcp";
+      if (md.status) metadata.status = md.status;
+      break;
+    }
+    case "subdomain": {
+      metadata.host = asset.value;
+      if (md.addresses) metadata.addresses = md.addresses;
+      if (md.cname) metadata.cname = md.cname;
+      break;
+    }
+  }
+
+  if (typeof opts.secretHits === "number" && opts.secretHits > 0) {
+    metadata.secret_hits = opts.secretHits;
+  }
+  if (asset.source) metadata.source = asset.source;
+
+  return {
+    discovery_source: reconKindToDiscoverySource(asset.kind, opts.fromJs ?? false),
+    ecosystem,
+    name: asset.value,
+    metadata,
+  };
+}
+
+/**
+ * POST a single discovered asset to the orchestrator's `/assets` upsert. No-op
+ * when the sink is unconfigured. Failures are logged and swallowed — an asset
+ * push must NEVER abort the scan (same posture as `postFinding`).
+ */
+export async function postAsset(
+  asset: CloudSinkAsset,
+  config: CloudSinkConfig | null = getCloudSinkConfig(),
+): Promise<void> {
+  if (!config) return;
+  const url = `${config.sinkUrl.replace(/\/+$/, "")}/assets`;
+  await postJson(url, asset, config, "asset");
+}
+
+/**
+ * Best-effort bulk push of discovered assets. Each asset is posted
+ * independently so one bad row never blocks the rest; the whole batch is
+ * fire-and-forget and resolves once every push settles. Never throws.
+ */
+export async function postAssets(
+  assets: readonly CloudSinkAsset[],
+  config: CloudSinkConfig | null = getCloudSinkConfig(),
+): Promise<void> {
+  if (!config || assets.length === 0) return;
+  await Promise.all(assets.map((a) => postAsset(a, config)));
 }
