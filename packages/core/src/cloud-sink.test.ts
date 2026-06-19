@@ -5,12 +5,18 @@ import {
   normalizeFinding,
   postFinding,
   postFinalReport,
+  postAsset,
+  postAssets,
+  reconAssetToCloudSinkAsset,
+  type CloudSinkAsset,
 } from "./cloud-sink.js";
+import type { ReconAsset } from "./recon/recon.js";
 
 const ENV_KEYS = [
   "PWNKIT_CLOUD_SINK",
   "PWNKIT_CLOUD_SCAN_ID",
   "PWNKIT_CLOUD_TOKEN",
+  "PWNKIT_CLOUD_ORG_ID",
   "PWNKIT_FEATURE_CLOUD_SINK",
 ];
 
@@ -366,5 +372,207 @@ describe("normalizeFinding", () => {
     expect(out.templateId).toBe("manual");
     expect(out.category).toBe("unknown");
     expect(out.status).toBe("discovered");
+  });
+});
+
+// ── discovered-asset push (pwnkit#768 / #761) ──
+describe("cloud-sink assets", () => {
+  const originalFetch = globalThis.fetch;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
+    for (const k of ENV_KEYS) delete process.env[k];
+  });
+
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k]!;
+    }
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  // ── reconAssetToCloudSinkAsset mapper ──
+
+  it("maps an endpoint ReconAsset to a url-bearing /assets payload", () => {
+    const asset: ReconAsset = {
+      kind: "endpoint",
+      value: "GET /api/users",
+      source: "https://api.example.com/openapi.json",
+      metadata: { method: "GET", path: "/api/users" },
+    };
+    const out = reconAssetToCloudSinkAsset(asset, "api.example.com");
+    expect(out).toEqual({
+      discovery_source: "openapi",
+      ecosystem: "api.example.com",
+      name: "GET /api/users",
+      metadata: {
+        kind: "endpoint",
+        url: "GET /api/users",
+        method: "GET",
+        path: "/api/users",
+        source: "https://api.example.com/openapi.json",
+      },
+    });
+  });
+
+  it("maps an openapi_spec ReconAsset and surfaces endpointCount as an endpoints[] array", () => {
+    const asset: ReconAsset = {
+      kind: "openapi_spec",
+      value: "https://api.example.com/openapi.json",
+      source: "https://api.example.com/openapi.json",
+      metadata: { title: "Example API", version: "1.0", endpointCount: "3" },
+    };
+    const out = reconAssetToCloudSinkAsset(asset, "api.example.com");
+    expect(out.discovery_source).toBe("openapi");
+    expect(out.metadata.url).toBe("https://api.example.com/openapi.json");
+    expect(out.metadata.title).toBe("Example API");
+    // describeMetadata's "N endpoints" probe reads array length.
+    expect(Array.isArray(out.metadata.endpoints)).toBe(true);
+    expect((out.metadata.endpoints as unknown[]).length).toBe(3);
+  });
+
+  it("maps a subdomain ReconAsset onto a host-keyed payload (dns-bruteforce source)", () => {
+    const asset: ReconAsset = {
+      kind: "subdomain",
+      value: "admin.example.com",
+      source: "crt.sh",
+      metadata: { addresses: "1.2.3.4", cname: "cdn.example.net" },
+    };
+    const out = reconAssetToCloudSinkAsset(asset, "example.com");
+    expect(out.discovery_source).toBe("dns-bruteforce");
+    expect(out.name).toBe("admin.example.com");
+    expect(out.metadata.host).toBe("admin.example.com");
+    expect(out.metadata.addresses).toBe("1.2.3.4");
+    expect(out.metadata.cname).toBe("cdn.example.net");
+  });
+
+  it("maps an mcp_server ReconAsset with service=mcp", () => {
+    const asset: ReconAsset = {
+      kind: "mcp_server",
+      value: "https://x.test/mcp",
+      source: "https://x.test",
+      metadata: { status: "200" },
+    };
+    const out = reconAssetToCloudSinkAsset(asset, "x.test");
+    expect(out.discovery_source).toBe("mcp");
+    expect(out.metadata.service).toBe("mcp");
+    expect(out.metadata.url).toBe("https://x.test/mcp");
+    expect(out.metadata.status).toBe("200");
+  });
+
+  it("tags js-recon endpoints with discovery_source=js-recon and a secret_hits count", () => {
+    const asset: ReconAsset = {
+      kind: "endpoint",
+      value: "POST /login",
+      source: "https://x.test/app.js",
+      metadata: { method: "POST", path: "/login", origin: "js-recon" },
+    };
+    const out = reconAssetToCloudSinkAsset(asset, "x.test", { fromJs: true, secretHits: 2 });
+    expect(out.discovery_source).toBe("js-recon");
+    // hasSecretHits() reads a numeric secret_hits key.
+    expect(out.metadata.secret_hits).toBe(2);
+  });
+
+  it("omits secret_hits when the count is zero", () => {
+    const asset: ReconAsset = { kind: "endpoint", value: "GET /", source: "s" };
+    const out = reconAssetToCloudSinkAsset(asset, "x.test", { fromJs: true, secretHits: 0 });
+    expect(out.metadata.secret_hits).toBeUndefined();
+  });
+
+  // ── postAsset / postAssets wire behavior ──
+
+  it("postAsset does NOT call fetch when the sink is unconfigured", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await postAsset({ discovery_source: "openapi", ecosystem: "x.test", name: "GET /", metadata: {} });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("postAsset POSTs to /assets with the bearer + org header and the asset body", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com/";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-123";
+    process.env.PWNKIT_CLOUD_TOKEN = "tok-abc";
+    process.env.PWNKIT_CLOUD_ORG_ID = "org_ABCDEFGHIJKLMNOP";
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, text: async () => "" });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const asset: CloudSinkAsset = {
+      discovery_source: "openapi",
+      ecosystem: "api.example.com",
+      name: "GET /api/users",
+      metadata: { kind: "endpoint", url: "GET /api/users" },
+    };
+    await postAsset(asset);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.example.com/assets");
+    expect(init.method).toBe("POST");
+    expect(init.headers["Authorization"]).toBe("Bearer tok-abc");
+    // Org scope is forwarded for the non-scan-id-pathed asset write.
+    expect(init.headers["X-Pwnkit-Org-Id"]).toBe("org_ABCDEFGHIJKLMNOP");
+    expect(JSON.parse(init.body)).toEqual(asset);
+  });
+
+  it("postAsset swallows a 5xx — an asset-push failure never aborts the scan", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 500, text: async () => "boom" });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      postAsset({ discovery_source: "openapi", ecosystem: "x.test", name: "GET /", metadata: {} }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("postAsset swallows a thrown network error (fetch rejects)", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+
+    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      postAsset({ discovery_source: "openapi", ecosystem: "x.test", name: "GET /", metadata: {} }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("postAssets posts every asset and never throws when one push fails", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+
+    let call = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      call += 1;
+      if (call === 2) throw new Error("transient");
+      return { ok: true, status: 201, text: async () => "" };
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const assets: CloudSinkAsset[] = [
+      { discovery_source: "openapi", ecosystem: "x.test", name: "GET /a", metadata: {} },
+      { discovery_source: "openapi", ecosystem: "x.test", name: "GET /b", metadata: {} },
+      { discovery_source: "openapi", ecosystem: "x.test", name: "GET /c", metadata: {} },
+    ];
+    await expect(postAssets(assets)).resolves.toBeUndefined();
+    // All three were attempted despite the middle one failing.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("postAssets is a no-op for an empty list", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await postAssets([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
