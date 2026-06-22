@@ -1,0 +1,72 @@
+id: cardano-eutxo-validators
+name: "Cardano EUTXO Validator Logic Bugs (Aiken / Plutus)"
+description: "Value-stealing logic bugs in Cardano on-chain validators — double satisfaction, missing signer checks, unconserved value, unauthorized minting, datum trust, staking/withdrawal tricks. No memory safety here; every bug is a constraint the validator forgets to enforce, exploited by a transaction the ledger admits."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+  - review
+tags:
+  - cardano
+  - aiken
+  - plutus
+  - smart-contract
+  - eutxo
+  - double-satisfaction
+  - blockchain
+triggers:
+  - "validator\\s*\\{|validator\\s+\\w+\\s*\\("
+  - "ScriptContext|TxInfo|mkValidator|PlutusV[23]|plutus-tx"
+  - "extra_signatories|tx\\.signatories|txInfoSignatories"
+  - "redeemer|datum|Datum|Redeemer"
+  - "aiken\\.toml|\\.ak\\b|plutarch|pvalidator"
+  - "outputs|inputs|mint|withdrawals|reference_inputs"
+  - "find_input|own_input|continuing.?output|find_datum"
+estimated_tokens: 900
+content: |
+  ## Cardano EUTXO Validator Logic — Methodology
+
+  Cardano validators are pure functions `(datum, redeemer, ScriptContext) -> Bool`
+  on a memory-safe VM. There is NO UAF/OOB/injection. The ONLY bug class is:
+  **a transaction the validator should reject but accepts**, draining locked
+  value or minting unauthorized tokens. Every bug is a missing or weak check on
+  a `TxInfo` field. Verified class across Cardano (acropolis/cardano-js-sdk SSRF
+  is off-chain; this is the on-chain sibling).
+
+  ### Phase 1: Enumerate validators + what they constrain
+  For each `spend` / `mint` / `withdraw` / `publish` / `vote` handler (Aiken v2)
+  or redeemer branch (Plutus), list which `ScriptContext`/`TxInfo` fields it
+  actually asserts on: `extra_signatories`, `inputs`, `outputs`, `mint`,
+  `validity_range`, `withdrawals`, `reference_inputs`, `datums`. The bug is the
+  field it FORGETS.
+
+  ### Phase 2: The high-yield bug classes
+  - **Double satisfaction** — validator checks "an output of value X to addr A
+    exists" without binding it to THIS input. One output satisfies two script
+    inputs → drain. Fix marker: counts own inputs / tags output to own outref.
+  - **Missing signer check** — admin/spend/upgrade path that never requires the
+    owner key in `extra_signatories` (or checks an attacker-suppliable list).
+  - **Value not conserved** — validates the datum/state transition but never
+    asserts `continuing_output.value >= input.value`. Attacker pays value to
+    self. Also `>=` slack the attacker profits from, and min-ada/dust tricks.
+  - **Unauthorized mint** — mint handler with no quantity check, no redeemer
+    binding, or a one-shot guard that consumes the WRONG outref → infinite mint.
+  - **Datum trust** — trusts a datum field (price/owner/oracle) without
+    verifying it, or trusts an output datum it does not constrain; datum-hash vs
+    inline-datum confusion on Plutus.
+  - **Staking/withdrawal trick** — unconstrained `withdrawals`, withdraw-zero to
+    skip a check, or delegating a spend check to a trivially-satisfiable stake
+    script.
+  - **Missing validity-range / replay** — no deadline/vesting time bound; no
+    nonce/spent-input uniqueness → replay of an authorization.
+
+  ### Phase 3: Prove it (no sanitizer here)
+  Ground every finding in (1) the validator file:line of the missing check and
+  (2) the malicious transaction shape — which inputs, outputs, mint, signers —
+  and why each EXISTING check still passes while value moves to the attacker.
+
+  ### Phase 4: Kill false positives
+  Reject if: the Cardano ledger already enforces it (value ≥ 0, no double-spend,
+  min-ada, fees); a SIBLING validator or required-signer enforces it; or the
+  "missing" check has no real value impact. Read the other validators before
+  concluding — most false positives are checks enforced one validator over.

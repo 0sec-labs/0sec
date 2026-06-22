@@ -4,6 +4,14 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { VERSION } from "@pwnkit/shared";
 import { maybeSubscribeCloudEventSink } from "@pwnkit/core";
+import { maybeLoadCodexAuth } from "./codex-auth.js";
+
+// Local-dev convenience: if `codex login` has run (~/.codex/auth.json) and no
+// PWNKIT_CHATGPT_* token is in the env, plumb the codex tokens in so the engine
+// resolves to the chatgpt-codex provider (highest priority) instead of falling
+// through to stale AZURE_OPENAI_API_KEY / OPENAI_API_KEY. No-op in the cloud
+// worker (it sets the tokens itself) and when a token is already present.
+maybeLoadCodexAuth();
 
 // Subscribe the cloud-event sink before any subcommand runs. Idempotent
 // + env-gated (PWNKIT_CLOUD_EVENTS=1): the sink writes one

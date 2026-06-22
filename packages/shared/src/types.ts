@@ -1259,8 +1259,13 @@ export interface AuditReport {
  *   violations (Dirty Frag class), TOCTOU on inode fields. Static-only;
  *   verification phase is pwnkit#271 (kernel oracle) and pwnkit#272
  *   (syzkaller harness scaffold).
+ * - `cardano-onchain`: Cardano on-chain smart-contract review (Aiken /
+ *   Plutus / Plutarch). EUTXO validator *logic* bugs — double satisfaction,
+ *   missing signer checks, unconserved value, unauthorized mint, datum
+ *   trust, staking/withdrawal tricks. No memory-safety surface; verification
+ *   is a transaction the validator wrongly admits.
  */
-export type ReviewProfile = "default" | "c-library" | "linux-kernel";
+export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain";
 
 /**
  * A known bug to anchor a review on for variant analysis. Project Zero's

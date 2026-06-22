@@ -35,6 +35,7 @@ const EXPECTED_SKILL_IDS = [
   "llm-excessive-agency",
   "llm-rag-poisoning",
   "llm-prompt-layer-write",
+  "cardano-eutxo-validators",
 ];
 
 const VALID_ROLES = new Set(["attack", "audit", "review"]);
@@ -180,9 +181,15 @@ describe("Skill Registry", () => {
       expect(attackSkills.length).toBe(EXPECTED_SKILL_IDS.length);
 
       const reviewSkills = listSkillSummaries({ role: "review" }, registry);
-      expect(reviewSkills.length).toBe(4);
+      expect(reviewSkills.length).toBe(5);
       const reviewIds = reviewSkills.map((s) => s.id).sort();
-      expect(reviewIds).toEqual(["blind-exploitation", "crypto-misuse", "graphql-introspection", "jwt-attacks"]);
+      expect(reviewIds).toEqual([
+        "blind-exploitation",
+        "cardano-eutxo-validators",
+        "crypto-misuse",
+        "graphql-introspection",
+        "jwt-attacks",
+      ]);
     });
 
     it("combines tag and role filters", () => {

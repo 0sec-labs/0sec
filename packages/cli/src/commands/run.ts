@@ -98,9 +98,11 @@ export interface RunOptions {
    * "c-library" tunes the prompt for C/C++ memory-safety + tier-1/2/3
    * harness construction. "linux-kernel" tunes for kernel-aware static
    * review (syscall/ioctl surface, copy_from_user, refcount races,
-   * Dirty Frag class). Default: "default".
+   * Dirty Frag class). "cardano-onchain" tunes for Aiken/Plutus EUTXO
+   * validator logic bugs (double satisfaction, missing signer checks,
+   * unconserved value, unauthorized mint). Default: "default".
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain";
   /**
    * Review the source of a published package: `target` is a package NAME and
    * the pipeline installs it (npm/pypi/cargo/oci) before reviewing its
