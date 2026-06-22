@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@pwnkit/db": "workspace:*",
+    "@pwnkit/llm-redteam": "workspace:*",
     "@pwnkit/shared": "workspace:*",
     "@pwnkit/templates": "workspace:*",
     "yaml": "^2.4.0",

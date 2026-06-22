@@ -32,6 +32,7 @@ export { createRuntime, ProcessRuntime, LlmApiRuntime, OpenRouterRuntime, DEFAUL
 export type { Runtime, RuntimeConfig, RuntimeContext, RuntimeResult, RuntimeType, NativeRuntime, NativeMessage, NativeContentBlock, NativeToolDef, NativeRuntimeResult, OpenRouterConfig } from "./runtime/index.js";
 export { buildDeepScanPrompt, buildMcpAuditPrompt, buildSourceAnalysisPrompt } from "./prompts.js";
 export { resolveMcpEndpoint, listMcpTools, callMcpTool, discoverMcpTarget, runMcpSecurityChecks } from "./mcp.js";
+export { runLlmIpiAudit, breakRecordToFinding } from "./llm-ipi-audit.js";
 
 // Analysis prompts
 export { auditAgentPrompt, reviewAgentPrompt } from "./analysis-prompts.js";

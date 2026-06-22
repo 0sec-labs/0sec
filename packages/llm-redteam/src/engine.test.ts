@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runCampaign } from "./engine.js";
+import { runCampaign, runIterativeCampaign } from "./engine.js";
 import { installPackageBehavior } from "./behaviors.js";
 import { mockTarget } from "./targets/mock.js";
 
@@ -28,5 +28,20 @@ describe("runCampaign against mock target", () => {
     expect(res.brokenModels).toEqual(["compliant"]);
     // first candidate already breaks it; no further sends to that model
     expect(sends).toBe(1);
+  });
+
+  it("iterative campaign escalates on survivors and keeps unique breaks", async () => {
+    const target = mockTarget({
+      models: [
+        { name: "compliant", followsVisible: true, decodes: [] },
+        { name: "claude-ish", followsVisible: false, decodes: ["tags"] },
+        { name: "hardened", followsVisible: false, decodes: [] },
+      ],
+    });
+    const res = await runIterativeCampaign(behavior, target, {});
+    expect(res.brokenModels.sort()).toEqual(["claude-ish", "compliant"]);
+    expect(res.brokenModels).not.toContain("hardened");
+    // each broken model recorded once (unique)
+    expect(new Set(res.breaks.map((b) => b.model)).size).toBe(res.brokenModels.length);
   });
 });

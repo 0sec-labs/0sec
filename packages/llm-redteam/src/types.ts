@@ -29,6 +29,9 @@ export interface InjectionGoal {
   /** Optional concrete payload value the strategy should embed verbatim
    *  (a command, an SSH key, an email address, a package name). */
   literal?: string;
+  /** Free-text success criteria for the LLM judge (non-regex behaviours):
+   *  "the assistant emailed the portfolio to an external address", etc. */
+  criteria?: string;
 }
 
 /** A named red-team target behaviour (what success means + where it rides). */

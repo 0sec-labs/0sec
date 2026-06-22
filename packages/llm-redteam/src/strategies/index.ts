@@ -33,6 +33,42 @@ export function compose(framing: Strategy, concealment?: Strategy): Strategy {
   };
 }
 
+/** Stack multiple concealment channels onto one framing (the "kitchen-sink"
+ *  escalation: visible framing + every hidden reinforcement at once). */
+export function composeMany(framing: Strategy, concealments: Strategy[]): Strategy {
+  return {
+    id: [framing.id, ...concealments.map((c) => c.id)].join("+"),
+    kind: "composite",
+    rationale: `escalation: ${framing.id} + ${concealments.map((c) => c.id).join(" + ")}`,
+    build(behavior: Behavior): Payload {
+      let text = framing.build(behavior).text;
+      const strategies = [...framing.build(behavior).strategies];
+      const hidden: string[] = [];
+      for (const c of concealments) {
+        const w = c.build(behavior, text);
+        text = w.text;
+        strategies.push(...w.strategies);
+        if (w.hiddenSegments) hidden.push(...w.hiddenSegments);
+      }
+      return { text, strategies, hiddenSegments: hidden, behaviorId: behavior.id };
+    },
+  };
+}
+
+/**
+ * Escalated candidates for models that survived the base sweep: each framing
+ * with ALL concealment channels stacked at once. This is the v5 "combine every
+ * technique" move that we used on the hardest arena models.
+ */
+export function escalatedCandidates(
+  behavior: Behavior,
+  opts: { framings?: Strategy[]; concealments?: Strategy[] } = {},
+): Payload[] {
+  const framings = opts.framings ?? framingStrategies;
+  const concealments = opts.concealments ?? concealmentStrategies;
+  return framings.map((f) => composeMany(f, concealments).build(behavior));
+}
+
 /**
  * Generate a diverse candidate set for a behaviour: every framing alone, plus
  * every framing × every concealment. This is the default attack surface the

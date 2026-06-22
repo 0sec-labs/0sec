@@ -152,6 +152,9 @@ importers:
       '@pwnkit/db':
         specifier: workspace:*
         version: link:../db
+      '@pwnkit/llm-redteam':
+        specifier: workspace:*
+        version: link:../llm-redteam
       '@pwnkit/shared':
         specifier: workspace:*
         version: link:../shared
@@ -278,6 +281,15 @@ importers:
       node-sqlite3-wasm:
         specifier: ^0.8.55
         version: 0.8.57
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@25.9.1)(lightningcss@1.32.0)(msw@2.14.6(@types/node@25.9.1)(typescript@5.9.3))
+
+  packages/llm-redteam:
     devDependencies:
       typescript:
         specifier: ^5.7.2

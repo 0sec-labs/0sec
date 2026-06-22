@@ -5,7 +5,7 @@ import type { VerificationResult } from "./verification.js";
 export type ScanDepth = "quick" | "default" | "deep";
 export type OutputFormat = "terminal" | "json" | "markdown" | "html" | "sarif" | "pdf";
 export type RuntimeMode = "api" | "claude" | "codex" | "gemini" | "ollama" | "auto";
-export type ScanMode = "probe" | "deep" | "mcp" | "web" | "http_audit";
+export type ScanMode = "probe" | "deep" | "mcp" | "web" | "http_audit" | "llm-ipi";
 export type PackageEcosystem = "npm" | "pypi" | "cargo" | "oci";
 
 // ── Authentication ──

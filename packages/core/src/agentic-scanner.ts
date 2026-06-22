@@ -38,6 +38,7 @@ import type { ScanEvent, ScanListener } from "./scanner.js";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "./runtime/types.js";
 import { isMcpTarget } from "./http.js";
 import { discoverMcpTarget, runMcpSecurityChecks } from "./mcp.js";
+import { runLlmIpiAudit } from "./llm-ipi-audit.js";
 import { z } from "zod";
 import { layerVerdictArraySchema, formatZodError } from "./schemas.js";
 import { createScanContext, finalize } from "./context.js";
@@ -1002,6 +1003,68 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
   try {
     // ── MCP fast-path: use deterministic MCP security checks ──
     // The agentic agent loops are designed for LLM API targets. For MCP targets,
+    // LLM indirect-prompt-injection audit fast-path. Mirrors the MCP
+    // short-circuit: a self-contained specialized audit, not a web pentest.
+    if (config.mode === "llm-ipi") {
+      emit({ type: "stage:start", stage: "discovery", message: "LLM IPI audit starting..." });
+      const ipiCtx = createScanContext(config);
+      ipiCtx.scanId = scanId;
+      ipiCtx.target = { url: config.target, type: "chatbot", model: config.model };
+      emit({ type: "stage:end", stage: "discovery", message: "LLM endpoint registered" });
+
+      emit({ type: "stage:start", stage: "attack", message: "Running IPI campaign..." });
+      const { findings } = await runLlmIpiAudit({
+        baseUrl: config.target,
+        apiKey: config.apiKey ?? process.env.PWNKIT_LLM_TARGET_KEY ?? "",
+        models: config.model ? [config.model] : ["default"],
+        maxAttempts: config.depth === "deep" ? 50 : 20,
+      });
+      for (const finding of findings) {
+        finding.remediation = generateRemediation(finding);
+        ipiCtx.findings.push(finding);
+      }
+      allFindings = [...findings];
+      emit({ type: "stage:end", stage: "attack", message: `IPI audit complete: ${findings.length} findings` });
+
+      if (db) {
+        db.upsertTarget(ipiCtx.target);
+        for (const finding of findings) db.saveFinding(scanId, finding);
+      }
+      finalize(ipiCtx);
+
+      const summary = {
+        totalAttacks: 0,
+        totalFindings: allFindings.length,
+        critical: allFindings.filter((f) => f.severity === "critical").length,
+        high: allFindings.filter((f) => f.severity === "high").length,
+        medium: allFindings.filter((f) => f.severity === "medium").length,
+        low: allFindings.filter((f) => f.severity === "low").length,
+        info: allFindings.filter((f) => f.severity === "info").length,
+      };
+      db.completeScan(scanId, summary);
+
+      const report: ScanReport = {
+        target: config.target,
+        scanDepth: config.depth,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: 0,
+        summary,
+        findings: allFindings,
+        warnings: [],
+      };
+      const dbScan = db.getScan(scanId);
+      if (dbScan) {
+        report.startedAt = dbScan.startedAt;
+        report.completedAt = dbScan.completedAt ?? report.completedAt;
+        report.durationMs = dbScan.durationMs ?? 0;
+      }
+      emit({ type: "stage:end", stage: "report", message: `Report: ${summary.totalFindings} findings` });
+      await postFinalReport(report);
+      emitScanCompleted("completed", allFindings.length, { findingsForFlagCount: allFindings });
+      return report;
+    }
+
     // delegate to the structured MCP discovery + security checks which directly
     // speak JSON-RPC to the MCP server.
     if (config.mode === "mcp" || isMcpTarget(config.target)) {
