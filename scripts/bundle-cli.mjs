@@ -94,6 +94,20 @@ await build({
 cpSync("packages/templates/attacks", `${outdir}/attacks`, { recursive: true });
 cpSync("packages/dashboard/dist", `${outdir}/dashboard`, { recursive: true });
 
+// Bench corpora: packages/core/src/bench/paths.ts resolves these via
+// `new URL("./<file>", import.meta.url)`. The package build co-locates them
+// (`cp src/bench/*.json dist/bench/`), but esbuild splits that module into
+// `dist/chunks/`, so the JSON must sit next to the chunk too — otherwise
+// `pwnkit bench run` (the nightly regression gate) fails with
+// `ENOENT dist/chunks/corpus-v1.json`. Keep in sync with the files paths.ts reads.
+mkdirSync(`${outdir}/chunks`, { recursive: true });
+for (const benchFile of ["corpus-v1.json", "example-manifest.json"]) {
+  copyFileSync(
+    `packages/core/src/bench/${benchFile}`,
+    `${outdir}/chunks/${benchFile}`,
+  );
+}
+
 // Fix double shebang
 const bundlePath = `${outdir}/pwnkit.js`;
 const bundle = readFileSync(bundlePath, "utf8").replace(
