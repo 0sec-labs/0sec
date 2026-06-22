@@ -1,0 +1,24 @@
+{
+  "name": "@pwnkit/llm-redteam",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offensive LLM/agent red-team engine: generate indirect-prompt-injection & jailbreak payloads from a sourced strategy library, drive a target adapter, judge breaks, and iterate. The attack-side mirror of packages/benchmark's detection suite.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "pwnkit-llm": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
+  }
+}
