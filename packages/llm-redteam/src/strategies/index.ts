@@ -12,6 +12,11 @@ export function getStrategy(id: string): Strategy | undefined {
   return allStrategies.find((s) => s.id === id);
 }
 
+/** Keep only strategies that produce sensible payloads for this behaviour's vector. */
+function forVector(strategies: Strategy[], behavior: Behavior): Strategy[] {
+  return strategies.filter((s) => !s.vectors || s.vectors.includes(behavior.vector));
+}
+
 /** Compose a framing strategy (visible body) with an optional concealment
  *  strategy (hidden reinforcement appended). */
 export function compose(framing: Strategy, concealment?: Strategy): Strategy {
@@ -64,7 +69,7 @@ export function escalatedCandidates(
   behavior: Behavior,
   opts: { framings?: Strategy[]; concealments?: Strategy[] } = {},
 ): Payload[] {
-  const framings = opts.framings ?? framingStrategies;
+  const framings = opts.framings ?? forVector(framingStrategies, behavior);
   const concealments = opts.concealments ?? concealmentStrategies;
   return framings.map((f) => composeMany(f, concealments).build(behavior));
 }
@@ -78,7 +83,7 @@ export function generateCandidates(
   behavior: Behavior,
   opts: { framings?: Strategy[]; concealments?: Strategy[] } = {},
 ): Payload[] {
-  const framings = opts.framings ?? framingStrategies;
+  const framings = opts.framings ?? forVector(framingStrategies, behavior);
   const concealments = opts.concealments ?? concealmentStrategies;
   const out: Payload[] = [];
   for (const f of framings) {

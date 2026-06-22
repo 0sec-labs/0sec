@@ -11,6 +11,9 @@ import {
   chatTarget,
   runIterativeCampaign,
   builtinBehaviors,
+  regexJudge,
+  llmJudge,
+  type AskFn,
   type Behavior,
   type BreakRecord,
 } from "@pwnkit/llm-redteam";
@@ -54,6 +57,9 @@ export interface LlmIpiAuditOptions {
   behaviors?: Behavior[];
   /** Cap per-behaviour attempts (depth-driven). */
   maxAttempts?: number;
+  /** Optional judge-model call; enables the LLM judge for semantic behaviours
+   *  (exfil, deanonymize, weak-policy). Without it those fall back to regex. */
+  judgeAsk?: AskFn;
   onProgress?: (msg: string) => void;
 }
 
@@ -67,9 +73,12 @@ export async function runLlmIpiAudit(opts: LlmIpiAuditOptions): Promise<{ findin
   const behaviors = opts.behaviors ?? builtinBehaviors;
   const findings: Finding[] = [];
 
+  const judge = (b: Behavior, r: Parameters<typeof regexJudge>[1]) =>
+    b.goal.criteria && opts.judgeAsk ? llmJudge(b, r, opts.judgeAsk) : regexJudge(b, r);
+
   for (const behavior of behaviors) {
     opts.onProgress?.(`IPI: behaviour "${behavior.id}" across ${opts.models.length} model(s)`);
-    const result = await runIterativeCampaign(behavior, target, { maxAttempts: opts.maxAttempts });
+    const result = await runIterativeCampaign(behavior, target, { maxAttempts: opts.maxAttempts, judge });
     for (const record of result.breaks) findings.push(breakRecordToFinding(record, behavior));
     opts.onProgress?.(`IPI: "${behavior.id}" → ${result.brokenModels.length}/${opts.models.length} broken`);
   }

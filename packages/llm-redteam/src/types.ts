@@ -67,6 +67,8 @@ export interface Strategy {
   kind: StrategyKind;
   /** One-line description of the technique + why it works. */
   rationale: string;
+  /** Vectors this strategy produces sensible payloads for; undefined = any. */
+  vectors?: InjectionVector[];
   /** Build a payload for a behaviour. `base` is prior payload text when
    *  composing (concealment wraps framing output). */
   build(behavior: Behavior, base?: string): Payload;
