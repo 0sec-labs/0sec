@@ -32,6 +32,7 @@ import {
   buildAccessControlPromptBlock,
 } from "./agent/prompts.js";
 import { resolveIdentities } from "@pwnkit/shared";
+import type { RuntimeMode } from "@pwnkit/shared";
 import { features } from "./agent/features.js";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "./runtime/types.js";
@@ -95,6 +96,8 @@ import { resolveLocalTargetPath } from "./path-resolution.js";
 import { runMemSafetyScan } from "./stages/memsafety-scan.js";
 import type { MemSafetyScanOptions } from "./stages/memsafety-scan.js";
 import type { MemSafetyTarget } from "./triage/memsafety-types.js";
+import { runCraftScan } from "./stages/craft-scan.js";
+import type { CraftTarget, CraftScanOptions } from "./stages/craft-scan.js";
 
 /**
  * Per-scan rate-limiter cache (#214). The limiter is stateful — buckets
@@ -231,6 +234,17 @@ export interface AgenticScanOptions {
   memSafetyTarget?: MemSafetyTarget;
   /** Optional fuzz-loop / logging knobs forwarded to `runMemSafetyScan`. */
   memSafety?: Omit<MemSafetyScanOptions, "target">;
+  /**
+   * Craft scan role — the agentic sibling of the memory-safety fuzz path. When
+   * set, the agent reads the pre-patch source with read-only tools and crafts a
+   * PoC input, testing each candidate against the injected `craft.evaluatePoc`
+   * oracle (CyberGym differential for benchmarks; a local sanitizer runner for
+   * real targets). Dispatches to `runCraftScan` and returns early, like the
+   * memSafety path. Unaffected web/API/audit flows when undefined.
+   */
+  craftTarget?: CraftTarget;
+  /** The PoC oracle + agent-loop knobs forwarded to `runCraftScan` (required when craftTarget is set). */
+  craft?: Omit<CraftScanOptions, "target" | "runtime">;
 }
 
 /**
@@ -470,6 +484,68 @@ async function runMemSafetyScanStage(
 }
 
 /**
+ * Craft scan dispatch — adapts `runCraftScan` into the unified `ScanReport`,
+ * mirroring `runMemSafetyScanStage`. The PoC oracle lives in `craft.evaluatePoc`
+ * (injected by the caller); this bridge does no I/O of its own.
+ */
+async function runCraftScanStage(
+  config: ScanConfig,
+  target: CraftTarget,
+  craft: Omit<CraftScanOptions, "target" | "runtime">,
+  emit: ScanListener,
+): Promise<ScanReport> {
+  const startedAt = Date.now();
+  emit({
+    type: "stage:start",
+    stage: "attack",
+    message: `Craft scan: ${target.language ?? "c"} target at ${target.sourceRoot}`,
+  });
+
+  const runtime = ((config as { runtime?: RuntimeMode }).runtime ?? "auto") as RuntimeMode;
+  const result = await runCraftScan({
+    ...craft,
+    target,
+    runtime,
+    log: (message) => emit({ type: "thinking", message }),
+  });
+
+  for (const finding of result.findings) {
+    emit({ type: "finding", message: finding.title, data: finding });
+  }
+
+  const completedAt = Date.now();
+  const findings = result.findings;
+  const summary = {
+    totalAttacks: result.submits,
+    totalFindings: findings.length,
+    critical: findings.filter((f) => f.severity === "critical").length,
+    high: findings.filter((f) => f.severity === "high").length,
+    medium: findings.filter((f) => f.severity === "medium").length,
+    low: findings.filter((f) => f.severity === "low").length,
+    info: findings.filter((f) => f.severity === "info").length,
+  };
+
+  emit({
+    type: "stage:end",
+    stage: "attack",
+    message: result.passed
+      ? `Craft scan: confirmed PoC in ${result.submits} submit(s)`
+      : `Craft scan: no confirmed PoC (${result.warnings[result.warnings.length - 1] ?? "no candidate"})`,
+  });
+
+  return {
+    target: config.target || target.sourceRoot,
+    scanDepth: config.depth,
+    startedAt: new Date(startedAt).toISOString(),
+    completedAt: new Date(completedAt).toISOString(),
+    durationMs: completedAt - startedAt,
+    summary,
+    findings,
+    warnings: result.warnings.map((message) => ({ stage: "attack" as const, message })),
+  };
+}
+
+/**
  * Parse a resolved package target of the shape `eco:name@version` (e.g.
  * `npm:lodash@4.17.4`, `pypi:requests@2.31.0`) that the unified pipeline emits
  * as `resolvedTarget`. Returns the OSS ecosystem / package name / version for
@@ -523,6 +599,15 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
   // 3800-line module) is deliberate — see that module + CLAUDE.md.
   if (opts.memSafetyTarget) {
     return runMemSafetyScanStage(opts.config, opts.memSafetyTarget, opts.memSafety, emit);
+  }
+
+  // Craft scan role — agentic sibling of the fuzz path (see CraftScanOptions).
+  // Dispatches to `runCraftScan` and returns, before the DB/runtime machinery.
+  if (opts.craftTarget) {
+    if (!opts.craft?.evaluatePoc) {
+      throw new Error("agenticScan: craftTarget requires craft.evaluatePoc (the PoC oracle)");
+    }
+    return runCraftScanStage(opts.config, opts.craftTarget, opts.craft, emit);
   }
 
   const config = await normalizeScanConfig(opts.config);

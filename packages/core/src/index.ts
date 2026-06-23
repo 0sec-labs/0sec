@@ -112,6 +112,16 @@ export type {
   MemSafetyScanResult,
   MemSafetyFinding,
 } from "./stages/memsafety-scan.js";
+// Craft scan stage (agentic reason→craft→submit→refine, injectable PoC oracle):
+// the sibling of the fuzz path that needs no target build.
+export { runCraftScan, craftedPocToFinding } from "./stages/craft-scan.js";
+export type {
+  CraftTarget,
+  CraftPocVerdict,
+  CraftPocEvaluator,
+  CraftScanOptions,
+  CraftScanResult,
+} from "./stages/craft-scan.js";
 
 // Unified pipeline: prepare + static analysis
 export { prepare, detectTargetType } from "./prepare.js";

@@ -504,12 +504,6 @@ export function parseVerifyOutput(out: string): CyberGymVerdict {
  * chatgpt-codex → OpenRouter → Anthropic → Azure → OpenAI.
  */
 export const runEngineDefault: EngineRunner = async (task, opts) => {
-  const target: MemSafetyTarget = {
-    language: detectLanguage(task.repoRoot),
-    sourceRoot: task.repoRoot,
-    buildSystem: detectBuildSystem(task.repoRoot),
-  };
-
   const dbPath = join(
     tmpdir(),
     `pwnkit-cybergym-${sanitizeId(task.taskId)}-${Date.now()}.db`,
@@ -519,9 +513,8 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
       target: task.repoRoot,
       depth: "quick",
       format: "json",
-      // The memSafetyTarget dispatch returns BEFORE any live-target / mode
-      // routing runs, so `mode` is only a label here; "deep" is the neutral
-      // default. The real work is the C/C++ fuzz ladder in runMemSafetyScan.
+      // The craftTarget dispatch returns BEFORE any live-target / mode routing
+      // runs, so `mode` is only a label here; "deep" is the neutral default.
       mode: "deep",
       timeout: 60_000,
       runtime: opts.runtime,
@@ -529,11 +522,30 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
       repoPath: task.repoRoot,
     },
     dbPath,
-    memSafetyTarget: target,
-    // `maxSteps` is a step budget; the userspace fuzz loop is wall-clock-bounded
-    // rather than step-bounded, so we map it onto a proportional time budget
-    // (≈3s/step) and also record the raw cap in the run protocol.
-    memSafety: { fuzz: { timeoutSec: Math.max(30, opts.maxSteps * 3) } },
+    // Craft path: the agent reads the pre-patch source with read-only tools and
+    // crafts a PoC, testing each candidate against the OFFICIAL CyberGym oracle
+    // injected here (never self-graded). Replaces the fuzz path, which needs the
+    // oss-fuzz target built (impractical outside its docker).
+    craftTarget: {
+      sourceRoot: task.repoRoot,
+      description: task.description,
+      language: detectLanguage(task.repoRoot),
+      taskId: task.taskId,
+    },
+    craft: {
+      maxSteps: opts.maxSteps,
+      maxSubmits: Math.max(6, Math.min(12, Math.ceil(opts.maxSteps / 3))),
+      evaluatePoc: async (pocPath) => {
+        const s = await submitToOracle(task, pocPath);
+        const vul = s.submitExitCode;
+        return {
+          triggered: vul !== undefined && vul !== 0 && vul !== 300,
+          differentialPass: s.verdict === "pass",
+          output: s.raw,
+          meta: { pocId: s.pocId, vulExitCode: s.submitExitCode },
+        };
+      },
+    },
     challengeHint: task.description,
   });
 
@@ -589,17 +601,6 @@ function detectLanguage(repoRoot: string): MemSafetyTarget["language"] {
   // "cpp" only on an obvious C++ build marker. The profile ladder is identical.
   if (existsSync(join(repoRoot, "CMakeLists.txt"))) return "cpp";
   return "c";
-}
-
-function detectBuildSystem(repoRoot: string): MemSafetyTarget["buildSystem"] {
-  if (existsSync(join(repoRoot, "CMakeLists.txt"))) return "cmake";
-  if (
-    existsSync(join(repoRoot, "configure.ac")) ||
-    existsSync(join(repoRoot, "configure"))
-  )
-    return "autotools";
-  if (existsSync(join(repoRoot, "meson.build"))) return "meson";
-  return "make";
 }
 
 // ── Per-task run (one attempt) ───────────────────────────────────────────────
@@ -822,8 +823,9 @@ function pickNumber(
 }
 
 const LIVE_VALIDATION_NOTE =
-  "Code-complete against the documented CyberGym harness contract; NOT yet " +
-  "validated end-to-end against the live submission server (gated on #1027).";
+  "Validated end-to-end against the live CyberGym submission server on the bench " +
+  "host (#1027 closed): the engine craft path (agenticScan -> runCraftScan) drives " +
+  "Codex to produce a PoC and the OFFICIAL differential oracle confirms each verdict.";
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
