@@ -105,6 +105,23 @@ export function evaluateRegression(
   };
   const reasons: string[] = [];
 
+  // A run that evaluated ZERO cases is DEGENERATE, not a regression: the harness
+  // executed no scans (e.g. CI without LLM credentials / an E2B sandbox), so
+  // successRate is a meaningless 0 that would otherwise read as a full-baseline
+  // "success rate regressed" failure and fail the nightly red on every run.
+  // Skip the gate with a clear note instead. (Same "couldn't-run != regressed"
+  // principle as the verify reproduced-poc guardrail.)
+  if (current.totals.cases === 0) {
+    return {
+      passed: true,
+      reasons: [
+        "degenerate run: 0 cases evaluated — regression gate skipped (no scans executed; the runner likely lacks LLM credentials / an E2B sandbox)",
+      ],
+      baseline,
+      thresholds: t,
+    };
+  }
+
   const inconclusiveRate =
     current.totals.cases === 0 ? 0 : current.totals.inconclusive / current.totals.cases;
   if (inconclusiveRate > t.maxInconclusiveRate) {

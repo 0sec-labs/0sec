@@ -99,4 +99,14 @@ describe("evaluateRegression", () => {
     const r = evaluateRegression(scorecard(0.9, 0.05), base);
     expect(r.passed).toBe(true);
   });
+
+  it("a degenerate 0-case run is SKIPPED (not a false regression)", () => {
+    // CI without LLM creds / sandbox executes 0 scans -> successRate 0, which
+    // would otherwise read as a full-baseline regression. Must not fail.
+    const base = entry("base", scorecard(0.8, 0.1), true);
+    const r = evaluateRegression(scorecard(0, 0, 0, 0), base, { maxSuccessRateDrop: 0.05 });
+    expect(r.passed).toBe(true);
+    expect(r.reasons.join(" ")).toMatch(/degenerate run: 0 cases/);
+    expect(r.reasons.join(" ")).not.toMatch(/regressed/);
+  });
 });
