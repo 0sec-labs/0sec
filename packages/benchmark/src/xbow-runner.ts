@@ -52,7 +52,7 @@ const SENSITIVE_PATTERNS = [
   /\b[0-9a-f]{32,}\b/gi,
 ];
 
-function sanitizeTraceText(text: string): string {
+export function sanitizeTraceText(text: string): string {
   let sanitized = text;
   for (const pattern of SENSITIVE_PATTERNS) {
     // Reset lastIndex for global regexes

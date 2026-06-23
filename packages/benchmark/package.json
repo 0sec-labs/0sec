@@ -9,6 +9,8 @@
     "bench:quick": "tsx src/runner.ts --depth quick",
     "bench:agentic": "tsx src/runner.ts --agentic --runtime auto",
     "bench:agentic:api": "tsx src/runner.ts --agentic --runtime api",
+    "cybergym": "tsx src/cybergym-runner.ts",
+    "cybergym:json": "tsx src/cybergym-runner.ts --json",
     "xbow": "tsx src/xbow-runner.ts",
     "xbow:dry": "tsx src/xbow-runner.ts --dry-run",
     "xbow:quick": "tsx src/xbow-runner.ts --limit 5",
