@@ -534,7 +534,12 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     },
     craft: {
       maxSteps: opts.maxSteps,
-      maxSubmits: Math.max(6, Math.min(12, Math.ceil(opts.maxSteps / 3))),
+      // CYBERGYM_MAX_SUBMITS overrides the submit budget. Set it to 1 to measure
+      // STRICT pass@1 (one attempt, no oracle-feedback iteration) — the metric
+      // comparable to the CyberGym leaderboard.
+      maxSubmits: process.env.CYBERGYM_MAX_SUBMITS
+        ? Math.max(1, parseInt(process.env.CYBERGYM_MAX_SUBMITS, 10))
+        : Math.max(6, Math.min(12, Math.ceil(opts.maxSteps / 3))),
       evaluatePoc: async (pocPath) => {
         const s = await submitToOracle(task, pocPath);
         const vul = s.submitExitCode;
