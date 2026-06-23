@@ -63,7 +63,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { agenticScan } from "@pwnkit/core";
+import { agenticScan, CraftMemoryStore, preseedMemory, consolidateMemory } from "@pwnkit/core";
 import type { MemSafetyTarget } from "@pwnkit/core";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { sanitizeTraceText } from "./xbow-runner.js";
@@ -508,6 +508,12 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     tmpdir(),
     `pwnkit-cybergym-${sanitizeId(task.taskId)}-${Date.now()}.db`,
   );
+  // Cross-task learning memory (the moat). Enabled by CYBERGYM_MEMORY_DB (a JSONL
+  // path shared across all task runs). Preseeded once; consolidated after each task.
+  const memory = process.env.CYBERGYM_MEMORY_DB
+    ? new CraftMemoryStore(process.env.CYBERGYM_MEMORY_DB)
+    : undefined;
+  if (memory) preseedMemory(memory);
   const report = await agenticScan({
     config: {
       target: task.repoRoot,
@@ -550,9 +556,15 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
           meta: { pocId: s.pocId, vulExitCode: s.submitExitCode },
         };
       },
+      ...(memory ? { memory } : {}),
     },
     challengeHint: task.description,
   });
+
+  // Hebbian consolidation: promote recent episodes into reusable knowledge.
+  if (memory) {
+    try { await consolidateMemory(memory, { everyN: 15 }); } catch { /* best-effort */ }
+  }
 
   const findings = (report as { findings?: unknown[] }).findings ?? [];
   const pocPath = extractPocPath(findings);

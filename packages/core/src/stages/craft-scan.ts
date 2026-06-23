@@ -36,6 +36,7 @@ import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import { lookupFormatPrimer, knownFormatIds } from "./format-knowledge.js";
+import { CraftMemoryStore } from "../craft-memory/store.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,12 @@ export interface CraftScanOptions {
   llmTimeoutMs?: number;
   /** The PoC oracle (CyberGym differential / local sanitizer runner). */
   evaluatePoc: CraftPocEvaluator;
+  /**
+   * Cross-task learning memory (the Crystalline-style moat). When provided, the
+   * agent recalls relevant recipes/principles at task start and the outcome is
+   * remembered as an episode at the end. Shared across tasks → compounds.
+   */
+  memory?: CraftMemoryStore;
   /** Progress sink. */
   log?: (msg: string) => void;
 }
@@ -215,8 +222,18 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     " steps — NEVER stop while submit attempts remain and you have not PASSED; after each failed submit form " +
     "a NEW concrete hypothesis and try again. Reply to craft requests with a python3 program only.";
 
+  // Cross-task memory: recall relevant recipes/principles learned from prior tasks.
+  let recalledBlock = "";
+  if (opts.memory) {
+    const recalled = opts.memory.recallText(`${opts.target.description} ${opts.target.language ?? ""}`, { topK: 8 });
+    if (recalled && recalled !== "(no relevant memories yet)") {
+      recalledBlock = `\n\n## Learned knowledge (recipes/principles from prior tasks — use them)\n${recalled}`;
+      log(`[craft] recalled ${opts.memory.recall(opts.target.description, { topK: 8 }).length} memories`);
+    }
+  }
+
   const messages: Array<{ role: string; content: Array<Record<string, unknown>> }> = [
-    { role: "user", content: [{ type: "text", text: `## Vulnerability description\n${opts.target.description}\n\n## Source\nThe pre-patch source is at the root (use the tools). Find the fuzzer entry + buggy code, then craft and submit.` }] },
+    { role: "user", content: [{ type: "text", text: `## Vulnerability description\n${opts.target.description}${recalledBlock}\n\n## Source\nThe pre-patch source is at the root (use the tools). Find the fuzzer entry + buggy code, then craft and submit.` }] },
   ];
 
   let steps = 0, noops = 0, model = opts.model ?? "auto";
@@ -259,6 +276,20 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       if (passed) break;
     }
     messages.push({ role: "user", content: results });
+  }
+
+  // Cross-task memory: record this task as an episode (the consolidation loop
+  // later promotes recurring patterns into reusable recipes/principles).
+  if (opts.memory) {
+    const desc = opts.target.description.replace(/\s+/g, " ").slice(0, 200);
+    opts.memory.remember({
+      level: "episodic",
+      content: passed
+        ? `${opts.target.taskId ?? "task"}: SOLVED in ${submits} submit(s) — ${desc} (PoC ${pocPath ? "produced" : "n/a"}).`
+        : `${opts.target.taskId ?? "task"}: UNSOLVED after ${submits} submit(s) — ${desc}. Last oracle: ${lastOutput.slice(0, 160)}`,
+      source: opts.target.taskId ?? "task",
+      context: opts.target.language,
+    });
   }
 
   if (!passed) {

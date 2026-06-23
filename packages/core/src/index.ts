@@ -122,6 +122,9 @@ export type {
   CraftScanOptions,
   CraftScanResult,
 } from "./stages/craft-scan.js";
+// Cross-task learning memory (the 5-tier "Crystalline-style" moat).
+export { CraftMemoryStore, preseedMemory, consolidateMemory } from "./craft-memory/index.js";
+export type { Memory, MemoryLevel } from "./craft-memory/index.js";
 
 // Unified pipeline: prepare + static analysis
 export { prepare, detectTargetType } from "./prepare.js";
