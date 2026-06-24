@@ -475,7 +475,7 @@ export {
   controlRungForDemo,
   runKernelExploitChain,
 } from "./kernel/index.js";
-export { rungRank as escalationRungRank } from "./kernel/exploit/index.js";
+export { rungRank as escalationRungRank, selectSprayPlans, introspectExploitConfig } from "./kernel/exploit/index.js";
 export type {
   EscalationRung,
   OracleVerdict,
