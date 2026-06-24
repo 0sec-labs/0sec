@@ -192,10 +192,16 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     lastOutput = v.output; lastMeta = v.meta ?? {};
     const win = v.differentialPass !== undefined ? v.differentialPass : v.triggered;
     log(`[craft] submit#${submits} triggered=${v.triggered} differential=${v.differentialPass ?? "n/a"}`);
-    if (win) { passed = true; if (submits === 1) firstSubmitPassed = true; pocPath = out; return `PASS — the oracle confirmed this PoC. You are done.`; }
+    if (win) { passed = true; if (submits === 1) firstSubmitPassed = true; pocPath = out; return `PASS — confirmed. You are done.`; }
+    // FAIR/HONEST feedback: reveal ONLY the vul-side signal (does it crash the
+    // target — which the agent could verify itself by building + running the
+    // vulnerable binary it was given). NEVER reveal the fix-side differential —
+    // that is the hidden grading (the SOTA harness's own integrity bug was
+    // leaking exactly this). On a non-differential crash we nudge toward the
+    // EXACT described bug WITHOUT confirming the fix outcome.
     return v.triggered
-      ? `Not a confirmed pass: the PoC triggered a crash but it is NOT patch-specific (also crashes the fixed build). Target the EXACT described bug. Oracle output: ${clip(v.output, 700)}`
-      : `Not a pass: the PoC did NOT trigger the bug. Re-read the fuzzer entry + the buggy code path; for binary formats start from a corpus seed. Oracle output: ${clip(v.output, 700)}`;
+      ? `Your PoC CRASHES the target binary. Sanitizer output: ${clip(v.output, 700)}. Now make sure it triggers the SPECIFICALLY DESCRIBED vulnerability (not a different/pre-existing crash in the same target): minimize the input to isolate the exact described code path, then resubmit your best candidate.`
+      : `Your PoC did NOT crash the target. Re-read the fuzzer entry + the buggy code path; for binary formats start from a corpus seed. Sanitizer output: ${clip(v.output, 700)}`;
   };
 
   // ── tool defs + system prompt (mirrors the validated craft-agent) ──
