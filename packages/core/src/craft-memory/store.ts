@@ -22,7 +22,7 @@
  * appends don't clobber, recall is read-only). No native dependency.
  */
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -89,7 +89,16 @@ export class CraftMemoryStore {
         /* skip malformed */
       }
     }
-    this.lastConsolidatedEpisodeCount = this.mems.filter((m) => m.level === "episodic").length;
+    // Consolidation state is GLOBAL (persisted in a sidecar), NOT reset to the
+    // current count on load. Each task runs as a separate process; resetting
+    // here meant the per-process delta never reached the threshold and
+    // consolidation never fired. Read the persisted high-water mark instead.
+    try {
+      this.lastConsolidatedEpisodeCount =
+        parseInt(readFileSync(this.path + ".consolidated", "utf8").trim() || "0", 10) || 0;
+    } catch {
+      this.lastConsolidatedEpisodeCount = 0;
+    }
   }
 
   /** Number of memories, optionally by level. */
@@ -184,8 +193,13 @@ export class CraftMemoryStore {
     return this.mems.filter((m) => m.level === "episodic").slice(-limit);
   }
 
-  /** Mark consolidation done at the current episode count. */
+  /** Mark consolidation done at the current episode count (persisted globally). */
   markConsolidated(): void {
     this.lastConsolidatedEpisodeCount = this.count("episodic");
+    try {
+      writeFileSync(this.path + ".consolidated", String(this.lastConsolidatedEpisodeCount), "utf8");
+    } catch {
+      /* best-effort */
+    }
   }
 }
