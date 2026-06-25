@@ -149,9 +149,13 @@ export function makeSkepticVerifier(opts: {
       "Only report a finding if, after genuinely trying to refute it, you CANNOT — i.e. you can still " +
       "point to the exact unguarded sink (file:line) and a concrete attacker-reachable path. " +
       "If you cannot reproduce the claim from the source, report NOTHING.";
+    // A FOCUSED re-read, not a fresh broad hunt: the challengeHint already
+    // targets the one claim, so "quick" depth keeps the gate fast enough to run
+    // per-finding at scale (a "deep" full-template scan took ~10min on a 10-line
+    // file in smoke testing — prohibitive across many findings).
     const config: ScanConfig = {
       target: candidate.path,
-      depth: "deep",
+      depth: "quick",
       format: "json",
       mode: "deep",
       timeout: 60_000,
