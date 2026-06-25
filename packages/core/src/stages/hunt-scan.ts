@@ -28,8 +28,26 @@
  * candidate model + the verify gate.
  */
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { rmSync } from "node:fs";
 import type { Finding, RuntimeMode, ScanConfig } from "@pwnkit/shared";
 import { agenticScan } from "../agentic-scanner.js";
+
+// Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
+// default DB is a single shared ~/.pwnkit/pwnkit.db — at any real fan-out width
+// they contend on its write lock ("SQLite database is locked"), which crashed
+// verify steps mid-sweep (NOT a refute — a crash, silently dropping the gate).
+// Each agenticScan gets its own DB so there is zero cross-scan contention.
+let huntDbCounter = 0;
+function freshHuntDb(): string {
+  return join(tmpdir(), `pwnkit-hunt-${process.pid}-${huntDbCounter++}.db`);
+}
+function cleanupHuntDb(path: string): void {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try { rmSync(path + suffix, { force: true }); } catch { /* best-effort */ }
+  }
+}
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -163,11 +181,16 @@ export function makeSkepticVerifier(opts: {
       repoPath: opts.sourceRoot,
       ...(opts.model ? { model: opts.model } : {}),
     };
-    const report = await agenticScan({ config, challengeHint: hint });
-    const survived = (report.findings ?? []).length > 0;
-    return survived
-      ? { confirmed: true, reason: "survived adversarial refute pass" }
-      : { confirmed: false, reason: "refuted: skeptic could not reproduce the claim from source" };
+    const dbPath = freshHuntDb();
+    try {
+      const report = await agenticScan({ config, dbPath, challengeHint: hint });
+      const survived = (report.findings ?? []).length > 0;
+      return survived
+        ? { confirmed: true, reason: "survived adversarial refute pass" }
+        : { confirmed: false, reason: "refuted: skeptic could not reproduce the claim from source" };
+    } finally {
+      cleanupHuntDb(dbPath);
+    }
   };
 }
 
@@ -200,6 +223,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   log(`[hunt] ${opts.candidates.length} candidate(s) × ${models.length} model(s) = ${runs.length} finder run(s), ${concurrency}-wide`);
 
   const reports = await pool(runs, concurrency, async (run) => {
+    const dbPath = freshHuntDb();
     try {
       const config: ScanConfig = {
         target: run.candidate.path,
@@ -211,11 +235,13 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         repoPath: opts.sourceRoot,
         ...(run.model ? { model: run.model } : {}),
       };
-      const report = await agenticScan({ config, challengeHint: huntHint(opts.brief, run.candidate) });
+      const report = await agenticScan({ config, dbPath, challengeHint: huntHint(opts.brief, run.candidate) });
       return { candidate: run.candidate, findings: report.findings ?? [] };
     } catch (e) {
       warnings.push(`hunt: finder failed on ${run.candidate.path}: ${String(e).slice(0, 120)}`);
       return { candidate: run.candidate, findings: [] as Finding[] };
+    } finally {
+      cleanupHuntDb(dbPath);
     }
   });
 
