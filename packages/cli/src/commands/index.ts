@@ -19,6 +19,7 @@ export { registerKernelCommand } from "./kernel.js";
 export { registerDiscloseCommand } from "./disclose.js";
 export { registerVerifyCommand } from "./verify.js";
 export { registerExploitCommand } from "./exploit.js";
+export { registerHuntCommand } from "./hunt.js";
 export { registerProtocolCheckCommand } from "./protocol-check.js";
 export { registerCveCommand } from "./cve.js";
 export { registerUpgradeCommand } from "./upgrade.js";
