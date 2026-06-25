@@ -118,6 +118,15 @@ export { runCraftScan, craftedPocToFinding } from "./stages/craft-scan.js";
 // Exploit scan stage (agentic weaponize-to-root, injectable target executor).
 export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";
+// Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
+export { runHuntScan, makeSkepticVerifier, composeGate } from "./stages/hunt-scan.js";
+export type {
+  HuntCandidate,
+  HuntBrief,
+  HuntVerifier,
+  HuntScanOptions,
+  HuntScanResult,
+} from "./stages/hunt-scan.js";
 export type {
   CraftTarget,
   CraftPocVerdict,
