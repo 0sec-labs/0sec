@@ -114,11 +114,17 @@ export async function generateVariantCandidates(input: VariantHuntInput): Promis
     },
   };
   const system =
-    "You are a kernel/security VARIANT-HUNT analyst. Given a security fix diff, identify the bug class and the exact " +
-    "unguarded code shape (the sink) the fix added a guard around. Then write grep EXTENDED-REGEX patterns that will find " +
-    "the SAME sink shape at OTHER call-sites and sibling files across the tree — the places an INCOMPLETE fix would have " +
-    "missed. Match the dangerous call/sink (the function, the field access, the copy), NOT the guard that was added. " +
-    "Keep patterns specific enough to avoid thousands of hits but general enough to catch the variant. Call emit_variant_plan.";
+    "You are a kernel/security VARIANT-HUNT analyst. Given a security fix diff, identify the bug class and the unguarded " +
+    "code SHAPE (the sink) the fix added a guard around. Then write grep EXTENDED-REGEX patterns that find the SAME bug " +
+    "CLASS at OTHER call-sites across the tree — where an INCOMPLETE fix or an independent instance lives.\n" +
+    "CRITICAL — match the CLASS, not the original site: the patched file is EXCLUDED from results, so a pattern that " +
+    "hardcodes the original's specific identifiers (field names like `sensf_res`, struct names like `digital_*`, the " +
+    "variable `resp`) will match ONLY the original and yield ZERO variants. WILDCARD the identifiers. Match the dangerous " +
+    "SHAPE — e.g. a length-controlled copy into a fixed buffer regardless of names: `memcpy\\([^,]+,[^,]+,[^)]*->len\\)`, " +
+    "or an unchecked `->len`/`->size` used as a copy/index bound. Match the sink, NOT the guard that was added.\n" +
+    "Emit 3-6 patterns ranging from moderately specific (the same struct-field-copy shape with wildcarded names) to " +
+    "general (any length-bounded memcpy/copy_from of that family). Aim for tens of hits to triage, not zero and not " +
+    "thousands. Call emit_variant_plan.";
   const messages = [{ role: "user", content: [{ type: "text", text: `## Fix diff\n${clip(diff, 24_000)}` }] }];
 
   const rt = new LlmApiRuntime({ type: "api", ...(input.model ? { model: input.model } : {}), timeout: 240_000 });
