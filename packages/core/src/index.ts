@@ -120,6 +120,8 @@ export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";
 // Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
 export { runHuntScan, makeSkepticVerifier, composeGate } from "./stages/hunt-scan.js";
+export { generateVariantCandidates } from "./stages/variant-candidates.js";
+export type { VariantHuntInput, VariantHuntPlan } from "./stages/variant-candidates.js";
 export type {
   HuntCandidate,
   HuntBrief,
