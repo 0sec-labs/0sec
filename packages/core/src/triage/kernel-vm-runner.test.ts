@@ -11,6 +11,11 @@ import {
   defaultDmesgOutPath,
   writeProofFileReadOnly,
   parseCoveragePcs,
+  buildInitramfsKernelAppend,
+  renderInitramfsInitScript,
+  buildInitramfsQemuCommand,
+  loadKernelVmConfigFromEnv,
+  type KernelVmConfig,
 } from "./kernel-vm-runner.js";
 
 describe("prepareKernelVmArtifacts", () => {
@@ -617,5 +622,95 @@ describe("writeProofFileReadOnly — read-only proof artifact", () => {
       // Read-only files need force removal.
       rmSync(path, { force: true });
     }
+  });
+});
+
+describe("weaponize-initramfs lane", () => {
+  const originalEnv = { ...process.env };
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("buildInitramfsKernelAppend boots rdinit=/init, NO 9p root disk", () => {
+    const append = buildInitramfsKernelAppend(false);
+    expect(append).toContain("rdinit=/init");
+    expect(append).toContain("kasan_multi_shot=1"); // count every UAF, not just the first
+    expect(append).toContain("nokaslr");
+    expect(append).toContain("panic=-1");
+    // The rootfs IS the initramfs — there is no disk to mount.
+    expect(append).not.toContain("root=/dev/vda");
+    // KASLR knob mirrors the 9p lane.
+    expect(buildInitramfsKernelAppend(true)).toContain(" kaslr ");
+  });
+
+  it("renderInitramfsInitScript insmods modules, exports race env, runs /exploit, harvests markers", () => {
+    const init = renderInitramfsInitScript(
+      ["snd-mtpav.ko"],
+      { PWNKIT_RACE_SECONDS: "35", PWNKIT_RACE_FLOOD_THREADS: "4" },
+      30,
+    );
+    expect(init).toContain("#!/bin/busybox sh");
+    expect(init).toContain("mount -t proc none /proc");
+    // the module the snd-seq-midi UAF needs (the midisynth port) is insmod'd
+    expect(init).toContain("insmod /lib/modules/snd-mtpav.ko");
+    // the PWNKIT_RACE_* knobs the emitted exploit reads via getenv are exported
+    expect(init).toContain("export PWNKIT_RACE_SECONDS='35'");
+    expect(init).toContain("export PWNKIT_RACE_FLOOD_THREADS='4'");
+    // the host-compiled static exploit is run under busybox `timeout` (positional
+    // SECS arg — NOT GNU `-t SECS`, which busybox rejects). Caps a hung flood.
+    // Its high-volume marker output goes to a tmpfs file during the race (so the
+    // slow UART does not wedge the CPU and starve the race), then is cat'd to
+    // serial after — the oracle reads the same markers either way.
+    expect(init).toContain("timeout 30 /exploit > /tmp/run.log");
+    expect(init).toContain("cat /tmp/run.log");
+    expect(init).not.toContain("timeout -t");
+    // poweroff so the host's QEMU-exit wait returns
+    expect(init).toContain("poweroff -f");
+    expect(init).toContain("PWNKIT-INITRAMFS done");
+  });
+
+  it("buildInitramfsQemuCommand uses -initrd with NO -drive/-virtfs (9p)", () => {
+    const config: KernelVmConfig = {
+      qemuBinary: "qemu-system-x86_64",
+      kernelImage: "/k/bzImage",
+      diskImage: "/k/rootfs.img",
+      diskFormat: "raw",
+      bootTimeoutSec: 120,
+      memoryMb: 2048,
+      smp: 2,
+      kernelAppend: "ignored",
+      timeoutSec: 60,
+      shareTag: "pwnkitshare",
+      qemuAccel: "kvm",
+    };
+    const { command, args } = buildInitramfsQemuCommand(
+      config,
+      "/tmp/serial.log",
+      "/tmp/initramfs.cpio.gz",
+      buildInitramfsKernelAppend(false),
+    );
+    expect(command).toBe("qemu-system-x86_64");
+    const joined = args.join(" ");
+    expect(joined).toContain("-initrd /tmp/initramfs.cpio.gz");
+    expect(joined).toContain("-kernel /k/bzImage");
+    expect(joined).toContain("rdinit=/init");
+    expect(joined).toContain("-accel kvm");
+    // NO heavy 9p root disk in this lane.
+    expect(joined).not.toContain("-drive");
+    expect(joined).not.toContain("-virtfs");
+  });
+
+  it("loadKernelVmConfigFromEnv enables the lane via USE_KERNEL_WEAPONIZE / INITRAMFS env", () => {
+    process.env.PWNKIT_KERNEL_QEMU_KERNEL = "/k/bzImage";
+    process.env.PWNKIT_KERNEL_QEMU_DISK = "/k/rootfs.img";
+    delete process.env.PWNKIT_KERNEL_QEMU_INITRAMFS;
+    delete process.env.USE_KERNEL_WEAPONIZE;
+    expect(loadKernelVmConfigFromEnv().weaponizeInitramfs).toBe(false);
+
+    process.env.USE_KERNEL_WEAPONIZE = "1";
+    process.env.PWNKIT_KERNEL_QEMU_INITRAMFS_MODULES = "/a/snd-mtpav.ko:/b/kdelay.ko";
+    const cfg = loadKernelVmConfigFromEnv();
+    expect(cfg.weaponizeInitramfs).toBe(true);
+    expect(cfg.initramfsModules).toEqual(["/a/snd-mtpav.ko", "/b/kdelay.ko"]);
   });
 });

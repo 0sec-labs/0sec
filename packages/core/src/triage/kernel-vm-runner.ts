@@ -42,6 +42,32 @@ export interface KernelVmConfig {
    * race-widening kprobe module in-guest. Absent ⇒ widening is skipped.
    */
   guestKernelBuildDir?: string;
+  /**
+   * Weaponization lane: boot a LIGHTWEIGHT busybox initramfs (`rdinit=/init`,
+   * NO heavy 9p root disk) instead of the 9p-shared disk image. Mirrors the
+   * proven manual `run_v6.sh` harness — the lightweight environment removes the
+   * scheduler/IO noise that wedges the 9p-disk flood thread, so the UAF flood
+   * reaches the manual ~225-UAF/boot rate that actually wins the reclaim.
+   *
+   * The exploit C is compiled STATICALLY on the host (the initramfs has no
+   * toolchain) and packed as `/init`'s payload. Gated by
+   * `PWNKIT_KERNEL_QEMU_INITRAMFS=1` (set by `USE_KERNEL_WEAPONIZE=1`). When
+   * false the historical 9p verify/repro lane is used unchanged.
+   */
+  weaponizeInitramfs?: boolean;
+  /**
+   * Host paths to vulnerable-kernel `.ko` modules the initramfs `/init` must
+   * `insmod` before running the exploit (e.g. `snd-mtpav.ko`, which provides the
+   * `midisynth` rawmidi port the snd-seq-midi UAF subscribes/opens). Packed into
+   * the initramfs and insmod'd in order. Only consulted in the initramfs lane.
+   */
+  initramfsModules?: string[];
+  /**
+   * Host path to a STATIC busybox binary packed into the initramfs as
+   * `/bin/busybox` (the only userspace the `/init` shell needs). Defaults to a
+   * `busybox` discovered on PATH; the lane errors clearly if none is static.
+   */
+  busyboxPath?: string;
 }
 
 /**
@@ -247,6 +273,18 @@ export function loadKernelVmConfigFromEnv(): KernelVmConfig {
   const widenOffsetRaw = process.env.PWNKIT_KERNEL_QEMU_WIDEN_OFFSET?.trim();
   const widenDelayRaw = process.env.PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS?.trim();
 
+  // Weaponization lane (lightweight busybox initramfs). `USE_KERNEL_WEAPONIZE=1`
+  // is the operator-facing alias; `PWNKIT_KERNEL_QEMU_INITRAMFS=1` is the
+  // explicit knob. Either enables it.
+  const weaponizeInitramfs =
+    /^(1|true|on|yes)$/i.test(process.env.PWNKIT_KERNEL_QEMU_INITRAMFS?.trim() ?? "") ||
+    /^(1|true|on|yes)$/i.test(process.env.USE_KERNEL_WEAPONIZE?.trim() ?? "");
+  const initramfsModules = (process.env.PWNKIT_KERNEL_QEMU_INITRAMFS_MODULES?.trim() || "")
+    .split(/[:,\s]+/)
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const busyboxPath = process.env.PWNKIT_KERNEL_QEMU_BUSYBOX?.trim() || undefined;
+
   return {
     qemuBinary: process.env.PWNKIT_KERNEL_QEMU_BINARY?.trim() || "qemu-system-x86_64",
     kernelImage: resolvedKernelImage,
@@ -272,6 +310,9 @@ export function loadKernelVmConfigFromEnv(): KernelVmConfig {
     ...(process.env.PWNKIT_KERNEL_QEMU_GUEST_BUILD_DIR?.trim()
       ? { guestKernelBuildDir: process.env.PWNKIT_KERNEL_QEMU_GUEST_BUILD_DIR!.trim() }
       : {}),
+    weaponizeInitramfs,
+    ...(initramfsModules.length > 0 ? { initramfsModules } : {}),
+    ...(busyboxPath ? { busyboxPath } : {}),
   };
 }
 
@@ -361,6 +402,224 @@ export function buildQemuCommand(
   }
 
   return { command: config.qemuBinary, args };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Weaponization lane: lightweight busybox-initramfs boot (issue: snd-midi
+// initramfs weaponization lane). Mirrors the proven manual `run_v6.sh` harness.
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the kernel cmdline for the initramfs weaponization lane. Mirrors the
+ * proven manual `run_v6.sh` append: `rdinit=/init` + `kasan_multi_shot=1`
+ * (every UAF write splats, not just the first — so we can COUNT UAF events/boot)
+ * + the KASLR knob + `panic=-1` (a splat-stall must not wedge the whole boot).
+ * NO `root=/dev/vda` — there is no disk; the rootfs IS the initramfs.
+ */
+export function buildInitramfsKernelAppend(kaslr: boolean): string {
+  return [
+    "console=ttyS0",
+    "earlyprintk=serial",
+    "rdinit=/init",
+    "kasan_multi_shot=1",
+    kaslr ? "kaslr" : "nokaslr",
+    "panic=-1",
+  ].join(" ");
+}
+
+/**
+ * Render the initramfs `/init` (busybox sh). Mounts proc/sys/dev, insmods the
+ * staged `.ko` modules (e.g. `snd-mtpav.ko` — the midisynth port the snd-seq UAF
+ * needs), runs the host-compiled exploit, then harvests the SAME oracle markers
+ * the 9p lane harvests (the exploit prints DROP/ROOT/RECLAIM/MODPROBE_HELPER_RAN
+ * to stdout; KASAN splats land on the serial console). `run.log` is echoed back
+ * to the serial console (the only channel out of an initramfs with no share) so
+ * the host can scrape one stream for both the run output and the dmesg splats.
+ *
+ * `raceEnv` is the `PWNKIT_RACE_*` knob set the emitted exploit reads via
+ * getenv at runtime — exported into the exploit's environment here so the lane
+ * can drive RACE_SECONDS/FLOOD_THREADS/etc. without recompiling.
+ */
+export function renderInitramfsInitScript(
+  moduleNames: string[],
+  raceEnv: Record<string, string>,
+  timeoutSec: number,
+): string {
+  const envExports = Object.entries(raceEnv)
+    .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+    .join("\n");
+  const insmods = moduleNames
+    .map((m) => `insmod /lib/modules/${m} 2>&1 && echo "insmod ${m} ok" || echo "insmod ${m} rc=$?"`)
+    .join("\n");
+  return [
+    "#!/bin/busybox sh",
+    "/bin/busybox mkdir -p /proc /sys /dev /tmp /lib/modules",
+    "/bin/busybox mount -t proc none /proc",
+    "/bin/busybox mount -t sysfs none /sys",
+    "/bin/busybox mount -t devtmpfs none /dev 2>/dev/null",
+    "/bin/busybox --install -s /bin 2>/dev/null",
+    'echo "=== PWNKIT-INITRAMFS weaponize lane up ==="',
+    "cat /proc/version",
+    insmods,
+    envExports,
+    'echo "=== PWNKIT-INITRAMFS run (env: ' +
+      Object.keys(raceEnv).join(",") +
+      ') ==="',
+    // CRITICAL: the engine's emitted exploit prints a RECLAIM marker on EVERY
+    // spray-loop iteration (thousands/sec). Streaming that to the slow 8250 UART
+    // wedges the CPU in io_serial_in and STARVES the race (NMI watchdog fires,
+    // KASAN never gets a window). So redirect the exploit's stdout/stderr to a
+    // tmpfs file (fast, no UART blocking) during the race, then `cat` it to the
+    // serial console AFTER the race completes — the oracle reads the full serial
+    // stream either way, and the KASAN splats (kernel printk, a separate path)
+    // still interleave live. `timeout` caps a hung flood; busybox `timeout` takes
+    // the seconds as a POSITIONAL arg (`timeout SECS PROG`), NOT GNU `-t SECS`.
+    `/bin/busybox timeout ${timeoutSec} /exploit > /tmp/run.log 2>&1 || echo "PWNKIT-INITRAMFS exploit exit=$?" >> /tmp/run.log`,
+    'echo "=== PWNKIT-INITRAMFS exploit output (batched off the UART hot path) ==="',
+    "cat /tmp/run.log",
+    'echo "=== PWNKIT-INITRAMFS post-run ==="',
+    "sync",
+    "cat /tmp/pwned 2>/dev/null && echo PWNKIT-INITRAMFS-PWNED-FILE-PRESENT",
+    'echo "=== PWNKIT-INITRAMFS done; powering off ==="',
+    "/bin/busybox poweroff -f",
+  ].join("\n");
+}
+
+/**
+ * Compile the exploit C STATICALLY on the host and pack a minimal busybox
+ * initramfs (`/init`, `/bin/busybox`, `/exploit`, staged `.ko` modules) into a
+ * `initramfs.cpio.gz`. Returns its path. Throws with a clear message when the
+ * toolchain / busybox prerequisites are missing — the lane is opt-in, so a
+ * misconfigured box must fail loudly, not silently fall back to 9p.
+ *
+ * Static linking is mandatory: the initramfs ships no shared libs or dynamic
+ * loader, so the exploit (pthread) must be a self-contained static binary.
+ */
+export function buildWeaponizeInitramfs(
+  config: KernelVmConfig,
+  exploitC: string,
+  workDir: string,
+  raceEnv: Record<string, string>,
+): string {
+  const rootDir = join(workDir, "initramfs-root");
+  mkdirSync(join(rootDir, "bin"), { recursive: true });
+  mkdirSync(join(rootDir, "lib", "modules"), { recursive: true });
+  for (const sub of ["proc", "sys", "dev", "tmp"]) {
+    mkdirSync(join(rootDir, sub), { recursive: true });
+  }
+
+  // 1. Static busybox — the only userspace the /init shell needs.
+  const busybox =
+    config.busyboxPath ||
+    (() => {
+      try {
+        return execFileSync("sh", ["-c", "command -v busybox"], { encoding: "utf8" }).trim();
+      } catch {
+        return "";
+      }
+    })();
+  if (!busybox || !existsSync(busybox)) {
+    throw new Error(
+      "weaponize-initramfs lane: no busybox found (set PWNKIT_KERNEL_QEMU_BUSYBOX to a STATIC busybox)",
+    );
+  }
+  execFileSync("cp", [busybox, join(rootDir, "bin", "busybox")]);
+  chmodSync(join(rootDir, "bin", "busybox"), 0o755);
+
+  // 2. Compile the exploit STATICALLY on the host.
+  const srcPath = join(workDir, "exploit.c");
+  writeFileSync(srcPath, exploitC, "utf-8");
+  const binPath = join(rootDir, "exploit");
+  const compileLog = join(workDir, "compile.log");
+  try {
+    execFileSync(
+      "gcc",
+      ["-O0", "-g", "-static", "-o", binPath, srcPath, "-lpthread"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (err) {
+    const msg = err instanceof Error && "stderr" in err ? String((err as { stderr: unknown }).stderr) : String(err);
+    writeFileSync(compileLog, msg, "utf-8");
+    throw new Error(`weaponize-initramfs lane: static exploit compile failed:\n${msg.slice(0, 1500)}`);
+  }
+  chmodSync(binPath, 0o755);
+
+  // 3. Stage the .ko modules (basename → /lib/modules/<name>).
+  const moduleNames: string[] = [];
+  for (const koPath of config.initramfsModules ?? []) {
+    if (!existsSync(koPath)) {
+      throw new Error(`weaponize-initramfs lane: module not found: ${koPath}`);
+    }
+    const name = koPath.split("/").pop()!;
+    execFileSync("cp", [koPath, join(rootDir, "lib", "modules", name)]);
+    moduleNames.push(name);
+  }
+
+  // 4. /init.
+  const initPath = join(rootDir, "init");
+  writeFileSync(initPath, renderInitramfsInitScript(moduleNames, raceEnv, config.timeoutSec), "utf-8");
+  chmodSync(initPath, 0o755);
+
+  // 5. Pack the cpio.gz (find | cpio newc | gzip), run from inside rootDir so
+  // paths are relative (`./init`, not `/abs/.../init`).
+  const cpioPath = join(workDir, "initramfs.cpio.gz");
+  execFileSync(
+    "sh",
+    ["-c", `cd ${shellQuote(rootDir)} && find . -print0 | cpio --null -o --format=newc 2>/dev/null | gzip -9 > ${shellQuote(cpioPath)}`],
+  );
+  if (!existsSync(cpioPath) || statSync(cpioPath).size === 0) {
+    throw new Error("weaponize-initramfs lane: cpio packing produced an empty initramfs");
+  }
+  return cpioPath;
+}
+
+/**
+ * QEMU command for the initramfs weaponization lane: `-initrd <cpio>` +
+ * `rdinit=/init`, NO `-drive` and NO 9p `-virtfs` (the rootfs IS the
+ * initramfs). Otherwise mirrors `buildQemuCommand` (serial→file, no-reboot,
+ * optional accel). The cmdline comes from `buildInitramfsKernelAppend`.
+ */
+export function buildInitramfsQemuCommand(
+  config: KernelVmConfig,
+  serialLogPath: string,
+  initramfsPath: string,
+  kernelAppend: string,
+): { command: string; args: string[] } {
+  const args = [
+    "-m", String(config.memoryMb),
+    "-smp", String(config.smp),
+    "-kernel", config.kernelImage,
+    "-initrd", initramfsPath,
+    "-append", kernelAppend,
+    "-nographic",
+    "-monitor", "none",
+    "-serial", `file:${serialLogPath}`,
+    "-no-reboot",
+  ];
+  if (config.qemuAccel) {
+    args.push("-accel", config.qemuAccel);
+  }
+  return { command: config.qemuBinary, args };
+}
+
+/**
+ * The `PWNKIT_RACE_*` knob set the emitted exploit reads at runtime, sourced
+ * from the process env so the lane can be tuned without a rebuild. Only keys
+ * that are actually set are forwarded (the exploit applies its own defaults).
+ */
+export function collectRaceEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of [
+    "PWNKIT_RACE_FLOOD_THREADS",
+    "PWNKIT_RACE_SPRAY_THREADS",
+    "PWNKIT_RACE_PARK_US",
+    "PWNKIT_RACE_SECONDS",
+    "PWNKIT_RACE_SAME_CPU",
+  ]) {
+    const v = process.env[key]?.trim();
+    if (v) out[key] = v;
+  }
+  return out;
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -573,6 +832,103 @@ export function parseCoveragePcs(raw: string): string[] {
   });
 }
 
+/**
+ * Wait for the initramfs VM to finish: it has no 9p share to drop a marker on,
+ * so we wait for QEMU to exit (the `/init` poweroffs after the run) or a
+ * deadline, whichever comes first. The single serial log carries everything.
+ */
+async function waitForInitramfsVm(
+  config: KernelVmConfig,
+  proc: ReturnType<typeof spawn>,
+  serialLogPath: string,
+): Promise<{ poweredOff: boolean }> {
+  const totalBudgetSec = config.bootTimeoutSec + config.timeoutSec + 60;
+  const deadline = Date.now() + totalBudgetSec * 1000;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) return { poweredOff: true };
+    // Fast-path: the /init's terminal banner is on serial — exit as soon as the
+    // run is provably done, without waiting on QEMU's own teardown.
+    if (existsSync(serialLogPath)) {
+      const tail = readFileSync(serialLogPath, "utf-8").slice(-2000);
+      if (tail.includes("PWNKIT-INITRAMFS done")) return { poweredOff: true };
+    }
+    await sleep(1_000);
+  }
+  return { poweredOff: false };
+}
+
+/**
+ * Run the engine-emitted exploit in the lightweight busybox initramfs lane.
+ *
+ * Builds a minimal initramfs (static busybox + host-compiled static exploit +
+ * staged `.ko` modules + `/init`), boots `rdinit=/init` with NO heavy 9p root
+ * disk, and harvests the SAME markers the 9p lane produces from the single
+ * serial stream (the exploit's stdout markers AND the KASAN splats both land
+ * there). The returned `ReproducerResult` is shape-identical to the 9p lane's,
+ * so the oracle/adjudicator sees no difference — only a far healthier flood.
+ */
+async function runWeaponizeInitramfs(
+  config: KernelVmConfig,
+  exploitC: string,
+): Promise<ReproducerResult> {
+  const hostTmpDir = config.artifactDir
+    ? (() => {
+        mkdirSync(config.artifactDir!, { recursive: true });
+        return mkdtempSync(join(config.artifactDir!, "pwnkit-initramfs-"));
+      })()
+    : mkdtempSync(join(tmpdir(), "pwnkit-initramfs-"));
+  const serialLogPath = join(hostTmpDir, "serial.log");
+  const raceEnv = collectRaceEnv();
+
+  let initramfsPath: string;
+  try {
+    initramfsPath = buildWeaponizeInitramfs(config, exploitC, hostTmpDir, raceEnv);
+  } catch (err) {
+    // A build/compile failure is reported like a 9p compile failure: not
+    // compiled, no execution. The message carries the gcc/cpio error.
+    if (!config.artifactDir) rmSync(hostTmpDir, { recursive: true, force: true });
+    return {
+      compiled: false,
+      executed: false,
+      output: err instanceof Error ? err.message : String(err),
+      dmesg: "",
+      exitCode: -1,
+      timedOut: false,
+    };
+  }
+
+  const kernelAppend = buildInitramfsKernelAppend(config.kaslr ?? false);
+  const { command, args } = buildInitramfsQemuCommand(config, serialLogPath, initramfsPath, kernelAppend);
+  const vmProc = spawn(command, args, { stdio: "ignore" });
+
+  try {
+    const { poweredOff } = await waitForInitramfsVm(config, vmProc, serialLogPath);
+    const serial = existsSync(serialLogPath) ? readFileSync(serialLogPath, "utf-8") : "";
+    // Execution is proven by the run banner; the exploit always reaches at least
+    // its first print once /init runs it.
+    const executed = serial.includes("PWNKIT-INITRAMFS run");
+    const timedOut = !poweredOff;
+    // Both channels live in `serial`. Hand the WHOLE serial stream as both the
+    // run output (markers) and the dmesg (KASAN splats) — the adjudicator
+    // substring-matches each independently, so duplicating is harmless and the
+    // single stream guarantees the DROP/ROOT witness and its KASAN splat are
+    // adjudicated from the SAME boot.
+    return {
+      compiled: true,
+      executed,
+      output: serial,
+      dmesg: serial,
+      exitCode: executed ? 0 : 1,
+      timedOut,
+    };
+  } finally {
+    await stopVm(vmProc);
+    if (!config.artifactDir) {
+      rmSync(hostTmpDir, { recursive: true, force: true });
+    }
+  }
+}
+
 export async function runReproducerInKernelVm(report: CrashReport): Promise<ReproducerResult> {
   if (!report.reproducer) {
     return {
@@ -586,6 +942,14 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
   }
 
   const config = loadKernelVmConfigFromEnv();
+
+  // Weaponization lane: boot the lightweight busybox initramfs instead of the
+  // 9p disk. Only for C reproducers (the syz path is verify-only). The 9p verify
+  // /repro behaviour below is unchanged when the lane is off.
+  if (config.weaponizeInitramfs && (report.reproducerLanguage ?? "c") === "c") {
+    return runWeaponizeInitramfs(config, report.reproducer);
+  }
+
   const hostTmpDir = config.artifactDir
     ? (() => {
         mkdirSync(config.artifactDir!, { recursive: true });
