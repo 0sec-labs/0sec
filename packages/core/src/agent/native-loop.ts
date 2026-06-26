@@ -613,6 +613,14 @@ export async function runNativeAgentLoop(
 
   // ── Main loop ──
 
+  // Transient-error backoff budget. A provider that returns 429/529/5xx
+  // ("overloaded", "try again later") is temporarily unavailable, not broken —
+  // without this a single transient blip ends the whole agent run (observed:
+  // z-ai 529 zeroed an entire 20-finder hunt fleet). Capped so a hard outage
+  // still terminates.
+  let transientRetries = 0;
+  const MAX_TRANSIENT_RETRIES = 6;
+
   try {
   while (!state.done && state.turnCount < config.maxTurns) {
     // ── http_audit wall-clock kill switch ──
@@ -890,6 +898,19 @@ export async function runNativeAgentLoop(
     // Handle error or empty response
     if (result.error || (result.content.length === 0 && (!result.usage || result.usage.outputTokens === 0))) {
       const errorMsg = result.error || "API returned empty response (0 tokens) — model may be rate-limited or unavailable";
+      // Transient provider overload / rate-limit / 5xx → back off and retry the
+      // SAME turn rather than killing the run. Doesn't consume a turn (the LLM
+      // call failed before any tool ran), capped by MAX_TRANSIENT_RETRIES.
+      const transient = /\b(429|529|502|503|504)\b|overloaded|rate.?limit|temporarily|too many requests|ETIMEDOUT|ECONNRESET|throttl/i.test(errorMsg);
+      if (transient && transientRetries < MAX_TRANSIENT_RETRIES) {
+        transientRetries++;
+        const backoffMs = Math.min(20_000, 500 * 2 ** transientRetries);
+        process.stderr.write(`[pwnkit] transient LLM error (retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}, backoff ${backoffMs}ms): ${errorMsg.slice(0, 120)}\n`);
+        onEvent?.("agent_error", { turn: state.turnCount, error: `transient (retry ${transientRetries}): ${errorMsg.slice(0, 200)}` });
+        if (state.turnCount > 0) state.turnCount--; // a failed transient turn must not burn budget
+        await new Promise((r) => setTimeout(r, backoffMs));
+        continue;
+      }
       process.stderr.write(`[pwnkit] Agent loop error on turn ${state.turnCount}: ${errorMsg}\n`);
       onEvent?.("agent_error", { turn: state.turnCount, error: errorMsg });
       // Preserve the legacy summary marker — downstream readers (cloud
