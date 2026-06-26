@@ -553,10 +553,45 @@ function parseCodexAzureConfig(): {
 }
 
 /**
- * Detect which API provider to use based on available keys.
- * Priority: PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN -> OPENROUTER_API_KEY -> ANTHROPIC_API_KEY -> AZURE_OPENAI_API_KEY -> OPENAI_API_KEY
+ * Per-call model→provider routing. Maps a requested model id to its NATURAL
+ * provider, returning it only when that provider's auth is present in env. This
+ * is what lets a single process fan calls out across providers — e.g. a hunt
+ * running with several `models` ([gpt-5.5, glm-5.2, claude-*]) routes each model
+ * to its own provider+key simultaneously, instead of the global env-priority
+ * picking one provider for the whole process. Returns undefined → fall back to
+ * the env-priority chain (existing behaviour).
  */
-function detectProvider(configApiKey?: string): {
+function providerForModel(model: string | undefined): ApiProvider | undefined {
+  if (!model) return undefined;
+  const m = model.toLowerCase();
+  // Explicit provider prefix → OpenRouter meta-routing (one key, many models).
+  if (m.startsWith("openrouter/")) return process.env.OPENROUTER_API_KEY ? "openrouter" : undefined;
+  // GLM / Z.ai.
+  if (m.startsWith("glm-") || m.startsWith("z-ai/") || m.includes("glm")) {
+    return process.env.Z_AI_API_KEY ? "z-ai" : undefined;
+  }
+  // OpenAI GPT-5 / o-series → ChatGPT-Codex subscription if present, else OpenAI.
+  if (/^gpt-|^o[1-4](?:[-_]|$)/.test(m)) {
+    if (process.env.PWNKIT_CHATGPT_ACCESS_TOKEN || process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN) return "chatgpt-codex";
+    if (process.env.OPENAI_API_KEY) return "openai";
+    return undefined;
+  }
+  // Claude / Anthropic → direct anthropic key, else OpenRouter (anthropic/*).
+  if (m.startsWith("claude") || m.startsWith("anthropic/") || m.includes("sonnet") || m.includes("opus") || m.includes("haiku")) {
+    if (process.env.ANTHROPIC_API_KEY) return "anthropic";
+    if (process.env.OPENROUTER_API_KEY) return "openrouter";
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Detect which API provider to use based on available keys.
+ * When `preferredModel` maps to a provider whose auth is present, that wins
+ * (per-call routing). Otherwise priority: PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN ->
+ * OPENROUTER_API_KEY -> ANTHROPIC_API_KEY -> AZURE_OPENAI_API_KEY -> OPENAI_API_KEY
+ */
+function detectProvider(configApiKey?: string, preferredModel?: string): {
   provider: ApiProvider;
   apiKey: string;
   baseUrl: string;
@@ -592,6 +627,29 @@ function detectProvider(configApiKey?: string): {
       defaultModel: DEFAULT_OPENAI_MODEL,
       wireApi: "chat_completions",
     };
+  }
+
+  // Per-call routing: if the requested model maps to a provider whose auth is
+  // present, that provider wins over the global env priority — so one process
+  // can fan calls across providers (gpt-5.5→codex, glm-5.2→z-ai, claude→anthropic).
+  switch (providerForModel(preferredModel)) {
+    case "z-ai":
+      return { provider: "z-ai", apiKey: process.env.Z_AI_API_KEY as string,
+        baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, defaultModel: ZAI_DEFAULT_MODEL, wireApi: "chat_completions" };
+    case "chatgpt-codex":
+      return { provider: "chatgpt-codex", apiKey: "", baseUrl: CODEX_API_ENDPOINT,
+        defaultModel: process.env.PWNKIT_MODEL ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
+    case "anthropic":
+      return { provider: "anthropic", apiKey: process.env.ANTHROPIC_API_KEY as string,
+        baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com", defaultModel: DEFAULT_ANTHROPIC_MODEL, wireApi: "chat_completions" };
+    case "openrouter":
+      return { provider: "openrouter", apiKey: process.env.OPENROUTER_API_KEY as string,
+        baseUrl: "https://openrouter.ai/api/v1", defaultModel: DEFAULT_OPENROUTER_MODEL, wireApi: "chat_completions" };
+    case "openai":
+      return { provider: "openai", apiKey: process.env.OPENAI_API_KEY as string,
+        baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", defaultModel: DEFAULT_OPENAI_MODEL, wireApi: "chat_completions" };
+    default:
+      break; // fall through to env-priority detection
   }
 
   // Check env vars in priority order. ChatGPT subscription auth wins
@@ -735,7 +793,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   constructor(config: RuntimeConfig) {
     this.config = config;
     this.azureConfig = parseCodexAzureConfig();
-    const detected = detectProvider(config.apiKey);
+    // Thread the requested model into detection so provider follows the model
+    // per-call (per-call multi-provider routing) when its auth is available.
+    const detected = detectProvider(config.apiKey, config.model ?? process.env.PWNKIT_MODEL);
     this.provider = detected.provider;
     this.apiKey = detected.apiKey;
     this.baseUrl = detected.baseUrl;
