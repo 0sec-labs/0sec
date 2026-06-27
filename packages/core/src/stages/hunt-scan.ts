@@ -162,11 +162,26 @@ export function makeSkepticVerifier(opts: {
     const hint =
       `ADVERSARIAL REVIEW. A prior pass claims this finding in ${candidate.path}:\n` +
       `  title: ${finding.title}\n  detail: ${finding.description}\n` +
-      "Assume it is a FALSE POSITIVE and try to REFUTE it: is the sink actually guarded upstream, " +
-      "is the path unreachable by an attacker, is the precondition impossible, is it already fixed? " +
-      "Only report a finding if, after genuinely trying to refute it, you CANNOT — i.e. you can still " +
-      "point to the exact unguarded sink (file:line) and a concrete attacker-reachable path. " +
-      "If you cannot reproduce the claim from the source, report NOTHING.";
+      "Assume it is a FALSE POSITIVE and try HARD to REFUTE it. Generic checks: is the sink actually " +
+      "guarded upstream, is the precondition impossible, is it already fixed? Then run these THREE " +
+      "checks that catch the false positives a naive re-read misses (each has burned us — a real " +
+      "submitted patch was wrong because we skipped them):\n" +
+      "  1. ENTRY-POINT / REACHABILITY GATE: trace from the userspace entry (ioctl dispatcher, syscall, " +
+      "netlink handler, parser entry) all the way to the sink. Is the entry itself DISABLED or gated " +
+      "off before the sink is reached? Look for `if (cmd) return -EINVAL` umbrella disables, a " +
+      "'disallow all private ioctls' guard, a compiled-out CONFIG, a deprecated/being-removed driver, " +
+      "or a capability/permission check. If the path is dead code, it is a FALSE POSITIVE.\n" +
+      "  2. CONTROL-FLOW COMPOSITION: if the bug needs two events in sequence (e.g. flush THEN resume, " +
+      "free in fn A THEN use in fn B), verify those functions are actually on the SAME reachable path " +
+      "and not disjoint (e.g. one is teardown-only and never precedes the other). If the composition " +
+      "never happens, it is a FALSE POSITIVE (or mis-attributed).\n" +
+      "  3. FIX SIDE-EFFECTS (only if a fix/guard is implied): would the proposed guard (esp. an early " +
+      "return / goto) SKIP required code below it — register writes, unlocks, frees, DMA setup — and " +
+      "thereby introduce a NEW bug? If so, the finding/fix is unsafe.\n" +
+      "Only report a finding if, after genuinely trying to refute it AND passing all three checks, you " +
+      "CANNOT refute it — i.e. you can still point to the exact unguarded sink (file:line), a concrete " +
+      "ENABLED attacker-reachable path, and (if a fix is implied) a fix that skips no required code. " +
+      "If you cannot, report NOTHING.";
     // A FOCUSED re-read, not a fresh broad hunt: the challengeHint already
     // targets the one claim, so "quick" depth keeps the gate fast enough to run
     // per-finding at scale (a "deep" full-template scan took ~10min on a 10-line
