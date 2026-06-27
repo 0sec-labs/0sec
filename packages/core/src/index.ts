@@ -894,3 +894,7 @@ export type {
   ConformanceAttempt,
   LiveHttpSenderOptions,
 } from "./protocol/index.js";
+
+// xnu-fuzz — IOKit user-client fuzzer (dynamic sibling to the xnu-re review
+// profile). See docs/pwnkit-iokit-fuzzer.md and src/xnu-fuzz/.
+export * from "./xnu-fuzz/index.js";
