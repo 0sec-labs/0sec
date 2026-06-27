@@ -1,6 +1,7 @@
 /** Generic novel-bug hunt on under-audited surface: enumerate files -> runHuntScan (no seed). */
 import { runHuntScan, makeSkepticVerifier } from "@pwnkit/core";
 import { execFileSync } from "node:child_process";
+import { writeFileSync, mkdirSync } from "node:fs";
 
 const SRC = process.env.HUNT_SRC || "/root/linux-next";
 const SUBSYS = process.env.HUNT_SUBSYS || "drivers/staging";
@@ -39,3 +40,14 @@ console.log(JSON.stringify({
   allTitles: res.findings.map((f) => f.title),
   warnings: res.warnings.slice(0, 8),
 }, null, 2));
+
+const outDir = process.env.HUNT_OUT_DIR || "/root/hunt-results";
+try {
+  mkdirSync(outDir, { recursive: true });
+  const stamp = process.env.HUNT_STAMP || String(Date.now());
+  const outPath = `${outDir}/${SUBSYS.replace(/[\/]/g, "_")}-${stamp}.json`;
+  writeFileSync(outPath, JSON.stringify({ subsystem: SUBSYS, src: SRC, models, scanned: res.scanned, confirmed: res.confirmed, findings: res.findings, warnings: res.warnings }, null, 2));
+  console.log(`[surface] full findings written to ${outPath}`);
+} catch (e) {
+  console.log("[surface] failed to persist findings: " + String(e));
+}
