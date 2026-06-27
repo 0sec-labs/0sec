@@ -25,7 +25,7 @@ const res = await runHuntScan({
   // no brief -> generic memory-safety hunt
   runtime: "api",
   concurrency: CONC,
-  verify: makeSkepticVerifier({ sourceRoot: SRC, runtime: "api" }),
+  verify: makeSkepticVerifier({ sourceRoot: SRC, runtime: "api", model: process.env.HUNT_SKEPTIC_MODEL || "glm-5.2" }),
   log: (m) => console.log(m),
 });
 
