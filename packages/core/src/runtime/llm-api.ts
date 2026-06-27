@@ -589,7 +589,7 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
  * Detect which API provider to use based on available keys.
  * When `preferredModel` maps to a provider whose auth is present, that wins
  * (per-call routing). Otherwise priority: PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN ->
- * OPENROUTER_API_KEY -> ANTHROPIC_API_KEY -> AZURE_OPENAI_API_KEY -> OPENAI_API_KEY
+ * ANTHROPIC_API_KEY -> Z_AI_API_KEY -> AZURE_OPENAI_API_KEY -> OPENAI_API_KEY -> OPENROUTER_API_KEY (last-resort)
  */
 function detectProvider(configApiKey?: string, preferredModel?: string): {
   provider: ApiProvider;
@@ -692,17 +692,10 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  if (openrouterKey) {
-    return {
-      provider: "openrouter",
-      apiKey: openrouterKey,
-      baseUrl: "https://openrouter.ai/api/v1",
-      defaultModel: DEFAULT_OPENROUTER_MODEL,
-      wireApi: "chat_completions",
-    };
-  }
-
+  // NOTE: OpenRouter is intentionally checked LAST (just before the no-key
+  // fallback), not here. It is a last-resort meta-provider; a stale or leaked
+  // OPENROUTER_API_KEY must never outrank an explicitly-configured z-ai or
+  // chatgpt-codex credential during a per-call multi-provider fan-out.
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
@@ -752,6 +745,20 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // OpenRouter — last-resort meta-provider (many models, one key). Checked
+  // AFTER z-ai / azure / openai so a stale or leaked OPENROUTER_API_KEY can't
+  // hijack a run that has a valid z-ai or chatgpt-codex credential.
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  if (openrouterKey) {
+    return {
+      provider: "openrouter",
+      apiKey: openrouterKey,
+      baseUrl: "https://openrouter.ai/api/v1",
+      defaultModel: DEFAULT_OPENROUTER_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
+
   // No key found — default to Anthropic (will fail at runtime with helpful message)
   return {
     provider: "anthropic",
@@ -771,7 +778,7 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
  * - Anthropic (ANTHROPIC_API_KEY) — direct Claude API access
  * - OpenAI (OPENAI_API_KEY) — direct OpenAI API access
  *
- * Priority: PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN -> OPENROUTER_API_KEY -> ANTHROPIC_API_KEY -> AZURE_OPENAI_API_KEY -> OPENAI_API_KEY
+ * Priority: PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN -> ANTHROPIC_API_KEY -> Z_AI_API_KEY -> AZURE_OPENAI_API_KEY -> OPENAI_API_KEY -> OPENROUTER_API_KEY (last-resort)
  *
  * Model can be overridden with PWNKIT_MODEL env var or --model flag.
  *
