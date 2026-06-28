@@ -146,6 +146,14 @@ export type {
 } from "./stages/novelty-check.js";
 export { generateVariantCandidates } from "./stages/variant-candidates.js";
 export type { VariantHuntInput, VariantHuntPlan } from "./stages/variant-candidates.js";
+export { extractSpecInvariants } from "./specdrift/index.js";
+export type {
+  ExtractSpecInvariantsOptions,
+  SpecCitation,
+  SpecInvariant,
+  SpecInvariantKind,
+  SpecdriftExtractResult,
+} from "./specdrift/index.js";
 export type {
   HuntCandidate,
   HuntBrief,
