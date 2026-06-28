@@ -121,6 +121,29 @@ export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";
 // Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
 export { runHuntScan, makeSkepticVerifier, composeGate } from "./stages/hunt-scan.js";
+export {
+  checkNovelty,
+  syncLoreMirror,
+  discoverEpochs,
+  localMirrors,
+  deriveSearchTerms,
+  findingToQuery,
+  makeLloreJudge,
+  liveGit,
+  OWN_FROM_MARKERS,
+} from "./stages/novelty-check.js";
+export type {
+  NoveltyQuery,
+  LoreNoveltyResult,
+  NoveltyCheckOptions,
+  NoveltyJudge,
+  JudgeVerdict,
+  LoreCandidate,
+  LoreMirror,
+  LoreSyncOptions,
+  DuplicateRef,
+  GitRunner,
+} from "./stages/novelty-check.js";
 export { generateVariantCandidates } from "./stages/variant-candidates.js";
 export type { VariantHuntInput, VariantHuntPlan } from "./stages/variant-candidates.js";
 export type {
