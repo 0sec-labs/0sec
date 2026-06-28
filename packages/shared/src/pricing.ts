@@ -11,12 +11,14 @@ export interface TokenUsageForPricing {
   cachedInputTokens?: number;
 }
 
-export const PRICING_SNAPSHOT_DATE = "2026-05-17";
+export const PRICING_SNAPSHOT_DATE = "2026-06-28";
 
 /** Approximate cost per 1M tokens by provider/model. */
 export const MODEL_PRICING: Record<string, ModelRates> = {
   // OpenAI
   "gpt-5.4": { input: 2.50, output: 10.00 },
+  "gpt-5.5": { input: 2.50, output: 10.00 },
+  "gpt-5.5-codex": { input: 2.50, output: 10.00 },
   "gpt-4o": { input: 2.50, output: 10.00 },
   "gpt-4o-mini": { input: 0.15, output: 0.60 },
   "gpt-4.1": { input: 2.00, output: 8.00 },
@@ -44,6 +46,7 @@ export const MODEL_PRICING: Record<string, ModelRates> = {
   "mistral-large": { input: 2.00, output: 6.00 },
   "mistral-small": { input: 0.10, output: 0.30 },
   // Z.AI (open-weight, hosted) -- see provos.org "Finding Zero-Days with Any Model" (Apr 2026)
+  "glm-5.2": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-5.1": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-4.5": { input: 0.60, output: 2.20, cachedInput: 0.11 },
   default: { input: 3.00, output: 15.00 },

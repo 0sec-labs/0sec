@@ -41,6 +41,15 @@ describe("estimateCost", () => {
     expect(cost).toBeCloseTo(1.4 + 4.4, 5);
   });
 
+  it("prices current Codex and GLM benchmark models without falling back", () => {
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "gpt-5.5"))
+      .toBeCloseTo(2.5 + 10.0, 5);
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "gpt-5.5-codex"))
+      .toBeCloseTo(2.5 + 10.0, 5);
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "glm-5.2"))
+      .toBeCloseTo(1.4 + 4.4, 5);
+  });
+
   it("applies cached-input rate when cachedInputTokens is set", () => {
     // Sonnet 4.6: $3 input, $0.30 cached. 1M input total, 600k cached, 400k uncached
     // → 0.4 * 3 + 0.6 * 0.30 = 1.2 + 0.18 = 1.38
@@ -94,6 +103,11 @@ describe("getRates", () => {
     expect(rates.cachedInput).toBe(0.26);
   });
 
+  it("returns GLM 5.2 cached-input rate from the GLM 5.x pricing family", () => {
+    const rates = getRates("glm-5.2");
+    expect(rates.cachedInput).toBe(0.26);
+  });
+
   it("returns the default-table rate for an unknown model", () => {
     const rates = getRates("totally-made-up-model-9000");
     expect(rates.input).toBe(3.0);
@@ -142,12 +156,14 @@ describe("modelProvider", () => {
 
   it("falls back to family-based detection for bare model names", () => {
     expect(modelProvider("gpt-5.4")).toBe("openai");
+    expect(modelProvider("gpt-5.5")).toBe("openai");
     expect(modelProvider("claude-opus-4-7")).toBe("anthropic");
     expect(modelProvider("gemini-2.5-pro")).toBe("google");
     expect(modelProvider("deepseek-chat")).toBe("deepseek");
     expect(modelProvider("llama-4-maverick")).toBe("meta");
     expect(modelProvider("mistral-large")).toBe("mistral");
     expect(modelProvider("glm-5.1")).toBe("z-ai");
+    expect(modelProvider("glm-5.2")).toBe("z-ai");
   });
 
   it("returns 'unknown' for empty / unrecognisable model ids", () => {
