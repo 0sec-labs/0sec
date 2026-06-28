@@ -1264,6 +1264,25 @@ export interface AuditReport {
  *   missing signer checks, unconserved value, unauthorized mint, datum
  *   trust, staking/withdrawal tricks. No memory-safety surface; verification
  *   is a transaction the validator wrongly admits.
+ * - `solana-onchain`: Solana on-chain program review (Anchor / native Rust).
+ *   Account-model *authorization* bugs — missing signer/owner checks, account
+ *   substitution / type confusion, missing PDA seed+bump validation, arbitrary
+ *   CPI / unchecked program id, missing Anchor `has_one`/constraint binding,
+ *   integer overflow/rounding in AMM/lending math, missing rent/close-account
+ *   checks, duplicate-mutable-account, unvalidated `remaining_accounts`. No
+ *   memory-safety surface (Rust + BPF VM); verification is an instruction the
+ *   program wrongly processes against a substituted account.
+ * - `cardano-haskell`: Cardano FIRST-PARTY Haskell node-stack review
+ *   (cardano-ledger, plutus / the Plutus script evaluator, ouroboros-network,
+ *   cardano-wallet, cardano-cli/cardano-api, cardano-base, plutus-apps).
+ *   Off-chain INFRASTRUCTURE bugs — partial functions / decoder panics on
+ *   untrusted input (DoS), FFI memory-safety across `foreign import`/`Ptr`
+ *   (the cardano-base `encryptedDerivePublic` OOB class), `unsafePerformIO`/
+ *   `unsafeCoerce` misuse, lazy-eval space leaks, integer/`Natural` underflow
+ *   & div-by-zero, Plutus-VM budget/eval flaws, ledger STS rule gaps, and
+ *   MVar/STM deadlock/race. Distinct from `cardano-onchain` (validator logic
+ *   on a memory-safe VM). Semgrep is Haskell-blind, so this profile is
+ *   LLM-review-driven (source reading, not scanner triage).
  * - `xnu-kernel`: Apple XNU (macOS/iOS) kernel source review — Mach
  *   trap + MIG surface, IOKit user-client externalMethod dispatch,
  *   BSD syscall/copyin discipline, Mach port refcount + OOL descriptor
@@ -1275,7 +1294,7 @@ export interface AuditReport {
  *   to read offset-soup + recover IOKit ABI fields, and gates findings
  *   behind binary re-verification.
  */
-export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel" | "xnu-re";
+export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
 
 /**
  * A known bug to anchor a review on for variant analysis. Project Zero's

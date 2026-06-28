@@ -25,6 +25,9 @@ import { auditAgentPrompt, reviewAgentPrompt } from "./analysis-prompts.js";
 import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { cardanoOnchainReviewAgentPrompt } from "./review/cardano-onchain-profile.js";
+import { solanaOnchainReviewAgentPrompt } from "./review/solana-onchain-profile.js";
+import { cardanoHaskellReviewAgentPrompt } from "./review/cardano-haskell-profile.js";
+import { generateHaskellSeeds } from "./review/haskell-seeds.js";
 import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
 import { xnuReReviewAgentPrompt } from "./review/xnu-re-profile.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
@@ -103,7 +106,7 @@ export interface PipelineOptions {
    *   surface, copy_from_user discipline, refcount races, skb cow/share
    *   violations (Dirty Frag class). Static-only; verification via #271/#272.
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel" | "xnu-re";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
   /**
    * Review the SOURCE of a published package. When set, `target` is a
    * package NAME (not a repo path / git URL): the pipeline installs the
@@ -1169,6 +1172,37 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       }
     }
 
+    // Haskell seed layer (pwnkit). Semgrep/Foxguard cannot parse Haskell, so a
+    // cardano-haskell review otherwise starts from an EMPTY scanner list. This
+    // ripgrep/regex pass emits concrete leads (FFI memory-safety, unsafe
+    // escapes, CBOR decoder panics, partial functions, arithmetic, lazy-eval
+    // DoS) in the same SemgrepFinding shape the review prompt consumes. Scoped
+    // strictly to the cardano-haskell source-review profile so no other
+    // profile's seeding is disturbed.
+    if (
+      prepared.resolvedType === "source-code" &&
+      opts.reviewProfile === "cardano-haskell"
+    ) {
+      try {
+        const haskellSeeds = generateHaskellSeeds(prepared.scopePath);
+        if (haskellSeeds.length > 0) {
+          semgrepFindings.push(...haskellSeeds);
+          emit({
+            type: "stage:start",
+            stage: "analyze",
+            message: `Haskell seed layer: ${haskellSeeds.length} regex lead(s) (Semgrep is Haskell-blind)`,
+          });
+          logPipelineEvent("analyze", "haskell_seeds", {
+            count: haskellSeeds.length,
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({ stage: "analyze", message: `Haskell seed layer failed: ${msg}` });
+        logPipelineEvent("analyze", "warning", { message: `Haskell seed layer failed: ${msg}` });
+      }
+    }
+
     // dependency audit (package targets only, need the temp project dir)
     if (
       (prepared.resolvedType === "npm-package" || prepared.resolvedType === "pypi-package" || prepared.resolvedType === "cargo-package" || prepared.resolvedType === "oci-image") &&
@@ -1357,6 +1391,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
             ? cppReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "cardano-onchain"
             ? cardanoOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
+            : opts.reviewProfile === "solana-onchain"
+            ? solanaOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
+            : opts.reviewProfile === "cardano-haskell"
+            ? cardanoHaskellReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "xnu-kernel"
             ? xnuKernelReviewAgentPrompt(prepared.scopePath, semgrepFindings, undefined, opts.subsystem, opts.hypothesis)
             : opts.reviewProfile === "xnu-re"

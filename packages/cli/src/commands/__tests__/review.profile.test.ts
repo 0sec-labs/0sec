@@ -72,6 +72,18 @@ describe("pwnkit review --profile validator", () => {
     expect(runUnifiedMock.mock.calls[0]![0].reviewProfile).toBe("cardano-onchain");
   });
 
+  it("accepts --profile solana-onchain and forwards it", async () => {
+    await runCli(["review", "./somerepo", "--profile", "solana-onchain"]);
+    expect(runUnifiedMock).toHaveBeenCalledTimes(1);
+    expect(runUnifiedMock.mock.calls[0]![0].reviewProfile).toBe("solana-onchain");
+  });
+
+  it("accepts --profile cardano-haskell and forwards it", async () => {
+    await runCli(["review", "./somerepo", "--profile", "cardano-haskell"]);
+    expect(runUnifiedMock).toHaveBeenCalledTimes(1);
+    expect(runUnifiedMock.mock.calls[0]![0].reviewProfile).toBe("cardano-haskell");
+  });
+
   it("accepts --profile xnu-kernel and forwards it", async () => {
     await runCli(["review", "./somerepo", "--profile", "xnu-kernel"]);
     expect(runUnifiedMock).toHaveBeenCalledTimes(1);

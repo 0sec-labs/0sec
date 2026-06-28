@@ -168,8 +168,86 @@ each existing check passes while value is stolen.
   implied by the EUTXO model (e.g. the ledger already enforces value > 0) is
   NOT a bug — note it as a grounded negative and move on.
 
+## eUTxO VALUE-CONSERVATION GATE — clear this BEFORE any value/tag/recipient finding
+
+This is the #1 false-positive source on Cardano reviews: the "Indigo-class"
+semantic misread, where the agent flags a "missing" output / value / tag / or
+recipient constraint that the **ledger already enforces implicitly**. A
+validator does NOT re-check what the ledger enforces for it. ~60% of prior
+value/tag/recipient findings were FALSE for exactly this reason.
+
+Before you may call save_finding for ANY finding whose category is
+\`value-not-conserved\`, \`double-satisfaction\`, or any "missing output",
+"missing value check", "tag can be swapped/retagged", or "recipient not bound"
+claim, you MUST first TRACE the binding and prove the constraint is NOT already
+covered by one of the five mechanisms below. Cite the EXACT lines that enforce
+the binding (or prove they don't exist). If any mechanism covers it, DOWNGRADE
+(to info/low as a grounded negative) or SKIP — do not emit it as a vuln.
+
+1. **Value conservation is ledger-enforced.** \`sum(inputs) == sum(outputs) +
+   fee + burn\` (and mint adds to the spendable side) is enforced by the ledger
+   on EVERY transaction; a validator need NOT re-assert it. So "attacker takes
+   funds that weren't paid out" is WRONG whenever the spender must FUND the
+   inputs: a buyer cannot pay a listing's price out of the listing's own
+   min-ADA — the ledger forces \`inputs >= outputs + fee\`, so the attacker's
+   own wallet covers any output the validator requires. A listing / order /
+   escrow UTxO that holds only \`NFT + min-ADA\` (no principal) CANNOT be
+   drained for principal, because there is no principal in it to take. Before
+   claiming a drain, state WHERE the stolen value physically sits in the
+   consumed UTxO(s); if it isn't there, there is no theft.
+
+2. **NFT / validity-token uniqueness + single own-input binds the tag.** A
+   position tag / control token / "thread token" is IMPLICITLY bound to the
+   consumed UTxO when (a) the token is an NFT (mint policy enforces qty 1 /
+   one-shot) so it cannot exist loose in a wallet, and (b) there is exactly one
+   own-input being spent. Do NOT flag "the tag/datum can be swapped or
+   retagged" when minting BURNS the token on spend and value-conservation forces
+   the surviving tag to match the consumed position. Trace the mint/burn policy
+   and the own-input count before claiming a swap; if the token is a unique NFT
+   tied to one own-input, the swap is impossible.
+
+3. **Required-signer authors their own outputs.** If the "missing" constraint is
+   that the validator doesn't pin WHERE a signer's own payout goes, and the tx
+   already \`requires that signer\` in \`extra_signatories\`, it is NOT a vuln:
+   the signer authors their own transaction and chooses their own outputs. This
+   is not permissionless — only that signer can build the tx. Confirm the signer
+   requirement is present and that the "unconstrained" output is that same
+   signer's payout before discarding the finding.
+
+4. **Min-ADA dust is not principal.** Distinguish strippable min-ADA dust
+   (~1–2 ADA, and often INTENDED builder / change behavior) from theft of
+   principal. A path that lets someone capture leftover min-ADA dust is at most
+   info/low — NEVER rate min-ADA / dust capture as HIGH or CRITICAL. Only
+   principal (the locked asset the contract exists to protect) earns
+   high/critical.
+
+5. **Documented keeper/builder fees are by-design.** A hard-capped, small skim
+   documented in the README / a code comment / the spec (e.g. a 1-ADA keeper
+   fee, a fixed batcher tip) is intended behavior, not theft. Quote the doc/cap
+   before flagging; an in-bounds documented fee is not a finding.
+
+**The distinction that keeps genuine no-binding bugs alive (do NOT over-suppress):**
+This gate suppresses "the LEDGER's value-conservation / NFT-uniqueness / signer-
+authorship FORCES the binding." It must NOT suppress a validator that returns a
+bare \`True\` (or omits the check entirely) AND whose authorizing witness is
+PUBLICLY REPLAYABLE by anyone. The real FluidSwaps HTLC front-run is the
+canonical keep: the Claim path binds only \`preimage + a replayable signature\`
+and constrains NO recipient and NO outputs — so once the preimage is on-chain,
+ANYONE rebuilds the tx and redirects the payout to themselves; the ledger does
+NOT force it to the rightful claimant. Decision test: "if I am a permissionless
+third party with only public chain data, can I build a tx the validator admits
+that sends value to ME?" If YES → real bug, emit it. If the only reason it
+"works" is that the legitimate signer/funder builds it and the ledger forces
+their own funds to cover it → ledger-enforced, downgrade or skip.
+
 ## MANDATORY SELF-CHECK — before save_finding
 
+0. **Value-conservation gate (value/tag/recipient findings only):** You have
+   cleared the eUTxO VALUE-CONSERVATION GATE above — traced the binding to exact
+   lines, and confirmed none of the five mechanisms (value conservation, NFT
+   uniqueness + single own-input, required-signer authorship, min-ADA dust,
+   documented fee) already enforces the "missing" constraint. If one does,
+   downgrade or skip rather than emit.
 1. **Reachability:** Is the vulnerable branch actually reachable for the
    redeemer/purpose an attacker can submit? Trace the redeemer that hits it.
 2. **Ledger-already-enforces check:** Does the Cardano ledger ALREADY enforce
@@ -182,8 +260,9 @@ each existing check passes while value is stolen.
    attacker (or grief honest users)? A cosmetic missing check with no value
    impact is info/low, not high.
 
-If you cannot pass all four with evidence from the source, set confidence to
-0.3 and mark hypothesis: true.
+If you cannot pass all of these with evidence from the source (including the
+value-conservation gate where it applies), set confidence to 0.3 and mark
+hypothesis: true.
 
 ## Reporting — MANDATORY: call save_finding for every vulnerability
 

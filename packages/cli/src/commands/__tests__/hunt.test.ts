@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Finding } from "@pwnkit/shared";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,8 +11,9 @@ const {
   localMirrorsMock,
   syncLoreMirrorMock,
   makeLloreJudgeMock,
-  detectTargetTypeMock,
   prepareMock,
+  getCloudSinkConfigMock,
+  postFindingMock,
   noveltyJudge,
 } = vi.hoisted(() => {
   const skepticVerifier = vi.fn();
@@ -23,8 +25,9 @@ const {
     localMirrorsMock: vi.fn(),
     syncLoreMirrorMock: vi.fn(),
     makeLloreJudgeMock: vi.fn(() => noveltyJudge),
-    detectTargetTypeMock: vi.fn(),
     prepareMock: vi.fn(),
+    getCloudSinkConfigMock: vi.fn(),
+    postFindingMock: vi.fn(),
     skepticVerifier,
     noveltyJudge,
   };
@@ -37,11 +40,66 @@ vi.mock("@pwnkit/core", () => ({
   localMirrors: localMirrorsMock,
   syncLoreMirror: syncLoreMirrorMock,
   makeLloreJudge: makeLloreJudgeMock,
-  detectTargetType: detectTargetTypeMock,
   prepare: prepareMock,
+  getCloudSinkConfig: getCloudSinkConfigMock,
+  postFinding: postFindingMock,
 }));
 
-const { runHunt } = await import("../hunt.js");
+const { leadToCandidateFinding, runHunt } = await import("../hunt.js");
+
+function makeLead(overrides: Partial<Finding> = {}): Finding {
+  return {
+    id: "lead-1",
+    templateId: "variant-hunt",
+    title: "Possible UAF in foo_release()",
+    description: "The release path frees obj without clearing the dangling ref.",
+    severity: "high",
+    category: "memory-safety" as Finding["category"],
+    status: "confirmed", // finder/skeptic-confirmed — must be downgraded
+    evidence: {
+      request: "n/a",
+      response: "drivers/foo/foo.c:120",
+      analysis: "skeptic survived the refute pass",
+    },
+    ...overrides,
+  } as Finding;
+}
+
+describe("leadToCandidateFinding (#1051)", () => {
+  it("forces status to 'discovered' — never confirmed/sendable", () => {
+    const out = leadToCandidateFinding(makeLead(), "use-after-free", "abc123 fix");
+    expect(out.status).toBe("discovered");
+  });
+
+  it("preserves the finder's honest severity (no inflation/deflation)", () => {
+    expect(leadToCandidateFinding(makeLead({ severity: "high" }), "uaf", "ref").severity).toBe("high");
+    expect(leadToCandidateFinding(makeLead({ severity: "medium" }), "uaf", "ref").severity).toBe("medium");
+  });
+
+  it("stamps lead provenance (bug class + seed) into evidence.analysis", () => {
+    const out = leadToCandidateFinding(makeLead(), "use-after-free", "abc123 fix the UAF");
+    const evidence = out.evidence as { analysis: string };
+    expect(evidence.analysis).toContain("use-after-free");
+    expect(evidence.analysis).toContain("abc123 fix the UAF");
+    expect(evidence.analysis).toMatch(/LEAD|HYPOTHESIS/);
+    expect(evidence.analysis).toContain("skeptic survived the refute pass");
+  });
+
+  it("marks the candidate with the recency-hunt template id and keeps title/description", () => {
+    const out = leadToCandidateFinding(makeLead(), "uaf", "ref");
+    expect(out.templateId).toBe("recency-hunt-lead");
+    expect(out.title).toBe("Possible UAF in foo_release()");
+    expect(out.description).toContain("dangling ref");
+  });
+
+  it("never carries a 'confirmed' status through even when the lead has no analysis", () => {
+    const lead = makeLead({ evidence: { request: "", response: "" } });
+    const out = leadToCandidateFinding(lead, "uaf", "ref");
+    expect(out.status).toBe("discovered");
+    const evidence = out.evidence as { analysis: string };
+    expect(evidence.analysis).toMatch(/LEAD|HYPOTHESIS/);
+  });
+});
 
 describe("runHunt — novelty gate wiring", () => {
   let tmpRoot: string;
@@ -69,7 +127,6 @@ describe("runHunt — novelty gate wiring", () => {
       warnings: [],
     });
     makeSkepticVerifierMock.mockClear();
-    detectTargetTypeMock.mockReset().mockReturnValue("source-code");
     prepareMock.mockReset().mockImplementation(async (target: string) => ({
       targetType: "source-code",
       resolvedTarget: target,
@@ -83,6 +140,8 @@ describe("runHunt — novelty gate wiring", () => {
       { list: "linux-media", epoch: 2, dir: "/root/lore-mirror/linux-media__2" },
     ]);
     makeLloreJudgeMock.mockClear();
+    getCloudSinkConfigMock.mockReset().mockReturnValue(null);
+    postFindingMock.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -181,31 +240,16 @@ describe("runHunt — novelty gate wiring", () => {
     });
   });
 
-  it("treats a non-file seed as a commit ref", async () => {
+  it("passes the staged seed file contents through as fix.diff", async () => {
     await runHunt({
       sourceRoot: tmpRoot,
-      seedPath: "abc1234def",
+      seedPath,
       verify: false,
     });
 
     expect(generateVariantCandidatesMock).toHaveBeenCalledWith(expect.objectContaining({
       sourceRoot: tmpRoot,
-      fix: { commit: "abc1234def", reference: "abc1234def" },
-    }));
-  });
-
-  it("passes an inline diff seed through as fix.diff", async () => {
-    const diff = "diff --git a/foo.c b/foo.c\n@@\n-  bad();\n+  good();\n";
-
-    await runHunt({
-      sourceRoot: tmpRoot,
-      seedPath: diff,
-      verify: false,
-    });
-
-    expect(generateVariantCandidatesMock).toHaveBeenCalledWith(expect.objectContaining({
-      sourceRoot: tmpRoot,
-      fix: { diff, reference: "inline-diff" },
+      fix: { diff: "diff --git a/foo.c b/foo.c\n", reference: seedPath },
     }));
   });
 
