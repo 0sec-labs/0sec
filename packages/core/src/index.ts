@@ -431,6 +431,13 @@ export type { VisibleActions } from "./scan-ui-state.js";
 // in the agentic scanner and reusable by logs / cloud-sink / dashboard).
 export { toolCallPreview, summariseTurnToolCalls } from "./agent/tool-preview.js";
 
+// Opt-in cloud-sink: POST findings/leads to the orchestrator
+// (`POST /scans/:id/findings`) when PWNKIT_CLOUD_SINK + PWNKIT_CLOUD_SCAN_ID are
+// set. Exposed so `pwnkit hunt` can ingest its gated leads as candidate
+// findings the same way scan/review reach the cloud (#1051).
+export { getCloudSinkConfig, postFinding } from "./cloud-sink.js";
+export type { CloudSinkConfig } from "./cloud-sink.js";
+
 // Kernel crash ingest (crash report → Finding pipeline)
 export { parseCrashReport, crashToFinding, ingestArtifactsFromDirectory, ingestArtifactsFromFile, ingestFile, ingestDirectory, crashTypeToCategory, crashSeverity, reviewKernelCrashSubsystems } from "./ingest/index.js";
 export type { KernelCrashArtifact, KernelSubsystemReviewOptions, KernelSubsystemReviewResult, KernelSubsystemReviewRunner, KernelSubsystemReviewRunnerInput, KernelSubsystemReviewSkip } from "./ingest/index.js";
