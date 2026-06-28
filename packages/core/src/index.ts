@@ -146,16 +146,21 @@ export type {
 } from "./stages/novelty-check.js";
 export { generateVariantCandidates } from "./stages/variant-candidates.js";
 export type { VariantHuntInput, VariantHuntPlan } from "./stages/variant-candidates.js";
-export { extractSpecInvariants, mapInvariantsToImplementation, runSpecdriftScan } from "./specdrift/index.js";
+export { extractSpecInvariants, mapInvariantsToImplementation, planSpecdriftHypotheses, runSpecdriftPlan, runSpecdriftScan } from "./specdrift/index.js";
 export type {
+  DriftHypothesis,
   ExtractSpecInvariantsOptions,
   ImplementationCandidate,
   MapInvariantsToImplementationOptions,
+  PlanSpecdriftHypothesesOptions,
   RunSpecdriftScanOptions,
+  RunSpecdriftPlanOptions,
   SpecCitation,
+  SpecdriftAdapterKind,
   SpecInvariant,
   SpecInvariantKind,
   SpecdriftExtractResult,
+  SpecdriftPlanResult,
   SpecdriftScanResult,
 } from "./specdrift/index.js";
 export type {

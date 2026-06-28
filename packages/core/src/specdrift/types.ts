@@ -55,6 +55,26 @@ export interface SpecdriftScanResult {
   warnings: string[];
 }
 
+export type SpecdriftAdapterKind = "raw-bytes" | "request-response" | "stateful-transcript" | "kernel-repro" | "unit-test";
+
+export interface DriftHypothesis {
+  id: string;
+  invariantId: string;
+  candidateFile: string;
+  candidateLineStart: number;
+  candidateLineEnd: number;
+  question: string;
+  suggestedAdapter: SpecdriftAdapterKind;
+  rationale: string;
+  status: "hypothesis";
+  confidence: number;
+}
+
+export interface SpecdriftPlanResult extends Omit<SpecdriftScanResult, "stage"> {
+  stage: "plan";
+  hypotheses: DriftHypothesis[];
+}
+
 export interface ExtractSpecInvariantsOptions {
   specName: string;
   specText: string;
@@ -75,4 +95,13 @@ export interface RunSpecdriftScanOptions {
   maxInvariants?: number;
   maxFiles?: number;
   maxCandidatesPerInvariant?: number;
+}
+
+export interface PlanSpecdriftHypothesesOptions {
+  scan: SpecdriftScanResult;
+  maxHypotheses?: number;
+}
+
+export interface RunSpecdriftPlanOptions extends RunSpecdriftScanOptions {
+  maxHypotheses?: number;
 }

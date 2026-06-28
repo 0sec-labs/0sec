@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { extractSpecInvariants, prepare, runSpecdriftScan } from "@pwnkit/core";
+import { extractSpecInvariants, prepare, runSpecdriftPlan, runSpecdriftScan } from "@pwnkit/core";
 
 interface ExtractOpts {
   spec?: string;
@@ -14,6 +14,7 @@ interface ScanOpts extends ExtractOpts {
   source?: string;
   maxFiles?: string;
   maxCandidatesPerInvariant?: string;
+  maxHypotheses?: string;
   timeout?: string;
 }
 
@@ -37,11 +38,20 @@ export async function runSpecdriftExtract(opts: ExtractOpts): Promise<unknown> {
 }
 
 export async function runSpecdriftScanCli(opts: ScanOpts): Promise<unknown> {
+  return runSpecdriftSourceWorkflow(opts, "scan");
+}
+
+export async function runSpecdriftPlanCli(opts: ScanOpts): Promise<unknown> {
+  return runSpecdriftSourceWorkflow(opts, "plan");
+}
+
+async function runSpecdriftSourceWorkflow(opts: ScanOpts, stage: "scan" | "plan"): Promise<unknown> {
   if (!opts.spec) throw new Error("missing required flag: --spec <path>");
   if (!opts.source) throw new Error("missing required flag: --source <path-or-git-url>");
   const maxInvariants = parsePositive("--max-invariants", opts.maxInvariants, 40);
   const maxFiles = parsePositive("--max-files", opts.maxFiles, 400);
   const maxCandidatesPerInvariant = parsePositive("--max-candidates-per-invariant", opts.maxCandidatesPerInvariant, 5);
+  const maxHypotheses = parsePositive("--max-hypotheses", opts.maxHypotheses, 20);
   const timeout = parsePositive("--timeout", opts.timeout, 600_000);
   const specPath = resolve(opts.spec);
   const specText = readFileSync(specPath, "utf8");
@@ -49,14 +59,15 @@ export async function runSpecdriftScanCli(opts: ScanOpts): Promise<unknown> {
     if (e.message) process.stderr.write(`[specdrift:source] ${e.message}\n`);
   });
   try {
-    return runSpecdriftScan({
+    const input = {
       specName: opts.specName ?? basename(specPath),
       specText,
       sourceRoot: resolve(prepared.resolvedTarget),
       maxInvariants,
       maxFiles,
       maxCandidatesPerInvariant,
-    });
+    };
+    return stage === "plan" ? runSpecdriftPlan({ ...input, maxHypotheses }) : runSpecdriftScan(input);
   } finally {
     prepared.cleanup();
   }
@@ -107,5 +118,21 @@ export function registerSpecdriftCommand(program: Command): void {
     .option("--output <path>", "Write JSON result to a file instead of stdout")
     .action(async (opts: ScanOpts) => {
       await writeJsonResult(() => runSpecdriftScanCli(opts), opts.output, "scan");
+    });
+
+  cmd
+    .command("plan")
+    .description("Extract invariants, map implementation candidates, and emit drift hypotheses to verify")
+    .requiredOption("--spec <path>", "Spec/RFC/protocol text file to analyze")
+    .requiredOption("--source <path-or-git-url>", "Implementation source tree to map against")
+    .option("--spec-name <name>", "Display name stored in citations")
+    .option("--max-invariants <N>", "Maximum invariant candidates to extract", "40")
+    .option("--max-files <N>", "Maximum source files to inspect", "400")
+    .option("--max-candidates-per-invariant <N>", "Maximum implementation candidates per invariant", "5")
+    .option("--max-hypotheses <N>", "Maximum drift hypotheses to emit", "20")
+    .option("--timeout <ms>", "Source preparation timeout", "600000")
+    .option("--output <path>", "Write JSON result to a file instead of stdout")
+    .action(async (opts: ScanOpts) => {
+      await writeJsonResult(() => runSpecdriftPlanCli(opts), opts.output, "plan");
     });
 }
