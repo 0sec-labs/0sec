@@ -2170,7 +2170,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // code (white-box mode). Cross-checks every finding against the
       // foxguard Rust pattern scanner — if both agents agree, the finding is
       // almost certainly real; if foxguard disagrees and the evidence is
-      // thin, we auto-reject. This is the "opensoar-hq trinity" validation.
+      // thin, we auto-reject.
       if (features.multiModalAgreement && config.repoPath && routerAllowsLayer("multi_modal")) {
         const mmStartedAt = Date.now();
         try {

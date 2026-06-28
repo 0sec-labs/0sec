@@ -25,7 +25,7 @@ describe("shellPentestPrompt", () => {
     // already discovered. The guidance is inlined into the shell-first
     // web pentest prompt and these assertions make sure a future prompt
     // refactor doesn't accidentally strip it out.
-    const prompt = shellPentestPrompt("https://demo.opensoar.app");
+    const prompt = shellPentestPrompt("https://demo.target.test");
 
     // Section header is present so the agent sees this as a distinct rule
     // block, not buried inline text.

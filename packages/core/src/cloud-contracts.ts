@@ -1,5 +1,5 @@
 /**
- * Shared wire contracts between the OSS pwnkit `cloud-sink` and the
+ * Shared wire contracts between the pwnkit `cloud-sink` and the
  * pwnkit-cloud orchestrator.
  *
  * These types MUST stay in sync with the zod schema in

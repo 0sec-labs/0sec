@@ -4,15 +4,15 @@
  * Endor Labs achieves ~95% false-positive elimination by running BOTH a neural
  * classifier AND pattern-based rules, then requiring agreement before
  * auto-triaging. pwnkit (AI agent) + foxguard (Rust pattern scanner) is exactly
- * the same pattern — except open-source.
+ * the same pattern: combine agentic discovery with deterministic scanner
+ * agreement before auto-triage.
  *
  * For every finding pwnkit discovers, we also run foxguard against the same
  * source tree. If foxguard has a rule that fires on the same file (and ideally
  * the same category) → strong signal the finding is real. If foxguard scanned
  * the file but found nothing → likely false positive.
  *
- * This is the "opensoar-hq trinity" validation: pwnkit detects, foxguard
- * cross-checks, opensoar responds.
+ * pwnkit detects; foxguard cross-checks.
  */
 
 import type { Finding } from "@pwnkit/shared";
