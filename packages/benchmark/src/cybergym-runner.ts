@@ -25,15 +25,20 @@
  *     chatgpt-codex → OpenRouter → Anthropic → Azure → OpenAI). No raw keys.
  *
  * ─────────────────────────────────────────────────────────────────────────
- *  ⚠ LIVE-VALIDATION STATUS — NOT YET RUN END-TO-END
+ *  ✅ LIVE-VALIDATION STATUS — VALIDATED END-TO-END 2026-06-23 (#1027 closed)
  *
  *  The default engine + submission seams in this file are INJECTABLE so the
  *  unit test can drive task-parse → submit → verdict with the submission
  *  server fully MOCKED (no model calls, no network). Real end-to-end
- *  validation against the official CyberGym harness + submission server is
- *  gated on issue #1027 (harness on the `bench` host) and has NOT happened.
- *  Do not quote a CyberGym pass@1 from this runner until #1027 lands and a
- *  committed, reproducible run log exists (epic #1026 claim-gate).
+ *  validation against the official CyberGym harness + submission server on
+ *  the `bench` host has ALSO happened: #1027 closed 2026-06-23 — harness
+ *  live, official differential oracle returning real verdicts, reproducible
+ *  run log in `results/cybergym-v1.jsonl` (3/6 oracle-verified on the local
+ *  ARVO subset; epic #1026). Outstanding #1027 follow-up (NOT a validation
+ *  gate): the no-web-egress firewall during runs.
+ *  Claim-gate: the harness IS validated live; the remaining gate is task
+ *  count (n=6 is a smoke set, not a defensible benchmark — epic #1026), not
+ *  live validation.
  * ─────────────────────────────────────────────────────────────────────────
  *
  * Usage (mirrors xbow-runner flags):
@@ -164,8 +169,8 @@ interface CyberGymReport {
   results: CyberGymResult[];
   /** Present only when --repeat > 1. */
   repeatProtocol?: { N: number };
-  /** Echoes the live-validation gate so any consumer sees it in the JSON. */
-  liveValidated: false;
+  /** Echoes LIVE_VALIDATED so any consumer sees the live-validation state in the JSON. */
+  liveValidated: typeof LIVE_VALIDATED;
   liveValidationNote: string;
 }
 
@@ -839,6 +844,16 @@ function pickNumber(
   return undefined;
 }
 
+/**
+ * Single source of truth for whether this runner has been validated
+ * end-to-end against the live CyberGym harness on the bench host. Mirrors
+ * LIVE_VALIDATION_NOTE (human-readable provenance) and is echoed on every
+ * report so a consumer can trust (or distrust) a pass@1 receipt. Flip only
+ * when the validation state genuinely changes — do not sprinkle boolean
+ * literals at the call sites.
+ */
+const LIVE_VALIDATED = true as const;
+
 const LIVE_VALIDATION_NOTE =
   "Validated end-to-end against the live CyberGym submission server on the bench " +
   "host (#1027 closed): the engine craft path (agenticScan -> runCraftScan) drives " +
@@ -973,7 +988,7 @@ async function main(): Promise<void> {
     ),
     results,
     ...(cfg.repeat > 1 ? { repeatProtocol: { N: cfg.repeat } } : {}),
-    liveValidated: false,
+    liveValidated: LIVE_VALIDATED,
     liveValidationNote: LIVE_VALIDATION_NOTE,
   };
 
