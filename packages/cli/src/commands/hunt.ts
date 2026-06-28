@@ -20,7 +20,7 @@
  */
 
 import type { Command } from "commander";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { RuntimeMode } from "@pwnkit/shared";
 
@@ -32,8 +32,15 @@ interface HuntOpts {
   maxCandidates?: string;
   models?: string;
   verify?: boolean; // commander sets false when --no-verify is passed
+  novelty?: boolean;
+  noveltyRoot?: string;
+  noveltyLists?: string;
+  noveltyRecentEpochs?: string;
+  noveltySync?: boolean;
+  noveltyModel?: string;
   output?: string;
   runtime?: string;
+  timeout?: string;
 }
 
 function parsePositive(flag: string, raw: string | undefined, dflt: number): number {
@@ -48,6 +55,17 @@ export interface HuntOutcome {
   result: unknown;
 }
 
+function seedToFix(seed: string, ref: string | undefined): { commit?: string; diff?: string; reference?: string } {
+  const seedPath = resolve(seed);
+  if (existsSync(seedPath)) {
+    return { diff: readFileSync(seedPath, "utf8"), reference: ref ?? seed };
+  }
+  if (seed.includes("\n") || /^diff --git\b/.test(seed.trimStart()) || /^@@\s/m.test(seed)) {
+    return { diff: seed, reference: ref ?? "inline-diff" };
+  }
+  return { commit: seed, reference: ref ?? seed };
+}
+
 /** Run a seed-driven variant hunt and return a JSON-ready outcome. Exposed for testing. */
 export async function runHunt(opts: {
   sourceRoot: string;
@@ -57,72 +75,153 @@ export async function runHunt(opts: {
   maxCandidates?: number;
   models?: string[];
   verify?: boolean;
+  novelty?: {
+    rootDir?: string;
+    lists?: string[];
+    recentEpochs?: number;
+    sync?: boolean;
+    model?: string;
+  };
   runtime?: RuntimeMode;
+  timeoutMs?: number;
   log?: (msg: string) => void;
 }): Promise<HuntOutcome> {
-  const { generateVariantCandidates, runHuntScan, makeSkepticVerifier } = await import("@pwnkit/core");
+  const {
+    generateVariantCandidates,
+    runHuntScan,
+    makeSkepticVerifier,
+    localMirrors,
+    syncLoreMirror,
+    makeLloreJudge,
+    detectTargetType,
+    prepare,
+  } = await import("@pwnkit/core");
   const log = opts.log ?? (() => {});
   const runtime: RuntimeMode = opts.runtime ?? "api";
-  const sourceRoot = resolve(opts.sourceRoot);
-  const seedDiff = readFileSync(resolve(opts.seedPath), "utf8");
+  const targetType = detectTargetType(opts.sourceRoot);
+  if (targetType !== "source-code") {
+    throw new Error(`hunt --source must be a local source tree or git URL (got ${targetType})`);
+  }
+  const prepared = await prepare(
+    opts.sourceRoot,
+    targetType,
+    { ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}) },
+    (event) => log(`[hunt] ${event.message}`),
+  );
+  const sourceRoot = prepared.resolvedTarget;
+  const fix = seedToFix(opts.seedPath, opts.ref);
+  const noveltyRoot = opts.novelty?.rootDir ?? process.env.PWNKIT_LORE_MIRROR_ROOT ?? "/root/lore-mirror";
+  const noveltyLists = opts.novelty?.lists ?? (process.env.PWNKIT_LORE_LISTS ?? "linux-media").split(",").map((s) => s.trim()).filter(Boolean);
+  const noveltyRecentEpochs = opts.novelty?.recentEpochs ?? 1;
+  const noveltyWarnings: string[] = [];
+  try {
+    let noveltyMirrors: Awaited<ReturnType<typeof localMirrors>> = [];
+    if (opts.novelty && noveltyLists.length > 0) {
+      try {
+        noveltyMirrors = opts.novelty.sync
+          ? await syncLoreMirror({
+              rootDir: noveltyRoot,
+              lists: noveltyLists,
+              recentEpochs: noveltyRecentEpochs,
+              log,
+            })
+          : localMirrors(noveltyRoot, noveltyLists);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        noveltyWarnings.push(`hunt: novelty sync failed, continuing without duplicate suppression: ${reason.slice(0, 160)}`);
+        log(`[hunt] ${noveltyWarnings[noveltyWarnings.length - 1]}`);
+      }
+    }
 
-  // 1. Seed → variant-hunt plan (bug class + grep'd candidate sites).
-  const plan = await generateVariantCandidates({
-    sourceRoot,
-    fix: { diff: seedDiff, reference: opts.ref ?? opts.seedPath },
-    runtime,
-    maxCandidates: opts.maxCandidates ?? 40,
-    ...(opts.models ? { models: opts.models } : {}),
-    log,
-  });
+    if (opts.novelty && noveltyMirrors.length === 0) {
+      log(
+        `[hunt] novelty requested but no lore mirrors found under ${noveltyRoot} ` +
+          `for ${noveltyLists.join(",") || "(no lists)"}; continuing fail-open`,
+      );
+    }
 
-  if (plan.candidates.length === 0) {
+    // 1. Seed → variant-hunt plan (bug class + grep'd candidate sites).
+    const plan = await generateVariantCandidates({
+      sourceRoot,
+      fix,
+      runtime,
+      maxCandidates: opts.maxCandidates ?? 40,
+      ...(opts.models ? { models: opts.models } : {}),
+      log,
+    });
+
+    if (plan.candidates.length === 0) {
+      return {
+        exitCode: 2,
+        result: {
+          mode: "hunt",
+          seed: opts.ref ?? opts.seedPath,
+          bug_class: plan.brief.bugClass,
+          grep_patterns: plan.grepPatterns,
+          candidates: 0,
+          warnings: [...noveltyWarnings, ...plan.warnings],
+          note: "no candidate sites generated — seed too narrow or surface already clean",
+        },
+      };
+    }
+
+    // 2. Fan finders out over the variant sites (absolute paths); skeptic-gate each.
+    const candidates = plan.candidates.map((c) => ({ ...c, path: `${sourceRoot}/${c.path}` }));
+    const res = await runHuntScan({
+      sourceRoot,
+      candidates,
+      brief: plan.brief,
+      runtime,
+      concurrency: opts.concurrency ?? 4,
+      ...(opts.models ? { models: opts.models } : {}),
+      ...(opts.verify === false ? {} : { verify: makeSkepticVerifier({ sourceRoot, runtime, ...(opts.models?.[0] ? { model: opts.models[0] } : {}) }) }),
+      ...(opts.novelty && noveltyMirrors.length > 0
+        ? {
+            novelty: {
+              mirrors: noveltyMirrors,
+              ...(opts.novelty.model ? { judge: makeLloreJudge({ model: opts.novelty.model }) } : {}),
+            },
+          }
+        : {}),
+      log,
+    });
+
+    const gated = opts.verify !== false;
+    const leads = gated ? res.confirmed : res.findings;
     return {
-      exitCode: 2,
+      exitCode: leads.length > 0 ? 0 : 1,
       result: {
         mode: "hunt",
         seed: opts.ref ?? opts.seedPath,
         bug_class: plan.brief.bugClass,
-        grep_patterns: plan.grepPatterns,
-        candidates: 0,
-        warnings: plan.warnings,
-        note: "no candidate sites generated — seed too narrow or surface already clean",
+        source: sourceRoot,
+        candidate_sites: plan.candidates.map((c) => c.path),
+        scanned: res.scanned,
+        findings: res.findings.length,
+        confirmed: gated ? res.confirmed.length : null,
+        novelty: opts.novelty
+          ? {
+              enabled: true,
+              root: noveltyRoot,
+              lists: noveltyLists,
+              mirrors: noveltyMirrors.map((m) => ({ list: m.list, epoch: m.epoch, dir: m.dir })),
+              duplicates: res.duplicates.map((d) => ({
+                title: d.finding.title,
+                matches: d.novelty.duplicates,
+              })),
+            }
+          : { enabled: false },
+        leads: leads.map((f) => ({ title: f.title, severity: f.severity })),
+        gated,
+        warnings: [...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),
+        note: opts.novelty
+          ? "LEADS, not confirmed 0-days. Novelty-duplicate leads were dropped when lore mirrors matched; still verify the real sink before disclosure."
+          : "LEADS, not confirmed 0-days. Verify the real sink + upstream-fix (novelty) before disclosure.",
       },
     };
+  } finally {
+    prepared.cleanup();
   }
-
-  // 2. Fan finders out over the variant sites (absolute paths); skeptic-gate each.
-  const candidates = plan.candidates.map((c) => ({ ...c, path: `${sourceRoot}/${c.path}` }));
-  const res = await runHuntScan({
-    sourceRoot,
-    candidates,
-    brief: plan.brief,
-    runtime,
-    concurrency: opts.concurrency ?? 4,
-    ...(opts.models ? { models: opts.models } : {}),
-    ...(opts.verify === false ? {} : { verify: makeSkepticVerifier({ sourceRoot, runtime, ...(opts.models?.[0] ? { model: opts.models[0] } : {}) }) }),
-    log,
-  });
-
-  const gated = opts.verify !== false;
-  const leads = gated ? res.confirmed : res.findings;
-  return {
-    exitCode: leads.length > 0 ? 0 : 1,
-    result: {
-      mode: "hunt",
-      seed: opts.ref ?? opts.seedPath,
-      bug_class: plan.brief.bugClass,
-      source: sourceRoot,
-      candidate_sites: plan.candidates.map((c) => c.path),
-      scanned: res.scanned,
-      findings: res.findings.length,
-      confirmed: gated ? res.confirmed.length : null,
-      leads: leads.map((f) => ({ title: f.title, severity: f.severity })),
-      gated,
-      warnings: [...plan.warnings, ...res.warnings].slice(0, 10),
-      note: "LEADS, not confirmed 0-days. Verify the real sink + upstream-fix (novelty) before disclosure.",
-    },
-  };
 }
 
 async function huntAction(opts: HuntOpts): Promise<void> {
@@ -137,7 +236,19 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     maxCandidates: parsePositive("--max-candidates", opts.maxCandidates, 40),
     ...(opts.models ? { models: opts.models.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
     verify: opts.verify,
+    ...(opts.novelty
+      ? {
+          novelty: {
+            ...(opts.noveltyRoot ? { rootDir: opts.noveltyRoot } : {}),
+            ...(opts.noveltyLists ? { lists: opts.noveltyLists.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
+            recentEpochs: parsePositive("--novelty-recent-epochs", opts.noveltyRecentEpochs, 1),
+            sync: opts.noveltySync === true,
+            ...(opts.noveltyModel ? { model: opts.noveltyModel } : {}),
+          },
+        }
+      : {}),
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
+    timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
   });
 
@@ -163,8 +274,15 @@ export function registerHuntCommand(program: Command): void {
     .option("--max-candidates <N>", "Cap candidate sites hunted (default 40)")
     .option("--models <a,b>", "Comma-separated finder models for diversity (default: provider default)")
     .option("--no-verify", "Skip the skeptic gate (emit all raw findings — triage only, never disclosure)")
+    .option("--novelty", "After the skeptic gate, drop confirmed findings duplicated by lore.kernel.org mirror patches")
+    .option("--novelty-root <path>", "Lore mirror root (default: PWNKIT_LORE_MIRROR_ROOT or /root/lore-mirror)")
+    .option("--novelty-lists <a,b>", "Comma-separated lore lists to search (default: PWNKIT_LORE_LISTS or linux-media)")
+    .option("--novelty-recent-epochs <N>", "Newest public-inbox epochs to sync per list when --novelty-sync is set (default 1)")
+    .option("--novelty-sync", "Clone/fetch lore mirrors before running the novelty gate")
+    .option("--novelty-model <model>", "Optional model override for the lore duplicate judge")
     .option("--output <path>", "Write the hunt result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")
+    .option("--timeout <ms>", "Accepted cloud agent timeout budget in milliseconds", "600000")
     .action(async (opts: HuntOpts) => {
       try {
         await huntAction(opts);
