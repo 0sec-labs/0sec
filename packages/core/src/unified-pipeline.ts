@@ -27,6 +27,7 @@ import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { cardanoOnchainReviewAgentPrompt } from "./review/cardano-onchain-profile.js";
 import { solanaOnchainReviewAgentPrompt } from "./review/solana-onchain-profile.js";
 import { cardanoHaskellReviewAgentPrompt } from "./review/cardano-haskell-profile.js";
+import { generateHaskellSeeds } from "./review/haskell-seeds.js";
 import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
 import { xnuReReviewAgentPrompt } from "./review/xnu-re-profile.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
@@ -1168,6 +1169,37 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         const msg = err instanceof Error ? err.message : String(err);
         warnings.push({ stage: "analyze", message: `${scannerName} scan failed: ${msg}` });
         logPipelineEvent("analyze", "warning", { message: `${scannerName} scan failed: ${msg}` });
+      }
+    }
+
+    // Haskell seed layer (pwnkit). Semgrep/Foxguard cannot parse Haskell, so a
+    // cardano-haskell review otherwise starts from an EMPTY scanner list. This
+    // ripgrep/regex pass emits concrete leads (FFI memory-safety, unsafe
+    // escapes, CBOR decoder panics, partial functions, arithmetic, lazy-eval
+    // DoS) in the same SemgrepFinding shape the review prompt consumes. Scoped
+    // strictly to the cardano-haskell source-review profile so no other
+    // profile's seeding is disturbed.
+    if (
+      prepared.resolvedType === "source-code" &&
+      opts.reviewProfile === "cardano-haskell"
+    ) {
+      try {
+        const haskellSeeds = generateHaskellSeeds(prepared.scopePath);
+        if (haskellSeeds.length > 0) {
+          semgrepFindings.push(...haskellSeeds);
+          emit({
+            type: "stage:start",
+            stage: "analyze",
+            message: `Haskell seed layer: ${haskellSeeds.length} regex lead(s) (Semgrep is Haskell-blind)`,
+          });
+          logPipelineEvent("analyze", "haskell_seeds", {
+            count: haskellSeeds.length,
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({ stage: "analyze", message: `Haskell seed layer failed: ${msg}` });
+        logPipelineEvent("analyze", "warning", { message: `Haskell seed layer failed: ${msg}` });
       }
     }
 
