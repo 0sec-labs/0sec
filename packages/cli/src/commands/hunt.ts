@@ -69,8 +69,15 @@ interface HuntOpts {
   maxCandidates?: string;
   models?: string;
   verify?: boolean; // commander sets false when --no-verify is passed
+  novelty?: boolean;
+  noveltyRoot?: string;
+  noveltyLists?: string;
+  noveltyRecentEpochs?: string;
+  noveltySync?: boolean;
+  noveltyModel?: string;
   output?: string;
   runtime?: string;
+  timeout?: string;
 }
 
 function parsePositive(flag: string, raw: string | undefined, dflt: number): number {
@@ -94,13 +101,24 @@ export async function runHunt(opts: {
   maxCandidates?: number;
   models?: string[];
   verify?: boolean;
+  novelty?: {
+    rootDir?: string;
+    lists?: string[];
+    recentEpochs?: number;
+    sync?: boolean;
+    model?: string;
+  };
   runtime?: RuntimeMode;
+  timeoutMs?: number;
   log?: (msg: string) => void;
 }): Promise<HuntOutcome> {
   const {
     generateVariantCandidates,
     runHuntScan,
     makeSkepticVerifier,
+    localMirrors,
+    syncLoreMirror,
+    makeLloreJudge,
     prepare,
     getCloudSinkConfig,
     postFinding,
@@ -116,10 +134,14 @@ export async function runHunt(opts: {
   // into a local tree the variant grep can walk. generateVariantCandidates only
   // greps the working tree, so depth-1 is sufficient; the temp clone is removed
   // by prepared.cleanup() in the finally.
-  const prepared = await prepare(opts.sourceRoot, "source-code", {}, (e) => {
+  const prepared = await prepare(opts.sourceRoot, "source-code", { ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}) }, (e) => {
     if (e.message) log(`[hunt:source] ${e.message}`);
   });
   const sourceRoot = resolve(prepared.resolvedTarget);
+  const noveltyRoot = opts.novelty?.rootDir ?? process.env.PWNKIT_LORE_MIRROR_ROOT ?? "/root/lore-mirror";
+  const noveltyLists = opts.novelty?.lists ?? (process.env.PWNKIT_LORE_LISTS ?? "linux-media").split(",").map((s) => s.trim()).filter(Boolean);
+  const noveltyRecentEpochs = opts.novelty?.recentEpochs ?? 1;
+  const noveltyWarnings: string[] = [];
 
   // #1051 — capture the cloud-sink config BEFORE suppressing the env below.
   // In cloud mode (PWNKIT_CLOUD_SINK + scan id set) the inner finder/skeptic
@@ -135,6 +157,31 @@ export async function runHunt(opts: {
   if (sinkCfg) delete process.env.PWNKIT_CLOUD_SINK;
 
   try {
+    let noveltyMirrors: Awaited<ReturnType<typeof localMirrors>> = [];
+    if (opts.novelty && noveltyLists.length > 0) {
+      try {
+        noveltyMirrors = opts.novelty.sync
+          ? await syncLoreMirror({
+              rootDir: noveltyRoot,
+              lists: noveltyLists,
+              recentEpochs: noveltyRecentEpochs,
+              log,
+            })
+          : localMirrors(noveltyRoot, noveltyLists);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        noveltyWarnings.push(`hunt: novelty sync failed, continuing without duplicate suppression: ${reason.slice(0, 160)}`);
+        log(`[hunt] ${noveltyWarnings[noveltyWarnings.length - 1]}`);
+      }
+    }
+
+    if (opts.novelty && noveltyMirrors.length === 0) {
+      log(
+        `[hunt] novelty requested but no lore mirrors found under ${noveltyRoot} ` +
+          `for ${noveltyLists.join(",") || "(no lists)"}; continuing fail-open`,
+      );
+    }
+
     // 1. Seed → variant-hunt plan (bug class + grep'd candidate sites).
     const plan = await generateVariantCandidates({
       sourceRoot,
@@ -154,7 +201,7 @@ export async function runHunt(opts: {
           bug_class: plan.brief.bugClass,
           grep_patterns: plan.grepPatterns,
           candidates: 0,
-          warnings: plan.warnings,
+          warnings: [...noveltyWarnings, ...plan.warnings],
           note: "no candidate sites generated — seed too narrow or surface already clean",
         },
       };
@@ -170,6 +217,14 @@ export async function runHunt(opts: {
       concurrency: opts.concurrency ?? 4,
       ...(opts.models ? { models: opts.models } : {}),
       ...(opts.verify === false ? {} : { verify: makeSkepticVerifier({ sourceRoot, runtime, ...(opts.models?.[0] ? { model: opts.models[0] } : {}) }) }),
+      ...(opts.novelty && noveltyMirrors.length > 0
+        ? {
+            novelty: {
+              mirrors: noveltyMirrors,
+              ...(opts.novelty.model ? { judge: makeLloreJudge({ model: opts.novelty.model }) } : {}),
+            },
+          }
+        : {}),
       log,
     });
 
@@ -202,11 +257,25 @@ export async function runHunt(opts: {
         scanned: res.scanned,
         findings: res.findings.length,
         confirmed: gated ? res.confirmed.length : null,
+        novelty: opts.novelty
+          ? {
+              enabled: true,
+              root: noveltyRoot,
+              lists: noveltyLists,
+              mirrors: noveltyMirrors.map((m) => ({ list: m.list, epoch: m.epoch, dir: m.dir })),
+              duplicates: res.duplicates.map((d) => ({
+                title: d.finding.title,
+                matches: d.novelty.duplicates,
+              })),
+            }
+          : { enabled: false },
         leads: leads.map((f) => ({ title: f.title, severity: f.severity })),
         ingested: sinkCfg ? ingested : null,
         gated,
-        warnings: [...plan.warnings, ...res.warnings].slice(0, 10),
-        note: "LEADS, not confirmed 0-days. Verify the real sink + upstream-fix (novelty) before disclosure.",
+        warnings: [...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),
+        note: opts.novelty
+          ? "LEADS, not confirmed 0-days. Novelty-duplicate leads were dropped when lore mirrors matched; still verify the real sink before disclosure."
+          : "LEADS, not confirmed 0-days. Verify the real sink + upstream-fix (novelty) before disclosure.",
       },
     };
   } finally {
@@ -227,7 +296,19 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     maxCandidates: parsePositive("--max-candidates", opts.maxCandidates, 40),
     ...(opts.models ? { models: opts.models.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
     verify: opts.verify,
+    ...(opts.novelty
+      ? {
+          novelty: {
+            ...(opts.noveltyRoot ? { rootDir: opts.noveltyRoot } : {}),
+            ...(opts.noveltyLists ? { lists: opts.noveltyLists.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
+            recentEpochs: parsePositive("--novelty-recent-epochs", opts.noveltyRecentEpochs, 1),
+            sync: opts.noveltySync === true,
+            ...(opts.noveltyModel ? { model: opts.noveltyModel } : {}),
+          },
+        }
+      : {}),
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
+    timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
   });
 
@@ -253,8 +334,15 @@ export function registerHuntCommand(program: Command): void {
     .option("--max-candidates <N>", "Cap candidate sites hunted (default 40)")
     .option("--models <a,b>", "Comma-separated finder models for diversity (default: provider default)")
     .option("--no-verify", "Skip the skeptic gate (emit all raw findings — triage only, never disclosure)")
+    .option("--novelty", "After the skeptic gate, drop confirmed findings duplicated by lore.kernel.org mirror patches")
+    .option("--novelty-root <path>", "Lore mirror root (default: PWNKIT_LORE_MIRROR_ROOT or /root/lore-mirror)")
+    .option("--novelty-lists <a,b>", "Comma-separated lore lists to search (default: PWNKIT_LORE_LISTS or linux-media)")
+    .option("--novelty-recent-epochs <N>", "Newest public-inbox epochs to sync per list when --novelty-sync is set (default 1)")
+    .option("--novelty-sync", "Clone/fetch lore mirrors before running the novelty gate")
+    .option("--novelty-model <model>", "Optional model override for the lore duplicate judge")
     .option("--output <path>", "Write the hunt result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")
+    .option("--timeout <ms>", "Accepted cloud agent timeout budget in milliseconds", "600000")
     .action(async (opts: HuntOpts) => {
       try {
         await huntAction(opts);

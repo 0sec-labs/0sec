@@ -1,12 +1,51 @@
-// #1051 — pins the hunt LEAD → cloud-sink CANDIDATE finding mapping. Hunt leads
-// are HYPOTHESES gated by the adversarial skeptic, not confirmed bugs: the
-// mapper must force `status: discovered` (never confirmed/sendable), preserve
-// the finder's honest severity, mark provenance, and stamp a "this is a lead"
-// note into evidence.analysis so the cloud ingests it as a verify candidate.
-
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Finding } from "@pwnkit/shared";
-import { leadToCandidateFinding } from "../hunt.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const {
+  generateVariantCandidatesMock,
+  runHuntScanMock,
+  makeSkepticVerifierMock,
+  localMirrorsMock,
+  syncLoreMirrorMock,
+  makeLloreJudgeMock,
+  prepareMock,
+  getCloudSinkConfigMock,
+  postFindingMock,
+  noveltyJudge,
+} = vi.hoisted(() => {
+  const skepticVerifier = vi.fn();
+  const noveltyJudge = vi.fn();
+  return {
+    generateVariantCandidatesMock: vi.fn(),
+    runHuntScanMock: vi.fn(),
+    makeSkepticVerifierMock: vi.fn(() => skepticVerifier),
+    localMirrorsMock: vi.fn(),
+    syncLoreMirrorMock: vi.fn(),
+    makeLloreJudgeMock: vi.fn(() => noveltyJudge),
+    prepareMock: vi.fn(),
+    getCloudSinkConfigMock: vi.fn(),
+    postFindingMock: vi.fn(),
+    skepticVerifier,
+    noveltyJudge,
+  };
+});
+
+vi.mock("@pwnkit/core", () => ({
+  generateVariantCandidates: generateVariantCandidatesMock,
+  runHuntScan: runHuntScanMock,
+  makeSkepticVerifier: makeSkepticVerifierMock,
+  localMirrors: localMirrorsMock,
+  syncLoreMirror: syncLoreMirrorMock,
+  makeLloreJudge: makeLloreJudgeMock,
+  prepare: prepareMock,
+  getCloudSinkConfig: getCloudSinkConfigMock,
+  postFinding: postFindingMock,
+}));
+
+const { leadToCandidateFinding, runHunt } = await import("../hunt.js");
 
 function makeLead(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -43,7 +82,6 @@ describe("leadToCandidateFinding (#1051)", () => {
     expect(evidence.analysis).toContain("use-after-free");
     expect(evidence.analysis).toContain("abc123 fix the UAF");
     expect(evidence.analysis).toMatch(/LEAD|HYPOTHESIS/);
-    // The original analysis is preserved alongside the provenance note.
     expect(evidence.analysis).toContain("skeptic survived the refute pass");
   });
 
@@ -60,5 +98,185 @@ describe("leadToCandidateFinding (#1051)", () => {
     expect(out.status).toBe("discovered");
     const evidence = out.evidence as { analysis: string };
     expect(evidence.analysis).toMatch(/LEAD|HYPOTHESIS/);
+  });
+});
+
+describe("runHunt — novelty gate wiring", () => {
+  let tmpRoot: string;
+  let seedPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-hunt-test-"));
+    seedPath = join(tmpRoot, "seed.patch");
+    writeFileSync(seedPath, "diff --git a/foo.c b/foo.c\n", "utf8");
+
+    generateVariantCandidatesMock.mockReset().mockResolvedValue({
+      brief: {
+        bugClass: "missing bounds check",
+        pattern: "index before array access",
+      },
+      grepPatterns: ["foo"],
+      candidates: [{ path: "drivers/media/foo.c" }],
+      warnings: [],
+    });
+    runHuntScanMock.mockReset().mockResolvedValue({
+      findings: [],
+      confirmed: [],
+      duplicates: [],
+      scanned: 1,
+      warnings: [],
+    });
+    makeSkepticVerifierMock.mockClear();
+    prepareMock.mockReset().mockImplementation(async (target: string) => ({
+      targetType: "source-code",
+      resolvedTarget: target,
+      repoPath: target,
+      cleanup: vi.fn(),
+    }));
+    localMirrorsMock.mockReset().mockReturnValue([
+      { list: "linux-media", epoch: 1, dir: "/root/lore-mirror/linux-media__1" },
+    ]);
+    syncLoreMirrorMock.mockReset().mockResolvedValue([
+      { list: "linux-media", epoch: 2, dir: "/root/lore-mirror/linux-media__2" },
+    ]);
+    makeLloreJudgeMock.mockClear();
+    getCloudSinkConfigMock.mockReset().mockReturnValue(null);
+    postFindingMock.mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("passes local lore mirrors into runHuntScan when novelty is enabled", async () => {
+    const outcome = await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      novelty: {
+        rootDir: "/root/lore-mirror",
+        lists: ["linux-media"],
+      },
+    });
+
+    expect(outcome.exitCode).toBe(1);
+    expect(localMirrorsMock).toHaveBeenCalledWith("/root/lore-mirror", ["linux-media"]);
+    expect(syncLoreMirrorMock).not.toHaveBeenCalled();
+    expect(runHuntScanMock).toHaveBeenCalledOnce();
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.novelty).toMatchObject({
+      mirrors: [{ list: "linux-media", epoch: 1, dir: "/root/lore-mirror/linux-media__1" }],
+    });
+    expect(outcome.result).toMatchObject({
+      novelty: {
+        enabled: true,
+        mirrors: [{ list: "linux-media", epoch: 1, dir: "/root/lore-mirror/linux-media__1" }],
+      },
+    });
+  });
+
+  it("syncs lore mirrors first when novelty.sync is enabled", async () => {
+    await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      novelty: {
+        rootDir: "/root/lore-mirror",
+        lists: ["linux-media", "netdev"],
+        recentEpochs: 2,
+        sync: true,
+        model: "gpt-5.5-codex",
+      },
+    });
+
+    expect(syncLoreMirrorMock).toHaveBeenCalledWith({
+      rootDir: "/root/lore-mirror",
+      lists: ["linux-media", "netdev"],
+      recentEpochs: 2,
+      log: expect.any(Function),
+    });
+    expect(localMirrorsMock).not.toHaveBeenCalled();
+    expect(makeLloreJudgeMock).toHaveBeenCalledWith({ model: "gpt-5.5-codex" });
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.novelty).toMatchObject({
+      mirrors: [{ list: "linux-media", epoch: 2, dir: "/root/lore-mirror/linux-media__2" }],
+      judge: noveltyJudge,
+    });
+  });
+
+  it("continues fail-open when novelty is requested but no mirrors exist", async () => {
+    localMirrorsMock.mockReturnValue([]);
+
+    await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      novelty: {
+        rootDir: "/missing",
+        lists: ["linux-media"],
+      },
+    });
+
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.novelty).toBeUndefined();
+  });
+
+  it("continues fail-open when novelty sync fails", async () => {
+    syncLoreMirrorMock.mockRejectedValueOnce(new Error("network down"));
+
+    const outcome = await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      novelty: {
+        rootDir: "/root/lore-mirror",
+        lists: ["linux-media"],
+        sync: true,
+      },
+    });
+
+    expect(outcome.exitCode).toBe(1);
+    expect(runHuntScanMock).toHaveBeenCalledOnce();
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.novelty).toBeUndefined();
+    expect(outcome.result).toMatchObject({
+      warnings: [expect.stringContaining("novelty sync failed")],
+    });
+  });
+
+  it("passes the staged seed file contents through as fix.diff", async () => {
+    await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      verify: false,
+    });
+
+    expect(generateVariantCandidatesMock).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRoot: tmpRoot,
+      fix: { diff: "diff --git a/foo.c b/foo.c\n", reference: seedPath },
+    }));
+  });
+
+  it("resolves git/local sources through prepare and cleans them up", async () => {
+    const cleanup = vi.fn();
+    prepareMock.mockResolvedValueOnce({
+      targetType: "source-code",
+      resolvedTarget: "/tmp/pwnkit-review/repo",
+      repoPath: "/tmp/pwnkit-review/repo",
+      cleanup,
+    });
+
+    await runHunt({
+      sourceRoot: "https://github.com/torvalds/linux.git",
+      seedPath,
+      verify: false,
+    });
+
+    expect(prepareMock).toHaveBeenCalledWith(
+      "https://github.com/torvalds/linux.git",
+      "source-code",
+      {},
+      expect.any(Function),
+    );
+    expect(generateVariantCandidatesMock).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRoot: "/tmp/pwnkit-review/repo",
+    }));
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 });
