@@ -100,12 +100,15 @@ export interface RunOptions {
    * review (syscall/ioctl surface, copy_from_user, refcount races,
    * Dirty Frag class). "cardano-onchain" tunes for Aiken/Plutus EUTXO
    * validator logic bugs (double satisfaction, missing signer checks,
-   * unconserved value, unauthorized mint). "xnu-kernel" tunes for Apple
+   * unconserved value, unauthorized mint). "solana-onchain" tunes for Solana
+   * Anchor/native Rust account-model authorization bugs (missing signer/owner
+   * checks, account substitution, missing PDA validation, arbitrary CPI,
+   * missing has_one, AMM/lending overflow). "xnu-kernel" tunes for Apple
    * XNU (Mach trap/MIG, IOKit externalMethod, BSD copyin, Mach port/VM).
    * "xnu-re" reviews DECOMPILED Apple kext pseudo-C (closed kexts from a
    * kernelcache). Default: "default".
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "xnu-kernel" | "xnu-re";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "xnu-kernel" | "xnu-re";
   /**
    * Review the source of a published package: `target` is a package NAME and
    * the pipeline installs it (npm/pypi/cargo/oci) before reviewing its
