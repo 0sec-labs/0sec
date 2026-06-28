@@ -2,12 +2,14 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
-  echo "usage: $0 <ecosystem> <target>" >&2
+  echo "usage: $0 <ecosystem> <target> [cli-invocation]" >&2
   exit 2
 fi
 
 ecosystem="$1"
 target="$2"
+cli="${3:-node dist/pwnkit.js}"
+read -r -a cli_arr <<< "$cli"
 
 extra_arg_a=""
 extra_arg_b=""
@@ -30,7 +32,7 @@ json_path="$tmpdir/result.json"
 log_path="$tmpdir/result.log"
 
 cmd=(
-  node dist/pwnkit.js audit "$target"
+  "${cli_arr[@]}" audit "$target"
   --format json
   --depth quick
   --runtime api
