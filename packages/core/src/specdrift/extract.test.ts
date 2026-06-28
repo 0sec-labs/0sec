@@ -28,7 +28,7 @@ A DATA frame MUST NOT be sent before the session reaches the open state.
   });
 
   it("emits an honest warning when no normative invariant is found", () => {
-    const result = extractSpecInvariants({ specName: "notes.txt", specText: "This document describes background and examples only." });
+    const result = extractSpecInvariants({ specName: "notes.txt", specText: "This document describes background and examples only. Implementations should be pleasant to use." });
 
     expect(result.invariants).toEqual([]);
     expect(result.warnings).toContain("no normative invariants found; spec may need OCR cleanup or LLM extraction");

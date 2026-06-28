@@ -6,13 +6,17 @@ interface SectionLine {
   section?: string;
 }
 
-const MODAL_RE = /\b(MUST(?:\s+NOT)?|SHALL(?:\s+NOT)?|SHOULD(?:\s+NOT)?|MAY|REQUIRED|OPTIONAL|MUST be|MUST have)\b/i;
+const MODAL_RE = /\b(MUST(?:\s+NOT)?|SHALL(?:\s+NOT)?|SHOULD(?:\s+NOT)?|MAY|REQUIRED|OPTIONAL)\b/;
 const RANGE_RE = /\b(?:between|minimum|maximum|at least|at most|less than|greater than|[0-9]+\s*(?:-|to)\s*[0-9]+|0x[0-9a-f]+)\b/i;
 const LENGTH_RE = /\b(length|size|bytes?|octets?|bits?|payload|frame size|field)\b/i;
 const STATE_RE = /\b(state|transition|handshake|stream|session|before|after|until|when|while|once)\b/i;
 const REJECT_RE = /\b(reject(?:ed|s|ing)?|error|invalid|malformed|abort(?:ed|s|ing)?|terminate(?:d|s|ing)?|discard(?:ed|s|ing)?|fail(?:ed|s|ing)?|close(?:d|s|ing)?)\b/i;
 const ORDER_RE = /\b(before|after|first|then|prior to|followed by|precede|order)\b/i;
 const CANON_RE = /\b(canonical|normalize|normalise|case-sensitive|case-insensitive|duplicate|unique)\b/i;
+
+function hasNormativeSignal(text: string): boolean {
+  return MODAL_RE.test(text) || REJECT_RE.test(text) || (STATE_RE.test(text) && (RANGE_RE.test(text) || LENGTH_RE.test(text)));
+}
 
 function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "rule";
@@ -43,6 +47,7 @@ function sentences(lines: SectionLine[]): SectionLine[] {
     const trimmed = line.text.trim();
     if (!trimmed) continue;
     if (/^#{1,6}\s+/.test(trimmed) || /^(\d+(?:\.\d+)*\.?\s+.+)$/.test(trimmed)) continue;
+    if (!buf && !hasNormativeSignal(trimmed)) continue;
     if (!buf) {
       start = line.n;
       section = line.section;
@@ -89,7 +94,7 @@ export function extractSpecInvariants(opts: ExtractSpecInvariantsOptions): Specd
   const warnings: string[] = [];
   const lines = splitLines(opts.specText);
   const candidates = sentences(lines)
-    .filter((s) => MODAL_RE.test(s.text) || REJECT_RE.test(s.text) || (STATE_RE.test(s.text) && (RANGE_RE.test(s.text) || LENGTH_RE.test(s.text))))
+    .filter((s) => hasNormativeSignal(s.text))
     .slice(0, max);
 
   if (candidates.length === max) warnings.push(`capped invariants at ${max}; raise --max-invariants to widen extraction`);

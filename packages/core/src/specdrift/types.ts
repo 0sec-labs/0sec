@@ -33,8 +33,46 @@ export interface SpecdriftExtractResult {
   warnings: string[];
 }
 
+export interface ImplementationCandidate {
+  invariantId: string;
+  file: string;
+  lineStart: number;
+  lineEnd: number;
+  snippet: string;
+  matchedTerms: string[];
+  reason: string;
+  confidence: number;
+  status: "candidate";
+}
+
+export interface SpecdriftScanResult {
+  mode: "specdrift";
+  stage: "scan";
+  spec: string;
+  source: string;
+  invariants: SpecInvariant[];
+  candidates: ImplementationCandidate[];
+  warnings: string[];
+}
+
 export interface ExtractSpecInvariantsOptions {
   specName: string;
   specText: string;
   maxInvariants?: number;
+}
+
+export interface MapInvariantsToImplementationOptions {
+  sourceRoot: string;
+  invariants: SpecInvariant[];
+  maxFiles?: number;
+  maxCandidatesPerInvariant?: number;
+}
+
+export interface RunSpecdriftScanOptions {
+  specName: string;
+  specText: string;
+  sourceRoot: string;
+  maxInvariants?: number;
+  maxFiles?: number;
+  maxCandidatesPerInvariant?: number;
 }
