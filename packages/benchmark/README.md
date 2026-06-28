@@ -229,3 +229,78 @@ The Wilson CI computation and the aggregation logic live in
 `src/wilson.test.ts` (15 tests, including the k=0 / k=n boundary
 clamps) and `src/xbow-runner.test.ts` (4 tests covering the repeat
 harness with an injected fake `runOne`).
+
+## CyberGym fair-config pass@1 (pre-registration = claim-gate integrity)
+
+CyberGym (UC Berkeley RDI — `sunblaze-ucb/cybergym`) is the field's
+C/C++ memory-safety benchmark. The committed receipts
+(`results/cybergym-v1.jsonl`, `results/cybergym-agent-v1.jsonl`) are
+real but **non-random** first-pulled subsets (n=6 / n=18) — defensible
+data points, NOT a benchmark-wide pass@1. The path to a citation-grade
+number is issue [#1029]: a **pre-registered, stratified** 150–200-task
+subset with the task-ID list + RNG seed committed **before** the run.
+
+[#1029]: https://github.com/0sec-labs/0sec/issues/1029
+
+Pre-registration is the integrity contract — the order is fixed:
+
+1. **Commit the subset file before any model run.** The task-id list +
+   seed are frozen in git at pre-registration time.
+2. Run the engine on that subset, writing a **fresh** receipt
+   (`--corpus-path results/cybergym-fair-v1.jsonl`) so the defensible
+   number cannot contaminate the existing n=6/n=18 receipts.
+3. **Commit the per-task JSONL receipt after the run.**
+
+Editing the subset list after the run breaks the claim-gate (epic #1026).
+
+### `cybergym-stratify` — pre-registered stratified subset generator
+
+`src/cybergym-stratify.ts` (exposed as `pnpm cybergym:stratify`) emits a
+stratified subset from the bench-side corpus (the mask_map / HF dataset
+metadata, which is NOT in-repo — the corpus is always passed as input):
+
+```sh
+pnpm --filter @pwnkit/benchmark cybergym:stratify \
+  --corpus /root/cybergym/mask_map.json \
+  --target 175 --seed 0xc6f1a5ed \
+  --stratify-by project,crashType \
+  --out results/cybergym-fair-v1.subset.txt
+```
+
+- Stratifies across `project,crashType` per #1029 (configurable via
+  `--stratify-by`). Tolerant of corpus shape: `mask_map.json` (bare
+  id universe), JSONL of task records, or a JSON array. When a stratum
+  field is absent (e.g. a bare mask_map carries no crash types) it
+  falls back to uniform deterministic sampling on the remaining fields
+  and warns to stderr — still pre-registered + seeded, just not
+  stratified. For a true stratified run, feed a corpus with project +
+  crash-type metadata (dumpable from the HF dataset on bench).
+- Determinism: a mulberry32 PRNG seeded from `--seed` (default
+  `0xc6f1a5ed`) decides membership; the same corpus + seed always yields
+  the same subset. Allocation across strata is largest-remainder
+  proportional, bounded by each stratum's size.
+- The output file carries a provenance header (source path + sha256,
+  generated-at, target, seed, stratify-by) so the frozen artifact is
+  self-describing. `cybergym-runner --subset` already skips `#` comment
+  lines, so the header rides along cleanly.
+
+### `cybergym-runner --corpus-path` — write a fresh receipt
+
+`--corpus-path <file>` (or the `CYBERGYM_CORPUS_PATH` env) overrides the
+corpus output path so a fair run writes a NEW receipt instead of
+appending to the stale `cybergym-v1.jsonl`. Defaults to
+`results/cybergym-v1.jsonl` (unchanged for existing callers):
+
+```sh
+pnpm --filter @pwnkit/benchmark cybergym \
+  --subset results/cybergym-fair-v1.subset.txt \
+  --corpus-path results/cybergym-fair-v1.jsonl \
+  --harness-dir /root/cybergym --json
+```
+
+The full fair-run protocol (firewall, one-container-per-task, relaunch
+policy, Wilson-CI reporting) lives in the
+[runbook](../../../docs/operations/runbooks/cybergym-harness.md) and
+issue [#1029]. The fairness fix itself is already in the engine
+(`pwnkit/packages/core/src/stages/craft-scan.ts`, commit 704b84b5) —
+not a flag.

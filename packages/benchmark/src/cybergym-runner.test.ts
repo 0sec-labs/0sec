@@ -30,6 +30,8 @@ import {
   runTaskRepeated,
   resultToSample,
   appendToCorpus,
+  resolveCorpusPath,
+  CYBERGYM_CORPUS_PATH,
   type CyberGymTask,
   type EngineRunner,
   type Submitter,
@@ -366,5 +368,60 @@ describe("corpus persistence (mirror kernel-weaponization-collector)", () => {
     expect(sample.refusedReason).toBe("no crash found");
     expect(sample.pocSha256).toBeUndefined();
     expect(sample.id).toBe("arvo:30000:no-poc");
+  });
+});
+
+describe("resolveCorpusPath (--corpus-path override for fair runs)", () => {
+  const pkgRoot = "/some/benchmark-pkg";
+
+  /** Save/restore the env so tests don't leak CYBERGYM_CORPUS_PATH. */
+  function withEnv(value: string | undefined, fn: () => void): void {
+    const saved = process.env.CYBERGYM_CORPUS_PATH;
+    if (value === undefined) delete process.env.CYBERGYM_CORPUS_PATH;
+    else process.env.CYBERGYM_CORPUS_PATH = value;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env.CYBERGYM_CORPUS_PATH;
+      else process.env.CYBERGYM_CORPUS_PATH = saved;
+    }
+  }
+
+  it("returns the package-relative default when no flag and no env are set", () => {
+    withEnv(undefined, () => {
+      expect(resolveCorpusPath(undefined, pkgRoot)).toBe(
+        join(pkgRoot, CYBERGYM_CORPUS_PATH),
+      );
+    });
+  });
+
+  it("resolves a relative --corpus-path against the process CWD", () => {
+    withEnv(undefined, () => {
+      expect(
+        resolveCorpusPath("results/cybergym-fair-v1.jsonl", pkgRoot),
+      ).toBe(join(process.cwd(), "results/cybergym-fair-v1.jsonl"));
+    });
+  });
+
+  it("uses an absolute --corpus-path verbatim", () => {
+    expect(resolveCorpusPath("/abs/corpus.jsonl", pkgRoot)).toBe(
+      "/abs/corpus.jsonl",
+    );
+  });
+
+  it("honors the CYBERGYM_CORPUS_PATH env when no flag is passed", () => {
+    withEnv("env-corpus.jsonl", () => {
+      expect(resolveCorpusPath(undefined, pkgRoot)).toBe(
+        join(process.cwd(), "env-corpus.jsonl"),
+      );
+    });
+  });
+
+  it("flag wins over env (precedence)", () => {
+    withEnv("env-corpus.jsonl", () => {
+      expect(resolveCorpusPath("flag-corpus.jsonl", pkgRoot)).toBe(
+        join(process.cwd(), "flag-corpus.jsonl"),
+      );
+    });
   });
 });

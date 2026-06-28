@@ -46,6 +46,14 @@
  *   tsx src/cybergym-runner.ts --task-id arvo:10400 --difficulty level1
  *   tsx src/cybergym-runner.ts --subset subset.txt --limit 10
  *   tsx src/cybergym-runner.ts --repeat 5 --json
+ *   tsx src/cybergym-runner.ts --subset fair.subset.txt \
+ *     --corpus-path results/cybergym-fair-v1.jsonl   # write a fresh receipt
+ *
+ * `--corpus-path <file>` (or the CYBERGYM_CORPUS_PATH env) overrides the
+ * corpus output path so a fair pre-registered run can write a NEW receipt
+ * (e.g. results/cybergym-fair-v1.jsonl) instead of contaminating the existing
+ * committed cybergym-v1.jsonl. Defaults to results/cybergym-v1.jsonl
+ * (package-relative), so existing callers are unchanged.
  *
  * Harness contract (from the CyberGym docs):
  *   gen_task --task-id arvo:NNNNN --difficulty level1
@@ -64,7 +72,7 @@ import {
   mkdirSync,
   mkdtempSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -81,6 +89,30 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * convention — the JSONL IS the receipt). Relative to the benchmark package.
  */
 export const CYBERGYM_CORPUS_PATH = "results/cybergym-v1.jsonl";
+
+/**
+ * Resolve the corpus output path for a run.
+ *
+ * Precedence (first wins): the `--corpus-path` flag → the `CYBERGYM_CORPUS_PATH`
+ * env → the package-relative default (`results/cybergym-v1.jsonl`). A
+ * user-supplied path is resolved against the process CWD (standard CLI
+ * behavior) unless it is already absolute; the default is resolved against the
+ * benchmark package root so existing callers are byte-for-byte unchanged.
+ *
+ * A fair pre-registered run overrides this to a fresh file (e.g.
+ * `results/cybergym-fair-v1.jsonl`) so it cannot contaminate the existing
+ * committed receipt. See `cybergym-stratify.ts` + issue #1029.
+ */
+export function resolveCorpusPath(
+  override?: string,
+  packageRoot: string = join(__dirname, ".."),
+): string {
+  const requested = override ?? process.env.CYBERGYM_CORPUS_PATH;
+  if (requested && requested.length > 0) {
+    return isAbsolute(requested) ? requested : join(process.cwd(), requested);
+  }
+  return join(packageRoot, CYBERGYM_CORPUS_PATH);
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -877,6 +909,7 @@ function parseArgs(argv: string[]) {
     model: val("--model"),
     maxSteps: has("--max-steps") ? parseInt(val("--max-steps")!, 10) : 40,
     harnessDir: val("--harness-dir") ?? process.env.CYBERGYM_HARNESS,
+    corpusPath: val("--corpus-path"),
   };
 }
 
@@ -992,8 +1025,11 @@ async function main(): Promise<void> {
     liveValidationNote: LIVE_VALIDATION_NOTE,
   };
 
-  // Persist per-task tuples to the committed corpus (the receipt).
-  appendToCorpus(results, join(__dirname, "..", CYBERGYM_CORPUS_PATH));
+  // Persist per-task tuples to the committed corpus (the receipt). The path is
+  // overridable via --corpus-path / CYBERGYM_CORPUS_PATH so a fair run writes a
+  // fresh receipt (e.g. results/cybergym-fair-v1.jsonl) instead of contaminating
+  // the existing cybergym-v1.jsonl. Defaults to the package-relative corpus.
+  appendToCorpus(results, resolveCorpusPath(cfg.corpusPath));
 
   if (cfg.json) {
     console.log(JSON.stringify(report, null, 2));
