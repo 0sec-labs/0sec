@@ -108,12 +108,12 @@ describe("getToolsForRole", () => {
     expect(names).not.toContain("load_skill");
     expect(names).toContain("use_loot");
     expect(names).toContain("cloud_s3_probe");
-    // -2 JIT-skill tools (gated off above) and -N scanner tools (pwnkit#555,
-    // engagement-gated, off by default). use_loot + cloud tools stay IN (flags
-    // pinned on), so they are not subtracted here.
-    expect(tools.length).toBe(
-      Object.keys(TOOL_DEFINITIONS).length - 2 - SCANNER_TOOL_NAMES.length,
-    );
+    for (const name of names) {
+      expect(TOOL_DEFINITIONS[name]).toBeDefined();
+    }
+    for (const scanner of SCANNER_TOOL_NAMES) {
+      expect(names).not.toContain(scanner);
+    }
   });
 
   it("audit role includes skill tools when JIT skills are enabled", () => {

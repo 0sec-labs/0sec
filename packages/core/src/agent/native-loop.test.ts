@@ -287,7 +287,7 @@ describe("runNativeAgentLoop", () => {
         content: [],
         stopReason: "error",
         durationMs: 100,
-        error: "Rate limit exceeded",
+        error: "Invalid API key",
       },
     ]);
 
