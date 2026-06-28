@@ -26,6 +26,7 @@ import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { cardanoOnchainReviewAgentPrompt } from "./review/cardano-onchain-profile.js";
 import { solanaOnchainReviewAgentPrompt } from "./review/solana-onchain-profile.js";
+import { cardanoHaskellReviewAgentPrompt } from "./review/cardano-haskell-profile.js";
 import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
 import { xnuReReviewAgentPrompt } from "./review/xnu-re-profile.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
@@ -104,7 +105,7 @@ export interface PipelineOptions {
    *   surface, copy_from_user discipline, refcount races, skb cow/share
    *   violations (Dirty Frag class). Static-only; verification via #271/#272.
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "xnu-kernel" | "xnu-re";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
   /**
    * Review the SOURCE of a published package. When set, `target` is a
    * package NAME (not a repo path / git URL): the pipeline installs the
@@ -1360,6 +1361,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
             ? cardanoOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "solana-onchain"
             ? solanaOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
+            : opts.reviewProfile === "cardano-haskell"
+            ? cardanoHaskellReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "xnu-kernel"
             ? xnuKernelReviewAgentPrompt(prepared.scopePath, semgrepFindings, undefined, opts.subsystem, opts.hypothesis)
             : opts.reviewProfile === "xnu-re"
