@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditReport } from "@pwnkit/shared";
-import { auditReportToBenchResult } from "./adapters.js";
+import { auditReportToBenchResult, createDockerWebProvisioner } from "./adapters.js";
 import type { BenchCase } from "./manifest.js";
 
 const auditReport: AuditReport = {
@@ -93,5 +93,27 @@ describe("auditReportToBenchResult", () => {
     expect(result.benchmarkMeta?.targetProvenance?.notes?.join(" ")).toMatch(
       /Requested version 6\.37\.8 resolved as 6\.37\.9/,
     );
+  });
+});
+
+describe("createDockerWebProvisioner", () => {
+  it("passes source-audit cases through without Docker", async () => {
+    const provisioner = createDockerWebProvisioner();
+    const provisioned = await provisioner.up(
+      {
+        id: "src-sequelize-set-sqli",
+        target: sourceAuditTarget,
+        objective: {
+          type: "finding-match",
+          vulnClass: "sql-injection",
+          sinkMarkers: ["Sequelize.prototype.set"],
+        },
+        knownNegative: false,
+        tags: [],
+      },
+      0,
+    );
+
+    expect(provisioned).toEqual({ target: "npm:sequelize@6.37.8" });
   });
 });

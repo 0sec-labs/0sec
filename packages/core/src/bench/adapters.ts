@@ -309,13 +309,17 @@ function findPublishedPort(containerName: string, internalPort?: number): number
  *   - `docker run -d -P <image>` then reading the mapped port, or
  *   - `docker compose up -d` in `composeDir` (mirrors the XBOW runner).
  *
- * Kernel cases are NOT provisioned here — they are handed to the scan/oracle
- * by `reproducerRef` and run inside the kernel VM path. `up()` throws for a
- * kernel case so it surfaces as inconclusive rather than silently mis-running.
+ * Source-audit cases need no target process; the audit engine installs the
+ * package itself. Kernel cases are NOT provisioned here — they require the
+ * kernel VM path. `up()` throws for a kernel case so it surfaces as
+ * inconclusive rather than silently mis-running.
  */
 export function createDockerWebProvisioner(corpusRoot?: string): TargetProvisioner {
   return {
     async up(c: BenchCase): Promise<ProvisionedTarget> {
+      if (c.target.kind === "source-audit") {
+        return { target: `${c.target.ecosystem}:${c.target.package}@${c.target.version}` };
+      }
       if (c.target.kind !== "web") {
         throw new Error(
           `DockerWebProvisioner: case "${c.id}" is a ${c.target.kind} target; supply a kernel provisioner/oracle for it`,
