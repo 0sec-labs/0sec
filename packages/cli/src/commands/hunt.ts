@@ -67,6 +67,7 @@ interface HuntOpts {
   ref?: string;
   concurrency?: string;
   maxCandidates?: string;
+  skipCandidates?: string;
   models?: string;
   verify?: boolean; // commander sets false when --no-verify is passed
   novelty?: boolean;
@@ -87,6 +88,13 @@ function parsePositive(flag: string, raw: string | undefined, dflt: number): num
   return n;
 }
 
+function parseNonNegative(flag: string, raw: string | undefined, dflt: number): number {
+  if (raw === undefined) return dflt;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) throw new Error(`invalid ${flag} '${raw}' (expected non-negative integer)`);
+  return n;
+}
+
 export interface HuntOutcome {
   exitCode: number;
   result: unknown;
@@ -99,6 +107,7 @@ export async function runHunt(opts: {
   ref?: string;
   concurrency?: number;
   maxCandidates?: number;
+  skipCandidates?: number;
   models?: string[];
   verify?: boolean;
   novelty?: {
@@ -183,16 +192,20 @@ export async function runHunt(opts: {
     }
 
     // 1. Seed → variant-hunt plan (bug class + grep'd candidate sites).
+    const skipCandidates = opts.skipCandidates ?? 0;
+    const maxCandidates = opts.maxCandidates ?? 40;
     const plan = await generateVariantCandidates({
       sourceRoot,
       fix: { diff: seedDiff, reference: opts.ref ?? opts.seedPath },
       runtime,
-      maxCandidates: opts.maxCandidates ?? 40,
+      maxCandidates: skipCandidates + maxCandidates,
       ...(opts.models ? { models: opts.models } : {}),
       log,
     });
 
-    if (plan.candidates.length === 0) {
+    const selectedCandidates = plan.candidates.slice(skipCandidates, skipCandidates + maxCandidates);
+
+    if (selectedCandidates.length === 0) {
       return {
         exitCode: 2,
         result: {
@@ -201,14 +214,17 @@ export async function runHunt(opts: {
           bug_class: plan.brief.bugClass,
           grep_patterns: plan.grepPatterns,
           candidates: 0,
+          skipped_candidates: Math.min(skipCandidates, plan.candidates.length),
           warnings: [...noveltyWarnings, ...plan.warnings],
-          note: "no candidate sites generated — seed too narrow or surface already clean",
+          note: plan.candidates.length === 0
+            ? "no candidate sites generated — seed too narrow or surface already clean"
+            : "no candidate sites left after --skip-candidates",
         },
       };
     }
 
     // 2. Fan finders out over the variant sites (absolute paths); skeptic-gate each.
-    const candidates = plan.candidates.map((c) => ({ ...c, path: `${sourceRoot}/${c.path}` }));
+    const candidates = selectedCandidates.map((c) => ({ ...c, path: `${sourceRoot}/${c.path}` }));
     const res = await runHuntScan({
       sourceRoot,
       candidates,
@@ -253,7 +269,8 @@ export async function runHunt(opts: {
         seed: opts.ref ?? opts.seedPath,
         bug_class: plan.brief.bugClass,
         source: sourceRoot,
-        candidate_sites: plan.candidates.map((c) => c.path),
+        candidate_sites: selectedCandidates.map((c) => c.path),
+        skipped_candidates: skipCandidates,
         scanned: res.scanned,
         findings: res.findings.length,
         confirmed: gated ? res.confirmed.length : null,
@@ -294,6 +311,7 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     ...(opts.ref ? { ref: opts.ref } : {}),
     concurrency: parsePositive("--concurrency", opts.concurrency, 4),
     maxCandidates: parsePositive("--max-candidates", opts.maxCandidates, 40),
+    skipCandidates: parseNonNegative("--skip-candidates", opts.skipCandidates, 0),
     ...(opts.models ? { models: opts.models.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
     verify: opts.verify,
     ...(opts.novelty
@@ -332,6 +350,7 @@ export function registerHuntCommand(program: Command): void {
     .option("--ref <name>", "Provenance label for the seed (e.g. the CVE / commit)")
     .option("--concurrency <N>", "Max finders in flight (default 4)")
     .option("--max-candidates <N>", "Cap candidate sites hunted (default 40)")
+    .option("--skip-candidates <N>", "Skip the first N ranked candidate sites before hunting (default 0)")
     .option("--models <a,b>", "Comma-separated finder models for diversity (default: provider default)")
     .option("--no-verify", "Skip the skeptic gate (emit all raw findings — triage only, never disclosure)")
     .option("--novelty", "After the skeptic gate, drop confirmed findings duplicated by lore.kernel.org mirror patches")

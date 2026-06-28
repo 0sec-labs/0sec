@@ -253,6 +253,44 @@ describe("runHunt — novelty gate wiring", () => {
     }));
   });
 
+  it("skips the requested number of ranked candidate sites before scanning", async () => {
+    generateVariantCandidatesMock.mockResolvedValueOnce({
+      brief: {
+        bugClass: "missing bounds check",
+        pattern: "index before array access",
+      },
+      grepPatterns: ["foo"],
+      candidates: [
+        { path: "drivers/media/first.c" },
+        { path: "drivers/media/second.c" },
+        { path: "drivers/media/third.c" },
+      ],
+      warnings: [],
+    });
+
+    const outcome = await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      maxCandidates: 2,
+      skipCandidates: 1,
+      verify: false,
+    });
+
+    expect(generateVariantCandidatesMock).toHaveBeenCalledWith(expect.objectContaining({
+      maxCandidates: 3,
+    }));
+    expect(runHuntScanMock).toHaveBeenCalledWith(expect.objectContaining({
+      candidates: [
+        expect.objectContaining({ path: `${tmpRoot}/drivers/media/second.c` }),
+        expect.objectContaining({ path: `${tmpRoot}/drivers/media/third.c` }),
+      ],
+    }));
+    expect(outcome.result).toMatchObject({
+      candidate_sites: ["drivers/media/second.c", "drivers/media/third.c"],
+      skipped_candidates: 1,
+    });
+  });
+
   it("resolves git/local sources through prepare and cleans them up", async () => {
     const cleanup = vi.fn();
     prepareMock.mockResolvedValueOnce({
