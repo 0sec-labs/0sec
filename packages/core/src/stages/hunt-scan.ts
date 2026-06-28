@@ -33,6 +33,13 @@ import { join } from "node:path";
 import { rmSync } from "node:fs";
 import type { Finding, RuntimeMode, ScanConfig } from "@pwnkit/shared";
 import { agenticScan } from "../agentic-scanner.js";
+import {
+  checkNovelty,
+  findingToQuery,
+  type NoveltyCheckOptions,
+  type NoveltyQuery,
+  type LoreNoveltyResult,
+} from "./novelty-check.js";
 
 // Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
 // default DB is a single shared ~/.pwnkit/pwnkit.db — at any real fan-out width
@@ -94,6 +101,15 @@ export interface HuntScanOptions {
   depth?: "quick" | "deep";
   /** The skeptic+prover gate. When omitted, all findings are returned unconfirmed. */
   verify?: HuntVerifier;
+  /**
+   * OPTIONAL lore-mirror novelty gate (issue: Rockchip AV1 re-find). When set,
+   * every confirmed finding is checked against on-list (pending/merged) upstream
+   * patches via {@link checkNovelty}. DUPLICATE findings are moved out of
+   * `confirmed` into `duplicates`; NOVEL ones pass through unchanged. Additive —
+   * omit it and the hunt behaves exactly as before. `queryFor` maps a finding to
+   * its search facts; defaults to {@link findingToQuery} (auto-mines the prose).
+   */
+  novelty?: NoveltyCheckOptions & { queryFor?: (finding: Finding) => NoveltyQuery };
   log?: (msg: string) => void;
 }
 
@@ -102,6 +118,11 @@ export interface HuntScanResult {
   findings: Finding[];
   /** Findings that passed the skeptic+prover gate (real, novel, reachable). */
   confirmed: Finding[];
+  /**
+   * Confirmed findings the novelty gate ruled DUPLICATE of an on-list upstream
+   * fix. Empty unless `opts.novelty` is set. These are dropped from `confirmed`.
+   */
+  duplicates: Array<{ finding: Finding; novelty: LoreNoveltyResult }>;
   /** How many (candidate × model) finder runs executed. */
   scanned: number;
   warnings: string[];
@@ -280,9 +301,35 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     log(`[hunt] ${confirmed.length}/${all.length} finding(s) confirmed by the skeptic+prover gate`);
   }
 
+  // OPTIONAL novelty gate: drop confirmed findings that duplicate an on-list
+  // upstream fix (lore mirror). Runs only when opts.novelty is provided.
+  const duplicates: Array<{ finding: Finding; novelty: LoreNoveltyResult }> = [];
+  if (opts.novelty && confirmed.length > 0) {
+    const queryFor = opts.novelty.queryFor ?? ((f: Finding) => findingToQuery(f));
+    const novel: Finding[] = [];
+    for (const finding of confirmed) {
+      try {
+        const result = await checkNovelty(queryFor(finding), { ...opts.novelty, log });
+        if (result.novel) {
+          novel.push(finding);
+        } else {
+          duplicates.push({ finding, novelty: result });
+          log(`[hunt] novelty: DROP "${finding.title}" — duplicate of ${result.duplicates.map((d) => d.messageId).join(", ")}`);
+        }
+      } catch (e) {
+        // A novelty-gate failure must not silently drop a real finding: keep it.
+        warnings.push(`hunt: novelty check failed for ${finding.title}: ${String(e).slice(0, 100)}`);
+        novel.push(finding);
+      }
+    }
+    confirmed = novel;
+    log(`[hunt] ${confirmed.length} novel, ${duplicates.length} duplicate after novelty gate`);
+  }
+
   return {
     findings: all.map((a) => a.finding),
     confirmed,
+    duplicates,
     scanned: runs.length,
     warnings,
   };
