@@ -984,9 +984,18 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   // files up front (short-circuiting once the cap is passed, so we don't walk
   // all 80k just to reject) and fail fast with an actionable error instead.
   // Source-code review only — package audits are already file-bounded.
+  const reviewSubsystemPaths =
+    opts.reviewProfile === "linux-kernel" && opts.subsystem
+      ? parseSubsystems(opts.subsystem).map((s) => join(prepared.scopePath, s))
+      : undefined;
+
   if (prepared.resolvedType === "source-code" && !opts.resumeScanId) {
     const cap = reviewMaxFiles();
-    const fileCount = countScopeFilesUpTo(prepared.scopePath, cap);
+    let fileCount = 0;
+    for (const scopePath of reviewSubsystemPaths ?? [prepared.scopePath]) {
+      fileCount += countScopeFilesUpTo(scopePath, cap - fileCount);
+      if (fileCount > cap) break;
+    }
     if (fileCount > cap) {
       const msg =
         `review target too large: over ${cap} source files exceeds the ${cap} ` +
@@ -1147,11 +1156,6 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         // specified subdirectory/directories. The full tree is still available
         // for cross-reference reads, but scanning the whole 30M-line tree
         // wastes the scanner's time budget.
-        const subsystemPaths =
-          opts.reviewProfile === "linux-kernel" && opts.subsystem
-            ? parseSubsystems(opts.subsystem).map((s) => join(prepared.scopePath, s))
-            : undefined;
-
         // Push (not assign) so prepended external seedFindings survive.
         const scanResults = runSelectedStaticScan(
           prepared.scopePath,
@@ -1159,7 +1163,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           {
             ...(packageStaticTarget ? { noGitIgnore: true } : {}),
             ...(changedOnlyPaths ? { paths: changedOnlyPaths } : {}),
-            ...(subsystemPaths ? { paths: subsystemPaths } : {}),
+            ...(reviewSubsystemPaths ? { paths: reviewSubsystemPaths } : {}),
           },
         );
         staticScannerRan = true;

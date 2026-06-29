@@ -475,6 +475,30 @@ describe("runPipeline — oversized-review guard", () => {
     expect(runAnalysisAgentMock).toHaveBeenCalledTimes(1);
   });
 
+  it("linux-kernel review with --subsystem applies the file cap to the scoped path", async () => {
+    countScopeFilesUpToMock.mockReturnValue(42);
+
+    const repo = reviewRepo();
+    const report = await runPipeline({
+      target: repo,
+      targetType: "source-code",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      dbPath: freshDbPath(),
+      reviewProfile: "linux-kernel",
+      subsystem: "drivers/hid",
+    });
+
+    expect(report.targetType).toBe("source-code");
+    expect(countScopeFilesUpToMock).toHaveBeenCalledWith(
+      join(repo, "drivers/hid/"),
+      5000,
+    );
+    expect(runAnalysisAgentMock).toHaveBeenCalledTimes(1);
+  });
+
   it("PWNKIT_REVIEW_MAX_FILES overrides the cap (count above the override trips the guard)", async () => {
     const prev = process.env.PWNKIT_REVIEW_MAX_FILES;
     process.env.PWNKIT_REVIEW_MAX_FILES = "10";
