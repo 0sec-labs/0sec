@@ -14,6 +14,19 @@ const testDbPath = join(tmpdir(), `pwnkit-cli-test-${Date.now()}.db`);
 
 const projectRoot = join(thisDir, "../..");
 
+const noApiEnv = {
+  OPENROUTER_API_KEY: "",
+  ANTHROPIC_API_KEY: "",
+  AZURE_OPENAI_API_KEY: "",
+  OPENAI_API_KEY: "",
+  Z_AI_API_KEY: "",
+  PWNKIT_CHATGPT_ACCESS_TOKEN: "",
+  PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: "",
+  PWNKIT_CHATGPT_ACCOUNT_ID: "",
+  PWNKIT_CODEX_AUTH_JSON_PATH: join(tmpdir(), "pwnkit-cli-test-no-codex-auth.json"),
+  PWNKIT_SKIP_PROVIDER_BANNER: "1",
+};
+
 const run = (args: string[], timeout = 30_000, extraEnv: Record<string, string | undefined> = {}) => {
   // Build a clean env, stripping NODE_OPTIONS and npm_*/pnpm_* vars
   // that pnpm injects and can interfere with native module loading
@@ -90,7 +103,7 @@ describe("CLI E2E", () => {
     const result = run(
       ["audit", "is-odd", "--runtime", "api", "--format", "json", "--db-path", testDbPath],
       60_000,
-      { OPENROUTER_API_KEY: "", ANTHROPIC_API_KEY: "", AZURE_OPENAI_API_KEY: "", OPENAI_API_KEY: "" },
+      noApiEnv,
     );
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
@@ -121,7 +134,7 @@ describe("CLI E2E", () => {
     const result = run(
       ["audit", "is-odd", "--runtime", "api", "--format", "terminal", "--db-path", testDbPath + "-share"],
       60_000,
-      { OPENROUTER_API_KEY: "", ANTHROPIC_API_KEY: "", AZURE_OPENAI_API_KEY: "", OPENAI_API_KEY: "" },
+      noApiEnv,
     );
     const output = result.stdout + result.stderr;
     expect(result.status).toBe(0);
@@ -134,10 +147,7 @@ describe("CLI E2E", () => {
       ["audit", "is-odd", "--runtime", "api", "--format", "json", "--db-path", testDbPath + "-result-line"],
       60_000,
       {
-        OPENROUTER_API_KEY: "",
-        ANTHROPIC_API_KEY: "",
-        AZURE_OPENAI_API_KEY: "",
-        OPENAI_API_KEY: "",
+        ...noApiEnv,
         PWNKIT_EMIT_RESULT_LINE: "1",
       },
     );
