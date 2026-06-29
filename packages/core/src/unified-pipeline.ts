@@ -1172,25 +1172,25 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       }
     }
 
-    // Haskell seed layer (pwnkit). Semgrep/Foxguard cannot parse Haskell, so a
-    // cardano-haskell review otherwise starts from an EMPTY scanner list. This
-    // ripgrep/regex pass emits concrete leads (FFI memory-safety, unsafe
-    // escapes, CBOR decoder panics, partial functions, arithmetic, lazy-eval
-    // DoS) in the same SemgrepFinding shape the review prompt consumes. Scoped
-    // strictly to the cardano-haskell source-review profile so no other
-    // profile's seeding is disturbed.
+    // Haskell fallback seed layer (pwnkit). Foxguard v0.10.0 emits built-in
+    // Cardano Haskell leads; keep this regex pass only for Semgrep/fallback
+    // runs or older scanner output so cardano-haskell reviews never start from
+    // an empty scanner list.
     if (
       prepared.resolvedType === "source-code" &&
       opts.reviewProfile === "cardano-haskell"
     ) {
       try {
-        const haskellSeeds = generateHaskellSeeds(prepared.scopePath);
+        const hasFoxguardHaskellLeads = semgrepFindings.some((finding) =>
+          finding.ruleId.startsWith("semgrep/cardano-haskell/"),
+        );
+        const haskellSeeds = hasFoxguardHaskellLeads ? [] : generateHaskellSeeds(prepared.scopePath);
         if (haskellSeeds.length > 0) {
           semgrepFindings.push(...haskellSeeds);
           emit({
             type: "stage:start",
             stage: "analyze",
-            message: `Haskell seed layer: ${haskellSeeds.length} regex lead(s) (Semgrep is Haskell-blind)`,
+            message: `Haskell seed layer: ${haskellSeeds.length} regex fallback lead(s)`,
           });
           logPipelineEvent("analyze", "haskell_seeds", {
             count: haskellSeeds.length,

@@ -9,7 +9,12 @@ import type { ScanListener } from "./scanner.js";
  * than tracking `main` or `latest` so the ablation harness produces
  * reproducible numbers across runs.
  *
- * v0.9.0 (2026-06) — latest stable:
+ * v0.10.0 (2026-06) — latest stable:
+ *   - Haskell parser support and built-in Cardano Haskell seed rules
+ *   - Semgrep/OpenGrep compatibility loadability ~96% of the tracked registry
+ *   - VS Code suppressions routed through the Rust config editor
+ *
+ * v0.9.0 (2026-06):
  *   - HCL / Terraform grammar (terraform registry rule pack now loads)
  *   - Semgrep generic/spacegrep mode + regex-language alias
  *   - Semgrep-compat parity: metavariable-pattern/-comparison, focus-metavariable,
@@ -21,7 +26,7 @@ import type { ScanListener } from "./scanner.js";
  *   - C kernel rule pack (Dirty Frag) shipped via Semgrep-YAML bridge
  *   - Accurate scan-skipped counts in reporters
  */
-export const FOXGUARD_PINNED_TAG = "v0.9.0";
+export const FOXGUARD_PINNED_TAG = "v0.10.0";
 
 /**
  * CLI runtimes (claude, codex, etc.) are full agents — they can read files,
@@ -171,7 +176,7 @@ export function selectedStaticScanner(): "foxguard" | "semgrep" {
 /**
  * Raw JSON shape emitted by `foxguard --format json` (top-level array of
  * Finding structs). Source of truth:
- * https://github.com/0sec-labs/foxguard/blob/v0.9.0/src/lib.rs
+ * https://github.com/0sec-labs/foxguard/blob/v0.10.0/src/lib.rs
  *
  * Severity is `low | medium | high | critical` (lowercase). Optional
  * fields are omitted from the JSON when unset, so the translator must

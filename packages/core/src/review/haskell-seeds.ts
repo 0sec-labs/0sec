@@ -4,12 +4,11 @@ import type { SemgrepFinding } from "@pwnkit/shared";
 /**
  * Haskell static-analysis SEED layer for the `cardano-haskell` review profile.
  *
- * ROOT CAUSE THIS FIXES: Semgrep / Foxguard cannot parse Haskell, so a
- * `cardano-haskell` review runs with an EMPTY `semgrepResults` list — the LLM
- * review starts from a blind full-tree pass over large multi-package cabal
- * projects. This module gives that review CONCRETE seeds (file:line + rule +
- * snippet + why) to hunt from, in the exact `SemgrepFinding` shape the review
- * prompt already consumes (`cardanoHaskellReviewAgentPrompt`).
+ * Fallback layer for when the configured static scanner does not return
+ * Foxguard's built-in Cardano Haskell leads. This gives the review concrete
+ * seeds (file:line + rule + snippet + why) to hunt from, in the exact
+ * `SemgrepFinding` shape the review prompt already consumes
+ * (`cardanoHaskellReviewAgentPrompt`).
  *
  * MVP SCOPE (honest): this is a ripgrep/regex seed layer. It is a LEAD
  * generator, not a verifier — every seed is "this token appears here, look at
