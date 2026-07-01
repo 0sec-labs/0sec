@@ -12,6 +12,8 @@ import type {
 } from "./types.js";
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { VERSION } from "@pwnkit/shared";
 
 /** Safely parse JSON tool arguments; returns empty object on malformed input. */
@@ -338,6 +340,40 @@ function readChatGptCodexEnv():
   };
 }
 
+function readChatGptCodexAuthFile():
+  | { accessToken?: string; refreshToken?: string; accountId?: string }
+  | undefined {
+  const authPath = process.env.PWNKIT_CHATGPT_AUTH_FILE ?? join(homedir(), ".codex", "auth.json");
+  if (!existsSync(authPath)) return undefined;
+  try {
+    const auth = JSON.parse(readFileSync(authPath, "utf8")) as {
+      tokens?: {
+        access_token?: unknown;
+        refresh_token?: unknown;
+        account_id?: unknown;
+      };
+    };
+    const tokens = auth.tokens;
+    if (!tokens) return undefined;
+    const accessToken = typeof tokens.access_token === "string" && tokens.access_token.length > 0
+      ? tokens.access_token
+      : undefined;
+    const refreshToken = typeof tokens.refresh_token === "string" && tokens.refresh_token.length > 0
+      ? tokens.refresh_token
+      : undefined;
+    if (!accessToken && !refreshToken) return undefined;
+    return {
+      ...(accessToken ? { accessToken } : {}),
+      ...(refreshToken ? { refreshToken } : {}),
+      ...(typeof tokens.account_id === "string" && tokens.account_id.length > 0
+        ? { accountId: tokens.account_id }
+        : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Pull the `exp` (seconds since epoch) claim out of an OpenAI-issued
  * JWT and return it as ms-since-epoch. Used when a pre-issued
@@ -426,15 +462,14 @@ export async function getChatGptCodexAccessToken(): Promise<{
   accountId?: string;
 }> {
   if (!chatGptCodexAuthState) {
-    const fromEnv = readChatGptCodexEnv();
+    const fromEnv = readChatGptCodexEnv() ?? readChatGptCodexAuthFile();
     if (!fromEnv) {
       throw new Error(
         "ChatGPT Codex auth: neither PWNKIT_CHATGPT_ACCESS_TOKEN nor " +
           "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN is set. Run `codex login` and " +
           "either forward the access token via worker-controller (preferred " +
           "for multi-sandbox dispatch — avoids the OAuth refresh-token " +
-          "rotation race) or copy `tokens.refresh_token` from " +
-          "~/.codex/auth.json into the env.",
+          "rotation race) or keep a valid ~/.codex/auth.json on this host.",
       );
     }
     chatGptCodexAuthState = {
@@ -673,9 +708,13 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
   // us to use the subscription path.
   const chatGptAccess = process.env.PWNKIT_CHATGPT_ACCESS_TOKEN;
   const chatGptRefresh = process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
+  const chatGptAuthFile = !chatGptAccess && !chatGptRefresh
+    ? readChatGptCodexAuthFile()
+    : undefined;
   if (
     (chatGptAccess && chatGptAccess.length > 0) ||
-    (chatGptRefresh && chatGptRefresh.length > 0)
+    (chatGptRefresh && chatGptRefresh.length > 0) ||
+    !!chatGptAuthFile
   ) {
     return {
       provider: "chatgpt-codex",
