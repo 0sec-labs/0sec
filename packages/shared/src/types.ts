@@ -1084,6 +1084,9 @@ export interface ScanReport {
     outputTokens?: number;
     totalTokens?: number;
     model?: string;
+    craftSubmits?: number;
+    craftPassed?: boolean;
+    craftFirstSubmitPassed?: boolean;
   };
   /**
    * Reason the scan terminated. Undefined for normal completion. Set to

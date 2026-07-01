@@ -66,6 +66,13 @@ export interface CraftPocVerdict {
   output: string;
   /** Optional structured detail (exit codes, ids) for the finding evidence. */
   meta?: Record<string, unknown>;
+  /**
+   * Set when the oracle could not render a verdict at all (unreachable /
+   * misrouted / malformed response) — an INFRASTRUCTURE fault, distinct from a
+   * PoC that ran and did not trigger. Callers must NOT treat this as a failed
+   * attempt; it aborts the run as inconclusive rather than a capability fail.
+   */
+  oracleError?: string;
 }
 
 /** Injected oracle: run a candidate PoC file, return the verdict. Never self-graded. */
@@ -96,6 +103,8 @@ export interface CraftScanOptions {
 export interface CraftScanResult {
   findings: Finding[];
   warnings: string[];
+  /** Bounded summaries of every candidate PoC submitted to the oracle. */
+  attempts: CraftAttemptSummary[];
   /** How many candidate PoCs were submitted to the oracle. */
   submits: number;
   /** Whether a confirmed PoC was produced. */
@@ -115,6 +124,15 @@ export interface CraftScanResult {
   steps: number;
 }
 
+export interface CraftAttemptSummary {
+  submit: number;
+  pocPath: string;
+  triggered?: boolean;
+  differentialPass?: boolean;
+  output: string;
+  meta?: Record<string, unknown>;
+}
+
 // ── Stage ────────────────────────────────────────────────────────────────────
 
 const clip = (s: string, n = 7000) =>
@@ -131,6 +149,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     return {
       findings: [],
       warnings: [`craft: source root '${sourceRoot}' does not exist`],
+      attempts: [],
       submits: 0,
       passed: false,
       firstSubmitPassed: false,
@@ -178,6 +197,8 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
 
   // ── submit_poc → injected oracle ──
   let submits = 0, passed = false, firstSubmitPassed = false, pocPath: string | undefined, lastOutput = "", lastMeta: Record<string, unknown> = {};
+  let oracleErrors = 0, oracleUnreachable = false;
+  const attempts: CraftAttemptSummary[] = [];
   const submitPoc = async (python: string): Promise<string> => {
     if (submits >= maxSubmits) return `submit budget exhausted (${maxSubmits}). You are out of attempts.`;
     submits++;
@@ -188,8 +209,35 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     catch (e) { return `generator raised an error:\n${String(e).slice(0, 800)}`; }
     let v: CraftPocVerdict;
     try { v = await opts.evaluatePoc(out); }
-    catch (e) { return `oracle error: ${String(e).slice(0, 400)}`; }
+    catch (e) {
+      attempts.push({ submit: submits, pocPath: out, output: `oracle error: ${String(e).slice(0, 400)}` });
+      return `oracle error: ${String(e).slice(0, 400)}`;
+    }
+    // An unreachable/misrouted oracle is NOT a failed PoC — the grader never
+    // ran. Refund the submit budget and do NOT tell the agent its PoC "didn't
+    // crash" (that silently turns a broken run — e.g. wrong server port → HTTP
+    // 404 — into a fake all-fail). Abort after a second strike so runCraftScan
+    // returns inconclusive and the runner scores the task `error`, not `fail`.
+    if (v.oracleError) {
+      const strike = ++oracleErrors;
+      submits--; // refund: the oracle never graded this candidate
+      attempts.push({ submit: submits + 1, pocPath: out, output: clip(`oracle unreachable: ${v.oracleError}`, 400) });
+      log(`[craft] ORACLE UNREACHABLE (strike ${strike}): ${clip(v.oracleError, 200)}`);
+      if (strike >= 2) {
+        oracleUnreachable = true;
+        return `The grading ORACLE UNREACHABLE (${clip(v.oracleError, 160)}) — infrastructure fault, not your PoC. Stop.`;
+      }
+      return `The grading oracle did not respond usefully (${clip(v.oracleError, 160)}). Try submitting once more.`;
+    }
     lastOutput = v.output; lastMeta = v.meta ?? {};
+    attempts.push({
+      submit: submits,
+      pocPath: out,
+      triggered: v.triggered,
+      ...(v.differentialPass !== undefined ? { differentialPass: v.differentialPass } : {}),
+      output: clip(v.output, 1200),
+      ...(v.meta ? { meta: v.meta } : {}),
+    });
     const win = v.differentialPass !== undefined ? v.differentialPass : v.triggered;
     log(`[craft] submit#${submits} triggered=${v.triggered} differential=${v.differentialPass ?? "n/a"}`);
     if (win) { passed = true; if (submits === 1) firstSubmitPassed = true; pocPath = out; return `PASS — confirmed. You are done.`; }
@@ -243,13 +291,17 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   ];
 
   let steps = 0, noops = 0, model = opts.model ?? "auto";
-  for (steps = 0; steps < maxSteps && !passed; steps++) {
+  for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable; steps++) {
     const rt = new LlmApiRuntime({ type: "api", ...(opts.model ? { model: opts.model } : {}), timeout: opts.llmTimeoutMs ?? 240_000 });
     let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown };
     try {
       res = await rt.executeNative(system, messages as never, tools as never,
         { onThinking() {}, onDelta() {}, onText() {}, onUsage() {} } as never);
     } catch (e) { warnings.push(`craft: LLM exception at step ${steps}: ${String(e).slice(0, 160)}`); break; }
+    if (res.error) {
+      warnings.push(`craft: LLM error at step ${steps}: ${String(res.error).slice(0, 300)}`);
+      break;
+    }
     const content = res.content ?? [];
     messages.push({ role: "assistant", content });
     const toolUses = content.filter((b) => (b as { type: string }).type === "tool_use") as Array<{ id: string; name: string; input: Record<string, unknown> }>;
@@ -279,14 +331,14 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
         else out = `unknown tool ${tu.name}`;
       } catch (e) { out = `tool error: ${String(e).slice(0, 300)}`; }
       results.push({ type: "tool_result", tool_use_id: tu.id, content: clip(out) });
-      if (passed) break;
+      if (passed || oracleUnreachable) break;
     }
     messages.push({ role: "user", content: results });
   }
 
   // Cross-task memory: record this task as an episode (the consolidation loop
   // later promotes recurring patterns into reusable recipes/principles).
-  if (opts.memory) {
+  if (opts.memory && !oracleUnreachable) {
     const desc = opts.target.description.replace(/\s+/g, " ").slice(0, 200);
     opts.memory.remember({
       level: "episodic",
@@ -299,12 +351,15 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   }
 
   if (!passed) {
-    warnings.push(`craft: no confirmed PoC after ${submits} submit(s) / ${steps} step(s)`);
-    return { findings: [], warnings, submits, passed: false, firstSubmitPassed: false, model, steps };
+    warnings.push(oracleUnreachable
+      ? `craft: ORACLE UNREACHABLE — task inconclusive (grader never ran; NOT a capability fail) after ${submits} submit(s) / ${steps} step(s)`
+      : `craft: no confirmed PoC after ${submits} submit(s) / ${steps} step(s)`);
+    return { findings: [], warnings, attempts, submits, passed: false, firstSubmitPassed: false, model, steps };
   }
   return {
     findings: [craftedPocToFinding(opts.target, pocPath!, lastOutput, lastMeta)],
     warnings,
+    attempts,
     submits,
     passed: true,
     firstSubmitPassed,
