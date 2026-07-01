@@ -503,8 +503,10 @@ async function runCraftScanStage(
   });
 
   const runtime = ((config as { runtime?: RuntimeMode }).runtime ?? "auto") as RuntimeMode;
+  const model = craft.model ?? (config as { model?: string }).model;
   const result = await runCraftScan({
     ...craft,
+    ...(model ? { model } : {}),
     target,
     runtime,
     log: (message) => emit({ type: "thinking", message }),
@@ -543,6 +545,14 @@ async function runCraftScanStage(
     summary,
     findings,
     warnings: result.warnings.map((message) => ({ stage: "attack" as const, message })),
+    trace: [{ type: "craft_attempts", attempts: result.attempts }],
+    benchmarkMeta: {
+      attackTurns: result.steps,
+      model: result.model,
+      craftSubmits: result.submits,
+      craftPassed: result.passed,
+      craftFirstSubmitPassed: result.firstSubmitPassed,
+    },
   };
 }
 
