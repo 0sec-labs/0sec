@@ -3,7 +3,7 @@
  *
  * Loads the upstream kernel CVE feed (a local `git.kernel.org/pub/scm/linux/
  * security/vulns.git` clone, e.g. bench's `/root/kernel-vulns`), diffs each
- * fix against a target tree (e.g. bench's `/root/linux-6.12.93`, the
+ * fix against a target tree (e.g. bench's `/root/linux-6.12-git`, the
  * kernelCTF COS-6.12 ground truth `services/orchestrator/src/
  * kernelctf-config.ts` is grounded in), gates by kernelCTF reachability, and
  * appends the ranked survivors to `results/patch-gap-v1.jsonl`.
@@ -16,9 +16,13 @@
  * Usage (on bench, where both trees live):
  *   PATCH_GAP_RUN=1 \
  *   PATCH_GAP_VULNS_REPO=/root/kernel-vulns \
- *   PATCH_GAP_TARGET_TREE=/root/linux-6.12.93 \
+ *   PATCH_GAP_TARGET_TREE=/root/linux-6.12-git \
  *   PATCH_GAP_SINCE_YEAR=2025 \
  *   tsx patch-gap-run.ts
+ *
+ * 2026-07-05: default TARGET_TREE moved off `/root/linux-6.12.93` — that path
+ * is a broken git worktree on bench (parent repo deleted, every `git -C ...`
+ * call there fails) — to `/root/linux-6.12-git`, a full-history clone.
  */
 import { loadVulnsFeedFromDir, scanForPatchGapCandidates } from "@pwnkit/core";
 import { appendPatchGapCorpus, resolvePatchGapCorpusPath } from "./src/patch-gap-corpus.js";
@@ -34,7 +38,7 @@ if (!RUN) {
 }
 
 const VULNS_REPO = process.env.PATCH_GAP_VULNS_REPO || "/root/kernel-vulns";
-const TARGET_TREE = process.env.PATCH_GAP_TARGET_TREE || "/root/linux-6.12.93";
+const TARGET_TREE = process.env.PATCH_GAP_TARGET_TREE || "/root/linux-6.12-git";
 const SINCE_YEAR = process.env.PATCH_GAP_SINCE_YEAR ? Number.parseInt(process.env.PATCH_GAP_SINCE_YEAR, 10) : undefined;
 const LIMIT = process.env.PATCH_GAP_LIMIT ? Number.parseInt(process.env.PATCH_GAP_LIMIT, 10) : undefined;
 // Default true (drop unreachable-on-COS candidates) — set to "0" to keep everything for a distro-only audit.
