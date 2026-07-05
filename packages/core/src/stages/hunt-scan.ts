@@ -40,6 +40,7 @@ import {
   type NoveltyQuery,
   type LoreNoveltyResult,
 } from "./novelty-check.js";
+import { judgeHuntCandidatesWithLlm, type HuntCandidateJudge } from "./hunt-judge.js";
 
 // Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
 // default DB is a single shared ~/.pwnkit/pwnkit.db — at any real fan-out width
@@ -99,6 +100,25 @@ export interface HuntScanOptions {
   concurrency?: number;
   /** Per-finder scan depth. Default "quick". */
   depth?: "quick" | "deep";
+  /**
+   * Independent finder attempts per (candidate, model) — the best-of-N
+   * breadth (mirrors CYBERGYM_BEST_OF_N). Default 1 reproduces today's
+   * behavior exactly: one finder run per (candidate, model), everything goes
+   * straight to `verify`. Raising this fans out N attempts per (candidate,
+   * model); when N>1 surfaces >1 finding at the same site, only the top
+   * `judgeTopK` (by {@link judgeCandidates}) reach the skeptic+prover gate, so
+   * skeptic call-count stays ~flat while finder coverage widens N×.
+   */
+  attemptsPerCandidate?: number;
+  /**
+   * How many judge-ranked findings per (candidate, model) group advance to
+   * `verify` when that group has >1 finding. Default 1.
+   */
+  judgeTopK?: number;
+  /** Optional judge model override (mirrors the `HUNT_SKEPTIC_MODEL` convention). */
+  judgeModel?: string;
+  /** Injectable candidate judge; defaults to {@link judgeHuntCandidatesWithLlm}. Exposed for tests. */
+  judgeCandidates?: HuntCandidateJudge;
   /** The skeptic+prover gate. When omitted, all findings are returned unconfirmed. */
   verify?: HuntVerifier;
   /**
@@ -113,6 +133,31 @@ export interface HuntScanOptions {
   log?: (msg: string) => void;
 }
 
+/**
+ * Full per-finding tuple for corpus persistence (see `@pwnkit/benchmark`'s
+ * `hunt-corpus.ts`) — never flattened to titles-only. One row per raw finding
+ * the finders surfaced, carrying its provenance (site/model/attempt) plus
+ * whatever gates it actually passed through.
+ */
+export interface HuntFindingRecord {
+  /** The candidate path (site) this finding was surfaced at. */
+  candidatePath: string;
+  /** The finder model that produced it (undefined → provider default). */
+  model?: string;
+  /** Which attempt (0-indexed) at this (candidate, model) pair produced it. */
+  attempt: number;
+  /** The full finding, including `evidence.request/response/analysis`. */
+  finding: Finding;
+  /** Set only when its (candidate, model) group had >1 finding and was judged. */
+  judgeScore?: number;
+  judgeReason?: string;
+  /** Set only for findings that actually ran through `opts.verify`. */
+  skepticConfirmed?: boolean;
+  skepticReason?: string;
+  /** True when the novelty gate ruled this (confirmed) finding a duplicate. */
+  duplicate: boolean;
+}
+
 export interface HuntScanResult {
   /** Every candidate finding the finders surfaced. */
   findings: Finding[];
@@ -123,9 +168,11 @@ export interface HuntScanResult {
    * fix. Empty unless `opts.novelty` is set. These are dropped from `confirmed`.
    */
   duplicates: Array<{ finding: Finding; novelty: LoreNoveltyResult }>;
-  /** How many (candidate × model) finder runs executed. */
+  /** How many (candidate × model × attempt) finder runs executed. */
   scanned: number;
   warnings: string[];
+  /** The full per-finding tuple for every raw finding — see {@link HuntFindingRecord}. */
+  records: HuntFindingRecord[];
 }
 
 // ── Stage ────────────────────────────────────────────────────────────────────
@@ -245,18 +292,35 @@ export function composeGate(...stages: HuntVerifier[]): HuntVerifier {
   };
 }
 
+/** Group key for best-of-N judging: per (candidate site, model) — NOT per candidate alone, so
+ *  model-diversity fan-out (models.length > 1) with the default attemptsPerCandidate=1 never
+ *  produces a >1-length group and stays byte-for-byte identical to pre-best-of-N behavior. */
+function siteGroupKey(candidatePath: string, model: string | undefined): string {
+  return `${candidatePath} ${model ?? ""}`;
+}
+
 export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult> {
   const log = opts.log ?? (() => {});
   const models = opts.models && opts.models.length > 0 ? opts.models : [undefined as unknown as string];
   const concurrency = opts.concurrency ?? 8;
   const depth = opts.depth ?? "quick";
+  const attemptsPerCandidate = Math.max(1, opts.attemptsPerCandidate ?? 1);
+  const judgeTopK = Math.max(1, opts.judgeTopK ?? 1);
+  const judgeCandidates = opts.judgeCandidates ?? judgeHuntCandidatesWithLlm;
   const warnings: string[] = [];
 
-  // (candidate × model) finder runs — the parallel coverage sweep.
-  const runs: Array<{ candidate: HuntCandidate; model?: string }> = [];
-  for (const candidate of opts.candidates) for (const model of models) runs.push({ candidate, model });
+  // (candidate × model × attempt) finder runs — the parallel coverage sweep.
+  // attemptsPerCandidate=1 (default) reproduces the original candidate × model
+  // fan-out exactly.
+  const runs: Array<{ candidate: HuntCandidate; model?: string; attempt: number }> = [];
+  for (const candidate of opts.candidates)
+    for (const model of models)
+      for (let attempt = 0; attempt < attemptsPerCandidate; attempt++) runs.push({ candidate, model, attempt });
 
-  log(`[hunt] ${opts.candidates.length} candidate(s) × ${models.length} model(s) = ${runs.length} finder run(s), ${concurrency}-wide`);
+  log(
+    `[hunt] ${opts.candidates.length} candidate(s) × ${models.length} model(s) × ${attemptsPerCandidate} attempt(s) ` +
+      `= ${runs.length} finder run(s), ${concurrency}-wide`,
+  );
 
   const reports = await pool(runs, concurrency, async (run) => {
     const dbPath = freshHuntDb();
@@ -272,25 +336,91 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         ...(run.model ? { model: run.model } : {}),
       };
       const report = await agenticScan({ config, dbPath, challengeHint: huntHint(opts.brief, run.candidate) });
-      return { candidate: run.candidate, findings: report.findings ?? [] };
+      return { candidate: run.candidate, model: run.model, attempt: run.attempt, findings: report.findings ?? [] };
     } catch (e) {
       warnings.push(`hunt: finder failed on ${run.candidate.path}: ${String(e).slice(0, 120)}`);
-      return { candidate: run.candidate, findings: [] as Finding[] };
+      return { candidate: run.candidate, model: run.model, attempt: run.attempt, findings: [] as Finding[] };
     } finally {
       cleanupHuntDb(dbPath);
     }
   });
 
-  const all: Array<{ finding: Finding; candidate: HuntCandidate }> = [];
-  for (const r of reports) if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate });
+  const all: Array<{ finding: Finding; candidate: HuntCandidate; model?: string; attempt: number }> = [];
+  for (const r of reports)
+    if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate, model: r.model, attempt: r.attempt });
   log(`[hunt] finders surfaced ${all.length} candidate finding(s)`);
+
+  // The full per-finding tuple, keyed by finding.id — filled in as each gate runs.
+  const records = new Map<string, HuntFindingRecord>(
+    all.map((a) => [
+      a.finding.id,
+      { candidatePath: a.candidate.path, model: a.model, attempt: a.attempt, finding: a.finding, duplicate: false },
+    ]),
+  );
+
+  // Best-of-N judge: group raw findings by (candidate, model). A group with >1
+  // finding means attemptsPerCandidate>1 surfaced more than one candidate at
+  // that site — judge them and only the top-judgeTopK reach `verify`, so
+  // skeptic call-count stays ~flat while the judge input pool is N× wider.
+  // Groups of exactly 1 (the default) skip the judge entirely — unmodified.
+  const groups = new Map<string, typeof all>();
+  for (const item of all) {
+    const key = siteGroupKey(item.candidate.path, item.model);
+    const g = groups.get(key);
+    if (g) g.push(item);
+    else groups.set(key, [item]);
+  }
+
+  const toVerify: Array<{ finding: Finding; candidate: HuntCandidate }> = [];
+  for (const group of groups.values()) {
+    if (group.length <= 1) {
+      toVerify.push(...group.map((g) => ({ finding: g.finding, candidate: g.candidate })));
+      continue;
+    }
+    if (!opts.brief) {
+      // No bug-class/pattern to judge against — keep the first judgeTopK by attempt order.
+      warnings.push(
+        `hunt: ${group.length} attempts at ${group[0].candidate.path} but no brief to judge against; keeping first ${judgeTopK}`,
+      );
+      toVerify.push(...group.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate })));
+      continue;
+    }
+    let scores: Map<string, { score: number; reason: string }>;
+    try {
+      scores = await judgeCandidates(opts.brief, group.map((g) => g.finding), {
+        ...(opts.judgeModel ? { model: opts.judgeModel } : {}),
+        runtime: opts.runtime,
+      });
+    } catch (e) {
+      warnings.push(`hunt: judge failed for ${group[0].candidate.path}: ${String(e).slice(0, 120)}`);
+      scores = new Map();
+    }
+    for (const item of group) {
+      const s = scores.get(item.finding.id);
+      const record = records.get(item.finding.id);
+      if (s && record) {
+        record.judgeScore = s.score;
+        record.judgeReason = s.reason;
+      }
+    }
+    const ranked = [...group].sort((a, b) => {
+      const delta = (scores.get(b.finding.id)?.score ?? 0) - (scores.get(a.finding.id)?.score ?? 0);
+      return delta || a.attempt - b.attempt;
+    });
+    toVerify.push(...ranked.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate })));
+  }
 
   // Skeptic + prover gate (parallel). No verifier → everything stays unconfirmed.
   let confirmed: Finding[] = [];
-  if (opts.verify && all.length > 0) {
-    const verdicts = await pool(all, concurrency, async ({ finding, candidate }) => {
+  if (opts.verify && toVerify.length > 0) {
+    const verdicts = await pool(toVerify, concurrency, async ({ finding, candidate }) => {
       try {
         const v = await opts.verify!(finding, candidate);
+        const record = records.get(finding.id);
+        if (record) {
+          record.skepticConfirmed = v.confirmed;
+          record.skepticReason = v.reason;
+        }
         return v.confirmed ? finding : null;
       } catch (e) {
         warnings.push(`hunt: verify failed for ${finding.title}: ${String(e).slice(0, 100)}`);
@@ -298,7 +428,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       }
     });
     confirmed = verdicts.filter((f): f is Finding => f != null);
-    log(`[hunt] ${confirmed.length}/${all.length} finding(s) confirmed by the skeptic+prover gate`);
+    log(`[hunt] ${confirmed.length}/${toVerify.length} finding(s) confirmed by the skeptic+prover gate`);
   }
 
   // OPTIONAL novelty gate: drop confirmed findings that duplicate an on-list
@@ -314,6 +444,8 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           novel.push(finding);
         } else {
           duplicates.push({ finding, novelty: result });
+          const record = records.get(finding.id);
+          if (record) record.duplicate = true;
           log(`[hunt] novelty: DROP "${finding.title}" — duplicate of ${result.duplicates.map((d) => d.messageId).join(", ")}`);
         }
       } catch (e) {
@@ -332,5 +464,6 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     duplicates,
     scanned: runs.length,
     warnings,
+    records: [...records.values()],
   };
 }

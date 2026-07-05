@@ -95,6 +95,19 @@ function parseNonNegative(flag: string, raw: string | undefined, dflt: number): 
   return n;
 }
 
+/** Same parse-guard pattern as `cyberGymBestOfN()`: an unset/invalid env value falls back silently. */
+function parseEnvBestOfN(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 1 ? n : undefined;
+}
+
+function parseEnvPositiveInt(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 export interface HuntOutcome {
   exitCode: number;
   result: unknown;
@@ -110,6 +123,12 @@ export async function runHunt(opts: {
   skipCandidates?: number;
   models?: string[];
   verify?: boolean;
+  /** Best-of-N finder attempts per (candidate, model). Defaults to the `HUNT_BEST_OF_N` env, then 1. */
+  attemptsPerCandidate?: number;
+  /** How many judge-ranked findings per site reach the skeptic gate. Defaults to `HUNT_JUDGE_TOP_K`, then 1. */
+  judgeTopK?: number;
+  /** Judge model override. Defaults to the `HUNT_JUDGE_MODEL` env (mirrors `HUNT_SKEPTIC_MODEL`). */
+  judgeModel?: string;
   novelty?: {
     rootDir?: string;
     lists?: string[];
@@ -225,6 +244,9 @@ export async function runHunt(opts: {
 
     // 2. Fan finders out over the variant sites (absolute paths); skeptic-gate each.
     const candidates = selectedCandidates.map((c) => ({ ...c, path: `${sourceRoot}/${c.path}` }));
+    const attemptsPerCandidate = opts.attemptsPerCandidate ?? parseEnvBestOfN(process.env.HUNT_BEST_OF_N);
+    const judgeTopK = opts.judgeTopK ?? parseEnvPositiveInt(process.env.HUNT_JUDGE_TOP_K);
+    const judgeModel = opts.judgeModel ?? process.env.HUNT_JUDGE_MODEL;
     const res = await runHuntScan({
       sourceRoot,
       candidates,
@@ -232,6 +254,9 @@ export async function runHunt(opts: {
       runtime,
       concurrency: opts.concurrency ?? 4,
       ...(opts.models ? { models: opts.models } : {}),
+      ...(attemptsPerCandidate ? { attemptsPerCandidate } : {}),
+      ...(judgeTopK ? { judgeTopK } : {}),
+      ...(judgeModel ? { judgeModel } : {}),
       ...(opts.verify === false ? {} : { verify: makeSkepticVerifier({ sourceRoot, runtime, ...(opts.models?.[0] ? { model: opts.models[0] } : {}) }) }),
       ...(opts.novelty && noveltyMirrors.length > 0
         ? {
@@ -286,7 +311,11 @@ export async function runHunt(opts: {
               })),
             }
           : { enabled: false },
-        leads: leads.map((f) => ({ title: f.title, severity: f.severity })),
+        leads: leads.map((f) => ({
+          title: f.title,
+          severity: f.severity,
+          analysis: f.evidence.analysis ?? "",
+        })),
         ingested: sinkCfg ? ingested : null,
         gated,
         warnings: [...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),

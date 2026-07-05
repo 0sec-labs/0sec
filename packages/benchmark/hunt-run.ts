@@ -1,12 +1,30 @@
 /** Real novel-vuln variant hunt: seed from a proven fix, fan out finders, skeptic-gate. */
 import { generateVariantCandidates, runHuntScan, makeSkepticVerifier } from "@pwnkit/core";
 import { readFileSync } from "node:fs";
+import { appendToCorpus, resolveHuntCorpusPath } from "./src/hunt-corpus.js";
 
 const SRC = process.env.HUNT_SRC || "/root/linux-6.12.93";
 const SEED = process.env.HUNT_SEED || "/root/nfc-seed.patch";
 const REF = process.env.HUNT_REF || "nfc-digital-SENSF_RES-length-clamp";
 const CONC = Number(process.env.HUNT_CONC || 3);
 const MAXC = Number(process.env.HUNT_MAXC || 16);
+
+/** Same parse-guard pattern as `cyberGymBestOfN()`: unset/invalid env falls back to the runHuntScan default. */
+function huntBestOfN(): number | undefined {
+  const raw = process.env.HUNT_BEST_OF_N;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 1 ? n : undefined;
+}
+function huntJudgeTopK(): number | undefined {
+  const raw = process.env.HUNT_JUDGE_TOP_K;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+const BEST_OF_N = huntBestOfN();
+const JUDGE_TOP_K = huntJudgeTopK();
+const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
 
 const seedDiff = readFileSync(SEED, "utf8");
 
@@ -41,6 +59,9 @@ const res = await runHuntScan({
   brief: plan.brief,
   runtime: "api",
   concurrency: CONC,
+  ...(BEST_OF_N ? { attemptsPerCandidate: BEST_OF_N } : {}),
+  ...(JUDGE_TOP_K ? { judgeTopK: JUDGE_TOP_K } : {}),
+  ...(JUDGE_MODEL ? { judgeModel: JUDGE_MODEL } : {}),
   verify: makeSkepticVerifier({ sourceRoot: SRC, runtime: "api" }),
   log: (m) => console.log(m),
 });
@@ -54,3 +75,8 @@ console.log(JSON.stringify({
   allTitles: res.findings.map((f) => f.title),
   warnings: res.warnings.slice(0, 8),
 }, null, 2));
+
+// Full finding bodies (never just titles) — the corpus is the receipt.
+const corpusPath = resolveHuntCorpusPath();
+appendToCorpus(res.records, corpusPath, plan.brief);
+console.log(`[hunt-run] appended ${res.records.length} full finding record(s) to ${corpusPath}`);

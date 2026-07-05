@@ -121,6 +121,9 @@ export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";
 // Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
 export { runHuntScan, makeSkepticVerifier, composeGate } from "./stages/hunt-scan.js";
+// Hunt best-of-N LLM judge (disambiguates multi-attempt findings before the skeptic gate).
+export { judgeHuntCandidatesWithLlm, heuristicCandidateScore } from "./stages/hunt-judge.js";
+export type { HuntCandidateJudge, HuntCandidateScore } from "./stages/hunt-judge.js";
 export {
   checkNovelty,
   syncLoreMirror,
@@ -169,6 +172,7 @@ export type {
   HuntVerifier,
   HuntScanOptions,
   HuntScanResult,
+  HuntFindingRecord,
 } from "./stages/hunt-scan.js";
 export type {
   CraftTarget,
