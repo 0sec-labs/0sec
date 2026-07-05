@@ -212,6 +212,18 @@ export type {
 } from "./stages/novelty-check.js";
 export { generateVariantCandidates } from "./stages/variant-candidates.js";
 export type { VariantHuntInput, VariantHuntPlan } from "./stages/variant-candidates.js";
+// Invariant-checker candidate-gen (kernelCTF Pipeline #2): recover a subsystem's
+// lock/refcount/state invariant, then hypothesize concurrent unprivileged
+// violations. Sibling of variant-candidates; plugs into runHuntScan.
+export { generateInvariantCandidates } from "./stages/invariant-candidates.js";
+export type {
+  InvariantHuntInput,
+  InvariantHuntPlan,
+  InvariantSpec,
+  InvariantCandidate,
+} from "./stages/invariant-candidates.js";
+export { renderRaceHarness, makeTemplateRacePocSynth } from "./stages/race-poc-synth.js";
+export type { RacePocRequest, RacePocSynth } from "./stages/race-poc-synth.js";
 // kernelCTF-reachability gate for hunt candidate selection (path-based; see
 // services/orchestrator/src/kernelctf-config.ts for the CONFIG-symbol ground truth).
 export { classifyPathReachability, applyReachabilityGate } from "./stages/hunt-reachability.js";
