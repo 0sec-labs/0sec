@@ -606,6 +606,16 @@ export {
   runKernelExploitChain,
 } from "./kernel/index.js";
 export { rungRank as escalationRungRank, selectSprayPlans, introspectExploitConfig } from "./kernel/exploit/index.js";
+
+// kernelCTF patch-gap 1day monitor (upstream-fixed CVE feed → target-tree
+// presence check → kernelCTF reachability gate → ranked candidates). See
+// pwnkit/packages/core/src/kernel/patch-gap.ts.
+export { parseVulnsCveRecord, loadVulnsFeedFromDir, defaultVulnsFeedIo } from "./kernel/index.js";
+export type { UpstreamFixEntry, RawVulnsCveRecord, VulnsFeedIo, LoadVulnsFeedOptions } from "./kernel/index.js";
+export { checkFixPresentInTarget, defaultGitExec as defaultPatchGapGitExec } from "./kernel/index.js";
+export type { GitExec as PatchGapGitExec, FixPresenceResult, FixPresenceMethod } from "./kernel/index.js";
+export { scanForPatchGapCandidates } from "./kernel/index.js";
+export type { PatchGapCandidate, PatchGapScanOptions, PatchGapScanResult } from "./kernel/index.js";
 export type {
   EscalationRung,
   OracleVerdict,

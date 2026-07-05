@@ -174,3 +174,14 @@ export type {
 // kernel-VM harness, and the control-demo probe. P2 (0cloud dispatch) and P3
 // (autonomy) build on this surface.
 export * from "./exploit/index.js";
+
+// kernelCTF patch-gap 1day monitor: upstream-fixed CVE feed → target-tree
+// presence check → kernelCTF reachability gate → ranked candidates ready
+// for the weaponize pipeline. Serves the "un-backported fix = live 1day"
+// kernelCTF-winning technique (distinct from generic source-hunting above).
+export { parseVulnsCveRecord, loadVulnsFeedFromDir, defaultVulnsFeedIo } from "./patch-gap-feed.js";
+export type { UpstreamFixEntry, RawVulnsCveRecord, VulnsFeedIo, LoadVulnsFeedOptions } from "./patch-gap-feed.js";
+export { checkFixPresentInTarget, defaultGitExec } from "./patch-gap-check.js";
+export type { GitExec, FixPresenceResult, FixPresenceMethod } from "./patch-gap-check.js";
+export { scanForPatchGapCandidates } from "./patch-gap.js";
+export type { PatchGapCandidate, PatchGapScanOptions, PatchGapScanResult } from "./patch-gap.js";
