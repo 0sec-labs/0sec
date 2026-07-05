@@ -1,3 +1,5 @@
+import { OSS_PRICING } from "./pricing.oss.generated.js";
+
 export interface ModelRates {
   input: number;
   output: number;
@@ -11,45 +13,46 @@ export interface TokenUsageForPricing {
   cachedInputTokens?: number;
 }
 
-export const PRICING_SNAPSHOT_DATE = "2026-06-28";
+export const PRICING_SNAPSHOT_DATE = "2026-07-05";
 
-/** Approximate cost per 1M tokens by provider/model. */
-export const MODEL_PRICING: Record<string, ModelRates> = {
-  // OpenAI
-  "gpt-5.4": { input: 2.50, output: 10.00 },
-  "gpt-5.5": { input: 2.50, output: 10.00 },
-  "gpt-5.5-codex": { input: 2.50, output: 10.00 },
-  "gpt-4o": { input: 2.50, output: 10.00 },
-  "gpt-4o-mini": { input: 0.15, output: 0.60 },
-  "gpt-4.1": { input: 2.00, output: 8.00 },
-  "gpt-4.1-mini": { input: 0.40, output: 1.60 },
-  "gpt-4.1-nano": { input: 0.10, output: 0.40 },
-  "o3": { input: 2.00, output: 8.00 },
-  "o3-mini": { input: 1.10, output: 4.40 },
-  "o4-mini": { input: 1.10, output: 4.40 },
-  // Anthropic
+/**
+ * The IRREDUCIBLE manual residue: models no public pricing feed (LiteLLM, and by
+ * extension ccusage / tokencost) carries — open-weight-hosted (glm-*, llama-4-*,
+ * mistral-*), the newest Anthropic tiers, and vendor-specific aliases. These are
+ * the ONLY prices a human touches; everything else auto-syncs from OSS via
+ * `scripts/sync-pricing.ts --write` into pricing.oss.generated.ts.
+ */
+export const MANUAL_PRICING: Record<string, ModelRates> = {
+  // Anthropic (versioned; LiteLLM keys use different suffixes → keep manual)
   "claude-opus-4-7": { input: 5.00, output: 25.00, cachedInput: 0.50 },
   "claude-opus-4-6": { input: 15.00, output: 75.00, cachedInput: 1.50 },
   "claude-sonnet-4-6": { input: 3.00, output: 15.00, cachedInput: 0.30 },
   "claude-haiku-4-5": { input: 0.80, output: 4.00, cachedInput: 0.08 },
-  // Google
-  "gemini-2.5-pro": { input: 1.25, output: 10.00 },
-  "gemini-2.5-flash": { input: 0.15, output: 0.60 },
-  "gemini-2.0-flash": { input: 0.10, output: 0.40 },
-  // DeepSeek
-  "deepseek-chat": { input: 0.27, output: 1.10 },
-  "deepseek-reasoner": { input: 0.55, output: 2.19 },
-  // Meta (hosted)
+  // OpenAI codex alias — mirrors gpt-5.5 (OSS feed has only the bare key)
+  "gpt-5.5-codex": { input: 5.00, output: 30.00 },
+  // Meta (hosted) — not in the OSS feed
   "llama-4-maverick": { input: 0.50, output: 0.77 },
   "llama-4-scout": { input: 0.20, output: 0.35 },
-  // Mistral
+  // Mistral — not in the OSS feed
   "mistral-large": { input: 2.00, output: 6.00 },
   "mistral-small": { input: 0.10, output: 0.30 },
-  // Z.AI (open-weight, hosted) -- see provos.org "Finding Zero-Days with Any Model" (Apr 2026)
+  // Z.AI (open-weight, hosted) — see provos.org "Finding Zero-Days with Any Model" (Apr 2026)
   "glm-5.2": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-5.1": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-4.5": { input: 0.60, output: 2.20, cachedInput: 0.11 },
   default: { input: 3.00, output: 15.00 },
+};
+
+/**
+ * Effective price table = the auto-generated OSS rates (source of truth for every
+ * model the feed covers) overlaid with the manual residue. OSS wins where it has
+ * data, so refreshing the generated file is the only "maintenance" for those
+ * models — no hand-typed rates. Run `pnpm --filter @pwnkit/shared sync-pricing`
+ * to check drift, `--write` to refresh.
+ */
+export const MODEL_PRICING: Record<string, ModelRates> = {
+  ...MANUAL_PRICING,
+  ...OSS_PRICING,
 };
 
 /** Known vendor prefixes to strip (e.g. "openai/gpt-4o" -> "gpt-4o"). */

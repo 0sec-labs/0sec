@@ -42,10 +42,11 @@ describe("estimateCost", () => {
   });
 
   it("prices current Codex and GLM benchmark models without falling back", () => {
+    // gpt-5.5 reconciled to the LiteLLM OSS feed 2026-07-05: $5/M in, $30/M out.
     expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "gpt-5.5"))
-      .toBeCloseTo(2.5 + 10.0, 5);
+      .toBeCloseTo(5.0 + 30.0, 5);
     expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "gpt-5.5-codex"))
-      .toBeCloseTo(2.5 + 10.0, 5);
+      .toBeCloseTo(5.0 + 30.0, 5);
     expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "glm-5.2"))
       .toBeCloseTo(1.4 + 4.4, 5);
   });
@@ -65,14 +66,14 @@ describe("estimateCost", () => {
   });
 
   it("falls back to the input rate when cachedInputTokens is set but no cachedInput rate exists", () => {
-    // GPT-4o has no cachedInput rate in the table → cached tokens cost the same as uncached
+    // mistral-large has no cachedInput rate in the table → cached tokens cost the same as uncached
     const noCache = estimateCost(
       { inputTokens: 1_000_000, outputTokens: 0 },
-      "gpt-4o",
+      "mistral-large",
     );
     const withCache = estimateCost(
       { inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 500_000 },
-      "gpt-4o",
+      "mistral-large",
     );
     expect(withCache).toBeCloseTo(noCache, 5);
   });

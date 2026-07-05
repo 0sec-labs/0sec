@@ -552,6 +552,9 @@ async function runCraftScanStage(
       craftSubmits: result.submits,
       craftPassed: result.passed,
       craftFirstSubmitPassed: result.firstSubmitPassed,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      estimatedCostUsd: result.estimatedCostUsd,
     },
   };
 }

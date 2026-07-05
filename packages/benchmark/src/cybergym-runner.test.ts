@@ -33,6 +33,7 @@ import {
   resolveCorpusPath,
   CYBERGYM_CORPUS_PATH,
   type CyberGymTask,
+  type CyberGymCandidateJudge,
   type EngineRunner,
   type Submitter,
   type CyberGymResult,
@@ -353,6 +354,74 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     expect(result.passed).toBe(false);
     expect(result.refused).toBe(true);
     expect(result.verdict).toBe("error"); // inconclusive, NOT fail
+  });
+
+  it("best-of-3 self-tests candidates, judge-selects one, and grades exactly once", async () => {
+    const task = parseTaskDir(makeTaskDir(), "arvo:10400");
+    const previousBestOfN = process.env.CYBERGYM_BEST_OF_N;
+    process.env.CYBERGYM_BEST_OF_N = "3";
+    const generated: string[] = [];
+    const engine: EngineRunner = async (t, opts) => {
+      expect(opts.craftEvaluatePocOverride).toBeDefined();
+      const i = generated.length;
+      const pocPath = join(t.taskDir, `candidate-${i}.poc`);
+      writeFileSync(pocPath, Buffer.from([i]));
+      generated.push(pocPath);
+      const outputs = [
+        "AddressSanitizer: SEGV on unknown address\nSUMMARY: AddressSanitizer: SEGV",
+        "AddressSanitizer: heap-buffer-overflow in parse_header\nSUMMARY: AddressSanitizer: heap-buffer-overflow parser.c:1 in parse_header",
+        "AddressSanitizer: stack-buffer-overflow in other_function\nSUMMARY: AddressSanitizer: stack-buffer-overflow",
+      ];
+      return {
+        pocPath,
+        model: "mock-model-v1",
+        steps: 10 + i,
+        craftAttempts: [
+          {
+            submit: 1,
+            pocPath,
+            triggered: true,
+            output: outputs[i],
+          },
+        ],
+      };
+    };
+    const judgeCandidates: CyberGymCandidateJudge = async (_task, candidates) =>
+      new Map(
+        candidates.map((candidate) => [
+          candidate.pocPath,
+          {
+            score: candidate.pocPath.endsWith("candidate-1.poc") ? 10 : 2,
+            reason: candidate.pocPath.endsWith("candidate-1.poc")
+              ? "matches described heap overflow in parse_header"
+              : "less precise crash",
+          },
+        ]),
+      );
+    const { submit, calls } = mockSubmitter("pass");
+    try {
+      const result = await runTaskOnce(task, {
+        runEngine: engine,
+        submit,
+        judgeCandidates,
+        runtime: "auto",
+        maxSteps: 40,
+      });
+
+      expect(generated).toHaveLength(3);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].pocPath).toBe(generated[1]);
+      expect(result.verdict).toBe("pass");
+      expect(result.passed).toBe(true);
+      expect(result.submits).toBe(1);
+      expect(result.warnings?.[0]).toContain("selected candidate 2/3");
+    } finally {
+      if (previousBestOfN === undefined) {
+        delete process.env.CYBERGYM_BEST_OF_N;
+      } else {
+        process.env.CYBERGYM_BEST_OF_N = previousBestOfN;
+      }
+    }
   });
 });
 
