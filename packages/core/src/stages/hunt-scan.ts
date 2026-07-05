@@ -182,6 +182,17 @@ export interface HuntScanResult {
   duplicates: Array<{ finding: Finding; novelty: LoreNoveltyResult }>;
   /** How many (candidate × model × attempt) finder runs executed. */
   scanned: number;
+  /**
+   * Finder-fanout health (see HUNT_FINDER_TIMEOUT_MS / HUNT_FINDER_MAX_RETRIES):
+   * how many of the `scanned` finder runs actually finished vs were ABANDONED
+   * for exceeding the hard per-finder timeout vs gave up after exhausting the
+   * transient-error retry budget. `finderCompleted + finderTimedOut +
+   * finderErrored === scanned`. Backend health at a glance instead of a
+   * silent stall.
+   */
+  finderCompleted: number;
+  finderTimedOut: number;
+  finderErrored: number;
   warnings: string[];
   /** The full per-finding tuple for every raw finding — see {@link HuntFindingRecord}. */
   records: HuntFindingRecord[];
@@ -202,6 +213,116 @@ async function pool<T, R>(items: T[], limit: number, fn: (item: T, i: number) =>
   });
   await Promise.all(workers);
   return out;
+}
+
+// ── Finder-fanout resilience (env-gated) ─────────────────────────────────────
+//
+// Observed on bench repeatedly: the ChatGPT/Codex backend can HANG on a
+// finder (`agenticScan`) call — 0% CPU, no error, no completion. Before this,
+// that pool slot never freed and the ENTIRE sweep stalled forever (every bench
+// hunt lost this way). Two independent guards, scoped to the finder fan-out
+// only — never the skeptic/oracle gate (`opts.verify` is untouched):
+//
+//   1. HUNT_FINDER_TIMEOUT_MS — a hard wall-clock cap per finder call.
+//      `agenticScan` has no cancellation signal in its option surface, so on
+//      expiry the call is ABANDONED (not awaited further) rather than
+//      cancelled — the pool slot frees immediately and the candidate is
+//      recorded `timed-out`. Default 240_000 (4 min) is ON by default: the
+//      old effectively-infinite wait was the bug, not a feature. Set very
+//      high (or a non-positive/non-numeric value) to approximate the old
+//      "wait forever" behavior.
+//   2. HUNT_FINDER_MAX_RETRIES — bounded retries when the finder call
+//      REJECTS with a transient-looking error (fetch failed / 429 / 5xx /
+//      timeout-ish). Backoff between attempts; after the budget is spent the
+//      candidate is recorded `errored` and skipped. Never infinite — we've
+//      also seen retry-storms on this backend. Timeouts (case 1) are never
+//      retried here — a hang isn't a "try again" situation.
+const DEFAULT_HUNT_FINDER_TIMEOUT_MS = 240_000;
+const DEFAULT_HUNT_FINDER_MAX_RETRIES = 2;
+
+function huntFinderTimeoutMs(): number {
+  const raw = process.env.HUNT_FINDER_TIMEOUT_MS;
+  if (!raw) return DEFAULT_HUNT_FINDER_TIMEOUT_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_HUNT_FINDER_TIMEOUT_MS;
+}
+
+function huntFinderMaxRetries(): number {
+  const raw = process.env.HUNT_FINDER_MAX_RETRIES;
+  if (raw === undefined || raw === "") return DEFAULT_HUNT_FINDER_MAX_RETRIES;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_HUNT_FINDER_MAX_RETRIES;
+}
+
+// Mirrors the transient-LLM-error heuristic in agent/native-loop.ts (429/529/5xx,
+// "overloaded", rate-limit language, connection resets) plus the fetch/timeout
+// phrasing this stage actually observed on bench ("fetch failed", "timed out").
+const TRANSIENT_FINDER_ERROR_RE =
+  /\b(429|502|503|504|529)\b|overloaded|rate.?limit|temporarily|too many requests|time(d)?.?out|ETIMEDOUT|ECONNRESET|econnreset|fetch failed|throttl/i;
+
+function isTransientFinderError(e: unknown): boolean {
+  return TRANSIENT_FINDER_ERROR_RE.test(String(e).slice(0, 300));
+}
+
+/** Outcome of one finder (candidate × model × attempt) invocation. */
+type FinderStatus = "completed" | "timed-out" | "errored";
+
+type RaceOutcome<T> = { hit: "value"; value: T } | { hit: "timeout" } | { hit: "error"; error: unknown };
+
+/** Race `promise` against a `ms` timer. Never rejects — resolves to a tagged outcome. */
+function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<RaceOutcome<T>> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ hit: "timeout" });
+    }, ms);
+    // Attached synchronously, before the timer can fire — so even when we've
+    // already resolved via timeout, this handler still runs later (keeping
+    // the abandoned call's rejection from becoming an unhandled rejection).
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ hit: "value", value });
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ hit: "error", error });
+      },
+    );
+  });
+}
+
+/**
+ * Run one finder attempt with a hard timeout + bounded transient-error
+ * retries. `attemptFn` is called fresh on each retry (a brand-new
+ * `agenticScan` call, its own dbPath). A hung call (timeout) is ABANDONED and
+ * returned immediately as `timed-out` — never retried. A rejected call is
+ * retried up to `maxRetries` times ONLY when it looks transient; otherwise
+ * (or once the retry budget is spent) it's returned as `errored`.
+ */
+async function runFinderResilient<T>(
+  attemptFn: () => Promise<T>,
+  opts: { timeoutMs: number; maxRetries: number },
+): Promise<{ status: FinderStatus; value?: T; error?: unknown }> {
+  let lastError: unknown;
+  for (let attempt = 0; ; attempt++) {
+    const outcome = await raceTimeout(attemptFn(), opts.timeoutMs);
+    if (outcome.hit === "value") return { status: "completed", value: outcome.value };
+    if (outcome.hit === "timeout") return { status: "timed-out" };
+    lastError = outcome.error;
+    if (attempt < opts.maxRetries && isTransientFinderError(outcome.error)) {
+      const backoffMs = Math.min(10_000, 500 * 2 ** attempt);
+      await new Promise((r) => setTimeout(r, backoffMs));
+      continue;
+    }
+    return { status: "errored", error: lastError };
+  }
 }
 
 function huntHint(brief: HuntBrief | undefined, candidate: HuntCandidate): string {
@@ -372,28 +493,56 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       `= ${runs.length} finder run(s), ${concurrency}-wide`,
   );
 
+  const finderTimeoutMs = huntFinderTimeoutMs();
+  const finderMaxRetries = huntFinderMaxRetries();
+
   const reports = await pool(runs, concurrency, async (run) => {
-    const dbPath = freshHuntDb();
-    try {
-      const config: ScanConfig = {
-        target: run.candidate.path,
-        depth,
-        format: "json",
-        mode: "deep",
-        timeout: 60_000,
-        runtime: opts.runtime,
-        repoPath: opts.sourceRoot,
-        ...(run.model ? { model: run.model } : {}),
-      };
-      const report = await agenticScan({ config, dbPath, challengeHint: huntHint(opts.brief, run.candidate) });
-      return { candidate: run.candidate, model: run.model, attempt: run.attempt, findings: report.findings ?? [] };
-    } catch (e) {
-      warnings.push(`hunt: finder failed on ${run.candidate.path}: ${String(e).slice(0, 120)}`);
-      return { candidate: run.candidate, model: run.model, attempt: run.attempt, findings: [] as Finding[] };
-    } finally {
-      cleanupHuntDb(dbPath);
+    const attemptOnce = async () => {
+      const dbPath = freshHuntDb();
+      try {
+        const config: ScanConfig = {
+          target: run.candidate.path,
+          depth,
+          format: "json",
+          mode: "deep",
+          timeout: 60_000,
+          runtime: opts.runtime,
+          repoPath: opts.sourceRoot,
+          ...(run.model ? { model: run.model } : {}),
+        };
+        return await agenticScan({ config, dbPath, challengeHint: huntHint(opts.brief, run.candidate) });
+      } finally {
+        cleanupHuntDb(dbPath);
+      }
+    };
+    const outcome = await runFinderResilient(attemptOnce, { timeoutMs: finderTimeoutMs, maxRetries: finderMaxRetries });
+    if (outcome.status === "timed-out") {
+      warnings.push(`hunt: finder timed out on ${run.candidate.path} after ${finderTimeoutMs}ms — abandoned, skipping`);
+    } else if (outcome.status === "errored") {
+      warnings.push(`hunt: finder failed on ${run.candidate.path}: ${String(outcome.error).slice(0, 120)}`);
     }
+    return {
+      candidate: run.candidate,
+      model: run.model,
+      attempt: run.attempt,
+      status: outcome.status,
+      findings: outcome.status === "completed" ? (outcome.value?.findings ?? []) : ([] as Finding[]),
+    };
   });
+
+  let finderCompleted = 0;
+  let finderTimedOut = 0;
+  let finderErrored = 0;
+  for (const r of reports) {
+    if (!r) { finderErrored++; continue; }
+    if (r.status === "completed") finderCompleted++;
+    else if (r.status === "timed-out") finderTimedOut++;
+    else finderErrored++;
+  }
+  log(
+    `[hunt] finder fan-out health: ${finderCompleted} completed, ${finderTimedOut} timed-out, ${finderErrored} errored ` +
+      `(of ${runs.length})`,
+  );
 
   const all: Array<{ finding: Finding; candidate: HuntCandidate; model?: string; attempt: number }> = [];
   for (const r of reports)
@@ -521,6 +670,9 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     confirmed,
     duplicates,
     scanned: runs.length,
+    finderCompleted,
+    finderTimedOut,
+    finderErrored,
     warnings,
     records: [...records.values()],
   };

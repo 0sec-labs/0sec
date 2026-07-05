@@ -24,7 +24,7 @@
  *     the standalone flywheel module — see hunt-flywheel.test.ts for that).
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Finding } from "@pwnkit/shared";
 import { HuntMemory } from "./hunt-flywheel.js";
 
@@ -161,6 +161,126 @@ describe("runHuntScan — best-of-N + judge gate", () => {
     expect(verifyCalls).toEqual(["f-0"]); // first attempt, in order
     expect(res.warnings.some((w) => w.includes("no brief to judge against"))).toBe(true);
     expect(res.records.every((r) => r.judgeScore === undefined)).toBe(true);
+  });
+});
+
+describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUNT_FINDER_MAX_RETRIES)", () => {
+  const prevTimeout = process.env.HUNT_FINDER_TIMEOUT_MS;
+  const prevRetries = process.env.HUNT_FINDER_MAX_RETRIES;
+
+  afterEach(() => {
+    if (prevTimeout === undefined) delete process.env.HUNT_FINDER_TIMEOUT_MS;
+    else process.env.HUNT_FINDER_TIMEOUT_MS = prevTimeout;
+    if (prevRetries === undefined) delete process.env.HUNT_FINDER_MAX_RETRIES;
+    else process.env.HUNT_FINDER_MAX_RETRIES = prevRetries;
+  });
+
+  it("a finder that never resolves is abandoned after HUNT_FINDER_TIMEOUT_MS and the run still completes with the other candidates", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "20";
+    process.env.HUNT_FINDER_MAX_RETRIES = "0";
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+      if (config.target === "/src/hangs.c") return new Promise(() => {}); // never resolves
+      return { findings: [mkFinding(`f-${config.target}`, `finding from ${config.target}`, "")] };
+    });
+
+    const verifyCalls: string[] = [];
+    const verify: NonNullable<Parameters<typeof runHuntScan>[0]["verify"]> = async (finding) => {
+      verifyCalls.push(finding.id);
+      return { confirmed: true, reason: "ok" };
+    };
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/hangs.c" }, { path: "/src/ok.c" }],
+      runtime: "api",
+      concurrency: 2,
+      verify,
+    });
+
+    // The hung candidate is abandoned (not awaited to completion) and skipped;
+    // the other candidate's finding still makes it through the whole gate.
+    expect(res.scanned).toBe(2);
+    expect(res.finderTimedOut).toBe(1);
+    expect(res.finderCompleted).toBe(1);
+    expect(res.finderErrored).toBe(0);
+    expect(res.findings).toHaveLength(1);
+    expect(res.confirmed).toHaveLength(1);
+    expect(verifyCalls).toEqual(["f-/src/ok.c"]);
+    expect(res.warnings.some((w) => w.includes("timed out") && w.includes("/src/hangs.c"))).toBe(true);
+  });
+
+  it("a transient-error finder retries up to HUNT_FINDER_MAX_RETRIES then gives up on that candidate", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "5000";
+    process.env.HUNT_FINDER_MAX_RETRIES = "2";
+    agenticScanMock.mockReset();
+    let calls = 0;
+    agenticScanMock.mockImplementation(async () => {
+      calls++;
+      throw new Error("fetch failed: ECONNRESET");
+    });
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/flaky.c" }],
+      runtime: "api",
+      concurrency: 1,
+    });
+
+    // 1 initial attempt + 2 retries = 3 calls, then gives up.
+    expect(calls).toBe(3);
+    expect(res.scanned).toBe(1);
+    expect(res.finderErrored).toBe(1);
+    expect(res.finderCompleted).toBe(0);
+    expect(res.finderTimedOut).toBe(0);
+    expect(res.findings).toHaveLength(0);
+    expect(res.warnings.some((w) => w.includes("finder failed on /src/flaky.c"))).toBe(true);
+  });
+
+  it("a non-transient error is not retried and is recorded as errored", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "5000";
+    process.env.HUNT_FINDER_MAX_RETRIES = "2";
+    agenticScanMock.mockReset();
+    let calls = 0;
+    agenticScanMock.mockImplementation(async () => {
+      calls++;
+      throw new Error("target file not found");
+    });
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/missing.c" }],
+      runtime: "api",
+      concurrency: 1,
+    });
+
+    expect(calls).toBe(1); // no retries — not a transient-looking error
+    expect(res.finderErrored).toBe(1);
+    expect(res.finderCompleted).toBe(0);
+  });
+
+  it("the result carries accurate completed/timed-out/errored counts across a mixed sweep", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "20";
+    process.env.HUNT_FINDER_MAX_RETRIES = "0";
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+      if (config.target === "/src/hangs.c") return new Promise(() => {});
+      if (config.target === "/src/broken.c") throw new Error("target file not found");
+      return { findings: [] };
+    });
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/hangs.c" }, { path: "/src/broken.c" }, { path: "/src/ok.c" }],
+      runtime: "api",
+      concurrency: 3,
+    });
+
+    expect(res.scanned).toBe(3);
+    expect(res.finderTimedOut).toBe(1);
+    expect(res.finderErrored).toBe(1);
+    expect(res.finderCompleted).toBe(1);
+    expect(res.finderCompleted + res.finderTimedOut + res.finderErrored).toBe(res.scanned);
   });
 });
 
