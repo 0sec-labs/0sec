@@ -124,6 +124,31 @@ export { runHuntScan, makeSkepticVerifier, composeGate } from "./stages/hunt-sca
 // Hunt best-of-N LLM judge (disambiguates multi-attempt findings before the skeptic gate).
 export { judgeHuntCandidatesWithLlm, heuristicCandidateScore } from "./stages/hunt-judge.js";
 export type { HuntCandidateJudge, HuntCandidateScore } from "./stages/hunt-judge.js";
+// Kernel archetype catalog (multi-archetype hunt seeding; ported from 0verse's
+// 90-archetype registry, kernel-domain subset). Data + brief mapping are always
+// inert/available; `planArchetypeSweep` is env-gated (PWNKIT_ARCHETYPE_SWEEP=1).
+export {
+  kernelArchetypesPath,
+  loadKernelArchetypes,
+  needsKernelVerify,
+  hypothesisOnly,
+  filterArchetypes,
+  archetypeToHuntBrief,
+  symbolsFromDetectionSignature,
+  candidateGrepPatterns,
+  generateArchetypeCandidates,
+  archetypeSweepEnabled,
+  planArchetypeSweep,
+} from "./stages/archetype-catalog.js";
+export type {
+  ArchetypeRoute,
+  KernelArchetype,
+  ArchetypeFilter,
+  ArchetypeCandidateOptions,
+  ArchetypeSweepPlan,
+  ArchetypeSweepOptions,
+  ArchetypeSweepResult,
+} from "./stages/archetype-catalog.js";
 export {
   checkNovelty,
   syncLoreMirror,

@@ -8,7 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && cp -R src/triage/kernel-vm dist/triage/kernel-vm && cp src/bench/*.json dist/bench/ && mkdir -p dist/xnu-fuzz/opener && cp src/xnu-fuzz/opener/*.c dist/xnu-fuzz/opener/",
+    "build": "tsc && cp -R src/triage/kernel-vm dist/triage/kernel-vm && cp src/bench/*.json dist/bench/ && mkdir -p dist/xnu-fuzz/opener && cp src/xnu-fuzz/opener/*.c dist/xnu-fuzz/opener/ && mkdir -p dist/stages/data && cp src/stages/data/*.json dist/stages/data/",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
