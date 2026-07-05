@@ -676,6 +676,24 @@ export type {
   VerifyKernelFindingOptions,
 } from "./triage/kernel-vm-runner.js";
 
+// KCSAN data-race triage (kernelCTF Pipeline #1, issue #1112).
+export { parseKcsanReport } from "./triage/kcsan-race.js";
+export type { KcsanRace, KcsanAccess } from "./triage/kcsan-race.js";
+export {
+  triageKcsanRace,
+  kcsanRaceToBrief,
+  kcsanRaceToFinding,
+  makeRaceWidenProver,
+  raceWidenEnv,
+  detectKasanSplat,
+  DEFAULT_RACE_WIDEN_DELAY_MS,
+} from "./triage/kcsan-triage.js";
+export type {
+  KcsanProverConfig,
+  TriageKcsanOptions,
+  TriageKcsanResult,
+} from "./triage/kcsan-triage.js";
+
 // Tier 2 kernel-finding verification (#271). Agent-driven loop that takes a
 // static `hypothesis: true, confidence: 0.4` kernel-review Finding and drives
 // a constrained reproducer-generation loop until the Tier 1 oracle confirms
