@@ -15,8 +15,10 @@
  */
 import {
   archetypeSweepEnabled,
+  CHROMIUM_BARE_WORDS,
   filterArchetypes,
   FREEBSD_BARE_KERNEL_WORDS,
+  loadChromiumArchetypes,
   loadFreebsdArchetypes,
   loadKernelArchetypes,
   makeSkepticVerifier,
@@ -33,27 +35,43 @@ import { runArchetypeSweep } from "./src/hunt-sweep.js";
 // archetype-catalog.ts's data/freebsd-archetypes.json provenance note: no
 // FreeBSD kernel-verify (build+boot+KASAN) lane exists yet, so treat any
 // "kernel-verify"-route hit as a hypothesis for human/skeptic review.
+// "chromium" = the 12-entry V8/Blink/Mojo/base:: pack (TurboFan/Maglev type
+// confusion, Oilpan UAF, Mojo IPC validation gaps, unwrapped raw_ptr UAF)
+// against a Chromium source checkout — default path below assumes a fresh
+// `/root/chromium-src` clone (being staged separately; not present in this
+// repo). Every chromium archetype is `route: "source-static"` (see
+// archetype-catalog.ts's data/chromium-archetypes.json provenance note: no
+// Chromium build/ASan/libFuzzer lane exists yet either).
 const DOMAIN = (process.env.HUNT_SWEEP_DOMAIN || "kernel").trim() as ArchetypeDomain;
-const SRC = process.env.HUNT_SRC || (DOMAIN === "freebsd" ? "/root/freebsd-src" : "/root/linux-6.12.93");
+const SRC =
+  process.env.HUNT_SRC ||
+  (DOMAIN === "freebsd" ? "/root/freebsd-src" : DOMAIN === "chromium" ? "/root/chromium-src" : "/root/linux-6.12.93");
 const CONC = Number(process.env.HUNT_CONC || 3);
 const MAX_FILE_LINES = Number(process.env.HUNT_MAX_FILE_LINES || 2000);
 const MAX_ARCHETYPES = Number(process.env.HUNT_SWEEP_MAX_ARCHETYPES || 8);
-// Default to the grep-visible route: kernel-static archetypes have a
-// source-level detection signature (see archetype-catalog.ts's file header on
-// why `route` here classifies the fix-lane, not grep-ability, but
-// kernel-static is the safest default breadth for a static-only sweep).
-const ROUTES = (process.env.HUNT_SWEEP_ROUTES || "kernel-static")
+// Default to the grep-visible route for the domain's own vocabulary: the
+// kernel/FreeBSD packs use "kernel-static" (see archetype-catalog.ts's file
+// header on why `route` there classifies the fix-lane, not grep-ability),
+// while the Chromium pack has only one route value, "source-static" (no
+// build/execution lane exists to distinguish a "verify" tier yet).
+const ROUTES = (process.env.HUNT_SWEEP_ROUTES || (DOMAIN === "chromium" ? "source-static" : "kernel-static"))
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean) as ArchetypeRoute[];
 const UIDS = process.env.HUNT_SWEEP_UIDS
   ? process.env.HUNT_SWEEP_UIDS.split(",").map((s) => s.trim()).filter(Boolean)
   : undefined;
-// FreeBSD's core copy/alloc primitives (copyout/copyin/malloc) are bare
-// words that the default symbol-extraction heuristic misses (see
-// symbolsFromDetectionSignature's header) — pass the curated allow-list only
-// on the FreeBSD path so the Linux sweep stays byte-for-byte unaffected.
-const BARE_WORDS = DOMAIN === "freebsd" ? FREEBSD_BARE_KERNEL_WORDS : undefined;
+// FreeBSD's core copy/alloc primitives (copyout/copyin/malloc) and Chromium's
+// PascalCase/camelCase C++ symbols (TurboFan, Member, Deserialize, ...) are
+// bare words that the default snake_case symbol-extraction heuristic misses
+// (see symbolsFromDetectionSignature's header) — pass the curated allow-list
+// only on the matching path so the Linux sweep stays byte-for-byte unaffected.
+const BARE_WORDS =
+  DOMAIN === "freebsd" ? FREEBSD_BARE_KERNEL_WORDS : DOMAIN === "chromium" ? CHROMIUM_BARE_WORDS : undefined;
+// Chromium source is C++, not C — widen the grep globs beyond the kernel
+// packs' *.c/*.h default (archetype-catalog.ts's ArchetypeCandidateOptions
+// default) to also cover .cc/.cpp/.mojom/.mm.
+const INCLUDE_GLOBS = DOMAIN === "chromium" ? ["*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.mojom", "*.mm"] : undefined;
 
 /** Same parse-guard pattern as `hunt-run.ts`: unset/invalid env falls back to the runHuntScan default. */
 function huntBestOfN(): number | undefined {
@@ -87,7 +105,8 @@ if (!archetypeSweepEnabled()) {
 
 // 1. Pick the archetype subset: an explicit uid pin wins over the route filter.
 const filter = UIDS ? { uids: UIDS } : { routes: ROUTES };
-const library = DOMAIN === "freebsd" ? loadFreebsdArchetypes() : loadKernelArchetypes();
+const library =
+  DOMAIN === "freebsd" ? loadFreebsdArchetypes() : DOMAIN === "chromium" ? loadChromiumArchetypes() : loadKernelArchetypes();
 const selected = filterArchetypes(library, filter).slice(0, MAX_ARCHETYPES);
 console.log(`[hunt-sweep] selected ${selected.length} archetype(s): ${selected.map((a) => a.uid).join(", ")}`);
 
@@ -102,6 +121,7 @@ const { plans, warnings: planWarnings } = planArchetypeSweep({
   domain: DOMAIN,
   uids: selected.map((a) => a.uid),
   ...(BARE_WORDS ? { bareWords: BARE_WORDS } : {}),
+  ...(INCLUDE_GLOBS ? { includeGlobs: INCLUDE_GLOBS } : {}),
 });
 if (planWarnings.length) console.log("[hunt-sweep] plan warnings:", JSON.stringify(planWarnings));
 

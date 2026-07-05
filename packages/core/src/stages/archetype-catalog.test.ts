@@ -14,10 +14,12 @@ import {
   archetypeSweepEnabled,
   archetypeToHuntBrief,
   candidateGrepPatterns,
+  CHROMIUM_BARE_WORDS,
   filterArchetypes,
   FREEBSD_BARE_KERNEL_WORDS,
   generateArchetypeCandidates,
   hypothesisOnly,
+  loadChromiumArchetypes,
   loadFreebsdArchetypes,
   loadKernelArchetypes,
   needsKernelVerify,
@@ -380,6 +382,158 @@ describe("generateArchetypeCandidates + planArchetypeSweep on the FreeBSD pack (
     const result = planArchetypeSweep({
       sourceRoot: dir,
       uids: ["freebsd/CP-01"], // a freebsd uid does not exist in the kernel (Linux) pack
+      force: true,
+    });
+    expect(result.plans).toEqual([]);
+  });
+});
+
+// ── Chromium archetype pack ──────────────────────────────────────────────────
+// Mirrors the FreeBSD-pack test coverage above: the pack loads, has the
+// expected count/routes, archetypeToHuntBrief works on a Chromium archetype,
+// and candidateGrepPatterns emits blink::/mojo::/v8-style symbols — NOT
+// kernel/FreeBSD ones — once the bare-word allow-list is supplied (Chromium
+// C++ is PascalCase/camelCase, so almost nothing here matches the default
+// snake_case heuristic unassisted; `raw_ptr` is the one documented exception).
+
+describe("loadChromiumArchetypes", () => {
+  it("loads all 12 Chromium-domain archetypes with unique uids under chromium/", () => {
+    const archetypes = loadChromiumArchetypes();
+    expect(archetypes).toHaveLength(12);
+    const uids = new Set(archetypes.map((a) => a.uid));
+    expect(uids.size).toBe(12);
+    for (const a of archetypes) {
+      expect(a.uid.startsWith("chromium/")).toBe(true);
+      expect(a.name.length).toBeGreaterThan(0);
+      expect(a.pattern.length).toBeGreaterThan(0);
+      expect(a.detectionSignature.length).toBeGreaterThan(0);
+      expect(a.grounding.length).toBeGreaterThan(0);
+      expect(["kernel-static", "kernel-verify", "not-binary-detectable", "source-static"]).toContain(a.route);
+    }
+  });
+
+  it("is cached (repeated calls return the same reference) and independent from the kernel/FreeBSD caches", () => {
+    expect(loadChromiumArchetypes()).toBe(loadChromiumArchetypes());
+    const chromiumUids = new Set(loadChromiumArchetypes().map((a) => a.uid));
+    const kernelUids = new Set(loadKernelArchetypes().map((a) => a.uid));
+    const freebsdUids = new Set(loadFreebsdArchetypes().map((a) => a.uid));
+    for (const uid of chromiumUids) {
+      expect(kernelUids.has(uid)).toBe(false);
+      expect(freebsdUids.has(uid)).toBe(false);
+    }
+  });
+
+  it("route counts: all 12 are source-static (no Chromium build/execution lane exists to split a verify tier)", () => {
+    const archetypes = loadChromiumArchetypes();
+    expect(archetypes.every((a) => a.route === "source-static")).toBe(true);
+  });
+
+  it("covers V8, Blink, Mojo, and base:: bug classes (TurboFan/Maglev type confusion, Oilpan UAF, Mojo IPC validation, raw_ptr UAF)", () => {
+    const ids = new Set(loadChromiumArchetypes().map((a) => a.id));
+    for (const id of ["V8-01", "V8-02", "V8-03", "V8-04", "BLINK-01", "BLINK-02", "BLINK-03", "MOJO-01", "MOJO-02", "MOJO-03", "BASE-01", "BASE-02"]) {
+      expect(ids.has(id)).toBe(true);
+    }
+  });
+});
+
+describe("archetypeToHuntBrief on a Chromium archetype", () => {
+  it("produces a non-empty bugClass/pattern/fixReference", () => {
+    const a = loadChromiumArchetypes().find((x) => x.id === "V8-01")!;
+    const brief = archetypeToHuntBrief(a);
+    expect(brief.bugClass).toContain(a.name);
+    expect(brief.bugClass).toContain(a.cwe);
+    expect(brief.pattern).toContain(a.pattern);
+    expect(brief.pattern).toContain(a.detectionSignature);
+    expect(brief.fixReference).toContain(a.uid);
+  });
+});
+
+describe("candidateGrepPatterns on the Chromium pack — blink::/mojo::/v8-style symbols, not kernel/FreeBSD ones", () => {
+  it("without bareWords, the one genuinely snake_case symbol (raw_ptr) still matches the default heuristic", () => {
+    const base01 = loadChromiumArchetypes().find((x) => x.id === "BASE-01")!;
+    const symbols = symbolsFromDetectionSignature(base01.detectionSignature);
+    expect(symbols).toContain("raw_ptr");
+    // Never a kernel/FreeBSD-specific symbol.
+    expect(symbols).not.toContain("copyout");
+    expect(symbols).not.toContain("kfree_rcu");
+  });
+
+  it("PascalCase/camelCase symbols (TurboFan, Maglev, Member, Deserialize) are NOT matched without CHROMIUM_BARE_WORDS", () => {
+    const v801 = loadChromiumArchetypes().find((x) => x.id === "V8-01")!;
+    const symbols = symbolsFromDetectionSignature(v801.detectionSignature);
+    expect(symbols).not.toContain("TurboFan");
+    expect(symbols).not.toContain("Maglev");
+  });
+
+  it("with CHROMIUM_BARE_WORDS, candidateGrepPatterns emits the real V8/Blink/Mojo symbols per archetype", () => {
+    const v801 = loadChromiumArchetypes().find((x) => x.id === "V8-01")!;
+    const v8Symbols = symbolsFromDetectionSignature(v801.detectionSignature, CHROMIUM_BARE_WORDS);
+    expect(v8Symbols).toContain("TurboFan");
+    expect(v8Symbols).toContain("Maglev");
+    expect(v8Symbols).toContain("CheckMap");
+
+    const blink01 = loadChromiumArchetypes().find((x) => x.id === "BLINK-01")!;
+    const blinkSymbols = symbolsFromDetectionSignature(blink01.detectionSignature, CHROMIUM_BARE_WORDS);
+    expect(blinkSymbols).toContain("GarbageCollected");
+    expect(blinkSymbols).toContain("Member");
+    expect(blinkSymbols).toContain("WeakMember");
+
+    const mojo01 = loadChromiumArchetypes().find((x) => x.id === "MOJO-01")!;
+    const mojoSymbols = symbolsFromDetectionSignature(mojo01.detectionSignature, CHROMIUM_BARE_WORDS);
+    expect(mojoSymbols).toContain("Deserialize");
+    expect(mojoSymbols).toContain("StructTraits");
+
+    const patterns = candidateGrepPatterns(blink01, CHROMIUM_BARE_WORDS);
+    expect(patterns.length).toBeGreaterThan(0);
+    expect(patterns.some((p) => p.includes("GarbageCollected"))).toBe(true);
+  });
+});
+
+describe("generateArchetypeCandidates + planArchetypeSweep on the Chromium pack (real grep, temp fixture tree)", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pwnkit-chromium-archetype-test-"));
+    writeFileSync(
+      join(dir, "oilpan_hit.cc"),
+      "class Foo : public GarbageCollected<Foo> { public: void Trace(Visitor* v) const { v->Trace(member_); } private: Member<Bar> member_; };\n",
+    );
+    writeFileSync(join(dir, "unrelated.cc"), "int Add(int a, int b) { return a + b; }\n");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("finds the file containing the archetype's bare-word symbols (GarbageCollected/Member) when bareWords is supplied", () => {
+    const blink01 = loadChromiumArchetypes().find((x) => x.id === "BLINK-01")!;
+    const candidates = generateArchetypeCandidates(blink01, dir, {
+      bareWords: CHROMIUM_BARE_WORDS,
+      includeGlobs: ["*.cc", "*.h"],
+    });
+    expect(candidates.map((c) => c.path)).toContain("oilpan_hit.cc");
+    expect(candidates.map((c) => c.path)).not.toContain("unrelated.cc");
+  });
+
+  it("planArchetypeSweep with domain: 'chromium' + force sweeps the Chromium pack, not the kernel/FreeBSD ones", () => {
+    const result = planArchetypeSweep({
+      sourceRoot: dir,
+      domain: "chromium",
+      uids: ["chromium/BLINK-01"],
+      bareWords: CHROMIUM_BARE_WORDS,
+      includeGlobs: ["*.cc", "*.h"],
+      force: true,
+    });
+    expect(result.plans.length).toBe(1);
+    const plan = result.plans[0]!;
+    expect(plan.archetype.uid).toBe("chromium/BLINK-01");
+    expect(plan.candidates.map((c) => c.path)).toContain("oilpan_hit.cc");
+  });
+
+  it("planArchetypeSweep still defaults to the kernel (Linux) domain when domain is omitted (Linux path unaffected)", () => {
+    const result = planArchetypeSweep({
+      sourceRoot: dir,
+      uids: ["chromium/BLINK-01"], // a chromium uid does not exist in the kernel (Linux) pack
       force: true,
     });
     expect(result.plans).toEqual([]);

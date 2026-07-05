@@ -50,8 +50,17 @@ import type { HuntBrief, HuntCandidate } from "./hunt-scan.js";
 
 // ── Data shape ───────────────────────────────────────────────────────────────
 
-/** 0verse's kernel-domain route vocabulary (binary-detectability classification; see file header). */
-export type ArchetypeRoute = "kernel-static" | "kernel-verify" | "not-binary-detectable";
+/**
+ * 0verse's kernel-domain route vocabulary (binary-detectability
+ * classification; see file header), extended with `"source-static"` for the
+ * Chromium pack: unlike the kernel/FreeBSD packs (which distinguish a
+ * grep-able static shape from one that needs a build+boot+KASAN prover),
+ * pwnkit has NO Chromium build/execution lane at all today — every Chromium
+ * archetype is source-static-only by construction, so this single value
+ * covers the whole pack rather than splitting it into static/verify like the
+ * kernel packs do.
+ */
+export type ArchetypeRoute = "kernel-static" | "kernel-verify" | "not-binary-detectable" | "source-static";
 
 /** One CVE-grounded kernel bug-class archetype, ported from 0verse's registry. */
 export interface KernelArchetype {
@@ -144,8 +153,32 @@ export function loadFreebsdArchetypes(): KernelArchetype[] {
   return _freebsdCache;
 }
 
+let _chromiumCache: KernelArchetype[] | null = null;
+
+/** Absolute path to the bundled Chromium-archetype data file (src and dist both carry it). */
+export function chromiumArchetypesPath(): string {
+  return fileURLToPath(new URL("./data/chromium-archetypes.json", import.meta.url));
+}
+
+/**
+ * Load the Chromium-domain archetype pack (cached; pure data — never
+ * executes anything). Same schema/shape as `loadKernelArchetypes`, but
+ * grounded in V8/Blink/Mojo/base:: bug classes (TurboFan/Maglev type
+ * confusion, Oilpan UAF, Mojo IPC validation gaps, unwrapped raw_ptr UAF)
+ * instead of kernel ones — see the data file's `provenance` field for the
+ * honest caveat that no Chromium build/execution lane (compile, ASan/libFuzzer
+ * harness, v8CTF submit path) exists yet in this repo, so every entry is
+ * `route: "source-static"` (see `ArchetypeRoute`'s header).
+ */
+export function loadChromiumArchetypes(): KernelArchetype[] {
+  if (_chromiumCache) return _chromiumCache;
+  const raw = JSON.parse(readFileSync(chromiumArchetypesPath(), "utf8")) as { archetypes: RawArchetype[] };
+  _chromiumCache = mapRawArchetypes(raw.archetypes);
+  return _chromiumCache;
+}
+
 /** Which archetype library `planArchetypeSweep` draws from. Defaults to "kernel" (Linux) — unchanged behavior. */
-export type ArchetypeDomain = "kernel" | "freebsd";
+export type ArchetypeDomain = "kernel" | "freebsd" | "chromium";
 
 /**
  * Curated allow-list of bare (no-underscore) FreeBSD kernel primitives worth
@@ -155,6 +188,31 @@ export type ArchetypeDomain = "kernel" | "freebsd";
  * when sweeping the FreeBSD pack; Linux callers that omit this stay unaffected.
  */
 export const FREEBSD_BARE_KERNEL_WORDS = ["copyout", "copyin", "copyinstr", "malloc", "mallocarray"] as const;
+
+/**
+ * Curated allow-list of bare (no-underscore) Chromium/V8/Blink/Mojo symbols
+ * worth grepping verbatim — see `symbolsFromDetectionSignature`'s header for
+ * why the default underscore-shape heuristic misses these. Chromium C++ uses
+ * PascalCase/camelCase almost exclusively (unlike Linux/FreeBSD kernel C's
+ * snake_case), so WITHOUT this allow-list nearly every Chromium archetype's
+ * `detectionSignature` would yield zero extractable symbols — the one
+ * exception is `raw_ptr`, which genuinely is snake_case and already matches
+ * the default heuristic unassisted. Pass to `candidateGrepPatterns` /
+ * `generateArchetypeCandidates` / `planArchetypeSweep` when sweeping the
+ * Chromium pack; kernel/FreeBSD callers that omit this stay unaffected.
+ */
+export const CHROMIUM_BARE_WORDS = [
+  "TurboFan", "Maglev", "CheckMap", "TransitionElementsKind", "InferMaps", "JSCallReducer", "KeyedStoreIC",
+  "BuildClassLiteral", "ClassBoilerplate", "FastNewObject",
+  "JSTypedArray", "BackingStore", "ArrayBufferView", "Detach",
+  "Local", "HandleScope", "EscapableHandleScope", "Persistent",
+  "GarbageCollected", "MakeGarbageCollected", "Member", "WeakMember",
+  "GetExecutionContext", "ScriptState",
+  "GarbageCollectedMixin",
+  "Deserialize", "StructTraits", "ArrayDataView", "DataView",
+  "PendingRemote", "PendingReceiver", "Remote", "Receiver",
+  "WeakPtr", "CheckedNumeric",
+] as const;
 
 /** True when the class needs the kernel-verify lane (build+boot+KASAN) to go from candidate to proven. */
 export function needsKernelVerify(a: KernelArchetype): boolean {
@@ -371,11 +429,14 @@ export interface ArchetypeSweepResult {
  * `opts.force` is not set, returns no plans and a warning explaining why,
  * rather than silently doing nothing.
  *
- * `opts.domain` picks the library: "kernel" (default, Linux, unchanged) or
- * "freebsd" (`loadFreebsdArchetypes()`). Callers sweeping the FreeBSD pack
- * should also pass `bareWords: FREEBSD_BARE_KERNEL_WORDS` (see
- * `symbolsFromDetectionSignature`'s header) to actually surface its
- * copyout/copyin/malloc-shaped candidates.
+ * `opts.domain` picks the library: "kernel" (default, Linux, unchanged),
+ * "freebsd" (`loadFreebsdArchetypes()`), or "chromium"
+ * (`loadChromiumArchetypes()`). Callers sweeping the FreeBSD pack should also
+ * pass `bareWords: FREEBSD_BARE_KERNEL_WORDS`, and callers sweeping the
+ * Chromium pack should pass `bareWords: CHROMIUM_BARE_WORDS` (see
+ * `symbolsFromDetectionSignature`'s header) to actually surface their
+ * bare-symbol-shaped candidates (copyout/copyin/malloc for FreeBSD;
+ * TurboFan/Member/Deserialize/etc. for Chromium).
  */
 export function planArchetypeSweep(opts: ArchetypeSweepOptions): ArchetypeSweepResult {
   if (!opts.force && !archetypeSweepEnabled()) {
@@ -385,7 +446,8 @@ export function planArchetypeSweep(opts: ArchetypeSweepOptions): ArchetypeSweepR
     };
   }
   const warnings: string[] = [];
-  const library = opts.domain === "freebsd" ? loadFreebsdArchetypes() : loadKernelArchetypes();
+  const library =
+    opts.domain === "freebsd" ? loadFreebsdArchetypes() : opts.domain === "chromium" ? loadChromiumArchetypes() : loadKernelArchetypes();
   const selected = filterArchetypes(library, opts);
   const plans: ArchetypeSweepPlan[] = [];
   for (const archetype of selected) {
