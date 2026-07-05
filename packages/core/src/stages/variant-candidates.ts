@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import type { HuntBrief, HuntCandidate } from "./hunt-scan.js";
+import { applyReachabilityGate } from "./hunt-reachability.js";
 
 export interface VariantHuntInput {
   /** Local source tree / git repo to hunt variants in. */
@@ -33,6 +34,22 @@ export interface VariantHuntInput {
   maxCandidates?: number;
   /** File globs to search (default C/C++/headers). */
   includeGlobs?: string[];
+  /**
+   * kernelCTF-reachability gate for candidate selection (opt-in; default OFF
+   * preserves today's density-only ranking exactly). When true, RESTRICT
+   * candidates to paths classified "reachable" on the kernelCTF COS target
+   * (see hunt-reachability.ts) — drops paths that are unbuilt/not zero-cap
+   * reachable (exotic drivers, Bluetooth/CAN, capability-gated filesystems).
+   * Mirrors `HUNT_REACHABLE_ONLY`. Takes priority over `reachablePrefer`.
+   */
+  reachableOnly?: boolean;
+  /**
+   * Softer than `reachableOnly`: sort candidates so kernelCTF-reachable paths
+   * come first (nothing dropped), so the `maxCandidates` cap below doesn't
+   * truncate them away. Mirrors `HUNT_REACHABLE_PREFER`. Ignored when
+   * `reachableOnly` is set.
+   */
+  reachablePrefer?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -153,10 +170,25 @@ export async function generateVariantCandidates(input: VariantHuntInput): Promis
   }
   // Rank by how many independent patterns a file matched (more = stronger variant signal).
   const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
-  if (ranked.length > maxCandidates) {
-    warnings.push(`capped candidates ${ranked.length} -> ${maxCandidates} (raise maxCandidates to widen)`);
+
+  // kernelCTF-reachability gate (opt-in; default OFF -> byte-identical to
+  // before this gate existed). Applied BEFORE the maxCandidates cap below so
+  // reachable candidates aren't truncated away by density-only ranking
+  // landing on exotic/unbuilt drivers (see hunt-reachability.ts).
+  const gated = input.reachableOnly || input.reachablePrefer
+    ? applyReachabilityGate(ranked, { reachableOnly: input.reachableOnly, reachablePrefer: input.reachablePrefer })
+    : { paths: ranked, unreachableCount: 0 };
+  if (gated.unreachableCount > 0) {
+    const verb = input.reachableOnly ? "dropped" : "deprioritized";
+    const msg = `${verb} ${gated.unreachableCount} unreachable candidate(s) (not built/zero-cap on kernelCTF COS — see hunt-reachability.ts)`;
+    warnings.push(msg);
+    log(`[variant] ${msg}`);
   }
-  const candidates: HuntCandidate[] = ranked.slice(0, maxCandidates).map((path) => ({
+
+  if (gated.paths.length > maxCandidates) {
+    warnings.push(`capped candidates ${gated.paths.length} -> ${maxCandidates} (raise maxCandidates to widen)`);
+  }
+  const candidates: HuntCandidate[] = gated.paths.slice(0, maxCandidates).map((path) => ({
     path,
     hint: `Variant site for: ${plan!.bugClass}. Check whether ${plan!.pattern} is guarded here.`,
   }));

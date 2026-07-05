@@ -1,5 +1,5 @@
 /** Generic novel-bug hunt on under-audited surface: enumerate files -> runHuntScan (no seed). */
-import { runHuntScan, makeSkepticVerifier } from "@pwnkit/core";
+import { runHuntScan, makeSkepticVerifier, applyReachabilityGate } from "@pwnkit/core";
 import { execFileSync } from "node:child_process";
 import { appendToCorpus, resolveHuntCorpusPath } from "./src/hunt-corpus.js";
 
@@ -28,15 +28,31 @@ function huntJudgeTopK(): number | undefined {
 const BEST_OF_N = huntBestOfN();
 const JUDGE_TOP_K = huntJudgeTopK();
 const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
+// kernelCTF-reachability gate for candidate selection (default OFF -> today's
+// size-only ranking unchanged). See pwnkit/packages/core/src/stages/hunt-reachability.ts.
+const REACHABLE_ONLY = process.env.HUNT_REACHABLE_ONLY === "1";
+const REACHABLE_PREFER = process.env.HUNT_REACHABLE_PREFER === "1";
 
-// Enumerate .c files under the (under-audited) subsystem; prefer larger files
-// (more surface), sample up to MAXC.
+// Enumerate .c files under the (under-audited) subsystem, largest first. The
+// MAXC cap is applied in JS below (not in this shell pipeline) so the
+// reachability gate runs BEFORE the cap and reachable files aren't truncated
+// away by size-only ranking landing on exotic/unbuilt drivers.
 const listing = execFileSync(
   "bash",
-  ["-lc", `find '${SRC}/${SUBSYS}' -name '*.c' -printf '%s %p\\n' 2>/dev/null | sort -rn | head -${MAXC} | awk '{print $2}'`],
+  ["-lc", `find '${SRC}/${SUBSYS}' -name '*.c' -printf '%s %p\\n' 2>/dev/null | sort -rn | awk '{print $2}'`],
   { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
 );
-const files = listing.split("\n").map((s) => s.trim()).filter(Boolean);
+const allFiles = listing.split("\n").map((s) => s.trim()).filter(Boolean);
+
+const gate = REACHABLE_ONLY || REACHABLE_PREFER
+  ? applyReachabilityGate(allFiles, { reachableOnly: REACHABLE_ONLY, reachablePrefer: REACHABLE_PREFER })
+  : { paths: allFiles, unreachableCount: 0 };
+if (gate.unreachableCount > 0) {
+  const verb = REACHABLE_ONLY ? "dropped" : "deprioritized";
+  console.log(`[surface] ${verb} ${gate.unreachableCount} unreachable candidate(s) (not built/zero-cap on kernelCTF COS)`);
+}
+
+const files = gate.paths.slice(0, MAXC);
 console.log(`[surface] ${SUBSYS}: hunting ${files.length} largest .c files (generic, no seed), ${CONC}-wide`);
 
 if (files.length === 0) { console.log("[surface] no files"); process.exit(0); }

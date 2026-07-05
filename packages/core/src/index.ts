@@ -149,6 +149,10 @@ export type {
 } from "./stages/novelty-check.js";
 export { generateVariantCandidates } from "./stages/variant-candidates.js";
 export type { VariantHuntInput, VariantHuntPlan } from "./stages/variant-candidates.js";
+// kernelCTF-reachability gate for hunt candidate selection (path-based; see
+// services/orchestrator/src/kernelctf-config.ts for the CONFIG-symbol ground truth).
+export { classifyPathReachability, applyReachabilityGate } from "./stages/hunt-reachability.js";
+export type { PathReachability, ReachabilityGateOptions, ReachabilityGateResult } from "./stages/hunt-reachability.js";
 export { extractSpecInvariants, mapInvariantsToImplementation, planSpecdriftHypotheses, runSpecdriftPlan, runSpecdriftScan } from "./specdrift/index.js";
 export type {
   DriftHypothesis,

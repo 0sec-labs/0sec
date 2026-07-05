@@ -69,6 +69,8 @@ interface HuntOpts {
   maxCandidates?: string;
   skipCandidates?: string;
   models?: string;
+  reachableOnly?: boolean;
+  reachablePrefer?: boolean;
   verify?: boolean; // commander sets false when --no-verify is passed
   novelty?: boolean;
   noveltyRoot?: string;
@@ -122,6 +124,10 @@ export async function runHunt(opts: {
   maxCandidates?: number;
   skipCandidates?: number;
   models?: string[];
+  /** Restrict candidates to kernelCTF-reachable paths. Defaults to the `HUNT_REACHABLE_ONLY` env. */
+  reachableOnly?: boolean;
+  /** Sort kernelCTF-reachable candidates first (nothing dropped). Defaults to the `HUNT_REACHABLE_PREFER` env. */
+  reachablePrefer?: boolean;
   verify?: boolean;
   /** Best-of-N finder attempts per (candidate, model). Defaults to the `HUNT_BEST_OF_N` env, then 1. */
   attemptsPerCandidate?: number;
@@ -213,12 +219,16 @@ export async function runHunt(opts: {
     // 1. Seed → variant-hunt plan (bug class + grep'd candidate sites).
     const skipCandidates = opts.skipCandidates ?? 0;
     const maxCandidates = opts.maxCandidates ?? 40;
+    const reachableOnly = opts.reachableOnly ?? process.env.HUNT_REACHABLE_ONLY === "1";
+    const reachablePrefer = opts.reachablePrefer ?? process.env.HUNT_REACHABLE_PREFER === "1";
     const plan = await generateVariantCandidates({
       sourceRoot,
       fix: { diff: seedDiff, reference: opts.ref ?? opts.seedPath },
       runtime,
       maxCandidates: skipCandidates + maxCandidates,
       ...(opts.models ? { models: opts.models } : {}),
+      ...(reachableOnly ? { reachableOnly } : {}),
+      ...(reachablePrefer ? { reachablePrefer } : {}),
       log,
     });
 
@@ -342,6 +352,8 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     maxCandidates: parsePositive("--max-candidates", opts.maxCandidates, 40),
     skipCandidates: parseNonNegative("--skip-candidates", opts.skipCandidates, 0),
     ...(opts.models ? { models: opts.models.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
+    ...(opts.reachableOnly ? { reachableOnly: true } : {}),
+    ...(opts.reachablePrefer ? { reachablePrefer: true } : {}),
     verify: opts.verify,
     ...(opts.novelty
       ? {
@@ -381,6 +393,8 @@ export function registerHuntCommand(program: Command): void {
     .option("--max-candidates <N>", "Cap candidate sites hunted (default 40)")
     .option("--skip-candidates <N>", "Skip the first N ranked candidate sites before hunting (default 0)")
     .option("--models <a,b>", "Comma-separated finder models for diversity (default: provider default)")
+    .option("--reachable-only", "Restrict candidates to paths built + zero-cap reachable on the kernelCTF COS target (default: HUNT_REACHABLE_ONLY env)")
+    .option("--reachable-prefer", "Sort kernelCTF-reachable candidates first, without dropping any (default: HUNT_REACHABLE_PREFER env)")
     .option("--no-verify", "Skip the skeptic gate (emit all raw findings — triage only, never disclosure)")
     .option("--novelty", "After the skeptic gate, drop confirmed findings duplicated by lore.kernel.org mirror patches")
     .option("--novelty-root <path>", "Lore mirror root (default: PWNKIT_LORE_MIRROR_ROOT or /root/lore-mirror)")

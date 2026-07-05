@@ -25,6 +25,10 @@ function huntJudgeTopK(): number | undefined {
 const BEST_OF_N = huntBestOfN();
 const JUDGE_TOP_K = huntJudgeTopK();
 const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
+// kernelCTF-reachability gate for candidate selection (default OFF -> today's
+// density-only ranking unchanged). See pwnkit/packages/core/src/stages/hunt-reachability.ts.
+const REACHABLE_ONLY = process.env.HUNT_REACHABLE_ONLY === "1";
+const REACHABLE_PREFER = process.env.HUNT_REACHABLE_PREFER === "1";
 
 const seedDiff = readFileSync(SEED, "utf8");
 
@@ -37,6 +41,8 @@ const plan = await generateVariantCandidates({
   runtime: "api",
   maxCandidates: MAXC,
   includeGlobs: ["*.c"],
+  ...(REACHABLE_ONLY ? { reachableOnly: true } : {}),
+  ...(REACHABLE_PREFER ? { reachablePrefer: true } : {}),
   log: (m) => console.log(m),
 });
 console.log("[hunt-run] BRIEF:", JSON.stringify(plan.brief));
