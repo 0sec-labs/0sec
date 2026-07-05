@@ -16,10 +16,17 @@
  *   - No-brief fallback: attemptsPerCandidate>1 with no `brief` skips the
  *     judge (no bug-class/pattern to score against) and keeps the first
  *     `judgeTopK` attempts in order.
+ *   - Flywheel wiring (PWNKIT_HUNT_FLYWHEEL=1, hunt-flywheel.ts): with
+ *     judgeTopK == group size (nothing dropped), priming reorders which
+ *     finding `verify` is called on FIRST, but the resulting `confirmed` SET
+ *     is byte-identical to the flag-off run — the primes-never-confirms
+ *     invariant, proven at the real `runHuntScan` integration seam (not just
+ *     the standalone flywheel module — see hunt-flywheel.test.ts for that).
  */
 
 import { describe, expect, it, vi } from "vitest";
 import type { Finding } from "@pwnkit/shared";
+import { HuntMemory } from "./hunt-flywheel.js";
 
 const agenticScanMock = vi.fn();
 vi.mock("../agentic-scanner.js", () => ({
@@ -154,5 +161,96 @@ describe("runHuntScan — best-of-N + judge gate", () => {
     expect(verifyCalls).toEqual(["f-0"]); // first attempt, in order
     expect(res.warnings.some((w) => w.includes("no brief to judge against"))).toBe(true);
     expect(res.records.every((r) => r.judgeScore === undefined)).toBe(true);
+  });
+});
+
+describe("runHuntScan — memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1)", () => {
+  it("reorders which finding verify sees first, but leaves the confirmed SET identical to the flag-off run", async () => {
+    const brief = {
+      bugClass: "nf_tables set-element deferred-free UAF (CWE-416)",
+      pattern: "nft_set_elem_deactivate races the GC and frees the element while referenced",
+    };
+
+    // f-0 is the true match (buried under a generically-higher judge score);
+    // f-1/f-2 are unrelated noise the generic judge over-rates.
+    agenticScanMock.mockReset();
+    let call = 0;
+    agenticScanMock.mockImplementation(async () => {
+      const i = call++;
+      const bodies = [
+        ["f-0", "nf_tables element UAF", "nft_set_elem_deactivate use-after-free race with gc"],
+        ["f-1", "unrelated noise A", "generic parsing issue"],
+        ["f-2", "unrelated noise B", "generic overflow issue"],
+      ] as const;
+      const [id, title, analysis] = bodies[i % bodies.length];
+      return { findings: [mkFinding(id, title, analysis)] };
+    });
+    const judgeScores = new Map([
+      ["f-0", 2],
+      ["f-1", 8],
+      ["f-2", 7],
+    ]);
+    const judgeCandidates: Parameters<typeof runHuntScan>[0]["judgeCandidates"] = async (_brief, findings) => {
+      const scores = new Map<string, { score: number; reason: string }>();
+      for (const f of findings) scores.set(f.id, { score: judgeScores.get(f.id) ?? 0, reason: "" });
+      return scores;
+    };
+    // Confirmation depends ONLY on finding identity/content, never on call
+    // order or priming — f-2 is always refuted, the other two always confirmed.
+    const mkVerify = (callOrder: string[]) =>
+      (async (finding: Finding) => {
+        callOrder.push(finding.id);
+        return { confirmed: finding.id !== "f-2", reason: "deterministic-by-content" };
+      }) satisfies Parameters<typeof runHuntScan>[0]["verify"];
+
+    const baseOpts = {
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/nf_tables_api.c" }],
+      brief,
+      runtime: "api" as const,
+      concurrency: 1, // deterministic start order for the call-order assertion
+      attemptsPerCandidate: 3,
+      judgeTopK: 3, // == group size: nothing is dropped, only reordered
+      judgeCandidates,
+    };
+
+    const prevFlag = process.env.PWNKIT_HUNT_FLYWHEEL;
+    try {
+      delete process.env.PWNKIT_HUNT_FLYWHEEL;
+      call = 0;
+      const coldOrder: string[] = [];
+      const cold = await runHuntScan({ ...baseOpts, verify: mkVerify(coldOrder) });
+
+      const memory = new HuntMemory();
+      memory.remember(
+        {
+          candidatePath: "net/netfilter/nf_tables_api.c",
+          model: "seed",
+          attempt: 0,
+          finding: mkFinding("seed", "nf_tables deferred-free UAF", "nft_set_elem_deactivate races gc, use-after-free"),
+          skepticConfirmed: true,
+          skepticReason: "reproduced under KASAN",
+          duplicate: false,
+        },
+        brief,
+      );
+      process.env.PWNKIT_HUNT_FLYWHEEL = "1";
+      call = 0;
+      const primedOrder: string[] = [];
+      const primed = await runHuntScan({ ...baseOpts, huntMemory: memory, verify: mkVerify(primedOrder) });
+
+      // Reordering happened: the matching (but generically-underscored)
+      // finding moves to the front once memory recognizes its shape.
+      expect(coldOrder[0]).not.toBe("f-0");
+      expect(primedOrder[0]).toBe("f-0");
+
+      // The confirmed SET is identical either way — priming only ever
+      // reordered who got verified first, never what verify decided.
+      expect([...cold.confirmed.map((f) => f.id)].sort()).toEqual(["f-0", "f-1"]);
+      expect([...primed.confirmed.map((f) => f.id)].sort()).toEqual(["f-0", "f-1"]);
+    } finally {
+      if (prevFlag === undefined) delete process.env.PWNKIT_HUNT_FLYWHEEL;
+      else process.env.PWNKIT_HUNT_FLYWHEEL = prevFlag;
+    }
   });
 });

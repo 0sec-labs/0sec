@@ -41,6 +41,8 @@ import {
   type LoreNoveltyResult,
 } from "./novelty-check.js";
 import { judgeHuntCandidatesWithLlm, type HuntCandidateJudge } from "./hunt-judge.js";
+import { HuntMemory, huntFlywheelEnabled, primedOrderKey, type HuntPriming } from "./hunt-flywheel.js";
+import { huntNegativesEnabled, matchNegative, negativeContext, type KnownNegative } from "./hunt-negatives.js";
 
 // Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
 // default DB is a single shared ~/.pwnkit/pwnkit.db — at any real fan-out width
@@ -130,6 +132,16 @@ export interface HuntScanOptions {
    * its search facts; defaults to {@link findingToQuery} (auto-mines the prose).
    */
   novelty?: NoveltyCheckOptions & { queryFor?: (finding: Finding) => NoveltyQuery };
+  /**
+   * OPTIONAL memory-flywheel priming (`PWNKIT_HUNT_FLYWHEEL=1`, see
+   * hunt-flywheel.ts). Injectable for tests; when the flag is on and
+   * `opts.brief` is set but no instance is passed, defaults to a fresh
+   * `HuntMemory()` (archetype preseed only — no corpus path). PRIMES the
+   * best-of-N judge ORDERING and the attempt-budget cost-router ONLY —
+   * `opts.verify` (the skeptic+prover gate) never receives it. See
+   * hunt-flywheel.ts's header for the primes-never-confirms invariant.
+   */
+  huntMemory?: HuntMemory;
   log?: (msg: string) => void;
 }
 
@@ -225,9 +237,17 @@ export function makeSkepticVerifier(opts: {
   sourceRoot: string;
   runtime: RuntimeMode;
   model?: string;
+  /**
+   * OPTIONAL learned-negatives context (`PWNKIT_HUNT_NEGATIVES=1`, see
+   * hunt-negatives.ts). When a finding matches a known-refuted shape closely
+   * enough, its prior refute reason is appended to the skeptic prompt as a
+   * NOTE — it never auto-rejects; the skeptic call below still runs and
+   * still decides.
+   */
+  negatives?: readonly KnownNegative[];
 }): HuntVerifier {
   return async (finding, candidate) => {
-    const hint =
+    let hint =
       `ADVERSARIAL REVIEW. A prior pass claims this finding in ${candidate.path}:\n` +
       `  title: ${finding.title}\n  detail: ${finding.description}\n` +
       "Assume it is a FALSE POSITIVE and try HARD to REFUTE it. Generic checks: is the sink actually " +
@@ -250,6 +270,14 @@ export function makeSkepticVerifier(opts: {
       "CANNOT refute it — i.e. you can still point to the exact unguarded sink (file:line), a concrete " +
       "ENABLED attacker-reachable path, and (if a fix is implied) a fix that skips no required code. " +
       "If you cannot, report NOTHING.";
+    // Learned negatives (PWNKIT_HUNT_NEGATIVES=1): attach a prior refute
+    // reason as CONTEXT when this shape was already refuted before — a
+    // label the skeptic reads, never an auto-rejection. The skeptic call
+    // below is unchanged either way: it still runs, still decides.
+    if (huntNegativesEnabled() && opts.negatives && opts.negatives.length > 0) {
+      const match = matchNegative(finding, opts.negatives);
+      if (match) hint += `\n\n${negativeContext(match)}`;
+    }
     // A FOCUSED re-read, not a fresh broad hunt: the challengeHint already
     // targets the one claim, so "quick" depth keeps the gate fast enough to run
     // per-finding at scale (a "deep" full-template scan took ~10min on a 10-line
@@ -304,10 +332,32 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   const models = opts.models && opts.models.length > 0 ? opts.models : [undefined as unknown as string];
   const concurrency = opts.concurrency ?? 8;
   const depth = opts.depth ?? "quick";
-  const attemptsPerCandidate = Math.max(1, opts.attemptsPerCandidate ?? 1);
   const judgeTopK = Math.max(1, opts.judgeTopK ?? 1);
   const judgeCandidates = opts.judgeCandidates ?? judgeHuntCandidatesWithLlm;
   const warnings: string[] = [];
+
+  // Memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1, hunt-flywheel.ts): OFF by
+  // default (`priming` stays `null`, every use below is a no-op and the run
+  // is byte-identical to before this existed). When on and a brief is given,
+  // priming ONLY (a) adjusts the attempt-budget cost-router below and (b)
+  // reorders the best-of-N judge ranking further down — `opts.verify` (the
+  // skeptic+prover gate, the sole adjudicator) never receives it.
+  let priming: HuntPriming | null = null;
+  if (huntFlywheelEnabled() && opts.brief) {
+    const memory = opts.huntMemory ?? new HuntMemory();
+    priming = memory.prime(opts.brief);
+    log(
+      `[hunt] flywheel: ${priming.active ? `primed (top=${priming.topScore.toFixed(2)})` : "no similar memory"} — cost_route=${priming.costRoute}`,
+    );
+  }
+
+  let attemptsPerCandidate = Math.max(1, opts.attemptsPerCandidate ?? 1);
+  if (priming && priming.costRoute === "cheap" && attemptsPerCandidate > 1) {
+    warnings.push(
+      `hunt: flywheel cost-router saw no similar memory for this brief — capping attemptsPerCandidate to 1 (was ${attemptsPerCandidate})`,
+    );
+    attemptsPerCandidate = 1;
+  }
 
   // (candidate × model × attempt) finder runs — the parallel coverage sweep.
   // attemptsPerCandidate=1 (default) reproduces the original candidate × model
@@ -403,9 +453,17 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         record.judgeReason = s.reason;
       }
     }
+    // Ordering only: `priming.rankBonus` (when active) nudges which findings
+    // reach `verify` first/at all under `judgeTopK`; it is never itself
+    // passed to `verify` below, and when `priming` is `null` (flag off, or no
+    // similar memory) `primedOrderKey` reduces to the plain judge score, so
+    // this is byte-identical to the pre-flywheel comparator in that case.
     const ranked = [...group].sort((a, b) => {
-      const delta = (scores.get(b.finding.id)?.score ?? 0) - (scores.get(a.finding.id)?.score ?? 0);
-      return delta || a.attempt - b.attempt;
+      const rawA = scores.get(a.finding.id)?.score ?? 0;
+      const rawB = scores.get(b.finding.id)?.score ?? 0;
+      const keyA = priming ? primedOrderKey(rawA, priming, a.finding) : rawA;
+      const keyB = priming ? primedOrderKey(rawB, priming, b.finding) : rawB;
+      return keyB - keyA || a.attempt - b.attempt;
     });
     toVerify.push(...ranked.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate })));
   }

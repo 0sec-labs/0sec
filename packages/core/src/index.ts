@@ -124,6 +124,37 @@ export { runHuntScan, makeSkepticVerifier, composeGate } from "./stages/hunt-sca
 // Hunt best-of-N LLM judge (disambiguates multi-attempt findings before the skeptic gate).
 export { judgeHuntCandidatesWithLlm, heuristicCandidateScore } from "./stages/hunt-judge.js";
 export type { HuntCandidateJudge, HuntCandidateScore } from "./stages/hunt-judge.js";
+// Hunt memory flywheel (PWNKIT_HUNT_FLYWHEEL=1, ported from 0verse's
+// flywheel.py): a preseeded 5-layer memory that PRIMES the best-of-N judge
+// ordering + attempt-budget cost-router — it never confirms; see
+// hunt-flywheel.ts's header for the invariant.
+export {
+  huntFlywheelEnabled,
+  classTokens,
+  jaccard,
+  memoryTokens,
+  findingTokens,
+  primedOrderKey,
+  loadHuntCorpusRows,
+  HuntMemory,
+  PRIME_MIN,
+  HUNT_MEMORY_LAYERS,
+  provePriming,
+} from "./stages/hunt-flywheel.js";
+export type {
+  HuntMemoryLayer,
+  HuntMemoryRecord,
+  HuntRecall,
+  HuntPriming,
+  HuntMemoryOptions,
+  HuntCorpusRow,
+  HuntProofReport,
+} from "./stages/hunt-flywheel.js";
+// Learned negatives (PWNKIT_HUNT_NEGATIVES=1): a known-refuted-shape memory
+// that attaches prior refute reasons to the skeptic prompt as context. Never
+// auto-rejects; see hunt-negatives.ts's header.
+export { huntNegativesEnabled, loadKnownNegatives, matchNegative, negativeContext, NEGATIVE_MIN } from "./stages/hunt-negatives.js";
+export type { KnownNegative, NegativeMatch } from "./stages/hunt-negatives.js";
 // Kernel archetype catalog (multi-archetype hunt seeding; ported from 0verse's
 // 90-archetype registry, kernel-domain subset). Data + brief mapping are always
 // inert/available; `planArchetypeSweep` is env-gated (PWNKIT_ARCHETYPE_SWEEP=1).
