@@ -224,6 +224,19 @@ export type {
 } from "./stages/invariant-candidates.js";
 export { renderRaceHarness, makeTemplateRacePocSynth } from "./stages/race-poc-synth.js";
 export type { RacePocRequest, RacePocSynth } from "./stages/race-poc-synth.js";
+// Race-widening smell-hunter (kernelCTF Pipeline #3): the LLM hunts the
+// ExpRace/Calif smell — unlock(A) -> [sleep/mutex/GFP_KERNEL alloc/copy_from_user]
+// -> lock(B) with attacker state across the gap — and maps each smell's
+// `widenHint` onto the PWNKIT_KERNEL_QEMU_WIDEN_* prover knobs. Sibling of
+// variant/invariant-candidates; plugs into runHuntScan.
+export { generateRaceSmellCandidates, widenEnvFor, KERNELCTF_TIER1_RACE_GRID } from "./stages/race-smell-candidates.js";
+export type {
+  RaceSmellHuntInput,
+  RaceSmellHuntPlan,
+  RaceSmellCandidate,
+  RaceWidenHint,
+  RaceWidenEnv,
+} from "./stages/race-smell-candidates.js";
 // kernelCTF-reachability gate for hunt candidate selection (path-based; see
 // services/orchestrator/src/kernelctf-config.ts for the CONFIG-symbol ground truth).
 export { classifyPathReachability, applyReachabilityGate } from "./stages/hunt-reachability.js";
