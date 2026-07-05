@@ -181,7 +181,15 @@ export * from "./exploit/index.js";
 // kernelCTF-winning technique (distinct from generic source-hunting above).
 export { parseVulnsCveRecord, loadVulnsFeedFromDir, defaultVulnsFeedIo } from "./patch-gap-feed.js";
 export type { UpstreamFixEntry, RawVulnsCveRecord, VulnsFeedIo, LoadVulnsFeedOptions } from "./patch-gap-feed.js";
-export { checkFixPresentInTarget, defaultGitExec } from "./patch-gap-check.js";
-export type { GitExec, FixPresenceResult, FixPresenceMethod } from "./patch-gap-check.js";
+export { checkFixPresentInTarget, checkNotYetIntroduced, defaultGitExec } from "./patch-gap-check.js";
+export type {
+  GitExec,
+  FixPresenceResult,
+  FixPresenceMethod,
+  NotYetIntroducedResult,
+  NotYetIntroducedMethod,
+} from "./patch-gap-check.js";
+export { classifyPatchGapReachability } from "./patch-gap-reachability.js";
+export type { PatchGapReachability, PatchGapReachabilityResult } from "./patch-gap-reachability.js";
 export { scanForPatchGapCandidates } from "./patch-gap.js";
 export type { PatchGapCandidate, PatchGapScanOptions, PatchGapScanResult } from "./patch-gap.js";

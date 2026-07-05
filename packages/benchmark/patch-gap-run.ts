@@ -43,10 +43,14 @@ const SINCE_YEAR = process.env.PATCH_GAP_SINCE_YEAR ? Number.parseInt(process.en
 const LIMIT = process.env.PATCH_GAP_LIMIT ? Number.parseInt(process.env.PATCH_GAP_LIMIT, 10) : undefined;
 // Default true (drop unreachable-on-COS candidates) — set to "0" to keep everything for a distro-only audit.
 const REACHABLE_ONLY = process.env.PATCH_GAP_REACHABLE_ONLY !== "0";
+// Target tree's kernel version — gates the not-yet-introduced filter (drops
+// entries whose feed-reported introduced-in version is newer than this).
+const TARGET_KERNEL_VERSION = process.env.PATCH_GAP_TARGET_VERSION || "6.12";
 
 console.log(
   `[patch-gap-run] vulnsRepo=${VULNS_REPO} targetTree=${TARGET_TREE} ` +
-    `sinceYear=${SINCE_YEAR ?? "(none)"} limit=${LIMIT ?? "(none)"} reachableOnly=${REACHABLE_ONLY}`,
+    `sinceYear=${SINCE_YEAR ?? "(none)"} limit=${LIMIT ?? "(none)"} reachableOnly=${REACHABLE_ONLY} ` +
+    `targetKernelVersion=${TARGET_KERNEL_VERSION}`,
 );
 
 const entries = loadVulnsFeedFromDir({
@@ -65,6 +69,7 @@ const result = scanForPatchGapCandidates({
   targetTreePath: TARGET_TREE,
   entries,
   reachableOnly: REACHABLE_ONLY,
+  targetKernelVersion: TARGET_KERNEL_VERSION,
 });
 
 console.log("=== PATCH-GAP RESULT ===");
@@ -72,6 +77,7 @@ console.log(
   JSON.stringify(
     {
       total: result.total,
+      skippedNotYetIntroduced: result.skippedNotYetIntroduced,
       skippedAlreadyFixed: result.skippedAlreadyFixed,
       skippedUnreachable: result.skippedUnreachable,
       candidates: result.candidates.length,
