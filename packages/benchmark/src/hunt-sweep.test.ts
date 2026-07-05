@@ -25,7 +25,9 @@ vi.mock("@pwnkit/core", async (importOriginal) => {
   return { ...actual, runHuntScan: (...args: unknown[]) => runHuntScanMock(...args) };
 });
 
-const { guardCandidatesBySize, runArchetypeSweep, extractFileLine } = await import("./hunt-sweep.js");
+const { guardCandidatesBySize, runArchetypeSweep, extractFileLine, pickModelForPlanIndex } = await import(
+  "./hunt-sweep.js"
+);
 
 function mkFinding(id: string, title: string, analysis = ""): Finding {
   return {
@@ -136,6 +138,29 @@ describe("extractFileLine", () => {
   });
 });
 
+describe("pickModelForPlanIndex", () => {
+  it("returns undefined when the pool is undefined", () => {
+    expect(pickModelForPlanIndex(undefined, 0)).toBeUndefined();
+  });
+
+  it("returns undefined when the pool is empty", () => {
+    expect(pickModelForPlanIndex([], 3)).toBeUndefined();
+  });
+
+  it("round-robins across the pool by index", () => {
+    const pool = ["gpt-5.5", "glm-5.2"];
+    expect(pickModelForPlanIndex(pool, 0)).toBe("gpt-5.5");
+    expect(pickModelForPlanIndex(pool, 1)).toBe("glm-5.2");
+    expect(pickModelForPlanIndex(pool, 2)).toBe("gpt-5.5");
+    expect(pickModelForPlanIndex(pool, 3)).toBe("glm-5.2");
+  });
+
+  it("wraps a single-entry pool onto every index", () => {
+    expect(pickModelForPlanIndex(["gpt-5.5"], 0)).toBe("gpt-5.5");
+    expect(pickModelForPlanIndex(["gpt-5.5"], 5)).toBe("gpt-5.5");
+  });
+});
+
 describe("runArchetypeSweep", () => {
   beforeEach(() => {
     runHuntScanMock.mockReset();
@@ -238,6 +263,40 @@ describe("runArchetypeSweep", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("default (no modelPool) never passes `models` to runHuntScan — reproduces pre-existing behavior exactly", async () => {
+    const plans = [
+      mkPlan("kernel/DRV-01", "a", ["drivers/a.c"]),
+      mkPlan("kernel/NF-03", "b", ["net/b.c"]),
+    ];
+    runHuntScanMock.mockResolvedValue(mkResult({ scanned: 1 }));
+
+    await runArchetypeSweep({ sourceRoot: "/root/linux-6.12.93", plans, runtime: "api" });
+
+    for (const call of runHuntScanMock.mock.calls) {
+      expect((call[0] as { models?: unknown }).models).toBeUndefined();
+    }
+  });
+
+  it("modelPool round-robins ONE model per plan (splits load; does not multiply finder-call volume)", async () => {
+    const plans = [
+      mkPlan("kernel/DRV-01", "a", ["drivers/a.c"]),
+      mkPlan("kernel/NF-03", "b", ["net/b.c"]),
+      mkPlan("kernel/BPF-02", "c", ["kernel/bpf/c.c"]),
+    ];
+    runHuntScanMock.mockResolvedValue(mkResult({ scanned: 1 }));
+
+    await runArchetypeSweep({
+      sourceRoot: "/root/linux-6.12.93",
+      plans,
+      runtime: "api",
+      modelPool: ["gpt-5.5", "glm-5.2"],
+    });
+
+    expect(runHuntScanMock).toHaveBeenCalledTimes(3);
+    const models = runHuntScanMock.mock.calls.map((call) => (call[0] as { models?: string[] }).models);
+    expect(models).toEqual([["gpt-5.5"], ["glm-5.2"], ["gpt-5.5"]]);
   });
 
   it("persists records to the corpus path via appendToCorpus when corpusPath is set", async () => {

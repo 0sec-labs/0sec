@@ -90,9 +90,26 @@ const BEST_OF_N = huntBestOfN();
 const JUDGE_TOP_K = huntJudgeTopK();
 const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
 
+// Bench token-contention fix (measured: a single shared Codex/ChatGPT
+// subscription token times out ~90% of finder calls under sweep fan-out —
+// every archetype plan falls through to the same env-priority provider by
+// default). Set HUNT_SWEEP_MODEL_POOL to a comma-separated list (e.g.
+// "gpt-5.5,glm-5.2") to round-robin ONE model per archetype plan across
+// distinct provider accounts (llm-api.ts's providerForModel() routes gpt-*
+// to the Codex subscription, glm-* to the separate Z.ai key) — this SPLITS
+// load across accounts rather than adding a second pass on top (that would
+// be a genuine diversity fan-out, which costs 2x calls instead). Unset
+// (default) reproduces today's behavior exactly: every plan uses the shared
+// default provider, byte-for-byte identical to pre-existing behavior.
+const MODEL_POOL = (process.env.HUNT_SWEEP_MODEL_POOL ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 console.log(
   `[hunt-sweep] domain=${DOMAIN} src=${SRC} conc=${CONC} maxFileLines=${MAX_FILE_LINES} maxArchetypes=${MAX_ARCHETYPES} ` +
-    `routes=${ROUTES.join(",")}${UIDS ? ` uids=${UIDS.join(",")}` : ""}`,
+    `routes=${ROUTES.join(",")}${UIDS ? ` uids=${UIDS.join(",")}` : ""}` +
+    `${MODEL_POOL.length > 0 ? ` modelPool=${MODEL_POOL.join(",")}` : ""}`,
 );
 
 if (!archetypeSweepEnabled()) {
@@ -141,6 +158,7 @@ const result = await runArchetypeSweep({
   ...(BEST_OF_N ? { attemptsPerCandidate: BEST_OF_N } : {}),
   ...(JUDGE_TOP_K ? { judgeTopK: JUDGE_TOP_K } : {}),
   ...(JUDGE_MODEL ? { judgeModel: JUDGE_MODEL } : {}),
+  ...(MODEL_POOL.length > 0 ? { modelPool: MODEL_POOL } : {}),
   verify: makeSkepticVerifier({ sourceRoot: SRC, runtime: "api" }),
   corpusPath,
   log: (m) => console.log(m),

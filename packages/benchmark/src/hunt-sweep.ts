@@ -104,7 +104,51 @@ export interface ArchetypeSweepRunOptions {
   verify?: HuntVerifier;
   /** Corpus JSONL path. Omit to skip persistence entirely (tests). */
   corpusPath?: string;
+  /**
+   * Load-spreading seam (bench token-contention fix): when set, each
+   * archetype plan is pinned to ONE model from this pool, round-robin by
+   * plan index (`pickModelForPlanIndex`) — plan 0 gets `modelPool[0]`, plan
+   * 1 gets `modelPool[1]`, etc., wrapping around. Each plan's OWN candidate
+   * fan-out is unchanged (still `concurrency`-wide, still one call per
+   * candidate); only WHICH provider that plan's calls land on changes.
+   *
+   * Why this helps: every archetype plan run through `runHuntScan` without
+   * an explicit model falls through to the shared env-priority provider
+   * (today: the single ChatGPT/Codex subscription token — see
+   * `pwnkit/packages/core/src/runtime/llm-api.ts`'s `detectProvider()`
+   * env-priority chain). A multi-archetype sweep fans MANY archetype plans'
+   * candidate pools through that ONE account/token, which is the measured
+   * bench bottleneck (single shared token, ~90% timeouts/429s under
+   * fan-out). Pinning alternating plans to a DIFFERENT model
+   * (`providerForModel()` in llm-api.ts routes e.g. `glm-*` to the
+   * completely separate Z.ai key/account, `gpt-*` to Codex) genuinely
+   * splits load across independent provider accounts/rate-limit buckets,
+   * instead of adding a second pass on top of the existing one (that would
+   * be `HuntScanOptions.models`'s existing cartesian candidate×model
+   * diversity fan-out — a different, additive feature; this option instead
+   * assigns exactly one model per plan, so total finder-call volume is
+   * unchanged from the no-pool baseline).
+   *
+   * Omit (default) to reproduce today's behavior exactly: no `models` is
+   * passed to `runHuntScan` and every plan falls through to the shared
+   * default provider, byte-for-byte identical to pre-existing behavior.
+   */
+  modelPool?: readonly string[];
   log?: (msg: string) => void;
+}
+
+/**
+ * Pure round-robin picker: returns `pool[index % pool.length]`, or
+ * `undefined` when `pool` is unset/empty (the "no pool configured" case —
+ * callers should omit `models` entirely rather than pass `[undefined]`).
+ * Exported for unit testing independent of `runArchetypeSweep`.
+ */
+export function pickModelForPlanIndex(
+  pool: readonly string[] | undefined,
+  index: number,
+): string | undefined {
+  if (!pool || pool.length === 0) return undefined;
+  return pool[index % pool.length];
 }
 
 export interface ConfirmedFindingSummary {
@@ -149,7 +193,7 @@ export async function runArchetypeSweep(opts: ArchetypeSweepRunOptions): Promise
     return { perArchetype: [], totals: { scanned: 0, findings: 0, confirmed: 0 }, warnings };
   }
 
-  for (const plan of opts.plans) {
+  for (const [planIndex, plan] of opts.plans.entries()) {
     const { kept, dropped } = guardCandidatesBySize(plan.candidates, opts.sourceRoot, maxFileLines);
     if (dropped.length > 0) {
       log(
@@ -179,6 +223,17 @@ export async function runArchetypeSweep(opts: ArchetypeSweepRunOptions): Promise
       path: isAbsolute(c.path) ? c.path : join(opts.sourceRoot, c.path),
     }));
 
+    // Round-robin ONE model per plan from opts.modelPool (undefined/empty →
+    // undefined, same as today). A single-element `models` array assigns
+    // this plan's candidates to exactly one provider — it does NOT multiply
+    // finder-call volume the way HuntScanOptions.models's cartesian
+    // candidate×model diversity fan-out would with >1 element. See the
+    // modelPool doc comment above for why this is the load-spreading lever.
+    const pinnedModel = pickModelForPlanIndex(opts.modelPool, planIndex);
+    if (pinnedModel) {
+      log(`[hunt-sweep] ${plan.archetype.uid}: pinned to model ${pinnedModel} (modelPool round-robin)`);
+    }
+
     const res = await runHuntScan({
       sourceRoot: opts.sourceRoot,
       candidates,
@@ -189,6 +244,7 @@ export async function runArchetypeSweep(opts: ArchetypeSweepRunOptions): Promise
       ...(opts.judgeTopK ? { judgeTopK: opts.judgeTopK } : {}),
       ...(opts.judgeModel ? { judgeModel: opts.judgeModel } : {}),
       ...(opts.verify ? { verify: opts.verify } : {}),
+      ...(pinnedModel ? { models: [pinnedModel] } : {}),
       log,
     });
 
