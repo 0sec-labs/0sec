@@ -36,6 +36,7 @@ function mkCandidate(cve: string): PatchGapCandidate {
     files: ["net/unix/af_unix.c"],
     subsystem: "net/unix",
     reachable: "reachable",
+    reachabilityReason: "zero-cap reachable on kernelCTF COS-6.12 (net/unix/)",
     severity: "high",
     presence: { present: false, method: "none", reason: "fix absent, live 1day candidate" },
     reason: `${cve}: fix absent, live 1day candidate (kernelCTF reachability: reachable)`,

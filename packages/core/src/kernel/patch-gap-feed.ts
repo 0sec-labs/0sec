@@ -27,6 +27,19 @@
  * cpeApplicability, etc.) still parses; an entry missing what we DO need
  * (no CVE id, no fix commit SHA of any kind) returns `null` rather than
  * throwing, so one malformed file in a 12k+-file feed can't crash a scan.
+ *
+ * ── "introduced-in" fields (patch-gap false-positive fix) ──
+ * Each `versions[]` entry with `versionType: "git"` and `status: "affected"`
+ * carries the CAUSE commit in its `version` field and the FIX commit in
+ * `lessThan` — i.e. "affected from commit <version> up to (not including)
+ * commit <lessThan>" for that branch. The kernel security team uses the
+ * sentinel `"0"` for `version` when no specific introducing commit is known
+ * (effectively "affected since the beginning of git history" / unknown) —
+ * that sentinel is NOT collected as a cause SHA (see `SHA_RE` guard below).
+ * Some records additionally carry a human-readable "Issue introduced in
+ * X.Y[.Z]" line in the description (the .mbox-format announcement text,
+ * occasionally mirrored into the JSON `descriptions[].value`) — parsed as a
+ * best-effort numeric fallback.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -34,7 +47,9 @@ import { join } from "node:path";
 
 /** One `versions[]` entry we care about — the git-SHA-keyed backport pointers. */
 interface RawVersionEntry {
+  version?: string;
   versionType?: string;
+  status?: string;
   lessThan?: string;
   lessThanOrEqual?: string;
 }
@@ -77,11 +92,28 @@ export interface UpstreamFixEntry {
    * superset of the other in the wild, so both are merged and deduped).
    */
   candidateShas: string[];
+  /**
+   * Cause (introducing) commit SHAs from `versions[]` entries where
+   * `versionType: "git"`, `status: "affected"`, and `version` is a real SHA
+   * (the `"0"` "unknown-since-forever" sentinel is excluded). Empty when the
+   * feed doesn't identify a specific introducing commit for any branch —
+   * callers must NOT treat an empty list as "introduced everywhere"; it means
+   * "we don't know", so the not-yet-introduced filter falls back to keeping
+   * the candidate (see `checkNotYetIntroduced` in patch-gap-check.ts).
+   */
+  causeShas: string[];
+  /**
+   * Best-effort numeric "introduced in vX.Y[.Z]" version, parsed from an
+   * "Issue introduced in ..." line in the description text when present.
+   * Undefined when no such line exists — most records don't carry it.
+   */
+  introducedVersion?: string;
 }
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 const CHERRY_PICK_RE = /cherry picked from commit\s+([0-9a-f]{7,40})\b/i;
 const STABLE_REF_RE = /git\.kernel\.org\/stable\/c\/([0-9a-f]{7,40})\b/i;
+const INTRODUCED_IN_RE = /issue introduced in\s+v?(\d+\.\d+(?:\.\d+)?)/i;
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
@@ -123,9 +155,28 @@ export function parseVulnsCveRecord(raw: unknown): UpstreamFixEntry | null {
     .map((s) => s.toLowerCase());
   const candidateShas = dedupe([...shasFromVersions, ...shasFromRefs]);
 
+  // Cause (introducing) commit: versions[] entries where versionType "git",
+  // status "affected", and `version` is a real SHA — NOT the "0" sentinel
+  // (which means "no specific introducing commit known", not "introduced by
+  // commit zero").
+  const causeShas = dedupe(
+    (cna.affected ?? []).flatMap((a) =>
+      (a.versions ?? [])
+        .filter(
+          (v) =>
+            v.versionType === "git" &&
+            v.status === "affected" &&
+            typeof v.version === "string" &&
+            SHA_RE.test(v.version),
+        )
+        .map((v) => v.version!.toLowerCase()),
+    ),
+  );
+
   const description = cna.descriptions?.find((d) => !d.lang || d.lang === "en")?.value ?? "";
   const cherryPick = description.match(CHERRY_PICK_RE)?.[1];
   const mainlineSha = cherryPick ? cherryPick.toLowerCase() : undefined;
+  const introducedVersion = description.match(INTRODUCED_IN_RE)?.[1];
 
   // Nothing to check against a target tree — not actionable.
   if (candidateShas.length === 0 && !mainlineSha) return null;
@@ -136,6 +187,8 @@ export function parseVulnsCveRecord(raw: unknown): UpstreamFixEntry | null {
     files,
     ...(mainlineSha ? { mainlineSha } : {}),
     candidateShas,
+    causeShas,
+    ...(introducedVersion ? { introducedVersion } : {}),
   };
 }
 

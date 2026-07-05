@@ -20,10 +20,26 @@
  * Pure orchestration — no network. The feed is pre-loaded by the caller
  * (`loadVulnsFeedFromDir` for the real bench clone, or an in-memory array in
  * tests); the target-tree check takes an injectable `GitExec`.
+ *
+ * Two gates run before an entry becomes a ranked candidate:
+ *   1. `checkNotYetIntroduced` — drop entries whose vulnerable code was never
+ *      in the target tree (introduced in a newer kernel version than the
+ *      target) — this was the source of the monitor's 71% false-positive
+ *      rate (fix-absent doesn't mean "gap" when the whole feature is absent).
+ *   2. `checkFixPresentInTarget` — drop entries already backported.
+ * Survivors are then gated by `classifyPatchGapReachability` (the
+ * patch-gap-specific, CAP-aware reachability mapping — see that module's doc
+ * for why the generic hunt-ranking classifier over-reported "reachable").
  */
 
-import { classifyPathReachability, type PathReachability } from "../stages/hunt-reachability.js";
-import { checkFixPresentInTarget, defaultGitExec, type GitExec, type FixPresenceResult } from "./patch-gap-check.js";
+import { classifyPatchGapReachability, type PatchGapReachability } from "./patch-gap-reachability.js";
+import {
+  checkFixPresentInTarget,
+  checkNotYetIntroduced,
+  defaultGitExec,
+  type GitExec,
+  type FixPresenceResult,
+} from "./patch-gap-check.js";
 import type { UpstreamFixEntry } from "./patch-gap-feed.js";
 
 /** Cheap severity signal from the fix title/description — no CVSS in this feed, so this is a coarse tie-breaker, not a real severity score. */
@@ -47,7 +63,7 @@ function severityHint(title: string): "high" | "unknown" {
   return HIGH_SIGNAL_KEYWORDS.some((kw) => lower.includes(kw)) ? "high" : "unknown";
 }
 
-/** Best-effort subsystem label from the first touched file — same "path prefix" vocabulary `classifyPathReachability` uses. */
+/** Best-effort subsystem label from the first touched file — same "path prefix" vocabulary `classifyPatchGapReachability` uses. */
 function subsystemOf(files: readonly string[]): string {
   const first = files[0];
   if (!first) return "unknown";
@@ -63,7 +79,9 @@ export interface PatchGapCandidate {
   title: string;
   files: string[];
   subsystem: string;
-  reachable: PathReachability;
+  reachable: PatchGapReachability;
+  /** Why the reachability classifier landed on `reachable` — surfaced for triage/audit. */
+  reachabilityReason: string;
   severity: "high" | "unknown";
   /** Full presence-check detail (method, matched SHA if any, reason) for triage/audit. */
   presence: FixPresenceResult;
@@ -86,11 +104,20 @@ export interface PatchGapScanOptions {
    * (e.g. for a distro-only audit) with `reachable` still annotated per-entry.
    */
   reachableOnly?: boolean;
+  /**
+   * Target tree's kernel version, e.g. `"6.12"` — used by the
+   * not-yet-introduced filter to drop entries whose feed-reported
+   * introduced-in version is newer than the target. Default `"6.12"`
+   * (the kernelCTF COS target this monitor is built for).
+   */
+  targetKernelVersion?: string;
 }
 
 export interface PatchGapScanResult {
   /** Ranked candidates: `reachable` first, then `severity: "high"`, then newest CVE id. */
   candidates: PatchGapCandidate[];
+  /** Entries CONFIRMED never introduced into the target tree (introduced in a newer kernel version — not applicable, not a gap). */
+  skippedNotYetIntroduced: number;
   /** Entries whose fix was CONFIRMED present in the target tree (already backported — not a 1day). */
   skippedAlreadyFixed: number;
   /** Entries dropped by the reachability gate (only when `reachableOnly` is true). */
@@ -99,29 +126,38 @@ export interface PatchGapScanResult {
   total: number;
 }
 
-const REACHABILITY_RANK: Record<PathReachability, number> = { reachable: 0, unknown: 1, unreachable: 2 };
+const REACHABILITY_RANK: Record<PatchGapReachability, number> = { reachable: 0, unreachable: 1 };
 const SEVERITY_RANK: Record<"high" | "unknown", number> = { high: 0, unknown: 1 };
 
 /**
- * Run the patch-gap monitor: for each upstream fix entry, check target-tree
- * presence, gate by kernelCTF reachability, and rank the survivors.
+ * Run the patch-gap monitor: for each upstream fix entry, drop
+ * not-yet-introduced entries, check target-tree presence, gate by kernelCTF
+ * reachability, and rank the survivors.
  */
 export function scanForPatchGapCandidates(opts: PatchGapScanOptions): PatchGapScanResult {
   const exec = opts.gitExec ?? defaultGitExec;
   const reachableOnly = opts.reachableOnly ?? true;
+  const targetKernelVersion = opts.targetKernelVersion ?? "6.12";
 
+  let skippedNotYetIntroduced = 0;
   let skippedAlreadyFixed = 0;
   let skippedUnreachable = 0;
   const candidates: PatchGapCandidate[] = [];
 
   for (const entry of opts.entries) {
+    const introduced = checkNotYetIntroduced(entry, opts.targetTreePath, exec, targetKernelVersion);
+    if (introduced.notYetIntroduced) {
+      skippedNotYetIntroduced++;
+      continue;
+    }
+
     const presence = checkFixPresentInTarget(entry, opts.targetTreePath, exec);
     if (presence.present) {
       skippedAlreadyFixed++;
       continue;
     }
 
-    const reachable = classifyPathReachability(entry.files[0] ?? "");
+    const { reachable, reason: reachabilityReason } = classifyPatchGapReachability(entry.files[0] ?? "");
     if (reachableOnly && reachable !== "reachable") {
       skippedUnreachable++;
       continue;
@@ -136,9 +172,10 @@ export function scanForPatchGapCandidates(opts: PatchGapScanOptions): PatchGapSc
       files: entry.files,
       subsystem: subsystemOf(entry.files),
       reachable,
+      reachabilityReason,
       severity,
       presence,
-      reason: `${entry.cve}: ${presence.reason} (kernelCTF reachability: ${reachable})`,
+      reason: `${entry.cve}: ${presence.reason} (kernelCTF reachability: ${reachable} — ${reachabilityReason})`,
     });
   }
 
@@ -152,6 +189,7 @@ export function scanForPatchGapCandidates(opts: PatchGapScanOptions): PatchGapSc
 
   return {
     candidates,
+    skippedNotYetIntroduced,
     skippedAlreadyFixed,
     skippedUnreachable,
     total: opts.entries.length,

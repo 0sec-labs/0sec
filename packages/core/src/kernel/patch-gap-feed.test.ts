@@ -88,6 +88,84 @@ describe("kernel/patch-gap-feed: parseVulnsCveRecord (pure)", () => {
     expect(parseVulnsCveRecord("not an object")).toBeNull();
     expect(parseVulnsCveRecord({})).toBeNull();
   });
+
+  it("extracts causeShas from versions[] entries with versionType=git, status=affected", () => {
+    const rec = makeRecord();
+    rec.containers!.cna!.affected = [
+      {
+        programFiles: ["drivers/gpu/drm/i915/gem/i915_gem_phys.c"],
+        versions: [
+          {
+            version: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            lessThan: "40f738991058eb3e3530c3006a5bd6fd5e29f035",
+            status: "affected",
+            versionType: "git",
+          },
+        ],
+      },
+    ];
+    const entry = parseVulnsCveRecord(rec);
+    expect(entry?.causeShas).toEqual(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]);
+  });
+
+  it("excludes the '0' sentinel (no specific introducing commit known) from causeShas", () => {
+    const rec = makeRecord();
+    rec.containers!.cna!.affected = [
+      {
+        programFiles: ["drivers/gpu/drm/i915/gem/i915_gem_phys.c"],
+        versions: [
+          {
+            version: "0",
+            lessThan: "40f738991058eb3e3530c3006a5bd6fd5e29f035",
+            status: "affected",
+            versionType: "git",
+          },
+        ],
+      },
+    ];
+    const entry = parseVulnsCveRecord(rec);
+    expect(entry?.causeShas).toEqual([]);
+  });
+
+  it("ignores a versions[] entry with status other than 'affected' for causeShas", () => {
+    const rec = makeRecord();
+    rec.containers!.cna!.affected = [
+      {
+        programFiles: ["drivers/gpu/drm/i915/gem/i915_gem_phys.c"],
+        versions: [
+          {
+            version: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            lessThan: "40f738991058eb3e3530c3006a5bd6fd5e29f035",
+            status: "unaffected",
+            versionType: "git",
+          } as never,
+        ],
+      },
+    ];
+    const entry = parseVulnsCveRecord(rec);
+    expect(entry?.causeShas).toEqual([]);
+  });
+
+  it("parses an 'Issue introduced in X.Y' line from the description into introducedVersion", () => {
+    const rec = makeRecord();
+    rec.containers!.cna!.descriptions = [
+      {
+        lang: "en",
+        value:
+          "In the Linux kernel, the following vulnerability has been resolved:\n\n" +
+          "drm/i915/gem: fix it\n\n" +
+          "Issue introduced in 6.14 with commit abc123 and fixed in 6.14.5 with commit def456\n\n" +
+          "(cherry picked from commit 3e49a2f85070b2fb672c1e0fdba281a4ea3aebe6)",
+      },
+    ];
+    const entry = parseVulnsCveRecord(rec);
+    expect(entry?.introducedVersion).toBe("6.14");
+  });
+
+  it("leaves introducedVersion undefined when no 'Issue introduced in' line is present", () => {
+    const entry = parseVulnsCveRecord(makeRecord());
+    expect(entry?.introducedVersion).toBeUndefined();
+  });
 });
 
 describe("kernel/patch-gap-feed: loadVulnsFeedFromDir (thin IO, real tmp fs — no network)", () => {

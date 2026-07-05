@@ -30,6 +30,7 @@ const ALREADY_FIXED_ENTRY: UpstreamFixEntry = {
   title: "net/unix: fix use-after-free",
   files: ["net/unix/af_unix.c"],
   candidateShas: ["1111111111111111111111111111111111111a"],
+  causeShas: [],
 };
 
 const REACHABLE_LIVE_ENTRY: UpstreamFixEntry = {
@@ -37,6 +38,7 @@ const REACHABLE_LIVE_ENTRY: UpstreamFixEntry = {
   title: "crypto: fix double-free in af_alg",
   files: ["crypto/algif_skcipher.c"],
   candidateShas: ["2222222222222222222222222222222222222b"],
+  causeShas: [],
 };
 
 const UNREACHABLE_LIVE_ENTRY: UpstreamFixEntry = {
@@ -44,6 +46,7 @@ const UNREACHABLE_LIVE_ENTRY: UpstreamFixEntry = {
   title: "bluetooth: fix overflow",
   files: ["net/bluetooth/hci_core.c"],
   candidateShas: ["3333333333333333333333333333333333333c"],
+  causeShas: [],
 };
 
 describe("kernel/patch-gap: scanForPatchGapCandidates", () => {
@@ -120,6 +123,7 @@ describe("kernel/patch-gap: scanForPatchGapCandidates", () => {
       title: "net/unix: minor cleanup", // no high-signal keyword
       files: ["net/unix/af_unix.c"],
       candidateShas: ["5555555555555555555555555555555555555e"],
+      causeShas: [],
     };
     const exec = makeFakeExec(new Set(), new Set());
     const res = scanForPatchGapCandidates({
@@ -131,5 +135,70 @@ describe("kernel/patch-gap: scanForPatchGapCandidates", () => {
     // REACHABLE_LIVE_ENTRY (severity "high") ranks before the low-signal one.
     expect(res.candidates[0]!.cve).toBe("CVE-2026-00002");
     expect(res.candidates[1]!.cve).toBe("CVE-2026-00004");
+  });
+});
+
+describe("kernel/patch-gap: scanForPatchGapCandidates — not-yet-introduced filter (Bug 1 fix)", () => {
+  it("drops a CVE introduced in 6.14 against a 6.12 target as skippedNotYetIntroduced, not skippedAlreadyFixed", () => {
+    const entry: UpstreamFixEntry = {
+      cve: "CVE-2026-40001",
+      title: "crypto: fix double-free in af_alg",
+      files: ["crypto/algif_skcipher.c"],
+      candidateShas: ["6666666666666666666666666666666666666f"],
+      causeShas: [],
+      introducedVersion: "6.14",
+    };
+    const exec = makeFakeExec(new Set(), new Set());
+    const res = scanForPatchGapCandidates({
+      targetTreePath: "/fake/target",
+      entries: [entry],
+      gitExec: exec,
+    });
+    expect(res.candidates).toHaveLength(0);
+    expect(res.skippedNotYetIntroduced).toBe(1);
+    expect(res.skippedAlreadyFixed).toBe(0);
+  });
+
+  it("keeps a CVE introduced in 6.10 (older than a 6.12 target) with fix absent as a live candidate", () => {
+    const entry: UpstreamFixEntry = {
+      cve: "CVE-2026-40002",
+      title: "crypto: fix double-free in af_alg",
+      files: ["crypto/algif_skcipher.c"],
+      candidateShas: ["7777777777777777777777777777777777777a"],
+      causeShas: [],
+      introducedVersion: "6.10",
+    };
+    const exec = makeFakeExec(new Set(), new Set());
+    const res = scanForPatchGapCandidates({
+      targetTreePath: "/fake/target",
+      entries: [entry],
+      gitExec: exec,
+    });
+    expect(res.skippedNotYetIntroduced).toBe(0);
+    expect(res.candidates).toHaveLength(1);
+    expect(res.candidates[0]!.cve).toBe("CVE-2026-40002");
+  });
+
+  it("drops via cause-commit ancestry when the cause SHA is confirmed not-an-ancestor of target HEAD", () => {
+    const entry: UpstreamFixEntry = {
+      cve: "CVE-2026-40003",
+      title: "crypto: fix double-free in af_alg",
+      files: ["crypto/algif_skcipher.c"],
+      candidateShas: ["8888888888888888888888888888888888888b"],
+      causeShas: ["9999999999999999999999999999999999999c"],
+    };
+    const exec: GitExec = (_tree, args) => {
+      if (args[0] === "rev-parse") return "true";
+      if (args[0] === "cat-file") return ""; // object exists
+      if (args[0] === "merge-base") throw new Error("not an ancestor");
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
+    };
+    const res = scanForPatchGapCandidates({
+      targetTreePath: "/fake/target",
+      entries: [entry],
+      gitExec: exec,
+    });
+    expect(res.candidates).toHaveLength(0);
+    expect(res.skippedNotYetIntroduced).toBe(1);
   });
 });
