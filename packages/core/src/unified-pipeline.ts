@@ -831,7 +831,16 @@ export interface PerFileResearchOptions {
     fileRel: string;
     systemPrompt: string;
     cliSystemPrompt: string;
-  }) => Promise<{ findings: Finding[] }>;
+  }) => Promise<{
+    findings: Finding[];
+    usage?: { inputTokens: number; outputTokens: number };
+    turns?: number;
+  }>;
+  /** Optional per-file usage sink so the caller can attribute tokens/turns to
+   *  the research phase. Fires once per file with that file's agent result. */
+  onUsage?: (
+    result: { usage?: { inputTokens: number; outputTokens: number }; turns?: number },
+  ) => void;
   /** Optional per-file lifecycle hook for stage-progress emission. */
   onFileStart?: (fileRel: string, index: number, total: number) => void;
   /** Optional handler for per-file errors (logged + recorded but does not
@@ -877,6 +886,7 @@ export async function runPerFileResearch(
         systemPrompt: filePrompt,
         cliSystemPrompt,
       });
+      opts.onUsage?.(agentResult);
       aggregated.push(...agentResult.findings);
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
@@ -918,6 +928,64 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       duration_ms: Date.now() - startTime,
       ...payload,
     });
+  };
+
+  // ── Truthful server-side phase timeline ──
+  // Each real top-level phase transition fires `phase_started` on the bus;
+  // `startPhase` closes the previously-open phase with a `phase_completed`
+  // carrying its wall-clock duration. Only phases that actually execute get
+  // an event (a skipped analyze/research/verify leaves no gap), and `index`
+  // is the 0-based execution order. Gated identically to `scan_completed` so
+  // local CLI runs stay quiet.
+  //
+  // Per-phase token/turn totals ride on `phase_completed` too. Every LLM agent
+  // run in this pipeline returns its own `{ usage, turns }`; `recordUsage`
+  // folds those into a pipeline-wide monotonic accumulator as each phase runs
+  // (return values, not events, so the concurrent verify wave sums exactly).
+  // `startPhase` snapshots the accumulator; `finishPhase` emits the delta —
+  // the real work THIS phase did. Phases that call no agent (prepare, analyze,
+  // report) leave the accumulator untouched → a truthful 0. Runtime paths that
+  // don't surface usage (CLI runtimes, legacy loop for tokens) contribute 0
+  // rather than a fabricated estimate.
+  const usageTotals = { inputTokens: 0, outputTokens: 0, turns: 0 };
+  const recordUsage = (
+    r?: { usage?: { inputTokens: number; outputTokens: number }; turns?: number } | null,
+  ): void => {
+    if (!r) return;
+    usageTotals.inputTokens += r.usage?.inputTokens ?? 0;
+    usageTotals.outputTokens += r.usage?.outputTokens ?? 0;
+    usageTotals.turns += r.turns ?? 0;
+  };
+  let phaseIndex = 0;
+  let openPhase:
+    | {
+        name: string;
+        index: number;
+        startedAt: number;
+        usageAtStart: { inputTokens: number; outputTokens: number; turns: number };
+      }
+    | null = null;
+  const finishPhase = (): void => {
+    if (!openPhase) return;
+    if (shouldEmitPipelineCloudEvents()) {
+      eventBus.emit("phase_completed", {
+        name: openPhase.name,
+        index: openPhase.index,
+        duration_ms: Date.now() - openPhase.startedAt,
+        input_tokens: usageTotals.inputTokens - openPhase.usageAtStart.inputTokens,
+        output_tokens: usageTotals.outputTokens - openPhase.usageAtStart.outputTokens,
+        turns: usageTotals.turns - openPhase.usageAtStart.turns,
+      });
+    }
+    openPhase = null;
+  };
+  const startPhase = (name: string): void => {
+    finishPhase();
+    const index = phaseIndex++;
+    openPhase = { name, index, startedAt: Date.now(), usageAtStart: { ...usageTotals } };
+    if (shouldEmitPipelineCloudEvents()) {
+      eventBus.emit("phase_started", { name, index });
+    }
   };
 
   // Initialize DB (optional, best-effort)
@@ -964,6 +1032,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   };
 
   // ── PHASE 1: PREPARE ──
+  startPhase("prepare");
   emit({ type: "stage:start", stage: "prepare", message: opts.resumeScanId ? "Re-preparing target for resume..." : "Preparing target..." });
 
   let prepared: PrepareResult;
@@ -1053,6 +1122,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
 
   try {
     // ── PHASE 2: ANALYZE (static analysis) ──
+    startPhase("analyze");
     emit({ type: "stage:start", stage: "analyze", message: "Running static analysis..." });
     logPipelineEvent("analyze", "stage_start");
 
@@ -1312,6 +1382,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     const canResumeResearchSession = existingResearchSession?.status === "paused";
     const canSkipResearch = existingPersistedFindings.length > 0 && !canResumeResearchSession;
 
+    startPhase("research");
     emit({
       type: "stage:start",
       stage: "research",
@@ -1455,6 +1526,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
               cliSystemPrompt:
                 "You are a security researcher performing an authorized source code audit. For EACH vulnerability you find, output it using the exact ---FINDING--- / ---END--- format specified in the prompt. Do NOT write prose analysis — only output structured finding blocks. If you find no vulnerabilities, say 'No vulnerabilities found.' and nothing else.",
             });
+            recordUsage(agentResult);
             findings = agentResult.findings;
           } else {
             findings = await runPerFileResearch({
@@ -1497,6 +1569,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                   agentSystemPrompt: systemPrompt,
                   cliSystemPrompt,
                 }),
+              onUsage: recordUsage,
               onFileStart: (fileRel, i, total) => {
                 emit({
                   type: "stage:start",
@@ -1540,6 +1613,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
             cliSystemPrompt:
               "You are a security researcher performing an authorized source code audit. For EACH vulnerability you find, output it using the exact ---FINDING--- / ---END--- format specified in the prompt. Do NOT write prose analysis — only output structured finding blocks. If you find no vulnerabilities, say 'No vulnerabilities found.' and nothing else.",
           });
+          recordUsage(agentResult);
           findings = agentResult.findings;
         }
       } catch (err) {
@@ -1579,6 +1653,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         existingVerifiedFindings.length === findings.length &&
         findings.length > 0;
 
+      startPhase("verify");
       emit({
         type: "stage:start",
         stage: "verify",
@@ -1682,6 +1757,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                 agentSystemPrompt: verifySystemPrompt,
                 cliSystemPrompt: "You are a blind verification agent. Read the file, trace the PoC, confirm or reject the vulnerability.",
               });
+              // Attribute this verify agent's tokens/turns to the verify phase.
+              // Safe under the concurrent findings.map: these are return-value
+              // sums, so interleaving never double-counts or races.
+              recordUsage(agentResult);
               const verifiedFindings = agentResult.findings;
 
               const confirmed = verifiedFindings.length > 0;
@@ -1812,7 +1891,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
 
     } // end of hasApiKey || hasCliRuntime else block
 
-    // ── BUILD REPORT ──
+    // ── PHASE 5: BUILD REPORT ──
+    startPhase("report");
     const confirmedFindings = findings.filter((f) => f.status !== "false-positive");
 
     // Public-advisory novelty gate (issue #851) on the OSS-package scan path.
@@ -1890,6 +1970,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           }
         : {}),
     };
+
+    // Close the report phase before the terminal scan_completed so the
+    // dashboard sees a fully-bracketed phase timeline.
+    finishPhase();
 
     emitPipelineScanCompleted("completed", {
       findings: confirmedFindings.length,

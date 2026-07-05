@@ -55,6 +55,13 @@ export interface AnalysisAgentResult {
   findings: Finding[];
   usage?: AnalysisTokenUsage;
   estimatedCostUsd?: number;
+  /**
+   * Number of agent-loop turns this run consumed. Populated by the loop
+   * branches that track it (native + legacy); the CLI-runtime and single-shot
+   * paths don't expose a multi-turn count, so it's left undefined there. Used
+   * by the pipeline to attribute per-phase turn totals.
+   */
+  turns?: number;
 }
 
 // ── Depth → maxTurns mapping ──
@@ -383,6 +390,7 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
         findings: agentState.findings,
         usage: agentState.totalUsage,
         estimatedCostUsd: agentState.estimatedCostUsd,
+        turns: agentState.turnCount,
       };
     }
 
@@ -423,6 +431,8 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
         estimatedCostUsd: result.usage
           ? estimateCost(result.usage, config.model)
           : undefined,
+        // Single-shot fallback = exactly one model round-trip.
+        turns: 1,
       };
     }
   }
@@ -476,6 +486,7 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
   });
 
   // Legacy loop doesn't track token usage / cost — those are populated
-  // only by the native API loop branch above.
-  return { findings: agentState.findings, usage: undefined, estimatedCostUsd: undefined };
+  // only by the native API loop branch above. It does count turns, so those
+  // are still attributable per-phase.
+  return { findings: agentState.findings, usage: undefined, estimatedCostUsd: undefined, turns: agentState.turnCount };
 }

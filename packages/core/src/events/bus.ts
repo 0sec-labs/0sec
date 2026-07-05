@@ -338,6 +338,49 @@ export interface DeltaPayload {
   seq: number;
 }
 
+// ── Pipeline phase events (server-side truthful phase timeline) ───────────
+//
+// The unified pipeline (`unified-pipeline.ts`) runs a fixed sequence of
+// top-level phases — prepare → analyze → research → verify → report — and
+// emits one `phase_started` at each REAL transition (skipped phases never
+// fire), plus a matching `phase_completed` carrying the wall-clock duration.
+//
+// Before this event existed the dashboard GUESSED phase boundaries client-
+// side by watching when a turn's `max_turns` changed (see live-trace.tsx
+// `TurnGroup.phaseStart` / `PhaseDivider`). That heuristic can be replaced by
+// reading `phase_started.payload.name` / `.index` directly. Rides the same
+// cloudEventSink → worker → orchestrator `scan_events` → SSE path as every
+// other bus event; the orchestrator accepts the free-form `event_type` and
+// the worker relay has no allow-list, so no cloud redeploy is required.
+
+export interface PhaseStartedPayload {
+  /** Canonical phase name: `prepare` | `analyze` | `research` | `verify` | `report`. */
+  name: string;
+  /** 0-based execution order of this phase within the scan (skipped phases leave no gap). */
+  index: number;
+  [k: string]: unknown;
+}
+
+export interface PhaseCompletedPayload {
+  name: string;
+  index: number;
+  /** Wall-clock duration of the phase in milliseconds. */
+  duration_ms: number;
+  /**
+   * LLM input tokens attributed to THIS phase (delta of the pipeline-wide
+   * cumulative usage between the phase's start and completion). 0 for phases
+   * that do no LLM work (prepare/analyze/report) and for runtime paths that
+   * don't surface token usage (CLI runtimes, legacy loop) — truthful, never
+   * synthesized.
+   */
+  input_tokens: number;
+  /** LLM output tokens attributed to this phase (same delta semantics). */
+  output_tokens: number;
+  /** Agent-loop turns attributed to this phase (same delta semantics). */
+  turns: number;
+  [k: string]: unknown;
+}
+
 /** Discriminated union of all events flowing through the bus. */
 export type PwnkitEvent =
   | { type: "step_started"; payload: StepStartedPayload }
@@ -357,7 +400,9 @@ export type PwnkitEvent =
   | { type: "skill_listed"; payload: SkillListedPayload }
   | { type: "untrusted_input_sanitized"; payload: UntrustedInputSanitizedPayload }
   | { type: "inline_validation"; payload: InlineValidationPayload }
-  | { type: "pov_oracle"; payload: PovOraclePayload };
+  | { type: "pov_oracle"; payload: PovOraclePayload }
+  | { type: "phase_started"; payload: PhaseStartedPayload }
+  | { type: "phase_completed"; payload: PhaseCompletedPayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = PwnkitEvent["type"];
