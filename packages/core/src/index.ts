@@ -161,6 +161,9 @@ export type { KnownNegative, NegativeMatch } from "./stages/hunt-negatives.js";
 export {
   kernelArchetypesPath,
   loadKernelArchetypes,
+  freebsdArchetypesPath,
+  loadFreebsdArchetypes,
+  FREEBSD_BARE_KERNEL_WORDS,
   needsKernelVerify,
   hypothesisOnly,
   filterArchetypes,
@@ -173,6 +176,7 @@ export {
 } from "./stages/archetype-catalog.js";
 export type {
   ArchetypeRoute,
+  ArchetypeDomain,
   KernelArchetype,
   ArchetypeFilter,
   ArchetypeCandidateOptions,

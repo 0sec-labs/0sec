@@ -15,8 +15,10 @@ import {
   archetypeToHuntBrief,
   candidateGrepPatterns,
   filterArchetypes,
+  FREEBSD_BARE_KERNEL_WORDS,
   generateArchetypeCandidates,
   hypothesisOnly,
+  loadFreebsdArchetypes,
   loadKernelArchetypes,
   needsKernelVerify,
   planArchetypeSweep,
@@ -243,5 +245,143 @@ describe("generateArchetypeCandidates + planArchetypeSweep (real grep over a tem
     // symbols at all — both are honest non-throwing outcomes.
     expect(() => result).not.toThrow();
     expect(result.plans.length + result.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+// ── FreeBSD archetype pack ───────────────────────────────────────────────────
+// Mirrors the Linux-pack test coverage above: the pack loads, has the
+// expected count/routes, archetypeToHuntBrief works on a FreeBSD archetype,
+// and candidateGrepPatterns emits FreeBSD symbols (copyout/copyin/malloc) —
+// NOT Linux ones — once the bare-word allow-list is supplied.
+
+describe("loadFreebsdArchetypes", () => {
+  it("loads all 10 FreeBSD-domain archetypes with unique uids under freebsd/", () => {
+    const archetypes = loadFreebsdArchetypes();
+    expect(archetypes).toHaveLength(10);
+    const uids = new Set(archetypes.map((a) => a.uid));
+    expect(uids.size).toBe(10);
+    for (const a of archetypes) {
+      expect(a.uid.startsWith("freebsd/")).toBe(true);
+      expect(a.name.length).toBeGreaterThan(0);
+      expect(a.pattern.length).toBeGreaterThan(0);
+      expect(a.detectionSignature.length).toBeGreaterThan(0);
+      expect(a.grounding.length).toBeGreaterThan(0);
+      expect(["kernel-static", "kernel-verify", "not-binary-detectable"]).toContain(a.route);
+    }
+  });
+
+  it("is cached (repeated calls return the same reference) and independent from the Linux cache", () => {
+    expect(loadFreebsdArchetypes()).toBe(loadFreebsdArchetypes());
+    const freebsdUids = new Set(loadFreebsdArchetypes().map((a) => a.uid));
+    const kernelUids = new Set(loadKernelArchetypes().map((a) => a.uid));
+    for (const uid of freebsdUids) expect(kernelUids.has(uid)).toBe(false);
+  });
+
+  it("route counts: 6 kernel-static / 4 kernel-verify / 0 not-binary-detectable", () => {
+    const archetypes = loadFreebsdArchetypes();
+    const counts = { "kernel-static": 0, "kernel-verify": 0, "not-binary-detectable": 0 };
+    for (const a of archetypes) counts[a.route]++;
+    expect(counts).toEqual({ "kernel-static": 6, "kernel-verify": 4, "not-binary-detectable": 0 });
+  });
+
+  it("covers the requested FreeBSD bug classes (copyout infoleak, copyin TOCTOU, malloc overflow, missing priv_check, ioctl OOB, free/uma_zfree UAF, sysctl OOB)", () => {
+    const ids = new Set(loadFreebsdArchetypes().map((a) => a.id));
+    for (const id of ["CP-01", "CP-02", "MA-01", "PRIV-01", "IOC-01", "UAF-01", "SYSCTL-01"]) {
+      expect(ids.has(id)).toBe(true);
+    }
+  });
+});
+
+describe("archetypeToHuntBrief on a FreeBSD archetype", () => {
+  it("produces a non-empty bugClass/pattern/fixReference", () => {
+    const a = loadFreebsdArchetypes().find((x) => x.id === "CP-01")!;
+    const brief = archetypeToHuntBrief(a);
+    expect(brief.bugClass).toContain(a.name);
+    expect(brief.bugClass).toContain(a.cwe);
+    expect(brief.pattern).toContain(a.pattern);
+    expect(brief.pattern).toContain(a.detectionSignature);
+    expect(brief.fixReference).toContain(a.uid);
+  });
+});
+
+describe("candidateGrepPatterns on the FreeBSD pack — FreeBSD symbols, not Linux ones", () => {
+  it("without bareWords still finds the underscored real FreeBSD symbols (e.g. priv_check, uma_zfree)", () => {
+    const priv = loadFreebsdArchetypes().find((x) => x.id === "PRIV-01")!;
+    const symbols = symbolsFromDetectionSignature(priv.detectionSignature);
+    expect(symbols).toContain("priv_check");
+    // Never a Linux-specific symbol.
+    expect(symbols).not.toContain("copy_from_user");
+    expect(symbols).not.toContain("kmalloc");
+
+    const uaf = loadFreebsdArchetypes().find((x) => x.id === "UAF-01")!;
+    expect(symbolsFromDetectionSignature(uaf.detectionSignature)).toContain("uma_zfree");
+  });
+
+  it("bare copyout/copyin/malloc are NOT matched without the bare-word allow-list (Linux path stays unaffected by default)", () => {
+    const cp01 = loadFreebsdArchetypes().find((x) => x.id === "CP-01")!;
+    const symbols = symbolsFromDetectionSignature(cp01.detectionSignature);
+    expect(symbols).not.toContain("copyout");
+  });
+
+  it("with FREEBSD_BARE_KERNEL_WORDS, candidateGrepPatterns emits copyout/copyin/malloc symbols", () => {
+    const cp01 = loadFreebsdArchetypes().find((x) => x.id === "CP-01")!;
+    const symbols = symbolsFromDetectionSignature(cp01.detectionSignature, FREEBSD_BARE_KERNEL_WORDS);
+    expect(symbols).toContain("copyout");
+
+    const ma01 = loadFreebsdArchetypes().find((x) => x.id === "MA-01")!;
+    const maSymbols = symbolsFromDetectionSignature(ma01.detectionSignature, FREEBSD_BARE_KERNEL_WORDS);
+    expect(maSymbols).toContain("malloc");
+    expect(maSymbols).toContain("mallocarray");
+
+    const patterns = candidateGrepPatterns(cp01, FREEBSD_BARE_KERNEL_WORDS);
+    expect(patterns.length).toBeGreaterThan(0);
+    expect(patterns.some((p) => p.includes("copyout"))).toBe(true);
+  });
+});
+
+describe("generateArchetypeCandidates + planArchetypeSweep on the FreeBSD pack (real grep, temp fixture tree)", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pwnkit-freebsd-archetype-test-"));
+    writeFileSync(
+      join(dir, "uninit_leak.c"),
+      "int copyout_ucontext(ucontext_t *uc) { return copyout(uc, 0, sizeof(*uc)); }\n",
+    );
+    writeFileSync(join(dir, "unrelated.c"), "int add(int a, int b) { return a + b; }\n");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("finds the file containing the archetype's bare-word symbol (copyout) when bareWords is supplied", () => {
+    const cp01 = loadFreebsdArchetypes().find((x) => x.id === "CP-01")!;
+    const candidates = generateArchetypeCandidates(cp01, dir, { bareWords: FREEBSD_BARE_KERNEL_WORDS });
+    expect(candidates.map((c) => c.path)).toContain("uninit_leak.c");
+    expect(candidates.map((c) => c.path)).not.toContain("unrelated.c");
+  });
+
+  it("planArchetypeSweep with domain: 'freebsd' + force sweeps the FreeBSD pack, not the Linux one", () => {
+    const result = planArchetypeSweep({
+      sourceRoot: dir,
+      domain: "freebsd",
+      uids: ["freebsd/CP-01"],
+      bareWords: FREEBSD_BARE_KERNEL_WORDS,
+      force: true,
+    });
+    expect(result.plans.length).toBe(1);
+    const plan = result.plans[0]!;
+    expect(plan.archetype.uid).toBe("freebsd/CP-01");
+    expect(plan.candidates.map((c) => c.path)).toContain("uninit_leak.c");
+  });
+
+  it("planArchetypeSweep still defaults to the kernel (Linux) domain when domain is omitted", () => {
+    const result = planArchetypeSweep({
+      sourceRoot: dir,
+      uids: ["freebsd/CP-01"], // a freebsd uid does not exist in the kernel (Linux) pack
+      force: true,
+    });
+    expect(result.plans).toEqual([]);
   });
 });

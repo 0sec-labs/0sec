@@ -91,18 +91,8 @@ interface RawArchetype {
   route: string;
 }
 
-let _cache: KernelArchetype[] | null = null;
-
-/** Absolute path to the bundled kernel-archetype data file (src and dist both carry it). */
-export function kernelArchetypesPath(): string {
-  return fileURLToPath(new URL("./data/kernel-archetypes.json", import.meta.url));
-}
-
-/** Load the 34 kernel-domain archetypes (cached; pure data — never executes anything). */
-export function loadKernelArchetypes(): KernelArchetype[] {
-  if (_cache) return _cache;
-  const raw = JSON.parse(readFileSync(kernelArchetypesPath(), "utf8")) as { archetypes: RawArchetype[] };
-  _cache = raw.archetypes.map((a) => ({
+function mapRawArchetypes(raw: RawArchetype[]): KernelArchetype[] {
+  return raw.map((a) => ({
     uid: a.uid,
     id: a.id,
     name: a.name,
@@ -115,8 +105,56 @@ export function loadKernelArchetypes(): KernelArchetype[] {
     engineLens: a.engine_lens,
     route: a.route as ArchetypeRoute,
   }));
+}
+
+let _cache: KernelArchetype[] | null = null;
+
+/** Absolute path to the bundled kernel-archetype data file (src and dist both carry it). */
+export function kernelArchetypesPath(): string {
+  return fileURLToPath(new URL("./data/kernel-archetypes.json", import.meta.url));
+}
+
+/** Load the 34 kernel-domain archetypes (cached; pure data — never executes anything). */
+export function loadKernelArchetypes(): KernelArchetype[] {
+  if (_cache) return _cache;
+  const raw = JSON.parse(readFileSync(kernelArchetypesPath(), "utf8")) as { archetypes: RawArchetype[] };
+  _cache = mapRawArchetypes(raw.archetypes);
   return _cache;
 }
+
+let _freebsdCache: KernelArchetype[] | null = null;
+
+/** Absolute path to the bundled FreeBSD-archetype data file (src and dist both carry it). */
+export function freebsdArchetypesPath(): string {
+  return fileURLToPath(new URL("./data/freebsd-archetypes.json", import.meta.url));
+}
+
+/**
+ * Load the FreeBSD-domain archetype pack (cached; pure data — never executes
+ * anything). Same schema/shape as `loadKernelArchetypes`, but grounded in
+ * FreeBSD idioms (copyout/copyin, malloc(9)/mallocarray, priv_check, sysctl,
+ * d_ioctl_t, uma_zfree) instead of Linux ones — see the data file's
+ * `provenance` field for the honest caveat that no FreeBSD kernel-verify
+ * (build+boot+KASAN) lane exists yet in this repo.
+ */
+export function loadFreebsdArchetypes(): KernelArchetype[] {
+  if (_freebsdCache) return _freebsdCache;
+  const raw = JSON.parse(readFileSync(freebsdArchetypesPath(), "utf8")) as { archetypes: RawArchetype[] };
+  _freebsdCache = mapRawArchetypes(raw.archetypes);
+  return _freebsdCache;
+}
+
+/** Which archetype library `planArchetypeSweep` draws from. Defaults to "kernel" (Linux) — unchanged behavior. */
+export type ArchetypeDomain = "kernel" | "freebsd";
+
+/**
+ * Curated allow-list of bare (no-underscore) FreeBSD kernel primitives worth
+ * grepping verbatim — see `symbolsFromDetectionSignature`'s header for why
+ * the default underscore-shape heuristic misses these. Pass to
+ * `candidateGrepPatterns` / `generateArchetypeCandidates` / `planArchetypeSweep`
+ * when sweeping the FreeBSD pack; Linux callers that omit this stay unaffected.
+ */
+export const FREEBSD_BARE_KERNEL_WORDS = ["copyout", "copyin", "copyinstr", "malloc", "mallocarray"] as const;
 
 /** True when the class needs the kernel-verify lane (build+boot+KASAN) to go from candidate to proven. */
 export function needsKernelVerify(a: KernelArchetype): boolean {
@@ -190,14 +228,28 @@ const _STOPWORDS = new Set([
  * incidental English phrase does. This is intentionally conservative (favors
  * precision over recall): a symbol missed here just means that archetype
  * yields fewer/no grep candidates, never a wrong one.
+ *
+ * `bareWords` (optional, default none — existing/Linux callers are
+ * byte-for-byte unaffected) is a curated allow-list of exact, unambiguous
+ * kernel API names to match verbatim even though they DON'T have the
+ * underscore shape above. FreeBSD's core copy-to/from-user and allocation
+ * primitives are bare single words (`copyout`, `copyin`, `malloc`) unlike
+ * Linux's `copy_to_user` / `kmalloc`, so the heuristic above would silently
+ * yield zero candidates for them without this escape hatch. Each allow-listed
+ * word is curated by hand precisely because it is NOT ordinary English (see
+ * why bare `free` is deliberately left off `FREEBSD_BARE_KERNEL_WORDS` — too
+ * common in prose/comments to be a safe bare-word match).
  */
-export function symbolsFromDetectionSignature(text: string): string[] {
+export function symbolsFromDetectionSignature(text: string, bareWords: readonly string[] = []): string[] {
   const found = text.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [];
   const out = new Set<string>();
   for (const raw of found) {
     if (raw.length < 6) continue;
     if (_STOPWORDS.has(raw)) continue;
     out.add(raw);
+  }
+  for (const bare of bareWords) {
+    if (new RegExp(`\\b${bare}\\b`).test(text)) out.add(bare);
   }
   return [...out].sort();
 }
@@ -209,9 +261,12 @@ export function symbolsFromDetectionSignature(text: string): string[] {
  * empty array when no reliable symbol was extracted (an honest "no static
  * grep signal" — the archetype still exists as a brief for a human/LLM-driven
  * hunt, it just cannot self-seed candidates this way).
+ *
+ * `bareWords` forwards to `symbolsFromDetectionSignature` (see its header) —
+ * pass `FREEBSD_BARE_KERNEL_WORDS` when sweeping the FreeBSD pack.
  */
-export function candidateGrepPatterns(a: KernelArchetype): string[] {
-  const symbols = symbolsFromDetectionSignature(a.detectionSignature);
+export function candidateGrepPatterns(a: KernelArchetype, bareWords: readonly string[] = []): string[] {
+  const symbols = symbolsFromDetectionSignature(a.detectionSignature, bareWords);
   if (symbols.length === 0) return [];
   // Cap alternation width so a single pattern stays a readable, auditable
   // grep invocation; split into multiple patterns rather than one giant one.
@@ -244,6 +299,8 @@ export interface ArchetypeCandidateOptions {
   includeGlobs?: string[];
   /** Cap the candidate file list per archetype (default 20). */
   maxCandidates?: number;
+  /** Bare-word allow-list forwarded to `candidateGrepPatterns` (default none — see its header). */
+  bareWords?: readonly string[];
 }
 
 /**
@@ -260,7 +317,7 @@ export function generateArchetypeCandidates(
 ): HuntCandidate[] {
   const includeGlobs = opts.includeGlobs ?? ["*.c", "*.h"];
   const maxCandidates = opts.maxCandidates ?? 20;
-  const patterns = candidateGrepPatterns(a);
+  const patterns = candidateGrepPatterns(a, opts.bareWords ?? []);
   if (patterns.length === 0) return [];
 
   const hits = new Map<string, number>();
@@ -294,6 +351,8 @@ export interface ArchetypeSweepOptions extends ArchetypeFilter, ArchetypeCandida
   sourceRoot: string;
   /** Skip the env gate (tests only — production callers must respect `archetypeSweepEnabled()`). */
   force?: boolean;
+  /** Which archetype library to sweep. Defaults to "kernel" (Linux, unchanged behavior). */
+  domain?: ArchetypeDomain;
 }
 
 export interface ArchetypeSweepResult {
@@ -311,6 +370,12 @@ export interface ArchetypeSweepResult {
  * Gated by `archetypeSweepEnabled()` (default OFF): when disabled and
  * `opts.force` is not set, returns no plans and a warning explaining why,
  * rather than silently doing nothing.
+ *
+ * `opts.domain` picks the library: "kernel" (default, Linux, unchanged) or
+ * "freebsd" (`loadFreebsdArchetypes()`). Callers sweeping the FreeBSD pack
+ * should also pass `bareWords: FREEBSD_BARE_KERNEL_WORDS` (see
+ * `symbolsFromDetectionSignature`'s header) to actually surface its
+ * copyout/copyin/malloc-shaped candidates.
  */
 export function planArchetypeSweep(opts: ArchetypeSweepOptions): ArchetypeSweepResult {
   if (!opts.force && !archetypeSweepEnabled()) {
@@ -320,10 +385,11 @@ export function planArchetypeSweep(opts: ArchetypeSweepOptions): ArchetypeSweepR
     };
   }
   const warnings: string[] = [];
-  const selected = filterArchetypes(loadKernelArchetypes(), opts);
+  const library = opts.domain === "freebsd" ? loadFreebsdArchetypes() : loadKernelArchetypes();
+  const selected = filterArchetypes(library, opts);
   const plans: ArchetypeSweepPlan[] = [];
   for (const archetype of selected) {
-    const grepPatterns = candidateGrepPatterns(archetype);
+    const grepPatterns = candidateGrepPatterns(archetype, opts.bareWords ?? []);
     if (grepPatterns.length === 0) {
       warnings.push(`${archetype.uid}: no extractable symbols in detectionSignature — no self-seeded candidates`);
       continue;

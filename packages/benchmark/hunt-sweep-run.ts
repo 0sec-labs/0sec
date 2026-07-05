@@ -16,15 +16,25 @@
 import {
   archetypeSweepEnabled,
   filterArchetypes,
+  FREEBSD_BARE_KERNEL_WORDS,
+  loadFreebsdArchetypes,
   loadKernelArchetypes,
   makeSkepticVerifier,
   planArchetypeSweep,
+  type ArchetypeDomain,
   type ArchetypeRoute,
 } from "@pwnkit/core";
 import { resolveHuntCorpusPath } from "./src/hunt-corpus.js";
 import { runArchetypeSweep } from "./src/hunt-sweep.js";
 
-const SRC = process.env.HUNT_SRC || "/root/linux-6.12.93";
+// "kernel" (default) = the 34-entry Linux pack against /root/linux-6.12.93.
+// "freebsd" = the FreeBSD-idiom pack (copyout/copyin/malloc/priv_check/sysctl)
+// against a FreeBSD source checkout (bench:/root/freebsd-src) — see
+// archetype-catalog.ts's data/freebsd-archetypes.json provenance note: no
+// FreeBSD kernel-verify (build+boot+KASAN) lane exists yet, so treat any
+// "kernel-verify"-route hit as a hypothesis for human/skeptic review.
+const DOMAIN = (process.env.HUNT_SWEEP_DOMAIN || "kernel").trim() as ArchetypeDomain;
+const SRC = process.env.HUNT_SRC || (DOMAIN === "freebsd" ? "/root/freebsd-src" : "/root/linux-6.12.93");
 const CONC = Number(process.env.HUNT_CONC || 3);
 const MAX_FILE_LINES = Number(process.env.HUNT_MAX_FILE_LINES || 2000);
 const MAX_ARCHETYPES = Number(process.env.HUNT_SWEEP_MAX_ARCHETYPES || 8);
@@ -39,6 +49,11 @@ const ROUTES = (process.env.HUNT_SWEEP_ROUTES || "kernel-static")
 const UIDS = process.env.HUNT_SWEEP_UIDS
   ? process.env.HUNT_SWEEP_UIDS.split(",").map((s) => s.trim()).filter(Boolean)
   : undefined;
+// FreeBSD's core copy/alloc primitives (copyout/copyin/malloc) are bare
+// words that the default symbol-extraction heuristic misses (see
+// symbolsFromDetectionSignature's header) — pass the curated allow-list only
+// on the FreeBSD path so the Linux sweep stays byte-for-byte unaffected.
+const BARE_WORDS = DOMAIN === "freebsd" ? FREEBSD_BARE_KERNEL_WORDS : undefined;
 
 /** Same parse-guard pattern as `hunt-run.ts`: unset/invalid env falls back to the runHuntScan default. */
 function huntBestOfN(): number | undefined {
@@ -58,7 +73,7 @@ const JUDGE_TOP_K = huntJudgeTopK();
 const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
 
 console.log(
-  `[hunt-sweep] src=${SRC} conc=${CONC} maxFileLines=${MAX_FILE_LINES} maxArchetypes=${MAX_ARCHETYPES} ` +
+  `[hunt-sweep] domain=${DOMAIN} src=${SRC} conc=${CONC} maxFileLines=${MAX_FILE_LINES} maxArchetypes=${MAX_ARCHETYPES} ` +
     `routes=${ROUTES.join(",")}${UIDS ? ` uids=${UIDS.join(",")}` : ""}`,
 );
 
@@ -72,7 +87,8 @@ if (!archetypeSweepEnabled()) {
 
 // 1. Pick the archetype subset: an explicit uid pin wins over the route filter.
 const filter = UIDS ? { uids: UIDS } : { routes: ROUTES };
-const selected = filterArchetypes(loadKernelArchetypes(), filter).slice(0, MAX_ARCHETYPES);
+const library = DOMAIN === "freebsd" ? loadFreebsdArchetypes() : loadKernelArchetypes();
+const selected = filterArchetypes(library, filter).slice(0, MAX_ARCHETYPES);
 console.log(`[hunt-sweep] selected ${selected.length} archetype(s): ${selected.map((a) => a.uid).join(", ")}`);
 
 if (selected.length === 0) {
@@ -83,7 +99,9 @@ if (selected.length === 0) {
 // 2. Plan: grep the source tree for each archetype's candidate sites.
 const { plans, warnings: planWarnings } = planArchetypeSweep({
   sourceRoot: SRC,
+  domain: DOMAIN,
   uids: selected.map((a) => a.uid),
+  ...(BARE_WORDS ? { bareWords: BARE_WORDS } : {}),
 });
 if (planWarnings.length) console.log("[hunt-sweep] plan warnings:", JSON.stringify(planWarnings));
 
