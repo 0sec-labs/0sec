@@ -9,7 +9,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -17,6 +23,7 @@ import {
   collectFromRunsFile,
   normalizeStep,
   toJsonl,
+  appendWeaponizationRun,
   ESCALATION_RUNGS,
   type WeaponizationSample,
 } from "./kernel-weaponization-collector.js";
@@ -199,5 +206,113 @@ describe("toJsonl + collectFromRunsFile", () => {
   it("exposes the canonical rung ladder weakest → strongest", () => {
     expect(ESCALATION_RUNGS[0]).toBe("none");
     expect(ESCALATION_RUNGS[ESCALATION_RUNGS.length - 1]).toBe("root");
+  });
+});
+
+// ─── appendWeaponizationRun — the inline auto-populate path (#1126) ──
+
+describe("appendWeaponizationRun (inline auto-populate)", () => {
+  it("appends a real root run AND an oracle-REFUSED negative to the JSONL", () => {
+    const corpus = join(tmp, "kernel-weaponization-v1.jsonl");
+    expect(existsSync(corpus)).toBe(false);
+
+    // A genuine root (positive) run.
+    const rooted = appendWeaponizationRun(
+      {
+        run_id: "climb-1-boot1",
+        finding_id: "f-root",
+        result: {
+          weaponization: {
+            highestRung: "root",
+            lpeAchieved: true,
+            reclaimLanded: true,
+            detail: {
+              perStep: [
+                {
+                  nodeId: "root-tail",
+                  targetRung: "root",
+                  reachedRung: "root",
+                  reason: "root credited",
+                },
+              ],
+            },
+          },
+        },
+      },
+      { corpusPath: corpus },
+    );
+
+    // A non-root boot — itself a labeled negative — whose per-step record is an
+    // oracle-REFUSED row (reachedRung < targetRung).
+    const refused = appendWeaponizationRun(
+      {
+        run_id: "climb-1-boot2",
+        finding_id: "f-refused",
+        result: {
+          weaponization: {
+            highestRung: "arb-write",
+            lpeAchieved: false,
+            reclaimLanded: true,
+            detail: {
+              perStep: [
+                {
+                  nodeId: "root-tail",
+                  targetRung: "root",
+                  reachedRung: "arb-write",
+                  reason: "REFUSED: no kaslr leak",
+                },
+              ],
+            },
+          },
+        },
+      },
+      { corpusPath: corpus },
+    );
+
+    expect(rooted).toBe(true);
+    expect(refused).toBe(true);
+
+    const lines = readFileSync(corpus, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    const rows = lines.map((l) => JSON.parse(l) as WeaponizationSample);
+
+    expect(rows[0].label.lpeAchieved).toBe(true);
+    expect(rows[0].source).toBe("climb-1-boot1");
+
+    // The negative row is preserved with its REFUSED per-step verdict.
+    expect(rows[1].label.lpeAchieved).toBe(false);
+    expect(rows[1].label.highestRung).toBe("arb-write");
+    const refusedSteps = rows[1].label.perStep.filter((p) => p.refused);
+    expect(refusedSteps).toHaveLength(1);
+    expect(rows[1].label.refusedReasons).toEqual(["REFUSED: no kaslr leak"]);
+  });
+
+  it("skips a run with no recognizable outcome and never creates the file", () => {
+    const corpus = join(tmp, "empty.jsonl");
+    const wrote = appendWeaponizationRun(
+      { notes: "plain verify, no weaponization" },
+      { corpusPath: corpus },
+    );
+    expect(wrote).toBe(false);
+    expect(existsSync(corpus)).toBe(false);
+  });
+
+  it("is best-effort — an unwritable path is swallowed, not thrown", () => {
+    // A path whose parent is an existing FILE (not a dir) makes mkdir/write
+    // fail; the helper must report false, not throw.
+    const asFile = join(tmp, "afile");
+    writeFileSync(asFile, "x");
+    const logged: string[] = [];
+    const wrote = appendWeaponizationRun(
+      {
+        finding_id: "f-x",
+        highest_rung: "reclaim",
+        lpe_achieved: false,
+        per_step: [],
+      },
+      { corpusPath: join(asFile, "nested", "corpus.jsonl"), logger: (l) => logged.push(l) },
+    );
+    expect(wrote).toBe(false);
+    expect(logged.some((l) => l.includes("append skipped"))).toBe(true);
   });
 });

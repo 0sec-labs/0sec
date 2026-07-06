@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./kernel-weaponization-collector": {
+      "types": "./dist/kernel-weaponization-collector.d.ts",
+      "default": "./dist/kernel-weaponization-collector.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "bench": "tsx src/runner.ts",

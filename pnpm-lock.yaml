@@ -88,6 +88,9 @@ importers:
       '@opentui/react':
         specifier: 0.1.99
         version: 0.1.99(react-devtools-core@7.0.1)(react@19.2.6)(stage-js@1.0.2)(typescript@5.9.3)(web-tree-sitter@0.25.10)(ws@8.21.0)
+      '@pwnkit/benchmark':
+        specifier: workspace:*
+        version: link:../benchmark
       '@pwnkit/core':
         specifier: workspace:*
         version: link:../core

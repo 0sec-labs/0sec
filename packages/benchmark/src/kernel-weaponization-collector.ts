@@ -41,10 +41,11 @@
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -268,6 +269,68 @@ export function toJsonl(sample: WeaponizationSample): string {
  */
 export const KERNEL_WEAPONIZATION_CORPUS_PATH =
   "results/kernel-weaponization-v1.jsonl";
+
+/**
+ * Resolve the corpus output path. Precedence (first wins): an explicit
+ * `override` → the `KERNEL_WEAPONIZATION_CORPUS_PATH` env → the package-relative
+ * default (`results/kernel-weaponization-v1.jsonl`). A relative override is
+ * resolved against the process CWD (standard CLI behaviour); the default is
+ * resolved against the benchmark package root so the committed receipt is
+ * always written in the same place regardless of who invokes it. Mirrors
+ * `resolveCorpusPath` in `cybergym-runner.ts`.
+ */
+export function resolveKernelWeaponizationCorpusPath(
+  override?: string,
+  packageRoot: string = join(__dirname, ".."),
+): string {
+  const requested = override ?? process.env.KERNEL_WEAPONIZATION_CORPUS_PATH;
+  if (requested && requested.length > 0) {
+    return isAbsolute(requested) ? requested : join(process.cwd(), requested);
+  }
+  return join(packageRoot, KERNEL_WEAPONIZATION_CORPUS_PATH);
+}
+
+/**
+ * Append a SINGLE weaponization run to the corpus INLINE, the moment its
+ * outcome is produced — the auto-populate path (issue #1126) that makes this
+ * corpus fill itself the way `cybergym-runner.ts` fills `cybergym-v1.jsonl`,
+ * instead of relying on the manual `--runs` batch extraction that was never run.
+ *
+ * `run` is any object `collectSampleFromRun` understands (the nested
+ * `result.weaponization` shape or the flat CLI shape). Oracle-REFUSED negatives
+ * ride along inside `label.perStep[]` exactly as the batch collector emits them
+ * — a run that did not reach root is itself a labeled negative. The tuple
+ * shaping + serialization are REUSED from `collectSampleFromRun` / `toJsonl`;
+ * this function only owns the benchmark-relative path + append semantics.
+ *
+ * BEST-EFFORT by contract: any failure (unwritable path, malformed run) is
+ * swallowed and reported to `logger` — a corpus-write must NEVER break the
+ * weaponization run that produced the tuple. Returns true iff a row was written.
+ */
+export function appendWeaponizationRun(
+  run: unknown,
+  opts: { corpusPath?: string; logger?: (line: string) => void } = {},
+): boolean {
+  try {
+    const sample = collectSampleFromRun(run);
+    if (!sample) return false; // no recognizable outcome — nothing to append
+    const corpus = resolveKernelWeaponizationCorpusPath(opts.corpusPath);
+    const dir = dirname(corpus);
+    if (dir && dir !== ".") mkdirSync(dir, { recursive: true });
+    const line = toJsonl(sample) + "\n";
+    if (existsSync(corpus)) {
+      appendFileSync(corpus, line);
+    } else {
+      writeFileSync(corpus, line);
+    }
+    return true;
+  } catch (err) {
+    opts.logger?.(
+      `[weaponization-corpus] append skipped: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
+}
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
