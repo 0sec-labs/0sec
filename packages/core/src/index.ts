@@ -681,6 +681,30 @@ export type {
   EnumerateAttackSurfacesOptions,
 } from "./kernel/index.js";
 
+// Syzbot invalid / auto-closed queue mining (LPE-hunt upgrade #0) — a net-new
+// bug-supply channel that mines syzbot's DISCARDED reports (invalid / no-repro /
+// moderation) into ranked hunt candidates. Ingestion + candidate-mapping only;
+// the dynamic repro is handed to the existing (bench-gated) kernel-vm path.
+export {
+  DEFAULT_TARGET_SUBSYSTEMS,
+  parseListingRow,
+  parseListing,
+  parseBugDetailKernelVersion,
+  rankCandidates,
+  syzbotQueueBrief,
+  toHuntCandidate,
+  toHuntCandidates,
+  defaultSyzbotFetcher,
+  mineSyzbotQueue,
+} from "./kernel/index.js";
+export type {
+  SyzbotFetcher,
+  SyzbotBucket,
+  SyzbotCandidate,
+  SyzbotQueueMineOptions,
+  SyzbotQueueMineResult,
+} from "./kernel/index.js";
+
 // Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
 // primitive strategy library + C templates, deterministic success oracle,
 // kernel-VM harness, and the control-demo probe that backs `attemptControlDemo`.

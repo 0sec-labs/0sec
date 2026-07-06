@@ -169,6 +169,31 @@ export type {
   PatchToPocOptions,
 } from "./patch-to-poc.js";
 
+// Syzbot invalid / auto-closed queue mining (LPE-hunt upgrade #0) — a net-new
+// bug-SUPPLY channel. Ingestion + candidate-mapping only: fetch syzbot's
+// discarded bucket listings, parse into ranked candidates, and map to
+// hunt-scan HuntCandidate[] / HuntBrief for the existing (bench-gated) repro
+// path. Deterministic HTML parsing, injected fetcher (offline-testable).
+export {
+  DEFAULT_TARGET_SUBSYSTEMS,
+  parseListingRow,
+  parseListing,
+  parseBugDetailKernelVersion,
+  rankCandidates,
+  syzbotQueueBrief,
+  toHuntCandidate,
+  toHuntCandidates,
+  defaultSyzbotFetcher,
+  mineSyzbotQueue,
+} from "./syzbot-queue-mine.js";
+export type {
+  SyzbotFetcher,
+  SyzbotBucket,
+  SyzbotCandidate,
+  SyzbotQueueMineOptions,
+  SyzbotQueueMineResult,
+} from "./syzbot-queue-mine.js";
+
 // Weaponization pipeline — engine bricks (ADR-055 Phase 1). Escalation ladder,
 // primitive strategy library + C templates, deterministic success oracle,
 // kernel-VM harness, and the control-demo probe. P2 (0cloud dispatch) and P3
