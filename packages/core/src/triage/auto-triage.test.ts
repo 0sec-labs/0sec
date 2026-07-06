@@ -163,6 +163,46 @@ describe("reachabilityGate", () => {
     expect(v.verdict).toBe("drop");
   });
 
+  it("DROPs a nested wireless-driver bug (carl9170, drivers/net/wireless)", () => {
+    const finding = kernelFinding({
+      title: "Linux kernel kasan-oob: carl9170_cmd_response in drivers/net/wireless",
+      analysis: "Subsystem: drivers/net/wireless",
+    });
+    const v = reachabilityGate(finding);
+    expect(v.tier).toBe("needs-hardware");
+    expect(v.verdict).toBe("drop");
+  });
+
+  it("DROPs a nested wireless-driver bug (mwifiex, drivers/net/wireless)", () => {
+    const finding = kernelFinding({
+      title: "Linux kernel kasan-oob: mwifiex_update_bss in drivers/net/wireless",
+      analysis: "Subsystem: drivers/net/wireless",
+    });
+    const v = reachabilityGate(finding);
+    expect(v.tier).toBe("needs-hardware");
+    expect(v.verdict).toBe("drop");
+  });
+
+  it("DROPs a nested HID-driver bug (hid-multitouch, drivers/hid)", () => {
+    const finding = kernelFinding({
+      title: "Linux kernel kasan-oob: mt_report in drivers/hid",
+      analysis: "Subsystem: drivers/hid",
+    });
+    const v = reachabilityGate(finding);
+    expect(v.tier).toBe("needs-hardware");
+    expect(v.verdict).toBe("drop");
+  });
+
+  it("does NOT drop a genuinely-local char driver as needs-hardware", () => {
+    const finding = kernelFinding({
+      title: "Linux kernel kasan-uaf: local_char_ioctl in drivers/char",
+      analysis: "Subsystem: drivers/char",
+    });
+    const v = reachabilityGate(finding);
+    expect(v.tier).not.toBe("needs-hardware");
+    expect(v.verdict).not.toBe("drop");
+  });
+
   it("DROPs a CAP_SYS_ADMIN / netfilter-gated surface", () => {
     const finding = kernelFinding({
       title: "Linux kernel kasan-oob: nft_do_chain in net/netfilter",

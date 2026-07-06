@@ -319,6 +319,32 @@ const REMOTE_SUBSYSTEMS = new Set(["net/tcp", "net/udp", "net/ip", "net/sctp"]);
 
 const CONFIG_TOKEN = /\bCONFIG_[A-Z0-9_]+\b/g;
 
+// Driver subtrees that require a physical/adjacent hardware device (peripheral,
+// radio NIC, HID device, GPU/display, media capture) rather than a local
+// unprivileged process. Matched as SUBTREE prefixes so nested paths are covered
+// (e.g. drivers/net/wireless/ath/carl9170, drivers/hid/hid-multitouch) — an
+// exact `drivers/hid` or `net/wireless` match alone under-drops them. Kept
+// narrow on purpose: local surfaces (drivers/char, drivers/tty) and software
+// net drivers (drivers/net/tun, drivers/net/ppp) are NOT hardware-gated and
+// must stay reachable. Sound (ALSA seq) is likewise excluded — unprivileged
+// local, not hardware.
+const HARDWARE_DRIVER_SUBTREES = [
+  "drivers/usb",
+  "drivers/bluetooth",
+  "drivers/gpu",
+  "drivers/media",
+  "drivers/hid",
+  "drivers/net/wireless",
+  "drivers/net/ethernet",
+  "net/wireless",
+];
+
+function isHardwareSubtree(subsystem: string): boolean {
+  return HARDWARE_DRIVER_SUBTREES.some(
+    (prefix) => subsystem === prefix || subsystem.startsWith(prefix + "/"),
+  );
+}
+
 /**
  * Check 3: classify reachability tier and recommend keep-vs-drop for LPE.
  *
@@ -392,11 +418,7 @@ export function reachabilityGate(
   // Sound (ALSA seq) is deliberately excluded — it is an unprivileged local
   // surface, not hardware-gated.
   if (
-    subsystem.startsWith("drivers/usb") ||
-    subsystem.startsWith("drivers/bluetooth") ||
-    subsystem.startsWith("drivers/gpu") ||
-    subsystem.startsWith("drivers/media") ||
-    subsystem === "net/wireless" ||
+    isHardwareSubtree(subsystem) ||
     /\b(usb_[a-z]|hci_[a-z]|hid_[a-z]|ieee80211|cfg80211|nl80211|firmware image)\b/i.test(
       lower,
     )
