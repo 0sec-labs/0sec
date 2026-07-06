@@ -6,14 +6,20 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  badFixLeadToBrief,
   familyStem,
+  findBadFixes,
   huntIncompleteFixSiblings,
   incompleteFixLeadToFinding,
   siblingDefsForStem,
 } from "./incomplete-fix-hunt.js";
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" });
+function git(cwd: string, args: string[], env?: Record<string, string>): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    ...(env ? { env: { ...process.env, ...env } } : {}),
+  });
 }
 
 const FILE = "net/tipc/crypto.c";
@@ -107,6 +113,76 @@ describe("kernel/incomplete-fix-hunt", () => {
     const notGit = mkdtempSync(join(tmpdir(), "pwnkit-incfix-soft-"));
     try {
       expect(huntIncompleteFixSiblings({ tree: notGit })).toEqual([]);
+    } finally {
+      rmSync(notGit, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("kernel/incomplete-fix-hunt — bad-fix (fix-of-fix) ingest", () => {
+  const SFQ = "net/sched/sch_sfq.c";
+  let repo: string;
+
+  /** Commit `content` to SFQ with a fixed committer/author date. */
+  function commitOn(dateIso: string, subject: string, content: string): void {
+    writeFileSync(join(repo, SFQ), content);
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", subject], {
+      GIT_AUTHOR_DATE: dateIso,
+      GIT_COMMITTER_DATE: dateIso,
+    });
+  }
+
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "pwnkit-badfix-"));
+    git(repo, ["init", "-q"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    git(repo, ["config", "commit.gpgsign", "false"]);
+    execFileSync("mkdir", ["-p", join(repo, "net/sched")]);
+
+    // Three security fixes on the SAME file. The last two are 5 days apart
+    // (within the 30-day window => a bad-fix pair); the first is ~90 days before
+    // the second (outside the window => NOT paired with it).
+    commitOn("2026-04-01T00:00:00", "net/sched: sch_sfq: initial use-after-free fix", "v1\n");
+    commitOn("2026-06-27T00:00:00", "net/sched: sch_sfq: fix use-after-free in enqueue", "v2\n");
+    commitOn("2026-07-02T00:00:00", "net/sched: sch_sfq: fix use-after-free again", "v3\n");
+  });
+
+  afterAll(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("flags a second security fix that lands within N days of a prior one", () => {
+    const leads = findBadFixes({ tree: repo, paths: ["net/sched"], withinDays: 30 });
+    // Only the 5-day pair qualifies; the 90-day gap does not.
+    expect(leads.length).toBe(1);
+    const lead = leads[0]!;
+    expect(lead.file).toBe(SFQ);
+    expect(lead.daysApart).toBe(5);
+    expect(lead.fix.subject).toContain("again");
+    expect(lead.priorFix.subject).toContain("in enqueue");
+    expect(lead.subsystem).toBe("net/sched");
+  });
+
+  it("does not flag anything when the window is tighter than the gap", () => {
+    const leads = findBadFixes({ tree: repo, paths: ["net/sched"], withinDays: 2 });
+    expect(leads).toEqual([]);
+  });
+
+  it("renders a bad-fix lead as a HuntBrief hint", () => {
+    const leads = findBadFixes({ tree: repo, paths: ["net/sched"], withinDays: 30 });
+    const brief = badFixLeadToBrief(leads[0]!);
+    expect(brief.bugClass).toMatch(/bad-fix|fix-of-fix/i);
+    expect(brief.bugClass).toContain(SFQ);
+    expect(brief.pattern).toMatch(/incomplete|bypassable/i);
+    expect(brief.fixReference).toBe(leads[0]!.fix.sha);
+  });
+
+  it("fails soft on a non-git tree", () => {
+    const notGit = mkdtempSync(join(tmpdir(), "pwnkit-badfix-soft-"));
+    try {
+      expect(findBadFixes({ tree: notGit })).toEqual([]);
     } finally {
       rmSync(notGit, { recursive: true, force: true });
     }

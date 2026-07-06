@@ -374,3 +374,66 @@ describe("runHuntScan — memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1)", () 
     }
   });
 });
+
+describe("runHuntScan — exploitable-geometry rank (PWNKIT_HUNT_GEOMETRY_RANK / opts.geometryRank)", () => {
+  // Three findings surfaced at one site (no brief → judge is skipped, so the
+  // pre-geometry order is plain attempt order): a pure read-OOB DoS, a neutral
+  // logic bug, and — last — a weaponizable qdisc UAF (type-confusion +
+  // elastic-reclaim). Geometry rank should pull the UAF to the FRONT of the
+  // verify queue; with the flag off the queue stays in attempt order.
+  const bodies = [
+    ["dos", "out-of-bounds read in foo_parse", "OOB read info leak, denial of service, no write"],
+    ["neutral", "config parser off-by-one", "generic logic issue"],
+    ["weap", "HFSC qdisc use-after-free", "UAF in a sibling qdisc class, kmalloc-256, reclaim via msg_msg"],
+  ] as const;
+
+  function mockThreeAttempts(): void {
+    agenticScanMock.mockReset();
+    let call = 0;
+    agenticScanMock.mockImplementation(async () => {
+      const [id, title, analysis] = bodies[call % bodies.length];
+      call += 1;
+      return { findings: [mkFinding(id, title, analysis)] };
+    });
+  }
+
+  const baseOpts = {
+    sourceRoot: "/src",
+    candidates: [{ path: "/src/sch_hfsc.c" }],
+    runtime: "api" as const,
+    concurrency: 1, // deterministic attempt order for the call-order assertion
+    attemptsPerCandidate: 3,
+    judgeTopK: 3, // nothing dropped — only reordered
+  };
+
+  it("leaves the verify queue in attempt order when OFF (default)", async () => {
+    mockThreeAttempts();
+    const order: string[] = [];
+    await runHuntScan({
+      ...baseOpts,
+      verify: async (f) => {
+        order.push(f.id);
+        return { confirmed: true, reason: "ok" };
+      },
+    });
+    expect(order).toEqual(["dos", "neutral", "weap"]);
+  });
+
+  it("pulls the type-confusion + elastic-reclaim UAF to the front when ON", async () => {
+    mockThreeAttempts();
+    const order: string[] = [];
+    await runHuntScan({
+      ...baseOpts,
+      geometryRank: true,
+      verify: async (f) => {
+        order.push(f.id);
+        return { confirmed: true, reason: "ok" };
+      },
+    });
+    expect(order[0]).toBe("weap");
+    // The read-OOB DoS (negative geometry) sinks to last.
+    expect(order[order.length - 1]).toBe("dos");
+    // Re-rank only: the verified SET is unchanged.
+    expect([...order].sort()).toEqual(["dos", "neutral", "weap"]);
+  });
+});

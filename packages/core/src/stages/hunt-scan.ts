@@ -43,6 +43,7 @@ import {
 import { judgeHuntCandidatesWithLlm, type HuntCandidateJudge } from "./hunt-judge.js";
 import { HuntMemory, huntFlywheelEnabled, primedOrderKey, type HuntPriming } from "./hunt-flywheel.js";
 import { huntNegativesEnabled, matchNegative, negativeContext, type KnownNegative } from "./hunt-negatives.js";
+import { scoreGeometry } from "../kernel/geometry-score.js";
 
 // Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
 // default DB is a single shared ~/.pwnkit/pwnkit.db — at any real fan-out width
@@ -165,6 +166,17 @@ export interface HuntScanOptions {
    * hunt-flywheel.ts's header for the primes-never-confirms invariant.
    */
   huntMemory?: HuntMemory;
+  /**
+   * OPTIONAL exploitable-geometry ranking of the verify queue (LPE-hunt plan #0,
+   * `PWNKIT_HUNT_GEOMETRY_RANK=1`; this option overrides the env). When on, the
+   * findings about to hit the skeptic+prover gate are STABLE-sorted by
+   * {@link scoreGeometry} — a sibling-type type-confusion + elastic-reclaimable
+   * heap-corruption candidate sorts ahead of a pure read-OOB / DoS, so the
+   * weaponizable bugs reach the expensive gate first and lead `confirmed`.
+   * Additive — RE-RANKS only (nothing dropped); default OFF is byte-identical to
+   * before this existed. Runs AFTER the best-of-N judge / flywheel ordering.
+   */
+  geometryRank?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -659,6 +671,21 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       return keyB - keyA || a.attempt - b.attempt;
     });
     toVerify.push(...ranked.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate })));
+  }
+
+  // EXPLOITABLE-GEOMETRY RANK (LPE-hunt plan #0): re-order the verify queue by
+  // exploitable geometry — a sibling-type type-confusion + elastic-reclaimable
+  // heap-corruption candidate sorts ahead of a pure read-OOB / DoS. This only
+  // RE-RANKS (stable; nothing dropped), so the highest-geometry findings reach
+  // the expensive skeptic+prover gate first and lead the `confirmed` output.
+  // Opt-in (default OFF → byte-identical): the option overrides the env flag.
+  const geometryRank = opts.geometryRank ?? process.env.PWNKIT_HUNT_GEOMETRY_RANK === "1";
+  if (geometryRank && toVerify.length > 1) {
+    toVerify
+      .map((v, i) => ({ v, i, score: scoreGeometry(v.finding).geometryScore }))
+      .sort((a, b) => b.score - a.score || a.i - b.i)
+      .forEach((x, rank) => (toVerify[rank] = x.v));
+    log(`[hunt] geometry-ranked ${toVerify.length} finding(s) for the verify queue (type-confusion / elastic-reclaim first)`);
   }
 
   // Skeptic + prover gate (parallel). No verifier → everything stays unconfirmed.

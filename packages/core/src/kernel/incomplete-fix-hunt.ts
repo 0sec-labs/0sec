@@ -21,6 +21,9 @@ import { randomUUID } from "node:crypto";
 
 import type { Finding } from "@pwnkit/shared";
 
+// Type-only import — erased at compile, so it adds no runtime dependency on the
+// (heavy) hunt-scan stage and creates no import cycle.
+import type { HuntBrief } from "../stages/hunt-scan.js";
 import {
   isKernelGitTree,
   mineFixCommits,
@@ -239,5 +242,133 @@ export function incompleteFixLeadToFinding(lead: IncompleteFixLead): Finding {
     triageStatus: "new",
     confidence: 0.45,
     timestamp: Date.now(),
+  };
+}
+
+// ── BAD-FIX (fix-of-fix) INGEST ──────────────────────────────────────────────
+//
+// The strongest recent kernel bugs are BAD FIXES: the guard a fix commit added
+// was itself incomplete or bypassable, and a SECOND fix landed on the same file
+// shortly after (the MSG_OOB UAF was introduced by a fix commit; Google's first
+// SFQ patch was bypassable). A file that gets two security fixes within a short
+// window is a signal that the class is under-covered and worth re-auditing — the
+// later fix may STILL be incomplete.
+//
+// This surfaces those file-local fix-of-fix pairs by pure read-only git mining
+// (reuses `mineFixCommits`), turning each into a HuntBrief hint the variant hunt
+// can run. Fails soft ([]) on a non-git tree / error, like the rest of the module.
+
+export interface BadFixLead {
+  /** The later commit — the fix-of-fix whose guard may STILL be incomplete. */
+  fix: FixCommit;
+  /** The earlier security fix on the same file that it followed. */
+  priorFix: FixCommit;
+  file: string;
+  /** Whole days between the prior fix and this one (≤ withinDays). */
+  daysApart: number;
+  subsystem: string;
+}
+
+export interface BadFixHuntOptions {
+  tree: string;
+  /** git `--since` spec bounding the fix history; default "6 months ago". */
+  since?: string;
+  /** max days between a security fix and the next one on the same file; default 30. */
+  withinDays?: number;
+  /** path prefixes to scope to, e.g. ["net/sched", "net/tls"]. */
+  paths?: string[];
+  /** cap on fix commits scanned when discovering candidate files; default 300. */
+  limit?: number;
+  /** cap on distinct files inspected for fix-of-fix pairs; default 200. */
+  maxFiles?: number;
+  /** cap on emitted leads; default 40. */
+  maxLeads?: number;
+}
+
+function daysBetween(earlierIso: string, laterIso: string): number {
+  const a = Date.parse(earlierIso);
+  const b = Date.parse(laterIso);
+  if (Number.isNaN(a) || Number.isNaN(b)) return Number.POSITIVE_INFINITY;
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Find fix-of-fix (bad-fix) pairs: a file that received a second security fix
+ * within `withinDays` of a prior one. For each such pair the LATER commit is the
+ * bad-fix candidate — its guard may still be incomplete/bypassable. Pure
+ * read-only git; [] on a non-git tree / error.
+ */
+export function findBadFixes(opts: BadFixHuntOptions): BadFixLead[] {
+  const { tree } = opts;
+  if (!isKernelGitTree(tree)) return [];
+
+  const since = opts.since ?? "6 months ago";
+  const withinDays = opts.withinDays ?? 30;
+  const limit = opts.limit ?? 300;
+  const maxFiles = opts.maxFiles ?? 200;
+  const maxLeads = opts.maxLeads ?? 40;
+
+  // 1. Discover the files that recent security fixes touched (the candidate set).
+  const seedFixes = mineFixCommits({
+    tree,
+    since,
+    ...(opts.paths ? { paths: opts.paths } : {}),
+    limit,
+    securityOnly: true,
+  });
+  const files: string[] = [];
+  const seenFile = new Set<string>();
+  for (const fix of seedFixes) {
+    for (const file of commitFiles(tree, fix.sha)) {
+      if (!seenFile.has(file)) {
+        seenFile.add(file);
+        files.push(file);
+      }
+    }
+    if (files.length >= maxFiles) break;
+  }
+
+  // 2. For each file, walk its security-fix history and flag consecutive fixes
+  //    that landed within the window — the later one is the bad-fix candidate.
+  const leads: BadFixLead[] = [];
+  const seenLead = new Set<string>();
+  for (const file of files.slice(0, maxFiles)) {
+    if (leads.length >= maxLeads) break;
+    const fileFixes = mineFixCommits({ tree, since, paths: [file], limit, securityOnly: true });
+    if (fileFixes.length < 2) continue;
+    // Oldest first so a pair is (prior, later).
+    const chron = [...fileFixes].sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+    for (let i = 1; i < chron.length; i++) {
+      const priorFix = chron[i - 1];
+      const fix = chron[i];
+      if (fix.sha === priorFix.sha) continue;
+      const daysApart = daysBetween(priorFix.dateIso, fix.dateIso);
+      if (daysApart > withinDays) continue;
+      const key = `${file}:${fix.sha}`;
+      if (seenLead.has(key)) continue;
+      seenLead.add(key);
+      leads.push({ fix, priorFix, file, daysApart, subsystem: inferSubsystem(file) });
+      if (leads.length >= maxLeads) break;
+    }
+  }
+  return leads;
+}
+
+/**
+ * Turn a bad-fix lead into a {@link HuntBrief} for the variant hunt: the hint is
+ * "the guard may be incomplete/bypassable (bad-fix)". Feed it to `runHuntScan`
+ * with the lead's `file` as the candidate site.
+ */
+export function badFixLeadToBrief(lead: BadFixLead): HuntBrief {
+  const cur = lead.fix.sha.slice(0, 12);
+  const prev = lead.priorFix.sha.slice(0, 12);
+  return {
+    bugClass: `incomplete/bypassable guard (bad-fix / fix-of-fix) in ${lead.file}`,
+    pattern:
+      `Commit ${cur} ("${lead.fix.subject}") landed ${lead.daysApart}d after a prior security fix ` +
+      `${prev} ("${lead.priorFix.subject}") on the SAME file — the earlier guard may be incomplete ` +
+      `or bypassable (the MSG_OOB / SFQ pattern: a fix that under-covers the class or introduces a ` +
+      `new instance). Audit whether ${cur}'s guard fully covers the bug class or can still be reached.`,
+    fixReference: lead.fix.sha,
   };
 }

@@ -24,12 +24,19 @@ export {
   siblingDefsForStem,
   huntIncompleteFixSiblings,
   incompleteFixLeadToFinding,
+  findBadFixes,
+  badFixLeadToBrief,
 } from "./incomplete-fix-hunt.js";
 export type {
   SiblingDef,
   IncompleteFixLead,
   IncompleteFixHuntOptions,
+  BadFixLead,
+  BadFixHuntOptions,
 } from "./incomplete-fix-hunt.js";
+
+export { scoreGeometry, rankByGeometry } from "./geometry-score.js";
+export type { GeometryScore } from "./geometry-score.js";
 
 export {
   KNOWN_ATTACK_SURFACES,
