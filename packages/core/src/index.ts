@@ -241,6 +241,11 @@ export type {
 // services/orchestrator/src/kernelctf-config.ts for the CONFIG-symbol ground truth).
 export { classifyPathReachability, applyReachabilityGate } from "./stages/hunt-reachability.js";
 export type { PathReachability, ReachabilityGateOptions, ReachabilityGateResult } from "./stages/hunt-reachability.js";
+// Second-audit (kernelCTF Pipeline #2, deepen-before-verify): treat every crash as
+// shallow-by-default; hunt the deeper root cause + whether an existing fix is
+// bypassable. Plugs into runHuntScan as the `refine` hook (deepen, then verify).
+export { runSecondAudit, defaultSecondAuditModel, makeSecondAuditRefiner } from "./stages/second-audit.js";
+export type { SecondAuditInput, SecondAuditResult, SecondAuditModel } from "./stages/second-audit.js";
 export { extractSpecInvariants, mapInvariantsToImplementation, planSpecdriftHypotheses, runSpecdriftPlan, runSpecdriftScan } from "./specdrift/index.js";
 export type {
   DriftHypothesis,

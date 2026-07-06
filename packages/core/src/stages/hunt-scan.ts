@@ -124,6 +124,16 @@ export interface HuntScanOptions {
   /** The skeptic+prover gate. When omitted, all findings are returned unconfirmed. */
   verify?: HuntVerifier;
   /**
+   * OPTIONAL second-audit refinement (the "treat every crash as shallow" step).
+   * Runs on each surfaced finding BEFORE the verify gate: deepen the candidate to
+   * its root cause / a fix-bypass path, THEN verify the deepened candidate. Given
+   * `(finding, candidate)`, returns the candidate the gate should reproduce (the
+   * original candidate when the audit finds nothing deeper). Additive — omit it
+   * and the hunt verifies the first-order candidate exactly as before. Wire it
+   * with {@link makeSecondAuditRefiner} from second-audit.ts.
+   */
+  refine?: (finding: Finding, candidate: HuntCandidate) => Promise<HuntCandidate>;
+  /**
    * OPTIONAL lore-mirror novelty gate (issue: Rockchip AV1 re-find). When set,
    * every confirmed finding is checked against on-list (pending/merged) upstream
    * patches via {@link checkNovelty}. DUPLICATE findings are moved out of
@@ -548,6 +558,27 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   for (const r of reports)
     if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate, model: r.model, attempt: r.attempt });
   log(`[hunt] finders surfaced ${all.length} candidate finding(s)`);
+
+  // OPTIONAL second-audit refinement: DEEPEN each finding's candidate (root cause
+  // / fix-bypass) BEFORE grouping/judging/verifying. Runs in parallel; a refiner
+  // failure leaves the original candidate (never drops the finding). Refining
+  // `all` up front means the deepened candidate propagates into `records`, the
+  // best-of-N judge groups, and `toVerify` — deepen, then judge, then verify.
+  if (opts.refine && all.length > 0) {
+    const refined = await pool(all, concurrency, async (entry) => {
+      try {
+        return await opts.refine!(entry.finding, entry.candidate);
+      } catch (e) {
+        warnings.push(`hunt: refine failed for ${entry.finding.title}: ${String(e).slice(0, 100)}`);
+        return entry.candidate;
+      }
+    });
+    for (let i = 0; i < all.length; i++) {
+      const c = refined[i];
+      if (c) all[i].candidate = c;
+    }
+    log(`[hunt] second-audit refined ${all.length} candidate(s) before the gate`);
+  }
 
   // The full per-finding tuple, keyed by finding.id — filled in as each gate runs.
   const records = new Map<string, HuntFindingRecord>(
