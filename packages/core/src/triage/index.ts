@@ -194,3 +194,14 @@ export type {
   MemoryStoreOptions,
   MemoryDbHandle,
 } from "./memories.js";
+export {
+  assessImpact,
+  heuristicImpact,
+  parseImpactAssessment,
+  impactAssessmentToColumn,
+  businessImpactOf,
+  impactRank,
+  compareByImpactDesc,
+  BUSINESS_IMPACT_RANK,
+} from "./impact-assessment.js";
+export type { AssessImpactOptions } from "./impact-assessment.js";

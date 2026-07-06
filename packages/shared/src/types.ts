@@ -395,6 +395,70 @@ export type PublishabilityDecision =
   | "fix_bypass"
   | "needs_verify";
 
+/**
+ * Business-impact scoring for a finding (issue #1103). Qualifies raw
+ * `severity` + `exploitability` with the decision-relevant question a triager
+ * actually asks: how much does this bug matter, and how hard is it to reach?
+ *
+ * The engine self-prioritizes on these so a nominally "critical" bug gated
+ * behind root+host-migration (an FS-image UAF that needs a mounted attacker
+ * image = noise) sorts BELOW a "high" bug that hits every device on the network
+ * (a remote-unauth NFC crash = headline). Optional/additive — populated by the
+ * impact-assessment triage layer; undefined on findings that predate it.
+ */
+
+/**
+ * How the attacker has to be positioned to reach the sink — the gate that
+ * turns raw severity into real risk. Ordered most→least dangerous.
+ *   - `remote-unauth`         — reachable over the network with no auth.
+ *   - `proximity-rf`          — needs RF/physical proximity (NFC, BLE, Wi-Fi).
+ *   - `local-unpriv`          — needs an unprivileged local account.
+ *   - `local-priv`            — needs an already-privileged local account
+ *     (root/admin) — a low-value LPE target: the attacker is already there.
+ *   - `needs-hardware`        — needs specific/attacker-supplied hardware.
+ *   - `needs-host-migration`  — needs the victim to mount/import/migrate an
+ *     attacker-supplied artifact (FS image, VM, container) first.
+ */
+export type ReachabilityTier =
+  | "remote-unauth"
+  | "proximity-rf"
+  | "local-unpriv"
+  | "local-priv"
+  | "needs-hardware"
+  | "needs-host-migration";
+
+/**
+ * What the attacker gets once they trigger the bug. Ordered least→most severe.
+ *   - `dos-crash`   — denial of service / crash only.
+ *   - `info-leak`   — reads memory / secrets they shouldn't.
+ *   - `lpe-to-root` — local privilege escalation to root/admin.
+ *   - `rce`         — arbitrary remote code execution.
+ */
+export type Weaponizability = "dos-crash" | "info-leak" | "lpe-to-root" | "rce";
+
+/**
+ * The coarse, ranking-facing tier. This is the single knob the engine sorts on:
+ * `noise` gets deprioritized, `headline` gets escalated. Ordered.
+ */
+export type BusinessImpact = "headline" | "notable" | "modest" | "noise";
+
+/**
+ * Structured impact assessment attached to a {@link Finding} by the
+ * impact-assessment triage layer. Optional/additive.
+ */
+export interface ImpactAssessment {
+  /** How the attacker has to be positioned to reach the sink. */
+  reachability_tier: ReachabilityTier;
+  /** Free-text scope of who/what is affected (e.g. "every device with NFC"). */
+  blast_radius: string;
+  /** What the attacker gains once the bug fires. */
+  weaponizability: Weaponizability;
+  /** The coarse tier the engine ranks on. */
+  business_impact: BusinessImpact;
+  /** Short human-readable justification, stable for the same input. */
+  rationale: string;
+}
+
 export type LayerVerdictKind =
   | "pass"      // layer ran and approved the finding
   | "reject"    // layer ran and rejected (suppressed) the finding
@@ -597,6 +661,15 @@ export interface Finding {
    * because the shapes match field-for-field. See {@link KernelExploitState}.
    */
   kernelExploit?: KernelExploitState;
+  /**
+   * Business-impact assessment (issue #1103). Optional and additive —
+   * populated by the impact-assessment triage layer, undefined on findings
+   * that predate it. Qualifies `severity` with reachability + weaponizability
+   * so the engine can self-prioritize (deprioritize `noise`, escalate
+   * `headline`). Round-trips into the `findings.impact_assessment` jsonb
+   * column. See {@link ImpactAssessment}.
+   */
+  impactAssessment?: ImpactAssessment;
   timestamp: number;
 }
 
