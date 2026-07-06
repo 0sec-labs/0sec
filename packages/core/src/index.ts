@@ -685,13 +685,55 @@ export {
   classifyKernelPrimitive,
   classifyPrimitiveFromDmesg,
   describeKernelPrimitive,
+  classifyDmesgDanger,
+  rankDanger,
+  maxDangerClass,
+  isDangerUpgrade,
+  BENIGN_MAX_CLASS,
+  UPGRADE_MIN_CLASS,
 } from "./triage/kernel-primitive.js";
 export type {
   KernelPrimitive,
   KernelPrimitiveKind,
   PrimitiveControl,
   ControlDemoStep,
+  UpgradeClass,
 } from "./triage/kernel-primitive.js";
+
+// Execution-verified exploitability-upgrade oracle — the PROVE stage (#1119).
+export {
+  makeDiversifyOracle,
+  makeDifferentialOracle,
+  attemptExploitabilityUpgrade,
+  foldExploitabilityIntoSeverity,
+  shouldWeaponize,
+  makeExploitabilityGate,
+  reachableTargets,
+  parseWidenTarget,
+  primitiveBaselineClass,
+  provenExploitabilityScore,
+} from "./triage/exploitability-upgrade.js";
+export type {
+  ExploitabilityVerdict as KernelExploitabilityVerdict,
+  UpgradeTrial,
+  PrivescTarget,
+  DiversifyOracle,
+  DiversifyRunner,
+  DiversifyTrialInput,
+  DiversifyTrialResult,
+  DiversifyOptions,
+  DiversifyResult,
+  DifferentialOracle,
+  DifferentialRunner,
+  DifferentialBootInput,
+  DifferentialBootResult,
+  DifferentialOptions,
+  DifferentialResult,
+  AttemptUpgradeOptions,
+  FoldSeverityOptions,
+  PrimitiveResolver,
+  ExploitabilityGateDeps,
+} from "./triage/exploitability-upgrade.js";
 
 // Kernel crash verification oracle
 export { verifyKernelCrash, verifyStandaloneKernelReproducer, compileAndRunReproducer, matchCrashSignature, validateCrashReportConsistency } from "./triage/kernel-oracle.js";

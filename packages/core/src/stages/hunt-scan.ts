@@ -124,6 +124,19 @@ export interface HuntScanOptions {
   /** The skeptic+prover gate. When omitted, all findings are returned unconfirmed. */
   verify?: HuntVerifier;
   /**
+   * OPTIONAL PROVE stage (issue #1119): the exploitability-upgrade oracle,
+   * composed as a THIRD, TERMINAL gate stage AFTER `opts.verify`. Because
+   * {@link composeGate} short-circuits on the first stage that rejects, this only
+   * runs on skeptic+prover-CONFIRMED findings; it never rejects a reproduced bug
+   * — it stamps an `ExploitabilityVerdict` and gates the expensive
+   * weaponize→root call (`runExploitScan`) on `upgraded || reachesPrivesc`. Build
+   * it with `makeExploitabilityGate(deps)` from triage/exploitability-upgrade.ts.
+   * Additive — omit it and the gate is exactly the skeptic+prover pair as before.
+   * Requires `opts.verify` to be set (there is nothing to run the PROVE stage on
+   * otherwise); ignored with a warning when `opts.verify` is absent.
+   */
+  exploitability?: HuntVerifier;
+  /**
    * OPTIONAL second-audit refinement (the "treat every crash as shallow" step).
    * Runs on each surfaced finding BEFORE the verify gate: deepen the candidate to
    * its root cause / a fix-bypass path, THEN verify the deepened candidate. Given
@@ -649,11 +662,26 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   }
 
   // Skeptic + prover gate (parallel). No verifier → everything stays unconfirmed.
+  // PROVE stage (issue #1119): when set, the exploitability-upgrade oracle is
+  // composed as a TERMINAL stage after the skeptic+prover pair — it runs only on
+  // findings the earlier stages already confirmed (composeGate short-circuits),
+  // stamps a verdict and gates weaponization. Additive: absent → unchanged.
+  let verify = opts.verify;
+  if (opts.exploitability) {
+    if (opts.verify) {
+      verify = composeGate(opts.verify, opts.exploitability);
+      log(`[hunt] PROVE stage wired as the terminal gate (refine → judge → verify → exploitability)`);
+    } else {
+      warnings.push("hunt: opts.exploitability set but opts.verify is absent — PROVE stage skipped (nothing confirmed to prove)");
+    }
+  }
+
   let confirmed: Finding[] = [];
-  if (opts.verify && toVerify.length > 0) {
+  if (verify && toVerify.length > 0) {
+    const verifyFn = verify;
     const verdicts = await pool(toVerify, concurrency, async ({ finding, candidate }) => {
       try {
-        const v = await opts.verify!(finding, candidate);
+        const v = await verifyFn(finding, candidate);
         const record = records.get(finding.id);
         if (record) {
           record.skepticConfirmed = v.confirmed;

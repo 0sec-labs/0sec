@@ -531,3 +531,112 @@ function sniffCrashType(dmesg: string): CrashType | undefined {
   if (/null pointer|null-ptr-deref/i.test(dmesg)) return "kasan-null";
   return undefined;
 }
+
+// ── Exploitability danger ladder (PROVE stage — pwnkit#1119) ──────────────────
+//
+// The crash→primitive classifier above answers "what CAN an attacker do" as a
+// *static guess* from one splat. The PROVE stage (exploitability-upgrade.ts)
+// answers "does the danger actually get WORSE when we re-run and re-schedule the
+// bug" — for which it needs to rank one boot's dmesg on a danger ladder and
+// compare boots. `classifyDmesgDanger` is that pure, deterministic ranker: no
+// I/O, no QEMU, trivially unit-testable, and it is the smallest piece the whole
+// PROVE stage builds on (design build-order step 1). It deliberately reuses the
+// same KASAN Read/Write + double-free + GPF signals the rest of this module
+// already parses — it does not add a second parsing infra.
+//
+// ASSUME-FALSE discipline: the ranker only climbs to a WRITE tier when it
+// POSITIVELY sees a `Write of size` KASAN access. A KASAN splat with no parsable
+// access line ranks as the benign `oob-read` tier, never a write — so a garbled
+// or partial splat can never *false-upgrade* a benign read into a fake write
+// primitive. That is the exact failure mode the mwifiex validation case guards.
+
+/**
+ * A report class on the exploitation danger ladder — the axis the PROVE stage
+ * ranks boots on (distinct from the KASAN bug `CrashType` and the attacker
+ * `KernelPrimitiveKind`). Ordered benign→dangerous by {@link rankDanger}.
+ */
+export type UpgradeClass =
+  | "none"
+  | "warn" // WARNING/WARN splat — benign
+  | "race" // KCSAN data-race — benign concurrency report
+  | "oob-read" // read-only OOB/UAF read — benign
+  | "info-leak" // read that reaches userspace — benign but exfiltrating
+  | "gpf" // general protection fault — DoS-class, above a read
+  | "double-free" // freelist confusion
+  | "oob-write" // dangerous heap write primitive
+  | "uaf-write" // dangerous use-after-free write primitive
+  | "control-flow"; // hijacked control flow
+
+// Benign→dangerous. Index === danger rank; `none` is the floor.
+const DANGER_LADDER: UpgradeClass[] = [
+  "none",
+  "warn",
+  "race",
+  "oob-read",
+  "info-leak",
+  "gpf",
+  "double-free",
+  "oob-write",
+  "uaf-write",
+  "control-flow",
+];
+
+/** The highest benign (non-upgrade) rung — anything at/below this is "not more dangerous". */
+export const BENIGN_MAX_CLASS: UpgradeClass = "info-leak";
+/** The lowest rung that counts as a dangerous UPGRADE from a benign baseline. */
+export const UPGRADE_MIN_CLASS: UpgradeClass = "gpf";
+
+/** Position on the danger ladder (0 = benign floor). Unknown classes rank as `none`. */
+export function rankDanger(cls: UpgradeClass): number {
+  const i = DANGER_LADDER.indexOf(cls);
+  return i < 0 ? 0 : i;
+}
+
+/** The more-dangerous of two classes (never downgrades). */
+export function maxDangerClass(a: UpgradeClass, b: UpgradeClass): UpgradeClass {
+  return rankDanger(a) >= rankDanger(b) ? a : b;
+}
+
+/** True when `observed` is a strictly more-dangerous report than a benign `baseline`. */
+export function isDangerUpgrade(baseline: UpgradeClass, observed: UpgradeClass): boolean {
+  return (
+    rankDanger(baseline) <= rankDanger(BENIGN_MAX_CLASS) &&
+    rankDanger(observed) >= rankDanger(UPGRADE_MIN_CLASS)
+  );
+}
+
+/**
+ * Rank a single boot's dmesg on the danger ladder. Pure and deterministic — the
+ * PROVE stage calls it once per diversification trial and folds the max across
+ * boots. Returns the MOST dangerous class positively evidenced in the text;
+ * falls back to the benign `oob-read` tier for a KASAN splat with no parsable
+ * access, and `none` when no recognised signature is present.
+ */
+export function classifyDmesgDanger(dmesg: string | undefined): UpgradeClass {
+  if (!dmesg) return "none";
+  const hasWrite = /\bWrite of size\s+\d+/i.test(dmesg);
+  const hasRead = /\bRead of size\s+\d+/i.test(dmesg);
+  const isKasan = /KASAN:/i.test(dmesg);
+
+  // Freelist confusion and control-flow hijack are unambiguous regardless of R/W.
+  if (/KASAN.*double-free|double free|Object already free/i.test(dmesg)) return "double-free";
+  if (/Control flow|CFI failure|kCFI|forward-edge/i.test(dmesg)) return "control-flow";
+
+  // Dangerous WRITE tiers — only when a Write access is positively evidenced.
+  if (hasWrite && /use-after-free/i.test(dmesg)) return "uaf-write";
+  if (hasWrite && /out-of-bounds|slab-out-of-bounds|global-out-of-bounds/i.test(dmesg))
+    return "oob-write";
+  if (hasWrite && isKasan) return "oob-write"; // KASAN write, class unnamed → still a write
+
+  // GPF / oops — DoS-class, ranks above a benign read.
+  if (/general protection fault/i.test(dmesg)) return "gpf";
+
+  // Benign READ tiers.
+  if (hasRead || isKasan) return "oob-read";
+
+  // Concurrency + soft warnings — benign.
+  if (/KCSAN:|data-race/i.test(dmesg)) return "race";
+  if (/WARNING:|\bWARN\b|------------\[ cut here \]/i.test(dmesg)) return "warn";
+
+  return "none";
+}
