@@ -94,6 +94,45 @@ export type {
 // + shared contract (docs/pwnkit-rust-memsafety-pipeline.md, Track B).
 export { runUserspaceFuzzLoop, parseCrashOutput } from "./triage/userspace-fuzz-runner.js";
 export type { UserspaceFuzzOptions } from "./triage/userspace-fuzz-runner.js";
+// Race-winning widening-gadget engine (#1120): turn a race candidate into a
+// reliably-won one via a widening-gadget library + LLM selector + prover glue.
+export {
+  timerfdInterruptGadget,
+  epollWaitqueueFloodGadget,
+  cacheMissStallGadget,
+  mutexSleepWidenGadget,
+  futexHoldGadget,
+  GADGET_FACTORIES,
+  GADGET_KINDS,
+  GADGET_SETUP_MARKER,
+  instantiateGadget,
+  composeGadgetSetup,
+  selectRaceGadgets,
+  defaultGadgetsFor,
+  attemptWinRace,
+  makeKernelVmRaceProver,
+  spliceGadgetSetup,
+  buildWidenEnv,
+  mapVerificationToOutcome,
+  setEnv,
+} from "./triage/race-gadgets.js";
+export type {
+  RaceCandidate,
+  KcsanRaceCandidate,
+  SmellRaceCandidate,
+  RaceAccess,
+  GadgetKind,
+  RaceGadget,
+  ComposedGadgets,
+  WidenSpec,
+  SelectGadgetsOptions,
+  RaceProver,
+  RaceProverInput,
+  RaceProverOutcome,
+  AttemptWinRaceOptions,
+  AttemptWinRaceResult,
+  KernelVmRaceProverBase,
+} from "./triage/race-gadgets.js";
 export type {
   MemSafetyTarget,
   MemPrimitive,
