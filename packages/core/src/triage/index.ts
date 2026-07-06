@@ -30,6 +30,35 @@ export type {
 export { isHoldingItWrong } from "./holding-it-wrong.js";
 export type { HoldingItWrongResult } from "./holding-it-wrong.js";
 export {
+  autoTriage,
+  alreadyFixedInTarget,
+  knownDupe,
+  reachabilityGate,
+  extractDupeSignature,
+  classifyVerifyOutcome,
+  verifyStatusFromOutcome,
+  makeTargetTreeLookup,
+} from "./auto-triage.js";
+export type {
+  AutoTriageVerdict,
+  AutoTriageOptions,
+  AutoTriageResult,
+  CheckVerdict,
+  ReachabilityTier,
+  ReachabilityVerdict,
+  ReachabilityOptions,
+  AlreadyFixedOptions,
+  SourceLookupHit,
+  TargetSourceLookup,
+  DupeSignature,
+  DupeMatch,
+  DupeFeedLookup,
+  VerifyFailureKind,
+  VerifyOutcomeInput,
+  VerifyOutcomeDecision,
+  VerifyStatus,
+} from "./auto-triage.js";
+export {
   checkPublishability,
   checkThreatModelExclusion,
   classifyDedup,

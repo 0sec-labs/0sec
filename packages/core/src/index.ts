@@ -541,6 +541,37 @@ export type {
   DisclosureDecision,
 } from "./triage/verify-verdict.js";
 
+// Auto-triage gate (#1101): source-fixed / dedup / reachability + false-refute fix
+export {
+  autoTriage,
+  alreadyFixedInTarget,
+  knownDupe,
+  reachabilityGate,
+  extractDupeSignature,
+  classifyVerifyOutcome,
+  verifyStatusFromOutcome,
+  makeTargetTreeLookup,
+} from "./triage/auto-triage.js";
+export type {
+  AutoTriageVerdict,
+  AutoTriageOptions,
+  AutoTriageResult,
+  CheckVerdict,
+  ReachabilityTier,
+  ReachabilityVerdict,
+  ReachabilityOptions,
+  AlreadyFixedOptions,
+  SourceLookupHit,
+  TargetSourceLookup,
+  DupeSignature,
+  DupeMatch,
+  DupeFeedLookup,
+  VerifyFailureKind,
+  VerifyOutcomeInput,
+  VerifyOutcomeDecision,
+  VerifyStatus,
+} from "./triage/auto-triage.js";
+
 // Triage memories (Semgrep-style persistent FP learning)
 export { MemoryStore, scoreMemory, inferPackage } from "./triage/memories.js";
 export type {
