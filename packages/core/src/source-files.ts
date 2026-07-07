@@ -19,6 +19,7 @@ const DEFAULT_SOURCE_EXTS = new Set([
   ".php",
   ".java", ".kt",
   ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp",
+  ".sol",
 ]);
 
 const SKIP_DIRS = new Set([

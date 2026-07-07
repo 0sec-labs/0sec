@@ -1,0 +1,203 @@
+{
+  "provenance": "0contract EVM DeFi/bridge archetype catalog, grounded in rekt.news post-mortems + public CVEs/advisories, curated 2026-07-08",
+  "archetypes": [
+    {
+      "id": "EVM-RE-01",
+      "name": "Classic reentrancy — external call before state settlement",
+      "cwe": "CWE-841",
+      "subsystem": "vault / withdrawal accounting",
+      "pattern": "A withdraw/redeem path sends ETH or calls an ERC20/ERC777/ERC721 hook BEFORE zeroing the caller's internal balance/shares, so the callee re-enters the same function and drains the pool while the pre-decrement balance still reads full.",
+      "detection_signature": "An external value-moving call (`.call{value:}`, `token.transfer`, `_safeMint`, ERC777 `tokensReceived`) followed LATER in the same function by the state write (`balances[msg.sender] = 0`, `shares -= amount`). No `nonReentrant` and not Checks-Effects-Interactions ordered.",
+      "grounding": ["The DAO 2016", "Fei Protocol reentrancy 2022 (Rari Fuse, ~$80M)", "CREAM Finance ERC777 reentrancy 2021"]
+    },
+    {
+      "id": "EVM-RE-02",
+      "name": "Read-only reentrancy — stale view read mid-callback",
+      "cwe": "CWE-841",
+      "subsystem": "AMM / oracle-consuming integrator",
+      "pattern": "A `view` (get_virtual_price, getReserves, share price) is read by a THIRD contract while a mid-transaction callback has left the source pool's invariant temporarily broken, yielding a manipulated price to the consumer even though the source contract itself has a nonReentrant guard.",
+      "detection_signature": "A price/share `view` consumed cross-contract, whose source updates balances and fires an external callback (remove_liquidity ETH send) non-atomically. The guard protects state-changing entrypoints but NOT the view.",
+      "grounding": ["Curve read-only reentrancy class 2022", "Sentiment 0xSifu $1M 2023", "Midas Capital 2023"]
+    },
+    {
+      "id": "EVM-AC-01",
+      "name": "Unprotected initializer / init front-run (uninitialized proxy)",
+      "cwe": "CWE-665",
+      "subsystem": "upgradeable proxy / implementation",
+      "pattern": "A proxy or implementation exposes `initialize()` without an effective one-time guard or with the implementation left uninitialized, so an attacker calls it first to set themselves as owner (or initializes + selfdestructs a UUPS impl to brick the proxy).",
+      "detection_signature": "`initialize()` with a missing/loose `initializer` modifier, or a UUPS/`_authorizeUpgrade` implementation whose constructor omits `_disableInitializers()`. `_setOwner(msg.sender)` reachable pre-ownership.",
+      "grounding": ["Wormhole uninitialized proxy bugfix 2022 ($10M Immunefi bounty)", "Parity multisig wallet freeze 2017", "Harvest/OpenZeppelin uninitialized-UUPS advisory"]
+    },
+    {
+      "id": "EVM-AC-02",
+      "name": "Missing access control on privileged / value-moving function",
+      "cwe": "CWE-284",
+      "subsystem": "admin / treasury",
+      "pattern": "A state-changing or fund-moving function (mint, setOwner, withdrawAll, setImplementation, addMinter) has no `onlyOwner`/`onlyRole` gate, or gates on `tx.origin`, so any address can invoke the admin action.",
+      "detection_signature": "`external`/`public` function that transfers value, mints, or mutates ownership/roles with NO modifier and no `require(msg.sender == owner)`; or an auth check on `tx.origin`.",
+      "grounding": ["Poly Network cross-contract keeper takeover 2021 ($611M)", "88mph unprotected mint", "bZx tx.origin-adjacent auth flaws"]
+    },
+    {
+      "id": "EVM-OR-01",
+      "name": "Spot-price oracle manipulation via flash loan",
+      "cwe": "CWE-345",
+      "subsystem": "lending / stablecoin collateral pricing",
+      "pattern": "Collateral/borrow value is priced from an AMM SPOT read (getReserves / balanceOf(pool) / getAmountOut) within one transaction; attacker flash-loans, skews the pool, borrows or liquidates against the false price, then repays.",
+      "detection_signature": "`getReserves`/`getAmountOut`/pool `balanceOf` feeding a `getPrice`/collateral-value calc, with no TWAP and no independent oracle. Reachable alongside a flash-loan callback.",
+      "grounding": ["bZx 2020", "Harvest Finance 2020 ($34M)", "Cheese Bank / Value DeFi 2020"]
+    },
+    {
+      "id": "EVM-OR-02",
+      "name": "Oracle price manipulation via lending-market / vault donation",
+      "cwe": "CWE-345",
+      "subsystem": "isolated lending market",
+      "pattern": "An empty or thin market lets an attacker manipulate the exchange rate by self-borrowing/self-liquidating or donating assets to inflate the per-share price, then extracting more than deposited (the Euler donation + self-liquidation class).",
+      "detection_signature": "Exchange rate = cash+borrows / totalSupply with no floor on totalSupply and a `donateToReserves`/direct-transfer path that moves `totalAssets` without minting shares; self-liquidation not blocked.",
+      "grounding": ["Euler Finance 2023 ($197M, donation + self-liquidation)", "Mango Markets oracle manipulation 2022 ($117M)", "Compound-fork empty-market rate manipulation"]
+    },
+    {
+      "id": "EVM-RND-01",
+      "name": "First-depositor / ERC4626 share-inflation via donation",
+      "cwe": "CWE-682",
+      "subsystem": "ERC4626 vault / share accounting",
+      "pattern": "First depositor mints 1 wei of shares, then transfers assets directly into the vault to inflate totalAssets, so the next depositor's `assets * totalSupply / totalAssets` rounds to zero shares and their deposit is captured by the attacker.",
+      "detection_signature": "`convertToShares` = `assets * totalSupply / totalAssets` with no virtual-shares/dead-shares offset and no minimum first deposit; `totalAssets()` reads live `balanceOf` (donation-inflatable).",
+      "grounding": ["Rari/Fuse & numerous ERC4626 vaults", "OpenZeppelin ERC4626 inflation-attack advisory 2023", "Yield-aggregator first-depositor exploits"]
+    },
+    {
+      "id": "EVM-RND-02",
+      "name": "Rounding / precision loss captured by attacker",
+      "cwe": "CWE-682",
+      "subsystem": "fee / interest / share math",
+      "pattern": "Division truncates in the attacker's favor (round-down owed, round-up credited) or divide-before-multiply loses precision, letting repeated small operations skim value or mint free shares.",
+      "detection_signature": "`a / b * c` (divide before multiply), rounding that credits the user (`ceil` on mint, `floor` on burn), or fee math with no minimum. Missing `mulDiv` with correct rounding direction.",
+      "grounding": ["Compound cToken rounding advisories", "Balancer rounding edge cases", "numerous audit 'rounding in favor of protocol' findings"]
+    },
+    {
+      "id": "EVM-SIG-01",
+      "name": "Signature replay — missing nonce / deadline",
+      "cwe": "CWE-294",
+      "subsystem": "meta-tx / permit / claim(sig)",
+      "pattern": "A signature-authorized action does not consume a per-signer nonce (or checks it after the effect), so the same signature is replayed to repeat a withdrawal/claim/approval.",
+      "detection_signature": "`ecrecover`/`_hashTypedDataV4` verifying a signed message with no `nonces[signer]++` before the action, or a `usedSignatures` map never set.",
+      "grounding": ["0x v2 signature reuse", "multiple airdrop double-claim exploits", "meta-tx replay advisories"]
+    },
+    {
+      "id": "EVM-SIG-02",
+      "name": "EIP-712 domain reuse — cross-chain / cross-deploy signature replay",
+      "cwe": "CWE-294",
+      "subsystem": "EIP-712 domain separator",
+      "pattern": "The domain separator omits `block.chainid` and/or `address(this)`, so a signature valid on one chain or one deployment is replayable on a fork/other chain/redeployed contract.",
+      "detection_signature": "`DOMAIN_SEPARATOR` computed once in the constructor (cached across a fork) or without `chainid`/`verifyingContract` in the type hash; no re-derivation when `block.chainid` changes.",
+      "grounding": ["Post-merge chain-split permit replay concerns 2022", "cached-domain-separator advisories", "OpenZeppelin EIP712 chainid guidance"]
+    },
+    {
+      "id": "EVM-XC-01",
+      "name": "Cross-chain: uninitialized / zero trusted-root accepted",
+      "cwe": "CWE-345",
+      "subsystem": "optimistic bridge / message replica",
+      "pattern": "The bridge's message-verification treats an uninitialized (zero) committed root as valid, so any message proves against the default-empty mapping and anyone forges withdrawals of bridged value.",
+      "detection_signature": "`acceptableRoot(0x00) == true` or a `confirmAt`/`roots` mapping whose default zero value passes the proof check; `process()` gated only by `acceptableRoot` on an attacker-supplied root.",
+      "grounding": ["Nomad Bridge 2022 ($190M, zero-root after routine init)", "bridge merkle-root default-value class"]
+    },
+    {
+      "id": "EVM-XC-02",
+      "name": "Cross-chain: missing source-address / source-chain / endpoint binding",
+      "cwe": "CWE-346",
+      "subsystem": "LayerZero / CCIP / generic message handler",
+      "pattern": "An inbound handler (`lzReceive`, `ccipReceive`, `_execute`, `handle`) does not verify msg.sender is the trusted endpoint AND the (srcChainId, srcAddress) trusted remote, so a forged call mints/releases value on the destination.",
+      "detection_signature": "`lzReceive`/`ccipReceive` with no `require(msg.sender == endpoint)` or no `require(trustedRemote[srcChainId] == srcAddress)`; sender/chain fields read but not enforced.",
+      "grounding": ["LayerZero trusted-remote misconfig class", "cross-chain 'anyone can call receive' audit findings", "Chainlink CCIP router-auth guidance"]
+    },
+    {
+      "id": "EVM-XC-03",
+      "name": "Cross-chain: message replay — no per-message nonce",
+      "cwe": "CWE-294",
+      "subsystem": "bridge message intake",
+      "pattern": "A delivered cross-chain message (or its VAA/leaf/messageHash) can be re-submitted because no per-message nonce or processed-set is enforced, replaying a mint/withdraw multiple times.",
+      "detection_signature": "Message handler that credits value keyed by (chain, nonce) or a `messageHash` with no `processed[hash] = true` guard set before the effect; Wormhole VAA hash not recorded as consumed.",
+      "grounding": ["bridge double-spend replay advisories", "Wormhole VAA replay-guard requirements", "Meter.io / cross-chain replay incidents"]
+    },
+    {
+      "id": "EVM-XC-04",
+      "name": "Cross-chain: broken guardian/signature verification (VAA)",
+      "cwe": "CWE-347",
+      "subsystem": "Wormhole-style attested bridge",
+      "pattern": "Signature/guardian-set verification of a bridge attestation is bypassable — a spoofed or unchecked signer set lets a forged VAA mint wrapped assets without a real deposit.",
+      "detection_signature": "`parseAndVerifyVM`/guardian-set check missing or verifying against an attacker-influenceable set; the classic `verify_signatures` shortcut that accepts a sysvar/instruction-spoofed signer set.",
+      "grounding": ["Wormhole 2022 ($326M, spoofed signature verification)", "Qubit/other attestation-forge bridge hacks"]
+    },
+    {
+      "id": "EVM-DC-01",
+      "name": "Delegatecall storage-layout collision",
+      "cwe": "CWE-843",
+      "subsystem": "proxy / library delegatecall",
+      "pattern": "A `delegatecall` into a library/implementation whose storage layout differs from the caller's, so a write at slot N in the callee clobbers an unrelated caller variable (owner, impl pointer, balance).",
+      "detection_signature": "`delegatecall` to an impl whose declared state variables do not align slot-for-slot with the proxy's (no `__gap`, reordered vars across an upgrade), or unstructured-storage slots that overlap.",
+      "grounding": ["Parity multisig 2017", "storage-collision upgrade advisories", "diamond-storage misalignment findings"]
+    },
+    {
+      "id": "EVM-DC-02",
+      "name": "Arbitrary delegatecall / call to attacker-controlled target",
+      "cwe": "CWE-610",
+      "subsystem": "multicall / router / wallet",
+      "pattern": "A function forwards a caller-supplied `target` and `data` into `delegatecall`/`call`, letting the attacker execute arbitrary code in the contract's context (drain approvals, set owner) — often combined with `msg.value` reuse in a payable multicall.",
+      "detection_signature": "`target.delegatecall(data)` / `target.call(data)` where `target` is a function parameter with no allowlist; `payable` multicall looping over calls that each read `msg.value`.",
+      "grounding": ["Multichain/AnySwap arbitrary-call approvals drain 2022", "0x / router arbitrary-call findings", "payable multicall msg.value-reuse class"]
+    },
+    {
+      "id": "EVM-UR-01",
+      "name": "Unchecked external-call / transfer return value",
+      "cwe": "CWE-252",
+      "subsystem": "token accounting",
+      "pattern": "A low-level `call`/`send` or a bare ERC20 `transfer`/`transferFrom` return is ignored, so a silently-failing (or no-return / false-returning) token lets accounting proceed as if value moved.",
+      "detection_signature": "`token.transfer(...)` as a statement (return not checked) without SafeERC20; `addr.call(...)` / `addr.send(...)` whose `bool success` is discarded.",
+      "grounding": ["missing SafeERC20 audit findings", "no-return-token (USDT) integration failures", "silent-transfer accounting desync incidents"]
+    },
+    {
+      "id": "EVM-TK-01",
+      "name": "Fee-on-transfer / rebasing token accounting desync",
+      "cwe": "CWE-682",
+      "subsystem": "token integration / pool accounting",
+      "pattern": "The contract credits the requested `amount` on deposit rather than the actual received balance delta, so a fee-on-transfer or rebasing token lets the attacker withdraw more than the pool actually received.",
+      "detection_signature": "`transferFrom(user, this, amount)` followed by `balances[user] += amount` (uses the requested amount, not `balanceAfter - balanceBefore`); no double-entry-point / rebasing guard.",
+      "grounding": ["Balancer fee-on-transfer 2020", "numerous 'measure actual received' audit findings", "rebasing-token integration exploits"]
+    },
+    {
+      "id": "EVM-GOV-01",
+      "name": "Flash-loan governance takeover",
+      "cwe": "CWE-345",
+      "subsystem": "on-chain governance / voting",
+      "pattern": "Voting power is read from a live token balance (not a historical snapshot), so an attacker flash-loans governance tokens, passes a malicious proposal in one transaction, and drains the treasury.",
+      "detection_signature": "`getVotes`/quorum using `balanceOf`/current supply instead of a past-block snapshot (`getPastVotes`/checkpoints); proposal execution reachable in the same tx as vote casting.",
+      "grounding": ["Beanstalk 2022 ($182M, flash-loan governance)", "Build Finance DAO takeover", "flash-loan-vote advisories"]
+    },
+    {
+      "id": "EVM-MEV-01",
+      "name": "Missing slippage / deadline — sandwichable swap",
+      "cwe": "CWE-362",
+      "subsystem": "swap / liquidity action",
+      "pattern": "A swap/deposit/withdraw executes with `minAmountOut = 0` (or an attacker-suppliable bound) and/or `deadline = block.timestamp`, so a searcher sandwiches the transaction and skims the difference.",
+      "detection_signature": "`swapExactTokensForTokens(..., 0, ..., block.timestamp)` or an internal swap with no caller-supplied min-out; auto-computed min-out from the same manipulable pool.",
+      "grounding": ["routine MEV sandwich losses", "zero-slippage aggregator findings", "on-chain swap deadline advisories"]
+    },
+    {
+      "id": "EVM-DOS-01",
+      "name": "Unbounded-loop / push-payment DoS (griefing)",
+      "cwe": "CWE-834",
+      "subsystem": "distribution / withdrawal queue",
+      "pattern": "A function loops over an attacker-growable array or push-pays a list of recipients, so one reverting recipient or a large array pushes gas past the block limit and permanently bricks the function.",
+      "detection_signature": "`for` over `holders`/`queue`/per-user array with no bound; a payout loop that reverts wholesale if one `transfer` fails (favor pull-payments).",
+      "grounding": ["King of the Ether griefing", "GovernMental unbounded-array lock", "push-payment DoS audit findings"]
+    },
+    {
+      "id": "EVM-RNG-01",
+      "name": "On-chain randomness from block values",
+      "cwe": "CWE-330",
+      "subsystem": "lottery / NFT mint / game",
+      "pattern": "Randomness is derived from `block.timestamp`/`blockhash`/`prevrandao`, which a validator or a same-block contract can predict/influence to win the lottery or mint the rare NFT.",
+      "detection_signature": "`keccak256(abi.encodePacked(block.timestamp, block.difficulty, ...))` used as a winning/selection seed; no commit-reveal or VRF.",
+      "grounding": ["numerous lottery/NFT predictable-randomness exploits", "SmartBillions", "block-hash RNG advisories"]
+    }
+  ]
+}

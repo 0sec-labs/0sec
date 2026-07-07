@@ -27,7 +27,9 @@ import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { cardanoOnchainReviewAgentPrompt } from "./review/cardano-onchain-profile.js";
 import { solanaOnchainReviewAgentPrompt } from "./review/solana-onchain-profile.js";
 import { cardanoHaskellReviewAgentPrompt } from "./review/cardano-haskell-profile.js";
+import { evmOnchainReviewAgentPrompt } from "./review/evm-onchain-profile.js";
 import { generateHaskellSeeds } from "./review/haskell-seeds.js";
+import { generateEvmSeeds } from "./review/evm-seeds.js";
 import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
 import { xnuReReviewAgentPrompt } from "./review/xnu-re-profile.js";
 import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/index.js";
@@ -106,7 +108,7 @@ export interface PipelineOptions {
    *   surface, copy_from_user discipline, refcount races, skb cow/share
    *   violations (Dirty Frag class). Static-only; verification via #271/#272.
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
   /**
    * Review the SOURCE of a published package. When set, `target` is a
    * package NAME (not a repo path / git URL): the pipeline installs the
@@ -1325,6 +1327,38 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       }
     }
 
+    // Solidity/EVM fallback seed layer (pwnkit "0contract"). Semgrep's
+    // Solidity coverage is thin and Slither is not on PATH in the engine
+    // image, so this regex pass gives the evm-onchain review concrete
+    // candidate sinks (external calls, delegatecall, cross-chain handlers,
+    // oracle reads) so it never starts from an empty scanner list.
+    if (
+      prepared.resolvedType === "source-code" &&
+      opts.reviewProfile === "evm-onchain"
+    ) {
+      try {
+        const hasScannerSolidityLeads = semgrepFindings.some((finding) =>
+          finding.path.endsWith(".sol"),
+        );
+        const evmSeeds = hasScannerSolidityLeads ? [] : generateEvmSeeds(prepared.scopePath);
+        if (evmSeeds.length > 0) {
+          semgrepFindings.push(...evmSeeds);
+          emit({
+            type: "stage:start",
+            stage: "analyze",
+            message: `EVM seed layer: ${evmSeeds.length} regex fallback lead(s)`,
+          });
+          logPipelineEvent("analyze", "evm_seeds", {
+            count: evmSeeds.length,
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push({ stage: "analyze", message: `EVM seed layer failed: ${msg}` });
+        logPipelineEvent("analyze", "warning", { message: `EVM seed layer failed: ${msg}` });
+      }
+    }
+
     // dependency audit (package targets only, need the temp project dir)
     if (
       (prepared.resolvedType === "npm-package" || prepared.resolvedType === "pypi-package" || prepared.resolvedType === "cargo-package" || prepared.resolvedType === "oci-image") &&
@@ -1516,6 +1550,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
             ? cardanoOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "solana-onchain"
             ? solanaOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
+            : opts.reviewProfile === "evm-onchain"
+            ? evmOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "cardano-haskell"
             ? cardanoHaskellReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "xnu-kernel"

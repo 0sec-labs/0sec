@@ -1348,6 +1348,17 @@ export interface AuditReport {
  *   checks, duplicate-mutable-account, unvalidated `remaining_accounts`. No
  *   memory-safety surface (Rust + BPF VM); verification is an instruction the
  *   program wrongly processes against a substituted account.
+ * - `evm-onchain`: EVM on-chain smart-contract review (Solidity / Foundry /
+ *   Hardhat) — "0contract". DeFi/bridge *value-logic* bugs — reentrancy
+ *   (classic/cross-function/read-only/cross-contract), access-control /
+ *   missing-auth / init front-run, oracle & price manipulation (spot vs
+ *   manipulable TWAP, stale feeds), rounding / first-depositor share inflation,
+ *   signature / permit / EIP-712 replay, cross-chain message verification &
+ *   replay (source-chain/nonce/domain binding), delegatecall / proxy storage
+ *   collision, unchecked external-call return, MEV/sandwich, unbounded-loop DoS.
+ *   No memory-safety surface (EVM VM); verification is a Foundry test that
+ *   drains or corrupts. Distinct from cardano-onchain (EUTXO) and solana-onchain
+ *   (account model).
  * - `cardano-haskell`: Cardano FIRST-PARTY Haskell node-stack review
  *   (cardano-ledger, plutus / the Plutus script evaluator, ouroboros-network,
  *   cardano-wallet, cardano-cli/cardano-api, cardano-base, plutus-apps).
@@ -1370,7 +1381,7 @@ export interface AuditReport {
  *   to read offset-soup + recover IOKit ABI fields, and gates findings
  *   behind binary re-verification.
  */
-export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
+export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
 
 /**
  * A known bug to anchor a review on for variant analysis. Project Zero's

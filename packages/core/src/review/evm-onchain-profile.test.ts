@@ -1,0 +1,117 @@
+import { describe, it, expect } from "vitest";
+import { evmOnchainReviewAgentPrompt } from "./evm-onchain-profile.js";
+
+describe("evmOnchainReviewAgentPrompt", () => {
+  it("instructs the agent to confirm the tree is an EVM/Solidity tree before doing anything (Step 0)", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", []);
+    expect(prompt).toMatch(/Step 0/);
+    expect(prompt).toMatch(/foundry\.toml/);
+    expect(prompt).toMatch(/hardhat\.config/);
+    expect(prompt).toMatch(/pragma solidity/);
+    expect(prompt).toMatch(/OpenZeppelin/);
+    // Must explicitly tell the agent to refuse if it's not an EVM tree.
+    expect(prompt).toMatch(/refuse/i);
+    // And name the repo path.
+    expect(prompt).toMatch(/\/tmp\/repo/);
+  });
+
+  it("maps the external-call, privileged, price, upgrade and cross-chain surfaces (Step 1)", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", []);
+    expect(prompt).toMatch(/\.call\{value:\}|call\{value:/);
+    expect(prompt).toMatch(/delegatecall/);
+    expect(prompt).toMatch(/onlyOwner/);
+    expect(prompt).toMatch(/getReserves/);
+    expect(prompt).toMatch(/lzReceive/);
+    expect(prompt).toMatch(/initialize/);
+  });
+
+  it("lists the EVM DeFi/bridge hypothesis classes (Step 2 taxonomy)", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", []);
+    // Reentrancy — all four flavors.
+    expect(prompt).toMatch(/Reentrancy/i);
+    expect(prompt).toMatch(/cross-function/i);
+    expect(prompt).toMatch(/read-only/i);
+    expect(prompt).toMatch(/cross-contract/i);
+    // Access control / init front-run.
+    expect(prompt).toMatch(/Access control|missing-auth/i);
+    expect(prompt).toMatch(/front-run/i);
+    // Oracle / price manipulation.
+    expect(prompt).toMatch(/[Oo]racle/);
+    expect(prompt).toMatch(/TWAP/);
+    // Rounding / first-depositor inflation.
+    expect(prompt).toMatch(/first-depositor|share inflation/i);
+    expect(prompt).toMatch(/ERC4626/);
+    // Signature / permit / EIP-712 replay.
+    expect(prompt).toMatch(/EIP-712/);
+    expect(prompt).toMatch(/permit/);
+    // Cross-chain — first-class high-value class.
+    expect(prompt).toMatch(/[Cc]ross-chain/);
+    expect(prompt).toMatch(/source.?chain.?id/i);
+    expect(prompt).toMatch(/nonce/);
+    // Delegatecall / proxy storage collision.
+    expect(prompt).toMatch(/storage.?collision|storage-layout|storage layout/i);
+    // Unchecked external-call return.
+    expect(prompt).toMatch(/[Uu]nchecked/);
+    // MEV / sandwich.
+    expect(prompt).toMatch(/MEV|sandwich/i);
+    // Unbounded-loop DoS.
+    expect(prompt).toMatch(/[Uu]nbounded/);
+    expect(prompt).toMatch(/DoS/);
+  });
+
+  it("emits a Foundry test as the PoC form", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", []);
+    expect(prompt).toMatch(/Foundry/);
+    expect(prompt).toMatch(/forge test|forge-std/);
+  });
+
+  it("carries a false-positive gate that kills the common EVM myths", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", []);
+    expect(prompt).toMatch(/FALSE-POSITIVE GATE/);
+    // CEI / nonReentrant already-guarded.
+    expect(prompt).toMatch(/nonReentrant|Checks-Effects-Interactions/);
+    // 0.8 checked math.
+    expect(prompt).toMatch(/0\.8/);
+    // Modifier-gated.
+    expect(prompt).toMatch(/modifier/);
+    // Robust TWAP already.
+    expect(prompt).toMatch(/TWAP/);
+    // SafeERC20 already.
+    expect(prompt).toMatch(/SafeERC20/);
+  });
+
+  it("has a mandatory self-check and the save_finding / category / poc_steps contract", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", []);
+    expect(prompt).toMatch(/MANDATORY SELF-CHECK/);
+    expect(prompt).toMatch(/save_finding/);
+    // The category enum must enumerate the taxonomy.
+    expect(prompt).toMatch(/reentrancy\|access-control\|oracle-manipulation/);
+    expect(prompt).toMatch(/cross-chain-replay/);
+    expect(prompt).toMatch(/delegatecall-proxy/);
+    // poc_steps contract is mandatory.
+    expect(prompt).toMatch(/poc_steps/);
+    expect(prompt).toMatch(/MANDATORY JSON-encoded PocStep/);
+  });
+
+  it("threads the operator hypothesis into a primary-direction block when provided", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", [], "look at the bridge withdraw handler");
+    expect(prompt).toMatch(/OPERATOR HYPOTHESIS/);
+    expect(prompt).toMatch(/look at the bridge withdraw handler/);
+  });
+
+  it("renders static scanner leads when provided", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", [
+      {
+        ruleId: "evm-seed.external-call.call-value",
+        message: "low-level ETH call",
+        severity: "high",
+        path: "src/Vault.sol",
+        startLine: 42,
+        endLine: 42,
+        snippet: "(bool ok,) = msg.sender.call{value: amount}(\"\");",
+      },
+    ]);
+    expect(prompt).toMatch(/evm-seed\.external-call\.call-value/);
+    expect(prompt).toMatch(/src\/Vault\.sol:42/);
+  });
+});

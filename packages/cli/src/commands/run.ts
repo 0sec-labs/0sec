@@ -103,7 +103,12 @@ export interface RunOptions {
    * unconserved value, unauthorized mint). "solana-onchain" tunes for Solana
    * Anchor/native Rust account-model authorization bugs (missing signer/owner
    * checks, account substitution, missing PDA validation, arbitrary CPI,
-   * missing has_one, AMM/lending overflow). "cardano-haskell" tunes for
+   * missing has_one, AMM/lending overflow). "evm-onchain" tunes for Solidity /
+   * Foundry / Hardhat DeFi/bridge value-logic bugs (reentrancy, missing
+   * access control / init front-run, oracle & price manipulation,
+   * first-depositor share inflation, signature/permit replay, cross-chain
+   * message verification & replay, delegatecall/proxy storage collision,
+   * unchecked external-call return). "cardano-haskell" tunes for
    * first-party Cardano Haskell node-stack bugs (partial-function/decoder
    * crashes on untrusted input, FFI memory-safety, lazy-eval space leaks,
    * Plutus-VM budget/eval flaws, ledger STS rule gaps). "xnu-kernel" tunes
@@ -111,7 +116,7 @@ export interface RunOptions {
    * port/VM). "xnu-re" reviews DECOMPILED Apple kext pseudo-C (closed kexts
    * from a kernelcache). Default: "default".
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
   /**
    * Review the source of a published package: `target` is a package NAME and
    * the pipeline installs it (npm/pypi/cargo/oci) before reviewing its
