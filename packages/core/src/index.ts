@@ -829,6 +829,27 @@ export type {
   ExploitabilityGateDeps,
 } from "./triage/exploitability-upgrade.js";
 
+// REAL kernel-VM adapter for the PROVE oracle — the prod observation source
+// (LPE upgrade-plan #2). Builds the DiversifyRunner/DifferentialRunner seams over
+// the real kernel-vm-runner lanes; injectable so tests stay fully offline.
+export {
+  makeKernelVmDiversifyRunner,
+  makeKernelVmDifferentialRunner,
+  makeKernelVmOracles,
+  makeKernelVmExploitabilityGate,
+  defaultDifferentialRootDetector,
+  withEnvOverrides,
+} from "./triage/exploitability-oracle-runner.js";
+export type {
+  KernelVmBootFn,
+  EnvBag,
+  KernelVmDiversifyRunnerDeps,
+  KernelVmDifferentialRunnerDeps,
+  KernelVmDifferentialExploit,
+  DifferentialRootDetector,
+  KernelVmOraclesDeps,
+} from "./triage/exploitability-oracle-runner.js";
+
 // Kernel crash verification oracle
 export { verifyKernelCrash, verifyStandaloneKernelReproducer, compileAndRunReproducer, matchCrashSignature, validateCrashReportConsistency } from "./triage/kernel-oracle.js";
 export type { KernelOracleResult, ReproducerResult, CrashSignatureMatch, ConsistencyResult } from "./triage/kernel-oracle.js";
