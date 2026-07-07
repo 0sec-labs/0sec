@@ -103,9 +103,14 @@ export interface UpstreamFixEntry {
    */
   causeShas: string[];
   /**
-   * Best-effort numeric "introduced in vX.Y[.Z]" version, parsed from an
-   * "Issue introduced in ..." line in the description text when present.
-   * Undefined when no such line exists — most records don't carry it.
+   * Numeric "introduced in vX.Y[.Z]" mainline version. Sourced two ways, in
+   * order of preference: (1) an "Issue introduced in ..." line in the
+   * description text (rare in the JSON — usually only in the .mbox); (2) the
+   * lowest `affected` semver in `versions[]` — kernel CVE JSON marks the
+   * introducing release as e.g. `{"version": "6.18", "status": "affected"}`,
+   * which is present on essentially every record. Undefined only when neither
+   * signal exists. This is the field `checkNotYetIntroduced` uses to drop
+   * candidates whose vulnerable code postdates the target tree's cut.
    */
   introducedVersion?: string;
 }
@@ -114,9 +119,17 @@ const SHA_RE = /^[0-9a-f]{7,40}$/i;
 const CHERRY_PICK_RE = /cherry picked from commit\s+([0-9a-f]{7,40})\b/i;
 const STABLE_REF_RE = /git\.kernel\.org\/stable\/c\/([0-9a-f]{7,40})\b/i;
 const INTRODUCED_IN_RE = /issue introduced in\s+v?(\d+\.\d+(?:\.\d+)?)/i;
+const SEMVER_RE = /^\d+\.\d+(?:\.\d+)?$/;
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+/** Sortable numeric key for a "X.Y[.Z]" kernel version; unparseable → +∞ so it never wins a min(). */
+function semverKey(v: string): number {
+  const m = v.match(/^(\d+)\.(\d+)(?:\.(\d+))?$/);
+  if (!m) return Number.MAX_SAFE_INTEGER;
+  return Number(m[1]) * 1_000_000 + Number(m[2]) * 1_000 + Number(m[3] ?? 0);
 }
 
 /**
@@ -176,7 +189,19 @@ export function parseVulnsCveRecord(raw: unknown): UpstreamFixEntry | null {
   const description = cna.descriptions?.find((d) => !d.lang || d.lang === "en")?.value ?? "";
   const cherryPick = description.match(CHERRY_PICK_RE)?.[1];
   const mainlineSha = cherryPick ? cherryPick.toLowerCase() : undefined;
-  const introducedVersion = description.match(INTRODUCED_IN_RE)?.[1];
+  // Introduced-in version: prefer the authoritative "Issue introduced in X.Y"
+  // description line; fall back to the lowest `affected` semver in versions[]
+  // (present on ~every kernel CVE record — the text line usually isn't). The
+  // lowest affected release is the one the vuln first appeared in, which is
+  // exactly what the not-yet-introduced numeric check compares to the target.
+  const introducedFromText = description.match(INTRODUCED_IN_RE)?.[1];
+  const affectedSemvers = (cna.affected ?? [])
+    .flatMap((a) => a.versions ?? [])
+    .filter((v) => v.status === "affected" && typeof v.version === "string" && SEMVER_RE.test(v.version))
+    .map((v) => v.version!);
+  const introducedFromVersions =
+    affectedSemvers.length > 0 ? affectedSemvers.reduce((a, b) => (semverKey(b) < semverKey(a) ? b : a)) : undefined;
+  const introducedVersion = introducedFromText ?? introducedFromVersions;
 
   // Nothing to check against a target tree — not actionable.
   if (candidateShas.length === 0 && !mainlineSha) return null;

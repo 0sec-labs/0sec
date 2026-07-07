@@ -162,9 +162,48 @@ describe("kernel/patch-gap-feed: parseVulnsCveRecord (pure)", () => {
     expect(entry?.introducedVersion).toBe("6.14");
   });
 
-  it("leaves introducedVersion undefined when no 'Issue introduced in' line is present", () => {
+  it("leaves introducedVersion undefined when neither a description line nor an affected semver is present", () => {
     const entry = parseVulnsCveRecord(makeRecord());
     expect(entry?.introducedVersion).toBeUndefined();
+  });
+
+  it("falls back to the affected semver in versions[] when the description carries no 'Issue introduced in' line", () => {
+    // Real kernel CVE shape: the introducing release is an affected semver
+    // entry alongside the git-SHA entries (e.g. CVE-2026-43208 → 6.18).
+    const rec = makeRecord();
+    rec.containers!.cna!.affected![0].versions!.push(
+      { version: "6.18", status: "affected" },
+      { version: "0", lessThan: "6.18", status: "unaffected", versionType: "semver" },
+    );
+    const entry = parseVulnsCveRecord(rec);
+    expect(entry?.introducedVersion).toBe("6.18");
+  });
+
+  it("picks the LOWEST affected semver as the introducing version (multiple affected ranges)", () => {
+    const rec = makeRecord();
+    rec.containers!.cna!.affected![0].versions!.push(
+      { version: "6.6.2", status: "affected" },
+      { version: "5.17", status: "affected" },
+      { version: "6.12.9", status: "affected" },
+    );
+    const entry = parseVulnsCveRecord(rec);
+    expect(entry?.introducedVersion).toBe("5.17");
+  });
+
+  it("prefers the authoritative description 'Issue introduced in' line over the versions[] semver", () => {
+    const rec = makeRecord();
+    rec.containers!.cna!.descriptions = [
+      {
+        lang: "en",
+        value:
+          "In the Linux kernel, the following vulnerability has been resolved:\n\n" +
+          "Issue introduced in 5.10 with commit abc123\n\n" +
+          "(cherry picked from commit 3e49a2f85070b2fb672c1e0fdba281a4ea3aebe6)",
+      },
+    ];
+    rec.containers!.cna!.affected![0].versions!.push({ version: "6.18", status: "affected" });
+    const entry = parseVulnsCveRecord(rec);
+    expect(entry?.introducedVersion).toBe("5.10");
   });
 });
 
