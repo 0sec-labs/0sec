@@ -191,6 +191,35 @@ export function parseSubsystems(raw: string): string[] {
     .map((s) => (s.endsWith("/") ? s : `${s}/`));
 }
 
+/**
+ * Resolve the effective review scope when a single `--subsystem` path is given
+ * on a NON-kernel source review. Narrows `<scopePath>/<subsystem>` when that
+ * subtree exists, so the oversized-review guard, semgrep, and the review agent
+ * all operate on the subsystem instead of the whole monorepo.
+ *
+ * Previously the subsystem hint was applied only for the linux-kernel profile
+ * (which does its own semgrep path-scoping + prompt threading), so a
+ * `--subsystem` on a large monorepo under any other profile was silently
+ * ignored — scopePath stayed the whole repo and the file-count guard rejected
+ * targets like `dotnet/runtime`. Returns null when no narrowing applies: no
+ * subsystem, multiple subsystems (kept whole-repo), a kernel profile, or a
+ * missing subtree. Exported for tests.
+ */
+export function resolveSubsystemScope(
+  scopePath: string,
+  subsystem: string | undefined,
+  reviewProfile: string | undefined,
+): string | null {
+  if (!subsystem) return null;
+  if (reviewProfile === "linux-kernel" || reviewProfile === "xnu-kernel") {
+    return null;
+  }
+  const subs = parseSubsystems(subsystem);
+  if (subs.length !== 1) return null;
+  const subPath = join(scopePath, subs[0]);
+  return existsSync(subPath) ? subPath : null;
+}
+
 function shouldEmitPipelineCloudEvents(): boolean {
   if (isCloudEventSinkActive()) return true;
   const flag = process.env.PWNKIT_CLOUD_EVENTS;
@@ -1045,6 +1074,25 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   }
 
   emit({ type: "stage:end", stage: "prepare", message: `Target ready: ${prepared.resolvedType}` });
+
+  // Honor `--subsystem` for non-kernel source reviews by narrowing the review
+  // scope to the requested subtree (pwnkit). Without this the subsystem hint
+  // was ignored outside the linux-kernel profile, so `--subsystem` on a large
+  // monorepo (e.g. dotnet/runtime) left scopePath at the whole repo and the
+  // oversized-review guard below rejected it every time.
+  if (prepared.resolvedType === "source-code" && !opts.resumeScanId) {
+    const narrowed = resolveSubsystemScope(
+      prepared.scopePath,
+      opts.subsystem,
+      opts.reviewProfile,
+    );
+    if (narrowed) {
+      prepared = { ...prepared, scopePath: narrowed };
+      emit({ type: "stage:end", stage: "prepare", message: `Scoped to subsystem: ${opts.subsystem}` });
+    } else if (opts.subsystem && parseSubsystems(opts.subsystem).length === 1) {
+      emit({ type: "error", stage: "prepare", message: `subsystem path not found in repo, scanning whole target: ${opts.subsystem}` });
+    }
+  }
 
   // Oversized-review guard (pwnkit). A whole-repo `review` feeds the source
   // tree to a single agent session under a fixed time budget; on a target the
