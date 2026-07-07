@@ -71,6 +71,7 @@ import {
   appendFileSync,
   mkdirSync,
   mkdtempSync,
+  rmSync,
 } from "node:fs";
 import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -333,6 +334,30 @@ function deriveTaskId(taskDir: string, description: string): string {
  * resolved from `--harness-dir` / `CYBERGYM_HARNESS` (where the sunblaze-ucb
  * checkout lives on `bench`); this is the live path gated on #1027.
  */
+/**
+ * Temp dirs THIS run created via `generateTask` (mkdtempSync under
+ * `/tmp/cybergym-task-*`). The harness owns their lifecycle and cleans them up
+ * per task (see `cleanupOwnedTaskDir`) so it never depends on an external
+ * time-based /tmp janitor that can race a live task and delete its source
+ * mid-run — the root cause of ~15% of 0-step free-fails. A user-supplied
+ * `--task-dir` is never in this set, so it is never deleted.
+ */
+const ownedTaskDirs = new Set<string>();
+
+/**
+ * Delete a task's temp dir IFF the harness created it this run. Never throws
+ * (already-gone is fine); never touches a user-supplied `--task-dir`.
+ */
+export function cleanupOwnedTaskDir(taskDir: string): void {
+  if (!ownedTaskDirs.has(taskDir)) return;
+  try {
+    rmSync(taskDir, { recursive: true, force: true });
+  } catch {
+    /* already gone / best-effort */
+  }
+  ownedTaskDirs.delete(taskDir);
+}
+
 export function generateTask(
   taskId: string,
   difficulty: string,
@@ -345,6 +370,7 @@ export function generateTask(
     );
   }
   const outDir = mkdtempSync(join(tmpdir(), "cybergym-task-"));
+  ownedTaskDirs.add(outDir);
   const maskMap = process.env.CYBERGYM_MASK_MAP ?? join(harnessDir, "mask_map.json");
   // gen_task is the harness CLI; it writes description.txt, repo-vul.tar.gz,
   // and submit.sh into the output dir. The exact invocation lives in the
@@ -641,6 +667,17 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     },
     craft: {
       maxSteps: opts.maxSteps,
+      // Recovery for a source root that vanished before the run started (a /tmp
+      // janitor GC'd the task dir, or gen_task's unpack raced). Re-unpack the
+      // pre-patch tarball IN PLACE at the same sourceRoot; if the whole task dir
+      // is gone (tarball too) this throws and the craft stage falls through to a
+      // distinct "SOURCE MISSING" inconclusive warning (re-runnable, not a fail).
+      // NB: full gen_task re-generation isn't wired here because it mints a NEW
+      // temp path, whereas the craft stage needs the source restored at the
+      // fixed sourceRoot — re-unpack in place is the only recovery that does so.
+      regenerateSource: () => {
+        locateOrUnpackRepo(task.taskDir);
+      },
       // CYBERGYM_MAX_SUBMITS overrides the submit budget. Set it to 1 to measure
       // STRICT pass@1 (one attempt, no oracle-feedback iteration) — the metric
       // comparable to the CyberGym leaderboard.
@@ -899,9 +936,12 @@ export async function runTaskBestOfN(
 
     if (!ensemble.pocPath) {
       // No vul-side crashing candidate across the N trajectories → no graded
-      // submit. Distinguish an oracle-unreachable infra fault (inconclusive)
-      // from a genuine capability miss (fail), mirroring the single path.
-      const oracleUnreachable = ensemble.warnings.some((w) => w.includes("ORACLE UNREACHABLE"));
+      // submit. Distinguish an infra fault (source vanished / oracle
+      // unreachable) — which is inconclusive — from a genuine capability miss
+      // (fail), so a broken run never scores as a fake all-fail.
+      const infraFault = ensemble.warnings.some(
+        (w) => w.includes("ORACLE UNREACHABLE") || w.includes("SOURCE MISSING"),
+      );
       return {
         taskId: task.taskId,
         difficulty: task.difficulty,
@@ -911,7 +951,7 @@ export async function runTaskBestOfN(
         inputTokens: ensemble.inputTokens,
         outputTokens: ensemble.outputTokens,
         submits: 0,
-        verdict: oracleUnreachable ? "error" : "fail",
+        verdict: infraFault ? "error" : "fail",
         passed: false,
         refused: true,
         refusedReason: `best-of-${deps.bestOfN}: no vulnerable-side crashing candidates`,
@@ -993,13 +1033,15 @@ export async function runTaskOnce(
     });
 
     if (!engine.pocPath) {
-      // Distinguish an INFRASTRUCTURE fault (the grading oracle was never
-      // reachable — e.g. wrong server port → HTTP 404) from a genuine
-      // capability miss. The craft stage flags the former with an "ORACLE
-      // UNREACHABLE" warning; scoring it `fail` would silently turn a broken
-      // run into a fake all-fail. Score it `error` (inconclusive) instead.
-      const oracleUnreachable = (engine.warnings ?? []).some((w) =>
-        w.includes("ORACLE UNREACHABLE"),
+      // Distinguish an INFRASTRUCTURE fault from a genuine capability miss. Two
+      // infra faults produce no PoC but must NOT be scored `fail` (that silently
+      // turns a broken run into a fake all-fail): (1) the grading oracle was
+      // never reachable — e.g. wrong server port → HTTP 404 ("ORACLE
+      // UNREACHABLE"); (2) the per-task source vanished before the run started —
+      // /tmp janitor or gen_task unpack race ("SOURCE MISSING"). The craft stage
+      // flags both; score either `error` (inconclusive, re-runnable) instead.
+      const infraFault = (engine.warnings ?? []).some(
+        (w) => w.includes("ORACLE UNREACHABLE") || w.includes("SOURCE MISSING"),
       );
       return {
         taskId: task.taskId,
@@ -1019,7 +1061,7 @@ export async function runTaskOnce(
         ...(engine.craftAttempts && engine.craftAttempts.length > 0
           ? { craftAttempts: engine.craftAttempts }
           : {}),
-        verdict: oracleUnreachable ? "error" : "fail",
+        verdict: infraFault ? "error" : "fail",
         passed: false,
         refused: true,
         refusedReason: engine.refusedReason ?? "engine produced no candidate PoC",
@@ -1390,32 +1432,39 @@ async function main(): Promise<void> {
   const results: CyberGymResult[] = [];
 
   for (const task of tasks) {
-    const deps = {
-      runEngine: runEngineDefault,
-      submit: submitToOracle,
-      ...(cfg.model ? { model: cfg.model } : {}),
-      runtime: cfg.runtime,
-      maxSteps: cfg.maxSteps,
-    };
-    const result =
-      cfg.repeat > 1
-        ? await runTaskRepeated(task, cfg.repeat, () => runTaskOnce(task, deps))
-        : await runTaskOnce(task, deps);
-    results.push(result);
+    try {
+      const deps = {
+        runEngine: runEngineDefault,
+        submit: submitToOracle,
+        ...(cfg.model ? { model: cfg.model } : {}),
+        runtime: cfg.runtime,
+        maxSteps: cfg.maxSteps,
+      };
+      const result =
+        cfg.repeat > 1
+          ? await runTaskRepeated(task, cfg.repeat, () => runTaskOnce(task, deps))
+          : await runTaskOnce(task, deps);
+      results.push(result);
 
-    if (!cfg.json) {
-      const icon =
-        result.verdict === "pass"
-          ? "\x1b[32mPASS\x1b[0m"
-          : result.verdict === "error"
-            ? "\x1b[33mERR \x1b[0m"
-            : "\x1b[31mFAIL\x1b[0m";
-      const t = `${(result.durationMs / 1000).toFixed(0)}s`;
-      console.log(
-        `  ${icon} ${task.taskId.padEnd(20)} ${result.steps} steps  ${t}` +
-          (result.refused ? `  refused: ${result.refusedReason}` : "") +
-          (result.error ? `  err: ${result.error.slice(0, 50)}` : ""),
-      );
+      if (!cfg.json) {
+        const icon =
+          result.verdict === "pass"
+            ? "\x1b[32mPASS\x1b[0m"
+            : result.verdict === "error"
+              ? "\x1b[33mERR \x1b[0m"
+              : "\x1b[31mFAIL\x1b[0m";
+        const t = `${(result.durationMs / 1000).toFixed(0)}s`;
+        console.log(
+          `  ${icon} ${task.taskId.padEnd(20)} ${result.steps} steps  ${t}` +
+            (result.refused ? `  refused: ${result.refusedReason}` : "") +
+            (result.error ? `  err: ${result.error.slice(0, 50)}` : ""),
+        );
+      }
+    } finally {
+      // The harness owns the lifecycle of the temp dirs IT created: delete this
+      // task's own dir now that it's done, so a background /tmp janitor can't
+      // race the next task's source. No-op for a user-supplied --task-dir.
+      cleanupOwnedTaskDir(task.taskDir);
     }
   }
 

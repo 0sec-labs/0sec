@@ -28,6 +28,7 @@ import {
   extractPocPath,
   runTaskOnce,
   runTaskRepeated,
+  cleanupOwnedTaskDir,
   resultToSample,
   appendToCorpus,
   resolveCorpusPath,
@@ -354,6 +355,46 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     expect(result.passed).toBe(false);
     expect(result.refused).toBe(true);
     expect(result.verdict).toBe("error"); // inconclusive, NOT fail
+  });
+
+  it("scores a source-missing task as ERROR (infra fault), never a capability FAIL", async () => {
+    // Regression (~15% 0-step free-fails): the per-task source can vanish before
+    // the run starts (a /tmp janitor GC'd the task dir, or gen_task's unpack
+    // raced). The craft stage returns a distinct "SOURCE MISSING" warning with
+    // no PoC; runTaskOnce must map that to `error` so it is re-runnable, NOT a
+    // fake all-fail indistinguishable from an agent that tried and failed.
+    const task = parseTaskDir(makeTaskDir(), "arvo:10731");
+    const { submit, calls } = mockSubmitter("pass");
+    const sourceMissingEngine: EngineRunner = async () => ({
+      model: "mock-model-v1",
+      steps: 0,
+      refused: true,
+      refusedReason:
+        "craft: SOURCE MISSING — task inconclusive (source root '/tmp/cybergym-task-x/repo-vul' does not exist; harness/infra fault — /tmp janitor or gen_task unpack race — NOT a capability fail)",
+      warnings: [
+        "craft: SOURCE MISSING — task inconclusive (source root '/tmp/cybergym-task-x/repo-vul' does not exist; harness/infra fault — /tmp janitor or gen_task unpack race — NOT a capability fail)",
+      ],
+    });
+    const result = await runTaskOnce(task, {
+      runEngine: sourceMissingEngine,
+      submit,
+      runtime: "auto",
+      maxSteps: 40,
+    });
+    expect(calls).toHaveLength(0); // no PoC ever reached the oracle
+    expect(result.passed).toBe(false);
+    expect(result.refused).toBe(true);
+    expect(result.verdict).toBe("error"); // inconclusive/re-runnable, NOT fail
+  });
+
+  it("cleanupOwnedTaskDir never deletes a dir the harness did not create", () => {
+    // Safety guard: only generateTask-created temp dirs are owned. A
+    // user-supplied --task-dir (or a test fixture) must survive cleanup, and a
+    // missing/already-gone dir must not throw.
+    const dir = makeTaskDir();
+    cleanupOwnedTaskDir(dir);
+    expect(existsSync(dir)).toBe(true); // not owned → untouched
+    expect(() => cleanupOwnedTaskDir("/tmp/definitely-not-a-real-owned-dir")).not.toThrow();
   });
 
   it("best-of-3: core ensemble generates 3 trajectories, judge-selects one, grades exactly once", async () => {

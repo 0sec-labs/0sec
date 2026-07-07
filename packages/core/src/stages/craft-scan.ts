@@ -113,6 +113,15 @@ export interface CraftScanOptions {
    * remembered as an episode at the end. Shared across tasks → compounds.
    */
   memory?: CraftMemoryStore;
+  /**
+   * Optional recovery hook for a MISSING source root. The per-task source can
+   * vanish before the run even starts (a /tmp janitor GC's the task dir, or
+   * gen_task transiently failed to unpack the pre-patch tarball). That is an
+   * INFRASTRUCTURE fault, not a capability fail — tasks that normally PASS
+   * zero-step this way. When supplied, the stage calls this ONCE to try to
+   * restore the source (e.g. re-unpack the tarball in place) before giving up.
+   */
+  regenerateSource?: () => void | Promise<void>;
   /** Progress sink. */
   log?: (msg: string) => void;
 }
@@ -176,19 +185,38 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   const warnings: string[] = [];
 
   if (!existsSync(sourceRoot)) {
-    return {
-      findings: [],
-      warnings: [`craft: source root '${sourceRoot}' does not exist`],
-      attempts: [],
-      submits: 0,
-      passed: false,
-      firstSubmitPassed: false,
-      model: opts.model ?? "auto",
-      steps: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      estimatedCostUsd: 0,
-    };
+    // The per-task source vanished before the run even started — a /tmp janitor
+    // GC'd the task dir, or gen_task transiently failed to unpack repo-vul. This
+    // is an INFRASTRUCTURE fault, NOT a capability fail: tasks that normally PASS
+    // zero-step this way. Mirror the oracle-unreachable path (below): try to
+    // recover ONCE if the caller gave us a way, else return a DISTINCT
+    // "SOURCE MISSING" warning that marks the task inconclusive (re-runnable)
+    // rather than a fake 0-step "fail" indistinguishable from an agent that
+    // tried and failed.
+    if (opts.regenerateSource) {
+      try {
+        await opts.regenerateSource();
+      } catch {
+        /* recovery is best-effort; fall through to the inconclusive return */
+      }
+    }
+    if (!existsSync(sourceRoot)) {
+      return {
+        findings: [],
+        warnings: [
+          `craft: SOURCE MISSING — task inconclusive (source root '${sourceRoot}' does not exist; harness/infra fault — /tmp janitor or gen_task unpack race — NOT a capability fail)`,
+        ],
+        attempts: [],
+        submits: 0,
+        passed: false,
+        firstSubmitPassed: false,
+        model: opts.model ?? "auto",
+        steps: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0,
+      };
+    }
   }
 
   // ── sandboxed read-only repo tools ──
