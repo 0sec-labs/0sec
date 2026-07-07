@@ -476,9 +476,12 @@ export function composeGate(...stages: HuntVerifier[]): HuntVerifier {
   };
 }
 
-/** Group key for best-of-N judging: per (candidate site, model) — NOT per candidate alone, so
- *  model-diversity fan-out (models.length > 1) with the default attemptsPerCandidate=1 never
- *  produces a >1-length group and stays byte-for-byte identical to pre-best-of-N behavior. */
+/** Group key for best-of-N judging: per (ORIGINAL candidate site, model) — NOT per candidate
+ *  alone, so model-diversity fan-out (models.length > 1) with the default attemptsPerCandidate=1
+ *  never produces a >1-length group and stays byte-for-byte identical to pre-best-of-N behavior.
+ *  Callers pass the pre-refine `originPath`, so grouping tracks which candidate PRODUCED the
+ *  finding — two distinct findings the second-audit refiner deepens to the same path do NOT
+ *  collapse into one group (which the no-brief `judgeTopK` truncation would then silently drop). */
 function siteGroupKey(candidatePath: string, model: string | undefined): string {
   return `${candidatePath} ${model ?? ""}`;
 }
@@ -579,9 +582,16 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       `(of ${runs.length})`,
   );
 
-  const all: Array<{ finding: Finding; candidate: HuntCandidate; model?: string; attempt: number }> = [];
+  // `originPath` freezes the finder's ORIGINAL candidate site BEFORE the
+  // second-audit refiner (below) can rewrite `candidate.path` to a deeper
+  // root-cause path. The best-of-N judge groups on it (not the post-refine
+  // path) so a group is always "the N attempts at ONE original site" — see
+  // siteGroupKey. Without this, refine deepening two DISTINCT findings to the
+  // SAME path collapses them into one group, and the no-brief truncation to
+  // `judgeTopK` then silently drops the confirmed extra.
+  const all: Array<{ finding: Finding; candidate: HuntCandidate; originPath: string; model?: string; attempt: number }> = [];
   for (const r of reports)
-    if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate, model: r.model, attempt: r.attempt });
+    if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate, originPath: r.candidate.path, model: r.model, attempt: r.attempt });
   log(`[hunt] finders surfaced ${all.length} candidate finding(s)`);
 
   // OPTIONAL second-audit refinement: DEEPEN each finding's candidate (root cause
@@ -620,7 +630,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // Groups of exactly 1 (the default) skip the judge entirely — unmodified.
   const groups = new Map<string, typeof all>();
   for (const item of all) {
-    const key = siteGroupKey(item.candidate.path, item.model);
+    const key = siteGroupKey(item.originPath, item.model);
     const g = groups.get(key);
     if (g) g.push(item);
     else groups.set(key, [item]);

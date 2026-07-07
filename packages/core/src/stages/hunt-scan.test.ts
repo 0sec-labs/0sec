@@ -162,6 +162,58 @@ describe("runHuntScan — best-of-N + judge gate", () => {
     expect(res.warnings.some((w) => w.includes("no brief to judge against"))).toBe(true);
     expect(res.records.every((r) => r.judgeScore === undefined)).toBe(true);
   });
+
+  it("does NOT drop a confirmed finding when second-audit refine deepens two DISTINCT candidates to the same path (no brief)", async () => {
+    // Regression: the best-of-N judge groups by SITE. The second-audit refiner
+    // rewrites `candidate.path` to a deeper root-cause path BEFORE grouping, so
+    // two symptoms of one lifetime bug — surfaced at two DISTINCT original sites
+    // (a.c, b.c) — can be refined to the SAME path (core.c). Grouping on the
+    // post-refine path collapsed them into one group; with no `brief` that group
+    // was truncated to `judgeTopK` (default 1) with only a warning, silently
+    // dropping the second CONFIRMED finding before it ever reached `verify`.
+    // Grouping on the ORIGINAL site keeps them apart so BOTH survive.
+    agenticScanMock.mockReset();
+    // Two distinct candidates, each surfaces exactly one finding at its own site.
+    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+      const site = config.target; // "/src/a.c" or "/src/b.c"
+      const id = site.endsWith("a.c") ? "f-a" : "f-b";
+      return { findings: [mkFinding(id, `finding at ${site}`, "")] };
+    });
+
+    // Second-audit deepens BOTH findings to the SAME root-cause path.
+    const refined: string[] = [];
+    const refine: NonNullable<Parameters<typeof runHuntScan>[0]["refine"]> = async (_finding, _candidate) => {
+      refined.push(_candidate.path);
+      return { path: "/src/core.c" }; // both symptoms → one lifetime bug's path
+    };
+
+    const verifyCalls: string[] = [];
+    const verify: NonNullable<Parameters<typeof runHuntScan>[0]["verify"]> = async (finding) => {
+      verifyCalls.push(finding.id);
+      return { confirmed: true, reason: "reproduced" };
+    };
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }, { path: "/src/b.c" }],
+      // no brief -> generic hunt: the collapsed group can't be judged, only truncated
+      runtime: "api",
+      concurrency: 4,
+      // default attemptsPerCandidate=1: one finding per site, so any >1 group is
+      // PURELY the refine collapse — not real best-of-N widening.
+      refine,
+      verify,
+    });
+
+    // Both original sites were refined and both deepened to the shared path.
+    expect(refined.sort()).toEqual(["/src/a.c", "/src/b.c"]);
+    expect(res.records.map((r) => r.candidatePath).sort()).toEqual(["/src/core.c", "/src/core.c"]);
+    // The drop: pre-fix only f-a reached verify and confirmed had length 1.
+    expect(verifyCalls.sort()).toEqual(["f-a", "f-b"]);
+    expect(res.confirmed.map((f) => f.id).sort()).toEqual(["f-a", "f-b"]);
+    // No spurious "no brief to judge against" truncation warning was emitted.
+    expect(res.warnings.some((w) => w.includes("no brief to judge against"))).toBe(false);
+  });
 });
 
 describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUNT_FINDER_MAX_RETRIES)", () => {
