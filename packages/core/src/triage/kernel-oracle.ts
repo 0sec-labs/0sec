@@ -124,6 +124,9 @@ const KNOWN_PREFIXES = [
  * Map from crash type keywords to expected content in the report.
  */
 const CRASH_TYPE_CONTENT: Record<string, RegExp> = {
+  // KCSAN data-race — the concurrency-bug signature KASAN never emits. Closes
+  // the loop with kcsan-race.ts (parser) + patch-to-poc.ts ("KCSAN: data-race").
+  "kcsan-data-race": /KCSAN:\s*data-race|data-race in/i,
   "kasan-oob": /slab-out-of-bounds|global-out-of-bounds|out-of-bounds/i,
   "kasan-stack-oob": /stack-out-of-bounds|stack-buffer-overflow/i,
   "kasan-uaf": /use-after-free/i,
@@ -322,6 +325,7 @@ export function matchCrashSignature(
 
   // Map normalized crash type to patterns we look for in output
   const typePatterns: Record<string, RegExp> = {
+    "kcsan-data-race": /kcsan:\s*data-race|data-race in/i,
     "kasan-oob": /kasan.*out-of-bounds|slab-out-of-bounds/i,
     "kasan-uaf": /kasan.*use-after-free|slab-use-after-free/i,
     "kasan-double-free": /kasan.*double-free|kasan.*invalid-free/i,
@@ -685,6 +689,11 @@ export async function verifyKernelCrash(
  * Extract the crash type from raw dmesg/KASAN output.
  */
 function extractCrashType(output: string): string | undefined {
+  // KCSAN data-race first — it is a distinct sanitizer signature (the race
+  // class KASAN is blind to), so a widened data-race is classified correctly.
+  if (/KCSAN:\s*data-race|BUG:\s*KCSAN/i.test(output)) {
+    return "kcsan-data-race";
+  }
   if (/KASAN.*slab-out-of-bounds|KASAN.*out-of-bounds/i.test(output)) {
     return "kasan-oob";
   }

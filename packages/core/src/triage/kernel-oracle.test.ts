@@ -211,4 +211,50 @@ Call Trace:
     expect(result.matchedFields).toContain("faultingFunction");
     expect(result.mismatchedFields).not.toContain("stackFrame[0]:dump_stack_lvl");
   });
+
+  it("matches a KCSAN data-race crashType against a KCSAN splat (race lane)", () => {
+    const result = matchCrashSignature(
+      {
+        raw: "BUG: KCSAN: data-race",
+        crashType: "kcsan-data-race",
+        faultingFunction: "ep_poll",
+        stackFrames: ["ep_poll+0x1c/0x680", "do_epoll_wait+0x2a0/0x400"],
+      },
+      "BUG: KCSAN: data-race in ep_poll / ep_free\n ep_poll+0x1c/0x680 fs/eventpoll.c:1900\n",
+    );
+    expect(result.matched).toBe(true);
+    expect(result.matchedFields).toContain("crashType");
+  });
+});
+
+describe("verifyStandaloneKernelReproducer — KCSAN race lane", () => {
+  const originalEnv = { ...process.env };
+  beforeEach(() => {
+    process.env = { ...originalEnv, PWNKIT_KERNEL_QEMU: "1" };
+    runVmMock.mockReset();
+  });
+
+  it("confirms a standalone reproducer that triggers a KCSAN data-race", async () => {
+    runVmMock.mockResolvedValue({
+      compiled: true,
+      executed: true,
+      output: "ran",
+      dmesg: "BUG: KCSAN: data-race in ep_poll / ep_free\n value changed: 0x1 -> 0x0\n",
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    const result = await verifyStandaloneKernelReproducer({
+      raw: "",
+      crashType: "unknown",
+      faultingFunction: "unknown",
+      stackFrames: [],
+      reproducer: "int main(void) { return 0; }",
+      reproducerLanguage: "c",
+    });
+
+    expect(result.verified).toBe(true);
+    expect(result.reproduced).toBe(true);
+    expect(result.reproducedCrashType).toBe("kcsan-data-race");
+  });
 });

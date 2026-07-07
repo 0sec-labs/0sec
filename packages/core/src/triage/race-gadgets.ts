@@ -131,7 +131,13 @@ export type GadgetKind =
   | "epoll_waitqueue_flood"
   | "cache_miss_stall"
   | "mutex_sleep_widen"
-  | "futex_hold";
+  | "futex_hold"
+  // ExpRace-style real-IPI window wideners (#1 in the LPE-hunt upgrade plan).
+  | "reschedule_ipi"
+  | "tlb_shootdown_ipi"
+  | "membarrier_ipi"
+  | "waitqueue_freeze"
+  | "retry_until_splat";
 
 export const GADGET_KINDS: readonly GadgetKind[] = [
   "timerfd_interrupt",
@@ -139,6 +145,11 @@ export const GADGET_KINDS: readonly GadgetKind[] = [
   "cache_miss_stall",
   "mutex_sleep_widen",
   "futex_hold",
+  "reschedule_ipi",
+  "tlb_shootdown_ipi",
+  "membarrier_ipi",
+  "waitqueue_freeze",
+  "retry_until_splat",
 ] as const;
 
 /**
@@ -154,6 +165,19 @@ export interface RaceGadget {
   rationale: string;
   renderSetup(): string;
   proverEnv(): Record<string, string>;
+  /**
+   * Kernel `.config` symbol this tactic REQUIRES to be effective (e.g.
+   * `CONFIG_PREEMPT` for the reschedule-IPI tactic — a reschedule IPI only
+   * preempts the racing worker mid-window under full preemption). When set,
+   * {@link filterGadgetsByConfig} drops the gadget (fail-soft) if the target
+   * `.config` does not enable it. Undefined ⇒ works on any config.
+   */
+  requiredConfig?: string;
+  /**
+   * The extra libc headers the tactic's C needs. Merged by the harness renderer
+   * so the emitted program compiles without the caller tracking includes.
+   */
+  headers?: readonly string[];
 }
 
 function clampInt(v: unknown, min: number, max: number, dflt: number): number {
@@ -326,6 +350,206 @@ export function futexHoldGadget(params: { holdUs?: number } = {}): RaceGadget {
   };
 }
 
+// ── ExpRace-style real-IPI window wideners (LPE-hunt upgrade #1) ─────
+//
+// The gadgets above widen a window by SLOWING the racing worker (cache miss,
+// waitqueue bloat, sleep). ExpRace (USENIX'21) widens it the other way: fire a
+// real inter-processor interrupt (IPI) at the CPU running the racing worker so
+// the kernel is *preempted mid-window*. Three userspace IPI sources — a
+// reschedule IPI (`sched_setaffinity`), a TLB-shootdown IPI (`mprotect`/
+// `munmap` on a shared mm), and `membarrier` expedited — plus calif's giant
+// wait-queue freeze and Bad Epoll's non-crashing retry loop. All userspace-only,
+// no debug gate. Each maps 1:1 to a `renderSetup()` C snippet + `PWNKIT_RACE_*`
+// prover knob, and declares the `.config` symbol it needs (config-gated).
+
+/**
+ * `reschedule_ipi` — ExpRace's reschedule-IPI widener. A `sched_setaffinity`
+ * that migrates a thread already running on another CPU makes the scheduler
+ * send a RESCHEDULE IPI to that CPU; fired in a tight loop across the racing
+ * CPU it preempts the racing worker *inside* the window. Only effective under
+ * `CONFIG_PREEMPT` (voluntary/none preemption won't preempt kernel-mode code
+ * mid-window), so it is config-gated on it.
+ */
+export function rescheduleIpiGadget(
+  params: { targetCpu?: number; bounces?: number } = {},
+): RaceGadget {
+  const targetCpu = clampInt(params.targetCpu, 0, 4_095, 1);
+  const bounces = clampInt(params.bounces, 1, 10_000_000, 2_000);
+  return {
+    name: "reschedule_ipi",
+    params: { targetCpu, bounces },
+    rationale: `Bounce affinity across CPU ${targetCpu} ${bounces}x to fire reschedule IPIs that preempt the racing worker mid-window (needs CONFIG_PREEMPT).`,
+    requiredConfig: "CONFIG_PREEMPT",
+    headers: ["#define _GNU_SOURCE", "#include <sched.h>", "#include <pthread.h>"],
+    renderSetup() {
+      return [
+        "/* gadget: reschedule_ipi — ExpRace reschedule-IPI (needs CONFIG_PREEMPT) */",
+        "{",
+        "  cpu_set_t __rs_a, __rs_b;",
+        `  CPU_ZERO(&__rs_a); CPU_SET(${targetCpu}, &__rs_a);`,
+        `  CPU_ZERO(&__rs_b); CPU_SET(${targetCpu + 1}, &__rs_b);`,
+        `  for (int __k = 0; __k < ${bounces}; __k++) {`,
+        "    /* Re-pinning a running thread across CPUs makes the scheduler send a",
+        "       reschedule IPI to the CPU it was on — the ExpRace preemption source. */",
+        "    sched_setaffinity(0, sizeof(__rs_a), &__rs_a);",
+        "    sched_setaffinity(0, sizeof(__rs_b), &__rs_b);",
+        "  }",
+        "}",
+      ].join("\n");
+    },
+    proverEnv() {
+      return {
+        PWNKIT_RACE_WIDEN_RESCHED_BOUNCES: String(bounces),
+        PWNKIT_RACE_SAME_CPU: "0",
+      };
+    },
+  };
+}
+
+/**
+ * `tlb_shootdown_ipi` — a `mprotect()` (or `munmap()`) on a page mapped into an
+ * mm shared by the racing thread forces a TLB-shootdown IPI to every CPU
+ * running a thread of that mm. Flipping a shared page's protection in a loop
+ * rains TLB-flush IPIs on the racing CPU, preempting the window. Works on any
+ * SMP config (no preemption requirement) — the IPI is unconditional.
+ */
+export function tlbShootdownIpiGadget(params: { flips?: number } = {}): RaceGadget {
+  const flips = clampInt(params.flips, 1, 10_000_000, 2_000);
+  return {
+    name: "tlb_shootdown_ipi",
+    params: { flips },
+    rationale: `Flip a shared page's protection ${flips}x (mprotect) to rain TLB-shootdown IPIs on the racing CPU.`,
+    headers: ["#include <sys/mman.h>", "#include <unistd.h>"],
+    renderSetup() {
+      return [
+        "/* gadget: tlb_shootdown_ipi — mprotect() TLB-shootdown IPI widener */",
+        "{",
+        "  long __pg = sysconf(_SC_PAGESIZE);",
+        "  void *__tm = mmap(NULL, __pg, PROT_READ | PROT_WRITE,",
+        "                    MAP_ANONYMOUS | MAP_SHARED, -1, 0);",
+        "  if (__tm != MAP_FAILED) {",
+        `    for (int __k = 0; __k < ${flips}; __k++) {`,
+        "      /* All threads share this mm, so each protection change shoots down",
+        "         the racing CPU's TLB via IPI — an unconditional preemption. */",
+        "      mprotect(__tm, __pg, PROT_READ);",
+        "      mprotect(__tm, __pg, PROT_READ | PROT_WRITE);",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n");
+    },
+    proverEnv() {
+      return { PWNKIT_RACE_WIDEN_TLB_FLIPS: String(flips) };
+    },
+  };
+}
+
+/**
+ * `membarrier_ipi` — `membarrier(PRIVATE_EXPEDITED)` sends an IPI to every CPU
+ * running a thread of the calling process to serialize memory. Fired in a loop
+ * it is a clean, dependency-free IPI source. Needs `CONFIG_MEMBARRIER` (usually
+ * on, but config-gated so a stripped kernel fails soft).
+ */
+export function membarrierIpiGadget(params: { count?: number } = {}): RaceGadget {
+  const count = clampInt(params.count, 1, 10_000_000, 2_000);
+  return {
+    name: "membarrier_ipi",
+    params: { count },
+    rationale: `Fire ${count} membarrier(PRIVATE_EXPEDITED) IPIs at the racing CPU (needs CONFIG_MEMBARRIER).`,
+    requiredConfig: "CONFIG_MEMBARRIER",
+    headers: ["#include <sys/syscall.h>", "#include <unistd.h>"],
+    renderSetup() {
+      return [
+        "/* gadget: membarrier_ipi — membarrier() expedited IPI widener */",
+        "#ifndef MEMBARRIER_CMD_PRIVATE_EXPEDITED",
+        "#define MEMBARRIER_CMD_PRIVATE_EXPEDITED (1 << 3)",
+        "#endif",
+        "#ifndef MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED",
+        "#define MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED (1 << 4)",
+        "#endif",
+        "{",
+        "  syscall(SYS_membarrier, MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0, 0);",
+        `  for (int __k = 0; __k < ${count}; __k++)`,
+        "    syscall(SYS_membarrier, MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0, 0);",
+        "}",
+      ].join("\n");
+    },
+    proverEnv() {
+      return { PWNKIT_RACE_WIDEN_MEMBARRIER: String(count) };
+    },
+  };
+}
+
+/**
+ * `waitqueue_freeze` — calif's (blog.calif.io) 720k-entry timerfd/epoll wait-
+ * queue freeze: register a huge number of `timerfd`s on one epoll instance so a
+ * wakeup walk under the wait-queue lock stalls the racing worker for a long,
+ * attacker-chosen window. Distinct from `epoll_waitqueue_flood` in scale +
+ * source (timerfds, not pipes) — this is the "freeze for milliseconds" tactic.
+ */
+export function waitqueueFreezeGadget(params: { entries?: number } = {}): RaceGadget {
+  const entries = clampInt(params.entries, 1_024, 2_000_000, 720_000);
+  return {
+    name: "waitqueue_freeze",
+    params: { entries },
+    rationale: `Register ${entries} timerfds on one epoll (calif) so a wakeup walk freezes the racing worker.`,
+    headers: [
+      "#include <sys/timerfd.h>",
+      "#include <sys/epoll.h>",
+      "#include <time.h>",
+    ],
+    renderSetup() {
+      return [
+        "/* gadget: waitqueue_freeze — calif 720k timerfd/epoll wait-queue freeze */",
+        "{",
+        "  int __wf_ep = epoll_create1(0);",
+        `  for (int __i = 0; __wf_ep >= 0 && __i < ${entries}; __i++) {`,
+        "    int __wf_t = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);",
+        "    if (__wf_t < 0) break;",
+        "    struct epoll_event __wf_ev = { .events = EPOLLIN, .data = { .fd = __wf_t } };",
+        "    epoll_ctl(__wf_ep, EPOLL_CTL_ADD, __wf_t, &__wf_ev);",
+        "  }",
+        "}",
+      ].join("\n");
+    },
+    proverEnv() {
+      return { PWNKIT_RACE_WIDEN_WAITQUEUE_ENTRIES: String(entries) };
+    },
+  };
+}
+
+/**
+ * `retry_until_splat` — Bad Epoll's (github.com/J-jaeyoung/bad-epoll) key
+ * reliability trick: rather than one-shot the race, loop it until the sanitizer
+ * fires, and NEVER let the harness itself panic/segfault (the kernel splat is
+ * the only terminator). This gadget carries no C of its own — the retry loop
+ * lives in the {@link renderRealIpiRaceHarness} template — it only sets the
+ * `PWNKIT_RACE_*` budget knobs the harness reads.
+ */
+export function retryUntilSplatGadget(
+  params: { retries?: number; seconds?: number } = {},
+): RaceGadget {
+  const retries = clampInt(params.retries, 1, 100_000_000, 200_000);
+  const seconds = clampInt(params.seconds, 1, 3_600, 40);
+  return {
+    name: "retry_until_splat",
+    params: { retries, seconds },
+    rationale: `Loop the race up to ${retries}x / ${seconds}s until KASAN/KCSAN fires; never panic (Bad Epoll).`,
+    renderSetup() {
+      return [
+        "/* gadget: retry_until_splat — the harness wraps the race in a non-crashing",
+        `   retry loop (<=${retries} iters / ${seconds}s). No inline C. */`,
+      ].join("\n");
+    },
+    proverEnv() {
+      return {
+        PWNKIT_RACE_RETRIES: String(retries),
+        PWNKIT_RACE_SECONDS: String(seconds),
+      };
+    },
+  };
+}
+
 /** Factory registry keyed by gadget name — lets the selector instantiate by name. */
 export const GADGET_FACTORIES: Record<GadgetKind, (params: Record<string, number>) => RaceGadget> = {
   timerfd_interrupt: (p) => timerfdInterruptGadget(p),
@@ -333,6 +557,11 @@ export const GADGET_FACTORIES: Record<GadgetKind, (params: Record<string, number
   cache_miss_stall: (p) => cacheMissStallGadget(p),
   mutex_sleep_widen: (p) => mutexSleepWidenGadget(p),
   futex_hold: (p) => futexHoldGadget(p),
+  reschedule_ipi: (p) => rescheduleIpiGadget(p),
+  tlb_shootdown_ipi: (p) => tlbShootdownIpiGadget(p),
+  membarrier_ipi: (p) => membarrierIpiGadget(p),
+  waitqueue_freeze: (p) => waitqueueFreezeGadget(p),
+  retry_until_splat: (p) => retryUntilSplatGadget(p),
 };
 
 /** Instantiate a gadget by name with (possibly partial/invalid) params. Returns
@@ -379,6 +608,48 @@ export function composeGadgetSetup(gadgets: RaceGadget[]): ComposedGadgets {
   return { setupC, proverEnv, gadgetNames };
 }
 
+// ── Config gating (fail-soft) ───────────────────────────────────────
+
+export interface GadgetConfigFilter {
+  /** Gadgets whose `requiredConfig` is satisfied (or that need none). */
+  kept: RaceGadget[];
+  /** Gadgets dropped because the target `.config` lacks their symbol. */
+  skipped: { name: GadgetKind; requiredConfig: string }[];
+}
+
+/**
+ * Is `symbol` enabled (`=y` or `=m`) in a kernel `.config` text? A bare
+ * `# CONFIG_X is not set` or absence counts as OFF.
+ */
+export function isConfigEnabled(kernelConfig: string, symbol: string): boolean {
+  const re = new RegExp(`^${symbol}=(y|m)\\s*$`, "m");
+  return re.test(kernelConfig);
+}
+
+/**
+ * Drop config-gated gadgets whose required `.config` symbol is not enabled in
+ * the target kernel — FAIL-SOFT: an unsupported tactic (e.g. reschedule-IPI on
+ * a non-`CONFIG_PREEMPT` kernel) is skipped, never a hard error, so the rest of
+ * the recipe still runs. When `kernelConfig` is undefined we cannot gate, so
+ * every gadget is kept (the live prover will simply no-op an ineffective one).
+ */
+export function filterGadgetsByConfig(
+  gadgets: RaceGadget[],
+  kernelConfig: string | undefined,
+): GadgetConfigFilter {
+  if (kernelConfig === undefined) return { kept: [...gadgets], skipped: [] };
+  const kept: RaceGadget[] = [];
+  const skipped: { name: GadgetKind; requiredConfig: string }[] = [];
+  for (const g of gadgets) {
+    if (g.requiredConfig && !isConfigEnabled(kernelConfig, g.requiredConfig)) {
+      skipped.push({ name: g.name, requiredConfig: g.requiredConfig });
+    } else {
+      kept.push(g);
+    }
+  }
+  return { kept, skipped };
+}
+
 // ── LLM gadget selector ─────────────────────────────────────────────
 
 export interface SelectGadgetsOptions {
@@ -404,11 +675,18 @@ const SELECTOR_SYSTEM = [
   "  cache_miss_stall       { footprintKb, strideBytes } — evict the racing load.",
   "  mutex_sleep_widen      { holdUs }       — hold at a sleep point.",
   "  futex_hold             { holdUs }       — park the racing worker in futex_wait.",
+  "  reschedule_ipi         { targetCpu, bounces } — ExpRace reschedule IPI (needs CONFIG_PREEMPT).",
+  "  tlb_shootdown_ipi      { flips }        — mprotect TLB-shootdown IPI (any SMP config).",
+  "  membarrier_ipi         { count }        — membarrier expedited IPI (needs CONFIG_MEMBARRIER).",
+  "  waitqueue_freeze       { entries }      — calif 720k timerfd/epoll wait-queue freeze.",
+  "  retry_until_splat      { retries, seconds } — loop the race until the sanitizer fires; never panic.",
   "",
   "Guidance: a tight UAF window usually needs cache_miss_stall + timerfd_interrupt +",
-  "epoll_waitqueue_flood together (the proven Bad Epoll recipe). A sleep-bounded",
-  "smell window benefits from mutex_sleep_widen / futex_hold at the sleepPoint.",
-  "Order the list by how you would layer them.",
+  "waitqueue_freeze together (the proven Bad Epoll recipe), layered with a real-IPI",
+  "preemption source (reschedule_ipi / tlb_shootdown_ipi / membarrier_ipi, ExpRace)",
+  "and wrapped by retry_until_splat. A sleep-bounded smell window benefits from",
+  "mutex_sleep_widen / futex_hold at the sleepPoint plus an IPI source. Prefer",
+  "reschedule_ipi only when the target has CONFIG_PREEMPT. Order by how you layer them.",
   "",
   'Respond with ONLY a JSON object: {"gadgets":[{"name":"<gadget>","params":{...},"why":"<short>"}]}.',
 ].join("\n");
@@ -433,17 +711,22 @@ function extractJson(text: string): unknown {
  */
 export function defaultGadgetsFor(candidate: RaceCandidate): RaceGadget[] {
   if (candidate.kind === "smell") {
+    // Sleep-bounded window: park at the sleep point, crack the load, fire a real
+    // (TLB-shootdown) IPI to preempt the racing worker, under the retry loop.
     return [
       mutexSleepWidenGadget(),
       cacheMissStallGadget(),
-      epollWaitqueueFloodGadget(),
+      tlbShootdownIpiGadget(),
+      retryUntilSplatGadget(),
     ];
   }
-  // KCSAN / UAF race → the Bad Epoll recipe.
+  // KCSAN / UAF race → Bad Epoll recipe (cache-crack + timerfd IRQ) layered with
+  // the ExpRace reschedule-IPI, all under the non-crashing retry loop.
   return [
     cacheMissStallGadget(),
     timerfdInterruptGadget(),
-    epollWaitqueueFloodGadget(),
+    rescheduleIpiGadget(),
+    retryUntilSplatGadget(),
   ];
 }
 

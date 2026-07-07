@@ -15,6 +15,10 @@ import {
   renderInitramfsInitScript,
   buildInitramfsQemuCommand,
   loadKernelVmConfigFromEnv,
+  renderRealIpiRaceHarness,
+  buildFlagsForProfile,
+  kcsanConfigSupported,
+  RECOGNIZED_CONFIG_PROFILES,
   type KernelVmConfig,
 } from "./kernel-vm-runner.js";
 
@@ -326,6 +330,76 @@ describe("verifyKernelFinding", () => {
         }),
       }),
     ).rejects.toThrow(/only one of/);
+  });
+
+  it("matches a widened KCSAN data-race splat and confirms (closes the race loop)", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree();
+    primeCacheForTree(tree, cacheDir);
+    const reproPath = makeReproducer("race.c");
+
+    // No expectedSignature → the detectKernelSignature table must recognize the
+    // KCSAN report on its own. This is the loop kcsan-race.ts + patch-to-poc.ts
+    // could not close before (KASAN table was blind to data-races).
+    const result = await verifyKernelFinding({
+      reproducerPath: reproPath,
+      kernelTree: tree,
+      cacheDir,
+      logger: () => undefined,
+      buildRunner: () => {
+        throw new Error("cache hit should not rebuild");
+      },
+      vmRunner: async () => ({
+        compiled: true,
+        executed: true,
+        output: "ran",
+        dmesg: [
+          "==================================================================",
+          "BUG: KCSAN: data-race in ep_poll / ep_free",
+          "",
+          "write to 0xffff8881033c1a40 of 8 bytes by task 6398 on cpu 0:",
+          " ep_free+0x33c/0x8d0 fs/eventpoll.c:900",
+          "read to 0xffff8881033c1a40 of 8 bytes by task 6403 on cpu 1:",
+          " ep_poll+0x1c/0x680 fs/eventpoll.c:1900",
+          "==================================================================",
+        ].join("\n"),
+        exitCode: 0,
+        timedOut: false,
+      }),
+    });
+
+    expect(result.status).toBe("reproduced");
+    expect(result.signature).toBe("kcsan-data-race");
+  });
+
+  it("confirms a KCSAN race against the patch-to-poc expected signature", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree();
+    primeCacheForTree(tree, cacheDir);
+    const reproPath = makeReproducer("race.c");
+
+    const result = await verifyKernelFinding({
+      reproducerPath: reproPath,
+      kernelTree: tree,
+      cacheDir,
+      // The exact string patch-to-poc.ts emits for a race finding.
+      expectedSignature: "KCSAN: data-race",
+      logger: () => undefined,
+      buildRunner: () => {
+        throw new Error("cache hit should not rebuild");
+      },
+      vmRunner: async () => ({
+        compiled: true,
+        executed: true,
+        output: "ran",
+        dmesg: "BUG: KCSAN: data-race in ext4_free_inode / ext4_mark_iloc_dirty",
+        exitCode: 0,
+        timedOut: false,
+      }),
+    });
+
+    expect(result.status).toBe("reproduced");
+    expect(result.signature).toBe("KCSAN: data-race");
   });
 
   function primeCacheForTree(tree: string, cacheDir: string, configProfile = "kasan"): void {
@@ -712,5 +786,156 @@ describe("weaponize-initramfs lane", () => {
     const cfg = loadKernelVmConfigFromEnv();
     expect(cfg.weaponizeInitramfs).toBe(true);
     expect(cfg.initramfsModules).toEqual(["/a/snd-mtpav.ko", "/b/kdelay.ko"]);
+  });
+});
+
+describe("renderRealIpiRaceHarness — ExpRace userspace race harness", () => {
+  it("renders a compilable racer with the non-crashing retry loop and env budget", () => {
+    const c = renderRealIpiRaceHarness({
+      raceOpA: "close(fd);",
+      raceOpB: "ioctl(fd, 0, 0);",
+      maxIters: 12345,
+      seconds: 30,
+    });
+    // _GNU_SOURCE must precede includes (affinity macros).
+    expect(c.indexOf("#define _GNU_SOURCE")).toBe(0);
+    expect(c).toContain("#include <pthread.h>");
+    // two CPU-pinned racer threads carrying the supplied ops.
+    expect(c).toContain("pwnkit_pin_cpu(0)");
+    expect(c).toContain("pwnkit_pin_cpu(1)"); // different CPUs by default
+    expect(c).toContain("close(fd);");
+    expect(c).toContain("ioctl(fd, 0, 0);");
+    // Bad Epoll non-crashing retry loop, budget overridable via env.
+    expect(c).toContain('pwnkit_env_long("PWNKIT_RACE_RETRIES", 12345)');
+    expect(c).toContain('pwnkit_env_long("PWNKIT_RACE_SECONDS", 30)');
+    expect(c).toContain("time(NULL) < deadline");
+    expect(c).toContain("PWNKIT-RACE");
+  });
+
+  it("splices the composed gadget setup C once, before the race loop", () => {
+    const c = renderRealIpiRaceHarness({
+      raceOpA: "a();",
+      raceOpB: "b();",
+      setupC: "/* SENTINEL_TACTIC */ membarrier_burst();",
+    });
+    expect(c).toContain("/* SENTINEL_TACTIC */ membarrier_burst();");
+    // setup precedes the retry loop.
+    expect(c.indexOf("SENTINEL_TACTIC")).toBeLessThan(c.indexOf("for (long iter"));
+  });
+
+  it("pins both racers to CPU 0 when sameCpu is set", () => {
+    const c = renderRealIpiRaceHarness({ raceOpA: "a();", raceOpB: "b();", sameCpu: true });
+    // both racer pin calls target CPU 0.
+    expect(c.match(/pwnkit_pin_cpu\(1\)/)).toBeNull();
+  });
+
+  it("merges tactic headers without duplicating _GNU_SOURCE", () => {
+    const c = renderRealIpiRaceHarness({
+      raceOpA: "a();",
+      raceOpB: "b();",
+      headers: ["#define _GNU_SOURCE", "#include <sys/mman.h>", "#include <sys/mman.h>"],
+    });
+    expect((c.match(/#define _GNU_SOURCE/g) ?? []).length).toBe(1);
+    expect((c.match(/#include <sys\/mman.h>/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("buildFlagsForProfile — KCSAN build profile", () => {
+  it("kasan profile enables the KASAN/UBSAN sanitizer set", () => {
+    const flags = buildFlagsForProfile("kasan");
+    expect(flags).toContain("--enable CONFIG_KASAN");
+    expect(flags).toContain("--enable CONFIG_UBSAN");
+    expect(flags.some((f) => f.includes("CONFIG_KCSAN"))).toBe(false);
+  });
+
+  it("kcsan profile enables KCSAN + PREEMPT and turns KASAN off", () => {
+    const flags = buildFlagsForProfile("kcsan");
+    expect(flags).toContain("--enable CONFIG_KCSAN");
+    expect(flags).toContain("--enable CONFIG_PREEMPT");
+    expect(flags).toContain("--disable CONFIG_KASAN");
+    // races should report every time, not once.
+    expect(flags).toContain("--set-val CONFIG_KCSAN_REPORT_ONCE_IN_MS 0");
+    // the two heavyweight sanitizers are not co-built.
+    expect(flags.some((f) => f.includes("--enable CONFIG_KASAN"))).toBe(false);
+  });
+
+  it("throws loudly for an unrecognized profile", () => {
+    expect(() => buildFlagsForProfile("defconfig+kasan")).toThrow(/unrecognized kernel config profile/);
+    expect(RECOGNIZED_CONFIG_PROFILES).toEqual(["kasan", "kcsan"]);
+  });
+});
+
+describe("kcsanConfigSupported — .config gate", () => {
+  it("is true only when CONFIG_KCSAN=y is present", () => {
+    expect(kcsanConfigSupported("CONFIG_KCSAN=y\nCONFIG_PREEMPT=y\n")).toBe(true);
+    expect(kcsanConfigSupported("# CONFIG_KCSAN is not set\n")).toBe(false);
+    expect(kcsanConfigSupported("CONFIG_KASAN=y\n")).toBe(false);
+  });
+});
+
+describe("prepareKernelVmArtifacts — KCSAN fail-soft config gate", () => {
+  const originalEnv = { ...process.env };
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.PWNKIT_KERNEL_QEMU_KERNEL;
+    delete process.env.PWNKIT_KERNEL_QEMU_DISK;
+  });
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  function makeTree(): string {
+    const tree = mkdtempSync(join(tmpdir(), "pwnkit-kernel-tree-"));
+    writeFileSync(join(tree, "Makefile"), "VERSION = 6\nPATCHLEVEL = 8\n");
+    return tree;
+  }
+
+  it("WARNS (fail-soft) when the kcsan build produced a .config without CONFIG_KCSAN", () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const logs: string[] = [];
+    prepareKernelVmArtifacts({
+      kernelTree: makeTree(),
+      cacheDir,
+      configProfile: "kcsan",
+      logger: (l) => logs.push(l),
+      buildRunner: ({ outDir }) => {
+        writeFileSync(join(outDir, "bzImage"), "kernel");
+        writeFileSync(join(outDir, "rootfs.img"), "disk");
+        // KCSAN did NOT land (arch/toolchain can't support it).
+        writeFileSync(join(outDir, "kernel.config"), "# CONFIG_KCSAN is not set\n");
+      },
+    });
+    expect(logs.some((l) => l.includes("[kcsan-gate] WARN") && l.includes("CONFIG_KCSAN"))).toBe(true);
+  });
+
+  it("does NOT warn when CONFIG_KCSAN is present, and never warns for kasan", () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const logs: string[] = [];
+    prepareKernelVmArtifacts({
+      kernelTree: makeTree(),
+      cacheDir,
+      configProfile: "kcsan",
+      logger: (l) => logs.push(l),
+      buildRunner: ({ outDir }) => {
+        writeFileSync(join(outDir, "bzImage"), "kernel");
+        writeFileSync(join(outDir, "rootfs.img"), "disk");
+        writeFileSync(join(outDir, "kernel.config"), "CONFIG_KCSAN=y\nCONFIG_PREEMPT=y\n");
+      },
+    });
+    expect(logs.some((l) => l.includes("[kcsan-gate] WARN"))).toBe(false);
+
+    const logs2: string[] = [];
+    prepareKernelVmArtifacts({
+      kernelTree: makeTree(),
+      cacheDir: mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-")),
+      configProfile: "kasan",
+      logger: (l) => logs2.push(l),
+      buildRunner: ({ outDir }) => {
+        writeFileSync(join(outDir, "bzImage"), "kernel");
+        writeFileSync(join(outDir, "rootfs.img"), "disk");
+        writeFileSync(join(outDir, "kernel.config"), "# CONFIG_KCSAN is not set\n");
+      },
+    });
+    expect(logs2.some((l) => l.includes("[kcsan-gate]"))).toBe(false);
   });
 });

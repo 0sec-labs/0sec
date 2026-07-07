@@ -147,6 +147,17 @@ scripts/config \
   --enable CONFIG_NET_9P_VIRTIO \
   --disable CONFIG_RANDOMIZE_BASE \
   --set-val CONFIG_FRAME_WARN 2048; \
+if [ \"${CONFIG_PROFILE:-kasan}\" = kcsan ]; then \
+  echo 'applying KCSAN race-lane profile (KCSAN=y, PREEMPT=y, KASAN off)'; \
+  scripts/config \
+    --disable CONFIG_KASAN \
+    --disable CONFIG_KASAN_INLINE \
+    --enable CONFIG_KCSAN \
+    --enable CONFIG_KCSAN_EARLY_ENABLE \
+    --set-val CONFIG_KCSAN_REPORT_ONCE_IN_MS 0 \
+    --enable CONFIG_KCSAN_INTERRUPT_WATCHER \
+    --enable CONFIG_PREEMPT; \
+fi; \
 make olddefconfig; \
 make -j\"${KERNEL_MAKE_JOBS}\" bzImage; \
 install -o \"$uid\" -g \"$gid\" -m 0644 arch/x86/boot/bzImage /out/bzImage; \

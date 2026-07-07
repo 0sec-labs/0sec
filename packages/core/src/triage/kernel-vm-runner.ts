@@ -75,11 +75,72 @@ export interface KernelVmConfig {
  *
  * Tier-1 verify (issue #271) lets callers pass arbitrary profile names that
  * the build script understands — e.g. `kasan`, `defconfig+kasan`. The
- * built-in build runner today only recognises `kasan`; custom names require
- * a custom `buildRunner` or an out-of-band script that maps the name to
- * a kernel `.config`.
+ * built-in build runner recognises `kasan` (KASAN/UBSAN) and `kcsan`
+ * (Kernel Concurrency Sanitizer + full preemption — the race-detection lane
+ * KASAN is blind to). Custom names require a custom `buildRunner` or an
+ * out-of-band script that maps the name to a kernel `.config`.
  */
 export type KernelConfigProfile = string;
+
+/** Config profiles the built-in `build-from-tree.sh` runner understands. */
+export const RECOGNIZED_CONFIG_PROFILES = ["kasan", "kcsan"] as const;
+
+/**
+ * `scripts/config` toggles for a build profile. This is the ENGINE source of
+ * truth for what each profile enables; `build-from-tree.sh` mirrors these two
+ * sets (kept in sync — see the cross-reference comment there). Exposed so a
+ * unit test can assert the KCSAN profile enables `CONFIG_KCSAN` + `CONFIG_PREEMPT`
+ * and does NOT carry the KASAN inline set (the two heavyweight sanitizers are
+ * not co-built — KCSAN is the point of this profile).
+ *
+ * Throws for an unrecognized profile so a typo fails loudly rather than
+ * silently building a bare defconfig.
+ */
+export function buildFlagsForProfile(profile: KernelConfigProfile): string[] {
+  if (profile === "kasan") {
+    return [
+      "--enable CONFIG_KASAN",
+      "--set-str CONFIG_KASAN_MODE generic",
+      "--enable CONFIG_KASAN_GENERIC",
+      "--enable CONFIG_KASAN_INLINE",
+      "--enable CONFIG_KASAN_STACK",
+      "--enable CONFIG_KASAN_VMALLOC",
+      "--enable CONFIG_UBSAN",
+      "--enable CONFIG_UBSAN_BOUNDS",
+      "--enable CONFIG_UBSAN_SHIFT",
+    ];
+  }
+  if (profile === "kcsan") {
+    // KCSAN=y + full preemption (PREEMPT=y) so the ExpRace reschedule-IPI
+    // widener can actually preempt the racing worker mid-window. KASAN is left
+    // OFF: co-instrumenting both sanitizers is not supported/sane, and races
+    // are what this lane is for. `KCSAN_REPORT_ONCE_IN_MS=0` + interrupt-watch
+    // so a widened race reports every time, not just the first.
+    return [
+      "--enable CONFIG_KCSAN",
+      "--enable CONFIG_KCSAN_EARLY_ENABLE",
+      "--set-val CONFIG_KCSAN_REPORT_ONCE_IN_MS 0",
+      "--enable CONFIG_KCSAN_INTERRUPT_WATCHER",
+      "--enable CONFIG_PREEMPT",
+      "--disable CONFIG_KASAN",
+      "--enable CONFIG_DEBUG_INFO",
+      "--enable CONFIG_DEBUG_KERNEL",
+    ];
+  }
+  throw new Error(
+    `unrecognized kernel config profile: ${profile} (known: ${RECOGNIZED_CONFIG_PROFILES.join(", ")})`,
+  );
+}
+
+/**
+ * Config-gate for the KCSAN profile: is `CONFIG_KCSAN` actually enabled in the
+ * (built or target) `.config`? Fail-soft callers use this to detect a kernel
+ * that cannot support KCSAN (e.g. an arch/toolchain without the sanitizer) and
+ * skip the race lane rather than silently "verifying" on a race-blind kernel.
+ */
+export function kcsanConfigSupported(kernelConfigText: string): boolean {
+  return /^CONFIG_KCSAN=y\s*$/m.test(kernelConfigText);
+}
 
 export interface KernelBuildOptions {
   kernelTree: string;
@@ -215,6 +276,7 @@ export function prepareKernelVmArtifacts(opts: KernelBuildOptions): KernelVmArti
 
   if (!opts.force && artifactsExist(outDir)) {
     log(`[kernel-cache] hit: ${outDir} (config=${configProfile})`);
+    warnIfKcsanUnsupported(configProfile, join(outDir, "kernel.config"), log);
     return {
       kernelImage: join(outDir, "bzImage"),
       diskImage: join(outDir, "rootfs.img"),
@@ -232,6 +294,7 @@ export function prepareKernelVmArtifacts(opts: KernelBuildOptions): KernelVmArti
   if (!artifactsExist(outDir)) {
     throw new Error(`kernel build did not produce bzImage/rootfs.img/kernel.config in ${outDir}`);
   }
+  warnIfKcsanUnsupported(configProfile, join(outDir, "kernel.config"), log);
 
   return {
     kernelImage: join(outDir, "bzImage"),
@@ -242,6 +305,31 @@ export function prepareKernelVmArtifacts(opts: KernelBuildOptions): KernelVmArti
     cacheStatus: "miss",
     configProfile,
   };
+}
+
+/**
+ * FAIL-SOFT KCSAN config-gate. When the `kcsan` profile was requested but the
+ * produced `.config` does not actually carry `CONFIG_KCSAN=y` (arch/toolchain
+ * can't support it), log a loud warning rather than throwing — the caller still
+ * gets bootable artifacts, it just won't observe data races on this kernel. A
+ * no-op for every other profile.
+ */
+function warnIfKcsanUnsupported(
+  configProfile: KernelConfigProfile,
+  kernelConfigPath: string,
+  log: (line: string) => void,
+): void {
+  if (configProfile !== "kcsan") return;
+  let text = "";
+  try {
+    text = readFileSync(kernelConfigPath, "utf-8");
+  } catch {
+    log(`[kcsan-gate] WARN: could not read ${kernelConfigPath} to verify CONFIG_KCSAN — race lane may be blind`);
+    return;
+  }
+  if (!kcsanConfigSupported(text)) {
+    log(`[kcsan-gate] WARN: CONFIG_KCSAN not enabled in ${kernelConfigPath} — data races will NOT be observed (fail-soft)`);
+  }
 }
 
 export function loadKernelVmConfigFromEnv(): KernelVmConfig {
@@ -373,6 +461,154 @@ export function renderRaceWidenModuleSource(
     "",
     "module_init(widen_init);",
     "module_exit(widen_exit);",
+  ].join("\n");
+}
+
+/**
+ * Spec for {@link renderRealIpiRaceHarness} — the ExpRace-style userspace race
+ * driver. The two racing sides are supplied by the caller as C statement bodies
+ * (e.g. `close(fd);` on the free side, `ioctl(fd, ...);` on the use side); the
+ * widening TACTICS come pre-composed as `setupC` (from `race-gadgets.ts`), and
+ * the harness wraps everything in Bad Epoll's non-crashing retry loop.
+ */
+export interface RealIpiRaceHarnessSpec {
+  /** C body of racer thread A (typically the free/reuse side). */
+  raceOpA: string;
+  /** C body of racer thread B (typically the use side). */
+  raceOpB: string;
+  /** Composed gadget/tactic setup C, armed once before the race. */
+  setupC?: string;
+  /** Extra headers the tactics need (deduped; `_GNU_SOURCE` is forced first). */
+  headers?: readonly string[];
+  /** Non-crashing retry-loop cap (iterations). Also read from env at runtime. */
+  maxIters?: number;
+  /** Wall-clock budget in seconds. Also read from env at runtime. */
+  seconds?: number;
+  /** Pin both racers to the same CPU (default false → CPUs 0 and 1). */
+  sameCpu?: boolean;
+}
+
+const RACE_HARNESS_BASE_HEADERS: readonly string[] = [
+  "#include <stdio.h>",
+  "#include <stdlib.h>",
+  "#include <string.h>",
+  "#include <unistd.h>",
+  "#include <pthread.h>",
+  "#include <sched.h>",
+  "#include <time.h>",
+  "#include <fcntl.h>",
+  "#include <sys/types.h>",
+];
+
+/**
+ * Render the ExpRace-style userspace race harness as a full, compilable C
+ * program (contrast `renderRaceWidenModuleSource`, which builds an in-guest
+ * *kprobe* — this is pure userspace, no debug gate). It:
+ *
+ *  - merges the widening tactics' headers (`_GNU_SOURCE` forced to line 1),
+ *  - arms the composed gadget `setupC` ONCE (waitqueue freeze / membarrier
+ *    register + the IPI bursts),
+ *  - spins two CPU-pinned racer threads looping their `raceOp{A,B}` bodies,
+ *  - wraps them in **Bad Epoll's non-crashing retry loop**: it re-races up to
+ *    `maxIters` / `seconds` (both overridable via `PWNKIT_RACE_RETRIES` /
+ *    `PWNKIT_RACE_SECONDS`) and NEVER dereferences freed memory or aborts —
+ *    only the in-kernel KASAN/KCSAN splat (on the serial console) terminates
+ *    the run. Prints a `PWNKIT-RACE` progress marker so the oracle sees liveness.
+ *
+ * Pure string builder — no I/O — so it unit-tests offline.
+ */
+export function renderRealIpiRaceHarness(spec: RealIpiRaceHarnessSpec): string {
+  const maxIters = Number.isFinite(spec.maxIters) ? Math.max(1, Math.trunc(spec.maxIters!)) : 200_000;
+  const seconds = Number.isFinite(spec.seconds) ? Math.max(1, Math.trunc(spec.seconds!)) : 40;
+  const cpuA = 0;
+  const cpuB = spec.sameCpu ? 0 : 1;
+
+  // Merge headers: `_GNU_SOURCE` must precede every include (sched affinity
+  // macros, MAP_SHARED, etc.); then base headers; then tactic headers; deduped
+  // in first-seen order. A tactic may itself carry a `#define _GNU_SOURCE`.
+  const seen = new Set<string>();
+  const headerLines: string[] = [];
+  const push = (h: string) => {
+    const t = h.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    headerLines.push(t);
+  };
+  push("#define _GNU_SOURCE");
+  for (const h of RACE_HARNESS_BASE_HEADERS) push(h);
+  for (const h of spec.headers ?? []) {
+    // A tactic's `#define _GNU_SOURCE` is already emitted first; skip dupes.
+    push(h);
+  }
+
+  const setupC = spec.setupC?.trim()
+    ? spec.setupC
+    : "/* no widening tactics composed */";
+
+  return [
+    ...headerLines,
+    "",
+    "static volatile int g_stop = 0;",
+    "",
+    "static void pwnkit_pin_cpu(int cpu) {",
+    "  cpu_set_t set;",
+    "  CPU_ZERO(&set);",
+    "  CPU_SET(cpu, &set);",
+    "  sched_setaffinity(0, sizeof(set), &set);",
+    "}",
+    "",
+    "static long pwnkit_env_long(const char *name, long dflt) {",
+    "  const char *v = getenv(name);",
+    "  if (!v || !*v) return dflt;",
+    "  char *end = NULL;",
+    "  long n = strtol(v, &end, 10);",
+    "  return (end && *end == '\\0' && n > 0) ? n : dflt;",
+    "}",
+    "",
+    `static void *pwnkit_racer_a(void *arg) {`,
+    "  (void)arg;",
+    `  pwnkit_pin_cpu(${cpuA});`,
+    "  while (!g_stop) {",
+    `    ${spec.raceOpA}`,
+    "  }",
+    "  return NULL;",
+    "}",
+    "",
+    `static void *pwnkit_racer_b(void *arg) {`,
+    "  (void)arg;",
+    `  pwnkit_pin_cpu(${cpuB});`,
+    "  while (!g_stop) {",
+    `    ${spec.raceOpB}`,
+    "  }",
+    "  return NULL;",
+    "}",
+    "",
+    "int main(void) {",
+    `  long retries = pwnkit_env_long("PWNKIT_RACE_RETRIES", ${maxIters});`,
+    `  long seconds = pwnkit_env_long("PWNKIT_RACE_SECONDS", ${seconds});`,
+    "  time_t deadline = time(NULL) + seconds;",
+    "",
+    "  /* Arm the widening tactics ONCE (freeze/register + IPI bursts). */",
+    setupC,
+    "",
+    "  /* Bad Epoll non-crashing retry loop: re-race until the sanitizer fires.",
+    "     The harness itself never touches freed memory — the kernel splat on the",
+    "     serial console is the only terminator; here we just exhaust the budget. */",
+    "  for (long iter = 0; iter < retries && time(NULL) < deadline; iter++) {",
+    "    g_stop = 0;",
+    "    pthread_t ta, tb;",
+    "    if (pthread_create(&ta, NULL, pwnkit_racer_a, NULL) != 0) break;",
+    "    if (pthread_create(&tb, NULL, pwnkit_racer_b, NULL) != 0) { g_stop = 1; pthread_join(ta, NULL); break; }",
+    "    usleep(200);",
+    "    g_stop = 1;",
+    "    pthread_join(ta, NULL);",
+    "    pthread_join(tb, NULL);",
+    "    if ((iter & 0x3ff) == 0) { printf(\"PWNKIT-RACE iter=%ld\\n\", iter); fflush(stdout); }",
+    "  }",
+    "  printf(\"PWNKIT-RACE done (budget exhausted, no splat)\\n\");",
+    "  fflush(stdout);",
+    "  return 0;",
+    "}",
   ].join("\n");
 }
 
@@ -1095,6 +1331,11 @@ export interface VerifyKernelFindingOptions {
 }
 
 const KERNEL_CRASH_SIGNATURES: { pattern: RegExp; signature: string }[] = [
+  // KCSAN data-race — the race class KASAN is structurally blind to. Matched
+  // first so a widened data-race under the `kcsan` build profile is recognized
+  // (closes the loop with kcsan-race.ts's parser + patch-to-poc.ts's
+  // "KCSAN: data-race" expected signature).
+  { pattern: /BUG:\s*KCSAN:\s*data-race|KCSAN:\s*data-race/i, signature: "kcsan-data-race" },
   { pattern: /KASAN:\s+slab-use-after-free|KASAN.*use-after-free/i, signature: "kasan-uaf" },
   { pattern: /KASAN:\s+slab-out-of-bounds|KASAN.*out-of-bounds/i, signature: "kasan-oob" },
   { pattern: /KASAN.*double-free/i, signature: "kasan-double-free" },

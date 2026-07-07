@@ -22,6 +22,13 @@ import {
   mapVerificationToOutcome,
   setEnv,
   makeKernelVmRaceProver,
+  rescheduleIpiGadget,
+  tlbShootdownIpiGadget,
+  membarrierIpiGadget,
+  waitqueueFreezeGadget,
+  retryUntilSplatGadget,
+  filterGadgetsByConfig,
+  isConfigEnabled,
   GADGET_KINDS,
   GADGET_SETUP_MARKER,
   type RaceCandidate,
@@ -495,6 +502,126 @@ describe("makeKernelVmRaceProver (VM stubbed)", () => {
     expect(res.wins).toBe(1);
     expect(res.confirmed).toBe(true);
     expect(res.signature).toBe("kasan-uaf");
+  });
+});
+
+// ── ExpRace real-IPI widener tactics (LPE-hunt upgrade #1) ──────────
+
+describe("ExpRace real-IPI widener gadgets", () => {
+  it("reschedule_ipi renders the sched_setaffinity IPI source and is CONFIG_PREEMPT-gated", () => {
+    const g = rescheduleIpiGadget({ targetCpu: 2, bounces: 500 });
+    expect(g.name).toBe("reschedule_ipi");
+    expect(g.requiredConfig).toBe("CONFIG_PREEMPT");
+    const c = g.renderSetup();
+    expect(c).toContain("sched_setaffinity");
+    expect(c).toContain("CPU_SET(2");
+    // affinity bounces to targetCpu+1 to force the migration/IPI.
+    expect(c).toContain("CPU_SET(3");
+    expect(c).toContain("__k < 500");
+    // carries the headers its C needs (GNU affinity macros).
+    expect(g.headers).toContain("#define _GNU_SOURCE");
+    expect(g.proverEnv().PWNKIT_RACE_WIDEN_RESCHED_BOUNCES).toBe("500");
+  });
+
+  it("tlb_shootdown_ipi renders an mprotect() TLB IPI and needs NO config gate", () => {
+    const g = tlbShootdownIpiGadget({ flips: 300 });
+    expect(g.name).toBe("tlb_shootdown_ipi");
+    expect(g.requiredConfig).toBeUndefined();
+    const c = g.renderSetup();
+    expect(c).toContain("mprotect");
+    expect(c).toContain("MAP_SHARED");
+    expect(c).toContain("__k < 300");
+  });
+
+  it("membarrier_ipi renders the membarrier expedited IPI and is CONFIG_MEMBARRIER-gated", () => {
+    const g = membarrierIpiGadget({ count: 100 });
+    expect(g.requiredConfig).toBe("CONFIG_MEMBARRIER");
+    const c = g.renderSetup();
+    expect(c).toContain("SYS_membarrier");
+    expect(c).toContain("MEMBARRIER_CMD_PRIVATE_EXPEDITED");
+    // registers before firing (required by the expedited command).
+    expect(c).toContain("MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED");
+  });
+
+  it("waitqueue_freeze renders calif's timerfd/epoll freeze", () => {
+    const g = waitqueueFreezeGadget({ entries: 12345 });
+    const c = g.renderSetup();
+    expect(c).toContain("timerfd_create");
+    expect(c).toContain("epoll_ctl");
+    expect(c).toContain("__i < 12345");
+    expect(g.proverEnv().PWNKIT_RACE_WIDEN_WAITQUEUE_ENTRIES).toBe("12345");
+  });
+
+  it("retry_until_splat carries only env budget (loop lives in the harness)", () => {
+    const g = retryUntilSplatGadget({ retries: 5000, seconds: 25 });
+    expect(g.proverEnv().PWNKIT_RACE_RETRIES).toBe("5000");
+    expect(g.proverEnv().PWNKIT_RACE_SECONDS).toBe("25");
+    // no real C beyond a comment marker.
+    expect(g.renderSetup()).toContain("harness wraps the race");
+  });
+
+  it("registers all new kinds in GADGET_KINDS and instantiateGadget", () => {
+    for (const name of [
+      "reschedule_ipi",
+      "tlb_shootdown_ipi",
+      "membarrier_ipi",
+      "waitqueue_freeze",
+      "retry_until_splat",
+    ] as const) {
+      expect(GADGET_KINDS).toContain(name);
+      expect(instantiateGadget(name)?.name).toBe(name);
+    }
+  });
+});
+
+describe("filterGadgetsByConfig — config-gated fail-soft", () => {
+  it("isConfigEnabled reads =y / =m and treats 'is not set' as OFF", () => {
+    expect(isConfigEnabled("CONFIG_PREEMPT=y\n", "CONFIG_PREEMPT")).toBe(true);
+    expect(isConfigEnabled("CONFIG_MEMBARRIER=m\n", "CONFIG_MEMBARRIER")).toBe(true);
+    expect(isConfigEnabled("# CONFIG_PREEMPT is not set\n", "CONFIG_PREEMPT")).toBe(false);
+    expect(isConfigEnabled("CONFIG_OTHER=y\n", "CONFIG_PREEMPT")).toBe(false);
+  });
+
+  it("skips reschedule_ipi when CONFIG_PREEMPT is absent (fail-soft), keeps the rest", () => {
+    const gadgets = [
+      cacheMissStallGadget(),
+      rescheduleIpiGadget(),
+      tlbShootdownIpiGadget(),
+    ];
+    const cfg = "# CONFIG_PREEMPT is not set\nCONFIG_SMP=y\n";
+    const { kept, skipped } = filterGadgetsByConfig(gadgets, cfg);
+    expect(kept.map((g) => g.name)).toEqual(["cache_miss_stall", "tlb_shootdown_ipi"]);
+    expect(skipped).toEqual([{ name: "reschedule_ipi", requiredConfig: "CONFIG_PREEMPT" }]);
+  });
+
+  it("keeps reschedule_ipi when CONFIG_PREEMPT is enabled", () => {
+    const { kept, skipped } = filterGadgetsByConfig(
+      [rescheduleIpiGadget()],
+      "CONFIG_PREEMPT=y\n",
+    );
+    expect(kept.map((g) => g.name)).toEqual(["reschedule_ipi"]);
+    expect(skipped).toEqual([]);
+  });
+
+  it("keeps ALL gadgets when the target .config is unknown (cannot gate)", () => {
+    const gadgets = [rescheduleIpiGadget(), membarrierIpiGadget()];
+    const { kept, skipped } = filterGadgetsByConfig(gadgets, undefined);
+    expect(kept).toHaveLength(2);
+    expect(skipped).toEqual([]);
+  });
+});
+
+describe("defaultGadgetsFor — ExpRace IPI + retry layered in", () => {
+  it("KCSAN/UAF recipe layers a real-IPI source and the retry loop", () => {
+    const names = defaultGadgetsFor(kcsan).map((g) => g.name);
+    expect(names).toContain("reschedule_ipi");
+    expect(names).toContain("retry_until_splat");
+  });
+
+  it("smell recipe also carries a real-IPI source + retry loop", () => {
+    const names = defaultGadgetsFor(smell).map((g) => g.name);
+    expect(names).toContain("tlb_shootdown_ipi");
+    expect(names).toContain("retry_until_splat");
   });
 });
 
