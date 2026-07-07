@@ -155,6 +155,23 @@ export type {
 // Craft scan stage (agentic reason→craft→submit→refine, injectable PoC oracle):
 // the sibling of the fuzz path that needs no target build.
 export { runCraftScan, craftedPocToFinding } from "./stages/craft-scan.js";
+// Ensemble craft stage (multi-model best-of-N craft + LLM judge → one PoC).
+export {
+  runEnsembleCraft,
+  judgeCraftCandidatesWithLlm,
+  buildCandidateJudgePrompt,
+  parseJudgeJson as parseCraftJudgeJson,
+  heuristicCraftCandidateScore,
+  sanitizerOutputFromCraftResult,
+  parseEnsembleModels,
+  resolveEnsembleModels,
+} from "./stages/ensemble-craft.js";
+export type {
+  EnsembleCraftOptions,
+  EnsembleCraftCandidate,
+  CraftCandidateScore,
+  CraftCandidateJudge,
+} from "./stages/ensemble-craft.js";
 // Exploit scan stage (agentic weaponize-to-root, injectable target executor).
 export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";

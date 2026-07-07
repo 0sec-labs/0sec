@@ -99,6 +99,7 @@ import type { MemSafetyScanOptions } from "./stages/memsafety-scan.js";
 import type { MemSafetyTarget } from "./triage/memsafety-types.js";
 import { runCraftScan } from "./stages/craft-scan.js";
 import type { CraftTarget, CraftScanOptions } from "./stages/craft-scan.js";
+import { runEnsembleCraft, resolveEnsembleModels } from "./stages/ensemble-craft.js";
 
 /**
  * Per-scan rate-limiter cache (#214). The limiter is stateful — buckets
@@ -504,13 +505,33 @@ async function runCraftScanStage(
 
   const runtime = ((config as { runtime?: RuntimeMode }).runtime ?? "auto") as RuntimeMode;
   const model = craft.model ?? (config as { model?: string }).model;
-  const result = await runCraftScan({
-    ...craft,
-    ...(model ? { model } : {}),
-    target,
-    runtime,
-    log: (message) => emit({ type: "thinking", message }),
-  });
+  const log = (message: string) => emit({ type: "thinking", message });
+
+  // Ensemble craft opt-in (OFF by default): when PWNKIT_ENSEMBLE_MODELS lists
+  // more than one model, run N parallel craft trajectories across those models
+  // and LLM-judge them down to one PoC. Unset / single model → the single-model
+  // craft path below, byte-for-byte unchanged. `runEnsembleCraft` returns a
+  // normal CraftScanResult, so the adaptation below is identical either way.
+  const ensembleModels = resolveEnsembleModels();
+  const result =
+    ensembleModels.length > 1
+      ? await runEnsembleCraft({
+          target,
+          runtime,
+          n: ensembleModels.length,
+          models: ensembleModels,
+          // `model` is per-trajectory in the ensemble; strip the single-model knob.
+          craft: (({ model: _drop, ...rest }) => rest)(craft),
+          ...(model ? { judgeModel: model } : {}),
+          log,
+        })
+      : await runCraftScan({
+          ...craft,
+          ...(model ? { model } : {}),
+          target,
+          runtime,
+          log,
+        });
 
   for (const finding of result.findings) {
     emit({ type: "finding", message: finding.title, data: finding });

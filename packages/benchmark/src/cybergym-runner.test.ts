@@ -33,11 +33,11 @@ import {
   resolveCorpusPath,
   CYBERGYM_CORPUS_PATH,
   type CyberGymTask,
-  type CyberGymCandidateJudge,
   type EngineRunner,
   type Submitter,
   type CyberGymResult,
 } from "./cybergym-runner.js";
+import type { CraftScanOptions, CraftScanResult, CraftCandidateJudge } from "@pwnkit/core";
 
 const tmpDirs: string[] = [];
 afterEach(() => {
@@ -356,37 +356,44 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     expect(result.verdict).toBe("error"); // inconclusive, NOT fail
   });
 
-  it("best-of-3 self-tests candidates, judge-selects one, and grades exactly once", async () => {
+  it("best-of-3: core ensemble generates 3 trajectories, judge-selects one, grades exactly once", async () => {
     const task = parseTaskDir(makeTaskDir(), "arvo:10400");
     const previousBestOfN = process.env.CYBERGYM_BEST_OF_N;
+    const previousModels = process.env.CYBERGYM_BESTOFN_MODELS;
     process.env.CYBERGYM_BEST_OF_N = "3";
+    process.env.CYBERGYM_BESTOFN_MODELS = "model-a,model-b,model-c";
+
+    // Injected craft seam: one crashing PoC per trajectory, distinct crash text.
     const generated: string[] = [];
-    const engine: EngineRunner = async (t, opts) => {
-      expect(opts.craftEvaluatePocOverride).toBeDefined();
+    const outputs = [
+      "AddressSanitizer: SEGV on unknown address\nSUMMARY: AddressSanitizer: SEGV",
+      "AddressSanitizer: heap-buffer-overflow in parse_header\nSUMMARY: AddressSanitizer: heap-buffer-overflow parser.c:1 in parse_header",
+      "AddressSanitizer: stack-buffer-overflow in other_function\nSUMMARY: AddressSanitizer: stack-buffer-overflow",
+    ];
+    const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> => {
+      // Each trajectory's evaluator must be the ungraded vul-side self-test —
+      // the strict pass@1 trick (the N runs never grade differentially).
+      expect(opts.evaluatePoc).toBeDefined();
       const i = generated.length;
-      const pocPath = join(t.taskDir, `candidate-${i}.poc`);
+      const pocPath = join(task.taskDir, `candidate-${i}.poc`);
       writeFileSync(pocPath, Buffer.from([i]));
       generated.push(pocPath);
-      const outputs = [
-        "AddressSanitizer: SEGV on unknown address\nSUMMARY: AddressSanitizer: SEGV",
-        "AddressSanitizer: heap-buffer-overflow in parse_header\nSUMMARY: AddressSanitizer: heap-buffer-overflow parser.c:1 in parse_header",
-        "AddressSanitizer: stack-buffer-overflow in other_function\nSUMMARY: AddressSanitizer: stack-buffer-overflow",
-      ];
       return {
+        findings: [],
+        warnings: [],
+        attempts: [{ submit: 1, pocPath, triggered: true, output: outputs[i] }],
+        submits: 0,
+        passed: true,
+        firstSubmitPassed: false,
         pocPath,
-        model: "mock-model-v1",
+        model: opts.model ?? "auto",
         steps: 10 + i,
-        craftAttempts: [
-          {
-            submit: 1,
-            pocPath,
-            triggered: true,
-            output: outputs[i],
-          },
-        ],
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0,
       };
     };
-    const judgeCandidates: CyberGymCandidateJudge = async (_task, candidates) =>
+    const judge: CraftCandidateJudge = async (_target, candidates) =>
       new Map(
         candidates.map((candidate) => [
           candidate.pocPath,
@@ -398,29 +405,30 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
           },
         ]),
       );
+
     const { submit, calls } = mockSubmitter("pass");
     try {
       const result = await runTaskOnce(task, {
-        runEngine: engine,
+        runEngine: mockEngine({ poc: new Uint8Array([0]) }), // unused in best-of-N
         submit,
-        judgeCandidates,
+        runCraft,
+        judge,
         runtime: "auto",
         maxSteps: 40,
       });
 
-      expect(generated).toHaveLength(3);
-      expect(calls).toHaveLength(1);
-      expect(calls[0].pocPath).toBe(generated[1]);
+      expect(generated).toHaveLength(3); // three parallel craft trajectories
+      expect(calls).toHaveLength(1); // EXACTLY ONE graded submit (strict pass@1)
+      expect(calls[0].pocPath).toBe(generated[1]); // judge picked candidate-1
       expect(result.verdict).toBe("pass");
       expect(result.passed).toBe(true);
       expect(result.submits).toBe(1);
-      expect(result.warnings?.[0]).toContain("selected candidate 2/3");
+      expect(result.warnings?.some((w) => w.includes("selected trajectory 2/3"))).toBe(true);
     } finally {
-      if (previousBestOfN === undefined) {
-        delete process.env.CYBERGYM_BEST_OF_N;
-      } else {
-        process.env.CYBERGYM_BEST_OF_N = previousBestOfN;
-      }
+      if (previousBestOfN === undefined) delete process.env.CYBERGYM_BEST_OF_N;
+      else process.env.CYBERGYM_BEST_OF_N = previousBestOfN;
+      if (previousModels === undefined) delete process.env.CYBERGYM_BESTOFN_MODELS;
+      else process.env.CYBERGYM_BESTOFN_MODELS = previousModels;
     }
   });
 });
