@@ -89,6 +89,29 @@ export type {
   Tier3ValidationOptions,
   Tier3ValidationResult,
 } from "./review/c-cpp-tier3.js";
+// EVM on-chain PROVING harness (Tier 3) — docs/design/0contract-proving-harness.md.
+export {
+  evmVerifyEnabled,
+  evmForkRpc,
+  forgeBin,
+  forgeAvailable,
+  parseForgeOutput,
+  adjudicateForgeOutcomes,
+  evmVerifyCacheKey,
+  planEvmVerify,
+  runEvmVerify,
+} from "./review/evm-verify.js";
+export type {
+  EvmVerifyStatus,
+  EvmVerifyRequest,
+  EvmVerifyPlan,
+  EvmVerifyResult,
+  ForgeTestOutcome,
+  ForgeTestKind,
+  ForgeTestStatus,
+  ForgeAdjudication,
+  ParsedForgeOutput,
+} from "./review/evm-verify.js";
 
 // Userspace / Rust memory-safety pipeline ("Monty-mode") — closed fuzz loop
 // + shared contract (docs/pwnkit-rust-memsafety-pipeline.md, Track B).
