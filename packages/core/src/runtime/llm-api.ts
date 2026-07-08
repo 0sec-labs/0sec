@@ -168,6 +168,91 @@ function shouldLogProviderStartup(): boolean {
   return process.env.PWNKIT_SUPPRESS_PROVIDER_STARTUP_LOG !== "1";
 }
 
+// ── Transient-failure retry (429 rate-limit + transient 5xx) ────────────
+//
+// Burst dispatch (the nightly sweep fires hundreds of scans at once) makes
+// the shared ChatGPT/Codex subscription return HTTP 429. Before this, the
+// engine's FIRST LLM call bailed with `stopReason:"error"`, the agent loop
+// produced zero tool calls + zero cost, and the scan was misfiled as
+// "no work — sandbox terminated". We now back off and retry retryable HTTP
+// statuses at the wire layer — the only place the `Retry-After` header is
+// actually visible — so a rate-limited call WAITS and RETRIES instead of
+// failing the whole scan. Caps are env-tunable so a burst can be widened
+// without a redeploy.
+
+/** HTTP statuses worth retrying: rate-limit (429) + transient 5xx. */
+export function isRetryableHttpStatus(status: number): boolean {
+  return (
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+/** Max retries after the initial attempt. `PWNKIT_LLM_MAX_RETRIES` (default 6). */
+function llmMaxRetries(): number {
+  const raw = process.env.PWNKIT_LLM_MAX_RETRIES;
+  if (raw == null || raw.trim() === "") return 6;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 6;
+}
+
+/** Cumulative backoff cap in ms. `PWNKIT_LLM_MAX_RETRY_WAIT_MS` (default 60s). */
+function llmMaxRetryWaitMs(): number {
+  const raw = process.env.PWNKIT_LLM_MAX_RETRY_WAIT_MS;
+  if (raw == null || raw.trim() === "") return 60_000;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 60_000;
+}
+
+/**
+ * Parse a `Retry-After` header into ms. Supports both the delta-seconds form
+ * ("5") and the HTTP-date form ("Wed, 21 Oct 2026 07:28:00 GMT"). Returns
+ * undefined when the header is absent or unparseable so the caller falls back
+ * to exponential backoff.
+ */
+export function parseRetryAfterMs(
+  headerValue: string | null | undefined,
+): number | undefined {
+  if (!headerValue) return undefined;
+  const trimmed = headerValue.trim();
+  if (trimmed === "") return undefined;
+  if (/^\d+$/.test(trimmed)) return Number.parseInt(trimmed, 10) * 1000;
+  const dateMs = Date.parse(trimmed);
+  if (Number.isFinite(dateMs)) {
+    const delta = dateMs - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+  return undefined;
+}
+
+/** Exponential backoff with full jitter. `attempt` is 0-based: ~0.5s, 1s, 2s … capped at 20s. */
+export function retryBackoffMs(attempt: number): number {
+  const ceiling = Math.min(20_000, 500 * 2 ** attempt);
+  return Math.floor(Math.random() * ceiling) + 250;
+}
+
+/** Sleep that rejects with an AbortError if `signal` fires mid-wait (respects the request budget). */
+function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted during retry backoff", "AbortError"));
+      return;
+    }
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(new DOMException("Aborted during retry backoff", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
 function defaultReasoningEffort(model: string): string | undefined {
   const lower = model.toLowerCase();
   if (lower.includes("gpt-5") || /^o[134]/.test(lower)) return "medium";
@@ -1096,6 +1181,74 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     };
   }
 
+  /**
+   * POST to the provider endpoint and, on a retryable HTTP status
+   * (429 rate-limit / transient 5xx), back off and retry — honoring a
+   * `Retry-After` header when present, otherwise exponential backoff with
+   * full jitter (so a burst of concurrent scans desynchronises instead of
+   * hammering the limit in lockstep).
+   *
+   * Bounded by PWNKIT_LLM_MAX_RETRIES (attempts) and
+   * PWNKIT_LLM_MAX_RETRY_WAIT_MS (cumulative backoff). On exhaustion it
+   * returns the last still-failing Response with its body intact, so the
+   * caller's existing `!res.ok` branch surfaces the clear "API error
+   * <status>" message — a rate-limit never masquerades as silent no-work.
+   *
+   * Headers are re-resolved per attempt (via ensureFreshHeaders → OAuth
+   * refresh) so a token that rotated during the wait is picked up. The body
+   * is fixed across attempts.
+   */
+  private async postWithRetry(
+    bodyJson: string,
+    signal: AbortSignal,
+  ): Promise<Response> {
+    const maxRetries = llmMaxRetries();
+    const maxWaitMs = llmMaxRetryWaitMs();
+    let waitedMs = 0;
+    for (let attempt = 0; ; attempt++) {
+      // buildUrl() is the configured LLM provider endpoint (operator-set via
+      // provider config / PWNKIT_* env), never user/attacker input; same
+      // trusted endpoint the client already POSTed to, now wrapped in retry.
+      // foxguard: ignore[js/no-ssrf]
+      const res = await fetch(this.buildUrl(), {
+        method: "POST",
+        headers: await this.ensureFreshHeaders(),
+        body: bodyJson,
+        signal,
+      });
+      if (
+        res.ok ||
+        !isRetryableHttpStatus(res.status) ||
+        attempt >= maxRetries
+      ) {
+        return res;
+      }
+      const retryAfter = parseRetryAfterMs(res.headers?.get?.("retry-after"));
+      const delay = retryAfter ?? retryBackoffMs(attempt);
+      if (waitedMs + delay > maxWaitMs) return res;
+      // Drain the failed response so the socket is released before retrying.
+      try {
+        await res.text?.();
+      } catch {
+        // best-effort — a mocked/streamed body may not expose text()
+      }
+      appendNativeTrace({
+        kind: "retry",
+        provider: this.providerLabel,
+        status: res.status,
+        attempt: attempt + 1,
+        delayMs: delay,
+        retryAfterHonored: retryAfter != null,
+      });
+      process.stderr.write(
+        `[pwnkit] ${this.providerLabel} HTTP ${res.status} — backoff ${delay}ms ` +
+          `(retry ${attempt + 1}/${maxRetries})\n`,
+      );
+      waitedMs += delay;
+      await sleepWithAbort(delay, signal);
+    }
+  }
+
   // ── Legacy Runtime interface (single-prompt) ──
 
   async execute(
@@ -1136,16 +1289,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         }
         messages.push({ role: "user", content: prompt });
 
-        res = await fetch(this.buildUrl(), {
-          method: "POST",
-          headers: await this.ensureFreshHeaders(),
-          body: JSON.stringify({
+        res = await this.postWithRetry(
+          JSON.stringify({
             model: this.model,
             [this.maxTokensParamKey]: 8192,
             messages,
           }),
-          signal: controller.signal,
-        });
+          controller.signal,
+        );
       } else if (this.isOpenAICompat && this.wireApi === "responses") {
         // Azure Responses API format
         const input: Array<Record<string, unknown>> = [];
@@ -1161,30 +1312,26 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         });
 
         const isCodex = this.provider === "chatgpt-codex";
-        res = await fetch(this.buildUrl(), {
-          method: "POST",
-          headers: await this.ensureFreshHeaders(),
-          body: JSON.stringify({
+        res = await this.postWithRetry(
+          JSON.stringify({
             model: this.model,
             input,
             ...(isCodex ? { store: false } : { max_output_tokens: 8192 }),
           }),
-          signal: controller.signal,
-        });
+          controller.signal,
+        );
       } else {
         // Anthropic Messages API format (also serves the z-ai/GLM provider).
-        res = await fetch(this.buildUrl(), {
-          method: "POST",
-          headers: await this.ensureFreshHeaders(),
-          body: JSON.stringify({
+        res = await this.postWithRetry(
+          JSON.stringify({
             model: this.model,
             max_tokens: 8192,
             ...this.anthropicThinkingField(),
             ...(systemPrompt ? { system: systemPrompt } : {}),
             messages: [{ role: "user", content: prompt }],
           }),
-          signal: controller.signal,
-        });
+          controller.signal,
+        );
       }
 
       clearTimeout(timer);
@@ -1363,12 +1510,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           }));
         }
 
-        res = await fetch(this.buildUrl(), {
-          method: "POST",
-          headers: await this.ensureFreshHeaders(),
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
+        res = await this.postWithRetry(JSON.stringify(body), controller.signal);
       } else if (this.isOpenAICompat && this.wireApi === "responses") {
         // Responses API uses a flat list of items, not role-based messages.
         // function_call and function_call_output are top-level items, not nested
@@ -1491,12 +1633,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           }
         }
 
-        res = await fetch(this.buildUrl(), {
-          method: "POST",
-          headers: await this.ensureFreshHeaders(),
-          body: JSON.stringify({ ...body, stream: true }),
-          signal: controller.signal,
-        });
+        res = await this.postWithRetry(
+          JSON.stringify({ ...body, stream: true }),
+          controller.signal,
+        );
 
         clearTimeout(timer);
 
@@ -1545,12 +1685,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           body.tools = tools;
         }
 
-        res = await fetch(this.buildUrl(), {
-          method: "POST",
-          headers: await this.ensureFreshHeaders(),
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
+        res = await this.postWithRetry(JSON.stringify(body), controller.signal);
       }
 
       clearTimeout(timer);

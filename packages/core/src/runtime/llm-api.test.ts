@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   LlmApiRuntime,
   probeAzureRegion,
+  parseRetryAfterMs,
+  isRetryableHttpStatus,
+  retryBackoffMs,
   __resetAzureRegionCacheForTests,
   __resetProviderStartupLogForTests,
 } from "./llm-api.js";
@@ -732,4 +735,182 @@ describe.skipIf(!hasAzureKey)("Azure Responses API live integration", () => {
     expect(text).toBeDefined();
     expect(text!.text.length).toBeGreaterThan(0);
   }, 60_000);
+});
+
+// ── 429 rate-limit backoff + retry (burst-scan resilience) ──
+//
+// The nightly sweep fires hundreds of scans at once; the shared ChatGPT/Codex
+// subscription then returns HTTP 429. These tests pin the behaviour that keeps
+// a rate-limited scan from failing as "no work": the wire layer backs off and
+// retries retryable statuses, honours Retry-After, and only surfaces a real
+// terminal error once retries are exhausted — while a non-retryable 4xx still
+// fails fast.
+
+describe("parseRetryAfterMs", () => {
+  it("parses the delta-seconds form", () => {
+    expect(parseRetryAfterMs("5")).toBe(5000);
+    expect(parseRetryAfterMs("0")).toBe(0);
+    expect(parseRetryAfterMs("  12 ")).toBe(12000);
+  });
+
+  it("parses the HTTP-date form as a future delta", () => {
+    const future = new Date(Date.now() + 3000).toUTCString();
+    const ms = parseRetryAfterMs(future);
+    expect(ms).toBeGreaterThan(0);
+    expect(ms).toBeLessThanOrEqual(3000);
+  });
+
+  it("clamps a past HTTP-date to 0", () => {
+    const past = new Date(Date.now() - 10_000).toUTCString();
+    expect(parseRetryAfterMs(past)).toBe(0);
+  });
+
+  it("returns undefined for absent or unparseable values", () => {
+    expect(parseRetryAfterMs(null)).toBeUndefined();
+    expect(parseRetryAfterMs(undefined)).toBeUndefined();
+    expect(parseRetryAfterMs("")).toBeUndefined();
+    expect(parseRetryAfterMs("soon")).toBeUndefined();
+  });
+});
+
+describe("isRetryableHttpStatus", () => {
+  it("retries 429 and transient 5xx", () => {
+    for (const s of [429, 500, 502, 503, 504]) {
+      expect(isRetryableHttpStatus(s)).toBe(true);
+    }
+  });
+
+  it("does not retry auth/bad-request 4xx or success 2xx", () => {
+    for (const s of [200, 400, 401, 403, 404, 422]) {
+      expect(isRetryableHttpStatus(s)).toBe(false);
+    }
+  });
+});
+
+describe("retryBackoffMs", () => {
+  it("grows with attempt and stays within the jittered ceiling", () => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const ms = retryBackoffMs(attempt);
+      const ceiling = Math.min(20_000, 500 * 2 ** attempt);
+      expect(ms).toBeGreaterThanOrEqual(250);
+      expect(ms).toBeLessThanOrEqual(ceiling + 250);
+    }
+  });
+});
+
+describe("LlmApiRuntime 429 backoff + retry", () => {
+  const origEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.PWNKIT_SKIP_PROVIDER_BANNER = "1";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    Object.assign(process.env, origEnv);
+    for (const k of ["PWNKIT_LLM_MAX_RETRIES", "PWNKIT_LLM_MAX_RETRY_WAIT_MS"]) {
+      if (!(k in origEnv)) delete process.env[k];
+    }
+  });
+
+  function mkRuntime(): LlmApiRuntime {
+    const rt = new LlmApiRuntime({ type: "api", timeout: 30_000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+    // test fixture, literal non-secret "test" key
+    // foxguard: ignore[js/no-hardcoded-secret]
+    (rt as any).apiKey = "test";
+    return rt;
+  }
+
+  function rateLimited(retryAfter?: string): Response {
+    const headers = new Headers();
+    if (retryAfter != null) headers.set("retry-after", retryAfter);
+    return {
+      ok: false,
+      status: 429,
+      headers,
+      text: async () => '{"detail":"rate limit exceeded"}',
+    } as unknown as Response;
+  }
+
+  function okChat(text: string): Response {
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          choices: [{ message: { content: text }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        }),
+    } as unknown as Response;
+  }
+
+  const userMsg: NativeMessage[] = [
+    { role: "user", content: [{ type: "text", text: "go" }] },
+  ];
+
+  it("retries a 429 then succeeds (does not fail the scan)", async () => {
+    const responses = [rateLimited("0"), okChat("done")];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.error).toBeUndefined();
+  });
+
+  it("honors a Retry-After header and retries", async () => {
+    const responses = [rateLimited("0"), rateLimited("0"), okChat("ok")];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const start = Date.now();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    // Retry-After "0" → no backoff wait; both retries complete near-instantly.
+    expect(Date.now() - start).toBeLessThan(2000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.error).toBeUndefined();
+  });
+
+  it("surfaces a clear terminal error after retries are exhausted", async () => {
+    process.env.PWNKIT_LLM_MAX_RETRIES = "2";
+    const fetchMock = vi.fn(async () => rateLimited("0"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    // 1 initial + 2 retries = 3 calls, then a REAL error (not silent no-work).
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("429");
+  });
+
+  it("does NOT retry a non-retryable 400 (fails fast)", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          text: async () => '{"error":"bad request"}',
+        }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("400");
+  });
 });
