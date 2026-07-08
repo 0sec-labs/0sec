@@ -180,6 +180,85 @@ describe("runEnsembleCraft", () => {
     expect(result.warnings.some((w) => w.includes("heuristic selector fallback"))).toBe(true);
   });
 
+  it("does NOT abort when one trajectory rejects — the healthy trajectory's candidate still wins", async () => {
+    // model-a's provider throws mid-run (the glm-5.2/z-ai failure mode); model-b
+    // crafts a real crash. With Promise.all this used to take the whole ensemble
+    // down; with allSettled it must not.
+    const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> => {
+      if (opts.model === "model-a") throw new Error("z-ai provider hung/500");
+      return craftResult({
+        model: opts.model ?? "auto",
+        pocPath: "/poc-b",
+        output: "AddressSanitizer: heap-buffer-overflow in parse_header",
+        steps: 7,
+      });
+    };
+    const judge: CraftCandidateJudge = async (_t, candidates) =>
+      new Map(candidates.map((c) => [c.pocPath, { score: 8, reason: c.model }]));
+    const result = await runEnsembleCraft({
+      target: TARGET,
+      runtime: "auto",
+      n: 2,
+      models: ["model-a", "model-b"],
+      craft: { evaluatePoc: async () => ({ triggered: true, output: "" }) },
+      runCraft,
+      judge,
+    });
+    expect(result.passed).toBe(true);
+    expect(result.model).toBe("model-b");
+    expect(result.pocPath).toBe("/poc-b");
+    // Accounting aggregates over the SETTLED (surviving) trajectory only.
+    expect(result.steps).toBe(7);
+    // The failure is surfaced (debuggable) but not fatal.
+    expect(result.warnings.some((w) => /1\/2 trajectories failed or timed out/.test(w))).toBe(true);
+  });
+
+  it("does NOT hang when one trajectory never resolves — the per-trajectory timeout unblocks the ensemble", async () => {
+    const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> => {
+      if (opts.model === "model-a") return new Promise<CraftScanResult>(() => {}); // hangs forever
+      return craftResult({
+        model: opts.model ?? "auto",
+        pocPath: "/poc-b",
+        output: "AddressSanitizer: heap-buffer-overflow in parse_header",
+      });
+    };
+    const judge: CraftCandidateJudge = async (_t, candidates) =>
+      new Map(candidates.map((c) => [c.pocPath, { score: 8, reason: c.model }]));
+    const result = await runEnsembleCraft({
+      target: TARGET,
+      runtime: "auto",
+      n: 2,
+      models: ["model-a", "model-b"],
+      craft: { evaluatePoc: async () => ({ triggered: true, output: "" }) },
+      runCraft,
+      judge,
+      trajectoryTimeoutMs: 50,
+    });
+    expect(result.passed).toBe(true);
+    expect(result.model).toBe("model-b");
+    expect(result.warnings.some((w) => /timed out/.test(w))).toBe(true);
+  });
+
+  it("returns an honest failed result with a per-model failure summary when ALL trajectories fail", async () => {
+    const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> => {
+      throw new Error(`provider down for ${opts.model}`);
+    };
+    const result = await runEnsembleCraft({
+      target: TARGET,
+      runtime: "auto",
+      n: 2,
+      models: ["model-a", "model-b"],
+      craft: { evaluatePoc: async () => ({ triggered: true, output: "" }) },
+      runCraft,
+      judge: async () => new Map(),
+    });
+    expect(result.passed).toBe(false);
+    expect(result.pocPath).toBeUndefined();
+    expect(result.warnings.some((w) => /2\/2 trajectories failed or timed out/.test(w))).toBe(true);
+    // Distinguishable from a capability fail: names the per-model outcome.
+    expect(result.warnings.some((w) => /model-a: error/.test(w))).toBe(true);
+  });
+
   it("returns an honest failed result when no trajectory crashes (no PoC to grade)", async () => {
     const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> =>
       craftResult({ model: opts.model ?? "auto" }); // no pocPath → no crash

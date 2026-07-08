@@ -94,6 +94,20 @@ export interface EnsembleCraftOptions {
   craft: Omit<CraftScanOptions, "target" | "runtime" | "model">;
   /** Model for the judge call (defaults to `models[0]` / runtime default). */
   judgeModel?: string;
+  /**
+   * Per-trajectory hard time bound (ms). A single trajectory that HANGS (a
+   * provider stalls mid-stream — e.g. glm-5.2 via z-ai) or THROWS must never
+   * stall or sink the ensemble: each `runCraft(...)` is raced against this
+   * timeout, and a timed-out/throwing trajectory becomes "no candidate from that
+   * model" — never an ensemble abort (see {@link runEnsembleCraft}). A timeout is
+   * an INFRASTRUCTURE bound, not a capability fail. Defaults to 20 minutes.
+   *
+   * NOTE: `runCraftScan` exposes no cancellation hook, so on timeout the
+   * underlying craft may keep running in the background; the race still unblocks
+   * the ENSEMBLE (and the process, via an unref'd timer) so one bad trajectory
+   * can't hold everything.
+   */
+  trajectoryTimeoutMs?: number;
   /** Seam: run one craft trajectory (defaults to {@link runCraftScan}). */
   runCraft?: (opts: CraftScanOptions) => Promise<CraftScanResult>;
   /** Seam: score candidates (defaults to {@link judgeCraftCandidatesWithLlm}). */
@@ -270,6 +284,39 @@ export function resolveEnsembleModels(): string[] {
 
 const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
 
+/** Default per-trajectory hard bound: 20 minutes. */
+const DEFAULT_TRAJECTORY_TIMEOUT_MS = 20 * 60_000;
+
+/** Marks a trajectory that was killed by the per-trajectory timeout (vs. a throw). */
+export class TrajectoryTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TrajectoryTimeoutError";
+  }
+}
+
+/**
+ * Race a trajectory promise against a hard timeout. On timeout the returned
+ * promise REJECTS with a {@link TrajectoryTimeoutError} — the ensemble treats
+ * that as "no candidate from this trajectory", never a hang. The timer is
+ * unref'd so a background craft that keeps running can't hold the process. There
+ * is no cancellation of the underlying `runCraft` (it exposes no hook); the race
+ * only unblocks the ensemble.
+ */
+function withTrajectoryTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new TrajectoryTimeoutError(`trajectory ${label} timed out after ${ms}ms`)),
+      ms,
+    );
+    if (typeof timer.unref === "function") timer.unref();
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 // ── Stage ────────────────────────────────────────────────────────────────────
 
 /**
@@ -288,23 +335,64 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
   const modelFor = (i: number): string | undefined =>
     models.length > 0 ? models[i % models.length] : undefined;
 
+  const trajectoryTimeoutMs = opts.trajectoryTimeoutMs ?? DEFAULT_TRAJECTORY_TIMEOUT_MS;
+
   log(`[ensemble] launching ${n} parallel craft trajectories across models [${models.join(", ") || "default"}]`);
 
   // Fan the N trajectories out in parallel. Distinct model strings route to
   // distinct providers (per-call routing in llm-api.ts), spreading the load
   // across separate rate budgets AND giving diverse candidates.
-  const results = await Promise.all(
+  //
+  // Robustness: `Promise.allSettled` (NOT `Promise.all`) + a per-trajectory
+  // timeout. One trajectory that THROWS or HANGS mid-run (e.g. glm-5.2 via z-ai
+  // stalling) must never abort the ensemble or take a healthy in-progress
+  // trajectory (e.g. gpt-5.5) down with it. A rejected/timed-out trajectory is
+  // simply "no candidate from that model"; the ensemble succeeds as long as ANY
+  // trajectory produced a crashing candidate.
+  const settled = await Promise.allSettled(
     Array.from({ length: n }, (_, i) => {
       const model = modelFor(i);
-      return runCraft({
-        ...opts.craft,
-        target: opts.target,
-        runtime: opts.runtime,
-        ...(model ? { model } : {}),
-      });
+      return withTrajectoryTimeout(
+        runCraft({
+          ...opts.craft,
+          target: opts.target,
+          runtime: opts.runtime,
+          ...(model ? { model } : {}),
+        }),
+        trajectoryTimeoutMs,
+        `${i + 1}/${n} (model=${model ?? "default"})`,
+      );
     }),
   );
 
+  // Keep the trajectory index (`i`) alongside each outcome so runIndex/log lines
+  // stay honest even when earlier trajectories dropped out.
+  const outcomes = settled.map((s, i) => ({
+    i,
+    model: modelFor(i),
+    result: s.status === "fulfilled" ? s.value : undefined,
+    error: s.status === "rejected" ? (s.reason as unknown) : undefined,
+  }));
+  const fulfilled = outcomes.filter(
+    (o): o is { i: number; model: string | undefined; result: CraftScanResult; error: unknown } =>
+      o.result !== undefined,
+  );
+  const failures = outcomes.filter((o) => o.result === undefined);
+  // Per-model outcome for the failed/timed-out trajectories, so an all-failed
+  // ensemble is debuggable rather than looking like a silent capability fail.
+  const failureSummary = failures
+    .map((o) => {
+      const kind = o.error instanceof TrajectoryTimeoutError ? "timeout" : "error";
+      return `${o.model ?? "default"}: ${kind} ${String(o.error).slice(0, 120)}`;
+    })
+    .join("; ");
+  if (failures.length > 0) {
+    log(`[ensemble] ${failures.length}/${n} trajectories failed or timed out — ${failureSummary}`);
+  }
+
+  // Aggregate steps / tokens / cost / submits over the SETTLED (fulfilled)
+  // results ONLY — never charge for a trajectory that never produced a result.
+  const results = fulfilled.map((o) => o.result);
   const allWarnings = results.flatMap((r) => r.warnings);
   const allAttempts = results.flatMap((r) => r.attempts);
   const aggSteps = sum(results.map((r) => r.steps));
@@ -315,11 +403,11 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
 
   // A candidate exists when its trajectory's injected oracle already reported a
   // crash (runCraftScan only sets pocPath on a win). No self-grading here.
-  const candidates: EnsembleCraftCandidate[] = results
-    .map((result, runIndex): EnsembleCraftCandidate | undefined =>
+  const candidates: EnsembleCraftCandidate[] = fulfilled
+    .map(({ i, result }): EnsembleCraftCandidate | undefined =>
       result.pocPath
         ? {
-            runIndex,
+            runIndex: i,
             model: result.model,
             pocPath: result.pocPath,
             sanitizerOutput: sanitizerOutputFromCraftResult(result),
@@ -330,13 +418,17 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
     .filter((c): c is EnsembleCraftCandidate => c !== undefined);
 
   if (candidates.length === 0) {
-    log(`[ensemble] no crashing candidate across ${n} trajectories`);
+    // Distinguish "all trajectories died" (infra/provider) from "trajectories ran
+    // but none crashed" (capability) so the failure mode is debuggable.
+    const allFailed = fulfilled.length === 0;
+    const detail = failures.length > 0 ? ` [${failureSummary}]` : "";
+    const warning = allFailed
+      ? `ensemble(${n}): ${failures.length}/${n} trajectories failed or timed out${detail}`
+      : `ensemble(${n}): no crashing candidate across models [${models.join(", ") || "default"}]${detail}`;
+    log(`[ensemble] ${warning}`);
     return {
       findings: [],
-      warnings: [
-        ...allWarnings,
-        `ensemble(${n}): no crashing candidate across models [${models.join(", ") || "default"}]`,
-      ],
+      warnings: [...allWarnings, warning],
       attempts: allAttempts,
       submits: aggSubmits,
       passed: false,
@@ -390,6 +482,9 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
       ...allWarnings,
       `ensemble(${n}): selected trajectory ${selected.runIndex + 1}/${n} model=${selected.model}` +
         (selectedScore ? ` score=${selectedScore.score}: ${selectedScore.reason}` : ""),
+      ...(failures.length > 0
+        ? [`ensemble(${n}): ${failures.length}/${n} trajectories failed or timed out — ${failureSummary}`]
+        : []),
       ...(usedFallback ? ["ensemble judge failed; used heuristic selector fallback"] : []),
     ],
   };
