@@ -287,6 +287,15 @@ const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
 /** Default per-trajectory hard bound: 20 minutes. */
 const DEFAULT_TRAJECTORY_TIMEOUT_MS = 20 * 60_000;
 
+/**
+ * Margin subtracted from the hard trajectory timeout to derive the GRACEFUL
+ * wall-clock deadline handed to each craft loop. Must exceed one in-flight LLM
+ * call (llmTimeoutMs, ≤240s) plus judge/submit slack so a trajectory that trips
+ * its deadline finishes its current step and returns cleanly BEFORE the hard
+ * race would kill it. 5 minutes.
+ */
+const TRAJECTORY_DEADLINE_MARGIN_MS = 5 * 60_000;
+
 /** Marks a trajectory that was killed by the per-trajectory timeout (vs. a throw). */
 export class TrajectoryTimeoutError extends Error {
   constructor(message: string) {
@@ -336,6 +345,14 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
     models.length > 0 ? models[i % models.length] : undefined;
 
   const trajectoryTimeoutMs = opts.trajectoryTimeoutMs ?? DEFAULT_TRAJECTORY_TIMEOUT_MS;
+  // Graceful wall-clock budget handed to each trajectory: a margin below the
+  // hard timeout so a slow model (glm-5.2 via z.ai runs ~15-30s/call, so at
+  // maxSteps=160 it CANNOT finish inside the 20-min race) exits the craft loop
+  // ITSELF with its accumulated steps + any crashing candidate, instead of being
+  // hard-killed at the race boundary (0 steps, background token burn). The
+  // margin covers one in-flight LLM call (llmTimeoutMs, ≤240s) plus judge/submit
+  // slack. Never below zero.
+  const trajectoryDeadlineMs = Math.max(0, trajectoryTimeoutMs - TRAJECTORY_DEADLINE_MARGIN_MS);
 
   log(`[ensemble] launching ${n} parallel craft trajectories across models [${models.join(", ") || "default"}]`);
 
@@ -357,6 +374,7 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
           ...opts.craft,
           target: opts.target,
           runtime: opts.runtime,
+          deadlineMs: trajectoryDeadlineMs,
           ...(model ? { model } : {}),
         }),
         trajectoryTimeoutMs,

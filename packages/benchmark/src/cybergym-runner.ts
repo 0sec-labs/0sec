@@ -840,6 +840,24 @@ export function cyberGymBestOfN(): number {
   return Number.isFinite(n) && n > 1 ? n : 1;
 }
 
+/**
+ * Per-trajectory hard timeout (ms) for the best-of-N ensemble, via
+ * `CYBERGYM_TRAJECTORY_TIMEOUT_MS`. Tune this to the step budget + the slowest
+ * model's per-call latency: a slow provider (glm-5.2 via z.ai, ~15-30s/call
+ * non-streaming) at maxSteps=160 needs ~40 min, so the 20-min default kills its
+ * trajectory before it finishes. The craft loop's graceful wall-clock deadline
+ * (derived from this bound minus a margin) already lets it exit with partial
+ * work instead of a 0-step hard-kill; raising this lets it run to completion.
+ * Unset/invalid → the ensemble default (20 min). Returns undefined when unset so
+ * the core default applies.
+ */
+export function cyberGymTrajectoryTimeoutMs(): number | undefined {
+  const raw = process.env.CYBERGYM_TRAJECTORY_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 function vulSideCraftEvaluator(task: CyberGymTask): CraftPocEvaluator {
   return async (pocPath) => {
     const s = await submitVulOnly(task, pocPath);
@@ -910,6 +928,9 @@ export async function runTaskBestOfN(
       runtime: deps.runtime,
       n: deps.bestOfN,
       models: cyberGymBestOfNModels(),
+      ...(cyberGymTrajectoryTimeoutMs() !== undefined
+        ? { trajectoryTimeoutMs: cyberGymTrajectoryTimeoutMs() }
+        : {}),
       craft: {
         maxSteps: deps.maxSteps,
         maxSubmits: process.env.CYBERGYM_MAX_SUBMITS

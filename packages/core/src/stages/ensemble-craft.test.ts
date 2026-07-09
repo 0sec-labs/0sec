@@ -239,6 +239,39 @@ describe("runEnsembleCraft", () => {
     expect(result.warnings.some((w) => /timed out/.test(w))).toBe(true);
   });
 
+  it("hands each trajectory a graceful wall-clock deadline BELOW the hard timeout (so a slow model exits with partial work, not a 0-step kill)", async () => {
+    const seenDeadlines: Array<number | undefined> = [];
+    const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> => {
+      seenDeadlines.push(opts.deadlineMs);
+      return craftResult({
+        model: opts.model ?? "auto",
+        pocPath: "/poc",
+        output: "AddressSanitizer: heap-buffer-overflow in parse_header",
+      });
+    };
+    const judge: CraftCandidateJudge = async (_t, candidates) =>
+      new Map(candidates.map((c) => [c.pocPath, { score: 8, reason: c.model }]));
+    const trajectoryTimeoutMs = 20 * 60_000;
+    await runEnsembleCraft({
+      target: TARGET,
+      runtime: "auto",
+      n: 2,
+      models: ["gpt-5.5", "glm-5.2"],
+      craft: { evaluatePoc: async () => ({ triggered: true, output: "" }) },
+      runCraft,
+      judge,
+      trajectoryTimeoutMs,
+    });
+    expect(seenDeadlines).toHaveLength(2);
+    // Every trajectory got a positive deadline strictly below the hard timeout,
+    // leaving margin for one in-flight LLM call to finish before the race fires.
+    for (const d of seenDeadlines) {
+      expect(d).toBeDefined();
+      expect(d!).toBeGreaterThan(0);
+      expect(d!).toBeLessThan(trajectoryTimeoutMs);
+    }
+  });
+
   it("returns an honest failed result with a per-model failure summary when ALL trajectories fail", async () => {
     const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> => {
       throw new Error(`provider down for ${opts.model}`);

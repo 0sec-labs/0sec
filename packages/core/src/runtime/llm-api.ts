@@ -1688,9 +1688,18 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         res = await this.postWithRetry(JSON.stringify(body), controller.signal);
       }
 
-      clearTimeout(timer);
-
+      // Keep the abort timer ARMED through the body read. `fetch()` resolves as
+      // soon as the response HEADERS arrive; the body is drained by `res.text()`.
+      // If a provider (or a CDN in front of it) flushes a 200 status line early
+      // and then trickles/stalls the body, clearing the timer here would leave
+      // `res.text()` unbounded — a single call could hang the whole craft loop
+      // forever. z.ai/GLM and Anthropic both buffer non-streaming responses and
+      // send headers+body together at the end (TTFB≈TOTAL, verified 2026-07-08),
+      // so in practice this changes nothing for them; it only closes the latent
+      // "timer cleared too early" gap. Cleared right after the body is in hand.
       const responseText = await res.text();
+
+      clearTimeout(timer);
 
       if (!res.ok) {
         return {

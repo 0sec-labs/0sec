@@ -95,6 +95,20 @@ export interface CraftScanOptions {
   maxTests?: number;
   /** Per-LLM-call timeout (ms). Default 240_000. */
   llmTimeoutMs?: number;
+  /**
+   * Optional wall-clock budget (ms) for the WHOLE craft loop. When set, the loop
+   * exits GRACEFULLY at the top of the first step whose elapsed time would exceed
+   * this bound — returning the steps + tokens + any crashing candidate it already
+   * has, rather than running until the step cap. This exists for the ensemble: a
+   * slow provider (e.g. glm-5.2 via z.ai, ~15-30s/call non-streaming) can't finish
+   * 160 steps inside the ensemble's per-trajectory hard timeout, so without a
+   * deadline `runEnsembleCraft` HARD-KILLS the trajectory at the race boundary —
+   * discarding ALL its partial work (0 steps counted) while the un-cancellable
+   * loop keeps burning tokens in the background. A deadline set just under the
+   * trajectory timeout converts that into a clean partial contribution. Unset →
+   * step-cap-only behaviour (unchanged for single-model runs).
+   */
+  deadlineMs?: number;
   /** The PoC oracle (CyberGym differential / local sanitizer runner). The GRADED final answer. */
   evaluatePoc: CraftPocEvaluator;
   /**
@@ -423,7 +437,17 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
 
   let steps = 0, noops = 0, model = opts.model ?? "auto";
   let inputTokens = 0, outputTokens = 0;
+  const loopStart = Date.now();
   for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable; steps++) {
+    // Wall-clock budget: exit gracefully with accumulated work BEFORE the
+    // ensemble's per-trajectory hard timeout kills this trajectory mid-call
+    // (which would discard every step and leave the un-cancellable loop burning
+    // tokens in the background). Checked at the top of each step so an in-flight
+    // call finishes (bounded by llmTimeoutMs) and its result is banked first.
+    if (opts.deadlineMs !== undefined && Date.now() - loopStart >= opts.deadlineMs) {
+      warnings.push(`craft: wall-clock deadline reached (${opts.deadlineMs}ms) after ${steps} step(s) — exiting gracefully with accumulated work`);
+      break;
+    }
     const rt = new LlmApiRuntime({ type: "api", ...(opts.model ? { model: opts.model } : {}), timeout: opts.llmTimeoutMs ?? 240_000 });
     let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown };
     try {
