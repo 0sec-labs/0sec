@@ -199,6 +199,15 @@ describe("adversarial detail/repro enrichment", () => {
       features: [],
     });
   });
+
+  it("demotes empty sandbox and privileged calls hidden outside the options header", () => {
+    const repro = parseSyzReproOptions(`#{"sandbox":""}\nopenat$dir(0xffffffffffffff9c, &AUTO='/dev/net/tun', 0x2, 0x0)\nioctl$TUNSETIFF()\nsendmsg$nl_route(RTM_NEWQDISC)\nsyz_mount_image$ext4()\nbpf$BPF_PROG_LOAD()\nfoo(fail_nth: 3)`);
+    expect(repro.reachability).toBe("privileged-or-harness");
+    expect(repro.features).toEqual(expect.arrayContaining([
+      "mount", "tun-device", "net-admin", "bpf", "fault-injection",
+    ]));
+    expect(repro.warnings.join(" ")).toMatch(/unsandboxed.*tun-device/);
+  });
 });
 
 describe("toHuntCandidate", () => {
@@ -282,6 +291,12 @@ describe("mineSyzbotQueue", () => {
     expect(res.candidates.length).toBeGreaterThan(0);
     expect(res.candidates[0].kernelVersionSeen).toBeUndefined();
     expect(res.warnings.some((w) => /detail fetch failed/i.test(w))).toBe(true);
+  });
+
+  it("rejects unsafe library-level resource bounds", async () => {
+    await expect(mineSyzbotQueue({ fetch: fetchOk, limit: -1 })).rejects.toThrow(/invalid limit/);
+    await expect(mineSyzbotQueue({ fetch: fetchOk, maxDetailFetches: 101 })).rejects.toThrow(/maxDetailFetches/);
+    await expect(mineSyzbotQueue({ fetch: fetchOk, detailDelayMs: Number.NaN })).rejects.toThrow(/detailDelayMs/);
   });
 
   describe("defaultSyzbotFetcher SSRF guard", () => {

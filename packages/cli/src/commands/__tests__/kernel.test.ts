@@ -123,7 +123,7 @@ describe("pwnkit kernel variant-hunt", () => {
   it("mines syzbot with bounded detail enrichment and emits hunt handoffs", async () => {
     await runCli(["kernel", "syzbot-mine", "--subsystems", "net,xfrm", "--limit", "12", "--details", "4"]);
     expect(mineSyzbotQueueMock).toHaveBeenCalledWith(expect.objectContaining({
-      subsystems: ["net", "xfrm"], limit: 12, maxDetailFetches: 4,
+      subsystems: ["net", "xfrm"], limit: 12, maxDetailFetches: 4, detailDelayMs: 750,
       fetchRepro: expect.any(Function),
     }));
     expect(JSON.parse(String(logSpy.mock.calls[0]![0]))).toMatchObject({
