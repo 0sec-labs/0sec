@@ -48,6 +48,9 @@ describe("kernel execution attestation", () => {
     expect(source).toContain("setgroups(0,NULL)");
     expect(source).toContain("PR_SET_NO_NEW_PRIVS");
     expect(source).toContain("CapEff:");
+    expect(source).toContain('open("/proc/1/ns/user",O_RDONLY|O_CLOEXEC)');
+    expect(source.indexOf('open("/proc/1/ns/user"')).toBeLessThan(source.indexOf("setresuid(uid,uid,uid)"));
+    expect(source).toContain('stat("/proc/self/ns/user"');
     expect(source).toContain("execvp");
   });
 
@@ -70,8 +73,8 @@ describe("kernel execution attestation", () => {
   });
 
   it.skipIf(process.platform !== "linux")("compiles the launcher and proves a successful exec handshake", () => {
-    // Some hosted runners mount the system temp directory noexec. Build the
-    // launcher under the checked-out workspace so this test exercises exec.
+    // Build under the checkout so the test does not depend on system temp
+    // mount policy and always exercises the compiled launcher via exec.
     const root = mkdtempSync(join(process.cwd(), ".pwnkit-attest-launcher-"));
     try {
       const source = join(root, "launcher.c");
