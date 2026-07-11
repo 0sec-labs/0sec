@@ -346,6 +346,64 @@ export async function defaultKernelVerifyRunner(
 }
 
 /**
+ * Wrap any {@link KernelVerifyRunner} in an N× reproduction gate. Boots the
+ * reproducer up to `attempts` times and counts how many independent boots
+ * reproduced the crash+signature, stamping `reproConfirmations`/`reproAttempts`
+ * onto the result and dampening `oracleConfidence` when only a single boot
+ * confirmed (a lone flaky reproduction of a race/UAF can be an environment
+ * fluke — ToB/Shellphish require N× reproduction before trusting at full
+ * strength). This is the runner-side half of the memcorruption N× gate.
+ *
+ * Cost-aware: each boot is expensive, so it EARLY-EXITS as soon as 2 boots
+ * confirm (the flake gate is cleared). It never turns a confirmed result into a
+ * rejection — a single confirmation is still `crashed:true`, just dampened.
+ *
+ * `attempts <= 1` returns the wrapped runner's result verbatim (legacy path).
+ */
+export function withNxReproduction(
+  runner: KernelVerifyRunner,
+  attempts: number,
+): KernelVerifyRunner {
+  const budget = Math.max(1, Math.floor(attempts));
+  if (budget === 1) return runner;
+  return async (input) => {
+    let confirmations = 0;
+    let actualAttempts = 0;
+    let firstConfirmed: KernelVerifyOracleResult | undefined;
+    let last: KernelVerifyOracleResult | undefined;
+    for (let i = 0; i < budget; i++) {
+      actualAttempts++;
+      const r = await runner(input);
+      last = r;
+      if (r.ran && r.crashed && r.signatureMatched) {
+        confirmations++;
+        if (!firstConfirmed) firstConfirmed = r;
+        if (confirmations >= 2) break; // flake gate cleared — stop booting
+      }
+    }
+    const base = firstConfirmed ?? last!;
+    // Dampen confidence for a single-shot confirmation across >1 attempt.
+    const dampened =
+      confirmations === 1 && actualAttempts > 1
+        ? Math.min(base.oracleConfidence, 0.82)
+        : base.oracleConfidence;
+    const suffix =
+      confirmations >= 2
+        ? ` [${confirmations}/${actualAttempts}× reproduced — N× confirmed]`
+        : confirmations === 1
+          ? ` [reproduced only 1/${actualAttempts}× — flaky-repro risk; re-run to confirm]`
+          : ` [did not reproduce in ${actualAttempts} attempts]`;
+    return {
+      ...base,
+      oracleConfidence: dampened,
+      reproConfirmations: confirmations,
+      reproAttempts: actualAttempts,
+      reason: base.reason + suffix,
+    };
+  };
+}
+
+/**
  * Translate the Tier-1 `KernelFindingVerification` shape (which the existing
  * ingest CLI consumes) into the richer `KernelVerifyOracleResult` shape this
  * loop hands to the agent. Mostly a status remap with dmesg readback.

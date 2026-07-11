@@ -6,7 +6,13 @@ import type {
   NativeToolDef,
   NativeRuntimeResult,
 } from "../runtime/types.js";
-import { generatePov, judgePovEvidence, oracleForCategory } from "./pov-gate.js";
+import {
+  generatePov,
+  judgePovEvidence,
+  memCorruptionVerdict,
+  oracleForCategory,
+} from "./pov-gate.js";
+import type { CrashArtifact } from "./memsafety-types.js";
 import type { OracleResult } from "./oracles.js";
 
 // ────────────────────────────────────────────────────────────────────
@@ -609,5 +615,58 @@ describe("generatePov — oracle delegation (SSRF / OAST callback)", () => {
     expect(result.hasPov).toBe(true);
     expect(result.oracle).toBe("oast-callback");
     expect(result.reason).toMatch(/ssrfPRE/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// memCorruptionVerdict — N× reproduction gate
+// ────────────────────────────────────────────────────────────────────
+
+describe("memCorruptionVerdict — N× reproduction gate", () => {
+  function crash(overrides: Partial<CrashArtifact> = {}): CrashArtifact {
+    return {
+      kind: "asan",
+      signature: "sig-uaf-1",
+      rawOutput: "==1==ERROR: AddressSanitizer: heap-use-after-free",
+      inputPath: "/tmp/poc.bin",
+      ...overrides,
+    };
+  }
+
+  it("legacy single-shot (no reproConfirmations) stays confirmed@0.95", () => {
+    const v = memCorruptionVerdict(crash());
+    expect(v.verdict).toBe("confirmed");
+    expect(v.confidence).toBe(0.95);
+    // no repro fraction appended when the field is absent
+    expect(v.signals[0]?.reasoning).not.toMatch(/repro=/);
+  });
+
+  it("N×-confirmed (>=2) is confirmed@0.95 and notes the fraction", () => {
+    const v = memCorruptionVerdict(crash({ reproConfirmations: 3, reproAttempts: 3 }));
+    expect(v.verdict).toBe("confirmed");
+    expect(v.confidence).toBe(0.95);
+    expect(v.reasoning).toMatch(/3\/3.*confirmed/);
+    expect(v.signals[0]?.reasoning).toMatch(/repro=3\/3/);
+  });
+
+  it("1-of-N reproduction is confirmed but dampened + flagged flaky", () => {
+    const v = memCorruptionVerdict(crash({ reproConfirmations: 1, reproAttempts: 5 }));
+    expect(v.verdict).toBe("confirmed"); // never silently rejected (#518)
+    expect(v.confidence).toBe(0.82);
+    expect(v.confidence).toBeLessThan(0.95);
+    expect(v.reasoning).toMatch(/flaky-repro risk/);
+    expect(v.signals[0]?.reasoning).toMatch(/repro=1\/5/);
+  });
+
+  it("single attempt (N=1) is dampened and asks for a re-run", () => {
+    const v = memCorruptionVerdict(crash({ reproConfirmations: 1, reproAttempts: 1 }));
+    expect(v.confidence).toBe(0.82);
+    expect(v.reasoning).toMatch(/Single-shot reproduction/);
+  });
+
+  it("non-reproduced crash is inconclusive, never rejected", () => {
+    const v = memCorruptionVerdict(crash({ inputPath: undefined }));
+    expect(v.verdict).toBe("inconclusive");
+    expect(v.confidence).toBe(0);
   });
 });
