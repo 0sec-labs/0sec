@@ -3,9 +3,13 @@ import { Command } from "commander";
 import type { KernelVariantHuntReport } from "@pwnkit/core";
 
 const runKernelVariantHuntMock = vi.fn<() => Promise<KernelVariantHuntReport>>();
+const mineSyzbotQueueMock = vi.fn();
 
 vi.mock("@pwnkit/core", () => ({
   runKernelVariantHunt: runKernelVariantHuntMock,
+  defaultSyzbotFetcher: vi.fn(),
+  mineSyzbotQueue: mineSyzbotQueueMock,
+  toHuntCandidates: vi.fn(() => [{ path: "net/l2tp", hint: "reproduce" }]),
 }));
 
 const { registerKernelCommand, variantReportToScanReport } = await import("../kernel.js");
@@ -65,6 +69,8 @@ describe("pwnkit kernel variant-hunt", () => {
     process.exitCode = undefined;
     runKernelVariantHuntMock.mockReset();
     runKernelVariantHuntMock.mockResolvedValue(makeReport());
+    mineSyzbotQueueMock.mockReset();
+    mineSyzbotQueueMock.mockResolvedValue({ candidates: [], brief: {}, scanned: 19086, warnings: [] });
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
@@ -112,5 +118,16 @@ describe("pwnkit kernel variant-hunt", () => {
     expect(scanReport.summary.totalAttacks).toBe(1);
     expect(scanReport.summary.totalFindings).toBe(1);
     expect(scanReport.summary.high).toBe(1);
+  });
+
+  it("mines syzbot with bounded detail enrichment and emits hunt handoffs", async () => {
+    await runCli(["kernel", "syzbot-mine", "--subsystems", "net,xfrm", "--limit", "12", "--details", "4"]);
+    expect(mineSyzbotQueueMock).toHaveBeenCalledWith(expect.objectContaining({
+      subsystems: ["net", "xfrm"], limit: 12, maxDetailFetches: 4,
+    }));
+    expect(JSON.parse(String(logSpy.mock.calls[0]![0]))).toMatchObject({
+      scanned: 19086,
+      huntCandidates: [{ path: "net/l2tp", hint: "reproduce" }],
+    });
   });
 });

@@ -136,6 +136,34 @@ describe("rankCandidates", () => {
       ids.indexOf("aaaabbbbccccddddeeee"),
     );
   });
+
+  it("prioritizes memory corruption and penalizes warning or mixed-origin noise", () => {
+    const base: SyzbotCandidate = {
+      syzbotId: "base", idKind: "id", bugUrl: "https://syzkaller.appspot.com/bug?id=base",
+      title: "WARNING in net_exit", subsystems: ["net"], crashSignature: "WARNING in net_exit",
+      crashType: "WARNING", hasCRepro: false, hasSyzRepro: true, bucket: "invalid",
+      whyDiscarded: "invalid", score: 0,
+    };
+    const uaf = { ...base, syzbotId: "uaf", title: "KASAN: slab-use-after-free Write in qdisc_destroy" };
+    const mixed = { ...uaf, syzbotId: "mixed", subsystems: ["net", "ext4"] };
+    const ranked = rankCandidates([base, mixed, uaf]);
+    expect(ranked.map((c) => c.syzbotId)).toEqual(["uaf", "mixed", "base"]);
+    expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
+    expect(ranked[1].score).toBeGreaterThan(ranked[2].score);
+  });
+
+  it("penalizes years-old abandoned reports below otherwise equal live leads", () => {
+    const candidate = (id: string, reportedDays: number): SyzbotCandidate => ({
+      syzbotId: id, idKind: "id", bugUrl: `https://syzkaller.appspot.com/bug?id=${id}`,
+      title: "KASAN: use-after-free Write in net_worker", subsystems: ["net"],
+      crashSignature: "KASAN: use-after-free Write in net_worker", crashType: "KASAN",
+      hasCRepro: false, hasSyzRepro: true, reportedDays, bucket: "invalid",
+      whyDiscarded: "invalid", score: 0,
+    });
+    const ranked = rankCandidates([candidate("old", 1200), candidate("recent", 90)]);
+    expect(ranked.map((c) => c.syzbotId)).toEqual(["recent", "old"]);
+    expect(ranked[0].score - ranked[1].score).toBe(40);
+  });
 });
 
 describe("parseBugDetailKernelVersion", () => {
