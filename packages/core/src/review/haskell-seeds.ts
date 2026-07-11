@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { SemgrepFinding } from "@pwnkit/shared";
 
 /**
@@ -160,7 +162,7 @@ function toRgSource(source: string): string {
  * processes total, not one-per-rule) and re-classify each hit in JS against the
  * rule table — fast over big trees, precise per-rule labelling.
  */
-function rgClass(targetPath: string, klass: HaskellBugClass): RgMatch[] {
+function rgClass(targetPath: string, klass: HaskellBugClass, rgPath: string): RgMatch[] {
   // Build a single alternation of the class's patterns for ONE ripgrep pass.
   // ripgrep's default (Rust regex) engine rejects lookaround, and the engine
   // image's rg is not guaranteed to be PCRE2-enabled — so we STRIP lookbehind/
@@ -188,7 +190,7 @@ function rgClass(targetPath: string, klass: HaskellBugClass): RgMatch[] {
 
   let raw = "";
   try {
-    raw = execFileSync("rg", args, {
+    raw = execFileSync(rgPath, args, {
       timeout: RG_TIMEOUT_MS,
       stdio: "pipe",
       encoding: "utf-8",
@@ -200,7 +202,7 @@ function rgClass(targetPath: string, klass: HaskellBugClass): RgMatch[] {
     const stdout = err && typeof err === "object" && "stdout" in err ? (err as { stdout?: Buffer | string }).stdout : undefined;
     if (code === 1 && !stdout) return [];
     raw = typeof stdout === "string" ? stdout : stdout ? stdout.toString("utf-8") : "";
-    if (!raw) return [];
+    if (!raw) return scanClassInProcess(targetPath, klass);
   }
 
   const matches: RgMatch[] = [];
@@ -222,6 +224,41 @@ function rgClass(targetPath: string, klass: HaskellBugClass): RgMatch[] {
     if (!path || !lineNumber || lineText === undefined) continue;
     matches.push({ path, lineNumber, line: lineText.replace(/\n$/, ""), column });
   }
+  return matches;
+}
+
+/** Portable fallback for minimal runners/images where `rg` is unavailable. */
+function scanClassInProcess(targetPath: string, klass: HaskellBugClass): RgMatch[] {
+  const matches: RgMatch[] = [];
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (["dist", "dist-newstyle", ".stack-work"].includes(entry.name)) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+        continue;
+      }
+      if (!entry.isFile() || (!entry.name.endsWith(".hs") && !entry.name.endsWith(".lhs"))) continue;
+      let lines: string[];
+      try {
+        lines = readFileSync(path, "utf8").split("\n");
+      } catch {
+        continue;
+      }
+      for (let index = 0; index < lines.length; index++) {
+        const line = lines[index]!;
+        const rule = classifyLine(line, klass);
+        if (rule) matches.push({ path, lineNumber: index + 1, line, column: line.search(rule.re) });
+      }
+    }
+  };
+  walk(targetPath);
   return matches;
 }
 
@@ -257,7 +294,7 @@ function classifyLine(line: string, klass: HaskellBugClass): HaskellRule | undef
  * into the review pipeline's `semgrepFindings` list. Paths are made
  * tree-relative so they match the rest of the pipeline's conventions.
  */
-export function generateHaskellSeeds(targetPath: string): SemgrepFinding[] {
+export function generateHaskellSeeds(targetPath: string, options: { rgPath?: string } = {}): SemgrepFinding[] {
   const base = targetPath.endsWith("/") ? targetPath : `${targetPath}/`;
   const seeds: SemgrepFinding[] = [];
 
@@ -265,7 +302,7 @@ export function generateHaskellSeeds(targetPath: string): SemgrepFinding[] {
     let kept = 0;
     let raw: RgMatch[];
     try {
-      raw = rgClass(targetPath, klass);
+      raw = rgClass(targetPath, klass, options.rgPath ?? "rg");
     } catch {
       // ripgrep missing or failed for this class — skip it, keep the others.
       continue;
