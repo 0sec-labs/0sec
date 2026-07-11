@@ -97,6 +97,11 @@ web/AI/source/package/on-chain pipeline. XNU panic promotion intentionally
 remains disabled until repeated attributed proof exists. Native engine evidence
 is preserved losslessly behind the shared adapter boundary.
 
+Target-specific kernel rigs can import a versioned vulnerable-vs-patched boot
+manifest with `pwnkit research linux-matrix`. pwnkit validates distinct boot
+markers and thresholds, requires clean completed controls, snapshots and hashes
+all logs, and records that execution occurred externally.
+
 See [Research architecture](docs/src/content/docs/architecture.md#shared-research-plane).
 
 ## Docs

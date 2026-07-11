@@ -46,6 +46,7 @@ describe("research control-plane primitives", () => {
   it("registers every shipped research adapter in the default registry", () => {
     expect(createDefaultResearchRegistry().kinds()).toEqual([
       "hunt.agentic",
+      "linux.kernel-boot-matrix-import",
       "linux.kernel-reproducer",
       "mobile.static-intake",
       "pipeline.unified",
