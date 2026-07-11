@@ -357,6 +357,8 @@ export function rankCandidates(
     const labels = new Set(c.subsystems.map((s) => s.toLowerCase()));
     const privilegedOrigins = ["ext4", "bcachefs", "f2fs", "xfs", "btrfs", "ntfs3", "usb"];
     if (privilegedOrigins.some((s) => labels.has(s))) score -= 35;
+    if ((c.reportedDays ?? 0) > 730) score -= 40;
+    else if ((c.reportedDays ?? 0) > 365) score -= 20;
     if (c.lastActivityDays !== undefined) {
       // Up to +20, decaying over a year; recent activity ranks higher.
       score += Math.max(0, Math.round((365 - Math.min(c.lastActivityDays, 365)) / 365 * 20));
