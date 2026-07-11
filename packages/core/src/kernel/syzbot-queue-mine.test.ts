@@ -136,6 +136,21 @@ describe("rankCandidates", () => {
       ids.indexOf("aaaabbbbccccddddeeee"),
     );
   });
+
+  it("prioritizes memory corruption and penalizes warning or mixed-origin noise", () => {
+    const base: SyzbotCandidate = {
+      syzbotId: "base", idKind: "id", bugUrl: "https://syzkaller.appspot.com/bug?id=base",
+      title: "WARNING in net_exit", subsystems: ["net"], crashSignature: "WARNING in net_exit",
+      crashType: "WARNING", hasCRepro: false, hasSyzRepro: true, bucket: "invalid",
+      whyDiscarded: "invalid", score: 0,
+    };
+    const uaf = { ...base, syzbotId: "uaf", title: "KASAN: slab-use-after-free Write in qdisc_destroy" };
+    const mixed = { ...uaf, syzbotId: "mixed", subsystems: ["net", "ext4"] };
+    const ranked = rankCandidates([base, mixed, uaf]);
+    expect(ranked.map((c) => c.syzbotId)).toEqual(["uaf", "mixed", "base"]);
+    expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
+    expect(ranked[1].score).toBeGreaterThan(ranked[2].score);
+  });
 });
 
 describe("parseBugDetailKernelVersion", () => {

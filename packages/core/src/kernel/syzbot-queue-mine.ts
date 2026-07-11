@@ -329,7 +329,10 @@ export function parseBugDetailKernelVersion(html: string): string | undefined {
  *      shape). Highest weight: everyone already acts on C-repro bugs.
  *   2. any reproducer at all beats none.
  *   3. a target subsystem.
- *   4. recent-ish activity (a bug last seen recently is more likely still live).
+ *   4. memory-corruption geometry beats warnings/lockdep noise.
+ *   5. penalize mixed filesystem/device labels: they often mean a privileged
+ *      mount or emulated-device bug corrupted a later networking victim.
+ *   6. recent-ish activity (a bug last seen recently is more likely still live).
  * Sorted descending by score; ties broken toward the more recently-active bug.
  */
 export function rankCandidates(
@@ -342,6 +345,18 @@ export function rankCandidates(
     if (c.hasSyzRepro && !c.hasCRepro) score += 100; // abandoned-but-reproducible
     else if (c.hasSyzRepro) score += 40; // has a (C) repro
     if (c.subsystems.some((s) => targets.has(s))) score += 20;
+    const title = c.title.toLowerCase();
+    if (/kasan:.*use-after-free/.test(title)) score += 35;
+    if (/\bwrite\b/.test(title) && /(use-after-free|out-of-bounds|corrupt)/.test(title)) score += 20;
+    if (/(slab-|heap-|global-)?out-of-bounds/.test(title)) score += 15;
+    if (/corrupted list|list corruption/.test(title)) score += 20;
+    if (/general protection fault|kernel paging request/.test(title)) score += 10;
+    if (/^warning|lockdep|possible deadlock|rcu detected stall/.test(title)) score -= 25;
+    if (/^info:/.test(title)) score -= 35;
+
+    const labels = new Set(c.subsystems.map((s) => s.toLowerCase()));
+    const privilegedOrigins = ["ext4", "bcachefs", "f2fs", "xfs", "btrfs", "ntfs3", "usb"];
+    if (privilegedOrigins.some((s) => labels.has(s))) score -= 35;
     if (c.lastActivityDays !== undefined) {
       // Up to +20, decaying over a year; recent activity ranks higher.
       score += Math.max(0, Math.round((365 - Math.min(c.lastActivityDays, 365)) / 365 * 20));
