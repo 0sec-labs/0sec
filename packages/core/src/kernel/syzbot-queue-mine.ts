@@ -68,6 +68,18 @@ export interface SyzbotCandidate {
   crashCount?: number;
   /** Kernel version last seen crashing — only populated when detail-enriched. */
   kernelVersionSeen?: string;
+  /** Exact syz reproducer URL discovered on the detail page. */
+  reproSyzUrl?: string;
+  /** Syzkaller sandbox requested by the reproducer options header. */
+  reproSandbox?: string;
+  /** Harness/setup features requested by the syz reproducer. */
+  reproFeatures?: string[];
+  /** Conservative reachability classification; never an exploitability claim. */
+  reachability?: "zero-cap-plausible" | "privileged-or-harness" | "unknown";
+  /** Adversarial reasons to avoid spending VM/reproduction budget. */
+  triageWarnings?: string[];
+  /** Whether bounded detail/repro enrichment succeeded. */
+  enrichmentStatus?: "verified" | "failed" | "not-fetched";
   /** The bucket this candidate came from. */
   bucket: SyzbotBucket;
   /** Best-effort human explanation of why syzbot discarded it. */
@@ -101,6 +113,8 @@ export interface SyzbotQueueMineOptions {
    * swallowed — a candidate keeps its listing data.
    */
   fetchDetail?: SyzbotFetcher;
+  /** Optional fetcher for exact syz repro programs linked by detail pages. */
+  fetchRepro?: SyzbotFetcher;
   /** Cost guard on detail fetches. Default 20. */
   maxDetailFetches?: number;
   log?: (msg: string) => void;
@@ -321,6 +335,66 @@ export function parseBugDetailKernelVersion(html: string): string | undefined {
   })[0];
 }
 
+export interface SyzbotDetailMetadata {
+  kernelVersionSeen?: string;
+  reproSyzUrl?: string;
+}
+
+/** Extract bounded triage metadata from a syzbot detail page. */
+export function parseBugDetail(
+  html: string,
+  baseUrl: string = DEFAULT_BASE_URL,
+): SyzbotDetailMetadata {
+  const kernelVersionSeen = parseBugDetailKernelVersion(html);
+  const match = html.match(/href="([^"]*\/text\?tag=ReproSyz(?:&amp;|&)x=[0-9a-f]+)"/i);
+  let reproSyzUrl: string | undefined;
+  if (match) {
+    try {
+      reproSyzUrl = new URL(match[1].replace(/&amp;/g, "&"), `${baseUrl}/`).toString();
+    } catch {
+      // Malformed untrusted HTML is ignored.
+    }
+  }
+  return { ...(kernelVersionSeen ? { kernelVersionSeen } : {}), ...(reproSyzUrl ? { reproSyzUrl } : {}) };
+}
+
+const REPRO_SETUP_FEATURES = [
+  "tun", "netdev", "resetnet", "cgroups", "binfmt_misc", "usb", "vhci",
+  "wifi", "ieee802154", "sysctl", "tmpdir", "fault", "swap",
+] as const;
+
+/** Parse only the JSON options header of a syzkaller program. */
+export function parseSyzReproOptions(program: string): {
+  sandbox?: string;
+  features: string[];
+  reachability: "zero-cap-plausible" | "privileged-or-harness" | "unknown";
+  warnings: string[];
+} {
+  const header = program.slice(0, 16_384).match(/^#(\{[^\n]+\})$/m)?.[1];
+  if (!header) return { features: [], reachability: "unknown", warnings: ["missing syz options header"] };
+  let options: Record<string, unknown>;
+  try {
+    options = JSON.parse(header) as Record<string, unknown>;
+  } catch {
+    return { features: [], reachability: "unknown", warnings: ["invalid syz options header"] };
+  }
+  const sandbox = typeof options.sandbox === "string" ? options.sandbox : undefined;
+  const features = REPRO_SETUP_FEATURES.filter((name) => options[name] === true);
+  const privilegedFeatures = features.filter((name) =>
+    ["tun", "netdev", "resetnet", "usb", "vhci", "wifi", "ieee802154", "sysctl", "fault", "swap"].includes(name),
+  );
+  const warnings: string[] = [];
+  if (sandbox === "none") warnings.push("reproducer requires sandbox:none");
+  if (privilegedFeatures.length > 0) warnings.push(`harness setup: ${privilegedFeatures.join(", ")}`);
+  const privileged = sandbox === "none" || privilegedFeatures.length > 0;
+  const reachability = privileged
+    ? "privileged-or-harness"
+    : sandbox === "namespace"
+      ? "zero-cap-plausible"
+      : "unknown";
+  return { ...(sandbox ? { sandbox } : {}), features, reachability, warnings };
+}
+
 // ── Ranking ──────────────────────────────────────────────────────────────────
 
 /**
@@ -353,6 +427,7 @@ export function rankCandidates(
     if (/general protection fault|kernel paging request/.test(title)) score += 10;
     if (/^warning|lockdep|possible deadlock|rcu detected stall/.test(title)) score -= 25;
     if (/^info:/.test(title)) score -= 35;
+    if (/^kmsan:|memory leak|uninit-value|null-ptr-deref/.test(title)) score -= 60;
 
     const labels = new Set(c.subsystems.map((s) => s.toLowerCase()));
     const privilegedOrigins = ["ext4", "bcachefs", "f2fs", "xfs", "btrfs", "ntfs3", "usb"];
@@ -363,6 +438,13 @@ export function rankCandidates(
       // Up to +20, decaying over a year; recent activity ranks higher.
       score += Math.max(0, Math.round((365 - Math.min(c.lastActivityDays, 365)) / 365 * 20));
     }
+    if (c.crashCount === 1) score -= 25;
+    if (c.reachability === "privileged-or-harness") score -= 80;
+    else if (c.reachability === "zero-cap-plausible") score += 20;
+    if (c.enrichmentStatus === "failed") score -= 25;
+    else if (c.enrichmentStatus === "not-fetched") score -= 35;
+    else if (c.enrichmentStatus === "verified" && c.reachability === "unknown") score -= 15;
+    if (c.reproFeatures?.includes("fault")) score -= 30;
     return { ...c, score };
   });
   return scored.sort(
@@ -388,9 +470,8 @@ export function syzbotQueueBrief(): HuntBrief {
 /** Map a mined candidate to a hunt-scan {@link HuntCandidate} for the finder / repro path. */
 export function toHuntCandidate(c: SyzbotCandidate): HuntCandidate {
   const primary = c.subsystems.find((s) => SUBSYSTEM_SOURCE_HINT[s]);
-  const path = primary
-    ? SUBSYSTEM_SOURCE_HINT[primary]
-    : SUBSYSTEM_SOURCE_HINT[c.subsystems[0]] ?? c.subsystems[0] ?? ".";
+  // Remote dashboard labels are untrusted and must never become filesystem paths.
+  const path = primary ? SUBSYSTEM_SOURCE_HINT[primary] : ".";
   const repro = c.hasCRepro
     ? "C-repro available"
     : c.hasSyzRepro
@@ -426,15 +507,22 @@ export const defaultSyzbotFetcher: SyzbotFetcher = async (url) => {
   } catch {
     throw new Error(`invalid syzbot url: ${url}`);
   }
-  if (parsed.protocol !== "https:" || parsed.hostname !== SYZBOT_ALLOWED_HOST) {
+  if (parsed.protocol !== "https:" || parsed.hostname !== SYZBOT_ALLOWED_HOST || parsed.port || parsed.username || parsed.password) {
     throw new Error(
       `refusing to fetch non-allowlisted url (host must be ${SYZBOT_ALLOWED_HOST} over https): ${url}`,
     );
   }
   const res = await fetch(parsed.toString(), {
     headers: { "user-agent": "pwnkit-syzbot-queue-mine/1.0" },
+    redirect: "manual",
+    // The invalid listing is ~19k rows and can take tens of seconds from the
+    // public dashboard; remain bounded without making the live source unusable.
+    signal: AbortSignal.timeout(60_000),
   });
+  if (res.status >= 300 && res.status < 400) throw new Error(`refusing syzbot redirect for ${url}`);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  const length = Number(res.headers.get("content-length"));
+  if (Number.isFinite(length) && length > 16 * 1024 * 1024) throw new Error(`oversized syzbot response for ${url}`);
   return res.text();
 };
 
@@ -446,7 +534,7 @@ export const defaultSyzbotFetcher: SyzbotFetcher = async (url) => {
  * Best-effort + resilient: a fetch/parse failure on any bucket adds a warning
  * and is skipped — the stage never throws. Candidates are deduped by syzbot id,
  * subsystem-filtered, ranked, and capped at `limit`. Optional detail enrichment
- * fills `kernelVersionSeen` for the top candidates.
+ * fills detail/repro reachability metadata for the top candidates, then reranks.
  */
 export async function mineSyzbotQueue(
   opts: SyzbotQueueMineOptions,
@@ -488,6 +576,7 @@ export async function mineSyzbotQueue(
   const byId = new Map<string, SyzbotCandidate>();
   for (const c of parsed) if (!byId.has(c.syzbotId)) byId.set(c.syzbotId, c);
   let candidates = [...byId.values()];
+  candidates = candidates.map((c) => ({ ...c, enrichmentStatus: "not-fetched" as const }));
 
   // Subsystem filter (empty array disables it).
   if (subsystems.length > 0) {
@@ -506,15 +595,35 @@ export async function mineSyzbotQueue(
     for (const c of candidates) {
       if (fetched >= maxDetail) break;
       fetched++;
+      c.enrichmentStatus = "failed";
+      c.reachability = "unknown";
+      c.triageWarnings = ["detail/repro enrichment incomplete"];
       try {
         const detail = await opts.fetchDetail(c.bugUrl);
-        const version = parseBugDetailKernelVersion(detail);
-        if (version) c.kernelVersionSeen = version;
+        const metadata = parseBugDetail(detail, baseUrl);
+        Object.assign(c, metadata);
+        if (metadata.reproSyzUrl && opts.fetchRepro) {
+          try {
+            const program = await opts.fetchRepro(metadata.reproSyzUrl);
+            const repro = parseSyzReproOptions(program);
+            c.reproSandbox = repro.sandbox;
+            c.reproFeatures = repro.features;
+            c.reachability = repro.reachability;
+            c.triageWarnings = repro.warnings;
+            c.enrichmentStatus = repro.reachability === "unknown" ? "failed" : "verified";
+          } catch (e) {
+            warnings.push(`syzbot: repro fetch failed for ${c.syzbotId}: ${String(e).slice(0, 80)}`);
+          }
+        }
       } catch (e) {
         warnings.push(`syzbot: detail fetch failed for ${c.syzbotId}: ${String(e).slice(0, 80)}`);
       }
     }
   }
+
+  // Enrichment can reveal privileged harness dependencies. Rerank so those
+  // candidates cannot retain a top position earned from title-only geometry.
+  candidates = rankCandidates(candidates, subsystems.length > 0 ? subsystems : DEFAULT_TARGET_SUBSYSTEMS);
 
   log(`[syzbot] ${scanned} row(s) scanned → ${candidates.length} ranked candidate(s)`);
 
