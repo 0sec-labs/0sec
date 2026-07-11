@@ -64,6 +64,14 @@ export type {
   LinuxKernelHarness,
   LinuxKernelExecution,
 } from "./adapters/linux-kernel-adapter.js";
+export { LinuxBootMatrixImportAdapter } from "./adapters/linux-boot-matrix-adapter.js";
+export type {
+  LinuxBootMatrixTarget,
+  LinuxBootMatrixTargetConfig,
+  LinuxBootMatrixCandidate,
+  BootMatrixObservation,
+  BootMatrixVerdict,
+} from "./adapters/linux-boot-matrix-adapter.js";
 export { XnuIokitResearchAdapter } from "./adapters/xnu-iokit-adapter.js";
 export type {
   XnuIokitTarget,
