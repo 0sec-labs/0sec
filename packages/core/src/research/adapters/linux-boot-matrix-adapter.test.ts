@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -42,5 +42,25 @@ describe("LinuxBootMatrixImportAdapter", () => {
     const result = await runResearch(new LinuxBootMatrixImportAdapter(), target, { artifactRoot: join(root, "artifacts"), runId: "bad-control" });
     expect(result.findings).toHaveLength(0);
     expect(result.evidence.some((item) => item.stage === "verify" && item.status === "failed")).toBe(true);
+  });
+
+  it("rejects duplicate boot identities at discovery", async () => {
+    const { target, root } = setup();
+    const manifest = JSON.parse(readFileSync(target.location, "utf8")) as ExternalKernelBootMatrixManifest;
+    manifest.patched.boots[0]!.id = manifest.vulnerable.boots[0]!.id;
+    writeFileSync(target.location, JSON.stringify(manifest));
+    const result = await runResearch(new LinuxBootMatrixImportAdapter(), target, { artifactRoot: join(root, "artifacts"), runId: "dup-id" });
+    expect(result.candidates).toHaveLength(0);
+    expect(result.evidence.some((item) => item.stage === "discover" && item.status === "failed")).toBe(true);
+  });
+
+  it("rejects missing logs and unattainable thresholds", async () => {
+    const { target, root } = setup();
+    const manifest = JSON.parse(readFileSync(target.location, "utf8")) as ExternalKernelBootMatrixManifest;
+    manifest.minVulnerableHits = 4;
+    manifest.patched.boots[0]!.logPath = "logs/missing.log";
+    writeFileSync(target.location, JSON.stringify(manifest));
+    const result = await runResearch(new LinuxBootMatrixImportAdapter(), target, { artifactRoot: join(root, "artifacts"), runId: "bad-manifest" });
+    expect(result.candidates).toHaveLength(0);
   });
 });

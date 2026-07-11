@@ -51,6 +51,7 @@ function parseManifest(path: string): ExternalKernelBootMatrixManifest {
     || !nonempty(value.completionMarker) || !sides.every((side) => side && nonempty(side.buildId) && Array.isArray(side.boots))) {
     throw new Error("invalid boot-matrix manifest header or side identity");
   }
+  if (value.expectedSignature === value.completionMarker) throw new Error("signature and completion oracles must be distinct");
   const allBoots = [...value.vulnerable!.boots, ...value.patched!.boots];
   if (allBoots.some((boot) => !nonempty(boot.id) || !nonempty(boot.logPath) || !nonempty(boot.bootMarker))) {
     throw new Error("every boot requires non-empty id, logPath, and bootMarker");
@@ -58,6 +59,9 @@ function parseManifest(path: string): ExternalKernelBootMatrixManifest {
   if (new Set(allBoots.map((boot) => boot.id)).size !== allBoots.length
     || new Set(allBoots.map((boot) => boot.bootMarker)).size !== allBoots.length) {
     throw new Error("boot ids and markers must be globally unique");
+  }
+  if (allBoots.some((boot) => boot.bootMarker === value.expectedSignature || boot.bootMarker === value.completionMarker)) {
+    throw new Error("boot identity markers must be distinct from global oracles");
   }
   if (!Number.isInteger(value.minVulnerableHits) || value.minVulnerableHits! < 1
     || value.minVulnerableHits! > value.vulnerable!.boots.length

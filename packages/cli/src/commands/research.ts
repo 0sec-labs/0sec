@@ -70,11 +70,13 @@ export function registerResearchCommand(program: Command): void {
       const { LinuxBootMatrixImportAdapter, postFinding, runResearch } = await import("@pwnkit/core");
       const matrix = resolve(opts.matrix);
       const finding = JSON.parse(readFileSync(resolve(opts.finding), "utf8")) as Finding;
-      print(await runResearch(
+      const result = await runResearch(
         new LinuxBootMatrixImportAdapter(),
         { kind: "linux.kernel-boot-matrix-import", id: `linux-matrix:${finding.id}`, location: matrix, config: { finding } },
         { artifactRoot: resolve(opts.artifactRoot), emitFinding: postFinding, log: (message) => process.stderr.write(message + "\n") },
-      ));
+      );
+      if (result.candidates.length === 0) throw new Error("external boot-matrix manifest failed validation");
+      print(result);
     });
 
   research
