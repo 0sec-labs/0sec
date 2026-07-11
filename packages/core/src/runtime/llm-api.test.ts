@@ -25,6 +25,11 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.ANTHROPIC_BASE_URL;
     delete process.env.PWNKIT_MODEL;
     delete process.env.PWNKIT_REGION_OVERRIDE;
+    delete process.env.PWNKIT_CHATGPT_ACCESS_TOKEN;
+    delete process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
+    delete process.env.PWNKIT_CHATGPT_ACCOUNT_ID;
+    // Provider-selection tests must not inherit the operator's Codex login.
+    process.env.PWNKIT_CHATGPT_AUTH_FILE = "/tmp/pwnkit-provider-test-no-auth.json";
     // Suppress the startup banner so provider-detection tests don't
     // spew log lines or attempt real network probes.
     process.env.PWNKIT_SKIP_PROVIDER_BANNER = "1";
