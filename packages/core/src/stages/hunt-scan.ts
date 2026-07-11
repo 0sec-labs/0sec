@@ -84,6 +84,23 @@ export interface HuntBrief {
   fixReference?: string;
 }
 
+/**
+ * A specialized FINDER LENS — a new fan-out axis exactly like a finder model.
+ * Each lens re-hunts the SAME candidates with a focused adversarial angle
+ * (e.g. "arithmetic/accounting" vs "access-control/reentrancy"), and findings
+ * UNION across lenses (they do not compete — each lens keeps its own best-of-N
+ * group). Omit / pass an empty array and the hunt runs today's single-brief loop
+ * BYTE-IDENTICALLY (a single empty sentinel lens is used internally, appending
+ * nothing to the finder hint and leaving the group key unchanged). See the
+ * on-chain profiles' `*FinderLenses` exports for ready-made sets.
+ */
+export interface FinderLens {
+  /** Stable lens id — becomes part of the best-of-N group key so lenses union. */
+  id: string;
+  /** The focused hunt angle, appended to the brief/candidate finder hint. */
+  challengeHint: string;
+}
+
 /** Skeptic+prover gate: refute (assume-FP) then build+run+sanitizer reproduce. Never self-graded. */
 export type HuntVerifier = (
   finding: Finding,
@@ -99,6 +116,16 @@ export interface HuntScanOptions {
   runtime: RuntimeMode;
   /** One or more finder models (diversity). Defaults to the configured provider. */
   models?: string[];
+  /**
+   * OPTIONAL specialized-lens fan-out (the "depth method"): re-hunt every
+   * candidate through each lens's focused angle, exactly like the `models`
+   * axis. The run product becomes candidate × model × lens × attempt and
+   * findings UNION across lenses (each lens keeps its own best-of-N group via
+   * {@link siteGroupKey}). Absent / empty → today's single-brief loop, run for
+   * run BYTE-IDENTICAL (a single empty sentinel lens appends nothing to the
+   * finder hint and leaves the group key untouched).
+   */
+  lenses?: FinderLens[];
   /** Max finders running at once. Default 8. */
   concurrency?: number;
   /** Per-finder scan depth. Default "quick". */
@@ -177,6 +204,23 @@ export interface HuntScanOptions {
    * before this existed. Runs AFTER the best-of-N judge / flywheel ordering.
    */
   geometryRank?: boolean;
+  /**
+   * OPTIONAL incremental-persistence hook: invoked with each finding the moment
+   * it passes the skeptic+prover gate (inside the verify pool), BEFORE the run
+   * returns. Lets a long fan-out PERSIST confirmed leads as they land instead of
+   * only in one burst after the whole sweep — so a sandbox/deadline kill
+   * mid-sweep still leaves the leads found so far (an incomplete scan, not a
+   * failed one with zero findings). A throwing hook never drops the finding (it
+   * stays in `confirmed`); the error is recorded as a warning.
+   *
+   * NOTE on ordering: this fires when the gate CONFIRMS, which is BEFORE the
+   * optional novelty gate ({@link HuntScanOptions.novelty}) can later reclassify
+   * a confirmed finding as a DUPLICATE. A caller that both streams here AND uses
+   * the novelty gate may therefore stream a finding that is later deduped. The
+   * seedless `deep-review` command (its sole user today) runs no novelty gate,
+   * so its streamed leads exactly equal `confirmed`.
+   */
+  onConfirmed?: (finding: Finding) => void | Promise<void>;
   log?: (msg: string) => void;
 }
 
@@ -215,7 +259,7 @@ export interface HuntScanResult {
    * fix. Empty unless `opts.novelty` is set. These are dropped from `confirmed`.
    */
   duplicates: Array<{ finding: Finding; novelty: LoreNoveltyResult }>;
-  /** How many (candidate × model × attempt) finder runs executed. */
+  /** How many (candidate × model × lens × attempt) finder runs executed. */
   scanned: number;
   /**
    * Finder-fanout health (see HUNT_FINDER_TIMEOUT_MS / HUNT_FINDER_MAX_RETRIES):
@@ -299,7 +343,7 @@ function isTransientFinderError(e: unknown): boolean {
   return TRANSIENT_FINDER_ERROR_RE.test(String(e).slice(0, 300));
 }
 
-/** Outcome of one finder (candidate × model × attempt) invocation. */
+/** Outcome of one finder (candidate × model × lens × attempt) invocation. */
 type FinderStatus = "completed" | "timed-out" | "errored";
 
 type RaceOutcome<T> = { hit: "value"; value: T } | { hit: "timeout" } | { hit: "error"; error: unknown };
@@ -360,7 +404,7 @@ async function runFinderResilient<T>(
   }
 }
 
-function huntHint(brief: HuntBrief | undefined, candidate: HuntCandidate): string {
+function huntHint(brief: HuntBrief | undefined, candidate: HuntCandidate, lensHint?: string): string {
   const parts: string[] = [];
   if (brief) {
     parts.push(
@@ -376,6 +420,10 @@ function huntHint(brief: HuntBrief | undefined, candidate: HuntCandidate): strin
     );
   }
   if (candidate.hint) parts.push(candidate.hint);
+  // Lens focus (the depth-method finder axis) is appended LAST so the
+  // brief/candidate hint above is byte-identical to today when no lens is set
+  // (the sentinel lens carries an empty challengeHint → nothing appended).
+  if (lensHint) parts.push(lensHint);
   return parts.filter(Boolean).join(" ");
 }
 
@@ -401,6 +449,13 @@ export function makeSkepticVerifier(opts: {
    * still decides.
    */
   negatives?: readonly KnownNegative[];
+  /**
+   * OPTIONAL lens focus — a single specialized angle this refute pass should
+   * concentrate on (used by {@link makeMultiLensVerifier} to turn one skeptic
+   * into a per-lens quorum member). Appended to the adversarial hint; absent →
+   * the skeptic prompt is byte-identical to before.
+   */
+  focus?: string;
 }): HuntVerifier {
   return async (finding, candidate) => {
     let hint =
@@ -422,7 +477,27 @@ export function makeSkepticVerifier(opts: {
       "  3. FIX SIDE-EFFECTS (only if a fix/guard is implied): would the proposed guard (esp. an early " +
       "return / goto) SKIP required code below it — register writes, unlocks, frees, DMA setup — and " +
       "thereby introduce a NEW bug? If so, the finding/fix is unsafe.\n" +
-      "Only report a finding if, after genuinely trying to refute it AND passing all three checks, you " +
+      "Then, for source-level (non-kernel) findings, run these THREE checks — each names a false " +
+      "positive this engine has confidently shipped before:\n" +
+      "  4. LAYOUT / PARSE MISREAD (Aiken, Haskell, Plutus, Nix, Python — any whitespace- or " +
+      "precedence-sensitive language): the most dangerous class. Re-derive the claimed 'missing check' " +
+      "from the REAL file's indentation, columns, and operator precedence — never from a quoted snippet. " +
+      "We have hallucinated a 0.9+ 'critical' by misreading `case ... of {...} && (d == outDatum)` as if " +
+      "the `&&` bound only the last alternative, when layout ANDs it with the WHOLE case (so the datum " +
+      "check WAS enforced). If the check is actually present once you parse the true layout, it is a " +
+      "FALSE POSITIVE.\n" +
+      "  5. BY-DESIGN / DEMO / CLI / EXAMPLE: before reporting an 'unauthenticated exposure', " +
+      "'default credential', or 'arbitrary command/mint/spend', read the README / SECURITY.md / the " +
+      "file's own header for intent — 'example', 'demo', 'not production-ready', 'testing only', " +
+      "'trusted mode', `//// @hidden`/sample markers, or a contract where the behavior IS the tool's " +
+      "purpose (a wallet CLI printing a mnemonic, a sandbox demo running commands). If the behavior is " +
+      "the documented intent of a non-production / operator-run tool, it is a FALSE POSITIVE.\n" +
+      "  6. NO TRUST BOUNDARY / KNOWN-CVE: if the only 'attacker-controlled' input is supplied by the " +
+      "same principal who runs the code (a CLI's own argv, a build script's own flags, an SDK " +
+      "self-injecting its config), no privilege is crossed — FALSE POSITIVE. Likewise, if the finding " +
+      "merely restates an already-public CVE/GHSA n-day (e.g. lodash `_.template`, ImageTragick delegate " +
+      "expansion, a pinned vulnerable dependency version), it is NOT a novel finding — do not report it.\n" +
+      "Only report a finding if, after genuinely trying to refute it AND passing all applicable checks, you " +
       "CANNOT refute it — i.e. you can still point to the exact unguarded sink (file:line), a concrete " +
       "ENABLED attacker-reachable path, and (if a fix is implied) a fix that skips no required code. " +
       "If you cannot, report NOTHING.";
@@ -433,6 +508,11 @@ export function makeSkepticVerifier(opts: {
     if (huntNegativesEnabled() && opts.negatives && opts.negatives.length > 0) {
       const match = matchNegative(finding, opts.negatives);
       if (match) hint += `\n\n${negativeContext(match)}`;
+    }
+    // Lens focus (multi-lens quorum member): concentrate this one refute pass
+    // on a single angle. Absent → identical to the general skeptic prompt.
+    if (opts.focus) {
+      hint += `\n\nLENS FOCUS — concentrate this refute pass specifically on: ${opts.focus}`;
     }
     // A FOCUSED re-read, not a fresh broad hunt: the challengeHint already
     // targets the one claim, so "quick" depth keeps the gate fast enough to run
@@ -476,14 +556,113 @@ export function composeGate(...stages: HuntVerifier[]): HuntVerifier {
   };
 }
 
+/**
+ * One VERIFY LENS — a focused adversarial refute pass for the multi-lens
+ * quorum. Each lens re-runs the skeptic ({@link makeSkepticVerifier}) with a
+ * lens-specific `focus`, so the same finding is challenged from several
+ * independent angles (reachability, completeness, novelty, scope). See the
+ * on-chain profiles' `*VerifyLenses` exports for ready-made sets.
+ */
+export interface VerifyLens {
+  /** Stable lens id, surfaced in the quorum reason string. */
+  id: string;
+  /** The focused refute angle handed to the skeptic pass as its `focus`. */
+  challengeHint: string;
+}
+
+export interface MultiLensVerifierOptions {
+  /** Source tree the skeptic passes re-read. Required — every lens is a real refute pass. */
+  sourceRoot: string;
+  runtime: RuntimeMode;
+  /** Optional skeptic model override (mirrors HUNT_SKEPTIC_MODEL). */
+  model?: string;
+  /** Optional learned-negatives context, forwarded to each skeptic pass. */
+  negatives?: readonly KnownNegative[];
+  /**
+   * Confirmation threshold: a finding is confirmed ONLY when 0 lenses refute it
+   * AND at least `quorum` lenses survive. Default = majority `ceil(N/2)`.
+   */
+  quorum?: number;
+  /**
+   * Injectable per-lens pass factory (tests). Defaults to a focused
+   * {@link makeSkepticVerifier}. Exposed so the quorum logic can be unit-tested
+   * with fake passes and zero LLM calls.
+   */
+  makePass?: (lens: VerifyLens) => HuntVerifier;
+}
+
+/**
+ * MULTI-LENS VERIFY QUORUM (the "depth method" verify side): run several
+ * focused adversarial refute passes over ONE finding in parallel and require a
+ * quorum of survivors with ZERO refutes. Confirmed iff
+ * `refuted === 0 && survived >= quorum` (quorum default = majority
+ * `ceil(lenses.length/2)`). Any single lens that REFUTES the finding fails it
+ * outright (fail-closed); a lens that ERRORS counts as neither a survival nor a
+ * refute, so it lowers the survivor count (also fail-closed). Plugs straight
+ * into the existing `opts.verify` slot — it IS a {@link HuntVerifier}, so
+ * `runHuntScan` needs no change.
+ */
+export function makeMultiLensVerifier(lenses: VerifyLens[], opts: MultiLensVerifierOptions): HuntVerifier {
+  if (lenses.length === 0) throw new Error("makeMultiLensVerifier requires at least one verify lens");
+  const quorum = Math.max(1, opts.quorum ?? Math.ceil(lenses.length / 2));
+  const makePass =
+    opts.makePass ??
+    ((lens: VerifyLens) =>
+      makeSkepticVerifier({
+        sourceRoot: opts.sourceRoot,
+        runtime: opts.runtime,
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.negatives ? { negatives: opts.negatives } : {}),
+        focus: lens.challengeHint,
+      }));
+  const passes = lenses.map((lens) => ({ lens, run: makePass(lens) }));
+  return async (finding, candidate) => {
+    const results = await Promise.all(
+      passes.map(async ({ lens, run }) => {
+        try {
+          const v = await run(finding, candidate);
+          return { lensId: lens.id, survived: v.confirmed, errored: false };
+        } catch {
+          // A pass that throws couldn't adjudicate — counts as neither a
+          // survival nor a refute, so it just lowers the survivor count.
+          return { lensId: lens.id, survived: false, errored: true };
+        }
+      }),
+    );
+    const refuted = results.filter((r) => !r.survived && !r.errored);
+    const survived = results.filter((r) => r.survived);
+    if (refuted.length > 0) {
+      return {
+        confirmed: false,
+        reason: `multi-lens: refuted by ${refuted.map((r) => r.lensId).join(", ")} (${survived.length}/${lenses.length} survived, quorum ${quorum})`,
+      };
+    }
+    if (survived.length >= quorum) {
+      return {
+        confirmed: true,
+        reason: `multi-lens quorum met: ${survived.length}/${lenses.length} lenses survived, 0 refuted (quorum ${quorum})`,
+      };
+    }
+    return {
+      confirmed: false,
+      reason: `multi-lens below quorum: ${survived.length}/${lenses.length} survived < ${quorum}, 0 refuted`,
+    };
+  };
+}
+
 /** Group key for best-of-N judging: per (ORIGINAL candidate site, model) — NOT per candidate
  *  alone, so model-diversity fan-out (models.length > 1) with the default attemptsPerCandidate=1
  *  never produces a >1-length group and stays byte-for-byte identical to pre-best-of-N behavior.
  *  Callers pass the pre-refine `originPath`, so grouping tracks which candidate PRODUCED the
  *  finding — two distinct findings the second-audit refiner deepens to the same path do NOT
  *  collapse into one group (which the no-brief `judgeTopK` truncation would then silently drop). */
-function siteGroupKey(candidatePath: string, model: string | undefined): string {
-  return `${candidatePath} ${model ?? ""}`;
+function siteGroupKey(candidatePath: string, model: string | undefined, lensId?: string): string {
+  // NUL separator preserved from the pre-lens key so the sentinel case is
+  // byte-identical at runtime; the lens segment is appended ONLY for a real
+  // lens, so each lens keeps its OWN best-of-N group and lens findings union
+  // rather than truncate each other.
+  const base = `${candidatePath}\0${model ?? ""}`;
+  return lensId ? `${base} ${lensId}` : base;
 }
 
 export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult> {
@@ -518,16 +697,25 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     attemptsPerCandidate = 1;
   }
 
-  // (candidate × model × attempt) finder runs — the parallel coverage sweep.
-  // attemptsPerCandidate=1 (default) reproduces the original candidate × model
-  // fan-out exactly.
-  const runs: Array<{ candidate: HuntCandidate; model?: string; attempt: number }> = [];
+  // Specialized-lens fan-out axis (the "depth method"). Absent/empty → a single
+  // EMPTY SENTINEL lens: its id is "" (siteGroupKey drops the segment) and its
+  // challengeHint is "" (huntHint appends nothing), so the loop order, run
+  // count, finder hint, and group keys below are all byte-identical to today.
+  const lenses: FinderLens[] =
+    opts.lenses && opts.lenses.length > 0 ? opts.lenses : [{ id: "", challengeHint: "" }];
+
+  // (candidate × model × lens × attempt) finder runs — the parallel coverage
+  // sweep. With the sentinel lens (default), the loop reduces to the original
+  // candidate × model × attempt product, run for run.
+  const runs: Array<{ candidate: HuntCandidate; model?: string; lens: FinderLens; attempt: number }> = [];
   for (const candidate of opts.candidates)
     for (const model of models)
-      for (let attempt = 0; attempt < attemptsPerCandidate; attempt++) runs.push({ candidate, model, attempt });
+      for (const lens of lenses)
+        for (let attempt = 0; attempt < attemptsPerCandidate; attempt++) runs.push({ candidate, model, lens, attempt });
 
+  const lensNote = opts.lenses && opts.lenses.length > 0 ? ` × ${lenses.length} lens(es)` : "";
   log(
-    `[hunt] ${opts.candidates.length} candidate(s) × ${models.length} model(s) × ${attemptsPerCandidate} attempt(s) ` +
+    `[hunt] ${opts.candidates.length} candidate(s) × ${models.length} model(s)${lensNote} × ${attemptsPerCandidate} attempt(s) ` +
       `= ${runs.length} finder run(s), ${concurrency}-wide`,
   );
 
@@ -548,7 +736,11 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           repoPath: opts.sourceRoot,
           ...(run.model ? { model: run.model } : {}),
         };
-        return await agenticScan({ config, dbPath, challengeHint: huntHint(opts.brief, run.candidate) });
+        return await agenticScan({
+          config,
+          dbPath,
+          challengeHint: huntHint(opts.brief, run.candidate, run.lens.challengeHint),
+        });
       } finally {
         cleanupHuntDb(dbPath);
       }
@@ -562,6 +754,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     return {
       candidate: run.candidate,
       model: run.model,
+      lensId: run.lens.id,
       attempt: run.attempt,
       status: outcome.status,
       findings: outcome.status === "completed" ? (outcome.value?.findings ?? []) : ([] as Finding[]),
@@ -589,9 +782,9 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // siteGroupKey. Without this, refine deepening two DISTINCT findings to the
   // SAME path collapses them into one group, and the no-brief truncation to
   // `judgeTopK` then silently drops the confirmed extra.
-  const all: Array<{ finding: Finding; candidate: HuntCandidate; originPath: string; model?: string; attempt: number }> = [];
+  const all: Array<{ finding: Finding; candidate: HuntCandidate; originPath: string; model?: string; lensId: string; attempt: number }> = [];
   for (const r of reports)
-    if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate, originPath: r.candidate.path, model: r.model, attempt: r.attempt });
+    if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate, originPath: r.candidate.path, model: r.model, lensId: r.lensId, attempt: r.attempt });
   log(`[hunt] finders surfaced ${all.length} candidate finding(s)`);
 
   // OPTIONAL second-audit refinement: DEEPEN each finding's candidate (root cause
@@ -630,7 +823,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // Groups of exactly 1 (the default) skip the judge entirely — unmodified.
   const groups = new Map<string, typeof all>();
   for (const item of all) {
-    const key = siteGroupKey(item.originPath, item.model);
+    const key = siteGroupKey(item.originPath, item.model, item.lensId);
     const g = groups.get(key);
     if (g) g.push(item);
     else groups.set(key, [item]);
@@ -723,6 +916,17 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         if (record) {
           record.skepticConfirmed = v.confirmed;
           record.skepticReason = v.reason;
+        }
+        // Incremental persistence: hand each confirmed finding to the caller
+        // AS IT LANDS (see HuntScanOptions.onConfirmed) so a mid-sweep kill
+        // still leaves the leads found so far. A throwing hook must not drop
+        // the finding — record it as a warning and keep the confirmation.
+        if (v.confirmed && opts.onConfirmed) {
+          try {
+            await opts.onConfirmed(finding);
+          } catch (e) {
+            warnings.push(`hunt: onConfirmed hook failed for ${finding.title}: ${String(e).slice(0, 100)}`);
+          }
         }
         return v.confirmed ? finding : null;
       } catch (e) {

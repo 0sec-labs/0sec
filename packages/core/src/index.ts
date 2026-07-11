@@ -89,30 +89,6 @@ export type {
   Tier3ValidationOptions,
   Tier3ValidationResult,
 } from "./review/c-cpp-tier3.js";
-// EVM on-chain PROVING harness (Tier 3) — docs/design/0contract-proving-harness.md.
-export {
-  evmVerifyEnabled,
-  evmForkRpc,
-  forgeBin,
-  forgeAvailable,
-  parseForgeOutput,
-  adjudicateForgeOutcomes,
-  evmVerifyCacheKey,
-  planEvmVerify,
-  runEvmVerify,
-} from "./review/evm-verify.js";
-export type {
-  EvmVerifyStatus,
-  EvmVerifyRequest,
-  EvmVerifyPlan,
-  EvmVerifyResult,
-  ForgeTestOutcome,
-  ForgeTestKind,
-  ForgeTestStatus,
-  ForgeAdjudication,
-  ParsedForgeOutput,
-} from "./review/evm-verify.js";
-
 // Userspace / Rust memory-safety pipeline ("Monty-mode") — closed fuzz loop
 // + shared contract (docs/pwnkit-rust-memsafety-pipeline.md, Track B).
 export { runUserspaceFuzzLoop, parseCrashOutput } from "./triage/userspace-fuzz-runner.js";
@@ -199,7 +175,16 @@ export type {
 export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";
 // Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
-export { runHuntScan, makeSkepticVerifier, composeGate } from "./stages/hunt-scan.js";
+export { runHuntScan, makeSkepticVerifier, composeGate, makeMultiLensVerifier } from "./stages/hunt-scan.js";
+// Depth-method specialized-lens sets, per on-chain review profile. These are
+// the ready-made `*FinderLenses` / `*VerifyLenses` fan-out + verify-quorum
+// axes the seedless `deep-review` command wires into runHuntScan (G-A).
+export { evmFinderLenses, evmVerifyLenses } from "./review/evm-onchain-profile.js";
+export { solanaFinderLenses, solanaVerifyLenses } from "./review/solana-onchain-profile.js";
+export { cardanoFinderLenses, cardanoVerifyLenses } from "./review/cardano-onchain-profile.js";
+// Deterministic source-file walkers (shared by the review pipeline + the
+// seedless deep-review candidate enumeration + its 5000-file scope cap).
+export { collectScopeFiles, countScopeFilesUpTo } from "./source-files.js";
 // Hunt best-of-N LLM judge (disambiguates multi-attempt findings before the skeptic gate).
 export { judgeHuntCandidatesWithLlm, heuristicCandidateScore } from "./stages/hunt-judge.js";
 export type { HuntCandidateJudge, HuntCandidateScore } from "./stages/hunt-judge.js";
@@ -320,6 +305,24 @@ export type {
 // services/orchestrator/src/kernelctf-config.ts for the CONFIG-symbol ground truth).
 export { classifyPathReachability, applyReachabilityGate } from "./stages/hunt-reachability.js";
 export type { PathReachability, ReachabilityGateOptions, ReachabilityGateResult } from "./stages/hunt-reachability.js";
+// Surface-desirability score for the generic fresh-surface hunt: prioritize
+// hard-to-fuzz stateful parsers of untrusted input that are NOT recently swept
+// (where source review beats fuzzing). Opt-in; default OFF = size-only ranking.
+export {
+  applySurfaceRanking,
+  scoreSurfaceDesirability,
+  computeSurfaceScore,
+  gatherSurfaceSignals,
+  isHardToFuzzSurface,
+  HARD_TO_FUZZ_PATH_PREFIXES,
+} from "./stages/surface-desirability.js";
+export type {
+  SurfaceSignals,
+  SurfaceScore,
+  SurfaceDesirabilityOptions,
+  SurfaceRankingOptions,
+  SurfaceRankingResult,
+} from "./stages/surface-desirability.js";
 // Second-audit (kernelCTF Pipeline #2, deepen-before-verify): treat every crash as
 // shallow-by-default; hunt the deeper root cause + whether an existing fix is
 // bypassable. Plugs into runHuntScan as the `refine` hook (deepen, then verify).
@@ -349,6 +352,9 @@ export type {
   HuntScanOptions,
   HuntScanResult,
   HuntFindingRecord,
+  FinderLens,
+  VerifyLens,
+  MultiLensVerifierOptions,
 } from "./stages/hunt-scan.js";
 export type {
   CraftTarget,
