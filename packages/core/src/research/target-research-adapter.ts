@@ -1,6 +1,7 @@
 import type {
   Finding,
   ResearchEvidenceEnvelope,
+  ResearchExecutionContext,
   ResearchNoveltyReceipt,
   ResearchPromotionGrade,
 } from "@pwnkit/shared";
@@ -52,6 +53,7 @@ export interface ResearchFinding {
   evidence: ResearchEvidence[];
   grade?: ResearchPromotionGrade;
   novelty?: ResearchNoveltyReceipt;
+  executionContext?: ResearchExecutionContext;
 }
 
 /** A scoped downstream target derived from intake; never a vulnerability finding. */

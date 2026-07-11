@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import { researchZeroCapProven, type Finding } from "@pwnkit/shared";
 import { runResearch } from "../research-runner.js";
 import { LinuxKernelResearchAdapter, type LinuxKernelTarget } from "./linux-kernel-adapter.js";
 
@@ -60,6 +60,10 @@ describe("LinuxKernelResearchAdapter", () => {
     expect(result.findings).toHaveLength(1);
     expect(result.envelopes).toHaveLength(1);
     expect(result.envelopes[0]).toMatchObject({ grade: "reproduced", novelty: { state: "unchecked" } });
+    expect(result.envelopes[0]).toMatchObject({
+      executionContext: { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 },
+    });
+    expect(researchZeroCapProven(result.envelopes[0]!)).toBe(false);
     expect(result.findings[0].finding.researchEvidence).toEqual(result.envelopes);
     expect(emitted[0]?.researchEvidence).toEqual(result.envelopes);
     expect(existsSync(result.envelopePath!)).toBe(true);

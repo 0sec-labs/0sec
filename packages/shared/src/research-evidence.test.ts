@@ -3,6 +3,8 @@ import {
   normalizeResearchNovelty,
   researchDisclosureReady,
   researchGradeAtLeast,
+  researchLpeDisclosureReady,
+  researchZeroCapProven,
   type ResearchEvidenceEnvelope,
 } from "./research-evidence.js";
 
@@ -33,5 +35,31 @@ describe("research evidence promotion", () => {
     expect(researchDisclosureReady(envelope())).toBe(true);
     expect(researchDisclosureReady({ ...envelope(), grade: "observed" })).toBe(false);
     expect(researchDisclosureReady({ ...envelope(), novelty: { state: "novel", sources: [], scanned: 0 } })).toBe(false);
+  });
+
+  it("requires runtime-attested non-root uid and zero capabilities for zero-cap proof", () => {
+    const proven = {
+      ...envelope(),
+      executionContext: {
+        privilege: "zero-cap" as const,
+        basis: "runtime-attested" as const,
+        realUid: 65534,
+        effectiveUid: 65534,
+        effectiveCapabilities: "0000000000000000",
+        attestationArtifact: { ref: "attestation.json", sha256: "a".repeat(64) },
+      },
+    };
+    expect(researchZeroCapProven(proven)).toBe(true);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, basis: "campaign-config" } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, realUid: 0 } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, effectiveUid: 0 } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, effectiveCapabilities: "0000000000002000" } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, effectiveCapabilities: "0" } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, realUid: Number.POSITIVE_INFINITY } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, attestationArtifact: undefined } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, grade: "candidate" })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: undefined })).toBe(false);
+    expect(researchLpeDisclosureReady(proven)).toBe(true);
+    expect(researchLpeDisclosureReady({ ...proven, novelty: { state: "unchecked" } })).toBe(false);
   });
 });

@@ -26,6 +26,7 @@ describe("LinuxBootMatrixImportAdapter", () => {
     const result = await runResearch(new LinuxBootMatrixImportAdapter(), target, { artifactRoot: join(root, "artifacts"), runId: "matrix-run" });
     expect(result.envelopes[0]).toMatchObject({ grade: "reproduced" });
     expect(result.findings[0]?.evidence[0]?.data).toMatchObject({ executionOrigin: "external" });
+    expect(result.envelopes[0]?.executionContext).toEqual({ privilege: "unknown", basis: "declared" });
     expect(result.envelopes[0]?.artifacts).toHaveLength(8);
     expect(result.envelopes[0]?.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256))).toBe(true);
   });
