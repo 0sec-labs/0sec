@@ -1592,6 +1592,8 @@ export interface KernelFindingNbootVerification extends KernelFindingVerificatio
   nbootStable: boolean;
   /** Per-boot statuses, in boot order, for the audit trail. */
   bootStatuses: KernelFindingStatus[];
+  /** Full per-boot records, including the independently captured dmesg path. */
+  bootResults: KernelFindingVerification[];
 }
 
 /**
@@ -1612,6 +1614,7 @@ export async function verifyAcrossBoots(
   const { boots: _boots, minHits: _minHits, dmesgOutPath, ...baseOpts } = opts;
 
   const bootStatuses: KernelFindingStatus[] = [];
+  const bootResults: KernelFindingVerification[] = [];
   let bootHits = 0;
   let firstReproduced: KernelFindingVerification | undefined;
   let lastResult: KernelFindingVerification | undefined;
@@ -1625,6 +1628,7 @@ export async function verifyAcrossBoots(
       ...(perBootDmesg ? { dmesgOutPath: perBootDmesg } : {}),
     });
     lastResult = result;
+    bootResults.push(result);
     bootStatuses.push(result.status);
     if (result.status === "reproduced") {
       bootHits++;
@@ -1660,6 +1664,7 @@ export async function verifyAcrossBoots(
     bootTotal,
     nbootStable,
     bootStatuses,
+    bootResults,
   };
 }
 
