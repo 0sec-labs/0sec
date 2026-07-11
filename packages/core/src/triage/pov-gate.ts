@@ -940,20 +940,61 @@ export function memCorruptionVerdict(crash: CrashArtifact): VerifyVerdict {
     };
   }
 
+  // N× reproduction gate (frontier discipline: ToB/Shellphish require a crash to
+  // reproduce across several independent runs before it is trusted at full
+  // strength — a lone flaky reproduction of a race/UAF can be an environment
+  // fluke). `reproConfirmations` is folded into confidence:
+  //   - undefined      → legacy single-shot path, unchanged (0.95).
+  //   - >= 2           → multi-confirmed, strongest (0.95).
+  //   - exactly 1 of N → confirmed but FLAGGED flaky; confidence dampened so a
+  //                      single-shot repro never rides at full strength.
+  // It is still a `confirmed` verdict (a real sanitizer hit fired) — we lower
+  // confidence and surface the flake risk, never silently reject (#518).
+  const gate = reproConfidence(crash);
   return {
     verdict: "confirmed",
-    confidence: 0.95,
+    confidence: gate.confidence,
     reasoning:
       `Reproduced under the sanitizer/Miri build (kind=${crash.kind}): ` +
-      `${exploit.primitive} (${exploit.readWrite}). ${exploit.rationale}`,
+      `${exploit.primitive} (${exploit.readWrite}). ${exploit.rationale}${gate.note}`,
     signals: [
       {
         name: "memcorruption_repro",
         passed: true,
-        confidence: 0.95,
-        reasoning: `signature=${crash.signature}, input=${crash.inputPath}`,
+        confidence: gate.confidence,
+        reasoning:
+          `signature=${crash.signature}, input=${crash.inputPath}` +
+          (crash.reproConfirmations != null
+            ? `, repro=${crash.reproConfirmations}/${crash.reproAttempts ?? crash.reproConfirmations}`
+            : ""),
       },
     ],
     evidenceKind: "reproduced-memcorruption-poc",
   };
+}
+
+/**
+ * Fold the N× reproduction count into a memcorruption confidence + note.
+ * Additive: a crash with no `reproConfirmations` keeps the legacy 0.95.
+ */
+function reproConfidence(crash: CrashArtifact): { confidence: number; note: string } {
+  const n = crash.reproConfirmations;
+  if (n == null) return { confidence: 0.95, note: "" };
+  if (n >= 2) {
+    const attempts = crash.reproAttempts ?? n;
+    return { confidence: 0.95, note: ` Reproduced ${n}/${attempts}× (N× confirmed).` };
+  }
+  if (n === 1) {
+    const attempts = crash.reproAttempts ?? 1;
+    return {
+      confidence: 0.82,
+      note:
+        attempts > 1
+          ? ` Reproduced only 1/${attempts}× — flaky-repro risk; re-run to confirm before relying on it.`
+          : ` Single-shot reproduction (N=1) — re-run to rule out an environment fluke.`,
+    };
+  }
+  // n === 0 is unreachable here (isReproducedMemCorruption already gated on a
+  // real signature), but be defensive: treat as single-shot rather than trusting.
+  return { confidence: 0.82, note: " Reproduction count is 0 — treat as unconfirmed flake." };
 }

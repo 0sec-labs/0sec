@@ -69,6 +69,16 @@ export interface KernelVerifyOracleResult {
    * ("you reached N new edges near sink X; sink Y not yet reached").
    */
   newEdges?: string[];
+  /**
+   * How many independent re-boots reproduced the crash+signature, out of
+   * {@link reproAttempts}. Stamped by {@link withNxReproduction}. A lone flaky
+   * reproduction of a race/UAF can be an environment fluke, so single-shot
+   * confirmations carry a dampened {@link oracleConfidence}. Undefined on the
+   * legacy single-boot path (treated as one confirmation).
+   */
+  reproConfirmations?: number;
+  /** Independent re-boots actually performed (the N in "N×"). */
+  reproAttempts?: number;
 }
 
 /**
