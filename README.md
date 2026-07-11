@@ -92,7 +92,7 @@ actually checked. Attacker privilege is a third, orthogonal dimension. Current
 native Linux VM replay runs as guest root and is recorded as privileged; a
 reproduced crash is therefore not zero-cap proof. Zero-cap promotion requires
 runtime-attested non-root real and effective UIDs, an empty effective capability
-set, and a digest-bound attestation artifact.
+set, `no_new_privs`, and a digest-bound attestation artifact.
 
 Connected adapters cover deterministic HTTP protocol conformance, userspace
 sanitizer/fuzzing campaigns, the agentic best-of-N hunt, repeated-boot Linux
