@@ -492,6 +492,7 @@ describe("verifyAcrossBoots — N-boot reproducibility gate (AIxCC T2)", () => {
       boots: 3,
       minHits: 2,
       expectedSignature: "KASAN: slab-use-after-free",
+      dmesgOutPath: join(cacheDir, "nboot-evidence.dmesg"),
       logger: () => undefined,
       buildRunner: () => {
         throw new Error("cache hit should not rebuild");
@@ -509,6 +510,11 @@ describe("verifyAcrossBoots — N-boot reproducibility gate (AIxCC T2)", () => {
     expect(result.bootResults).toHaveLength(3);
     expect(result.bootResults.every((boot) => existsSync(boot.dmesg_path))).toBe(true);
     expect(new Set(result.bootResults.map((boot) => boot.dmesg_path)).size).toBe(3);
+    expect(result.bootResults.map((boot) => boot.dmesg_path)).toEqual([
+      join(cacheDir, "nboot-evidence.dmesg"),
+      join(cacheDir, "nboot-evidence.dmesg.boot-2"),
+      join(cacheDir, "nboot-evidence.dmesg.boot-3"),
+    ]);
   });
 
   it("declares NOT stable when the signature fires in only 1 of 3 boots", async () => {
