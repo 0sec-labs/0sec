@@ -119,6 +119,35 @@ describe("evmOnchainReviewAgentPrompt", () => {
     expect(verify?.challengeHint).toMatch(/ATOMIC upgrade|upgradeAndCall/);
   });
 
+  it("makes the novelty verify lens challenge the oracle-staleness SECURITY PREMISE (push feed vs computed-live rate), not just the code claim", () => {
+    const verify = evmVerifyLenses.find((l) => l.id === "novelty-known-issue");
+    expect(verify).toBeDefined();
+    const hint = verify!.challengeHint;
+    // Names the premise-refutation obligation and the source-type distinction.
+    expect(hint).toMatch(/PREMISE REFUTATION/);
+    expect(hint).toMatch(/push[- ]?feed|push feed/i);
+    expect(hint).toMatch(/computed-live|fresh-by-construction/i);
+    // Confirming the code claim is explicitly not enough.
+    expect(hint).toMatch(/NOT sufficient/);
+    // Anti-over-suppression: do not refute merely on uncertainty about the source.
+    expect(hint).toMatch(/unsure of the source type/i);
+  });
+
+  it("makes the scope verify lens check DEPLOYMENT LIVENESS (test-only/unwired => not HIGH) without over-suppressing", () => {
+    const verify = evmVerifyLenses.find((l) => l.id === "scope");
+    expect(verify).toBeDefined();
+    const hint = verify!.challengeHint;
+    expect(hint).toMatch(/DEPLOYMENT LIVENESS/);
+    // Names the deploy/wiring surface it must search.
+    expect(hint).toMatch(/deploy/i);
+    expect(hint).toMatch(/\*\.s\.sol|broadcast|hardhat-deploy/);
+    // Test-only / mock => downgrade from HIGH.
+    expect(hint).toMatch(/TEST-ONLY|MOCK/);
+    // Anti-over-suppression: uncertainty about deployment is NOT grounds to refute.
+    expect(hint).toMatch(/uncertain/i);
+    expect(hint).toMatch(/over-suppress/i);
+  });
+
   it("threads the operator hypothesis into a primary-direction block when provided", () => {
     const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", [], "look at the bridge withdraw handler");
     expect(prompt).toMatch(/OPERATOR HYPOTHESIS/);
