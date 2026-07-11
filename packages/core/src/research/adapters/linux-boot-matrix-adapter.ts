@@ -131,7 +131,7 @@ export class LinuxBootMatrixImportAdapter implements TargetResearchAdapter<Linux
       writeFileSync(verdictPath, JSON.stringify(verdict, null, 2) + "\n");
       const artifacts = [manifestSnapshot, ...observations.map((boot) => boot.snapshotPath), verdictPath];
       evidence.push({ stage: "verify", status: contradiction ? "failed" : passed ? "passed" : "inconclusive", summary: passed ? `imported external differential passed: ${vulnerableHits}/${vulnerable.length} vulnerable hit(s), no target signature in ${cleanControls}/${patched.length} tested patched controls` : "imported external boot matrix did not clear identity, completion, signature, and clean-control gates", data: verdict, artifacts });
-      if (passed) items.push({ finding: candidate.payload.finding, candidateId: candidate.id, grade: "reproduced", evidence: [{ stage: "verify", status: "passed", summary: "pwnkit validated and hashed externally executed logs; pwnkit did not execute these boots", data: verdict, artifacts }] });
+      if (passed) items.push({ finding: candidate.payload.finding, candidateId: candidate.id, grade: "reproduced", executionContext: { privilege: "unknown", basis: "declared" }, evidence: [{ stage: "verify", status: "passed", summary: "pwnkit validated and hashed externally executed logs; pwnkit did not execute these boots", data: verdict, artifacts }] });
     }
     return { items, evidence };
   }

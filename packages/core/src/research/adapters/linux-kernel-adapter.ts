@@ -143,6 +143,7 @@ export class LinuxKernelResearchAdapter
         finding: candidate.payload.finding,
         candidateId: candidate.id,
         grade: "reproduced",
+        executionContext: { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 },
         evidence: [{
           stage: "verify",
           status: "passed",

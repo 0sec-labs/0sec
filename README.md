@@ -88,7 +88,11 @@ Discover → Reachability? → Harness? → Execute? → Verify → Novelty? →
 recorded as skipped or inconclusive rather than silently passing. Proof strength
 is monotone (`candidate → reachable → observed → reproduced → impact-proven`),
 while novelty is tracked separately and fails closed when no sources were
-actually checked.
+actually checked. Attacker privilege is a third, orthogonal dimension. Current
+native Linux VM replay runs as guest root and is recorded as privileged; a
+reproduced crash is therefore not zero-cap proof. Zero-cap promotion requires
+runtime-attested non-root real and effective UIDs, an empty effective capability
+set, and a digest-bound attestation artifact.
 
 Connected adapters cover deterministic HTTP protocol conformance, userspace
 sanitizer/fuzzing campaigns, the agentic best-of-N hunt, repeated-boot Linux
@@ -114,6 +118,10 @@ records sandbox and harness dependencies, and demotes privileged, one-shot,
 stale, or incompletely enriched leads. This is triage—not an LPE or novelty
 claim. Promotion still requires fresh sanitizer proof, COS reachability,
 patched differential controls, and novelty receipts.
+
+Kernel campaigns should keep privileged discovery and setuid-isolated discovery
+as separate lanes. `sandbox=setuid` is configuration evidence and may support a
+zero-cap-plausible label, but it is not runtime proof by itself.
 
 See [Research architecture](docs/src/content/docs/architecture.md#shared-research-plane).
 

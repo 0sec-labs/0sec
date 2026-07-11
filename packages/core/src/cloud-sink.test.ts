@@ -121,7 +121,10 @@ describe("cloud-sink", () => {
     process.env.PWNKIT_CLOUD_TOKEN = "tok";
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    const receipt = { schemaVersion: 1, evidenceId: "e-1", grade: "reproduced" };
+    const receipt = {
+      schemaVersion: 1, evidenceId: "e-1", grade: "reproduced",
+      executionContext: { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 },
+    };
 
     await postFinding({
       id: "f-research", templateId: "research", title: "Finding", description: "Proof",
