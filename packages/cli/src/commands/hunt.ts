@@ -78,6 +78,8 @@ interface HuntOpts {
   noveltyRecentEpochs?: string;
   noveltySync?: boolean;
   noveltyModel?: string;
+  noveltyRequired?: boolean;
+  methodology?: boolean;
   output?: string;
   runtime?: string;
   timeout?: string;
@@ -141,7 +143,11 @@ export async function runHunt(opts: {
     recentEpochs?: number;
     sync?: boolean;
     model?: string;
+    /** Abort before discovery when novelty evidence is unavailable. */
+    required?: boolean;
   };
+  /** Apply the evidence-backed kernel-LPE discovery preset. */
+  methodology?: boolean;
   runtime?: RuntimeMode;
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -210,17 +216,30 @@ export async function runHunt(opts: {
     }
 
     if (opts.novelty && noveltyMirrors.length === 0) {
-      log(
-        `[hunt] novelty requested but no lore mirrors found under ${noveltyRoot} ` +
-          `for ${noveltyLists.join(",") || "(no lists)"}; continuing fail-open`,
-      );
+      const message =
+        `novelty requested but no lore mirrors found under ${noveltyRoot} ` +
+        `for ${noveltyLists.join(",") || "(no lists)"}`;
+      if (opts.novelty.required) {
+        return {
+          exitCode: 3,
+          result: {
+            mode: "hunt",
+            seed: opts.ref ?? opts.seedPath,
+            candidates: 0,
+            novelty: { enabled: true, required: true, mirrors: [] },
+            warnings: [...noveltyWarnings, `hunt: ${message}; aborting fail-closed`],
+            note: "Discovery did not run because novelty evidence was required but unavailable.",
+          },
+        };
+      }
+      log(`[hunt] ${message}; continuing fail-open`);
     }
 
     // 1. Seed → variant-hunt plan (bug class + grep'd candidate sites).
     const skipCandidates = opts.skipCandidates ?? 0;
     const maxCandidates = opts.maxCandidates ?? 40;
     const reachableOnly = opts.reachableOnly ?? process.env.HUNT_REACHABLE_ONLY === "1";
-    const reachablePrefer = opts.reachablePrefer ?? process.env.HUNT_REACHABLE_PREFER === "1";
+    const reachablePrefer = opts.reachablePrefer ?? (opts.methodology ? true : process.env.HUNT_REACHABLE_PREFER === "1");
     const plan = await generateVariantCandidates({
       sourceRoot,
       fix: { diff: seedDiff, reference: opts.ref ?? opts.seedPath },
@@ -254,13 +273,23 @@ export async function runHunt(opts: {
 
     // 2. Fan finders out over the variant sites (absolute paths); skeptic-gate each.
     const candidates = selectedCandidates.map((c) => ({ ...c, path: `${sourceRoot}/${c.path}` }));
-    const attemptsPerCandidate = opts.attemptsPerCandidate ?? parseEnvBestOfN(process.env.HUNT_BEST_OF_N);
-    const judgeTopK = opts.judgeTopK ?? parseEnvPositiveInt(process.env.HUNT_JUDGE_TOP_K);
+    const attemptsPerCandidate = opts.attemptsPerCandidate ?? parseEnvBestOfN(process.env.HUNT_BEST_OF_N) ?? (opts.methodology ? 4 : undefined);
+    const judgeTopK = opts.judgeTopK ?? parseEnvPositiveInt(process.env.HUNT_JUDGE_TOP_K) ?? (opts.methodology ? 2 : undefined);
     const judgeModel = opts.judgeModel ?? process.env.HUNT_JUDGE_MODEL;
     const res = await runHuntScan({
       sourceRoot,
       candidates,
-      brief: plan.brief,
+      brief: opts.methodology
+        ? {
+            ...plan.brief,
+            pattern:
+              `${plan.brief.pattern}\n\nMETHODOLOGY LENSES: map the full object lifecycle across handlers, callbacks, ` +
+              `error/teardown paths and concurrent sessions; trace buffer/page provenance across zero-copy and in-place ` +
+              `subsystem boundaries; look for a fix applied to one sibling path but bypassed by another. Refute capability, ` +
+              `configuration and state-machine reachability before claiming impact. Treat source reasoning as a hypothesis ` +
+              `until a sanitizer-backed reproducer proves it.`,
+          }
+        : plan.brief,
       runtime,
       concurrency: opts.concurrency ?? 4,
       ...(opts.models ? { models: opts.models } : {}),
@@ -312,6 +341,7 @@ export async function runHunt(opts: {
         novelty: opts.novelty
           ? {
               enabled: true,
+              required: opts.novelty.required === true,
               root: noveltyRoot,
               lists: noveltyLists,
               mirrors: noveltyMirrors.map((m) => ({ list: m.list, epoch: m.epoch, dir: m.dir })),
@@ -328,6 +358,7 @@ export async function runHunt(opts: {
         })),
         ingested: sinkCfg ? ingested : null,
         gated,
+        methodology: opts.methodology === true,
         warnings: [...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),
         note: opts.novelty
           ? "LEADS, not confirmed 0-days. Novelty-duplicate leads were dropped when lore mirrors matched; still verify the real sink before disclosure."
@@ -355,17 +386,19 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     ...(opts.reachableOnly ? { reachableOnly: true } : {}),
     ...(opts.reachablePrefer ? { reachablePrefer: true } : {}),
     verify: opts.verify,
-    ...(opts.novelty
+    ...(opts.novelty || opts.noveltyRequired || opts.methodology
       ? {
           novelty: {
             ...(opts.noveltyRoot ? { rootDir: opts.noveltyRoot } : {}),
             ...(opts.noveltyLists ? { lists: opts.noveltyLists.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
             recentEpochs: parsePositive("--novelty-recent-epochs", opts.noveltyRecentEpochs, 1),
-            sync: opts.noveltySync === true,
+            sync: opts.noveltySync === true || opts.methodology === true,
             ...(opts.noveltyModel ? { model: opts.noveltyModel } : {}),
+            required: opts.noveltyRequired === true || opts.methodology === true,
           },
         }
       : {}),
+    methodology: opts.methodology === true,
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
@@ -402,6 +435,8 @@ export function registerHuntCommand(program: Command): void {
     .option("--novelty-recent-epochs <N>", "Newest public-inbox epochs to sync per list when --novelty-sync is set (default 1)")
     .option("--novelty-sync", "Clone/fetch lore mirrors before running the novelty gate")
     .option("--novelty-model <model>", "Optional model override for the lore duplicate judge")
+    .option("--novelty-required", "Abort before discovery when novelty evidence is unavailable")
+    .option("--methodology", "Use the kernel-LPE methodology preset: lifecycle/provenance lenses, best-of-4, top-2 skeptic gate, reachable-first")
     .option("--output <path>", "Write the hunt result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")
     .option("--timeout <ms>", "Accepted cloud agent timeout budget in milliseconds", "600000")

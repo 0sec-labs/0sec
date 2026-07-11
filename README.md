@@ -75,6 +75,30 @@ pwnkit https://example.com
 - **Blind verification.** Findings are independently re-exploited before they are reported.
 - **Benchmark transparency.** Raw artifacts and per-challenge breakdowns under `packages/benchmark/results`.
 
+## One research loop, specialized engines
+
+pwnkit's target-specific engines keep their native harnesses and oracles, but
+can now run through one evidence lifecycle:
+
+```text
+Discover → Reachability? → Harness? → Execute? → Verify → Novelty? → Impact?
+```
+
+`Verify` is mandatory before promotion. Optional stages that cannot run are
+recorded as skipped or inconclusive rather than silently passing. Proof strength
+is monotone (`candidate → reachable → observed → reproduced → impact-proven`),
+while novelty is tracked separately and fails closed when no sources were
+actually checked.
+
+Connected adapters cover deterministic HTTP protocol conformance, userspace
+sanitizer/fuzzing campaigns, the agentic best-of-N hunt, repeated-boot Linux
+verification, mobile intake/handoff, XNU selector generation, and the existing
+web/AI/source/package/on-chain pipeline. XNU panic promotion intentionally
+remains disabled until repeated attributed proof exists. Native engine evidence
+is preserved losslessly behind the shared adapter boundary.
+
+See [Research architecture](docs/src/content/docs/architecture.md#shared-research-plane).
+
 ## Docs
 
 [Getting Started](https://docs.0sec.ai/getting-started) · [Commands](https://docs.0sec.ai/commands) · [Configuration](https://docs.0sec.ai/configuration) · [Recipes](https://docs.0sec.ai/recipes) · [Architecture](https://docs.0sec.ai/architecture) · [Triage](https://docs.0sec.ai/triage) · [Benchmark](https://docs.0sec.ai/benchmark) · [Adversarial evals](https://docs.0sec.ai/adversarial-evals) · [Enterprise](https://docs.0sec.ai/enterprise)

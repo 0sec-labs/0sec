@@ -318,6 +318,9 @@ export function normalizeFinding(rawFinding: unknown): CloudSinkFinding {
   );
   if (verificationSpec) normalized.verificationSpec = verificationSpec;
 
+  const researchEvidence = normalizePocSteps(raw.researchEvidence ?? raw.research_evidence);
+  if (researchEvidence && researchEvidence.length > 0) normalized.researchEvidence = researchEvidence;
+
   return normalized;
 }
 
