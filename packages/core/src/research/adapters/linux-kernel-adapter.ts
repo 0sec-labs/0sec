@@ -28,6 +28,10 @@ export interface LinuxKernelHarness { candidateId: string; options: VerifyAcross
 export interface LinuxKernelExecution { candidateId: string; result: KernelFindingNbootVerification }
 type KernelVerifier = typeof verifyAcrossBoots;
 
+function resultArtifacts(result: KernelFindingNbootVerification): string[] {
+  return [...new Set((result.bootResults.length > 0 ? result.bootResults : [result]).map((boot) => boot.dmesg_path))];
+}
+
 export class LinuxKernelResearchAdapter
   implements TargetResearchAdapter<LinuxKernelTarget, LinuxKernelCandidate, LinuxKernelHarness, LinuxKernelExecution>
 {
@@ -36,6 +40,13 @@ export class LinuxKernelResearchAdapter
 
   async discover(target: LinuxKernelTarget): Promise<ResearchStageResult<LinuxKernelCandidate>> {
     const { syzProgramPath, reproducerPath } = target.config.verify;
+    if (!target.config.verify.expectedSignature?.trim()) {
+      return {
+        items: [],
+        evidence: [{ stage: "discover", status: "failed", summary: "an expected kernel crash signature is required" }],
+        warnings: ["linux kernel research requires expectedSignature to prevent unrelated-crash promotion"],
+      };
+    }
     const paths = [syzProgramPath, reproducerPath].filter((path): path is string => Boolean(path));
     if (paths.length !== 1) {
       return {
@@ -102,7 +113,7 @@ export class LinuxKernelResearchAdapter
           ? `kernel signature reproduced in ${result.bootHits}/${result.bootTotal} fresh boot(s)`
           : `kernel verification ended ${result.status}; hits=${result.bootHits}/${result.bootTotal}`,
         data: result,
-        artifacts: [result.dmesg_path],
+        artifacts: resultArtifacts(result),
       });
       if (result.status === "build_failed" || result.status === "run_failed") warnings.push(`kernel verifier ${result.status}`);
     }
@@ -125,7 +136,7 @@ export class LinuxKernelResearchAdapter
           ? `N-boot gate passed (${execution.result.bootHits}/${execution.result.bootTotal})`
           : "N-boot reproduction threshold was not met; absence is not proven",
         data: execution.result,
-        artifacts: [execution.result.dmesg_path],
+        artifacts: resultArtifacts(execution.result),
       });
       if (!stable || !candidate) continue;
       items.push({
@@ -137,7 +148,7 @@ export class LinuxKernelResearchAdapter
           status: "passed",
           summary: `stable kernel signature ${execution.result.signature ?? "unknown"} across fresh boots`,
           data: execution.result,
-          artifacts: [execution.result.dmesg_path],
+          artifacts: resultArtifacts(execution.result),
         }],
       });
     }

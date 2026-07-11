@@ -506,6 +506,9 @@ describe("verifyAcrossBoots — N-boot reproducibility gate (AIxCC T2)", () => {
     expect(result.status).toBe("reproduced");
     expect(result.signature).toBe("KASAN: slab-use-after-free");
     expect(result.bootStatuses).toEqual(["reproduced", "no_signal", "reproduced"]);
+    expect(result.bootResults).toHaveLength(3);
+    expect(result.bootResults.every((boot) => existsSync(boot.dmesg_path))).toBe(true);
+    expect(new Set(result.bootResults.map((boot) => boot.dmesg_path)).size).toBe(3);
   });
 
   it("declares NOT stable when the signature fires in only 1 of 3 boots", async () => {
