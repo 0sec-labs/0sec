@@ -184,7 +184,9 @@ describe("kernel/patch-gap-check: checkNotYetIntroduced (the 71%-false-positive 
       git(target, ["add", "."]);
       git(target, ["commit", "-q", "-m", "introduces the bug (lands later)"]);
       laterSha = git(target, ["rev-parse", "HEAD"]).trim();
-      git(target, ["checkout", "-q", "main"]);
+      // Return to the exact target cut. CI checkouts are commonly detached and
+      // git's default initial branch is not guaranteed to be named `main`.
+      git(target, ["checkout", "-q", headSha]);
     });
 
     afterAll(() => {

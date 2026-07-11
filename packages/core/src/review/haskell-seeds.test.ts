@@ -186,4 +186,11 @@ describe("generateHaskellSeeds", () => {
       await rm(empty, { recursive: true, force: true });
     }
   });
+
+  it("falls back to the in-process scanner when ripgrep is unavailable", () => {
+    const seeds = generateHaskellSeeds(dir, { rgPath: "/definitely/missing/rg" });
+    expect(seeds.length).toBeGreaterThan(0);
+    expect(classes(seeds).has("ffi-memory-safety")).toBe(true);
+    expect(classes(seeds).has("partial-function")).toBe(true);
+  });
 });

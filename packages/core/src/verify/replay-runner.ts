@@ -177,6 +177,9 @@ export class LocalShellRunner implements ReplayRunner {
           cwd: stepCwd,
           env: { ...process.env, PWNKIT_VERIFY: "1" },
           stdio: ["ignore", "pipe", "pipe"],
+          // On POSIX, isolate the shell and all descendants into a process
+          // group so a timeout cannot leave a grandchild holding stdout open.
+          detached: nodePlatform !== "win32",
         });
       } catch (err) {
         resolveP({
@@ -193,7 +196,11 @@ export class LocalShellRunner implements ReplayRunner {
       const timer = setTimeout(() => {
         timedOut = true;
         try {
-          child.kill("SIGKILL");
+          if (nodePlatform !== "win32" && child.pid) {
+            process.kill(-child.pid, "SIGKILL");
+          } else {
+            child.kill("SIGKILL");
+          }
         } catch {
           // Best-effort: the child may have already exited racy with the
           // timer fire. The `close` handler still wins and we record the

@@ -20,7 +20,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -302,6 +302,8 @@ async function runPattern(
     // rg exits with code 2 for partial errors — use whatever stdout we got.
     if (isExecError(err) && err.code === 2 && err.stdout) {
       stdout = err.stdout;
+    } else if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+      return runPatternInProcess(pattern, tree, searchPath);
     } else {
       throw err;
     }
@@ -332,6 +334,47 @@ async function runPattern(
     });
   }
 
+  return results;
+}
+
+/** Minimal dependency-free fallback when ripgrep is absent from the runner. */
+function runPatternInProcess(pattern: ScanPattern, tree: string, searchPath: string): EntryPoint[] {
+  const results: EntryPoint[] = [];
+  const stack = [searchPath];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const path = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(path);
+        continue;
+      }
+      if (!entry.isFile() || (!entry.name.endsWith(".c") && !entry.name.endsWith(".h"))) continue;
+      let lines: string[];
+      try {
+        lines = readFileSync(path, "utf8").split("\n");
+      } catch {
+        continue;
+      }
+      for (let index = 0; index < lines.length; index++) {
+        const extracted = pattern.extract(lines[index]!);
+        if (!extracted) continue;
+        results.push({
+          type: pattern.type,
+          name: extracted.name,
+          file: relative(tree, path),
+          line: index + 1,
+          ...(extracted.userspaceApi ? { userspaceApi: extracted.userspaceApi } : {}),
+        });
+      }
+    }
+  }
   return results;
 }
 
