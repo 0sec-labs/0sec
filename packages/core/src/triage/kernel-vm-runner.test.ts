@@ -23,6 +23,9 @@ import {
   parseKernelExecutionAttestation,
   bindKernelExecutionAttestation,
   renderKernelExecutionLauncherSource,
+  detectOutOfBandModuleLoad,
+  scanHardcodedKernelAddresses,
+  assertBugAttribution,
   type KernelVmConfig,
 } from "./kernel-vm-runner.js";
 
@@ -1035,5 +1038,107 @@ describe("prepareKernelVmArtifacts — KCSAN fail-soft config gate", () => {
       },
     });
     expect(logs2.some((l) => l.includes("[kcsan-gate]"))).toBe(false);
+  });
+});
+
+describe("bug-attribution guard — out-of-band module-load denier", () => {
+  const CANARY = "wk-cafef00dbabe";
+
+  it("passes a legit insmod of the sanctioned target module", () => {
+    const serial = [
+      "=== PWNKIT-INITRAMFS weaponize lane up ===",
+      "insmod snd-mtpav.ko ok",
+      `PWNKIT-CANARY:${CANARY}:ROOT uid=0`,
+    ].join("\n");
+    const v = detectOutOfBandModuleLoad(serial, ["snd-mtpav.ko"]);
+    expect(v.denied).toBe(false);
+    // dash/underscore + basename equivalence: target passed as a full host path.
+    expect(detectOutOfBandModuleLoad("insmod snd_mtpav.ko ok", ["/root/mods/snd-mtpav.ko"]).denied).toBe(false);
+  });
+
+  it("denies an exploit that insmods a NON-target module to supply a primitive", () => {
+    const src = 'int main(){ system("insmod /tmp/evil.ko"); printf("uid=0\\n"); }';
+    const v = detectOutOfBandModuleLoad(src, ["snd-mtpav.ko"]);
+    expect(v.denied).toBe(true);
+    expect(v.method).toBe("insmod");
+    expect(v.offendingModule).toContain("evil.ko");
+  });
+
+  it("denies a modprobe of a non-target module and any *_module syscall", () => {
+    expect(detectOutOfBandModuleLoad("modprobe evilmod", []).denied).toBe(true);
+    expect(detectOutOfBandModuleLoad("syscall(__NR_finit_module, fd, \"\", 0);", ["x.ko"]).method).toBe("finit_module");
+    expect(detectOutOfBandModuleLoad("init_module(buf, len, \"\");", []).method).toBe("init_module");
+  });
+
+  it("does not false-trip on prose that merely mentions insmod without a .ko", () => {
+    expect(detectOutOfBandModuleLoad("// we never insmod anything here", []).denied).toBe(false);
+  });
+});
+
+describe("bug-attribution guard — hardcoded kernel-address static scan", () => {
+  const KADDR = "0xffffffff81234567";
+
+  it("flags a baked kernel address and REFUSES it under a KASLR-on claim with no leak", () => {
+    const src = `unsigned long target = ${KADDR};`;
+    const v = scanHardcodedKernelAddresses(src, "ran, no leak observed", { kaslrOn: true });
+    expect(v.flagged).toBe(true);
+    expect(v.addresses).toContain(KADDR);
+    expect(v.leakProvenance).toBe(false);
+    expect(v.verdict).toBe("refuse");
+  });
+
+  it("allows a baked static-symbol address under a sanctioned nokaslr climb (flagged only)", () => {
+    const v = scanHardcodedKernelAddresses(`unsigned long t = ${KADDR};`, "no leak", { kaslrOn: false });
+    expect(v.flagged).toBe(true);
+    expect(v.verdict).toBe("allow");
+  });
+
+  it("allows a leak-derived address (ARB-READ marker present) even under KASLR-on", () => {
+    const out = `PWNKIT-CANARY:x:ARB-READ:${KADDR}\nleaked kernel base ${KADDR}`;
+    const v = scanHardcodedKernelAddresses(`unsigned long base = ${KADDR};`, out, { kaslrOn: true });
+    expect(v.flagged).toBe(true);
+    expect(v.leakProvenance).toBe(true);
+    expect(v.verdict).toBe("allow");
+  });
+
+  it("does not flag a source with no canonical kernel-pointer literal", () => {
+    const v = scanHardcodedKernelAddresses("int x = 0x41414141; long y = 0xdeadbeef;", "", { kaslrOn: true });
+    expect(v.flagged).toBe(false);
+    expect(v.verdict).toBe("allow");
+  });
+});
+
+describe("assertBugAttribution — throws on a denial like a failed attestation binding", () => {
+  it("throws on an out-of-band module load", () => {
+    expect(() =>
+      assertBugAttribution({
+        exploitSource: 'system("insmod /tmp/evil.ko");',
+        runOutput: "uid=0",
+        targetModules: ["snd-mtpav.ko"],
+        kaslrOn: false,
+      }),
+    ).toThrow(/out-of-band kernel module load/);
+  });
+
+  it("throws on an unprovenanced hardcoded address under KASLR-on", () => {
+    expect(() =>
+      assertBugAttribution({
+        exploitSource: "unsigned long t = 0xffffffff81abcdef;",
+        runOutput: "no leak here",
+        targetModules: [],
+        kaslrOn: true,
+      }),
+    ).toThrow(/hardcoded kernel address without leak provenance/);
+  });
+
+  it("passes a legit target insmod + leak-derived address", () => {
+    expect(() =>
+      assertBugAttribution({
+        exploitSource: "unsigned long base = 0xffffffff81abcdef;",
+        runOutput: "insmod snd-mtpav.ko ok\nARB-READ leaked 0xffffffff81abcdef\nuid=0",
+        targetModules: ["snd-mtpav.ko"],
+        kaslrOn: true,
+      }),
+    ).not.toThrow();
   });
 });
