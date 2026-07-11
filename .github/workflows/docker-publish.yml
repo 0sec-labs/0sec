@@ -142,3 +142,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=pwnkit
           cache-to: type=gha,mode=max,scope=pwnkit
+
+      - name: Notify 0sec E2B template workflow
+        if: ${{ success() }}
+        env:
+          ZEROSEC_REPO_DISPATCH_TOKEN: ${{ secrets.ZEROSEC_REPO_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ZEROSEC_REPO_DISPATCH_TOKEN}" ]; then
+            echo "::notice::ZEROSEC_REPO_DISPATCH_TOKEN is not set; skipping 0sec E2B template dispatch."
+            exit 0
+          fi
+          curl -fsS \
+            -X POST \
+            -H "Authorization: Bearer ${ZEROSEC_REPO_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/0sec-labs/0sec/dispatches \
+            -d '{"event_type":"pwnkit-image-published","client_payload":{"image":"ghcr.io/0sec-labs/pwnkit:latest","sha":"${{ github.sha }}"}}'
