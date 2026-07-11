@@ -1,4 +1,5 @@
 import type { VerificationResult } from "./verification.js";
+import type { ResearchEvidenceEnvelope } from "./research-evidence.js";
 
 // ── Scan Configuration ──
 
@@ -576,6 +577,8 @@ export interface Finding {
    * dep needed for callers that only *read* the field).
    */
   verification_result?: VerificationResult;
+  /** Target-neutral research receipts attached by the shared adapter plane. */
+  researchEvidence?: ResearchEvidenceEnvelope[];
   /**
    * Optional parent finding link for derived findings. Kernel crash ingest
    * uses this when a crash-triggered subsystem review finds sibling bugs.

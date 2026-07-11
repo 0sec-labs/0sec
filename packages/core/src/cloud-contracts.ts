@@ -100,6 +100,8 @@ export interface CloudSinkFinding {
    * schema mirrors `VerificationSpec` in `@pwnkit/shared/types.ts`.
    */
   verificationSpec?: CloudSinkVerificationSpec;
+  /** Optional target-neutral research evidence envelopes. */
+  researchEvidence?: unknown[];
 }
 
 /**

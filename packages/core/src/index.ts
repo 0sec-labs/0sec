@@ -1231,6 +1231,10 @@ export {
   DEFAULT_MAX_DURATION_MS,
 } from "./recon/active-subdomains.js";
 export type { ActiveEnumerateOptions } from "./recon/active-subdomains.js";
+
+// Target-neutral research control plane. Existing engines remain native and
+// opt in through adapters; the common runner owns stage order and evidence.
+export * from "./research/index.js";
 // JS-driven endpoint + secret discovery (pwnkit#927) — scope-gated,
 // deny-by-default; mines a site's JS bundles for endpoints + redacted secrets.
 export { runJsRecon, MAX_JS_FILES } from "./recon/js-recon.js";
