@@ -455,6 +455,19 @@ describe("syscall_boundary_map agent tool", () => {
   });
 });
 
+describe("scanSyscallBoundary without ripgrep", () => {
+  it("uses the in-process fallback instead of returning an empty map", async () => {
+    const result = await scanSyscallBoundary({
+      tree: FIXTURE_TREE,
+      rgPath: "/definitely/missing/rg",
+    });
+    expect(result.entryPoints.length).toBeGreaterThan(0);
+    expect(result.entryPoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "syscall", name: "vuln_open" }),
+    ]));
+  });
+});
+
 // ── Integration test with real ripgrep (skip if rg not available) ──
 
 describe("scanSyscallBoundary with real rg", () => {
