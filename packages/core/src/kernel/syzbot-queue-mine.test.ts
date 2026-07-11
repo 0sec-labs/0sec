@@ -6,6 +6,8 @@ import {
   parseListing,
   parseListingRow,
   parseBugDetailKernelVersion,
+  parseBugDetail,
+  parseSyzReproOptions,
   rankCandidates,
   syzbotQueueBrief,
   toHuntCandidate,
@@ -176,6 +178,29 @@ describe("parseBugDetailKernelVersion", () => {
   });
 });
 
+describe("adversarial detail/repro enrichment", () => {
+  it("extracts only a syz reproducer link and parses privileged harness options", () => {
+    const detail = `<a href="/text?tag=ReproSyz&amp;x=16a2006d480000">syz</a>`;
+    expect(parseBugDetail(detail).reproSyzUrl).toBe(
+      "https://syzkaller.appspot.com/text?tag=ReproSyz&x=16a2006d480000",
+    );
+    const repro = parseSyzReproOptions(`# docs\n#{"sandbox":"none","netdev":true,"fault":true}\nsyz_call()`);
+    expect(repro).toMatchObject({
+      sandbox: "none",
+      features: ["netdev", "fault"],
+      reachability: "privileged-or-harness",
+    });
+    expect(repro.warnings.join(" ")).toMatch(/sandbox:none.*netdev, fault/);
+  });
+
+  it("treats namespace-only repros as plausible, not proven", () => {
+    expect(parseSyzReproOptions(`#{"sandbox":"namespace","threaded":true}\nsyz_call()`)).toMatchObject({
+      reachability: "zero-cap-plausible",
+      features: [],
+    });
+  });
+});
+
 describe("toHuntCandidate", () => {
   it("maps a candidate to a hunt-scan HuntCandidate with a source path + reproduction hint", () => {
     const cand = parseListingRow(ROW_SYZ_ONLY, "invalid") as SyzbotCandidate;
@@ -235,6 +260,20 @@ describe("mineSyzbotQueue", () => {
     expect(res.candidates[0].kernelVersionSeen).toBe("6.12.5");
   });
 
+  it("reranks privileged one-shot repros below plausible namespace candidates", async () => {
+    const detailFetch: SyzbotFetcher = async (url) =>
+      `<html>6.12.5 <a href="/text?tag=ReproSyz&amp;x=${url.includes("30088") ? "1111" : "2222"}">syz</a></html>`;
+    const reproFetch: SyzbotFetcher = async (url) => url.includes("1111")
+      ? `#{"sandbox":"none","netdev":true}\nsyz_call()`
+      : `#{"sandbox":"namespace"}\nsyz_call()`;
+    const res = await mineSyzbotQueue({ fetch: fetchOk, fetchDetail: detailFetch, fetchRepro: reproFetch });
+    expect(res.candidates[0].syzbotId).toBe("594a5971743b5ded7a9fcead4b74757c270f564e");
+    expect(res.candidates.find((c) => c.syzbotId === "30088ff61a210124be13")).toMatchObject({
+      enrichmentStatus: "verified",
+      reachability: "privileged-or-harness",
+    });
+  });
+
   it("survives a detail-fetch failure without dropping the candidate", async () => {
     const detailThrows: SyzbotFetcher = async () => {
       throw new Error("detail 500");
@@ -262,6 +301,11 @@ describe("mineSyzbotQueue", () => {
       await expect(defaultSyzbotFetcher("not-a-url")).rejects.toThrow(
         /invalid syzbot url/,
       );
+    });
+
+    it("refuses credentials and explicit ports", async () => {
+      await expect(defaultSyzbotFetcher("https://user@syzkaller.appspot.com/upstream/invalid")).rejects.toThrow(/non-allowlisted/);
+      await expect(defaultSyzbotFetcher("https://syzkaller.appspot.com:444/upstream/invalid")).rejects.toThrow(/non-allowlisted/);
     });
   });
 });

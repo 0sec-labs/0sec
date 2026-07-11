@@ -102,6 +102,13 @@ manifest with `pwnkit research linux-matrix`. pwnkit validates distinct boot
 markers and thresholds, requires clean completed controls, snapshots and hashes
 all logs, and records that execution occurred externally.
 
+`pwnkit kernel syzbot-mine` mines abandoned syzbot reports with a bounded
+adversarial second pass. It reads the top detail pages and exact syz options,
+records sandbox and harness dependencies, and demotes privileged, one-shot,
+stale, or incompletely enriched leads. This is triage—not an LPE or novelty
+claim. Promotion still requires fresh sanitizer proof, COS reachability,
+patched differential controls, and novelty receipts.
+
 See [Research architecture](docs/src/content/docs/architecture.md#shared-research-plane).
 
 ## Docs
