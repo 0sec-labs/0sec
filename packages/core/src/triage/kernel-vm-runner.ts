@@ -1620,9 +1620,14 @@ export async function verifyAcrossBoots(
   let lastResult: KernelFindingVerification | undefined;
 
   for (let i = 0; i < bootTotal; i++) {
-    // Each boot writes its own proof; reuse the caller's path only for boot 0 so
-    // a single-shot caller still gets the file it asked for.
-    const perBootDmesg = i === 0 ? dmesgOutPath : undefined;
+    // Keep every proof beside the caller-provided artifact path. Falling back
+    // to unrelated /tmp paths would leave M-of-K claims with only one archived
+    // log after the research run is moved or uploaded.
+    const perBootDmesg = dmesgOutPath
+      ? i === 0
+        ? dmesgOutPath
+        : `${dmesgOutPath}.boot-${i + 1}`
+      : undefined;
     const result = await verifyKernelFinding({
       ...baseOpts,
       ...(perBootDmesg ? { dmesgOutPath: perBootDmesg } : {}),
