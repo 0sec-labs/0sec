@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -19,8 +20,69 @@ import {
   buildFlagsForProfile,
   kcsanConfigSupported,
   RECOGNIZED_CONFIG_PROFILES,
+  parseKernelExecutionAttestation,
+  bindKernelExecutionAttestation,
+  renderKernelExecutionLauncherSource,
   type KernelVmConfig,
 } from "./kernel-vm-runner.js";
+
+const receiptText = (nonce = "a".repeat(32), sha = "b".repeat(64), uid = 65534) => `schema=1\nnonce=${nonce}\nreproducer_sha256=${sha}\nruid=${uid}\neuid=${uid}\nsuid=${uid}\nrgid=${uid}\negid=${uid}\nsgid=${uid}\ngroups=\ncap_inh=0000000000000000\ncap_prm=0000000000000000\ncap_eff=0000000000000000\ncap_amb=0000000000000000\nsecurebits=0\nuserns_max=0\ninitial_userns=1\nno_new_privs=1\n`;
+
+describe("kernel execution attestation", () => {
+  it("strictly parses and binds a zero-cap pre-exec receipt", () => {
+    const receipt = parseKernelExecutionAttestation(receiptText());
+    bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), dropUid: 65534, dropGid: 65534 });
+    expect(receipt).toMatchObject({ realUid: 65534, effectiveUid: 65534, savedUid: 65534, noNewPrivileges: true });
+  });
+
+  it("rejects duplicate, unknown, and incorrectly bound receipt fields", () => {
+    expect(() => parseKernelExecutionAttestation(`${receiptText()}euid=65534\n`)).toThrow(/duplicate/);
+    expect(() => parseKernelExecutionAttestation(`${receiptText()}extra=x\n`)).toThrow(/unknown/);
+    const receipt = parseKernelExecutionAttestation(receiptText());
+    expect(() => bindKernelExecutionAttestation(receipt, { nonce: "c".repeat(32), reproducerSha256: "b".repeat(64) })).toThrow(/binding mismatch/);
+  });
+
+  it("generates a launcher that drops saved IDs, sets NNP, captures CapEff, and execs", () => {
+    const source = renderKernelExecutionLauncherSource();
+    expect(source).toContain("setresuid(uid,uid,uid)");
+    expect(source).toContain("setgroups(0,NULL)");
+    expect(source).toContain("PR_SET_NO_NEW_PRIVS");
+    expect(source).toContain("CapEff:");
+    expect(source).toContain("execvp");
+  });
+
+  it("rejects a partial UID/GID drop contract", () => {
+    const receipt = parseKernelExecutionAttestation(receiptText());
+    expect(() => bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), dropUid: 65534 })).toThrow(/UID and GID together/);
+  });
+
+  it("rejects residual groups, capabilities, NNP, and user-namespace escape state", () => {
+    const expected = { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), dropUid: 65534, dropGid: 65534 };
+    for (const raw of [
+      receiptText().replace("groups=\n", "groups=0\n"),
+      receiptText().replace("cap_prm=0000000000000000", "cap_prm=0000000000000001"),
+      receiptText().replace("no_new_privs=1", "no_new_privs=0"),
+      receiptText().replace("userns_max=0", "userns_max=1"),
+      receiptText().replace("initial_userns=1", "initial_userns=0"),
+    ]) {
+      expect(() => bindKernelExecutionAttestation(parseKernelExecutionAttestation(raw), expected)).toThrow(/did not prove/);
+    }
+  });
+
+  it.skipIf(process.platform !== "linux")("compiles the launcher and proves a successful exec handshake", () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-attest-launcher-"));
+    const source = join(root, "launcher.c");
+    const binary = join(root, "launcher");
+    const receiptPath = join(root, "receipt");
+    const markerPath = join(root, "started");
+    writeFileSync(source, renderKernelExecutionLauncherSource());
+    expect(spawnSync("cc", ["-O2", "-Wall", "-Wextra", "-o", binary, source], { stdio: "pipe" }).status).toBe(0);
+    expect(spawnSync("/usr/bin/env", [binary, receiptPath, "a".repeat(32), "b".repeat(64), "-", "-", markerPath, "/bin/true"], { stdio: "pipe" }).status).toBe(0);
+    expect(existsSync(markerPath)).toBe(true);
+    const receipt = parseKernelExecutionAttestation(readFileSync(receiptPath, "utf8"));
+    bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64) });
+  });
+});
 
 describe("prepareKernelVmArtifacts", () => {
   const originalEnv = { ...process.env };
@@ -196,6 +258,24 @@ describe("verifyKernelFinding", () => {
     expect(result.build_cache_hit).toBe(true);
     expect(existsSync(result.dmesg_path)).toBe(true);
     expect(readFileSync(result.dmesg_path, "utf-8")).toContain("KASAN: slab-use-after-free");
+  });
+
+  it("binds and persists a requested zero-cap receipt", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree(); primeCacheForTree(tree, cacheDir);
+    const reproPath = makeReproducer("poc.c");
+    const dmesgOut = join(mkdtempSync(join(tmpdir(), "pwnkit-attest-")), "dmesg.log");
+    const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, dmesgOutPath: dmesgOut, expectedSignature: "KASAN: uaf", executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async (report) => ({ compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: parseKernelExecutionAttestation(receiptText(report.executionAttestationRequest!.nonce, report.executionAttestationRequest!.reproducerSha256)) }) });
+    expect(result.status).toBe("reproduced");
+    expect(result.executionAttestation?.effectiveUid).toBe(65534);
+    expect(result.executionAttestationSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(existsSync(result.executionAttestationPath!)).toBe(true);
+  });
+
+  it("fails closed when an explicit drop produces no receipt", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-")); const tree = makeTree(); primeCacheForTree(tree, cacheDir); const reproPath = makeReproducer("poc.c");
+    const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async () => ({ compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false }) });
+    expect(result.status).toBe("run_failed");
   });
 
   it("detects an unexpected-but-recognised crash as no-match when expectedSignature mismatches", async () => {

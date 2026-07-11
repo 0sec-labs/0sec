@@ -36,6 +36,7 @@ export interface CrashReport {
   reproducer?: string;
   /** Reproducer language. Raw `.syz` programs require syz-execprog in the guest. */
   reproducerLanguage?: "c" | "syz" | "bash";
+  executionAttestationRequest?: { nonce: string; reproducerSha256: string; dropUid?: number; dropGid?: number };
   /** Access type from KASAN reports ("read" | "write"). */
   accessType?: string;
   /** Access size from KASAN reports. */
@@ -72,6 +73,29 @@ export interface ReproducerResult {
    * previously-seen PCs to compute new edges and feed coverage back to the LLM.
    */
   coveragePcs?: string[];
+  executionAttestation?: KernelExecutionAttestation;
+  executionAttestationPath?: string;
+}
+
+export interface KernelExecutionAttestation {
+  schemaVersion: 1;
+  nonce: string;
+  reproducerSha256: string;
+  realUid: number;
+  effectiveUid: number;
+  savedUid: number;
+  realGid: number;
+  effectiveGid: number;
+  savedGid: number;
+  supplementaryGroups: number[];
+  inheritableCapabilities: string;
+  permittedCapabilities: string;
+  effectiveCapabilities: string;
+  ambientCapabilities: string;
+  secureBits: number;
+  userNamespaceMax: number;
+  initialUserNamespace: boolean;
+  noNewPrivileges: boolean;
 }
 
 export interface CrashSignatureMatch {
