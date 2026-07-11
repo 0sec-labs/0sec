@@ -18,6 +18,20 @@ interface VariantHuntOpts {
   verbose?: boolean;
 }
 
+interface SyzbotMineOpts {
+  subsystems: string;
+  limit: string;
+  details: string;
+}
+
+function parsePositiveInt(value: string, name: string, max: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > max) {
+    throw new Error(`Invalid ${name} '${value}'; expected 1..${max}`);
+  }
+  return parsed;
+}
+
 function parseTimeoutMs(value?: string): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
@@ -112,6 +126,33 @@ export function registerKernelCommand(program: Command): void {
     .description("Kernel security workflows");
 
   kernel
+    .command("syzbot-mine")
+    .description("Mine and LPE-rank syzbot's invalid/auto-closed queue")
+    .option("--subsystems <csv>", "Subsystem labels to keep", "net,net/sched,net/tls,xfrm,crypto,vsock,nfc")
+    .option("--limit <n>", "Maximum ranked candidates", "30")
+    .option("--details <n>", "Top candidate detail pages to enrich", "15")
+    .action(async (opts: SyzbotMineOpts) => {
+      try {
+        const limit = parsePositiveInt(opts.limit, "--limit", 500);
+        const details = parsePositiveInt(opts.details, "--details", 100);
+        const subsystems = opts.subsystems.split(",").map((value) => value.trim()).filter(Boolean);
+        const { defaultSyzbotFetcher, mineSyzbotQueue, toHuntCandidates } = await import("@pwnkit/core");
+        const result = await mineSyzbotQueue({
+          fetch: defaultSyzbotFetcher,
+          fetchDetail: defaultSyzbotFetcher,
+          maxDetailFetches: details,
+          limit,
+          subsystems,
+          log: (message) => console.error(message),
+        });
+        console.log(JSON.stringify({ ...result, huntCandidates: toHuntCandidates(result) }, null, 2));
+      } catch (err) {
+        console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
+        process.exitCode = 1;
+      }
+    });
+
+  kernel
     .command("variant-hunt")
     .description("Run foxguard-backed kernel advisory variant hunting")
     .requiredOption("--tree <path>", "Path to a Linux source tree")
@@ -159,4 +200,4 @@ export function registerKernelCommand(program: Command): void {
     });
 }
 
-export { variantReportToScanReport };
+export { parsePositiveInt, variantReportToScanReport };
