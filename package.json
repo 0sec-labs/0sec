@@ -44,8 +44,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/0sec-labs/0sec.git",
-    "directory": "pwnkit"
+    "url": "git+ssh://git@github.com/0sec-labs/pwnkit.git"
   },
   "license": "SEE LICENSE IN LICENSE",
   "engines": {
