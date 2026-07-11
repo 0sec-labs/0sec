@@ -54,16 +54,16 @@ static int writezero(void){int f=open("/proc/sys/user/max_user_namespaces",O_WRO
 int main(int argc,char **argv){
  if(argc<8)return 125; unsigned uid=0,gid=0; int du=strcmp(argv[4],"-")!=0,dg=strcmp(argv[5],"-")!=0; if(du!=dg)return 125;
  if((du&&num(argv[4],&uid))||(dg&&num(argv[5],&gid)))return 125;
- int receipt=open(argv[1],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400); if(receipt<0)return 126;
+ int receipt=open(argv[1],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400); if(receipt<0)return 126;int initns=open("/proc/1/ns/user",O_RDONLY|O_CLOEXEC);
  if(du&&writezero())return 126;
  int p[2]; if(pipe2(p,O_CLOEXEC))return 126; pid_t child=fork(); if(child<0)return 126;
- if(child){close(p[1]);char x;ssize_t n=read(p[0],&x,1);close(p[0]);if(n!=0){waitpid(child,0,0);return 127;}int m=open(argv[6],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400);if(m<0){kill(child,SIGKILL);waitpid(child,0,0);return 126;}write(m,"1\n",2);close(m);int st;if(waitpid(child,&st,0)<0)return 126;if(WIFEXITED(st))return WEXITSTATUS(st);return 128+WTERMSIG(st);}
+ if(child){close(receipt);if(initns>=0)close(initns);close(p[1]);char x;ssize_t n=read(p[0],&x,1);close(p[0]);if(n!=0){waitpid(child,0,0);return 127;}int m=open(argv[6],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400);if(m<0){kill(child,SIGKILL);waitpid(child,0,0);return 126;}write(m,"1\n",2);close(m);int st;if(waitpid(child,&st,0)<0)return 126;if(WIFEXITED(st))return WEXITSTATUS(st);return 128+WTERMSIG(st);}
  close(p[0]); if(dg&&(setgroups(0,NULL)||setresgid(gid,gid,gid)))return 126;if(du&&setresuid(uid,uid,uid))return 126;if(du&&prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0))return 126;
  uid_t r,e,s;gid_t gr,ge,gs;if(getresuid(&r,&e,&s)||getresgid(&gr,&ge,&gs))return 126;gid_t gl[64];int ng=getgroups(64,gl);if(ng<0)return 126;
  FILE *st=fopen("/proc/self/status","r");char line[256],ci[17]="",cp[17]="",ce[17]="",ca[17]="";int nnp=-1;if(!st)return 126;while(fgets(line,sizeof line,st)){sscanf(line,"CapInh: %16[0-9a-fA-F]",ci);sscanf(line,"CapPrm: %16[0-9a-fA-F]",cp);sscanf(line,"CapEff: %16[0-9a-fA-F]",ce);sscanf(line,"CapAmb: %16[0-9a-fA-F]",ca);sscanf(line,"NoNewPrivs: %d",&nnp);}fclose(st);
  char *caps[]={ci,cp,ce,ca};for(int i=0;i<4;i++){if(strlen(caps[i])!=16)return 126;for(char *q=caps[i];*q;q++)if(*q>='A'&&*q<='F')*q+=32;}
- struct stat ns,ns1;if(stat("/proc/self/ns/user",&ns)||stat("/proc/1/ns/user",&ns1))return 126;FILE *um=fopen("/proc/sys/user/max_user_namespaces","r");unsigned umax;if(!um||fscanf(um,"%u",&umax)!=1)return 126;fclose(um);int sb=prctl(PR_GET_SECUREBITS);if(sb<0||nnp<0)return 126;
- FILE *o=fdopen(receipt,"w");if(!o)return 126;fprintf(o,"schema=1\nnonce=%s\nreproducer_sha256=%s\nruid=%u\neuid=%u\nsuid=%u\nrgid=%u\negid=%u\nsgid=%u\ngroups=",argv[2],argv[3],r,e,s,gr,ge,gs);for(int i=0;i<ng;i++)fprintf(o,"%s%u",i?",":"",gl[i]);fprintf(o,"\ncap_inh=%s\ncap_prm=%s\ncap_eff=%s\ncap_amb=%s\nsecurebits=%d\nuserns_max=%u\ninitial_userns=%d\nno_new_privs=%d\n",ci,cp,ce,ca,sb,umax,ns.st_ino==ns1.st_ino,nnp);if(fclose(o))return 126;
+ struct stat ns,ns1;int initial=initns>=0&&!stat("/proc/self/ns/user",&ns)&&!fstat(initns,&ns1)&&ns.st_dev==ns1.st_dev&&ns.st_ino==ns1.st_ino;if(initns>=0)close(initns);FILE *um=fopen("/proc/sys/user/max_user_namespaces","r");unsigned umax;if(!um||fscanf(um,"%u",&umax)!=1)return 126;fclose(um);int sb=prctl(PR_GET_SECUREBITS);if(sb<0||nnp<0)return 126;
+ FILE *o=fdopen(receipt,"w");if(!o)return 126;fprintf(o,"schema=1\nnonce=%s\nreproducer_sha256=%s\nruid=%u\neuid=%u\nsuid=%u\nrgid=%u\negid=%u\nsgid=%u\ngroups=",argv[2],argv[3],r,e,s,gr,ge,gs);for(int i=0;i<ng;i++)fprintf(o,"%s%u",i?",":"",gl[i]);fprintf(o,"\ncap_inh=%s\ncap_prm=%s\ncap_eff=%s\ncap_amb=%s\nsecurebits=%d\nuserns_max=%u\ninitial_userns=%d\nno_new_privs=%d\n",ci,cp,ce,ca,sb,umax,initial,nnp);if(fclose(o))return 126;
  execvp(argv[7],&argv[7]);char bad='x';write(p[1],&bad,1);return 127;
 }`;
 }
