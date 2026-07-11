@@ -102,6 +102,12 @@ manifest with `pwnkit research linux-matrix`. pwnkit validates distinct boot
 markers and thresholds, requires clean completed controls, snapshots and hashes
 all logs, and records that execution occurred externally.
 
+For pwnkit-executed boots, `pwnkit research linux` requires an explicit
+`--expected-signature`. Only boots containing that literal oracle count toward
+the M-of-K threshold; unrelated sanitizer faults fail closed. Every attempted
+boot retains and hashes its own dmesg artifact, and an inconclusive command
+returns nonzero.
+
 `pwnkit kernel syzbot-mine` mines abandoned syzbot reports with a bounded
 adversarial second pass. It reads the top detail pages and exact syz options,
 records sandbox and harness dependencies, and demotes privileged, one-shot,

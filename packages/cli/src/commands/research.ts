@@ -85,10 +85,11 @@ export function registerResearchCommand(program: Command): void {
     .requiredOption("--kernel-tree <path>", "Linux source tree")
     .requiredOption("--reproducer <path>", "C reproducer or syzkaller .syz program")
     .requiredOption("--finding <path>", "Existing Finding JSON to bind the proof to")
+    .requiredOption("--expected-signature <literal>", "Literal crash signature that every counted boot must contain")
     .option("--boots <n>", "Fresh boots", "3")
     .option("--min-hits <n>", "Required reproducing boots", "2")
     .option("--artifact-root <path>", "Research artifact root", ".pwnkit-research")
-    .action(async (opts: { kernelTree: string; reproducer: string; finding: string; boots: string; minHits: string; artifactRoot: string }) => {
+    .action(async (opts: { kernelTree: string; reproducer: string; finding: string; expectedSignature: string; boots: string; minHits: string; artifactRoot: string }) => {
       const { LinuxKernelResearchAdapter, postFinding, runResearch } = await import("@pwnkit/core");
       const kernelTree = resolve(opts.kernelTree);
       const reproducer = resolve(opts.reproducer);
@@ -98,10 +99,11 @@ export function registerResearchCommand(program: Command): void {
       if (!Number.isFinite(boots) || boots < 1 || !Number.isFinite(minHits) || minHits < 1 || minHits > boots) {
         throw new Error("--boots and --min-hits must be positive, with min-hits <= boots");
       }
+      if (!opts.expectedSignature.trim()) throw new Error("--expected-signature must not be empty");
       const verify = reproducer.endsWith(".syz")
-        ? { syzProgramPath: reproducer, boots, minHits }
-        : { reproducerPath: reproducer, boots, minHits };
-      print(await runResearch(
+        ? { syzProgramPath: reproducer, boots, minHits, expectedSignature: opts.expectedSignature }
+        : { reproducerPath: reproducer, boots, minHits, expectedSignature: opts.expectedSignature };
+      const result = await runResearch(
         new LinuxKernelResearchAdapter(),
         {
           kind: "linux.kernel-reproducer",
@@ -110,6 +112,10 @@ export function registerResearchCommand(program: Command): void {
           config: { finding, verify },
         },
         { artifactRoot: resolve(opts.artifactRoot), emitFinding: postFinding, log: (message) => process.stderr.write(message + "\n") },
-      ));
+      );
+      if (result.findings.length === 0) {
+        throw new Error("kernel N-boot verification did not reproduce the expected signature");
+      }
+      print(result);
     });
 }
