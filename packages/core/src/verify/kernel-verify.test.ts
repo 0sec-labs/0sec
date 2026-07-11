@@ -6,9 +6,11 @@ import {
   applyVerificationToFinding,
   tier1VerdictToOracleResult,
   verifyStaticKernelFinding,
+  withNxReproduction,
   type KernelVerifyAgentInvoker,
   type KernelVerifyOracleResult,
   type KernelVerifyRunner,
+  type KernelVerifyRunnerInput,
 } from "./kernel-verify.js";
 import {
   buildCoverageFeedbackPrompt,
@@ -642,5 +644,61 @@ describe("tier1VerdictToOracleResult", () => {
     expect(oracle.buildStatus).toBe("miss");
     expect(oracle.reason).toMatch(/build failed/i);
     rmSync(path, { force: true });
+  });
+});
+
+describe("withNxReproduction — runner-side N× boot gate", () => {
+  const input: KernelVerifyRunnerInput = {
+    finding: staticKernelFinding(),
+    program: "int main(){return 0;}",
+    programLang: "c",
+    kernelTree: "/tmp/linux",
+    expectedSignature: "kasan-uaf",
+  };
+  const confirmed = fakeOracle({ crashed: true, signatureMatched: true, oracleConfidence: 0.95 });
+  const noRepro = fakeOracle({ crashed: false, signatureMatched: false, oracleConfidence: 0.5 });
+
+  function seqRunner(results: KernelVerifyOracleResult[]): {
+    runner: KernelVerifyRunner;
+    calls: () => number;
+  } {
+    let i = 0;
+    return {
+      runner: async () => results[Math.min(i++, results.length - 1)]!,
+      calls: () => i,
+    };
+  }
+
+  it("attempts<=1 returns the wrapped runner unchanged (legacy path)", async () => {
+    const { runner } = seqRunner([confirmed]);
+    expect(withNxReproduction(runner, 1)).toBe(runner);
+  });
+
+  it("2+ confirmations → keeps confidence, stamps N× and early-exits", async () => {
+    const { runner, calls } = seqRunner([confirmed, confirmed, confirmed, confirmed, confirmed]);
+    const r = await withNxReproduction(runner, 5)(input);
+    expect(r.reproConfirmations).toBe(2);
+    expect(r.reproAttempts).toBe(2); // early-exit after the 2nd confirmation
+    expect(calls()).toBe(2); // did NOT keep booting
+    expect(r.oracleConfidence).toBe(0.95);
+    expect(r.reason).toMatch(/2\/2.*N× confirmed/);
+  });
+
+  it("single flaky reproduction → confirmed but confidence dampened to 0.82 + flagged", async () => {
+    const { runner } = seqRunner([confirmed, noRepro, noRepro, noRepro, noRepro]);
+    const r = await withNxReproduction(runner, 5)(input);
+    expect(r.crashed).toBe(true); // never silently rejected
+    expect(r.reproConfirmations).toBe(1);
+    expect(r.reproAttempts).toBe(5); // ran all 5 (never hit 2 confirmations)
+    expect(r.oracleConfidence).toBe(0.82);
+    expect(r.reason).toMatch(/flaky-repro risk/);
+  });
+
+  it("never reproduces → reproConfirmations 0, base confidence preserved", async () => {
+    const { runner } = seqRunner([noRepro, noRepro, noRepro]);
+    const r = await withNxReproduction(runner, 3)(input);
+    expect(r.reproConfirmations).toBe(0);
+    expect(r.reproAttempts).toBe(3);
+    expect(r.reason).toMatch(/did not reproduce in 3/);
   });
 });

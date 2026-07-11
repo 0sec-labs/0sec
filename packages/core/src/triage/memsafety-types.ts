@@ -54,6 +54,17 @@ export interface CrashArtifact {
   /** Symbolised stack frames, when available. */
   stack?: string[];
   primitive?: MemPrimitive;
+  /**
+   * How many independent re-runs reproduced the crash, out of {@link reproAttempts}.
+   * Populated by an N× reproduction gate (e.g. the kernel VM runner booting the
+   * PoC multiple times). A single flaky reproduction of a race/UAF can be an
+   * environment fluke — the verdict layer folds this into confidence so a
+   * 1-of-N reproduction is confirmed-but-flagged, not asserted at full strength.
+   * Undefined = single-shot legacy path (treated as one confirmation).
+   */
+  reproConfirmations?: number;
+  /** Total independent reproduction attempts made (the N in "N×"). */
+  reproAttempts?: number;
 }
 
 /** Result of one closed fuzz loop run. */
