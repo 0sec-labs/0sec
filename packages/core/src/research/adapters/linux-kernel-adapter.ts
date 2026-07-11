@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Finding } from "@pwnkit/shared";
+import type { ResearchExecutionContext } from "@pwnkit/shared";
 import {
   verifyAcrossBoots,
   type KernelFindingNbootVerification,
@@ -29,7 +30,24 @@ export interface LinuxKernelExecution { candidateId: string; result: KernelFindi
 type KernelVerifier = typeof verifyAcrossBoots;
 
 function resultArtifacts(result: KernelFindingNbootVerification): string[] {
-  return [...new Set((result.bootResults.length > 0 ? result.bootResults : [result]).map((boot) => boot.dmesg_path))];
+  return [...new Set((result.bootResults.length > 0 ? result.bootResults : [result]).flatMap((boot) => [boot.dmesg_path, boot.executionAttestationPath].filter((path): path is string => Boolean(path))))];
+}
+
+function executionContext(result: KernelFindingNbootVerification): ResearchExecutionContext {
+  const reproduced = result.bootResults.filter((boot) => boot.status === "reproduced");
+  const receipts = reproduced.map((boot) => boot.executionAttestation).filter((receipt): receipt is NonNullable<typeof receipt> => Boolean(receipt));
+  if (receipts.length !== reproduced.length || receipts.length === 0 || !result.executionIdentity || !result.executionAttestationManifestPath || !result.executionAttestationManifestSha256 || reproduced.some((boot) => !boot.executionAttestationPath || !boot.executionAttestationSha256 || boot.executionIdentity?.uid !== result.executionIdentity?.uid || boot.executionIdentity?.gid !== result.executionIdentity?.gid)) return { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 };
+  const first = receipts[0];
+  const zeroCap = first.realUid === result.executionIdentity.uid && first.effectiveUid === result.executionIdentity.uid && first.savedUid === result.executionIdentity.uid && first.realGid === result.executionIdentity.gid && first.effectiveGid === result.executionIdentity.gid && first.savedGid === result.executionIdentity.gid && first.supplementaryGroups.length === 0 && [first.inheritableCapabilities, first.permittedCapabilities, first.effectiveCapabilities, first.ambientCapabilities].every((cap) => cap === "0000000000000000") && first.noNewPrivileges && first.userNamespaceMax === 0 && first.initialUserNamespace && receipts.every((r) => JSON.stringify(r) === JSON.stringify(first));
+  return {
+    privilege: zeroCap ? "zero-cap" : "privileged",
+    basis: "runtime-attested",
+    realUid: first.realUid,
+    effectiveUid: first.effectiveUid,
+    effectiveCapabilities: first.effectiveCapabilities,
+    noNewPrivileges: first.noNewPrivileges,
+    attestationArtifact: { ref: result.executionAttestationManifestPath, sha256: result.executionAttestationManifestSha256 },
+  };
 }
 
 export class LinuxKernelResearchAdapter
@@ -143,7 +161,7 @@ export class LinuxKernelResearchAdapter
         finding: candidate.payload.finding,
         candidateId: candidate.id,
         grade: "reproduced",
-        executionContext: { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 },
+        executionContext: executionContext(execution.result),
         evidence: [{
           stage: "verify",
           status: "passed",

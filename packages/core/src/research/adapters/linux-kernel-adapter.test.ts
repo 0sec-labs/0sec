@@ -92,6 +92,34 @@ describe("LinuxKernelResearchAdapter", () => {
     expect(result.evidence.some((e) => e.stage === "verify" && e.status === "inconclusive")).toBe(true);
   });
 
+  it("promotes zero-cap context only when every reproduced boot is runtime-attested", async () => {
+    const { target, artifactRoot } = setup();
+    target.config.verify.executionIdentity = { uid: 65534, gid: 65534 };
+    const receipt = { schemaVersion: 1 as const, nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), realUid: 65534, effectiveUid: 65534, savedUid: 65534, realGid: 65534, effectiveGid: 65534, savedGid: 65534, supplementaryGroups: [], inheritableCapabilities: "0000000000000000", permittedCapabilities: "0000000000000000", effectiveCapabilities: "0000000000000000", ambientCapabilities: "0000000000000000", secureBits: 0, userNamespaceMax: 0, initialUserNamespace: true, noNewPrivileges: true };
+    const verifier = vi.fn(async (opts) => ({
+      status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true,
+      bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const,
+      executionIdentity: { uid: 65534, gid: 65534 }, executionAttestationManifestPath: `${opts.dmesgOutPath}.manifest`, executionAttestationManifestSha256: "d".repeat(64),
+      bootResults: [1, 2].map((n) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: `${opts.dmesgOutPath}.${n}`, build_cache_hit: true, executionIdentity: { uid: 65534, gid: 65534 }, executionAttestation: receipt, executionAttestationPath: `${opts.dmesgOutPath}.${n}.receipt`, executionAttestationSha256: "c".repeat(64) })),
+    }));
+    const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: "linux-zero-cap" });
+    expect(result.envelopes[0]?.executionContext).toMatchObject({ privilege: "zero-cap", basis: "runtime-attested", realUid: 65534, effectiveCapabilities: "0000000000000000", noNewPrivileges: true });
+    expect(researchZeroCapProven(result.envelopes[0]!)).toBe(true);
+  });
+
+  it("never promotes a non-root receipt without an explicit execution contract and all-boot manifest", async () => {
+    const { target, artifactRoot } = setup();
+    const receipt = { schemaVersion: 1 as const, nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), realUid: 65534, effectiveUid: 65534, savedUid: 65534, realGid: 65534, effectiveGid: 65534, savedGid: 65534, supplementaryGroups: [], inheritableCapabilities: "0000000000000000", permittedCapabilities: "0000000000000000", effectiveCapabilities: "0000000000000000", ambientCapabilities: "0000000000000000", secureBits: 0, userNamespaceMax: 0, initialUserNamespace: true, noNewPrivileges: true };
+    const verifier = vi.fn(async (opts) => ({
+      status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true,
+      bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const,
+      bootResults: [1, 2].map((n) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: `${opts.dmesgOutPath}.${n}`, build_cache_hit: true, executionAttestation: receipt, executionAttestationPath: `${opts.dmesgOutPath}.${n}.receipt`, executionAttestationSha256: "c".repeat(64) })),
+    }));
+    const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: "linux-forged-context" });
+    expect(result.envelopes[0]?.executionContext).toEqual({ privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 });
+    expect(researchZeroCapProven(result.envelopes[0]!)).toBe(false);
+  });
+
   it("fails discovery closed when the claimed signature is not bound", async () => {
     const { target, artifactRoot } = setup();
     delete target.config.verify.expectedSignature;

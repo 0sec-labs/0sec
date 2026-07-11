@@ -1,10 +1,72 @@
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync, chmodSync } from "node:fs";
-import type { ReproducerResult, CrashReport } from "./kernel-oracle.js";
+import type { ReproducerResult, CrashReport, KernelExecutionAttestation } from "./kernel-oracle.js";
+
+const ATTESTATION_KEYS = ["schema", "nonce", "reproducer_sha256", "ruid", "euid", "suid", "rgid", "egid", "sgid", "groups", "cap_inh", "cap_prm", "cap_eff", "cap_amb", "securebits", "userns_max", "initial_userns", "no_new_privs"] as const;
+
+export function parseKernelExecutionAttestation(raw: string): KernelExecutionAttestation {
+  const fields = new Map<string, string>();
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line) continue;
+    const match = /^([a-z0-9_]+)=([^\r\n]*)$/.exec(line);
+    if (!match || fields.has(match[1])) throw new Error("malformed or duplicate kernel execution attestation field");
+    fields.set(match[1], match[2]);
+  }
+  if (fields.size !== ATTESTATION_KEYS.length || ATTESTATION_KEYS.some((key) => !fields.has(key))) throw new Error("kernel execution attestation has missing or unknown fields");
+  const dec = (key: string): number => { const value = fields.get(key)!; if (!/^(0|[1-9][0-9]{0,9})$/.test(value)) throw new Error(`invalid attestation ${key}`); const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed > 0xffffffff) throw new Error(`invalid attestation ${key}`); return parsed; };
+  const nonce = fields.get("nonce")!, reproducerSha256 = fields.get("reproducer_sha256")!;
+  const caps = ["cap_inh", "cap_prm", "cap_eff", "cap_amb"].map((key) => fields.get(key)!);
+  if (fields.get("schema") !== "1" || !/^[a-f0-9]{32}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(reproducerSha256) || caps.some((cap) => !/^[a-f0-9]{16}$/.test(cap))) throw new Error("invalid kernel execution attestation binding or capability field");
+  const groups = fields.get("groups")!;
+  if (groups !== "" && !/^(0|[1-9][0-9]{0,9})(,(0|[1-9][0-9]{0,9}))*$/.test(groups)) throw new Error("invalid attestation groups");
+  const nnp = dec("no_new_privs"); if (nnp !== 0 && nnp !== 1) throw new Error("invalid attestation no_new_privs");
+  const initial = dec("initial_userns"); if (initial !== 0 && initial !== 1) throw new Error("invalid attestation initial_userns");
+  return { schemaVersion: 1, nonce, reproducerSha256, realUid: dec("ruid"), effectiveUid: dec("euid"), savedUid: dec("suid"), realGid: dec("rgid"), effectiveGid: dec("egid"), savedGid: dec("sgid"), supplementaryGroups: groups ? groups.split(",").map(Number) : [], inheritableCapabilities: caps[0], permittedCapabilities: caps[1], effectiveCapabilities: caps[2], ambientCapabilities: caps[3], secureBits: dec("securebits"), userNamespaceMax: dec("userns_max"), initialUserNamespace: initial === 1, noNewPrivileges: nnp === 1 };
+}
+
+export function bindKernelExecutionAttestation(receipt: KernelExecutionAttestation, expected: { nonce: string; reproducerSha256: string; dropUid?: number; dropGid?: number }): void {
+  if ((expected.dropUid === undefined) !== (expected.dropGid === undefined)) throw new Error("kernel execution identity requires UID and GID together");
+  if (receipt.nonce !== expected.nonce || receipt.reproducerSha256 !== expected.reproducerSha256) throw new Error("kernel execution attestation binding mismatch");
+  if (expected.dropUid !== undefined && (receipt.realUid !== expected.dropUid || receipt.effectiveUid !== expected.dropUid || receipt.savedUid !== expected.dropUid || receipt.supplementaryGroups.length !== 0 || [receipt.inheritableCapabilities, receipt.permittedCapabilities, receipt.effectiveCapabilities, receipt.ambientCapabilities].some((cap) => cap !== "0000000000000000") || !receipt.noNewPrivileges || receipt.userNamespaceMax !== 0 || !receipt.initialUserNamespace)) throw new Error("kernel execution attestation did not prove requested UID/capability boundary");
+  if (expected.dropGid !== undefined && (receipt.realGid !== expected.dropGid || receipt.effectiveGid !== expected.dropGid || receipt.savedGid !== expected.dropGid)) throw new Error("kernel execution attestation did not prove requested GID boundary");
+}
+
+export function renderKernelExecutionLauncherSource(): string {
+  return String.raw`#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <grp.h>
+#include <sched.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+static int num(const char *s,unsigned *v){char *e=0;unsigned long n=strtoul(s,&e,10);if(!s[0]||*e||n>0xffffffffUL)return -1;*v=(unsigned)n;return 0;}
+static int writezero(void){int f=open("/proc/sys/user/max_user_namespaces",O_WRONLY);if(f<0)return -1;if(write(f,"0\n",2)!=2){close(f);return -1;}return close(f);}
+int main(int argc,char **argv){
+ if(argc<8)return 125; unsigned uid=0,gid=0; int du=strcmp(argv[4],"-")!=0,dg=strcmp(argv[5],"-")!=0; if(du!=dg)return 125;
+ if((du&&num(argv[4],&uid))||(dg&&num(argv[5],&gid)))return 125;
+ int receipt=open(argv[1],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400); if(receipt<0)return 126;
+ if(du&&writezero())return 126;
+ int p[2]; if(pipe2(p,O_CLOEXEC))return 126; pid_t child=fork(); if(child<0)return 126;
+ if(child){close(p[1]);char x;ssize_t n=read(p[0],&x,1);close(p[0]);if(n!=0){waitpid(child,0,0);return 127;}int m=open(argv[6],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400);if(m<0){kill(child,SIGKILL);waitpid(child,0,0);return 126;}write(m,"1\n",2);close(m);int st;if(waitpid(child,&st,0)<0)return 126;if(WIFEXITED(st))return WEXITSTATUS(st);return 128+WTERMSIG(st);}
+ close(p[0]); if(dg&&(setgroups(0,NULL)||setresgid(gid,gid,gid)))return 126;if(du&&setresuid(uid,uid,uid))return 126;if(du&&prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0))return 126;
+ uid_t r,e,s;gid_t gr,ge,gs;if(getresuid(&r,&e,&s)||getresgid(&gr,&ge,&gs))return 126;gid_t gl[64];int ng=getgroups(64,gl);if(ng<0)return 126;
+ FILE *st=fopen("/proc/self/status","r");char line[256],ci[17]="",cp[17]="",ce[17]="",ca[17]="";int nnp=-1;if(!st)return 126;while(fgets(line,sizeof line,st)){sscanf(line,"CapInh: %16[0-9a-fA-F]",ci);sscanf(line,"CapPrm: %16[0-9a-fA-F]",cp);sscanf(line,"CapEff: %16[0-9a-fA-F]",ce);sscanf(line,"CapAmb: %16[0-9a-fA-F]",ca);sscanf(line,"NoNewPrivs: %d",&nnp);}fclose(st);
+ char *caps[]={ci,cp,ce,ca};for(int i=0;i<4;i++){if(strlen(caps[i])!=16)return 126;for(char *q=caps[i];*q;q++)if(*q>='A'&&*q<='F')*q+=32;}
+ struct stat ns,ns1;if(stat("/proc/self/ns/user",&ns)||stat("/proc/1/ns/user",&ns1))return 126;FILE *um=fopen("/proc/sys/user/max_user_namespaces","r");unsigned umax;if(!um||fscanf(um,"%u",&umax)!=1)return 126;fclose(um);int sb=prctl(PR_GET_SECUREBITS);if(sb<0||nnp<0)return 126;
+ FILE *o=fdopen(receipt,"w");if(!o)return 126;fprintf(o,"schema=1\nnonce=%s\nreproducer_sha256=%s\nruid=%u\neuid=%u\nsuid=%u\nrgid=%u\negid=%u\nsgid=%u\ngroups=",argv[2],argv[3],r,e,s,gr,ge,gs);for(int i=0;i<ng;i++)fprintf(o,"%s%u",i?",":"",gl[i]);fprintf(o,"\ncap_inh=%s\ncap_prm=%s\ncap_eff=%s\ncap_amb=%s\nsecurebits=%d\nuserns_max=%u\ninitial_userns=%d\nno_new_privs=%d\n",ci,cp,ce,ca,sb,umax,ns.st_ino==ns1.st_ino,nnp);if(fclose(o))return 126;
+ execvp(argv[7],&argv[7]);char bad='x';write(p[1],&bad,1);return 127;
+}`;
+}
 
 export interface KernelVmConfig {
   qemuBinary: string;
@@ -874,7 +936,10 @@ async function stopVm(proc: ReturnType<typeof spawn>): Promise<void> {
   }
 }
 
-function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" | "bash"): string {
+function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" | "bash", request: NonNullable<CrashReport["executionAttestationRequest"]>): string {
+  const uid = request.dropUid === undefined ? "-" : String(request.dropUid);
+  const gid = request.dropGid === undefined ? "-" : String(request.dropGid);
+  const launcherArgs = `"$WORK_DIR/attest-launcher" "$SHARE_DIR/execution-attestation.txt" ${shellQuote(request.nonce)} ${shellQuote(request.reproducerSha256)} ${shellQuote(uid)} ${shellQuote(gid)} "$SHARE_DIR/exec-started.ok"`;
   if (language === "syz") {
     return [
       "#!/bin/sh",
@@ -887,7 +952,7 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
       "exit_code=0",
       "timed_out=0",
       "cp \"$SHARE_DIR/repro.syz\" \"$WORK_DIR/repro.syz\"",
-      "if command -v syz-execprog >/dev/null 2>&1; then",
+      "if command -v syz-execprog >/dev/null 2>&1 && /usr/bin/gcc -O2 -o \"$WORK_DIR/attest-launcher\" \"$SHARE_DIR/attest-launcher.c\" >>\"$SHARE_DIR/compile.log\" 2>&1; then",
       "  compiled=1",
       "  : > \"$SHARE_DIR/compile.log\"",
       "else",
@@ -901,7 +966,7 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
       // `-cover=1` enables KCOV; `-coverfile` is the shard prefix. Both flags are no-ops
       // (or rejected) on a non-KCOV kernel / older syz-execprog — fail-soft so a
       // run without coverage still records its crash result.
-      `  if timeout ${shellQuote(String(config.timeoutSec))}s syz-execprog -cover=1 -coverfile="$SHARE_DIR/coverage" "$WORK_DIR/repro.syz" >"$SHARE_DIR/run.log" 2>&1; then`,
+      `  if timeout ${shellQuote(String(config.timeoutSec))}s ${launcherArgs} syz-execprog -cover=1 -coverfile="$SHARE_DIR/coverage" "$WORK_DIR/repro.syz" >"$SHARE_DIR/run.log" 2>&1; then`,
       "    executed=1",
       "    exit_code=0",
       "  else",
@@ -912,6 +977,7 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
       "      executed=1",
       "    fi",
       "  fi",
+      "  [ -f \"$SHARE_DIR/exec-started.ok\" ] || executed=0",
       "  # Consolidate coverage: syz-execprog -coverfile writes the PC set to",
       "  # per-program/per-call shards named `coverage_prog<N>.<call>` (e.g.",
       "  # `coverage_prog0.0`), and may also leave a bare `coverage` / `coverage.N`.",
@@ -977,14 +1043,14 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
     "timed_out=0",
     "cp \"$SHARE_DIR/repro.c\" \"$WORK_DIR/repro.c\"",
     ...widenLines,
-    `if /usr/bin/gcc -B/usr/bin/ -O0 -g -o "$WORK_DIR/repro" "$WORK_DIR/repro.c" -lpthread >"$SHARE_DIR/compile.log" 2>&1; then`,
+    `if /usr/bin/gcc -B/usr/bin/ -O0 -g -o "$WORK_DIR/repro" "$WORK_DIR/repro.c" -lpthread >"$SHARE_DIR/compile.log" 2>&1 && /usr/bin/gcc -O2 -o "$WORK_DIR/attest-launcher" "$SHARE_DIR/attest-launcher.c" >>"$SHARE_DIR/compile.log" 2>&1; then`,
     "  compiled=1",
     "else",
     "  exit_code=$?",
     "fi",
     "if [ \"$compiled\" = \"1\" ]; then",
     "  dmesg -C 2>/dev/null || true",
-    `  if timeout ${shellQuote(String(config.timeoutSec))}s "$WORK_DIR/repro" >"$SHARE_DIR/run.log" 2>&1; then`,
+    `  if timeout ${shellQuote(String(config.timeoutSec))}s ${launcherArgs} "$WORK_DIR/repro" >"$SHARE_DIR/run.log" 2>&1; then`,
     "    executed=1",
     "    exit_code=0",
     "  else",
@@ -995,6 +1061,7 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
     "      executed=1",
     "    fi",
     "  fi",
+    "  [ -f \"$SHARE_DIR/exec-started.ok\" ] || executed=0",
     "else",
     "  : > \"$SHARE_DIR/run.log\"",
     "fi",
@@ -1193,11 +1260,16 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
       })()
     : mkdtempSync(join(tmpdir(), "pwnkit-kvm-"));
   const language = report.reproducerLanguage ?? "c";
+  const request = report.executionAttestationRequest ?? {
+    nonce: randomBytes(16).toString("hex"),
+    reproducerSha256: createHash("sha256").update(report.reproducer).digest("hex"),
+  };
   const sourcePath = join(hostTmpDir, language === "syz" ? "repro.syz" : "repro.c");
   const runnerScriptPath = join(hostTmpDir, "runner.sh");
   const serialLogPath = join(hostTmpDir, "serial.log");
   writeFileSync(sourcePath, report.reproducer, "utf-8");
-  writeFileSync(runnerScriptPath, renderGuestRunnerScript(config, language), "utf-8");
+  writeFileSync(runnerScriptPath, renderGuestRunnerScript(config, language, request), "utf-8");
+  writeFileSync(join(hostTmpDir, "attest-launcher.c"), renderKernelExecutionLauncherSource(), "utf-8");
 
   // Stage the race-widening kprobe module source for the guest to (best-effort)
   // build + insmod. Only written when fully parameterized; the guest fails soft
@@ -1244,6 +1316,12 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
     const coveragePcs = existsSync(join(hostTmpDir, "coverage.log"))
       ? parseCoveragePcs(readFileSync(join(hostTmpDir, "coverage.log"), "utf-8"))
       : undefined;
+    const executionAttestationPath = join(hostTmpDir, "execution-attestation.txt");
+    let executionAttestation: KernelExecutionAttestation | undefined;
+    if (existsSync(executionAttestationPath)) {
+      executionAttestation = parseKernelExecutionAttestation(readFileSync(executionAttestationPath, "utf-8"));
+      bindKernelExecutionAttestation(executionAttestation, request);
+    }
 
     return {
       compiled,
@@ -1253,6 +1331,7 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
       exitCode: Number.isFinite(exitCode) ? exitCode : 1,
       timedOut,
       ...(coveragePcs && coveragePcs.length > 0 ? { coveragePcs } : {}),
+      ...(executionAttestation ? { executionAttestation, executionAttestationPath } : {}),
     };
   } finally {
     await stopVm(vmProc);
@@ -1293,6 +1372,10 @@ export interface KernelFindingVerification {
    * diff against previously-seen edges and feed coverage back to the LLM.
    */
   coveragePcs?: string[];
+  executionAttestation?: KernelExecutionAttestation;
+  executionAttestationPath?: string;
+  executionAttestationSha256?: string;
+  executionIdentity?: { uid: number; gid: number };
 }
 
 export interface VerifyKernelFindingOptions {
@@ -1328,6 +1411,8 @@ export interface VerifyKernelFindingOptions {
   buildRunner?: KernelBuildOptions["buildRunner"];
   /** Injection point for tests; defaults to the real QEMU runner. */
   vmRunner?: (report: CrashReport) => Promise<ReproducerResult>;
+  /** Explicit unprivileged pre-exec boundary. Omit for the current root lane. */
+  executionIdentity?: { uid: number; gid: number };
 }
 
 const KERNEL_CRASH_SIGNATURES: { pattern: RegExp; signature: string }[] = [
@@ -1406,6 +1491,15 @@ export async function verifyKernelFinding(
   if (!existsSync(reproPath)) {
     throw new Error(`reproducer not found: ${reproPath}`);
   }
+  if (opts.executionIdentity && (!Number.isSafeInteger(opts.executionIdentity.uid) || opts.executionIdentity.uid <= 0 || opts.executionIdentity.uid > 0xffffffff || !Number.isSafeInteger(opts.executionIdentity.gid) || opts.executionIdentity.gid <= 0 || opts.executionIdentity.gid > 0xffffffff)) {
+    throw new Error("executionIdentity requires positive uint32 uid/gid values");
+  }
+  const reproducerBytes = readFileSync(reproPath);
+  const attestationRequest = {
+    nonce: randomBytes(16).toString("hex"),
+    reproducerSha256: createHash("sha256").update(reproducerBytes).digest("hex"),
+    ...(opts.executionIdentity ? { dropUid: opts.executionIdentity.uid, dropGid: opts.executionIdentity.gid } : {}),
+  };
 
   // ── Build (or cache-hit) ─────────────────────────────────────
   let artifacts: KernelVmArtifacts;
@@ -1458,8 +1552,9 @@ export async function verifyKernelFinding(
       crashType: "unknown",
       faultingFunction: "unknown",
       stackFrames: [],
-      reproducer: readFileSync(reproPath, "utf-8"),
+      reproducer: reproducerBytes.toString("utf-8"),
       reproducerLanguage,
+      executionAttestationRequest: attestationRequest,
     };
     const runner = opts.vmRunner ?? runReproducerInKernelVm;
     runResult = await runner(report);
@@ -1484,14 +1579,25 @@ export async function verifyKernelFinding(
   // ── Persist dmesg + decide verdict ──────────────────────────
   const dmesgContent = runResult.dmesg || runResult.output || "";
   writeProofFileReadOnly(dmesgOutPath, dmesgContent);
-
-  // KCOV coverage threaded through to every post-run verdict (AIxCC T1) so the
-  // verify loop can compute new edges and feed them back to the LLM. Spread
-  // additively — undefined when no coverage was collected.
   const cov: Pick<KernelFindingVerification, "coveragePcs"> =
     runResult.coveragePcs && runResult.coveragePcs.length > 0
       ? { coveragePcs: runResult.coveragePcs }
       : {};
+  let attestationFields: Pick<KernelFindingVerification, "executionAttestation" | "executionAttestationPath" | "executionAttestationSha256"> = {};
+  if (runResult.executionAttestation) {
+    bindKernelExecutionAttestation(runResult.executionAttestation, attestationRequest);
+    const attestationPath = `${dmesgOutPath}.execution-attestation`;
+    const raw = runResult.executionAttestationPath && existsSync(runResult.executionAttestationPath)
+      ? readFileSync(runResult.executionAttestationPath, "utf-8")
+      : serializeKernelExecutionAttestation(runResult.executionAttestation);
+    const parsedRaw = parseKernelExecutionAttestation(raw);
+    bindKernelExecutionAttestation(parsedRaw, attestationRequest);
+    if (serializeKernelExecutionAttestation(parsedRaw) !== serializeKernelExecutionAttestation(runResult.executionAttestation)) throw new Error("kernel execution attestation object/raw mismatch");
+    writeProofFileReadOnly(attestationPath, raw);
+    attestationFields = { executionAttestation: parsedRaw, executionAttestationPath: attestationPath, executionAttestationSha256: createHash("sha256").update(raw).digest("hex") };
+  } else if (opts.executionIdentity) {
+    return { status: "run_failed", dmesg_path: dmesgOutPath, build_cache_hit, ...cov };
+  }
 
   if (!runResult.compiled || !runResult.executed) {
     return {
@@ -1499,6 +1605,7 @@ export async function verifyKernelFinding(
       dmesg_path: dmesgOutPath,
       build_cache_hit,
       ...cov,
+      ...attestationFields,
     };
   }
 
@@ -1512,6 +1619,8 @@ export async function verifyKernelFinding(
         dmesg_path: dmesgOutPath,
         build_cache_hit,
         ...cov,
+        ...attestationFields,
+        ...(opts.executionIdentity ? { executionIdentity: opts.executionIdentity } : {}),
       };
     }
     const detected = detectKernelSignature(dmesgContent);
@@ -1523,6 +1632,7 @@ export async function verifyKernelFinding(
         dmesg_path: dmesgOutPath,
         build_cache_hit,
         ...cov,
+        ...attestationFields,
       };
     }
     return {
@@ -1530,6 +1640,7 @@ export async function verifyKernelFinding(
       dmesg_path: dmesgOutPath,
       build_cache_hit,
       ...cov,
+      ...attestationFields,
     };
   }
 
@@ -1541,6 +1652,7 @@ export async function verifyKernelFinding(
       dmesg_path: dmesgOutPath,
       build_cache_hit,
       ...cov,
+      ...attestationFields,
     };
   }
 
@@ -1549,7 +1661,12 @@ export async function verifyKernelFinding(
     dmesg_path: dmesgOutPath,
     build_cache_hit,
     ...cov,
+    ...attestationFields,
   };
+}
+
+function serializeKernelExecutionAttestation(r: KernelExecutionAttestation): string {
+  return `schema=1\nnonce=${r.nonce}\nreproducer_sha256=${r.reproducerSha256}\nruid=${r.realUid}\neuid=${r.effectiveUid}\nsuid=${r.savedUid}\nrgid=${r.realGid}\negid=${r.effectiveGid}\nsgid=${r.savedGid}\ngroups=${r.supplementaryGroups.join(",")}\ncap_inh=${r.inheritableCapabilities}\ncap_prm=${r.permittedCapabilities}\ncap_eff=${r.effectiveCapabilities}\ncap_amb=${r.ambientCapabilities}\nsecurebits=${r.secureBits}\nuserns_max=${r.userNamespaceMax}\ninitial_userns=${r.initialUserNamespace ? 1 : 0}\nno_new_privs=${r.noNewPrivileges ? 1 : 0}\n`;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -1594,6 +1711,8 @@ export interface KernelFindingNbootVerification extends KernelFindingVerificatio
   bootStatuses: KernelFindingStatus[];
   /** Full per-boot records, including the independently captured dmesg path. */
   bootResults: KernelFindingVerification[];
+  executionAttestationManifestPath?: string;
+  executionAttestationManifestSha256?: string;
 }
 
 /**
@@ -1660,6 +1779,14 @@ export async function verifyAcrossBoots(
     ? "reproduced"
     : pickWorstStatus(bootStatuses);
 
+  let manifest: Pick<KernelFindingNbootVerification, "executionAttestationManifestPath" | "executionAttestationManifestSha256"> = {};
+  const reproduced = bootResults.filter((boot) => boot.status === "reproduced");
+  if (nbootStable && opts.executionIdentity && reproduced.length > 0 && reproduced.every((boot) => boot.executionAttestationPath && boot.executionAttestationSha256 && boot.executionIdentity?.uid === opts.executionIdentity!.uid && boot.executionIdentity?.gid === opts.executionIdentity!.gid)) {
+    const path = `${dmesgOutPath ?? winning.dmesg_path}.execution-attestations.manifest`;
+    const content = reproduced.map((boot, index) => `${index + 1}\t${boot.executionAttestationSha256}\t${boot.executionAttestationPath}`).join("\n") + "\n";
+    writeProofFileReadOnly(path, content);
+    manifest = { executionAttestationManifestPath: path, executionAttestationManifestSha256: createHash("sha256").update(content).digest("hex") };
+  }
   return {
     status: aggregateStatus,
     ...(winning.signature ? { signature: winning.signature } : {}),
@@ -1670,6 +1797,9 @@ export async function verifyAcrossBoots(
     nbootStable,
     bootStatuses,
     bootResults,
+    ...manifest,
+    ...(winning.executionIdentity ? { executionIdentity: winning.executionIdentity } : {}),
+    ...(winning.executionAttestation ? { executionAttestation: winning.executionAttestation, executionAttestationPath: winning.executionAttestationPath, executionAttestationSha256: winning.executionAttestationSha256 } : {}),
   };
 }
 
