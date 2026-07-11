@@ -218,6 +218,37 @@ describe("runHunt — novelty gate wiring", () => {
     expect(opts.novelty).toBeUndefined();
   });
 
+  it("fails closed before discovery when novelty evidence is required but unavailable", async () => {
+    localMirrorsMock.mockReturnValue([]);
+
+    const outcome = await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      novelty: { rootDir: "/missing/lore", lists: ["linux-kernel"], required: true },
+    });
+
+    expect(outcome.exitCode).toBe(3);
+    expect(generateVariantCandidatesMock).not.toHaveBeenCalled();
+    expect(runHuntScanMock).not.toHaveBeenCalled();
+    expect(outcome.result).toMatchObject({
+      novelty: { enabled: true, required: true, mirrors: [] },
+      note: expect.stringContaining("did not run"),
+    });
+  });
+
+  it("applies the kernel-LPE methodology preset to candidate selection and finder review", async () => {
+    await runHunt({ sourceRoot: tmpRoot, seedPath, methodology: true });
+
+    expect(generateVariantCandidatesMock).toHaveBeenCalledWith(expect.objectContaining({ reachablePrefer: true }));
+    expect(runHuntScanMock).toHaveBeenCalledWith(expect.objectContaining({
+      attemptsPerCandidate: 4,
+      judgeTopK: 2,
+      brief: expect.objectContaining({
+        pattern: expect.stringMatching(/object lifecycle.*buffer\/page provenance/is),
+      }),
+    }));
+  });
+
   it("continues fail-open when novelty sync fails", async () => {
     syncLoreMirrorMock.mockRejectedValueOnce(new Error("network down"));
 
