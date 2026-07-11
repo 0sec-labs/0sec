@@ -117,6 +117,8 @@ export interface SyzbotQueueMineOptions {
   fetchRepro?: SyzbotFetcher;
   /** Cost guard on detail fetches. Default 20. */
   maxDetailFetches?: number;
+  /** Delay between live detail/repro requests to avoid dashboard throttling. Default 0. */
+  detailDelayMs?: number;
   log?: (msg: string) => void;
 }
 
@@ -128,6 +130,14 @@ export interface SyzbotQueueMineResult {
   /** Total rows parsed across all fetched buckets (before filtering). */
   scanned: number;
   warnings: string[];
+}
+
+function boundedInteger(value: number | undefined, fallback: number, min: number, max: number, name: string): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved < min || resolved > max) {
+    throw new Error(`invalid ${name}: expected integer ${min}..${max}`);
+  }
+  return resolved;
 }
 
 /**
@@ -379,14 +389,36 @@ export function parseSyzReproOptions(program: string): {
     return { features: [], reachability: "unknown", warnings: ["invalid syz options header"] };
   }
   const sandbox = typeof options.sandbox === "string" ? options.sandbox : undefined;
-  const features = REPRO_SETUP_FEATURES.filter((name) => options[name] === true);
+  const features: string[] = REPRO_SETUP_FEATURES.filter((name) => options[name] === true);
+  // The options header does not capture all setup performed by the program.
+  // Conservatively recognize calls that need host capabilities, synthetic
+  // devices, or fault-injection support on the target distro.
+  const body = program.slice(0, 2 * 1024 * 1024);
+  const callFeatures: Array<[string, RegExp]> = [
+    ["mount", /\b(?:syz_mount_image|mount\$|fsopen\$|fsmount\$)/],
+    ["tun-device", /\/dev\/net\/tun|TUNSETIFF/],
+    ["net-admin", /RTM_NEW(?:QDISC|LINK|TFILTER|TCLASS)|rtnetlink\$(?:newlink|newqdisc)/i],
+    ["xfrm-admin", /XFRM_MSG_NEW|netlink\$xfrm/i],
+    ["vhci", /syz_emit_vhci|\/dev\/vhci/i],
+    ["usb", /syz_usb_(?:connect|control_io)|\/dev\/raw-gadget/i],
+    ["bpf", /\bbpf\$/],
+    ["fault-injection", /\(fail_nth:\s*\d+\)/],
+  ];
+  for (const [name, pattern] of callFeatures) {
+    if (pattern.test(body) && !features.includes(name)) features.push(name);
+  }
   const privilegedFeatures = features.filter((name) =>
-    ["tun", "netdev", "resetnet", "usb", "vhci", "wifi", "ieee802154", "sysctl", "fault", "swap"].includes(name),
+    [
+      "tun", "netdev", "resetnet", "usb", "vhci", "wifi", "ieee802154", "sysctl", "fault", "swap",
+      "mount", "tun-device", "net-admin", "xfrm-admin", "bpf", "fault-injection",
+    ].includes(name),
   );
   const warnings: string[] = [];
-  if (sandbox === "none") warnings.push("reproducer requires sandbox:none");
+  if (sandbox === "none" || sandbox === "") {
+    warnings.push(`reproducer requires ${sandbox === "none" ? "sandbox:none" : "an empty/unsandboxed mode"}`);
+  }
   if (privilegedFeatures.length > 0) warnings.push(`harness setup: ${privilegedFeatures.join(", ")}`);
-  const privileged = sandbox === "none" || privilegedFeatures.length > 0;
+  const privileged = sandbox === "none" || sandbox === "" || privilegedFeatures.length > 0;
   const reachability = privileged
     ? "privileged-or-harness"
     : sandbox === "namespace"
@@ -495,6 +527,45 @@ export function toHuntCandidates(result: SyzbotQueueMineResult): HuntCandidate[]
 
 /** The only host this stage is ever allowed to reach (SSRF guard). */
 export const SYZBOT_ALLOWED_HOST = "syzkaller.appspot.com";
+const MAX_SYZBOT_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+async function readBoundedResponse(res: Response, url: string): Promise<string> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_SYZBOT_RESPONSE_BYTES) {
+    throw new Error(`oversized syzbot response for ${url}`);
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_SYZBOT_RESPONSE_BYTES) {
+        await reader.cancel("response exceeds pwnkit size limit");
+        throw new Error(`oversized syzbot response for ${url}`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
+function retryDelayMs(res: Response): number {
+  const retryAfter = res.headers.get("retry-after");
+  const seconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : 1;
+  return Math.min(Math.max(seconds * 1_000, 250), 5_000);
+}
 
 /** Production fetcher over global `fetch` (Node ≥18). Not used by tests. */
 export const defaultSyzbotFetcher: SyzbotFetcher = async (url) => {
@@ -512,18 +583,25 @@ export const defaultSyzbotFetcher: SyzbotFetcher = async (url) => {
       `refusing to fetch non-allowlisted url (host must be ${SYZBOT_ALLOWED_HOST} over https): ${url}`,
     );
   }
-  const res = await fetch(parsed.toString(), {
-    headers: { "user-agent": "pwnkit-syzbot-queue-mine/1.0" },
-    redirect: "manual",
-    // The invalid listing is ~19k rows and can take tens of seconds from the
-    // public dashboard; remain bounded without making the live source unusable.
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (res.status >= 300 && res.status < 400) throw new Error(`refusing syzbot redirect for ${url}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const length = Number(res.headers.get("content-length"));
-  if (Number.isFinite(length) && length > 16 * 1024 * 1024) throw new Error(`oversized syzbot response for ${url}`);
-  return res.text();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(parsed.toString(), {
+      headers: { "user-agent": "pwnkit-syzbot-queue-mine/1.0" },
+      redirect: "manual",
+      // The invalid listing is ~19k rows and can take tens of seconds from the
+      // public dashboard; remain bounded without making the live source unusable.
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (res.status >= 300 && res.status < 400) {
+      throw new Error(`refusing syzbot redirect for ${url}`);
+    }
+    if (res.status === 429 && attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs(res)));
+      continue;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    return readBoundedResponse(res, url);
+  }
+  throw new Error(`HTTP 429 for ${url}`);
 };
 
 // ── Stage entry point ────────────────────────────────────────────────────────
@@ -545,7 +623,9 @@ export async function mineSyzbotQueue(
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const subsystems =
     opts.subsystems !== undefined ? opts.subsystems : [...DEFAULT_TARGET_SUBSYSTEMS];
-  const limit = opts.limit ?? 50;
+  const limit = boundedInteger(opts.limit, 50, 1, 500, "limit");
+  const maxDetail = boundedInteger(opts.maxDetailFetches, 20, 0, 100, "maxDetailFetches");
+  const detailDelayMs = boundedInteger(opts.detailDelayMs, 0, 0, 5_000, "detailDelayMs");
   const warnings: string[] = [];
 
   // Fetch + parse each bucket independently; one failure never sinks the rest.
@@ -590,10 +670,12 @@ export async function mineSyzbotQueue(
 
   // Optional detail enrichment for the top candidates.
   if (opts.fetchDetail) {
-    const maxDetail = opts.maxDetailFetches ?? 20;
     let fetched = 0;
     for (const c of candidates) {
       if (fetched >= maxDetail) break;
+      if (fetched > 0 && detailDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, detailDelayMs));
+      }
       fetched++;
       c.enrichmentStatus = "failed";
       c.reachability = "unknown";
@@ -604,6 +686,9 @@ export async function mineSyzbotQueue(
         Object.assign(c, metadata);
         if (metadata.reproSyzUrl && opts.fetchRepro) {
           try {
+            if (detailDelayMs > 0) {
+              await new Promise((resolve) => setTimeout(resolve, detailDelayMs));
+            }
             const program = await opts.fetchRepro(metadata.reproSyzUrl);
             const repro = parseSyzReproOptions(program);
             c.reproSandbox = repro.sandbox;

@@ -22,6 +22,7 @@ interface SyzbotMineOpts {
   subsystems: string;
   limit: string;
   details: string;
+  detailDelay: string;
 }
 
 function parsePositiveInt(value: string, name: string, max: number): number {
@@ -131,10 +132,12 @@ export function registerKernelCommand(program: Command): void {
     .option("--subsystems <csv>", "Subsystem labels to keep", "net,net/sched,net/tls,xfrm,crypto,vsock,nfc")
     .option("--limit <n>", "Maximum ranked candidates", "30")
     .option("--details <n>", "Top candidate detail pages to enrich", "15")
+    .option("--detail-delay <ms>", "Delay between syzbot detail/repro requests", "750")
     .action(async (opts: SyzbotMineOpts) => {
       try {
         const limit = parsePositiveInt(opts.limit, "--limit", 500);
         const details = parsePositiveInt(opts.details, "--details", 100);
+        const detailDelayMs = parsePositiveInt(opts.detailDelay, "--detail-delay", 5_000);
         const subsystems = opts.subsystems.split(",").map((value) => value.trim()).filter(Boolean);
         const { defaultSyzbotFetcher, mineSyzbotQueue, toHuntCandidates } = await import("@pwnkit/core");
         const result = await mineSyzbotQueue({
@@ -142,6 +145,7 @@ export function registerKernelCommand(program: Command): void {
           fetchDetail: defaultSyzbotFetcher,
           fetchRepro: defaultSyzbotFetcher,
           maxDetailFetches: details,
+          detailDelayMs,
           limit,
           subsystems,
           log: (message) => console.error(message),
