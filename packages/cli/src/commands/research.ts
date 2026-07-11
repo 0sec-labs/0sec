@@ -61,6 +61,23 @@ export function registerResearchCommand(program: Command): void {
     });
 
   research
+    .command("linux-matrix")
+    .description("Import externally executed vulnerable-vs-patched boot logs; pwnkit validates and hashes them but does not execute boots")
+    .requiredOption("--matrix <path>", "Versioned external boot-matrix manifest JSON")
+    .requiredOption("--finding <path>", "Existing Finding JSON to bind the proof to")
+    .option("--artifact-root <path>", "Research artifact root", ".pwnkit-research")
+    .action(async (opts: { matrix: string; finding: string; artifactRoot: string }) => {
+      const { LinuxBootMatrixImportAdapter, postFinding, runResearch } = await import("@pwnkit/core");
+      const matrix = resolve(opts.matrix);
+      const finding = JSON.parse(readFileSync(resolve(opts.finding), "utf8")) as Finding;
+      print(await runResearch(
+        new LinuxBootMatrixImportAdapter(),
+        { kind: "linux.kernel-boot-matrix-import", id: `linux-matrix:${finding.id}`, location: matrix, config: { finding } },
+        { artifactRoot: resolve(opts.artifactRoot), emitFinding: postFinding, log: (message) => process.stderr.write(message + "\n") },
+      ));
+    });
+
+  research
     .command("linux")
     .description("Run a supplied Linux kernel reproducer through the shared N-boot evidence gate")
     .requiredOption("--kernel-tree <path>", "Linux source tree")
