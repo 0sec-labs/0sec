@@ -70,17 +70,23 @@ describe("kernel execution attestation", () => {
   });
 
   it.skipIf(process.platform !== "linux")("compiles the launcher and proves a successful exec handshake", () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-attest-launcher-"));
-    const source = join(root, "launcher.c");
-    const binary = join(root, "launcher");
-    const receiptPath = join(root, "receipt");
-    const markerPath = join(root, "started");
-    writeFileSync(source, renderKernelExecutionLauncherSource());
-    expect(spawnSync("cc", ["-O2", "-Wall", "-Wextra", "-o", binary, source], { stdio: "pipe" }).status).toBe(0);
-    expect(spawnSync("/usr/bin/env", [binary, receiptPath, "a".repeat(32), "b".repeat(64), "-", "-", markerPath, "/bin/true"], { stdio: "pipe" }).status).toBe(0);
-    expect(existsSync(markerPath)).toBe(true);
-    const receipt = parseKernelExecutionAttestation(readFileSync(receiptPath, "utf8"));
-    bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64) });
+    // Some hosted runners mount the system temp directory noexec. Build the
+    // launcher under the checked-out workspace so this test exercises exec.
+    const root = mkdtempSync(join(process.cwd(), ".pwnkit-attest-launcher-"));
+    try {
+      const source = join(root, "launcher.c");
+      const binary = join(root, "launcher");
+      const receiptPath = join(root, "receipt");
+      const markerPath = join(root, "started");
+      writeFileSync(source, renderKernelExecutionLauncherSource());
+      expect(spawnSync("cc", ["-O2", "-Wall", "-Wextra", "-o", binary, source], { stdio: "pipe" }).status).toBe(0);
+      expect(spawnSync("/usr/bin/env", [binary, receiptPath, "a".repeat(32), "b".repeat(64), "-", "-", markerPath, "/bin/true"], { stdio: "pipe" }).status).toBe(0);
+      expect(existsSync(markerPath)).toBe(true);
+      const receipt = parseKernelExecutionAttestation(readFileSync(receiptPath, "utf8"));
+      bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64) });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
