@@ -140,6 +140,7 @@ export function registerKernelCommand(program: Command): void {
         const result = await mineSyzbotQueue({
           fetch: defaultSyzbotFetcher,
           fetchDetail: defaultSyzbotFetcher,
+          fetchRepro: defaultSyzbotFetcher,
           maxDetailFetches: details,
           limit,
           subsystems,
