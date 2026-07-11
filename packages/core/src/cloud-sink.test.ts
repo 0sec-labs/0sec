@@ -115,6 +115,25 @@ describe("cloud-sink", () => {
     });
   });
 
+  it("normalizes and transports research evidence envelopes", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-research";
+    process.env.PWNKIT_CLOUD_TOKEN = "tok";
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const receipt = { schemaVersion: 1, evidenceId: "e-1", grade: "reproduced" };
+
+    await postFinding({
+      id: "f-research", templateId: "research", title: "Finding", description: "Proof",
+      severity: "high", category: "other", status: "confirmed",
+      evidence: { request: "", response: "" }, timestamp: 1,
+      researchEvidence: [receipt],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.finding.researchEvidence).toEqual([receipt]);
+  });
+
   it("postFinalReport POSTs the final report flag", async () => {
     process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
     process.env.PWNKIT_CLOUD_SCAN_ID = "scan-456";
