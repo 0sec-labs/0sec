@@ -1,4 +1,5 @@
 import type { SemgrepFinding } from "@pwnkit/shared";
+import type { FinderLens, VerifyLens } from "../stages/hunt-scan.js";
 
 /**
  * Prompt for the Solana on-chain (Anchor / native Rust) source-review profile.
@@ -213,9 +214,14 @@ while value is stolen or state corrupted.
 
 - **Preferred:** a concrete account list for the malicious instruction (each
   account: who owns it, is it a signer, is it a forged/substituted PDA or token
-  account) plus, when the repo has a test harness
-  (\`anchor test\`, \`solana-program-test\`, \`bankrun\`, \`litesvm\`), a
-  description of the test that would process it.
+  account) PLUS a runnable **litesvm Rust test** that loads the program (from its
+  built \`.so\` or an embedded processor), submits the malicious instruction, and
+  ASSERTS the impact (attacker balance/vault/mint/authority change) — the test
+  PASSES iff the bug exists. A \`litesvm\` \`#[test]\` is the PoC FORM for this
+  profile (it runs in-process, no validator boot); a \`solana-program-test\` /
+  \`bankrun\` test is acceptable when the repo already wires one, but PREFER
+  litesvm. This test is what the reproduction harness EXECUTES to grade the
+  finding, so emit it whenever you can trace the malicious instruction.
 - Do NOT claim a bug you cannot trace to a specific maliciously-substituted
   account or unchecked expression.
 - A check that LOOKS missing but is enforced elsewhere — an Anchor
@@ -258,7 +264,7 @@ the ONLY mechanism that persists a finding. For each, call save_finding with:
 - evidence_request: the program file path and line (e.g. "programs/vault/src/instructions/withdraw.rs:42")
 - evidence_response: the malicious instruction outline (the account list with each account's substituted properties + signer/owner) that the program wrongly processes
 - evidence_analysis: the data-flow trace from the attacker-passed account → the unchecked owner/signer/PDA/type (or the overflowing/rounding expression) → stolen/corrupted value
-- poc_steps: MANDATORY JSON-encoded PocStep[]. At minimum one "note" step describing the malicious instruction + account substitution; add a "shell" step with an anchor/solana-program-test/bankrun/litesvm test that processes it when the repo has a harness. Each step: { id, kind, summary, action, expect? }.
+- poc_steps: MANDATORY JSON-encoded PocStep[]. At minimum one "note" step describing the malicious instruction + account substitution; and — whenever you can trace the malicious instruction — a "shell" step whose \`cmd\` is a complete runnable **litesvm Rust exploit test** (a \`#[test]\` fn named test_exploit_* / exploit_* that loads the program, submits the malicious instruction, and asserts the drain/mint/authority impact — it must PASS iff the bug exists). A solana-program-test/bankrun test is acceptable if the repo already wires one, but PREFER litesvm. This test IS the reproduction the harness executes to reach a verdict. Each step: { id, kind, summary, action, expect? }.
 
 Severity reflects value / authority impact: an unauthorized drain, arbitrary
 CPI, or unauthorized mint/transfer of locked funds is critical; an owner/admin
@@ -266,3 +272,61 @@ action anyone can take (missing signer, account substitution to admin) is
 critical-to-high; cross-user state corruption or a fund-lock DoS is medium; a
 cosmetic missing check with no value/authz impact is low/info.`;
 }
+
+/**
+ * Depth-method FINDER lenses for the Solana on-chain profile — the four
+ * account-model failure families this profile hunts, split so each becomes its
+ * own best-of-N finder sweep (findings union across lenses). Wire into
+ * {@link runHuntScan}'s `lenses`.
+ */
+export const solanaFinderLenses: FinderLens[] = [
+  {
+    id: "signer-owner-auth",
+    challengeHint:
+      "Hunt AUTHORIZATION / account-substitution only: a privileged/withdraw/transfer path that never requires the authority to be a `Signer` (field typed AccountInfo/UncheckedAccount, or native is_signer never asserted); an account whose `owner` is never checked or that uses UncheckedAccount/AccountInfo where a typed Account<'info, T> (owner + discriminator) is required, letting the attacker pass a forged account; and related accounts not bound to each other by `has_one` / `constraint =` / `address =`. Prove the account TYPE does not already enforce it.",
+  },
+  {
+    id: "arithmetic-rounding",
+    challengeHint:
+      "Hunt VALUE-MATH only: u64/u128 `+ - * /` on lamports / token amounts / shares / prices without checked_*/saturating_* (wraps in release unless `overflow-checks = true` — verify the Cargo.toml profile), `as u64`/`as u32` truncating casts, division/rounding the attacker rounds in their favor (deposit/withdraw share math, fee math), and first-depositor share inflation. Cite the exact expression and the direction of the attacker's gain.",
+  },
+  {
+    id: "cpi-pda",
+    challengeHint:
+      "Hunt CPI and PDA-derivation bugs only: `invoke`/`invoke_signed` (or a Program<'info, T> typed as AccountInfo/UncheckedAccount) whose target program id comes from a passed account rather than a pinned constant — attacker passes their own program as the 'token program'; a PDA passed without `seeds = [...]` + `bump` (or seeds omitting the user/market/mint that should scope it), create_program_address vs canonical find_program_address, and bump stored but not re-checked; plus spoofable sysvar accounts and unvalidated `remaining_accounts` iteration.",
+  },
+  {
+    id: "duplicate-mutable",
+    challengeHint:
+      "Hunt DUPLICATE-account and lifecycle bugs only: two mutable account params the handler assumes are DISTINCT but the attacker passes as the SAME account (from/to token accounts, two positions) with no `key() != key()` guard — Anchor does NOT auto-reject duplicate mutables, so a read-modify-write aliases one and double-credits/zeroes a delta; plus close/re-init revival (`close =` missing so data/discriminator survives, or init_if_needed re-initializing an already-set-up account to reset authority).",
+  },
+];
+
+/**
+ * Depth-method VERIFY lenses for the Solana profile — the multi-lens refute
+ * quorum ({@link makeMultiLensVerifier}). Each is a focused adversarial pass
+ * over one candidate finding; confirmed only when none refute and a quorum
+ * survive. Mirrors the profile's MANDATORY SELF-CHECK.
+ */
+export const solanaVerifyLenses: VerifyLens[] = [
+  {
+    id: "reachability",
+    challengeHint:
+      "REACHABILITY: is the vulnerable instruction handler actually invocable by an attacker — a public instruction with no gating signer it cannot provide? Trace the concrete instruction (its account list, each account's owner/signer/PDA/type) that reaches the sink. If a signer or gate it cannot satisfy blocks the path, refute it.",
+  },
+  {
+    id: "completeness",
+    challengeHint:
+      "COMPLETENESS: is the 'missing' binding actually enforced by a sibling field's `has_one` / `constraint =` / `address =`, or by a manual `require!` later in the handler? Read the whole handler AND the full #[derive(Accounts)] struct. If the constraint is present and correctly scoped, refute it; keep it only if genuinely absent.",
+  },
+  {
+    id: "novelty-known-issue",
+    challengeHint:
+      "NOVELTY / TYPE-ENFORCED: does the account TYPE already enforce the invariant — `Signer` ⇒ is_signer, `Account<'info, T>` ⇒ owner==program + discriminator, `Program<'info, T>` ⇒ pinned id, `#[account(seeds, bump)]` ⇒ PDA derivation, `overflow-checks = true` ⇒ arithmetic traps? Is this a well-known already-guarded Anchor pattern? If the type or profile already covers it, refute it.",
+  },
+  {
+    id: "scope",
+    challengeHint:
+      "SCOPE / IMPACT: does processing the malicious instruction actually move value to the attacker, let them take an authority action, or corrupt another user's funds/position? A cosmetic missing check with no value/authz impact is not high-severity. If there is no real drain, unauthorized mint/transfer, authority seizure, or cross-user corruption, refute the severity.",
+  },
+];

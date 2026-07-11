@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { evmOnchainReviewAgentPrompt } from "./evm-onchain-profile.js";
+import {
+  evmOnchainReviewAgentPrompt,
+  evmFinderLenses,
+  evmVerifyLenses,
+} from "./evm-onchain-profile.js";
 
 describe("evmOnchainReviewAgentPrompt", () => {
   it("instructs the agent to confirm the tree is an EVM/Solidity tree before doing anything (Step 0)", () => {
@@ -91,6 +95,28 @@ describe("evmOnchainReviewAgentPrompt", () => {
     // poc_steps contract is mandatory.
     expect(prompt).toMatch(/poc_steps/);
     expect(prompt).toMatch(/MANDATORY JSON-encoded PocStep/);
+  });
+
+  it("gates unguarded initializer/reinitializer findings on upgrade atomicity (atomic-upgrade FP gate)", () => {
+    const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", []);
+    // The atomic-upgrade FP gate must be present in the false-positive section.
+    expect(prompt).toMatch(/ATOMIC upgrade/);
+    // Names the three closing mechanisms.
+    expect(prompt).toMatch(/upgradeAndCall|upgradeToAndCall/);
+    expect(prompt).toMatch(/reinitializer\(N\)/);
+    expect(prompt).toMatch(/VAA|multicall/);
+    expect(prompt).toMatch(/TemporalGovernor/);
+    // Only high/critical when impl-swap and init are SEPARATE txs (a real window).
+    expect(prompt).toMatch(/SEPARATE/);
+    // Encodes the real motivating false positives.
+    expect(prompt).toMatch(/Moonwell/);
+  });
+
+  it("carries the atomic-upgrade check in the access-control finder lens and novelty verify lens", () => {
+    const finder = evmFinderLenses.find((l) => l.id === "access-control-reentrancy");
+    expect(finder?.challengeHint).toMatch(/atomic|upgradeAndCall/i);
+    const verify = evmVerifyLenses.find((l) => l.id === "novelty-known-issue");
+    expect(verify?.challengeHint).toMatch(/ATOMIC upgrade|upgradeAndCall/);
   });
 
   it("threads the operator hypothesis into a primary-direction block when provided", () => {

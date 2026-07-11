@@ -33,7 +33,7 @@ vi.mock("../agentic-scanner.js", () => ({
   agenticScan: (...args: unknown[]) => agenticScanMock(...args),
 }));
 
-const { runHuntScan } = await import("./hunt-scan.js");
+const { runHuntScan, makeMultiLensVerifier } = await import("./hunt-scan.js");
 
 function mkFinding(id: string, title: string, analysis: string): Finding {
   return {
@@ -487,5 +487,235 @@ describe("runHuntScan — exploitable-geometry rank (PWNKIT_HUNT_GEOMETRY_RANK /
     expect(order[order.length - 1]).toBe("dos");
     // Re-rank only: the verified SET is unchanged.
     expect([...order].sort()).toEqual(["dos", "neutral", "weap"]);
+  });
+});
+
+describe("runHuntScan — specialized-lens finder fan-out (depth method, default-off)", () => {
+  it("lenses absent leaves the run product byte-identical and the finder hint free of any lens text; a lens hint is purely APPENDED", async () => {
+    // Capture the exact challengeHint each finder run receives.
+    const capture = (): string[] => {
+      const hints: string[] = [];
+      agenticScanMock.mockReset();
+      agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
+        hints.push(challengeHint);
+        return { findings: [] as Finding[] };
+      });
+      return hints;
+    };
+    const brief = { bugClass: "missing length check", pattern: "memcpy without bound" };
+    const candidates = [{ path: "/src/a.c", hint: "CANDHINT" }];
+
+    // Run A: NO lenses (today's path). One finder run, one hint.
+    const hintsA = capture();
+    const resA = await runHuntScan({ sourceRoot: "/src", candidates, brief, runtime: "api", concurrency: 1 });
+    expect(resA.scanned).toBe(1); // 1 candidate × 1 model × (sentinel) × 1 attempt — unchanged product
+    expect(hintsA).toHaveLength(1);
+    // The default hint carries the brief + candidate hint and NOTHING lens-shaped.
+    expect(hintsA[0]).toContain("missing length check");
+    expect(hintsA[0]).toContain("CANDHINT");
+    expect(hintsA[0]).not.toContain("LENS_MARK");
+
+    // Run B: one real lens with a marker hint — same everything else.
+    const hintsB = capture();
+    const resB = await runHuntScan({
+      sourceRoot: "/src",
+      candidates,
+      brief,
+      runtime: "api",
+      concurrency: 1,
+      lenses: [{ id: "arithmetic", challengeHint: "LENS_MARK arithmetic focus" }],
+    });
+    expect(resB.scanned).toBe(1); // 1 candidate × 1 model × 1 lens × 1 attempt
+    expect(hintsB).toHaveLength(1);
+    // The lens hint is appended VERBATIM to the exact default hint — nothing else changed.
+    expect(hintsB[0]).toBe(`${hintsA[0]} LENS_MARK arithmetic focus`);
+  });
+
+  it("N lenses multiply the run product and each lens keeps its OWN best-of-N group so findings UNION instead of truncating", async () => {
+    // Two lenses, ONE candidate, no brief, one attempt each. Each lens surfaces a
+    // distinct finding at the SAME site. Pre-lens-key grouping would collapse both
+    // into one (path, model) group and — with no brief — truncate to judgeTopK=1,
+    // silently dropping the second lens's finding with a warning. The lens segment
+    // in siteGroupKey keeps them in two groups of one, so BOTH reach verify.
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async ({ challengeHint }: { challengeHint: string }) => {
+      const lens = challengeHint.includes("LENS_A") ? "a" : "b";
+      return { findings: [mkFinding(`f-${lens}`, `finding via lens ${lens}`, "")] };
+    });
+
+    const verifyCalls: string[] = [];
+    const verify: NonNullable<Parameters<typeof runHuntScan>[0]["verify"]> = async (finding) => {
+      verifyCalls.push(finding.id);
+      return { confirmed: true, reason: "ok" };
+    };
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }],
+      // no brief -> generic hunt; a >1 group would only be truncatable, never judged
+      runtime: "api",
+      concurrency: 2,
+      lenses: [
+        { id: "lens-a", challengeHint: "LENS_A angle" },
+        { id: "lens-b", challengeHint: "LENS_B angle" },
+      ],
+      verify,
+    });
+
+    expect(res.scanned).toBe(2); // 1 candidate × 1 model × 2 lenses × 1 attempt
+    expect(res.findings.map((f) => f.id).sort()).toEqual(["f-a", "f-b"]); // union
+    expect(verifyCalls.sort()).toEqual(["f-a", "f-b"]); // BOTH reached the gate
+    expect(res.confirmed.map((f) => f.id).sort()).toEqual(["f-a", "f-b"]);
+    // No collapse: the no-brief truncation warning must NOT fire — they were separate groups.
+    expect(res.warnings.some((w) => w.includes("no brief to judge against"))).toBe(false);
+  });
+});
+
+describe("makeMultiLensVerifier — multi-lens verify quorum (depth method)", () => {
+  const lenses = [
+    { id: "reachability", challengeHint: "reach" },
+    { id: "completeness", challengeHint: "complete" },
+    { id: "novelty", challengeHint: "novel" },
+    { id: "scope", challengeHint: "scope" },
+  ];
+  const finding = mkFinding("f-1", "candidate finding", "");
+  const candidate = { path: "/src/x.c" };
+
+  // Inject fake per-lens passes so the quorum logic is tested with ZERO LLM calls.
+  // `outcomes[lensId]`: true = survives, false = refutes, "throw" = errors.
+  const makePassFrom =
+    (outcomes: Record<string, boolean | "throw">) =>
+    (lens: { id: string; challengeHint: string }) =>
+    async () => {
+      const o = outcomes[lens.id];
+      if (o === "throw") throw new Error(`lens ${lens.id} errored`);
+      return { confirmed: o, reason: o ? "survived" : "refuted" };
+    };
+
+  const base = { sourceRoot: "/src", runtime: "api" as const };
+
+  it("confirms when 0 lenses refute AND survivors meet the majority quorum", async () => {
+    const verify = makeMultiLensVerifier(lenses, {
+      ...base,
+      makePass: makePassFrom({ reachability: true, completeness: true, novelty: true, scope: true }),
+    });
+    const v = await verify(finding, candidate);
+    expect(v.confirmed).toBe(true);
+    expect(v.reason).toContain("quorum met");
+  });
+
+  it("confirms at exactly the quorum boundary even when some lenses ERROR (fail-closed on survivors, not on errors)", async () => {
+    // 4 lenses, majority quorum = 2. Two survive, two error (neither survives nor refutes).
+    const verify = makeMultiLensVerifier(lenses, {
+      ...base,
+      makePass: makePassFrom({ reachability: true, completeness: true, novelty: "throw", scope: "throw" }),
+    });
+    const v = await verify(finding, candidate);
+    expect(v.confirmed).toBe(true); // 2 survived >= quorum 2, 0 refuted
+  });
+
+  it("does NOT confirm when ANY lens refutes, even with a survivor majority", async () => {
+    const verify = makeMultiLensVerifier(lenses, {
+      ...base,
+      makePass: makePassFrom({ reachability: true, completeness: true, novelty: true, scope: false }),
+    });
+    const v = await verify(finding, candidate);
+    expect(v.confirmed).toBe(false);
+    expect(v.reason).toContain("refuted by scope");
+  });
+
+  it("does NOT confirm when survivors fall below quorum (no refutes, but too many errors)", async () => {
+    // Only 1 survives, 3 error → survived 1 < majority quorum 2, 0 refuted.
+    const verify = makeMultiLensVerifier(lenses, {
+      ...base,
+      makePass: makePassFrom({ reachability: true, completeness: "throw", novelty: "throw", scope: "throw" }),
+    });
+    const v = await verify(finding, candidate);
+    expect(v.confirmed).toBe(false);
+    expect(v.reason).toContain("below quorum");
+  });
+
+  it("honors an explicit quorum override (unanimous)", async () => {
+    // quorum = 4 (all): 3 survivors is not enough.
+    const verify = makeMultiLensVerifier(lenses, {
+      ...base,
+      quorum: 4,
+      makePass: makePassFrom({ reachability: true, completeness: true, novelty: true, scope: "throw" }),
+    });
+    const v = await verify(finding, candidate);
+    expect(v.confirmed).toBe(false);
+    expect(v.reason).toContain("below quorum");
+  });
+
+  it("throws when constructed with zero lenses", () => {
+    expect(() => makeMultiLensVerifier([], base)).toThrow(/at least one/);
+  });
+});
+
+describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {
+  it("fires the hook exactly once per CONFIRMED finding (not for refuted ones), as each clears the gate", async () => {
+    // Two candidates, one finding each; verify confirms f-good, refutes f-bad.
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async ({ config }: { config: { target: string } }) => {
+      const id = config.target.endsWith("good.c") ? "f-good" : "f-bad";
+      return { findings: [mkFinding(id, `finding at ${config.target}`, "")] };
+    });
+
+    const verify: NonNullable<Parameters<typeof runHuntScan>[0]["verify"]> = async (finding) => ({
+      confirmed: finding.id === "f-good",
+      reason: "deterministic-by-id",
+    });
+
+    const streamed: string[] = [];
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/good.c" }, { path: "/src/bad.c" }],
+      runtime: "api",
+      concurrency: 2,
+      verify,
+      onConfirmed: (finding) => {
+        streamed.push(finding.id);
+      },
+    });
+
+    // Only the confirmed finding was streamed, and it was streamed exactly once.
+    expect(streamed).toEqual(["f-good"]);
+    expect(res.confirmed.map((f) => f.id)).toEqual(["f-good"]);
+  });
+
+  it("never fires for any finding when no verifier confirms", async () => {
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-1", "x", "")] }));
+    const streamed: string[] = [];
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }],
+      runtime: "api",
+      concurrency: 1,
+      verify: async () => ({ confirmed: false, reason: "refuted" }),
+      onConfirmed: (f) => {
+        streamed.push(f.id);
+      },
+    });
+    expect(streamed).toEqual([]);
+    expect(res.confirmed).toHaveLength(0);
+  });
+
+  it("a throwing onConfirmed hook NEVER drops the finding — it stays confirmed and the error is a warning", async () => {
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-1", "leak", "")] }));
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }],
+      runtime: "api",
+      concurrency: 1,
+      verify: async () => ({ confirmed: true, reason: "reproduced" }),
+      onConfirmed: async () => {
+        throw new Error("sink POST failed");
+      },
+    });
+    // The persistence failure does not lose the finding from the result set.
+    expect(res.confirmed.map((f) => f.id)).toEqual(["f-1"]);
+    expect(res.warnings.some((w) => w.includes("onConfirmed hook failed"))).toBe(true);
   });
 });

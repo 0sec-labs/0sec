@@ -1,4 +1,5 @@
 import type { SemgrepFinding } from "@pwnkit/shared";
+import type { FinderLens, VerifyLens } from "../stages/hunt-scan.js";
 
 /**
  * Prompt for the Cardano on-chain (Aiken / Plutus) source-review profile.
@@ -281,3 +282,61 @@ Severity reflects value impact: an unauthorized-mint or unconstrained drain of
 locked funds is critical; an owner-only action anyone can take is high; a griefing
 / fund-lock DoS is medium; a cosmetic missing check is low/info.`;
 }
+
+/**
+ * Depth-method FINDER lenses for the Cardano on-chain profile — the four EUTXO
+ * failure families this profile hunts, split so each becomes its own best-of-N
+ * finder sweep (findings union across lenses). Wire into {@link runHuntScan}'s
+ * `lenses`.
+ */
+export const cardanoFinderLenses: FinderLens[] = [
+  {
+    id: "value-conservation",
+    challengeHint:
+      "Hunt VALUE-FLOW only: a spend handler that validates the datum/state transition but never asserts the continuing output preserves the locked value (or the correct delta) — compare output.value to input.value; plus double satisfaction (one output satisfies two script inputs because the validator checks 'an output of value X to A exists' without binding it to THIS input) and `>=` value checks where the attacker profits from the slack. First clear the eUTxO VALUE-CONSERVATION GATE: the ledger already enforces sum(inputs)==sum(outputs)+fee+burn, so state WHERE the stolen principal physically sits in the consumed UTxO.",
+  },
+  {
+    id: "signer-datum",
+    challengeHint:
+      "Hunt AUTHORIZATION / datum-trust only: a spend/admin/upgrade path that does not require the owner key in `extra_signatories` (or checks the wrong key, or `list.has` against an attacker-suppliable list); and validators that TRUST a datum field (price, owner, admin, oracle value) without verifying it against a trusted source, an output datum they don't constrain, or (Plutus) datum-hash vs inline-datum confusion and findDatum returning attacker-chosen data.",
+  },
+  {
+    id: "replay-uniqueness",
+    challengeHint:
+      "Hunt REPLAY / TIME / uniqueness only: a validator that omits a `validity_range` constraint where time matters (deadlines, vesting), or enforces no nonce / spent-input uniqueness so the same authorization can be replayed. The canonical keep is a claim path binding only a preimage + a PUBLICLY REPLAYABLE signature that constrains no recipient and no outputs — once on-chain anyone rebuilds the tx and redirects the payout. Also staking/withdraw-zero tricks that sidestep a check.",
+  },
+  {
+    id: "minting",
+    challengeHint:
+      "Hunt MINTING-POLICY bugs only: a mint handler with no quantity check (mint any amount), no redeemer binding, or a one-shot/uniqueness guard that checks the WRONG outref and so never actually consumes the expected input UTxO — yielding infinite-mint or unauthorized-mint. Trace the mint/burn policy and the own-input it claims to consume; if the NFT/thread-token uniqueness is genuinely broken, keep it.",
+  },
+];
+
+/**
+ * Depth-method VERIFY lenses for the Cardano profile — the multi-lens refute
+ * quorum ({@link makeMultiLensVerifier}). Each is a focused adversarial pass
+ * over one candidate finding; confirmed only when none refute and a quorum
+ * survive. Mirrors the profile's eUTxO VALUE-CONSERVATION GATE + SELF-CHECK.
+ */
+export const cardanoVerifyLenses: VerifyLens[] = [
+  {
+    id: "reachability",
+    challengeHint:
+      "REACHABILITY: is the vulnerable branch actually reachable for a redeemer/purpose an attacker can submit? Trace the concrete redeemer and the malicious tx (inputs/outputs/mint/signatories/validity_range) that hits it. If only a privileged signer can build the tx, note that it is not permissionless.",
+  },
+  {
+    id: "completeness",
+    challengeHint:
+      "COMPLETENESS / LEDGER-ENFORCED (the Indigo-class false-positive gate): before keeping any value/tag/recipient finding, prove the 'missing' constraint is NOT already covered by (1) ledger value conservation sum(inputs)==sum(outputs)+fee+burn, (2) NFT uniqueness + a single own-input binding the tag, (3) a required-signer authoring their own outputs, (4) min-ADA dust (never principal), or (5) a documented keeper/builder fee. If any mechanism enforces it, refute it. Also check whether a sibling validator or minting policy enforces the check.",
+  },
+  {
+    id: "novelty-known-issue",
+    challengeHint:
+      "NOVELTY / KNOWN-PATTERN: is this a well-known EUTXO pattern that is actually guarded here, a constraint implied by the EUTXO model the ledger already enforces (value > 0, no double-spend of a UTxO), or documented by-design behavior in the README/spec? If the pattern is already correctly handled or intended, refute it.",
+  },
+  {
+    id: "scope",
+    challengeHint:
+      "SCOPE / IMPACT: does admitting the tx actually move PRINCIPAL (the locked asset the contract protects) to the attacker, or seriously grief honest users — not merely strip min-ADA dust? Decision test: if I am a permissionless third party with only public chain data, can I build a tx the validator admits that sends value to ME? If the only reason it 'works' is the legitimate signer/funder builds it and the ledger forces their own funds to cover it, refute it.",
+  },
+];

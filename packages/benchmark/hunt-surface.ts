@@ -1,5 +1,5 @@
 /** Generic novel-bug hunt on under-audited surface: enumerate files -> runHuntScan (no seed). */
-import { runHuntScan, makeSkepticVerifier, applyReachabilityGate } from "@pwnkit/core";
+import { runHuntScan, makeSkepticVerifier, applyReachabilityGate, applySurfaceRanking } from "@pwnkit/core";
 import { execFileSync } from "node:child_process";
 import { appendToCorpus, resolveHuntCorpusPath } from "./src/hunt-corpus.js";
 
@@ -32,6 +32,12 @@ const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
 // size-only ranking unchanged). See pwnkit/packages/core/src/stages/hunt-reachability.ts.
 const REACHABLE_ONLY = process.env.HUNT_REACHABLE_ONLY === "1";
 const REACHABLE_PREFER = process.env.HUNT_REACHABLE_PREFER === "1";
+// Surface-desirability ranking (default OFF -> size-only ranking unchanged).
+// When ON, re-orders candidates so hard-to-fuzz stateful parsers of untrusted
+// input that are NOT recently swept float to the top of the (pre-cap) list,
+// where a source-review hunt has an edge over fuzzing. See
+// pwnkit/packages/core/src/stages/surface-desirability.ts.
+const SURFACE_RANK = process.env.HUNT_SURFACE_RANK === "1";
 
 // Enumerate .c files under the (under-audited) subsystem, largest first. The
 // MAXC cap is applied in JS below (not in this shell pipeline) so the
@@ -52,7 +58,19 @@ if (gate.unreachableCount > 0) {
   console.log(`[surface] ${verb} ${gate.unreachableCount} unreachable candidate(s) (not built/zero-cap on kernelCTF COS)`);
 }
 
-const files = gate.paths.slice(0, MAXC);
+// Surface-desirability ranking runs AFTER the reachability gate and BEFORE the
+// cap, so the most hunt-worthy surfaces survive truncation (opt-in; default OFF
+// -> size-only order preserved). Date.now() is fine here — this is a top-level
+// node script, not a resumable workflow.
+const ranked = SURFACE_RANK
+  ? applySurfaceRanking(gate.paths, { enabled: true, tree: SRC, sourceRoot: SRC, nowMs: Date.now() })
+  : { paths: gate.paths, scores: [] };
+if (SURFACE_RANK && ranked.scores.length > 0) {
+  const top = ranked.scores.slice(0, 5).map((s) => `${s.score} ${s.path.replace(`${SRC}/`, "")}`);
+  console.log(`[surface] desirability-ranked ${ranked.scores.length} candidate(s); top: ${top.join(" | ")}`);
+}
+
+const files = ranked.paths.slice(0, MAXC);
 console.log(`[surface] ${SUBSYS}: hunting ${files.length} largest .c files (generic, no seed), ${CONC}-wide`);
 
 if (files.length === 0) { console.log("[surface] no files"); process.exit(0); }

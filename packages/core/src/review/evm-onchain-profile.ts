@@ -1,4 +1,5 @@
 import type { SemgrepFinding } from "@pwnkit/shared";
+import type { FinderLens, VerifyLens } from "../stages/hunt-scan.js";
 
 /**
  * Prompt for the EVM on-chain (Solidity / Foundry / Hardhat) source-review
@@ -301,6 +302,31 @@ guard.
    no-return / false-return token cases. (A fee-on-transfer/rebasing accounting
    desync is a DIFFERENT, still-real finding — keep that one.)
 
+6. **Initializer/reinitializer window closed by an ATOMIC upgrade.** An
+   unguarded \`initialize\` / \`initializeVN\` / \`reinitializer(N)\` is NOT
+   front-runnable — and is NOT high/critical — when the contract's REAL upgrade or
+   deploy path swaps the implementation and runs the initializer in the SAME
+   transaction, leaving no window between them. Before rating it, trace how the
+   proxy is actually upgraded and treat it as a FALSE POSITIVE when ANY of these
+   hold: (a) the upgrade goes through OZ \`ProxyAdmin.upgradeAndCall\` /
+   \`upgradeToAndCall\` / \`upgradeAndCall\` — the impl swap and the init
+   \`delegatecall\` are one atomic tx; (b) a governance executor / timelock batches
+   the \`upgrade\` action and the \`initialize\`/\`initializeVN\` action into a SINGLE
+   execution payload — one proposal / one Wormhole VAA / one multicall (e.g. a
+   TemporalGovernor-style \`_executeProposal\` \`for\`-loop over
+   \`(targets, calldatas)\` that calls \`upgrade(...)\` then \`initializeVN(...)\` in the
+   same tx); or (c) the reinitializer is reachable only by the proxy-admin /
+   timelock AND OZ \`Initializable\`'s \`reinitializer(N)\` version is consumed in the
+   same tx as the impl swap (so a front-runner cannot call it first — the version
+   is already burned, or they are not the admin). This was a real 3× false-positive
+   class for us (Moonwell \`initializeV2\`/\`initializeV3\`, a similar OnRe
+   reinitializer): all flagged CRITICAL "unguarded reinitializer" but the executor
+   batched \`upgrade\`+\`initialize\` into one governance VAA, so no front-run window
+   ever existed. Only rate it high/critical when you can SHOW the impl-swap and the
+   init are SEPARATE on-chain txs (a genuine window an attacker can wedge into), OR
+   it is a fresh-instance deploy whose deployer init lands in a LATER tx AND that
+   instance already custodies real value. Otherwise it is info/low at most.
+
 The distinction that keeps genuine bugs alive (do NOT over-suppress): this gate
 suppresses "the standard guard is PRESENT and correctly scoped." It must NOT
 suppress a guard that is present but MIS-SCOPED (a \`nonReentrant\` that doesn't
@@ -352,3 +378,61 @@ signature replay for gain is critical-to-high; cross-user state corruption, a
 rounding skim, or a griefing/DoS fund-lock is medium; a cosmetic missing check
 with no value/authz impact is low/info.`;
 }
+
+/**
+ * Depth-method FINDER lenses for the EVM on-chain profile — the four value-loss
+ * angles this profile hunts, split so each becomes its own best-of-N finder
+ * sweep (findings union across lenses). One lens per DeFi/bridge failure family
+ * from the hypothesis classes above. Wire into {@link runHuntScan}'s `lenses`.
+ */
+export const evmFinderLenses: FinderLens[] = [
+  {
+    id: "arithmetic-accounting",
+    challengeHint:
+      "Hunt VALUE-MATH bugs only: rounding/precision loss where division truncates in the attacker's favor, first-depositor ERC4626 share-inflation, mulDiv ordering that loses precision, unchecked-block or downcast (uint128(x)) truncation, and fee/interest math that rounds owed down and credited up. Solidity 0.8 traps classic overflow — flag arithmetic only inside `unchecked`, assembly, an explicit downcast, or pragma <0.8. Cite the exact expression and the rounding direction.",
+  },
+  {
+    id: "access-control-reentrancy",
+    challengeHint:
+      "Hunt the CALL-BOUNDARY and AUTH angle only: reentrancy (classic call-before-state-write, cross-function, read-only view mid-callback, cross-contract) where an external call (ETH send, ERC777/721/1155 hook, flash-loan callback, arbitrary target.call) precedes state settlement; missing/wrong access gates (no modifier, tx.origin, public _setOwner, unprotected initialize() front-run, missing _disableInitializers, reachable upgradeTo/selfdestruct); and delegatecall/proxy storage-slot collisions. Prove CEI is violated or the guard is absent/mis-scoped, not merely that the keywords appear. For an unguarded initialize/initializeVN/reinitializer(N): before rating it high/critical, trace the REAL upgrade path — if the impl swap and the initializer run in ONE atomic tx (OZ ProxyAdmin.upgradeAndCall/upgradeToAndCall, or a timelock/governance executor batching upgrade+initialize into a single proposal/VAA/multicall, e.g. a TemporalGovernor _executeProposal loop), there is NO front-run window and it is a FALSE POSITIVE; only flag it when the impl-swap and init are SEPARATE txs (a real window) or a fresh-instance deploy whose init lands in a later tx on a value-holding instance.",
+  },
+  {
+    id: "oracle-economic-invariant",
+    challengeHint:
+      "Hunt PRICE/ECONOMIC manipulation only: a price read from a source movable within one transaction — an AMM spot read (getReserves / balanceOf(pool) / getAmountOut) usable with a flash loan, a too-short or low-liquidity TWAP, or a Chainlink read that ignores updatedAt/staleness, answeredInRound<roundId, or min/maxAnswer bounds; plus missing-slippage/deadline swaps a searcher can sandwich. Describe the flash-loan-shaped tx that skews the pool, borrows/liquidates/mints against the false price, and repays.",
+  },
+  {
+    id: "cross-chain-replay",
+    challengeHint:
+      "Hunt CROSS-CHAIN and SIGNATURE replay only: inbound message handlers (lzReceive, ccipReceive, _execute, handle, receiveWormholeMessages, Merkle-root claims) that fail to bind the message to its SOURCE — trusted endpoint/mailbox caller, source chain id, source/sender address, per-message nonce/replay guard, proof/guardian-set authenticity, or an uninitialized default-empty trusted root (Nomad class); plus signature/permit/EIP-712 replay missing a nonce, deadline, address(this), or block.chainid in the domain, and malleable/address(0) ecrecover. Cite exactly which binding is missing.",
+  },
+];
+
+/**
+ * Depth-method VERIFY lenses for the EVM profile — the multi-lens refute quorum
+ * ({@link makeMultiLensVerifier}). Each is a focused adversarial pass over one
+ * candidate finding; a finding is confirmed only when none refute it and a
+ * quorum survive. Mirrors the profile's MANDATORY SELF-CHECK + FALSE-POSITIVE GATE.
+ */
+export const evmVerifyLenses: VerifyLens[] = [
+  {
+    id: "reachability",
+    challengeHint:
+      "REACHABILITY: is the vulnerable function actually callable by a permissionless attacker — external/public, deployed (not abstract), behind no modifier or precondition it cannot satisfy? Trace the concrete transaction (with any needed flash loan / callback / forged message) from the entry point to the sink. If the path is gated, disabled, or admin-only, refute it.",
+  },
+  {
+    id: "completeness",
+    challengeHint:
+      "COMPLETENESS: is the 'missing' check actually enforced elsewhere on the path — a require earlier in the flow, a modifier on the only caller, a trusted-remote map on the bridge endpoint, a check in the proxy/admin? Read the whole call path and full contract. If the guard is present AND correctly scoped, refute it; keep it only if genuinely absent or mis-scoped.",
+  },
+  {
+    id: "novelty-known-issue",
+    challengeHint:
+      "NOVELTY / KNOWN-GUARD: clear the EVM false-positive gate — is the standard guard present and correct (Checks-Effects-Interactions or a working nonReentrant covering THIS path, Solidity 0.8 checked math, a real onlyOwner/onlyRole, a robust deep-liquidity TWAP or a fully-validated Chainlink feed, SafeERC20)? For an unguarded initialize/initializeVN/reinitializer(N) finding specifically: is the front-run window CLOSED by an ATOMIC upgrade — OZ ProxyAdmin.upgradeAndCall/upgradeToAndCall swapping impl and running init in one tx, or a timelock/governance executor batching upgrade+initialize into a single proposal/VAA/multicall (TemporalGovernor-style _executeProposal loop), or a reinitializer only admin-reachable and version-consumed in the same tx as the impl swap? If the upgrade is atomic there is no window — refute it; keep it only when you can show the impl-swap and init are SEPARATE on-chain txs or a fresh value-holding instance inits in a later tx. Is this a well-known already-patched pattern in this codebase? If a correct standard guard covers it, refute it.",
+  },
+  {
+    id: "scope",
+    challengeHint:
+      "SCOPE / IMPACT: does the malicious transaction actually move value to the attacker, seize an owner/upgrade authority, manipulate a price into profit, replay a message/signature for gain, or corrupt/lock another user's funds? Decision test: can a permissionless attacker with only public on-chain actions send a tx this code accepts that moves value to them or breaks an invariant? A cosmetic missing check with no value/authz impact is not a high-severity finding — refute it as such.",
+  },
+];
