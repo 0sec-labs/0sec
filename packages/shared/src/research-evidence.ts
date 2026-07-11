@@ -45,6 +45,8 @@ export interface ResearchExecutionContext {
   effectiveUid?: number;
   /** Linux CapEff-style hexadecimal bitmap, when runtime-attested. */
   effectiveCapabilities?: string;
+  /** True only when PR_SET_NO_NEW_PRIVS was observed at the execution boundary. */
+  noNewPrivileges?: boolean;
   /** Artifact containing the runtime identity/capability capture. */
   attestationArtifact?: { ref: string; sha256: string };
   sandbox?: string;
@@ -116,6 +118,7 @@ export function researchZeroCapProven(envelope: ResearchEvidenceEnvelope): boole
     && Number.isSafeInteger(context.effectiveUid)
     && (context.effectiveUid ?? 0) > 0
     && /^[0]{16}$/.test(context.effectiveCapabilities ?? "")
+    && context.noNewPrivileges === true
     && Boolean(context.attestationArtifact?.ref)
     && /^[a-f0-9]{64}$/.test(context.attestationArtifact?.sha256 ?? "");
 }

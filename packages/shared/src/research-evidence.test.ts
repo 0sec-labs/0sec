@@ -46,6 +46,7 @@ describe("research evidence promotion", () => {
         realUid: 65534,
         effectiveUid: 65534,
         effectiveCapabilities: "0000000000000000",
+        noNewPrivileges: true,
         attestationArtifact: { ref: "attestation.json", sha256: "a".repeat(64) },
       },
     };
@@ -55,6 +56,7 @@ describe("research evidence promotion", () => {
     expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, effectiveUid: 0 } })).toBe(false);
     expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, effectiveCapabilities: "0000000000002000" } })).toBe(false);
     expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, effectiveCapabilities: "0" } })).toBe(false);
+    expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, noNewPrivileges: false } })).toBe(false);
     expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, realUid: Number.POSITIVE_INFINITY } })).toBe(false);
     expect(researchZeroCapProven({ ...proven, executionContext: { ...proven.executionContext, attestationArtifact: undefined } })).toBe(false);
     expect(researchZeroCapProven({ ...proven, grade: "candidate" })).toBe(false);
