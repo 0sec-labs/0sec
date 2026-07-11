@@ -1592,6 +1592,8 @@ export interface KernelFindingNbootVerification extends KernelFindingVerificatio
   nbootStable: boolean;
   /** Per-boot statuses, in boot order, for the audit trail. */
   bootStatuses: KernelFindingStatus[];
+  /** Full per-boot records, including the independently captured dmesg path. */
+  bootResults: KernelFindingVerification[];
 }
 
 /**
@@ -1612,19 +1614,26 @@ export async function verifyAcrossBoots(
   const { boots: _boots, minHits: _minHits, dmesgOutPath, ...baseOpts } = opts;
 
   const bootStatuses: KernelFindingStatus[] = [];
+  const bootResults: KernelFindingVerification[] = [];
   let bootHits = 0;
   let firstReproduced: KernelFindingVerification | undefined;
   let lastResult: KernelFindingVerification | undefined;
 
   for (let i = 0; i < bootTotal; i++) {
-    // Each boot writes its own proof; reuse the caller's path only for boot 0 so
-    // a single-shot caller still gets the file it asked for.
-    const perBootDmesg = i === 0 ? dmesgOutPath : undefined;
+    // Keep every proof beside the caller-provided artifact path. Falling back
+    // to unrelated /tmp paths would leave M-of-K claims with only one archived
+    // log after the research run is moved or uploaded.
+    const perBootDmesg = dmesgOutPath
+      ? i === 0
+        ? dmesgOutPath
+        : `${dmesgOutPath}.boot-${i + 1}`
+      : undefined;
     const result = await verifyKernelFinding({
       ...baseOpts,
       ...(perBootDmesg ? { dmesgOutPath: perBootDmesg } : {}),
     });
     lastResult = result;
+    bootResults.push(result);
     bootStatuses.push(result.status);
     if (result.status === "reproduced") {
       bootHits++;
@@ -1660,6 +1669,7 @@ export async function verifyAcrossBoots(
     bootTotal,
     nbootStable,
     bootStatuses,
+    bootResults,
   };
 }
 
