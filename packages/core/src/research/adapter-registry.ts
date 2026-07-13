@@ -12,6 +12,7 @@ import { ProtocolHttpResearchAdapter } from "./adapters/protocol-http-adapter.js
 import { UnifiedPipelineResearchAdapter } from "./adapters/unified-pipeline-adapter.js";
 import { UserspaceMemSafetyResearchAdapter } from "./adapters/userspace-memsafety-adapter.js";
 import { XnuIokitResearchAdapter } from "./adapters/xnu-iokit-adapter.js";
+import { WindowsHyperVImportAdapter } from "./adapters/windows-hyperv-adapter.js";
 
 type AdapterFactory = () => TargetResearchAdapter<any, any, any, any>;
 
@@ -44,5 +45,6 @@ export function createDefaultResearchRegistry(): ResearchAdapterRegistry {
     .register("linux.kernel-boot-matrix-import", () => new LinuxBootMatrixImportAdapter())
     .register("mobile.static-intake", () => new MobileStaticResearchAdapter())
     .register("xnu.iokit-fuzz", () => new XnuIokitResearchAdapter())
+    .register("windows.hyperv-prover-import", () => new WindowsHyperVImportAdapter())
     .register("pipeline.unified", () => new UnifiedPipelineResearchAdapter());
 }

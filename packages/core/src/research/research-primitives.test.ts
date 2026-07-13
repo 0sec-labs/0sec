@@ -52,6 +52,7 @@ describe("research control-plane primitives", () => {
       "pipeline.unified",
       "protocol.http-conformance",
       "userspace.memsafety",
+      "windows.hyperv-prover-import",
       "xnu.iokit-fuzz",
     ]);
   });
