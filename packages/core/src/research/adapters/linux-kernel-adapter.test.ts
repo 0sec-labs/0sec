@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { researchZeroCapProven, type Finding } from "@pwnkit/shared";
 import { runResearch } from "../research-runner.js";
@@ -30,6 +31,30 @@ function setup(): { target: LinuxKernelTarget; artifactRoot: string } {
       config: { finding, verify: { reproducerPath, boots: 3, minHits: 2, expectedSignature: "KASAN: slab-use-after-free" } },
     },
   };
+}
+
+function runtimeReceipt(boot: number, reproducerSha256 = "b".repeat(64), observedKernelRelease = "6.12.95-pwnkit") {
+  return { schemaVersion: 2 as const, nonce: String(boot).padStart(32, "a"), reproducerSha256, expectedKernelRelease: "6.12.95-pwnkit", observedKernelRelease, bootId: `00000000-0000-4000-8000-${String(boot).padStart(12, "0")}`, kernelImageSha256: "e".repeat(64), kernelConfigSha256: "f".repeat(64), realUid: 65534, effectiveUid: 65534, savedUid: 65534, realGid: 65534, effectiveGid: 65534, savedGid: 65534, supplementaryGroups: [], inheritableCapabilities: "0000000000000000", permittedCapabilities: "0000000000000000", effectiveCapabilities: "0000000000000000", ambientCapabilities: "0000000000000000", secureBits: 0, userNamespaceMax: 0, initialUserNamespace: true, noNewPrivileges: true };
+}
+
+function serializeReceipt(r: ReturnType<typeof runtimeReceipt>): string {
+  return `schema=2\nnonce=${r.nonce}\nreproducer_sha256=${r.reproducerSha256}\nexpected_kernel_release=${r.expectedKernelRelease}\nobserved_kernel_release=${r.observedKernelRelease}\nboot_id=${r.bootId}\nkernel_image_sha256=${r.kernelImageSha256}\nkernel_config_sha256=${r.kernelConfigSha256}\nruid=${r.realUid}\neuid=${r.effectiveUid}\nsuid=${r.savedUid}\nrgid=${r.realGid}\negid=${r.effectiveGid}\nsgid=${r.savedGid}\ngroups=\ncap_inh=${r.inheritableCapabilities}\ncap_prm=${r.permittedCapabilities}\ncap_eff=${r.effectiveCapabilities}\ncap_amb=${r.ambientCapabilities}\nsecurebits=${r.secureBits}\nuserns_max=${r.userNamespaceMax}\ninitial_userns=1\nno_new_privs=1\n`;
+}
+
+function materializeEvidence(base: string, reproducerPath: string, observedKernelRelease?: string) {
+  const sha = (bytes: string) => createHash("sha256").update(bytes).digest("hex");
+  const reproducerSha256 = createHash("sha256").update(readFileSync(reproducerPath)).digest("hex");
+  const bootResults = [1, 2].map((n) => {
+    const receipt = runtimeReceipt(n, reproducerSha256, observedKernelRelease), receiptRaw = serializeReceipt(receipt), dmesg = "KASAN: uaf\n";
+    const receiptPath = `${base}.${n}.receipt`, dmesgPath = `${base}.${n}`;
+    writeFileSync(receiptPath, receiptRaw); writeFileSync(dmesgPath, dmesg);
+    return { status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: dmesgPath, dmesgSha256: sha(dmesg), build_cache_hit: true, executionIdentity: { uid: 65534, gid: 65534 }, executionAttestation: receipt, executionAttestationPath: receiptPath, executionAttestationSha256: sha(receiptRaw) };
+  });
+  const first = bootResults[0].executionAttestation;
+  const manifest = { schemaVersion: 2, expectedKernelRelease: first.expectedKernelRelease, observedKernelRelease: first.observedKernelRelease, kernelImageSha256: first.kernelImageSha256, kernelConfigSha256: first.kernelConfigSha256, executionIdentity: { uid: 65534, gid: 65534 }, boots: bootResults.map((boot, index) => ({ index: index + 1, bootId: boot.executionAttestation.bootId, receiptSha256: boot.executionAttestationSha256, receiptPath: boot.executionAttestationPath, dmesgSha256: boot.dmesgSha256, dmesgPath: boot.dmesg_path })) };
+  const manifestRaw = JSON.stringify(manifest, null, 2) + "\n", manifestPath = `${base}.manifest`;
+  writeFileSync(manifestPath, manifestRaw);
+  return { bootResults, executionAttestationManifestPath: manifestPath, executionAttestationManifestSha256: sha(manifestRaw) };
 }
 
 describe("LinuxKernelResearchAdapter", () => {
@@ -95,25 +120,72 @@ describe("LinuxKernelResearchAdapter", () => {
   it("promotes zero-cap context only when every reproduced boot is runtime-attested", async () => {
     const { target, artifactRoot } = setup();
     target.config.verify.executionIdentity = { uid: 65534, gid: 65534 };
-    const receipt = { schemaVersion: 1 as const, nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), realUid: 65534, effectiveUid: 65534, savedUid: 65534, realGid: 65534, effectiveGid: 65534, savedGid: 65534, supplementaryGroups: [], inheritableCapabilities: "0000000000000000", permittedCapabilities: "0000000000000000", effectiveCapabilities: "0000000000000000", ambientCapabilities: "0000000000000000", secureBits: 0, userNamespaceMax: 0, initialUserNamespace: true, noNewPrivileges: true };
     const verifier = vi.fn(async (opts) => ({
       status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true,
       bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const,
-      executionIdentity: { uid: 65534, gid: 65534 }, executionAttestationManifestPath: `${opts.dmesgOutPath}.manifest`, executionAttestationManifestSha256: "d".repeat(64),
-      bootResults: [1, 2].map((n) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: `${opts.dmesgOutPath}.${n}`, build_cache_hit: true, executionIdentity: { uid: 65534, gid: 65534 }, executionAttestation: receipt, executionAttestationPath: `${opts.dmesgOutPath}.${n}.receipt`, executionAttestationSha256: "c".repeat(64) })),
+      executionIdentity: { uid: 65534, gid: 65534 },
+      ...materializeEvidence(opts.dmesgOutPath!, opts.reproducerPath!),
     }));
     const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: "linux-zero-cap" });
     expect(result.envelopes[0]?.executionContext).toMatchObject({ privilege: "zero-cap", basis: "runtime-attested", realUid: 65534, effectiveCapabilities: "0000000000000000", noNewPrivileges: true });
     expect(researchZeroCapProven(result.envelopes[0]!)).toBe(true);
   });
 
+  it("fails zero-cap closed for missing or substituted evidence artifacts", async () => {
+    for (const tamper of ["missing-receipt", "substituted-dmesg", "forged-manifest", "symlink-receipt", "outside-receipt"] as const) {
+      const { target, artifactRoot } = setup(); target.config.verify.executionIdentity = { uid: 65534, gid: 65534 };
+      const verifier = vi.fn(async (opts) => {
+        const evidence = materializeEvidence(opts.dmesgOutPath!, opts.reproducerPath!);
+        if (tamper === "missing-receipt") unlinkSync(evidence.bootResults[0].executionAttestationPath);
+        else if (tamper === "substituted-dmesg") writeFileSync(evidence.bootResults[0].dmesg_path, "substituted bytes\n");
+        else if (tamper === "forged-manifest") writeFileSync(evidence.executionAttestationManifestPath, '{"schemaVersion":2,"boots":[]}\n');
+        else if (tamper === "symlink-receipt") {
+          unlinkSync(evidence.bootResults[0].executionAttestationPath);
+          symlinkSync(evidence.bootResults[1].executionAttestationPath, evidence.bootResults[0].executionAttestationPath);
+        } else {
+          const outside = join(dirname(evidence.executionAttestationManifestPath), "..", "outside.receipt");
+          writeFileSync(outside, readFileSync(evidence.bootResults[0].executionAttestationPath));
+          evidence.bootResults[0].executionAttestationPath = outside;
+          const manifest = JSON.parse(readFileSync(evidence.executionAttestationManifestPath, "utf8"));
+          manifest.boots[0].receiptPath = outside;
+          const raw = JSON.stringify(manifest, null, 2) + "\n";
+          writeFileSync(evidence.executionAttestationManifestPath, raw);
+          evidence.executionAttestationManifestSha256 = createHash("sha256").update(raw).digest("hex");
+        }
+        return { status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true, bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const, executionIdentity: { uid: 65534, gid: 65534 }, ...evidence };
+      });
+      const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: `linux-${tamper}` });
+      expect(result.envelopes[0]?.executionContext).toEqual({ privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 });
+      expect(researchZeroCapProven(result.envelopes[0]!)).toBe(false);
+    }
+  });
+
+  it("fails zero-cap closed for consistently mismatched runtime releases", async () => {
+    const { target, artifactRoot } = setup(); target.config.verify.executionIdentity = { uid: 65534, gid: 65534 };
+    const verifier = vi.fn(async (opts) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true, bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const, executionIdentity: { uid: 65534, gid: 65534 }, ...materializeEvidence(opts.dmesgOutPath!, opts.reproducerPath!, "6.12.93-pwnkit") }));
+    const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: "linux-release-mismatch" });
+    expect(result.envelopes[0]?.executionContext).toMatchObject({ privilege: "privileged", basis: "runtime-attested" });
+    expect(researchZeroCapProven(result.envelopes[0]!)).toBe(false);
+  });
+
+  it("downgrades instead of throwing when the reproducer disappears after execution", async () => {
+    const { target, artifactRoot } = setup(); target.config.verify.executionIdentity = { uid: 65534, gid: 65534 };
+    const verifier = vi.fn(async (opts) => {
+      const evidence = materializeEvidence(opts.dmesgOutPath!, opts.reproducerPath!);
+      unlinkSync(opts.reproducerPath!);
+      return { status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true, bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const, executionIdentity: { uid: 65534, gid: 65534 }, ...evidence };
+    });
+    const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: "linux-missing-reproducer" });
+    expect(result.envelopes[0]?.executionContext).toEqual({ privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 });
+    expect(researchZeroCapProven(result.envelopes[0]!)).toBe(false);
+  });
+
   it("never promotes a non-root receipt without an explicit execution contract and all-boot manifest", async () => {
     const { target, artifactRoot } = setup();
-    const receipt = { schemaVersion: 1 as const, nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), realUid: 65534, effectiveUid: 65534, savedUid: 65534, realGid: 65534, effectiveGid: 65534, savedGid: 65534, supplementaryGroups: [], inheritableCapabilities: "0000000000000000", permittedCapabilities: "0000000000000000", effectiveCapabilities: "0000000000000000", ambientCapabilities: "0000000000000000", secureBits: 0, userNamespaceMax: 0, initialUserNamespace: true, noNewPrivileges: true };
     const verifier = vi.fn(async (opts) => ({
       status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true,
       bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const,
-      bootResults: [1, 2].map((n) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: `${opts.dmesgOutPath}.${n}`, build_cache_hit: true, executionAttestation: receipt, executionAttestationPath: `${opts.dmesgOutPath}.${n}.receipt`, executionAttestationSha256: "c".repeat(64) })),
+      bootResults: [1, 2].map((n) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: `${opts.dmesgOutPath}.${n}`, dmesgSha256: String(n).repeat(64), build_cache_hit: true, executionAttestation: runtimeReceipt(n), executionAttestationPath: `${opts.dmesgOutPath}.${n}.receipt`, executionAttestationSha256: "c".repeat(64) })),
     }));
     const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: "linux-forged-context" });
     expect(result.envelopes[0]?.executionContext).toEqual({ privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 });

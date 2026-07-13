@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -15,6 +15,7 @@ import {
   buildInitramfsKernelAppend,
   renderInitramfsInitScript,
   buildInitramfsQemuCommand,
+  buildQemuCommand,
   loadKernelVmConfigFromEnv,
   renderRealIpiRaceHarness,
   buildFlagsForProfile,
@@ -29,20 +30,44 @@ import {
   type KernelVmConfig,
 } from "./kernel-vm-runner.js";
 
-const receiptText = (nonce = "a".repeat(32), sha = "b".repeat(64), uid = 65534) => `schema=1\nnonce=${nonce}\nreproducer_sha256=${sha}\nruid=${uid}\neuid=${uid}\nsuid=${uid}\nrgid=${uid}\negid=${uid}\nsgid=${uid}\ngroups=\ncap_inh=0000000000000000\ncap_prm=0000000000000000\ncap_eff=0000000000000000\ncap_amb=0000000000000000\nsecurebits=0\nuserns_max=0\ninitial_userns=1\nno_new_privs=1\n`;
+const provenance = {
+  expectedKernelRelease: "6.8.0-pwnkit",
+  kernelImageSha256: "c".repeat(64),
+  kernelConfigSha256: "d".repeat(64),
+};
+const request = (nonce = "a".repeat(32), reproducerSha256 = "b".repeat(64), drop = true) => ({ nonce, reproducerSha256, ...provenance, ...(drop ? { dropUid: 65534, dropGid: 65534 } : {}) });
+const receiptText = (nonce = "a".repeat(32), sha = "b".repeat(64), uid = 65534, bootId = "00000000-0000-4000-8000-000000000001") => `schema=2\nnonce=${nonce}\nreproducer_sha256=${sha}\nexpected_kernel_release=${provenance.expectedKernelRelease}\nobserved_kernel_release=${provenance.expectedKernelRelease}\nboot_id=${bootId}\nkernel_image_sha256=${provenance.kernelImageSha256}\nkernel_config_sha256=${provenance.kernelConfigSha256}\nruid=${uid}\neuid=${uid}\nsuid=${uid}\nrgid=${uid}\negid=${uid}\nsgid=${uid}\ngroups=\ncap_inh=0000000000000000\ncap_prm=0000000000000000\ncap_eff=0000000000000000\ncap_amb=0000000000000000\nsecurebits=0\nuserns_max=0\ninitial_userns=1\nno_new_privs=1\n`;
+const receiptForRequest = (req: NonNullable<Parameters<typeof bindKernelExecutionAttestation>[1]>, bootId = "00000000-0000-4000-8000-000000000001") => receiptText(req.nonce, req.reproducerSha256, req.dropUid ?? 0, bootId)
+  .replaceAll(provenance.expectedKernelRelease, req.expectedKernelRelease)
+  .replace(provenance.kernelImageSha256, req.kernelImageSha256)
+  .replace(provenance.kernelConfigSha256, req.kernelConfigSha256);
 
 describe("kernel execution attestation", () => {
   it("strictly parses and binds a zero-cap pre-exec receipt", () => {
     const receipt = parseKernelExecutionAttestation(receiptText());
-    bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), dropUid: 65534, dropGid: 65534 });
+    bindKernelExecutionAttestation(receipt, request());
     expect(receipt).toMatchObject({ realUid: 65534, effectiveUid: 65534, savedUid: 65534, noNewPrivileges: true });
   });
 
   it("rejects duplicate, unknown, and incorrectly bound receipt fields", () => {
     expect(() => parseKernelExecutionAttestation(`${receiptText()}euid=65534\n`)).toThrow(/duplicate/);
     expect(() => parseKernelExecutionAttestation(`${receiptText()}extra=x\n`)).toThrow(/unknown/);
+    expect(() => parseKernelExecutionAttestation(receiptText().replace("nonce=", "reproducer_sha256="))).toThrow();
+    const reordered = receiptText().replace(/schema=2\nnonce=([^\n]+)\n/, "nonce=$1\nschema=2\n");
+    expect(() => parseKernelExecutionAttestation(reordered)).toThrow(/canonical/);
     const receipt = parseKernelExecutionAttestation(receiptText());
-    expect(() => bindKernelExecutionAttestation(receipt, { nonce: "c".repeat(32), reproducerSha256: "b".repeat(64) })).toThrow(/binding mismatch/);
+    expect(() => bindKernelExecutionAttestation(receipt, request("c".repeat(32)))).toThrow(/binding or runtime/);
+  });
+
+  it("rejects legacy, malformed, or host-mismatched kernel provenance", () => {
+    expect(() => parseKernelExecutionAttestation(receiptText().replace("schema=2", "schema=1"))).toThrow(/invalid/);
+    expect(() => parseKernelExecutionAttestation(receiptText().replace("boot_id=00000000-0000-4000-8000-000000000001", "boot_id=not-a-uuid"))).toThrow(/invalid/);
+    const expected = request();
+    for (const raw of [
+      receiptText().replace("observed_kernel_release=6.8.0-pwnkit", "observed_kernel_release=6.12.93"),
+      receiptText().replace(provenance.kernelImageSha256, "e".repeat(64)),
+      receiptText().replace(provenance.kernelConfigSha256, "f".repeat(64)),
+    ]) expect(() => bindKernelExecutionAttestation(parseKernelExecutionAttestation(raw), expected)).toThrow(/runtime kernel identity/);
   });
 
   it("generates a launcher that drops saved IDs, sets NNP, captures CapEff, and execs", () => {
@@ -59,11 +84,11 @@ describe("kernel execution attestation", () => {
 
   it("rejects a partial UID/GID drop contract", () => {
     const receipt = parseKernelExecutionAttestation(receiptText());
-    expect(() => bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), dropUid: 65534 })).toThrow(/UID and GID together/);
+    expect(() => bindKernelExecutionAttestation(receipt, { ...request(), dropGid: undefined })).toThrow(/UID and GID together/);
   });
 
   it("rejects residual groups, capabilities, NNP, and user-namespace escape state", () => {
-    const expected = { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64), dropUid: 65534, dropGid: 65534 };
+    const expected = request();
     for (const raw of [
       receiptText().replace("groups=\n", "groups=0\n"),
       receiptText().replace("cap_prm=0000000000000000", "cap_prm=0000000000000001"),
@@ -86,10 +111,11 @@ describe("kernel execution attestation", () => {
       const markerPath = join(root, "started");
       writeFileSync(source, renderKernelExecutionLauncherSource());
       expect(spawnSync("cc", ["-O2", "-Wall", "-Wextra", "-o", binary, source], { stdio: "pipe" }).status).toBe(0);
-      expect(spawnSync("/usr/bin/env", [binary, receiptPath, "a".repeat(32), "b".repeat(64), "-", "-", markerPath, "/bin/true"], { stdio: "pipe" }).status).toBe(0);
+      const release = readFileSync("/proc/sys/kernel/osrelease", "utf8").trim();
+      expect(spawnSync("/usr/bin/env", [binary, receiptPath, "a".repeat(32), "b".repeat(64), release, provenance.kernelImageSha256, provenance.kernelConfigSha256, "-", "-", markerPath, "/bin/true"], { stdio: "pipe" }).status).toBe(0);
       expect(existsSync(markerPath)).toBe(true);
       const receipt = parseKernelExecutionAttestation(readFileSync(receiptPath, "utf8"));
-      bindKernelExecutionAttestation(receipt, { nonce: "a".repeat(32), reproducerSha256: "b".repeat(64) });
+      bindKernelExecutionAttestation(receipt, { ...request("a".repeat(32), "b".repeat(64), false), expectedKernelRelease: release });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -277,7 +303,7 @@ describe("verifyKernelFinding", () => {
     const tree = makeTree(); primeCacheForTree(tree, cacheDir);
     const reproPath = makeReproducer("poc.c");
     const dmesgOut = join(mkdtempSync(join(tmpdir(), "pwnkit-attest-")), "dmesg.log");
-    const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, dmesgOutPath: dmesgOut, expectedSignature: "KASAN: uaf", executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async (report) => ({ compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: parseKernelExecutionAttestation(receiptText(report.executionAttestationRequest!.nonce, report.executionAttestationRequest!.reproducerSha256)) }) });
+    const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, dmesgOutPath: dmesgOut, expectedSignature: "KASAN: uaf", executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async (report) => ({ compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: parseKernelExecutionAttestation(receiptForRequest(report.executionAttestationRequest!)) }) });
     expect(result.status).toBe("reproduced");
     expect(result.executionAttestation?.effectiveUid).toBe(65534);
     expect(result.executionAttestationSha256).toMatch(/^[a-f0-9]{64}$/);
@@ -287,6 +313,40 @@ describe("verifyKernelFinding", () => {
   it("fails closed when an explicit drop produces no receipt", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-")); const tree = makeTree(); primeCacheForTree(tree, cacheDir); const reproPath = makeReproducer("poc.c");
     const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async () => ({ compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false }) });
+    expect(result.status).toBe("run_failed");
+  });
+
+  it("fails closed if the host kernel image changes while the VM is running", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-")); const tree = makeTree(); primeCacheForTree(tree, cacheDir); const reproPath = makeReproducer("poc.c");
+    const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async (report) => {
+      const image = process.env.PWNKIT_KERNEL_QEMU_KERNEL!;
+      chmodSync(image, 0o644);
+      writeFileSync(image, "mutated-after-launch");
+      return { compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: parseKernelExecutionAttestation(receiptForRequest(report.executionAttestationRequest!)) };
+    } });
+    expect(result.status).toBe("run_failed");
+    expect(result.executionAttestation).toBeUndefined();
+  });
+
+  it("launches from a private staged image so mutation of the cache artifact cannot swap the boot", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-")); const tree = makeTree(); primeCacheForTree(tree, cacheDir); const reproPath = makeReproducer("poc.c");
+    const artifacts = prepareKernelVmArtifacts({ kernelTree: tree, cacheDir, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); } });
+    let launchedPath = "";
+    const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, expectedSignature: "KASAN: uaf", executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async (report) => {
+      launchedPath = process.env.PWNKIT_KERNEL_QEMU_KERNEL!;
+      writeFileSync(artifacts.kernelImage, "swapped-original-cache-image");
+      return { compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: parseKernelExecutionAttestation(receiptForRequest(report.executionAttestationRequest!)) };
+    } });
+    expect(launchedPath).not.toBe(artifacts.kernelImage);
+    expect(result.status).toBe("reproduced");
+  });
+
+  it("converts malformed runtime receipts to run_failed instead of throwing", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-")); const tree = makeTree(); primeCacheForTree(tree, cacheDir); const reproPath = makeReproducer("poc.c");
+    const result = await verifyKernelFinding({ reproducerPath: reproPath, kernelTree: tree, cacheDir, executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined, buildRunner: () => { throw new Error("cache hit"); }, vmRunner: async (report) => {
+      const receipt = parseKernelExecutionAttestation(receiptForRequest(report.executionAttestationRequest!));
+      return { compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: { ...receipt, observedKernelRelease: "6.12.93" } };
+    } });
     expect(result.status).toBe("run_failed");
   });
 
@@ -609,6 +669,40 @@ describe("verifyAcrossBoots — N-boot reproducibility gate (AIxCC T2)", () => {
     ]);
   });
 
+  it("writes a schema-v2 manifest only for invariant provenance and distinct fresh boots", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree(); primeCacheForTree(tree, cacheDir);
+    let boot = 0;
+    const result = await verifyAcrossBoots({
+      reproducerPath: makeReproducer("poc.c"), kernelTree: tree, cacheDir, boots: 2, minHits: 2,
+      expectedSignature: "KASAN: uaf", executionIdentity: { uid: 65534, gid: 65534 }, dmesgOutPath: join(cacheDir, "proof.dmesg"), logger: () => undefined,
+      buildRunner: () => { throw new Error("cache hit"); },
+      vmRunner: async (report) => ({ compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: parseKernelExecutionAttestation(receiptForRequest(report.executionAttestationRequest!, `00000000-0000-4000-8000-${String(++boot).padStart(12, "0")}`)) }),
+    });
+    expect(result.status).toBe("reproduced");
+    expect(result.nbootStable).toBe(true);
+    const manifest = JSON.parse(readFileSync(result.executionAttestationManifestPath!, "utf8"));
+    expect(manifest).toMatchObject({ schemaVersion: 2, expectedKernelRelease: "6.8.0", executionIdentity: { uid: 65534, gid: 65534 } });
+    expect(manifest.boots).toHaveLength(2);
+    expect(new Set(manifest.boots.map((item: { bootId: string }) => item.bootId)).size).toBe(2);
+    expect(manifest.boots.every((item: { dmesgSha256: string }) => /^[a-f0-9]{64}$/.test(item.dmesgSha256))).toBe(true);
+  });
+
+  it("revokes N-boot stability when two hits claim the same boot ID", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
+    const tree = makeTree(); primeCacheForTree(tree, cacheDir);
+    const result = await verifyAcrossBoots({
+      reproducerPath: makeReproducer("poc.c"), kernelTree: tree, cacheDir, boots: 2, minHits: 2,
+      expectedSignature: "KASAN: uaf", executionIdentity: { uid: 65534, gid: 65534 }, logger: () => undefined,
+      buildRunner: () => { throw new Error("cache hit"); },
+      vmRunner: async (report) => ({ compiled: true, executed: true, output: "", dmesg: "KASAN: uaf", exitCode: 0, timedOut: false, executionAttestation: parseKernelExecutionAttestation(receiptForRequest(report.executionAttestationRequest!)) }),
+    });
+    expect(result.bootHits).toBe(2);
+    expect(result.nbootStable).toBe(false);
+    expect(result.status).toBe("run_failed");
+    expect(result.executionAttestationManifestPath).toBeUndefined();
+  });
+
   it("declares NOT stable when the signature fires in only 1 of 3 boots", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-kernel-cache-"));
     const tree = makeTree();
@@ -873,6 +967,24 @@ describe("weaponize-initramfs lane", () => {
     // NO heavy 9p root disk in this lane.
     expect(joined).not.toContain("-drive");
     expect(joined).not.toContain("-virtfs");
+  });
+
+  it("buildQemuCommand snapshots the root disk for independent verification boots", () => {
+    const config: KernelVmConfig = {
+      qemuBinary: "qemu-system-x86_64",
+      kernelImage: "/k/bzImage",
+      diskImage: "/k/rootfs.img",
+      diskFormat: "raw",
+      bootTimeoutSec: 120,
+      memoryMb: 2048,
+      smp: 2,
+      kernelAppend: "root=/dev/vda",
+      timeoutSec: 60,
+      shareTag: "pwnkitshare",
+    };
+    const { args } = buildQemuCommand(config, "/tmp/serial.log", "/tmp/share");
+    expect(args).toContain("-snapshot");
+    expect(args.join(" ")).toContain("-drive file=/k/rootfs.img,format=raw,if=virtio");
   });
 
   it("loadKernelVmConfigFromEnv enables the lane via USE_KERNEL_WEAPONIZE / INITRAMFS env", () => {

@@ -1,9 +1,11 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Finding } from "@pwnkit/shared";
 import type { ResearchExecutionContext } from "@pwnkit/shared";
 import {
   verifyAcrossBoots,
+  parseKernelExecutionAttestation,
   type KernelFindingNbootVerification,
   type VerifyAcrossBootsOptions,
 } from "../../triage/kernel-vm-runner.js";
@@ -30,15 +32,64 @@ export interface LinuxKernelExecution { candidateId: string; result: KernelFindi
 type KernelVerifier = typeof verifyAcrossBoots;
 
 function resultArtifacts(result: KernelFindingNbootVerification): string[] {
-  return [...new Set((result.bootResults.length > 0 ? result.bootResults : [result]).flatMap((boot) => [boot.dmesg_path, boot.executionAttestationPath].filter((path): path is string => Boolean(path))))];
+  return [...new Set([
+    ...(result.bootResults.length > 0 ? result.bootResults : [result]).flatMap((boot) => [boot.dmesg_path, boot.executionAttestationPath].filter((path): path is string => Boolean(path))),
+    ...(result.executionAttestationManifestPath ? [result.executionAttestationManifestPath] : []),
+  ])];
 }
 
-function executionContext(result: KernelFindingNbootVerification): ResearchExecutionContext {
+function executionContext(result: KernelFindingNbootVerification, reproducerPath?: string): ResearchExecutionContext {
   const reproduced = result.bootResults.filter((boot) => boot.status === "reproduced");
   const receipts = reproduced.map((boot) => boot.executionAttestation).filter((receipt): receipt is NonNullable<typeof receipt> => Boolean(receipt));
-  if (receipts.length !== reproduced.length || receipts.length === 0 || !result.executionIdentity || !result.executionAttestationManifestPath || !result.executionAttestationManifestSha256 || reproduced.some((boot) => !boot.executionAttestationPath || !boot.executionAttestationSha256 || boot.executionIdentity?.uid !== result.executionIdentity?.uid || boot.executionIdentity?.gid !== result.executionIdentity?.gid)) return { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 };
-  const first = receipts[0];
-  const zeroCap = first.realUid === result.executionIdentity.uid && first.effectiveUid === result.executionIdentity.uid && first.savedUid === result.executionIdentity.uid && first.realGid === result.executionIdentity.gid && first.effectiveGid === result.executionIdentity.gid && first.savedGid === result.executionIdentity.gid && first.supplementaryGroups.length === 0 && [first.inheritableCapabilities, first.permittedCapabilities, first.effectiveCapabilities, first.ambientCapabilities].every((cap) => cap === "0000000000000000") && first.noNewPrivileges && first.userNamespaceMax === 0 && first.initialUserNamespace && receipts.every((r) => JSON.stringify(r) === JSON.stringify(first));
+  if (receipts.length !== reproduced.length || receipts.length === 0 || !reproducerPath || !result.executionIdentity || !result.executionAttestationManifestPath || !result.executionAttestationManifestSha256 || reproduced.some((boot) => !boot.executionAttestationPath || !boot.executionAttestationSha256 || !boot.dmesgSha256 || boot.executionIdentity?.uid !== result.executionIdentity?.uid || boot.executionIdentity?.gid !== result.executionIdentity?.gid)) return { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 };
+  let validatedReceipts: typeof receipts;
+  try {
+    const manifestPath = resolve(result.executionAttestationManifestPath);
+    const manifestStat = lstatSync(manifestPath);
+    if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) throw new Error("manifest must be a regular non-symlink file");
+    const artifactDir = dirname(manifestPath);
+    const readArtifact = (path: string, encoding?: BufferEncoding): string | Buffer => {
+      const resolved = resolve(path);
+      if (dirname(resolved) !== artifactDir) throw new Error("evidence path escapes run artifact directory");
+      const stat = lstatSync(resolved);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("evidence must be a regular non-symlink file");
+      return encoding ? readFileSync(resolved, encoding) : readFileSync(resolved);
+    };
+    const manifestRaw = readFileSync(manifestPath, "utf8");
+    if (createHash("sha256").update(manifestRaw).digest("hex") !== result.executionAttestationManifestSha256) throw new Error("manifest hash mismatch");
+    const manifest = JSON.parse(manifestRaw) as Record<string, unknown>;
+    const exactKeys = (value: object, keys: string[]) => JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+    if (!exactKeys(manifest, ["schemaVersion", "expectedKernelRelease", "observedKernelRelease", "kernelImageSha256", "kernelConfigSha256", "executionIdentity", "boots"]) || manifest.schemaVersion !== 2 || !Array.isArray(manifest.boots) || manifest.boots.length !== reproduced.length || typeof manifest.executionIdentity !== "object" || manifest.executionIdentity === null || !exactKeys(manifest.executionIdentity, ["uid", "gid"])) throw new Error("invalid manifest shape");
+    const identity = manifest.executionIdentity as Record<string, unknown>;
+    if (identity.uid !== result.executionIdentity.uid || identity.gid !== result.executionIdentity.gid) throw new Error("manifest identity mismatch");
+    const manifestBoots = manifest.boots as unknown[];
+    validatedReceipts = reproduced.map((boot, index) => {
+      const entry = manifestBoots[index] as Record<string, unknown>;
+      if (!entry || !exactKeys(entry, ["index", "bootId", "receiptSha256", "receiptPath", "dmesgSha256", "dmesgPath"]) || entry.index !== index + 1 || entry.receiptPath !== boot.executionAttestationPath || entry.receiptSha256 !== boot.executionAttestationSha256 || entry.dmesgPath !== boot.dmesg_path || entry.dmesgSha256 !== boot.dmesgSha256) throw new Error("manifest boot entry mismatch");
+      const receiptRaw = readArtifact(boot.executionAttestationPath!, "utf8") as string;
+      if (createHash("sha256").update(receiptRaw).digest("hex") !== boot.executionAttestationSha256) throw new Error("receipt hash mismatch");
+      const parsed = parseKernelExecutionAttestation(receiptRaw);
+      if (JSON.stringify(parsed) !== JSON.stringify(boot.executionAttestation) || entry.bootId !== parsed.bootId) throw new Error("receipt object mismatch");
+      const dmesgRaw = readArtifact(boot.dmesg_path) as Buffer;
+      if (createHash("sha256").update(dmesgRaw).digest("hex") !== boot.dmesgSha256) throw new Error("dmesg hash mismatch");
+      return parsed;
+    });
+    if (manifestRaw !== JSON.stringify(manifest, null, 2) + "\n") throw new Error("noncanonical manifest");
+    const first = validatedReceipts[0]!;
+    if (manifest.expectedKernelRelease !== first.expectedKernelRelease || manifest.observedKernelRelease !== first.observedKernelRelease || manifest.kernelImageSha256 !== first.kernelImageSha256 || manifest.kernelConfigSha256 !== first.kernelConfigSha256) throw new Error("manifest provenance mismatch");
+  } catch {
+    return { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 };
+  }
+  const first = validatedReceipts[0]!;
+  const bootIds = new Set(validatedReceipts.map((receipt) => receipt.bootId));
+  const nonces = new Set(validatedReceipts.map((receipt) => receipt.nonce));
+  let reproducerSha256: string;
+  try {
+    reproducerSha256 = createHash("sha256").update(readFileSync(reproducerPath)).digest("hex");
+  } catch {
+    return { privilege: "privileged", basis: "runner-contract", realUid: 0, effectiveUid: 0 };
+  }
+  const zeroCap = validatedReceipts.every((receipt) => receipt.schemaVersion === 2 && receipt.reproducerSha256 === reproducerSha256 && receipt.expectedKernelRelease === receipt.observedKernelRelease && receipt.realUid === result.executionIdentity!.uid && receipt.effectiveUid === result.executionIdentity!.uid && receipt.savedUid === result.executionIdentity!.uid && receipt.realGid === result.executionIdentity!.gid && receipt.effectiveGid === result.executionIdentity!.gid && receipt.savedGid === result.executionIdentity!.gid && receipt.supplementaryGroups.length === 0 && [receipt.inheritableCapabilities, receipt.permittedCapabilities, receipt.effectiveCapabilities, receipt.ambientCapabilities].every((cap) => cap === "0000000000000000") && receipt.noNewPrivileges && receipt.userNamespaceMax === 0 && receipt.initialUserNamespace && receipt.expectedKernelRelease === first.expectedKernelRelease && receipt.observedKernelRelease === first.observedKernelRelease && receipt.kernelImageSha256 === first.kernelImageSha256 && receipt.kernelConfigSha256 === first.kernelConfigSha256) && bootIds.size === validatedReceipts.length && nonces.size === validatedReceipts.length;
   return {
     privilege: zeroCap ? "zero-cap" : "privileged",
     basis: "runtime-attested",
@@ -161,7 +212,7 @@ export class LinuxKernelResearchAdapter
         finding: candidate.payload.finding,
         candidateId: candidate.id,
         grade: "reproduced",
-        executionContext: executionContext(execution.result),
+        executionContext: executionContext(execution.result, candidate.payload.verify.syzProgramPath ?? candidate.payload.verify.reproducerPath),
         evidence: [{
           stage: "verify",
           status: "passed",

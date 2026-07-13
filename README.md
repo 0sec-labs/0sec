@@ -93,6 +93,12 @@ native Linux VM replay runs as guest root and is recorded as privileged; a
 reproduced crash is therefore not zero-cap proof. Zero-cap promotion requires
 runtime-attested non-root real and effective UIDs, an empty effective capability
 set, `no_new_privs`, and a digest-bound attestation artifact.
+Schema-v2 receipts also bind a private staged host kernel-image digest and its
+associated build-config digest to the guest-observed kernel release and a fresh
+boot UUID. N-of-K promotion rejects
+mixed kernel identities, repeated boot IDs, or missing per-boot dmesg hashes.
+This is trusted host/VM orchestration evidence, not hardware remote attestation;
+the config association is not a runtime-config measurement.
 
 Connected adapters cover deterministic HTTP protocol conformance, userspace
 sanitizer/fuzzing campaigns, the agentic best-of-N hunt, repeated-boot Linux
