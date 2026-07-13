@@ -15,6 +15,31 @@ keeps an explicit benchmark ledger at
   Actions artifacts, and
 - older historical mixed local+CI publication tallies.
 
+## Windows research evidence ledger
+
+`pnpm --filter @pwnkit/benchmark windows-research` converts an input JSON or
+JSONL file of Windows research attempts into an append-only, hash-bound ledger
+and a summary with Wilson intervals:
+
+```sh
+pnpm --filter @pwnkit/benchmark windows-research \
+  --input attempts.jsonl \
+  --output results/windows-research-v1.jsonl \
+  --summary results/windows-research-summary-v1.json
+```
+
+The ledger retains every outcome, including no-candidate, not-reproduced,
+inconclusive, and safety-rejected attempts. Contract fixtures are reported
+separately and are never included in capability metrics. A live reproduced row
+is claim-eligible only when it is bound to a passing pwnkit import verdict, the
+exact receipt hash, distinct retained dump bytes, a pre-run sealed label, and
+all execution safety gates. Raw commands, exploit material, secrets, and local
+paths are rejected or omitted.
+
+Live collection also requires `PWNKIT_WINDOWS_LABEL_SEAL_KEY` (at least 32
+bytes). The collector verifies the HMAC seal over campaign, case, ground truth,
+label hash, and seal timestamp without persisting the key.
+
 ## XBOW runner
 
 The XBOW runner (`src/xbow-runner.ts`, exposed as `pnpm xbow`) executes
