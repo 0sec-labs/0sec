@@ -42,8 +42,18 @@ export type KernelPrimitiveKind =
   | "uninitialized-access"
   | "unknown";
 
-/** The dominant memory operation the primitive grants the attacker. */
-export type PrimitiveControl = "write" | "read" | "free" | "none";
+/**
+ * The dominant memory operation the primitive grants the attacker.
+ *
+ *   - `call` — a control-flow shape: the freed object owns a function pointer
+ *     the kernel calls after the free (an embedded `timer_list.function`, a
+ *     `work_struct`/tasklet callback, or an ops-vtable slot). Reclaiming the
+ *     object with a forged pointer hijacks that indirect call. This is distinct
+ *     from a `write`: the leverage is an attacker-directed *call*, not a memcpy
+ *     into adjacent memory — and it is what the fake-cred / timer-UAF family
+ *     needs (`.function = commit_creds`, `rdi = &obj`).
+ */
+export type PrimitiveControl = "write" | "read" | "free" | "none" | "call";
 
 /**
  * A single, bounded step that would *demonstrate* attacker control over the
@@ -85,6 +95,14 @@ export interface KernelPrimitive {
   /** The allocation object / cache the primitive operates on, when derivable. */
   objectHint?: string;
   /**
+   * Byte offset of the callable function pointer inside the freed object (the
+   * `timer_list.function` / ops slot). Only set for a `call` (control-flow)
+   * primitive, and only once a struct-layout pass (`analyzeWritePrimitive`)
+   * pins it — the cheap crash classifier flags the SHAPE (control="call") but
+   * leaves the exact offset undefined.
+   */
+  funcPtrOffset?: number;
+  /**
    * Derived shape of the controlled write primitive (kernel-autonomy Phase 1).
    * Optional and additive — populated by later weaponization stages; the cheap
    * classifier leaves it undefined.
@@ -120,6 +138,34 @@ const WRITE_PRIMITIVE_KINDS = new Set<KernelPrimitiveKind>([
   "use-after-free",
   "out-of-bounds-write",
 ]);
+
+/**
+ * Timer / softirq dispatch frames whose faulting access is an indirect call
+ * through a freed object's callback pointer. When a UAF faults HERE (rather
+ * than in a memcpy write site), the object owns an embedded `timer_list` /
+ * callback the kernel invokes after the free — the control-flow-hijack shape
+ * the fake-cred one-shot weaponizes.
+ */
+const CONTROL_FLOW_CALL_SITES =
+  /^(call_timer_fn|run_timer_softirq|__run_timers?|__run_timer_base|expire_timers|__hrtimer_run_queues|__run_hrtimer|hrtimer_interrupt|__do_softirq|tasklet_action|tasklet_hi_action|process_one_work)$/;
+
+/**
+ * True when `faultingPc` is a timer/ops indirect-call dispatch site — i.e. the
+ * bug hands an attacker control over a function pointer the kernel *calls*
+ * (freed `timer_list.function`, work/tasklet callback, ops slot), not a memcpy
+ * destination. Pure + defensive: parses the leading symbol off the PC token and
+ * never throws. Also matches object-local callback names by suffix
+ * (`*_timer_fn`, `*_timeout`, `*_callback`, `*_cb`) so a driver's own timer
+ * handler frame classifies as control-flow too.
+ */
+export function isControlFlowCallSite(faultingPc?: string): boolean {
+  if (!faultingPc) return false;
+  const sym = faultingPc.match(/^([A-Za-z_][\w.$]*)/)?.[1];
+  if (!sym) return false;
+  if (CONTROL_FLOW_CALL_SITES.test(sym)) return true;
+  // A driver's own timer/callback handler frame (the object-local dispatch).
+  return /(?:_timer_fn|_timeout|_callback|_cb)$/.test(sym);
+}
 
 /**
  * Classify the exploitation primitive a kernel crash exposes.
@@ -277,6 +323,27 @@ export function classifyKernelPrimitive(report: CrashReport): KernelPrimitive {
   const faultingPc = report.faultingPc ?? parseFaultingPc(report.rawText);
   const slabCache = report.slabCache ?? parseSlabCache(report.rawText);
 
+  // Control-flow (fn-ptr) shape: a UAF / freelist-confusion whose faulting site
+  // is a timer/ops indirect call means the freed object owns a callback the
+  // kernel invokes after the free. That is NOT a memcpy-write primitive — it is
+  // a direct control-transfer, so we relabel control="call" (distinct from
+  // "write") and raise exploitability: reclaiming the object with a forged
+  // `.function`/ops slot hijacks that call (fake-cred / timer-UAF one-shot).
+  if (
+    (kind === "use-after-free" || kind === "double-free") &&
+    isControlFlowCallSite(faultingPc)
+  ) {
+    control = "call";
+    exploitability = Math.max(exploitability, 0.9);
+    confidence = Math.min(1, confidence + 0.05);
+    rationale.push(
+      "Faulting site is a timer/ops indirect-call dispatch frame: the freed" +
+        " object owns a function pointer the kernel calls after the free, so" +
+        " reclaiming it with a forged `.function` hijacks control flow" +
+        " (fake-cred one-shot: `.function=commit_creds`, `rdi=&obj`).",
+    );
+  }
+
   return {
     kind,
     control,
@@ -337,6 +404,23 @@ export function buildControlDemo(
 ): ControlDemoStep {
   const sizeHint = report.accessSize ? `${report.accessSize}-byte` : "controlled-width";
   const objectHint = report.allocSite ?? report.faultingFunction;
+
+  // Control-flow (fn-ptr) shape overrides the memcpy-write demo: the bounded
+  // demonstration is reclaiming the freed object so a forged callback pointer
+  // is the one the kernel invokes at the next dispatch.
+  if (control === "call") {
+    return {
+      kind: "object-overwrite",
+      description:
+        `After the free in ${report.freeSite ?? "the freed path"}, spray the` +
+        ` victim cache to reclaim the freed object with a forged embedded` +
+        ` callback (timer_list.function / ops slot), then let the kernel's` +
+        ` timer/softirq dispatch (${objectHint}) fire and confirm the indirect` +
+        ` call lands on the attacker-chosen target.`,
+      controlledInput: "reclaiming-object bytes at the callback-pointer offset",
+      demonstrated: false,
+    };
+  }
 
   switch (kind) {
     case "use-after-free":
@@ -468,6 +552,10 @@ export function exploitabilityAdjustedSeverity(
   if (primitive.controlDemo.demonstrated && WRITE_PRIMITIVE_KINDS.has(primitive.kind)) {
     floor = "critical";
   } else if (primitive.exploitability >= 0.8 && primitive.control === "write") {
+    floor = "critical";
+  } else if (primitive.control === "call" && primitive.exploitability >= 0.8) {
+    // A control-flow hijack (freed fn-ptr the kernel calls) is at least as
+    // dangerous as a write-what-where — the fake-cred one-shot roots directly.
     floor = "critical";
   } else if (primitive.exploitability >= 0.6) {
     floor = "high";
