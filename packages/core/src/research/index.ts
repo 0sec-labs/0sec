@@ -72,6 +72,15 @@ export type {
   BootMatrixObservation,
   BootMatrixVerdict,
 } from "./adapters/linux-boot-matrix-adapter.js";
+export { WindowsHyperVImportAdapter } from "./adapters/windows-hyperv-adapter.js";
+export type {
+  WindowsHyperVTarget,
+  WindowsHyperVTargetConfig,
+  WindowsHyperVCandidate,
+  WindowsHyperVImportVerdict,
+  ZeroverseHyperVEvidence,
+  ZeroverseHyperVObservation,
+} from "./adapters/windows-hyperv-adapter.js";
 export { XnuIokitResearchAdapter } from "./adapters/xnu-iokit-adapter.js";
 export type {
   XnuIokitTarget,
