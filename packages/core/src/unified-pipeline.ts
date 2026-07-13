@@ -28,6 +28,8 @@ import { cardanoOnchainReviewAgentPrompt } from "./review/cardano-onchain-profil
 import { solanaOnchainReviewAgentPrompt } from "./review/solana-onchain-profile.js";
 import { cardanoHaskellReviewAgentPrompt } from "./review/cardano-haskell-profile.js";
 import { evmOnchainReviewAgentPrompt } from "./review/evm-onchain-profile.js";
+import { cairoOnchainReviewAgentPrompt } from "./review/cairo-onchain-profile.js";
+import { moveOnchainReviewAgentPrompt } from "./review/move-onchain-profile.js";
 import { generateHaskellSeeds } from "./review/haskell-seeds.js";
 import { generateEvmSeeds } from "./review/evm-seeds.js";
 import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
@@ -108,7 +110,7 @@ export interface PipelineOptions {
    *   surface, copy_from_user discipline, refcount races, skb cow/share
    *   violations (Dirty Frag class). Static-only; verification via #271/#272.
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cairo-onchain" | "move-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
   /**
    * Review the SOURCE of a published package. When set, `target` is a
    * package NAME (not a repo path / git URL): the pipeline installs the
@@ -1552,6 +1554,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
             ? solanaOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "evm-onchain"
             ? evmOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
+            : opts.reviewProfile === "cairo-onchain"
+            ? cairoOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
+            : opts.reviewProfile === "move-onchain"
+            ? moveOnchainReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "cardano-haskell"
             ? cardanoHaskellReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.hypothesis)
             : opts.reviewProfile === "xnu-kernel"

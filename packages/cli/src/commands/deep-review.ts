@@ -169,6 +169,10 @@ export interface ProfileLensSets {
   solanaVerifyLenses: VerifyLens[];
   cardanoFinderLenses: FinderLens[];
   cardanoVerifyLenses: VerifyLens[];
+  cairoFinderLenses: FinderLens[];
+  cairoVerifyLenses: VerifyLens[];
+  moveFinderLenses: FinderLens[];
+  moveVerifyLenses: VerifyLens[];
 }
 
 export interface SelectedLenses {
@@ -179,7 +183,7 @@ export interface SelectedLenses {
 }
 
 /**
- * Pick the finder + verify lens set for a `--profile`. The three on-chain
+ * Pick the finder + verify lens set for a `--profile`. The five on-chain
  * profiles have bespoke lens sets; every other profile (default / c-library /
  * linux-kernel / cardano-haskell / unset / unknown) falls back to the generic
  * {@link defaultFinderLenses} / {@link defaultVerifyLenses}. Pure + testable.
@@ -192,6 +196,10 @@ export function selectProfileLenses(profile: string | undefined, sets: ProfileLe
       return { finderLenses: sets.solanaFinderLenses, verifyLenses: sets.solanaVerifyLenses, matchedProfile: "solana-onchain" };
     case "cardano-onchain":
       return { finderLenses: sets.cardanoFinderLenses, verifyLenses: sets.cardanoVerifyLenses, matchedProfile: "cardano-onchain" };
+    case "cairo-onchain":
+      return { finderLenses: sets.cairoFinderLenses, verifyLenses: sets.cairoVerifyLenses, matchedProfile: "cairo-onchain" };
+    case "move-onchain":
+      return { finderLenses: sets.moveFinderLenses, verifyLenses: sets.moveVerifyLenses, matchedProfile: "move-onchain" };
     default:
       return { finderLenses: defaultFinderLenses, verifyLenses: defaultVerifyLenses, matchedProfile: "default" };
   }
@@ -340,6 +348,10 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     solanaVerifyLenses,
     cardanoFinderLenses,
     cardanoVerifyLenses,
+    cairoFinderLenses,
+    cairoVerifyLenses,
+    moveFinderLenses,
+    moveVerifyLenses,
   } = await import("@pwnkit/core");
   const log = opts.log ?? (() => {});
   const runtime: RuntimeMode = opts.runtime ?? "api";
@@ -424,6 +436,10 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       solanaVerifyLenses,
       cardanoFinderLenses,
       cardanoVerifyLenses,
+      cairoFinderLenses,
+      cairoVerifyLenses,
+      moveFinderLenses,
+      moveVerifyLenses,
     });
 
     log(
@@ -606,7 +622,7 @@ export function registerDeepReviewCommand(program: Command): void {
         "over the review cap), 3=error (bad flags / unreadable target / all finders failed).",
     )
     .argument("<target>", "Source tree to review (a local path or a git URL)")
-    .option("--profile <p>", "Lens profile: evm-onchain | solana-onchain | cardano-onchain (else a generic default lens set)")
+    .option("--profile <p>", "Lens profile: evm-onchain | solana-onchain | cardano-onchain | cairo-onchain | move-onchain (else a generic default lens set)")
     .option("--subsystem <path>", "Narrow the review scope to a subdirectory (respects the 5000-file review cap)")
     .option("--models <a,b>", "Comma-separated finder models for diversity (default: single provider model, or $PWNKIT_DEEP_REVIEW_MODELS)")
     .option("--attempts <N>", `Finder attempts per candidate×lens×model, best-of-N (default ${DEFAULT_ATTEMPTS}, or $PWNKIT_DEEP_REVIEW_ATTEMPTS)`)
