@@ -715,6 +715,8 @@ export interface KernelWritePrimitiveProfile {
   srcOffset?: number;
   writeWidth?: "controlled" | "fixed";
   controllable?: boolean;
+  /** Offset of the callable fn-ptr (timer_list.function) for a `call` primitive. */
+  funcPtrOffset?: number;
   conclusion?: string;
 }
 
@@ -731,7 +733,7 @@ export interface KernelSprayPlan {
 
 /** Mirror of core's `RootTailPlan`. */
 export interface KernelRootTailPlan {
-  tail: "modprobe_path" | "core_pattern" | "cred";
+  tail: "modprobe_path" | "core_pattern" | "cred" | "fake-cred" | "workqueue-www";
   targetSymbol?: string;
   /** Resolved target symbol address as a `0x…` hex string (unslid under KASLR). */
   targetAddr?: string;
@@ -744,6 +746,8 @@ export interface KernelRootTailPlan {
   pathString?: string;
   byteFidelityOk?: boolean;
   dropUidTrigger?: boolean;
+  /** `fake-cred` honesty flag: KASLR on + no kernel-text leak ⇒ text leak required. */
+  hardenedNeedsTextLeak?: boolean;
   reason?: string;
 }
 
