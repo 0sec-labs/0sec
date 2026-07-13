@@ -6,6 +6,7 @@ import type { FinderLens, VerifyLens } from "@pwnkit/core";
 import {
   selectProfileLenses,
   enumerateDeepReviewCandidates,
+  isNonProtocolEvmPath,
   defaultFinderLenses,
   defaultVerifyLenses,
   type ProfileLensSets,
@@ -110,6 +111,61 @@ describe("enumerateDeepReviewCandidates", () => {
     const r = enumerateDeepReviewCandidates("/repo", flat, { maxCandidates: 3 });
     expect(r.candidates).toEqual(["/repo/a.ts", "/repo/m.ts", "/repo/z.ts"]);
   });
+
+  it("applies an `exclude` predicate BEFORE the largest-first cap", () => {
+    // The two largest files are vendored/test; without the filter they'd win the
+    // cap and starve the real src file. With it, the src file is selected.
+    const sizes: Record<string, number> = {
+      "/repo/lib/forge-std/src/Vm.sol": 90000,
+      "/repo/test/Vault.t.sol": 80000,
+      "/repo/src/Vault.sol": 1000,
+    };
+    const h: DeepReviewEnumHelpers = {
+      collectScopeFiles: () => Object.keys(sizes),
+      countScopeFilesUpTo: () => Object.keys(sizes).length,
+      fileSize: (p) => sizes[p] ?? 0,
+    };
+    const r = enumerateDeepReviewCandidates("/repo", h, {
+      maxCandidates: 1,
+      exclude: (p) => isNonProtocolEvmPath(p, "/repo"),
+    });
+    expect(r.candidates).toEqual(["/repo/src/Vault.sol"]);
+  });
+});
+
+describe("isNonProtocolEvmPath — evm candidate scoping (test/vendored exclusion)", () => {
+  const root = "/repo";
+  it.each([
+    "/repo/lib/forge-std/src/Vm.sol",
+    "/repo/lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol",
+    "/repo/lib/openzeppelin-contracts-upgradeable/lib/forge-std/src/console2.sol", // nested vendored lib
+    "/repo/test/unit/CapyfiAggregatorV3Test.t.sol",
+    "/repo/src/Vault.t.sol",              // Foundry test filename anywhere
+    "/repo/test/contracts/WalletsManager.t.sol",
+    "/repo/script/Deploy.s.sol",
+    "/repo/scripts/deploy.ts",
+    "/repo/src/mocks/MockOracle.sol",
+    "/repo/node_modules/@oz/ERC20.sol",
+    "/repo/src/Vault.test.ts",
+    "/repo/src/Vault.spec.js",
+  ])("excludes non-protocol path %s", (p) => {
+    expect(isNonProtocolEvmPath(p, root)).toBe(true);
+  });
+
+  it.each([
+    "/repo/src/contracts/Comptroller.sol",
+    "/repo/src/Vault.sol",
+    "/repo/contracts/Token.sol",
+    "/repo/Vault.sol",                    // root-level protocol source
+    "/repo/src/libraries/SafeMath.sol",   // own `libraries` dir is NOT vendored `lib`
+    "/repo/src/interfaces/IVault.sol",
+  ])("keeps protocol source %s", (p) => {
+    expect(isNonProtocolEvmPath(p, root)).toBe(false);
+  });
+
+  it("does not exclude a path that escapes the scope root", () => {
+    expect(isNonProtocolEvmPath("/other/lib/x.sol", "/repo")).toBe(false);
+  });
 });
 
 // ── runDeepReview wiring (with @pwnkit/core mocked, mirrors hunt.test.ts) ─────
@@ -185,6 +241,9 @@ describe("runDeepReview — seedless lens-driven review", () => {
       confirmed: [makeLead()],
       duplicates: [],
       scanned: 8,
+      finderCompleted: 8,
+      finderTimedOut: 0,
+      finderErrored: 0,
       warnings: [],
     });
     getCloudSinkConfigMock.mockReset().mockReturnValue(null);
@@ -209,6 +268,39 @@ describe("runDeepReview — seedless lens-driven review", () => {
       { path: "/repo/src/Vault.sol" },
     ]);
     expect(outcome.result).toMatchObject({ mode: "deep_review", profile: "evm-onchain", confirmed: 1 });
+  });
+
+  it("evm-onchain: excludes test/vendored/script files from the finder candidate set", async () => {
+    collectScopeFilesMock.mockReturnValue([
+      "/repo/lib/forge-std/src/Vm.sol",         // vendored — dropped
+      "/repo/test/contracts/Vault.t.sol",       // test — dropped
+      "/repo/script/Deploy.s.sol",              // deploy script — dropped
+      "/repo/src/Comptroller.sol",              // protocol source — kept
+      "/repo/src/contracts/Vault.sol",          // protocol source — kept
+    ]);
+    countScopeFilesUpToMock.mockReturnValue(5);
+    await runDeepReview({ target: "/repo", profile: "evm-onchain" });
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    // All mock files stat to size 0 → alphabetical tie-break among the KEPT src files.
+    expect(opts.candidates).toEqual([
+      { path: "/repo/src/Comptroller.sol" },
+      { path: "/repo/src/contracts/Vault.sol" },
+    ]);
+  });
+
+  it("non-evm profile: does NOT apply the evm test/vendored exclusion", async () => {
+    collectScopeFilesMock.mockReturnValue([
+      "/repo/lib/forge-std/src/Vm.sol",
+      "/repo/src/Comptroller.sol",
+    ]);
+    countScopeFilesUpToMock.mockReturnValue(2);
+    await runDeepReview({ target: "/repo", profile: "linux-kernel" });
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    // Kernel/default candidate selection is unchanged — the lib file is kept.
+    expect(opts.candidates).toEqual([
+      { path: "/repo/lib/forge-std/src/Vm.sol" },
+      { path: "/repo/src/Comptroller.sol" },
+    ]);
   });
 
   it("falls back to the default lens set for a non-onchain profile", async () => {
@@ -354,10 +446,43 @@ describe("runDeepReview — seedless lens-driven review", () => {
     expect((outcome.result as { note: string }).note).toMatch(/--subsystem/);
   });
 
-  it("exits 1 when the hunt surfaces no surviving leads", async () => {
-    runHuntScanMock.mockResolvedValue({ findings: [], confirmed: [], duplicates: [], scanned: 8, warnings: [] });
+  it("exits 0 (complete, not failed) when the sweep RAN but surfaced no surviving leads", async () => {
+    // A clean 0-lead hunt is a valid SUCCESS: the sweep completed, finders did
+    // real work (finderCompleted > 0), nothing survived the quorum. Must NOT be
+    // exit-non-zero, or the cloud worker marks the scan failed (CapyFi/Onyx).
+    runHuntScanMock.mockResolvedValue({
+      findings: [], confirmed: [], duplicates: [],
+      scanned: 8, finderCompleted: 8, finderTimedOut: 0, finderErrored: 0,
+      warnings: [],
+    });
     const outcome = await runDeepReview({ target: "/repo", profile: "evm-onchain" });
-    expect(outcome.exitCode).toBe(1);
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.result).toMatchObject({ mode: "deep_review", confirmed: 0 });
+  });
+
+  it("exits 0 when a PARTIAL subset of finders timed out but some completed (real coverage)", async () => {
+    // 20/32 timing out (Onyx) still leaves real coverage — a success, not failure.
+    runHuntScanMock.mockResolvedValue({
+      findings: [], confirmed: [], duplicates: [],
+      scanned: 32, finderCompleted: 12, finderTimedOut: 20, finderErrored: 0,
+      warnings: ["finder timed out on X — abandoned"],
+    });
+    const outcome = await runDeepReview({ target: "/repo", profile: "evm-onchain" });
+    expect(outcome.exitCode).toBe(0);
+  });
+
+  it("exits 3 (genuine failure) when the sweep did NO work — every finder failed", async () => {
+    // 0 of N completed = an LLM/backend failure (auth, total stall), NOT a clean
+    // 0-finding result. This must still fail so real outages aren't masked.
+    runHuntScanMock.mockResolvedValue({
+      findings: [], confirmed: [], duplicates: [],
+      scanned: 8, finderCompleted: 0, finderTimedOut: 3, finderErrored: 5,
+      warnings: ["fetch failed", "LLM auth error"],
+    });
+    const outcome = await runDeepReview({ target: "/repo", profile: "evm-onchain" });
+    expect(outcome.exitCode).toBe(3);
+    expect(outcome.result).toMatchObject({ mode: "deep_review", finder_completed: 0 });
+    expect((outcome.result as { error: string }).error).toMatch(/every finder run failed/);
   });
 
   it("rejects a subsystem that escapes the source tree", async () => {

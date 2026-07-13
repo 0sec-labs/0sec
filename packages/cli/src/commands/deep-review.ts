@@ -23,16 +23,20 @@
  * leads flow to the orchestrator as `discovered` candidates and enter the
  * cloud's own adversarial verify gate, exactly like `hunt`.
  *
- * Exit codes (mirroring `pwnkit hunt`):
- *   0 → ≥1 lead survived the multi-lens quorum
- *   1 → ran, no lead survived
+ * Exit codes:
+ *   0 → the sweep RAN to completion — a VALID outcome whether or not any lead
+ *       survived the quorum. A clean 0-lead hunt is a success, not a failure
+ *       (the cloud worker maps a non-zero CLI exit to scan status=failed, so a
+ *       completed 0-finding sweep must exit 0 or it is wrongly marked failed —
+ *       the CapyFi/Onyx "failed with 0 findings" incident, 2026-07-08).
  *   2 → skipped (no candidate files, or the scope exceeds the review cap)
- *   3 → error (bad flags, unreadable target, LLM failure)
+ *   3 → error (bad flags, unreadable target, or the sweep did NO work at all —
+ *       every finder errored/timed out, i.e. an LLM/backend failure)
  */
 
 import type { Command } from "commander";
 import { statSync } from "node:fs";
-import { resolve, join, sep } from "node:path";
+import { resolve, join, sep, relative } from "node:path";
 import type { Finding, RuntimeMode } from "@pwnkit/shared";
 import type { FinderLens, VerifyLens } from "@pwnkit/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
@@ -193,6 +197,54 @@ export function selectProfileLenses(profile: string | undefined, sets: ProfileLe
   }
 }
 
+/**
+ * EVM/Foundry repos vendor their dependencies under `lib/` (forge-std,
+ * openzeppelin, solmate, …), keep unit tests as `*.t.sol` under `test/`, and
+ * put deploy helpers under `script/` / `scripts/`. NONE of that is protocol
+ * source worth spending a finder budget on — and the LARGEST `.sol` files in a
+ * Foundry tree are almost always vendored (forge-std's `Vm.sol` /
+ * `safeconsole.sol` / `console2.sol`), so the largest-first candidate pick lands
+ * the entire finder budget on dependencies and tests and times out. Observed on
+ * two real cloud scans (2026-07-08): CapyFi finders timed out on
+ * `lib/forge-std/src/Vm.sol`; Onyx had 20/32 finders time out on `.t.sol` files
+ * under `test/`, gutting real coverage. These dir segments are the
+ * vendored/test/script buckets to skip so the evm-onchain candidate set is
+ * scoped to protocol source (`src/`, `contracts/`, root `.sol`, …).
+ */
+const EVM_EXCLUDE_DIR_SEGMENTS = new Set([
+  "test", "tests",
+  "mock", "mocks",
+  "script", "scripts", // Foundry deploy scripts
+  "lib",               // Foundry vendored deps (forge-std / openzeppelin / solmate …)
+  "node_modules",      // Hardhat/JS vendored deps (also skipped by the core walker)
+]);
+
+/**
+ * True when an evm-onchain candidate path is a TEST, VENDORED-LIB, MOCK, or
+ * DEPLOY-SCRIPT file rather than protocol source. Matches on path segments
+ * relative to the scope root (so a nested `lib/openzeppelin/lib/forge-std/…`
+ * vendored tree is caught at any depth) plus Foundry/JS test filename patterns
+ * (`Foo.t.sol`, `*.test.*`, `*.spec.*`) regardless of directory. Pure +
+ * exported for unit testing. EVM-scoped: only wired for `--profile evm-onchain`.
+ */
+export function isNonProtocolEvmPath(absPath: string, scopeRoot: string): boolean {
+  const rel = relative(scopeRoot, absPath);
+  // A path that resolves outside the scope (shouldn't happen) is not excludable
+  // on a segment basis — leave it in rather than silently drop it.
+  if (rel === "" || rel.startsWith("..")) return false;
+  const segments = rel.split(/[/\\]+/).filter(Boolean);
+  if (segments.length === 0) return false;
+  // Directory segments (everything before the filename): vendored / test / script.
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (EVM_EXCLUDE_DIR_SEGMENTS.has(segments[i]!.toLowerCase())) return true;
+  }
+  // Test/spec filenames regardless of directory (Foundry `Foo.t.sol`, JS specs).
+  const fileName = segments[segments.length - 1]!.toLowerCase();
+  if (fileName.endsWith(".t.sol")) return true;
+  if (fileName.includes(".test.") || fileName.includes(".spec.")) return true;
+  return false;
+}
+
 /** File-walk helpers, injected so the enumeration logic is unit-testable
  *  without a real source tree. Match the `@pwnkit/core` signatures. */
 export interface DeepReviewEnumHelpers {
@@ -222,9 +274,17 @@ export interface DeepReviewEnumResult {
 export function enumerateDeepReviewCandidates(
   scopeRoot: string,
   helpers: DeepReviewEnumHelpers,
-  opts: { maxCandidates: number; fileCap?: number },
+  opts: {
+    maxCandidates: number;
+    fileCap?: number;
+    /** Drop candidate paths for which this returns true BEFORE the largest-first
+     *  cap — used to keep test/vendored files out of the evm-onchain finder set
+     *  so the budget goes to protocol source (see {@link isNonProtocolEvmPath}). */
+    exclude?: (absPath: string) => boolean;
+  },
 ): DeepReviewEnumResult {
   const fileCap = opts.fileCap ?? DEEP_REVIEW_FILE_CAP;
+  const exclude = opts.exclude ?? (() => false);
   const fileSize = helpers.fileSize ?? ((p: string) => {
     try { return statSync(p).size; } catch { return 0; }
   });
@@ -232,6 +292,7 @@ export function enumerateDeepReviewCandidates(
   const overCap = totalFiles > fileCap;
   const files = helpers.collectScopeFiles(scopeRoot, { maxFiles: fileCap });
   const candidates = files
+    .filter((p) => !exclude(p))
     .map((p) => ({ p, size: fileSize(p) }))
     .sort((a, b) => b.size - a.size || a.p.localeCompare(b.p))
     .slice(0, Math.max(1, opts.maxCandidates))
@@ -314,10 +375,20 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
   if (sinkCfg) delete process.env.PWNKIT_CLOUD_SINK;
 
   try {
+    // EVM-scoped candidate filtering: for the evm-onchain profile, keep the
+    // finder budget on protocol source by excluding test / vendored-lib / mock /
+    // deploy-script files (the largest .sol files in a Foundry tree are vendored,
+    // so largest-first would otherwise spend the whole budget on forge-std/tests
+    // and time out). No behavior change for kernel / other profiles.
+    const isEvmProfile = (opts.profile ?? "").trim().toLowerCase() === "evm-onchain";
     const { candidates: candidatePaths, totalFiles, overCap } = enumerateDeepReviewCandidates(
       scopeRoot,
       { collectScopeFiles, countScopeFilesUpTo },
-      { maxCandidates, fileCap: DEEP_REVIEW_FILE_CAP },
+      {
+        maxCandidates,
+        fileCap: DEEP_REVIEW_FILE_CAP,
+        ...(isEvmProfile ? { exclude: (p: string) => isNonProtocolEvmPath(p, scopeRoot) } : {}),
+      },
     );
 
     if (overCap) {
@@ -411,8 +482,44 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       log(`[deep-review] posted ${ingested} lead(s) to the cloud-sink as candidate findings (incremental)`);
     }
 
+    // Terminal status. A sweep that RAN is a SUCCESS whether or not any lead
+    // survived the quorum — a clean 0-lead hunt is a valid outcome, not a
+    // failure (the cloud worker maps a non-zero CLI exit to scan status=failed,
+    // which was wrongly failing completed 0-finding sweeps — CapyFi/Onyx,
+    // 2026-07-08). We do NOT mask a GENUINE backend failure: if the sweep did no
+    // work at all — every finder run errored or timed out, so NONE completed —
+    // that's an LLM/backend failure (auth, total stall), reported as exit 3. A
+    // PARTIAL subset timing out still produced real coverage and is a success.
+    // (`finderCompleted` may be absent from older/mocked results; treat absent
+    // as "did work" so we never flip a completed run to failure on missing data.)
+    const sweptNothing =
+      res.scanned > 0 &&
+      typeof res.finderCompleted === "number" &&
+      res.finderCompleted === 0;
+    if (sweptNothing) {
+      return {
+        exitCode: 3,
+        result: {
+          mode: "deep_review",
+          profile: matchedProfile,
+          source: sourceRoot,
+          subsystem: opts.subsystem ?? null,
+          scope_files: totalFiles,
+          candidates: candidatePaths.length,
+          scanned: res.scanned,
+          finder_completed: res.finderCompleted,
+          finder_timed_out: res.finderTimedOut ?? null,
+          finder_errored: res.finderErrored ?? null,
+          error:
+            "every finder run failed (0 of " +
+            `${res.scanned} completed) — no coverage was produced; treating as a backend/LLM failure, not a clean 0-finding result.`,
+          warnings: res.warnings.slice(0, 10),
+        },
+      };
+    }
+
     return {
-      exitCode: leads.length > 0 ? 0 : 1,
+      exitCode: 0,
       result: {
         mode: "deep_review",
         profile: matchedProfile,
@@ -495,7 +602,8 @@ export function registerDeepReviewCommand(program: Command): void {
       "Seedless DEPTH review of a source tree: enumerate candidate files, re-hunt " +
         "each through the profile's specialized finder lenses, and gate survivors " +
         "through the multi-lens verify quorum. Emits LEADS to verify (not confirmed " +
-        "bugs). Exit 0=lead(s), 1=none, 2=skipped (no files / over the review cap), 3=error.",
+        "bugs). Exit 0=sweep completed (with or without leads), 2=skipped (no files / " +
+        "over the review cap), 3=error (bad flags / unreadable target / all finders failed).",
     )
     .argument("<target>", "Source tree to review (a local path or a git URL)")
     .option("--profile <p>", "Lens profile: evm-onchain | solana-onchain | cardano-onchain (else a generic default lens set)")
