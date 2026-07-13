@@ -108,7 +108,15 @@ export interface RunOptions {
    * access control / init front-run, oracle & price manipulation,
    * first-depositor share inflation, signature/permit replay, cross-chain
    * message verification & replay, delegatecall/proxy storage collision,
-   * unchecked external-call return). "cardano-haskell" tunes for
+   * unchecked external-call return). "cairo-onchain" tunes for Cairo/Starknet
+   * DeFi value-logic bugs (caller/ownership auth gaps, fixed-point
+   * share-conversion rounding, reentrancy via call_contract, storage
+   * default-value trust, L1↔L2 message / l1_handler access control, oracle
+   * staleness). "move-onchain" tunes for Sui/Aptos Move resource/capability
+   * bugs (object/capability ownership & instance-binding gaps, shared-math
+   * overflow/truncation, uninitialized reward-index accounting, capability
+   * leakage, shared-object races, init/one-time-witness misuse, coin
+   * conservation). "cardano-haskell" tunes for
    * first-party Cardano Haskell node-stack bugs (partial-function/decoder
    * crashes on untrusted input, FFI memory-safety, lazy-eval space leaks,
    * Plutus-VM budget/eval flaws, ledger STS rule gaps). "xnu-kernel" tunes
@@ -116,7 +124,7 @@ export interface RunOptions {
    * port/VM). "xnu-re" reviews DECOMPILED Apple kext pseudo-C (closed kexts
    * from a kernelcache). Default: "default".
    */
-  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
+  reviewProfile?: "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cairo-onchain" | "move-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
   /**
    * Review the source of a published package: `target` is a package NAME and
    * the pipeline installs it (npm/pypi/cargo/oci) before reviewing its

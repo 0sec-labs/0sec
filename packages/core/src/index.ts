@@ -182,6 +182,8 @@ export { runHuntScan, makeSkepticVerifier, composeGate, makeMultiLensVerifier } 
 export { evmFinderLenses, evmVerifyLenses } from "./review/evm-onchain-profile.js";
 export { solanaFinderLenses, solanaVerifyLenses } from "./review/solana-onchain-profile.js";
 export { cardanoFinderLenses, cardanoVerifyLenses } from "./review/cardano-onchain-profile.js";
+export { cairoFinderLenses, cairoVerifyLenses } from "./review/cairo-onchain-profile.js";
+export { moveFinderLenses, moveVerifyLenses } from "./review/move-onchain-profile.js";
 // Deterministic source-file walkers (shared by the review pipeline + the
 // seedless deep-review candidate enumeration + its 5000-file scope cap).
 export { collectScopeFiles, countScopeFilesUpTo } from "./source-files.js";

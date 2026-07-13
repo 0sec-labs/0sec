@@ -23,6 +23,10 @@ const SETS: ProfileLensSets = {
   solanaVerifyLenses: tagged("sol-v") as VerifyLens[],
   cardanoFinderLenses: tagged("car-f"),
   cardanoVerifyLenses: tagged("car-v") as VerifyLens[],
+  cairoFinderLenses: tagged("cairo-f"),
+  cairoVerifyLenses: tagged("cairo-v") as VerifyLens[],
+  moveFinderLenses: tagged("move-f"),
+  moveVerifyLenses: tagged("move-v") as VerifyLens[],
 };
 
 describe("selectProfileLenses", () => {
@@ -44,6 +48,20 @@ describe("selectProfileLenses", () => {
     const r = selectProfileLenses("cardano-onchain", SETS);
     expect(r.matchedProfile).toBe("cardano-onchain");
     expect(r.finderLenses).toBe(SETS.cardanoFinderLenses);
+  });
+
+  it("picks the Cairo lens set for cairo-onchain", () => {
+    const r = selectProfileLenses("cairo-onchain", SETS);
+    expect(r.matchedProfile).toBe("cairo-onchain");
+    expect(r.finderLenses).toBe(SETS.cairoFinderLenses);
+    expect(r.verifyLenses).toBe(SETS.cairoVerifyLenses);
+  });
+
+  it("picks the Move lens set for move-onchain", () => {
+    const r = selectProfileLenses("move-onchain", SETS);
+    expect(r.matchedProfile).toBe("move-onchain");
+    expect(r.finderLenses).toBe(SETS.moveFinderLenses);
+    expect(r.verifyLenses).toBe(SETS.moveVerifyLenses);
   });
 
   it("is case/whitespace-insensitive", () => {
@@ -207,6 +225,10 @@ vi.mock("@pwnkit/core", () => ({
   solanaVerifyLenses: [{ id: "sol-v", challengeHint: "y" }],
   cardanoFinderLenses: [{ id: "car-f", challengeHint: "x" }],
   cardanoVerifyLenses: [{ id: "car-v", challengeHint: "y" }],
+  cairoFinderLenses: [{ id: "cairo-f", challengeHint: "x" }],
+  cairoVerifyLenses: [{ id: "cairo-v", challengeHint: "y" }],
+  moveFinderLenses: [{ id: "move-f", challengeHint: "x" }],
+  moveVerifyLenses: [{ id: "move-v", challengeHint: "y" }],
 }));
 
 const { runDeepReview } = await import("../deep-review.js");

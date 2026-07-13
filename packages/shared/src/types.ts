@@ -1366,6 +1366,30 @@ export interface AuditReport {
  *   No memory-safety surface (EVM VM); verification is a Foundry test that
  *   drains or corrupts. Distinct from cardano-onchain (EUTXO) and solana-onchain
  *   (account model).
+ * - `cairo-onchain`: Cairo / Starknet on-chain smart-contract review (Cairo 1+,
+ *   Scarb, starknet-foundry). Starknet DeFi *value-logic* bugs — caller /
+ *   ownership auth gaps (missing `assert(get_caller_address() == owner)`),
+ *   fixed-point share-conversion rounding (the zkLend / Vesu class), reentrancy
+ *   via `call_contract`, storage / mapping default-value trust, unchecked
+ *   external-call results, L1↔L2 message & `l1_handler` access control, oracle
+ *   staleness. No memory-safety surface (STARK-proven VM); `felt252` wraps mod p
+ *   but `u256`/`u128` overflow-panic, and failure is `assert`/`panic` (a revert)
+ *   so classic "unchecked return" idioms mostly do NOT apply. Verification is a
+ *   starknet-foundry (`snforge`) test that drains/corrupts. Distinct from
+ *   evm-onchain (Solidity/message-call), cardano-onchain (EUTXO), and
+ *   solana-onchain (account model).
+ * - `move-onchain`: Move on-chain smart-contract review (Sui Move / Aptos Move).
+ *   Move resource / capability *value-logic* bugs — object / capability
+ *   ownership & instance-binding gaps (the Cetus / Scallop unconstrained-object
+ *   class), arithmetic overflow / truncation in shared math libs (the Cetus
+ *   `integer_mate` `checked_shlw` $223M class), uninitialized / reward-index
+ *   accounting (the Scallop `last_index` class), public-transfer / capability
+ *   leakage, shared-object consensus races, `init` / one-time-witness misuse,
+ *   coin / balance conservation. No memory-safety surface (linear-resource VM);
+ *   native `+ - *` abort on overflow (so the real class is bit-shifts / casts /
+ *   unsound hand-rolled `checked_*` helpers), and failure is `abort` (a revert).
+ *   Verification is a `sui move test` / `aptos move test` unit test that
+ *   drains/corrupts. Distinct from the account/EUTXO/message-call profiles.
  * - `cardano-haskell`: Cardano FIRST-PARTY Haskell node-stack review
  *   (cardano-ledger, plutus / the Plutus script evaluator, ouroboros-network,
  *   cardano-wallet, cardano-cli/cardano-api, cardano-base, plutus-apps).
@@ -1388,7 +1412,7 @@ export interface AuditReport {
  *   to read offset-soup + recover IOKit ABI fields, and gates findings
  *   behind binary re-verification.
  */
-export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
+export type ReviewProfile = "default" | "c-library" | "linux-kernel" | "cardano-onchain" | "solana-onchain" | "evm-onchain" | "cairo-onchain" | "move-onchain" | "cardano-haskell" | "xnu-kernel" | "xnu-re";
 
 /**
  * A known bug to anchor a review on for variant analysis. Project Zero's
