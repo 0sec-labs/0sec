@@ -7,6 +7,10 @@
     "./kernel-weaponization-collector": {
       "types": "./dist/kernel-weaponization-collector.d.ts",
       "default": "./dist/kernel-weaponization-collector.js"
+    },
+    "./windows-research-collector": {
+      "types": "./dist/windows-research-collector.d.ts",
+      "default": "./dist/windows-research-collector.js"
     }
   },
   "scripts": {
@@ -72,6 +76,7 @@
     "adversarial-tool-misuse": "tsx src/adversarial-tool-misuse-runner.ts",
     "adversarial-indirect-prompt-injection": "tsx src/adversarial-indirect-prompt-injection-runner.ts",
     "adversarial-persistence": "tsx src/adversarial-persistence-runner.ts",
+    "windows-research": "tsx src/windows-research-collector.ts",
     "npm-bench": "tsx src/npm-bench.ts",
     "npm-bench:json": "tsx src/npm-bench.ts --json",
     "consolidate-xbow": "tsx src/scripts/consolidate-xbow.ts",

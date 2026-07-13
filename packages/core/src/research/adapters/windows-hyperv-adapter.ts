@@ -1,13 +1,20 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   copyFileSync,
   existsSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  openSync,
+  readSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { constants as fsConstants } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Finding } from "@pwnkit/shared";
 import type {
   ResearchCandidate,
@@ -21,6 +28,7 @@ import type {
 
 const EVIDENCE_SCHEMA = "0verse.hyperv-evidence/v1";
 const SHA256 = /^[a-f0-9]{64}$/;
+const RUN_NONCE = /^[A-Za-z0-9_-]{32,128}$/;
 
 export interface ZeroverseHyperVObservation {
   case: "control" | "target";
@@ -29,9 +37,14 @@ export interface ZeroverseHyperVObservation {
   status: "CLEAN" | "CRASH" | "ERROR";
   crash_signature: string;
   dump_sha256: string;
+  dump_identity: string;
+  dump_artifact_path: string;
   guest_transcript_sha256: string;
   guest_transcript_path: string;
   dump_analysis_path: string;
+  dump_analysis_sha256: string;
+  run_nonce: string;
+  argv_sha256: string;
   error: string;
 }
 
@@ -48,6 +61,8 @@ export interface ZeroverseHyperVEvidence {
   required_confirmations: number;
   observations: ZeroverseHyperVObservation[];
   error: string;
+  claim_eligible: boolean;
+  fixture_kind?: string;
 }
 
 export interface WindowsHyperVTargetConfig {
@@ -71,13 +86,20 @@ interface HyperVCandidatePayload {
 
 interface ValidatedSidecar {
   content: Buffer;
-  path: string;
+  field: "guest_transcript_path" | "dump_analysis_path";
+  observationIndex: number;
   suffix: ".json" | ".txt";
+}
+
+interface ValidatedBundle {
+  sidecars: ValidatedSidecar[];
+  dumps: Array<{ source: string; sha256: string; observationIndex: number }>;
 }
 
 export type WindowsHyperVCandidate = ResearchCandidate<HyperVCandidatePayload>;
 
 export interface WindowsHyperVImportVerdict {
+  verdictSchema: "pwnkit.windows-hyperv-import-verdict/v1";
   executionOrigin: "external";
   producer: "0verse";
   schemaVersion: typeof EVIDENCE_SCHEMA;
@@ -87,6 +109,9 @@ export interface WindowsHyperVImportVerdict {
   confirmations: number;
   requiredConfirmations: number;
   cleanControls: number;
+  distinctDumpArtifacts: number;
+  dumpHashBasis: "retained-bundle-bytes";
+  receiptSha256: string;
   sidecarsRehashed: number;
   passed: boolean;
 }
@@ -103,16 +128,70 @@ function integer(value: unknown): value is number {
   return Number.isSafeInteger(value);
 }
 
-function sha256File(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+function hashOpenedFile(path: string, maximumBytes = 8 * 1024 * 1024 * 1024): { sha256: string; bytes: number } {
+  const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > maximumBytes) throw new Error(`evidence file has invalid size: ${path}`);
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    let bytes = 0;
+    for (;;) {
+      const count = readSync(descriptor, chunk, 0, chunk.length, null);
+      if (count === 0) break;
+      bytes += count;
+      hash.update(chunk.subarray(0, count));
+    }
+    return { sha256: hash.digest("hex"), bytes };
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
-function regularFile(path: string, label: string): string {
-  const absolute = resolve(path);
-  if (!existsSync(absolute) || !statSync(absolute).isFile()) {
+function readOpenedFile(path: string, maximumBytes = 16 * 1024 * 1024): Buffer {
+  const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > maximumBytes) throw new Error(`evidence sidecar has invalid size: ${path}`);
+    return readFileSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function hasWindowsCrashDumpHeader(path: string): boolean {
+  const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const header = Buffer.alloc(8);
+    return readSync(descriptor, header, 0, header.length, 0) === header.length
+      && (header.equals(Buffer.from("PAGEDUMP")) || header.equals(Buffer.from("PAGEDU64")));
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function regularFile(path: string, label: string, base?: string): string {
+  if (base && isAbsolute(path)) {
+    throw new Error(`${label} must use a receipt-relative bundle path`);
+  }
+  const absolute = base ? resolve(base, path) : resolve(path);
+  if (base) {
+    const escaped = relative(resolve(base), absolute);
+    if (escaped === ".." || escaped.startsWith(`..${sep}`) || isAbsolute(escaped)) {
+      throw new Error(`${label} escapes the Hyper-V evidence bundle: ${path}`);
+    }
+  }
+  if (!existsSync(absolute) || !lstatSync(absolute).isFile() || !statSync(absolute).isFile()) {
     throw new Error(`${label} is not a regular file: ${path}`);
   }
-  return absolute;
+  const real = realpathSync(absolute);
+  if (base) {
+    const escaped = relative(realpathSync(base), real);
+    if (escaped === ".." || escaped.startsWith(`..${sep}`) || isAbsolute(escaped)) {
+      throw new Error(`${label} resolves outside the Hyper-V evidence bundle: ${path}`);
+    }
+  }
+  return real;
 }
 
 function cdbSignature(text: string): string {
@@ -133,9 +212,14 @@ function parseObservation(value: unknown): ZeroverseHyperVObservation {
   const strings = [
     "crash_signature",
     "dump_sha256",
+    "dump_identity",
+    "dump_artifact_path",
     "guest_transcript_sha256",
     "guest_transcript_path",
     "dump_analysis_path",
+    "dump_analysis_sha256",
+    "run_nonce",
+    "argv_sha256",
     "error",
   ] as const;
   if (strings.some((key) => typeof value[key] !== "string")) {
@@ -145,7 +229,7 @@ function parseObservation(value: unknown): ZeroverseHyperVObservation {
 }
 
 function parseReceipt(path: string): ZeroverseHyperVEvidence {
-  const value = JSON.parse(readFileSync(regularFile(path, "Hyper-V receipt"), "utf8")) as unknown;
+  const value = JSON.parse(readOpenedFile(regularFile(path, "Hyper-V receipt"), 4 * 1024 * 1024).toString("utf8")) as unknown;
   if (!isRecord(value)
     || value.schema_version !== EVIDENCE_SCHEMA
     || !SHA256.test(String(value.manifest_sha256))
@@ -158,7 +242,9 @@ function parseReceipt(path: string): ZeroverseHyperVEvidence {
     || !integer(value.required_confirmations)
     || !Array.isArray(value.observations)
     || typeof value.crash_signature !== "string"
-    || typeof value.error !== "string") {
+    || typeof value.error !== "string"
+    || typeof value.claim_eligible !== "boolean"
+    || (value.fixture_kind !== undefined && typeof value.fixture_kind !== "string")) {
     throw new Error("invalid or unsupported 0verse Hyper-V evidence receipt");
   }
   return {
@@ -183,30 +269,63 @@ function validateIdentity(receipt: ZeroverseHyperVEvidence, target: WindowsHyper
   }
 }
 
-function validateSidecars(receipt: ZeroverseHyperVEvidence): ValidatedSidecar[] {
+function validateSidecars(
+  receipt: ZeroverseHyperVEvidence,
+  receiptPath: string,
+): ValidatedBundle {
   const sidecars: ValidatedSidecar[] = [];
-  for (const row of receipt.observations) {
-    const transcript = regularFile(row.guest_transcript_path, "guest transcript");
-    const transcriptContent = readFileSync(transcript);
+  const bundleRoot = dirname(receiptPath);
+  const nonces = new Set<string>();
+  const dumps: ValidatedBundle["dumps"] = [];
+  for (const [observationIndex, row] of receipt.observations.entries()) {
+    if (!RUN_NONCE.test(row.run_nonce) || nonces.has(row.run_nonce)) {
+      throw new Error(`invalid or reused run nonce for ${row.case} trial ${row.trial}`);
+    }
+    nonces.add(row.run_nonce);
+    if (!SHA256.test(row.argv_sha256)) {
+      throw new Error(`invalid argv hash for ${row.case} trial ${row.trial}`);
+    }
+    const transcript = regularFile(row.guest_transcript_path, "guest transcript", bundleRoot);
+    const transcriptContent = readOpenedFile(transcript);
     if (!SHA256.test(row.guest_transcript_sha256)
       || createHash("sha256").update(transcriptContent).digest("hex") !== row.guest_transcript_sha256) {
       throw new Error(`guest transcript hash mismatch for ${row.case} trial ${row.trial}`);
     }
-    sidecars.push({ content: transcriptContent, path: transcript, suffix: ".txt" });
+    sidecars.push({
+      content: transcriptContent,
+      field: "guest_transcript_path",
+      observationIndex,
+      suffix: ".json",
+    });
     if (row.status === "CRASH") {
-      const analysis = regularFile(row.dump_analysis_path, "cdb analysis");
-      const analysisContent = readFileSync(analysis);
+      const analysis = regularFile(row.dump_analysis_path, "cdb analysis", bundleRoot);
+      const analysisContent = readOpenedFile(analysis);
+      const dump = regularFile(row.dump_artifact_path, "retained dump", bundleRoot);
+      const dumpHash = hashOpenedFile(dump).sha256;
       if (!SHA256.test(row.dump_sha256)
+        || dumpHash !== row.dump_sha256
+        || (receipt.claim_eligible && !hasWindowsCrashDumpHeader(dump))
+        || !SHA256.test(row.dump_analysis_sha256)
+        || createHash("sha256").update(analysisContent).digest("hex") !== row.dump_analysis_sha256
         || !nonempty(row.crash_signature)
+        || !nonempty(row.dump_identity)
+        || !nonempty(row.dump_artifact_path)
         || cdbSignature(analysisContent.toString("utf8")) !== row.crash_signature) {
         throw new Error(`crash sidecar mismatch for ${row.case} trial ${row.trial}`);
       }
-      sidecars.push({ content: analysisContent, path: analysis, suffix: ".txt" });
-    } else if (row.crash_signature || row.dump_sha256 || row.dump_analysis_path) {
+      sidecars.push({
+        content: analysisContent,
+        field: "dump_analysis_path",
+        observationIndex,
+        suffix: ".txt",
+      });
+      dumps.push({ source: dump, sha256: dumpHash, observationIndex });
+    } else if (row.crash_signature || row.dump_sha256 || row.dump_identity
+      || row.dump_artifact_path || row.dump_analysis_path || row.dump_analysis_sha256) {
       throw new Error(`non-crash observation carries crash authority for ${row.case} trial ${row.trial}`);
     }
   }
-  return sidecars;
+  return { sidecars, dumps };
 }
 
 function validateReproduced(receipt: ZeroverseHyperVEvidence): { cleanControls: number; trials: number } {
@@ -233,6 +352,8 @@ function validateReproduced(receipt: ZeroverseHyperVEvidence): { cleanControls: 
     || crashes.length < receipt.required_confirmations
     || !nonempty(receipt.crash_signature)
     || new Set(crashes.map((row) => row.crash_signature)).size !== 1
+    || new Set(crashes.map((row) => row.dump_sha256)).size !== crashes.length
+    || new Set(crashes.map((row) => row.dump_identity)).size !== crashes.length
     || crashes.some((row) => row.crash_signature !== receipt.crash_signature)) {
     throw new Error("receipt did not clear repeated target-only Hyper-V reproduction gates");
   }
@@ -252,7 +373,7 @@ export class WindowsHyperVImportAdapter implements TargetResearchAdapter<
       const receiptPath = regularFile(target.location, "Hyper-V receipt");
       const receipt = parseReceipt(receiptPath);
       validateIdentity(receipt, target);
-      validateSidecars(receipt);
+      validateSidecars(receipt, receiptPath);
       return {
         items: [{
           id: `${target.id}:0verse-receipt`,
@@ -291,22 +412,46 @@ export class WindowsHyperVImportAdapter implements TargetResearchAdapter<
       try {
         const snapshotRoot = join(ctx.artifactDir, "0verse-hyperv");
         mkdirSync(snapshotRoot, { recursive: true });
-        const receiptPath = join(snapshotRoot, "receipt.json");
-        copyFileSync(candidate.payload.receiptPath, receiptPath);
-        const receipt = parseReceipt(receiptPath);
+        const receipt = parseReceipt(candidate.payload.receiptPath);
         validateIdentity(receipt, target);
-        const sidecars = validateSidecars(receipt);
+        const { sidecars, dumps } = validateSidecars(receipt, candidate.payload.receiptPath);
         const { cleanControls } = validateReproduced(receipt);
-        const snapshots: string[] = [receiptPath];
+        if (!receipt.claim_eligible || receipt.fixture_kind) {
+          evidence.push({
+            stage: "verify",
+            status: "passed",
+            summary: "validated a non-claim Hyper-V contract fixture; no finding was promoted",
+          });
+          continue;
+        }
+        const portableReceipt = structuredClone(receipt);
+        const snapshots: string[] = [];
         for (const [index, sidecar] of sidecars.entries()) {
           const destination = join(snapshotRoot, `sidecar-${String(index + 1).padStart(2, "0")}${sidecar.suffix}`);
-          writeFileSync(destination, sidecar.content);
-          if (createHash("sha256").update(sidecar.content).digest("hex") !== sha256File(destination)) {
+          writeFileSync(destination, sidecar.content, { flag: "wx" });
+          if (createHash("sha256").update(sidecar.content).digest("hex") !== hashOpenedFile(destination).sha256) {
             throw new Error("sidecar changed while it was being snapshotted");
           }
+          portableReceipt.observations[sidecar.observationIndex]![sidecar.field] = basename(destination);
           snapshots.push(destination);
         }
+        for (const [index, dump] of dumps.entries()) {
+          const destination = join(snapshotRoot, `dump-${String(index + 1).padStart(2, "0")}.dmp`);
+          copyFileSync(dump.source, destination, fsConstants.COPYFILE_EXCL);
+          if (hashOpenedFile(destination).sha256 !== dump.sha256) {
+            throw new Error("dump changed while it was being snapshotted");
+          }
+          portableReceipt.observations[dump.observationIndex]!.dump_artifact_path = basename(destination);
+          snapshots.push(destination);
+        }
+        const receiptPath = join(snapshotRoot, "receipt.json");
+        writeFileSync(receiptPath, `${JSON.stringify(portableReceipt, null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        snapshots.unshift(receiptPath);
         const verdict: WindowsHyperVImportVerdict = {
+          verdictSchema: "pwnkit.windows-hyperv-import-verdict/v1",
           executionOrigin: "external",
           producer: "0verse",
           schemaVersion: EVIDENCE_SCHEMA,
@@ -316,11 +461,17 @@ export class WindowsHyperVImportAdapter implements TargetResearchAdapter<
           confirmations: receipt.confirmations,
           requiredConfirmations: receipt.required_confirmations,
           cleanControls,
+          distinctDumpArtifacts: new Set(dumps.map((dump) => dump.sha256)).size,
+          dumpHashBasis: "retained-bundle-bytes",
+          receiptSha256: hashOpenedFile(receiptPath, 4 * 1024 * 1024).sha256,
           sidecarsRehashed: sidecars.length,
           passed: true,
         };
         const verdictPath = join(snapshotRoot, "import-verdict.json");
-        writeFileSync(verdictPath, `${JSON.stringify(verdict, null, 2)}\n`, "utf8");
+        writeFileSync(verdictPath, `${JSON.stringify(verdict, null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
         snapshots.push(verdictPath);
         const record: ResearchEvidence = {
           stage: "verify",
