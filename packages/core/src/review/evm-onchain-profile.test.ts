@@ -148,6 +148,41 @@ describe("evmOnchainReviewAgentPrompt", () => {
     expect(hint).toMatch(/over-suppress/i);
   });
 
+  it("makes the scope lens GATE SEVERITY on value-flow reachability: a no-consumer / no-custody HIGH must be refuted (the two Cap FPs)", () => {
+    const verify = evmVerifyLenses.find((l) => l.id === "scope");
+    expect(verify).toBeDefined();
+    const hint = verify!.challengeHint;
+    // The gate exists and is framed as a SEVERITY gate, not a mere annotation.
+    expect(hint).toMatch(/VALUE-FLOW REACHABILITY GATE/);
+    expect(hint).toMatch(/GATES SEVERITY/);
+    // The two positive conditions that keep a HIGH: at least one on-chain
+    // consumer OR real value custody/routing.
+    expect(hint).toMatch(/ON-CHAIN CONSUMER/);
+    expect(hint).toMatch(/CUSTODIES OR ROUTES PROTOCOL VALUE/i);
+    // The exemplar negatives to refute at HIGH (both Cap FP shapes) are encoded.
+    expect(hint).toMatch(/zero-balance pass-through|sweep router/i);
+    expect(hint).toMatch(/adapter\/library\/helper with no live consumer|no live consumer/i);
+    // The bounty out-of-scope framing for accidental dust.
+    expect(hint).toMatch(/dust/i);
+    expect(hint).toMatch(/OUT-OF-SCOPE/i);
+    // It must REFUTE / force-downgrade such a finding, not just hedge it.
+    expect(hint).toMatch(/refute it|force-downgrade/i);
+    expect(hint).toMatch(/CANNOT STAND AT HIGH/i);
+  });
+
+  it("keeps the value-flow gate fail-closed-safe: refute only on an affirmative negative, never on uncertainty, and a wired component keeps severity", () => {
+    const verify = evmVerifyLenses.find((l) => l.id === "scope");
+    const hint = verify!.challengeHint;
+    // Anti-over-suppression: only an affirmatively-established negative refutes.
+    expect(hint).toMatch(/AFFIRMATIVELY-ESTABLISHED negative/i);
+    expect(hint).toMatch(/NEVER on mere uncertainty/i);
+    // A genuinely-wired HIGH survives — a component with a live consumer or real
+    // value flow keeps its severity (protects real bugs from the fail-closed gate).
+    expect(hint).toMatch(/KEEPS its severity/i);
+    // Must cite concrete evidence of the negative, mirroring pwnkit#3's pattern.
+    expect(hint).toMatch(/grep .*consumers|came back empty/i);
+  });
+
   it("threads the operator hypothesis into a primary-direction block when provided", () => {
     const prompt = evmOnchainReviewAgentPrompt("/tmp/repo", [], "look at the bridge withdraw handler");
     expect(prompt).toMatch(/OPERATOR HYPOTHESIS/);
