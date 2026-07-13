@@ -36,7 +36,7 @@ export interface CrashReport {
   reproducer?: string;
   /** Reproducer language. Raw `.syz` programs require syz-execprog in the guest. */
   reproducerLanguage?: "c" | "syz" | "bash";
-  executionAttestationRequest?: { nonce: string; reproducerSha256: string; dropUid?: number; dropGid?: number };
+  executionAttestationRequest?: KernelExecutionAttestationRequest;
   /** Access type from KASAN reports ("read" | "write"). */
   accessType?: string;
   /** Access size from KASAN reports. */
@@ -77,10 +77,25 @@ export interface ReproducerResult {
   executionAttestationPath?: string;
 }
 
-export interface KernelExecutionAttestation {
-  schemaVersion: 1;
+export interface KernelExecutionAttestationRequest {
   nonce: string;
   reproducerSha256: string;
+  expectedKernelRelease: string;
+  kernelImageSha256: string;
+  kernelConfigSha256: string;
+  dropUid?: number;
+  dropGid?: number;
+}
+
+export interface KernelExecutionAttestation {
+  schemaVersion: 2;
+  nonce: string;
+  reproducerSha256: string;
+  expectedKernelRelease: string;
+  observedKernelRelease: string;
+  bootId: string;
+  kernelImageSha256: string;
+  kernelConfigSha256: string;
   realUid: number;
   effectiveUid: number;
   savedUid: number;

@@ -3,10 +3,11 @@ import { createHash, randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync, chmodSync } from "node:fs";
-import type { ReproducerResult, CrashReport, KernelExecutionAttestation } from "./kernel-oracle.js";
+import { constants as fsConstants, copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync, chmodSync } from "node:fs";
+import type { ReproducerResult, CrashReport, KernelExecutionAttestation, KernelExecutionAttestationRequest } from "./kernel-oracle.js";
 
-const ATTESTATION_KEYS = ["schema", "nonce", "reproducer_sha256", "ruid", "euid", "suid", "rgid", "egid", "sgid", "groups", "cap_inh", "cap_prm", "cap_eff", "cap_amb", "securebits", "userns_max", "initial_userns", "no_new_privs"] as const;
+const ATTESTATION_KEYS = ["schema", "nonce", "reproducer_sha256", "expected_kernel_release", "observed_kernel_release", "boot_id", "kernel_image_sha256", "kernel_config_sha256", "ruid", "euid", "suid", "rgid", "egid", "sgid", "groups", "cap_inh", "cap_prm", "cap_eff", "cap_amb", "securebits", "userns_max", "initial_userns", "no_new_privs"] as const;
+const RELEASE_RE = /^[A-Za-z0-9._+~-]{1,128}$/;
 
 export function parseKernelExecutionAttestation(raw: string): KernelExecutionAttestation {
   const fields = new Map<string, string>();
@@ -19,18 +20,22 @@ export function parseKernelExecutionAttestation(raw: string): KernelExecutionAtt
   if (fields.size !== ATTESTATION_KEYS.length || ATTESTATION_KEYS.some((key) => !fields.has(key))) throw new Error("kernel execution attestation has missing or unknown fields");
   const dec = (key: string): number => { const value = fields.get(key)!; if (!/^(0|[1-9][0-9]{0,9})$/.test(value)) throw new Error(`invalid attestation ${key}`); const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed > 0xffffffff) throw new Error(`invalid attestation ${key}`); return parsed; };
   const nonce = fields.get("nonce")!, reproducerSha256 = fields.get("reproducer_sha256")!;
+  const expectedKernelRelease = fields.get("expected_kernel_release")!, observedKernelRelease = fields.get("observed_kernel_release")!;
+  const bootId = fields.get("boot_id")!, kernelImageSha256 = fields.get("kernel_image_sha256")!, kernelConfigSha256 = fields.get("kernel_config_sha256")!;
   const caps = ["cap_inh", "cap_prm", "cap_eff", "cap_amb"].map((key) => fields.get(key)!);
-  if (fields.get("schema") !== "1" || !/^[a-f0-9]{32}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(reproducerSha256) || caps.some((cap) => !/^[a-f0-9]{16}$/.test(cap))) throw new Error("invalid kernel execution attestation binding or capability field");
+  if (fields.get("schema") !== "2" || !/^[a-f0-9]{32}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(reproducerSha256) || !RELEASE_RE.test(expectedKernelRelease) || !RELEASE_RE.test(observedKernelRelease) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(bootId) || !/^[a-f0-9]{64}$/.test(kernelImageSha256) || !/^[a-f0-9]{64}$/.test(kernelConfigSha256) || caps.some((cap) => !/^[a-f0-9]{16}$/.test(cap))) throw new Error("invalid kernel execution attestation binding, provenance, or capability field");
   const groups = fields.get("groups")!;
   if (groups !== "" && !/^(0|[1-9][0-9]{0,9})(,(0|[1-9][0-9]{0,9}))*$/.test(groups)) throw new Error("invalid attestation groups");
   const nnp = dec("no_new_privs"); if (nnp !== 0 && nnp !== 1) throw new Error("invalid attestation no_new_privs");
   const initial = dec("initial_userns"); if (initial !== 0 && initial !== 1) throw new Error("invalid attestation initial_userns");
-  return { schemaVersion: 1, nonce, reproducerSha256, realUid: dec("ruid"), effectiveUid: dec("euid"), savedUid: dec("suid"), realGid: dec("rgid"), effectiveGid: dec("egid"), savedGid: dec("sgid"), supplementaryGroups: groups ? groups.split(",").map(Number) : [], inheritableCapabilities: caps[0], permittedCapabilities: caps[1], effectiveCapabilities: caps[2], ambientCapabilities: caps[3], secureBits: dec("securebits"), userNamespaceMax: dec("userns_max"), initialUserNamespace: initial === 1, noNewPrivileges: nnp === 1 };
+  const receipt: KernelExecutionAttestation = { schemaVersion: 2, nonce, reproducerSha256, expectedKernelRelease, observedKernelRelease, bootId, kernelImageSha256, kernelConfigSha256, realUid: dec("ruid"), effectiveUid: dec("euid"), savedUid: dec("suid"), realGid: dec("rgid"), effectiveGid: dec("egid"), savedGid: dec("sgid"), supplementaryGroups: groups ? groups.split(",").map(Number) : [], inheritableCapabilities: caps[0], permittedCapabilities: caps[1], effectiveCapabilities: caps[2], ambientCapabilities: caps[3], secureBits: dec("securebits"), userNamespaceMax: dec("userns_max"), initialUserNamespace: initial === 1, noNewPrivileges: nnp === 1 };
+  if (raw !== serializeKernelExecutionAttestation(receipt)) throw new Error("kernel execution attestation is not canonical");
+  return receipt;
 }
 
-export function bindKernelExecutionAttestation(receipt: KernelExecutionAttestation, expected: { nonce: string; reproducerSha256: string; dropUid?: number; dropGid?: number }): void {
+export function bindKernelExecutionAttestation(receipt: KernelExecutionAttestation, expected: KernelExecutionAttestationRequest): void {
   if ((expected.dropUid === undefined) !== (expected.dropGid === undefined)) throw new Error("kernel execution identity requires UID and GID together");
-  if (receipt.nonce !== expected.nonce || receipt.reproducerSha256 !== expected.reproducerSha256) throw new Error("kernel execution attestation binding mismatch");
+  if (receipt.nonce !== expected.nonce || receipt.reproducerSha256 !== expected.reproducerSha256 || receipt.expectedKernelRelease !== expected.expectedKernelRelease || receipt.observedKernelRelease !== expected.expectedKernelRelease || receipt.kernelImageSha256 !== expected.kernelImageSha256 || receipt.kernelConfigSha256 !== expected.kernelConfigSha256) throw new Error("kernel execution attestation binding or runtime kernel identity mismatch");
   if (expected.dropUid !== undefined && (receipt.realUid !== expected.dropUid || receipt.effectiveUid !== expected.dropUid || receipt.savedUid !== expected.dropUid || receipt.supplementaryGroups.length !== 0 || [receipt.inheritableCapabilities, receipt.permittedCapabilities, receipt.effectiveCapabilities, receipt.ambientCapabilities].some((cap) => cap !== "0000000000000000") || !receipt.noNewPrivileges || receipt.userNamespaceMax !== 0 || !receipt.initialUserNamespace)) throw new Error("kernel execution attestation did not prove requested UID/capability boundary");
   if (expected.dropGid !== undefined && (receipt.realGid !== expected.dropGid || receipt.effectiveGid !== expected.dropGid || receipt.savedGid !== expected.dropGid)) throw new Error("kernel execution attestation did not prove requested GID boundary");
 }
@@ -219,19 +224,20 @@ export function renderKernelExecutionLauncherSource(): string {
 static int num(const char *s,unsigned *v){char *e=0;unsigned long n=strtoul(s,&e,10);if(!s[0]||*e||n>0xffffffffUL)return -1;*v=(unsigned)n;return 0;}
 static int writezero(void){int f=open("/proc/sys/user/max_user_namespaces",O_WRONLY);if(f<0)return -1;if(write(f,"0\n",2)!=2){close(f);return -1;}return close(f);}
 int main(int argc,char **argv){
- if(argc<8)return 125; unsigned uid=0,gid=0; int du=strcmp(argv[4],"-")!=0,dg=strcmp(argv[5],"-")!=0; if(du!=dg)return 125;
- if((du&&num(argv[4],&uid))||(dg&&num(argv[5],&gid)))return 125;
+ if(argc<11)return 125; unsigned uid=0,gid=0; int du=strcmp(argv[7],"-")!=0,dg=strcmp(argv[8],"-")!=0; if(du!=dg)return 125;
+ if((du&&num(argv[7],&uid))||(dg&&num(argv[8],&gid)))return 125;
  int receipt=open(argv[1],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400); if(receipt<0)return 126;int initns=open("/proc/1/ns/user",O_RDONLY|O_CLOEXEC);
  if(du&&writezero())return 126;
  int p[2]; if(pipe2(p,O_CLOEXEC))return 126; pid_t child=fork(); if(child<0)return 126;
- if(child){close(receipt);if(initns>=0)close(initns);close(p[1]);char x;ssize_t n=read(p[0],&x,1);close(p[0]);if(n!=0){waitpid(child,0,0);return 127;}int m=open(argv[6],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400);if(m<0){kill(child,SIGKILL);waitpid(child,0,0);return 126;}write(m,"1\n",2);close(m);int st;if(waitpid(child,&st,0)<0)return 126;if(WIFEXITED(st))return WEXITSTATUS(st);return 128+WTERMSIG(st);}
+ if(child){close(receipt);if(initns>=0)close(initns);close(p[1]);char x;ssize_t n=read(p[0],&x,1);close(p[0]);if(n!=0){waitpid(child,0,0);return 127;}int m=open(argv[9],O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0400);if(m<0){kill(child,SIGKILL);waitpid(child,0,0);return 126;}write(m,"1\n",2);close(m);int st;if(waitpid(child,&st,0)<0)return 126;if(WIFEXITED(st))return WEXITSTATUS(st);return 128+WTERMSIG(st);}
  close(p[0]); if(dg&&(setgroups(0,NULL)||setresgid(gid,gid,gid)))return 126;if(du&&setresuid(uid,uid,uid))return 126;if(du&&prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0))return 126;
  uid_t r,e,s;gid_t gr,ge,gs;if(getresuid(&r,&e,&s)||getresgid(&gr,&ge,&gs))return 126;gid_t gl[64];int ng=getgroups(64,gl);if(ng<0)return 126;
  FILE *st=fopen("/proc/self/status","r");char line[256],ci[17]="",cp[17]="",ce[17]="",ca[17]="";int nnp=-1;if(!st)return 126;while(fgets(line,sizeof line,st)){sscanf(line,"CapInh: %16[0-9a-fA-F]",ci);sscanf(line,"CapPrm: %16[0-9a-fA-F]",cp);sscanf(line,"CapEff: %16[0-9a-fA-F]",ce);sscanf(line,"CapAmb: %16[0-9a-fA-F]",ca);sscanf(line,"NoNewPrivs: %d",&nnp);}fclose(st);
  char *caps[]={ci,cp,ce,ca};for(int i=0;i<4;i++){if(strlen(caps[i])!=16)return 126;for(char *q=caps[i];*q;q++)if(*q>='A'&&*q<='F')*q+=32;}
  struct stat ns,ns1;int initial=initns>=0&&!stat("/proc/self/ns/user",&ns)&&!fstat(initns,&ns1)&&ns.st_dev==ns1.st_dev&&ns.st_ino==ns1.st_ino;if(initns>=0)close(initns);FILE *um=fopen("/proc/sys/user/max_user_namespaces","r");unsigned umax;if(!um||fscanf(um,"%u",&umax)!=1)return 126;fclose(um);int sb=prctl(PR_GET_SECUREBITS);if(sb<0||nnp<0)return 126;
- FILE *o=fdopen(receipt,"w");if(!o)return 126;fprintf(o,"schema=1\nnonce=%s\nreproducer_sha256=%s\nruid=%u\neuid=%u\nsuid=%u\nrgid=%u\negid=%u\nsgid=%u\ngroups=",argv[2],argv[3],r,e,s,gr,ge,gs);for(int i=0;i<ng;i++)fprintf(o,"%s%u",i?",":"",gl[i]);fprintf(o,"\ncap_inh=%s\ncap_prm=%s\ncap_eff=%s\ncap_amb=%s\nsecurebits=%d\nuserns_max=%u\ninitial_userns=%d\nno_new_privs=%d\n",ci,cp,ce,ca,sb,umax,initial,nnp);if(fclose(o))return 126;
- execvp(argv[7],&argv[7]);char bad='x';write(p[1],&bad,1);return 127;
+ char rel[129],boot[37];FILE *ur=fopen("/proc/sys/kernel/osrelease","r"),*bi=fopen("/proc/sys/kernel/random/boot_id","r");if(!ur||!bi||!fgets(rel,sizeof rel,ur)||!fgets(boot,sizeof boot,bi))return 126;fclose(ur);fclose(bi);rel[strcspn(rel,"\r\n")]=0;boot[strcspn(boot,"\r\n")]=0;
+ FILE *o=fdopen(receipt,"w");if(!o)return 126;fprintf(o,"schema=2\nnonce=%s\nreproducer_sha256=%s\nexpected_kernel_release=%s\nobserved_kernel_release=%s\nboot_id=%s\nkernel_image_sha256=%s\nkernel_config_sha256=%s\nruid=%u\neuid=%u\nsuid=%u\nrgid=%u\negid=%u\nsgid=%u\ngroups=",argv[2],argv[3],argv[4],rel,boot,argv[5],argv[6],r,e,s,gr,ge,gs);for(int i=0;i<ng;i++)fprintf(o,"%s%u",i?",":"",gl[i]);fprintf(o,"\ncap_inh=%s\ncap_prm=%s\ncap_eff=%s\ncap_amb=%s\nsecurebits=%d\nuserns_max=%u\ninitial_userns=%d\nno_new_privs=%d\n",ci,cp,ce,ca,sb,umax,initial,nnp);if(fclose(o))return 126;
+ execvp(argv[10],&argv[10]);char bad='x';write(p[1],&bad,1);return 127;
 }`;
 }
 
@@ -439,6 +445,34 @@ function sanitizeForPath(value: string): string {
 
 function configNameHash(configProfile: KernelConfigProfile): string {
   return createHash("sha256").update(configProfile).digest("hex").slice(0, 12);
+}
+
+function sha256File(path: string): string {
+  if (!path || !existsSync(path)) throw new Error(`kernel provenance artifact not found: ${path || "<unset>"}`);
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function expectedKernelRelease(kernelTree: string, explicit?: string, requireExplicit = false): string {
+  const fromEnv = explicit?.trim() || process.env.PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE?.trim();
+  if (fromEnv) {
+    if (!RELEASE_RE.test(fromEnv)) throw new Error("invalid expected kernel release");
+    return fromEnv;
+  }
+  if (requireExplicit) throw new Error("env-provided kernel artifacts require an explicit expected kernel release");
+  try {
+    const release = execFileSync("make", ["-s", "kernelrelease"], { cwd: kernelTree, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (RELEASE_RE.test(release)) return release;
+  } catch {
+    // A deliberately tiny fixture may not implement kernelrelease; parse only
+    // its canonical version assignments. Real/env override artifacts must use
+    // the explicit option or environment variable instead of a filename guess.
+  }
+  const makefile = readFileSync(join(kernelTree, "Makefile"), "utf8");
+  const part = (name: string) => new RegExp(`^${name}\\s*=\\s*([^\\s#]+)`, "m").exec(makefile)?.[1];
+  const version = part("VERSION"), patch = part("PATCHLEVEL"), sub = part("SUBLEVEL") ?? "0", extra = part("EXTRAVERSION") ?? "";
+  const release = version && patch ? `${version}.${patch}.${sub}${extra}` : "";
+  if (!RELEASE_RE.test(release)) throw new Error("cannot determine expected kernel release; set PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE");
+  return release;
 }
 
 /**
@@ -857,6 +891,10 @@ export function buildQemuCommand(
     "-monitor", "none",
     "-serial", `file:${serialLogPath}`,
     "-no-reboot",
+    // Every verification boot must start from the same immutable rootfs state.
+    // QEMU writes guest disk changes to a temporary overlay and discards them
+    // when the VM exits; this is the disk-state half of the N-boot contract.
+    "-snapshot",
   ];
 
   if (config.qemuAccel) {
@@ -1106,7 +1144,7 @@ async function stopVm(proc: ReturnType<typeof spawn>): Promise<void> {
 function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" | "bash", request: NonNullable<CrashReport["executionAttestationRequest"]>): string {
   const uid = request.dropUid === undefined ? "-" : String(request.dropUid);
   const gid = request.dropGid === undefined ? "-" : String(request.dropGid);
-  const launcherArgs = `"$WORK_DIR/attest-launcher" "$SHARE_DIR/execution-attestation.txt" ${shellQuote(request.nonce)} ${shellQuote(request.reproducerSha256)} ${shellQuote(uid)} ${shellQuote(gid)} "$SHARE_DIR/exec-started.ok"`;
+  const launcherArgs = `"$WORK_DIR/attest-launcher" "$SHARE_DIR/execution-attestation.txt" ${shellQuote(request.nonce)} ${shellQuote(request.reproducerSha256)} ${shellQuote(request.expectedKernelRelease)} ${shellQuote(request.kernelImageSha256)} ${shellQuote(request.kernelConfigSha256)} ${shellQuote(uid)} ${shellQuote(gid)} "$SHARE_DIR/exec-started.ok"`;
   if (language === "syz") {
     return [
       "#!/bin/sh",
@@ -1438,10 +1476,17 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
       })()
     : mkdtempSync(join(tmpdir(), "pwnkit-kvm-"));
   const language = report.reproducerLanguage ?? "c";
-  const request = report.executionAttestationRequest ?? {
-    nonce: randomBytes(16).toString("hex"),
-    reproducerSha256: createHash("sha256").update(report.reproducer).digest("hex"),
-  };
+  const request = report.executionAttestationRequest ?? (() => {
+    const release = process.env.PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE?.trim();
+    if (!release || !RELEASE_RE.test(release)) throw new Error("direct kernel VM execution requires PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE");
+    return {
+      nonce: randomBytes(16).toString("hex"),
+      reproducerSha256: createHash("sha256").update(report.reproducer).digest("hex"),
+      expectedKernelRelease: release,
+      kernelImageSha256: sha256File(config.kernelImage),
+      kernelConfigSha256: sha256File(process.env.PWNKIT_KERNEL_QEMU_CONFIG?.trim() || ""),
+    };
+  })();
   const sourcePath = join(hostTmpDir, language === "syz" ? "repro.syz" : "repro.c");
   const runnerScriptPath = join(hostTmpDir, "runner.sh");
   const serialLogPath = join(hostTmpDir, "serial.log");
@@ -1566,6 +1611,7 @@ export interface KernelFindingVerification {
   executionAttestationPath?: string;
   executionAttestationSha256?: string;
   executionIdentity?: { uid: number; gid: number };
+  dmesgSha256?: string;
 }
 
 export interface VerifyKernelFindingOptions {
@@ -1603,6 +1649,8 @@ export interface VerifyKernelFindingOptions {
   vmRunner?: (report: CrashReport) => Promise<ReproducerResult>;
   /** Explicit unprivileged pre-exec boundary. Omit for the current root lane. */
   executionIdentity?: { uid: number; gid: number };
+  /** Exact `uname -r` expected from the booted kernel. Required for env artifacts. */
+  expectedKernelRelease?: string;
 }
 
 const KERNEL_CRASH_SIGNATURES: { pattern: RegExp; signature: string }[] = [
@@ -1685,11 +1733,8 @@ export async function verifyKernelFinding(
     throw new Error("executionIdentity requires positive uint32 uid/gid values");
   }
   const reproducerBytes = readFileSync(reproPath);
-  const attestationRequest = {
-    nonce: randomBytes(16).toString("hex"),
-    reproducerSha256: createHash("sha256").update(reproducerBytes).digest("hex"),
-    ...(opts.executionIdentity ? { dropUid: opts.executionIdentity.uid, dropGid: opts.executionIdentity.gid } : {}),
-  };
+  const nonce = randomBytes(16).toString("hex");
+  const reproducerSha256 = createHash("sha256").update(reproducerBytes).digest("hex");
 
   // ── Build (or cache-hit) ─────────────────────────────────────
   let artifacts: KernelVmArtifacts;
@@ -1715,6 +1760,29 @@ export async function verifyKernelFinding(
   }
 
   const build_cache_hit = artifacts.cacheStatus === "hit" || artifacts.cacheStatus === "env";
+  mkdirSync(dirname(dmesgOutPath), { recursive: true });
+  const launchDir = mkdtempSync(join(dirname(dmesgOutPath), ".pwnkit-kernel-launch-"));
+  const stagedKernelImage = join(launchDir, "kernel.image");
+  const stagedKernelConfig = join(launchDir, "kernel.config");
+  let attestationRequest: KernelExecutionAttestationRequest;
+  try {
+    copyFileSync(artifacts.kernelImage, stagedKernelImage, fsConstants.COPYFILE_FICLONE);
+    copyFileSync(artifacts.kernelConfig, stagedKernelConfig, fsConstants.COPYFILE_FICLONE);
+    chmodSync(stagedKernelImage, 0o444);
+    chmodSync(stagedKernelConfig, 0o444);
+    attestationRequest = {
+      nonce,
+      reproducerSha256,
+      expectedKernelRelease: expectedKernelRelease(opts.kernelTree, opts.expectedKernelRelease, artifacts.cacheStatus === "env"),
+      kernelImageSha256: sha256File(stagedKernelImage),
+      kernelConfigSha256: sha256File(stagedKernelConfig),
+      ...(opts.executionIdentity ? { dropUid: opts.executionIdentity.uid, dropGid: opts.executionIdentity.gid } : {}),
+    };
+  } catch (err) {
+    rmSync(launchDir, { recursive: true, force: true });
+    writeProofFileReadOnly(dmesgOutPath, `[build_failed] ${err instanceof Error ? err.message : String(err)}\n`);
+    return { status: "build_failed", dmesg_path: dmesgOutPath, build_cache_hit };
+  }
 
   // Make the runner pick up the freshly built artifacts.
   const previousEnv = {
@@ -1725,10 +1793,10 @@ export async function verifyKernelFinding(
     cacheKey: process.env.PWNKIT_KERNEL_QEMU_CACHEKEY,
   };
   process.env.PWNKIT_KERNEL_QEMU = "1";
-  process.env.PWNKIT_KERNEL_QEMU_KERNEL = artifacts.kernelImage;
+  process.env.PWNKIT_KERNEL_QEMU_KERNEL = stagedKernelImage;
   process.env.PWNKIT_KERNEL_QEMU_DISK = artifacts.diskImage;
   if (artifacts.kernelConfig) {
-    process.env.PWNKIT_KERNEL_QEMU_CONFIG = artifacts.kernelConfig;
+    process.env.PWNKIT_KERNEL_QEMU_CONFIG = stagedKernelConfig;
   }
   // Booted-image identity for the weaponization oracle's wrong-kernel binding.
   if (artifacts.cacheKey) {
@@ -1748,6 +1816,9 @@ export async function verifyKernelFinding(
     };
     const runner = opts.vmRunner ?? runReproducerInKernelVm;
     runResult = await runner(report);
+    if (sha256File(stagedKernelImage) !== attestationRequest.kernelImageSha256 || sha256File(stagedKernelConfig) !== attestationRequest.kernelConfigSha256) {
+      throw new Error("staged kernel image or config changed during execution");
+    }
   } catch (err) {
     writeProofFileReadOnly(
       dmesgOutPath,
@@ -1764,29 +1835,35 @@ export async function verifyKernelFinding(
     process.env.PWNKIT_KERNEL_QEMU_DISK = previousEnv.disk;
     process.env.PWNKIT_KERNEL_QEMU_CONFIG = previousEnv.cfg;
     process.env.PWNKIT_KERNEL_QEMU_CACHEKEY = previousEnv.cacheKey;
+    rmSync(launchDir, { recursive: true, force: true });
   }
 
   // ── Persist dmesg + decide verdict ──────────────────────────
   const dmesgContent = runResult.dmesg || runResult.output || "";
   writeProofFileReadOnly(dmesgOutPath, dmesgContent);
+  const dmesgSha256 = createHash("sha256").update(dmesgContent).digest("hex");
   const cov: Pick<KernelFindingVerification, "coveragePcs"> =
     runResult.coveragePcs && runResult.coveragePcs.length > 0
       ? { coveragePcs: runResult.coveragePcs }
       : {};
   let attestationFields: Pick<KernelFindingVerification, "executionAttestation" | "executionAttestationPath" | "executionAttestationSha256"> = {};
   if (runResult.executionAttestation) {
-    bindKernelExecutionAttestation(runResult.executionAttestation, attestationRequest);
-    const attestationPath = `${dmesgOutPath}.execution-attestation`;
-    const raw = runResult.executionAttestationPath && existsSync(runResult.executionAttestationPath)
-      ? readFileSync(runResult.executionAttestationPath, "utf-8")
-      : serializeKernelExecutionAttestation(runResult.executionAttestation);
-    const parsedRaw = parseKernelExecutionAttestation(raw);
-    bindKernelExecutionAttestation(parsedRaw, attestationRequest);
-    if (serializeKernelExecutionAttestation(parsedRaw) !== serializeKernelExecutionAttestation(runResult.executionAttestation)) throw new Error("kernel execution attestation object/raw mismatch");
-    writeProofFileReadOnly(attestationPath, raw);
-    attestationFields = { executionAttestation: parsedRaw, executionAttestationPath: attestationPath, executionAttestationSha256: createHash("sha256").update(raw).digest("hex") };
-  } else if (opts.executionIdentity) {
-    return { status: "run_failed", dmesg_path: dmesgOutPath, build_cache_hit, ...cov };
+    try {
+      bindKernelExecutionAttestation(runResult.executionAttestation, attestationRequest);
+      const attestationPath = `${dmesgOutPath}.execution-attestation`;
+      const raw = runResult.executionAttestationPath && existsSync(runResult.executionAttestationPath)
+        ? readFileSync(runResult.executionAttestationPath, "utf-8")
+        : serializeKernelExecutionAttestation(runResult.executionAttestation);
+      const parsedRaw = parseKernelExecutionAttestation(raw);
+      bindKernelExecutionAttestation(parsedRaw, attestationRequest);
+      if (serializeKernelExecutionAttestation(parsedRaw) !== serializeKernelExecutionAttestation(runResult.executionAttestation)) throw new Error("kernel execution attestation object/raw mismatch");
+      writeProofFileReadOnly(attestationPath, raw);
+      attestationFields = { executionAttestation: parsedRaw, executionAttestationPath: attestationPath, executionAttestationSha256: createHash("sha256").update(raw).digest("hex") };
+    } catch {
+      return { status: "run_failed", dmesg_path: dmesgOutPath, build_cache_hit, ...cov, dmesgSha256 };
+    }
+  } else if (opts.executionIdentity || !opts.vmRunner) {
+    return { status: "run_failed", dmesg_path: dmesgOutPath, build_cache_hit, ...cov, dmesgSha256 };
   }
 
   if (!runResult.compiled || !runResult.executed) {
@@ -1794,7 +1871,7 @@ export async function verifyKernelFinding(
       status: "run_failed",
       dmesg_path: dmesgOutPath,
       build_cache_hit,
-      ...cov,
+      ...cov, dmesgSha256,
       ...attestationFields,
     };
   }
@@ -1808,7 +1885,7 @@ export async function verifyKernelFinding(
         signature: opts.expectedSignature,
         dmesg_path: dmesgOutPath,
         build_cache_hit,
-        ...cov,
+        ...cov, dmesgSha256,
         ...attestationFields,
         ...(opts.executionIdentity ? { executionIdentity: opts.executionIdentity } : {}),
       };
@@ -1821,7 +1898,7 @@ export async function verifyKernelFinding(
         signature: detected,
         dmesg_path: dmesgOutPath,
         build_cache_hit,
-        ...cov,
+        ...cov, dmesgSha256,
         ...attestationFields,
       };
     }
@@ -1829,7 +1906,7 @@ export async function verifyKernelFinding(
       status: "no_signal",
       dmesg_path: dmesgOutPath,
       build_cache_hit,
-      ...cov,
+      ...cov, dmesgSha256,
       ...attestationFields,
     };
   }
@@ -1841,7 +1918,7 @@ export async function verifyKernelFinding(
       signature: detected,
       dmesg_path: dmesgOutPath,
       build_cache_hit,
-      ...cov,
+      ...cov, dmesgSha256,
       ...attestationFields,
     };
   }
@@ -1850,13 +1927,13 @@ export async function verifyKernelFinding(
     status: "no_signal",
     dmesg_path: dmesgOutPath,
     build_cache_hit,
-    ...cov,
+    ...cov, dmesgSha256,
     ...attestationFields,
   };
 }
 
 function serializeKernelExecutionAttestation(r: KernelExecutionAttestation): string {
-  return `schema=1\nnonce=${r.nonce}\nreproducer_sha256=${r.reproducerSha256}\nruid=${r.realUid}\neuid=${r.effectiveUid}\nsuid=${r.savedUid}\nrgid=${r.realGid}\negid=${r.effectiveGid}\nsgid=${r.savedGid}\ngroups=${r.supplementaryGroups.join(",")}\ncap_inh=${r.inheritableCapabilities}\ncap_prm=${r.permittedCapabilities}\ncap_eff=${r.effectiveCapabilities}\ncap_amb=${r.ambientCapabilities}\nsecurebits=${r.secureBits}\nuserns_max=${r.userNamespaceMax}\ninitial_userns=${r.initialUserNamespace ? 1 : 0}\nno_new_privs=${r.noNewPrivileges ? 1 : 0}\n`;
+  return `schema=2\nnonce=${r.nonce}\nreproducer_sha256=${r.reproducerSha256}\nexpected_kernel_release=${r.expectedKernelRelease}\nobserved_kernel_release=${r.observedKernelRelease}\nboot_id=${r.bootId}\nkernel_image_sha256=${r.kernelImageSha256}\nkernel_config_sha256=${r.kernelConfigSha256}\nruid=${r.realUid}\neuid=${r.effectiveUid}\nsuid=${r.savedUid}\nrgid=${r.realGid}\negid=${r.effectiveGid}\nsgid=${r.savedGid}\ngroups=${r.supplementaryGroups.join(",")}\ncap_inh=${r.inheritableCapabilities}\ncap_prm=${r.permittedCapabilities}\ncap_eff=${r.effectiveCapabilities}\ncap_amb=${r.ambientCapabilities}\nsecurebits=${r.secureBits}\nuserns_max=${r.userNamespaceMax}\ninitial_userns=${r.initialUserNamespace ? 1 : 0}\nno_new_privs=${r.noNewPrivileges ? 1 : 0}\n`;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -1960,20 +2037,44 @@ export async function verifyAcrossBoots(
     }
   }
 
-  const nbootStable = bootHits >= minHits;
+  let nbootStable = bootHits >= minHits;
   const winning = firstReproduced ?? lastResult!;
 
   // When the threshold isn't met, surface the most informative per-boot status
   // (a build/run failure outranks a no_signal) so the caller sees WHY it failed.
-  const aggregateStatus: KernelFindingStatus = nbootStable
+  let aggregateStatus: KernelFindingStatus = nbootStable
     ? "reproduced"
     : pickWorstStatus(bootStatuses);
 
   let manifest: Pick<KernelFindingNbootVerification, "executionAttestationManifestPath" | "executionAttestationManifestSha256"> = {};
   const reproduced = bootResults.filter((boot) => boot.status === "reproduced");
-  if (nbootStable && opts.executionIdentity && reproduced.length > 0 && reproduced.every((boot) => boot.executionAttestationPath && boot.executionAttestationSha256 && boot.executionIdentity?.uid === opts.executionIdentity!.uid && boot.executionIdentity?.gid === opts.executionIdentity!.gid)) {
+  const provenanceRequired = opts.executionIdentity !== undefined || opts.vmRunner === undefined;
+  if (nbootStable && provenanceRequired) {
+    const attestations = reproduced.map((boot) => boot.executionAttestation);
+    const first = attestations[0];
+    const complete = reproduced.length >= minHits && first !== undefined && reproduced.every((boot) => {
+      const receipt = boot.executionAttestation;
+      const identityMatches = !opts.executionIdentity || (boot.executionIdentity?.uid === opts.executionIdentity.uid && boot.executionIdentity?.gid === opts.executionIdentity.gid);
+      return receipt?.schemaVersion === 2 && boot.executionAttestationPath && boot.executionAttestationSha256 && boot.dmesgSha256 && identityMatches && receipt.expectedKernelRelease === first.expectedKernelRelease && receipt.observedKernelRelease === first.observedKernelRelease && receipt.kernelImageSha256 === first.kernelImageSha256 && receipt.kernelConfigSha256 === first.kernelConfigSha256;
+    });
+    const bootIds = new Set(attestations.flatMap((receipt) => receipt ? [receipt.bootId] : []));
+    if (!complete || bootIds.size !== reproduced.length) {
+      nbootStable = false;
+      aggregateStatus = "run_failed";
+    }
+  }
+  if (nbootStable && provenanceRequired) {
     const path = `${dmesgOutPath ?? winning.dmesg_path}.execution-attestations.manifest`;
-    const content = reproduced.map((boot, index) => `${index + 1}\t${boot.executionAttestationSha256}\t${boot.executionAttestationPath}`).join("\n") + "\n";
+    const first = reproduced[0]!.executionAttestation!;
+    const content = JSON.stringify({
+      schemaVersion: 2,
+      expectedKernelRelease: first.expectedKernelRelease,
+      observedKernelRelease: first.observedKernelRelease,
+      kernelImageSha256: first.kernelImageSha256,
+      kernelConfigSha256: first.kernelConfigSha256,
+      ...(opts.executionIdentity ? { executionIdentity: opts.executionIdentity } : {}),
+      boots: reproduced.map((boot, index) => ({ index: index + 1, bootId: boot.executionAttestation!.bootId, receiptSha256: boot.executionAttestationSha256, receiptPath: boot.executionAttestationPath, dmesgSha256: boot.dmesgSha256, dmesgPath: boot.dmesg_path })),
+    }, null, 2) + "\n";
     writeProofFileReadOnly(path, content);
     manifest = { executionAttestationManifestPath: path, executionAttestationManifestSha256: createHash("sha256").update(content).digest("hex") };
   }

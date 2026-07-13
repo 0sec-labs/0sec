@@ -60,6 +60,15 @@ describe("agenticScan: scan_completed emission", () => {
     originalChatGptCodexRefreshToken = process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
     delete process.env.PWNKIT_FEATURE_CODEX_LIVE_TARGETS;
     delete process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
+    // Provider discovery also reads ~/.codex/auth.json.  Do not let a
+    // developer/runner's persisted login silently turn the early-failure
+    // tests below into live native scans.
+    vi.spyOn(LlmApiRuntime.prototype, "getConfigurationDiagnostics").mockReturnValue({
+      valid: false,
+      provider: "openrouter",
+      providerLabel: "OpenRouter",
+      reason: "missing_key",
+    });
   });
 
   afterEach(() => {
@@ -119,6 +128,11 @@ describe("agenticScan: scan_completed emission", () => {
 
   it("routes explicit codex live scans through the direct ChatGPT Codex provider when configured", async () => {
     process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = "fake-refresh-token";
+    vi.mocked(LlmApiRuntime.prototype.getConfigurationDiagnostics).mockReturnValue({
+      valid: true,
+      provider: "chatgpt-codex",
+      providerLabel: "ChatGPT (Codex backend)",
+    });
     const executeNativeSpy = vi
       .spyOn(LlmApiRuntime.prototype, "executeNative")
       .mockResolvedValue({
@@ -146,10 +160,11 @@ describe("agenticScan: scan_completed emission", () => {
     const completedEvents = events.filter((e) => e.type === "scan_completed");
     expect(completedEvents).toHaveLength(1);
     expect(completedEvents[0]!.payload.exit_reason).toBe("completed");
-    // #618 — this exercises a real agent-loop path that retries on a simulated
-    // Azure 500, so it legitimately takes ~6s and races the 5s default
-    // testTimeout under full-suite parallelism. Bump it per-test.
-  }, 15000);
+    // This intentionally exercises the full native agent loop. Vitest does
+    // not cancel the pending promise when a test times out; allowing the
+    // timeout to race the scan leaks its eventual scan_completed event into
+    // the next test's process-global eventBus subscription.
+  }, 60000);
 });
 
 describe("agenticScan: planner LLM error mid-scan", () => {
@@ -252,7 +267,9 @@ describe("agenticScan: planner LLM error mid-scan", () => {
     // The summary should carry the planner error string verbatim so the
     // cloud relay can surface it as the failure reason.
     expect(completedEvents[0]!.payload.summary).toBe(errorMessage);
-    // #618 — same as above: a real retry-on-500 agent-loop path takes ~6s and
-    // races the 5s default testTimeout under full-suite parallelism.
-  }, 15000);
+    // The error path deliberately performs transient-error backoff. Keep the
+    // test alive until agenticScan drains: a Vitest timeout rejects only the
+    // test, not the underlying scan, which would otherwise emit into a later
+    // test's process-global eventBus subscription.
+  }, 60000);
 });
