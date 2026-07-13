@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Finding } from "@pwnkit/shared";
 import { runResearch } from "../research-runner.js";
 import {
@@ -13,6 +14,24 @@ import {
 } from "./windows-hyperv-adapter.js";
 
 const roots: string[] = [];
+let signerRoot = "";
+let signerKey = "";
+let allowedSigners = "";
+beforeAll(() => {
+  signerRoot = mkdtempSync(join(tmpdir(), "pwnkit-hyperv-signer-"));
+  signerKey = join(signerRoot, "acceptance-key");
+  allowedSigners = join(signerRoot, "allowed-signers");
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", signerKey]);
+  writeFileSync(
+    allowedSigners,
+    `lab-acceptance ${readFileSync(join(signerRoot, "acceptance-key.pub"), "utf8")}`,
+  );
+  process.env.PWNKIT_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS = allowedSigners;
+});
+afterAll(() => {
+  delete process.env.PWNKIT_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS;
+  if (signerRoot) rmSync(signerRoot, { recursive: true, force: true });
+});
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 function sha256(path: string): string {
@@ -66,6 +85,82 @@ function setup(status: "REPRODUCED" | "NOT_REPRODUCED" = "REPRODUCED"): {
   }
   const campaignHash = "a".repeat(64);
   const scopeHash = "b".repeat(64);
+  const now = new Date();
+  const common = {
+    campaign_sha256: campaignHash,
+    scope_manifest_sha256: scopeHash,
+    campaign_id: "vmswitch-oid-001",
+    worker: "visor-insider",
+    guest_worker: "attacker-insider",
+    vm_name: "attacker",
+    checkpoint_name: "clean",
+    dump_path: "C:\\dumps\\MEMORY.DMP",
+    build_lab_ex: "28020.1.amd64fre.rs_prerelease",
+    checkpoint_identity_sha256: "1".repeat(64),
+    debugger_executable_sha256: "2".repeat(64),
+    trigger_executable_sha256: "3".repeat(64),
+    control_executable_sha256: "3".repeat(64),
+  };
+  const recoveryArtifacts = {
+    benign_dump_sha256: ["recovery-benign.dmp", "PAGEDU64sanitized-benign-dump"],
+    benign_dump_analysis_sha256: ["recovery-benign-cdb.txt", "BugCheck 0, benign debugger smoke\n"],
+    guest_challenge_sha256: ["recovery-guest-challenge.json", '{"challenge":"nonce-bound","ok":true}'],
+  } as const;
+  const recoveryHashes: Record<string, string> = {};
+  for (const [field, [filename, content]] of Object.entries(recoveryArtifacts)) {
+    const artifactPath = join(root, filename);
+    writeFileSync(artifactPath, content);
+    recoveryHashes[field] = sha256(artifactPath);
+  }
+  const drillPath = join(root, "recovery-drill.json");
+  writeFileSync(drillPath, JSON.stringify({
+    schema_version: "0verse.hyperv-recovery-drill/v1",
+    ...common,
+    worker_machine_id: "worker-guid",
+    guest_machine_id: "guest-id",
+    worker_ssh_host_key_sha256: "4".repeat(64),
+    guest_ssh_host_key_sha256: "5".repeat(64),
+    recovery_nonce: "recovery-drill-00000000000000000001",
+    pre_host_boot_id: "before",
+    post_host_boot_id: "after",
+    started_at: new Date(now.getTime() - 6 * 60_000).toISOString(),
+    host_unavailable_observed_at: new Date(now.getTime() - 5 * 60_000).toISOString(),
+    host_recovered_at: new Date(now.getTime() - 4 * 60_000).toISOString(),
+    guest_recovered_at: new Date(now.getTime() - 3 * 60_000).toISOString(),
+    completed_at: new Date(now.getTime() - 2 * 60_000).toISOString(),
+    ...recoveryHashes,
+    out_of_band_controller: "provider-console",
+    host_unavailable_observed: true,
+    checkpoint_restore_confirmed: true,
+    guest_challenge_confirmed: true,
+    debugger_smoke_confirmed: true,
+  }));
+  const acceptance: Record<string, unknown> = {
+    schema_version: "0verse.hyperv-worker-acceptance/v1",
+    ...common,
+    recovery_drill_path: basename(drillPath),
+    recovery_drill_sha256: sha256(drillPath),
+    execution_grant_sha256: "9".repeat(64),
+    execution_grant_nonce: "execution-grant-0000000000000000001",
+    issued_at: new Date(now.getTime() - 60_000).toISOString(),
+    expires_at: new Date(now.getTime() + 60 * 60_000).toISOString(),
+    nonce: "worker-acceptance-0000000000000001",
+    accepted_by: "lab-acceptance",
+    signature_ssh: "pending",
+  };
+  const materialPath = join(root, "acceptance-material.json");
+  const unsigned = { ...acceptance };
+  delete unsigned.signature_ssh;
+  writeFileSync(materialPath, JSON.stringify(Object.fromEntries(
+    Object.keys(unsigned).sort().map((key) => [key, unsigned[key]]),
+  )));
+  execFileSync("ssh-keygen", [
+    "-q", "-Y", "sign", "-f", signerKey, "-n",
+    "0verse-hyperv-worker-acceptance", materialPath,
+  ]);
+  acceptance.signature_ssh = readFileSync(join(root, "acceptance-material.json.sig"), "utf8");
+  const acceptancePath = join(root, "worker-acceptance.json");
+  writeFileSync(acceptancePath, JSON.stringify(acceptance));
   const receiptPath = join(root, "receipt.json");
   writeFileSync(receiptPath, JSON.stringify({
     schema_version: "0verse.hyperv-evidence/v1",
@@ -81,6 +176,13 @@ function setup(status: "REPRODUCED" | "NOT_REPRODUCED" = "REPRODUCED"): {
     observations,
     error: status === "REPRODUCED" ? "" : "confirmation threshold was not met",
     claim_eligible: true,
+    execution_grant_sha256: acceptance.execution_grant_sha256,
+    execution_grant_nonce: acceptance.execution_grant_nonce,
+    worker_acceptance_sha256: sha256(acceptancePath),
+    worker_acceptance_nonce: acceptance.nonce,
+    worker_acceptance_path: basename(acceptancePath),
+    worker_recovery_drill_sha256: sha256(drillPath),
+    worker_recovery_drill_path: basename(drillPath),
   }));
   const finding = {
     id: "vmswitch-oid",
@@ -128,7 +230,7 @@ describe("WindowsHyperVImportAdapter", () => {
       target: { kind: "windows.hyperv-prover-import", buildId: target.buildId },
       executionContext: { sandbox: "hyperv-child-partition", basis: "runtime-attested" },
     });
-    expect(result.envelopes[0]?.artifacts).toHaveLength(10);
+    expect(result.envelopes[0]?.artifacts).toHaveLength(15);
     expect(result.envelopes[0]?.artifacts.every((artifact) => /^[a-f0-9]{64}$/.test(artifact.sha256))).toBe(true);
     const receiptArtifact = result.envelopes[0]!.artifacts.find((artifact) => basename(artifact.path) === "receipt.json")!;
     const portable = JSON.parse(readFileSync(receiptArtifact.path, "utf8")) as ZeroverseHyperVEvidence;
@@ -152,6 +254,40 @@ describe("WindowsHyperVImportAdapter", () => {
     });
     expect(result.findings).toHaveLength(0);
     expect(result.evidence.some((item) => item.stage === "discover" && item.status === "failed")).toBe(true);
+  });
+
+  it("rejects missing or tampered worker acceptance authority", async () => {
+    const missing = setup();
+    const receipt = JSON.parse(readFileSync(missing.receiptPath, "utf8")) as Record<string, unknown>;
+    delete receipt.worker_acceptance_path;
+    writeFileSync(missing.receiptPath, JSON.stringify(receipt));
+    const missingResult = await runResearch(new WindowsHyperVImportAdapter(), missing.target, {
+      artifactRoot: join(missing.root, "artifacts"), runId: "missing-acceptance",
+    });
+    expect(missingResult.findings).toHaveLength(0);
+
+    const tampered = setup();
+    const acceptancePath = join(tampered.root, "worker-acceptance.json");
+    const acceptance = JSON.parse(readFileSync(acceptancePath, "utf8")) as Record<string, unknown>;
+    acceptance.build_lab_ex = "attacker-chosen-build";
+    writeFileSync(acceptancePath, JSON.stringify(acceptance));
+    const tamperedReceipt = JSON.parse(
+      readFileSync(tampered.receiptPath, "utf8"),
+    ) as Record<string, unknown>;
+    tamperedReceipt.worker_acceptance_sha256 = sha256(acceptancePath);
+    writeFileSync(tampered.receiptPath, JSON.stringify(tamperedReceipt));
+    const tamperedResult = await runResearch(new WindowsHyperVImportAdapter(), tampered.target, {
+      artifactRoot: join(tampered.root, "artifacts"), runId: "tampered-acceptance",
+    });
+    expect(tamperedResult.findings).toHaveLength(0);
+
+    const recoveryTamper = setup();
+    writeFileSync(join(recoveryTamper.root, "recovery-guest-challenge.json"), "tampered");
+    const recoveryTamperResult = await runResearch(
+      new WindowsHyperVImportAdapter(), recoveryTamper.target,
+      { artifactRoot: join(recoveryTamper.root, "artifacts"), runId: "tampered-recovery" },
+    );
+    expect(recoveryTamperResult.findings).toHaveLength(0);
   });
 
   it("rejects tampered cdb analysis and reused proof identities", async () => {
