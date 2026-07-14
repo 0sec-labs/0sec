@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "pwnkit.msrc-windows-lpe-tranche-lock/v1",
+  "profile": "staging",
+  "product": { "productId": "12390", "name": "Windows 11 Version 24H2 for x64-based Systems", "architecture": "x64", "currentBuildNumber": "26100" },
+  "sourceDocuments": [
+    { "release": "2025-Jan", "url": "https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2025-Jan", "rawBytesSha256": "206e1c83361b3df235739ea7ee17f2e473a1339f5a6e174cce52baf7d7aa4d40", "initialReleaseDate": "2025-01-14T00:00:00", "currentReleaseDate": "2026-07-12T15:01:35", "trackingVersion": "1.0", "trackingStatus": 2, "revisionNumber": "509" },
+    { "release": "2025-Feb", "url": "https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2025-Feb", "rawBytesSha256": "ba0e3a3317d91d645e8a6803a86058391c5a9f59d3b78b43eae382eb8de2d91b", "initialReleaseDate": "2025-02-11T08:00:00", "currentReleaseDate": "2026-07-12T15:02:19", "trackingVersion": "1.0", "trackingStatus": 2, "revisionNumber": "703" },
+    { "release": "2025-Mar", "url": "https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2025-Mar", "rawBytesSha256": "57b9bb0e07934e577b9fa40ae20e3985d9047d61e94ecabe320f7188bcb60d85", "initialReleaseDate": "2025-03-11T07:00:00", "currentReleaseDate": "2026-07-12T15:00:33", "trackingVersion": "1.0", "trackingStatus": 2, "revisionNumber": "373" }
+  ],
+  "tranches": [
+    { "trancheId": "2025-Jan--2025-Feb", "previousRelease": "2025-Jan", "currentRelease": "2025-Feb", "inventorySha256": "91d60fe98510fd4ce28ca1d3049eae24e513d1d098fe3bb79a1db1b0dff30e6d", "previousRawBytesSha256": "206e1c83361b3df235739ea7ee17f2e473a1339f5a6e174cce52baf7d7aa4d40", "currentRawBytesSha256": "ba0e3a3317d91d645e8a6803a86058391c5a9f59d3b78b43eae382eb8de2d91b", "selected": 11 },
+    { "trancheId": "2025-Feb--2025-Mar", "previousRelease": "2025-Feb", "currentRelease": "2025-Mar", "inventorySha256": "5e51f6aca2c4032aa61292be9c50fb2ee7310dc0417cec95da55b8a7e3e9ab8e", "previousRawBytesSha256": "ba0e3a3317d91d645e8a6803a86058391c5a9f59d3b78b43eae382eb8de2d91b", "currentRawBytesSha256": "57b9bb0e07934e577b9fa40ae20e3985d9047d61e94ecabe320f7188bcb60d85", "selected": 9 }
+  ],
+  "cases": [
+    { "caseId": "msrc-cve-2025-21182-12390-x64", "cve": "CVE-2025-21182", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21183-12390-x64", "cve": "CVE-2025-21183", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21184-12390-x64", "cve": "CVE-2025-21184", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21337-12390-x64", "cve": "CVE-2025-21337", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21358-12390-x64", "cve": "CVE-2025-21358", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21367-12390-x64", "cve": "CVE-2025-21367", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21373-12390-x64", "cve": "CVE-2025-21373", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21375-12390-x64", "cve": "CVE-2025-21375", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21414-12390-x64", "cve": "CVE-2025-21414", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21419-12390-x64", "cve": "CVE-2025-21419", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-21420-12390-x64", "cve": "CVE-2025-21420", "currentRelease": "2025-Feb" },
+    { "caseId": "msrc-cve-2025-24044-12390-x64", "cve": "CVE-2025-24044", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24046-12390-x64", "cve": "CVE-2025-24046", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24048-12390-x64", "cve": "CVE-2025-24048", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24050-12390-x64", "cve": "CVE-2025-24050", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24059-12390-x64", "cve": "CVE-2025-24059", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24066-12390-x64", "cve": "CVE-2025-24066", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24067-12390-x64", "cve": "CVE-2025-24067", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24072-12390-x64", "cve": "CVE-2025-24072", "currentRelease": "2025-Mar" },
+    { "caseId": "msrc-cve-2025-24995-12390-x64", "cve": "CVE-2025-24995", "currentRelease": "2025-Mar" }
+  ],
+  "counts": { "tranches": 2, "sourceDocuments": 3, "stagedCandidateCves": 20, "distinctPatchBoundaries": 2 },
+  "policy": { "stagingOnly": true, "benchmarkEligible": false, "bountyClaimEligible": false, "weaponization": false, "promotable": false, "containsExploitMaterial": false },
+  "lockId": "sha256:c822b7eb75dcab043b669cc51b28554123b3f646918a0475f881cb6eb8b92a1d"
+}

@@ -448,7 +448,7 @@ export function validateWindowsLpePairedCorpus(
   return result;
 }
 
-function assertNoDuplicateJsonKeys(text: string): void {
+export function assertNoDuplicateWindowsLpeJsonKeys(text: string): void {
   let cursor = 0;
   const whitespace = (): void => { while (/\s/.test(text[cursor] ?? "")) cursor += 1; };
   const string = (): string => {
@@ -534,7 +534,7 @@ function readJson(path: string): unknown {
       throw new Error("Windows LPE corpus input changed while it was being read");
     }
     const text = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, offset));
-    assertNoDuplicateJsonKeys(text);
+    assertNoDuplicateWindowsLpeJsonKeys(text);
     return JSON.parse(text) as unknown;
   } finally {
     closeSync(descriptor);
