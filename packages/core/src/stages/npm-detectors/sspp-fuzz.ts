@@ -36,7 +36,11 @@ const NAME_RE = new RegExp(
       "assign", "assignIn", "assignInWith", "assignWith", "assignDeep", "extend", "extendDeep",
       "deepExtend", "deepAssign", "mixin", "mixinDeep",
       "clone", "cloneDeep",
-      "parse", "expand",
+      // NB: recursive-WRITE/merge sinks only. Deliberately NOT `parse*` — a
+      // validator's `parse`/`parseAsync` (e.g. zod) is a read/validate export,
+      // not a merge sink, and matching it both over-flags and (for the async
+      // variant) floats a rejected Promise through the sync fuzz loop.
+      "expand",
     ].join("|") +
     ")",
   "i",
@@ -201,7 +205,16 @@ export function fuzzCandidate(fn: AnyFn, timeBudgetMs = 4000): SsppHit[] {
     const marker = freshMarker();
     cleanup(marker);
     try {
-      fn(...payload.make(marker));
+      const ret = fn(...payload.make(marker));
+      // A candidate may (mis)resolve to an async function — e.g. a validator's
+      // `parseAsync` — that returns a REJECTED promise. This loop is synchronous
+      // and ignores the return value, so an un-awaited rejection would float and
+      // crash the host (unhandled rejection → exit 1, fatal under
+      // `--unhandled-rejections=strict`). Neutralise any returned thenable; we
+      // only observe the prototype, never the return value.
+      if (ret !== null && (typeof ret === "object" || typeof ret === "function") && typeof (ret as { then?: unknown }).then === "function") {
+        void (ret as Promise<unknown>).then(undefined, () => {});
+      }
     } catch {
       /* fn rejecting the shape is fine; we only care about the prototype */
     }

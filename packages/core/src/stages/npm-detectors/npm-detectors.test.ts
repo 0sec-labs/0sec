@@ -80,6 +80,34 @@ describe("sspp-fuzz detector", () => {
     expect(nameMatchesPpSink("")).toBe(false);
   });
 
+  it("does NOT match validator parse* exports (parse/parseAsync are read sinks)", () => {
+    // Regression: `^parse` used to over-match zod's `parseAsync`, selecting a
+    // validator that returns a rejected Promise as a recursive-merge candidate.
+    expect(nameMatchesPpSink("parse")).toBe(false);
+    expect(nameMatchesPpSink("parseAsync")).toBe(false);
+  });
+
+  it("does NOT float an unhandled rejection when a candidate returns a rejected Promise", async () => {
+    // A candidate that resolves to an async fn (e.g. a mis-selected `parseAsync`)
+    // returns a REJECTED promise. The sync fuzz loop must neutralise it so it can
+    // never escape as an unhandled rejection (which would exit the host).
+    const rejections: unknown[] = [];
+    const onRej = (r: unknown): void => {
+      rejections.push(r);
+    };
+    process.on("unhandledRejection", onRej);
+    try {
+      const asyncSink = ((..._args: unknown[]) => Promise.reject(new TypeError("parse failed"))) as any;
+      const hits = fuzzCandidate(asyncSink);
+      expect(hits.length).toBe(0); // no prototype pollution — nothing confirmed
+      // give any floated rejection a tick to surface before asserting.
+      await new Promise((r) => setTimeout(r, 25));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRej);
+    }
+  });
+
   it("CONFIRMS runtime pollution on a vulnerable set (es-toolkit class)", () => {
     const hits = fuzzCandidate(vulnSet as any);
     expect(hits.length).toBeGreaterThan(0);
@@ -176,6 +204,30 @@ describe("read-unstable detector", () => {
     expect(conf.confirmed).toBe(true);
   });
 
+  it("collapses superstruct validate+assert duplicates into a single candidate", async () => {
+    // A superstruct-shaped module exposing BOTH validate and assert would emit
+    // two near-identical TOCTOU leads on the same field; identify collapses them.
+    const superstructStub = {
+      enums: (vals: string[]) => ({ __enum: vals }),
+      object: (shape: Record<string, { __enum: string[] }>) => ({ __shape: shape }),
+      validate: (input: any, schema: any) => {
+        for (const k of Object.keys(schema.__shape)) {
+          if (!schema.__shape[k].__enum.includes(input[k])) return [new Error("invalid"), undefined];
+        }
+        return [undefined, input];
+      },
+      assert: (input: any, schema: any) => {
+        for (const k of Object.keys(schema.__shape)) {
+          if (!schema.__shape[k].__enum.includes(input[k])) throw new Error("invalid");
+        }
+      },
+    };
+    const probe = staticProbe({ name: "superstruct" }, { superstruct: superstructStub });
+    const cands = await readUnstableDetector.identifyCandidates(probe);
+    expect(cands.length).toBe(1);
+    expect(cands[0].id).toBe("superstruct.validate");
+  });
+
   it("identify matches a zod-shaped module and does NOT confirm (control)", async () => {
     const zodStub = {
       z: {
@@ -244,6 +296,33 @@ describe("parser-diff detector", () => {
     };
     const conf = confirmParserDiff(correct);
     expect(conf.confirmed).toBe(false);
+  });
+
+  it("does NOT flag an is-ip-style recognizer returning false (assume-FP: no observed consequence)", async () => {
+    // `isIP("0177.0.0.1") === false` is CORRECT — that string is not a canonical
+    // IP — and there is no observed downstream connect()/resolve(). It must not
+    // produce a parser-diff candidate, let alone a confirmed SSRF finding.
+    const isIP = (s: unknown): boolean => {
+      const str = String(s);
+      const parts = str.split(".");
+      return parts.length === 4 && parts.every((p) => /^[0-9]{1,3}$/.test(p) && !/^0\d/.test(p) && Number(p) <= 255);
+    };
+    expect(isIP("0177.0.0.1")).toBe(false); // the mis-flagged input, correctly rejected
+    const probe = staticProbe({ name: "is-ip" }, { "is-ip": { isIP } });
+    const cands = await parserDiffDetector.identifyCandidates(probe);
+    expect(cands.length).toBe(0);
+    const outcome = await runDetectorOnPackage(parserDiffDetector as any, probe);
+    expect(outcome.leads.length).toBe(0);
+  });
+
+  it("dedup routes cidr-tools (parser-diff founding seed) as prior/known, not novel", async () => {
+    const verdict = await dedupConfirmation({
+      name: "cidr-tools",
+      cwe: "CWE-918",
+      hints: parserDiffDetector.dedupHints,
+    });
+    expect(verdict.novel).toBe(false);
+    expect(verdict.source).toBe("prior-report");
   });
 });
 

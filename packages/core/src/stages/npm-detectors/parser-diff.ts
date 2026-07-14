@@ -231,25 +231,17 @@ const ADAPTERS: FilterAdapter[] = [
       } as ParserDiffCandidate;
     },
   },
-  // `is-ip`: not-recognized-as-IP ⇒ host passed straight to DNS/fetch ⇒ bypass.
-  {
-    id: "is-ip",
-    matches: (name, mod) => name === "is-ip" || typeof mod["isIP"] === "function" || typeof mod["default"] === "function",
-    candidate(name, mod) {
-      const isIP = fnOf(mod, "isIP") ?? (typeof mod["default"] === "function" ? (mod["default"] as UnknownFn) : undefined);
-      if (!isIP) return undefined;
-      return {
-        id: `${name}.isIP`,
-        label: `${name}.isIP`,
-        field: "",
-        filterVerdict(input) {
-          const rec = safe(() => isIP(input));
-          if (rec === false) return { treatedAsSafe: true, note: "is-ip=NOT-IP(passed-to-DNS)" };
-          return { treatedAsSafe: false, note: "recognized" };
-        },
-      } as ParserDiffCandidate;
-    },
-  },
+  // NB: an `is-ip`-style recognizer (`isIP(host) → boolean`) is deliberately NOT
+  // an adapter. `isIP("0177.0.0.1") === false` is CORRECT library behaviour —
+  // that string is not a canonical IP — and a bare `false` says nothing about a
+  // downstream connect()/resolve() ever happening. The old adapter ASSERTED
+  // "not-recognized ⇒ passed to DNS ⇒ SSRF", which fired on is-ip itself and on
+  // every package that re-exports `isIP` (e.g. class-validator) with no observed
+  // consequence — an assume-FP violation. A recognizer that never NORMALISES or
+  // RE-EMITS a different address cannot produce an observable parser divergence,
+  // so it has no confirm here. Only filters that make a connect/resolve decision
+  // (`ip`, `ipaddr.js`) or re-emit a different base (`cidr-tools`) get adapters.
+  //
   // `cidr-tools`: normalizeCidr mis-normalization — the confirmed win. If the
   // filter normalises the input to a base whose oracle class is public while the
   // input's true target is internal, the allowlist is bypassed.
@@ -316,5 +308,15 @@ export const parserDiffDetector: Detector<ParserDiffCandidate> = {
   },
   confirm(candidate: ParserDiffCandidate): DetectorConfirmation {
     return confirmParserDiff(candidate);
+  },
+  dedupHints: {
+    // parser-diff's OWN founding seed: `cidr-tools`
+    // `normalizeCidr("0177.0.0.1") → "177.0.0.1"` drops the leading-zero octal
+    // and re-emits a PUBLIC-looking base while glibc resolves the input to
+    // 127.0.0.1 (loopback) — the exact mis-normalization the prototype was
+    // ported from. OSV carries no named advisory for it, so a live lookup
+    // returns "novel" and the flywheel would otherwise re-surface its own seed
+    // as a fresh find. Route it as prior/known.
+    priorReports: ["cidr-tools"],
   },
 };
