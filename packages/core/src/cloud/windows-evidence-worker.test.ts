@@ -204,7 +204,7 @@ describe("WindowsEvidenceWorkerClient submission", () => {
     const responses = [new Response("busy", { status: 503 }), success];
     const retryFetch = vi.fn(async () => responses.shift()!) as unknown as typeof fetch;
     await expect(
-      client(retryFetch, { sleep: async () => undefined }).submitEnvelope({}),
+      client(retryFetch, { sleep: async () => undefined }).submitEnvelope({ packId: PACK_ID }),
     ).resolves.toMatchObject({ status: "submitted" });
     expect(retryFetch).toHaveBeenCalledTimes(2);
 
@@ -212,7 +212,9 @@ describe("WindowsEvidenceWorkerClient submission", () => {
       const fetchImpl = vi.fn(
         async () => new Response("no", { status }),
       ) as unknown as typeof fetch;
-      await expect(client(fetchImpl).submitEnvelope({})).rejects.toMatchObject({ status });
+      await expect(
+        client(fetchImpl).submitEnvelope({ packId: PACK_ID }),
+      ).rejects.toMatchObject({ status });
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     }
   });
@@ -223,15 +225,37 @@ describe("WindowsEvidenceWorkerClient submission", () => {
       packId: PACK_ID,
       status: "submitted",
     })) as unknown as typeof fetch;
-    const atLimit = { x: "a".repeat(256 * 1024 - 8) };
+    const emptySize = JSON.stringify({ packId: PACK_ID, x: "" }).length;
+    const atLimit = { packId: PACK_ID, x: "a".repeat(256 * 1024 - emptySize) };
     await expect(client(fetchImpl).submitEnvelope(atLimit)).resolves.toMatchObject({
       status: "submitted",
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
-    const overLimit = { x: "a".repeat(256 * 1024 - 7) };
+    const overLimit = { packId: PACK_ID, x: `${atLimit.x}a` };
     await expect(client(fetchImpl).submitEnvelope(overLimit)).rejects.toThrow(/256 KiB/);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a submission receipt for a different pack", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      jobId: JOB_ID,
+      packId: "c".repeat(64),
+      status: "submitted",
+    })) as unknown as typeof fetch;
+
+    await expect(client(fetchImpl).submitEnvelope({ packId: PACK_ID })).rejects.toThrow(
+      /invalid response/,
+    );
+  });
+
+  it("rejects a missing or malformed envelope pack ID before fetch", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    await expect(client(fetchImpl).submitEnvelope({})).rejects.toThrow(/pack ID/);
+    await expect(client(fetchImpl).submitEnvelope({ packId: "not-a-digest" })).rejects.toThrow(
+      /pack ID/,
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 

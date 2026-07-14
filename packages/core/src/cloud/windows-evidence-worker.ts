@@ -149,6 +149,7 @@ export class WindowsEvidenceWorkerClient {
     signal?: AbortSignal,
   ): Promise<WindowsEvidenceSubmissionReceipt> {
     signal?.throwIfAborted();
+    const expectedPackId = envelopePackId(envelope);
     let encoded: string;
     try {
       encoded = JSON.stringify(envelope);
@@ -179,7 +180,7 @@ export class WindowsEvidenceWorkerClient {
         body: replayableBody(bytes),
         signal,
       }),
-      accept: async (response) => parseSubmission(response, this.jobId),
+      accept: async (response) => parseSubmission(response, this.jobId, expectedPackId),
       retryInProgress: false,
     });
   }
@@ -401,18 +402,27 @@ async function parseStoredBlob(
 async function parseSubmission(
   response: Response,
   expectedJobId: string,
+  expectedPackId: string,
 ): Promise<WindowsEvidenceSubmissionReceipt> {
   const value = await response.json() as unknown;
   if (
     !isRecord(value) ||
     value.status !== "submitted" ||
     value.jobId !== expectedJobId ||
-    typeof value.packId !== "string" ||
-    !SHA256.test(value.packId)
+    value.packId !== expectedPackId
   ) {
     throw new Error("submission receipt mismatch");
   }
   return { jobId: value.jobId, packId: value.packId, status: "submitted" };
+}
+
+function envelopePackId(envelope: unknown): string {
+  if (!isRecord(envelope) || typeof envelope.packId !== "string" || !SHA256.test(envelope.packId)) {
+    throw new WindowsEvidenceWorkerTransportError(
+      "Windows evidence envelope pack ID is invalid",
+    );
+  }
+  return envelope.packId;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
