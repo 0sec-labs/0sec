@@ -512,72 +512,48 @@ describe("atomicAppendJsonLine (O_APPEND fast path) — #415", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  // Regression for #415: prior implementation read+rewrote the entire journal
-  // for every append, producing O(N²) cumulative I/O. With O_APPEND each
-  // entry costs O(1) cumulative bytes, so the final file is just the sum of
-  // its lines instead of triangle-summing to ~N²/2 of cumulative writes.
-  //
-  // We assert linearity two ways:
-  // 1. Final on-disk file size is sum-of-lines (the only invariant the old
-  //    impl satisfied too — but the *cumulative bytes written* differ).
-  // 2. The 1000-append run finishes in ≲ 10x the 100-append run. A
-  //    quadratic impl would scale ~100x because each append's cost grows
-  //    with the file length.
-  it("appends 1000 entries with linear (not quadratic) cost", () => {
-    function timeAppends(runId: string, count: number): { ms: number; bytes: number } {
-      const writer = createJournalWriter({
-        runId,
-        rootDir: tmpRoot,
-        now: fixedNow,
-        idFactory: nextId,
+  // Regression for the exact pre-#415 read→temp→rename implementation: it
+  // replaced the journal inode on every append. The O_APPEND implementation
+  // keeps one file in place, so inode stability detects that regression
+  // deterministically without making wall-clock claims about a shared runner.
+  it("does not replace the journal file across 1000 appends", () => {
+    const writer = createJournalWriter({
+      runId: "run-append-1000",
+      rootDir: tmpRoot,
+      now: fixedNow,
+      idFactory: nextId,
+    });
+    writer.append({
+      kind: "decision",
+      decision: "continue",
+      rationale: "iteration 0",
+    });
+    const initialInode = statSync(writer.paths.journalPath).ino;
+    if (process.platform !== "win32") expect(initialInode).toBeGreaterThan(0);
+    for (let i = 1; i < 1000; i += 1) {
+      writer.append({
+        kind: "decision",
+        decision: "continue",
+        rationale: `iteration ${i}`,
       });
-      const start = performance.now();
-      for (let i = 0; i < count; i += 1) {
-        writer.append({
-          kind: "decision",
-          decision: "continue",
-          rationale: `iteration ${i}`,
-        });
-      }
-      const ms = performance.now() - start;
-      const bytes = statSync(writer.paths.journalPath).size;
-      return { ms, bytes };
     }
+    const finalStat = statSync(writer.paths.journalPath);
+    expect(finalStat.ino).toBe(initialInode);
 
-    const small = timeAppends("run-perf-100", 100);
-    const big = timeAppends("run-perf-1000", 1000);
+    // Keep the journal bounded and verify every record, not merely parseability.
+    expect(finalStat.size).toBeLessThan(200 * 1024);
 
-    // Linearity check on time: a quadratic implementation would make the
-    // 1000-run ~100x the 100-run; linear should be ~10x. Allow 30x to
-    // absorb fsync variance on CI runners. The pre-fix impl was ~50-100x.
-    const ratio = big.ms / Math.max(small.ms, 1);
-    expect(ratio).toBeLessThan(30);
-
-    // On-disk size must be O(N) (each line is the same shape ⇒ size grows
-    // linearly with count, not quadratically with the old impl's cumulative
-    // rewrites — but the *final* file size was already O(N) under both impls;
-    // the byte budget here is a sanity check that lines stay small).
-    expect(big.bytes).toBeLessThan(200 * 1024);
-    expect(big.bytes).toBeGreaterThan(small.bytes * 9); // ~10x more lines
-
-    const lines = readFileSync(
-      join(tmpRoot, "run-perf-1000", "journal.jsonl"),
-      "utf8",
-    )
-      .trim()
-      .split("\n");
+    const raw = readFileSync(writer.paths.journalPath, "utf8");
+    expect(Buffer.byteLength(raw, "utf8")).toBe(finalStat.size);
+    const lines = raw.trim().split("\n");
     expect(lines).toHaveLength(1000);
-    for (const line of lines) {
-      expect(() => JSON.parse(line)).not.toThrow();
+    for (const [index, line] of lines.entries()) {
+      expect(JSON.parse(line)).toMatchObject({
+        id: `entry-${index + 1}`,
+        seq: index,
+        rationale: `iteration ${index}`,
+      });
     }
-
-    // Surface the numbers in test output for the PR description.
-    // eslint-disable-next-line no-console
-    console.log(
-      `[#415 perf] 100 appends: ${small.ms.toFixed(1)}ms; ` +
-        `1000 appends: ${big.ms.toFixed(1)}ms; ratio=${ratio.toFixed(2)}x ` +
-        `(quadratic would be ~100x)`,
-    );
   });
 
   // Durability: O_APPEND + fsync must persist the entry before append()
