@@ -223,5 +223,44 @@ export type {
 } from "./patch-gap-check.js";
 export { classifyPatchGapReachability } from "./patch-gap-reachability.js";
 export type { PatchGapReachability, PatchGapReachabilityResult } from "./patch-gap-reachability.js";
+
+// Self-validating checker synthesis (KNighter/BUGSTONE): learn a bug-class
+// invariant from an upstream fix, PROVE the checker catches its own seed
+// (flags the pre-image, silent on the post-fix image), then sweep the tree for
+// the sibling sites the fix missed and compose them with the existing
+// finder→skeptic→prover gate. Industrializes the incomplete-fix technique
+// behind our TIPC/mac802154/NFC wins and reduces the external-foxguard reliance
+// of variant-hunt.ts. Watcher entry point fans recent fixes through the loop.
+export {
+  isWeggliAvailable,
+  evaluateChecker,
+  selfValidateChecker,
+  synthesizeChecker,
+  synthesizeValidatedChecker,
+  sweepCheckerForSiblings,
+  checkerSweepToPlan,
+  runCheckerVariantHunt,
+  checkerSweepHitToFinding,
+  saveChecker,
+  loadCheckerLibrary,
+  huntVariantsForRecentFixes,
+} from "./checker-synthesis.js";
+export type {
+  CheckerSeed,
+  SynthesizedChecker,
+  CheckerMatch,
+  CheckerValidation,
+  CheckerSweepHit,
+  CheckerGit,
+  CheckerRuntime,
+  CheckerSynthesisDeps,
+  SynthesizeValidatedResult,
+  CheckerSweepOptions,
+  CheckerHuntPlan,
+  RunCheckerVariantHuntOptions,
+  CheckerWatcherOptions,
+  CheckerWatcherEntry,
+  CheckerWatcherResult,
+} from "./checker-synthesis.js";
 export { scanForPatchGapCandidates } from "./patch-gap.js";
 export type { PatchGapCandidate, PatchGapScanOptions, PatchGapScanResult } from "./patch-gap.js";
