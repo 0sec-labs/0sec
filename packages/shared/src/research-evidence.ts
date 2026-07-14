@@ -284,7 +284,9 @@ function validWindowsStart(
   token: WindowsTokenSnapshot,
 ): boolean {
   if (startingContext === "lpac") return false;
-  if (startingContext === "standard-user") return !token.appContainer;
+  if (startingContext === "standard-user") {
+    return !token.appContainer && token.restrictedSidCount === 0;
+  }
   if (startingContext === "appcontainer") return token.appContainer;
   return token.appContainer || token.restrictedSidCount > 0;
 }
@@ -329,6 +331,7 @@ export function researchWindowsTokenTransitionProven(
     || !context.campaignId
     || transition.campaignId !== context.campaignId
     || !SHA256.test(context.configDigest ?? "")
+    || envelope.target.configDigest !== context.configDigest
     || typeof transition.buildLabEx !== "string"
     || !transition.buildLabEx.trim()
     || transition.buildLabEx.length > 256
