@@ -1,17 +1,23 @@
 import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   collectWindowsResearchAttempt,
   summarizeWindowsResearch,
   type WindowsResearchAttemptInput,
 } from "./windows-research-collector.js";
+import { loadWindowsLpeCorpus } from "./windows-lpe-corpus.js";
 
 let root: string;
 let receiptPath: string;
 const labelSealKey = "test-only-label-seal-key-with-at-least-32-bytes";
+const contractCorpusPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../fixtures/windows-lpe-corpus-contract-v1.json",
+);
 
 function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -149,6 +155,41 @@ describe("Windows research all-attempts ledger", () => {
     expect(summary.contractValidationOutcomes.reproduced).toBe(1);
     expect(summary.claimEligibleRows).toBe(0);
     expect(summary.singleAttempt.precision.rate).toBeNull();
+  });
+
+  it("cryptographically binds corpus cases and excludes live benchmark rows from claims", () => {
+    const corpus = loadWindowsLpeCorpus(contractCorpusPath);
+    const row = collectWindowsResearchAttempt(attempt({
+      mode: "live",
+      caseId: "synthetic-positive-001",
+      corpusManifestPath: contractCorpusPath,
+      campaignManifestSha256: corpus.manifestSha256,
+      windowsBuildLabEx: "fixture.1.amd64fre.contract",
+      proof: {
+        status: "not_reproduced",
+        targetTrials: 0,
+        cleanControls: 0,
+        confirmations: 0,
+        pwnkitImportPassed: false,
+      },
+    }));
+    expect(row.claimEligible).toBe(false);
+    expect(summarizeWindowsResearch([row]).claimEligibleRows).toBe(0);
+
+    expect(() => collectWindowsResearchAttempt(attempt({
+      mode: "live",
+      caseId: "synthetic-positive-001",
+      corpusManifestPath: contractCorpusPath,
+      campaignManifestSha256: "f".repeat(64),
+      windowsBuildLabEx: "fixture.1.amd64fre.contract",
+      proof: {
+        status: "not_reproduced",
+        targetTrials: 0,
+        cleanControls: 0,
+        confirmations: 0,
+        pwnkitImportPassed: false,
+      },
+    }))).toThrow(/does not bind/);
   });
 
   it("preserves denominators and reports single-attempt versus best-of-N", () => {

@@ -4,6 +4,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { loadWindowsLpeCorpus } from "./windows-lpe-corpus.js";
 import { wilsonIntervalTuple } from "./wilson.js";
 
 export const WINDOWS_ATTEMPT_SCHEMA = "pwnkit.windows-research-attempt/v1" as const;
@@ -28,6 +29,8 @@ export interface WindowsResearchAttemptInput {
   repoShas: { zeroverse: string; pwnkit: string; zeroCloud: string };
   windowsBuildLabEx: string;
   campaignManifestSha256: string;
+  /** Optional benchmark manifest. Bound cases are never novelty/bounty claim eligible. */
+  corpusManifestPath?: string;
   scopeManifestSha256: string;
   receiptPath?: string;
   importVerdictPath?: string;
@@ -83,7 +86,7 @@ export interface WindowsResearchAttemptInput {
 }
 
 export interface WindowsResearchLedgerRow
-  extends Omit<WindowsResearchAttemptInput, "receiptPath" | "importVerdictPath" | "artifactPaths"> {
+  extends Omit<WindowsResearchAttemptInput, "receiptPath" | "importVerdictPath" | "artifactPaths" | "corpusManifestPath"> {
   ledgerSchema: typeof WINDOWS_LEDGER_SCHEMA;
   rowId: string;
   receiptSha256: string | null;
@@ -219,7 +222,7 @@ function validateInputShape(value: unknown): asserts value is WindowsResearchAtt
   const top = exact(value, "attempt", [
     "schemaVersion", "mode", "campaignId", "caseId", "attempt", "groundTruth", "label",
     "repoShas", "windowsBuildLabEx", "campaignManifestSha256", "scopeManifestSha256",
-    "receiptPath", "importVerdictPath", "artifactPaths", "discovery", "proof", "telemetry", "safety",
+    "corpusManifestPath", "receiptPath", "importVerdictPath", "artifactPaths", "discovery", "proof", "telemetry", "safety",
   ]);
   const label = exact(top.label, "label", ["source", "sha256", "sealedAt", "keyId", "signature"]);
   const repoShas = exact(top.repoShas, "repoShas", ["zeroverse", "pwnkit", "zeroCloud"]);
@@ -254,6 +257,9 @@ function validateInputShape(value: unknown): asserts value is WindowsResearchAtt
     throw new Error("artifactPaths entries must be strings");
   }
   if (top.receiptPath !== undefined && typeof top.receiptPath !== "string") throw new Error("receiptPath must be a string");
+  if (top.corpusManifestPath !== undefined && typeof top.corpusManifestPath !== "string") {
+    throw new Error("corpusManifestPath must be a string");
+  }
   if (top.importVerdictPath !== undefined && typeof top.importVerdictPath !== "string") {
     throw new Error("importVerdictPath must be a string");
   }
@@ -447,6 +453,20 @@ export function collectWindowsResearchAttempt(
   if (input.proof.status === "not_attempted" && input.safety.executed) {
     throw new Error("not_attempted outcome cannot claim worker execution");
   }
+  let corpusBound = false;
+  if (input.corpusManifestPath) {
+    const corpus = loadWindowsLpeCorpus(input.corpusManifestPath);
+    if (corpus.manifestSha256 !== input.campaignManifestSha256) {
+      throw new Error("campaignManifestSha256 does not bind the supplied Windows LPE corpus manifest");
+    }
+    const corpusCase = corpus.manifest.cases.find((entry) => entry.caseId === input.caseId);
+    if (!corpusCase) throw new Error("Windows research case is absent from the supplied corpus manifest");
+    if (corpusCase.groundTruth !== input.groundTruth
+      || corpusCase.target.windowsBuildLabEx !== input.windowsBuildLabEx) {
+      throw new Error("Windows research attempt is not bound to its corpus ground truth and target build");
+    }
+    corpusBound = true;
+  }
   const receiptSha256 = input.receiptPath ? hashFile(input.receiptPath).sha256 : null;
   const artifactRoot = input.receiptPath ? dirname(realpathSync(regularFileForLedger(input.receiptPath))) : undefined;
   let importVerdict: ImportVerdict | undefined;
@@ -495,7 +515,7 @@ export function collectWindowsResearchAttempt(
     names.add(artifact.name);
   }
   const rowId = sha256Bytes(`${input.campaignId}\0${input.caseId}\0${input.attempt}`);
-  const claimEligible = input.mode === "live";
+  const claimEligible = input.mode === "live" && !corpusBound;
   const unsigned = {
     schemaVersion: input.schemaVersion,
     mode: input.mode,
