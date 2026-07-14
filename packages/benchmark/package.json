@@ -11,6 +11,10 @@
     "./windows-research-collector": {
       "types": "./dist/windows-research-collector.d.ts",
       "default": "./dist/windows-research-collector.js"
+    },
+    "./windows-lpe-corpus": {
+      "types": "./dist/windows-lpe-corpus.d.ts",
+      "default": "./dist/windows-lpe-corpus.js"
     }
   },
   "scripts": {
@@ -77,6 +81,9 @@
     "adversarial-indirect-prompt-injection": "tsx src/adversarial-indirect-prompt-injection-runner.ts",
     "adversarial-persistence": "tsx src/adversarial-persistence-runner.ts",
     "windows-research": "tsx src/windows-research-collector.ts",
+    "windows-lpe-corpus": "tsx src/windows-lpe-corpus.ts",
+    "windows-lpe-corpus:contract": "tsx src/windows-lpe-corpus.ts --input fixtures/windows-lpe-corpus-contract-v1.json",
+    "test:windows-research": "vitest run src/windows-lpe-corpus.test.ts src/windows-research-collector.test.ts",
     "npm-bench": "tsx src/npm-bench.ts",
     "npm-bench:json": "tsx src/npm-bench.ts --json",
     "consolidate-xbow": "tsx src/scripts/consolidate-xbow.ts",
