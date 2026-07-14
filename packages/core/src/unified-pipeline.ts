@@ -38,6 +38,9 @@ import { enumerateAttackSurfaces, formatAttackSurfaceForPrompt } from "./kernel/
 import { researchPrompt, researchPromptSingleFile, blindVerifyPrompt } from "./agent/prompts.js";
 import { isDisclosureWorthy, evidenceKindForFinding } from "./triage/verify-verdict.js";
 import type { VerifyVerdict } from "./triage/verify-verdict.js";
+import { runNpmDynamicDiscovery } from "./stages/npm-dynamic-discovery.js";
+import { createSandboxPackageRunner } from "./stages/npm-detectors/sandbox-probe.js";
+import type { NpmPackageRunner } from "./stages/npm-detectors/sandbox-probe.js";
 import { resolveNovelty } from "./triage/index.js";
 import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
 import { collectScopeFiles, countScopeFilesUpTo } from "./source-files.js";
@@ -150,6 +153,22 @@ export interface PipelineOptions {
    * automatically, since "no leads" is worse than "best-effort leads").
    */
   seedOnly?: boolean;
+  /**
+   * OPT-IN: run the npm dynamic-discovery detector sweep (SSPP fuzz /
+   * validation read-stability / SSRF parser-diff) over the target package, in
+   * addition to the static review agent. Only effective for npm-ecosystem
+   * targets (`--ecosystem npm` package-source reviews or `npm-package` audits).
+   * Off by default (extra install + untrusted-exec cost); also enabled by the
+   * `PWNKIT_NPM_DYNAMIC_DISCOVERY` env toggle for cloud config. Confirmed leads
+   * join `findings` so they flow into the same verify → disclosure path.
+   */
+  npmDynamicDiscovery?: boolean;
+  /**
+   * Test/worker seam: inject the per-package sandbox runner the dynamic-discovery
+   * stage uses. Unset ⇒ the default local sandbox runner (fresh temp dir +
+   * child-process harness). The cloud worker injects an e2b-backed runner.
+   */
+  npmDynamicRunner?: NpmPackageRunner;
 }
 
 export interface PipelineReport {
@@ -927,6 +946,57 @@ export async function runPerFileResearch(
     }
   }
   return aggregated;
+}
+
+// ── npm dynamic-discovery stage (opt-in) ──
+
+/** Env-toggle counterpart of the `npmDynamicDiscovery` opt-in (cloud config). */
+function npmDynamicDiscoveryEnvEnabled(): boolean {
+  const v = (process.env.PWNKIT_NPM_DYNAMIC_DISCOVERY ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+/**
+ * Gate: run the npm dynamic-discovery sweep only when it is (a) opted in — via
+ * `--npm-dynamic` / `npmDynamicDiscovery: true` or the env toggle — AND (b) the
+ * prepared target is an npm-ecosystem package (a package-source npm review or an
+ * `npm-package` audit) with a resolved package name. Exported for tests.
+ */
+export function shouldRunNpmDynamicDiscovery(
+  opts: Pick<PipelineOptions, "npmDynamicDiscovery">,
+  prepared: Pick<PrepareResult, "packageEcosystem" | "resolvedType" | "packageName">,
+): boolean {
+  const enabled = opts.npmDynamicDiscovery === true || npmDynamicDiscoveryEnvEnabled();
+  if (!enabled) return false;
+  const isNpm = prepared.packageEcosystem === "npm" || prepared.resolvedType === "npm-package";
+  return isNpm && !!prepared.packageName;
+}
+
+/**
+ * Run the npm dynamic-discovery detector sweep over a single target package and
+ * return the confirmed leads as canonical `Finding`s (so the pipeline can merge
+ * them into `findings` before VERIFY). Isolation is the per-package sandbox
+ * runner; a sandbox fault skips the package (never a fabricated finding).
+ * Exported for tests. Never throws — a stage-level failure is returned as a
+ * warning so it can't abort the surrounding scan.
+ */
+export async function runNpmDynamicDiscoveryStage(args: {
+  packageName: string;
+  packageVersion?: string;
+  runner?: NpmPackageRunner;
+  log?: (msg: string) => void;
+}): Promise<{ findings: Finding[]; warnings: string[] }> {
+  const runner = args.runner ?? createSandboxPackageRunner({ log: args.log });
+  try {
+    const result = await runNpmDynamicDiscovery({
+      worklist: [{ name: args.packageName, version: args.packageVersion }],
+      packageRunner: runner,
+      log: args.log,
+    });
+    return { findings: result.findings, warnings: result.warnings };
+  } catch (e) {
+    return { findings: [], warnings: [`npm-dynamic-discovery: ${e instanceof Error ? e.message : String(e)}`] };
+  }
 }
 
 // ── Main entry point ──
@@ -1728,6 +1798,49 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       message: `${findings.length} findings discovered`,
     });
     logPipelineEvent("research", "stage_complete", { findings: findings.length });
+
+    // ── PHASE 3.5: npm DYNAMIC DISCOVERY (opt-in) ──
+    // A first-class, selectable discovery stage that sweeps the target npm
+    // package with the pluggable detector registry (SSPP fuzz / validation
+    // read-stability / SSRF parser-diff) in a disposable sandbox. It runs
+    // independently of the AI review (even when no LLM runtime is configured),
+    // and its confirmed leads are appended to `findings` HERE — before VERIFY —
+    // so they flow through the exact same blind-verify → disclosure path as the
+    // agent's findings. Gated: off unless `--npm-dynamic` / the env toggle is
+    // set AND the target is an npm-ecosystem package (cost/latency discipline).
+    if (!opts.resumeScanId && shouldRunNpmDynamicDiscovery(opts, prepared)) {
+      startPhase("npm-dynamic-discovery");
+      emit({
+        type: "stage:start",
+        stage: "npm-dynamic-discovery",
+        message: `Dynamic-discovery sweep of ${prepared.packageName}...`,
+      });
+      logPipelineEvent("npm-dynamic-discovery", "stage_start", {
+        package: prepared.packageName,
+        version: prepared.packageVersion,
+      });
+      const discovery = await runNpmDynamicDiscoveryStage({
+        packageName: prepared.packageName!,
+        packageVersion: prepared.packageVersion,
+        runner: opts.npmDynamicRunner,
+        log: (m) => logPipelineEvent("npm-dynamic-discovery", "progress", { message: m }),
+      });
+      for (const w of discovery.warnings) {
+        warnings.push({ stage: "npm-dynamic-discovery", message: w });
+      }
+      if (discovery.findings.length > 0) {
+        findings = findings.concat(discovery.findings);
+      }
+      emit({
+        type: "stage:end",
+        stage: "npm-dynamic-discovery",
+        message: `${discovery.findings.length} confirmed dynamic lead(s)`,
+      });
+      logPipelineEvent("npm-dynamic-discovery", "stage_complete", {
+        findings: discovery.findings.length,
+        warnings: discovery.warnings.length,
+      });
+    }
 
     // ── PHASE 4: VERIFY (parallel blind agents) ──
     if (

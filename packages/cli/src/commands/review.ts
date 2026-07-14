@@ -147,6 +147,11 @@ export function registerReviewCommand(program: Command): void {
       "--hypothesis <text>",
       "Operator hypothesis to seed the agent with a specific research direction. Modeled after Xint Code's operator prompt.",
     )
+    .option(
+      "--npm-dynamic",
+      "Also run the npm dynamic-discovery detector sweep (SSPP fuzz / validation read-stability / SSRF parser-diff) over the package in a disposable sandbox. Only effective with --ecosystem npm. Confirmed leads flow into the same verify → disclosure path.",
+      false,
+    )
     .option("--resume <run-id>", "Resume a previous run from its journal on disk (pwnkit#374)")
     .option("--branch-from <entry-index>", "Branch the journal at the given entry index before resuming (requires --resume).")
     .option("--verbose", "Show detailed output", false)
@@ -259,6 +264,7 @@ export function registerReviewCommand(program: Command): void {
         reviewProfile: targetProfile ?? profile,
         subsystem: opts.subsystem as string | undefined,
         hypothesis: opts.hypothesis as string | undefined,
+        npmDynamicDiscovery: opts.npmDynamic as boolean | undefined,
         tui: opts.tui as boolean,
         seedFindings,
         seedOnly: opts.seedOnly as boolean,
