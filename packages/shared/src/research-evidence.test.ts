@@ -149,6 +149,7 @@ describe("research evidence promotion", () => {
         kind: "windows.lpe",
         locator: "authorized-canary-worker",
         buildId: "28020.1.amd64fre.rs_prerelease",
+        configDigest: "c".repeat(64),
       },
       executionContext: {
         platform: "windows",
@@ -207,6 +208,9 @@ describe("research evidence promotion", () => {
     }))).toBe(false);
     expect(researchWindowsTokenTransitionProven(mutate((copy) => {
       copy.target.buildId = "different-build";
+    }))).toBe(false);
+    expect(researchWindowsTokenTransitionProven(mutate((copy) => {
+      copy.target.configDigest = "e".repeat(64);
     }))).toBe(false);
     expect(researchWindowsTokenTransitionProven(mutate((copy) => {
       copy.executionContext!.windowsTokenTransition!.startToken.tokenId = "finish_token_0001";
@@ -279,6 +283,13 @@ describe("research evidence promotion", () => {
     }))).toBe(false);
     expect(researchWindowsTokenTransitionProven(mutate((copy) => {
       copy.executionContext!.windowsTokenTransition!.startToken.elevated = true;
+    }))).toBe(false);
+    expect(researchWindowsTokenTransitionProven(mutate((copy) => {
+      const transition = copy.executionContext!.windowsTokenTransition!;
+      transition.startToken.restrictedSidCount = 1;
+      for (const capture of transition.runCaptures) {
+        capture.startToken.restrictedSidCount = 1;
+      }
     }))).toBe(false);
     expect(researchWindowsLpeDisclosureReady(mutate((copy) => {
       copy.reportingPolicy!.benchmarkCase = true;
@@ -379,7 +390,12 @@ describe("research evidence promotion", () => {
     const transition = { ...transitionBase, runCaptures };
     const windows: ResearchEvidenceEnvelope = {
       ...base,
-      target: { kind: "windows.lpe", locator: "worker", buildId: "canary-build" },
+      target: {
+        kind: "windows.lpe",
+        locator: "worker",
+        buildId: "canary-build",
+        configDigest: "4".repeat(64),
+      },
       executionContext: {
         platform: "windows",
         privilege: "windows-restricted",
