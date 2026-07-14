@@ -15,6 +15,10 @@
     "./windows-lpe-corpus": {
       "types": "./dist/windows-lpe-corpus.d.ts",
       "default": "./dist/windows-lpe-corpus.js"
+    },
+    "./windows-lpe-paired-corpus": {
+      "types": "./dist/windows-lpe-paired-corpus.d.ts",
+      "default": "./dist/windows-lpe-paired-corpus.js"
     }
   },
   "scripts": {
@@ -83,7 +87,9 @@
     "windows-research": "tsx src/windows-research-collector.ts",
     "windows-lpe-corpus": "tsx src/windows-lpe-corpus.ts",
     "windows-lpe-corpus:contract": "tsx src/windows-lpe-corpus.ts --input fixtures/windows-lpe-corpus-contract-v1.json",
-    "test:windows-research": "vitest run src/windows-lpe-corpus.test.ts src/windows-research-collector.test.ts",
+    "windows-lpe-paired-corpus": "tsx src/windows-lpe-paired-corpus.ts",
+    "windows-lpe-paired-corpus:contract": "tsx src/windows-lpe-paired-corpus.ts --input fixtures/windows-lpe-paired-corpus-contract-v2.json --development-labels fixtures/windows-lpe-paired-labels-development-contract-v2.json --holdout-labels fixtures/windows-lpe-paired-labels-holdout-contract-v2.json",
+    "test:windows-research": "vitest run src/windows-lpe-corpus.test.ts src/windows-lpe-paired-corpus.test.ts src/windows-research-collector.test.ts",
     "npm-bench": "tsx src/npm-bench.ts",
     "npm-bench:json": "tsx src/npm-bench.ts --json",
     "consolidate-xbow": "tsx src/scripts/consolidate-xbow.ts",
