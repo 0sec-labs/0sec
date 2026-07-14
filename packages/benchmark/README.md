@@ -50,13 +50,31 @@ pnpm --filter @pwnkit/benchmark windows-lpe-corpus \
   --input fixtures/windows-lpe-corpus-contract-v1.json
 ```
 
-The v1 manifest keeps development and holdout vulnerability families disjoint,
+The v2 manifest keeps development and holdout vulnerability families disjoint,
 requires positive and negative controls, pins target and scope digests, and
 forbids executable payload fields. Every corpus case is permanently marked
 non-novel, non-claimable, non-weaponizing, and ineligible for automatic
 disclosure. When a live attempt supplies `corpusManifestPath`, the collector
 recomputes the canonical manifest digest and binds the case ID, ground-truth
 label, and Windows build before forcing that ledger row out of claim metrics.
+
+Agents must not receive that full evaluator manifest for holdout work. The
+`windows-lpe-opaque-projection` boundary generates a fresh agent-facing file
+containing only a projection ID, randomized 256-bit handles, and fail-closed
+policy. Case IDs, split/family/pair structure, CVEs, builds, artifacts, scope,
+provenance, commitments, timestamps, and labels remain in an evaluator-only
+resolver. The resolver is bound to both the projection and full inventory.
+
+Dynamic resolution requires an external execution-authority verifier bound to
+the projection, resolver, inventory, opaque handle, exact observed Windows
+runtime, and worker acceptance. Its nonce is atomically consumed once. The
+evaluator also pins the resolver digest independently, so a complete handle
+remap cannot authorize itself. The agent mount validator permits exactly one
+read-only regular `projection.json` file in a fresh, non-symlinked, read-only
+directory and uses bounded, duplicate-key-safe, nofollow reads. The trusted
+runner must preserve that mount immutability for the worker lifetime; the
+resolver, private resolution result, and labels must never cross into the agent
+environment.
 
 The committed fixture is an offline contract check only: it performs no dynamic
 execution. Actual target runs require an independently authorized scope and a
