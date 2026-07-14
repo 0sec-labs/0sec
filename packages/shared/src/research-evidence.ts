@@ -229,6 +229,8 @@ const DANGEROUS_WINDOWS_PRIVILEGES = new Set([
   "SeDebugPrivilege",
   "SeImpersonatePrivilege",
   "SeAssignPrimaryTokenPrivilege",
+  "SeCreateTokenPrivilege",
+  "SeRelabelPrivilege",
   "SeTcbPrivilege",
   "SeBackupPrivilege",
   "SeRestorePrivilege",
