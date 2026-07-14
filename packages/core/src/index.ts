@@ -941,6 +941,11 @@ export {
   makeKernelVmExploitabilityGate,
   defaultDifferentialRootDetector,
   withEnvOverrides,
+  // Terminal rung-ranking gate — highest PROVEN rung on a real KASAN/KCSAN boot.
+  rungRankingEnabled,
+  makeKernelVmRungAdjudicator,
+  makeRungRankingGate,
+  rankBugsByProvenRung,
 } from "./triage/exploitability-oracle-runner.js";
 export type {
   KernelVmBootFn,
@@ -950,6 +955,12 @@ export type {
   KernelVmDifferentialExploit,
   DifferentialRootDetector,
   KernelVmOraclesDeps,
+  KernelVmProfileArtifacts,
+  ProvenRungResult,
+  KernelVmRungAdjudicatorDeps,
+  RankedBug,
+  RungExploitResolver,
+  RungRankingGateDeps,
 } from "./triage/exploitability-oracle-runner.js";
 
 // Kernel crash verification oracle
