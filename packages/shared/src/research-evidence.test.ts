@@ -274,9 +274,19 @@ describe("research evidence promotion", () => {
     expect(researchWindowsTokenTransitionProven(mutate((copy) => {
       copy.executionContext!.windowsTokenTransition!.fixture = true;
     }))).toBe(false);
-    expect(researchWindowsTokenTransitionProven(mutate((copy) => {
-      copy.executionContext!.windowsTokenTransition!.startToken.enabledPrivileges = ["SeImpersonatePrivilege"];
-    }))).toBe(false);
+    for (const privilege of [
+      "SeImpersonatePrivilege",
+      "SeCreateTokenPrivilege",
+      "SeRelabelPrivilege",
+    ]) {
+      expect(researchWindowsTokenTransitionProven(mutate((copy) => {
+        const transition = copy.executionContext!.windowsTokenTransition!;
+        transition.startToken.enabledPrivileges = [privilege];
+        for (const capture of transition.runCaptures) {
+          capture.startToken.enabledPrivileges = [privilege];
+        }
+      }))).toBe(false);
+    }
     expect(researchWindowsTokenTransitionProven(mutate((copy) => {
       copy.executionContext!.windowsTokenTransition!.startToken.elevated = true;
     }))).toBe(false);
