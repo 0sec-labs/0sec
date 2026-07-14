@@ -1119,12 +1119,19 @@ export {
   CloudUnauthorizedError,
   CloudForbiddenError,
   CloudNetworkError,
+  WindowsEvidenceWorkerClient,
+  WindowsEvidenceWorkerTransportError,
 } from "./cloud/index.js";
 export type {
   CloudCredentials,
   LoadCloudCredentialsOptions,
   CloudClientOptions,
   CloudHealthResponse,
+  WindowsEvidenceStoredBlob,
+  WindowsEvidenceSubmissionReceipt,
+  WindowsEvidenceWorkerBlob,
+  WindowsEvidenceWorkerClientOptions,
+  WindowsEvidenceWorkerHandoff,
 } from "./cloud/index.js";
 
 // CVE artifact scraping (#272 v0 part 1). Finds public PoC artifacts,
