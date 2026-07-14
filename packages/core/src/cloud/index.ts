@@ -20,3 +20,15 @@ export {
   CloudNetworkError,
 } from "./client.js";
 export type { CloudClientOptions, CloudHealthResponse, FetchImpl } from "./client.js";
+
+export {
+  WindowsEvidenceWorkerClient,
+  WindowsEvidenceWorkerTransportError,
+} from "./windows-evidence-worker.js";
+export type {
+  WindowsEvidenceStoredBlob,
+  WindowsEvidenceSubmissionReceipt,
+  WindowsEvidenceWorkerBlob,
+  WindowsEvidenceWorkerClientOptions,
+  WindowsEvidenceWorkerHandoff,
+} from "./windows-evidence-worker.js";
