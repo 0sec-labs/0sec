@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "pwnkit.windows-lpe-evaluator-labels/v2",
+  "corpusId": "windows-lpe-paired-contract-v2",
+  "split": "holdout",
+  "inventorySha256": "a4083166a4d025e639b5ac7e81df6351a3d671e3440a1672b01004ef3733ce5c",
+  "salt": "Bv3Mn7Qz1Kp5Xs9Dc2Fh6Jt0Ry4Ua8We3Li7Go1NcEk",
+  "labels": [
+    { "caseId": "holdout-build-a", "groundTruth": "negative" },
+    { "caseId": "holdout-build-b", "groundTruth": "positive" }
+  ]
+}
