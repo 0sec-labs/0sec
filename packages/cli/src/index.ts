@@ -54,6 +54,7 @@ import {
   registerIntelCommand,
   registerReconCommand,
   registerJsReconCommand,
+  registerNpmDiscoveryCommand,
   registerCloudCommand,
   registerXnuFuzzCommand,
   registerResearchCommand,
@@ -113,6 +114,7 @@ registerAuthCommand(program);
 registerIntelCommand(program);
 registerReconCommand(program);
 registerJsReconCommand(program);
+registerNpmDiscoveryCommand(program);
 registerCloudCommand(program);
 registerXnuFuzzCommand(program);
 registerResearchCommand(program);
@@ -151,7 +153,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "deep-review", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "cloud", "xnu-fuzz", "research", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "deep-review", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "cloud", "xnu-fuzz", "research", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {

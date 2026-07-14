@@ -151,6 +151,60 @@ export type {
   MemSafetyScanResult,
   MemSafetyFinding,
 } from "./stages/memsafety-scan.js";
+// npm-ecosystem dynamic-discovery stage + its extensible DETECTOR registry
+// (sspp-fuzz, read-unstable, parser-diff). LLM-proposes / harness-disposes;
+// confirmed only on an observed runtime consequence (assume-FP). New bug classes
+// plug in as detectors — see docs/operations/detector-from-finding.md.
+export {
+  runNpmDynamicDiscovery,
+  leadToFinding,
+} from "./stages/npm-dynamic-discovery.js";
+export type {
+  NpmDynamicDiscoveryOptions,
+  NpmDynamicDiscoveryResult,
+  DetectorStat,
+} from "./stages/npm-dynamic-discovery.js";
+export {
+  DETECTOR_REGISTRY,
+  DETECTOR_REGISTRY_BY_ID,
+  getDetectorById,
+  listDetectorIds,
+  resolveDetectors,
+  runDetectorOnPackage,
+  guardPackage,
+  dedupConfirmation,
+  createOsvAdvisoryLookup,
+  deriveForkSiblings,
+  OsvLookupError,
+  inProcessProbe,
+  staticProbe,
+  createSandboxPackageRunner,
+  localSandboxProvider,
+  ssppFuzzDetector,
+  readUnstableDetector,
+  parserDiffDetector,
+} from "./stages/npm-detectors/index.js";
+export type {
+  Detector,
+  DetectorCandidate,
+  DetectorConfirmation,
+  DedupHints,
+  DedupVerdict,
+  PackageProbe,
+  PackageRef,
+  AnyDetector,
+  DiscoveryGuards,
+  DetectorLead,
+  DetectorRunOutcome,
+  AdvisoryLookup,
+  OsvLookupOptions,
+  NpmPackageRunner,
+  PackageRunResult,
+  SandboxProvider,
+  SandboxSession,
+  SandboxCommandResult,
+  SandboxRunnerOptions,
+} from "./stages/npm-detectors/index.js";
 // Craft scan stage (agentic reason→craft→submit→refine, injectable PoC oracle):
 // the sibling of the fuzz path that needs no target build.
 export { runCraftScan, craftedPocToFinding } from "./stages/craft-scan.js";

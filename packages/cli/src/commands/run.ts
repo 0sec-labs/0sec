@@ -150,6 +150,12 @@ export interface RunOptions {
   /** Skip semgrep entirely and rely solely on `seedFindings`. */
   seedOnly?: boolean;
   /**
+   * Opt-in: also run the npm dynamic-discovery detector sweep over the target
+   * package (only effective for npm-ecosystem package reviews/audits). Confirmed
+   * leads flow into the same verify → disclosure path as the review findings.
+   */
+  npmDynamicDiscovery?: boolean;
+  /**
    * Emit target (pwnkit#377). Default unset → existing terminal/json/etc.
    * `pr` → turn each reproduced finding into a GitHub PR (repro + suggested
    * patch from the fix-template registry). Unverified findings roll up into
@@ -519,6 +525,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
           // it alone. Companion producer: peaktwilight/gemmaforge#23.
           seedFindings: opts.seedFindings,
           seedOnly: opts.seedOnly,
+          npmDynamicDiscovery: opts.npmDynamicDiscovery,
         } as any);
 
     const reportAny = report as any;
