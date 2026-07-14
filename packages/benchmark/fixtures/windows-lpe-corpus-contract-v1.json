@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "pwnkit.windows-lpe-corpus/v1",
+  "corpusId": "windows-lpe-contract-v1",
+  "createdAt": "2026-07-14T00:00:00.000Z",
+  "cases": [
+    {
+      "caseId": "synthetic-positive-001",
+      "kind": "synthetic-positive",
+      "groundTruth": "positive",
+      "split": "development",
+      "family": "synthetic-boundary-check",
+      "target": {
+        "windowsBuildLabEx": "fixture.1.amd64fre.contract",
+        "architecture": "x64",
+        "artifactSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "provenance": {
+          "source": "harmless offline contract fixture",
+          "refs": ["fixture:windows-lpe/synthetic-positive-001"],
+          "sealedAt": "2026-07-14T00:00:00.000Z"
+        }
+      },
+      "scope": {
+        "authorization": "synthetic-fixture",
+        "dynamicExecutionAllowed": false,
+        "scopeManifestSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "evaluation": {
+        "minimumGrade": "reproduced",
+        "requiredConfirmations": 2,
+        "requiredCleanControls": 2
+      },
+      "policy": {
+        "noveltyEligible": false,
+        "bountyClaimEligible": false,
+        "weaponization": false,
+        "autoDisclosure": false
+      }
+    },
+    {
+      "caseId": "negative-control-001",
+      "kind": "negative-control",
+      "groundTruth": "negative",
+      "split": "holdout",
+      "family": "synthetic-clean-control",
+      "target": {
+        "windowsBuildLabEx": "fixture.1.amd64fre.contract",
+        "architecture": "x64",
+        "artifactSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "provenance": {
+          "source": "harmless offline clean-control fixture",
+          "refs": ["fixture:windows-lpe/negative-control-001"],
+          "sealedAt": "2026-07-14T00:00:00.000Z"
+        }
+      },
+      "scope": {
+        "authorization": "synthetic-fixture",
+        "dynamicExecutionAllowed": false,
+        "scopeManifestSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "evaluation": {
+        "minimumGrade": "candidate",
+        "requiredConfirmations": 0,
+        "requiredCleanControls": 0
+      },
+      "policy": {
+        "noveltyEligible": false,
+        "bountyClaimEligible": false,
+        "weaponization": false,
+        "autoDisclosure": false
+      }
+    }
+  ]
+}

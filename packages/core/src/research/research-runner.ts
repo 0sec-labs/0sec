@@ -176,6 +176,7 @@ export async function runResearch<
       grade: item.grade ?? "observed",
       novelty: item.novelty ?? { state: "unchecked" },
       ...(item.executionContext ? { executionContext: item.executionContext } : {}),
+      ...(item.reportingPolicy ? { reportingPolicy: item.reportingPolicy } : {}),
       artifacts: artifactReceipts(item),
       native: { oracleKind: adapter.kind, oraclePayload: item.evidence },
     }));
