@@ -228,7 +228,17 @@ describe("WindowsHyperVImportAdapter", () => {
     expect(result.envelopes[0]).toMatchObject({
       grade: "reproduced",
       target: { kind: "windows.hyperv-prover-import", buildId: target.buildId },
-      executionContext: { sandbox: "hyperv-child-partition", basis: "runtime-attested" },
+      executionContext: {
+        platform: "windows",
+        privilege: "unknown",
+        sandbox: "hyperv-child-partition",
+        basis: "runtime-attested",
+      },
+      reportingPolicy: {
+        automaticDisclosure: false,
+        humanReviewRequired: true,
+        benchmarkCase: false,
+      },
     });
     expect(result.envelopes[0]?.artifacts).toHaveLength(15);
     expect(result.envelopes[0]?.artifacts.every((artifact) => /^[a-f0-9]{64}$/.test(artifact.sha256))).toBe(true);
