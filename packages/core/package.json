@@ -19,6 +19,8 @@
     "@pwnkit/llm-redteam": "workspace:*",
     "@pwnkit/shared": "workspace:*",
     "@pwnkit/templates": "workspace:*",
+    "tree-sitter": "0.21.1",
+    "tree-sitter-c": "0.21.4",
     "yaml": "^2.4.0",
     "zod": "^3.25.76"
   },
