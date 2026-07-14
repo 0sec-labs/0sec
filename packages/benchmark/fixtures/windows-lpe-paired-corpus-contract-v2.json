@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "pwnkit.windows-lpe-paired-corpus/v2",
+  "corpusId": "windows-lpe-paired-contract-v2",
+  "profile": "contract",
+  "createdAt": "2026-07-14T00:00:00.000Z",
+  "labelCommitments": {
+    "developmentSha256": "05258f484cde41396080718e0183ca136ad9246c58175d179735b1f7241ccdf7",
+    "holdoutSha256": "601bc21fb42f08f07ca84bee2cae365a6a1886a643bb3ac79188953f465ec73a"
+  },
+  "evaluation": {
+    "minimumPositiveGrade": "reproduced",
+    "requiredConfirmations": 2,
+    "requiredCleanControls": 2
+  },
+  "cases": [
+    {
+      "caseId": "dev-build-a",
+      "split": "development",
+      "family": "synthetic-dev-family",
+      "pairId": "synthetic-dev-pair",
+      "advisoryId": null,
+      "target": {
+        "windowsBuildLabEx": "26100.1.amd64fre.fixture_dev_a",
+        "currentBuildNumber": "26100",
+        "updateBuildRevision": 100,
+        "architecture": "x64",
+        "artifactSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "provenance": {
+          "source": "harmless offline contract fixture A",
+          "refs": ["fixture:windows-lpe/dev-build-a"],
+          "sealedAt": "2026-07-14T00:00:00.000Z"
+        }
+      },
+      "scope": {
+        "authorization": "synthetic-fixture",
+        "dynamicExecutionAllowed": false,
+        "scopeManifestSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "policy": {
+        "noveltyEligible": false,
+        "bountyClaimEligible": false,
+        "weaponization": false,
+        "autoDisclosure": false
+      }
+    },
+    {
+      "caseId": "dev-build-b",
+      "split": "development",
+      "family": "synthetic-dev-family",
+      "pairId": "synthetic-dev-pair",
+      "advisoryId": null,
+      "target": {
+        "windowsBuildLabEx": "26100.2.amd64fre.fixture_dev_b",
+        "currentBuildNumber": "26100",
+        "updateBuildRevision": 200,
+        "architecture": "x64",
+        "artifactSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "provenance": {
+          "source": "harmless offline contract fixture B",
+          "refs": ["fixture:windows-lpe/dev-build-b"],
+          "sealedAt": "2026-07-14T00:00:00.000Z"
+        }
+      },
+      "scope": {
+        "authorization": "synthetic-fixture",
+        "dynamicExecutionAllowed": false,
+        "scopeManifestSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "policy": {
+        "noveltyEligible": false,
+        "bountyClaimEligible": false,
+        "weaponization": false,
+        "autoDisclosure": false
+      }
+    },
+    {
+      "caseId": "holdout-build-a",
+      "split": "holdout",
+      "family": "synthetic-holdout-family",
+      "pairId": "synthetic-holdout-pair",
+      "advisoryId": null,
+      "target": {
+        "windowsBuildLabEx": "26200.1.amd64fre.fixture_holdout_a",
+        "currentBuildNumber": "26200",
+        "updateBuildRevision": 100,
+        "architecture": "x64",
+        "artifactSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "provenance": {
+          "source": "harmless offline holdout contract fixture A",
+          "refs": ["fixture:windows-lpe/holdout-build-a"],
+          "sealedAt": "2026-07-14T00:00:00.000Z"
+        }
+      },
+      "scope": {
+        "authorization": "synthetic-fixture",
+        "dynamicExecutionAllowed": false,
+        "scopeManifestSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+      },
+      "policy": {
+        "noveltyEligible": false,
+        "bountyClaimEligible": false,
+        "weaponization": false,
+        "autoDisclosure": false
+      }
+    },
+    {
+      "caseId": "holdout-build-b",
+      "split": "holdout",
+      "family": "synthetic-holdout-family",
+      "pairId": "synthetic-holdout-pair",
+      "advisoryId": null,
+      "target": {
+        "windowsBuildLabEx": "26200.2.amd64fre.fixture_holdout_b",
+        "currentBuildNumber": "26200",
+        "updateBuildRevision": 200,
+        "architecture": "x64",
+        "artifactSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "provenance": {
+          "source": "harmless offline holdout contract fixture B",
+          "refs": ["fixture:windows-lpe/holdout-build-b"],
+          "sealedAt": "2026-07-14T00:00:00.000Z"
+        }
+      },
+      "scope": {
+        "authorization": "synthetic-fixture",
+        "dynamicExecutionAllowed": false,
+        "scopeManifestSha256": "8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      "policy": {
+        "noveltyEligible": false,
+        "bountyClaimEligible": false,
+        "weaponization": false,
+        "autoDisclosure": false
+      }
+    }
+  ]
+}
