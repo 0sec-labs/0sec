@@ -293,6 +293,13 @@ export const readUnstableDetector: Detector<ReadUnstableCandidate> = {
     }
     const modRec = mod as Record<string, unknown>;
     const out: ReadUnstableCandidate[] = [];
+    // Collapse duplicate leads that would confirm the SAME class on the SAME
+    // field via the same library — e.g. superstruct's `validate` and `assert`
+    // both exercise the identical validate-and-return-live-object semantics on
+    // `role`, yielding two near-identical findings. Fingerprint by
+    // adapter+field+allowlist so distinct libraries (which legitimately share a
+    // field name) are never merged.
+    const seen = new Set<string>();
     for (const adapter of ADAPTERS) {
       let matched = false;
       try {
@@ -302,7 +309,15 @@ export const readUnstableDetector: Detector<ReadUnstableCandidate> = {
       }
       if (!matched) continue;
       try {
-        out.push(...adapter.candidates(probe.pkg.name, modRec));
+        for (const c of adapter.candidates(probe.pkg.name, modRec)) {
+          const fp = `${adapter.id}:${c.field}:${c.allowed.join(",")}`;
+          if (seen.has(fp)) {
+            probe.note?.(`read-unstable: collapsed duplicate candidate ${c.id} (fingerprint ${fp})`);
+            continue;
+          }
+          seen.add(fp);
+          out.push(c);
+        }
       } catch (e) {
         probe.note?.(`read-unstable: adapter ${adapter.id} failed: ${e instanceof Error ? e.message : String(e)}`);
       }
