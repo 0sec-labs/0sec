@@ -709,11 +709,17 @@ export class WindowsHyperVImportAdapter implements TargetResearchAdapter<
           candidateId: candidate.id,
           grade: "reproduced",
           executionContext: {
+            platform: "windows",
             privilege: "unknown",
             basis: "runtime-attested",
             sandbox: "hyperv-child-partition",
             campaignId: receipt.campaign_id,
             configDigest: receipt.manifest_sha256,
+          },
+          reportingPolicy: {
+            automaticDisclosure: false,
+            humanReviewRequired: true,
+            benchmarkCase: false,
           },
           evidence: [record],
         });

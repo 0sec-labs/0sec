@@ -18,7 +18,7 @@
     "build:docs": "pnpm --filter @pwnkit/docs build",
     "dev": "pnpm -r --parallel dev",
     "lint": "pnpm -r exec tsc --noEmit",
-    "test": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter ./packages/cli test && pnpm test:launcher",
+    "test": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter ./packages/cli test && pnpm --filter @pwnkit/benchmark test:windows-research && pnpm --filter @pwnkit/benchmark windows-lpe-corpus:contract && pnpm test:launcher",
     "test:launcher": "node --test scripts/npm-launcher/launcher.test.mjs",
     "bench": "pnpm --filter @pwnkit/benchmark bench",
     "bench:quick": "pnpm --filter @pwnkit/benchmark bench:quick",

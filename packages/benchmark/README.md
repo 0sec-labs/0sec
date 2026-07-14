@@ -40,6 +40,28 @@ Live collection also requires `PWNKIT_WINDOWS_LABEL_SEAL_KEY` (at least 32
 bytes). The collector verifies the HMAC seal over campaign, case, ground truth,
 label hash, and seal timestamp without persisting the key.
 
+### Windows LPE discovery corpus
+
+The Windows LPE benchmark uses a separate, strict corpus manifest so known
+regressions cannot be confused with novel bounty findings:
+
+```sh
+pnpm --filter @pwnkit/benchmark windows-lpe-corpus \
+  --input fixtures/windows-lpe-corpus-contract-v1.json
+```
+
+The v1 manifest keeps development and holdout vulnerability families disjoint,
+requires positive and negative controls, pins target and scope digests, and
+forbids executable payload fields. Every corpus case is permanently marked
+non-novel, non-claimable, non-weaponizing, and ineligible for automatic
+disclosure. When a live attempt supplies `corpusManifestPath`, the collector
+recomputes the canonical manifest digest and binds the case ID, ground-truth
+label, and Windows build before forcing that ledger row out of claim metrics.
+
+The committed fixture is an offline contract check only: it performs no dynamic
+execution. Actual target runs require an independently authorized scope and a
+human decision before any report leaves the research system.
+
 ## XBOW runner
 
 The XBOW runner (`src/xbow-runner.ts`, exposed as `pnpm xbow`) executes

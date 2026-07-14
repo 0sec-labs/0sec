@@ -4,6 +4,7 @@ import type {
   ResearchExecutionContext,
   ResearchNoveltyReceipt,
   ResearchPromotionGrade,
+  ResearchReportingPolicy,
 } from "@pwnkit/shared";
 
 export type ResearchStage =
@@ -54,6 +55,7 @@ export interface ResearchFinding {
   grade?: ResearchPromotionGrade;
   novelty?: ResearchNoveltyReceipt;
   executionContext?: ResearchExecutionContext;
+  reportingPolicy?: ResearchReportingPolicy;
 }
 
 /** A scoped downstream target derived from intake; never a vulnerability finding. */
