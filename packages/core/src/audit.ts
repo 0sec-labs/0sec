@@ -338,6 +338,14 @@ file: <path/to/file.js:lineNumber>
 Output as many ---FINDING--- blocks as needed. Be precise and honest about severity.`;
 }
 
+/** Append a clearly-delimited, non-authoritative research direction to a prompt. */
+export function appendAuditHypothesis(prompt: string, hypothesis?: string): string {
+  const bounded = hypothesis?.trim();
+  if (!bounded) return prompt;
+  if (bounded.length > 4_000) throw new Error("audit hypothesis exceeds 4000 characters");
+  return `${prompt}\n\n--- OPERATOR RESEARCH HYPOTHESIS ---\n${bounded}\n--- END HYPOTHESIS ---\nTreat this as a lead, not evidence. Verify it independently and report only reproducible vulnerabilities.`;
+}
+
 /**
  * Build a prompt that includes the actual source code for direct API analysis.
  */
@@ -513,6 +521,7 @@ export interface PerFileAuditOptions {
   npmAuditFindings: NpmAuditFinding[];
   targetLabel: string;
   advisoryLabel: string;
+  hypothesis?: string;
   /** Per-file agent invoker. Production wires this to runAnalysisAgent;
    *  tests can pass a counting stub to verify the loop shape. */
   invoke: (perFile: {
@@ -561,20 +570,29 @@ export async function runPerFileAudit(
   for (let i = 0; i < opts.files.length; i++) {
     const fileAbs = opts.files[i];
     const fileRel = relative(opts.pkg.path, fileAbs);
-    const filePrompt = researchPromptSingleFile(
-      opts.pkg.path,
-      fileRel,
-      opts.semgrepFindings.map(f => ({ ruleId: f.ruleId, message: f.message, path: f.path, startLine: f.startLine })),
-      opts.npmAuditFindings.map(f => ({ name: f.name, severity: f.severity, title: f.title })),
-      `${opts.targetLabel} ${opts.pkg.name}@${opts.pkg.version}`,
-      opts.advisoryLabel,
+    const filePrompt = appendAuditHypothesis(
+      researchPromptSingleFile(
+        opts.pkg.path,
+        fileRel,
+        opts.semgrepFindings.map(f => ({ ruleId: f.ruleId, message: f.message, path: f.path, startLine: f.startLine })),
+        opts.npmAuditFindings.map(f => ({ name: f.name, severity: f.severity, title: f.title })),
+        `${opts.targetLabel} ${opts.pkg.name}@${opts.pkg.version}`,
+        opts.advisoryLabel,
+      ),
+      opts.hypothesis,
     );
-    const cliSystemPrompt = `You are a security researcher analyzing the single file ${fileRel} from ${opts.pkg.name}@${opts.pkg.version}. For EACH vulnerability you find in THIS file, output it using the exact ---FINDING--- / ---END--- format. Do NOT analyze other files. If you find no vulnerabilities, say 'No vulnerabilities found.' and nothing else.`;
-    const directApiPrompt = buildDirectApiAuditPromptForFile(
-      opts.pkg,
-      fileAbs,
-      opts.semgrepFindings,
-      opts.npmAuditFindings,
+    const cliSystemPrompt = appendAuditHypothesis(
+      `You are a security researcher analyzing the single file ${fileRel} from ${opts.pkg.name}@${opts.pkg.version}. For EACH vulnerability you find in THIS file, output it using the exact ---FINDING--- / ---END--- format. Do NOT analyze other files. If you find no vulnerabilities, say 'No vulnerabilities found.' and nothing else.`,
+      opts.hypothesis,
+    );
+    const directApiPrompt = appendAuditHypothesis(
+      buildDirectApiAuditPromptForFile(
+        opts.pkg,
+        fileAbs,
+        opts.semgrepFindings,
+        opts.npmAuditFindings,
+      ),
+      opts.hypothesis,
     );
 
     opts.onFileStart?.(fileRel, i, opts.files.length);
@@ -645,6 +663,7 @@ async function runAuditAgent(
         npmAuditFindings,
         targetLabel,
         advisoryLabel,
+        hypothesis: config.hypothesis,
         invoke: ({ systemPrompt, cliSystemPrompt, directApiPrompt }) =>
           runAnalysisAgent({
             role: "audit",
@@ -654,7 +673,10 @@ async function runAuditAgent(
             config,
             db,
             emit,
-            cliPrompt: buildCliAuditPrompt(pkg, semgrepFindings, npmAuditFindings),
+            cliPrompt: appendAuditHypothesis(
+              buildCliAuditPrompt(pkg, semgrepFindings, npmAuditFindings),
+              config.hypothesis,
+            ),
             agentSystemPrompt: systemPrompt,
             cliSystemPrompt,
             directApiPrompt,
@@ -688,18 +710,27 @@ async function runAuditAgent(
     config,
     db,
     emit,
-    cliPrompt: buildCliAuditPrompt(pkg, semgrepFindings, npmAuditFindings),
-    agentSystemPrompt: auditAgentPrompt(
-      pkg.name,
-      pkg.version,
-      pkg.path,
-      semgrepFindings,
-      npmAuditFindings,
-      targetLabel,
-      advisoryLabel,
+    cliPrompt: appendAuditHypothesis(
+      buildCliAuditPrompt(pkg, semgrepFindings, npmAuditFindings),
+      config.hypothesis,
     ),
-    cliSystemPrompt: sharedCliSystemPrompt,
-    directApiPrompt: buildDirectApiAuditPrompt(pkg, semgrepFindings, npmAuditFindings),
+    agentSystemPrompt: appendAuditHypothesis(
+      auditAgentPrompt(
+        pkg.name,
+        pkg.version,
+        pkg.path,
+        semgrepFindings,
+        npmAuditFindings,
+        targetLabel,
+        advisoryLabel,
+      ),
+      config.hypothesis,
+    ),
+    cliSystemPrompt: appendAuditHypothesis(sharedCliSystemPrompt, config.hypothesis),
+    directApiPrompt: appendAuditHypothesis(
+      buildDirectApiAuditPrompt(pkg, semgrepFindings, npmAuditFindings),
+      config.hypothesis,
+    ),
   });
 }
 

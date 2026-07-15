@@ -165,6 +165,25 @@ describe("runPerFileAudit — per-file audit loop (#285)", () => {
     expect(prompts[1]).not.toContain("src1.js");
   });
 
+  it("appends an operator hypothesis to every prompt as an untrusted lead", async () => {
+    const prompts: string[][] = [];
+    await runPerFileAudit(baseOpts({
+      pkg: makePkg(tempDir),
+      files: [join(tempDir, "src1.js")],
+      hypothesis: "Inspect state-machine transitions before generic sinks.",
+      invoke: async ({ systemPrompt, cliSystemPrompt, directApiPrompt }) => {
+        prompts.push([systemPrompt, cliSystemPrompt, directApiPrompt]);
+        return { findings: [] };
+      },
+    }));
+
+    for (const prompt of prompts.flat()) {
+      expect(prompt).toContain("OPERATOR RESEARCH HYPOTHESIS");
+      expect(prompt).toContain("Inspect state-machine transitions");
+      expect(prompt).toContain("Treat this as a lead, not evidence");
+    }
+  });
+
   it("zero files → zero invocations", async () => {
     let calls = 0;
     const result = await runPerFileAudit(baseOpts({

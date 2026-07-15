@@ -15,23 +15,23 @@
  */
 export const features = {
   /** Early-stop at 50% budget if no findings, retry with different strategy */
-  earlyStopRetry: env("PWNKIT_FEATURE_EARLY_STOP", true),
+  get earlyStopRetry(): boolean { return env("PWNKIT_FEATURE_EARLY_STOP", true); },
   /** Detect A-A-A and A-B-A-B loop patterns, inject warning */
-  loopDetection: env("PWNKIT_FEATURE_LOOP_DETECTION", true),
+  get loopDetection(): boolean { return env("PWNKIT_FEATURE_LOOP_DETECTION", true); },
   /** Compress middle messages when context exceeds 30k tokens */
-  contextCompaction: env("PWNKIT_FEATURE_CONTEXT_COMPACTION", true),
+  get contextCompaction(): boolean { return env("PWNKIT_FEATURE_CONTEXT_COMPACTION", true); },
   /** Exploit script templates in shell prompt (blind SQLi, SSTI, auth chain) */
-  scriptTemplates: env("PWNKIT_FEATURE_SCRIPT_TEMPLATES", true),
+  get scriptTemplates(): boolean { return env("PWNKIT_FEATURE_SCRIPT_TEMPLATES", true); },
   /** Dynamic vulnerability playbooks injected after recon phase */
-  dynamicPlaybooks: env("PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS", false),
+  get dynamicPlaybooks(): boolean { return env("PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS", false); },
   /** Agent writes plan/creds to disk, injected at reflection checkpoints */
-  externalMemory: env("PWNKIT_FEATURE_EXTERNAL_MEMORY", false),
+  get externalMemory(): boolean { return env("PWNKIT_FEATURE_EXTERNAL_MEMORY", false); },
   /** Inject prior attempt findings when retrying (LLM-summarized progress handoff) */
-  progressHandoff: env("PWNKIT_FEATURE_PROGRESS_HANDOFF", true),
+  get progressHandoff(): boolean { return env("PWNKIT_FEATURE_PROGRESS_HANDOFF", true); },
   /** Allow the agent to search the web for CVE details, docs, and technique references */
-  webSearch: env("PWNKIT_FEATURE_WEB_SEARCH", false),
+  get webSearch(): boolean { return env("PWNKIT_FEATURE_WEB_SEARCH", false); },
   /** Interactive PTY sessions for exploits requiring interactivity (reverse shells, DB clients, SSH) */
-  ptySession: env("PWNKIT_FEATURE_PTY_SESSION", false),
+  get ptySession(): boolean { return env("PWNKIT_FEATURE_PTY_SESSION", false); },
   /**
    * EGATS specialist routing (#557, HPTSA-inspired). When ON, an EGATS branch
    * whose hypothesis names a concrete vuln class (SQLi/XSS/SSRF/SSTI/IDOR/
@@ -53,11 +53,11 @@ export const features = {
     return env("PWNKIT_FEATURE_SPECIALIST_ROUTING", false);
   },
   /** Self-consistency voting: run the structured verify pipeline N times and take the majority vote */
-  selfConsistencyVerify: env("PWNKIT_FEATURE_CONSENSUS_VERIFY", false),
+  get selfConsistencyVerify(): boolean { return env("PWNKIT_FEATURE_CONSENSUS_VERIFY", false); },
   /** Multi-modal agreement: cross-validate findings against foxguard (Rust pattern scanner) */
-  multiModalAgreement: env("PWNKIT_FEATURE_MULTIMODAL", false),
+  get multiModalAgreement(): boolean { return env("PWNKIT_FEATURE_MULTIMODAL", false); },
   /** Reachability gate: suppress findings whose sink is not reachable from an application entry point */
-  reachabilityGate: env("PWNKIT_FEATURE_REACHABILITY_GATE", false),
+  get reachabilityGate(): boolean { return env("PWNKIT_FEATURE_REACHABILITY_GATE", false); },
   /**
    * Publishability / in-scope gate (issue #537 / #539). Decides
    * disclosure-worthiness per finding: SECURITY.md threat-model exclusion
@@ -70,9 +70,9 @@ export const features = {
    * explicitly opted into before any A/B claim. Disable/enable via
    * PWNKIT_FEATURE_PUBLISHABILITY_GATE.
    */
-  publishabilityGate: env("PWNKIT_FEATURE_PUBLISHABILITY_GATE", false),
+  get publishabilityGate(): boolean { return env("PWNKIT_FEATURE_PUBLISHABILITY_GATE", false); },
   /** PoV gate: require a working, executable PoC per finding or downgrade to info */
-  povGate: env("PWNKIT_FEATURE_POV_GATE", false),
+  get povGate(): boolean { return env("PWNKIT_FEATURE_POV_GATE", false); },
   /**
    * Static-finding PoC generation (#666 / EPIC #674 Part A). For findings that
    * ship with NO executable PoC (`pocSteps` empty — the static / code-analysis
@@ -87,7 +87,7 @@ export const features = {
    * be explicitly opted into before any A/B claim (A/B-able via the #656
    * harness). Toggle via PWNKIT_FEATURE_POC_GEN_STATIC.
    */
-  pocGenStatic: env("PWNKIT_FEATURE_POC_GEN_STATIC", false),
+  get pocGenStatic(): boolean { return env("PWNKIT_FEATURE_POC_GEN_STATIC", false); },
   /**
    * Inline validation / validate-on-save (#554). When ON, the native attack
    * loop runs a fast deterministic category oracle the moment a high/critical
@@ -212,7 +212,7 @@ export const features = {
    * this as the strongest candidate for the unexplained XBOW finding-density
    * collapse from 14 → 4 between `features=none` and `features=all`.
    */
-  holdingItWrong: env("PWNKIT_FEATURE_HOLDING_IT_WRONG", true),
+  get holdingItWrong(): boolean { return env("PWNKIT_FEATURE_HOLDING_IT_WRONG", true); },
 
   /**
    * `evidence_completeness <= 0.5` reject (`packages/core/src/agentic-scanner.ts:591`).
@@ -222,7 +222,7 @@ export const features = {
    * Default ON because that's the existing v0.6.0 behavior. Can be disabled
    * via PWNKIT_FEATURE_EVIDENCE_GATE=0 for ablation.
    */
-  evidenceGate: env("PWNKIT_FEATURE_EVIDENCE_GATE", true),
+  get evidenceGate(): boolean { return env("PWNKIT_FEATURE_EVIDENCE_GATE", true); },
 
   /**
    * Learned per-finding triage router (`packages/core/src/triage/learned-router.ts`).
@@ -235,7 +235,7 @@ export const features = {
    * Default OFF until the router is validated via A/B testing on xbow-bench
    * and npm-bench. See pwnkit#113 for the design doc.
    */
-  learnedRouter: env("PWNKIT_FEATURE_LEARNED_ROUTER", false),
+  get learnedRouter(): boolean { return env("PWNKIT_FEATURE_LEARNED_ROUTER", false); },
 
   /**
    * Dynamic per-finding triage routing (`packages/core/src/triage/router/`).
@@ -254,7 +254,7 @@ export const features = {
    * Default OFF — opt in via PWNKIT_FEATURE_DYNAMIC_TRIAGE=1. See
    * pwnkit#113 for the design doc and pwnkit#67 for the joint paper plan.
    */
-  dynamicTriageRouting: env("PWNKIT_FEATURE_DYNAMIC_TRIAGE", false),
+  get dynamicTriageRouting(): boolean { return env("PWNKIT_FEATURE_DYNAMIC_TRIAGE", false); },
 
   /**
    * Opt-in cloud-sink webhook integration (`packages/core/src/cloud-sink.ts`).
@@ -267,7 +267,7 @@ export const features = {
    * where outbound HTTP from the scanner is not desired (e.g. air-gapped CI).
    * Disable via PWNKIT_FEATURE_CLOUD_SINK=0.
    */
-  cloudSink: env("PWNKIT_FEATURE_CLOUD_SINK", true),
+  get cloudSink(): boolean { return env("PWNKIT_FEATURE_CLOUD_SINK", true); },
 
   /**
    * Pre-recon CVE check (`packages/core/src/pre-recon-cve.ts`).
@@ -280,7 +280,7 @@ export const features = {
    * Default ON in white-box mode (no-op in black-box). Disable via
    * PWNKIT_FEATURE_PRE_RECON_CVE=0 for ablation.
    */
-  preReconCve: env("PWNKIT_FEATURE_PRE_RECON_CVE", true),
+  get preReconCve(): boolean { return env("PWNKIT_FEATURE_PRE_RECON_CVE", true); },
 
   /**
    * Deterministic web-recon pre-pass (`packages/core/src/stages/web-recon-prepass.ts`).

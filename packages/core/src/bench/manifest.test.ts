@@ -5,6 +5,7 @@ import {
   parseManifest,
   loadManifest,
   selectCiCases,
+  subsetManifest,
   partitionCases,
   type BenchManifest,
 } from "./manifest.js";
@@ -222,5 +223,27 @@ describe("selectCiCases", () => {
       ],
     });
     expect(selectCiCases(m).map((c) => c.id)).toEqual(["a", "c"]);
+  });
+});
+
+describe("subsetManifest", () => {
+  const manifest = parseManifest({
+    id: "full",
+    cases: [
+      baseCase({ id: "dev" }),
+      baseCase({ id: "held" }),
+      baseCase({ id: "negative", knownNegative: true }),
+    ],
+  });
+
+  it("preserves requested order and gives the sealed slice its own id", () => {
+    const subset = subsetManifest(manifest, ["held", "dev"], "full:development");
+    expect(subset.id).toBe("full:development");
+    expect(subset.cases.map((c) => c.id)).toEqual(["held", "dev"]);
+  });
+
+  it("fails closed for missing or duplicate case ids", () => {
+    expect(() => subsetManifest(manifest, ["missing"], "bad")).toThrow(/unknown case id/);
+    expect(() => subsetManifest(manifest, ["dev", "dev"], "bad")).toThrow(/duplicate/);
   });
 });

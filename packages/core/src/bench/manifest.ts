@@ -303,6 +303,34 @@ export function selectCiCases(manifest: BenchManifest): BenchCase[] {
   return manifest.cases.filter((c) => c.ci);
 }
 
+/**
+ * Build a validated, ordered manifest slice for sealed development/held-out/
+ * negative-control runs. Unknown and duplicate ids fail closed so a typo can
+ * never silently shrink an experiment corpus.
+ */
+export function subsetManifest(
+  manifest: BenchManifest,
+  caseIds: string[],
+  id: string,
+): BenchManifest {
+  if (caseIds.length === 0) throw new Error("bench manifest subset must not be empty");
+  if (new Set(caseIds).size !== caseIds.length) {
+    throw new Error("bench manifest subset contains duplicate case ids");
+  }
+  const byId = new Map(manifest.cases.map((c) => [c.id, c]));
+  const cases = caseIds.map((caseId) => {
+    const c = byId.get(caseId);
+    if (!c) throw new Error(`bench manifest "${manifest.id}": unknown case id "${caseId}"`);
+    return c;
+  });
+  return parseManifest({
+    id,
+    version: manifest.version,
+    corpusRoot: manifest.corpusRoot,
+    cases,
+  });
+}
+
 /** Cases partitioned into positive (real-vuln) and known-negative buckets. */
 export function partitionCases(cases: BenchCase[]): {
   positives: BenchCase[];

@@ -19,6 +19,7 @@ export {
   parseManifest,
   loadManifest,
   selectCiCases,
+  subsetManifest,
   partitionCases,
   BenchManifestSchema,
   BenchCaseSchema,
@@ -118,6 +119,18 @@ export {
   loadLedger,
   saveLedger,
 } from "./ledger.js";
+
+export {
+  digestBenchManifest,
+  projectResearchImprovementResult,
+} from "./improvement.js";
+export type {
+  ResearchScoreSnapshot,
+  ResearchNegativeControlSnapshot,
+  ResearchImprovementResult,
+  ResearchTournamentRun,
+  ProjectResearchResultOptions,
+} from "./improvement.js";
 export type {
   LedgerEntry,
   BenchmarkLedger,
