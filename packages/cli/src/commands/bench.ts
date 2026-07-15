@@ -33,6 +33,7 @@ import {
   type BenchVariant,
   type LedgerEntry,
 } from "@pwnkit/core";
+import { registerBenchImprovementCommand } from "./bench-improvement.js";
 
 const DEFAULT_LEDGER = "benchmark-ledger.json";
 
@@ -68,6 +69,8 @@ export function registerBenchCommand(program: Command): void {
   const bench = program
     .command("bench")
     .description("A/B variant tournament + CI regression gate over the labeled corpus (#656)");
+
+  registerBenchImprovementCommand(bench);
 
   // ── bench run ──
   bench
