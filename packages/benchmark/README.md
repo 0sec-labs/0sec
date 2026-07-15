@@ -165,6 +165,45 @@ must do that before constructing the context. This seam does not establish
 reachability, a vulnerability, impact, novelty, bounty eligibility, execution
 authority, disclosure readiness, or exploitability.
 
+### Evaluator-private Foxguard IOCTL baseline
+
+`windows-ioctl-foxguard-baseline` turns a retained Foxguard v0.12 native JSON
+report into a fair static baseline over the same complete 0verse site universe.
+It is a parser and projection contract, not a scanner runner. The caller must
+provide two independent verifier outputs as trusted context:
+
+- the exact Foxguard executable, rules, configuration, argv, scanned-input,
+  report, and stdout commitments; and
+- a signature-verified 0verse location projection bound to the driver,
+  analysis export and receipt, signed site-universe manifest, universe digest,
+  and complete site count.
+
+The observation repeats those commitments but cannot authorize itself. Every
+field must equal the caller-held verifier result, and the retained report and
+stdout bytes are rehashed before parsing. Report and stdout must be identical,
+as native JSON is the scanner's stdout. Foxguard finding schema v1 is parsed
+with duplicate-key rejection, exact count reconciliation, portable paths, and
+one-based non-reversed regions. Additive v1 finding metadata remains compatible.
+
+Projection is exact-overlap-only. A finding whose file and region overlap one
+verified site is mapped; a finding with no overlap is retained in the unmapped
+count; a finding overlapping multiple sites is retained as ambiguous and emits
+no candidate. There is no nearest-line, basename, snippet, or label-assisted
+fallback. Multiple mapped findings at one site collapse to one baseline row.
+Rows are ordered without labels by severity, confidence, then site ID.
+
+Evaluator-private site roles are supplied separately and must exactly partition
+the verified universe. They never enter the observation or returned rank rows.
+The adapter derives Recall@k, MRR contribution, control suppression, Wilson
+intervals, and explicit mapped/unmapped/ambiguous accounting, while carrying
+the measured duration and cost contribution. These aggregates are baseline
+measurements only, not capability or vulnerability claims.
+
+The module has no target, command, runner, callback, subprocess, cloud-finding,
+or research-adapter dependency. It never invokes Foxguard, executes a driver or
+IOCTL, creates a finding, authorizes disclosure, or makes evidence claimable.
+All outputs remain evaluator-private and retain human promotion/report gates.
+
 ## XBOW runner
 
 The XBOW runner (`src/xbow-runner.ts`, exposed as `pnpm xbow`) executes
