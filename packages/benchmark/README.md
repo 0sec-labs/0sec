@@ -80,6 +80,62 @@ The committed fixture is an offline contract check only: it performs no dynamic
 execution. Actual target runs require an independently authorized scope and a
 human decision before any report leaves the research system.
 
+### Evaluator-private 0verse IOCTL observations
+
+`windows-ioctl-benchmark-observation` is the benchmark-only consumer boundary
+for 0verse Windows IOCTL static evidence. The parser requires the evaluator's
+actual paired-corpus manifest, opaque agent projection, private resolver, and
+an independently provisioned resolver digest. The caller must also supply the
+exact 0verse digests and site/candidate counts authenticated by upstream
+artifact verifiers; self-declared observation commitments are rejected. It
+then binds one opaque handle
+to the exact corpus, inventory, projection, resolver, driver, analysis export,
+analysis receipt, complete site universe, rank result, signed rank receipt, and
+private aggregate evaluation commitments.
+
+The observation retains complete contiguous candidate ranks in 0verse's
+deterministic score/content-ID order, requires the site-universe, rank-result,
+and evaluation site counts to agree, and derives recall and suppression Wilson
+intervals from evaluator-only aggregate counts. Timing and cost are retained as
+measurement data, not evidence of vulnerability.
+
+Pass gates are recomputed with integer arithmetic from evaluator-owned
+parts-per-million threshold policy supplied through the trusted context. The
+observation's gate booleans cannot override that policy. MRR contribution is
+derived from the evaluator-private first expected rank. The competitive gate is
+instead Recall@k lift: it compares expected sites found at the cutoff with the
+trusted best-baseline count using exact integer cross-multiplication (the normal
+policy requires at least 2,000,000 ppm, or 2x). The reported MRR contribution
+and Recall@k lift use bounded integer parts per million to avoid floating-point
+policy decisions.
+
+A zero-hit baseline is not treated as infinite lift. It produces
+`baselineWasZero: true`, a null `recallLiftPpm`, and a fail-closed
+`baselineRecallLift` gate until the evaluator supplies a nonzero baseline.
+
+This module is a pure validator. It has no runner, command, target path,
+callback, research-adapter, or `ResearchFinding` dependency. It cannot execute
+a binary or device operation and cannot emit a finding. Every observation is
+static-only, evaluator-private, non-runtime-consumable, non-novel,
+non-claimable, non-weaponizing, ineligible for automatic disclosure, and gated
+on human promotion and reporting.
+
+The observation and its aggregate counts must never be returned to an agent.
+The agent-facing projection remains the existing one-file list of randomized
+handles; it receives no corpus commitment, resolver identity, target metadata,
+site role, label, metric, or directional evaluation result. The evaluation
+digest only commits private bytes at the evaluator boundary.
+
+Proof limit: successful parsing establishes internal commitment consistency
+for one static benchmark observation against caller-supplied trusted inputs.
+The trusted inputs are the already-validated paired corpus/projection/resolver,
+the independently pinned resolver digest, upstream-verified 0verse artifact
+digests and counts, and evaluator-owned threshold/baseline policy. This parser
+does not authenticate signatures or artifacts itself; upstream 0verse verifiers
+must do that before constructing the context. This seam does not establish
+reachability, a vulnerability, impact, novelty, bounty eligibility, execution
+authority, disclosure readiness, or exploitability.
+
 ## XBOW runner
 
 The XBOW runner (`src/xbow-runner.ts`, exposed as `pnpm xbow`) executes
