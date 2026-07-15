@@ -1072,9 +1072,16 @@ describe("buildFlagsForProfile — KCSAN build profile", () => {
     expect(flags.some((f) => f.includes("--enable CONFIG_KASAN"))).toBe(false);
   });
 
+  it("plain profile turns BOTH sanitizers off (the non-KASAN reclaim-aliasing lane)", () => {
+    const flags = buildFlagsForProfile("plain");
+    expect(flags).toContain("--disable CONFIG_KASAN");
+    expect(flags).toContain("--disable CONFIG_KCSAN");
+    expect(flags.some((f) => f.startsWith("--enable CONFIG_KASAN"))).toBe(false);
+  });
+
   it("throws loudly for an unrecognized profile", () => {
     expect(() => buildFlagsForProfile("defconfig+kasan")).toThrow(/unrecognized kernel config profile/);
-    expect(RECOGNIZED_CONFIG_PROFILES).toEqual(["kasan", "kcsan"]);
+    expect(RECOGNIZED_CONFIG_PROFILES).toEqual(["kasan", "kcsan", "plain"]);
   });
 });
 

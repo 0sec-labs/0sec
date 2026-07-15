@@ -318,7 +318,7 @@ export interface KernelVmConfig {
 export type KernelConfigProfile = string;
 
 /** Config profiles the built-in `build-from-tree.sh` runner understands. */
-export const RECOGNIZED_CONFIG_PROFILES = ["kasan", "kcsan"] as const;
+export const RECOGNIZED_CONFIG_PROFILES = ["kasan", "kcsan", "plain"] as const;
 
 /**
  * `scripts/config` toggles for a build profile. This is the ENGINE source of
@@ -344,6 +344,14 @@ export function buildFlagsForProfile(profile: KernelConfigProfile): string[] {
       "--enable CONFIG_UBSAN_BOUNDS",
       "--enable CONFIG_UBSAN_SHIFT",
     ];
+  }
+  if (profile === "plain") {
+    // The non-KASAN ("nokasan") lane: NO sanitizer. KASAN's quarantine is exactly
+    // what walls heap reclaim, so a bug that stalls at `attempted` under KASAN can
+    // credit `reclaim` on this plain kernel via the aliasing witness (a sprayed
+    // canary-derived token read back through the dangling pointer). No toggles to
+    // add — a plain kernel is the defconfig with KASAN explicitly off.
+    return ["--disable CONFIG_KASAN", "--disable CONFIG_KCSAN", "--enable CONFIG_DEBUG_INFO"];
   }
   if (profile === "kcsan") {
     // KCSAN=y + full preemption (PREEMPT=y) so the ExpRace reschedule-IPI
