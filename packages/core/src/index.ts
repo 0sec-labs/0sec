@@ -835,6 +835,35 @@ export {
   runKernelExploitChain,
 } from "./kernel/index.js";
 export { rungRank as escalationRungRank, selectSprayPlans, introspectExploitConfig } from "./kernel/exploit/index.js";
+// Autonomous LLM-composed weaponization climb (feat/autonomous-climb-loop).
+export {
+  autonomousClimb,
+  defaultComposerModel,
+  TECHNIQUE_LIBRARY,
+  getTechnique,
+  techniquesForBug,
+  renderLibraryBrief,
+  renderTriggerSeed,
+  triggerTechniquesForFamily,
+  emitMarkerHelper,
+  arbWriteTargetV,
+  arbWriteFaultWitnessed,
+  arbReadValueWitnessed,
+  triggerSplatWitnessed,
+  fnv1a64,
+  hex64,
+} from "./kernel/exploit/index.js";
+export type {
+  AutonomousClimbBug,
+  AutonomousClimbOptions,
+  AutonomousClimbResult,
+  ClimbRound,
+  ComposerModel,
+  ExploitTechnique,
+  TechniqueConstraint,
+  TechniquePrecondition,
+  TechniqueBugClass,
+} from "./kernel/exploit/index.js";
 
 // kernelCTF patch-gap 1day monitor (upstream-fixed CVE feed → target-tree
 // presence check → kernelCTF reachability gate → ranked candidates). See
