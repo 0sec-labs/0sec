@@ -81,6 +81,16 @@ export type {
   ZeroverseHyperVEvidence,
   ZeroverseHyperVObservation,
 } from "./adapters/windows-hyperv-adapter.js";
+export { WindowsVariantResearchAdapter } from "./adapters/windows-variant-adapter.js";
+export type {
+  WindowsVariantArtifactBinding,
+  WindowsVariantTargetConfig,
+  WindowsVariantTarget,
+  WindowsVariantRankRequest,
+  WindowsVariantRankExecution,
+  WindowsVariantRankRunner,
+  WindowsVariantCandidate,
+} from "./adapters/windows-variant-adapter.js";
 export { XnuIokitResearchAdapter } from "./adapters/xnu-iokit-adapter.js";
 export type {
   XnuIokitTarget,
