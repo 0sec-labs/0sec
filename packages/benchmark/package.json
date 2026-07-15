@@ -31,6 +31,10 @@
     "./msrc-windows-lpe-inventory": {
       "types": "./dist/msrc-windows-lpe-inventory.d.ts",
       "default": "./dist/msrc-windows-lpe-inventory.js"
+    },
+    "./msrc-windows-lpe-capability-promotion": {
+      "types": "./dist/msrc-windows-lpe-capability-promotion.d.ts",
+      "default": "./dist/msrc-windows-lpe-capability-promotion.js"
     }
   },
   "scripts": {
@@ -102,7 +106,7 @@
     "windows-lpe-paired-corpus": "tsx src/windows-lpe-paired-corpus.ts",
     "windows-lpe-paired-corpus:contract": "tsx src/windows-lpe-paired-corpus.ts --input fixtures/windows-lpe-paired-corpus-contract-v2.json --development-labels fixtures/windows-lpe-paired-labels-development-contract-v2.json --holdout-labels fixtures/windows-lpe-paired-labels-holdout-contract-v2.json",
     "msrc-windows-lpe-inventory": "tsx src/msrc-windows-lpe-inventory.ts",
-    "test:windows-research": "vitest run src/windows-lpe-corpus.test.ts src/windows-lpe-paired-corpus.test.ts src/windows-lpe-opaque-projection.test.ts src/windows-ioctl-benchmark-observation.test.ts src/msrc-windows-lpe-inventory.test.ts src/windows-research-collector.test.ts",
+    "test:windows-research": "vitest run src/windows-lpe-corpus.test.ts src/windows-lpe-paired-corpus.test.ts src/windows-lpe-opaque-projection.test.ts src/windows-ioctl-benchmark-observation.test.ts src/msrc-windows-lpe-inventory.test.ts src/msrc-windows-lpe-capability-promotion.test.ts src/windows-research-collector.test.ts",
     "npm-bench": "tsx src/npm-bench.ts",
     "npm-bench:json": "tsx src/npm-bench.ts --json",
     "consolidate-xbow": "tsx src/scripts/consolidate-xbow.ts",
