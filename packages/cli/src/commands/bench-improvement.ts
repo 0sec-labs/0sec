@@ -449,12 +449,16 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
+export function canonicalJson(value: unknown): string {
+  return `${JSON.stringify(canonicalize(value), null, 2)}\n`;
+}
+
 export function canonicalResultJson(result: ResearchImprovementResult): string {
-  return `${JSON.stringify(canonicalize(result), null, 2)}\n`;
+  return canonicalJson(result);
 }
 
 /** Create the destination from a fully written same-directory temporary file. */
-export function writeResultAtomic(outputValue: string, result: ResearchImprovementResult): void {
+export function writeCanonicalJsonAtomic(outputValue: string, value: unknown): void {
   const output = resolve(outputValue);
   const parent = dirname(output);
   mkdirSync(parent, { recursive: true });
@@ -463,7 +467,7 @@ export function writeResultAtomic(outputValue: string, result: ResearchImproveme
   let fd: number | undefined;
   try {
     fd = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-    writeSync(fd, canonicalResultJson(result), undefined, "utf8");
+    writeSync(fd, canonicalJson(value), undefined, "utf8");
     fsyncSync(fd);
     closeSync(fd);
     fd = undefined;
@@ -478,6 +482,10 @@ export function writeResultAtomic(outputValue: string, result: ResearchImproveme
     if (fd !== undefined) closeSync(fd);
     if (existsSync(temporary)) unlinkSync(temporary);
   }
+}
+
+export function writeResultAtomic(outputValue: string, result: ResearchImprovementResult): void {
+  writeCanonicalJsonAtomic(outputValue, result);
 }
 
 function collect(value: string, previous: string[]): string[] {
