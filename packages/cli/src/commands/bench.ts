@@ -14,11 +14,13 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Command } from "commander";
 import chalk from "chalk";
 import type { RuntimeMode, ScanDepth } from "@pwnkit/shared";
 import {
   loadManifest,
+  subsetManifest,
   corpusV1Path,
   runTournament,
   formatTournamentSummary,
@@ -32,10 +34,40 @@ import {
   evaluateRegression,
   type BenchVariant,
   type LedgerEntry,
+  type BenchManifest,
 } from "@pwnkit/core";
-import { registerBenchImprovementCommand } from "./bench-improvement.js";
+import {
+  registerBenchImprovementCommand,
+  writeCanonicalJsonAtomic,
+} from "./bench-improvement.js";
 
 const DEFAULT_LEDGER = "benchmark-ledger.json";
+
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+export function selectRunManifest(
+  source: BenchManifest,
+  opts: { caseId?: string[]; manifestId?: string; ciSubset?: boolean },
+): BenchManifest {
+  const caseIds = opts.caseId ?? [];
+  if (caseIds.length === 0) {
+    if (opts.manifestId) throw new Error("--manifest-id requires at least one --case-id");
+    return source;
+  }
+  if (opts.ciSubset) throw new Error("--case-id cannot be combined with --ci-subset");
+  if (!opts.manifestId) throw new Error("--manifest-id is required with --case-id");
+  return subsetManifest(source, caseIds, opts.manifestId);
+}
+
+export function validateCaptureDestination(outputValue: string, ledgerValue: string): void {
+  const output = resolve(outputValue);
+  if (output === resolve(ledgerValue)) {
+    throw new Error("--tournament-output must differ from --ledger");
+  }
+  if (existsSync(output)) throw new Error(`tournament output already exists: ${output}`);
+}
 
 function parseVariants(opts: Record<string, unknown>): BenchVariant[] {
   // Explicit variant file wins; otherwise build a single "champion" variant
@@ -77,6 +109,8 @@ export function registerBenchCommand(program: Command): void {
     .command("run")
     .description("Run a variant tournament over the corpus and update the benchmark ledger")
     .option("--manifest <path>", "Corpus manifest path (default: bundled corpus-v1.json)")
+    .option("--case-id <id>", "exact case id in a pre-registered manifest slice (repeatable)", collect, [])
+    .option("--manifest-id <id>", "sealed slice id (required with --case-id)")
     .option("--variants <json|path>", "JSON array of variant descriptors, or a path to one")
     .option("--variant-id <id>", "Id for the implicit single variant", "champion")
     .option("--model <model>", "Model override for the implicit single variant")
@@ -87,6 +121,7 @@ export function registerBenchCommand(program: Command): void {
     .option("--cost-ceiling <usd>", "Per-attempt cost ceiling (USD)")
     .option("--ci-subset", "Run only the fast CI subset (cases flagged ci:true)", false)
     .option("--ledger <path>", "Benchmark ledger path", DEFAULT_LEDGER)
+    .option("--tournament-output <path>", "create-once canonical {manifest,tournament} evidence")
     .option("--run-id <id>", "Run id recorded in the ledger (default: ISO timestamp)")
     .option("--gate", "Evaluate the regression gate and exit non-zero on a regression", false)
     .option("--max-success-drop <f>", "Max success-rate drop vs last green", "0.05")
@@ -104,8 +139,16 @@ export function registerBenchCommand(program: Command): void {
       }
 
       const manifestPath = opts.manifest ? String(opts.manifest) : corpusV1Path();
-      const manifest = await loadManifest(manifestPath);
+      const sourceManifest = await loadManifest(manifestPath);
+      const manifest = selectRunManifest(sourceManifest, {
+        caseId: opts.caseId as string[],
+        manifestId: opts.manifestId ? String(opts.manifestId) : undefined,
+        ciSubset: Boolean(opts.ciSubset),
+      });
       const provisioner = createDockerWebProvisioner(manifest.corpusRoot);
+      if (opts.tournamentOutput) {
+        validateCaptureDestination(String(opts.tournamentOutput), String(opts.ledger));
+      }
 
       if (!isJson) {
         console.log("");
@@ -129,6 +172,10 @@ export function registerBenchCommand(program: Command): void {
           ? undefined
           : (r) => console.log(chalk.dim(`  · ${r.variant.id} done`)),
       });
+
+      if (opts.tournamentOutput) {
+        writeCanonicalJsonAtomic(String(opts.tournamentOutput), { manifest, tournament });
+      }
 
       const champion = tournament.variants.find((v) => v.variant.id === tournament.championId)!;
 
