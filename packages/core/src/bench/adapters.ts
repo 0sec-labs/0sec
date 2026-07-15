@@ -161,6 +161,8 @@ export interface PackageAuditAdapterOptions {
   costCeilingUsdPerAttempt?: number;
   /** Optional db path; omit to let the engine pick its default. */
   dbPath?: string;
+  /** Bounded research hypothesis appended to source-audit prompts. */
+  hypothesis?: string;
 }
 
 /**
@@ -194,6 +196,7 @@ export function createPackageAuditScanAdapter(
           format: "json",
           runtime: opts.runtime ?? "api",
           model: opts.model,
+          hypothesis: opts.hypothesis,
           dbPath: opts.dbPath,
           ...(opts.costCeilingUsdPerAttempt != null
             ? { costCeilingUsd: opts.costCeilingUsdPerAttempt }
@@ -218,6 +221,8 @@ export interface AgenticScanAdapterOptions {
   costCeilingUsdPerAttempt?: number;
   /** Per-attempt wallclock timeout (ms). Default 60_000. */
   timeoutMs?: number;
+  /** Extra bounded research direction appended to the manifest hint. */
+  challengeHint?: string;
 }
 
 /**
@@ -259,7 +264,7 @@ export function createAgenticScanAdapter(
             ? { costCeilingUsd: opts.costCeilingUsdPerAttempt }
             : {}),
         },
-        challengeHint: c.target.hint,
+        challengeHint: [c.target.hint, opts.challengeHint].filter(Boolean).join("\n\n") || undefined,
       });
       return scanReportToBenchResult(report);
     } catch (err) {

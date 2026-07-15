@@ -1231,6 +1231,8 @@ export interface AuditConfig {
   dbPath?: string;
   apiKey?: string;
   model?: string;
+  /** Bounded operator hypothesis appended to audit prompts for controlled A/B research. */
+  hypothesis?: string;
   /** Hard cost ceiling in USD; aborts the audit when exceeded. Default: no ceiling. */
   costCeilingUsd?: number;
   /**
