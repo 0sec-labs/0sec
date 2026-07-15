@@ -80,6 +80,35 @@ The committed fixture is an offline contract check only: it performs no dynamic
 execution. Actual target runs require an independently authorized scope and a
 human decision before any report leaves the research system.
 
+### MSRC capability promotion gate
+
+`msrc-windows-lpe-capability-promotion` is the evaluator-private boundary
+between the frozen MSRC staging lock and a paired-v2 capability corpus. A
+tranche lock is intentionally insufficient input: promotion also requires the
+two complete MSRC inventories that produced it, both committed private label
+documents, and exact per-artifact extraction, package, servicing, scope, and
+static-control evidence.
+
+The gate requires every one of at least 20 staged public CVE families to have
+exactly four static cases: one vulnerable member, its paired fixed member, one
+guarded safe near-miss, and one sink proven unreachable from dispatch. This
+produces exactly three evaluator-labeled negatives per family and at least 60
+negatives overall. At least five and at least 25% of families must remain in a
+family-disjoint sealed holdout. The vulnerable member must bind the
+inventory's superseded boundary; all three controls bind its fixed boundary.
+Package, extracted component, receipt, build/UBR, KB/catalog, source-document,
+scope, and corpus identities are cross-checked rather than inferred from CVE
+metadata.
+
+Promotion is static validation only. It requires three confirmations and three
+clean controls for any later reproduction campaign, forces every target's
+dynamic-execution flag off, and preserves evaluator-private, agent-hidden,
+non-novel, non-claimable, non-weaponizing, no-auto-disclosure policy. It does
+not download updates, execute drivers, infer that a staged CVE is IOCTL
+relevant, authenticate upstream extraction signatures, or establish that any
+candidate is vulnerable. Those exact retained bytes and receipts must be
+verified before constructing the promotion input.
+
 ### Evaluator-private 0verse IOCTL observations
 
 `windows-ioctl-benchmark-observation` is the benchmark-only consumer boundary
