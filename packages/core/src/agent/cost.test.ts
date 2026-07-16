@@ -51,6 +51,18 @@ describe("estimateCost", () => {
       .toBeCloseTo(1.4 + 4.4, 5);
   });
 
+  it("prices Kimi K3 flat-rate coding models (incl. the [1m] context suffix)", () => {
+    // Kimi K3 flat-rate estimate: $3/M in, $15/M out.
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "k3"))
+      .toBeCloseTo(3.0 + 15.0, 5);
+    // The [1m] long-context variant is priced explicitly (normalizeModel does
+    // not strip a bracket suffix), so it must not fall back to default.
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "k3[1m]"))
+      .toBeCloseTo(3.0 + 15.0, 5);
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, "kimi/k3"))
+      .toBeCloseTo(3.0 + 15.0, 5);
+  });
+
   it("applies cached-input rate when cachedInputTokens is set", () => {
     // Sonnet 4.6: $3 input, $0.30 cached. 1M input total, 600k cached, 400k uncached
     // → 0.4 * 3 + 0.6 * 0.30 = 1.2 + 0.18 = 1.38
@@ -109,6 +121,11 @@ describe("getRates", () => {
     expect(rates.cachedInput).toBe(0.26);
   });
 
+  it("returns the Kimi K3 cached-input rate", () => {
+    expect(getRates("k3").cachedInput).toBe(0.30);
+    expect(getRates("k3[1m]").cachedInput).toBe(0.30);
+  });
+
   it("returns the default-table rate for an unknown model", () => {
     const rates = getRates("totally-made-up-model-9000");
     expect(rates.input).toBe(3.0);
@@ -153,6 +170,8 @@ describe("modelProvider", () => {
     expect(modelProvider("openai/gpt-4o")).toBe("openai");
     expect(modelProvider("anthropic/claude-opus-4-7")).toBe("anthropic");
     expect(modelProvider("z-ai/glm-5.1")).toBe("z-ai");
+    expect(modelProvider("kimi/k3")).toBe("kimi");
+    expect(modelProvider("moonshot/k3")).toBe("kimi");
   });
 
   it("falls back to family-based detection for bare model names", () => {
@@ -165,6 +184,9 @@ describe("modelProvider", () => {
     expect(modelProvider("mistral-large")).toBe("mistral");
     expect(modelProvider("glm-5.1")).toBe("z-ai");
     expect(modelProvider("glm-5.2")).toBe("z-ai");
+    expect(modelProvider("k3")).toBe("kimi");
+    expect(modelProvider("k3[1m]")).toBe("kimi");
+    expect(modelProvider("kimi-for-coding")).toBe("kimi");
   });
 
   it("returns 'unknown' for empty / unrecognisable model ids", () => {
