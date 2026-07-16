@@ -14,6 +14,7 @@ import {
 } from "./pov-gate.js";
 import type { CrashArtifact } from "./memsafety-types.js";
 import type { OracleResult } from "./oracles.js";
+import { VERIFY_EVIDENCE_KINDS, isDisclosureWorthy } from "./verify-verdict.js";
 
 // ────────────────────────────────────────────────────────────────────
 // Helpers
@@ -668,5 +669,35 @@ describe("memCorruptionVerdict — N× reproduction gate", () => {
     const v = memCorruptionVerdict(crash({ inputPath: undefined }));
     expect(v.verdict).toBe("inconclusive");
     expect(v.confidence).toBe(0);
+  });
+
+  // #701 collapse invariant: the memcorruption kind the verdict stamps must be a
+  // member of the canonical parity-locked tuple (no longer an engine-ext-only
+  // string), so a sanitizer-reproduced crash surfaces to the cloud/dashboard as
+  // a first-class evidence kind rather than being coerced to source-only.
+  it("stamps a canonical (cloud-parity) evidenceKind on a reproduced crash (#701)", () => {
+    const v = memCorruptionVerdict(crash());
+    expect(v.evidenceKind).toBe("reproduced-memcorruption-poc");
+    expect(VERIFY_EVIDENCE_KINDS).toContain(v.evidenceKind);
+  });
+
+  // #702-adjacent, fixture level: a confirmed memcorruption verdict flows through
+  // the unified disclosure funnel as KEPT — the loop's verdict reaches disclosure
+  // gating without being dropped (crash → primitive → verdict → keep).
+  it("a confirmed memcorruption verdict is disclosure-worthy (kept) (#702)", () => {
+    const v = memCorruptionVerdict(crash());
+    const finding: Finding = {
+      id: "f-uaf",
+      templateId: "memsafety-asan",
+      title: "heap UAF in parser",
+      description: "reproduced under ASan",
+      severity: "high",
+      category: "use-after-free" as AttackCategory,
+      status: "discovered",
+      evidence: { request: "poc.bin", response: "ASAN", analysis: "confirmed" },
+      confidence: 0.95,
+      timestamp: Date.now(),
+    };
+    expect(isDisclosureWorthy(finding, v).keep).toBe(true);
   });
 });

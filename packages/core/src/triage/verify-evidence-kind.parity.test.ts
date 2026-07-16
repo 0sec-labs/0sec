@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { AttackCategory, Finding, LayerVerdict, PocStep } from "@pwnkit/shared";
 import {
   VERIFY_EVIDENCE_KINDS,
+  VERIFY_EVIDENCE_KINDS_ENGINE_EXT,
   evidenceKindForFinding,
 } from "./verify-verdict.js";
 
@@ -20,14 +21,34 @@ import {
 // single source is caught here — without a physical cross-workspace import.
 // PARITY: when you change a value, update BOTH this fixture and the 0cloud one
 // (and both source modules). Mirrors `can-auto-suppress.parity.test.ts` (#650).
+//
+// `reproduced-memcorruption-poc` was added here in the coordinated change of
+// #701 — it graduated from the engine-ext staging set into the parity-locked
+// tuple at the same time cloud-contracts adopted it into its own
+// `VERIFY_EVIDENCE_KINDS` table. Keep this fixture identical to the cloud one.
 
-const CANONICAL_VERIFY_EVIDENCE_KINDS = ["reproduced-poc", "source-only"];
+const CANONICAL_VERIFY_EVIDENCE_KINDS = [
+  "reproduced-poc",
+  "source-only",
+  "reproduced-memcorruption-poc",
+];
 
 describe("verify evidence-kind parity with @0cloud/cloud-contracts (#674)", () => {
   it("engine VERIFY_EVIDENCE_KINDS matches the canonical cloud table", () => {
     expect([...VERIFY_EVIDENCE_KINDS].sort()).toEqual(
       [...CANONICAL_VERIFY_EVIDENCE_KINDS].sort(),
     );
+  });
+
+  it("carries reproduced-memcorruption-poc in the parity-locked tuple (#701)", () => {
+    expect(VERIFY_EVIDENCE_KINDS).toContain("reproduced-memcorruption-poc");
+  });
+
+  it("engine-ext staging set is empty — the memcorruption kind graduated (#701)", () => {
+    // The kind now lives in the canonical parity-locked tuple, not the
+    // engine-only staging set. The staging export is retained (empty) as a
+    // parity-safe home for the next not-yet-in-cloud kind.
+    expect(VERIFY_EVIDENCE_KINDS_ENGINE_EXT).toEqual([]);
   });
 });
 
