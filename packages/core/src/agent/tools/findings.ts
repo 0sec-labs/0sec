@@ -78,6 +78,26 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
       evidence_request: { type: "string", description: "The request/prompt that triggered the vuln" },
       evidence_response: { type: "string", description: "The response showing the vulnerability" },
       evidence_analysis: { type: "string", description: "Your analysis of why this is a vulnerability" },
+      source_path: {
+        type: "string",
+        description:
+          "OPTIONAL repository-relative source path for an inline CI review comment. Must be inside the scan workspace. Supply only when you inspected the exact vulnerable line.",
+      },
+      source_start_line: {
+        type: "number",
+        description:
+          "OPTIONAL 1-based source line for the inline CI review comment. Requires source_path.",
+      },
+      source_end_line: {
+        type: "number",
+        description:
+          "OPTIONAL inclusive 1-based end line. Must be >= source_start_line.",
+      },
+      suggested_replacement: {
+        type: "string",
+        description:
+          "OPTIONAL exact replacement text for source_start_line..source_end_line. Do not send a unified diff or markdown fence.",
+      },
       // pwnkit#170 — optional structured proof-of-concept step graph. When the
       // agent has structured execution data (e.g. it actually ran the curl /
       // docker steps and observed predictable outputs), it can pass them as a

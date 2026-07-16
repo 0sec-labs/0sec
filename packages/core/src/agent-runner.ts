@@ -191,6 +191,10 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
               severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] },
               category: { type: "string" },
               file: { type: "string", description: "File path and line number" },
+              suggested_replacement: {
+                type: "string",
+                description: "Optional exact replacement for the cited source line or range",
+              },
               description: { type: "string", description: "Detailed vulnerability description" },
               poc: { type: "string", description: "Proof-of-concept code or command" },
             },

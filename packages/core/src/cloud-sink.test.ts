@@ -137,6 +137,67 @@ describe("cloud-sink", () => {
     expect(body.finding.researchEvidence).toEqual([receipt]);
   });
 
+  it("normalizes save_finding source fields into a review annotation", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-review";
+    process.env.PWNKIT_CLOUD_TOKEN = "tok";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => "",
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await postFinding({
+      title: "Unsafe parser",
+      description: "Input reaches eval",
+      severity: "high",
+      category: "command-injection",
+      source_path: "src/parser.ts",
+      source_start_line: 41,
+      source_end_line: 42,
+      suggested_replacement: "return parseSafe(input);",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.finding.reviewAnnotation).toEqual({
+      path: "src/parser.ts",
+      startLine: 41,
+      endLine: 42,
+      suggestion: "return parseSafe(input);",
+    });
+  });
+
+  it("still POSTs the finding when its review annotation is dropped as non-repo-relative", async () => {
+    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-review-drop";
+    process.env.PWNKIT_CLOUD_TOKEN = "tok";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => "",
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await postFinding({
+      title: "Unsafe parser",
+      description: "Input reaches eval",
+      severity: "high",
+      category: "command-injection",
+      source_path: "src\\parser.ts",
+      source_start_line: 41,
+      suggested_replacement: "return parseSafe(input);",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    // The cloud schema would 400 this path — the sink drops ONLY the
+    // annotation; the finding itself must still ship.
+    expect(body.finding.reviewAnnotation).toBeUndefined();
+    expect(body.finding.title).toBe("Unsafe parser");
+    expect(body.finding.severity).toBe("high");
+  });
+
   it("postFinalReport POSTs the final report flag", async () => {
     process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
     process.env.PWNKIT_CLOUD_SCAN_ID = "scan-456";
@@ -266,6 +327,89 @@ describe("cloud-sink", () => {
 });
 
 describe("normalizeFinding", () => {
+  it("preserves a valid structured 0review annotation", () => {
+    const out = normalizeFinding({
+      title: "unsafe parser",
+      reviewAnnotation: {
+        path: "src/parser.ts",
+        startLine: 41,
+        endLine: 42,
+        suggestion: "safeParse(input)",
+      },
+    });
+    expect(out.reviewAnnotation).toEqual({
+      path: "src/parser.ts",
+      startLine: 41,
+      endLine: 42,
+      suggestion: "safeParse(input)",
+    });
+  });
+
+  it("drops annotations with non-repo-relative paths but keeps the finding", () => {
+    // Each of these fails the orchestrator's zod refine on
+    // reviewAnnotation.path — before this gate the cloud 400'd the ENTIRE
+    // finding POST and the sink only logged to stderr (finding lost).
+    const badPaths = [
+      "../secrets.txt", // `..` segment
+      "src/../../etc/passwd", // nested traversal
+      "/etc/passwd", // absolute POSIX
+      "C:\\src\\parser.ts", // drive-letter absolute (also backslashes)
+      "src\\parser.ts", // backslash separators
+    ];
+    for (const path of badPaths) {
+      const out = normalizeFinding({
+        title: `finding for ${path}`,
+        reviewAnnotation: { path, startLine: 1 },
+      });
+      expect(out.reviewAnnotation).toBeUndefined();
+      expect(out.title).toBe(`finding for ${path}`); // finding itself survives
+    }
+  });
+
+  it("drops an oversized suggestion instead of truncating it (location kept)", () => {
+    const out = normalizeFinding({
+      title: "oversized suggestion",
+      reviewAnnotation: {
+        path: "src/parser.ts",
+        startLine: 41,
+        suggestion: "x".repeat(20_001),
+      },
+    });
+    // A truncated half-function inside a suggestion block applies as broken
+    // code — the whole suggestion is dropped, the location is kept.
+    expect(out.reviewAnnotation).toEqual({
+      path: "src/parser.ts",
+      startLine: 41,
+    });
+  });
+
+  it("keeps a suggestion at exactly the 20k cloud cap", () => {
+    const suggestion = "x".repeat(20_000);
+    const out = normalizeFinding({
+      title: "at-cap suggestion",
+      reviewAnnotation: { path: "src/parser.ts", startLine: 1, suggestion },
+    });
+    expect(out.reviewAnnotation).toEqual({
+      path: "src/parser.ts",
+      startLine: 1,
+      suggestion,
+    });
+  });
+
+  it("drops fenced or unified-diff suggestions (location kept)", () => {
+    const fence = ["```ts", "safe(input)", "```"].join("\n");
+    const diff = ["@@ -1,3 +1,3 @@", "-unsafe(input)", "+safe(input)"].join("\n");
+    for (const suggestion of [fence, diff]) {
+      const out = normalizeFinding({
+        title: "unrenderable suggestion",
+        reviewAnnotation: { path: "src/parser.ts", startLine: 1, suggestion },
+      });
+      expect(out.reviewAnnotation).toEqual({
+        path: "src/parser.ts",
+        startLine: 1,
+      });
+    }
+  });
   it("happy path: full OSS Finding → strict CloudSinkFinding", () => {
     const ossFinding = {
       id: "f-1",

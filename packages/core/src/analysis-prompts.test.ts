@@ -39,5 +39,7 @@ describe("reviewAgentPrompt — hypothesis seeding (#467)", () => {
     expect(prompt).toContain(hypothesis);
     expect(prompt).toContain("src/webhooks/handler.ts");
     expect(prompt).toContain("diff-aware review");
+    expect(prompt).toContain("source_start_line");
+    expect(prompt).toContain("added line in the changed delta");
   });
 });

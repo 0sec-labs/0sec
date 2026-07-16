@@ -24,6 +24,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { features } from "./agent/features.js";
+import {
+  isRepoRelativePath,
+  isSuggestionAcceptable,
+} from "./findings-parser.js";
 import type {
   CloudSinkEvidence,
   CloudSinkFinding,
@@ -302,6 +306,20 @@ export function normalizeFinding(rawFinding: unknown): CloudSinkFinding {
   };
   if (confidence !== undefined) normalized.confidence = confidence;
 
+  const reviewAnnotation = normalizeReviewAnnotation(
+    raw.reviewAnnotation ??
+      raw.review_annotation ??
+      (raw.source_path !== undefined
+        ? {
+            path: raw.source_path,
+            startLine: raw.source_start_line,
+            endLine: raw.source_end_line,
+            suggestion: raw.suggested_replacement,
+          }
+        : undefined),
+  );
+  if (reviewAnnotation) normalized.reviewAnnotation = reviewAnnotation;
+
   // pwnkit#170 — pass-through optional PoC step graph. We accept already-
   // structured arrays (the in-process OSS Finding case) and JSON-encoded
   // strings (the LLM tool-call case). Anything malformed is dropped — a bad
@@ -343,6 +361,45 @@ function normalizePocSteps(v: unknown): unknown[] | null {
     }
   }
   return null;
+}
+
+function normalizeReviewAnnotation(
+  value: unknown,
+): CloudSinkFinding["reviewAnnotation"] | null {
+  if (!isRecord(value)) return null;
+  const path = typeof value.path === "string" ? value.path.trim() : "";
+  const startLine = value.startLine ?? value.start_line;
+  const endLine = value.endLine ?? value.end_line;
+  const suggestion = value.suggestion;
+  if (
+    !path ||
+    // Mirror the orchestrator's zod refine on reviewAnnotation.path
+    // EXACTLY (leading `/`, drive letters, backslashes, `..` segments).
+    // Without this the cloud 400s the ENTIRE finding POST — and the sink
+    // only logs to stderr, silently losing the finding. Drop just the
+    // annotation instead.
+    !isRepoRelativePath(path) ||
+    !Number.isInteger(startLine) ||
+    (startLine as number) < 1 ||
+    (endLine !== undefined &&
+      (!Number.isInteger(endLine) ||
+        (endLine as number) < (startLine as number)))
+  ) {
+    return null;
+  }
+  return {
+    path: path.slice(0, 500),
+    startLine: startLine as number,
+    ...(endLine !== undefined ? { endLine: endLine as number } : {}),
+    // Oversized / fenced / unified-diff suggestions are dropped whole, never
+    // truncated — a half-function inside a suggestion block applies as
+    // broken code (see isSuggestionAcceptable).
+    ...(typeof suggestion === "string" &&
+    suggestion.length > 0 &&
+    isSuggestionAcceptable(suggestion)
+      ? { suggestion }
+      : {}),
+  };
 }
 
 /**

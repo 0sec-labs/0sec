@@ -86,6 +86,12 @@ export interface CloudSinkFinding {
   evidence: CloudSinkEvidence;
   /** 0..1 agent-assessed confidence, if available. */
   confidence?: number;
+  reviewAnnotation?: {
+    path: string;
+    startLine: number;
+    endLine?: number;
+    suggestion?: string;
+  };
   /** Unix epoch milliseconds. */
   timestamp: number;
   /**
