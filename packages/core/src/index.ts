@@ -228,6 +228,46 @@ export type {
 // Exploit scan stage (agentic weaponize-to-root, injectable target executor).
 export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";
+// Domain-agnostic exploit-chain model + web/app planner (#976). Generalizes
+// ADR-058's kernel chain-planner over the capability alphabet; the web instance
+// (ADR-059's deferred `WebPrimitiveNode`) composes SSRF→metadata→RCE, IDOR→ATO,
+// SSTI→RCE, etc. The kernel planner (`kernel/exploit/chain/`) is left untouched.
+export {
+  planChains,
+  buildCompositionGraph,
+  isPlannable,
+  planWebChains,
+  buildWebCompositionGraph,
+  buildWebPrimitiveNode,
+  webFindingToPrimitiveNode,
+  categoryToWebKind,
+  defaultProvides,
+  defaultNeeds,
+  GOAL_WEB_RCE,
+  GOAL_WEB_DATA_EXFIL,
+  GOAL_WEB_ACCOUNT_TAKEOVER,
+  GOAL_WEB_SSRF_INTERNAL,
+  WEB_GOALS,
+  CANONICAL_WEB_CHAINS,
+  CHAIN_SSRF_METADATA_RCE,
+  CHAIN_IDOR_PRIVESC_ATO,
+  CHAIN_SSTI_RCE,
+  CHAIN_AUTHBYPASS_SQLI_EXFIL,
+} from "./exploit/chain/index.js";
+export type {
+  ChainDomain,
+  ChainNode,
+  ChainGoal,
+  CandidateChain,
+  CompositionEdge,
+  PlanOptions,
+  WebCapability,
+  WebPrimitiveKind,
+  WebPrimitiveNode,
+  WebNodeContext,
+  WebFindingToNodeOptions,
+  CanonicalWebChain,
+} from "./exploit/chain/index.js";
 // Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
 export { runHuntScan, makeSkepticVerifier, composeGate, makeMultiLensVerifier } from "./stages/hunt-scan.js";
 // Depth-method specialized-lens sets, per on-chain review profile. These are
