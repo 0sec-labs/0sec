@@ -54,7 +54,13 @@ type TsNode = Parser.SyntaxNode;
 /** Parse a C translation unit; returns the root node (or null on failure). */
 export function parseC(src: string): TsNode | null {
   try {
-    return parser().parse(src).rootNode;
+    // tree-sitter's default read buffer is 32KB; a source string larger than
+    // that parses to null unless we size the buffer to the input. Most real
+    // kernel .c files exceed 32KB, so without this the parser silently returns
+    // null and every downstream checker reports 0 candidates (false-clean).
+    return parser().parse(src, undefined, {
+      bufferSize: Buffer.byteLength(src, "utf8") + 8192,
+    }).rootNode;
   } catch {
     return null;
   }

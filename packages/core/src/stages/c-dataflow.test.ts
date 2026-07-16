@@ -68,6 +68,36 @@ describe("sanity: parser loads", () => {
     const root = parseC("int f(void){ return 0; }");
     expect(root?.type).toBe("translation_unit");
   });
+
+  it("parses a source larger than tree-sitter's 32KB default buffer", () => {
+    // Regression: tree-sitter's default read buffer is 32KB, so parse(src)
+    // without a sized buffer returns null for any file >=32768 bytes. Most
+    // real kernel .c files exceed that, so the bug silently made the dataflow
+    // checker a no-op (0 candidates = false-clean) on exactly the files we hunt.
+    const bigSrc = "// pad line to grow the translation unit\n".repeat(1200) +
+      "int big_fn(int x){ int y = x + 1; return y; }\n";
+    expect(bigSrc.length).toBeGreaterThan(40_000);
+    const root = parseC(bigSrc);
+    expect(root?.type).toBe("translation_unit");
+    expect(root?.childCount ?? 0).toBeGreaterThan(1);
+  });
+
+  it("runs the dataflow finder end-to-end on a >32KB translation unit", () => {
+    // The finder must still flag a real use-after-free when the buggy function
+    // sits in a large file (not silently return [] because parse() gave null).
+    const pad = "static int pad_fn_%(void){ return %; }\n";
+    const filler = Array.from({ length: 1000 }, (_, i) =>
+      pad.replaceAll("%", String(i))).join("");
+    const buggy =
+      "void use_after_free(struct conn *c){\n" +
+      "  if (c->state) { kfree(c); }\n" +
+      "  c->state = 1;\n" + // use after free on the freed branch
+      "}\n";
+    const src = filler + buggy;
+    expect(src.length).toBeGreaterThan(32_768);
+    const flags = df(src);
+    expect(flags.length).toBeGreaterThan(0);
+  });
 });
 
 // ── (a)+(e) lock HELD at the access point, cross-function naming → NO flag ────────
