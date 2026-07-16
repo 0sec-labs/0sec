@@ -64,28 +64,42 @@ export type VerifyOutcome = "confirmed" | "rejected" | "inconclusive";
  *
  * NOTE: this tuple is the 0cloud-PARITY-LOCKED set — it is asserted verbatim in
  * `verify-evidence-kind.parity.test.ts` against the cloud-contracts table. Do
- * NOT add engine-only kinds here or the parity check breaks. Additive,
- * engine-local kinds (those the cloud side does not yet derive) live in
- * {@link VERIFY_EVIDENCE_KINDS_ENGINE_EXT} and are folded into the
- * {@link VerifyEvidenceKind} union below.
- */
-export const VERIFY_EVIDENCE_KINDS = ["reproduced-poc", "source-only"] as const;
-
-/**
- * Engine-only evidence kinds, additive over the parity-locked cloud set (#698,
- * userspace/Rust memory-safety pipeline — Track C):
+ * NOT add a kind here until the SAME string has been added to the cloud-contracts
+ * `VERIFY_EVIDENCE_KINDS` table in the same coordinated change (#701), or the
+ * parity check asserts against a table the cloud side does not actually carry.
+ * Engine-only kinds the cloud side does not yet derive stage in
+ * {@link VERIFY_EVIDENCE_KINDS_ENGINE_EXT} until they graduate here, and are
+ * folded into the {@link VerifyEvidenceKind} union below.
  *
- *   `reproduced-memcorruption-poc` ⇔ a PoC actually fired under the sanitizer /
- *       Miri build — a real {@link CrashArtifact} reproduced (ASan/UBSan/MSan/
- *       Miri), not just a static or source signal. This is the memory-safety
- *       analogue of `reproduced-poc`, kept distinct so the disclosure/telemetry
- *       layers can tell a sanitizer-reproduced crash apart from a web/static
- *       PoC. Engine-local until the cloud contract adopts it — kept out of the
- *       parity-locked tuple above on purpose.
+ * `reproduced-memcorruption-poc` graduated from the engine-ext set into this
+ * parity-locked tuple in the coordinated change of #701 (adopted by cloud-
+ * contracts in lockstep): a PoC actually fired under the sanitizer / Miri build —
+ * a real {@link CrashArtifact} reproduced (ASan/UBSan/MSan/Miri), not just a
+ * static or source signal. It is the memory-safety analogue of `reproduced-poc`,
+ * kept as a distinct string so the disclosure/telemetry layers can tell a
+ * sanitizer-reproduced crash apart from a web/static PoC.
  */
-export const VERIFY_EVIDENCE_KINDS_ENGINE_EXT = [
+export const VERIFY_EVIDENCE_KINDS = [
+  "reproduced-poc",
+  "source-only",
   "reproduced-memcorruption-poc",
 ] as const;
+
+/**
+ * Engine-only evidence kinds, additive over the parity-locked cloud set — those
+ * the engine derives but the cloud contract does not yet carry. A kind stages
+ * here only while its coordinated cloud-contracts adoption is in flight; once
+ * cloud-contracts carries it, it graduates into {@link VERIFY_EVIDENCE_KINDS}
+ * above and is removed from here (that is what #701 did for
+ * `reproduced-memcorruption-poc`, the sole prior occupant).
+ *
+ * Currently EMPTY. Kept as an exported extension point (mirroring the
+ * `AUTO_SUPPRESS_*` arrays) so the next engine-only kind has a parity-safe
+ * staging home and consumers of the barrel export do not break. While empty its
+ * `[number]` is `never`, so the {@link VerifyEvidenceKind} union below is exactly
+ * {@link VERIFY_EVIDENCE_KINDS}.
+ */
+export const VERIFY_EVIDENCE_KINDS_ENGINE_EXT = [] as const;
 
 export type VerifyEvidenceKind =
   | (typeof VERIFY_EVIDENCE_KINDS)[number]
