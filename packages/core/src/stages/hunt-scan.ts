@@ -43,6 +43,7 @@ import {
 import { judgeHuntCandidatesWithLlm, type HuntCandidateJudge } from "./hunt-judge.js";
 import { HuntMemory, huntFlywheelEnabled, primedOrderKey, type HuntPriming } from "./hunt-flywheel.js";
 import { huntNegativesEnabled, matchNegative, negativeContext, type KnownNegative } from "./hunt-negatives.js";
+import { crossFamilyRefuteEnabled, selectCrossFamilyRefuter } from "./hunt-cross-family.js";
 import { scoreGeometry } from "../kernel/geometry-score.js";
 
 // Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
@@ -456,7 +457,29 @@ export function makeSkepticVerifier(opts: {
    * the skeptic prompt is byte-identical to before.
    */
   focus?: string;
+  /**
+   * OPTIONAL cross-family refuter (issue #661, `PWNKIT_HUNT_CROSS_FAMILY=1`).
+   * When enabled AND a distinct second family is available, force this refute
+   * pass onto a model of a DIFFERENT family than the finder so their errors
+   * decorrelate before a finding is promoted. Defaults to
+   * {@link crossFamilyRefuteEnabled}. OFF, or no distinct family available →
+   * the configured `model` is used unchanged (byte-identical to today).
+   */
+  crossFamilyRefute?: boolean;
+  /** Finder model/family the cross-family refuter must decorrelate from. */
+  finderModel?: string;
+  /** Alternate refuter models to pick a distinct family from, tried in order. */
+  refuterCandidates?: readonly string[];
 }): HuntVerifier {
+  // Cross-family refuter selection is static (all inputs come from opts), so
+  // resolve it ONCE. Passthrough when disabled / no distinct family → the config
+  // model and reason strings below stay byte-identical to before this existed.
+  const refuter = selectCrossFamilyRefuter({
+    enabled: opts.crossFamilyRefute ?? crossFamilyRefuteEnabled(),
+    ...(opts.finderModel ? { finderModel: opts.finderModel } : {}),
+    ...(opts.model ? { refuterModel: opts.model } : {}),
+    ...(opts.refuterCandidates ? { candidates: opts.refuterCandidates } : {}),
+  });
   return async (finding, candidate) => {
     let hint =
       `ADVERSARIAL REVIEW. A prior pass claims this finding in ${candidate.path}:\n` +
@@ -526,15 +549,20 @@ export function makeSkepticVerifier(opts: {
       timeout: 60_000,
       runtime: opts.runtime,
       repoPath: opts.sourceRoot,
-      ...(opts.model ? { model: opts.model } : {}),
+      ...(refuter.model ? { model: refuter.model } : {}),
     };
     const dbPath = freshHuntDb();
     try {
       const report = await agenticScan({ config, dbPath, challengeHint: hint });
       const survived = (report.findings ?? []).length > 0;
+      // Only annotate when a cross-family refuter actually ran — the default
+      // (same-family / disabled) reason strings stay byte-identical to today.
+      const note = refuter.crossFamily
+        ? ` (cross-family refuter: ${refuter.refuterFamily} vs finder ${refuter.finderFamily})`
+        : "";
       return survived
-        ? { confirmed: true, reason: "survived adversarial refute pass" }
-        : { confirmed: false, reason: "refuted: skeptic could not reproduce the claim from source" };
+        ? { confirmed: true, reason: `survived adversarial refute pass${note}` }
+        : { confirmed: false, reason: `refuted: skeptic could not reproduce the claim from source${note}` };
     } finally {
       cleanupHuntDb(dbPath);
     }
@@ -579,6 +607,16 @@ export interface MultiLensVerifierOptions {
   /** Optional learned-negatives context, forwarded to each skeptic pass. */
   negatives?: readonly KnownNegative[];
   /**
+   * OPTIONAL cross-family refuter (issue #661), forwarded to each skeptic pass.
+   * When enabled AND a distinct family is available, every lens refutes with a
+   * DIFFERENT family than the finder. OFF / no distinct family → byte-identical.
+   */
+  crossFamilyRefute?: boolean;
+  /** Finder model/family the cross-family refuter must decorrelate from. */
+  finderModel?: string;
+  /** Alternate refuter models to pick a distinct family from, tried in order. */
+  refuterCandidates?: readonly string[];
+  /**
    * Confirmation threshold: a finding is confirmed ONLY when 0 lenses refute it
    * AND at least `quorum` lenses survive. Default = majority `ceil(N/2)`.
    */
@@ -613,6 +651,9 @@ export function makeMultiLensVerifier(lenses: VerifyLens[], opts: MultiLensVerif
         runtime: opts.runtime,
         ...(opts.model ? { model: opts.model } : {}),
         ...(opts.negatives ? { negatives: opts.negatives } : {}),
+        ...(opts.crossFamilyRefute !== undefined ? { crossFamilyRefute: opts.crossFamilyRefute } : {}),
+        ...(opts.finderModel ? { finderModel: opts.finderModel } : {}),
+        ...(opts.refuterCandidates ? { refuterCandidates: opts.refuterCandidates } : {}),
         focus: lens.challengeHint,
       }));
   const passes = lenses.map((lens) => ({ lens, run: makePass(lens) }));

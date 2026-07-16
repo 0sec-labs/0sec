@@ -275,6 +275,12 @@ export type {
 // auto-rejects; see hunt-negatives.ts's header.
 export { huntNegativesEnabled, loadKnownNegatives, matchNegative, negativeContext, NEGATIVE_MIN } from "./stages/hunt-negatives.js";
 export type { KnownNegative, NegativeMatch } from "./stages/hunt-negatives.js";
+// Cross-family adversarial refuter (PWNKIT_HUNT_CROSS_FAMILY=1, issue #661):
+// force the refute pass onto a DIFFERENT model family than the finder before a
+// finding is promoted, so their errors decorrelate. OFF by default; see
+// hunt-cross-family.ts's header for the assume-FP-safe passthrough invariant.
+export { crossFamilyRefuteEnabled, selectCrossFamilyRefuter } from "./stages/hunt-cross-family.js";
+export type { CrossFamilyRefuteConfig, CrossFamilyRefuteChoice } from "./stages/hunt-cross-family.js";
 // Kernel archetype catalog (multi-archetype hunt seeding; ported from 0verse's
 // 90-archetype registry, kernel-domain subset). Data + brief mapping are always
 // inert/available; `planArchetypeSweep` is env-gated (PWNKIT_ARCHETYPE_SWEEP=1).
