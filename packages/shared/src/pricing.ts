@@ -40,6 +40,11 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   "glm-5.2": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-5.1": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-4.5": { input: 0.60, output: 2.20, cachedInput: 0.11 },
+  // Moonshot Kimi K3 (open-weight, hosted) — not in the OSS feed; flat-rate
+  // coding-plan estimates (mirror the GLM manual-row style).
+  "k3": { input: 3.0, output: 15.0, cachedInput: 0.30 },
+  "k3[1m]": { input: 3.0, output: 15.0, cachedInput: 0.30 },
+  "kimi-for-coding": { input: 3.0, output: 15.0, cachedInput: 0.30 },
   default: { input: 3.00, output: 15.00 },
 };
 
@@ -66,6 +71,8 @@ function normalizeModel(model: string): string {
     "mistral/",
     "z-ai/",
     "zai/",
+    "kimi/",
+    "moonshot/",
     "openrouter/",
   ];
   for (const prefix of prefixes) {
@@ -110,6 +117,7 @@ export function modelProvider(model?: string): string {
   if (lowered.startsWith("meta/")) return "meta";
   if (lowered.startsWith("mistral/")) return "mistral";
   if (lowered.startsWith("z-ai/") || lowered.startsWith("zai/")) return "z-ai";
+  if (lowered.startsWith("kimi/") || lowered.startsWith("moonshot/")) return "kimi";
   if (lowered.startsWith("openrouter/")) return "openrouter";
 
   const stripped = normalizeModel(model).toLowerCase();
@@ -120,6 +128,7 @@ export function modelProvider(model?: string): string {
   if (stripped.startsWith("llama-")) return "meta";
   if (stripped.startsWith("mistral-")) return "mistral";
   if (stripped.startsWith("glm-")) return "z-ai";
+  if (stripped.startsWith("k3") || stripped.startsWith("kimi")) return "kimi";
   return "unknown";
 }
 

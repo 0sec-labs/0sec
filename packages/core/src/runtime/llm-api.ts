@@ -317,7 +317,7 @@ const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const FREE_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "chatgpt-codex" | "z-ai";
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "chatgpt-codex" | "z-ai" | "kimi";
 type WireApi = "chat_completions" | "responses";
 
 // ── Z.ai GLM (flat-rate Coding Plan key) ───────────────────────────────
@@ -343,6 +343,20 @@ function zaiThinkingBudget(): number {
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : ZAI_DEFAULT_THINKING_BUDGET;
 }
+
+// ── Moonshot Kimi K3 (flat-rate coding key) ────────────────────────────
+//
+// Kimi K3 rides the exact same Anthropic-compatible `/v1/messages` wire +
+// header/url/parser path z-ai uses (verified live: POST
+// https://api.kimi.com/coding/v1/messages with x-api-key + model "k3" →
+// HTTP 200). It is NOT OpenAI-compatible. Unlike GLM, K3 emits native
+// `thinking` blocks on the Anthropic wire with no special body param, so
+// the z-ai-only thinking-budget fragment is deliberately NOT applied here.
+// The only kimi-specific config is the default base URL + model below
+// (override via KIMI_BASE_URL / PWNKIT_MODEL); note the base URL differs
+// from z.ai so kimi requests never hit api.z.ai.
+const KIMI_DEFAULT_BASE_URL = "https://api.kimi.com/coding";
+const KIMI_DEFAULT_MODEL = "k3";
 
 // ── ChatGPT Codex backend (subscription auth) ──────────────────────────
 //
@@ -690,6 +704,10 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (m.startsWith("glm-") || m.startsWith("z-ai/") || m.includes("glm")) {
     return process.env.Z_AI_API_KEY ? "z-ai" : undefined;
   }
+  // Kimi K3 / Moonshot.
+  if (m.startsWith("k3") || m.startsWith("kimi")) {
+    return process.env.KIMI_API_KEY ? "kimi" : undefined;
+  }
   // OpenAI GPT-5 / o-series → ChatGPT-Codex subscription if present, else OpenAI.
   if (/^gpt-|^o[1-4](?:[-_]|$)/.test(m)) {
     if (process.env.PWNKIT_CHATGPT_ACCESS_TOKEN || process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN) return "chatgpt-codex";
@@ -756,6 +774,9 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     case "z-ai":
       return { provider: "z-ai", apiKey: process.env.Z_AI_API_KEY as string,
         baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, defaultModel: ZAI_DEFAULT_MODEL, wireApi: "chat_completions" };
+    case "kimi":
+      return { provider: "kimi", apiKey: process.env.KIMI_API_KEY as string,
+        baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL, defaultModel: KIMI_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "chatgpt-codex":
       return { provider: "chatgpt-codex", apiKey: "", baseUrl: CODEX_API_ENDPOINT,
         defaultModel: process.env.PWNKIT_MODEL ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
@@ -841,6 +862,20 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       apiKey: zaiKey,
       baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL,
       defaultModel: ZAI_DEFAULT_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
+
+  // Moonshot Kimi K3 — Anthropic-compatible wire, same treatment as z-ai.
+  // Selected by KIMI_API_KEY (explicit operator opt-in). Defaults to
+  // api.kimi.com/coding — distinct from z.ai — so kimi never hits Z.ai.
+  const kimiKey = process.env.KIMI_API_KEY;
+  if (kimiKey) {
+    return {
+      provider: "kimi",
+      apiKey: kimiKey,
+      baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL,
+      defaultModel: KIMI_DEFAULT_MODEL,
       wireApi: "chat_completions",
     };
   }
@@ -1104,6 +1139,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "azure": return "Azure OpenAI";
       case "chatgpt-codex": return "ChatGPT (Codex backend)";
       case "z-ai": return "Z.ai (GLM)";
+      case "kimi": return "Kimi (Moonshot)";
     }
   }
 
@@ -1115,7 +1151,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export ANTHROPIC_API_KEY=sk-ant-...    (Anthropic — direct Claude access)\n" +
       "  export AZURE_OPENAI_API_KEY=...        (Azure OpenAI — reuse your Codex Azure provider)\n" +
       "  export OPENAI_API_KEY=sk-...           (OpenAI — direct GPT access)\n" +
-      "  export Z_AI_API_KEY=...                (Z.ai GLM — flat-rate Coding Plan, Anthropic-compatible)"
+      "  export Z_AI_API_KEY=...                (Z.ai GLM — flat-rate Coding Plan, Anthropic-compatible)\n" +
+      "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)"
     );
   }
 
