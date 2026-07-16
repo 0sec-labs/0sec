@@ -49,6 +49,11 @@ import {
   type CloudSinkAsset,
 } from "../cloud-sink.js";
 import {
+  isRepoRelativePath,
+  isSuggestionAcceptable,
+  probeFileRefTarget,
+} from "../findings-parser.js";
+import {
   probeS3Bucket,
   classifyTakeover,
   validateAwsCredentials,
@@ -3970,13 +3975,41 @@ export class ToolExecutor {
     // possible). CVE/CWE/CVSS still get checked; evidence paths get a
     // permissive pass since we have no root to compare against. In every
     // production code path scopePath IS set (it's the scan workspace).
+    const sourcePath =
+      typeof args.source_path === "string" && args.source_path.trim()
+        ? args.source_path.trim()
+        : undefined;
+    // Mirror the cloud schema's repo-relative path rule (leading `/`, drive
+    // letters, backslashes, `..` segments) at the tool boundary. Anything
+    // that passes here but fails cloud validation would 400 the ENTIRE
+    // finding POST at the sink — see findings-parser.ts isRepoRelativePath.
+    if (sourcePath && !isRepoRelativePath(sourcePath)) {
+      return buildValidationFailureResult([
+        {
+          field: "source_path",
+          reason:
+            "source_path must be repository-relative: no leading '/', drive-letter prefixes, backslashes, or parent-directory ('..') segments",
+        },
+      ]);
+    }
+    if (sourcePath && !this.ctx.scopePath) {
+      return buildValidationFailureResult([
+        {
+          field: "source_path",
+          reason: "source annotations require a scan workspace",
+        },
+      ]);
+    }
+    const evidencePaths = parseEvidencePathsArg(args.evidence_paths);
     const draft: FindingDraft = {
       cve: typeof args.cve === "string" ? args.cve : undefined,
       cwe: typeof args.cwe === "string" ? args.cwe : undefined,
       cvss: typeof args.cvss === "string" ? args.cvss : undefined,
       cvssScore:
         typeof args.cvss_score === "number" ? args.cvss_score : undefined,
-      evidence: parseEvidencePathsArg(args.evidence_paths),
+      evidence: sourcePath
+        ? [...evidencePaths, { path: sourcePath }]
+        : evidencePaths,
     };
     if (this.ctx.scopePath) {
       const validation = validateFindingDraft(draft, {
@@ -4002,6 +4035,76 @@ export class ToolExecutor {
       },
       timestamp: Date.now(),
     };
+
+    if (sourcePath) {
+      const startLine = args.source_start_line;
+      const endLine = args.source_end_line;
+      if (
+        !Number.isInteger(startLine) ||
+        (startLine as number) < 1 ||
+        (endLine !== undefined &&
+          (!Number.isInteger(endLine) ||
+            (endLine as number) < (startLine as number)))
+      ) {
+        return buildValidationFailureResult([
+          {
+            field: "source_start_line",
+            reason:
+              "source_path requires a positive integer start line and an optional end line >= start line",
+          },
+        ]);
+      }
+      // Existence + line-range probe — the SAME check the CLI findings
+      // parser runs (findings-parser.ts validateFileRef via
+      // probeFileRefTarget). A fabricated location does NOT reject the tool
+      // call: the finding is kept but downgraded exactly like a CLI-parsed
+      // finding (severity info / status false-positive / triageNote) and the
+      // unverifiable annotation is dropped. The probe never throws and
+      // yields no lineCount for directories/oversized/unreadable files, in
+      // which case the line-range check is skipped (conservative).
+      // `this.ctx.scopePath` is guaranteed set by the workspace guard above.
+      const probe = probeFileRefTarget(
+        resolve(this.ctx.scopePath!, sourcePath),
+      );
+      const lastLine =
+        endLine !== undefined ? (endLine as number) : (startLine as number);
+      if (
+        !probe.exists ||
+        (probe.lineCount !== undefined && lastLine > probe.lineCount)
+      ) {
+        finding.severity = "info";
+        finding.status = "false-positive";
+        finding.triageNote = !probe.exists
+          ? `fabricated path: ${sourcePath}`
+          : `fabricated line: ${sourcePath}:${lastLine}`;
+      } else {
+        // Oversized / fenced / unified-diff suggestions are dropped (never
+        // truncated), keeping the location — same gate as the CLI parser and
+        // the cloud sink (findings-parser.ts isSuggestionAcceptable).
+        const suggestion = args.suggested_replacement;
+        finding.reviewAnnotation = {
+          path: sourcePath,
+          startLine: startLine as number,
+          ...(endLine !== undefined ? { endLine: endLine as number } : {}),
+          ...(typeof suggestion === "string" &&
+          suggestion.length > 0 &&
+          isSuggestionAcceptable(suggestion)
+            ? { suggestion }
+            : {}),
+        };
+      }
+    } else if (
+      args.source_start_line !== undefined ||
+      args.source_end_line !== undefined ||
+      args.suggested_replacement !== undefined
+    ) {
+      return buildValidationFailureResult([
+        {
+          field: "source_path",
+          reason: "source line and replacement fields require source_path",
+        },
+      ]);
+    }
 
     // pwnkit#170 — optional structured PoC step graph. The agent passes
     // `poc_steps` as a JSON-encoded string (LLM tool call wire format). We

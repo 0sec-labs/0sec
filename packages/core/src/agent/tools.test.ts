@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, evaluateDoneCoverageGate, containsUnquotedShellChars } from "./tools.js";
+import { parseFindingsFromCliOutput } from "../findings-parser.js";
 import type { ToolContext, ToolCall } from "./types.js";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -286,6 +288,370 @@ describe("ToolExecutor", () => {
     expect(ctx.findings[0].severity).toBe("high");
     expect(ctx.findings[0].status).toBe("discovered");
     expect(ctx.findings[0].id).toBeTruthy();
+  });
+
+  it("save_finding records a workspace-contained 0review annotation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Unvalidated parser input",
+          severity: "high",
+          category: "missing-validation",
+          description: "Input reaches the parser without validation.",
+          evidence_request: "parser.ts:1",
+          evidence_response: "unsafe(input)",
+          source_path: "parser.ts",
+          source_start_line: 1,
+          suggested_replacement: "safe(validate(input))",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(ctx.findings[0]?.reviewAnnotation).toEqual({
+        path: "parser.ts",
+        startLine: 1,
+        suggestion: "safe(validate(input))",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding rejects an annotation path outside the workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Bad location",
+          severity: "medium",
+          category: "other",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "../etc/passwd",
+          source_start_line: 1,
+        },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/parent-directory|workspace/i);
+      expect(ctx.findings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding rejects a backslash annotation path (cloud schema would 400 it)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Backslash location",
+          severity: "high",
+          category: "missing-validation",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "src\\parser.ts",
+          source_start_line: 1,
+        },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/repository-relative|backslash/i);
+      expect(ctx.findings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding keeps but downgrades a finding whose source_path does not exist", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Fabricated file",
+          severity: "critical",
+          category: "missing-validation",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "app/users.php",
+          source_start_line: 43,
+        },
+      });
+      // Not a hard rejection: the finding is kept, downgraded exactly like a
+      // CLI-parsed finding citing a fabricated path, and the unverifiable
+      // annotation is dropped.
+      expect(result.success).toBe(true);
+      expect(ctx.findings).toHaveLength(1);
+      expect(ctx.findings[0].severity).toBe("info");
+      expect(ctx.findings[0].status).toBe("false-positive");
+      expect(ctx.findings[0].triageNote).toContain("fabricated path");
+      expect(ctx.findings[0].triageNote).toContain("app/users.php");
+      expect(ctx.findings[0].reviewAnnotation).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding keeps but downgrades a finding whose start line is out of range", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n"); // 1 line
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Fabricated line",
+          severity: "high",
+          category: "missing-validation",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "parser.ts",
+          source_start_line: 42,
+        },
+      });
+      expect(result.success).toBe(true);
+      expect(ctx.findings).toHaveLength(1);
+      expect(ctx.findings[0].severity).toBe("info");
+      expect(ctx.findings[0].status).toBe("false-positive");
+      expect(ctx.findings[0].triageNote).toContain("fabricated line");
+      expect(ctx.findings[0].triageNote).toContain("parser.ts:42");
+      expect(ctx.findings[0].reviewAnnotation).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding downgrades on an out-of-range end line but keeps an in-range one", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "// 1\n// 2\n// 3\n// 4\n// 5\n");
+      ctx.scopePath = root;
+
+      const bad = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "End line out of range",
+          severity: "high",
+          category: "missing-validation",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "parser.ts",
+          source_start_line: 2,
+          source_end_line: 42,
+        },
+      });
+      expect(bad.success).toBe(true);
+      expect(ctx.findings[0].status).toBe("false-positive");
+      expect(ctx.findings[0].triageNote).toContain("fabricated line");
+      expect(ctx.findings[0].reviewAnnotation).toBeUndefined();
+
+      const good = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "End line in range",
+          severity: "high",
+          category: "missing-validation",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "parser.ts",
+          source_start_line: 2,
+          source_end_line: 4,
+        },
+      });
+      expect(good.success).toBe(true);
+      expect(ctx.findings[1].severity).toBe("high");
+      expect(ctx.findings[1].status).toBe("discovered");
+      expect(ctx.findings[1].reviewAnnotation).toEqual({
+        path: "parser.ts",
+        startLine: 2,
+        endLine: 4,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding accepts a directory source_path conservatively (no line check)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      mkdirSync(join(root, "src"));
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Directory citation",
+          severity: "medium",
+          category: "missing-validation",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "src",
+          source_start_line: 1,
+        },
+      });
+      // A directory is a real path inside the workspace: not a fabrication,
+      // so the finding is kept un-downgraded and the annotation attaches
+      // (there is no line count to range-check against).
+      expect(result.success).toBe(true);
+      expect(ctx.findings[0].status).toBe("discovered");
+      expect(ctx.findings[0].reviewAnnotation).toEqual({
+        path: "src",
+        startLine: 1,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding drops an oversized suggestion instead of rejecting or truncating", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Oversized suggestion",
+          severity: "high",
+          category: "missing-validation",
+          description: "test",
+          evidence_request: "test",
+          evidence_response: "test",
+          source_path: "parser.ts",
+          source_start_line: 1,
+          suggested_replacement: "x".repeat(20_001),
+        },
+      });
+      expect(result.success).toBe(true);
+      expect(ctx.findings[0].severity).toBe("high");
+      expect(ctx.findings[0].status).toBe("discovered");
+      // Location kept, suggestion dropped whole (a truncated half-function
+      // would apply as broken code).
+      expect(ctx.findings[0].reviewAnnotation).toEqual({
+        path: "parser.ts",
+        startLine: 1,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("save_finding drops fenced or unified-diff suggestions but keeps the location", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
+      ctx.scopePath = root;
+      for (const [i, suggestion] of [
+        ["```ts", "safe(input)", "```"].join("\n"),
+        ["@@ -1,3 +1,3 @@", "-unsafe(input)", "+safe(input)"].join("\n"),
+      ].entries()) {
+        const result = await executor.execute({
+          name: "save_finding",
+          arguments: {
+            title: `Unrenderable suggestion ${i}`,
+            severity: "high",
+            category: "missing-validation",
+            description: "test",
+            // Distinct evidence prefixes keep the fuzzy dedup (pwnkit#281)
+            // from merging the two iterations — this test is about the
+            // suggestion gate, not dedup.
+            evidence_request: `test-${i}`,
+            evidence_response: "test",
+            source_path: "parser.ts",
+            source_start_line: 1,
+            suggested_replacement: suggestion,
+          },
+        });
+        expect(result.success).toBe(true);
+      }
+      expect(ctx.findings).toHaveLength(2);
+      for (const f of ctx.findings) {
+        expect(f.reviewAnnotation).toEqual({ path: "parser.ts", startLine: 1 });
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("native save_finding and CLI parsing agree on the same malicious locations", async () => {
+    // Dual-path parity: a fabricated location must produce the same outcome
+    // whether the finding arrives via the save_finding tool or via CLI
+    // output parsing (findings-parser.validateFileRef).
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "unsafe(input)\n"); // 1 line
+      ctx.scopePath = root;
+
+      const cli = parseFindingsFromCliOutput(
+        JSON.stringify({
+          findings: [
+            { title: "No such file", severity: "critical", description: "d", file: "nope.ts:1" },
+            { title: "Line out of range", severity: "high", description: "d", file: "parser.ts:42" },
+          ],
+        }),
+        { scopePath: root },
+      );
+      expect(cli).toHaveLength(2);
+      for (const f of cli) {
+        expect(f.severity).toBe("info");
+        expect(f.status).toBe("false-positive");
+        expect(f.reviewAnnotation).toBeUndefined();
+      }
+      expect(cli[0].triageNote).toContain("fabricated path");
+      expect(cli[1].triageNote).toContain("fabricated line");
+
+      for (const args of [
+        {
+          title: "No such file",
+          severity: "critical",
+          source_path: "nope.ts",
+          source_start_line: 1,
+        },
+        {
+          title: "Line out of range",
+          severity: "high",
+          source_path: "parser.ts",
+          source_start_line: 42,
+        },
+      ]) {
+        const result = await executor.execute({
+          name: "save_finding",
+          arguments: {
+            ...args,
+            category: "missing-validation",
+            description: "d",
+            evidence_request: "test",
+            evidence_response: "test",
+          },
+        });
+        expect(result.success).toBe(true);
+      }
+      expect(ctx.findings).toHaveLength(2);
+      for (const f of ctx.findings) {
+        expect(f.severity).toBe("info");
+        expect(f.status).toBe("false-positive");
+        expect(f.reviewAnnotation).toBeUndefined();
+      }
+      expect(ctx.findings[0].triageNote).toContain("fabricated path");
+      expect(ctx.findings[1].triageNote).toContain("fabricated line");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   // ── save_finding pocSteps emission (pwnkit#179) ──

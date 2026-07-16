@@ -20,7 +20,7 @@ describe("validateFileRef", () => {
     scope = mkdtempSync(join(tmpdir(), "pwnkit-parser-test-"));
     writeFileSync(join(scope, "package.json"), "{}");
     mkdirSync(join(scope, "src"));
-    writeFileSync(join(scope, "src", "index.ts"), "// real file");
+    writeFileSync(join(scope, "src", "index.ts"), "// 1\n// 2\n// 3\n// 4\n// real file");
   });
 
   afterEach(() => {
@@ -60,6 +60,21 @@ describe("validateFileRef", () => {
     expect(validateFileRef("../../../etc/passwd", undefined)).toEqual({ valid: true });
   });
 
+  it("accepts a directory with a line ref without throwing (conservative: skip the line check)", () => {
+    // existsSync is true for directories — the old readFileSync line count
+    // crashed with EISDIR here and took every finding in the output with it.
+    expect(validateFileRef("src:1", scope)).toEqual({ valid: true });
+    expect(validateFileRef("src:9999", scope)).toEqual({ valid: true });
+  });
+
+  it("skips the line check for oversized files instead of reading them whole", () => {
+    // 4 MiB + 1 byte of newline-free content: the probe must not read it, so
+    // an out-of-range line ref is conservatively accepted, not rejected.
+    const big = join(scope, "big.min.js");
+    writeFileSync(big, "x".repeat(4 * 1024 * 1024 + 1));
+    expect(validateFileRef("big.min.js:999999", scope)).toEqual({ valid: true });
+  });
+
   it("returns valid for an empty file ref (nothing to validate)", () => {
     expect(validateFileRef("", scope)).toEqual({ valid: true });
     expect(validateFileRef("   ", scope)).toEqual({ valid: true });
@@ -95,6 +110,29 @@ file: package.json:1
     expect(findings[0].severity).toBe("high");
     expect(findings[0].status).toBe("discovered");
     expect(findings[0].triageNote).toBeUndefined();
+    expect(findings[0].reviewAnnotation).toEqual({
+      path: "package.json",
+      startLine: 1,
+    });
+  });
+
+  it("captures an exact CLI replacement as a review suggestion", () => {
+    const output = `
+---FINDING---
+title: Unsafe parser
+severity: high
+category: code-injection
+description: Untrusted input reaches eval
+file: src/index.ts:1
+suggested_replacement: return parseSafe(input);
+---END---
+`;
+    const findings = parseFindingsFromCliOutput(output, { scopePath: scope });
+    expect(findings[0]?.reviewAnnotation).toEqual({
+      path: "src/index.ts",
+      startLine: 1,
+      suggestion: "return parseSafe(input);",
+    });
   });
 
   it("downgrades a finding citing a fabricated path", () => {
@@ -133,6 +171,7 @@ file: app/users.php:43
     expect(findings[0].severity).toBe("high");
     expect(findings[0].status).toBe("discovered");
     expect(findings[0].triageNote).toBeUndefined();
+    expect(findings[0].reviewAnnotation).toBeUndefined();
   });
 
   it("parses linux-kernel structured fields without folding them into category", () => {
@@ -216,6 +255,54 @@ file: ../../../etc/passwd
     expect(findings[0].triageNote).toContain("fabricated path");
   });
 
+  it("survives a directory-with-line citation without discarding any findings", () => {
+    // Regression: readFileSync on a directory threw EISDIR out of
+    // parseFindingsFromCliOutput, crashing/discarding ALL findings.
+    const output = `
+---FINDING---
+title: Directory citation
+severity: high
+category: injection
+description: Agent cited a directory with a line number
+file: src:1
+---END---
+---FINDING---
+title: Real bug
+severity: medium
+category: auth
+description: Bug in src/index.ts
+file: src/index.ts:1
+---END---
+`;
+    const findings = parseFindingsFromCliOutput(output, { scopePath: scope });
+    expect(findings).toHaveLength(2);
+    // Conservative: directory exists, so no downgrade — but no line check.
+    expect(findings[0].status).toBe("discovered");
+    expect(findings[0].triageNote).toBeUndefined();
+    expect(findings[0].reviewAnnotation).toEqual({ path: "src", startLine: 1 });
+    expect(findings[1].status).toBe("discovered");
+  });
+
+  it("drops an oversized suggestion instead of truncating it (location kept)", () => {
+    const output = `
+---FINDING---
+title: Oversized suggestion
+severity: high
+category: injection
+description: Replacement exceeds the 20k cloud cap
+file: src/index.ts:1
+suggested_replacement: ${"x".repeat(20_001)}
+---END---
+`;
+    const findings = parseFindingsFromCliOutput(output, { scopePath: scope });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].status).toBe("discovered");
+    expect(findings[0].reviewAnnotation).toEqual({
+      path: "src/index.ts",
+      startLine: 1,
+    });
+  });
+
   it("promotes a C/C++ structured finding when sanitizer_log parses", () => {
     mkdirSync(join(scope, "src"), { recursive: true });
     writeFileSync(join(scope, "src", "decoder.c"), "int decode(void) { return 0; }");
@@ -285,6 +372,7 @@ describe("parseFindingsFromCliOutput — JSON output with scopePath", () => {
           category: "injection",
           description: "Issue",
           file: "package.json:1",
+          suggested_replacement: "{\"scripts\": {}}",
         },
       ],
     });
@@ -293,10 +381,15 @@ describe("parseFindingsFromCliOutput — JSON output with scopePath", () => {
     expect(findings[0].severity).toBe("high");
     expect(findings[0].status).toBe("discovered");
     expect(findings[0].triageNote).toBeUndefined();
+    expect(findings[0].reviewAnnotation).toEqual({
+      path: "package.json",
+      startLine: 1,
+      suggestion: '{"scripts": {}}',
+    });
   });
 
   it("promotes JSON findings with sanitizer_log evidence", () => {
-    writeFileSync(join(scope, "test.cc"), "int main() { return 0; }");
+    writeFileSync(join(scope, "test.cc"), "#include <limits>\n\nint main() { return 0; }");
     const output = JSON.stringify({
       findings: [
         {
@@ -314,5 +407,37 @@ describe("parseFindingsFromCliOutput — JSON output with scopePath", () => {
     expect(findings[0].status).toBe("confirmed");
     expect(findings[0].category).toBe("integer-overflow");
     expect(findings[0].evidence.analysis).toContain("UBSAN signed-integer-overflow");
+  });
+
+  it("drops fenced or unified-diff suggestions (location kept)", () => {
+    writeFileSync(join(scope, "a.ts"), "// 1\n// 2\n// 3");
+    const fence = ["```ts", "safe(input)", "```"].join("\n");
+    const diff = ["@@ -1,3 +1,3 @@", "-unsafe(input)", "+safe(input)"].join("\n");
+    const output = JSON.stringify({
+      findings: [
+        { title: "Fenced", severity: "high", description: "d", file: "a.ts:1", suggested_replacement: fence },
+        { title: "Diff", severity: "high", description: "d", file: "a.ts:2", suggested_replacement: diff },
+      ],
+    });
+    const findings = parseFindingsFromCliOutput(output, { scopePath: scope });
+    expect(findings).toHaveLength(2);
+    // Fenced / diff content renders broken inside a GitHub suggestion block —
+    // dropped whole, never shipped.
+    expect(findings[0].reviewAnnotation).toEqual({ path: "a.ts", startLine: 1 });
+    expect(findings[1].reviewAnnotation).toEqual({ path: "a.ts", startLine: 2 });
+  });
+
+  it("survives a directory-with-line citation in JSON output without discarding findings", () => {
+    mkdirSync(join(scope, "src"));
+    const output = JSON.stringify({
+      findings: [
+        { title: "Directory citation", severity: "high", description: "d", file: "src:1" },
+        { title: "Real bug", severity: "medium", description: "d", file: "package.json:1" },
+      ],
+    });
+    const findings = parseFindingsFromCliOutput(output, { scopePath: scope });
+    expect(findings).toHaveLength(2);
+    expect(findings[0].status).toBe("discovered");
+    expect(findings[1].status).toBe("discovered");
   });
 });

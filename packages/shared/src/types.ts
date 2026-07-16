@@ -545,6 +545,19 @@ export interface Finding {
   cvssScore?: number; // CVSS numeric score (0–10)
   remediation?: FindingRemediation;
   /**
+   * Structured source location for CI review annotations. Populated only when
+   * the agent cites an exact workspace-contained path and line range at
+   * save_finding time. Consumers must still intersect this with the provider's
+   * changed-line map before posting an inline comment.
+   */
+  reviewAnnotation?: {
+    path: string;
+    startLine: number;
+    endLine?: number;
+    /** Replacement text for a provider-native suggestion block. */
+    suggestion?: string;
+  };
+  /**
    * Ordered proof-of-concept step graph (pwnkit#170). Optional and additive —
    * findings produced before this field existed leave it undefined, and every
    * renderer/exporter/sink must continue to work in that case. When populated,

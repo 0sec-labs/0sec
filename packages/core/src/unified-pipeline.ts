@@ -606,6 +606,7 @@ severity: <critical|high|medium|low|info>
 category: <prototype-pollution|redos|path-traversal|command-injection|code-injection|unsafe-deserialization|ssrf|information-disclosure|missing-validation|other>
 description: <detailed description of the vulnerability, how to exploit it, and suggested PoC>
 file: <path/to/file.js:lineNumber>
+suggested_replacement: <optional exact replacement for the cited source line or range>
 ---END---
 
 Output as many ---FINDING--- blocks as needed. Be precise and honest about severity.`;
