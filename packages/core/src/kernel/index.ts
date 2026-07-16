@@ -264,3 +264,34 @@ export type {
 } from "./checker-synthesis.js";
 export { scanForPatchGapCandidates } from "./patch-gap.js";
 export type { PatchGapCandidate, PatchGapScanOptions, PatchGapScanResult } from "./patch-gap.js";
+
+// Engine F — LLM-semantic vendor/downstream fork bug-diff. Vendor kernels
+// (Android/AOSP, RHEL, SUSE, ChromeOS, BSPs) are under-audited by construction:
+// mainline review + syzbot don't cover them. Two halves — (1) MISSING-BACKPORT
+// reuses the checker-synthesis spine to detect a mainline fix's guard absent in
+// the vendor tree; (2) VENDOR-ONLY-CODE diffs out files/functions that exist
+// only downstream and hunts them through the finder→skeptic→prover gate. e2e
+// needs a vendor tree checked out next to a mainline tree (bench).
+export {
+  defaultForkTreeIo,
+  checkVendorForMissingBackport,
+  huntMissingBackports,
+  missingBackportHitToFinding,
+  extractFunctionDefs,
+  enumerateVendorOnlyFiles,
+  enumerateVendorAddedFunctions,
+  computeVendorForkDiff,
+  runVendorForkDiffHunt,
+} from "./fork-diff.js";
+export type {
+  ForkTreeIo,
+  MissingBackportHit,
+  MissingBackportHuntOptions,
+  MissingBackportEntry,
+  MissingBackportResult,
+  FunctionDef,
+  VendorAddedFunction,
+  VendorForkDiffOptions,
+  VendorForkDiff,
+  RunVendorForkDiffHuntOptions,
+} from "./fork-diff.js";
