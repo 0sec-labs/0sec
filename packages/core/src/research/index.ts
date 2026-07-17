@@ -105,3 +105,9 @@ export type {
   UnifiedPipelineTargetConfig,
   UnifiedPipelineCandidate,
 } from "./adapters/unified-pipeline-adapter.js";
+export { LiveAgenticScanResearchAdapter } from "./adapters/live-agentic-scan-adapter.js";
+export type {
+  LiveAgenticScanTarget,
+  LiveAgenticScanTargetConfig,
+  LiveAgenticScanCandidate,
+} from "./adapters/live-agentic-scan-adapter.js";

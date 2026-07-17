@@ -48,6 +48,7 @@ describe("research control-plane primitives", () => {
       "hunt.agentic",
       "linux.kernel-boot-matrix-import",
       "linux.kernel-reproducer",
+      "live.agentic-scan",
       "mobile.static-intake",
       "pipeline.unified",
       "protocol.http-conformance",
