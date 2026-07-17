@@ -485,6 +485,24 @@ export const features = {
   get lootLedger(): boolean {
     return env("PWNKIT_FEATURE_LOOT_LEDGER", true);
   },
+
+  /**
+   * OAST out-of-band interaction collaborator + oracle (#659).
+   *
+   * When ON, the attack/verify agents get `oast_register` / `oast_poll` to
+   * confirm blind/out-of-band classes (blind SSRF/XSS, OOB RCE/SQLi, XXE-OOB,
+   * JNDI) via a hosted DNS+HTTP callback server we control, with
+   * correlation-token matching. A confirmed callback is disclosure-grade
+   * evidence and feeds the loot ledger.
+   *
+   * Default OFF — the tools are inert without a deployed collaborator. Enable
+   * with PWNKIT_FEATURE_OAST=1 AND point PWNKIT_OAST_URL at the self-hosted
+   * collaborator server (see packages/core/src/oast/server.ts). Getter (not a
+   * const) so the CLI `--features` flag is honored at tool-dispatch time.
+   */
+  get oastCollaborator(): boolean {
+    return env("PWNKIT_FEATURE_OAST", false);
+  },
 };
 
 function env(key: string, defaultValue: boolean): boolean {

@@ -4,6 +4,7 @@ import type { RateLimiter } from "../scope/rate-limit.js";
 import type { AttributionConfig } from "../scope/attribution.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import type { LootLedger } from "./loot.js";
+import type { OastCollaborator } from "../oast/types.js";
 import type { SessionEngine } from "./session.js";
 import type { WafDetector } from "../scope/waf-detect.js";
 
@@ -245,6 +246,16 @@ export interface ToolContext {
    * undefined otherwise so the default scan path is unchanged.
    */
   loot?: LootLedger;
+  /**
+   * Hosted OAST interaction collaborator (pwnkit#659). When set, the
+   * `oast_register` / `oast_poll` tools mint unique interaction handles and
+   * poll for DNS/HTTP/LDAP callbacks to confirm blind/out-of-band classes
+   * (blind SSRF/XSS, OOB RCE/SQLi, XXE-OOB, JNDI) via correlation-token
+   * matching. Created only when `features.oastCollaborator` is on AND a
+   * collaborator server is configured (PWNKIT_OAST_URL); undefined otherwise,
+   * in which case the OAST tools return a graceful "not deployed" result.
+   */
+  oast?: OastCollaborator;
 }
 
 // ── Dispatch Mode (pwnkit#232) ──

@@ -212,7 +212,7 @@ const CATEGORY_ADDENDUMS: Record<VulnCategory, CategoryAddendum> = {
 - Check if redirects are followed (open redirect chaining).`,
     payload_validation: `SSRF payload checks:
 - Does the server make a request to the attacker-controlled or internal URL?
-- For blind SSRF: use an out-of-band detection server (Burp Collaborator, webhook.site).
+- For blind SSRF: register an OAST handle with the \`oast_register\` tool, inject its http_url/dns_host as the SSRF target, then \`oast_poll\` — a token-matched DNS/HTTP callback is concrete proof (pwnkit#659). Fall back to an external collaborator (Burp, webhook.site) only if OAST is not deployed.
 - For internal SSRF: does the response contain internal service data (169.254.169.254, localhost)?
 - Check that the response is from the internal service, not an error page or WAF block.
 - DNS resolution must happen server-side, not client-side.`,
