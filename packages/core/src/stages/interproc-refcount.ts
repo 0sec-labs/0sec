@@ -114,6 +114,91 @@ function fieldOf(key: string): string {
   return idx === -1 ? "" : key.slice(idx + 2).replace(/\[\]$/, "");
 }
 
+// ── Refinement 3: rule-quality filter (reject non-refcount pairs) ────────────────
+
+/**
+ * Function tokens that are NOT symmetric object-refcount get/put pairs — the LLM
+ * model-build injected these as `refcountRules` and they generated pure FP noise.
+ * A rule whose get OR put token is on this list is rejected before the checker
+ * runs. Grouped by why they are not a refcount coupling:
+ *   • plain atomic counters (`atomic_t`, not `refcount_t`) — a bare inc/dec is a
+ *     counter, not an object-lifetime refcount, so "no put reaches it" is noise;
+ *   • allocation pairs — `kzalloc`/`kfree` etc. are ownership by allocation, a
+ *     different (and separately-modeled) discipline, not a get/put refcount;
+ *   • page refs and module refs — real refcounts, but on `struct page` / a module,
+ *     never the modeled subsystem object, so they false-couple everything;
+ *   • `sk_msg_alloc` and friends — buffer allocation, not a refcount.
+ * NB: `refcount_inc`/`refcount_dec` (the real refcount_t API) and named object
+ * gets/puts (`sock_hold`/`sock_put`, `get_pid`/`put_pid`, …) are deliberately NOT
+ * here — they are exactly what the checker exists to pair.
+ */
+const NON_REFCOUNT_TOKENS = new Set<string>([
+  // plain atomic counters
+  "atomic_inc", "atomic_dec", "atomic_add", "atomic_sub", "atomic_inc_return",
+  "atomic_dec_return", "atomic_dec_and_test", "atomic_add_return", "atomic64_inc",
+  "atomic64_dec", "atomic_long_inc", "atomic_long_dec", "atomic_fetch_inc", "atomic_fetch_dec",
+  // allocation pairs (ownership-by-alloc, not a get/put refcount)
+  "kzalloc", "kmalloc", "kcalloc", "kvzalloc", "kvmalloc", "vmalloc", "vzalloc",
+  "kfree", "kvfree", "vfree", "kmem_cache_alloc", "kmem_cache_zalloc", "kmem_cache_free",
+  "alloc_skb", "alloc_skb_with_frags", "kfree_skb", "consume_skb", "skb_free",
+  "sk_msg_alloc", "sk_msg_free", "sk_msg_free_nocharge", "napi_alloc_skb",
+  // page refs (never the modeled object)
+  "get_page", "put_page", "__free_page", "__free_pages", "free_page", "free_pages",
+  "get_user_pages", "put_user_page",
+  // module refs (never the modeled object)
+  "try_module_get", "__module_get", "module_put",
+]);
+
+const GET_TOKENS = ["get", "hold", "grab", "_inc", "acquire", "pin", "_ref", "take"];
+const PUT_TOKENS = ["put", "_free", "release", "_dec", "drop", "unref", "unpin", "destroy", "kill"];
+
+const looksIdentifier = (s: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s);
+
+/**
+ * Refinement 3. TRUE when `rule` is a plausible symmetric object-refcount get/put
+ * pair — a named get with a matching named put on the same object type. Rejects:
+ *   • parse junk (`fn=void`, `fn=pf`, empty, non-identifier tokens);
+ *   • get === put;
+ *   • either side on {@link NON_REFCOUNT_TOKENS} (atomic counters, alloc pairs,
+ *     page/module refs, `sk_msg_alloc`);
+ *   • pairs whose get does not read like a get and whose put does not read like a
+ *     put AND which share no object stem — i.e. not a symmetric acquire/release.
+ * This runs BEFORE wrapper resolution, so the noise never reaches the call graph.
+ */
+export function isRefcountLikeRule(rule: RefcountRule): boolean {
+  const g = (rule.getFn ?? "").trim();
+  const p = (rule.putFn ?? "").trim();
+  if (!g || !p || !looksIdentifier(g) || !looksIdentifier(p)) return false;
+  if (g === p) return false;
+  const gl = g.toLowerCase();
+  const pl = p.toLowerCase();
+  if (NON_REFCOUNT_TOKENS.has(gl) || NON_REFCOUNT_TOKENS.has(pl)) return false;
+  const gLooksGet = GET_TOKENS.some((t) => gl.includes(t));
+  const pLooksPut = PUT_TOKENS.some((t) => pl.includes(t));
+  if (gLooksGet && pLooksPut) return true;
+  // Fallback: a shared object stem (>=4 chars) with at least one side reading as
+  // an acquire/release still counts (`foo_ref`/`foo_unref` where a token is fuzzy).
+  const stem = (s: string) => s.replace(/^(__|_)+/, "").split("_")[0] ?? "";
+  const shareStem = stem(gl).length >= 4 && stem(gl) === stem(pl);
+  return shareStem && (gLooksGet || pLooksPut);
+}
+
+// ── Destructor-family recognition (refinement 1) ─────────────────────────────────
+
+/**
+ * TRUE when a function name reads as an object destructor / free / release / put /
+ * evict path. Refinement 1 treats a put-op inside such a function as a genuine
+ * release of the freed object's fields — the #1 FP was a get stored into
+ * `obj->field` (`sk->sk_peer_pid = get_pid(...)`) whose only release lives in the
+ * object's destructor (`__sk_destruct`: `put_pid(sk->sk_peer_pid)`), a different
+ * function the pairing has to reach.
+ */
+export function isDestructorFamily(name: string): boolean {
+  return /(?:_|^)(?:destruct(?:or)?|dtor|free|release|evict|reclaim|destroy|put|dealloc|cleanup|teardown|drop|kill)(?:_|$)/i.test(
+    name,
+  );
+}
+
 // ── Lightweight per-function extraction (calls, aliases, returns, params) ────────
 
 /** A call effect inside a function body. */
@@ -123,6 +208,15 @@ interface CallEv {
   arg0Key: string;
   /** lvalue this call's result is assigned to (`x = f(...)` / `T x = f(...)`), or undefined. */
   resultKey?: string;
+  /**
+   * TRUE when this call expression is itself the returned value
+   * (`return f(...)`, through parens/casts) — the call's result (an acquired
+   * ref, for a get-op) is handed straight to the caller. Multi-hop
+   * return-ownership (refinement 2) relies on this: the 1-hop `x = f(); return x`
+   * shape was already tracked via {@link resultKey} + returnBases, but the inline
+   * `return f(...)` shape produced NO resultKey and was mis-scored as a leak.
+   */
+  returnedInline: boolean;
   line: number;
 }
 
@@ -133,6 +227,14 @@ interface AliasEv {
   line: number;
 }
 
+/** A `local = base->field` copy — lets a later `put(local)` resolve to the field. */
+interface FieldAliasEv {
+  /** The plain local identifier the field was copied into. */
+  local: string;
+  /** The trailing field name the local aliases (`sk_peer_pid`). */
+  field: string;
+}
+
 /** One function definition + its extracted refcount-relevant events. */
 export interface FnDef {
   name: string;
@@ -140,6 +242,8 @@ export interface FnDef {
   startLine: number;
   calls: CallEv[];
   aliases: AliasEv[];
+  /** `local = base->field` copies (so `put(local)` resolves to `->field`). */
+  fieldAliases: FieldAliasEv[];
   /** Leading identifiers of every `return <expr>` (for get-wrapper detection). */
   returnBases: Set<string>;
   /** Parameter identifier names (for put-wrapper detection). */
@@ -180,6 +284,25 @@ function calleeName(call: TsNode, src: string): string {
   return fn && fn.type === "identifier" ? src.slice(fn.startIndex, fn.endIndex) : "";
 }
 
+/**
+ * TRUE when `call` is the value of an enclosing `return` (`return f(...)`,
+ * looking through parenthesized/cast wrappers). Used for inline
+ * return-ownership: `return get(x);` transfers the acquired ref to the caller.
+ */
+function isReturnedInline(call: TsNode): boolean {
+  let n: TsNode = call;
+  for (;;) {
+    const parent: TsNode | null = n.parent;
+    if (!parent) return false;
+    if (parent.type === "return_statement") return true;
+    if (parent.type === "parenthesized_expression" || parent.type === "cast_expression") {
+      n = parent;
+      continue;
+    }
+    return false;
+  }
+}
+
 /** Determine the lvalue a call's result is bound to, from the call's parent. */
 function resultKeyOf(call: TsNode, src: string): string | undefined {
   const p = call.parent;
@@ -197,10 +320,35 @@ function resultKeyOf(call: TsNode, src: string): string | undefined {
 }
 
 /** Walk one function body, collecting calls / alias-copies / returns. */
-function extractBody(body: TsNode, src: string): Pick<FnDef, "calls" | "aliases" | "returnBases"> {
+function extractBody(body: TsNode, src: string): Pick<FnDef, "calls" | "aliases" | "fieldAliases" | "returnBases"> {
   const calls: CallEv[] = [];
   const aliases: AliasEv[] = [];
+  const fieldAliases: FieldAliasEv[] = [];
   const returnBases = new Set<string>();
+
+  // Record `local = <field expr>` so a later `put(local)` resolves to the field.
+  // `local` may be a bare identifier (assignment) or wrapped in pointer/paren
+  // declarators (`struct pid *pid = sk->field`) — drill to the plain identifier.
+  const noteFieldAlias = (localName: string | null, valueNode: TsNode): void => {
+    if (!localName || valueNode.type !== "field_expression") return;
+    const field = fieldOf(canon(valueNode, src));
+    if (field) fieldAliases.push({ local: localName, field });
+  };
+  /** Plain local name of a declarator (drills pointer/paren declarators); null for array/fn. */
+  const declLocalName = (decl: TsNode | null): string | null => {
+    let d: TsNode | null = decl;
+    const seen = new Set<number>();
+    while (d && !seen.has(d.id)) {
+      seen.add(d.id);
+      if (d.type === "identifier") return src.slice(d.startIndex, d.endIndex);
+      if (d.type === "pointer_declarator" || d.type === "parenthesized_declarator") {
+        d = d.childForFieldName("declarator") ?? d.namedChildren.find((c) => c.type.endsWith("declarator") || c.type === "identifier") ?? null;
+        continue;
+      }
+      return null; // array/function declarator — not a simple local
+    }
+    return null;
+  };
 
   const walk = (n: TsNode): void => {
     switch (n.type) {
@@ -213,6 +361,7 @@ function extractBody(body: TsNode, src: string): Pick<FnDef, "calls" | "aliases"
             callee,
             arg0Key: a0 ? canon(a0, src) : "",
             ...(resultKeyOf(n, src) ? { resultKey: resultKeyOf(n, src) } : {}),
+            returnedInline: isReturnedInline(n),
             line: line1(n),
           });
         }
@@ -225,6 +374,7 @@ function extractBody(body: TsNode, src: string): Pick<FnDef, "calls" | "aliases"
         if (left && right && right.type === "identifier") {
           aliases.push({ lhsKey: canon(left, src), rhsIdent: src.slice(right.startIndex, right.endIndex), line: line1(n) });
         }
+        if (left && right) noteFieldAlias(left.type === "identifier" ? src.slice(left.startIndex, left.endIndex) : null, right);
         break;
       }
       case "init_declarator": {
@@ -233,6 +383,7 @@ function extractBody(body: TsNode, src: string): Pick<FnDef, "calls" | "aliases"
         if (decl && decl.type === "identifier" && value && value.type === "identifier") {
           aliases.push({ lhsKey: src.slice(decl.startIndex, decl.endIndex), rhsIdent: src.slice(value.startIndex, value.endIndex), line: line1(n) });
         }
+        if (decl && value) noteFieldAlias(declLocalName(decl), value);
         break;
       }
       case "return_statement": {
@@ -244,7 +395,7 @@ function extractBody(body: TsNode, src: string): Pick<FnDef, "calls" | "aliases"
     for (const c of n.namedChildren) walk(c);
   };
   walk(body);
-  return { calls, aliases, returnBases };
+  return { calls, aliases, fieldAliases, returnBases };
 }
 
 /** Collect every top-level function_definition in a parsed file. */
@@ -254,13 +405,14 @@ function collectFnDefs(root: TsNode, src: string, file: string): FnDef[] {
     if (n.type === "function_definition") {
       const body = n.childForFieldName("body");
       if (body && body.type === "compound_statement") {
-        const { calls, aliases, returnBases } = extractBody(body, src);
+        const { calls, aliases, fieldAliases, returnBases } = extractBody(body, src);
         out.push({
           name: fnName(n, src),
           file,
           startLine: line1(n),
           calls,
           aliases,
+          fieldAliases,
           returnBases,
           params: extractParams(n, src),
         });
@@ -365,14 +517,18 @@ export function resolveWrapperOps(cg: CallGraph, rule: RefcountRule): ResolvedOp
   for (let iter = 0; iter < cg.fns.length + 2; iter++) {
     let changed = false;
     for (const fn of cg.fns) {
-      // GET-WRAPPER: calls a get-op whose produced ref key is among the returns.
+      // GET-WRAPPER: calls a get-op and RETURNS the acquired ref — either as a
+      // named var (`x = get(); return x`) or inline (`return get(...)`). The
+      // inline form is refinement 2's fix: it produced no result key, so the
+      // fixpoint never promoted it and its callers were mis-scored as leaks.
       if (!getOps.has(fn.name)) {
         for (const call of fn.calls) {
           const seed = getOps.get(call.callee);
           if (!seed) continue;
           // produced ref = result of a wrapper call, or the arg0 of the raw getFn.
           const produced = call.resultKey ? firstIdent(call.resultKey) : firstIdent(call.arg0Key);
-          if (produced && fn.returnBases.has(produced)) {
+          const returnsAcquired = call.returnedInline || (!!produced && fn.returnBases.has(produced));
+          if (returnsAcquired) {
             getOps.set(fn.name, {
               via: fn.name,
               resolvedFile: seed.resolvedFile || fn.file,
@@ -437,6 +593,10 @@ export interface PutSite {
   rawOp: string;
   /** How this put was paired to the get: same variable, or same stored field. */
   matchedBy: "same-var" | "stored-field";
+  /** TRUE when this put lives in a destructor/free/release-family function. */
+  fromDestructor: boolean;
+  /** TRUE when `argField` was recovered from a `local = base->field` copy. */
+  fieldViaAlias: boolean;
 }
 
 /**
@@ -497,26 +657,50 @@ export function findInterprocRefcountCouplings(
   const cg = buildCallGraph(sources);
   const couplings: RefcountCoupling[] = [];
 
+  let rejectedRules = 0;
   for (const obj of model.objects) {
     for (const rule of obj.refcountRules) {
+      // Refinement 3: drop non-refcount pairs (atomic counters, alloc pairs,
+      // page/module refs, parse junk) before they reach the call graph.
+      if (!isRefcountLikeRule(rule)) {
+        rejectedRules++;
+        log(`[interproc-refcount] rejected non-refcount rule "${rule.name}" (${rule.getFn}/${rule.putFn})`);
+        continue;
+      }
       const { getOps, putOps } = resolveWrapperOps(cg, rule);
 
       // Global put-site index for this rule.
       const allPuts: PutSite[] = [];
       for (const fn of cg.fns) {
+        const inDestructor = isDestructorFamily(fn.name);
         for (const call of fn.calls) {
           const seed = putOps.get(call.callee);
           if (!seed) continue;
+          // Refinement 1: recover the field a plain-local put targets when the
+          // local was copied from `base->field` (`pid = sk->sk_peer_pid;
+          // put_pid(pid);`) — common in destructors.
+          let argField = fieldOf(call.arg0Key);
+          let fieldViaAlias = false;
+          if (!argField) {
+            const local = firstIdent(call.arg0Key);
+            const fa = fn.fieldAliases.find((a) => a.local === local);
+            if (fa) {
+              argField = fa.field;
+              fieldViaAlias = true;
+            }
+          }
           allPuts.push({
             fn: fn.name,
             file: fn.file,
             line: call.line,
             callee: call.callee,
             arg0: call.arg0Key,
-            argField: fieldOf(call.arg0Key),
+            argField,
             resolvedFile: seed.resolvedFile || fn.file,
             rawOp: seed.rawOp,
             matchedBy: "same-var", // refined per get below
+            fromDestructor: inDestructor,
+            fieldViaAlias,
           });
         }
       }
@@ -530,10 +714,14 @@ export function findInterprocRefcountCouplings(
           if (!refVar) continue;
           const refBase = firstIdent(refVar);
 
-          // Did this function store the ref into a field (`field = refVar`)?
-          const storedField = fn.aliases.find((a) => a.rhsIdent === refBase && fieldOf(a.lhsKey))
-            ? fieldOf(fn.aliases.find((a) => a.rhsIdent === refBase && fieldOf(a.lhsKey))!.lhsKey)
-            : undefined;
+          // Where did the acquired ref get parked? Refinement 1 handles BOTH:
+          //   (a) a separate `field = refVar` copy after the get; and
+          //   (b) the get result assigned DIRECTLY into a field
+          //       (`sk->sk_peer_pid = get_pid(...)`) — resultKey IS the field, so
+          //       fieldOf(refVar) recovers it. Case (b) was the #1 FP: with no
+          //       storedField the cross-function destructor put never matched.
+          const aliasStore = fn.aliases.find((a) => a.rhsIdent === refBase && fieldOf(a.lhsKey));
+          const storedField = aliasStore ? fieldOf(aliasStore.lhsKey) : fieldOf(refVar) || undefined;
 
           const getSite: GetSite = {
             fn: fn.name,
@@ -564,8 +752,11 @@ export function findInterprocRefcountCouplings(
 
           // Ownership can also leave the function by being RETURNED to the caller
           // (`sock_hold(sk); return sk;` — a get-wrapper's own body). That is a
-          // transfer, not a leak: the caller owns the release.
-          const returnedToCaller = fn.returnBases.has(refBase);
+          // transfer, not a leak: the caller owns the release. Refinement 2 adds
+          // the inline form `return get(...)` (no result var) — the acquired ref
+          // is the return value — which the 1-hop var check missed; combined with
+          // inline-return wrapper promotion this makes return-ownership multi-hop.
+          const returnedToCaller = fn.returnBases.has(refBase) || call.returnedInline;
 
           // VERDICT (first-increment, deliberately conservative):
           //   • a matching release present            → balanced
@@ -594,6 +785,8 @@ export function findInterprocRefcountCouplings(
                   .map(
                     (p) =>
                       `${p.callee}(${p.arg0}) @ ${p.file}:${p.line} [${p.matchedBy}${
+                        p.fromDestructor ? " in destructor/free-path" : ""
+                      }${p.fieldViaAlias ? " (field via local copy)" : ""}${
                         p.callee !== rule.putFn ? ` → ${p.rawOp}() @ ${p.resolvedFile}` : ""
                       }]`,
                   )
@@ -644,6 +837,7 @@ export function findInterprocRefcountCouplings(
     `[interproc-refcount] ${couplings.length} coupling candidate(s) ` +
       `(${couplings.filter((c) => c.crossFile).length} cross-file, ` +
       `${couplings.filter((c) => c.verdict !== "balanced").length} imbalance-suspect)` +
+      `${rejectedRules ? `, ${rejectedRules} non-refcount rule(s) rejected` : ""}` +
       `${capped.length < couplings.length ? ` (capped to ${capped.length})` : ""}`,
   );
   return capped;

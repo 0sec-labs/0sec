@@ -19,6 +19,8 @@ import {
   resolveWrapperOps,
   findInterprocRefcountCouplings,
   couplingsToHuntPlan,
+  isRefcountLikeRule,
+  isDestructorFamily,
 } from "./interproc-refcount.js";
 import { findViolationsDataflow } from "./c-dataflow.js";
 import { INVARIANT_MODEL_VERSION } from "./subsystem-invariant-model.js";
@@ -209,5 +211,202 @@ describe("ownership-transfer-by-return is not a leak", () => {
     const self = cs.find((c) => c.getSite.fn === "dev_get");
     expect(self).toBeDefined();
     expect(self!.verdict).toBe("balanced"); // returned to caller, not leaked
+  });
+});
+
+// ── REFINEMENT 1: destructor / free-path-aware put resolution + direct field store
+//    The #1 FP: a get whose RESULT is assigned STRAIGHT into `obj->field`
+//    (`sk->sk_peer_pid = get_pid(...)`), released only in the object's DESTRUCTOR
+//    in a different function/file. The old checker set no `storedField` (there is
+//    no separate `field = var` copy), so the cross-function field match was off. ─
+describe("(REFINEMENT 1) direct field-store released in a destructor → balanced", () => {
+  // The GET assigns the raw op's result directly into ->peer (no temp var). The
+  // ONLY release is put_pid(x->peer) inside a *_destructor function.
+  const PID_CORE_C = `
+struct pid;
+struct pid *get_pid(struct pid *p) { refcount_inc(&p->count); return p; }
+void put_pid(struct pid *p) { refcount_dec(&p->count); }
+`;
+  const pidModel = (): InvariantModel =>
+    ({
+      modelVersion: INVARIANT_MODEL_VERSION,
+      subsystem: "test/peercred",
+      subsystemFiles: ["pid_core.c", "sock.c"],
+      objects: [
+        {
+          object: "struct sock",
+          lockRules: [],
+          refcountRules: [{ name: "peer pid", getFn: "get_pid", putFn: "put_pid" }],
+          lifecycleRules: [],
+        },
+      ],
+      builtAt: new Date().toISOString(),
+    }) as InvariantModel;
+
+  const runPid = (sockText: string) =>
+    findInterprocRefcountCouplings(pidModel(), [
+      { file: "pid_core.c", text: PID_CORE_C },
+      { file: "sock.c", text: sockText },
+    ]).filter((c) => c.getSite.file === "sock.c");
+
+  it("(a) result assigned directly into ->peer records storedField", () => {
+    const SOCK = `
+void init_peercred(struct sock *sk) {
+	sk->sk_peer_pid = get_pid(task_tgid(current));
+}
+void sock_destructor(struct sock *sk) {
+	put_pid(sk->sk_peer_pid);
+}
+`;
+    const c = runPid(SOCK).find((x) => x.getSite.fn === "init_peercred");
+    expect(c).toBeDefined();
+    expect(c!.getSite.storedField).toBe("sk_peer_pid"); // recovered from the direct field store
+    expect(c!.verdict).toBe("balanced");
+    // paired to the release inside the destructor-family function, cross-function
+    const put = c!.putSites.find((p) => p.matchedBy === "stored-field");
+    expect(put).toBeDefined();
+    expect(put!.fn).toBe("sock_destructor");
+    expect(put!.fromDestructor).toBe(true);
+  });
+
+  it("(b) destructor releases via a local copied from the field (pid = sk->..; put_pid(pid))", () => {
+    const SOCK = `
+void init_peercred(struct sock *sk) {
+	sk->sk_peer_pid = get_pid(task_tgid(current));
+}
+void __sk_destruct(struct sock *sk) {
+	struct pid *pid = sk->sk_peer_pid;
+	put_pid(pid);
+}
+`;
+    const c = runPid(SOCK).find((x) => x.getSite.fn === "init_peercred");
+    expect(c!.verdict).toBe("balanced");
+    const put = c!.putSites.find((p) => p.matchedBy === "stored-field");
+    expect(put).toBeDefined();
+    expect(put!.fieldViaAlias).toBe(true); // argField recovered from the local copy
+    expect(put!.fromDestructor).toBe(true);
+  });
+
+  it("but a direct field-store with NO release anywhere still flags (no over-suppression)", () => {
+    const SOCK = `
+void init_peercred(struct sock *sk) {
+	sk->sk_peer_pid = get_pid(task_tgid(current));
+}
+void unrelated(struct sock *sk) { do_stuff(sk); }
+`;
+    const c = runPid(SOCK).find((x) => x.getSite.fn === "init_peercred");
+    expect(c!.getSite.storedField).toBe("sk_peer_pid");
+    expect(c!.verdict).toBe("leak-suspect");
+    expect(c!.putSites).toHaveLength(0);
+  });
+
+  it("isDestructorFamily recognizes the free/release/put/evict/destruct family", () => {
+    for (const n of ["__sk_destruct", "unix_sock_destructor", "foo_free", "bar_release", "x_evict", "y_put", "z_destroy"])
+      expect(isDestructorFamily(n)).toBe(true);
+    for (const n of ["init_peercred", "do_connect", "lookup_sock"]) expect(isDestructorFamily(n)).toBe(false);
+  });
+});
+
+// ── REFINEMENT 2: multi-hop (>=2) return-ownership. A get-wrapper's result
+//    returned inline (`return get(...)`) transfers the ref; and a wrapper of a
+//    wrapper of a wrapper that keeps returning the ref is balanced at every hop. ─
+describe("(REFINEMENT 2) multi-hop return-ownership is not a leak", () => {
+  it("inline `return dev_get(x)` (1 hop, no temp var) is balanced, not a leak", () => {
+    // The old 1-hop var check saw returnBases={dev_get} and refBase=x → mis-flagged.
+    const cs = callerCouplings(run("struct dev *lookup(struct mgr *m){ return dev_get(m->dev); }"));
+    const c = cs.find((x) => x.getSite.fn === "lookup");
+    expect(c).toBeDefined();
+    expect(c!.verdict).toBe("balanced"); // ref handed to the caller inline
+  });
+
+  it("a 3-hop return chain (A gets+returns, B returns A, C returns B) is balanced at every hop", () => {
+    // A: var-return get-wrapper; B: inline-returns A's result; C: inline-returns B.
+    const CHAIN = `
+struct dev *A(struct mgr *m){ struct dev *d = dev_get(m->dev); return d; }
+struct dev *B(struct mgr *m){ return A(m); }
+struct dev *C(struct mgr *m){ return B(m); }
+`;
+    const cs = callerCouplings(run(CHAIN));
+    for (const fn of ["A", "B", "C"]) {
+      const c = cs.find((x) => x.getSite.fn === fn);
+      expect(c, `expected a coupling at ${fn}`).toBeDefined();
+      expect(c!.verdict, `${fn} should transfer ownership up the chain`).toBe("balanced");
+    }
+    // and the whole chain is recognized as get-wrappers (transitive resolution)
+    const cg = buildCallGraph([
+      { file: "dev_core.c", text: DEV_CORE_C },
+      { file: "caller.c", text: CHAIN },
+    ]);
+    const { getOps } = resolveWrapperOps(cg, { name: "dev ref", getFn: "refcount_inc", putFn: "refcount_dec" });
+    expect([...getOps.keys()]).toEqual(expect.arrayContaining(["dev_get", "A", "B", "C"]));
+  });
+});
+
+// ── REFINEMENT 3: rule-quality filter — reject non-refcount pairs up front ────────
+describe("(REFINEMENT 3) non-refcount rules are rejected before the checker runs", () => {
+  it("isRefcountLikeRule rejects atomic counters, alloc pairs, page/module refs, junk", () => {
+    const reject = [
+      { name: "atomic", getFn: "atomic_inc", putFn: "atomic_dec" },
+      { name: "alloc", getFn: "kzalloc", putFn: "kfree" },
+      { name: "skb", getFn: "alloc_skb", putFn: "kfree_skb" },
+      { name: "page", getFn: "get_page", putFn: "put_page" },
+      { name: "module", getFn: "try_module_get", putFn: "module_put" },
+      { name: "sk_msg", getFn: "sk_msg_alloc", putFn: "sk_msg_free" },
+      { name: "void-junk", getFn: "void", putFn: "" },
+      { name: "pf-junk", getFn: "pf", putFn: "pf" },
+      { name: "same", getFn: "sock_hold", putFn: "sock_hold" },
+    ];
+    for (const r of reject) expect(isRefcountLikeRule(r), `${r.getFn}/${r.putFn} should be rejected`).toBe(false);
+  });
+
+  it("isRefcountLikeRule accepts real object get/put pairs", () => {
+    const accept = [
+      { name: "sock", getFn: "sock_hold", putFn: "sock_put" },
+      { name: "pid", getFn: "get_pid", putFn: "put_pid" },
+      { name: "refcount_t", getFn: "refcount_inc", putFn: "refcount_dec" },
+      { name: "llcp", getFn: "nfc_llcp_local_get", putFn: "nfc_llcp_local_put" },
+      { name: "xfrm", getFn: "xfrm_state_hold", putFn: "xfrm_state_put" },
+      { name: "key", getFn: "key_get", putFn: "key_put" },
+    ];
+    for (const r of accept) expect(isRefcountLikeRule(r), `${r.getFn}/${r.putFn} should be accepted`).toBe(true);
+  });
+
+  it("a model mixing a real rule with noise emits ONLY the real coupling", () => {
+    // atomic_inc/atomic_dec appears all over the caller, but must produce nothing.
+    const NOISY = `
+void hot(struct mgr *m) {
+	atomic_inc(&m->users);
+	struct dev *d = dev_get(m->dev);
+	dev_put(d);
+	atomic_dec(&m->users);
+}
+`;
+    const model: InvariantModel = {
+      modelVersion: INVARIANT_MODEL_VERSION,
+      subsystem: "test/dev",
+      subsystemFiles: ["dev_core.c", "caller.c"],
+      objects: [
+        {
+          object: "struct dev",
+          lockRules: [],
+          refcountRules: [
+            { name: "atomic noise", getFn: "atomic_inc", putFn: "atomic_dec" },
+            { name: "dev ref", getFn: "refcount_inc", putFn: "refcount_dec" },
+          ],
+          lifecycleRules: [],
+        },
+      ],
+      builtAt: new Date().toISOString(),
+    } as InvariantModel;
+    const cs = findInterprocRefcountCouplings(model, [
+      { file: "dev_core.c", text: DEV_CORE_C },
+      { file: "caller.c", text: NOISY },
+    ]);
+    // no coupling should carry the rejected rule's name
+    expect(cs.some((c) => c.refcount === "atomic noise")).toBe(false);
+    // the real dev-ref coupling in hot() is present and balanced
+    const real = cs.find((c) => c.getSite.fn === "hot" && c.refcount === "dev ref");
+    expect(real).toBeDefined();
+    expect(real!.verdict).toBe("balanced");
   });
 });
