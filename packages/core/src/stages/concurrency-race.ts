@@ -3,8 +3,18 @@
  * race-CANDIDATE generator. pwnkit's first increment of concurrency awareness.
  *
  * NOISE CONTROL (why the output is prover-feedable, not a dump): the raw
- * lockset-inconsistency signal is dominated by two benign FP classes, so two bounded
- * refinements run before a candidate is emitted (measured on fs/locks.c + mm/shmem.c):
+ * lockset-inconsistency signal is dominated by benign FP classes, so bounded
+ * refinements run before a candidate is emitted (measured on the fs/locks + net/unix
+ * + ipc/mqueue + posix-timers + fs/notify + ipc/shm sweep):
+ *   REFINEMENT 0 (INTERPROCEDURAL LOCK PROPAGATION) — the #1 FP class: a helper
+ *     that never takes a lock ITSELF but is only ever CALLED while a caller holds one
+ *     (mqueue `__do_notify`/`remove_notification` under `info->lock`, the net/unix GC
+ *     leaf helpers under `unix_gc_lock`, `exit_itimers`) looks "unlocked" and gets
+ *     flagged. A lightweight subsystem call graph folds the locks a function ALWAYS
+ *     runs under (held by ALL its call-sites, MUST-intersection, iterated to a bounded
+ *     fixpoint) into that function's field accesses, so the touch is no longer
+ *     unlocked and the candidate is suppressed. Callers that DISAGREE propagate
+ *     nothing — the candidate is kept (real signal). See {@link computePropagatedLocks}.
  *   FILTER 1 — suppress init/teardown/getter functions on the UNLOCKED side. A field
  *     touched only-unlocked inside a constructor/copy/dumper (`flock_make_lock`,
  *     `lease_init`, `*_alloc`, `lock_get_status`, `*_show`, `shmem_fill_super`, …) is
@@ -60,10 +70,12 @@
  *     how `fs/locks.c` handles `flc_blocker`) is CORRECT but WILL be flagged. That is
  *     a false positive by construction, and the honest output is "candidate", not
  *     "bug".
- *   - "Independently reachable" is approximated as "different function". There is no
- *     call graph, so two helpers that a common caller always invokes under the same
- *     lock will be falsely flagged (the lock is caller-held) — the SAME intra-proc
- *     limitation the invariant checker documents.
+ *   - "Independently reachable" is approximated as "different function". REFINEMENT 0
+ *     (interprocedural lock propagation) now suppresses the common case where the two
+ *     functions share a caller that holds the lock across the call; what remains is a
+ *     bounded, documented residue — a callee reached only through a function pointer
+ *     (invisible edge), or an EXPORTED function with unknown external callers, is
+ *     conservatively treated as a real entry point and still flagged.
  *   - Fields are keyed by NAME (no points-to / no type resolution): a `->state` on
  *     two unrelated structs is unified. Locks are compared by lock-FIELD identity
  *     (receiver-stripped) to blunt the reciprocal aliasing problem, but it remains a
@@ -140,6 +152,28 @@ export interface FieldAccessSite {
   locks: string[];
   /** Receiver-stripped lock IDENTITIES (e.g. `blocked_lock_lock`, `flc_lock`) used for consistency. */
   lockIdentities: string[];
+  /**
+   * Lock identities added by INTERPROCEDURAL propagation — locks NOT acquired in
+   * this function but held by ALL of its (in-subsystem) call-sites, so the callee
+   * runs under them (e.g. `__do_notify` under mqueue's `info->lock`). Empty for a
+   * directly-locked or genuinely-lockless access. Folded into {@link lockIdentities}
+   * for the consistency check; kept separate for provenance in the report/tests.
+   */
+  propagatedLocks: string[];
+}
+
+/**
+ * One in-subsystem call-site of a (subsystem-defined) function, with the MUST
+ * lock-set held by the CALLER at the call. Feeds the interprocedural lock
+ * propagation: a callee whose every call-site holds lock L runs under L.
+ */
+export interface CallSiteRecord {
+  /** The function making the call. */
+  caller: string;
+  /** The called function's name (plain-identifier callees only). */
+  callee: string;
+  /** Receiver-stripped lock identities held by the caller AT this call. */
+  lockIdentities: string[];
 }
 
 export type RaceCandidateKind =
@@ -187,6 +221,21 @@ export interface FindRaceCandidatesOptions {
   discoverSharedFields?: boolean;
   /** Cap auto-discovered fields per subsystem (default 40) to keep the scan bounded. */
   maxDiscoveredFields?: number;
+  /**
+   * Enable the interprocedural (call-graph) lock-propagation refinement that
+   * suppresses the callee-under-caller's-lock FP class (a helper flagged as
+   * "unlocked" only because the lock is held by its callers). Default `true`.
+   * Set `false` to reproduce the pre-propagation (intra-procedural-lock) behavior.
+   */
+  interprocLockPropagation?: boolean;
+  /**
+   * Max propagation fixpoint rounds (default 8). Round 1 is the pure ONE-LEVEL
+   * rule (a callee inherits the intersection of its direct callers' held locks);
+   * each further round lets a lock held N frames up reach a callee through a chain
+   * of always-under-that-lock call-sites (e.g. the unix GC leaf helpers, which sit
+   * two frames below `unix_gc_lock`). Bounded to keep recursion/deep graphs finite.
+   */
+  maxPropagationRounds?: number;
   log?: (msg: string) => void;
 }
 
@@ -229,7 +278,7 @@ function classifyField(field: string, obj: InvariantObjectModel | null): RaceSev
 const INIT_TEARDOWN_FN_RE = new RegExp(
   [
     "(^|_)init($|_)", // *_init, init_*, locks_init_lock_heads
-    "_alloc($|_)", // locks_alloc_lock, shmem_alloc_inode
+    "(^|_)alloc($|_)", // locks_alloc_lock, shmem_alloc_inode, alloc_posix_timer (leading alloc)
     "_create($|_)",
     "_make_", // flock_make_lock
     "_copy($|_)", // locks_copy_conflock / locks_copy_lock
@@ -334,6 +383,7 @@ function analyzeFunction(
   tracked: Set<string> | null,
   vocab: LockVocab,
   sink: FieldAccessSite[],
+  callSink?: CallSiteRecord[],
 ): void {
   const held = new Set<string>();
   // >0 while walking the arguments of a list/hlist MUTATOR call: every `&x->field`
@@ -350,6 +400,18 @@ function analyzeFunction(
       isWrite,
       locks: snapshot,
       lockIdentities: [...new Set(snapshot.map(lockIdentity))].sort(),
+      propagatedLocks: [],
+    });
+  };
+
+  const recordCallSite = (callee: string): void => {
+    if (!callSink || !callee) return;
+    // Lock identities held by THIS function at the call point (before the call's
+    // own acquire/release effect) — the caller-side lock-set the callee inherits.
+    callSink.push({
+      caller: fnName,
+      callee,
+      lockIdentities: [...new Set([...held].map(lockIdentity))].sort(),
     });
   };
 
@@ -380,6 +442,9 @@ function analyzeFunction(
           }
           if (isListMutator) mutatorArgDepth--;
         }
+        // Record the call-site with the caller's CURRENT lock-set (before this
+        // call's own acquire/release effect) for interprocedural propagation.
+        if (name && !vocab.acquire.has(name) && !vocab.release.has(name)) recordCallSite(name);
         // Apply the lock effect AFTER evaluating args.
         if (vocab.acquire.has(name)) {
           const key = callArg0Key(args);
@@ -555,6 +620,8 @@ function collectAccesses(
   tracked: Set<string> | null,
   vocab: LockVocab,
   log: (m: string) => void,
+  callSink?: CallSiteRecord[],
+  definedFns?: Set<string>,
 ): FieldAccessSite[] {
   const sink: FieldAccessSite[] = [];
   for (const { file, text } of sources) {
@@ -564,10 +631,113 @@ function collectAccesses(
       continue;
     }
     for (const fn of collectFunctions(root, text)) {
-      analyzeFunction(fn.body, text, file, fn.name, tracked, vocab, sink);
+      if (definedFns) definedFns.add(fn.name);
+      analyzeFunction(fn.body, text, file, fn.name, tracked, vocab, sink, callSink);
     }
   }
   return sink;
+}
+
+// ── Interprocedural (call-graph) lock propagation ───────────────────────────────
+//
+// THE REFINEMENT. The dominant FP the intra-procedural lock-set emits is the
+// callee-under-caller's-lock case: a helper (`__do_notify`, `remove_notification`,
+// the net/unix GC leaf helpers, `exit_itimers`) that never acquires a lock ITSELF
+// but is only ever reached while a caller holds one, so its field touches look
+// "unlocked" and get flagged against the properly-locked accesses elsewhere.
+//
+// FIX: over the subsystem call graph, compute for each DEFINED function the set of
+// lock identities held at EVERY one of its in-subsystem call-sites (a MUST /
+// intersection analysis). If that set is non-empty, the function always runs under
+// those locks, so they are folded into the lock-set of its field accesses — the
+// touch is no longer "unlocked" and the benign candidate is suppressed. If callers
+// DISAGREE (one holds L, another doesn't) the intersection is empty and nothing is
+// propagated, so the candidate is KEPT (that inconsistency is real signal — this is
+// exactly what preserves fs/locks' `flc_blocker`, whose lockless fast-path caller
+// `locks_delete_block` holds no lock at the call).
+//
+// The base rule is ONE-LEVEL (a callee inherits its direct callers' held locks). It
+// is iterated to a bounded fixpoint so a lock held several frames up (the unix GC
+// tree holds `unix_gc_lock` two frames above the leaf helpers) reaches a leaf when
+// every intermediate call-site is itself under the (already-propagated) lock.
+//
+// HONEST LIMITS:
+//   • NAME-BASED graph, no points-to: two static same-named functions collapse;
+//     indirect / function-pointer / macro-expanded calls are invisible edges, so a
+//     callee reached ONLY through a function pointer looks call-site-less (an entry
+//     point) and is never suppressed (conservative — keeps the candidate).
+//   • ONLY IN-SUBSYSTEM call-sites are seen. An EXPORTED function (EXPORT_SYMBOL)
+//     has external callers we cannot inspect, which may hold no lock, so exported
+//     functions are treated as un-propagatable (kept lockless) to avoid FALSELY
+//     suppressing a genuine candidate reached lock-free from outside the subsystem.
+//   • Context-INSENSITIVE MUST analysis: one lock-free call-site anywhere defeats
+//     propagation for that callee (sound for avoiding false suppression, but it can
+//     UNDER-suppress — a helper lock-free on a dead/unrelated path stays flagged).
+//   • A function with zero in-subsystem call-sites is an independent entry point and
+//     gets no propagation by construction.
+
+/** Names of functions exported out of the subsystem (external, possibly lock-free, callers). */
+function collectExportedSymbols(sources: Array<{ file: string; text: string }>): Set<string> {
+  const out = new Set<string>();
+  const re = /EXPORT_SYMBOL(?:_GPL|_NS|_NS_GPL)?\s*\(\s*([A-Za-z_]\w*)/g;
+  for (const { text } of sources) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) out.add(m[1]);
+  }
+  return out;
+}
+
+/**
+ * Compute, per defined function, the lock identities it ALWAYS runs under (folded
+ * into its field accesses). See the block comment above for the rule + limits.
+ */
+function computePropagatedLocks(
+  callSites: CallSiteRecord[],
+  definedFns: Set<string>,
+  exported: Set<string>,
+  maxRounds: number,
+): Map<string, string[]> {
+  // callee → its in-subsystem call-sites (only calls to functions we actually
+  // analyze can be annotated; library calls like spin_lock are irrelevant here).
+  const byCallee = new Map<string, CallSiteRecord[]>();
+  for (const cs of callSites) {
+    if (!definedFns.has(cs.callee)) continue;
+    const arr = byCallee.get(cs.callee);
+    if (arr) arr.push(cs);
+    else byCallee.set(cs.callee, [cs]);
+  }
+
+  // Fixpoint over MUST-intersection. `prop` grows monotonically (each round can only
+  // add locks a caller now carries), so it converges; `maxRounds` bounds recursion
+  // and deep chains. An exported callee is pinned empty (external lock-free callers).
+  const prop = new Map<string, Set<string>>();
+  for (let round = 0; round < Math.max(1, maxRounds); round++) {
+    let changed = false;
+    for (const [callee, sites] of byCallee) {
+      if (exported.has(callee)) continue; // un-propagatable: keep lockless
+      // Intersection over call-sites of (locks held at the site) ∪ (locks the
+      // CALLER itself always runs under — the one-hop lift that makes it iterate).
+      let acc: Set<string> | null = null;
+      for (const cs of sites) {
+        const callerProp = prop.get(cs.caller) ?? new Set<string>();
+        const atSite = new Set<string>([...cs.lockIdentities, ...callerProp]);
+        if (acc === null) acc = atSite;
+        else acc = intersect(acc, atSite);
+        if (acc.size === 0) break;
+      }
+      const next = acc ?? new Set<string>();
+      const prev = prop.get(callee) ?? new Set<string>();
+      if (next.size !== prev.size || [...next].some((k) => !prev.has(k))) {
+        prop.set(callee, next);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  const out = new Map<string, string[]>();
+  for (const [fn, set] of prop) if (set.size > 0) out.set(fn, [...set].sort());
+  return out;
 }
 
 // ── Eraser-style cross-function consistency check ───────────────────────────────
@@ -642,8 +812,40 @@ export function findRaceCandidates(
     return [];
   }
 
-  // 2. One pass to collect every access to a tracked field + its lock-set.
-  const accesses = collectAccesses(sources, tracked, vocab, log);
+  // 2. One pass to collect every access to a tracked field + its lock-set, and (for
+  //    the interprocedural refinement) every in-subsystem call-site with the caller's
+  //    held lock-set + the set of defined function names.
+  const callSites: CallSiteRecord[] = [];
+  const definedFns = new Set<string>();
+  const propagate = opts.interprocLockPropagation ?? true;
+  const accesses = collectAccesses(
+    sources,
+    tracked,
+    vocab,
+    log,
+    propagate ? callSites : undefined,
+    propagate ? definedFns : undefined,
+  );
+
+  // 2b. Interprocedural lock propagation: fold the locks a function ALWAYS runs
+  //     under (held by all its call-sites) into its field accesses, suppressing the
+  //     callee-under-caller's-lock FP class. See computePropagatedLocks for the rule.
+  if (propagate) {
+    const exported = collectExportedSymbols(sources);
+    const propByFn = computePropagatedLocks(callSites, definedFns, exported, opts.maxPropagationRounds ?? 8);
+    let augmented = 0;
+    for (const a of accesses) {
+      const extra = propByFn.get(a.functionName);
+      if (!extra || extra.length === 0) continue;
+      const added = extra.filter((id) => !a.lockIdentities.includes(id));
+      if (added.length === 0) continue;
+      a.propagatedLocks = added;
+      a.lockIdentities = [...new Set([...a.lockIdentities, ...added])].sort();
+      augmented++;
+    }
+    if (augmented > 0) log(`[concurrency] interproc lock-propagation folded caller locks into ${augmented} access(es)`);
+  }
+
   const byField = new Map<string, FieldAccessSite[]>();
   for (const a of accesses) {
     const arr = byField.get(a.field);
