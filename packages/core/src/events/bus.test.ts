@@ -11,11 +11,13 @@
  * tracker (`splitCost` from `agent/cost.ts`) and assert that a payload
  * built from those numbers passes through unchanged.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   eventBus,
+  cloudEventSink,
   type ScanCompletedPayload,
   type CostBreakdownEntry,
+  type OastConfirmedPayload,
   type EventType,
 } from "./bus.js";
 import { splitCost, modelProvider } from "../agent/cost.js";
@@ -56,6 +58,46 @@ describe("eventBus.emit('scan_completed', …) cost fields", () => {
     expect(observed).toHaveLength(1);
     expect(observed[0]!.type).toBe("scan_completed");
     expect(observed[0]!.payload).toEqual(payload);
+  });
+
+  // pwnkit#659 / 0cloud#1278 — the always-on OAST-confirmation event must flow
+  // through the bus AND serialize to the exact PWNKIT_EVENT line the worker
+  // relays into scan_events (event_type='oast_confirmed'), which the cloud
+  // verify-claim EXISTS + #570 badge correlate on.
+  it("fans an oast_confirmed event to subscribers and cloudEventSink emits PWNKIT_EVENT_OAST_CONFIRMED", () => {
+    const observed: Array<{ type: EventType; payload: Record<string, unknown> }> = [];
+    eventBus.subscribe({
+      emit: (type, payload) => observed.push({ type, payload }),
+    });
+    const payload: OastConfirmedPayload = {
+      findingId: "eng-abc123",
+      category: "ssrf",
+      oracle: "oast-callback",
+      hasPov: true,
+      reason: "DNS callback: host=abc.oast.0sec.ai",
+    };
+
+    const writes: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+      });
+    try {
+      eventBus.emit("oast_confirmed", payload);
+      cloudEventSink.emit("oast_confirmed", payload as unknown as Record<string, unknown>);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]!.type).toBe("oast_confirmed");
+    expect(observed[0]!.payload).toEqual(payload);
+    // The worker lowercases PWNKIT_EVENT_<TYPE> → event_type='oast_confirmed'.
+    const line = writes.join("");
+    expect(line).toContain("PWNKIT_EVENT_OAST_CONFIRMED");
+    expect(line).toContain('"findingId":"eng-abc123"');
   });
 
   it("supports a multi-model breakdown: discovery on Haiku + attack on Opus, summed cost", () => {

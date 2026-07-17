@@ -11,6 +11,7 @@ import {
   judgePovEvidence,
   memCorruptionVerdict,
   oracleForCategory,
+  oastConfirmedPayload,
 } from "./pov-gate.js";
 import type { CrashArtifact } from "./memsafety-types.js";
 import type { OracleResult } from "./oracles.js";
@@ -411,6 +412,66 @@ describe("oracleForCategory", () => {
     expect(oracleForCategory("information-disclosure" as AttackCategory)).toBe(
       "regex-fallback",
     );
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// oastConfirmedPayload (pwnkit#659 / 0cloud#1278) — the always-on
+// OAST-confirmation event decision, independent of the FP-moat pov_gate.
+// ────────────────────────────────────────────────────────────────────
+
+describe("oastConfirmedPayload", () => {
+  const verified: OracleResult = {
+    verified: true,
+    confidence: 1,
+    evidence: "DNS callback: host=abc.oast.0sec.ai",
+    reason: "",
+  };
+  const failed: OracleResult = {
+    verified: false,
+    confidence: 0,
+    evidence: "",
+    reason: "no callback within timeout",
+  };
+
+  it("emits for an OAST-category finding whose oracle verified — carries the engine finding id", () => {
+    const finding = makeFinding({ id: "eng-123", category: "ssrf" });
+    const p = oastConfirmedPayload(finding, verified);
+    expect(p).toEqual({
+      findingId: "eng-123",
+      category: "ssrf",
+      oracle: "oast-callback",
+      hasPov: true,
+      reason: "DNS callback: host=abc.oast.0sec.ai",
+    });
+  });
+
+  it("emits for command-injection / code-injection too", () => {
+    for (const category of ["command-injection", "code-injection"] as const) {
+      const p = oastConfirmedPayload(makeFinding({ id: "f", category }), verified);
+      expect(p?.oracle).toBe("oast-callback");
+      expect(p?.hasPov).toBe(true);
+    }
+  });
+
+  it("does NOT emit for a non-OAST oracle even when verified (xss / sqli)", () => {
+    expect(oastConfirmedPayload(makeFinding({ category: "xss" }), verified)).toBeNull();
+    expect(
+      oastConfirmedPayload(makeFinding({ category: "sql-injection" }), verified),
+    ).toBeNull();
+  });
+
+  it("does NOT emit when the oracle did not verify (fail-closed)", () => {
+    expect(oastConfirmedPayload(makeFinding({ category: "ssrf" }), failed)).toBeNull();
+  });
+
+  it("is independent of PWNKIT_FEATURE_POV_GATE (reads no feature flag)", () => {
+    const prev = process.env.PWNKIT_FEATURE_POV_GATE;
+    delete process.env.PWNKIT_FEATURE_POV_GATE; // pov_gate OFF (default)
+    const p = oastConfirmedPayload(makeFinding({ id: "f", category: "ssrf" }), verified);
+    expect(p?.oracle).toBe("oast-callback"); // still emits
+    if (prev === undefined) delete process.env.PWNKIT_FEATURE_POV_GATE;
+    else process.env.PWNKIT_FEATURE_POV_GATE = prev;
   });
 });
 
