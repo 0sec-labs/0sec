@@ -390,6 +390,54 @@ export type {
 } from "./stages/invariant-candidates.js";
 export { renderRaceHarness, makeTemplateRacePocSynth } from "./stages/race-poc-synth.js";
 export type { RacePocRequest, RacePocSynth } from "./stages/race-poc-synth.js";
+// Whole-subsystem invariant-model hunting (Engine A, the SEEDLESS discovery
+// axis): an LLM builds a stored per-object lock/refcount/lifetime model ONCE,
+// then a deterministic tree-sitter dataflow checker (c-dataflow.ts) re-finds
+// violations against every new revision for free. `InvariantHuntPlan` is
+// aliased — invariant-candidates (above) already owns that name in the barrel.
+export {
+  buildInvariantModel,
+  storeInvariantModel,
+  loadInvariantModel,
+  findInvariantViolations,
+  findInvariantViolationsTokenLevel,
+  violationsToHuntPlan,
+  runSubsystemInvariantHunt,
+  INVARIANT_MODEL_VERSION,
+} from "./stages/subsystem-invariant-model.js";
+export type {
+  LockRule,
+  RefcountRule,
+  LifecycleRule,
+  InvariantObjectModel,
+  InvariantModel,
+  ViolationKind,
+  InvariantViolation,
+  BuildModelInput,
+  FindViolationsOptions,
+  InvariantHuntPlan as SubsystemInvariantHuntPlan,
+  SubsystemInvariantHuntInput,
+  SubsystemInvariantHuntResult,
+} from "./stages/subsystem-invariant-model.js";
+// The deterministic intra-procedural C dataflow engine behind
+// findInvariantViolations (tree-sitter-c AST → per-function CFG → lock-set /
+// reaching-free fixpoints). Exported so other checkers can reuse the analysis.
+export { parseC, findViolationsDataflow } from "./stages/c-dataflow.js";
+export type { DataflowFindOptions } from "./stages/c-dataflow.js";
+// Engine A → seeded-hunt adapter (`pwnkit hunt --invariant`): derive the
+// subsystem scope from the seed diff, build-or-load its invariant model, and
+// format the model + deterministic violation hypotheses as a finder-prompt
+// block appended to the hunt brief.
+export {
+  deriveSubsystemScope,
+  buildInvariantHuntContext,
+  formatInvariantPromptBlock,
+} from "./stages/invariant-hunt-context.js";
+export type {
+  SubsystemScope,
+  InvariantHuntContextInput,
+  InvariantHuntContext,
+} from "./stages/invariant-hunt-context.js";
 // Race-widening smell-hunter (kernelCTF Pipeline #3): the LLM hunts the
 // ExpRace/Calif smell — unlock(A) -> [sleep/mutex/GFP_KERNEL alloc/copy_from_user]
 // -> lock(B) with attacker state across the gap — and maps each smell's

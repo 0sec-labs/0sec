@@ -15,7 +15,7 @@
  * the filesystem is REAL (temp tree) so the store/load round-trip is genuine.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -161,6 +161,46 @@ describe("buildInvariantModel", () => {
     await expect(
       buildInvariantModel({ sourceRoot: root, subsystem: "test/foo", subsystemFiles: ["foo.c"], runtime: "api" }),
     ).rejects.toThrow(/no objects/);
+  });
+
+  it("refuses a repo-relative source symlink that resolves outside sourceRoot", async () => {
+    const root = makeSourceRoot();
+    const outside = mkdtempSync(join(tmpdir(), "invsrc-outside-"));
+    const sentinel = "PWNKIT_READ_BOUNDARY_SENTINEL_ba41a7";
+    const outsideFile = join(outside, "secret.c");
+    writeFileSync(outsideFile, `/* ${sentinel} */\nint secret;\n`, "utf8");
+    symlinkSync(outsideFile, join(root, "leak.c"), "file");
+
+    await expect(
+      buildInvariantModel({ sourceRoot: root, subsystem: "test/foo", subsystemFiles: ["leak.c"], runtime: "api" }),
+    ).rejects.toThrow(/could not read any subsystemFile under sourceRoot/);
+    expect(executeNativeMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a direct POSIX absolute subsystemFile before invoking the model", async () => {
+    const root = makeSourceRoot();
+    const outside = mkdtempSync(join(tmpdir(), "invsrc-absolute-"));
+    const outsideFile = join(outside, "secret.c");
+    writeFileSync(outsideFile, "int absolute_secret;\n", "utf8");
+
+    await expect(
+      buildInvariantModel({ sourceRoot: root, subsystem: "test/foo", subsystemFiles: [outsideFile], runtime: "api" }),
+    ).rejects.toThrow(/could not read any subsystemFile under sourceRoot/);
+    expect(executeNativeMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a direct Windows absolute subsystemFile before invoking the model", async () => {
+    const root = makeSourceRoot();
+
+    await expect(
+      buildInvariantModel({
+        sourceRoot: root,
+        subsystem: "test/foo",
+        subsystemFiles: ["C:\\Users\\operator\\secret.c"],
+        runtime: "api",
+      }),
+    ).rejects.toThrow(/could not read any subsystemFile under sourceRoot/);
+    expect(executeNativeMock).not.toHaveBeenCalled();
   });
 });
 

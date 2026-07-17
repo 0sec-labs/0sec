@@ -7,6 +7,12 @@
  * gate). The discovery sibling of `pwnkit exploit` (weaponize) and
  * `pwnkit scan` (single-target). Engine-driven; this command is the surface.
  *
+ * `--invariant` (Engine A) layers the seed-touched subsystem's stored invariant
+ * model on top: before candidate generation it builds (or loads) the model and
+ * runs the deterministic violation checker, then injects the rules + violation
+ * hypotheses into every finder prompt as context. No candidates added, no gate
+ * changed; the stored model makes repeat hunts LLM-free at this step.
+ *
  * A hunt finding is a LEAD, not a confirmed 0-day: the skeptic gate filters
  * (it re-reads and refutes) but does not PROVE, and novelty (is it already
  * fixed?) is a downstream gate. Treat `confirmed` as "worth verifying", and
@@ -80,6 +86,7 @@ interface HuntOpts {
   noveltyModel?: string;
   noveltyRequired?: boolean;
   methodology?: boolean;
+  invariant?: boolean;
   output?: string;
   runtime?: string;
   timeout?: string;
@@ -148,6 +155,12 @@ export async function runHunt(opts: {
   };
   /** Apply the evidence-backed kernel-LPE discovery preset. */
   methodology?: boolean;
+  /**
+   * Engine A: before candidate generation, build (or load) the stored invariant
+   * model of the subsystem the seed diff touches and inject its rules +
+   * deterministic violation hypotheses into every finder prompt as context.
+   */
+  invariant?: boolean;
   runtime?: RuntimeMode;
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -156,6 +169,7 @@ export async function runHunt(opts: {
     generateVariantCandidates,
     runHuntScan,
     makeSkepticVerifier,
+    buildInvariantHuntContext,
     localMirrors,
     syncLoreMirror,
     makeLloreJudge,
@@ -240,6 +254,29 @@ export async function runHunt(opts: {
     const maxCandidates = opts.maxCandidates ?? 40;
     const reachableOnly = opts.reachableOnly ?? process.env.HUNT_REACHABLE_ONLY === "1";
     const reachablePrefer = opts.reachablePrefer ?? (opts.methodology ? true : process.env.HUNT_REACHABLE_PREFER === "1");
+
+    // Engine A (--invariant): BEFORE candidate generation, build (or load) the
+    // stored invariant model of the subsystem the seed touches and run the
+    // deterministic violation checker against the current source. The result is
+    // injected into every finder prompt as a context block below — it adds NO
+    // candidates and changes NO gate. Fail-open like the novelty sync: a scope /
+    // model-build failure degrades to the plain seeded hunt, it never aborts it.
+    let invariantCtx: Awaited<ReturnType<typeof buildInvariantHuntContext>> = null;
+    const invariantWarnings: string[] = [];
+    if (opts.invariant) {
+      try {
+        invariantCtx = await buildInvariantHuntContext({ sourceRoot, seedDiff, runtime, log });
+        if (!invariantCtx) {
+          invariantWarnings.push("hunt: --invariant set but no subsystem scope/files derivable from the seed — continuing without invariant context");
+          log(`[hunt] ${invariantWarnings[invariantWarnings.length - 1]}`);
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        invariantWarnings.push(`hunt: invariant-model stage failed, continuing without it: ${reason.slice(0, 160)}`);
+        log(`[hunt] ${invariantWarnings[invariantWarnings.length - 1]}`);
+      }
+    }
+
     const plan = await generateVariantCandidates({
       sourceRoot,
       fix: { diff: seedDiff, reference: opts.ref ?? opts.seedPath },
@@ -276,20 +313,27 @@ export async function runHunt(opts: {
     const attemptsPerCandidate = opts.attemptsPerCandidate ?? parseEnvBestOfN(process.env.HUNT_BEST_OF_N) ?? (opts.methodology ? 4 : undefined);
     const judgeTopK = opts.judgeTopK ?? parseEnvPositiveInt(process.env.HUNT_JUDGE_TOP_K) ?? (opts.methodology ? 2 : undefined);
     const judgeModel = opts.judgeModel ?? process.env.HUNT_JUDGE_MODEL;
+    const baseBrief = opts.methodology
+      ? {
+          ...plan.brief,
+          pattern:
+            `${plan.brief.pattern}\n\nMETHODOLOGY LENSES: map the full object lifecycle across handlers, callbacks, ` +
+            `error/teardown paths and concurrent sessions; trace buffer/page provenance across zero-copy and in-place ` +
+            `subsystem boundaries; look for a fix applied to one sibling path but bypassed by another. Refute capability, ` +
+            `configuration and state-machine reachability before claiming impact. Treat source reasoning as a hypothesis ` +
+            `until a sanitizer-backed reproducer proves it.`,
+        }
+      : plan.brief;
+    // Engine A context injection: the invariant rules + violation hypotheses ride
+    // the SAME prompt channel the methodology preset uses (brief.pattern), so
+    // every finder run sees them while chasing the seed's bug class.
+    const huntBrief = invariantCtx
+      ? { ...baseBrief, pattern: `${baseBrief.pattern}\n\n${invariantCtx.promptBlock}` }
+      : baseBrief;
     const res = await runHuntScan({
       sourceRoot,
       candidates,
-      brief: opts.methodology
-        ? {
-            ...plan.brief,
-            pattern:
-              `${plan.brief.pattern}\n\nMETHODOLOGY LENSES: map the full object lifecycle across handlers, callbacks, ` +
-              `error/teardown paths and concurrent sessions; trace buffer/page provenance across zero-copy and in-place ` +
-              `subsystem boundaries; look for a fix applied to one sibling path but bypassed by another. Refute capability, ` +
-              `configuration and state-machine reachability before claiming impact. Treat source reasoning as a hypothesis ` +
-              `until a sanitizer-backed reproducer proves it.`,
-          }
-        : plan.brief,
+      brief: huntBrief,
       runtime,
       concurrency: opts.concurrency ?? 4,
       ...(opts.models ? { models: opts.models } : {}),
@@ -356,10 +400,20 @@ export async function runHunt(opts: {
           severity: f.severity,
           analysis: f.evidence.analysis ?? "",
         })),
+        invariant: invariantCtx
+          ? {
+              enabled: true,
+              subsystem: invariantCtx.subsystem,
+              model_path: invariantCtx.modelPath,
+              model_loaded: invariantCtx.modelLoaded,
+              objects: invariantCtx.model.objects.length,
+              violations: invariantCtx.violations.length,
+            }
+          : { enabled: false },
         ingested: sinkCfg ? ingested : null,
         gated,
         methodology: opts.methodology === true,
-        warnings: [...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),
+        warnings: [...invariantWarnings, ...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),
         note: opts.novelty
           ? "LEADS, not confirmed 0-days. Novelty-duplicate leads were dropped when lore mirrors matched; still verify the real sink before disclosure."
           : "LEADS, not confirmed 0-days. Verify the real sink + upstream-fix (novelty) before disclosure.",
@@ -399,6 +453,7 @@ async function huntAction(opts: HuntOpts): Promise<void> {
         }
       : {}),
     methodology: opts.methodology === true,
+    invariant: opts.invariant === true,
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
@@ -437,6 +492,7 @@ export function registerHuntCommand(program: Command): void {
     .option("--novelty-model <model>", "Optional model override for the lore duplicate judge")
     .option("--novelty-required", "Abort before discovery when novelty evidence is unavailable")
     .option("--methodology", "Use the kernel-LPE methodology preset: lifecycle/provenance lenses, best-of-4, top-2 skeptic gate, reachable-first")
+    .option("--invariant", "Engine A: build (or load) the seed-touched subsystem's stored invariant model and inject its rules + deterministic violation hypotheses into every finder prompt")
     .option("--output <path>", "Write the hunt result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")
     .option("--timeout <ms>", "Accepted cloud agent timeout budget in milliseconds", "600000")

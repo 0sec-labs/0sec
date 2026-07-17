@@ -23,6 +23,12 @@ importers:
       pdfkit:
         specifier: ^0.15.2
         version: 0.15.2
+      tree-sitter:
+        specifier: 0.21.1
+        version: 0.21.1
+      tree-sitter-c:
+        specifier: 0.21.4
+        version: 0.21.4(tree-sitter@0.21.1)
     devDependencies:
       '@types/node':
         specifier: ^25.5.0
