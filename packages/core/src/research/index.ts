@@ -28,6 +28,12 @@ export {
   validateProposalAttempt,
   validateProposalReplay,
 } from "./proposal-replay.js";
+export { runProposalLearningLoop } from "./proposal-learning-loop.js";
+export type {
+  ProposalLearningContext,
+  ProposalLearningLoopResult,
+  RunProposalLearningLoopOptions,
+} from "./proposal-learning-loop.js";
 export {
   rankResearchProposals,
   scoreResearchProposal,
