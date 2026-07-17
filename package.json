@@ -56,7 +56,9 @@
     "@types/pdfkit": "^0.13.9",
     "drizzle-orm": "^0.45.2",
     "node-sqlite3-wasm": "^0.8.55",
-    "pdfkit": "^0.15.2"
+    "pdfkit": "^0.15.2",
+    "tree-sitter": "0.21.1",
+    "tree-sitter-c": "0.21.4"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

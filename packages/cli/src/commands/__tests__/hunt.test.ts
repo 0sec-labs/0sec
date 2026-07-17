@@ -8,6 +8,7 @@ const {
   generateVariantCandidatesMock,
   runHuntScanMock,
   makeSkepticVerifierMock,
+  buildInvariantHuntContextMock,
   localMirrorsMock,
   syncLoreMirrorMock,
   makeLloreJudgeMock,
@@ -22,6 +23,7 @@ const {
     generateVariantCandidatesMock: vi.fn(),
     runHuntScanMock: vi.fn(),
     makeSkepticVerifierMock: vi.fn(() => skepticVerifier),
+    buildInvariantHuntContextMock: vi.fn(),
     localMirrorsMock: vi.fn(),
     syncLoreMirrorMock: vi.fn(),
     makeLloreJudgeMock: vi.fn(() => noveltyJudge),
@@ -37,6 +39,7 @@ vi.mock("@pwnkit/core", () => ({
   generateVariantCandidates: generateVariantCandidatesMock,
   runHuntScan: runHuntScanMock,
   makeSkepticVerifier: makeSkepticVerifierMock,
+  buildInvariantHuntContext: buildInvariantHuntContextMock,
   localMirrors: localMirrorsMock,
   syncLoreMirror: syncLoreMirrorMock,
   makeLloreJudge: makeLloreJudgeMock,
@@ -140,6 +143,7 @@ describe("runHunt — novelty gate wiring", () => {
       { list: "linux-media", epoch: 2, dir: "/root/lore-mirror/linux-media__2" },
     ]);
     makeLloreJudgeMock.mockClear();
+    buildInvariantHuntContextMock.mockReset().mockResolvedValue(null);
     getCloudSinkConfigMock.mockReset().mockReturnValue(null);
     postFindingMock.mockReset().mockResolvedValue(undefined);
   });
@@ -347,5 +351,58 @@ describe("runHunt — novelty gate wiring", () => {
       sourceRoot: "/tmp/pwnkit-review/repo",
     }));
     expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("injects the invariant prompt block into the finder brief when --invariant is set", async () => {
+    buildInvariantHuntContextMock.mockResolvedValueOnce({
+      subsystem: "net/unix",
+      subsystemFiles: ["net/unix/af_unix.c"],
+      modelPath: `${tmpRoot}/.pwnkit/invariant-models/net__unix.json`,
+      modelLoaded: true,
+      model: { objects: [{ object: "struct unix_sock" }] },
+      violations: [{ kind: "unlocked-field-access" }],
+      promptBlock: "INVARIANT MODEL of net/unix (1 key object(s))",
+    });
+
+    const outcome = await runHunt({ sourceRoot: tmpRoot, seedPath, invariant: true, verify: false });
+
+    expect(buildInvariantHuntContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRoot: tmpRoot,
+      seedDiff: "diff --git a/foo.c b/foo.c\n",
+    }));
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.brief.pattern).toContain("index before array access");
+    expect(opts.brief.pattern).toContain("INVARIANT MODEL of net/unix");
+    expect(outcome.result).toMatchObject({
+      invariant: { enabled: true, subsystem: "net/unix", model_loaded: true, objects: 1, violations: 1 },
+    });
+  });
+
+  it("leaves the brief untouched when --invariant yields no context (fail-open)", async () => {
+    buildInvariantHuntContextMock.mockResolvedValueOnce(null);
+
+    const outcome = await runHunt({ sourceRoot: tmpRoot, seedPath, invariant: true, verify: false });
+
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.brief.pattern).toBe("index before array access");
+    expect(outcome.result).toMatchObject({
+      invariant: { enabled: false },
+      warnings: [expect.stringContaining("no subsystem scope")],
+    });
+  });
+
+  it("continues the plain hunt when the invariant stage throws (fail-open)", async () => {
+    buildInvariantHuntContextMock.mockRejectedValueOnce(new Error("model build exploded"));
+
+    const outcome = await runHunt({ sourceRoot: tmpRoot, seedPath, invariant: true, verify: false });
+
+    expect(outcome.exitCode).toBe(1);
+    expect(runHuntScanMock).toHaveBeenCalledOnce();
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.brief.pattern).toBe("index before array access");
+    expect(outcome.result).toMatchObject({
+      invariant: { enabled: false },
+      warnings: [expect.stringContaining("model build exploded")],
+    });
   });
 });

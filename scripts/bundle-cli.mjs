@@ -12,7 +12,8 @@ mkdirSync(outdir, { recursive: true });
 // gets injected into the bundle via esbuild's `define` so the runtime
 // constants.ts can pick it up without a runtime fs read. See
 // packages/shared/src/constants.ts for the matching loader.
-const PKG_VERSION = JSON.parse(readFileSync("package.json", "utf8")).version;
+const rootPkg = JSON.parse(readFileSync("package.json", "utf8"));
+const PKG_VERSION = rootPkg.version;
 
 function readBuildCommit() {
   try {
@@ -72,6 +73,12 @@ await build({
     "cfonts",
     "playwright",
     "playwright-core",
+    // tree-sitter and its C grammar load native .node bindings relative to
+    // their installed package directories. Bundling their CommonJS loaders
+    // into an ESM chunk removes __dirname and breaks even `pwnkit --help`.
+    // Keep both packages intact and declare them in the published tarball.
+    "tree-sitter",
+    "tree-sitter-c",
     // opentui ships .wasm / tree-sitter query asset imports using the
     // `with { type: "file" }` attribute and conditionally imports `bun:ffi`.
     // esbuild can't inline either, so keep them external and ship them as
@@ -117,8 +124,6 @@ const bundle = readFileSync(bundlePath, "utf8").replace(
 writeFileSync(bundlePath, bundle);
 
 // Write a clean package.json for publishing (no workspace: deps).
-// Re-read here for clarity even though PKG_VERSION already came from this.
-const rootPkg = JSON.parse(readFileSync("package.json", "utf8"));
 const publishPkg = {
   name: rootPkg.name,
   version: rootPkg.version,
@@ -139,6 +144,8 @@ const publishPkg = {
     "cfonts": "^3.3.1",
     "drizzle-orm": rootPkg.dependencies["drizzle-orm"],
     "node-sqlite3-wasm": rootPkg.dependencies["node-sqlite3-wasm"],
+    "tree-sitter": rootPkg.dependencies["tree-sitter"],
+    "tree-sitter-c": rootPkg.dependencies["tree-sitter-c"],
     "@opentui/core": "0.1.99",
     "@opentui/react": "0.1.99",
   },

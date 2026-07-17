@@ -43,8 +43,8 @@
  * violation it can point at a concrete `file:line` for.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import { findViolationsDataflow } from "./c-dataflow.js";
@@ -178,7 +178,7 @@ export interface BuildModelInput {
   sourceRoot: string;
   /** Subsystem label for the stored artifact (e.g. `"net/nfc/llcp"`). */
   subsystem: string;
-  /** The subsystem's key source files (repo-relative under `sourceRoot`, or absolute). */
+  /** The subsystem's key source files (canonical repo-relative paths under `sourceRoot`). */
   subsystemFiles: string[];
   runtime: RuntimeMode;
   model?: string;
@@ -190,8 +190,44 @@ export interface BuildModelInput {
 const clip = (s: string, n: number) =>
   s.length > n ? s.slice(0, n) + `\n...[truncated ${s.length - n} chars]` : s;
 
+function pathIsWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/**
+ * Resolve an existing, canonical repo-relative path beneath sourceRoot.
+ * Both lexical traversal and symlink escapes are rejected. Backslashes are
+ * treated as separators on every host so a path cannot become unsafe only when
+ * the same scan runs on Windows.
+ */
+export function resolveContainedSourcePath(sourceRoot: string, relativePath: string): string | null {
+  const normalized = relativePath.replaceAll("\\", "/");
+  if (
+    !normalized ||
+    normalized.includes("\0") ||
+    posix.isAbsolute(normalized) ||
+    win32.isAbsolute(normalized) ||
+    /^[A-Za-z]:/.test(normalized)
+  ) return null;
+  const parts = normalized.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) return null;
+
+  try {
+    const rootAbs = resolve(sourceRoot);
+    const candidateAbs = resolve(rootAbs, ...parts);
+    if (!pathIsWithin(rootAbs, candidateAbs)) return null;
+    const rootReal = realpathSync(rootAbs);
+    const candidateReal = realpathSync(candidateAbs);
+    return pathIsWithin(rootReal, candidateReal) ? candidateReal : null;
+  } catch {
+    return null;
+  }
+}
+
 function readSource(sourceRoot: string, file: string): string | null {
-  const path = isAbsolute(file) ? file : join(sourceRoot, file);
+  const path = resolveContainedSourcePath(sourceRoot, file);
+  if (!path) return null;
   try {
     return readFileSync(path, "utf8");
   } catch {
@@ -821,7 +857,7 @@ export interface SubsystemInvariantHuntInput {
   sourceRoot: string;
   /** Subsystem label (e.g. `"net/nfc/llcp"`). */
   subsystem: string;
-  /** The subsystem's key source files (repo-relative under `sourceRoot`, or absolute). */
+  /** The subsystem's key source files (canonical repo-relative paths under `sourceRoot`). */
   subsystemFiles: string[];
   runtime: RuntimeMode;
   /**
