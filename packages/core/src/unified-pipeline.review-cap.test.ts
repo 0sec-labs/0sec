@@ -52,7 +52,10 @@ function git(args: string[], cwd: string) {
 /** Repo with 6 files on main (over a cap of 3) and 1 file changed on a branch. */
 function makeRepo(): { dir: string; baseSha: string } {
   const dir = mkdtempSync(join(tmpdir(), "pwnkit-cap-"));
-  git(["init", "-q"], dir);
+  // Force the initial branch to `main`: a CI runner whose git defaults
+  // to `master` (no init.defaultBranch set) would otherwise make the
+  // `git rev-parse main` below fail with "unknown revision".
+  git(["init", "-q", "-b", "main"], dir);
   git(["config", "user.email", "t@t.t"], dir);
   git(["config", "user.name", "t"], dir);
   for (let i = 0; i < 6; i++) writeFileSync(join(dir, `f${i}.c`), `int f${i};\n`);
@@ -74,8 +77,8 @@ function makeRepo(): { dir: string; baseSha: string } {
 }
 
 describe("runPipeline — oversized-review guard vs diff-aware reviews", () => {
-  let dir: string;
-  let baseSha: string;
+  let dir = "";
+  let baseSha = "";
   const savedCap = process.env.PWNKIT_REVIEW_MAX_FILES;
 
   beforeEach(() => {
@@ -85,7 +88,7 @@ describe("runPipeline — oversized-review guard vs diff-aware reviews", () => {
   afterEach(() => {
     if (savedCap === undefined) delete process.env.PWNKIT_REVIEW_MAX_FILES;
     else process.env.PWNKIT_REVIEW_MAX_FILES = savedCap;
-    rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
   it(
