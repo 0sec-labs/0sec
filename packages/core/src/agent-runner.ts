@@ -392,6 +392,16 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
         });
       }
 
+      // Honor the loop's structured hard-exit (errorExit): an auth-class or
+      // exhausted-retry failure is NOT "0 findings" — propagate so the
+      // caller's error path (per-file onFileError + circuit breaker, or the
+      // pipeline's "AI analysis failed" warning) records it. Without this a
+      // dead provider reads as a clean "no vulnerabilities" report (measured
+      // 2026-07-17: codex 401 → 0-finding clean report, warnings[] empty).
+      if (agentState.errorExit) {
+        throw new Error(agentState.errorExit.error);
+      }
+
       emit({
         type: "stage:end",
         stage: "attack",

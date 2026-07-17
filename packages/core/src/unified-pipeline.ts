@@ -927,6 +927,18 @@ export async function runPerFileResearch(
   opts: PerFileResearchOptions,
 ): Promise<Finding[]> {
   const aggregated: Finding[] = [];
+  // Consecutive-failure circuit breaker. Per-file tolerance is for flaky,
+  // file-specific errors — a GLOBAL failure (auth 401/403, endpoint down,
+  // hard rate-limit) dooms EVERY remaining per-file session, and each one
+  // costs an API call plus a turn of latency before dying. Tripping after
+  // CB_MAX_CONSECUTIVE identical-signature failures converts N doomed
+  // sessions into a bounded few plus one aggregated error (measured
+  // 2026-07-17: a codex 401 ran ~50 doomed per-file sessions inside an
+  // otherwise "clean" audit). File-specific errors vary by file and never
+  // trip it; a success resets the counter.
+  const CB_MAX_CONSECUTIVE = 3;
+  let consecutiveErrors = 0;
+  let lastSignature = "";
   for (let i = 0; i < opts.files.length; i++) {
     const fileAbs = opts.files[i];
     const fileRel = pathRelative(opts.scopePath, fileAbs);
@@ -952,9 +964,24 @@ export async function runPerFileResearch(
       });
       opts.onUsage?.(agentResult);
       aggregated.push(...agentResult.findings);
+      consecutiveErrors = 0;
+      lastSignature = "";
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
+      const signature = e.message.slice(0, 80);
+      consecutiveErrors = signature === lastSignature ? consecutiveErrors + 1 : 1;
+      lastSignature = signature;
       opts.onFileError?.(fileRel, e);
+      if (consecutiveErrors >= CB_MAX_CONSECUTIVE) {
+        const skipped = opts.files.length - i - 1;
+        opts.onFileError?.(
+          "(circuit-breaker)",
+          new Error(
+            `${CB_MAX_CONSECUTIVE} consecutive identical failures — aborting the remaining ${skipped} per-file session(s): ${e.message.slice(0, 200)}`,
+          ),
+        );
+        break;
+      }
     }
   }
   return aggregated;
