@@ -17,6 +17,8 @@ import type {
 import { resolveIdentities, compareRoles } from "@pwnkit/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import type { LootKind } from "./loot.js";
+import type { OastHandle } from "../oast/types.js";
+import { confirmOast, categoryToOastClass, deriveProbe, type OastClass } from "../oast/index.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import { extractUrls } from "../scope/scope.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
@@ -136,8 +138,8 @@ import {
 // ToolExecutor below see them as local bindings. Splitting the old 600-line
 // literal lets parallel feature PRs touch disjoint domain files instead of
 // serializing on one merge-conflict chokepoint.
-import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES } from "./tools/index.js";
-export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES };
+import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES, OAST_TOOL_NAMES } from "./tools/index.js";
+export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES, OAST_TOOL_NAMES };
 import { executeStartScan } from "./tools/orchestrator.js";
 
 // Tool-name → handler-method-name routing table (pwnkit#614), assembled from
@@ -1601,6 +1603,13 @@ export class ToolExecutor {
    * See GitHub issue #82.
    */
   private _rejectedDecoyFlags: Set<string> = new Set();
+
+  /**
+   * OAST interaction handles minted this scan (pwnkit#659), keyed by the id
+   * surfaced to the agent (`oast-1`). `oast_register` writes here; `oast_poll`
+   * looks up the handle so the correlation token survives across turns.
+   */
+  private _oastHandles: Map<string, OastHandle> = new Map();
 
   // ── Coverage-gate tracking (#audit-laziness) ──
   // Populated incrementally inside `execute()` so `markDone` can refuse
@@ -4275,6 +4284,123 @@ export class ToolExecutor {
     };
   }
 
+  /**
+   * `oast_register` (pwnkit#659) — mint a unique out-of-band interaction handle
+   * from the hosted collaborator. Returns a unique subdomain + correlation
+   * token + ready-to-inject payload URLs. When no collaborator is configured
+   * (feature off or PWNKIT_OAST_URL unset), returns a graceful, explanatory
+   * result rather than an error — the agent should fall back to in-band proof.
+   */
+  private async oastRegister(args: Record<string, unknown>): Promise<ToolResult> {
+    const collaborator = this.ctx.oast;
+    if (!collaborator) {
+      return {
+        success: true,
+        output: {
+          available: false,
+          message:
+            "OAST collaborator not deployed for this scan. Blind/out-of-band callbacks cannot be confirmed here; fall back to in-band proof (SQL error, timing, reflected token, exfil content) or mark the candidate inconclusive.",
+        },
+      };
+    }
+    const handle = await collaborator.register();
+    this._oastHandles.set(handle.id, handle);
+
+    const candidate = typeof args.candidate === "string" ? args.candidate.trim() : "";
+    const probe = candidate ? deriveProbe(handle, candidate) : null;
+
+    return {
+      success: true,
+      output: {
+        available: true,
+        handle_id: handle.id,
+        token: handle.token,
+        host: probe ? probe.host : handle.host,
+        http_url: probe ? probe.httpUrl : handle.httpUrl,
+        dns_host: probe ? probe.dnsHost : handle.dnsHost,
+        candidate: probe ? probe.nonce : undefined,
+        guidance:
+          "Inject http_url (blind SSRF/XSS/RCE HTTP callback) or dns_host (OOB-SQLi via xp_dirtree/UTL_HTTP/LOAD_FILE, JNDI/log4shell, DNS-exfil), trigger the payload, then call oast_poll with this handle_id to confirm.",
+      },
+    };
+  }
+
+  /**
+   * `oast_poll` (pwnkit#659) — poll the collaborator for a handle and run the
+   * OAST oracle (correlation-token matching) to return a confirmed/inconclusive
+   * verdict. A confirmed callback is added to the loot ledger so the interaction
+   * host can be chained. Trusted output (we construct it).
+   */
+  private async oastPoll(args: Record<string, unknown>): Promise<ToolResult> {
+    const collaborator = this.ctx.oast;
+    if (!collaborator) {
+      return {
+        success: true,
+        output: {
+          available: false,
+          message: "OAST collaborator not deployed for this scan; cannot poll for callbacks.",
+        },
+      };
+    }
+    const handleId = String(args.handle_id ?? args.handleId ?? "").trim();
+    if (!handleId) return { success: false, output: null, error: "handle_id is required" };
+    const handle = this._oastHandles.get(handleId);
+    if (!handle) {
+      return {
+        success: false,
+        output: null,
+        error: `unknown handle_id="${handleId}" — call oast_register first`,
+      };
+    }
+
+    // Resolve the OAST class from an explicit `class` or a finding category.
+    const explicit = typeof args.class === "string" ? args.class.trim() : "";
+    const category = typeof args.category === "string" ? args.category.trim() : "";
+    const oastClass = (explicit || categoryToOastClass(category)) as OastClass | null | "";
+    if (!oastClass) {
+      return {
+        success: false,
+        output: null,
+        error: "provide class (blind-ssrf|blind-xss|oob-rce|oob-sqli|xxe-oob|jndi) or a category",
+      };
+    }
+    const candidate = typeof args.candidate === "string" ? args.candidate.trim() : undefined;
+
+    const interactions = await collaborator.poll(handle);
+    const verdict = confirmOast({
+      oastClass,
+      token: handle.token,
+      nonce: candidate,
+      interactions,
+    });
+
+    // Feed a confirmed callback into the loot ledger so the interaction host can
+    // be chained into follow-up requests. Best-effort; no-op without a ledger.
+    if (verdict.verified) {
+      this.ctx.loot?.add({
+        kind: "endpoint",
+        value: handle.host,
+        source: "oast_poll",
+        context: `confirmed ${oastClass} via ${verdict.protocol} callback`,
+      });
+    }
+
+    return {
+      success: true,
+      output: {
+        available: true,
+        handle_id: handle.id,
+        class: oastClass,
+        verified: verdict.verified,
+        confidence: verdict.confidence,
+        protocol: verdict.protocol,
+        evidence: verdict.evidence,
+        reason: verdict.reason,
+        interaction_count: interactions.length,
+      },
+    };
+  }
+
   private queryFindings(args: Record<string, unknown>): ToolResult {
     if (this.db) {
       const results = this.db.queryFindings({
@@ -5415,6 +5541,9 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   const orchestratorTools = featureFlags.agentFanout
     ? [...ORCHESTRATOR_TOOL_NAMES]
     : [];
+  // #659 — OAST out-of-band interaction tools, opt-in (default off; inert
+  // without a deployed collaborator). Confirm blind SSRF/XSS, OOB RCE/SQLi.
+  const oastTools = featureFlags.oastCollaborator ? [...OAST_TOOL_NAMES] : [];
   const networkTools = [
     "http_request",
     "crawl",
@@ -5432,6 +5561,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     ...scannerTools,
     ...cloudTools,
     ...orchestratorTools,
+    ...oastTools,
     "send_prompt",
     "save_finding",
     "update_finding",
@@ -5452,7 +5582,10 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // "everything" set when the feature flag is off (pwnkit#925).
     && (featureFlags.cloudSurface || !CLOUD_TOOL_NAMES.includes(name))
     // #978 — fan-out (start_scan) likewise stays out unless agentFanout is on.
-    && (featureFlags.agentFanout || !ORCHESTRATOR_TOOL_NAMES.includes(name)),
+    && (featureFlags.agentFanout || !ORCHESTRATOR_TOOL_NAMES.includes(name))
+    // #659 — OAST tools stay out of the audit/review "everything" set unless the
+    // collaborator feature is on (parity with the gating above).
+    && (featureFlags.oastCollaborator || !OAST_TOOL_NAMES.includes(name)),
   );
 
   const roleTools: Record<string, string[]> = {

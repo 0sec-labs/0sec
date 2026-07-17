@@ -21,6 +21,7 @@ import { scannerDispatch } from "./scanner.js";
 import { detectionDispatch } from "./detections.js";
 import { cloudDispatch } from "./cloud.js";
 import { orchestratorDispatch } from "./orchestrator.js";
+import { oastDispatch } from "./oast.js";
 
 export const TOOL_DISPATCH: Record<string, string> = {
   ...reconDispatch,
@@ -34,4 +35,5 @@ export const TOOL_DISPATCH: Record<string, string> = {
   ...detectionDispatch,
   ...cloudDispatch,
   ...orchestratorDispatch,
+  ...oastDispatch,
 };

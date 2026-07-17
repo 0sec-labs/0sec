@@ -18,6 +18,7 @@ import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
 import { LootLedger } from "./loot.js";
+import { createCollaborator } from "../oast/index.js";
 import {
   maybeCreateTrustGraphSession,
   type TrustGraphConfig,
@@ -319,6 +320,12 @@ export async function runNativeAgentLoop(
   // results and re-injects a compact "known footholds" block each turn.
   const loot = features.lootLedger ? new LootLedger() : undefined;
 
+  // pwnkit#659 — hosted OAST interaction collaborator. Built only when the
+  // feature is on AND a collaborator server is configured (PWNKIT_OAST_URL);
+  // `createCollaborator` returns undefined otherwise, in which case the
+  // oast_register / oast_poll tools return a graceful "not deployed" result.
+  const oast = features.oastCollaborator ? createCollaborator() : undefined;
+
   // pwnkit#771 (extends #687, connects #786 + #780) — durable cross-scan
   // credential store wiring. OPT-IN: `config.trustGraph` is undefined by default,
   // in which case `maybeCreateTrustGraphSession` returns undefined and every
@@ -367,6 +374,7 @@ export async function runNativeAgentLoop(
     allowScanners: config.allowScanners,
     attribution: config.attribution,
     loot,
+    oast,
   };
 
   const executor = new ToolExecutor(toolCtx, db);

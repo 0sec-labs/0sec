@@ -57,6 +57,9 @@ const EXPECTED_ROUTING: Record<string, string> = {
   cloud_s3_probe: "cloudS3Probe",
   cloud_validate_credentials: "cloudValidateCredentials",
   start_scan: "startScan",
+  // pwnkit#659 — OAST out-of-band interaction tools.
+  oast_register: "oastRegister",
+  oast_poll: "oastPoll",
 };
 
 describe("TOOL_DISPATCH (pwnkit#614)", () => {
