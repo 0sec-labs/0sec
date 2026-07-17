@@ -5,6 +5,8 @@ import {
   parseRetryAfterMs,
   isRetryableHttpStatus,
   retryBackoffMs,
+  parseUsageLimitReached,
+  QuotaExhaustedError,
   __resetAzureRegionCacheForTests,
   __resetProviderStartupLogForTests,
 } from "./llm-api.js";
@@ -23,6 +25,13 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.AZURE_OPENAI_BASE_URL;
     delete process.env.AZURE_OPENAI_MODEL;
     delete process.env.ANTHROPIC_BASE_URL;
+    // kimi/z-ai are valid providers in the priority chain too — a shell that
+    // exports them (e.g. an agent session routed through Moonshot/GLM) leaks
+    // a credential into provider-detection tests otherwise.
+    delete process.env.KIMI_API_KEY;
+    delete process.env.KIMI_BASE_URL;
+    delete process.env.Z_AI_API_KEY;
+    delete process.env.Z_AI_BASE_URL;
     delete process.env.PWNKIT_MODEL;
     delete process.env.PWNKIT_REGION_OVERRIDE;
     delete process.env.PWNKIT_CHATGPT_ACCESS_TOKEN;
@@ -778,6 +787,75 @@ describe("parseRetryAfterMs", () => {
   });
 });
 
+describe("parseUsageLimitReached", () => {
+  it("parses the nested ChatGPT/Codex error shape", () => {
+    const resetsAtS = Math.floor(
+      new Date("2026-07-19T00:00:00Z").getTime() / 1000,
+    );
+    const details = parseUsageLimitReached(
+      JSON.stringify({
+        error: {
+          type: "usage_limit_reached",
+          message: "You have reached your usage limit.",
+          plan_type: "pro",
+          resets_at: resetsAtS,
+          resets_in_seconds: 172_800,
+        },
+      }),
+    );
+    expect(details).toBeDefined();
+    expect(details?.planType).toBe("pro");
+    expect(details?.resetsAtMs).toBe(resetsAtS * 1000);
+    expect(details?.resetsInSeconds).toBe(172_800);
+  });
+
+  it("derives resetsAtMs from resets_in_seconds when resets_at is absent", () => {
+    const before = Date.now();
+    const details = parseUsageLimitReached(
+      JSON.stringify({
+        error: { type: "usage_limit_reached", resets_in_seconds: 3600 },
+      }),
+    );
+    const after = Date.now();
+    expect(details?.resetsInSeconds).toBe(3600);
+    expect(details?.resetsAtMs).toBeGreaterThanOrEqual(before + 3_600_000);
+    expect(details?.resetsAtMs).toBeLessThanOrEqual(after + 3_600_000);
+  });
+
+  it("accepts the un-nested (top-level) shape", () => {
+    const details = parseUsageLimitReached(
+      JSON.stringify({ type: "usage_limit_reached", plan_type: "plus" }),
+    );
+    expect(details?.planType).toBe("plus");
+  });
+
+  it("returns undefined for regular 429 bodies and non-JSON", () => {
+    expect(
+      parseUsageLimitReached('{"detail":"rate limit exceeded"}'),
+    ).toBeUndefined();
+    expect(
+      parseUsageLimitReached('{"error":{"type":"rate_limit_exceeded"}}'),
+    ).toBeUndefined();
+    expect(parseUsageLimitReached("not json")).toBeUndefined();
+    expect(parseUsageLimitReached("")).toBeUndefined();
+  });
+});
+
+describe("QuotaExhaustedError", () => {
+  it("carries the typed quota fields", () => {
+    const err = new QuotaExhaustedError("msg", {
+      planType: "pro",
+      resetsAtMs: 1_784_428_800_000,
+      resetsInSeconds: 172_800,
+    });
+    expect(err.name).toBe("QuotaExhaustedError");
+    expect(err.planType).toBe("pro");
+    expect(err.resetsAtMs).toBe(1_784_428_800_000);
+    expect(err.resetsInSeconds).toBe(172_800);
+    expect(err).toBeInstanceOf(Error);
+  });
+});
+
 describe("isRetryableHttpStatus", () => {
   it("retries 429 and transient 5xx", () => {
     for (const s of [429, 500, 502, 503, 504]) {
@@ -811,10 +889,16 @@ describe("LlmApiRuntime 429 backoff + retry", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     Object.assign(process.env, origEnv);
-    for (const k of ["PWNKIT_LLM_MAX_RETRIES", "PWNKIT_LLM_MAX_RETRY_WAIT_MS"]) {
+    for (const k of [
+      "PWNKIT_LLM_MAX_RETRIES",
+      "PWNKIT_LLM_MAX_RETRY_WAIT_MS",
+      "PWNKIT_LLM_429_MAX_RETRIES",
+      "PWNKIT_LLM_429_MAX_RETRY_WAIT_MS",
+    ]) {
       if (!(k in origEnv)) delete process.env[k];
     }
   });
@@ -917,6 +1001,167 @@ describe("LlmApiRuntime 429 backoff + retry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.stopReason).toBe("error");
     expect(result.error).toContain("400");
+  });
+
+  function quotaLimited(): Response {
+    const resetsAtS = Math.floor(
+      new Date("2026-07-19T00:00:00Z").getTime() / 1000,
+    );
+    return {
+      ok: false,
+      status: 429,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          error: {
+            type: "usage_limit_reached",
+            message: "You have reached your usage limit.",
+            plan_type: "pro",
+            resets_at: resetsAtS,
+            resets_in_seconds: 172_800,
+          },
+        }),
+    } as unknown as Response;
+  }
+
+  it("fails fast on usage_limit_reached (plan quota) — never retried", async () => {
+    const fetchMock = vi.fn(async () => quotaLimited());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    // ONE call only: plan quota resets in hours/days, so retrying is waste.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("usage_limit_reached");
+    expect(result.error).toContain("plan=pro");
+    expect(result.error).toContain("resets_at=2026-07-19T00:00:00.000Z");
+    // Distinct from the per-minute exhaustion shape ("API error 429: ...").
+    expect(result.error).not.toContain("API error 429");
+  });
+
+  it("detects plan quota even after per-minute 429 retries have started", async () => {
+    const responses = [rateLimited("0"), quotaLimited()];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.error).toContain("usage_limit_reached");
+  });
+
+  it("honors retry-after-ms (millisecond form) over retry-after", async () => {
+    const headers = new Headers();
+    headers.set("retry-after", "60"); // must be ignored in favour of the ms form
+    headers.set("retry-after-ms", "250");
+    const responses = [
+      {
+        ok: false,
+        status: 429,
+        headers,
+        text: async () => '{"detail":"rate limit exceeded"}',
+      } as unknown as Response,
+      okChat("ok"),
+    ];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.error).toBeUndefined();
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining("backoff 250ms"),
+    );
+  });
+
+  it("caps a long Retry-After at 120s instead of honoring it verbatim", async () => {
+    vi.useFakeTimers();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const responses = [rateLimited("300"), rateLimited("300"), okChat("capped")];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Big call timeout so the per-call abort timer can't fire mid-test; only
+    // the retry sleeps (capped 120s each) are on the clock.
+    const rt = new LlmApiRuntime({ type: "api", timeout: 600_000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+    // test fixture, literal non-secret "test" key
+    // foxguard: ignore[js/no-hardcoded-secret]
+    (rt as any).apiKey = "test";
+
+    const promise = rt.executeNative("sys", userMsg, []);
+    await vi.advanceTimersByTimeAsync(300_000);
+    const result = await promise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.error).toBeUndefined();
+    expect(result.stopReason).toBe("end_turn");
+    // Uncapped, the server asked for 300000ms; the emitted wait must be 120000.
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining("backoff 120000ms"),
+    );
+    expect(stderrSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("backoff 300000ms"),
+    );
+  });
+
+  it("widens the default 429 budget to 12 retries and preserves the body on exhaustion", async () => {
+    const fetchMock = vi.fn(async () => rateLimited("0"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    // 1 initial + 12 retries (default PWNKIT_LLM_429_MAX_RETRIES).
+    expect(fetchMock).toHaveBeenCalledTimes(13);
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("429");
+    // The classified-and-re-wrapped response still carries the original body.
+    expect(result.error).toContain("rate limit exceeded");
+  });
+
+  it("respects PWNKIT_LLM_429_MAX_RETRIES when set", async () => {
+    process.env.PWNKIT_LLM_429_MAX_RETRIES = "3";
+    const fetchMock = vi.fn(async () => rateLimited("0"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    expect(fetchMock).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+    expect(result.error).toContain("429");
+  });
+
+  it("keeps the transient 5xx budget unchanged (6 retries by default)", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 503,
+          headers: new Headers({ "retry-after": "0" }),
+          text: async () => '{"error":"service unavailable"}',
+        }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkRuntime();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    // 1 initial + 6 retries — the generic budget, not the widened 429 one.
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("503");
   });
 });
 
