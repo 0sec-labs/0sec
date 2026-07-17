@@ -87,6 +87,8 @@ import {
   type HuntScanResult,
   type HuntVerifier,
 } from "./hunt-scan.js";
+import { runAssumptionHunt } from "./assumption-mining.js";
+import type { DynamicWitnessDeps, WitnessResult } from "./dynamic-witness.js";
 
 // ── Reachability allowlist (the clear config) ──────────────────────────────────
 
@@ -464,30 +466,71 @@ export function fileDiff(tree: string, range: string, path: string, git: GitRunn
 // ── Detectors ───────────────────────────────────────────────────────────────────
 
 /**
- * The three refined-engine detectors a semantic-changed file is hunted with. They
- * share ONE invariant model (built once per file) and feed the SAME adversarial
- * gate; a survivor records which detector surfaced it.
+ * The refined-engine detectors a semantic-changed file is hunted with.
  *   • `dataflow` — intra-proc lock-set + reaching-free ({@link findViolationsDataflow}).
  *   • `refcount` — inter-procedural call-graph get/put coupling ({@link findInterprocRefcountCouplings}).
  *   • `race`     — cross-function lockset-inconsistency ({@link findRaceCandidates}).
+ * The first three share ONE invariant model (built once per file) and feed the SAME
+ * static adversarial (skeptic) gate; a survivor records which detector surfaced it.
+ *   • `dual-view` — assumption-mining cross-api/cross-phase enumerator
+ *     ({@link runAssumptionHunt} → {@link scanDualViewContexts}). Materially different:
+ *     it MINES the file's relied-on preconditions (one LLM turn), enumerates dual-view
+ *     seams the static skeptic structurally cannot judge, and routes them to the
+ *     DYNAMIC KASAN oracle instead of the skeptic. A dual-view SURVIVOR is only ever a
+ *     candidate the oracle DYNAMICALLY WITNESSED (an object-bound KASAN splat).
  */
-export type RecencyDetector = "dataflow" | "refcount" | "race";
+export type RecencyDetector = "dataflow" | "refcount" | "race" | "dual-view";
 
-/** The default detector set — all three run on every semantic-changed file. */
+/**
+ * The default detector set — the three static detectors that share the invariant
+ * model + skeptic gate. Unchanged cost: adding `dual-view` costs an extra per-file
+ * LLM mine (and, under `--dynamic-witness`, VM boots), so it is opt-in (selected
+ * explicitly, or implied when a `dynamicWitness` budget is configured).
+ */
 export const RECENCY_DETECTORS_ALL: readonly RecencyDetector[] = ["dataflow", "refcount", "race"];
+
+/** The FULL "crazy-bug machine" — the three static detectors PLUS assumption-mining dual-view. */
+export const RECENCY_DETECTORS_FULL: readonly RecencyDetector[] = ["dataflow", "refcount", "race", "dual-view"];
 
 /** Per-detector candidate/survivor counts (the honest per-detector funnel). */
 export interface DetectorCounts {
   dataflow: number;
   refcount: number;
   race: number;
+  /** Assumption-mining dual-view: candidates = enumerated seams; survivors = DYNAMICALLY WITNESSED only. */
+  dualView: number;
 }
 
 // ── The report shape ────────────────────────────────────────────────────────────
 
+/**
+ * Dynamic-witness evidence carried by a `dual-view` survivor — this is what makes a
+ * dual-view flywheel entry a REAL WITNESSED FINDING (an object-bound KASAN splat +
+ * the repro that produced it) rather than a static candidate. Present ONLY on
+ * `detector: "dual-view"` survivors that the KASAN oracle confirmed.
+ */
+export interface WitnessEvidence {
+  /** The promote-class KASAN signature (kasan-uaf / kasan-oob / kasan-double-free / …). */
+  signature?: string;
+  /** The candidate object/function token the splat bound to (the anti-incidental proof). */
+  boundTo?: string;
+  /** The extracted, object-bound KASAN splat region (the witness). */
+  splat?: string;
+  /** The unprivileged C PoC that produced the splat (the repro — re-runnable in the KASAN VM). */
+  repro?: string;
+  /** The dual-view object TYPE both phases operate on (`fuse_req`, `dma_buf`). */
+  object: string;
+  /** entry A — the phase that ESTABLISHES the guarantee. */
+  entryA: string;
+  /** entry B — the phase that reached the same object WITHOUT it (the violator). */
+  entryB: string;
+  /** How many synthesize→boot→witness rounds it took. */
+  rounds: number;
+}
+
 /** A high-confidence survivor, shaped as an autoclimb-ready bug-spec + seed. */
 export interface RecencySurvivor {
-  /** Which detector surfaced this lead (dataflow / refcount / race). */
+  /** Which detector surfaced this lead (dataflow / refcount / race / dual-view). */
   detector: RecencyDetector;
   file: string;
   functionName: string;
@@ -499,6 +542,12 @@ export interface RecencySurvivor {
   /** The finding id from the hunt (for cross-reference). */
   findingId: string;
   severity: string;
+  /**
+   * DYNAMIC-WITNESS evidence — present ONLY on `dual-view` survivors. A dual-view
+   * survivor is, by construction, one the KASAN oracle witnessed; this carries the
+   * splat + repro as the auditable proof (distinct from a static skeptic verdict).
+   */
+  witness?: WitnessEvidence;
   /**
    * A bug-spec + trigger-seed shaped for `pwnkit exploit --autoclimb` and the
    * disclosure stager. Staged only — nothing is auto-sent (operator-gated).
@@ -531,10 +580,12 @@ export interface RecencyFileRecord {
   /** Set once semantic + hunted: total candidate + survivor counts (all detectors). */
   candidates?: number;
   survivorCount?: number;
-  /** Per-detector candidate leads fed to the gate (dataflow / refcount / race). */
+  /** Per-detector candidate leads fed to the gate (dataflow / refcount / race / dual-view). */
   candidatesByDetector?: DetectorCounts;
-  /** Per-detector survivors after the adversarial gate. */
+  /** Per-detector survivors after the gate (dual-view survivors are dynamically-witnessed). */
   survivorsByDetector?: DetectorCounts;
+  /** Dual-view candidates actually run through the (expensive) KASAN oracle on this file. */
+  dualViewWitnessAttempted?: number;
   /** Non-fatal error hunting this file (recorded, not thrown). */
   error?: string;
 }
@@ -551,10 +602,16 @@ export interface RecencyHuntReport {
     semantic: number;
     candidates: number;
     survivors: number;
-    /** Candidate leads per detector across all hunted files (dataflow / refcount / race). */
+    /** Candidate leads per detector across all hunted files (dataflow / refcount / race / dual-view). */
     candidatesByDetector: DetectorCounts;
-    /** Survivors per detector after the adversarial gate. */
+    /** Survivors per detector after the gate (dual-view = dynamically witnessed). */
     survivorsByDetector: DetectorCounts;
+    /**
+     * The dual-view honest funnel's middle number: dual-view candidates actually run
+     * through the KASAN oracle across the whole run (bounded by the dynamic-witness
+     * budget). candidatesByDetector.dualView ≥ this ≥ survivorsByDetector.dualView.
+     */
+    dualViewWitnessAttempted: number;
   };
   /** Which detectors this run executed on each semantic-changed file. */
   detectors: RecencyDetector[];
@@ -605,6 +662,74 @@ export interface RecencyExtraDetectResult {
   race?: DetectorOutcome;
 }
 
+// ── dual-view detector (assumption-mining → dynamic KASAN oracle) ─────────────────
+
+/**
+ * The dynamic-witness budget for the flywheel's `dual-view` detector. VM boots are
+ * EXPENSIVE, so the oracle is bounded at the RUN level (a run may hunt dozens of
+ * files): the orchestrator hands each file a slice of the remaining run budget and
+ * decrements it by what the file consumes. Tuned by the bench sibling's measured
+ * seconds/candidate + compile% + boot-time numbers.
+ */
+export interface RecencyDynamicWitnessConfig {
+  /**
+   * Total dual-view candidates run through the KASAN oracle across the WHOLE run.
+   * Default 8. This is the hard cost ceiling — at most this many synthesize→boot
+   * loops per flywheel run regardless of how many files surface candidates.
+   */
+  maxCandidatesPerRun?: number;
+  /** Per-file cap on witnessed candidates (also clamped to the remaining run budget). Default 4. */
+  maxCandidatesPerFile?: number;
+  /** Bounded PoC-repair rounds per candidate — each round is one VM boot. Default 2. */
+  maxRoundsPerCandidate?: number;
+  /**
+   * Injectable synth/boot boundaries (+ runtime/model) for the oracle. Tests inject
+   * a mock `synthesizePoc`/`bootPoc` here; the bench sibling can pin a coder model.
+   * When omitted, the real LLM synthesizer + KASAN-VM harness run.
+   */
+  deps?: DynamicWitnessDeps;
+}
+
+/**
+ * Input to the flywheel's `dual-view` detector for ONE semantic-changed file. Unlike
+ * the refcount/race detectors it does NOT reuse the dataflow invariant model — it
+ * mines its OWN assumption model (one LLM turn), so it takes the raw file + tree.
+ */
+export interface RecencyDualViewInput {
+  sourceRoot: string;
+  file: string;
+  subsystem?: string;
+  runtime: RuntimeMode;
+  /** Per-file assumption-model JSON path (mine-once; reused if present unless `remine`). */
+  assumptionModelPath: string;
+  /** Force a fresh assumption mine (default: reuse a stored model if present — the "reuse if built" note). */
+  remine?: boolean;
+  /** Mining LLM override (mirrors the flywheel's finder model). */
+  model?: string;
+  /**
+   * The dynamic-witness budget for THIS file, already clamped to the remaining run
+   * budget by the orchestrator. ABSENT ⇒ candidate-generation only: dual-view seams
+   * are enumerated + counted, but nothing is booted, so the file yields 0 survivors
+   * (the honest static-only mode — the static skeptic refutes this class, so we do
+   * not waste it on them).
+   */
+  witnessBudget?: { maxCandidates: number; maxRounds: number; deps?: DynamicWitnessDeps };
+  log?: (msg: string) => void;
+}
+
+/** The dual-view detector's run result (the honest dual-view funnel for one file). */
+export interface RecencyDualViewResult {
+  /** Dual-view seams enumerated (the funnel's dual-view candidate count). */
+  candidateCount: number;
+  /** Candidates actually run through the KASAN oracle on this file (≤ witnessBudget.maxCandidates). */
+  witnessAttempted: number;
+  /** Dynamically-witnessed (object-bound KASAN) survivors, tagged `dual-view`, carrying splat+repro. */
+  survivors: RecencySurvivor[];
+  /** Honest funnel tail. */
+  refuted: number;
+  inconclusive: number;
+}
+
 /** Injectable dependencies (all default to the real implementations). */
 export interface RecencyHuntDeps {
   git?: GitRunner;
@@ -615,6 +740,12 @@ export interface RecencyHuntDeps {
    * Injectable so the orchestrator test stays git/classify/hunt/LLM-free.
    */
   detect?: (input: RecencyExtraDetectInput) => Promise<RecencyExtraDetectResult>;
+  /**
+   * The `dual-view` detector on one file: mine assumptions → dual-view enumerator →
+   * (budgeted) dynamic KASAN oracle. Injectable so the orchestrator test stays
+   * LLM/VM-free. Defaults to {@link runRecencyDualViewDetector}.
+   */
+  dualView?: (input: RecencyDualViewInput) => Promise<RecencyDualViewResult>;
 }
 
 /** Input to a recency hunt. */
@@ -636,9 +767,28 @@ export interface RecencyHuntInput {
    * ({@link RECENCY_DETECTORS_ALL}). A fresh commit can introduce a cross-file
    * refcount leak (`refcount`) or a cross-thread race (`race`), not just an
    * intra-proc lifetime bug (`dataflow`) — so the flywheel runs all three by
-   * default. Narrow this to cut cost or isolate a detector.
+   * default. Narrow this to cut cost or isolate a detector. Add `"dual-view"` (or
+   * configure {@link dynamicWitness}, which implies it) to run the full crazy-bug
+   * machine: assumption-mining → dual-view enumerator → dynamic KASAN oracle.
    */
   detectors?: RecencyDetector[];
+  /**
+   * DYNAMIC-WITNESS config for the `dual-view` detector. When set, the flywheel runs
+   * the dual-view enumerator on each semantic file and routes its candidates to the
+   * KASAN synthesize→boot→witness oracle (bounded by this budget), promoting ONLY
+   * dynamically-witnessed candidates to survivors. Setting this IMPLIES the
+   * `dual-view` detector (it is auto-added to the effective detector set). Omit it to
+   * skip the oracle: `dual-view` (if explicitly selected) then only enumerates +
+   * counts candidates. This is the `--dynamic-witness` flag's home.
+   */
+  dynamicWitness?: RecencyDynamicWitnessConfig;
+  /**
+   * Force a fresh assumption mine for the `dual-view` detector each run (default
+   * false = reuse a stored per-file assumption model if one exists — the cheap
+   * "reuse if built" path). Set true when reusing a `modelDir` across days so a
+   * fresh recency window never re-checks a stale assumption model.
+   */
+  remineAssumptions?: boolean;
   /** Cap on files actually hunted (protects against a huge merge window). */
   maxHuntFiles?: number;
   /**
@@ -836,6 +986,115 @@ function survivorsFromExtraHunt(
   });
 }
 
+// ── The dual-view detector (assumption-mining → dynamic KASAN oracle) ─────────────
+
+/**
+ * Shape ONE dynamically-witnessed dual-view {@link WitnessResult} into a flywheel
+ * {@link RecencySurvivor}, tagged `dual-view` and carrying the KASAN splat + repro as
+ * {@link WitnessEvidence}. This is materially different from {@link shapeSurvivor}: it
+ * has no `Finding` and no static skeptic verdict — its proof is the object-bound
+ * kernel splat the oracle captured, which is what makes it a real WITNESSED finding.
+ */
+function shapeWitnessSurvivor(rec: RecencyFileRecord, w: WitnessResult): RecencySurvivor {
+  const c = w.candidate;
+  const sig = w.witnessedAttempt?.check?.signature ?? "kasan";
+  const bugClass = `dual-view ${c.kind} (${sig})`;
+  return {
+    detector: "dual-view",
+    file: rec.file,
+    functionName: c.entryB,
+    line: 0, // dual-view is a two-phase seam, not a single site; the splat carries the faulting frame
+    bugClass,
+    title: `dynamically-witnessed dual-view violation on struct ${c.object} (${c.entryA} ⇄ ${c.entryB})`,
+    verifyVerdict: w.summary,
+    ...(rec.subsystem ? { subsystem: rec.subsystem } : {}),
+    findingId: c.assumptionId,
+    severity: "high",
+    witness: {
+      ...(w.witnessedAttempt?.check?.signature ? { signature: w.witnessedAttempt.check.signature } : {}),
+      ...(w.witnessedAttempt?.check?.boundTo ? { boundTo: w.witnessedAttempt.check.boundTo } : {}),
+      ...(w.splat ? { splat: w.splat } : {}),
+      ...(w.finalCSource ? { repro: w.finalCSource } : {}),
+      object: c.object,
+      entryA: c.entryA,
+      entryB: c.entryB,
+      rounds: w.attempts.length,
+    },
+    bugSpec: {
+      ...(rec.subsystem ? { subsystem: rec.subsystem } : {}),
+      file: rec.file,
+      functionName: c.entryB,
+      line: 0,
+      bugClass,
+      description: `Dual-view / cross-phase assumption violation DYNAMICALLY WITNESSED by an object-bound ${sig} splat: ${c.entryA}() establishes ${c.establisherToken} on struct ${c.object}; ${c.entryB}() reaches the same object without it.`,
+      analysis: `${c.detail}\n\nWITNESS: ${w.summary}`,
+      nextSteps: [
+        `Reproduce: the witnessing PoC is attached (survivor.witness.repro) — re-run in the KASAN VM to confirm the ${sig} on struct ${c.object}`,
+        `Confirm novelty: is this cross-phase bug already patched later in the same recency window? (novelty gate)`,
+        `Weaponize from the witnessing PoC: pwnkit exploit --autoclimb --source <tree> --target ${rec.file}`,
+        `If weaponized: stage via the disclosure stager — operator-gated, do NOT auto-send`,
+      ],
+    },
+  };
+}
+
+/**
+ * Default {@link RecencyHuntDeps.dualView}: the flywheel's 4th detector on one file.
+ * Reuses the assumption-mining pipeline wholesale — {@link runAssumptionHunt} with
+ * `skipHunt: true` (the dual-view class goes to the DYNAMIC oracle, NOT the static
+ * skeptic, which v2 proved refutes them all) and `dualView: true`. When a
+ * `witnessBudget` is supplied it also threads the bounded `dynamicWitness` config so
+ * the (expensive) KASAN synthesize→boot→witness loop runs; without it, the seams are
+ * enumerated + counted only. The single-view caller-scan contexts `runAssumptionHunt`
+ * also computes are intentionally ignored here — this detector is the dual-view class.
+ */
+export async function runRecencyDualViewDetector(input: RecencyDualViewInput): Promise<RecencyDualViewResult> {
+  const log = input.log ?? (() => {});
+  const rec: RecencyFileRecord = {
+    file: input.file,
+    status: "?",
+    reachable: true,
+    reachReason: "in scope",
+    ...(input.subsystem ? { subsystem: input.subsystem } : {}),
+  };
+  const wb = input.witnessBudget;
+  const res = await runAssumptionHunt({
+    sourceRoot: input.sourceRoot,
+    subsystem: input.subsystem ?? input.file,
+    subsystemFiles: [input.file],
+    runtime: input.runtime,
+    modelPath: input.assumptionModelPath,
+    ...(input.remine ? { remine: true } : {}),
+    ...(input.model ? { model: input.model } : {}),
+    dualView: true,
+    skipHunt: true, // dual-view → dynamic oracle, never the static skeptic
+    ...(wb
+      ? {
+          dynamicWitness: {
+            maxCandidates: wb.maxCandidates,
+            maxRounds: wb.maxRounds,
+            runtime: input.runtime,
+            ...(wb.deps ?? {}),
+          },
+        }
+      : {}),
+    log,
+  });
+
+  const candidateCount = res.dualViewContexts.length;
+  const witness = res.witness;
+  if (!witness) {
+    return { candidateCount, witnessAttempted: 0, survivors: [], refuted: 0, inconclusive: 0 };
+  }
+  return {
+    candidateCount,
+    witnessAttempted: witness.results.length,
+    survivors: witness.confirmed.map((w) => shapeWitnessSurvivor(rec, w)),
+    refuted: witness.refuted.length,
+    inconclusive: witness.inconclusive.length,
+  };
+}
+
 /**
  * Run the recency flywheel over a kernel tree + range. Honest by construction:
  * every stage records why a file was dropped, and the funnel counts are the raw
@@ -847,17 +1106,31 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
   const classify = input.deps?.classify ?? classifySemanticVsCosmetic;
   const hunt = input.deps?.hunt ?? runSubsystemInvariantHunt;
   const detect = input.deps?.detect ?? runRecencyExtraDetectors;
+  const dualViewDetect = input.deps?.dualView ?? runRecencyDualViewDetector;
   const notes: string[] = [];
 
-  // Detector selection (default: all three). The dataflow path builds the shared
-  // invariant model; refcount + race reuse it. If dataflow is deselected but an
-  // extra detector is on, the model is still built (via skipHunt) so they have one.
-  const detectors = (input.detectors && input.detectors.length > 0 ? input.detectors : RECENCY_DETECTORS_ALL).filter(
-    (d): d is RecencyDetector => RECENCY_DETECTORS_ALL.includes(d),
+  // Detector selection (default: the three static detectors). The dataflow path
+  // builds the shared invariant model; refcount + race reuse it. If dataflow is
+  // deselected but an extra detector is on, the model is still built (via skipHunt)
+  // so they have one. A `dynamicWitness` budget IMPLIES the dual-view detector — the
+  // oracle's whole job is the dual-view class — so it is auto-added when configured.
+  let detectors = (input.detectors && input.detectors.length > 0 ? input.detectors : RECENCY_DETECTORS_ALL).filter(
+    (d): d is RecencyDetector => RECENCY_DETECTORS_FULL.includes(d),
   );
+  if (input.dynamicWitness && !detectors.includes("dual-view")) detectors = [...detectors, "dual-view"];
   const runDataflow = detectors.includes("dataflow");
   const extraDetectors = detectors.filter((d) => d === "refcount" || d === "race");
-  const zero = (): DetectorCounts => ({ dataflow: 0, refcount: 0, race: 0 });
+  const runDualView = detectors.includes("dual-view");
+  const zero = (): DetectorCounts => ({ dataflow: 0, refcount: 0, race: 0, dualView: 0 });
+
+  // Dynamic-witness RUN budget: VM boots are expensive, so the oracle is bounded
+  // across the WHOLE run (a run may hunt dozens of files). Each file gets a slice of
+  // what remains; the budget decrements by candidates actually witnessed. Absent a
+  // `dynamicWitness` config the budget is 0 — dual-view then only enumerates seams.
+  const dwConfig = input.dynamicWitness;
+  let witnessBudgetRemaining = dwConfig ? dwConfig.maxCandidatesPerRun ?? 8 : 0;
+  const dwPerFile = dwConfig?.maxCandidatesPerFile ?? 4;
+  const dwRounds = dwConfig?.maxRoundsPerCandidate ?? 2;
 
   const range = resolveRange(input.tree, { range: input.range, hours: input.hours }, git);
   const generatedAt = new Date().toISOString();
@@ -867,7 +1140,7 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
       tree: input.tree, range: "(empty window)", generatedAt,
       funnel: {
         commits: 0, changedFiles: 0, inScope: 0, semantic: 0, candidates: 0, survivors: 0,
-        candidatesByDetector: zero(), survivorsByDetector: zero(),
+        candidatesByDetector: zero(), survivorsByDetector: zero(), dualViewWitnessAttempted: 0,
       },
       detectors, files: [], survivors: [], notes,
     };
@@ -941,69 +1214,108 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
 
   const candidatesByDetector = zero();
   const survivorsByDetector = zero();
+  let dualViewWitnessAttempted = 0;
   const survivors: RecencySurvivor[] = [];
   for (const rec of toHunt) {
     log(`[recency] hunting ${rec.file} (${rec.subsystem}) with [${detectors.join(", ")}]`);
     const recCands = zero();
     const recSurvs = zero();
     try {
-      const modelPath = join(input.modelDir, `${rec.file.replace(/[/.]/g, "_")}.model.json`);
-      // ONE model per file, shared by every detector. When dataflow is deselected
-      // we still build it (skipHunt) so refcount/race have a model to reuse.
-      const result = await hunt({
-        sourceRoot: input.tree,
-        subsystem: rec.subsystem ?? rec.file,
-        subsystemFiles: [rec.file],
-        runtime: input.runtime,
-        modelPath,
-        rebuildModel: true, // fresh window — never reuse a stale model
-        ...(runDataflow ? {} : { skipHunt: true }),
-        ...(input.model ? { model: input.model } : {}),
-        log,
-      });
+      // Detectors 1-3 — the STATIC engine (dataflow + refcount + race), sharing ONE
+      // invariant model + the skeptic gate. Built only when a static detector is
+      // selected; a dual-view-only run skips the invariant model entirely.
+      if (runDataflow || extraDetectors.length > 0) {
+        const modelPath = join(input.modelDir, `${rec.file.replace(/[/.]/g, "_")}.model.json`);
+        // ONE model per file, shared by every static detector. When dataflow is
+        // deselected we still build it (skipHunt) so refcount/race have a model to reuse.
+        const result = await hunt({
+          sourceRoot: input.tree,
+          subsystem: rec.subsystem ?? rec.file,
+          subsystemFiles: [rec.file],
+          runtime: input.runtime,
+          modelPath,
+          rebuildModel: true, // fresh window — never reuse a stale model
+          ...(runDataflow ? {} : { skipHunt: true }),
+          ...(input.model ? { model: input.model } : {}),
+          log,
+        });
 
-      // Detector 1 — dataflow (intra-proc lock-set + reaching-free).
-      if (runDataflow) {
-        recCands.dataflow = result.violations.length;
-        const survs = survivorsFromHunt(rec, result);
-        recSurvs.dataflow = survs.length;
-        survivors.push(...survs);
+        // Detector 1 — dataflow (intra-proc lock-set + reaching-free).
+        if (runDataflow) {
+          recCands.dataflow = result.violations.length;
+          const survs = survivorsFromHunt(rec, result);
+          recSurvs.dataflow = survs.length;
+          survivors.push(...survs);
+        }
+
+        // Detectors 2+3 — refcount + race, reusing the SAME model just built.
+        if (extraDetectors.length > 0) {
+          const extra = await detect({
+            detectors: extraDetectors,
+            model: result.model,
+            sourceRoot: input.tree,
+            file: rec.file,
+            ...(rec.subsystem ? { subsystem: rec.subsystem } : {}),
+            runtime: input.runtime,
+            ...(input.model ? { finderModel: input.model } : {}),
+            log,
+          });
+          if (extra.refcount) {
+            recCands.refcount = extra.refcount.candidateCount;
+            recSurvs.refcount = extra.refcount.survivors.length;
+            survivors.push(...extra.refcount.survivors);
+          }
+          if (extra.race) {
+            recCands.race = extra.race.candidateCount;
+            recSurvs.race = extra.race.survivors.length;
+            survivors.push(...extra.race.survivors);
+          }
+        }
       }
 
-      // Detectors 2+3 — refcount + race, reusing the SAME model just built.
-      if (extraDetectors.length > 0) {
-        const extra = await detect({
-          detectors: extraDetectors,
-          model: result.model,
+      // Detector 4 — dual-view (assumption-mining → dynamic KASAN oracle). Mines its
+      // OWN assumption model (not the invariant model), enumerates cross-phase seams,
+      // and — when RUN budget remains — routes them to the KASAN synthesize→boot→
+      // witness oracle. ONLY dynamically-witnessed candidates become survivors. The
+      // per-file witness slice is clamped to what remains of the run budget so VM
+      // boots stay bounded across the whole run.
+      if (runDualView) {
+        const perFileCap = Math.min(dwPerFile, witnessBudgetRemaining);
+        const witnessBudget =
+          dwConfig && perFileCap > 0
+            ? { maxCandidates: perFileCap, maxRounds: dwRounds, ...(dwConfig.deps ? { deps: dwConfig.deps } : {}) }
+            : undefined;
+        const dv = await dualViewDetect({
           sourceRoot: input.tree,
           file: rec.file,
           ...(rec.subsystem ? { subsystem: rec.subsystem } : {}),
           runtime: input.runtime,
-          ...(input.model ? { finderModel: input.model } : {}),
+          assumptionModelPath: join(input.modelDir, `${rec.file.replace(/[/.]/g, "_")}.assumptions.json`),
+          ...(input.remineAssumptions ? { remine: true } : {}),
+          ...(input.model ? { model: input.model } : {}),
+          ...(witnessBudget ? { witnessBudget } : {}),
           log,
         });
-        if (extra.refcount) {
-          recCands.refcount = extra.refcount.candidateCount;
-          recSurvs.refcount = extra.refcount.survivors.length;
-          survivors.push(...extra.refcount.survivors);
-        }
-        if (extra.race) {
-          recCands.race = extra.race.candidateCount;
-          recSurvs.race = extra.race.survivors.length;
-          survivors.push(...extra.race.survivors);
-        }
+        recCands.dualView = dv.candidateCount;
+        recSurvs.dualView = dv.survivors.length;
+        rec.dualViewWitnessAttempted = dv.witnessAttempted;
+        dualViewWitnessAttempted += dv.witnessAttempted;
+        witnessBudgetRemaining = Math.max(0, witnessBudgetRemaining - dv.witnessAttempted);
+        survivors.push(...dv.survivors);
       }
 
       rec.candidatesByDetector = recCands;
       rec.survivorsByDetector = recSurvs;
-      rec.candidates = recCands.dataflow + recCands.refcount + recCands.race;
-      rec.survivorCount = recSurvs.dataflow + recSurvs.refcount + recSurvs.race;
+      rec.candidates = recCands.dataflow + recCands.refcount + recCands.race + recCands.dualView;
+      rec.survivorCount = recSurvs.dataflow + recSurvs.refcount + recSurvs.race + recSurvs.dualView;
       candidatesByDetector.dataflow += recCands.dataflow;
       candidatesByDetector.refcount += recCands.refcount;
       candidatesByDetector.race += recCands.race;
+      candidatesByDetector.dualView += recCands.dualView;
       survivorsByDetector.dataflow += recSurvs.dataflow;
       survivorsByDetector.refcount += recSurvs.refcount;
       survivorsByDetector.race += recSurvs.race;
+      survivorsByDetector.dualView += recSurvs.dualView;
     } catch (e) {
       rec.error = `hunt failed: ${String(e).slice(0, 160)}`;
       log(`[recency] hunt error on ${rec.file}: ${rec.error}`);
@@ -1011,7 +1323,7 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
   }
 
   const totalCandidates =
-    candidatesByDetector.dataflow + candidatesByDetector.refcount + candidatesByDetector.race;
+    candidatesByDetector.dataflow + candidatesByDetector.refcount + candidatesByDetector.race + candidatesByDetector.dualView;
 
   // Rank survivors: higher severity first, then those with a concrete line.
   const sevRank: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
@@ -1023,9 +1335,19 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
     notes.push(`${survivors.length} survivor lead(s) — HYPOTHESES, not proven bugs. Weaponize via autoclimb + verify novelty/reachability before any operator-gated disclosure.`);
   }
   notes.push(
-    `Per-detector candidates {dataflow: ${candidatesByDetector.dataflow}, refcount: ${candidatesByDetector.refcount}, race: ${candidatesByDetector.race}} → ` +
-      `survivors {dataflow: ${survivorsByDetector.dataflow}, refcount: ${survivorsByDetector.refcount}, race: ${survivorsByDetector.race}}.`,
+    `Per-detector candidates {dataflow: ${candidatesByDetector.dataflow}, refcount: ${candidatesByDetector.refcount}, race: ${candidatesByDetector.race}, dual-view: ${candidatesByDetector.dualView}} → ` +
+      `survivors {dataflow: ${survivorsByDetector.dataflow}, refcount: ${survivorsByDetector.refcount}, race: ${survivorsByDetector.race}, dual-view: ${survivorsByDetector.dualView}}.`,
   );
+  if (runDualView) {
+    // The honest dual-view funnel: seams enumerated → witness-attempted (bounded by
+    // the run budget) → dynamically WITNESSED (the only ones promoted to survivors).
+    notes.push(
+      `Dual-view funnel: ${candidatesByDetector.dualView} seam candidate(s) → ${dualViewWitnessAttempted} witness-attempted (KASAN oracle) → ${survivorsByDetector.dualView} WITNESSED. ` +
+        (dwConfig
+          ? `Dynamic-witness budget: ${dwConfig.maxCandidatesPerRun ?? 8} candidate(s)/run × ${dwRounds} round(s) each (VM boots — the hard cost ceiling).`
+          : `No --dynamic-witness budget configured — dual-view enumerated seams only (0 witnessed; the static skeptic refutes this class, so it is not run on them).`),
+    );
+  }
 
   return {
     tree: input.tree, range, generatedAt,
@@ -1038,6 +1360,7 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
       survivors: survivors.length,
       candidatesByDetector,
       survivorsByDetector,
+      dualViewWitnessAttempted,
     },
     detectors, files, survivors, notes,
   };
@@ -1074,6 +1397,11 @@ export function renderRecencyReportMarkdown(r: RecencyHuntReport): string {
   L.push(`| dataflow | ${cbd.dataflow} | ${sbd.dataflow} |`);
   L.push(`| refcount | ${cbd.refcount} | ${sbd.refcount} |`);
   L.push(`| race | ${cbd.race} | ${sbd.race} |`);
+  if (r.detectors.includes("dual-view")) {
+    L.push(`| dual-view (dynamic) | ${cbd.dualView} | ${sbd.dualView} |`);
+    L.push("");
+    L.push(`> dual-view funnel: ${cbd.dualView} seam candidate(s) → ${r.funnel.dualViewWitnessAttempted} witness-attempted → **${sbd.dualView} dynamically WITNESSED** (object-bound KASAN). Only witnessed candidates are survivors.`);
+  }
   L.push("");
   if (r.survivors.length > 0) {
     L.push(`## Survivors (ranked leads — verify before any disclosure)`);
@@ -1086,6 +1414,21 @@ export function renderRecencyReportMarkdown(r: RecencyHuntReport): string {
       if (s.subsystem) L.push(`- **subsystem**: ${s.subsystem}`);
       L.push(`- **title**: ${s.title}`);
       L.push(`- **verify verdict**: ${s.verifyVerdict}`);
+      if (s.witness) {
+        // A dual-view survivor is a DYNAMICALLY WITNESSED finding — surface the
+        // KASAN splat + repro as the load-bearing evidence (not a static verdict).
+        const w = s.witness;
+        L.push(`- **DYNAMIC WITNESS**: object-bound \`${w.signature ?? "kasan"}\` on \`struct ${w.object}\`${w.boundTo ? ` (bound to \`${w.boundTo}\`)` : ""}, ${w.entryA}() ⇄ ${w.entryB}(), witnessed in ${w.rounds} round(s)`);
+        if (w.splat) {
+          L.push("");
+          L.push("  KASAN splat:");
+          L.push("");
+          L.push("  ```");
+          for (const line of w.splat.split("\n")) L.push(`  ${line}`);
+          L.push("  ```");
+        }
+        if (w.repro) L.push(`- **repro**: a witnessing unprivileged C PoC is attached in \`survivor.witness.repro\` (${w.repro.length} bytes) — re-runnable in the KASAN VM`);
+      }
       L.push(`- **next steps**:`);
       for (const step of s.bugSpec.nextSteps) L.push(`  - ${step}`);
       L.push("");
@@ -1104,7 +1447,7 @@ export function renderRecencyReportMarkdown(r: RecencyHuntReport): string {
       L.push(`- \`${f.file}\` (${f.subsystem}) — ERROR: ${f.error}`);
     } else if (f.classification === "semantic") {
       const c = f.candidatesByDetector;
-      const perDet = c ? ` [dataflow: ${c.dataflow}, refcount: ${c.refcount}, race: ${c.race}]` : "";
+      const perDet = c ? ` [dataflow: ${c.dataflow}, refcount: ${c.refcount}, race: ${c.race}, dual-view: ${c.dualView}]` : "";
       L.push(`- \`${f.file}\` (${f.subsystem}) — SEMANTIC → hunted: ${f.candidates ?? 0} candidate(s)${perDet}, ${f.survivorCount ?? 0} survivor(s). ${f.classifyReason}`);
     } else {
       L.push(`- \`${f.file}\` (${f.subsystem}) — in scope, not classified`);

@@ -395,6 +395,7 @@ export type {
 export {
   runRecencyHunt,
   runRecencyExtraDetectors,
+  runRecencyDualViewDetector,
   classifySemanticVsCosmetic,
   lifetimeTokenSignal,
   isReachablePath,
@@ -407,6 +408,7 @@ export {
   RECENCY_REACHABLE_ALLOWLIST,
   RECENCY_DENYLIST,
   RECENCY_DETECTORS_ALL,
+  RECENCY_DETECTORS_FULL,
   SEMANTIC_COSMETIC_RUBRIC,
 } from "./stages/recency-hunt.js";
 export type {
@@ -420,6 +422,10 @@ export type {
   DetectorOutcome,
   RecencyExtraDetectInput,
   RecencyExtraDetectResult,
+  RecencyDynamicWitnessConfig,
+  RecencyDualViewInput,
+  RecencyDualViewResult,
+  WitnessEvidence,
   ReachVerdict,
   ReachRule,
   LifetimeSignal,
