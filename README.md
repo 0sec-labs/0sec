@@ -71,9 +71,9 @@ pwnkit https://example.com
 
 ## Why It's Different
 
-- **Shell-first web pentesting.** The agent uses `bash`, writes scripts, and chains tools like a human pentester instead of being trapped in a small HTTP-tool DSL.
-- **Blind verification.** Findings are independently re-exploited before they are reported.
-- **Benchmark transparency.** Raw artifacts and per-challenge breakdowns under `packages/benchmark/results`.
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/terminal.png" alt="">&nbsp; **Shell-first web pentesting.** The agent uses `bash`, writes scripts, and chains tools like a human pentester instead of being trapped in a small HTTP-tool DSL.
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/verified.png" alt="">&nbsp; **Blind verification.** Findings are independently re-exploited before they are reported.
+- <img height="14" src="https://raw.githubusercontent.com/0sec-labs/.github/main/profile/assets/icons/graph.png" alt="">&nbsp; **Benchmark transparency.** Raw artifacts and per-challenge breakdowns under `packages/benchmark/results`.
 
 ## One research loop, specialized engines
 
