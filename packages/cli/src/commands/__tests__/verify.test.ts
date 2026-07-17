@@ -22,6 +22,7 @@ import { setRuntimeDeps } from "@pwnkit/core";
 import {
   VerificationResultSchema,
   type Finding,
+  type LayerVerdict,
   type PocStep,
   type VerificationResult,
 } from "@pwnkit/shared";
@@ -34,6 +35,8 @@ import {
   buildNoStepsResult,
   buildErrorResult,
   parseDurationMs,
+  findingOastConfirmed,
+  oastEvidenceFields,
 } from "../verify.js";
 
 // ── Test fixture helpers ────────────────────────────────────────────────────
@@ -236,6 +239,143 @@ describe("verify pure helpers", () => {
     expect(result.assertions.length).toBe(1);
     expect(result.assertions[0].kind).toBe("exit_code");
     expect(result.assertions[0].passed).toBe(true);
+    expect(VerificationResultSchema.parse(result)).toEqual(result);
+  });
+});
+
+// ── OAST out-of-band evidence provenance (pwnkit#659 / #1278) ────────────────
+//
+// The deterministic replay can't re-fire an out-of-band callback, so an OAST
+// proof is scan-time provenance carried on the finding. These lock the two
+// recognition paths (explicit flag + pov_oracle bucketing) and the additive
+// VerificationResult fields the 0cloud verify writeback (#1302) reads.
+describe("OAST evidence provenance", () => {
+  // command-injection (makeFinding's default) maps to the oast-callback oracle.
+  // Typed as LayerVerdict so `layer` narrows to TriageLayerName (not widened to
+  // string) — pwnkit main tightened LayerVerdict.layer to the closed enum.
+  const passLayerVerdict: LayerVerdict = {
+    layer: "pov_gate",
+    verdict: "pass" as const,
+    reason: "pov_verified(curl): oast callback",
+    durationMs: 5,
+    costUsd: 0,
+  };
+
+  it("findingOastConfirmed: honours an explicit oastConfirmed flag", () => {
+    const f = makeFinding();
+    (f as { oastConfirmed?: boolean }).oastConfirmed = true;
+    expect(findingOastConfirmed(f)).toBe(true);
+  });
+
+  it("findingOastConfirmed: true for an oast-category finding with a PoV pass", () => {
+    const f = makeFinding();
+    f.layerVerdicts = [passLayerVerdict];
+    expect(findingOastConfirmed(f)).toBe(true);
+  });
+
+  it("findingOastConfirmed: never fires on category alone (no PoV pass)", () => {
+    // command-injection, but no pov_gate/oracle pass → not proven out-of-band.
+    expect(findingOastConfirmed(makeFinding())).toBe(false);
+    const rejected = makeFinding();
+    rejected.layerVerdicts = [{ ...passLayerVerdict, verdict: "reject" as const }];
+    expect(findingOastConfirmed(rejected)).toBe(false);
+  });
+
+  it("findingOastConfirmed: false for a non-oast category even with a PoV pass", () => {
+    const f = makeFinding();
+    f.category = "sql-injection"; // regex-fallback oracle, not oast-callback
+    f.layerVerdicts = [passLayerVerdict];
+    expect(findingOastConfirmed(f)).toBe(false);
+  });
+
+  it("oastEvidenceFields: folds an OAST hit to reproduced-poc + oast_confirmed", () => {
+    const f = makeFinding();
+    f.layerVerdicts = [passLayerVerdict];
+    expect(oastEvidenceFields(f)).toEqual({
+      evidence_kind: "reproduced-poc",
+      oast_confirmed: true,
+    });
+  });
+
+  it("oastEvidenceFields: emits nothing for a source-only finding (no downgrade)", () => {
+    // No OAST, no reproduced provenance → both fields omitted so the consumer
+    // keeps its own status-based default (a reproduced replay stays reproduced).
+    expect(oastEvidenceFields(makeFinding())).toEqual({});
+  });
+
+  it("buildVerificationResult stamps the OAST provenance even when the replay did NOT reproduce", () => {
+    // The blind-only case: the in-band replay says not_reproduced, but the
+    // scan-time OAST callback proved it. #1302's mapPwnkitResult reads
+    // oast_confirmed BEFORE the status switch and promotes it.
+    const finding = makeFinding([
+      {
+        id: "s1",
+        kind: "exploit",
+        summary: "inject oast payload",
+        action: { type: "http", method: "GET", url: "http://t/?u=http://x.oast.0sec.ai" },
+        expect: { type: "http-status", status: 200 },
+      },
+    ]);
+    finding.layerVerdicts = [passLayerVerdict];
+    const result = buildVerificationResult({
+      finding,
+      report: {
+        findingId: finding.id,
+        startedAt: "2026-05-01T00:00:00.000Z",
+        endedAt: "2026-05-01T00:00:00.005Z",
+        steps: [
+          { stepId: "s1", kind: "failed", durationMs: 1, observedStatus: 500, observedResponseBody: "" },
+        ],
+        overallVerdict: "exploit_broken",
+      },
+      startedAt: "2026-05-01T00:00:00.000Z",
+      completedAt: "2026-05-01T00:00:00.005Z",
+    });
+    expect(result.status).toBe("not_reproduced");
+    expect(result.evidence_kind).toBe("reproduced-poc");
+    expect(result.oast_confirmed).toBe(true);
+    // Round-trips through the shared schema (the field #1302 reads off the wire).
+    expect(VerificationResultSchema.parse(result)).toEqual(result);
+  });
+
+  it("buildVerificationResult leaves the fields undefined for a non-OAST finding (behavior-preserving)", () => {
+    const finding = makeFinding([
+      {
+        id: "s1",
+        kind: "exploit",
+        summary: "exploit",
+        action: { type: "shell", cmd: "echo hi" },
+        expect: { type: "exit-zero" },
+      },
+    ]);
+    const result = buildVerificationResult({
+      finding,
+      report: {
+        findingId: finding.id,
+        startedAt: "2026-05-01T00:00:00.000Z",
+        endedAt: "2026-05-01T00:00:00.005Z",
+        steps: [{ stepId: "s1", kind: "passed", durationMs: 1, observedExit: 0, observedStdout: "hi" }],
+        overallVerdict: "exploit_still_works",
+      },
+      startedAt: "2026-05-01T00:00:00.000Z",
+      completedAt: "2026-05-01T00:00:00.005Z",
+    });
+    expect(result.status).toBe("reproduced");
+    expect(result.evidence_kind).toBeUndefined();
+    expect(result.oast_confirmed).toBeUndefined();
+  });
+
+  it("buildNoStepsResult carries the OAST proof for a finding with no runnable pocSteps", () => {
+    const finding = makeFinding();
+    finding.layerVerdicts = [passLayerVerdict];
+    const result = buildNoStepsResult({
+      finding,
+      startedAt: "2026-05-01T00:00:00.000Z",
+      completedAt: "2026-05-01T00:00:00.001Z",
+    });
+    expect(result.status).toBe("skipped");
+    expect(result.evidence_kind).toBe("reproduced-poc");
+    expect(result.oast_confirmed).toBe(true);
     expect(VerificationResultSchema.parse(result)).toEqual(result);
   });
 });

@@ -32,9 +32,12 @@ import {
   DockerRunner,
   QemuRunner,
   VerifyNotImplementedError,
+  evidenceKindForFinding,
+  oracleForCategory,
   type PocExecutionReport,
   type PocExecutionTarget,
   type PocStepResult,
+  type VerifyEvidenceKind,
 } from "@pwnkit/core";
 import type {
   EvidenceArtifact,
@@ -231,6 +234,65 @@ function assertionForStep(
 }
 
 /**
+ * Whether a token-matched OAST out-of-band callback proved this finding
+ * (pwnkit#659 / #1278). The deterministic replay this command runs cannot
+ * re-fire an out-of-band callback — its `expect` predicates only see the
+ * in-band request/response — so an OAST proof is scan-time PoV provenance
+ * carried on the finding. We recognise it two ways:
+ *
+ *   1. an explicit `oastConfirmed` flag on the finding (the finding schema is
+ *      `.passthrough()`; the 0cloud verify runner re-synthesises a minimal
+ *      finding and can stamp this from the orchestrator's scan-time pov_oracle
+ *      record), or
+ *   2. the pov_oracle bucketing itself: the finding's category delegates to the
+ *      out-of-band OAST oracle (`oracleForCategory` → `oast-callback` for SSRF /
+ *      command-injection / code-injection) AND a deterministic PoV layer
+ *      (`pov_gate` / `oracle`) recorded a `pass`. Gating on the pass is what
+ *      stops it from ever firing on category alone.
+ */
+export function findingOastConfirmed(finding: Finding): boolean {
+  if ((finding as { oastConfirmed?: unknown }).oastConfirmed === true) return true;
+  if (oracleForCategory(finding.category) !== "oast-callback") return false;
+  return (finding.layerVerdicts ?? []).some(
+    (v) =>
+      v?.verdict === "pass" && (v.layer === "pov_gate" || v.layer === "oracle"),
+  );
+}
+
+/**
+ * Derive the additive evidence-provenance fields for a {@link VerificationResult}
+ * from the finding (pwnkit#659 / #1278). Shared by every result builder so the
+ * signal is stamped identically regardless of replay outcome.
+ *
+ * Contract, tuned to the 0cloud consumer (its verify writeback + #1302's
+ * `mapPwnkitResult`):
+ *   - `oast_confirmed: true` when an OAST callback proved the finding — the
+ *     load-bearing flag that lets the cloud promote a blind-class proof even
+ *     when the in-band replay left the status `not_reproduced` / `skipped`.
+ *   - `evidence_kind`: only ever a REPRODUCED kind, never `source-only`. An OAST
+ *     hit folds to `reproduced-poc`; otherwise we surface the finding's own
+ *     reproduced kind when it has one, and leave the field undefined for a
+ *     source-only finding so the consumer keeps its own status-based default
+ *     (a `reproduced` replay must stay `reproduced-poc`, not be downgraded).
+ */
+export function oastEvidenceFields(finding: Finding): {
+  evidence_kind?: VerifyEvidenceKind;
+  oast_confirmed?: boolean;
+} {
+  const oast_confirmed = findingOastConfirmed(finding);
+  const findingKind = evidenceKindForFinding(finding);
+  const evidence_kind: VerifyEvidenceKind | undefined = oast_confirmed
+    ? "reproduced-poc"
+    : findingKind === "source-only"
+      ? undefined
+      : findingKind;
+  return {
+    ...(evidence_kind ? { evidence_kind } : {}),
+    ...(oast_confirmed ? { oast_confirmed: true } : {}),
+  };
+}
+
+/**
  * Build a {@link VerificationResult} from the runtime's report plus the
  * original finding (needed because `PocStepResult` doesn't carry the action
  * or the `expect` predicate — both are on the source `PocStep`).
@@ -297,6 +359,7 @@ export function buildVerificationResult(args: {
     engine_metadata: engineMetadata(),
     summary: defaultSummary(status, ran, total),
     error_reason: null,
+    ...oastEvidenceFields(finding),
   };
 }
 
@@ -323,6 +386,10 @@ export function buildNoStepsResult(args: {
     engine_metadata: engineMetadata(),
     summary: "No PoC steps to execute",
     error_reason: null,
+    // A finding proven purely out-of-band (an OAST callback) may carry no
+    // runnable pocSteps — the callback IS the proof. Stamp the provenance so
+    // the cloud still promotes it instead of reading `skipped` as no-evidence.
+    ...oastEvidenceFields(args.finding),
   };
 }
 
