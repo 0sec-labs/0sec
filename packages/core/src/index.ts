@@ -458,6 +458,81 @@ export type {
   SubsystemInvariantHuntInput,
   SubsystemInvariantHuntResult,
 } from "./stages/subsystem-invariant-model.js";
+// Assumption-mining (Engine A', the FOURTH seedless axis): an LLM MINES the
+// implicit relied-on preconditions each function makes (+ the token a caller/
+// lock/API uses to establish each) ONCE; then a deterministic 1b cross-check +
+// establisher-propagation caller-scan (no LLM) hunts reachable callers that
+// reach a relied-on subject WITHOUT establishing its precondition — the
+// dual-view/DirtyCred/AF_UNIX-GC/io_uring shape our fixed-schema checkers cannot
+// represent. `AssumptionHuntPlan` is aliased to avoid a barrel name clash.
+export {
+  mineAssumptions,
+  normalizeAssumptions,
+  storeAssumptionModel,
+  loadAssumptionModel,
+  crossCheckAssumptions,
+  isMechanizableEstablisher,
+  buildFunctionBodyIndex,
+  computeEstablisherSets,
+  computeEstablisherWrappers,
+  scanViolatingContexts,
+  subjectSelfEnforces,
+  isCrossApiAssumption,
+  objectTypeToken,
+  scanDualViewContexts,
+  assumptionsToHuntPlan,
+  buildFocusedCandidates,
+  runAssumptionHunt,
+  ASSUMPTION_MODEL_VERSION,
+} from "./stages/assumption-mining.js";
+export type {
+  AssumptionKind,
+  AssumptionProvenance,
+  SecurityRelevance,
+  ViolationOracle,
+  Assumption,
+  AssumptionModel,
+  MineAssumptionsInput,
+  DroppedAssumption,
+  CrossCheckResult,
+  ViolatingContext,
+  CallerScanOptions,
+  DualViewOptions,
+  AssumptionHuntPlan as AssumptionMiningHuntPlan,
+  AssumptionHuntInput,
+  AssumptionHuntResult,
+} from "./stages/assumption-mining.js";
+// v3 DYNAMIC WITNESS — the dynamic oracle for dual-view/cross-phase candidates the
+// static skeptic structurally cannot judge (synthesize PoC → boot in KASAN →
+// witness an object-bound splat).
+export {
+  witnessAssumptionViolation,
+  witnessDualViewContexts,
+  dualViewCandidateFromContext,
+  checkWitness,
+  pocFabricatesSplat,
+  extractCFromLlmOutput,
+  extractSplatRegion,
+  candidateReferenceTokens,
+  buildSynthesisPrompt,
+  makeDefaultSynthesizePoc,
+  defaultBootPoc,
+} from "./stages/dynamic-witness.js";
+export type {
+  DualViewCandidate,
+  CandidateSource,
+  PocSynthesisInput,
+  PocSynthesisResult,
+  SynthesizePocFn,
+  BootPocFn,
+  WitnessCheck,
+  WitnessVerdict,
+  WitnessAttempt,
+  WitnessResult,
+  DynamicWitnessDeps,
+  WitnessDualViewInput,
+  WitnessDualViewResult,
+} from "./stages/dynamic-witness.js";
 // The deterministic intra-procedural C dataflow engine behind
 // findInvariantViolations (tree-sitter-c AST → per-function CFG → lock-set /
 // reaching-free fixpoints). Exported so other checkers can reuse the analysis.
