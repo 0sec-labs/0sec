@@ -388,6 +388,45 @@ export type {
   InvariantSpec,
   InvariantCandidate,
 } from "./stages/invariant-candidates.js";
+// Recency flywheel (kernelCTF freshness window): git diff a fresh linux-next
+// range → reachability filter → semantic-vs-cosmetic classifier → the refined
+// invariant engine → adversarial verify → ranked report. Beats the audit-density
+// wall by hunting just-committed code before syzbot/top-groups harden it.
+export {
+  runRecencyHunt,
+  runRecencyExtraDetectors,
+  classifySemanticVsCosmetic,
+  lifetimeTokenSignal,
+  isReachablePath,
+  resolveRange,
+  countCommits,
+  changedFilesInRange,
+  parseNameStatus,
+  fileDiff,
+  renderRecencyReportMarkdown,
+  RECENCY_REACHABLE_ALLOWLIST,
+  RECENCY_DENYLIST,
+  RECENCY_DETECTORS_ALL,
+  SEMANTIC_COSMETIC_RUBRIC,
+} from "./stages/recency-hunt.js";
+export type {
+  RecencyHuntInput,
+  RecencyHuntReport,
+  RecencyHuntDeps,
+  RecencyFileRecord,
+  RecencySurvivor,
+  RecencyDetector,
+  DetectorCounts,
+  DetectorOutcome,
+  RecencyExtraDetectInput,
+  RecencyExtraDetectResult,
+  ReachVerdict,
+  ReachRule,
+  LifetimeSignal,
+  ClassifyInput,
+  CosmeticVerdict,
+  ChangedFile,
+} from "./stages/recency-hunt.js";
 export { renderRaceHarness, makeTemplateRacePocSynth } from "./stages/race-poc-synth.js";
 export type { RacePocRequest, RacePocSynth } from "./stages/race-poc-synth.js";
 // Whole-subsystem invariant-model hunting (Engine A, the SEEDLESS discovery
