@@ -46,7 +46,6 @@
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import type { RuntimeMode } from "@pwnkit/shared";
-import { LlmApiRuntime } from "../runtime/llm-api.js";
 import { findViolationsDataflow } from "./c-dataflow.js";
 import {
   composeGate,
@@ -57,6 +56,7 @@ import {
   type HuntScanResult,
   type HuntVerifier,
 } from "./hunt-scan.js";
+import { extractInvariantSpec } from "./invariant-spec-builder.js";
 
 // ── The stored invariant model (the compounding, re-checkable artifact) ────────
 
@@ -186,9 +186,6 @@ export interface BuildModelInput {
   maxCharsPerFile?: number;
   log?: (msg: string) => void;
 }
-
-const clip = (s: string, n: number) =>
-  s.length > n ? s.slice(0, n) + `\n...[truncated ${s.length - n} chars]` : s;
 
 function pathIsWithin(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
@@ -328,7 +325,6 @@ interface ModelFromLlm {
  */
 export async function buildInvariantModel(input: BuildModelInput): Promise<InvariantModel> {
   const log = input.log ?? (() => {});
-  const maxCharsPerFile = input.maxCharsPerFile ?? 24_000;
   if (!input.subsystemFiles || input.subsystemFiles.length === 0) {
     throw new Error("invariant model build needs at least one subsystemFile");
   }
@@ -346,24 +342,15 @@ export async function buildInvariantModel(input: BuildModelInput): Promise<Invar
     throw new Error("invariant model build could not read any subsystemFile under sourceRoot");
   }
 
-  const sourceBlocks = sources
-    .map((s) => `### FILE: ${s.file}\n\`\`\`c\n${clip(s.text, maxCharsPerFile)}\n\`\`\``)
-    .join("\n\n");
-  const messages = [{ role: "user", content: [{ type: "text", text: `## Subsystem source\n\n${sourceBlocks}` }] }];
-
-  const rt = new LlmApiRuntime({ type: "api", ...(input.model ? { model: input.model } : {}), timeout: 300_000 });
-  let modelOut: ModelFromLlm | null = null;
-  try {
-    const res = (await rt.executeNative(MODEL_SYSTEM, messages as never, [MODEL_TOOL] as never, {
-      onThinking() {}, onDelta() {}, onText() {}, onUsage() {},
-    } as never)) as { content?: Array<Record<string, unknown>> };
-    const call = (res.content ?? []).find(
-      (b) => (b as { type?: string; name?: string }).type === "tool_use" && (b as { name?: string }).name === "emit_invariant_model",
-    ) as { input?: ModelFromLlm } | undefined;
-    if (call?.input) modelOut = call.input;
-  } catch (e) {
-    throw new Error(`invariant-model LLM call failed: ${String(e).slice(0, 200)}`);
-  }
+  // SHARED extraction (LLM, once) — durable-checker strategy owns everything after.
+  const modelOut = await extractInvariantSpec<ModelFromLlm>({
+    sources,
+    system: MODEL_SYSTEM,
+    tool: MODEL_TOOL,
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.maxCharsPerFile !== undefined ? { maxCharsPerFile: input.maxCharsPerFile } : {}),
+    errorLabel: "invariant-model",
+  });
 
   const objects = Array.isArray(modelOut?.objects) ? modelOut!.objects : [];
   if (objects.length === 0) throw new Error("model build emitted no objects");
