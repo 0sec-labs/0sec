@@ -83,20 +83,28 @@ fi
 # hangs (we don't want this to stall CI forever).
 say "mcp-server initialize"
 INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"pwnkit-ci-smoke","version":"0.0.0"}}}'
-# `timeout 10` bounds runtime; `head -1` reads the first response line and
-# closes the pipe, which SIGPIPEs the server so it exits cleanly.
-printf '%s\n' "$INIT_MSG" \
-  | timeout_cmd 10 $CLI mcp-server \
-      --target https://example.invalid \
-      --scan-id ci-smoke \
-      --db-path "$TMP/mcp.db" 2> "$TMP/mcp.err" \
-  | head -1 > "$TMP/mcp.out" || true
+# The mcp-server boots the full CLI + stdio transport + DB before it can
+# answer `initialize`; under CI load that can exceed a fixed 10s window, which
+# made this subtest the #1 flake source (and, because the image publish gates
+# on CI=success, it randomly blocked publishes). Retry the handshake up to 3
+# times with a generous per-attempt window before declaring it broken.
+: > "$TMP/mcp.out"
+for attempt in 1 2 3; do
+  printf '%s\n' "$INIT_MSG" \
+    | timeout_cmd 30 $CLI mcp-server \
+        --target https://example.invalid \
+        --scan-id ci-smoke \
+        --db-path "$TMP/mcp.db" 2> "$TMP/mcp.err" \
+    | head -1 > "$TMP/mcp.out" || true
+  [ -s "$TMP/mcp.out" ] && break
+  [ "$attempt" -lt 3 ] && say "mcp-server initialize attempt $attempt produced no response; retrying"
+done
 # Accept exit 0 (clean), 141 (SIGPIPE from head), or 143 (SIGTERM from timeout
 # after response sent). Non-accepted: the command producing no output at all.
 if ! [ -s "$TMP/mcp.out" ]; then
   echo "--- mcp-server stderr ---" >&2
   cat "$TMP/mcp.err" >&2 || true
-  fail "mcp-server produced no response to initialize"
+  fail "mcp-server produced no response to initialize (3 attempts)"
 fi
 grep -q '"jsonrpc":"2.0"' "$TMP/mcp.out" || fail "mcp-server response not JSON-RPC 2.0"
 grep -q '"result"' "$TMP/mcp.out" || fail "mcp-server initialize returned no result"
