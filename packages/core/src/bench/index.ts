@@ -39,6 +39,8 @@ export type {
 export {
   ObjectiveOracle,
   objectiveOracle,
+  objectiveOracleEvaluatorAttestation,
+  objectiveOracleEvaluatorConfigJson,
   harvestEvidenceText,
 } from "./oracle.js";
 export type {
@@ -48,6 +50,7 @@ export type {
   BenchScanResult,
   BenchVerdict,
   ObjectiveOracleOptions,
+  BenchEvaluatorAttestation,
 } from "./oracle.js";
 
 export { runBenchCase, runBenchSuite } from "./runner.js";
@@ -124,6 +127,17 @@ export {
   digestBenchManifest,
   projectResearchImprovementResult,
 } from "./improvement.js";
+export {
+  projectResearchExecutionEvidence,
+  researchExecutionEvidenceDigest,
+  researchExecutionEvidenceRef,
+} from "./execution-evidence.js";
+export type {
+  ResearchExecutionLane,
+  ResearchExecutionEvidence,
+  ResearchExecutionLaneInput,
+  ProjectResearchExecutionEvidenceOptions,
+} from "./execution-evidence.js";
 export type {
   ResearchScoreSnapshot,
   ResearchNegativeControlSnapshot,
