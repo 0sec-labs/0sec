@@ -295,6 +295,166 @@ describe("findRaceCandidates — cross-function lockset inconsistency", () => {
     expect(cands.find((c) => c.field === "blocker")).toBeUndefined();
   });
 
+  // ── INTERPROCEDURAL LOCK PROPAGATION (REFINEMENT 0) ──────────────────────────────
+
+  it("does NOT flag a callee ALWAYS called under the lock (caller-held lock propagated)", () => {
+    // helper() touches ->state with no lock of its own, but BOTH of its call-sites hold
+    // c->lock, so it runs under the lock — the callee-under-caller's-lock FP must vanish.
+    const src = `
+      static void helper(struct conn *c) {
+        c->state = 1;          /* no lock acquired HERE — inherited from callers */
+      }
+      void path1(struct conn *c) {
+        spin_lock(&c->lock);
+        helper(c);
+        spin_unlock(&c->lock);
+      }
+      void path2(struct conn *c) {
+        spin_lock(&c->lock);
+        c->state = 2;
+        helper(c);
+        spin_unlock(&c->lock);
+      }
+    `;
+    const cands = run(src);
+    expect(cands.find((c) => c.field === "state")).toBeUndefined();
+  });
+
+  it("propagates a lock through TWO frames (fixpoint, not just one level)", () => {
+    // outer() holds the lock and calls mid(); mid() (no lock of its own) calls leaf();
+    // leaf() touches ->state. The lock is two frames up — the bounded fixpoint must
+    // still reach leaf() and suppress the candidate.
+    const src = `
+      static void leaf(struct conn *c) {
+        c->state = 1;          /* two frames below the lock */
+      }
+      static void mid(struct conn *c) {
+        leaf(c);               /* mid holds no lock itself */
+      }
+      void outer(struct conn *c) {
+        spin_lock(&c->lock);
+        mid(c);
+        spin_unlock(&c->lock);
+      }
+      void reader(struct conn *c) {
+        spin_lock(&c->lock);
+        (void)c->state;
+        spin_unlock(&c->lock);
+      }
+    `;
+    const cands = run(src);
+    expect(cands.find((c) => c.field === "state")).toBeUndefined();
+  });
+
+  it("STILL flags a callee whose callers DISAGREE (one holds the lock, one does not)", () => {
+    // writer() sets the consensus (->state under c->lock). helper() touches ->state
+    // too; one of its callers holds c->lock, the other does NOT — the MUST-intersection
+    // over its call-sites is empty, so NOTHING is propagated and helper stays unlocked:
+    // the genuine inconsistency survives.
+    const src = `
+      void writer(struct conn *c) {
+        spin_lock(&c->lock);
+        c->state = 5;          /* the locked consensus side */
+        spin_unlock(&c->lock);
+      }
+      static void helper(struct conn *c) {
+        c->state = 1;          /* callers disagree → NOT propagated → unlocked */
+      }
+      void locked_caller(struct conn *c) {
+        spin_lock(&c->lock);
+        helper(c);             /* under the lock */
+        spin_unlock(&c->lock);
+      }
+      void racy_caller(struct conn *c) {
+        helper(c);             /* NO lock — genuine inconsistency */
+      }
+    `;
+    const cands = run(src);
+    const state = cands.find((c) => c.field === "state");
+    expect(state).toBeDefined();
+    // helper is preserved as the inconsistent (unlocked) side.
+    const badFns = new Set(state!.inconsistentAccesses.map((a) => a.functionName));
+    expect(badFns.has("helper")).toBe(true);
+  });
+
+  it("does NOT propagate into an EXPORTED function (unknown external callers)", () => {
+    // exported_helper() is EXPORT_SYMBOL'd, so it has callers OUTSIDE the subsystem we
+    // cannot see (possibly lock-free). Even though its ONE in-subsystem call-site holds
+    // the lock, we conservatively refuse to propagate — the candidate must survive.
+    const src = `
+      void exported_helper(struct conn *c) {
+        c->state = 1;
+      }
+      EXPORT_SYMBOL(exported_helper);
+      void only_caller(struct conn *c) {
+        spin_lock(&c->lock);
+        exported_helper(c);
+        spin_unlock(&c->lock);
+      }
+      void reader(struct conn *c) {
+        spin_lock(&c->lock);
+        (void)c->state;
+        spin_unlock(&c->lock);
+      }
+    `;
+    const cands = run(src);
+    expect(cands.find((c) => c.field === "state")).toBeDefined();
+  });
+
+  it("preserves the flc_blocker-shape candidate: a lockless FAST-PATH read before an internal lock", () => {
+    // Shape of fs/locks' flc_blocker cancel-vs-wake: __del_block does a LOCKLESS read
+    // of ->blocker (fast path) BEFORE taking the lock internally, then writes it under
+    // the lock; a public wrapper calls it with NO lock held. Propagation must NOT fold
+    // the lock into __del_block (its wrapper caller holds none), so the genuine
+    // lockless-vs-locked candidate survives.
+    const src = `
+      static void wake_blocks(struct conn *c) {
+        spin_lock(&c->lock);
+        smp_store_release(&c->blocker, 0);   /* WRITE under the lock */
+        spin_unlock(&c->lock);
+      }
+      static int __del_block(struct conn *waiter) {
+        if (!smp_load_acquire(&waiter->blocker))   /* LOCKLESS fast-path read */
+          return 0;
+        spin_lock(&waiter->lock);
+        smp_store_release(&waiter->blocker, 0);     /* WRITE under the lock */
+        spin_unlock(&waiter->lock);
+        return 1;
+      }
+      /* pure lockless traversal (like fs/locks what_owner_is_waiting_for): a blocker
+         access in a function with NO locked access → the cross-function inconsistent
+         side. Its callers are outside this snippet (entry point) → not propagated. */
+      static struct conn *what_waits_for(struct conn *blocker) {
+        while (blocker->blocker)
+          blocker = blocker->blocker;
+        return blocker;
+      }
+      int del_block(struct conn *waiter) {
+        return __del_block(waiter);   /* public wrapper — NO lock held */
+      }
+    `;
+    const cands = run(src);
+    const blocker = cands.find((c) => c.field === "blocker");
+    expect(blocker).toBeDefined();
+    // The lockless traversal is preserved as the inconsistent side.
+    const badFns = new Set(blocker!.inconsistentAccesses.map((a) => a.functionName));
+    expect(badFns.has("what_waits_for")).toBe(true);
+    expect(blocker!.hasWrite).toBe(true);
+  });
+
+  it("propagation can be disabled to reproduce the pre-refinement behavior", () => {
+    const src = `
+      static void helper(struct conn *c) { c->state = 1; }
+      void path1(struct conn *c) { spin_lock(&c->lock); helper(c); spin_unlock(&c->lock); }
+      void reader(struct conn *c) { spin_lock(&c->lock); (void)c->state; spin_unlock(&c->lock); }
+    `;
+    const withProp = findRaceCandidates(connModel(), [{ file: "conn.c", text: src }], {});
+    const noProp = findRaceCandidates(connModel(), [{ file: "conn.c", text: src }], { interprocLockPropagation: false });
+    // With propagation: helper runs under the lock → no candidate. Without: flagged.
+    expect(withProp.find((c) => c.field === "state")).toBeUndefined();
+    expect(noProp.find((c) => c.field === "state")).toBeDefined();
+  });
+
   it("discovery mode surfaces a shared field absent from the model", () => {
     // 'epoch' is not in the model; discovery should pick it up (locked in fn1, 2 fns).
     const src = `
