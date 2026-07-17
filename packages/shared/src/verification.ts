@@ -181,6 +181,25 @@ export const VerificationResultSchema = z.object({
   // Optional, additive fields. Existing producers can leave these undefined.
   error_reason: z.string().nullable().optional(),
   summary: z.string().optional(),
+  // #659 / #1278 — evidence provenance surfaced to the cloud verify writeback.
+  //
+  // `evidence_kind` mirrors the cloud contract's VerifyEvidenceKind (0cloud
+  // `@0cloud/cloud-contracts`): a reproduced kind promotes the finding to
+  // in_scope, `source-only` never does. Producers that actually reproduced a
+  // PoC set it; leave it undefined to let the consumer keep its own default
+  // (the cloud maps a `reproduced` replay to `reproduced-poc` on its own, so
+  // an undefined kind never downgrades a genuine replay). We only ever emit a
+  // REPRODUCED kind here — never `source-only` — for exactly that reason.
+  //
+  // `oast_confirmed` is the out-of-band signal: true when a token-matched OAST
+  // (interactsh-style DNS/HTTP) callback proved a blind class (SSRF / OOB-RCE /
+  // OOB-SQLi / blind XSS). Its proof lives OUTSIDE the request/response the
+  // deterministic replay can see, so the cloud promotes it even when the
+  // in-band replay predicates left the status at `not_reproduced` / `skipped`.
+  evidence_kind: z
+    .enum(["reproduced-poc", "source-only", "reproduced-memcorruption-poc"])
+    .optional(),
+  oast_confirmed: z.boolean().optional(),
 });
 
 export type VerificationResult = z.infer<typeof VerificationResultSchema>;

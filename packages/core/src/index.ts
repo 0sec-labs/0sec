@@ -767,14 +767,20 @@ export type {
   VerifyMemoryOptions,
 } from "./triage/structured-verify.js";
 // Unified verify funnel — one verdict contract + one disclosure predicate.
-export { isDisclosureWorthy } from "./triage/verify-verdict.js";
+export { isDisclosureWorthy, evidenceKindForFinding } from "./triage/verify-verdict.js";
 export type {
   VerifyVerdict,
   VerifyOutcome,
   VerifySignal,
+  VerifyEvidenceKind,
   VerdictLike,
   DisclosureDecision,
 } from "./triage/verify-verdict.js";
+// #659 / #1278 — the pov_oracle bucketing (which categories delegate to the
+// out-of-band OAST-callback oracle). Consumed by `pwnkit verify` to decide when
+// a finding's PoV provenance is an OAST callback.
+export { oracleForCategory } from "./triage/pov-gate.js";
+export type { PovOracle } from "./triage/pov-gate.js";
 
 // Auto-triage gate (#1101): source-fixed / dedup / reachability + false-refute fix
 export {
