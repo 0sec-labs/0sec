@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { BenchManifest, TournamentResult } from "@pwnkit/core";
 
 import { canonicalJson, writeCanonicalJsonAtomic } from "../bench-improvement.js";
-import { selectRunManifest, validateCaptureDestination } from "../bench.js";
+import { measureOperation, selectRunManifest, validateCaptureDestination } from "../bench.js";
 
 const roots: string[] = [];
 
@@ -39,6 +39,14 @@ function manifest(): BenchManifest {
 }
 
 describe("sealed bench tournament capture", () => {
+  it("measures the full operation with an injectable monotonic clock", async () => {
+    const ticks = [10, 25.2];
+    await expect(measureOperation(async () => "done", () => ticks.shift()!)).resolves.toEqual({
+      value: "done",
+      elapsedMs: 16,
+    });
+  });
+
   it("selects exact ordered case ids under a new sealed manifest id", () => {
     const selected = selectRunManifest(manifest(), {
       caseId: ["held-out", "development"],

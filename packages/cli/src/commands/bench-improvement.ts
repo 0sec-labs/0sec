@@ -9,10 +9,11 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Command } from "commander";
 import {
@@ -22,22 +23,36 @@ import {
   pairwiseDeltas,
   pickChampion,
   projectResearchImprovementResult,
+  projectResearchExecutionEvidence,
+  researchExecutionEvidenceRef,
   type BenchScorecard,
   type BenchCaseResult,
   type BenchManifest,
+  type BenchEvaluatorAttestation,
   type ResearchImprovementResult,
+  type ResearchExecutionEvidence,
   type ResearchTournamentRun,
   type TournamentResult,
 } from "@pwnkit/core";
 
 interface CandidateMetadata {
   id: string;
+  project: "pwnkit";
+  budget: {
+    maxRuns: number;
+    maxUsd: number;
+    maxWallClockMinutes: number;
+  };
   evaluation: {
     manifestId: string;
+    manifestDigest: string;
     evaluatorDigest: string;
     developmentCorpusDigest: string;
     heldOutCorpusDigest: string;
     negativeControlCorpusDigest: string;
+    developmentCaseIds: string[];
+    heldOutCaseIds: string[];
+    negativeControlCaseIds: string[];
   };
 }
 
@@ -57,6 +72,46 @@ export interface ImprovementProjectionInputs {
   evaluatorDigestAfter: string;
   ciEvidence: CiEvidence;
   evidenceRefs: string[];
+}
+
+interface SealedTournamentInput {
+  run: ResearchTournamentRun;
+  digest: string;
+  artifactRef: string;
+}
+
+interface EvaluationManifestInput {
+  id: string;
+  digest: string;
+  artifactRef: string;
+  developmentCaseIds: string[];
+  heldOutCaseIds: string[];
+  negativeControlCaseIds: string[];
+}
+
+interface EvaluatorInput {
+  bundleDigest: string;
+  codeDigest: string;
+  configDigest: string;
+  artifactRefs: string[];
+}
+
+export interface ImprovementBundleProjectionInputs {
+  candidate: CandidateMetadata;
+  championVariantId: string;
+  challengerVariantId: string;
+  development: SealedTournamentInput;
+  heldOut: SealedTournamentInput;
+  negativeControls: SealedTournamentInput;
+  evaluationManifest: EvaluationManifestInput;
+  evaluator: EvaluatorInput;
+  ciEvidence: CiEvidence;
+  evidenceRefs: string[];
+}
+
+export interface ResearchImprovementBundle {
+  result: ResearchImprovementResult;
+  executionEvidence: ResearchExecutionEvidence;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -126,8 +181,8 @@ function stringArray(value: unknown, label: string): string[] {
   return strings;
 }
 
-/** Read a bounded immutable JSON artifact without following symlinks. */
-export function readArtifactJson(pathValue: string, label: string): unknown {
+/** Read bounded immutable artifact bytes without following symlinks. */
+export function readArtifactBytes(pathValue: string, label: string): Buffer {
   const path = resolve(pathValue);
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -138,7 +193,15 @@ export function readArtifactJson(pathValue: string, label: string): unknown {
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const before = fstatSync(fd);
-    const content = readFileSync(fd, "utf8");
+    if (
+      stat.dev !== before.dev ||
+      stat.ino !== before.ino ||
+      stat.size !== before.size ||
+      stat.mtimeMs !== before.mtimeMs
+    ) {
+      throw new Error(`${label} changed before it was opened`);
+    }
+    const content = readFileSync(fd);
     const after = fstatSync(fd);
     if (
       before.dev !== after.dev ||
@@ -148,13 +211,32 @@ export function readArtifactJson(pathValue: string, label: string): unknown {
     ) {
       throw new Error(`${label} changed while it was being read`);
     }
-    return JSON.parse(content);
-  } catch (error) {
-    if (error instanceof SyntaxError) throw new Error(`${label} is not valid JSON`);
-    throw error;
+    return content;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+export function sha256Bytes(content: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
+/** Read a bounded immutable JSON artifact and retain its exact byte digest. */
+export function readArtifactJsonWithDigest(
+  pathValue: string,
+  label: string,
+): { value: unknown; digest: string } {
+  const content = readArtifactBytes(pathValue, label);
+  try {
+    return { value: JSON.parse(content.toString("utf8")), digest: sha256Bytes(content) };
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error(`${label} is not valid JSON`);
+    throw error;
+  }
+}
+
+export function readArtifactJson(pathValue: string, label: string): unknown {
+  return readArtifactJsonWithDigest(pathValue, label).value;
 }
 
 export function parseCandidateMetadata(value: unknown): CandidateMetadata {
@@ -165,10 +247,22 @@ export function parseCandidateMetadata(value: unknown): CandidateMetadata {
     throw new Error("candidate.id must be a lowercase filesystem-safe identifier");
   }
   const evaluation = record(raw.evaluation, "candidate.evaluation");
+  if (raw.project !== "pwnkit") throw new Error("candidate.project must be pwnkit");
+  const budget = record(raw.budget, "candidate.budget");
   return {
     id,
+    project: "pwnkit",
+    budget: {
+      maxRuns: positiveInteger(budget.maxRuns, "candidate.budget.maxRuns"),
+      maxUsd: finiteNonNegative(budget.maxUsd, "candidate.budget.maxUsd"),
+      maxWallClockMinutes: positiveInteger(
+        budget.maxWallClockMinutes,
+        "candidate.budget.maxWallClockMinutes",
+      ),
+    },
     evaluation: {
       manifestId: text(evaluation.manifestId, "candidate.evaluation.manifestId"),
+      manifestDigest: digest(evaluation.manifestDigest, "candidate.evaluation.manifestDigest"),
       evaluatorDigest: digest(evaluation.evaluatorDigest, "candidate.evaluation.evaluatorDigest"),
       developmentCorpusDigest: digest(
         evaluation.developmentCorpusDigest,
@@ -181,6 +275,18 @@ export function parseCandidateMetadata(value: unknown): CandidateMetadata {
       negativeControlCorpusDigest: digest(
         evaluation.negativeControlCorpusDigest,
         "candidate.evaluation.negativeControlCorpusDigest",
+      ),
+      developmentCaseIds: stringArray(
+        evaluation.developmentCaseIds,
+        "candidate.evaluation.developmentCaseIds",
+      ),
+      heldOutCaseIds: stringArray(
+        evaluation.heldOutCaseIds,
+        "candidate.evaluation.heldOutCaseIds",
+      ),
+      negativeControlCaseIds: stringArray(
+        evaluation.negativeControlCaseIds,
+        "candidate.evaluation.negativeControlCaseIds",
       ),
     },
   };
@@ -197,6 +303,7 @@ function caseResult(
   value: unknown,
   manifestCase: BenchManifest["cases"][number],
   label: string,
+  configuredPassAtK: number,
 ): BenchCaseResult {
   const raw = record(value, label);
   if (text(raw.id, `${label}.id`) !== manifestCase.id) {
@@ -214,20 +321,66 @@ function caseResult(
   if (!Array.isArray(raw.tags) || JSON.stringify(raw.tags) !== JSON.stringify(manifestCase.tags)) {
     throw new Error(`${label}.tags do not match its manifest case`);
   }
-  positiveInteger(raw.passAtK, `${label}.passAtK`);
+  const passAtK = positiveInteger(raw.passAtK, `${label}.passAtK`);
+  if (passAtK !== (manifestCase.passAtK ?? configuredPassAtK)) {
+    throw new Error(`${label}.passAtK does not match its manifest or tournament config`);
+  }
   if (!Array.isArray(raw.attempts)) throw new Error(`${label}.attempts must be an array`);
-  if (!(["verified", "refuted", "inconclusive"] as unknown[]).includes(raw.verdict)) {
-    throw new Error(`${label}.verdict is invalid`);
+  if (raw.attempts.length === 0 || raw.attempts.length > passAtK) {
+    throw new Error(`${label}.attempts must contain between 1 and passAtK receipts`);
+  }
+  const attempts = raw.attempts.map((value, index) => {
+    const attempt = record(value, `${label}.attempts[${index}]`);
+    if (attempt.attemptIndex !== index) {
+      throw new Error(`${label}.attempts must have contiguous zero-based indices`);
+    }
+    if (!(["verified", "refuted", "inconclusive"] as unknown[]).includes(attempt.status)) {
+      throw new Error(`${label}.attempts[${index}].status is invalid`);
+    }
+    if (
+      attempt.confidence !== null &&
+      (typeof attempt.confidence !== "number" ||
+        !Number.isFinite(attempt.confidence) ||
+        attempt.confidence < 0 ||
+        attempt.confidence > 1)
+    ) {
+      throw new Error(`${label}.attempts[${index}].confidence must be null or a rate`);
+    }
+    if (typeof attempt.notes !== "string") {
+      throw new Error(`${label}.attempts[${index}].notes must be a string`);
+    }
+    finiteNonNegative(attempt.costUsd, `${label}.attempts[${index}].costUsd`);
+    nonNegativeInteger(attempt.attackTurns, `${label}.attempts[${index}].attackTurns`);
+    nonNegativeInteger(attempt.durationMs, `${label}.attempts[${index}].durationMs`);
+    return attempt;
+  });
+  const firstVerified = attempts.findIndex((attempt) => attempt.status === "verified");
+  if (firstVerified >= 0 && firstVerified !== attempts.length - 1) {
+    throw new Error(`${label}.attempts continue after the first verified receipt`);
+  }
+  const derivedVerdict = firstVerified >= 0
+    ? "verified"
+    : attempts.every((attempt) => attempt.status === "inconclusive")
+      ? "inconclusive"
+      : "refuted";
+  if (raw.verdict !== derivedVerdict) {
+    throw new Error(`${label}.verdict does not match its attempt receipts`);
   }
   if (typeof raw.falsePositive !== "boolean") {
     throw new Error(`${label}.falsePositive must be boolean`);
   }
-  if (raw.falsePositive !== (raw.knownNegative === true && raw.verdict === "verified")) {
+  if (raw.falsePositive !== (raw.knownNegative === true && derivedVerdict === "verified")) {
     throw new Error(`${label}.falsePositive is inconsistent with the verdict`);
   }
-  finiteNonNegative(raw.costUsd, `${label}.costUsd`);
-  nonNegativeInteger(raw.attackTurns, `${label}.attackTurns`);
-  return raw as unknown as BenchCaseResult;
+  const costUsd = finiteNonNegative(raw.costUsd, `${label}.costUsd`);
+  const attackTurns = nonNegativeInteger(raw.attackTurns, `${label}.attackTurns`);
+  const attemptCost = attempts.reduce((sum, attempt) => sum + (attempt.costUsd as number), 0);
+  const attemptTurns = attempts.reduce((sum, attempt) => sum + (attempt.attackTurns as number), 0);
+  if (costUsd !== attemptCost) throw new Error(`${label}.costUsd does not equal attempt costs`);
+  if (attackTurns !== attemptTurns) {
+    throw new Error(`${label}.attackTurns does not equal attempt turns`);
+  }
+  return { ...raw, attempts } as unknown as BenchCaseResult;
 }
 
 function validateScorecard(
@@ -296,7 +449,12 @@ function validateScorecard(
     seen.add(id);
     const manifestCase = manifestById.get(id);
     if (!manifestCase) throw new Error(`${label}.cases contains unknown id ${id}`);
-    return caseResult(entry, manifestCase, `${label}.cases[${index}]`);
+    return caseResult(
+      entry,
+      manifestCase,
+      `${label}.cases[${index}]`,
+      config.passAtK as number,
+    );
   });
   const recomputed = aggregateScorecard({
     manifestId: manifest.id,
@@ -321,6 +479,18 @@ function validateScorecard(
 
 export function parseTournamentPair(value: unknown, label: string): ResearchTournamentRun {
   const raw = record(value, label);
+  if (raw.schemaVersion !== 1) throw new Error(`${label}.schemaVersion must be 1`);
+  const elapsedMs = nonNegativeInteger(raw.elapsedMs, `${label}.elapsedMs`);
+  const evaluatorAttestation = (value: unknown, field: string): BenchEvaluatorAttestation => {
+    const attestation = record(value, `${label}.${field}`);
+    return {
+      bundleDigest: digest(attestation.bundleDigest, `${label}.${field}.bundleDigest`),
+      codeDigest: digest(attestation.codeDigest, `${label}.${field}.codeDigest`),
+      configDigest: digest(attestation.configDigest, `${label}.${field}.configDigest`),
+    };
+  };
+  const evaluatorBefore = evaluatorAttestation(raw.evaluatorBefore, "evaluatorBefore");
+  const evaluatorAfter = evaluatorAttestation(raw.evaluatorAfter, "evaluatorAfter");
   const manifest = parseManifest(raw.manifest);
   const tournamentRaw = record(raw.tournament, `${label}.tournament`);
   if (text(tournamentRaw.manifestId, `${label}.tournament.manifestId`) !== manifest.id) {
@@ -390,11 +560,185 @@ export function parseTournamentPair(value: unknown, label: string): ResearchTour
     variants,
     championId,
   };
-  return { manifest, tournament };
+  return { manifest, tournament, elapsedMs, evaluatorBefore, evaluatorAfter };
 }
 
 function requireDigest(actual: string, expected: string, label: string): void {
   if (actual !== expected) throw new Error(`${label} digest does not match candidate metadata`);
+}
+
+function sameStrings(actual: string[], expected: string[]): boolean {
+  return JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort());
+}
+
+function safeArtifactRef(value: unknown, label: string): string {
+  const ref = text(value, label);
+  if (!/^[a-z0-9][a-z0-9:._/-]{2,199}$/.test(ref)) {
+    throw new Error(`${label} must be a safe artifact reference`);
+  }
+  return ref;
+}
+
+export function parseEvaluationManifest(
+  value: unknown,
+  manifestDigest: string,
+  artifactRef: string,
+): EvaluationManifestInput {
+  const raw = record(value, "evaluation manifest");
+  if (raw.schemaVersion !== 1) throw new Error("evaluation manifest schemaVersion must be 1");
+  return {
+    id: text(raw.id, "evaluation manifest id"),
+    digest: digest(manifestDigest, "evaluation manifest digest"),
+    artifactRef: safeArtifactRef(artifactRef, "evaluation manifest ref"),
+    developmentCaseIds: stringArray(raw.developmentCaseIds, "evaluation manifest developmentCaseIds"),
+    heldOutCaseIds: stringArray(raw.heldOutCaseIds, "evaluation manifest heldOutCaseIds"),
+    negativeControlCaseIds: stringArray(
+      raw.negativeControlCaseIds,
+      "evaluation manifest negativeControlCaseIds",
+    ),
+  };
+}
+
+export function parseEvaluatorBundle(
+  value: unknown,
+  bundleDigest: string,
+  codeDigest: string,
+  configDigest: string,
+  artifactRefs: string[],
+): EvaluatorInput {
+  const raw = record(value, "evaluator bundle");
+  if (raw.schemaVersion !== 1) throw new Error("evaluator bundle schemaVersion must be 1");
+  const declaredCode = digest(raw.codeDigest, "evaluator bundle codeDigest");
+  const declaredConfig = digest(raw.configDigest, "evaluator bundle configDigest");
+  if (declaredCode !== codeDigest) throw new Error("evaluator code bytes do not match the bundle");
+  if (declaredConfig !== configDigest) throw new Error("evaluator config bytes do not match the bundle");
+  return {
+    bundleDigest: digest(bundleDigest, "evaluator bundle digest"),
+    codeDigest,
+    configDigest,
+    artifactRefs: artifactRefs.map((ref, index) => safeArtifactRef(ref, `evaluator ref ${index}`)),
+  };
+}
+
+function requireCaseBinding(actual: string[], expected: string[], label: string): void {
+  if (!sameStrings(actual, expected)) throw new Error(`${label} case ids do not match candidate metadata`);
+}
+
+export function projectImprovementBundleFromArtifacts(
+  inputs: ImprovementBundleProjectionInputs,
+): ResearchImprovementBundle {
+  const evaluation = inputs.candidate.evaluation;
+  if (inputs.evaluationManifest.id !== evaluation.manifestId) {
+    throw new Error("evaluation manifest id does not match candidate metadata");
+  }
+  requireDigest(inputs.evaluationManifest.digest, evaluation.manifestDigest, "evaluation manifest");
+  requireDigest(inputs.evaluator.bundleDigest, evaluation.evaluatorDigest, "evaluator bundle");
+  const expectedEvaluator = {
+    bundleDigest: inputs.evaluator.bundleDigest,
+    codeDigest: inputs.evaluator.codeDigest,
+    configDigest: inputs.evaluator.configDigest,
+  };
+  for (const [label, run] of [
+    ["development", inputs.development.run],
+    ["held-out", inputs.heldOut.run],
+    ["negative-control", inputs.negativeControls.run],
+  ] as const) {
+    if (JSON.stringify(run.evaluatorBefore) !== JSON.stringify(expectedEvaluator)) {
+      throw new Error(`${label} evaluator-before attestation does not match retained bytes`);
+    }
+    if (JSON.stringify(run.evaluatorAfter) !== JSON.stringify(run.evaluatorBefore)) {
+      throw new Error(`${label} evaluator changed during tournament execution`);
+    }
+  }
+  requireCaseBinding(
+    inputs.evaluationManifest.developmentCaseIds,
+    evaluation.developmentCaseIds,
+    "development evaluation manifest",
+  );
+  requireCaseBinding(
+    inputs.evaluationManifest.heldOutCaseIds,
+    evaluation.heldOutCaseIds,
+    "held-out evaluation manifest",
+  );
+  requireCaseBinding(
+    inputs.evaluationManifest.negativeControlCaseIds,
+    evaluation.negativeControlCaseIds,
+    "negative-control evaluation manifest",
+  );
+
+  const elapsedMs =
+    (inputs.development.run.elapsedMs ?? -1) +
+    (inputs.heldOut.run.elapsedMs ?? -1) +
+    (inputs.negativeControls.run.elapsedMs ?? -1);
+  const executionEvidence = projectResearchExecutionEvidence({
+    candidateId: inputs.candidate.id,
+    championVariantId: inputs.championVariantId,
+    challengerVariantId: inputs.challengerVariantId,
+    manifest: {
+      id: inputs.evaluationManifest.id,
+      digest: inputs.evaluationManifest.digest,
+      artifactRef: inputs.evaluationManifest.artifactRef,
+    },
+    evaluator: {
+      bundleDigest: inputs.evaluator.bundleDigest,
+      codeDigest: inputs.evaluator.codeDigest,
+      configDigest: inputs.evaluator.configDigest,
+    },
+    development: {
+      run: inputs.development.run,
+      artifactRef: inputs.development.artifactRef,
+      tournamentDigest: inputs.development.digest,
+      corpusDigest: evaluation.developmentCorpusDigest,
+      expectedCaseIds: evaluation.developmentCaseIds,
+      requireKnownNegative: false,
+    },
+    heldOut: {
+      run: inputs.heldOut.run,
+      artifactRef: inputs.heldOut.artifactRef,
+      tournamentDigest: inputs.heldOut.digest,
+      corpusDigest: evaluation.heldOutCorpusDigest,
+      expectedCaseIds: evaluation.heldOutCaseIds,
+      requireKnownNegative: false,
+    },
+    negativeControls: {
+      run: inputs.negativeControls.run,
+      artifactRef: inputs.negativeControls.artifactRef,
+      tournamentDigest: inputs.negativeControls.digest,
+      corpusDigest: evaluation.negativeControlCorpusDigest,
+      expectedCaseIds: evaluation.negativeControlCaseIds,
+      requireKnownNegative: true,
+    },
+    elapsedMs,
+  });
+  const requiredRefs = [
+    inputs.evaluationManifest.artifactRef,
+    inputs.development.artifactRef,
+    inputs.heldOut.artifactRef,
+    inputs.negativeControls.artifactRef,
+    ...inputs.evaluator.artifactRefs,
+    researchExecutionEvidenceRef(executionEvidence),
+  ];
+  const allRefs = [
+    ...inputs.ciEvidence.evidenceRefs,
+    ...inputs.evidenceRefs,
+    ...requiredRefs,
+  ];
+  if (new Set(allRefs).size !== allRefs.length) {
+    throw new Error("improvement artifact references must be unique across roles");
+  }
+  const result = projectImprovementFromArtifacts({
+    candidate: inputs.candidate,
+    championVariantId: inputs.championVariantId,
+    challengerVariantId: inputs.challengerVariantId,
+    development: inputs.development.run,
+    heldOut: inputs.heldOut.run,
+    negativeControls: inputs.negativeControls.run,
+    evaluatorDigestBefore: inputs.evaluator.bundleDigest,
+    evaluatorDigestAfter: inputs.evaluator.bundleDigest,
+    ciEvidence: inputs.ciEvidence,
+    evidenceRefs: [...inputs.evidenceRefs, ...requiredRefs],
+  });
+  return { result, executionEvidence };
 }
 
 export function projectImprovementFromArtifacts(
@@ -488,6 +832,33 @@ export function writeResultAtomic(outputValue: string, result: ResearchImproveme
   writeCanonicalJsonAtomic(outputValue, result);
 }
 
+/** Exclusively reserve the directory and publish COMPLETE only after both files exist. */
+export function writeImprovementBundleAtomic(
+  outputDirectoryValue: string,
+  bundle: ResearchImprovementBundle,
+): void {
+  const outputDirectory = resolve(outputDirectoryValue);
+  const parent = dirname(outputDirectory);
+  mkdirSync(parent, { recursive: true });
+  try {
+    mkdirSync(outputDirectory, { mode: 0o700 });
+  } catch (error) {
+    if (existsSync(outputDirectory)) throw new Error(`output already exists: ${outputDirectory}`);
+    throw error;
+  }
+  try {
+    writeCanonicalJsonAtomic(join(outputDirectory, "result.json"), bundle.result);
+    writeCanonicalJsonAtomic(
+      join(outputDirectory, "execution-evidence.json"),
+      bundle.executionEvidence,
+    );
+    writeCanonicalJsonAtomic(join(outputDirectory, "COMPLETE"), { schemaVersion: 1 });
+  } catch (error) {
+    rmSync(outputDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
@@ -500,38 +871,84 @@ export function registerBenchImprovementCommand(bench: Command): void {
     .requiredOption("--champion-variant <id>", "champion variant id present in every tournament")
     .requiredOption("--challenger-variant <id>", "challenger variant id present in every tournament")
     .requiredOption("--development <path>", "JSON pair: {manifest, tournament}")
+    .requiredOption("--development-ref <ref>", "immutable development tournament artifact ref")
     .requiredOption("--held-out <path>", "JSON pair: {manifest, tournament}")
+    .requiredOption("--held-out-ref <ref>", "immutable held-out tournament artifact ref")
     .requiredOption("--negative-controls <path>", "JSON pair: {manifest, tournament}")
-    .requiredOption("--evaluator-before <digest>", "pre-run evaluator digest")
-    .requiredOption("--evaluator-after <digest>", "post-run evaluator digest")
+    .requiredOption("--negative-controls-ref <ref>", "immutable negative-control artifact ref")
+    .requiredOption("--evaluation-manifest <path>", "precommitted evaluation manifest JSON")
+    .requiredOption("--manifest-ref <ref>", "immutable evaluation manifest artifact ref")
+    .requiredOption("--evaluator-bundle <path>", "evaluator bundle JSON")
+    .requiredOption("--evaluator-bundle-ref <ref>", "immutable evaluator bundle artifact ref")
+    .requiredOption("--evaluator-code <path>", "exact evaluator implementation artifact")
+    .requiredOption("--evaluator-code-ref <ref>", "immutable evaluator code artifact ref")
+    .requiredOption("--evaluator-config <path>", "exact evaluator configuration artifact")
+    .requiredOption("--evaluator-config-ref <ref>", "immutable evaluator config artifact ref")
     .requiredOption("--ci-evidence <path>", "JSON: {schemaVersion:1, passed, evidenceRefs}")
-    .requiredOption("--output <path>", "canonical v1 ImprovementExperimentResult destination")
+    .requiredOption("--output-dir <path>", "create-once result + execution-evidence directory")
     .option("--evidence-ref <ref>", "additional immutable evidence reference (repeatable)", collect, [])
     .action((opts) => {
-      const result = projectImprovementFromArtifacts({
+      const development = readArtifactJsonWithDigest(String(opts.development), "development pair");
+      const heldOut = readArtifactJsonWithDigest(String(opts.heldOut), "held-out pair");
+      const negativeControls = readArtifactJsonWithDigest(
+        String(opts.negativeControls),
+        "negative-control pair",
+      );
+      const manifest = readArtifactJsonWithDigest(
+        String(opts.evaluationManifest),
+        "evaluation manifest",
+      );
+      const evaluatorBundle = readArtifactJsonWithDigest(
+        String(opts.evaluatorBundle),
+        "evaluator bundle",
+      );
+      const evaluatorCodeDigest = sha256Bytes(
+        readArtifactBytes(String(opts.evaluatorCode), "evaluator code"),
+      );
+      const evaluatorConfigDigest = sha256Bytes(
+        readArtifactBytes(String(opts.evaluatorConfig), "evaluator config"),
+      );
+      const bundle = projectImprovementBundleFromArtifacts({
         candidate: parseCandidateMetadata(readArtifactJson(String(opts.candidate), "candidate")),
         championVariantId: text(opts.championVariant, "champion variant id"),
         challengerVariantId: text(opts.challengerVariant, "challenger variant id"),
-        development: parseTournamentPair(
-          readArtifactJson(String(opts.development), "development pair"),
-          "development pair",
+        development: {
+          run: parseTournamentPair(development.value, "development pair"),
+          digest: development.digest,
+          artifactRef: safeArtifactRef(opts.developmentRef, "development ref"),
+        },
+        heldOut: {
+          run: parseTournamentPair(heldOut.value, "held-out pair"),
+          digest: heldOut.digest,
+          artifactRef: safeArtifactRef(opts.heldOutRef, "held-out ref"),
+        },
+        negativeControls: {
+          run: parseTournamentPair(negativeControls.value, "negative-control pair"),
+          digest: negativeControls.digest,
+          artifactRef: safeArtifactRef(opts.negativeControlsRef, "negative-control ref"),
+        },
+        evaluationManifest: parseEvaluationManifest(
+          manifest.value,
+          manifest.digest,
+          String(opts.manifestRef),
         ),
-        heldOut: parseTournamentPair(
-          readArtifactJson(String(opts.heldOut), "held-out pair"),
-          "held-out pair",
+        evaluator: parseEvaluatorBundle(
+          evaluatorBundle.value,
+          evaluatorBundle.digest,
+          evaluatorCodeDigest,
+          evaluatorConfigDigest,
+          [
+            String(opts.evaluatorBundleRef),
+            String(opts.evaluatorCodeRef),
+            String(opts.evaluatorConfigRef),
+          ],
         ),
-        negativeControls: parseTournamentPair(
-          readArtifactJson(String(opts.negativeControls), "negative-control pair"),
-          "negative-control pair",
-        ),
-        evaluatorDigestBefore: text(opts.evaluatorBefore, "evaluator-before digest"),
-        evaluatorDigestAfter: text(opts.evaluatorAfter, "evaluator-after digest"),
         ciEvidence: parseCiEvidence(readArtifactJson(String(opts.ciEvidence), "CI evidence")),
         evidenceRefs: (opts.evidenceRef as string[]).map((ref, index) =>
           text(ref, `evidence ref ${index}`),
         ),
       });
-      writeResultAtomic(String(opts.output), result);
-      process.stdout.write(`${String(opts.output)}\n`);
+      writeImprovementBundleAtomic(String(opts.outputDir), bundle);
+      process.stdout.write(`${String(opts.outputDir)}\n`);
     });
 }

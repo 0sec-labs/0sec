@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { BenchManifest } from "./manifest.js";
 import type { BenchScorecard } from "./scorecard.js";
 import type { TournamentResult } from "./tournament.js";
+import type { BenchEvaluatorAttestation } from "./oracle.js";
 
 export interface ResearchScoreSnapshot {
   cases: number;
@@ -42,6 +43,10 @@ export interface ResearchImprovementResult {
 export interface ResearchTournamentRun {
   manifest: BenchManifest;
   tournament: TournamentResult;
+  /** Monotonic outer wall-clock duration recorded around the full tournament. */
+  elapsedMs?: number;
+  evaluatorBefore?: BenchEvaluatorAttestation;
+  evaluatorAfter?: BenchEvaluatorAttestation;
 }
 
 export interface ProjectResearchResultOptions {

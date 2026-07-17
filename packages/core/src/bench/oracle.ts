@@ -17,7 +17,38 @@
  * auto-verifying-eval-server property).
  */
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import type { BenchCase, BenchObjective } from "./manifest.js";
+
+export interface BenchEvaluatorAttestation {
+  bundleDigest: string;
+  codeDigest: string;
+  configDigest: string;
+}
+
+const OBJECTIVE_ORACLE_CONFIG = { schemaVersion: 1, oracle: "ObjectiveOracle", version: 1 };
+
+function sha256(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+/** Hash the exact loaded grader module and its fixed configuration. */
+export function objectiveOracleEvaluatorAttestation(): BenchEvaluatorAttestation {
+  const codeDigest = sha256(readFileSync(fileURLToPath(import.meta.url)));
+  const configBytes = Buffer.from(`${JSON.stringify(OBJECTIVE_ORACLE_CONFIG)}\n`);
+  const configDigest = sha256(configBytes);
+  const bundleBytes = Buffer.from(
+    `${JSON.stringify({ schemaVersion: 1, codeDigest, configDigest })}\n`,
+  );
+  return { bundleDigest: sha256(bundleBytes), codeDigest, configDigest };
+}
+
+export function objectiveOracleEvaluatorConfigJson(): string {
+  return `${JSON.stringify(OBJECTIVE_ORACLE_CONFIG)}\n`;
+}
 
 // ── Verdict contract (mirrors cloud RunVerifyJobResult) ───────────────
 

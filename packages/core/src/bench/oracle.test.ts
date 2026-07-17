@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { ObjectiveOracle, type BenchScanResult } from "./oracle.js";
+import {
+  ObjectiveOracle,
+  objectiveOracleEvaluatorAttestation,
+  objectiveOracleEvaluatorConfigJson,
+  type BenchScanResult,
+} from "./oracle.js";
 import type { BenchCase } from "./manifest.js";
 
 function webCase(overrides: Partial<BenchCase> = {}): BenchCase {
@@ -27,6 +32,21 @@ function kernelCase(overrides: Partial<BenchCase> = {}): BenchCase {
 }
 
 const oracle = new ObjectiveOracle();
+
+describe("ObjectiveOracle evaluator attestation", () => {
+  it("content-addresses the exact loaded grader and fixed config", () => {
+    const first = objectiveOracleEvaluatorAttestation();
+    expect(first).toEqual(objectiveOracleEvaluatorAttestation());
+    expect(first.bundleDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(first.codeDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(first.configDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(JSON.parse(objectiveOracleEvaluatorConfigJson())).toEqual({
+      schemaVersion: 1,
+      oracle: "ObjectiveOracle",
+      version: 1,
+    });
+  });
+});
 
 describe("ObjectiveOracle — positive web cases", () => {
   it("verifies when the injected marker appears in finding evidence", () => {

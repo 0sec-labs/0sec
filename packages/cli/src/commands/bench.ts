@@ -15,6 +15,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { Command } from "commander";
 import chalk from "chalk";
 import type { RuntimeMode, ScanDepth } from "@pwnkit/shared";
@@ -27,6 +28,7 @@ import {
   compareScorecards,
   createDefaultVariantScan,
   createDockerWebProvisioner,
+  objectiveOracleEvaluatorAttestation,
   loadLedger,
   saveLedger,
   appendLedgerEntry,
@@ -67,6 +69,19 @@ export function validateCaptureDestination(outputValue: string, ledgerValue: str
     throw new Error("--tournament-output must differ from --ledger");
   }
   if (existsSync(output)) throw new Error(`tournament output already exists: ${output}`);
+}
+
+export async function measureOperation<T>(
+  operation: () => Promise<T>,
+  monotonicClock: () => number = () => performance.now(),
+): Promise<{ value: T; elapsedMs: number }> {
+  const startedAt = monotonicClock();
+  const value = await operation();
+  const completedAt = monotonicClock();
+  if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) {
+    throw new Error("monotonic tournament clock produced an invalid interval");
+  }
+  return { value, elapsedMs: Math.ceil(completedAt - startedAt) };
 }
 
 function parseVariants(opts: Record<string, unknown>): BenchVariant[] {
@@ -159,7 +174,8 @@ export function registerBenchCommand(program: Command): void {
         console.log("");
       }
 
-      const tournament = await runTournament(manifest, {
+      const evaluatorBefore = objectiveOracleEvaluatorAttestation();
+      const measuredTournament = await measureOperation(() => runTournament(manifest, {
         variants,
         variantScan: (v) => createDefaultVariantScan(v),
         provisioner,
@@ -171,10 +187,19 @@ export function registerBenchCommand(program: Command): void {
         onVariant: isJson
           ? undefined
           : (r) => console.log(chalk.dim(`  · ${r.variant.id} done`)),
-      });
+      }));
+      const tournament = measuredTournament.value;
+      const evaluatorAfter = objectiveOracleEvaluatorAttestation();
 
       if (opts.tournamentOutput) {
-        writeCanonicalJsonAtomic(String(opts.tournamentOutput), { manifest, tournament });
+        writeCanonicalJsonAtomic(String(opts.tournamentOutput), {
+          schemaVersion: 1,
+          elapsedMs: measuredTournament.elapsedMs,
+          evaluatorBefore,
+          evaluatorAfter,
+          manifest,
+          tournament,
+        });
       }
 
       const champion = tournament.variants.find((v) => v.variant.id === tournament.championId)!;

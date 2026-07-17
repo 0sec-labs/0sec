@@ -1,5 +1,6 @@
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -8,7 +9,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { Command } from "commander";
 import {
   aggregateScorecard,
   digestBenchManifest,
@@ -19,10 +19,14 @@ import {
 import {
   canonicalResultJson,
   parseCandidateMetadata,
+  parseEvaluationManifest,
+  parseEvaluatorBundle,
   parseTournamentPair,
+  projectImprovementBundleFromArtifacts,
   projectImprovementFromArtifacts,
   readArtifactJson,
-  registerBenchImprovementCommand,
+  readArtifactJsonWithDigest,
+  writeImprovementBundleAtomic,
   writeResultAtomic,
 } from "../bench-improvement.js";
 
@@ -64,7 +68,15 @@ function scorecard(corpus: BenchManifest, successRate: number) {
     knownNegative: entry.knownNegative,
     tags: entry.tags,
     passAtK: 1,
-    attempts: [],
+    attempts: [{
+      attemptIndex: 0,
+      status: index < verified ? "verified" as const : "refuted" as const,
+      confidence: 1,
+      notes: "fixture",
+      costUsd: 8,
+      attackTurns: 20,
+      durationMs: 10,
+    }],
     verdict: index < verified ? "verified" as const : "refuted" as const,
     falsePositive: entry.knownNegative && index < verified,
     costUsd: 8,
@@ -86,6 +98,18 @@ function pair(corpus: BenchManifest, championSuccess: number, challengerSuccess:
     { variant: { id: "challenger" }, scorecard: scorecard(corpus, challengerSuccess) },
   ];
   return {
+    schemaVersion: 1,
+    elapsedMs: 1_000,
+    evaluatorBefore: {
+      bundleDigest: `sha256:${"e".repeat(64)}`,
+      codeDigest: `sha256:${"f".repeat(64)}`,
+      configDigest: `sha256:${"a".repeat(64)}`,
+    },
+    evaluatorAfter: {
+      bundleDigest: `sha256:${"e".repeat(64)}`,
+      codeDigest: `sha256:${"f".repeat(64)}`,
+      configDigest: `sha256:${"a".repeat(64)}`,
+    },
     manifest: corpus,
     tournament: {
       manifestId: corpus.id,
@@ -110,12 +134,18 @@ function fixtures() {
   const candidate = {
     schemaVersion: 1,
     id: "pwnkit_source_hypothesis_001",
+    project: "pwnkit",
+    budget: { maxRuns: 100, maxUsd: 1_000, maxWallClockMinutes: 60 },
     evaluation: {
       manifestId: "research-run-v1",
+      manifestDigest: `sha256:${"d".repeat(64)}`,
       evaluatorDigest: `sha256:${"e".repeat(64)}`,
       developmentCorpusDigest: digestBenchManifest(development.manifest),
       heldOutCorpusDigest: digestBenchManifest(heldOut.manifest),
       negativeControlCorpusDigest: digestBenchManifest(controls.manifest),
+      developmentCaseIds: development.manifest.cases.map((entry) => entry.id),
+      heldOutCaseIds: heldOut.manifest.cases.map((entry) => entry.id),
+      negativeControlCaseIds: controls.manifest.cases.map((entry) => entry.id),
     },
   };
   return { development, heldOut, controls, candidate };
@@ -135,6 +165,55 @@ function project() {
     ciEvidence: { passed: true, evidenceRefs: ["artifact:ci"] },
     evidenceRefs: ["artifact:tournaments", "artifact:ci"],
   });
+}
+
+function bundleInputs() {
+  const values = fixtures();
+  const candidate = parseCandidateMetadata(values.candidate);
+  const evaluatorCodeDigest = `sha256:${"f".repeat(64)}`;
+  const evaluatorConfigDigest = `sha256:${"a".repeat(64)}`;
+  return {
+    candidate,
+    championVariantId: "champion",
+    challengerVariantId: "challenger",
+    development: {
+      run: parseTournamentPair(values.development, "development"),
+      digest: `sha256:${"1".repeat(64)}`,
+      artifactRef: "artifact:development.json",
+    },
+    heldOut: {
+      run: parseTournamentPair(values.heldOut, "held-out"),
+      digest: `sha256:${"2".repeat(64)}`,
+      artifactRef: "artifact:held-out.json",
+    },
+    negativeControls: {
+      run: parseTournamentPair(values.controls, "controls"),
+      digest: `sha256:${"3".repeat(64)}`,
+      artifactRef: "artifact:controls.json",
+    },
+    evaluationManifest: parseEvaluationManifest({
+      schemaVersion: 1,
+      id: candidate.evaluation.manifestId,
+      developmentCaseIds: candidate.evaluation.developmentCaseIds,
+      heldOutCaseIds: candidate.evaluation.heldOutCaseIds,
+      negativeControlCaseIds: candidate.evaluation.negativeControlCaseIds,
+    }, candidate.evaluation.manifestDigest, "artifact:evaluation-manifest.json"),
+    evaluator: parseEvaluatorBundle({
+      schemaVersion: 1,
+      codeDigest: evaluatorCodeDigest,
+      configDigest: evaluatorConfigDigest,
+    }, candidate.evaluation.evaluatorDigest, evaluatorCodeDigest, evaluatorConfigDigest, [
+      "artifact:evaluator-bundle.json",
+      "artifact:evaluator-code.js",
+      "artifact:evaluator-config.json",
+    ]),
+    ciEvidence: { passed: true, evidenceRefs: ["artifact:ci"] },
+    evidenceRefs: [],
+  };
+}
+
+function projectBundle() {
+  return projectImprovementBundleFromArtifacts(bundleInputs());
 }
 
 describe("offline 0research improvement projection", () => {
@@ -218,6 +297,54 @@ describe("offline 0research improvement projection", () => {
     expect(() => parseCandidateMetadata(values.candidate)).toThrow(/lowercase SHA-256/);
   });
 
+  it("recomputes case verdicts from the oracle attempt receipts", () => {
+    const values = fixtures();
+    const forged = values.development.tournament.variants[0].scorecard.cases[0];
+    expect(forged.verdict).toBe("verified");
+    forged.attempts[0].status = "refuted";
+    expect(() => parseTournamentPair(values.development, "development")).toThrow(
+      /verdict does not match its attempt receipts/,
+    );
+  });
+
+  it("rejects evaluator drift during execution and artifact-ref collisions", () => {
+    const drifted = bundleInputs();
+    drifted.development.run.evaluatorAfter!.codeDigest = `sha256:${"0".repeat(64)}`;
+    expect(() => projectImprovementBundleFromArtifacts(drifted)).toThrow(
+      /evaluator changed during tournament execution/,
+    );
+
+    const collided = bundleInputs();
+    collided.heldOut.artifactRef = collided.development.artifactRef;
+    expect(() => projectImprovementBundleFromArtifacts(collided)).toThrow(
+      /artifact references must be unique/,
+    );
+  });
+
+  it("binds exact artifact bytes and rejects forged attempt or evaluator totals", () => {
+    const dir = root();
+    const artifact = join(dir, "artifact.json");
+    writeFileSync(artifact, "{\"schemaVersion\":1}\n");
+    const first = readArtifactJsonWithDigest(artifact, "artifact");
+    writeFileSync(artifact, "{ \"schemaVersion\": 1 }\n");
+    const second = readArtifactJsonWithDigest(artifact, "artifact");
+    expect(first.value).toEqual(second.value);
+    expect(first.digest).not.toBe(second.digest);
+
+    const values = fixtures();
+    values.development.tournament.variants[0].scorecard.cases[0].costUsd = 9;
+    expect(() => parseTournamentPair(values.development, "development")).toThrow(
+      /does not equal attempt costs/,
+    );
+    expect(() => parseEvaluatorBundle({
+      schemaVersion: 1,
+      codeDigest: `sha256:${"1".repeat(64)}`,
+      configDigest: `sha256:${"2".repeat(64)}`,
+    }, `sha256:${"3".repeat(64)}`, `sha256:${"4".repeat(64)}`, `sha256:${"2".repeat(64)}`, [
+      "artifact:bundle",
+    ])).toThrow(/code bytes/);
+  });
+
   it("rejects symlinked evidence inputs", () => {
     const dir = root();
     const target = join(dir, "candidate.json");
@@ -227,48 +354,29 @@ describe("offline 0research improvement projection", () => {
     expect(() => readArtifactJson(link, "candidate")).toThrow(/non-symlink/);
   });
 
-  it("does not replace an existing output when command validation fails", async () => {
-    const dir = root();
-    const values = fixtures();
-    const paths = {
-      candidate: join(dir, "candidate.json"),
-      development: join(dir, "development.json"),
-      heldOut: join(dir, "held-out.json"),
-      controls: join(dir, "controls.json"),
-      ci: join(dir, "ci.json"),
-      output: join(dir, "result.json"),
-    };
-    writeFileSync(paths.candidate, JSON.stringify(values.candidate));
-    writeFileSync(paths.development, JSON.stringify(values.development));
-    writeFileSync(paths.heldOut, JSON.stringify(values.heldOut));
-    writeFileSync(paths.controls, JSON.stringify(values.controls));
-    writeFileSync(paths.ci, JSON.stringify({
+  it("atomically publishes a bound result and execution receipt once", () => {
+    const output = join(root(), "bundle");
+    const bundle = projectBundle();
+    writeImprovementBundleAtomic(output, bundle);
+    expect(JSON.parse(readFileSync(join(output, "result.json"), "utf8"))).toEqual(bundle.result);
+    expect(JSON.parse(readFileSync(join(output, "execution-evidence.json"), "utf8"))).toEqual(
+      bundle.executionEvidence,
+    );
+    expect(JSON.parse(readFileSync(join(output, "COMPLETE"), "utf8"))).toEqual({
       schemaVersion: 1,
-      passed: true,
-      evidenceRefs: ["artifact:ci"],
-    }));
-    writeFileSync(paths.output, "sentinel\n");
-
-    const program = new Command();
-    program.exitOverride();
-    const bench = program.command("bench");
-    registerBenchImprovementCommand(bench);
-    await expect(program.parseAsync([
-      "node",
-      "pwnkit",
-      "bench",
-      "improvement-project",
-      "--candidate", paths.candidate,
-      "--champion-variant", "champion",
-      "--challenger-variant", "challenger",
-      "--development", paths.development,
-      "--held-out", paths.heldOut,
-      "--negative-controls", paths.controls,
-      "--evaluator-before", `sha256:${"e".repeat(64)}`,
-      "--evaluator-after", `sha256:${"f".repeat(64)}`,
-      "--ci-evidence", paths.ci,
-      "--output", paths.output,
-    ])).rejects.toThrow(/evaluator changed/);
-    expect(readFileSync(paths.output, "utf8")).toBe("sentinel\n");
+    });
+    expect(bundle.executionEvidence.measured).toEqual({
+      totalRuns: 30,
+      totalCostUsd: 240,
+      elapsedMs: 3_000,
+    });
+    expect(bundle.result.evidenceRefs).toContainEqual(
+      expect.stringMatching(/^execution-evidence:sha256:/),
+    );
+    expect(() => writeImprovementBundleAtomic(output, bundle)).toThrow(/already exists/);
+    const raced = join(root(), "raced-bundle");
+    mkdirSync(raced);
+    expect(() => writeImprovementBundleAtomic(raced, bundle)).toThrow(/already exists/);
+    expect(readFileSync(join(output, "result.json"), "utf8")).not.toBe("");
   });
 });
