@@ -122,12 +122,13 @@ import {
 } from "./skills/index.js";
 import { eventBus } from "../events/bus.js";
 import {
-  buildIntelDossier,
-  lookupCve,
-  searchAdvisories,
-  searchSimilar,
-  searchTargetHistory,
-} from "../intel/index.js";
+  executeIntelSearchAdvisories,
+  executeIntelLookupCve,
+  executeIntelSearchSimilar,
+  executeIntelBuildDossier,
+  executeIntelSearchTargetHistory,
+} from "./tools/intel.js";
+import { resolveScopedPath } from "./tools/scope-path.js";
 
 // ── Tool registry (pwnkit#611) ──
 // The per-tool ToolDefinition objects now live in per-domain modules under
@@ -902,19 +903,6 @@ function executePipeline(
     success: true,
     output: typeof stdin === "string" ? stdin.slice(0, 10_000) : "",
   };
-}
-
-function resolveScopedPath(scopePath: string, inputPath: string): string {
-  const root = resolve(scopePath);
-  const candidate = isAbsolute(inputPath)
-    ? resolve(inputPath)
-    : resolve(root, inputPath);
-
-  if (candidate !== root && !candidate.startsWith(root + "/")) {
-    throw new Error(`Path escapes the allowed scope: ${inputPath}`);
-  }
-
-  return candidate;
 }
 
 function validateScopedCommand(tokens: string[], scopePath?: string): void {
@@ -4770,147 +4758,27 @@ export class ToolExecutor {
     }
   }
 
-  private async intelSearchAdvisories(args: Record<string, unknown>): Promise<ToolResult> {
-    const ecosystem = String(args.ecosystem ?? "").trim();
-    const packageName = String(args.package_name ?? args.packageName ?? "").trim();
-    if (!ecosystem) return { success: false, output: null, error: "ecosystem is required" };
-    if (!packageName) return { success: false, output: null, error: "package_name is required" };
-    const version = typeof args.version === "string" && args.version.trim() ? args.version.trim() : undefined;
-    const enrich = typeof args.enrich === "boolean" ? args.enrich : true;
-    const result = await searchAdvisories({
-      ecosystem,
-      packageName,
-      version,
-      enrich,
-    });
-    return {
-      success: true,
-      output: {
-        count: result.advisories.length,
-        advisories: result.advisories.slice(0, 20),
-        graph: {
-          nodes: result.graph.nodes.slice(0, 80),
-          edges: result.graph.edges.slice(0, 120),
-        },
-      },
-    };
+  // pwnkit#1284 — intel handler bodies extracted to ./tools/intel.ts as free
+  // functions; these stay as thin delegates so tools/dispatch.test.ts keeps
+  // resolving each tool name to a real ToolExecutor method.
+  private intelSearchAdvisories(args: Record<string, unknown>): Promise<ToolResult> {
+    return executeIntelSearchAdvisories(args);
   }
 
-  private async intelLookupCve(args: Record<string, unknown>): Promise<ToolResult> {
-    const cveId = String(args.cve_id ?? args.cveId ?? "").trim();
-    if (!cveId) return { success: false, output: null, error: "cve_id is required" };
-    const intel = await lookupCve({ cveId });
-    if (!intel) return { success: true, output: { cve_id: cveId.toUpperCase(), found: false } };
-    return { success: true, output: { found: true, advisory: intel } };
+  private intelLookupCve(args: Record<string, unknown>): Promise<ToolResult> {
+    return executeIntelLookupCve(args);
   }
 
-  private async intelSearchSimilar(args: Record<string, unknown>): Promise<ToolResult> {
-    const cwe = typeof args.cwe === "string" && args.cwe.trim() ? args.cwe.trim() : undefined;
-    const ecosystem = typeof args.ecosystem === "string" && args.ecosystem.trim() ? args.ecosystem.trim() : undefined;
-    const keywords = typeof args.keywords === "string"
-      ? args.keywords.split(",").map((item) => item.trim()).filter(Boolean)
-      : undefined;
-    const limit = typeof args.limit === "number" ? Math.min(Math.max(Math.trunc(args.limit), 1), 50) : 10;
-    if (!cwe && (!keywords || keywords.length === 0)) {
-      return { success: false, output: null, error: "provide cwe or keywords" };
-    }
-    const result = await searchSimilar({ cwe, ecosystem, keywords, limit });
-    return {
-      success: true,
-      output: {
-        count: result.advisories.length,
-        advisories: result.advisories.slice(0, limit),
-        graph: {
-          nodes: result.graph.nodes.slice(0, 80),
-          edges: result.graph.edges.slice(0, 120),
-        },
-      },
-    };
+  private intelSearchSimilar(args: Record<string, unknown>): Promise<ToolResult> {
+    return executeIntelSearchSimilar(args);
   }
 
-  private async intelBuildDossier(args: Record<string, unknown>): Promise<ToolResult> {
-    const ecosystem = String(args.ecosystem ?? "").trim();
-    const packageName = String(args.package_name ?? args.packageName ?? "").trim();
-    if (!ecosystem) return { success: false, output: null, error: "ecosystem is required" };
-    if (!packageName) return { success: false, output: null, error: "package_name is required" };
-    const version = typeof args.version === "string" && args.version.trim() ? args.version.trim() : undefined;
-    const keywords = typeof args.keywords === "string"
-      ? args.keywords.split(",").map((item) => item.trim()).filter(Boolean)
-      : undefined;
-    const similarLimit = typeof args.similar_limit === "number"
-      ? Math.min(Math.max(Math.trunc(args.similar_limit), 1), 50)
-      : undefined;
-    const includeSimilar = typeof args.include_similar === "boolean" ? args.include_similar : undefined;
-    const dossier = await buildIntelDossier({
-      ecosystem,
-      packageName,
-      version,
-      keywords,
-      similarLimit,
-      includeSimilar,
-    });
-    return {
-      success: true,
-      output: {
-        ...dossier,
-        advisories: dossier.advisories.slice(0, 20),
-        variantLeads: dossier.variantLeads.slice(0, 10),
-        playbooks: dossier.playbooks.slice(0, 6).map((playbook) => ({
-          ...playbook,
-          steps: playbook.steps.slice(0, 5),
-        })),
-        graph: {
-          nodes: dossier.graph.nodes.slice(0, 100),
-          edges: dossier.graph.edges.slice(0, 160),
-        },
-      },
-    };
+  private intelBuildDossier(args: Record<string, unknown>): Promise<ToolResult> {
+    return executeIntelBuildDossier(args);
   }
 
-  private async intelSearchTargetHistory(args: Record<string, unknown>): Promise<ToolResult> {
-    const target = typeof args.target === "string" && args.target.trim() ? args.target.trim() : undefined;
-    const requestedRepoPath = typeof args.repo_path === "string" && args.repo_path.trim() ? args.repo_path.trim() : undefined;
-    const repoPath = requestedRepoPath
-      ? (this.ctx.scopePath ? resolveScopedPath(this.ctx.scopePath, requestedRepoPath) : requestedRepoPath)
-      : this.ctx.scopePath;
-    const repository = typeof args.repository === "string" && args.repository.trim() ? args.repository.trim() : undefined;
-    const ecosystem = typeof args.ecosystem === "string" && args.ecosystem.trim() ? args.ecosystem.trim() : undefined;
-    const packageName = String(args.package_name ?? args.packageName ?? "").trim() || undefined;
-    const product = typeof args.product === "string" && args.product.trim() ? args.product.trim() : undefined;
-    const vendor = typeof args.vendor === "string" && args.vendor.trim() ? args.vendor.trim() : undefined;
-    const keywords = typeof args.keywords === "string"
-      ? args.keywords.split(",").map((item) => item.trim()).filter(Boolean)
-      : undefined;
-    const limit = typeof args.limit === "number" ? Math.min(Math.max(Math.trunc(args.limit), 1), 50) : 20;
-    if (!target && !repoPath && !repository && !packageName && !product && !vendor && (!keywords || keywords.length === 0)) {
-      return { success: false, output: null, error: "provide target, repo_path, repository, package_name, product, vendor, keywords, or run with a scoped source path" };
-    }
-    const history = await searchTargetHistory({
-      target,
-      repoPath,
-      repository,
-      ecosystem,
-      packageName,
-      product,
-      vendor,
-      keywords,
-      limit,
-    });
-    return {
-      success: true,
-      output: {
-        ...history,
-        advisories: history.advisories.slice(0, 20),
-        playbooks: history.playbooks.slice(0, 6).map((playbook) => ({
-          ...playbook,
-          steps: playbook.steps.slice(0, 5),
-        })),
-        graph: {
-          nodes: history.graph.nodes.slice(0, 100),
-          edges: history.graph.edges.slice(0, 160),
-        },
-      },
-    };
+  private intelSearchTargetHistory(args: Record<string, unknown>): Promise<ToolResult> {
+    return executeIntelSearchTargetHistory(this.ctx, args);
   }
 
   private updateTarget(args: Record<string, unknown>): ToolResult {
