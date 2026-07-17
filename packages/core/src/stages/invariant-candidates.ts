@@ -31,8 +31,8 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { RuntimeMode } from "@pwnkit/shared";
-import { LlmApiRuntime } from "../runtime/llm-api.js";
 import type { HuntBrief, HuntCandidate } from "./hunt-scan.js";
+import { extractInvariantSpec } from "./invariant-spec-builder.js";
 
 export interface InvariantHuntInput {
   /** Local source tree the subsystem files live under. */
@@ -98,9 +98,6 @@ interface AnalysisFromModel {
   spec: InvariantSpec;
   candidates: InvariantCandidate[];
 }
-
-const clip = (s: string, n: number) =>
-  s.length > n ? s.slice(0, n) + `\n...[truncated ${s.length - n} chars]` : s;
 
 /** Read a subsystem file (repo-relative under sourceRoot, or absolute). Returns null on failure. */
 function readSource(sourceRoot: string, file: string): string | null {
@@ -184,7 +181,6 @@ export async function generateInvariantCandidates(input: InvariantHuntInput): Pr
   const log = input.log ?? (() => {});
   const warnings: string[] = [];
   const maxCandidates = input.maxCandidates ?? 20;
-  const maxCharsPerFile = input.maxCharsPerFile ?? 24_000;
 
   if (!input.subsystemFiles || input.subsystemFiles.length === 0) {
     throw new Error("invariant hunt needs at least one subsystemFile");
@@ -205,26 +201,18 @@ export async function generateInvariantCandidates(input: InvariantHuntInput): Pr
   }
 
   // 2. LLM: recover the invariant spec, then hunt violations (one tool call,
-  //    spec-first-then-violate). The model is a HYPOTHESIS generator — the
-  //    verify gate downstream, not this, decides truth.
-  const sourceBlocks = sources
-    .map((s) => `### FILE: ${s.file}\n\`\`\`c\n${clip(s.text, maxCharsPerFile)}\n\`\`\``)
-    .join("\n\n");
-  const messages = [{ role: "user", content: [{ type: "text", text: `## Subsystem source\n\n${sourceBlocks}` }] }];
-
-  const rt = new LlmApiRuntime({ type: "api", ...(input.model ? { model: input.model } : {}), timeout: 300_000 });
-  let analysis: AnalysisFromModel | null = null;
-  try {
-    const res = (await rt.executeNative(SYSTEM, messages as never, [ANALYSIS_TOOL] as never, {
-      onThinking() {}, onDelta() {}, onText() {}, onUsage() {},
-    } as never)) as { content?: Array<Record<string, unknown>> };
-    const call = (res.content ?? []).find(
-      (b) => (b as { type?: string; name?: string }).type === "tool_use" && (b as { name?: string }).name === "emit_invariant_analysis",
-    ) as { input?: AnalysisFromModel } | undefined;
-    if (call?.input) analysis = call.input;
-  } catch (e) {
-    throw new Error(`invariant-analysis LLM call failed: ${String(e).slice(0, 200)}`);
-  }
+  //    spec-first-then-violate) via the SHARED extraction primitive. The model is
+  //    a HYPOTHESIS generator — the verify gate downstream, not this, decides truth.
+  //    Unlike the durable-model builder, this fuses spec + candidates in one turn
+  //    and consumes them inline (no stored artifact).
+  const analysis = await extractInvariantSpec<AnalysisFromModel>({
+    sources,
+    system: SYSTEM,
+    tool: ANALYSIS_TOOL,
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.maxCharsPerFile !== undefined ? { maxCharsPerFile: input.maxCharsPerFile } : {}),
+    errorLabel: "invariant-analysis",
+  });
 
   const spec = analysis?.spec;
   if (!spec || typeof spec.lock !== "string" || !Array.isArray(spec.guardedFields)) {
