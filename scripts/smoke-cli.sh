@@ -91,11 +91,14 @@ INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersi
 MCP_SMOKE_TIMEOUT_SECONDS="${PWNKIT_MCP_SMOKE_TIMEOUT_SECONDS:-30}"
 : > "$TMP/mcp.out"
 for attempt in 1 2 3; do
+  # A timed-out server can still be unwinding its SQLite/WAL handles when the
+  # next retry begins. Give every attempt isolated state so a slow teardown
+  # cannot turn the next healthy boot into a spurious "database is locked".
   printf '%s\n' "$INIT_MSG" \
     | timeout_cmd "$MCP_SMOKE_TIMEOUT_SECONDS" $CLI mcp-server \
         --target https://example.invalid \
-        --scan-id ci-smoke \
-        --db-path "$TMP/mcp.db" 2> "$TMP/mcp.err" \
+        --scan-id "ci-smoke-$attempt" \
+        --db-path "$TMP/mcp-$attempt.db" 2> "$TMP/mcp.err" \
     | head -1 > "$TMP/mcp.out" || true
   [ -s "$TMP/mcp.out" ] && break
   [ "$attempt" -lt 3 ] && say "mcp-server initialize attempt $attempt produced no response; retrying"
