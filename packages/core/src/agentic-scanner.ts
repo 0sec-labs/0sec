@@ -74,7 +74,7 @@ import {
   type PublishabilityInputs,
 } from "./triage/index.js";
 import { verify, toVerifyVerdict } from "./triage/structured-verify.js";
-import { generatePov, oracleForCategory } from "./triage/pov-gate.js";
+import { generatePov, oracleForCategory, oastConfirmedPayload } from "./triage/pov-gate.js";
 import {
   generateStaticPoc,
   applyStaticPocResult,
@@ -2564,6 +2564,16 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           finding.confidence = 1.0;
           finding.triageStatus = "accepted";
           finding.triageNote = `oracle_verified: ${oracle.evidence}`;
+          // pwnkit#659 / 0cloud#1278 — when this deterministic pass came from the
+          // OAST-callback oracle (SSRF / OOB-RCE / OOB-SQLi), emit an ALWAYS-ON
+          // `oast_confirmed` bus event so cloudEventSink relays it to
+          // scan_events. Unlike `pov_oracle` (below, gated behind the default-off
+          // FP-moat pov_gate), the `oracle` layer is always-on — so this is the
+          // reliable cloud-side signal the blind-vuln→verify loop reads to
+          // promote. Additive: `oastConfirmedPayload` returns null (no emit) on
+          // any non-OAST oracle. See that helper for the exact gate.
+          const oastEvent = oastConfirmedPayload(finding, oracle);
+          if (oastEvent) eventBus.emit("oast_confirmed", oastEvent);
         } else if (
           oracle.reason &&
           !oracle.reason.startsWith("no oracle for category")

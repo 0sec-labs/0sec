@@ -24,6 +24,7 @@ import type {
 } from "../runtime/types.js";
 import type { Finding, AttackCategory } from "@pwnkit/shared";
 import { verifyOracleByCategory, type OracleResult } from "./oracles.js";
+import type { OastConfirmedPayload } from "../events/bus.js";
 import type { VerifyVerdict } from "./verify-verdict.js";
 import type { CrashArtifact } from "./memsafety-types.js";
 import { classifyUserspacePrimitive } from "./userspace-primitive.js";
@@ -99,6 +100,35 @@ export function oracleForCategory(category: AttackCategory): PovOracle {
     default:
       return "regex-fallback";
   }
+}
+
+/**
+ * Build the always-on OAST-confirmation event payload (pwnkit#659 / 0cloud#1278)
+ * for a finding whose deterministic `oracle` triage layer just ran — or `null`
+ * when this is not an OAST-oracle confirmation.
+ *
+ * Emits ONLY when (a) the oracle actually verified and (b) the finding's
+ * category delegates to the OAST-callback oracle (SSRF / OOB-RCE / OOB-SQLi via
+ * {@link oracleForCategory}). Pure and INDEPENDENT of `features.povGate`: the
+ * caller (`agentic-scanner`'s always-on oracle layer) fires it regardless of the
+ * FP-moat pov_gate, so a blind-class OAST proof reaches the cloud even when
+ * pov_gate is off. `findingId` is the engine finding id (== CloudSinkFinding.id
+ * → the cloud's `findings.engine_finding_id`). Exported so the emit decision is
+ * unit-tested without driving a full scan.
+ */
+export function oastConfirmedPayload(
+  finding: Finding,
+  oracle: OracleResult,
+): OastConfirmedPayload | null {
+  if (!oracle.verified) return null;
+  if (oracleForCategory(finding.category) !== "oast-callback") return null;
+  return {
+    findingId: finding.id,
+    category: finding.category,
+    oracle: "oast-callback",
+    hasPov: true,
+    reason: oracle.evidence || undefined,
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────

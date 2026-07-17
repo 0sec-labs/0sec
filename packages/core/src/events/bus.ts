@@ -326,6 +326,39 @@ export interface PovOraclePayload {
 }
 
 /**
+ * Confirmed OAST out-of-band callback (pwnkit#659 / 0cloud#1278). Emitted by the
+ * deterministic per-category `oracle` triage layer in `agentic-scanner.ts` when
+ * the OAST-callback oracle (SSRF / OOB-RCE / OOB-SQLi …) reproduces a
+ * token-matched callback.
+ *
+ * WHY A DEDICATED EVENT (not `pov_oracle`): the `pov_oracle` event only fires
+ * inside the FP-moat `pov_gate` layer, which is `PWNKIT_FEATURE_POV_GATE`-gated
+ * and default-OFF — so in the cloud it never reaches `scan_events` and the
+ * blind-vuln→verify loop can't promote. The `oracle` layer is `(always on)`
+ * (FREE_LAYER_SET), so this event fires on every scan that confirms an OAST
+ * callback, independent of `features.povGate`. Same {findingId, oracle, hasPov}
+ * shape as `PovOraclePayload` so the 0cloud consumer (verify-claim EXISTS +
+ * the #570 dashboard badge) reads either uniformly.
+ *
+ * `findingId` is the SAME engine finding id the `CloudSinkFinding` carries, so
+ * the cloud correlates it to the finding row's `engine_finding_id`.
+ */
+export interface OastConfirmedPayload {
+  /** Engine finding id — matches CloudSinkFinding.id → findings.engine_finding_id. */
+  findingId: string;
+  category?: string;
+  /** Always `oast-callback`: this event is only emitted for the OAST oracle. */
+  oracle: "oast-callback";
+  /** Always true: emitted only when a token-matched callback reproduced. */
+  hasPov: true;
+  /** Callback channel (`http` / `dns` / …) when the oracle surfaced one. */
+  protocol?: string;
+  /** Short human-readable evidence for the audit trail. */
+  reason?: string;
+  [k: string]: unknown;
+}
+
+/**
  * Token-level streaming delta. Emitted by the agent loop while the runtime
  * is still streaming the assistant's text or reasoning channel — each emit
  * carries a *coalesced* run of characters (NOT per-token; see the batcher in
@@ -417,6 +450,7 @@ export type PwnkitEvent =
   | { type: "untrusted_input_sanitized"; payload: UntrustedInputSanitizedPayload }
   | { type: "inline_validation"; payload: InlineValidationPayload }
   | { type: "pov_oracle"; payload: PovOraclePayload }
+  | { type: "oast_confirmed"; payload: OastConfirmedPayload }
   | { type: "phase_started"; payload: PhaseStartedPayload }
   | { type: "phase_completed"; payload: PhaseCompletedPayload };
 
