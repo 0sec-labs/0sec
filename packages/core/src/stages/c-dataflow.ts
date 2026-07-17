@@ -86,7 +86,7 @@ export const DEFAULT_RELEASE_FNS: readonly string[] = [
 ];
 
 /** Best-effort acquire→release mapping so a rule's custom acquireFns get matching releases. */
-function releaseFnsFor(acquireFns: readonly string[]): string[] {
+export function releaseFnsFor(acquireFns: readonly string[]): string[] {
   const rel = new Set<string>(DEFAULT_RELEASE_FNS);
   for (const a of acquireFns) {
     if (a === "down" || a === "down_interruptible" || a === "down_trylock") rel.add("up");
@@ -107,7 +107,7 @@ const collapseWs = (s: string) => s.replace(/\s+/g, "");
  * both normalize to `->` so pointer- and value-access to the same field unify;
  * a leading `&` is stripped so `&f->lock` and `f->lock` are the same key.
  */
-function canon(node: TsNode, src: string): string {
+export function canon(node: TsNode, src: string): string {
   switch (node.type) {
     case "identifier":
     case "field_identifier":
@@ -635,14 +635,14 @@ export interface DataflowFindOptions {
   log?: (msg: string) => void;
 }
 
-interface FnInfo {
+export interface FnInfo {
   name: string;
   body: TsNode;
   startLine: number;
 }
 
 /** Recursively collect every top-level function_definition (incl. inside preproc blocks). */
-function collectFunctions(root: TsNode, src: string): FnInfo[] {
+export function collectFunctions(root: TsNode, src: string): FnInfo[] {
   const out: FnInfo[] = [];
   const walk = (n: TsNode) => {
     if (n.type === "function_definition") {
