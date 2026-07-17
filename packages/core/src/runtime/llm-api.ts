@@ -208,6 +208,29 @@ function llmMaxRetryWaitMs(): number {
 }
 
 /**
+ * Idle watchdog for STREAMING (SSE) calls, in ms.
+ * `PWNKIT_LLM_STREAM_IDLE_TIMEOUT_MS` (default 120s).
+ *
+ * The streaming (responses-wireApi) branch disarms the overall call timer once
+ * response HEADERS arrive so a long generation isn't killed mid-stream — but
+ * that left `reader.read()` completely unbounded: a server that accepts the
+ * request and then holds the SSE stream open without emitting a single byte
+ * (queue/hold) hung the whole scan silently until the outer sandbox timeout —
+ * the "$0 cost, zero output, died at timeout" failure shape reproduced
+ * 2026-07-17 against the ChatGPT Codex backend on both E2B and microsandbox.
+ * An idle window with NO bytes at all is never legitimate progress (a healthy
+ * stream emits reasoning/text deltas or keep-alives continuously), so we fail
+ * the call as a transient-class stall: the agent loop's bounded backoff
+ * applies, then the run exits loudly via errorExit instead of hanging.
+ */
+function llmStreamIdleTimeoutMs(): number {
+  const raw = process.env.PWNKIT_LLM_STREAM_IDLE_TIMEOUT_MS;
+  if (raw == null || raw.trim() === "") return 120_000;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 120_000;
+}
+
+/**
  * Parse a `Retry-After` header into ms. Supports both the delta-seconds form
  * ("5") and the HTTP-date form ("Wed, 21 Oct 2026 07:28:00 GMT"). Returns
  * undefined when the header is absent or unparseable so the caller falls back
@@ -1698,7 +1721,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           };
         }
 
-        const streamed = await this.consumeResponsesStream(res, start, callbacks);
+        const streamed = await this.consumeResponsesStream(res, start, callbacks, {
+          idleTimeoutMs: llmStreamIdleTimeoutMs(),
+        });
         return streamed;
       } else {
         // Anthropic Messages API format
@@ -1930,6 +1955,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     res: Response,
     start: number,
     callbacks?: NativeStreamCallbacks,
+    opts?: { idleTimeoutMs?: number },
   ): Promise<NativeRuntimeResult> {
     const reader = res.body?.getReader();
     if (!reader) {
@@ -1940,6 +1966,28 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         error: `${this.providerLabel} API error: missing response body`,
       };
     }
+
+    // Idle watchdog on EVERY read — see llmStreamIdleTimeoutMs for why. The
+    // overall call timer is already disarmed by the time we get here (headers
+    // arrived), so without this nothing bounds a silently-held stream.
+    const idleTimeoutMs = opts?.idleTimeoutMs ?? llmStreamIdleTimeoutMs();
+    let stalled = false;
+    const readBounded = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          reader.read(),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              stalled = true;
+              reject(new Error("stream stalled"));
+            }, idleTimeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
 
     const decoder = new TextDecoder();
     let buffer = "";
@@ -1972,7 +2020,33 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     };
 
     while (true) {
-      const { done, value } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await readBounded();
+      } catch (err) {
+        if (stalled) {
+          // Release the held socket best-effort, then surface the stall as a
+          // transient-class error (the agent loop's bounded retry applies; a
+          // persistent server hold fails loudly via errorExit, never hangs).
+          try {
+            await reader.cancel();
+          } catch {
+            /* best-effort — the stream is already broken */
+          }
+          const secs = Math.round(idleTimeoutMs / 1000);
+          process.stderr.write(
+            `[pwnkit] ${this.providerLabel} stream stalled — no SSE events for ${secs}s (server hold; aborting call)\n`,
+          );
+          return {
+            content: [{ type: "text", text: "" }],
+            stopReason: "error",
+            durationMs: Date.now() - start,
+            error: `${this.providerLabel} stream stalled — no SSE events for ${secs}s (server accepted but held the stream; transient)`,
+          };
+        }
+        throw err;
+      }
+      const { done, value } = chunk;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
