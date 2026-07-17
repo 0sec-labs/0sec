@@ -174,3 +174,65 @@ describe("runPerFileResearch — per-file research loop (#285)", () => {
     expect(prompts[1]).not.toContain("safe.ts:7");
   });
 });
+
+// ── consecutive-failure circuit breaker (auth/endpoint-global failures) ──
+
+describe("runPerFileResearch — consecutive-failure circuit breaker", () => {
+  const tenFiles = Array.from({ length: 10 }, (_, i) => `/scope/src/f${i}.ts`);
+
+  it("trips after 3 consecutive identical-signature failures (10 files → 3 invokes)", async () => {
+    let invokes = 0;
+    const errors: string[] = [];
+    await runPerFileResearch(baseOpts({
+      files: tenFiles,
+      invoke: async () => {
+        invokes++;
+        throw new Error("ChatGPT (Codex backend) API error 401: could not parse token");
+      },
+      onFileError: (fileRel) => errors.push(fileRel),
+    }));
+    expect(invokes).toBe(3);
+    // 3 per-file errors + 1 aggregated circuit-breaker error
+    expect(errors).toHaveLength(4);
+    expect(errors[3]).toBe("(circuit-breaker)");
+  });
+
+  it("a success resets the consecutive counter", async () => {
+    let invokes = 0;
+    await runPerFileResearch(baseOpts({
+      files: ["/scope/a.ts", "/scope/b.ts", "/scope/c.ts", "/scope/d.ts", "/scope/e.ts"],
+      invoke: async ({ fileRel }) => {
+        invokes++;
+        if (fileRel === "c.ts") return { findings: [] };
+        throw new Error("same error everywhere");
+      },
+    }));
+    // fail, fail, OK (reset), fail, fail — never 3 consecutive
+    expect(invokes).toBe(5);
+  });
+
+  it("non-consecutive identical errors never trip the breaker", async () => {
+    let invokes = 0;
+    await runPerFileResearch(baseOpts({
+      files: ["/scope/a.ts", "/scope/b.ts", "/scope/c.ts", "/scope/d.ts", "/scope/e.ts"],
+      invoke: async ({ fileRel }) => {
+        invokes++;
+        if (fileRel === "b.ts" || fileRel === "d.ts") return { findings: [] };
+        throw new Error("same error everywhere");
+      },
+    }));
+    expect(invokes).toBe(5);
+  });
+
+  it("varying error signatures never trip the breaker", async () => {
+    let invokes = 0;
+    await runPerFileResearch(baseOpts({
+      files: ["/scope/a.ts", "/scope/b.ts", "/scope/c.ts", "/scope/d.ts"],
+      invoke: async ({ fileRel }) => {
+        invokes++;
+        throw new Error(`file-specific parse error in ${fileRel}`);
+      },
+    }));
+    expect(invokes).toBe(4);
+  });
+});
