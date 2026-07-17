@@ -208,6 +208,109 @@ function llmMaxRetryWaitMs(): number {
 }
 
 /**
+ * Max retries after the initial attempt for 429 rate-limits specifically.
+ * `PWNKIT_LLM_429_MAX_RETRIES` → `PWNKIT_LLM_MAX_RETRIES` → default 12.
+ *
+ * ChatGPT/Codex per-minute rate limits reset every ~60s; the generic 6-retry
+ * budget exhausts in ~14s (verified in prod raw_logs 2026-07-15: "HTTP 429 —
+ * backoff 14144ms (retry 6/6)" then "model did not emit a usable variant
+ * plan"), so a rate-limited call could not survive a single limiter window.
+ * The 429 budget is sized to span several windows instead.
+ */
+function llm429MaxRetries(): number {
+  const raw =
+    process.env.PWNKIT_LLM_429_MAX_RETRIES ?? process.env.PWNKIT_LLM_MAX_RETRIES;
+  if (raw == null || raw.trim() === "") return 12;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 12;
+}
+
+/**
+ * Cumulative 429 backoff cap in ms.
+ * `PWNKIT_LLM_429_MAX_RETRY_WAIT_MS` → `PWNKIT_LLM_MAX_RETRY_WAIT_MS` →
+ * default 5 min. Bounds server-guided (`Retry-After`) waits; the per-call
+ * abort timer (`config.timeout`) still applies as the outer bound.
+ */
+function llm429MaxRetryWaitMs(): number {
+  const raw =
+    process.env.PWNKIT_LLM_429_MAX_RETRY_WAIT_MS ??
+    process.env.PWNKIT_LLM_MAX_RETRY_WAIT_MS;
+  if (raw == null || raw.trim() === "") return 300_000;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 300_000;
+}
+
+/**
+ * Plan-quota exhaustion (ChatGPT/Codex `usage_limit_reached`): the
+ * subscription's plan-level quota is spent and resets in hours/days, so
+ * retrying is pointless. Thrown by postWithRetry on the FIRST such 429 —
+ * never retried — so the caller fails fast with a distinct, greppable error
+ * and the orchestrator can reschedule after `resetsAtMs` instead of burning
+ * the per-minute retry budget against a day-scale reset.
+ */
+export class QuotaExhaustedError extends Error {
+  override readonly name = "QuotaExhaustedError";
+  readonly planType?: string;
+  readonly resetsAtMs?: number;
+  readonly resetsInSeconds?: number;
+
+  constructor(message: string, details: UsageLimitDetails) {
+    super(message);
+    this.planType = details.planType;
+    this.resetsAtMs = details.resetsAtMs;
+    this.resetsInSeconds = details.resetsInSeconds;
+  }
+}
+
+/** Parsed fields of a ChatGPT/Codex `usage_limit_reached` 429 body. */
+export interface UsageLimitDetails {
+  planType?: string;
+  resetsAtMs?: number;
+  resetsInSeconds?: number;
+}
+
+/**
+ * Classify a 429 response body as plan-quota exhaustion. The ChatGPT Codex
+ * backend nests the error object: `{"error":{"type":"usage_limit_reached",
+ * "plan_type":"pro","resets_at":<epoch-s>,"resets_in_seconds":<n>}}`. Returns
+ * undefined unless the body positively parses as that shape — an unparseable
+ * 429 body stays a regular (retryable) rate limit.
+ */
+export function parseUsageLimitReached(
+  body: string,
+): UsageLimitDetails | undefined {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const root =
+    typeof json === "object" && json !== null
+      ? (json as Record<string, unknown>)
+      : undefined;
+  const err =
+    typeof root?.error === "object" && root.error !== null
+      ? (root.error as Record<string, unknown>)
+      : root;
+  if (err?.type !== "usage_limit_reached") return undefined;
+  const details: UsageLimitDetails = {};
+  if (typeof err.plan_type === "string") details.planType = err.plan_type;
+  if (typeof err.resets_in_seconds === "number" && Number.isFinite(err.resets_in_seconds)) {
+    details.resetsInSeconds = err.resets_in_seconds;
+  }
+  if (typeof err.resets_at === "number" && Number.isFinite(err.resets_at)) {
+    // Wire form is epoch seconds; tolerate an epoch-ms value defensively.
+    details.resetsAtMs =
+      err.resets_at > 1e12 ? err.resets_at : err.resets_at * 1000;
+  }
+  if (details.resetsAtMs == null && details.resetsInSeconds != null) {
+    details.resetsAtMs = Date.now() + details.resetsInSeconds * 1000;
+  }
+  return details;
+}
+
+/**
  * Idle watchdog for STREAMING (SSE) calls, in ms.
  * `PWNKIT_LLM_STREAM_IDLE_TIMEOUT_MS` (default 120s).
  *
@@ -251,10 +354,29 @@ export function parseRetryAfterMs(
   return undefined;
 }
 
-/** Exponential backoff with full jitter. `attempt` is 0-based: ~0.5s, 1s, 2s … capped at 20s. */
-export function retryBackoffMs(attempt: number): number {
-  const ceiling = Math.min(20_000, 500 * 2 ** attempt);
+/** Exponential backoff with full jitter. `attempt` is 0-based: ~0.5s, 1s, 2s … capped at `ceilingMs` (default 20s; the 429 path passes 30s to stretch across a per-minute limiter window). */
+export function retryBackoffMs(attempt: number, ceilingMs = 20_000): number {
+  const ceiling = Math.min(ceilingMs, 500 * 2 ** attempt);
   return Math.floor(Math.random() * ceiling) + 250;
+}
+
+/** Cap on a server-guided 429 wait: a `Retry-After` longer than this is clamped, not honored verbatim. */
+const RETRY_AFTER_CAP_MS = 120_000;
+
+/**
+ * Server-guided wait for a 429, in ms. Reads `retry-after-ms` (millisecond
+ * integer, OpenAI platform form) first, then `retry-after` (delta-seconds or
+ * HTTP-date), clamped to RETRY_AFTER_CAP_MS. Returns undefined when neither
+ * header is present/parseable so the caller falls back to jittered backoff.
+ */
+function retryAfterMsFromHeaders(headers: Headers | undefined): number | undefined {
+  const msHeader = headers?.get?.("retry-after-ms");
+  if (msHeader != null) {
+    const n = Number.parseInt(msHeader.trim(), 10);
+    if (Number.isFinite(n) && n >= 0) return Math.min(n, RETRY_AFTER_CAP_MS);
+  }
+  const parsed = parseRetryAfterMs(headers?.get?.("retry-after"));
+  return parsed != null ? Math.min(parsed, RETRY_AFTER_CAP_MS) : undefined;
 }
 
 /** Sleep that rejects with an AbortError if `signal` fires mid-wait (respects the request budget). */
@@ -1259,11 +1381,21 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
    * full jitter (so a burst of concurrent scans desynchronises instead of
    * hammering the limit in lockstep).
    *
-   * Bounded by PWNKIT_LLM_MAX_RETRIES (attempts) and
-   * PWNKIT_LLM_MAX_RETRY_WAIT_MS (cumulative backoff). On exhaustion it
-   * returns the last still-failing Response with its body intact, so the
-   * caller's existing `!res.ok` branch surfaces the clear "API error
-   * <status>" message — a rate-limit never masquerades as silent no-work.
+   * Two 429 classes are handled differently:
+   * - per-minute rate limit → retry with the wider 429 budget
+   *   (PWNKIT_LLM_429_MAX_RETRIES attempts / PWNKIT_LLM_429_MAX_RETRY_WAIT_MS
+   *   cumulative, defaults 12 / 5min) since the limiter resets every ~60s;
+   *   `Retry-After` / `retry-after-ms` headers are honored up to a 120s cap.
+   * - plan-quota exhaustion (`usage_limit_reached`, resets in hours/days) →
+   *   throws QuotaExhaustedError on the FIRST response, never retried, so the
+   *   scan fails fast with a distinct error instead of burning retries.
+   *
+   * Other retryable statuses (transient 5xx) keep the generic budget:
+   * PWNKIT_LLM_MAX_RETRIES (attempts) and PWNKIT_LLM_MAX_RETRY_WAIT_MS
+   * (cumulative backoff). On exhaustion it returns the last still-failing
+   * Response with its body intact, so the caller's existing `!res.ok` branch
+   * surfaces the clear "API error <status>" message — a rate-limit never
+   * masquerades as silent no-work.
    *
    * Headers are re-resolved per attempt (via ensureFreshHeaders → OAuth
    * refresh) so a token that rotated during the wait is picked up. The body
@@ -1273,9 +1405,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     bodyJson: string,
     signal: AbortSignal,
   ): Promise<Response> {
-    const maxRetries = llmMaxRetries();
-    const maxWaitMs = llmMaxRetryWaitMs();
-    let waitedMs = 0;
+    let waited429Ms = 0;
+    let waitedOtherMs = 0;
     for (let attempt = 0; ; attempt++) {
       // buildUrl() is the configured LLM provider endpoint (operator-set via
       // provider config / PWNKIT_* env), never user/attacker input; same
@@ -1287,21 +1418,77 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         body: bodyJson,
         signal,
       });
-      if (
-        res.ok ||
-        !isRetryableHttpStatus(res.status) ||
-        attempt >= maxRetries
-      ) {
+      if (res.ok || !isRetryableHttpStatus(res.status)) {
         return res;
       }
-      const retryAfter = parseRetryAfterMs(res.headers?.get?.("retry-after"));
-      const delay = retryAfter ?? retryBackoffMs(attempt);
-      if (waitedMs + delay > maxWaitMs) return res;
-      // Drain the failed response so the socket is released before retrying.
-      try {
-        await res.text?.();
-      } catch {
-        // best-effort — a mocked/streamed body may not expose text()
+
+      const is429 = res.status === 429;
+      // A 429 body distinguishes per-minute rate limiting (retry) from plan-
+      // quota exhaustion (fail fast), so it must be read to classify. If the
+      // response is handed back below, it is re-wrapped with the same body.
+      let bodyText: string | undefined;
+      if (is429) {
+        try {
+          bodyText = await res.text?.();
+        } catch {
+          bodyText = undefined;
+        }
+        const quota =
+          bodyText != null ? parseUsageLimitReached(bodyText) : undefined;
+        if (quota) {
+          const resetsAtIso =
+            quota.resetsAtMs != null
+              ? new Date(quota.resetsAtMs).toISOString()
+              : "unknown";
+          appendNativeTrace({
+            kind: "quota-exhausted",
+            provider: this.providerLabel,
+            status: res.status,
+            planType: quota.planType ?? null,
+            resetsAtMs: quota.resetsAtMs ?? null,
+          });
+          process.stderr.write(
+            `[pwnkit] ${this.providerLabel} usage_limit_reached — plan quota ` +
+              `exhausted (plan=${quota.planType ?? "unknown"}, ` +
+              `resets_at=${resetsAtIso}); failing without retry\n`,
+          );
+          throw new QuotaExhaustedError(
+            `${this.providerLabel} usage_limit_reached: plan quota exhausted ` +
+              `(plan=${quota.planType ?? "unknown"}, resets_at=${resetsAtIso}) ` +
+              `— reschedulable after reset`,
+            quota,
+          );
+        }
+      }
+
+      const maxRetries = is429 ? llm429MaxRetries() : llmMaxRetries();
+      const maxWaitMs = is429 ? llm429MaxRetryWaitMs() : llmMaxRetryWaitMs();
+      const waitedMs = is429 ? waited429Ms : waitedOtherMs;
+      // Hand the last still-failing Response back with its body intact.
+      const handBack = (): Response =>
+        is429 && bodyText != null
+          ? new Response(bodyText, {
+              status: res.status,
+              statusText: res.statusText,
+              headers: res.headers,
+            })
+          : res;
+      if (attempt >= maxRetries) {
+        return handBack();
+      }
+      const retryAfter = is429
+        ? retryAfterMsFromHeaders(res.headers)
+        : parseRetryAfterMs(res.headers?.get?.("retry-after"));
+      const delay = retryAfter ?? retryBackoffMs(attempt, is429 ? 30_000 : 20_000);
+      if (waitedMs + delay > maxWaitMs) return handBack();
+      // Drain the failed response so the socket is released before retrying
+      // (429 bodies were already consumed above for classification).
+      if (!is429) {
+        try {
+          await res.text?.();
+        } catch {
+          // best-effort — a mocked/streamed body may not expose text()
+        }
       }
       appendNativeTrace({
         kind: "retry",
@@ -1315,7 +1502,11 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         `[pwnkit] ${this.providerLabel} HTTP ${res.status} — backoff ${delay}ms ` +
           `(retry ${attempt + 1}/${maxRetries})\n`,
       );
-      waitedMs += delay;
+      if (is429) {
+        waited429Ms += delay;
+      } else {
+        waitedOtherMs += delay;
+      }
       await sleepWithAbort(delay, signal);
     }
   }
@@ -1460,6 +1651,17 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       };
     } catch (err) {
       clearTimeout(timer);
+      if (err instanceof QuotaExhaustedError) {
+        // Plan-quota exhaustion: fail fast with the distinct, greppable
+        // message (carries usage_limit_reached + resets_at) — never retried.
+        return {
+          output: "",
+          exitCode: 1,
+          timedOut: false,
+          durationMs: Date.now() - start,
+          error: err.message,
+        };
+      }
       const msg = err instanceof Error ? err.message : String(err);
       const timedOut = msg.includes("abort") || msg.includes("timeout");
       return {
@@ -1938,6 +2140,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       };
     } catch (err) {
       clearTimeout(timer);
+      if (err instanceof QuotaExhaustedError) {
+        // Plan-quota exhaustion: fail fast with the distinct, greppable
+        // message (carries usage_limit_reached + resets_at) — never retried.
+        return {
+          content: [{ type: "text", text: "" }],
+          stopReason: "error",
+          durationMs: Date.now() - start,
+          error: err.message,
+        };
+      }
       const msg = err instanceof Error ? err.message : String(err);
       const timedOut = msg.includes("abort") || msg.includes("timeout");
       return {

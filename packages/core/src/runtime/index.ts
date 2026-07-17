@@ -10,7 +10,8 @@ export type {
   NativeToolDef,
   NativeRuntimeResult,
 } from "./types.js";
-export { LlmApiRuntime } from "./llm-api.js";
+export { LlmApiRuntime, QuotaExhaustedError, parseUsageLimitReached } from "./llm-api.js";
+export type { UsageLimitDetails } from "./llm-api.js";
 export { ProcessRuntime } from "./process.js";
 export { CliNativeRuntime } from "./cli-native.js";
 export { OpenRouterRuntime, DEFAULT_ENSEMBLE_MODELS } from "./openrouter.js";

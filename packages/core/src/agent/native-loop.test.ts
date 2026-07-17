@@ -1755,4 +1755,17 @@ describe("isTransientLlmError", () => {
     expect(isTransientLlmError("OpenRouter API error 401: user not found")).toBe(false);
     expect(isTransientLlmError("Anthropic API error 403: forbidden")).toBe(false);
   });
+
+  it("does NOT classify plan-quota exhaustion as transient (reschedulable, not retryable)", async () => {
+    const { isTransientLlmError } = await import("./native-loop.js");
+    // Exact message shape produced by LlmApiRuntime on a usage_limit_reached
+    // 429 (see QuotaExhaustedError in llm-api.ts): resets in hours/days, so
+    // the loop must NOT burn its bounded transient retries against it.
+    expect(
+      isTransientLlmError(
+        "ChatGPT (Codex backend) usage_limit_reached: plan quota exhausted " +
+          "(plan=pro, resets_at=2026-07-19T00:00:00.000Z) — reschedulable after reset",
+      ),
+    ).toBe(false);
+  });
 });
