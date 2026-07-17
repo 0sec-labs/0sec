@@ -21,6 +21,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import type * as dbSchema from "@pwnkit/db";
 import type { ScanListener } from "./scanner.js";
 import { runAnalysisAgent } from "./agent-runner.js";
+import { ScanCostLedger } from "./agent/cost-ledger.js";
 import { auditAgentPrompt, reviewAgentPrompt } from "./analysis-prompts.js";
 import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
@@ -188,6 +189,16 @@ export interface PipelineReport {
   };
   findings: Finding[];
   warnings: Array<{ stage: string; message: string }>;
+  /**
+   * True when the run terminated early because the shared per-scan cost
+   * ceiling (`--cost-ceiling` / PWNKIT_COST_CEILING_USD) was reached —
+   * research tripped it or the verify wave was skipped/truncated on budget.
+   * The CLI maps this to exit code 4 and the cloud lands the scan
+   * `cost_exceeded` (never a clean pass). Absent on normal completions.
+   */
+  costCeilingExceeded?: boolean;
+  /** Terminal reason; mirrors the agentic-scanner report contract. */
+  exitReason?: "completed" | "cost_ceiling_exceeded";
   // Extras for backwards compat
   package?: string;
   version?: string;
@@ -1021,15 +1032,32 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   let emittedScanCompleted = false;
 
   const emitPipelineScanCompleted = (
-    exitReason: "completed" | "failed",
+    exitReason: "completed" | "failed" | "cost_exceeded",
     payload: Record<string, unknown> = {},
   ): void => {
     if (!shouldEmitPipelineCloudEvents()) return;
     if (emittedScanCompleted) return;
     emittedScanCompleted = true;
+    // Mirror the audit path's scan_completed field set (agentic-scanner.ts
+    // emitScanCompleted) so the cloud can populate scan detail for
+    // pipeline (review / package-audit) runs too: the engine-resolved model,
+    // cross-session turns + tool-call totals, and the ledger's true
+    // cross-session cost + per-model breakdown. cost_usd / cost_breakdown
+    // are omitted when no metered runtime ran (never a fabricated $0);
+    // model is omitted when nothing resolved one (never a guess).
+    const cost = costLedger.costBreakdown();
     eventBus.emit("scan_completed", {
       exit_reason: exitReason,
       duration_ms: Date.now() - startTime,
+      turns_used: usageTotals.turns,
+      tool_calls_total: toolCallsTotal,
+      ...(resolvedModel !== undefined ? { model: resolvedModel } : {}),
+      ...(typeof payload.findings === "number"
+        ? { findings_count: payload.findings }
+        : {}),
+      ...(cost !== null
+        ? { cost_usd: cost.costUsd, cost_breakdown: cost.breakdown }
+        : {}),
       ...payload,
     });
   };
@@ -1060,6 +1088,38 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     usageTotals.outputTokens += r.usage?.outputTokens ?? 0;
     usageTotals.turns += r.turns ?? 0;
   };
+
+  // ── Per-scan metrics tracked off the bus ──
+  // Mirror the audit path (agentic-scanner.ts): count tool_call_completed
+  // events between scan start and completion so scan_completed's
+  // tool_calls_total covers every agent session (research + verify wave),
+  // never under-counting even on partial / errored exits.
+  let toolCallsTotal = 0;
+  const unsubscribeMetrics = eventBus.subscribe({
+    emit(type) {
+      if (type === "tool_call_completed") toolCallsTotal += 1;
+    },
+  });
+
+  // ── Scan-wide cost budget ──
+  // ONE ledger shared by every agent session this pipeline runs (research +
+  // the concurrent blind-verify wave + per-file research). The native loop
+  // folds each turn's usage into it and prices `opts.costCeilingUsd` against
+  // the cross-session cumulative total — so the hard ceiling binds the SCAN,
+  // not each session (previously every session got the full ceiling, so a
+  // $3-capped 0review scan could really spend research($3) + N×verify($3);
+  // prod review scans landed at $4.99 / $6.36).
+  const costLedger = new ScanCostLedger();
+  /** True once the shared ledger's cumulative cost has reached the ceiling. */
+  const scanCostCeilingTripped = (): boolean =>
+    opts.costCeilingUsd !== undefined &&
+    opts.costCeilingUsd > 0 &&
+    costLedger.costUsd(opts.model) >= opts.costCeilingUsd;
+
+  // Engine-resolved model id, stamped on scan_completed. Assigned once the
+  // API runtime is probed (below); stays undefined when nothing resolved a
+  // model (e.g. a CLI runtime ran the scan with no --model pick).
+  let resolvedModel: string | undefined;
   let phaseIndex = 0;
   let openPhase:
     | {
@@ -1483,13 +1543,16 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       opts.runtime === "auto" ||
       opts.runtime === undefined ||
       (opts.runtime === "codex" && !availableRuntimes.has("codex"));
-    const apiDiagnostics = needsApiDiagnostics
+    const apiRuntimeForDiagnostics = needsApiDiagnostics
       ? new LlmApiRuntime({
           type: "api",
           timeout: opts.timeout ?? 120_000,
           apiKey: opts.apiKey,
           model: opts.model,
-        }).getConfigurationDiagnostics()
+        })
+      : null;
+    const apiDiagnostics = apiRuntimeForDiagnostics
+      ? apiRuntimeForDiagnostics.getConfigurationDiagnostics()
       : {
           valid: false,
           provider: "openai",
@@ -1497,6 +1560,15 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           reason: "missing_key",
         } satisfies ApiRuntimeDiagnostics;
     assertApiRuntimeSelection(opts.runtime, apiDiagnostics);
+    // The model id this run actually drives: the operator's explicit pick
+    // wins; otherwise the probed API runtime's resolved (provider-default)
+    // model — but only when that runtime is really configured, so a scan
+    // that ran on a CLI runtime never gets a guessed model stamped.
+    resolvedModel =
+      opts.model ??
+      (apiDiagnostics.valid
+        ? apiRuntimeForDiagnostics?.resolvedModel()
+        : undefined);
     const hasApiKey = apiDiagnostics.valid;
     const hasCliRuntime = availableRuntimes.size > 0;
     const canUseAiRuntime = hasRequestedAnalysisRuntime(
@@ -1671,6 +1743,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                 apiKey: opts.apiKey,
                 model: opts.model,
                 costCeilingUsd: opts.costCeilingUsd,
+                costLedger,
               },
               db,
               emit: researchEmit,
@@ -1715,6 +1788,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                     apiKey: opts.apiKey,
                     model: opts.model,
                     costCeilingUsd: opts.costCeilingUsd,
+                    costLedger,
                   },
                   db,
                   emit: researchEmit,
@@ -1758,6 +1832,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
               apiKey: opts.apiKey,
               model: opts.model,
               costCeilingUsd: opts.costCeilingUsd,
+              costLedger,
             },
             db,
             emit: researchEmit,
@@ -1911,6 +1986,46 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           message: "Verification skipped — no verifier runtime available",
         });
         logPipelineEvent("verify", "stage_skipped", { reason: "no_runtime" });
+      } else if (scanCostCeilingTripped()) {
+        // Budget exhausted by the research phase. Launching the blind-verify
+        // wave anyway would spend past the hard per-scan ceiling: the shared
+        // ledger trips each verify session only AFTER its first turn's LLM
+        // call, so N concurrent verifiers would still burn N turns of
+        // over-ceiling spend. Skip the wave entirely and hold every finding
+        // as unverified via the inconclusive route (isDisclosureWorthy keeps
+        // non-rejected verdicts → publishability needs_verify) — nothing is
+        // silently confirmed. The report below is stamped costCeilingExceeded,
+        // so the run lands cost_exceeded rather than a clean pass.
+        warnings.push({
+          stage: "verify",
+          message: `Verification skipped: scan cost ceiling of $${opts.costCeilingUsd} reached during research ($${costLedger.costUsd(opts.model).toFixed(4)} spent). Findings left unverified.`,
+        });
+        findings = findings.map((finding) => {
+          const decision = isDisclosureWorthy(finding, "inconclusive");
+          if (!decision.keep) {
+            return { ...finding, status: "false-positive" as Finding["status"] };
+          }
+          return {
+            ...finding,
+            publishability: "needs_verify" as Finding["publishability"],
+            triageNote: `blind-verify skipped (scan cost ceiling reached): ${decision.reason}`,
+          };
+        });
+        // Persist the held/dropped verdicts so a resume doesn't re-run (or
+        // wrongly skip) verify against an already-exhausted budget.
+        for (const f of findings) {
+          try {
+            db?.saveFinding(persistedScanId, f);
+          } catch {
+            // best-effort: don't compound a budget skip with a persistence error
+          }
+        }
+        emit({
+          type: "stage:end",
+          stage: "verify",
+          message: "Verification skipped — scan cost ceiling reached",
+        });
+        logPipelineEvent("verify", "stage_skipped", { reason: "cost_ceiling" });
       } else {
       try {
         const verifyResults = await Promise.all(
@@ -1954,6 +2069,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                   apiKey: opts.apiKey,
                   model: opts.model,
                   costCeilingUsd: opts.costCeilingUsd,
+                  costLedger,
                 },
                 db: null,
                 emit: verifyEmit,
@@ -1966,6 +2082,25 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
               // sums, so interleaving never double-counts or races.
               recordUsage(agentResult);
               const verifiedFindings = agentResult.findings;
+
+              // Budget truncation ≠ rejection. When the shared per-scan ledger
+              // tripped mid-wave, this verifier stopped on budget — possibly
+              // before it could attempt a reproduction. Returning an empty
+              // findings list here would read as "rejected" and drop the
+              // finding as a false positive on a scan that lands
+              // cost_exceeded; an honest `inconclusive` holds it for review
+              // instead (isDisclosureWorthy keeps non-rejected verdicts),
+              // matching the verifier-error path (#599).
+              if (agentResult.costCeilingExceeded) {
+                const verdict: VerifyVerdict = {
+                  verdict: "inconclusive",
+                  confidence: finding.confidence ?? 0,
+                  reasoning: "Verification truncated: scan cost ceiling reached.",
+                  signals: [{ name: "blind_verify", passed: false, reasoning: "cost ceiling reached mid-verify" }],
+                  evidenceKind: evidenceKindForFinding(finding),
+                };
+                return { finding, verdict, verifiedFinding: null };
+              }
 
               const confirmed = verifiedFindings.length > 0;
               // Evidence basis (#674): native emission of reproduced-poc vs
@@ -2146,6 +2281,14 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     const durationMs = Date.now() - startTime;
     const summary = buildSummary(confirmedFindings, semgrepFindings.length + npmAuditFindings.length);
 
+    // Scan-wide budget verdict: the shared ledger reached the hard ceiling
+    // (research tripped it, or the verify wave was skipped / truncated on
+    // budget). Stamped on the report so the CLI exits 4 and the cloud lands
+    // the scan cost_exceeded — a budget-truncated run must never read as a
+    // clean completion (0review merge policy; see the audit path's
+    // cost-ceiling short-circuit in agentic-scanner.ts).
+    const costCeilingExceeded = scanCostCeilingTripped();
+
     db?.completeScan(persistedScanId, summary);
     logPipelineEvent("report", "stage_complete", summary as unknown as Record<string, unknown>);
 
@@ -2159,6 +2302,9 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       findings: confirmedFindings,
       warnings,
       // Backwards-compat extras
+      ...(costCeilingExceeded
+        ? { costCeilingExceeded: true, exitReason: "cost_ceiling_exceeded" as const }
+        : {}),
       ...(prepared.resolvedType === "npm-package" || prepared.resolvedType === "pypi-package" || prepared.resolvedType === "cargo-package" || prepared.resolvedType === "oci-image"
         ? {
             package: prepared.packageName,
@@ -2179,7 +2325,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     // dashboard sees a fully-bracketed phase timeline.
     finishPhase();
 
-    emitPipelineScanCompleted("completed", {
+    emitPipelineScanCompleted(costCeilingExceeded ? "cost_exceeded" : "completed", {
       findings: confirmedFindings.length,
       summary: `${confirmedFindings.length} finding(s), ${semgrepFindings.length + npmAuditFindings.length} automated lead(s)`,
     });
@@ -2192,6 +2338,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     emitPipelineScanCompleted("failed", { summary: msg });
     throw err;
   } finally {
+    unsubscribeMetrics();
     db?.close();
     // Clean up temporary directories
     if (prepared.needsCleanup && prepared.tempDir) {

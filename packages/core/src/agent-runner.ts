@@ -23,7 +23,7 @@ export interface AnalysisAgentOptions {
   target: string;
   scanId: string;
   sessionId?: string;
-  config: { runtime?: string; timeout?: number; depth?: string; apiKey?: string; model?: string; costCeilingUsd?: number };
+  config: { runtime?: string; timeout?: number; depth?: string; apiKey?: string; model?: string; costCeilingUsd?: number; costLedger?: import("./agent/cost-ledger.js").ScanCostLedger };
   db: any;
   emit: ScanListener;
   /** Prompt sent to CLI runtimes (compact, includes ---FINDING--- format instructions) */
@@ -62,6 +62,13 @@ export interface AnalysisAgentResult {
    * by the pipeline to attribute per-phase turn totals.
    */
   turns?: number;
+  /**
+   * True when the agent loop terminated on the hard cost ceiling (native
+   * branch only; undefined elsewhere). The pipeline distinguishes a
+   * budget-truncated verifier from a genuine "could not reproduce" so the
+   * finding is held as inconclusive rather than rejected.
+   */
+  costCeilingExceeded?: boolean;
 }
 
 // ── Depth → maxTurns mapping ──
@@ -332,6 +339,7 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
           sessionId,
           costCeilingUsd: config.costCeilingUsd,
           costModel: config.model,
+          costLedger: config.costLedger,
         },
         runtime: apiRuntime as NativeRuntime,
         db,
@@ -395,6 +403,7 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
         usage: agentState.totalUsage,
         estimatedCostUsd: agentState.estimatedCostUsd,
         turns: agentState.turnCount,
+        costCeilingExceeded: agentState.costCeilingExceeded,
       };
     }
 

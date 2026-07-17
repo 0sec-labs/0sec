@@ -90,6 +90,10 @@ vi.mock("./runtime/llm-api.js", () => {
     getConfigurationDiagnostics() {
       return { valid: true, provider: "anthropic", providerLabel: "Anthropic" };
     }
+    // Mirror of the real class's resolved-model getter (provider default stand-in).
+    resolvedModel() {
+      return "claude-fake-default";
+    }
   }
   return { LlmApiRuntime: FakeLlmApiRuntime };
 });

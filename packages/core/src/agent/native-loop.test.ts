@@ -6,6 +6,7 @@ import {
   BUDGET_WARNING_SOFT,
   BUDGET_WARNING_HARD,
 } from "./native-loop.js";
+import { ScanCostLedger } from "./cost-ledger.js";
 import { detectPlaybooks, buildPlaybookInjection, PLAYBOOKS } from "./playbooks.js";
 import type { NativeRuntime, NativeRuntimeResult, NativeMessage, NativeToolDef } from "../runtime/types.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -833,6 +834,151 @@ describe("runNativeAgentLoop cost ceiling", () => {
     expect(ceilingEvent).toBeDefined();
     expect(ceilingEvent!.payload.ceilingUsd).toBe(0.001);
     expect(ceilingEvent!.payload.runningCostUsd).toBeGreaterThanOrEqual(0.001);
+  });
+
+  it("shared ledger: a second session trips on the FIRST session's spend (scan-wide ceiling)", async () => {
+    // Regression for the 0review $3-ceiling escape: research + verify are
+    // SEPARATE agent sessions, each tracking its own totalUsage from zero, so
+    // a per-session check granted every session the full ceiling and a
+    // $3-capped review could really spend research($3) + N×verify($3). With
+    // one ScanCostLedger threaded through both, the second session prices the
+    // cross-session cumulative total and trips on the first session's spend.
+    //
+    // 200k input + 50k output per turn at default pricing ($3/$15 per 1M)
+    // costs $0.60 + $0.75 = $1.35/turn. Ceiling $2.00: one turn alone stays
+    // under ($1.35 < $2.00); two sessions × one turn cross it ($2.70 ≥ $2.00).
+    const ledger = new ScanCostLedger();
+
+    // Session A (e.g. "research"): burns one turn — $1.35 < $2.00 — and
+    // must NOT trip.
+    const sessionA = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 1,
+        target: "https://example.com",
+        scanId: "ledger-session-a",
+        costCeilingUsd: 2.0,
+        costLedger: ledger,
+      },
+      runtime: createCostBurningRuntime(200_000, 50_000),
+      db: null,
+    });
+    expect(sessionA.costCeilingExceeded).toBe(false);
+    expect(sessionA.turnCount).toBe(1);
+
+    // Session B (e.g. a verify agent): its OWN first turn costs $1.35 —
+    // under the ceiling on a per-session read — but the ledger carries
+    // session A's spend, so the cumulative $2.70 trips on turn 1.
+    const sessionB = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 50,
+        target: "https://example.com",
+        scanId: "ledger-session-b",
+        costCeilingUsd: 2.0,
+        costLedger: ledger,
+      },
+      runtime: createCostBurningRuntime(200_000, 50_000),
+      db: null,
+    });
+    expect(sessionB.costCeilingExceeded).toBe(true);
+    expect(sessionB.turnCount).toBe(1);
+    expect(sessionB.summary).toContain("Cost ceiling exceeded");
+
+    // Control: the SAME session B shape WITHOUT the ledger does not trip —
+    // proving the trip above came from cross-session accumulation.
+    const noLedger = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 1,
+        target: "https://example.com",
+        scanId: "ledger-control",
+        costCeilingUsd: 2.0,
+      },
+      runtime: createCostBurningRuntime(200_000, 50_000),
+      db: null,
+    });
+    expect(noLedger.costCeilingExceeded).toBe(false);
+  });
+
+  it("ledger records per-model buckets for the scan_completed cost breakdown", async () => {
+    // The pipeline derives scan_completed's cost_usd / cost_breakdown from
+    // the shared ledger, so each session must tag its usage with its pricing
+    // model — one (provider, model) entry per bucket, split into
+    // cost_in / cost_out, mirroring the audit path's aggregation.
+    const ledger = new ScanCostLedger();
+    await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 1,
+        target: "https://example.com",
+        scanId: "ledger-model-bucket",
+        costModel: "claude-sonnet-4-6",
+        costLedger: ledger,
+      },
+      runtime: createCostBurningRuntime(200_000, 50_000),
+      db: null,
+    });
+
+    expect(ledger.soleModel()).toBe("claude-sonnet-4-6");
+    const cost = ledger.costBreakdown();
+    expect(cost).not.toBeNull();
+    expect(cost!.breakdown).toHaveLength(1);
+    expect(cost!.breakdown[0]).toMatchObject({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+    });
+    // 200k input @ $3/M + 50k output @ $15/M = $0.60 + $0.75.
+    expect(cost!.breakdown[0]!.cost_in).toBeCloseTo(0.6, 5);
+    expect(cost!.breakdown[0]!.cost_out).toBeCloseTo(0.75, 5);
+    expect(cost!.costUsd).toBeCloseTo(1.35, 5);
+  });
+
+  it("cost_update carries running token totals under BOTH spellings", async () => {
+    // The orchestrator's scan_jobs segment-sum (updateScanCostFromEvent)
+    // keys on token_input / token_output while engine-side consumers read
+    // input_tokens / output_tokens — emitting only the engine-canonical
+    // pair left the cloud's token columns NULL (prod review scans: cost
+    // 6/6, tokens 0/6). Assert both pairs ride every cost_update.
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const unsubscribe = eventBus.subscribe({
+      emit(type, payload) {
+        events.push({ type, payload });
+      },
+    });
+    try {
+      await runNativeAgentLoop({
+        config: {
+          role: "attack",
+          systemPrompt: "test",
+          tools: [],
+          maxTurns: 2,
+          target: "https://example.com",
+          scanId: "cost-update-token-keys",
+        },
+        runtime: createCostBurningRuntime(200_000, 50_000),
+        db: null,
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    const updates = events.filter((e) => e.type === "cost_update");
+    expect(updates.length).toBeGreaterThan(0);
+    const last = updates[updates.length - 1]!.payload;
+    // Running per-session totals after two 200k/50k turns.
+    expect(last.input_tokens).toBe(400_000);
+    expect(last.output_tokens).toBe(100_000);
+    expect(last.token_input).toBe(400_000);
+    expect(last.token_output).toBe(100_000);
   });
 });
 
