@@ -35,19 +35,26 @@ interface RecencyOpts {
   maxHuntFiles?: string;
   maxClassifyFiles?: string;
   detectors?: string;
+  dynamicWitness?: boolean;
+  witnessCandidates?: string;
+  witnessCandidatesPerFile?: string;
+  witnessRounds?: string;
+  remineAssumptions?: boolean;
   output?: string;
   md?: string;
   reportDir?: string;
 }
 
-/** Parse `--detectors dataflow,refcount,race` → validated detector list (default all). */
-function parseDetectors(raw: string | undefined): ("dataflow" | "refcount" | "race")[] | undefined {
+type RecencyDetectorName = "dataflow" | "refcount" | "race" | "dual-view";
+
+/** Parse `--detectors dataflow,refcount,race,dual-view` → validated detector list (default the three static). */
+function parseDetectors(raw: string | undefined): RecencyDetectorName[] | undefined {
   if (!raw) return undefined;
-  const valid = new Set(["dataflow", "refcount", "race"]);
+  const valid = new Set(["dataflow", "refcount", "race", "dual-view"]);
   const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
   const bad = list.filter((d) => !valid.has(d));
-  if (bad.length > 0) throw new Error(`invalid --detectors '${bad.join(", ")}' (allowed: dataflow, refcount, race)`);
-  return list as ("dataflow" | "refcount" | "race")[];
+  if (bad.length > 0) throw new Error(`invalid --detectors '${bad.join(", ")}' (allowed: dataflow, refcount, race, dual-view)`);
+  return list as RecencyDetectorName[];
 }
 
 function parsePositive(flag: string, raw: string | undefined, dflt: number): number {
@@ -78,6 +85,19 @@ async function recencyAction(opts: RecencyOpts): Promise<void> {
     maxHuntFiles: parsePositive("--max-hunt-files", opts.maxHuntFiles, 25),
     maxClassifyFiles: parsePositive("--max-classify-files", opts.maxClassifyFiles, 80),
     ...(parseDetectors(opts.detectors) ? { detectors: parseDetectors(opts.detectors) } : {}),
+    // --dynamic-witness: run the full crazy-bug machine — assumption-mining dual-view
+    // enumerator → KASAN synthesize→boot→witness oracle. Implies the dual-view
+    // detector. Bounded at the RUN level because VM boots are expensive.
+    ...(opts.dynamicWitness
+      ? {
+          dynamicWitness: {
+            maxCandidatesPerRun: parsePositive("--witness-candidates", opts.witnessCandidates, 8),
+            maxCandidatesPerFile: parsePositive("--witness-candidates-per-file", opts.witnessCandidatesPerFile, 4),
+            maxRoundsPerCandidate: parsePositive("--witness-rounds", opts.witnessRounds, 2),
+          },
+        }
+      : {}),
+    ...(opts.remineAssumptions ? { remineAssumptions: true } : {}),
     log: (m) => process.stderr.write(m + "\n"),
   });
 
@@ -94,10 +114,13 @@ async function recencyAction(opts: RecencyOpts): Promise<void> {
     writeFileSync(join(dir, `${day}.md`), md + "\n", "utf8");
     const f = report.funnel;
     const cbd = f.candidatesByDetector;
+    const dv = report.detectors.includes("dual-view")
+      ? `, dual-view: ${cbd.dualView} (→${f.dualViewWitnessAttempted} witnessed-attempted →${f.survivorsByDetector.dualView} WITNESSED)`
+      : "";
     process.stdout.write(
       `recency-flywheel ${day}: ${f.commits} commits → ${f.changedFiles} files → ${f.inScope} in-scope → ` +
         `${f.semantic} semantic → ${f.candidates} candidates ` +
-        `{dataflow: ${cbd.dataflow}, refcount: ${cbd.refcount}, race: ${cbd.race}} → ${f.survivors} survivor(s). ` +
+        `{dataflow: ${cbd.dataflow}, refcount: ${cbd.refcount}, race: ${cbd.race}${dv}} → ${f.survivors} survivor(s). ` +
         `detectors: ${report.detectors.join("+")}. reports: ${join(dir, day)}.{json,md}\n`,
     );
   } else {
@@ -129,7 +152,12 @@ export function registerRecencyHuntCommand(program: Command): void {
     .option("--model-dir <path>", "Where per-file invariant models are stored (default <tree>/.recency-models)")
     .option("--max-hunt-files <N>", "Cap files run through the engine (default 25)")
     .option("--max-classify-files <N>", "Cap in-scope files sent to the LLM classifier (default 80; snapshot merge-window cost control)")
-    .option("--detectors <list>", "Comma-separated detectors to run per semantic file: dataflow,refcount,race (default all three)")
+    .option("--detectors <list>", "Comma-separated detectors per semantic file: dataflow,refcount,race,dual-view (default the three static; dual-view is opt-in)")
+    .option("--dynamic-witness", "Run the full machine: assumption-mining dual-view enumerator → KASAN synthesize→boot→witness oracle. Implies dual-view. VM boots are expensive — bounded by the budget below.")
+    .option("--witness-candidates <N>", "Dynamic-witness RUN budget: total dual-view candidates booted through the KASAN oracle per run (default 8)")
+    .option("--witness-candidates-per-file <N>", "Per-file cap on witnessed candidates, clamped to the run budget (default 4)")
+    .option("--witness-rounds <N>", "Bounded PoC-repair rounds per candidate — each is one VM boot (default 2)")
+    .option("--remine-assumptions", "Force a fresh assumption mine for dual-view each run (default: reuse a stored per-file model if present)")
     .option("--output <path>", "Write the report JSON here instead of stdout")
     .option("--md <path>", "Also write the markdown report here")
     .option("--report-dir <dir>", "Scheduler mode: write <dir>/YYYY-MM-DD.{json,md} + log a one-line summary")
