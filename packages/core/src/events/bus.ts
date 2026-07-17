@@ -80,8 +80,24 @@ export interface FindingIngestedPayload {
 
 export interface CostUpdatePayload {
   cost_usd?: number;
+  /** Engine-canonical running-total token counts (per agent session). */
   input_tokens?: number;
   output_tokens?: number;
+  /**
+   * Dual-spelling mirrors of input_tokens / output_tokens. The 0cloud
+   * orchestrator's scan_jobs segment-sum (updateScanCostFromEvent) keys on
+   * `token_input` / `token_output`, while engine-side consumers
+   * (live-agent-state, dashboard live trace) read input_tokens /
+   * output_tokens — producers emit BOTH so neither reader sees NULL.
+   */
+  token_input?: number;
+  token_output?: number;
+  /**
+   * Cached-input (cache-read) tokens, when the runtime tracks them
+   * (currently the codex CLI process runtime). Matches the key the
+   * orchestrator's cache-read segment-sum reads.
+   */
+  cached_input_tokens?: number;
   turn?: number;
   [k: string]: unknown;
 }

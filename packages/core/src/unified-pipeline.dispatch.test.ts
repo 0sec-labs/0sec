@@ -104,7 +104,9 @@ vi.mock("./runtime/registry.js", () => ({
 const apiRuntimeConstructorCalls: Array<Record<string, unknown>> = [];
 vi.mock("./runtime/llm-api.js", () => {
   class FakeLlmApiRuntime {
+    private readonly config: Record<string, unknown>;
     constructor(config: Record<string, unknown>) {
+      this.config = config;
       apiRuntimeConstructorCalls.push(config);
     }
     getConfigurationDiagnostics() {
@@ -113,6 +115,11 @@ vi.mock("./runtime/llm-api.js", () => {
         provider: "anthropic",
         providerLabel: "Anthropic",
       };
+    }
+    // Mirrors the real class's resolved-model getter: the requested model
+    // when one was passed, otherwise a provider default stand-in.
+    resolvedModel() {
+      return (this.config.model as string | undefined) ?? "claude-fake-default";
     }
   }
   return { LlmApiRuntime: FakeLlmApiRuntime };
@@ -986,6 +993,356 @@ describe("runPipeline — research phase + review profile", () => {
     const w = report.warnings.find((x) => x.message.includes("AI analysis failed"));
     expect(w).toBeDefined();
     expect(w!.stage).toBe("research");
+  });
+});
+
+// ── Scan-wide cost ceiling (0review $3 binding) ─────────────────────────────
+
+describe("runPipeline — scan-wide cost ceiling", () => {
+  /**
+   * Regression for the prod 0review escape: the $3 ZERO_REVIEW_COST_CEILING_USD
+   * reached the sandbox as PWNKIT_COST_CEILING_USD, the review command resolved
+   * it — and then runUnified dropped it before core.runPipeline, so review
+   * scans ran UNCAPPED and landed at $4.99 / $6.36. Even where a ceiling did
+   * reach the pipeline, it was enforced per agent SESSION, so research($3) +
+   * N×verify($3) of real spend fit "under the ceiling". The fix: one
+   * ScanCostLedger threaded through every session + a pre-verify budget gate.
+   *
+   * The runAnalysisAgent mock simulates spend by adding token usage to the
+   * shared ledger the pipeline threads into each session's config — the same
+   * object every call must receive.
+   */
+  type MockAgentArgs = {
+    purpose?: "research" | "verify";
+    config: {
+      costLedger?: {
+        add(usage: { inputTokens: number; outputTokens: number }): void;
+      };
+    };
+  };
+
+  it("threads ONE shared cost ledger into every agent session (research + verify)", async () => {
+    const repoDir = freshTmpDir("repo-ledger-shared");
+    writeFileSync(join(repoDir, "app.ts"), "// fixture");
+    runAnalysisAgentMock.mockResolvedValue({ findings: [fakeFinding("f1")] });
+
+    await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "default",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      costCeilingUsd: 3,
+      dbPath: freshDbPath(),
+    });
+
+    // research + 1 verify session (the finding needs blind-verifying).
+    expect(runAnalysisAgentMock).toHaveBeenCalledTimes(2);
+    const ledgers = runAnalysisAgentMock.mock.calls.map(
+      (c) => (c[0] as MockAgentArgs).config.costLedger,
+    );
+    expect(ledgers[0]).toBeDefined();
+    expect(ledgers[1]).toBe(ledgers[0]);
+  });
+
+  it("research exhausting the ceiling SKIPS the verify wave and stamps costCeilingExceeded", async () => {
+    const repoDir = freshTmpDir("repo-ceiling-skip");
+    writeFileSync(join(repoDir, "app.ts"), "// fixture");
+
+    // Research session spends past the $3 ceiling via the shared ledger
+    // (default pricing $3/$15 per 1M: 900k in = $2.70, 60k out = $0.90 →
+    // $3.60 ≥ $3) and terminates on the ceiling.
+    runAnalysisAgentMock.mockImplementation(async (args: MockAgentArgs) => {
+      args.config.costLedger?.add({ inputTokens: 900_000, outputTokens: 60_000 });
+      return {
+        findings: [fakeFinding("f1")],
+        usage: { inputTokens: 900_000, outputTokens: 60_000 },
+        turns: 3,
+        costCeilingExceeded: true,
+      };
+    });
+
+    const report = await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "default",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      costCeilingUsd: 3,
+      dbPath: freshDbPath(),
+    });
+
+    // The verify wave never launched — pre-fix it would have burned up to
+    // $3 per finding ON TOP of the research spend.
+    expect(runAnalysisAgentMock).toHaveBeenCalledTimes(1);
+    expect(report.costCeilingExceeded).toBe(true);
+    expect(report.exitReason).toBe("cost_ceiling_exceeded");
+    // Fail-closed but honest: the unverified finding is HELD for review —
+    // never silently confirmed, never falsely rejected on budget.
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0]!.status).not.toBe("false-positive");
+    expect(report.findings[0]!.publishability).toBe("needs_verify");
+    const w = report.warnings.find((x) => x.message.includes("cost ceiling"));
+    expect(w).toBeDefined();
+    expect(w!.stage).toBe("verify");
+  });
+
+  it("mid-wave budget trip holds the finding as inconclusive (never a false rejection)", async () => {
+    const repoDir = freshTmpDir("repo-ceiling-midwave");
+    writeFileSync(join(repoDir, "app.ts"), "// fixture");
+
+    let call = 0;
+    runAnalysisAgentMock.mockImplementation(async (args: MockAgentArgs) => {
+      call++;
+      if (call === 1) {
+        // Research: one finding, comfortably under budget ($0.45).
+        args.config.costLedger?.add({ inputTokens: 100_000, outputTokens: 10_000 });
+        return {
+          findings: [fakeFinding("f1")],
+          usage: { inputTokens: 100_000, outputTokens: 10_000 },
+          turns: 2,
+        };
+      }
+      // Verify session: the collective spend crosses the ceiling mid-wave —
+      // the verifier stopped on budget, NOT on a reproduction attempt.
+      args.config.costLedger?.add({ inputTokens: 900_000, outputTokens: 60_000 });
+      return {
+        findings: [],
+        usage: { inputTokens: 900_000, outputTokens: 60_000 },
+        turns: 1,
+        costCeilingExceeded: true,
+      };
+    });
+
+    const report = await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "default",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      costCeilingUsd: 3,
+      dbPath: freshDbPath(),
+    });
+
+    expect(runAnalysisAgentMock).toHaveBeenCalledTimes(2); // research + 1 verify
+    expect(report.costCeilingExceeded).toBe(true);
+    expect(report.exitReason).toBe("cost_ceiling_exceeded");
+    // A budget-truncated verifier returning zero findings must NOT read as
+    // "could not reproduce" (→ false-positive): the finding is held.
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0]!.status).not.toBe("false-positive");
+    expect(report.findings[0]!.publishability).toBe("needs_verify");
+  });
+
+  it("stays a clean completion when total spend fits under the ceiling", async () => {
+    const repoDir = freshTmpDir("repo-ceiling-under");
+    writeFileSync(join(repoDir, "app.ts"), "// fixture");
+
+    // Research $0.45 + verify confirms the finding ($0.45) → $0.90 < $3.
+    runAnalysisAgentMock.mockImplementation(async (args: MockAgentArgs) => {
+      args.config.costLedger?.add({ inputTokens: 100_000, outputTokens: 10_000 });
+      if (args.purpose === "verify") {
+        return {
+          findings: [fakeFinding("f1", { status: "verified" })],
+          usage: { inputTokens: 100_000, outputTokens: 10_000 },
+          turns: 1,
+        };
+      }
+      return {
+        findings: [fakeFinding("f1")],
+        usage: { inputTokens: 100_000, outputTokens: 10_000 },
+        turns: 2,
+      };
+    });
+
+    const report = await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "default",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      costCeilingUsd: 3,
+      dbPath: freshDbPath(),
+    });
+
+    expect(report.costCeilingExceeded).toBeUndefined();
+    expect(report.exitReason).toBeUndefined();
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0]!.status).toBe("verified");
+  });
+});
+
+// ── scan_completed event stream (cloud scan-detail population) ─────────────
+
+describe("runPipeline — scan_completed event stream", () => {
+  /**
+   * Prod review scans showed cost_usd but NEVER model / turns_used /
+   * tool_calls_total / cost_breakdown (0/6 in the DB): the pipeline only
+   * emitted scan_completed on cost-trips, and with exit_reason alone. The
+   * cloud's scan-detail tiles are populated from this event
+   * (orchestrator events.ts → updateScanSummaryMetrics), so a NORMAL
+   * completion must emit the full field set the audit path
+   * (agentic-scanner.ts emitScanCompleted) emits.
+   */
+  type MockAgentArgs = {
+    purpose?: "research" | "verify";
+    config: {
+      model?: string;
+      costLedger?: {
+        add(usage: { inputTokens: number; outputTokens: number }, model?: string): void;
+      };
+    };
+  };
+
+  function captureBusEvents(): {
+    events: Array<{ type: string; payload: Record<string, unknown> }>;
+    unsubscribe: () => void;
+  } {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const unsubscribe = eventBus.subscribe({
+      emit(type, payload) {
+        events.push({ type, payload });
+      },
+    });
+    return { events, unsubscribe };
+  }
+
+  it("normal review completion emits scan_completed with model + turns + tool calls + cost + breakdown", async () => {
+    const repoDir = freshTmpDir("repo-scan-completed");
+    writeFileSync(join(repoDir, "app.ts"), "// fixture");
+    process.env.PWNKIT_CLOUD_EVENTS = "1";
+
+    // Research (2 turns) + one verify (1 turn), each folding usage into the
+    // shared ledger under the session's pricing model — exactly what the
+    // native loop does in production.
+    runAnalysisAgentMock.mockImplementation(async (args: MockAgentArgs) => {
+      const usage = { inputTokens: 100_000, outputTokens: 10_000 };
+      args.config.costLedger?.add(usage, args.config.model);
+      if (args.purpose === "verify") {
+        return { findings: [fakeFinding("f1", { status: "verified" })], usage, turns: 1 };
+      }
+      return { findings: [fakeFinding("f1")], usage, turns: 2 };
+    });
+
+    const { events, unsubscribe } = captureBusEvents();
+    try {
+      await runPipeline({
+        target: repoDir,
+        targetType: "source-code",
+        depth: "default",
+        format: "json",
+        runtime: "api",
+        apiKey: "sk-fake",
+        model: "claude-sonnet-4-6",
+        dbPath: freshDbPath(),
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    const completed = events.filter((e) => e.type === "scan_completed");
+    expect(completed).toHaveLength(1);
+    const p = completed[0]!.payload;
+    expect(p.exit_reason).toBe("completed");
+    // The operator's model pick is stamped verbatim.
+    expect(p.model).toBe("claude-sonnet-4-6");
+    // Cross-session totals: research 2 turns + verify 1 turn.
+    expect(p.turns_used).toBe(3);
+    expect(typeof p.tool_calls_total).toBe("number");
+    expect(p.findings).toBe(1);
+    expect(p.findings_count).toBe(1);
+    expect(typeof p.duration_ms).toBe("number");
+    // True cross-session cost: 2 sessions × (100k in @ $3/M + 10k out @
+    // $15/M) = 2 × $0.45 = $0.90 at claude-sonnet-4-6 rates.
+    expect(p.cost_usd).toBeCloseTo(0.9, 5);
+    const breakdown = p.cost_breakdown as Array<Record<string, unknown>>;
+    expect(breakdown).toHaveLength(1);
+    expect(breakdown[0]).toMatchObject({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+    });
+    expect(breakdown[0]!.cost_in as number).toBeCloseTo(0.6, 5);
+    expect(breakdown[0]!.cost_out as number).toBeCloseTo(0.3, 5);
+  });
+
+  it("stamps the API runtime's resolved default model when no model was picked", async () => {
+    const repoDir = freshTmpDir("repo-scan-completed-default-model");
+    writeFileSync(join(repoDir, "app.ts"), "// fixture");
+    process.env.PWNKIT_CLOUD_EVENTS = "1";
+    runAnalysisAgentMock.mockResolvedValue({ findings: [] });
+
+    const { events, unsubscribe } = captureBusEvents();
+    try {
+      await runPipeline({
+        target: repoDir,
+        targetType: "source-code",
+        depth: "default",
+        format: "json",
+        runtime: "api",
+        apiKey: "sk-fake",
+        dbPath: freshDbPath(),
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    const completed = events.filter((e) => e.type === "scan_completed");
+    expect(completed).toHaveLength(1);
+    // FakeLlmApiRuntime.resolvedModel() stand-in for the provider default —
+    // proves the pipeline reads the runtime's resolved model rather than
+    // leaving the field absent (CI review scans dispatch with model=NULL).
+    expect(completed[0]!.payload.model).toBe("claude-fake-default");
+    // No metered usage recorded (mock returns no usage) → cost fields
+    // omitted, never a fabricated $0.
+    expect(completed[0]!.payload.cost_usd).toBeUndefined();
+    expect(completed[0]!.payload.cost_breakdown).toBeUndefined();
+  });
+
+  it("cost-trip completions also carry the full field set", async () => {
+    const repoDir = freshTmpDir("repo-scan-completed-cost-trip");
+    writeFileSync(join(repoDir, "app.ts"), "// fixture");
+    process.env.PWNKIT_CLOUD_EVENTS = "1";
+
+    runAnalysisAgentMock.mockImplementation(async (args: MockAgentArgs) => {
+      const usage = { inputTokens: 900_000, outputTokens: 60_000 };
+      args.config.costLedger?.add(usage, args.config.model);
+      return {
+        findings: [fakeFinding("f1")],
+        usage,
+        turns: 4,
+        costCeilingExceeded: true,
+      };
+    });
+
+    const { events, unsubscribe } = captureBusEvents();
+    try {
+      await runPipeline({
+        target: repoDir,
+        targetType: "source-code",
+        depth: "default",
+        format: "json",
+        runtime: "api",
+        apiKey: "sk-fake",
+        model: "claude-sonnet-4-6",
+        costCeilingUsd: 3,
+        dbPath: freshDbPath(),
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    const completed = events.filter((e) => e.type === "scan_completed");
+    expect(completed).toHaveLength(1);
+    const p = completed[0]!.payload;
+    expect(p.exit_reason).toBe("cost_exceeded");
+    expect(p.model).toBe("claude-sonnet-4-6");
+    expect(p.turns_used).toBe(4);
+    expect(p.cost_usd).toBeCloseTo(3.6, 5);
+    expect(Array.isArray(p.cost_breakdown)).toBe(true);
   });
 });
 

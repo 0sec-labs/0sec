@@ -269,10 +269,16 @@ function relayScanEventToBus(event: ScanEvent): void {
     }
     case "usage": {
       const u = (event.data ?? {}) as Record<string, unknown>;
+      const inputTokens = typeof u.inputTokens === "number" ? u.inputTokens : undefined;
+      const outputTokens = typeof u.outputTokens === "number" ? u.outputTokens : undefined;
       eventBus.emit("cost_update", {
         cost_usd: typeof u.estimatedCostUsd === "number" ? u.estimatedCostUsd : undefined,
-        input_tokens: typeof u.inputTokens === "number" ? u.inputTokens : undefined,
-        output_tokens: typeof u.outputTokens === "number" ? u.outputTokens : undefined,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        // Dual-spelling mirrors — the orchestrator's scan_jobs segment-sum
+        // keys on token_input/token_output (see bus.ts CostUpdatePayload).
+        token_input: inputTokens,
+        token_output: outputTokens,
         turn: typeof u.turn === "number" ? u.turn : undefined,
       });
       return;

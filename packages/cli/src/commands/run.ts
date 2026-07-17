@@ -514,6 +514,12 @@ export async function runUnified(opts: RunOptions): Promise<void> {
           model: opts.model,
           timeout,
           packageVersion: opts.packageVersion,
+          // Hard per-scan cost ceiling. Dropped here historically, so
+          // `pwnkit review` / `pwnkit audit` resolved
+          // PWNKIT_COST_CEILING_USD (e.g. the $3 0review ceiling) and then
+          // ran the whole pipeline UNCAPPED — prod 0review scans landed at
+          // $4.99 / $6.36. The agenticScan branch above already threads it.
+          costCeilingUsd: opts.costCeilingUsd,
           reviewProfile: opts.reviewProfile,
           reviewPackageEcosystem: opts.reviewPackageEcosystem,
           subsystem: opts.subsystem,

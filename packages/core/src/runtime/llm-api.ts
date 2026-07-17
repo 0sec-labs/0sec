@@ -1009,6 +1009,17 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     );
   }
 
+  /**
+   * The resolved model id this runtime will actually call — the requested
+   * model when one was picked, otherwise the provider's detected default.
+   * Surfaced so the pipeline can stamp the engine-resolved model on
+   * `scan_completed` (CI review scans are dispatched with no model pick, so
+   * this is the only place the concrete id exists).
+   */
+  resolvedModel(): string {
+    return this.model;
+  }
+
   /** Build the appropriate headers for the configured provider. */
   private buildHeaders(): Record<string, string> {
     if (this.provider === "chatgpt-codex") {

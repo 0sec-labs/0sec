@@ -28,6 +28,7 @@ import { loadJournal, rehydrateContext, renderSeedMessages } from "./journal/ind
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
 import { formatJitSkillsInstruction, getSkillById } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
+import type { ScanCostLedger } from "./cost-ledger.js";
 import { eventBus, isCloudEventSinkActive } from "../events/bus.js";
 import {
   isUntrustedSourceTool,
@@ -153,10 +154,24 @@ export interface NativeAgentConfig {
    * estimated cost after every tool-call turn and aborts cleanly when
    * the ceiling is exceeded. Partial findings collected so far are
    * preserved on the returned state.
+   *
+   * By default the running cost is THIS session's `totalUsage` alone.
+   * When {@link NativeAgentConfig.costLedger} is present the check prices
+   * the ledger's cross-session cumulative total instead, so the ceiling
+   * binds the whole scan rather than each agent session individually.
    */
   costCeilingUsd?: number;
   /** Optional model id used to price token usage against the ceiling. */
   costModel?: string;
+  /**
+   * Shared per-scan cost ledger (see agent/cost-ledger.ts). When present,
+   * every turn's token usage is folded into the ledger AND the cost-ceiling
+   * check above prices the ledger total — so a scan running multiple agent
+   * sessions (research + the concurrent verify wave) enforces ONE ceiling
+   * across all of them instead of granting each session the full ceiling
+   * independently. Omit to keep the legacy per-session accounting.
+   */
+  costLedger?: ScanCostLedger;
   /**
    * Programmatic engagement scope (pwnkit#215). When set, every URL the
    * agent touches is checked against this policy and out-of-scope URLs
@@ -836,6 +851,11 @@ export async function runNativeAgentLoop(
     if (result.usage) {
       state.totalUsage.inputTokens += result.usage.inputTokens;
       state.totalUsage.outputTokens += result.usage.outputTokens;
+      // Fold this turn into the shared per-scan ledger (when threaded) so
+      // sibling agent sessions see this spend in their own ceiling checks.
+      // The session's pricing model keys the ledger's per-model buckets,
+      // which the scan_completed cost_breakdown is derived from.
+      config.costLedger?.add(result.usage, config.costModel);
       state.estimatedCostUsd = estimateCost(state.totalUsage, config.costModel);
       if (
         streamedUsageInputTokens !== result.usage.inputTokens
@@ -849,10 +869,19 @@ export async function runNativeAgentLoop(
         });
       }
       // Bus event: cumulative cost snapshot for the cloud relay / dashboard.
+      // Token counts ride under BOTH spellings: input_tokens/output_tokens
+      // is the engine-canonical pair (bus.ts CostUpdatePayload, consumed by
+      // live-agent-state + the dashboard live trace); token_input/
+      // token_output is what the orchestrator's scan_jobs segment-sum
+      // (updateScanCostFromEvent) keys on. The dual write is additive —
+      // without it the cloud's token columns stayed NULL even though the
+      // events carried usage (prod review scans: cost_usd 6/6, tokens 0/6).
       eventBus.emit("cost_update", {
         cost_usd: state.estimatedCostUsd,
         input_tokens: state.totalUsage.inputTokens,
         output_tokens: state.totalUsage.outputTokens,
+        token_input: state.totalUsage.inputTokens,
+        token_output: state.totalUsage.outputTokens,
         turn: state.turnCount,
       });
     }
@@ -1455,8 +1484,15 @@ export async function runNativeAgentLoop(
     // the cumulative token usage. If the user configured a hard ceiling and
     // we've exceeded it, break out of the loop. Findings collected so far
     // are preserved on `state.findings`.
+    //
+    // When a shared per-scan ledger is threaded, price the LEDGER's
+    // cross-session cumulative total: a scan running multiple agent sessions
+    // (research + the verify wave) must trip the ceiling on their combined
+    // spend, not grant each session the full ceiling independently.
     if (config.costCeilingUsd !== undefined && config.costCeilingUsd > 0) {
-      const runningCost = estimateCost(state.totalUsage, config.costModel);
+      const runningCost = config.costLedger
+        ? config.costLedger.costUsd(config.costModel)
+        : estimateCost(state.totalUsage, config.costModel);
       if (runningCost >= config.costCeilingUsd) {
         state.costCeilingExceeded = true;
         state.estimatedCostUsd = runningCost;

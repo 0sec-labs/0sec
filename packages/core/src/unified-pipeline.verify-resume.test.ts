@@ -106,6 +106,10 @@ vi.mock("./runtime/llm-api.js", () => {
     getConfigurationDiagnostics() {
       return currentDiagnostics.value;
     }
+    // Mirror of the real class's resolved-model getter (provider default stand-in).
+    resolvedModel() {
+      return "claude-fake-default";
+    }
   }
   return { LlmApiRuntime: FakeLlmApiRuntime };
 });

@@ -87,6 +87,11 @@ vi.mock("./runtime/llm-api.js", () => {
         providerLabel: "ChatGPT (Codex backend)",
       };
     }
+    // Mirror of the real class's resolved-model getter (chatgpt-codex
+    // provider default stand-in).
+    resolvedModel() {
+      return "gpt-fake-codex";
+    }
   }
   return { LlmApiRuntime: FakeLlmApiRuntime };
 });

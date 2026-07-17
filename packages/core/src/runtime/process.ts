@@ -234,12 +234,16 @@ export class ProcessRuntime implements Runtime {
           // Subscription-auth scans have no $ cost, but surfacing token
           // counts still helps operators reason about scan size + retry
           // budgets — emit cost_update with cost=0 so the dashboard's
-          // token meter populates.
+          // token meter populates. Dual-spelling token keys: the
+          // orchestrator's scan_jobs segment-sum keys on
+          // token_input/token_output (see bus.ts CostUpdatePayload).
           eventBus.emit("cost_update", {
             turn: turnNumber,
             cost_usd: 0,
             input_tokens: inputTokens,
             output_tokens: outputTokens,
+            token_input: inputTokens,
+            token_output: outputTokens,
             cached_input_tokens: cachedInputTokens,
             reasoning_output_tokens: reasoningTokens,
           });
