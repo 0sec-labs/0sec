@@ -919,3 +919,90 @@ describe("LlmApiRuntime 429 backoff + retry", () => {
     expect(result.error).toContain("400");
   });
 });
+
+// ── SSE stream idle watchdog (the silent-stall kill) ──
+
+describe("LlmApiRuntime stream idle watchdog", () => {
+  const IDLE_ENV = "PWNKIT_LLM_STREAM_IDLE_TIMEOUT_MS";
+
+  afterEach(() => {
+    delete process.env[IDLE_ENV];
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const mkStreamingRt = () => {
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "responses";
+    (rt as any).apiKey = "test";
+    return rt;
+  };
+  const userMsg: NativeMessage[] = [
+    { role: "user", content: [{ type: "text", text: "go" }] },
+  ];
+
+  it("fails a never-yielding SSE stream as a transient stall instead of hanging", async () => {
+    process.env[IDLE_ENV] = "200";
+    const rt = mkStreamingRt();
+    // Server accepts (200) then holds the stream open without a single byte —
+    // the exact ChatGPT-backend hold reproduced on E2B + microsandbox.
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      body: new ReadableStream<Uint8Array>({ start() { /* never enqueues */ } }),
+    } as unknown as Response)));
+
+    const t0 = Date.now();
+    const result = await rt.executeNative("sys", userMsg, []);
+    expect(Date.now() - t0).toBeLessThan(4000); // bounded — never a hang
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("stalled");
+  });
+
+  it("trips the watchdog when the stream yields once then goes silent", async () => {
+    process.env[IDLE_ENV] = "200";
+    const rt = mkStreamingRt();
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "hi" })}\n\n`,
+          ));
+          // then silence forever — never closes
+        },
+      }),
+    } as unknown as Response)));
+
+    const result = await rt.executeNative("sys", userMsg, []);
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("stalled");
+  });
+
+  it("healthy streams complete well inside the idle window", async () => {
+    process.env[IDLE_ENV] = "5000";
+    const rt = mkStreamingRt();
+    const sseEvent = `data: ${JSON.stringify({
+      type: "response.completed",
+      response: { output: [], usage: { input_tokens: 5, output_tokens: 1 } },
+    })}\n\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sseEvent));
+          controller.close();
+        },
+      }),
+    } as unknown as Response)));
+
+    const result = await rt.executeNative("sys", userMsg, []);
+    expect(result.stopReason).not.toBe("error");
+    expect(result.error ?? "").not.toContain("stalled");
+  });
+
+  it("pins 401/403 as NON-retryable at the wire layer (auth fails fast)", () => {
+    expect(isRetryableHttpStatus(401)).toBe(false);
+    expect(isRetryableHttpStatus(403)).toBe(false);
+  });
+});

@@ -1735,3 +1735,24 @@ describe("runNativeAgentLoop — inline validation (#554)", () => {
     expect(state.findings[0].inlineValidation).toBeUndefined();
   });
 });
+
+// ── transient LLM error classifier (bounded retry vs loud exit) ──
+
+describe("isTransientLlmError", () => {
+  it("classifies rate-limit/overload/timeout/stall as transient", async () => {
+    const { isTransientLlmError } = await import("./native-loop.js");
+    expect(isTransientLlmError("OpenRouter API error 429: too many requests")).toBe(true);
+    expect(isTransientLlmError("provider overloaded")).toBe(true);
+    expect(isTransientLlmError("fetch failed: ETIMEDOUT")).toBe(true);
+    expect(
+      isTransientLlmError("ChatGPT (Codex backend) stream stalled — no SSE events for 120s (transient)"),
+    ).toBe(true);
+  });
+
+  it("does NOT classify auth errors as transient (fail-fast, never retry)", async () => {
+    const { isTransientLlmError } = await import("./native-loop.js");
+    expect(isTransientLlmError("ChatGPT (Codex backend) API error 401: could not parse token")).toBe(false);
+    expect(isTransientLlmError("OpenRouter API error 401: user not found")).toBe(false);
+    expect(isTransientLlmError("Anthropic API error 403: forbidden")).toBe(false);
+  });
+});

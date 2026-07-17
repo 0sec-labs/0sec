@@ -115,6 +115,18 @@ export function summarizeReasoning(thinkingText: string | undefined | null): str
 
 const EXTERNAL_MEMORY_MAX_CHARS = 2000;
 
+/**
+ * Transient provider error classifier: overload / rate-limit / 5xx / held
+ * stream — failures where retrying the SAME turn after a backoff is right
+ * (bounded by MAX_TRANSIENT_RETRIES, then the run exits loudly via errorExit).
+ * `stall` covers the SSE idle-watchdog's error (a server that accepted the
+ * request then held the stream silently; see llm-api.ts
+ * consumeResponsesStream). Exported for tests.
+ */
+export function isTransientLlmError(errorMsg: string): boolean {
+  return /\b(429|529|502|503|504)\b|overloaded|rate.?limit|temporarily|too many requests|ETIMEDOUT|ECONNRESET|throttl|stall/i.test(errorMsg);
+}
+
 // ── Native Agent Loop Config ──
 
 export interface NativeAgentConfig {
@@ -938,7 +950,7 @@ export async function runNativeAgentLoop(
       // Transient provider overload / rate-limit / 5xx → back off and retry the
       // SAME turn rather than killing the run. Doesn't consume a turn (the LLM
       // call failed before any tool ran), capped by MAX_TRANSIENT_RETRIES.
-      const transient = /\b(429|529|502|503|504)\b|overloaded|rate.?limit|temporarily|too many requests|ETIMEDOUT|ECONNRESET|throttl/i.test(errorMsg);
+      const transient = isTransientLlmError(errorMsg);
       if (transient && transientRetries < MAX_TRANSIENT_RETRIES) {
         transientRetries++;
         const backoffMs = Math.min(20_000, 500 * 2 ** transientRetries);
