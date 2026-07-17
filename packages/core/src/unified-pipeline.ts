@@ -21,6 +21,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import type * as dbSchema from "@pwnkit/db";
 import type { ScanListener } from "./scanner.js";
 import { runAnalysisAgent } from "./agent-runner.js";
+import { cloneGitRepo } from "./repo-clone.js";
 import { ScanCostLedger } from "./agent/cost-ledger.js";
 import { auditAgentPrompt, reviewAgentPrompt } from "./analysis-prompts.js";
 import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
@@ -543,10 +544,9 @@ function prepareSourceCode(target: string, emit: ScanListener): PrepareResult {
   emit({ type: "stage:start", stage: "prepare", message: `Cloning ${target}...` });
 
   try {
-    execFileSync("git", ["clone", "--depth", "1", target, `${tempDir}/repo`], {
-      timeout: 120_000,
-      stdio: "pipe",
-    });
+    // Parses an optional `<url>.git@<ref>` version suffix (kernel/source
+    // targets) and clones the pinned ref, not the default branch.
+    cloneGitRepo(target, `${tempDir}/repo`);
   } catch (err) {
     rmSync(tempDir, { recursive: true, force: true });
     const msg = err instanceof Error ? err.message : String(err);
@@ -1241,19 +1241,45 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       ? parseSubsystems(opts.subsystem).map((s) => join(prepared.scopePath, s))
       : undefined;
 
+  // Diff-aware review: scope to the changed files BEFORE the oversized-
+  // review guard. The guard counts the WHOLE repo, so a 3-file PR on a
+  // monorepo would otherwise be rejected for the repo's size — the review
+  // only reads the changed set, so the cap must apply to that set, not the
+  // repo. null = not a diff run or the diff failed (fall back to whole-repo).
+  let diffChangedFiles: string[] | null = null;
+  if (
+    prepared.resolvedType === "source-code" &&
+    opts.diffBase &&
+    opts.changedOnly &&
+    !opts.resumeScanId
+  ) {
+    try {
+      diffChangedFiles = listChangedFiles(prepared.scopePath, opts.diffBase);
+    } catch {
+      diffChangedFiles = null;
+    }
+  }
+
   if (prepared.resolvedType === "source-code" && !opts.resumeScanId) {
     const cap = reviewMaxFiles();
-    let fileCount = 0;
-    for (const scopePath of reviewSubsystemPaths ?? [prepared.scopePath]) {
-      fileCount += countScopeFilesUpTo(scopePath, cap - fileCount);
-      if (fileCount > cap) break;
-    }
+    const fileCount = diffChangedFiles
+      ? diffChangedFiles.length
+      : (() => {
+          let n = 0;
+          for (const scopePath of reviewSubsystemPaths ?? [prepared.scopePath]) {
+            n += countScopeFilesUpTo(scopePath, cap - n);
+            if (n > cap) break;
+          }
+          return n;
+        })();
     if (fileCount > cap) {
-      const msg =
-        `review target too large: over ${cap} source files exceeds the ${cap} ` +
-        `review cap — scope to a subsystem/path (e.g. a specific directory) or ` +
-        `use a smaller target (override with PWNKIT_REVIEW_MAX_FILES)`;
-      logPipelineEvent("prepare", "stage_error", { error: msg, fileCount: `>${cap}`, cap });
+      const msg = diffChangedFiles
+        ? `review diff too large: ${fileCount} changed files exceeds the ${cap} ` +
+          `review cap — split the change or scope to a subsystem/path`
+        : `review target too large: over ${cap} source files exceeds the ${cap} ` +
+          `review cap — scope to a subsystem/path (e.g. a specific directory) or ` +
+          `use a smaller target (override with PWNKIT_REVIEW_MAX_FILES)`;
+      logPipelineEvent("prepare", "stage_error", { error: msg, fileCount, cap });
       emit({ type: "error", stage: "prepare", message: msg });
       throw new Error(msg);
     }
@@ -1318,7 +1344,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
 
     let semgrepFindings: SemgrepFinding[] = [];
     let npmAuditFindings: NpmAuditFinding[] = [];
-    let changedFiles: string[] = [];
+    // Seeded by the pre-guard diff scoping for changedOnly runs; empty when
+    // not a diff run or the pre-guard diff failed (the analyze stage's own
+    // diffBase block then recomputes / falls back to full review).
+    let changedFiles: string[] = diffChangedFiles ?? [];
     const staticScanner = selectedStaticScanner();
     let staticScannerRan = false;
     let staticScannerFindings = 0;
@@ -1345,7 +1374,11 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     }
     const skipSemgrep = !!(opts.seedOnly && externalSeedCount > 0);
 
-    if (prepared.resolvedType === "source-code" && opts.diffBase) {
+    if (
+      prepared.resolvedType === "source-code" &&
+      opts.diffBase &&
+      changedFiles.length === 0
+    ) {
       try {
         changedFiles = listChangedFiles(prepared.scopePath, opts.diffBase);
         if (changedFiles.length > 0) {

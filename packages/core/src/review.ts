@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
+import { cloneGitRepo } from "./repo-clone.js";
 import type {
   ReviewConfig,
   ReviewReport,
@@ -74,10 +75,9 @@ function resolveRepo(
   });
 
   try {
-    execFileSync("git", ["clone", "--depth", "1", repo, `${tempDir}/repo`], {
-      timeout: 120_000,
-      stdio: "pipe",
-    });
+    // Parses an optional `<url>.git@<ref>` version suffix (kernel/source
+    // targets) and clones the pinned ref, not the default branch.
+    cloneGitRepo(repo, `${tempDir}/repo`);
   } catch (err) {
     rmSync(tempDir, { recursive: true, force: true });
     const msg = err instanceof Error ? err.message : String(err);
