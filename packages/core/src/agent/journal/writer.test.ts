@@ -516,9 +516,13 @@ describe("atomicAppendJsonLine (O_APPEND fast path) — #415", () => {
   // replaced the journal inode on every append. The O_APPEND implementation
   // keeps one file in place, so inode stability detects that regression
   // deterministically without making wall-clock claims about a shared runner.
-  it("does not replace the journal file across 1000 appends", () => {
+  it("does not replace the journal file across many appends", () => {
+    // Each production append includes a synchronous fsync. One hundred
+    // inode-checked, content-verified writes exercise the regression without
+    // monopolizing a shared CI runner's disk long enough to starve Vitest RPC.
+    const appendCount = 100;
     const writer = createJournalWriter({
-      runId: "run-append-1000",
+      runId: "run-append-many",
       rootDir: tmpRoot,
       now: fixedNow,
       idFactory: nextId,
@@ -530,7 +534,7 @@ describe("atomicAppendJsonLine (O_APPEND fast path) — #415", () => {
     });
     const initialInode = statSync(writer.paths.journalPath).ino;
     if (process.platform !== "win32") expect(initialInode).toBeGreaterThan(0);
-    for (let i = 1; i < 1000; i += 1) {
+    for (let i = 1; i < appendCount; i += 1) {
       writer.append({
         kind: "decision",
         decision: "continue",
@@ -541,12 +545,12 @@ describe("atomicAppendJsonLine (O_APPEND fast path) — #415", () => {
     expect(finalStat.ino).toBe(initialInode);
 
     // Keep the journal bounded and verify every record, not merely parseability.
-    expect(finalStat.size).toBeLessThan(200 * 1024);
+    expect(finalStat.size).toBeLessThan(32 * 1024);
 
     const raw = readFileSync(writer.paths.journalPath, "utf8");
     expect(Buffer.byteLength(raw, "utf8")).toBe(finalStat.size);
     const lines = raw.trim().split("\n");
-    expect(lines).toHaveLength(1000);
+    expect(lines).toHaveLength(appendCount);
     for (const [index, line] of lines.entries()) {
       expect(JSON.parse(line)).toMatchObject({
         id: `entry-${index + 1}`,

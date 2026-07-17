@@ -93,7 +93,10 @@ describe("runPipeline — oversized-review guard vs diff-aware reviews", () => {
 
   it(
     "a small diff on a repo over the whole-repo cap completes (changedOnly)",
-    { timeout: 30_000 },
+    // Shared runners can spend tens of seconds in the diff/static bootstrap
+    // while Docker smoke jobs saturate disk. Keep the behavior assertion
+    // strict, but do not turn transient runner contention into a false failure.
+    { timeout: 90_000 },
     async () => {
       // 6 files > cap 3, but only 1 changed file — the diff-scoped guard applies
       // the cap to the 1 changed file, so the run completes instead of throwing

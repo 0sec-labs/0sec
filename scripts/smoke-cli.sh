@@ -88,10 +88,11 @@ INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersi
 # made this subtest the #1 flake source (and, because the image publish gates
 # on CI=success, it randomly blocked publishes). Retry the handshake up to 3
 # times with a generous per-attempt window before declaring it broken.
+MCP_SMOKE_TIMEOUT_SECONDS="${PWNKIT_MCP_SMOKE_TIMEOUT_SECONDS:-30}"
 : > "$TMP/mcp.out"
 for attempt in 1 2 3; do
   printf '%s\n' "$INIT_MSG" \
-    | timeout_cmd 30 $CLI mcp-server \
+    | timeout_cmd "$MCP_SMOKE_TIMEOUT_SECONDS" $CLI mcp-server \
         --target https://example.invalid \
         --scan-id ci-smoke \
         --db-path "$TMP/mcp.db" 2> "$TMP/mcp.err" \

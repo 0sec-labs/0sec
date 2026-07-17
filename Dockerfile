@@ -99,9 +99,11 @@ RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit-cli \
     && chmod +x /app/dist/pwnkit.js
 
 # Drop privileges by reusing the default ubuntu user (uid 1000) shipped with
-# ubuntu:24.04. Avoids pulling the passwd package just for useradd.
-RUN mkdir -p /work \
-    && chown -R ubuntu:ubuntu /work /app/dist /ms-playwright
+# ubuntu:24.04. Runtime code and browser assets are read-only to this user;
+# only the working directory needs ownership. Avoid recursively chowning the
+# large Playwright tree here: overlayfs metadata rewrites can take many minutes
+# on self-hosted runners and do not change runtime access.
+RUN install -d -o ubuntu -g ubuntu /work
 USER ubuntu
 WORKDIR /work
 
