@@ -1,4 +1,54 @@
 export { runResearch } from "./research-runner.js";
+export {
+  canonicalProposalJson,
+  createResearchProposal,
+  digestTargetSnapshot,
+  normalizeProposalPath,
+  proposalDigest,
+  validateResearchProposal,
+} from "./proposal.js";
+export type {
+  CreateResearchProposalInput,
+  ProposalCitation,
+  ProposalCitationInput,
+  ProposalFeatures,
+  ProposalKind,
+  ProposalOrigin,
+  ResearchProposal,
+  TargetSourceFile,
+  TargetSourceSnapshot,
+} from "./proposal.js";
+export {
+  appendProposalAttempt,
+  createProposalAttempt,
+  proposalReplayDigest,
+  proposalTrainingExamples,
+  readProposalReplay,
+  serializeProposalReplay,
+  validateProposalAttempt,
+  validateProposalReplay,
+} from "./proposal-replay.js";
+export {
+  rankResearchProposals,
+  scoreResearchProposal,
+  trainProposalRanker,
+} from "./proposal-ranker.js";
+export { proposalsFromInvariantViolations } from "./target-proposal-generator.js";
+export type { InvariantViolationProposalInput } from "./target-proposal-generator.js";
+export type {
+  ProposalRankerModel,
+  RankedProposal,
+  RankProposalOptions,
+  TrainProposalRankerOptions,
+} from "./proposal-ranker.js";
+export type {
+  CreateProposalAttemptInput,
+  EvidenceKind,
+  ProposalAttempt,
+  ProposalEvidenceReceipt,
+  ProposalOutcome,
+  ProposalTrainingExample,
+} from "./proposal-replay.js";
 export type { RunResearchOptions } from "./research-runner.js";
 export type {
   ResearchStage,
