@@ -40,6 +40,7 @@ export {
   ObjectiveOracle,
   objectiveOracle,
   objectiveOracleEvaluatorAttestation,
+  objectiveOracleEvaluatorCodeBytes,
   objectiveOracleEvaluatorConfigJson,
   harvestEvidenceText,
 } from "./oracle.js";

@@ -42,6 +42,7 @@ import {
   registerBenchImprovementCommand,
   writeCanonicalJsonAtomic,
 } from "./bench-improvement.js";
+import { registerBenchCalibrationCommand } from "./bench-calibration.js";
 
 const DEFAULT_LEDGER = "benchmark-ledger.json";
 
@@ -118,6 +119,7 @@ export function registerBenchCommand(program: Command): void {
     .description("A/B variant tournament + CI regression gate over the labeled corpus (#656)");
 
   registerBenchImprovementCommand(bench);
+  registerBenchCalibrationCommand(bench);
 
   // ── bench run ──
   bench

@@ -38,6 +38,7 @@ import {
 interface CandidateMetadata {
   id: string;
   project: "pwnkit";
+  calibrationEmptyFindings: boolean;
   budget: {
     maxRuns: number;
     maxUsd: number;
@@ -72,10 +73,15 @@ export interface ImprovementProjectionInputs {
   evaluatorDigestAfter: string;
   ciEvidence: CiEvidence;
   evidenceRefs: string[];
+  calibration?: boolean;
+}
+
+interface ParsedResearchTournamentRun extends ResearchTournamentRun {
+  calibrationMode?: "zero-cost-no-uplift";
 }
 
 interface SealedTournamentInput {
-  run: ResearchTournamentRun;
+  run: ParsedResearchTournamentRun;
   digest: string;
   artifactRef: string;
 }
@@ -109,6 +115,7 @@ export interface ImprovementBundleProjectionInputs {
   evaluator: EvaluatorInput;
   ciEvidence: CiEvidence;
   evidenceRefs: string[];
+  calibration?: boolean;
 }
 
 export interface ResearchImprovementBundle {
@@ -251,9 +258,17 @@ export function parseCandidateMetadata(value: unknown): CandidateMetadata {
   const evaluation = record(raw.evaluation, "candidate.evaluation");
   if (raw.project !== "pwnkit") throw new Error("candidate.project must be pwnkit");
   const budget = record(raw.budget, "candidate.budget");
+  const change = raw.change && typeof raw.change === "object" && !Array.isArray(raw.change)
+    ? raw.change as Record<string, unknown>
+    : undefined;
+  const knobs = change?.knobs && typeof change.knobs === "object" && !Array.isArray(change.knobs)
+    ? change.knobs as Record<string, unknown>
+    : undefined;
   return {
     id,
     project: "pwnkit",
+    calibrationEmptyFindings:
+      change?.kind === "feature_flag" && knobs?.["calibration.empty_findings"] === true,
     budget: {
       maxRuns: positiveInteger(budget.maxRuns, "candidate.budget.maxRuns"),
       maxUsd: finiteNonNegative(budget.maxUsd, "candidate.budget.maxUsd"),
@@ -479,9 +494,33 @@ function validateScorecard(
   };
 }
 
-export function parseTournamentPair(value: unknown, label: string): ResearchTournamentRun {
+export function parseTournamentPair(value: unknown, label: string): ParsedResearchTournamentRun {
   const raw = record(value, label);
   if (raw.schemaVersion !== 1) throw new Error(`${label}.schemaVersion must be 1`);
+  let calibrationMode: ParsedResearchTournamentRun["calibrationMode"];
+  if (raw.calibration !== undefined) {
+    const calibration = record(raw.calibration, `${label}.calibration`);
+    const expectedKeys = [
+      "expectedOutcome",
+      "mode",
+      "networkAllowed",
+      "providerAllowed",
+      "schemaVersion",
+    ];
+    if (JSON.stringify(Object.keys(calibration).sort()) !== JSON.stringify(expectedKeys)) {
+      throw new Error(`${label}.calibration has unsupported fields`);
+    }
+    if (
+      calibration.schemaVersion !== 1 ||
+      calibration.mode !== "zero-cost-no-uplift" ||
+      calibration.networkAllowed !== false ||
+      calibration.providerAllowed !== false ||
+      calibration.expectedOutcome !== "reject"
+    ) {
+      throw new Error(`${label}.calibration is not the trusted zero-cost rejection mode`);
+    }
+    calibrationMode = "zero-cost-no-uplift";
+  }
   const elapsedMs = nonNegativeInteger(raw.elapsedMs, `${label}.elapsedMs`);
   const evaluatorAttestation = (value: unknown, field: string): BenchEvaluatorAttestation => {
     const attestation = record(value, `${label}.${field}`);
@@ -562,7 +601,14 @@ export function parseTournamentPair(value: unknown, label: string): ResearchTour
     variants,
     championId,
   };
-  return { manifest, tournament, elapsedMs, evaluatorBefore, evaluatorAfter };
+  return {
+    manifest,
+    tournament,
+    elapsedMs,
+    evaluatorBefore,
+    evaluatorAfter,
+    ...(calibrationMode ? { calibrationMode } : {}),
+  };
 }
 
 function requireDigest(actual: string, expected: string, label: string): void {
@@ -637,9 +683,105 @@ function requireCaseBinding(actual: string[], expected: string[], label: string)
   if (!sameStrings(actual, expected)) throw new Error(`${label} case ids do not match candidate metadata`);
 }
 
+const CALIBRATION_CHAMPION_ID = "calibration-champion";
+const CALIBRATION_CHALLENGER_ID = "calibration-challenger";
+
+function enforceCalibrationProjectionPolicy(inputs: {
+  candidate: CandidateMetadata;
+  championVariantId: string;
+  challengerVariantId: string;
+  development: ParsedResearchTournamentRun;
+  heldOut: ParsedResearchTournamentRun;
+  negativeControls: ParsedResearchTournamentRun;
+  ciPassed: boolean;
+  calibration?: boolean;
+}): void {
+  const runs = [inputs.development, inputs.heldOut, inputs.negativeControls];
+  const hasCalibrationArtifact = runs.some((run) => run.calibrationMode !== undefined);
+  const hasCalibrationVariant = [inputs.championVariantId, inputs.challengerVariantId]
+    .some((id) => id === CALIBRATION_CHAMPION_ID || id === CALIBRATION_CHALLENGER_ID);
+
+  if (!inputs.calibration) {
+    if (hasCalibrationArtifact || hasCalibrationVariant) {
+      throw new Error("calibration evidence requires the explicit rejection-only calibration projector");
+    }
+    return;
+  }
+  if (runs.some((run) => run.calibrationMode !== "zero-cost-no-uplift")) {
+    throw new Error("calibration projection requires all three lanes to be trusted calibration artifacts");
+  }
+  if (
+    inputs.championVariantId !== CALIBRATION_CHAMPION_ID ||
+    inputs.challengerVariantId !== CALIBRATION_CHALLENGER_ID
+  ) {
+    throw new Error("calibration projection requires the fixed calibration variant ids");
+  }
+  if (!inputs.candidate.calibrationEmptyFindings || inputs.candidate.budget.maxUsd !== 0) {
+    throw new Error("calibration projection requires the empty-findings knob and a zero-dollar budget");
+  }
+  if (inputs.ciPassed) {
+    throw new Error("calibration projection requires non-promotable CI evidence");
+  }
+
+  for (const run of runs) {
+    if (run.elapsedMs !== 0 || run.tournament.pairwise.length !== 1) {
+      throw new Error("calibration projection requires zero elapsed time and one fixed pairwise result");
+    }
+    const delta = run.tournament.pairwise[0];
+    if (
+      delta.successRateDelta !== 0 ||
+      delta.fpRateDelta !== 0 ||
+      delta.costPerSuccessDelta !== null ||
+      delta.significant !== false
+    ) {
+      throw new Error("calibration projection requires a non-significant zero delta");
+    }
+    for (const variant of run.tournament.variants) {
+      const scorecard = variant.scorecard;
+      if (
+        scorecard.totals.verified !== 0 ||
+        scorecard.totals.inconclusive !== 0 ||
+        scorecard.falsePositives !== 0 ||
+        scorecard.successRate !== 0 ||
+        scorecard.fpRate !== 0 ||
+        scorecard.costPerSuccessUsd !== null ||
+        scorecard.totalCostUsd !== 0 ||
+        scorecard.totalAttackTurns !== 0
+      ) {
+        throw new Error("calibration projection requires refuted-only zero-cost scorecards");
+      }
+      for (const entry of scorecard.cases) {
+        if (
+          entry.verdict !== "refuted" ||
+          entry.falsePositive ||
+          entry.costUsd !== 0 ||
+          entry.attackTurns !== 0 ||
+          entry.attempts.length !== 1 ||
+          entry.attempts[0]?.status !== "refuted" ||
+          entry.attempts[0]?.costUsd !== 0 ||
+          entry.attempts[0]?.attackTurns !== 0 ||
+          entry.attempts[0]?.durationMs !== 0
+        ) {
+          throw new Error("calibration projection requires one zero-cost refuted receipt per case");
+        }
+      }
+    }
+  }
+}
+
 export function projectImprovementBundleFromArtifacts(
   inputs: ImprovementBundleProjectionInputs,
 ): ResearchImprovementBundle {
+  enforceCalibrationProjectionPolicy({
+    candidate: inputs.candidate,
+    championVariantId: inputs.championVariantId,
+    challengerVariantId: inputs.challengerVariantId,
+    development: inputs.development.run,
+    heldOut: inputs.heldOut.run,
+    negativeControls: inputs.negativeControls.run,
+    ciPassed: inputs.ciEvidence.passed,
+    calibration: inputs.calibration,
+  });
   const evaluation = inputs.candidate.evaluation;
   if (inputs.evaluationManifest.id !== evaluation.manifestId) {
     throw new Error("evaluation manifest id does not match candidate metadata");
@@ -755,6 +897,7 @@ export function projectImprovementBundleFromArtifacts(
     evaluatorDigestAfter: inputs.evaluator.bundleDigest,
     ciEvidence: inputs.ciEvidence,
     evidenceRefs: [...inputs.evidenceRefs, ...requiredRefs],
+    calibration: inputs.calibration,
   });
   return { result, executionEvidence };
 }
@@ -762,6 +905,16 @@ export function projectImprovementBundleFromArtifacts(
 export function projectImprovementFromArtifacts(
   inputs: ImprovementProjectionInputs,
 ): ResearchImprovementResult {
+  enforceCalibrationProjectionPolicy({
+    candidate: inputs.candidate,
+    championVariantId: inputs.championVariantId,
+    challengerVariantId: inputs.challengerVariantId,
+    development: inputs.development as ParsedResearchTournamentRun,
+    heldOut: inputs.heldOut as ParsedResearchTournamentRun,
+    negativeControls: inputs.negativeControls as ParsedResearchTournamentRun,
+    ciPassed: inputs.ciEvidence.passed,
+    calibration: inputs.calibration,
+  });
   digest(inputs.evaluatorDigestBefore, "evaluator-before digest");
   digest(inputs.evaluatorDigestAfter, "evaluator-after digest");
   if (inputs.evaluatorDigestBefore !== inputs.candidate.evaluation.evaluatorDigest) {
@@ -904,6 +1057,7 @@ export function registerBenchImprovementCommand(bench: Command): void {
     .requiredOption("--evaluator-config-ref <ref>", "immutable evaluator config artifact ref")
     .requiredOption("--ci-evidence <path>", "JSON: {schemaVersion:1, passed, evidenceRefs}")
     .requiredOption("--output-dir <path>", "create-once result + execution-evidence directory")
+    .option("--calibration", "rejection-only projection of three trusted calibration lanes", false)
     .option("--evidence-ref <ref>", "additional immutable evidence reference (repeatable)", collect, [])
     .action((opts) => {
       const development = readArtifactJsonWithDigest(String(opts.development), "development pair");
@@ -963,6 +1117,7 @@ export function registerBenchImprovementCommand(bench: Command): void {
         evidenceRefs: (opts.evidenceRef as string[]).map((ref, index) =>
           text(ref, `evidence ref ${index}`),
         ),
+        calibration: Boolean(opts.calibration),
       });
       writeImprovementBundleAtomic(String(opts.outputDir), bundle);
       process.stdout.write(`${String(opts.outputDir)}\n`);
