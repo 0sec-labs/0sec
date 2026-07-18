@@ -6,8 +6,10 @@ import { aggregateScorecard } from "./scorecard.js";
 import { pairwiseDeltas, pickChampion, type TournamentResult } from "./tournament.js";
 import {
   projectResearchExecutionEvidence,
+  researchCandidateChangeDigest,
   researchExecutionEvidenceDigest,
   researchExecutionEvidenceRef,
+  researchVariantDescriptorDigest,
   type ResearchExecutionEvidence,
 } from "./execution-evidence.js";
 
@@ -134,6 +136,99 @@ describe("0research execution evidence projection", () => {
     expect(evidence.lanes.heldOut.caseIds).toEqual(["held-0", "held-1"]);
     expect(researchExecutionEvidenceDigest(evidence)).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(researchExecutionEvidenceRef(evidence)).toMatch(/^execution-evidence:sha256:/);
+  });
+
+  it("emits schema v3 only when the declared candidate exactly matches executed variants", () => {
+    const options = inputs();
+    for (const lane of [options.development, options.heldOut, options.negativeControls]) {
+      lane.run.tournament.variants[1].variant.promptOverrides = {
+        "source_audit.hypothesis": "Inspect parser state transitions.",
+      };
+    }
+    const candidateChange = {
+      kind: "prompt",
+      knobs: { "source_audit.hypothesis": "Inspect parser state transitions." },
+    };
+    const evidence = projectResearchExecutionEvidence({
+      ...options,
+      candidateChange,
+      producer: {
+        repository: "0sec-labs/pwnkit",
+        commitSha: "a".repeat(40),
+        treeDigest: `sha256:${"7".repeat(64)}`,
+      },
+    });
+    expect(evidence.schemaVersion).toBe(3);
+    expect(evidence.variantBinding).toEqual({
+      mode: "candidate_change",
+      candidateChangeDigest: researchCandidateChangeDigest(candidateChange),
+      champion: {
+        id: "champion",
+        descriptorDigest: researchVariantDescriptorDigest({ id: "champion" }),
+      },
+      challenger: {
+        id: "challenger",
+        descriptorDigest: researchVariantDescriptorDigest({
+          id: "challenger",
+          promptOverrides: { "source_audit.hypothesis": "Inspect parser state transitions." },
+        }),
+      },
+    });
+    expect(evidence.variantBinding?.candidateChangeDigest).toBe("sha256:4359282a157b33e32a555db67d0812e5e3fa3fd685d329b1d73b1e0ab8f42089");
+    expect(evidence.variantBinding?.champion.descriptorDigest).toBe("sha256:66b1070479ffcbf72aef9f980dcc323c43a8106ede446428b330bc1f163dfbe4");
+    expect(evidence.variantBinding?.challenger.descriptorDigest).toBe("sha256:6127962483acfcb41df4f9f6e6ded869de676b0341d09e05f939263008b4bedf");
+  });
+
+  it("rejects lane drift and undeclared executed knobs", () => {
+    const drift = inputs();
+    drift.development.run.tournament.variants[1].variant.promptOverrides = {
+      "source_audit.hypothesis": "Inspect parser state transitions.",
+    };
+    for (const lane of [drift.heldOut, drift.negativeControls]) {
+      lane.run.tournament.variants[1].variant.promptOverrides = {
+        "source_audit.hypothesis": "Different prompt.",
+      };
+    }
+    expect(() => projectResearchExecutionEvidence({
+      ...drift,
+      candidateChange: { kind: "prompt", knobs: { "source_audit.hypothesis": "Inspect parser state transitions." } },
+      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+    })).toThrow(/drift/);
+
+    const hidden = inputs();
+    for (const lane of [hidden.development, hidden.heldOut, hidden.negativeControls]) {
+      lane.run.tournament.variants[1].variant.promptOverrides = {
+        "source_audit.hypothesis": "Inspect parser state transitions.",
+      };
+      lane.run.tournament.variants[1].variant.runtime = "codex";
+    }
+    expect(() => projectResearchExecutionEvidence({
+      ...hidden,
+      candidateChange: { kind: "prompt", knobs: { "source_audit.hypothesis": "Inspect parser state transitions." } },
+      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+    })).toThrow(/not exactly/);
+  });
+
+  it("rejects unknown flags and requires an explicit champion baseline", () => {
+    const options = inputs();
+    for (const lane of [options.development, options.heldOut, options.negativeControls]) {
+      lane.run.tournament.variants[1].variant.featureFlags = { invented_flag: true };
+    }
+    expect(() => projectResearchExecutionEvidence({
+      ...options,
+      candidateChange: { kind: "feature_flag", knobs: { invented_flag: true } },
+      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+    })).toThrow(/unsupported/);
+
+    const baseline = inputs();
+    for (const lane of [baseline.development, baseline.heldOut, baseline.negativeControls]) {
+      lane.run.tournament.variants[1].variant.featureFlags = { web_search: true };
+    }
+    expect(() => projectResearchExecutionEvidence({
+      ...baseline,
+      candidateChange: { kind: "feature_flag", knobs: { web_search: true } },
+      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+    })).toThrow(/explicitly bind/);
   });
 
   it("rejects case substitution and capability/control mixing", () => {

@@ -24,7 +24,7 @@ import {
   aggregateScorecard,
   type BenchScorecard,
 } from "./scorecard.js";
-import type { BenchVariant, VariantScanFactory } from "./variant.js";
+import { snapshotBenchVariant, type BenchVariant, type VariantScanFactory } from "./variant.js";
 
 // ── Result shapes ─────────────────────────────────────────────────────
 
@@ -167,8 +167,9 @@ export async function runTournament(
   if (opts.variants.length === 0) throw new Error("runTournament: no variants supplied");
 
   const variants: VariantRunResult[] = [];
-  for (let i = 0; i < opts.variants.length; i++) {
-    const variant = opts.variants[i];
+  const variantSnapshots = opts.variants.map((variant) => snapshotBenchVariant(variant));
+  for (let i = 0; i < variantSnapshots.length; i++) {
+    const variant = variantSnapshots[i];
     const suite = await runBenchSuite(manifest, {
       scan: opts.variantScan(variant),
       oracle: opts.oracle,
@@ -196,7 +197,7 @@ export async function runTournament(
       maxTurns: first.config.maxTurns,
       costCeilingUsd: first.config.costCeilingUsd,
       ciSubset: first.config.ciSubset,
-      variantIds: opts.variants.map((v) => v.id),
+      variantIds: variantSnapshots.map((v) => v.id),
     },
     variants,
     pairwise: pairwiseDeltas(variants),

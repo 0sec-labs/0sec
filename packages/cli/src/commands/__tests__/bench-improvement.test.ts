@@ -19,6 +19,7 @@ import {
 import {
   canonicalResultJson,
   parseCandidateMetadata,
+  parseCiEvidence,
   parseEvaluationManifest,
   parseEvaluatorBundle,
   parseTournamentPair,
@@ -43,6 +44,37 @@ const evaluatorBundleDigest = sha256Bytes(
     })}\n`,
   ),
 );
+const producer = {
+  repository: "0sec-labs/pwnkit",
+  commitSha: "a".repeat(40),
+  treeDigest: `sha256:${"7".repeat(64)}`,
+};
+const requiredChecks = [
+  "build",
+  "ecosystem-audit-smoke (cargo)",
+  "ecosystem-audit-smoke (npm)",
+  "ecosystem-audit-smoke (oci)",
+  "ecosystem-audit-smoke (pypi)",
+  "install-smoke (bun)",
+  "install-smoke (docker)",
+  "install-smoke (node 24)",
+  "install-smoke (node 25)",
+  "test",
+];
+
+function strictCiEvidence(candidateId: string) {
+  return parseCiEvidence({
+    schemaVersion: 1,
+    provider: "github-actions",
+    candidateId,
+    repository: producer.repository,
+    headSha: producer.commitSha,
+    treeDigest: producer.treeDigest,
+    passed: true,
+    evidenceRefs: ["artifact:ci"],
+    checks: requiredChecks.map((name) => ({ name, conclusion: "success" })),
+  });
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -107,7 +139,13 @@ function scorecard(corpus: BenchManifest, successRate: number) {
 function pair(corpus: BenchManifest, championSuccess: number, challengerSuccess: number) {
   const variants = [
     { variant: { id: "champion" }, scorecard: scorecard(corpus, championSuccess) },
-    { variant: { id: "challenger" }, scorecard: scorecard(corpus, challengerSuccess) },
+    {
+      variant: {
+        id: "challenger",
+        promptOverrides: { "source_audit.hypothesis": "Inspect parser state transitions." },
+      },
+      scorecard: scorecard(corpus, challengerSuccess),
+    },
   ];
   return {
     schemaVersion: 1,
@@ -147,6 +185,10 @@ function fixtures() {
     schemaVersion: 1,
     id: "pwnkit_source_hypothesis_001",
     project: "pwnkit",
+    change: {
+      kind: "prompt",
+      knobs: { "source_audit.hypothesis": "Inspect parser state transitions." },
+    },
     budget: { maxRuns: 100, maxUsd: 1_000, maxWallClockMinutes: 60 },
     evaluation: {
       manifestId: "research-run-v1",
@@ -174,7 +216,7 @@ function project() {
     negativeControls: parseTournamentPair(values.controls, "controls"),
     evaluatorDigestBefore: evaluatorBundleDigest,
     evaluatorDigestAfter: evaluatorBundleDigest,
-    ciEvidence: { passed: true, evidenceRefs: ["artifact:ci"] },
+    ciEvidence: strictCiEvidence(values.candidate.id),
     evidenceRefs: ["artifact:tournaments", "artifact:ci"],
   });
 }
@@ -217,7 +259,7 @@ function bundleInputs() {
       "artifact:evaluator-code.js",
       "artifact:evaluator-config.json",
     ),
-    ciEvidence: { passed: true, evidenceRefs: ["artifact:ci"] },
+    ciEvidence: strictCiEvidence(candidate.id),
     evidenceRefs: [],
   };
 }
@@ -290,10 +332,16 @@ describe("offline 0research improvement projection", () => {
     ]);
   });
 
-  it("emits a schema-v2 receipt with named evaluator artifact roles", () => {
+  it("emits a schema-v3 receipt binding producer, change, and executed variants", () => {
     const bundle = projectBundle();
     const evidence = bundle.executionEvidence;
-    expect(evidence.schemaVersion).toBe(2);
+    expect(evidence.schemaVersion).toBe(3);
+    expect(evidence.producer).toEqual(producer);
+    expect(evidence.variantBinding).toMatchObject({
+      mode: "candidate_change",
+      champion: { id: "champion" },
+      challenger: { id: "challenger" },
+    });
     expect(evidence.evaluator).toMatchObject({
       bundleArtifactRef: "artifact:evaluator-bundle.json",
       codeArtifactRef: "artifact:evaluator-code.js",
@@ -345,6 +393,56 @@ describe("offline 0research improvement projection", () => {
     expect(() => parseTournamentPair(values.development, "development")).toThrow(
       /verdict counts disagree|summary does not match/,
     );
+  });
+
+  it("rejects tournament entry fields that authoritative replay would reject", () => {
+    const values = fixtures();
+    (values.development.tournament.variants[0] as any).unbound = true;
+    expect(() => parseTournamentPair(values.development, "development"))
+      .toThrow(/unsupported or missing fields/);
+  });
+
+  it("validates the exact controller-required CI receipt before projection", () => {
+    expect(parseCiEvidence({
+      schemaVersion: 1,
+      passed: false,
+      evidenceRefs: ["artifact:calibration-ci"],
+      calibration: true,
+      promotionEligible: false,
+    })).toEqual({ passed: false, evidenceRefs: ["artifact:calibration-ci"] });
+    expect(strictCiEvidence("candidate_one")).toMatchObject({
+      provider: "github-actions",
+      candidateId: "candidate_one",
+      passed: true,
+      producer,
+    });
+    const missing = requiredChecks.slice(1).map((name) => ({ name, conclusion: "success" }));
+    expect(() => parseCiEvidence({
+      schemaVersion: 1,
+      provider: "github-actions",
+      candidateId: "candidate_one",
+      repository: producer.repository,
+      headSha: producer.commitSha,
+      treeDigest: producer.treeDigest,
+      passed: true,
+      evidenceRefs: ["artifact:ci"],
+      checks: missing,
+    })).toThrow(/controller-required check set/);
+    const multipleRefs = {
+      schemaVersion: 1,
+      provider: "github-actions",
+      candidateId: "candidate_one",
+      repository: producer.repository,
+      headSha: producer.commitSha,
+      treeDigest: producer.treeDigest,
+      passed: true,
+      evidenceRefs: ["artifact:ci", "artifact:other"],
+      checks: requiredChecks.map((name) => ({ name, conclusion: "success" })),
+    };
+    expect(() => parseCiEvidence(multipleRefs)).toThrow(/exactly its retained artifact/);
+    const inputs = bundleInputs();
+    inputs.ciEvidence.candidateId = "different_candidate";
+    expect(() => projectImprovementBundleFromArtifacts(inputs)).toThrow(/candidate id/);
   });
 
   it("rejects forged summaries and non-SHA evaluator labels", () => {
