@@ -93,7 +93,9 @@ interface EvaluatorInput {
   bundleDigest: string;
   codeDigest: string;
   configDigest: string;
-  artifactRefs: string[];
+  bundleArtifactRef: string;
+  codeArtifactRef: string;
+  configArtifactRef: string;
 }
 
 export interface ImprovementBundleProjectionInputs {
@@ -604,7 +606,9 @@ export function parseEvaluatorBundle(
   bundleDigest: string,
   codeDigest: string,
   configDigest: string,
-  artifactRefs: string[],
+  bundleArtifactRef: string,
+  codeArtifactRef: string,
+  configArtifactRef: string,
 ): EvaluatorInput {
   const raw = record(value, "evaluator bundle");
   if (raw.schemaVersion !== 1) throw new Error("evaluator bundle schemaVersion must be 1");
@@ -612,11 +616,20 @@ export function parseEvaluatorBundle(
   const declaredConfig = digest(raw.configDigest, "evaluator bundle configDigest");
   if (declaredCode !== codeDigest) throw new Error("evaluator code bytes do not match the bundle");
   if (declaredConfig !== configDigest) throw new Error("evaluator config bytes do not match the bundle");
+  const parsedBundleDigest = digest(bundleDigest, "evaluator bundle digest");
+  const canonicalBundleDigest = sha256Bytes(
+    Buffer.from(`${JSON.stringify({ schemaVersion: 1, codeDigest, configDigest })}\n`),
+  );
+  if (parsedBundleDigest !== canonicalBundleDigest) {
+    throw new Error("evaluator bundle bytes are not in the canonical v1 form");
+  }
   return {
-    bundleDigest: digest(bundleDigest, "evaluator bundle digest"),
+    bundleDigest: parsedBundleDigest,
     codeDigest,
     configDigest,
-    artifactRefs: artifactRefs.map((ref, index) => safeArtifactRef(ref, `evaluator ref ${index}`)),
+    bundleArtifactRef: safeArtifactRef(bundleArtifactRef, "evaluator bundle ref"),
+    codeArtifactRef: safeArtifactRef(codeArtifactRef, "evaluator code ref"),
+    configArtifactRef: safeArtifactRef(configArtifactRef, "evaluator config ref"),
   };
 }
 
@@ -683,6 +696,9 @@ export function projectImprovementBundleFromArtifacts(
       bundleDigest: inputs.evaluator.bundleDigest,
       codeDigest: inputs.evaluator.codeDigest,
       configDigest: inputs.evaluator.configDigest,
+      bundleArtifactRef: inputs.evaluator.bundleArtifactRef,
+      codeArtifactRef: inputs.evaluator.codeArtifactRef,
+      configArtifactRef: inputs.evaluator.configArtifactRef,
     },
     development: {
       run: inputs.development.run,
@@ -715,7 +731,9 @@ export function projectImprovementBundleFromArtifacts(
     inputs.development.artifactRef,
     inputs.heldOut.artifactRef,
     inputs.negativeControls.artifactRef,
-    ...inputs.evaluator.artifactRefs,
+    inputs.evaluator.bundleArtifactRef,
+    inputs.evaluator.codeArtifactRef,
+    inputs.evaluator.configArtifactRef,
     researchExecutionEvidenceRef(executionEvidence),
   ];
   const allRefs = [
@@ -866,7 +884,7 @@ function collect(value: string, previous: string[]): string[] {
 export function registerBenchImprovementCommand(bench: Command): void {
   bench
     .command("improvement-project")
-    .description("Offline projection of sealed 0research tournaments into the v1 result contract")
+    .description("Offline projection of sealed tournaments into the v1 result + v2 receipt contracts")
     .requiredOption("--candidate <path>", "schema-v1 ImprovementCandidate JSON")
     .requiredOption("--champion-variant <id>", "champion variant id present in every tournament")
     .requiredOption("--challenger-variant <id>", "challenger variant id present in every tournament")
@@ -937,11 +955,9 @@ export function registerBenchImprovementCommand(bench: Command): void {
           evaluatorBundle.digest,
           evaluatorCodeDigest,
           evaluatorConfigDigest,
-          [
-            String(opts.evaluatorBundleRef),
-            String(opts.evaluatorCodeRef),
-            String(opts.evaluatorConfigRef),
-          ],
+          String(opts.evaluatorBundleRef),
+          String(opts.evaluatorCodeRef),
+          String(opts.evaluatorConfigRef),
         ),
         ciEvidence: parseCiEvidence(readArtifactJson(String(opts.ciEvidence), "CI evidence")),
         evidenceRefs: (opts.evidenceRef as string[]).map((ref, index) =>

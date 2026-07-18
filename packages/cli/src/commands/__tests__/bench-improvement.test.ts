@@ -26,11 +26,23 @@ import {
   projectImprovementFromArtifacts,
   readArtifactJson,
   readArtifactJsonWithDigest,
+  sha256Bytes,
   writeImprovementBundleAtomic,
   writeResultAtomic,
 } from "../bench-improvement.js";
 
 const roots: string[] = [];
+const evaluatorCodeDigest = `sha256:${"f".repeat(64)}`;
+const evaluatorConfigDigest = `sha256:${"a".repeat(64)}`;
+const evaluatorBundleDigest = sha256Bytes(
+  Buffer.from(
+    `${JSON.stringify({
+      schemaVersion: 1,
+      codeDigest: evaluatorCodeDigest,
+      configDigest: evaluatorConfigDigest,
+    })}\n`,
+  ),
+);
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -101,14 +113,14 @@ function pair(corpus: BenchManifest, championSuccess: number, challengerSuccess:
     schemaVersion: 1,
     elapsedMs: 1_000,
     evaluatorBefore: {
-      bundleDigest: `sha256:${"e".repeat(64)}`,
-      codeDigest: `sha256:${"f".repeat(64)}`,
-      configDigest: `sha256:${"a".repeat(64)}`,
+      bundleDigest: evaluatorBundleDigest,
+      codeDigest: evaluatorCodeDigest,
+      configDigest: evaluatorConfigDigest,
     },
     evaluatorAfter: {
-      bundleDigest: `sha256:${"e".repeat(64)}`,
-      codeDigest: `sha256:${"f".repeat(64)}`,
-      configDigest: `sha256:${"a".repeat(64)}`,
+      bundleDigest: evaluatorBundleDigest,
+      codeDigest: evaluatorCodeDigest,
+      configDigest: evaluatorConfigDigest,
     },
     manifest: corpus,
     tournament: {
@@ -139,7 +151,7 @@ function fixtures() {
     evaluation: {
       manifestId: "research-run-v1",
       manifestDigest: `sha256:${"d".repeat(64)}`,
-      evaluatorDigest: `sha256:${"e".repeat(64)}`,
+      evaluatorDigest: evaluatorBundleDigest,
       developmentCorpusDigest: digestBenchManifest(development.manifest),
       heldOutCorpusDigest: digestBenchManifest(heldOut.manifest),
       negativeControlCorpusDigest: digestBenchManifest(controls.manifest),
@@ -160,8 +172,8 @@ function project() {
     development: parseTournamentPair(values.development, "development"),
     heldOut: parseTournamentPair(values.heldOut, "held-out"),
     negativeControls: parseTournamentPair(values.controls, "controls"),
-    evaluatorDigestBefore: `sha256:${"e".repeat(64)}`,
-    evaluatorDigestAfter: `sha256:${"e".repeat(64)}`,
+    evaluatorDigestBefore: evaluatorBundleDigest,
+    evaluatorDigestAfter: evaluatorBundleDigest,
     ciEvidence: { passed: true, evidenceRefs: ["artifact:ci"] },
     evidenceRefs: ["artifact:tournaments", "artifact:ci"],
   });
@@ -170,8 +182,6 @@ function project() {
 function bundleInputs() {
   const values = fixtures();
   const candidate = parseCandidateMetadata(values.candidate);
-  const evaluatorCodeDigest = `sha256:${"f".repeat(64)}`;
-  const evaluatorConfigDigest = `sha256:${"a".repeat(64)}`;
   return {
     candidate,
     championVariantId: "champion",
@@ -202,11 +212,11 @@ function bundleInputs() {
       schemaVersion: 1,
       codeDigest: evaluatorCodeDigest,
       configDigest: evaluatorConfigDigest,
-    }, candidate.evaluation.evaluatorDigest, evaluatorCodeDigest, evaluatorConfigDigest, [
+    }, candidate.evaluation.evaluatorDigest, evaluatorCodeDigest, evaluatorConfigDigest,
       "artifact:evaluator-bundle.json",
       "artifact:evaluator-code.js",
       "artifact:evaluator-config.json",
-    ]),
+    ),
     ciEvidence: { passed: true, evidenceRefs: ["artifact:ci"] },
     evidenceRefs: [],
   };
@@ -246,6 +256,22 @@ describe("offline 0research improvement projection", () => {
     ]);
   });
 
+  it("emits a schema-v2 receipt with named evaluator artifact roles", () => {
+    const bundle = projectBundle();
+    const evidence = bundle.executionEvidence;
+    expect(evidence.schemaVersion).toBe(2);
+    expect(evidence.evaluator).toMatchObject({
+      bundleArtifactRef: "artifact:evaluator-bundle.json",
+      codeArtifactRef: "artifact:evaluator-code.js",
+      configArtifactRef: "artifact:evaluator-config.json",
+    });
+    expect(bundle.result.evidenceRefs).toEqual(expect.arrayContaining([
+      "artifact:evaluator-bundle.json",
+      "artifact:evaluator-code.js",
+      "artifact:evaluator-config.json",
+    ]));
+  });
+
   it("writes deterministic canonical JSON once and refuses replacement", () => {
     const output = join(root(), "nested", "result.json");
     const result = project();
@@ -263,13 +289,13 @@ describe("offline 0research improvement projection", () => {
       development: parseTournamentPair(values.development, "development"),
       heldOut: parseTournamentPair(values.heldOut, "held-out"),
       negativeControls: parseTournamentPair(values.controls, "controls"),
-      evaluatorDigestBefore: `sha256:${"e".repeat(64)}`,
+      evaluatorDigestBefore: evaluatorBundleDigest,
       evaluatorDigestAfter: `sha256:${"f".repeat(64)}`,
       ciEvidence: { passed: true, evidenceRefs: ["artifact:ci"] },
       evidenceRefs: [],
     };
     expect(() => projectImprovementFromArtifacts(inputs)).toThrow(/evaluator changed/);
-    inputs.evaluatorDigestAfter = `sha256:${"e".repeat(64)}`;
+    inputs.evaluatorDigestAfter = evaluatorBundleDigest;
     inputs.candidate.evaluation.heldOutCorpusDigest = `sha256:${"0".repeat(64)}`;
     expect(() => projectImprovementFromArtifacts(inputs)).toThrow(/held-out corpus digest/);
   });
@@ -340,9 +366,28 @@ describe("offline 0research improvement projection", () => {
       schemaVersion: 1,
       codeDigest: `sha256:${"1".repeat(64)}`,
       configDigest: `sha256:${"2".repeat(64)}`,
-    }, `sha256:${"3".repeat(64)}`, `sha256:${"4".repeat(64)}`, `sha256:${"2".repeat(64)}`, [
+    }, `sha256:${"3".repeat(64)}`, `sha256:${"4".repeat(64)}`, `sha256:${"2".repeat(64)}`,
+      "artifact:bundle", "artifact:code", "artifact:config",
+    )).toThrow(/code bytes/);
+  });
+
+  it("rejects a semantically correct but noncanonical evaluator bundle", () => {
+    const noncanonical = Buffer.from(
+      `${JSON.stringify(
+        { configDigest: evaluatorConfigDigest, codeDigest: evaluatorCodeDigest, schemaVersion: 1 },
+        null,
+        2,
+      )}\n`,
+    );
+    expect(() => parseEvaluatorBundle(
+      JSON.parse(noncanonical.toString("utf8")),
+      sha256Bytes(noncanonical),
+      evaluatorCodeDigest,
+      evaluatorConfigDigest,
       "artifact:bundle",
-    ])).toThrow(/code bytes/);
+      "artifact:code",
+      "artifact:config",
+    )).toThrow(/canonical v1 form/);
   });
 
   it("rejects symlinked evidence inputs", () => {

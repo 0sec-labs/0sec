@@ -86,6 +86,9 @@ function inputs() {
       bundleDigest: `sha256:${"2".repeat(64)}`,
       codeDigest: `sha256:${"3".repeat(64)}`,
       configDigest: `sha256:${"4".repeat(64)}`,
+      bundleArtifactRef: "artifact:evaluator-bundle.json",
+      codeArtifactRef: "artifact:evaluator-code.js",
+      configArtifactRef: "artifact:evaluator-config.json",
     },
     development: {
       run: development,
@@ -121,7 +124,7 @@ describe("0research execution evidence projection", () => {
       readFileSync(new URL("./improvement-execution-evidence.fixture.json", import.meta.url), "utf8"),
     ) as ResearchExecutionEvidence;
     expect(researchExecutionEvidenceDigest(fixture)).toBe(
-      "sha256:b591325a57f3795baaef7d3206fff51155d76aed90d036b8cc4fc8b2a5a059bc",
+      "sha256:01f5053276ccb475eecd4b36d02ada8b1c1ae4d2b6278a63339322c51446c9fd",
     );
   });
 
@@ -141,6 +144,12 @@ describe("0research execution evidence projection", () => {
     const mixed = inputs();
     mixed.negativeControls.requireKnownNegative = false;
     expect(() => projectResearchExecutionEvidence(mixed)).toThrow(/capability cases/);
+  });
+
+  it("rejects artifact-role collisions", () => {
+    const colliding = inputs();
+    colliding.evaluator.configArtifactRef = colliding.evaluator.codeArtifactRef;
+    expect(() => projectResearchExecutionEvidence(colliding)).toThrow(/role artifact references/);
   });
 
   it("rejects underreported wall time and missing attempt receipts", () => {

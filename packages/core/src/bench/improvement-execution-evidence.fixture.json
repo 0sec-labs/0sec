@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "candidateId": "pwnkit_source_hypothesis_001",
   "manifest": {
     "id": "cybergym-heldout-v1",
@@ -9,7 +9,10 @@
   "evaluator": {
     "bundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "codeDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "configDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "configDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "bundleArtifactRef": "artifact:evaluator-bundle-example.json",
+    "codeArtifactRef": "artifact:evaluator-code-example.js",
+    "configArtifactRef": "artifact:evaluator-config-example.json"
   },
   "lanes": {
     "development": {
