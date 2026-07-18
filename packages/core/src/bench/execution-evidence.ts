@@ -13,7 +13,7 @@ export interface ResearchExecutionLane {
 
 /** Portable execution receipt consumed by 0brain without importing 0sec code. */
 export interface ResearchExecutionEvidence {
-  schemaVersion: 1;
+  schemaVersion: 2;
   candidateId: string;
   manifest: {
     id: string;
@@ -24,6 +24,9 @@ export interface ResearchExecutionEvidence {
     bundleDigest: string;
     codeDigest: string;
     configDigest: string;
+    bundleArtifactRef: string;
+    codeArtifactRef: string;
+    configArtifactRef: string;
   };
   lanes: {
     development: ResearchExecutionLane;
@@ -212,6 +215,18 @@ export function projectResearchExecutionEvidence(
   if (!Number.isSafeInteger(options.elapsedMs) || options.elapsedMs < 0) {
     throw new Error("elapsedMs must be a non-negative safe integer");
   }
+  const roleRefs = [
+    options.manifest.artifactRef,
+    options.evaluator.bundleArtifactRef,
+    options.evaluator.codeArtifactRef,
+    options.evaluator.configArtifactRef,
+    options.development.artifactRef,
+    options.heldOut.artifactRef,
+    options.negativeControls.artifactRef,
+  ];
+  if (new Set(roleRefs).size !== roleRefs.length) {
+    throw new Error("schema-v2 role artifact references must be unique");
+  }
 
   const development = projectLane(
     options.development,
@@ -251,7 +266,7 @@ export function projectResearchExecutionEvidence(
     negativeControls: negativeControls.lane,
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     candidateId: options.candidateId,
     manifest: { ...options.manifest },
     evaluator: { ...options.evaluator },
