@@ -20,10 +20,12 @@ import {
   extractCFromLlmOutput,
   extractSplatRegion,
   candidateReferenceTokens,
+  makeDefaultSynthesizePoc,
   type DualViewCandidate,
   type PocSynthesisInput,
   type BootPocFn,
 } from "./dynamic-witness.js";
+import { LlmApiRuntime } from "../runtime/index.js";
 import type { ReproducerResult } from "../triage/kernel-oracle.js";
 import type { Assumption, ViolatingContext } from "./assumption-mining.js";
 
@@ -138,6 +140,21 @@ describe("checkWitness", () => {
     expect(w.reason).toMatch(/no KASAN splat/i);
   });
 
+  it("does NOT mislabel a clean KASAN boot (banner only) as a crash", () => {
+    // The KASAN boot banner `kasan: KernelAddressSanitizer initialized` is present
+    // on EVERY boot of a KASAN kernel. It must NOT be read as a crash — otherwise
+    // the refute reason (and the feedback fed to the next synthesis round) claims a
+    // crash fired when the run was clean.
+    const cleanKasanBoot =
+      "[    0.407] kasan: KernelAddressSanitizer initialized\n" +
+      "[    1.200] poc ran, printed its markers, exited 0\n" +
+      "[    1.900] reboot: Power down";
+    const w = checkWitness(candidate(), "int main(){ return 0; }", result({ dmesg: cleanKasanBoot }));
+    expect(w.witnessed).toBe(false);
+    expect(w.reason).toMatch(/no KASAN splat/i);
+    expect(w.reason).not.toMatch(/crash fired/i);
+  });
+
   it("does NOT confirm a compile-only artifact (never executed)", () => {
     const w = checkWitness(candidate(), "int main(){}", result({ compiled: true, executed: false, dmesg: MATCHING_SPLAT }));
     expect(w.witnessed).toBe(false);
@@ -211,6 +228,54 @@ describe("witnessAssumptionViolation", () => {
     // round 1 had no prior feedback; round 2 was handed the boot output to fix.
     expect(seenFeedback[0]).toBeUndefined();
     expect(seenFeedback[1]).toMatch(/no KASAN splat|no witness|ran, no splat/i);
+  });
+});
+
+// ── makeDefaultSynthesizePoc (routes through streaming executeNative) ──────────────
+
+describe("makeDefaultSynthesizePoc", () => {
+  it("synthesises via executeNative (NOT the buffered execute) and extracts the fenced C", async () => {
+    // The codex `/responses` backend 400s a non-streaming `execute()`; synthesis
+    // must use `executeNative` (stream:true + SSE). Mock it and prove the default
+    // synthesizer routes there and pulls the C out of the content text blocks.
+    const nativeSpy = vi
+      .spyOn(LlmApiRuntime.prototype, "executeNative")
+      .mockResolvedValue({
+        content: [{ type: "text", text: "Here is the PoC:\n```c\n#include <unistd.h>\nint main(){ return 0; }\n```" }],
+        stopReason: "end_turn",
+        durationMs: 1,
+      } as never);
+    const executeSpy = vi.spyOn(LlmApiRuntime.prototype, "execute");
+
+    const synth = makeDefaultSynthesizePoc("api", "gpt-5.5");
+    const out = await synth({ candidate: candidate(), round: 1 });
+
+    expect(out?.cSource).toContain("int main()");
+    expect(out?.cSource).not.toContain("```");
+    expect(nativeSpy).toHaveBeenCalledTimes(1);
+    expect(executeSpy).not.toHaveBeenCalled();
+    // The system prompt + a single user message carrying the synthesis prompt.
+    const [system, messages] = nativeSpy.mock.calls[0];
+    expect(String(system)).toMatch(/PROOF-OF-CONCEPT/i);
+    expect((messages as Array<{ role: string }>)[0].role).toBe("user");
+
+    nativeSpy.mockRestore();
+    executeSpy.mockRestore();
+  });
+
+  it("returns null when the model emits no code block", async () => {
+    const nativeSpy = vi
+      .spyOn(LlmApiRuntime.prototype, "executeNative")
+      .mockResolvedValue({
+        content: [{ type: "text", text: "I could not synthesize a PoC for this candidate." }],
+        stopReason: "end_turn",
+        durationMs: 1,
+      } as never);
+
+    const synth = makeDefaultSynthesizePoc("api");
+    expect(await synth({ candidate: candidate(), round: 1 })).toBeNull();
+
+    nativeSpy.mockRestore();
   });
 });
 
