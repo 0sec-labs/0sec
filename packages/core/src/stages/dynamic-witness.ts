@@ -42,7 +42,7 @@
 
 import type { ReproducerResult, CrashReport } from "../triage/kernel-oracle.js";
 import { runReproducerInKernelVm } from "../triage/kernel-vm-runner.js";
-import { createRuntime } from "../runtime/index.js";
+import { LlmApiRuntime } from "../runtime/index.js";
 import type { RuntimeMode } from "@pwnkit/shared";
 import type {
   Assumption,
@@ -237,16 +237,38 @@ export function extractCFromLlmOutput(text: string): string | null {
 }
 
 /**
- * Default PoC synthesizer: route the prompt through the engine runtime (codex /
- * api / …) and extract the fenced C. `model` picks a specific model (e.g. a
- * gpt-5.5-class coder). Tests inject their own {@link SynthesizePocFn} and never
- * reach this.
+ * Default PoC synthesizer: route the prompt through the IN-PROCESS
+ * {@link LlmApiRuntime} via `executeNative` (which sends `stream: true` and parses
+ * the SSE response) and extract the fenced C. `model` picks the provider/model
+ * (e.g. `gpt-5.5` → chatgpt-codex via `~/.codex/auth.json`). Tests inject their
+ * own {@link SynthesizePocFn} and never reach this.
+ *
+ * WHY `executeNative` AND NOT `execute`. The chatgpt-codex backend
+ * (`/backend-api/codex/responses`) REQUIRES a streaming request: the legacy
+ * buffered `execute()` posts a non-streaming body and gets HTTP 400
+ * `"Stream must be set to true"`, which `execute()` swallows into an empty
+ * `output` → `extractCFromLlmOutput` returns null → EVERY synthesis fails → the
+ * whole `--dynamic-witness` loop reports 100% `inconclusive` (the oracle looks
+ * dead while actually never getting a PoC). `executeNative` is the streaming path
+ * (verified live on bench against gpt-5.5), so synthesis MUST use it.
+ *
+ * The `runtime` arg is accepted for signature compatibility but synthesis always
+ * runs in-process (`type: "api"`) — the ProcessRuntime CLI only implements
+ * `executeNative` for claude, not codex, so the CLI lane cannot synthesise here.
  */
-export function makeDefaultSynthesizePoc(runtime: RuntimeMode, model?: string, timeoutMs = 300_000): SynthesizePocFn {
+export function makeDefaultSynthesizePoc(_runtime: RuntimeMode, model?: string, timeoutMs = 300_000): SynthesizePocFn {
   return async (input) => {
-    const rt = createRuntime({ type: runtime === "auto" ? "api" : runtime, timeout: timeoutMs, ...(model ? { model } : {}) });
-    const res = await rt.execute(buildSynthesisPrompt(input), { systemPrompt: SYNTH_SYSTEM });
-    const cSource = extractCFromLlmOutput(res.output ?? "");
+    const rt = new LlmApiRuntime({ type: "api", timeout: timeoutMs, ...(model ? { model } : {}) });
+    const res = await rt.executeNative(
+      SYNTH_SYSTEM,
+      [{ role: "user", content: [{ type: "text", text: buildSynthesisPrompt(input) }] }],
+      [],
+    );
+    const text = (res.content ?? [])
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("\n");
+    const cSource = extractCFromLlmOutput(text);
     if (!cSource) return null;
     return { cSource };
   };
@@ -280,8 +302,19 @@ const WITNESS_SIGNATURES: { pattern: RegExp; signature: string }[] = [
   { pattern: /KASAN:.*stack-out-of-bounds/i, signature: "kasan-stack-oob" },
 ];
 
-/** Any recognizable kernel crash (broader than the promote set) — for reporting. */
-const ANY_CRASH = /BUG:\s*KASAN|KASAN:|UBSAN|general protection fault|NULL pointer dereference|kernel NULL pointer|BUG:\s*KCSAN/i;
+/**
+ * Any recognizable kernel crash (broader than the promote set) — for reporting.
+ *
+ * The KASAN alternative is ANCHORED to real splat forms (`BUG: KASAN …` or
+ * `KASAN: slab-/global-/stack-/vmalloc-/use-after-free/out-of-bounds/…`). A bare
+ * `KASAN:` alternative used to match the boot banner
+ * `kasan: KernelAddressSanitizer initialized` (case-insensitive), so EVERY clean
+ * boot on a KASAN kernel was mislabelled "a kernel crash fired" — both in the
+ * refute reason AND in the boot-feedback fed to the next synthesis round, which
+ * misled the LLM into "fixing" a crash that never happened. WITNESS_SIGNATURES
+ * (the promote set) is unaffected — assume-FP stays intact.
+ */
+const ANY_CRASH = /BUG:\s*KASAN|KASAN:\s*(?:slab-|global-|stack-|vmalloc-|use-after-free|out-of-bounds|invalid-free|double-free)|UBSAN|general protection fault|NULL pointer dereference|kernel NULL pointer|BUG:\s*KCSAN/i;
 
 export interface WitnessCheck {
   /** True only for a real, object-bound, non-fabricated memory-safety splat. */
