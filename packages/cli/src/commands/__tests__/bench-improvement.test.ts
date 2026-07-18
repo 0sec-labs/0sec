@@ -227,6 +227,40 @@ function projectBundle() {
 }
 
 describe("offline 0research improvement projection", () => {
+  it("rejects calibration evidence from the ordinary projector and forbids mixed lanes", () => {
+    const values = fixtures();
+    const calibration = {
+      schemaVersion: 1,
+      mode: "zero-cost-no-uplift",
+      networkAllowed: false,
+      providerAllowed: false,
+      expectedOutcome: "reject",
+    };
+    const inputs = bundleInputs();
+    inputs.negativeControls.run = parseTournamentPair(
+      { ...values.controls, calibration },
+      "calibration controls",
+    );
+    expect(() => projectImprovementBundleFromArtifacts(inputs))
+      .toThrow("calibration evidence requires the explicit rejection-only calibration projector");
+    expect(() => projectImprovementBundleFromArtifacts({ ...inputs, calibration: true }))
+      .toThrow("calibration projection requires all three lanes");
+  });
+
+  it("requires calibration CI evidence to remain explicitly non-promotable", () => {
+    const inputs = { ...bundleInputs(), calibration: true };
+    inputs.championVariantId = "calibration-champion";
+    inputs.challengerVariantId = "calibration-challenger";
+    inputs.candidate.calibrationEmptyFindings = true;
+    inputs.candidate.budget.maxUsd = 0;
+    inputs.development.run.calibrationMode = "zero-cost-no-uplift";
+    inputs.heldOut.run.calibrationMode = "zero-cost-no-uplift";
+    inputs.negativeControls.run.calibrationMode = "zero-cost-no-uplift";
+    inputs.ciEvidence.passed = true;
+    expect(() => projectImprovementBundleFromArtifacts(inputs))
+      .toThrow("calibration projection requires non-promotable CI evidence");
+  });
+
   it("emits the exact portable v1 result with deduplicated evidence", () => {
     const result = project();
     expect(result.schemaVersion).toBe(1);

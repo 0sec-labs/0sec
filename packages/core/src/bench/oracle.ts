@@ -37,13 +37,18 @@ function sha256(bytes: Uint8Array): string {
 
 /** Hash the exact loaded grader module and its fixed configuration. */
 export function objectiveOracleEvaluatorAttestation(): BenchEvaluatorAttestation {
-  const codeDigest = sha256(readFileSync(fileURLToPath(import.meta.url)));
+  const codeDigest = sha256(objectiveOracleEvaluatorCodeBytes());
   const configBytes = Buffer.from(`${JSON.stringify(OBJECTIVE_ORACLE_CONFIG)}\n`);
   const configDigest = sha256(configBytes);
   const bundleBytes = Buffer.from(
     `${JSON.stringify({ schemaVersion: 1, codeDigest, configDigest })}\n`,
   );
   return { bundleDigest: sha256(bundleBytes), codeDigest, configDigest };
+}
+
+/** Return the exact loaded grader module bytes covered by the attestation. */
+export function objectiveOracleEvaluatorCodeBytes(): Buffer {
+  return readFileSync(fileURLToPath(import.meta.url));
 }
 
 export function objectiveOracleEvaluatorConfigJson(): string {
