@@ -36,11 +36,16 @@ permissions:
   contents: read
   packages: write
 
-# Only one in-flight build per ref — a second push to main cancels the
-# prior run rather than racing it to GHCR.
+# Queue builds per ref; never cancel an in-progress build. Two failure
+# shapes this avoids (both measured 2026-07-17):
+#   - a condition-SKIPPED workflow_run publish (CI conclusion != success)
+#     occupied the group and CANCELLED a real in-progress build — skips
+#     must never kill builds;
+#   - out-of-order CI completions raced each other to GHCR. Queued
+#     builds complete in order instead of cancelling mid-flight.
 concurrency:
   group: pwnkit-docker-publish-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-push:
@@ -73,6 +78,47 @@ jobs:
           OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           echo "name=ghcr.io/${OWNER}/pwnkit" >> "$GITHUB_OUTPUT"
 
+      # :latest only moves when this build IS the current main tip.
+      # workflow_run publishes check out the TRIGGERING CI run's head_sha;
+      # with main moving fast, an older CI completing later would otherwise
+      # publish older content over a newer :latest (measured 2026-07-17:
+      # the 21:58 :latest shipped d3ee0b45-era content, missing a fix that
+      # had merged 40min earlier, while looking green). The immutable :sha
+      # tag is stamped on every build regardless, so any image's exact
+      # content stays identifiable/testable.
+      - name: Resolve :latest eligibility
+        id: latest_eligible
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            workflow_dispatch)
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              echo ":latest moves (operator dispatch)"
+              ;;
+            push)
+              # Branch push (fresh main tip) vs tag push (semver release —
+              # a version tag must not move :latest).
+              if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo ":latest moves (main push)"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo ":latest HELD (tag push ${GITHUB_REF} — semver only)"
+              fi
+              ;;
+            workflow_run)
+              CI_SHA="${{ github.event.workflow_run.head_sha }}"
+              TIP_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+              if [ "$CI_SHA" = "$TIP_SHA" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo ":latest moves (CI head == main tip: $CI_SHA)"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo ":latest HELD (CI head $CI_SHA is not main tip $TIP_SHA) — stamping :sha only"
+              fi
+              ;;
+          esac
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -81,7 +127,7 @@ jobs:
           # Tag plan (mirrors dashboard-build.yml / services-publish.yml):
           #   - sha          (every build, always)          abc1234
           #   - branch ref   (main pushes only)             main
-          #   - :latest      (default-branch + dispatch)    latest
+          #   - :latest      (tip-gated — see eligibility)  latest
           #   - semver       (v* tag pushes only)           0.1.0 / 0.1 / 0
           # The :sha and :main tags make a rolling-main engine build
           # identifiable/testable without disturbing the :latest the
@@ -89,8 +135,7 @@ jobs:
           tags: |
             type=sha,format=short,prefix=
             type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ steps.latest_eligible.outputs.enabled }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
