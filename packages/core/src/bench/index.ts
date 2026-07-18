@@ -94,7 +94,7 @@ export type {
 
 export { corpusV1Path, exampleManifestPath } from "./paths.js";
 
-export { createDefaultVariantScan } from "./variant.js";
+export { createDefaultVariantScan, snapshotBenchVariant } from "./variant.js";
 export type {
   BenchVariant,
   VariantScanFactory,
@@ -132,6 +132,9 @@ export {
   projectResearchExecutionEvidence,
   researchExecutionEvidenceDigest,
   researchExecutionEvidenceRef,
+  researchCandidateChangeDigest,
+  researchVariantDescriptor,
+  researchVariantDescriptorDigest,
 } from "./execution-evidence.js";
 export type {
   ResearchExecutionLane,

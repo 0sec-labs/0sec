@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { ResearchTournamentRun } from "./improvement.js";
+import type { BenchVariant } from "./variant.js";
 
 export interface ResearchExecutionLane {
   corpusDigest: string;
@@ -13,7 +14,7 @@ export interface ResearchExecutionLane {
 
 /** Portable execution receipt consumed by 0brain without importing 0sec code. */
 export interface ResearchExecutionEvidence {
-  schemaVersion: 2;
+  schemaVersion: 2 | 3;
   candidateId: string;
   manifest: {
     id: string;
@@ -27,6 +28,13 @@ export interface ResearchExecutionEvidence {
     bundleArtifactRef: string;
     codeArtifactRef: string;
     configArtifactRef: string;
+  };
+  producer?: { repository: string; commitSha: string; treeDigest: string };
+  variantBinding?: {
+    mode: "candidate_change";
+    candidateChangeDigest: string;
+    champion: { id: string; descriptorDigest: string };
+    challenger: { id: string; descriptorDigest: string };
   };
   lanes: {
     development: ResearchExecutionLane;
@@ -59,7 +67,31 @@ export interface ProjectResearchExecutionEvidenceOptions {
   heldOut: ResearchExecutionLaneInput;
   negativeControls: ResearchExecutionLaneInput;
   elapsedMs: number;
+  candidateChange?: { kind: string; knobs: Record<string, string | number | boolean> };
+  producer?: { repository: string; commitSha: string; treeDigest: string };
 }
+
+export interface ResearchVariantDescriptor {
+  schemaVersion: 1;
+  id: string;
+  modelOverride: string | null;
+  runtimeOverride: string | null;
+  depthOverride: string | null;
+  costCeilingUsdPerAttempt: number | null;
+  promptOverrides: Record<string, string>;
+  featureFlags: Record<string, boolean>;
+}
+
+const IMPLEMENTED_FEATURE_FLAGS = new Set([
+  "agent_fanout", "budget_warnings", "cloud_sink", "cloud_surface", "consensus_verify",
+  "context_compaction", "decoy_detection", "dynamic_playbooks", "dynamic_triage", "early_stop",
+  "evidence_gate", "execution_journal", "external_memory", "holding_it_wrong", "inline_validation",
+  "jit_skills", "journal_rehydrate", "learned_router", "loop_detection", "loot_ledger",
+  "mongo_objectid_forge", "multimodal", "oast", "per_item_orchestration", "poc_gen_static",
+  "pov_gate", "pre_recon_cve", "preserve_critical_messages", "progress_handoff", "pty_session",
+  "publishability_gate", "reachability_gate", "script_templates", "specialist_routing",
+  "target_history_preseed", "web_recon", "web_search", "wp_fingerprint",
+]);
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -71,6 +103,64 @@ function canonicalize(value: unknown): unknown {
     );
   }
   return value;
+}
+
+function canonicalDigest(value: unknown): string {
+  return `sha256:${createHash("sha256").update(`${JSON.stringify(canonicalize(value))}\n`).digest("hex")}`;
+}
+
+export function researchCandidateChangeDigest(change: { kind: string; knobs: Record<string, string | number | boolean> }): string {
+  return canonicalDigest(change);
+}
+
+export function researchVariantDescriptor(value: BenchVariant): ResearchVariantDescriptor {
+  return {
+    schemaVersion: 1,
+    id: value.id,
+    modelOverride: value.model ?? null,
+    runtimeOverride: value.runtime ?? null,
+    depthOverride: value.depth ?? null,
+    costCeilingUsdPerAttempt: value.costCeilingUsdPerAttempt ?? null,
+    promptOverrides: Object.fromEntries(Object.entries(value.promptOverrides ?? {}).sort(([a], [b]) => a.localeCompare(b))),
+    featureFlags: Object.fromEntries(Object.entries(value.featureFlags ?? {}).sort(([a], [b]) => a.localeCompare(b))),
+  };
+}
+
+export function researchVariantDescriptorDigest(value: BenchVariant | ResearchVariantDescriptor): string {
+  return canonicalDigest("schemaVersion" in value && "modelOverride" in value ? value : researchVariantDescriptor(value as BenchVariant));
+}
+
+function validateCandidateVariantChange(
+  change: { kind: string; knobs: Record<string, string | number | boolean> },
+  champion: ResearchVariantDescriptor,
+  challenger: ResearchVariantDescriptor,
+): void {
+  const keys = Object.keys(change.knobs).sort();
+  if (keys.length !== 1) throw new Error("pwnkit candidate changes must isolate exactly one knob");
+  const expected = structuredClone(champion);
+  expected.id = challenger.id;
+  const key = keys[0];
+  const value = change.knobs[key];
+  if (change.kind === "prompt" && ["source_audit.hypothesis", "web.challenge_hint"].includes(key) && typeof value === "string" && value !== "" && value === value.trim()) {
+    expected.promptOverrides[key] = value;
+  } else if (change.kind === "feature_flag" && IMPLEMENTED_FEATURE_FLAGS.has(key) && typeof value === "boolean") {
+    if (typeof champion.featureFlags[key] !== "boolean") throw new Error(`champion must explicitly bind feature flag ${key}`);
+    expected.featureFlags[key] = value;
+  } else if (change.kind === "routing" && key === "model" && typeof value === "string" && value !== "" && value === value.trim()) {
+    expected.modelOverride = value;
+  } else if (change.kind === "routing" && key === "runtime" && typeof value === "string" && ["api", "claude", "codex", "gemini", "ollama", "auto"].includes(value)) {
+    expected.runtimeOverride = value;
+  } else if (change.kind === "scheduler" && key === "depth" && typeof value === "string" && ["quick", "default", "deep"].includes(value)) {
+    expected.depthOverride = value;
+  } else {
+    throw new Error(`unsupported ${change.kind} candidate knob: ${key}`);
+  }
+  if (JSON.stringify(canonicalize(expected)) !== JSON.stringify(canonicalize(challenger))) {
+    throw new Error("executed challenger is not exactly the declared candidate change applied to champion");
+  }
+  if (researchVariantDescriptorDigest({ ...champion, id: "variant" }) === researchVariantDescriptorDigest({ ...challenger, id: "variant" })) {
+    throw new Error("candidate change produced no effective descriptor difference");
+  }
 }
 
 function variant(
@@ -215,6 +305,9 @@ export function projectResearchExecutionEvidence(
   if (!Number.isSafeInteger(options.elapsedMs) || options.elapsedMs < 0) {
     throw new Error("elapsedMs must be a non-negative safe integer");
   }
+  if ((options.candidateChange === undefined) !== (options.producer === undefined)) {
+    throw new Error("candidateChange and producer must be supplied together for schema v3");
+  }
   const roleRefs = [
     options.manifest.artifactRef,
     options.evaluator.bundleArtifactRef,
@@ -225,7 +318,7 @@ export function projectResearchExecutionEvidence(
     options.negativeControls.artifactRef,
   ];
   if (new Set(roleRefs).size !== roleRefs.length) {
-    throw new Error("schema-v2 role artifact references must be unique");
+    throw new Error("execution evidence role artifact references must be unique");
   }
 
   const development = projectLane(
@@ -265,11 +358,37 @@ export function projectResearchExecutionEvidence(
     heldOut: heldOut.lane,
     negativeControls: negativeControls.lane,
   };
+  let variantBinding: ResearchExecutionEvidence["variantBinding"];
+  if (options.candidateChange && options.producer) {
+    if (options.producer.repository !== "0sec-labs/pwnkit") throw new Error("schema-v3 producer repository must be 0sec-labs/pwnkit");
+    if (!/^[0-9a-f]{40}$/.test(options.producer.commitSha)) throw new Error("schema-v3 producer commit must be a full lowercase SHA");
+    if (!/^sha256:[0-9a-f]{64}$/.test(options.producer.treeDigest)) throw new Error("schema-v3 producer tree digest is invalid");
+    const descriptorPair = (run: ResearchTournamentRun) => ({
+      champion: researchVariantDescriptor(variant(run, options.championVariantId, "variant binding").variant),
+      challenger: researchVariantDescriptor(variant(run, options.challengerVariantId, "variant binding").variant),
+    });
+    const pairs = [descriptorPair(options.development.run), descriptorPair(options.heldOut.run), descriptorPair(options.negativeControls.run)];
+    const championDigest = researchVariantDescriptorDigest(pairs[0].champion);
+    const challengerDigest = researchVariantDescriptorDigest(pairs[0].challenger);
+    for (const pair of pairs.slice(1)) {
+      if (researchVariantDescriptorDigest(pair.champion) !== championDigest || researchVariantDescriptorDigest(pair.challenger) !== challengerDigest) {
+        throw new Error("variant descriptors drift across tournament lanes");
+      }
+    }
+    validateCandidateVariantChange(options.candidateChange, pairs[0].champion, pairs[0].challenger);
+    variantBinding = {
+      mode: "candidate_change",
+      candidateChangeDigest: researchCandidateChangeDigest(options.candidateChange),
+      champion: { id: options.championVariantId, descriptorDigest: championDigest },
+      challenger: { id: options.challengerVariantId, descriptorDigest: challengerDigest },
+    };
+  }
   return {
-    schemaVersion: 2,
+    schemaVersion: variantBinding ? 3 : 2,
     candidateId: options.candidateId,
     manifest: { ...options.manifest },
     evaluator: { ...options.evaluator },
+    ...(variantBinding ? { producer: { ...options.producer! }, variantBinding } : {}),
     lanes,
     measured: {
       totalRuns: Object.values(lanes).reduce(

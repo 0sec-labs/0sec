@@ -49,6 +49,42 @@ export interface BenchVariant {
   featureFlags?: Record<string, boolean>;
 }
 
+const VARIANT_KEYS = new Set([
+  "id", "label", "model", "runtime", "depth", "costCeilingUsdPerAttempt",
+  "promptOverrides", "featureFlags",
+]);
+
+/** Validate, clone, and freeze the exact descriptor before any scan executes. */
+export function snapshotBenchVariant(value: BenchVariant): Readonly<BenchVariant> {
+  for (const key of Object.keys(value)) {
+    if (!VARIANT_KEYS.has(key)) throw new Error(`unsupported bench variant field: ${key}`);
+  }
+  if (!/^[a-z0-9][a-z0-9_-]{2,79}$/.test(value.id)) throw new Error("bench variant id must be filesystem-safe");
+  if (value.label !== undefined && typeof value.label !== "string") throw new Error("bench variant label must be a string");
+  if (value.model !== undefined && (!value.model || value.model !== value.model.trim())) throw new Error("bench variant model must be non-empty and trimmed");
+  if (value.runtime !== undefined && !["api", "claude", "codex", "gemini", "ollama", "auto"].includes(value.runtime)) throw new Error("bench variant runtime is unsupported");
+  if (value.depth !== undefined && !["quick", "default", "deep"].includes(value.depth)) throw new Error("bench variant depth is unsupported");
+  if (value.costCeilingUsdPerAttempt !== undefined && (!Number.isFinite(value.costCeilingUsdPerAttempt) || value.costCeilingUsdPerAttempt <= 0)) throw new Error("bench variant cost ceiling must be positive and finite");
+  const promptOverrides = Object.fromEntries(Object.entries(value.promptOverrides ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  resolveVariantPromptOverrides(promptOverrides);
+  const featureFlags = Object.fromEntries(Object.entries(value.featureFlags ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  for (const [name, enabled] of Object.entries(featureFlags)) {
+    featureEnvironmentName(name);
+    if (typeof enabled !== "boolean") throw new Error(`feature flag "${name}" must be boolean`);
+  }
+  const snapshot: BenchVariant = {
+    id: value.id,
+    ...(value.label !== undefined ? { label: value.label } : {}),
+    ...(value.model !== undefined ? { model: value.model } : {}),
+    ...(value.runtime !== undefined ? { runtime: value.runtime } : {}),
+    ...(value.depth !== undefined ? { depth: value.depth } : {}),
+    ...(value.costCeilingUsdPerAttempt !== undefined ? { costCeilingUsdPerAttempt: value.costCeilingUsdPerAttempt } : {}),
+    ...(Object.keys(promptOverrides).length > 0 ? { promptOverrides: Object.freeze(promptOverrides) } : {}),
+    ...(Object.keys(featureFlags).length > 0 ? { featureFlags: Object.freeze(featureFlags) } : {}),
+  };
+  return Object.freeze(snapshot);
+}
+
 /** Build the {@link BenchScan} that exercises a given variant. */
 export type VariantScanFactory = (variant: BenchVariant) => BenchScan;
 

@@ -25,9 +25,11 @@ import {
   projectResearchImprovementResult,
   projectResearchExecutionEvidence,
   researchExecutionEvidenceRef,
+  snapshotBenchVariant,
   type BenchScorecard,
   type BenchCaseResult,
   type BenchManifest,
+  type BenchVariant,
   type BenchEvaluatorAttestation,
   type ResearchImprovementResult,
   type ResearchExecutionEvidence,
@@ -39,6 +41,7 @@ interface CandidateMetadata {
   id: string;
   project: "pwnkit";
   calibrationEmptyFindings: boolean;
+  change: { kind: string; knobs: Record<string, string | number | boolean> };
   budget: {
     maxRuns: number;
     maxUsd: number;
@@ -60,7 +63,24 @@ interface CandidateMetadata {
 interface CiEvidence {
   passed: boolean;
   evidenceRefs: string[];
+  producer?: { repository: string; commitSha: string; treeDigest: string };
+  provider?: "github-actions";
+  candidateId?: string;
+  checks?: Array<{ name: string; conclusion: "success" | "failure" | "cancelled" }>;
 }
+
+const REQUIRED_PWNKIT_CHECKS = [
+  "build",
+  "ecosystem-audit-smoke (cargo)",
+  "ecosystem-audit-smoke (npm)",
+  "ecosystem-audit-smoke (oci)",
+  "ecosystem-audit-smoke (pypi)",
+  "install-smoke (bun)",
+  "install-smoke (docker)",
+  "install-smoke (node 24)",
+  "install-smoke (node 25)",
+  "test",
+] as const;
 
 export interface ImprovementProjectionInputs {
   candidate: CandidateMetadata;
@@ -264,11 +284,20 @@ export function parseCandidateMetadata(value: unknown): CandidateMetadata {
   const knobs = change?.knobs && typeof change.knobs === "object" && !Array.isArray(change.knobs)
     ? change.knobs as Record<string, unknown>
     : undefined;
+  if (!change || !knobs) throw new Error("candidate.change with knobs is required");
+  const parsedKnobs: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(knobs)) {
+    if (!key || !["string", "number", "boolean"].includes(typeof value) || (typeof value === "number" && !Number.isFinite(value))) {
+      throw new Error(`candidate.change.knobs.${key} must be a finite scalar`);
+    }
+    parsedKnobs[key] = value as string | number | boolean;
+  }
   return {
     id,
     project: "pwnkit",
     calibrationEmptyFindings:
       change?.kind === "feature_flag" && knobs?.["calibration.empty_findings"] === true,
+    change: { kind: text(change.kind, "candidate.change.kind"), knobs: parsedKnobs },
     budget: {
       maxRuns: positiveInteger(budget.maxRuns, "candidate.budget.maxRuns"),
       maxUsd: finiteNonNegative(budget.maxUsd, "candidate.budget.maxUsd"),
@@ -313,7 +342,50 @@ export function parseCiEvidence(value: unknown): CiEvidence {
   const raw = record(value, "CI evidence");
   if (raw.schemaVersion !== 1) throw new Error("CI evidence schemaVersion must be 1");
   if (typeof raw.passed !== "boolean") throw new Error("CI evidence passed must be boolean");
-  return { passed: raw.passed, evidenceRefs: stringArray(raw.evidenceRefs, "CI evidence refs") };
+  const evidenceRefs = stringArray(raw.evidenceRefs, "CI evidence refs");
+  if (raw.repository === undefined && raw.headSha === undefined && raw.treeDigest === undefined) {
+    return { passed: raw.passed, evidenceRefs };
+  }
+  const expectedKeys = ["candidateId", "checks", "evidenceRefs", "headSha", "passed", "provider", "repository", "schemaVersion", "treeDigest"];
+  if (JSON.stringify(Object.keys(raw).sort()) !== JSON.stringify(expectedKeys)) {
+    throw new Error("schema-v3 CI evidence has unsupported or missing fields");
+  }
+  if (evidenceRefs.length !== 1) {
+    throw new Error("schema-v3 CI evidence must reference exactly its retained artifact");
+  }
+  if (raw.provider !== "github-actions") throw new Error("CI evidence provider must be github-actions");
+  const candidateId = text(raw.candidateId, "CI evidence candidateId");
+  const repository = text(raw.repository, "CI evidence repository");
+  const commitSha = text(raw.headSha, "CI evidence headSha");
+  const treeDigest = digest(raw.treeDigest, "CI evidence treeDigest");
+  if (repository !== "0sec-labs/pwnkit") throw new Error("CI evidence repository must be 0sec-labs/pwnkit");
+  if (!/^[0-9a-f]{40}$/.test(commitSha)) throw new Error("CI evidence headSha must be a full lowercase SHA");
+  if (!Array.isArray(raw.checks)) throw new Error("CI evidence checks must be an array");
+  const checks = raw.checks.map((value, index) => {
+    const check = record(value, `CI evidence checks[${index}]`);
+    if (JSON.stringify(Object.keys(check).sort()) !== JSON.stringify(["conclusion", "name"])) {
+      throw new Error(`CI evidence checks[${index}] has unsupported or missing fields`);
+    }
+    const name = text(check.name, `CI evidence checks[${index}].name`);
+    if (!["success", "failure", "cancelled"].includes(String(check.conclusion))) {
+      throw new Error(`CI evidence checks[${index}].conclusion is unsupported`);
+    }
+    return { name, conclusion: check.conclusion as "success" | "failure" | "cancelled" };
+  });
+  const names = checks.map((check) => check.name);
+  if (JSON.stringify(names) !== JSON.stringify(REQUIRED_PWNKIT_CHECKS)) {
+    throw new Error("CI evidence does not contain the controller-required check set");
+  }
+  const passed = checks.every((check) => check.conclusion === "success");
+  if (raw.passed !== passed) throw new Error("CI evidence passed does not match required check conclusions");
+  return {
+    passed,
+    evidenceRefs,
+    producer: { repository, commitSha, treeDigest },
+    provider: "github-actions",
+    candidateId,
+    checks,
+  };
 }
 
 function caseResult(
@@ -550,10 +622,13 @@ export function parseTournamentPair(value: unknown, label: string): ParsedResear
   }
   const variants = tournamentRaw.variants.map((value, index) => {
     const entry = record(value, `${label}.tournament.variants[${index}]`);
+    if (JSON.stringify(Object.keys(entry).sort()) !== JSON.stringify(["scorecard", "variant"])) {
+      throw new Error(`${label}.tournament.variants[${index}] has unsupported or missing fields`);
+    }
     const variant = record(entry.variant, `${label}.tournament.variants[${index}].variant`);
     const id = text(variant.id, `${label}.tournament.variants[${index}].variant.id`);
     return {
-      variant: { ...variant, id },
+      variant: snapshotBenchVariant({ ...variant, id } as BenchVariant),
       scorecard: validateScorecard(
         entry.scorecard,
         manifest,
@@ -782,6 +857,12 @@ export function projectImprovementBundleFromArtifacts(
     ciPassed: inputs.ciEvidence.passed,
     calibration: inputs.calibration,
   });
+  if (!inputs.calibration && !inputs.ciEvidence.producer) {
+    throw new Error("schema-v3 projection requires producer identity in CI evidence");
+  }
+  if (!inputs.calibration && inputs.ciEvidence.candidateId !== inputs.candidate.id) {
+    throw new Error("schema-v3 CI evidence candidate id does not match candidate metadata");
+  }
   const evaluation = inputs.candidate.evaluation;
   if (inputs.evaluationManifest.id !== evaluation.manifestId) {
     throw new Error("evaluation manifest id does not match candidate metadata");
@@ -867,6 +948,9 @@ export function projectImprovementBundleFromArtifacts(
       requireKnownNegative: true,
     },
     elapsedMs,
+    ...(!inputs.calibration
+      ? { candidateChange: inputs.candidate.change, producer: inputs.ciEvidence.producer! }
+      : {}),
   });
   const requiredRefs = [
     inputs.evaluationManifest.artifactRef,
@@ -1037,7 +1121,7 @@ function collect(value: string, previous: string[]): string[] {
 export function registerBenchImprovementCommand(bench: Command): void {
   bench
     .command("improvement-project")
-    .description("Offline projection of sealed tournaments into the v1 result + v2 receipt contracts")
+    .description("Offline projection of sealed tournaments into the v1 result + v3 execution contract")
     .requiredOption("--candidate <path>", "schema-v1 ImprovementCandidate JSON")
     .requiredOption("--champion-variant <id>", "champion variant id present in every tournament")
     .requiredOption("--challenger-variant <id>", "challenger variant id present in every tournament")
@@ -1055,7 +1139,7 @@ export function registerBenchImprovementCommand(bench: Command): void {
     .requiredOption("--evaluator-code-ref <ref>", "immutable evaluator code artifact ref")
     .requiredOption("--evaluator-config <path>", "exact evaluator configuration artifact")
     .requiredOption("--evaluator-config-ref <ref>", "immutable evaluator config artifact ref")
-    .requiredOption("--ci-evidence <path>", "JSON: {schemaVersion:1, passed, evidenceRefs}")
+    .requiredOption("--ci-evidence <path>", "retained GitHub Actions receipt with identity, required checks, pass result, and evidenceRefs")
     .requiredOption("--output-dir <path>", "create-once result + execution-evidence directory")
     .option("--calibration", "rejection-only projection of three trusted calibration lanes", false)
     .option("--evidence-ref <ref>", "additional immutable evidence reference (repeatable)", collect, [])

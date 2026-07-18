@@ -122,6 +122,39 @@ describe("runTournament", () => {
     expect(without.generatedAt).toBeUndefined();
   });
 
+  it("snapshots and freezes variants before constructing any scan", async () => {
+    const champion: BenchVariant = {
+      id: "strong",
+      promptOverrides: { "source_audit.hypothesis": "Original champion prompt." },
+    };
+    const challenger: BenchVariant = {
+      id: "weak",
+      promptOverrides: { "source_audit.hypothesis": "Original challenger prompt." },
+    };
+    const seen: BenchVariant[] = [];
+    const result = await runTournament(corpus(1, 0), {
+      variants: [champion, challenger],
+      variantScan: (variant) => {
+        seen.push(variant);
+        expect(Object.isFrozen(variant)).toBe(true);
+        expect(Object.isFrozen(variant.promptOverrides)).toBe(true);
+        champion.promptOverrides!["source_audit.hypothesis"] = "Mutated after snapshot.";
+        challenger.promptOverrides!["source_audit.hypothesis"] = "Also mutated.";
+        return scanFor(variant.id);
+      },
+    });
+    expect(seen[0].promptOverrides).toEqual({
+      "source_audit.hypothesis": "Original champion prompt.",
+    });
+    expect(seen[1].promptOverrides).toEqual({
+      "source_audit.hypothesis": "Original challenger prompt.",
+    });
+    expect(result.variants.map((entry) => entry.variant.promptOverrides)).toEqual([
+      { "source_audit.hypothesis": "Original champion prompt." },
+      { "source_audit.hypothesis": "Original challenger prompt." },
+    ]);
+  });
+
   it("throws when no variants are supplied", async () => {
     await expect(
       runTournament(corpus(1, 0), { variants: [], variantScan }),
