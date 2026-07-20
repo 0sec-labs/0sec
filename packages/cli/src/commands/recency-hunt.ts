@@ -39,6 +39,9 @@ interface RecencyOpts {
   witnessCandidates?: string;
   witnessCandidatesPerFile?: string;
   witnessRounds?: string;
+  witnessMode?: string;
+  witnessRaceThreads?: string;
+  witnessRaceIters?: string;
   remineAssumptions?: boolean;
   output?: string;
   md?: string;
@@ -62,6 +65,18 @@ function parsePositive(flag: string, raw: string | undefined, dflt: number): num
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) throw new Error(`invalid ${flag} '${raw}' (expected positive integer)`);
   return n;
+}
+
+type WitnessModeName = "single" | "race" | "auto";
+
+/** Parse `--witness-mode single|race|auto` → validated mode (default undefined = engine's `auto`). */
+function parseWitnessMode(raw: string | undefined): WitnessModeName | undefined {
+  if (raw === undefined) return undefined;
+  const m = raw.trim();
+  if (m !== "single" && m !== "race" && m !== "auto") {
+    throw new Error(`invalid --witness-mode '${raw}' (allowed: single, race, auto)`);
+  }
+  return m;
 }
 
 async function recencyAction(opts: RecencyOpts): Promise<void> {
@@ -94,6 +109,11 @@ async function recencyAction(opts: RecencyOpts): Promise<void> {
             maxCandidatesPerRun: parsePositive("--witness-candidates", opts.witnessCandidates, 10),
             maxCandidatesPerFile: parsePositive("--witness-candidates-per-file", opts.witnessCandidatesPerFile, 6),
             maxRoundsPerCandidate: parsePositive("--witness-rounds", opts.witnessRounds, 2),
+            // Race-capable witness knobs. Mode defaults to the engine's `auto` (race for
+            // race-shaped seams); thread count / iterations only override when supplied.
+            ...(parseWitnessMode(opts.witnessMode) ? { witnessMode: parseWitnessMode(opts.witnessMode) } : {}),
+            ...(opts.witnessRaceThreads ? { raceThreads: parsePositive("--witness-race-threads", opts.witnessRaceThreads, 4) } : {}),
+            ...(opts.witnessRaceIters ? { raceIters: parsePositive("--witness-race-iters", opts.witnessRaceIters, 200000) } : {}),
           },
         }
       : {}),
@@ -157,6 +177,9 @@ export function registerRecencyHuntCommand(program: Command): void {
     .option("--witness-candidates <N>", "Dynamic-witness RUN budget: total dual-view candidates booted through the KASAN oracle per run (default 10)")
     .option("--witness-candidates-per-file <N>", "Per-file cap on witnessed candidates, clamped to the run budget (default 6)")
     .option("--witness-rounds <N>", "Bounded PoC-repair rounds per candidate — each is one VM boot (default 2)")
+    .option("--witness-mode <mode>", "PoC shape for the oracle: single (sequential), race (concurrent multi-thread), auto (race for race-shaped seams; default)")
+    .option("--witness-race-threads <N>", "Race-mode worker threads driving entryA vs entryB (default 4)")
+    .option("--witness-race-iters <N>", "Race-mode per-thread hammer iterations to widen the race window (default 200000)")
     .option("--remine-assumptions", "Force a fresh assumption mine for dual-view each run (default: reuse a stored per-file model if present)")
     .option("--output <path>", "Write the report JSON here instead of stdout")
     .option("--md <path>", "Also write the markdown report here")

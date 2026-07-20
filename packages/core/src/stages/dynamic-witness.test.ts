@@ -21,6 +21,12 @@ import {
   extractSplatRegion,
   candidateReferenceTokens,
   makeDefaultSynthesizePoc,
+  buildSynthesisPrompt,
+  buildRaceSynthesisPrompt,
+  isRaceShapedCandidate,
+  resolveWitnessMode,
+  DEFAULT_RACE_THREADS,
+  DEFAULT_RACE_ITERS,
   preFilterDualViewContexts,
   candidateStableId,
   candidateStableIdFromContext,
@@ -531,5 +537,196 @@ describe("witnessDualViewContexts — rotation skips already-witnessed within TT
     const b = await witnessDualViewContexts({ contexts, kept, bodies: mkBodies(), subsystem: "net/unix", deps });
     expect(a.results).toHaveLength(1);
     expect(b.results).toHaveLength(1); // no rotation memory → re-tested
+  });
+});
+
+// ── RACE-CAPABLE WITNESS MODE (mode selection + concurrent PoC synthesis) ──────────
+//
+// These tests cover the PLUMBING and the generated-PoC SHAPE. They CANNOT prove a real
+// kernel race triggers — that needs a live KASAN VM under contention, which is out of
+// CI scope (a race only fires probabilistically, over many boots, on real hardware).
+// What is provable offline: auto picks the right mode, the race prompt demands genuine
+// concurrent structure (barrier + pthread_create + affinity + a high-iteration hammer
+// loop), the knobs thread through, and the single path is byte-for-byte unchanged.
+
+describe("isRaceShapedCandidate / resolveWitnessMode — mode selection", () => {
+  it("a concurrency/teardown KIND is race-shaped (auto → race)", () => {
+    for (const kind of ["lock-held", "ownership-exclusive", "refcount-positive", "called-once", "revalidated"] as const) {
+      const c = candidate({ kind, unprivEntry: false, securityRelevance: "bounds" });
+      expect(isRaceShapedCandidate(c)).toBe(true);
+      expect(resolveWitnessMode("auto", c)).toBe("race");
+    }
+  });
+
+  it("an unprivileged-reachable memory-safety seam is race-shaped even with a non-race kind", () => {
+    const c = candidate({ kind: "non-null", unprivEntry: true, securityRelevance: "lifetime" });
+    expect(isRaceShapedCandidate(c)).toBe(true);
+    expect(resolveWitnessMode("auto", c)).toBe("race");
+    const typ = candidate({ kind: "non-null", unprivEntry: true, securityRelevance: "type" });
+    expect(resolveWitnessMode("auto", typ)).toBe("race");
+  });
+
+  it("a non-race kind with no unpriv/memory-safety signal stays single under auto", () => {
+    const c = candidate({ kind: "validated-range", unprivEntry: false, securityRelevance: "bounds" });
+    expect(isRaceShapedCandidate(c)).toBe(false);
+    expect(resolveWitnessMode("auto", c)).toBe("single");
+    // unpriv but a non-memory-safety relevance (authz) also stays single.
+    const authz = candidate({ kind: "state-precondition", unprivEntry: true, securityRelevance: "authz" });
+    expect(isRaceShapedCandidate(authz)).toBe(false);
+    expect(resolveWitnessMode("auto", authz)).toBe("single");
+  });
+
+  it("explicit single/race OVERRIDE the shape heuristic", () => {
+    const racey = candidate({ kind: "lock-held" });
+    const singley = candidate({ kind: "validated-range", unprivEntry: false, securityRelevance: "bounds" });
+    expect(resolveWitnessMode("single", racey)).toBe("single"); // forced single on a race-shaped seam
+    expect(resolveWitnessMode("race", singley)).toBe("race"); // forced race on a non-race seam
+  });
+});
+
+describe("buildRaceSynthesisPrompt — demands genuine concurrent scaffolding", () => {
+  const raceCand = candidate({ kind: "ownership-exclusive", object: "unix_sock", entryA: "entryA_fn", entryB: "entryB_fn" });
+
+  it("the race prompt requires barrier + pthread_create + affinity + a high-iteration hammer loop", () => {
+    const p = buildRaceSynthesisPrompt({ candidate: raceCand, round: 1, mode: "race", race: { threads: 4, iters: 200000 } });
+    expect(p).toMatch(/pthread_barrier_t/);
+    expect(p).toMatch(/pthread_create/);
+    expect(p).toMatch(/sched_setaffinity/);
+    expect(p).toMatch(/200000\+? iterations/);
+    expect(p).toMatch(/RE-ARM/i);
+    // It targets the specific seam object + both entries.
+    expect(p).toContain("struct unix_sock");
+    expect(p).toContain("entryA_fn");
+    expect(p).toContain("entryB_fn");
+  });
+
+  it("buildSynthesisPrompt(mode:race) routes to the race prompt; round>1 keeps the race structure + prior feedback", () => {
+    const viaMode = buildSynthesisPrompt({ candidate: raceCand, round: 1, mode: "race" });
+    expect(viaMode).toBe(buildRaceSynthesisPrompt({ candidate: raceCand, round: 1, mode: "race" }));
+    const r2 = buildSynthesisPrompt({ candidate: raceCand, round: 2, mode: "race", priorCSource: "int main(){return 1;}", priorFeedback: "ran, no splat" });
+    expect(r2).toMatch(/pthread_barrier_t/);
+    expect(r2).toMatch(/did NOT witness/i);
+    expect(r2).toContain("ran, no splat");
+  });
+
+  it("reflects the thread/iteration knobs in the scaffold", () => {
+    const p = buildRaceSynthesisPrompt({ candidate: raceCand, round: 1, mode: "race", race: { threads: 8, iters: 500000 } });
+    expect(p).toMatch(/8 worker threads/);
+    expect(p).toMatch(/500000\+? iterations/);
+  });
+});
+
+describe("single-mode prompt is byte-for-byte unchanged", () => {
+  const c = candidate();
+  it("mode 'single' and mode undefined produce the IDENTICAL synthesis prompt", () => {
+    expect(buildSynthesisPrompt({ candidate: c, round: 1, mode: "single" })).toBe(buildSynthesisPrompt({ candidate: c, round: 1 }));
+    expect(buildSynthesisPrompt({ candidate: c, round: 2, mode: "single", priorCSource: "x", priorFeedback: "y" })).toBe(
+      buildSynthesisPrompt({ candidate: c, round: 2, priorCSource: "x", priorFeedback: "y" }),
+    );
+  });
+  it("the single prompt carries none of the race scaffolding", () => {
+    const p = buildSynthesisPrompt({ candidate: c, round: 1 });
+    expect(p).not.toMatch(/pthread_barrier_t/);
+    expect(p).not.toMatch(/sched_setaffinity/);
+    expect(p).not.toMatch(/RACE SYNTHESIS/);
+  });
+});
+
+describe("makeDefaultSynthesizePoc — selects the race system prompt for a race-mode input", () => {
+  it("mode 'race' routes executeNative with the CONCURRENT/MULTI-THREAD system prompt", async () => {
+    const nativeSpy = vi.spyOn(LlmApiRuntime.prototype, "executeNative").mockResolvedValue({
+      content: [{ type: "text", text: "```c\n#include <pthread.h>\nint main(){ return 0; }\n```" }],
+      stopReason: "end_turn",
+      durationMs: 1,
+    } as never);
+    const synth = makeDefaultSynthesizePoc("api");
+    await synth({ candidate: candidate({ kind: "ownership-exclusive" }), round: 1, mode: "race", race: { threads: 4, iters: 200000 } });
+    const [system] = nativeSpy.mock.calls[0];
+    expect(String(system)).toMatch(/CONCURRENT, MULTI-THREAD/i);
+    expect(String(system)).toMatch(/pthread_barrier_t/);
+    nativeSpy.mockRestore();
+  });
+
+  it("mode undefined (single) keeps the ORIGINAL system prompt", async () => {
+    const nativeSpy = vi.spyOn(LlmApiRuntime.prototype, "executeNative").mockResolvedValue({
+      content: [{ type: "text", text: "```c\nint main(){ return 0; }\n```" }],
+      stopReason: "end_turn",
+      durationMs: 1,
+    } as never);
+    const synth = makeDefaultSynthesizePoc("api");
+    await synth({ candidate: candidate(), round: 1 });
+    const [system] = nativeSpy.mock.calls[0];
+    expect(String(system)).not.toMatch(/CONCURRENT, MULTI-THREAD/i);
+    nativeSpy.mockRestore();
+  });
+});
+
+describe("witnessAssumptionViolation — threads the resolved mode + race knobs into synthesis", () => {
+  type SeenInput = { mode?: string; race?: { threads: number; iters: number } };
+  const recorder = (seen: SeenInput[]) => async (input: PocSynthesisInput) => {
+    seen.push({ ...(input.mode ? { mode: input.mode } : {}), ...(input.race ? { race: input.race } : {}) });
+    return { cSource: "int main(){ return 0; }" };
+  };
+
+  it("auto (default) synthesizes a RACE PoC for a race-shaped seam, with the default knobs", async () => {
+    const seen: SeenInput[] = [];
+    const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: "clean" }));
+    await witnessAssumptionViolation(candidate({ kind: "ownership-exclusive" }), { synthesizePoc: recorder(seen), bootPoc: boot, maxRounds: 1 });
+    expect(seen[0].mode).toBe("race");
+    expect(seen[0].race).toEqual({ threads: DEFAULT_RACE_THREADS, iters: DEFAULT_RACE_ITERS });
+  });
+
+  it("auto synthesizes a SINGLE PoC (no mode/race on the input) for a non-race seam", async () => {
+    const seen: SeenInput[] = [];
+    const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: "clean" }));
+    await witnessAssumptionViolation(
+      candidate({ kind: "validated-range", unprivEntry: false, securityRelevance: "bounds" }),
+      { synthesizePoc: recorder(seen), bootPoc: boot, maxRounds: 1 },
+    );
+    expect(seen[0].mode).toBeUndefined();
+    expect(seen[0].race).toBeUndefined();
+  });
+
+  it("explicit witnessMode='single' forces the single path on a race-shaped seam", async () => {
+    const seen: SeenInput[] = [];
+    const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: "clean" }));
+    await witnessAssumptionViolation(candidate({ kind: "lock-held" }), { synthesizePoc: recorder(seen), bootPoc: boot, maxRounds: 1, witnessMode: "single" });
+    expect(seen[0].mode).toBeUndefined();
+  });
+
+  it("explicit raceConfig overrides the thread/iteration knobs", async () => {
+    const seen: SeenInput[] = [];
+    const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: "clean" }));
+    await witnessAssumptionViolation(candidate({ kind: "refcount-positive" }), {
+      synthesizePoc: recorder(seen), bootPoc: boot, maxRounds: 1, witnessMode: "race", raceConfig: { threads: 8, iters: 12345 },
+    });
+    expect(seen[0].race).toEqual({ threads: 8, iters: 12345 });
+  });
+
+  it("the race path still shares the boot+witness check — a matching splat CONFIRMS a race PoC", async () => {
+    // A REAL concurrent PoC (barrier + affinity + pthreads + hammer loop) as the synth output.
+    const racePoc = [
+      "#define _GNU_SOURCE",
+      "#include <pthread.h>",
+      "#include <sched.h>",
+      "#include <unistd.h>",
+      "static pthread_barrier_t barrier;",
+      "static int shared_fd;",
+      "static void pin(int cpu){ cpu_set_t s; CPU_ZERO(&s); CPU_SET(cpu, &s); sched_setaffinity(0,sizeof(s),&s); }",
+      "static void *entryA_fn(void *a){ pin(0); pthread_barrier_wait(&barrier); for(long i=0;i<200000;i++) syscall(1, shared_fd); return 0; }",
+      "static void *entryB_fn(void *a){ pin(1); pthread_barrier_wait(&barrier); for(long i=0;i<200000;i++) syscall(3, shared_fd); return 0; }",
+      "int main(void){ pthread_barrier_init(&barrier,0,2); pthread_t a,b;",
+      "  pthread_create(&a,0,entryA_fn,0); pthread_create(&b,0,entryB_fn,0);",
+      "  pthread_join(a,0); pthread_join(b,0); return 0; }",
+    ].join("\n");
+    const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: MATCHING_SPLAT }));
+    const r = await witnessAssumptionViolation(candidate({ kind: "ownership-exclusive" }), {
+      synthesizePoc: async () => ({ cSource: racePoc }),
+      bootPoc: boot,
+      maxRounds: 1,
+    });
+    expect(r.verdict).toBe("confirmed");
+    expect(r.finalCSource).toContain("pthread_barrier_wait");
+    expect(r.witnessedAttempt?.check?.signature).toBe("kasan-uaf");
   });
 });

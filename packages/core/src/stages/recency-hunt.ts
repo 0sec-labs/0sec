@@ -88,7 +88,7 @@ import {
   type HuntVerifier,
 } from "./hunt-scan.js";
 import { runAssumptionHunt } from "./assumption-mining.js";
-import type { DynamicWitnessDeps, WitnessResult } from "./dynamic-witness.js";
+import type { DynamicWitnessDeps, WitnessResult, WitnessMode } from "./dynamic-witness.js";
 
 // ── Reachability allowlist (the clear config) ──────────────────────────────────
 
@@ -685,6 +685,17 @@ export interface RecencyDynamicWitnessConfig {
   /** Bounded PoC-repair rounds per candidate — each round is one VM boot. Default 2. */
   maxRoundsPerCandidate?: number;
   /**
+   * PoC-shape mode for the oracle: `single` (sequential), `race` (concurrent
+   * multi-thread), or `auto` (pick `race` per race-shaped seam). Default `auto` — a
+   * non-race seam resolves to `single`, so the default preserves existing behaviour.
+   * This is the `--witness-mode` flag's home.
+   */
+  witnessMode?: WitnessMode;
+  /** Race worker-thread count for race-mode PoCs (default 4). `--witness-race-threads`. */
+  raceThreads?: number;
+  /** Race per-thread iteration budget for race-mode PoCs (default 200000). `--witness-race-iters`. */
+  raceIters?: number;
+  /**
    * Injectable synth/boot boundaries (+ runtime/model) for the oracle. Tests inject
    * a mock `synthesizePoc`/`bootPoc` here; the bench sibling can pin a coder model.
    * When omitted, the real LLM synthesizer + KASAN-VM harness run.
@@ -1134,6 +1145,22 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
   let witnessBudgetRemaining = dwConfig ? dwConfig.maxCandidatesPerRun ?? 10 : 0;
   const dwPerFile = dwConfig?.maxCandidatesPerFile ?? 6;
   const dwRounds = dwConfig?.maxRoundsPerCandidate ?? 2;
+  // Merge the witness-shape knobs (mode + race threads/iters) into the oracle deps so
+  // they thread down to witnessAssumptionViolation. Omitting them leaves the default
+  // (`auto` mode) intact. `raceConfig` is only set when a knob was actually supplied.
+  const dwRaceConfig =
+    dwConfig?.raceThreads !== undefined || dwConfig?.raceIters !== undefined
+      ? {
+          raceConfig: {
+            ...(dwConfig?.raceThreads !== undefined ? { threads: dwConfig.raceThreads } : {}),
+            ...(dwConfig?.raceIters !== undefined ? { iters: dwConfig.raceIters } : {}),
+          },
+        }
+      : {};
+  const dwWitnessDeps: DynamicWitnessDeps | undefined =
+    dwConfig && (dwConfig.deps || dwConfig.witnessMode !== undefined || dwConfig.raceThreads !== undefined || dwConfig.raceIters !== undefined)
+      ? { ...(dwConfig.deps ?? {}), ...(dwConfig.witnessMode !== undefined ? { witnessMode: dwConfig.witnessMode } : {}), ...dwRaceConfig }
+      : undefined;
   // CROSS-RUN ROTATION state — one durable file per modelDir so consecutive daily runs
   // over the same tree/window test FRESH dual-view candidates instead of the same
   // ranked top-N. Reusing a modelDir across days is exactly when this earns its keep.
@@ -1290,7 +1317,7 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
         const perFileCap = Math.min(dwPerFile, witnessBudgetRemaining);
         const witnessBudget =
           dwConfig && perFileCap > 0
-            ? { maxCandidates: perFileCap, maxRounds: dwRounds, rotationStatePath, ...(dwConfig.deps ? { deps: dwConfig.deps } : {}) }
+            ? { maxCandidates: perFileCap, maxRounds: dwRounds, rotationStatePath, ...(dwWitnessDeps ? { deps: dwWitnessDeps } : {}) }
             : undefined;
         const dv = await dualViewDetect({
           sourceRoot: input.tree,
