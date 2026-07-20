@@ -28,6 +28,8 @@ import {
   isCrossApiAssumption,
   objectTypeToken,
   subjectSelfEnforces,
+  objectFieldAccesses,
+  dualViewSeamDecision,
   type Assumption,
   type AssumptionModel,
 } from "./assumption-mining.js";
@@ -396,6 +398,132 @@ describe("scanDualViewContexts — cross-phase distinct-entry pairs", () => {
     expect(scanDualViewContexts(wkept, buildCallGraph(ws), ws, buildFunctionBodyIndex(ws), { maxTouchers: 2 })).toHaveLength(0);
     // With a generous maxTouchers it fires (w_setup establishes wlock; w_a/w_b/w_c skip).
     expect(scanDualViewContexts(wkept, buildCallGraph(ws), ws, buildFunctionBodyIndex(ws), { maxTouchers: 14 }).length).toBeGreaterThan(0);
+  });
+});
+
+// ── FIELD + LOCK granular seam emission (the precision fix) ──────────────────────
+
+describe("objectFieldAccesses — struct member extraction", () => {
+  it("extracts the fields accessed on a typed var, and nothing on a disjoint var", () => {
+    const body = `int f(struct af_alg_ctx *ctx, struct sock *sk) { ctx->tsgl_list = 0; sk->x = 1; return ctx->used; }`;
+    const fields = objectFieldAccesses(body, "af_alg_ctx");
+    expect([...fields.keys()].sort()).toEqual(["tsgl_list", "used"]);
+    expect(fields.has("x")).toBe(false); // sk->x is on struct sock, not af_alg_ctx
+  });
+
+  it("returns empty when the type is present but no instance var is accessed (degrade signal)", () => {
+    const body = `int f(struct sock *sk) { wlock(sk); return 0; } /* af_alg_ctx mentioned in a comment */`;
+    expect(objectFieldAccesses(body, "af_alg_ctx").size).toBe(0);
+  });
+});
+
+describe("dualViewSeamDecision — (field, lock) granular verdict", () => {
+  const type = "obj";
+  it("DROPS a disjoint-field pair (field-match necessary condition)", () => {
+    const a = `int prod(struct obj *o) { lock_sock(sk); o->list = 0; release_sock(sk); return 0; }`;
+    const b = `int poll(struct obj *o) { return o->more | o->used; }`;
+    const d = dualViewSeamDecision(a, b, type);
+    expect(d.keep).toBe(false);
+    expect(d.reason).toMatch(/disjoint fields/);
+  });
+
+  it("DROPS a same-field pair when BOTH accesses are under the SAME lock (serialized)", () => {
+    const a = `int prod(struct obj *o) { mutex_lock(&o->lock); o->data = 1; mutex_unlock(&o->lock); return 0; }`;
+    const b = `int cons(struct obj *o) { mutex_lock(&o->lock); int x = o->data; mutex_unlock(&o->lock); return x; }`;
+    const d = dualViewSeamDecision(a, b, type);
+    expect(d.keep).toBe(false);
+    expect(d.reason).toMatch(/common lock/);
+  });
+
+  it("KEEPS a same-field pair when one access is LOCKLESS", () => {
+    const a = `int prod(struct obj *o) { mutex_lock(&o->lock); o->data = 1; mutex_unlock(&o->lock); return 0; }`;
+    const b = `int cons(struct obj *o) { return o->data; }`; // lockless read of the same field
+    const d = dualViewSeamDecision(a, b, type);
+    expect(d.keep).toBe(true);
+    expect(d.sharedField).toBe("data");
+    expect(d.reason).toMatch(/LOCKLESS/);
+  });
+
+  it("KEEPS a same-field pair when the two phases hold DIFFERENT locks", () => {
+    const a = `int prod(struct obj *o) { mutex_lock(&o->lock); o->data = 1; mutex_unlock(&o->lock); return 0; }`;
+    const b = `int cons(struct obj *o) { spin_lock(&o->slock); int x = o->data; spin_unlock(&o->slock); return x; }`;
+    const d = dualViewSeamDecision(a, b, type);
+    expect(d.keep).toBe(true);
+    expect(d.sharedField).toBe("data");
+    expect(d.reason).toMatch(/DIFFERENT locks/);
+  });
+
+  it("DEGRADES to keep when field info is unrecoverable on a side (backward-compatible)", () => {
+    const a = `int prod(struct obj *o) { wlock(o); return 0; }`; // touches type but no field access
+    const b = `int cons(struct obj *o) { return o->data; }`;
+    const d = dualViewSeamDecision(a, b, type);
+    expect(d.keep).toBe(true);
+    expect(d.reason).toMatch(/field info unavailable/);
+  });
+});
+
+describe("scanDualViewContexts — af_alg regression (field+lock granular)", () => {
+  // Mirrors tonight's crypto/af_alg.c post-mortem. af_alg_alloc_tsgl mutates
+  // ctx->tsgl_list under lock_sock (the establishing phase). Three skipping phases:
+  //   • af_alg_poll reads ctx->more / ctx->used  — DIFFERENT fields (benign lockless scalar read)
+  //   • af_alg_free_resources touches ctx->inflight / ctx->rcvused — DISJOINT fields
+  //   • af_alg_sendmsg reads ctx->tsgl_list WITHOUT lock_sock — the GENUINE same-field seam
+  // v2 (object-granular) emitted all three; the field+lock filter must keep only sendmsg.
+  const src = `
+    int af_alg_alloc_tsgl(struct sock *sk) {
+      struct af_alg_ctx *ctx = alg_sk(sk)->private;
+      lock_sock(sk);
+      ctx->tsgl_list = kmalloc(64);
+      release_sock(sk);
+      return 0;
+    }
+    unsigned int af_alg_poll(struct file *file, struct af_alg_ctx *ctx) {
+      unsigned int mask = 0;
+      if (ctx->more) mask = 1;
+      if (ctx->used) mask |= 2;
+      return mask;
+    }
+    void af_alg_free_resources(struct af_alg_ctx *ctx) {
+      ctx->inflight = 0;
+      ctx->rcvused = 0;
+    }
+    int af_alg_sendmsg(struct sock *sk) {
+      struct af_alg_ctx *ctx = alg_sk(sk)->private;
+      if (ctx->tsgl_list)
+        return 1;
+      return 0;
+    }
+  `;
+  const sources = [{ file: "af_alg.c", text: src }];
+  const cg = buildCallGraph(sources);
+  const bodies = buildFunctionBodyIndex(sources);
+  const kept: Assumption[] = [
+    assumption({
+      id: "af_alg_alloc_tsgl#1",
+      subject: "af_alg_alloc_tsgl",
+      kind: "ownership-exclusive",
+      securityRelevance: "lifetime",
+      provenance: "relied-on-cross-api",
+      object: "struct af_alg_ctx",
+      predicate: "ctx->tsgl_list is stable under lock_sock across phases",
+      oracle: { mechanism: "establisher-absent-cross-api", target: "ctx->tsgl_list", establisherToken: "lock_sock" },
+    }),
+  ];
+
+  it("KEEPS the genuine same-field lockless seam and DROPS the disjoint-field non-seams", () => {
+    const ctx = scanDualViewContexts(kept, cg, sources, bodies);
+    const callers = ctx.map((c) => c.caller).sort();
+    expect(callers).toEqual(["af_alg_sendmsg"]); // poll + free_resources dropped
+    expect(ctx[0].pairedEntry).toBe("af_alg_alloc_tsgl");
+    expect(ctx[0].field).toBe("tsgl_list");
+    expect(ctx[0].object).toBe("af_alg_ctx");
+  });
+
+  it("ABLATION: fieldGranular=false reproduces the v2 object-granular over-emission", () => {
+    const ctx = scanDualViewContexts(kept, cg, sources, bodies, { fieldGranular: false });
+    const callers = ctx.map((c) => c.caller).sort();
+    // Object-granular pairs alloc_tsgl with each skipping phase → poll + free_resources + sendmsg.
+    expect(callers).toEqual(["af_alg_free_resources", "af_alg_poll", "af_alg_sendmsg"]);
   });
 });
 

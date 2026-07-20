@@ -797,6 +797,8 @@ export interface ViolatingContext {
   pairedEntry?: string;
   /** v2 DUAL-VIEW: the object TYPE token both entries operate on (`fuse_req`, `dma_buf`). */
   object?: string;
+  /** DUAL-VIEW field-granular: the shared struct MEMBER both phases contend on (the seam key). */
+  field?: string;
 }
 
 /** Names that read as an unprivileged syscall / ioctl / socket-op entry point. */
@@ -1153,6 +1155,219 @@ function reachesFn(adj: Map<string, Set<string>>, from: string, to: string, maxD
   return false;
 }
 
+// ── FIELD + LOCK GRANULARITY (the precision fix) ────────────────────────────────
+//
+// v2's dual-view enumerator paired entries that share only the STRUCT TYPE (object).
+// A post-mortem of crypto/af_alg.c proved that is too coarse and burns the (small,
+// expensive) dynamic-witness budget on NON-seams:
+//   • af_alg_alloc_tsgl (mutates ctx->tsgl_list) ⇄ af_alg_poll (reads ctx->more /
+//     ctx->used) — a DELIBERATE benign lockless scalar read of DIFFERENT fields, not a
+//     lifetime seam on the same field.
+//   • af_alg_alloc_tsgl ⇄ af_alg_free_resources (touches ctx->inflight / ctx->rcvused)
+//     — DISJOINT fields, not tsgl_list.
+// A genuine seam requires the two phases to CONTEND on the SAME field, AND that field
+// not to be co-serialized by the same lock in both phases. We refine seam emission
+// from (object) to (field, lock) granularity:
+//   1. FIELD-MATCH (necessary): the establishing entryA and the skipping entryB must
+//      access at least one COMMON struct member of the object. Disjoint fields ⇒ drop.
+//   2. LOCK-COVERAGE: for every shared field, if BOTH accesses are covered by the SAME
+//      lock (both under lock_sock / the same mutex / spinlock / rcu / guard), that field
+//      is serialized. Emit only when some shared field has an access that is LOCKLESS in
+//      at least one phase, OR the two phases hold DIFFERENT locks over it.
+// DEGRADE-SAFE: when field info cannot be recovered for EITHER side (no typed var, a
+// macro-hidden access), we KEEP the pair — reproducing v2's object-granular behavior
+// rather than silently dropping. Suppression only ever fires on POSITIVE evidence of
+// field-disjointness or same-lock coverage — that bounds the false-negative risk.
+
+/** Paren ranges [open, close] of every recognized lock/guard call in a blanked body. */
+function lockCallArgRanges(blanked: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const push = (openParen: number) => {
+    let depth = 0;
+    for (let i = openParen; i < blanked.length; i++) {
+      if (blanked[i] === "(") depth++;
+      else if (blanked[i] === ")") { depth--; if (depth === 0) { ranges.push([openParen, i]); return; } }
+    }
+  };
+  LOCK_CALL_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = LOCK_CALL_RE.exec(blanked))) push(m.index + m[0].length - 1);
+  const guardRe = /\b(?:guard|scoped_guard)\s*\(/g;
+  let g: RegExpExecArray | null;
+  while ((g = guardRe.exec(blanked))) push(g.index + g[0].length - 1);
+  return ranges;
+}
+
+/**
+ * Struct member accesses of the given object TYPE in a function body: field → char
+ * offsets. A `->`/`.` access that is the ARGUMENT of a lock primitive (`o->lock` inside
+ * `mutex_lock(&o->lock)`) is EXCLUDED — that member is the lock handle, not a contended
+ * data field, and counting it would spuriously match / mis-cover the seam.
+ */
+export function objectFieldAccesses(body: string, typeToken: string): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  if (!body || !typeToken) return out;
+  const blanked = blankCommentsAndStrings(body);
+  const lockRanges = lockCallArgRanges(blanked);
+  const insideLockArg = (idx: number): boolean => lockRanges.some(([s, e]) => idx > s && idx < e);
+  // Variables declared as (struct)? <typeToken> [*] <name> — the handles onto an object instance.
+  const vars = new Set<string>();
+  const declRe = new RegExp(`(?:struct\\s+)?\\b${escapeRe(typeToken)}\\b\\s*\\**\\s*([A-Za-z_]\\w*)`, "g");
+  let dm: RegExpExecArray | null;
+  while ((dm = declRe.exec(blanked))) {
+    const name = dm[1];
+    // Skip C keywords that can trail a type in odd matches; keep plain identifiers.
+    if (name && name !== "struct") vars.add(name);
+  }
+  if (vars.size === 0) return out;
+  // For each variable, record every `<var>-><field>` / `<var>.<field>` access + its offset.
+  for (const v of vars) {
+    const accRe = new RegExp(`\\b${escapeRe(v)}\\s*(?:->|\\.)\\s*([A-Za-z_]\\w*)`, "g");
+    let am: RegExpExecArray | null;
+    while ((am = accRe.exec(blanked))) {
+      if (insideLockArg(am.index)) continue; // the lock handle itself, not a data field
+      const field = am[1];
+      const arr = out.get(field) ?? [];
+      arr.push(am.index);
+      out.set(field, arr);
+    }
+  }
+  return out;
+}
+
+/** Recognized lock ACQUIRE/RELEASE primitives → a normalized lock IDENTITY string. */
+const LOCK_CALL_RE =
+  /\b(lock_sock_nested|lock_sock|bh_lock_sock|bh_unlock_sock|release_sock|mutex_lock_interruptible|mutex_lock_nested|mutex_lock_killable|mutex_lock|mutex_unlock|spin_lock_irqsave|spin_lock_irq|spin_lock_bh|spin_lock|spin_unlock_irqrestore|spin_unlock_irq|spin_unlock_bh|spin_unlock|read_lock_bh|read_lock|read_unlock_bh|read_unlock|write_lock_bh|write_lock|write_unlock_bh|write_unlock|rcu_read_lock|rcu_read_unlock)\s*\(/g;
+
+/** First (top-level) argument of a call whose `(` is at `openParen`, normalized (strip &, whitespace). */
+function firstCallArgNorm(body: string, openParen: number): string {
+  let depth = 0;
+  let i = openParen;
+  const start = openParen + 1;
+  let end = start;
+  for (; i < body.length; i++) {
+    const c = body[i];
+    if (c === "(") depth++;
+    else if (c === ")") { depth--; if (depth === 0) { end = i; break; } }
+    else if (c === "," && depth === 1) { end = i; break; }
+  }
+  return body.slice(start, end).replace(/\s+/g, "").replace(/^&/, "");
+}
+
+interface LockEvent { index: number; acquire: boolean; id: string; }
+
+/** Ordered acquire/release events for the recognized lock primitives in a body. */
+function lockEvents(body: string): LockEvent[] {
+  const blanked = blankCommentsAndStrings(body);
+  const events: LockEvent[] = [];
+  LOCK_CALL_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = LOCK_CALL_RE.exec(blanked))) {
+    const name = m[1];
+    const openParen = m.index + m[0].length - 1;
+    const arg = firstCallArgNorm(blanked, openParen);
+    let id: string;
+    let acquire: boolean;
+    if (name === "lock_sock" || name === "lock_sock_nested" || name === "bh_lock_sock") { id = "sock"; acquire = true; }
+    else if (name === "release_sock" || name === "bh_unlock_sock") { id = "sock"; acquire = false; }
+    else if (name === "rcu_read_lock") { id = "rcu"; acquire = true; }
+    else if (name === "rcu_read_unlock") { id = "rcu"; acquire = false; }
+    else if (name.startsWith("mutex_lock")) { id = `mutex:${arg}`; acquire = true; }
+    else if (name === "mutex_unlock") { id = `mutex:${arg}`; acquire = false; }
+    else if (name.startsWith("spin_lock")) { id = `spin:${arg}`; acquire = true; }
+    else if (name.startsWith("spin_unlock")) { id = `spin:${arg}`; acquire = false; }
+    else if (name.startsWith("read_lock") || name.startsWith("write_lock")) { id = `rw:${arg}`; acquire = true; }
+    else if (name.startsWith("read_unlock") || name.startsWith("write_unlock")) { id = `rw:${arg}`; acquire = false; }
+    else continue;
+    events.push({ index: m.index, acquire, id });
+  }
+  // guard(TYPE)(&lock) / scoped_guard(TYPE, &lock) — RAII: held from here to end of scope.
+  // Textual approx: treat as acquired (never released) — end-of-function is the outer scope.
+  const guardRe = /\b(?:guard|scoped_guard)\s*\(\s*\w+\s*(?:\)\s*\(|,)\s*([^),]+)/g;
+  let g: RegExpExecArray | null;
+  while ((g = guardRe.exec(blanked))) {
+    const arg = g[1].replace(/\s+/g, "").replace(/^&/, "");
+    events.push({ index: g.index, acquire: true, id: `guard:${arg}` });
+  }
+  events.sort((a, b) => a.index - b.index);
+  return events;
+}
+
+/** The set of lock IDENTITIES held at char offset `at` (textual held-lockset approximation). */
+export function heldLockIdsAt(events: LockEvent[], at: number): Set<string> {
+  const counts = new Map<string, number>();
+  for (const e of events) {
+    if (e.index >= at) break;
+    const c = counts.get(e.id) ?? 0;
+    counts.set(e.id, e.acquire ? c + 1 : Math.max(0, c - 1));
+  }
+  const held = new Set<string>();
+  for (const [id, c] of counts) if (c > 0) held.add(id);
+  return held;
+}
+
+/**
+ * The locks that cover EVERY access at `offsets` (intersection of the held-lockset at
+ * each). A field whose accesses are all under lock L returns {…,L}; a field with ANY
+ * lockless access returns ∅ (a single unguarded touch means it is not fully serialized).
+ */
+function fieldCoveringLocks(events: LockEvent[], offsets: number[]): Set<string> {
+  let inter: Set<string> | null = null;
+  for (const off of offsets) {
+    const held = heldLockIdsAt(events, off);
+    if (inter === null) inter = new Set(held);
+    else for (const id of [...inter]) if (!held.has(id)) inter.delete(id);
+    if (inter.size === 0) break;
+  }
+  return inter ?? new Set<string>();
+}
+
+export interface SeamDecision {
+  /** True = a genuine (field, lock) seam to emit; false = a non-seam to drop. */
+  keep: boolean;
+  reason: string;
+  /** The contended shared field the decision keyed on (when a field-level verdict was reached). */
+  sharedField?: string;
+}
+
+/**
+ * FIELD + LOCK granular seam verdict for an establishing entryA / skipping entryB pair
+ * on object TYPE `typeToken`. Keeps only genuinely suspicious pairings (see the block
+ * comment above): same-field contention that is NOT co-serialized by a shared lock.
+ * Degrades to KEEP when field info is unrecoverable for either side (backward-compatible
+ * with v2's object-granular behavior — never silently drops on missing data).
+ */
+export function dualViewSeamDecision(bodyA: string, bodyB: string, typeToken: string): SeamDecision {
+  const fieldsA = objectFieldAccesses(bodyA, typeToken);
+  const fieldsB = objectFieldAccesses(bodyB, typeToken);
+  // Degrade-safe: no recoverable field info on a side → keep (v2 object-granular behavior).
+  if (fieldsA.size === 0 || fieldsB.size === 0) {
+    return { keep: true, reason: "field info unavailable on a phase — degraded to object-granular (kept)" };
+  }
+  const shared = [...fieldsA.keys()].filter((f) => fieldsB.has(f));
+  if (shared.length === 0) {
+    return { keep: false, reason: `disjoint fields (A:{${[...fieldsA.keys()].join(",")}} vs B:{${[...fieldsB.keys()].join(",")}}) — not a same-field seam` };
+  }
+  const eventsA = lockEvents(bodyA);
+  const eventsB = lockEvents(bodyB);
+  for (const f of shared) {
+    const covA = fieldCoveringLocks(eventsA, fieldsA.get(f)!);
+    const covB = fieldCoveringLocks(eventsB, fieldsB.get(f)!);
+    const common = [...covA].filter((id) => covB.has(id));
+    if (common.length === 0) {
+      const lockNote =
+        covA.size === 0 || covB.size === 0
+          ? `field '${f}' is accessed LOCKLESS in at least one phase`
+          : `field '${f}' is held under DIFFERENT locks ({${[...covA].join(",")}} vs {${[...covB].join(",")}})`;
+      return { keep: true, sharedField: f, reason: `same-field seam on '${f}' — ${lockNote}` };
+    }
+  }
+  return {
+    keep: false,
+    reason: `all shared field(s) {${shared.join(",")}} are covered by a common lock in BOTH phases — serialized, not a seam`,
+  };
+}
+
 export interface DualViewOptions {
   maxContexts?: number;
   maxPropagationRounds?: number;
@@ -1173,6 +1388,14 @@ export interface DualViewOptions {
   maxPairsPerObject?: number;
   /** Extra object type tokens to suppress (merged with the ubiquitous-type denylist). */
   objectDenylist?: Set<string>;
+  /**
+   * FIELD+LOCK GRANULARITY (default true): emit a dual-view seam ONLY when the
+   * establishing and skipping phases contend on the SAME struct field AND that field is
+   * not co-serialized by a common lock (see {@link dualViewSeamDecision}). Set false to
+   * reproduce v2's object-granular pairing (the precision ablation). Degrades to keep
+   * when field info is unrecoverable, so it never drops a pair on missing data.
+   */
+  fieldGranular?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -1292,6 +1515,7 @@ export function scanDualViewContexts(
   const maxTouchers = opts.maxTouchers ?? Infinity;
   const maxPairsPerObject = opts.maxPairsPerObject ?? 6;
   const denylist = opts.objectDenylist ?? UBIQUITOUS_OBJECT_TYPES;
+  const fieldGranular = opts.fieldGranular !== false;
 
   const crossApi = kept.filter((a) => isCrossApiAssumption(a, kinds) && objectTypeToken(a));
   if (crossApi.length === 0) {
@@ -1344,14 +1568,33 @@ export function scanDualViewContexts(
     let emittedForObject = 0;
     for (const tB of skipping) {
       if (emittedForObject >= maxPairsPerObject) break;
-      // A distinct establishing sibling tA: neither calls the other (genuinely separate phases).
-      const tA = establishing.find(
-        (x) => x !== tB && !reachesFn(adj, x, tB, reachDepth) && !reachesFn(adj, tB, x, reachDepth),
-      );
-      if (!tA) continue;
+      // A distinct establishing sibling tA: neither calls the other (genuinely separate
+      // phases). PRECISION FIX: also require a genuine (field, lock)-granular SEAM with tB —
+      // the pair must contend on the SAME field, not co-serialized by a common lock (see
+      // dualViewSeamDecision). This kills the af_alg poll/free_resources non-seams. Field
+      // granularity is on by default; opts.fieldGranular=false reproduces v2 object-granular.
+      let tA: string | undefined;
+      let seam: SeamDecision | undefined;
+      for (const x of establishing) {
+        if (x === tB || reachesFn(adj, x, tB, reachDepth) || reachesFn(adj, tB, x, reachDepth)) continue;
+        if (fieldGranular) {
+          const d = dualViewSeamDecision(bodies.get(x) ?? "", bodies.get(tB) ?? "", type);
+          if (!d.keep) { seam = seam ?? d; continue; } // remember the last drop reason for logging
+          tA = x;
+          seam = d;
+          break;
+        }
+        tA = x;
+        break;
+      }
+      if (!tA) {
+        if (fieldGranular && seam) log(`[dual-view] dropped ${tB}() on 'struct ${type}': ${seam.reason}`);
+        continue;
+      }
       const key = `${a.id}|${tA}|${tB}`;
       if (seenPair.has(key)) continue;
       seenPair.add(key);
+      const sharedField = seam?.sharedField;
 
       const fnB = cg.byName.get(tB)!;
       const b = bodies.get(tB) ?? "";
@@ -1370,13 +1613,16 @@ export function scanDualViewContexts(
         dualView: true,
         pairedEntry: tA,
         object: type,
+        ...(sharedField ? { field: sharedField } : {}),
         detail:
-          `DUAL-VIEW (cross-api/cross-phase): ${tA}() and ${tB}() both operate on 'struct ${type}', reached via ` +
+          `DUAL-VIEW (cross-api/cross-phase): ${tA}() and ${tB}() both operate on 'struct ${type}'` +
+          `${sharedField ? `.${sharedField}` : ""}, reached via ` +
           `DISTINCT call-trees (neither calls the other). ${tA}() ESTABLISHES ${token}` +
           `${aliases.length ? `/${aliases.join("/")}` : ""} on the object; ${tB}() reaches the SAME object type WITHOUT it. ` +
+          `${sharedField ? `Both contend on field '${sharedField}' (${seam?.reason}). ` : ""}` +
           `${a.subject}() RELIES ON: ${a.predicate} (${a.kind}, ${a.securityRelevance}). If ${tB}() can run on the SAME ` +
           `${type} INSTANCE concurrently with, or after, ${tA}()'s guarantee, the cross-api assumption is VIOLATED. ` +
-          `CANDIDATE to DISPROVE — type-name toucher grep + name-based establisher set: confirm (1) both paths reach the ` +
+          `CANDIDATE to DISPROVE — type-name toucher grep + field-match + name-based establisher set: confirm (1) both paths reach the ` +
           `SAME instance (aliasing / a shared table / an fd), and (2) ${token} is genuinely absent on ${tB}()'s path.`,
       });
       emittedForObject++;
