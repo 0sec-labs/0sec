@@ -158,9 +158,18 @@ describe("0research execution evidence projection", () => {
         treeDigest: `sha256:${"7".repeat(64)}`,
       },
     });
-    const golden = JSON.parse(
+    const contract = JSON.parse(
       readFileSync(new URL("./improvement-execution-evidence-v3.synthetic-fixture.json", import.meta.url), "utf8"),
-    ) as ResearchExecutionEvidence;
+    ) as {
+      schemaVersion: 1;
+      contract: string;
+      promotable: false;
+      evidence: ResearchExecutionEvidence;
+    };
+    expect(Object.keys(contract).sort()).toEqual(["contract", "evidence", "promotable", "schemaVersion"]);
+    expect(contract.contract).toBe("pwnkit-0brain-execution-evidence-v3-synthetic-golden-v1");
+    expect(contract.promotable).toBe(false);
+    const golden = contract.evidence;
     expect(evidence).toEqual(golden);
     expect(researchExecutionEvidenceDigest(evidence)).toBe(
       "sha256:456cc709c2230bdf2035f529631dcdf0b62d181bda36fac0f5215824851d2e59",
