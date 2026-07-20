@@ -1,4 +1,8 @@
 {
+  "schemaVersion": 1,
+  "contract": "pwnkit-0brain-execution-evidence-v3-synthetic-golden-v1",
+  "promotable": false,
+  "evidence": {
   "schemaVersion": 3,
   "candidateId": "candidate_one",
   "manifest": {
@@ -61,5 +65,6 @@
     "totalRuns": 12,
     "totalCostUsd": 6,
     "elapsedMs": 1500
+  }
   }
 }
