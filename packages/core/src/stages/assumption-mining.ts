@@ -80,6 +80,8 @@ import {
 import { extractInvariantSpec } from "./invariant-spec-builder.js";
 import { resolveContainedSourcePath } from "./subsystem-invariant-model.js";
 import { witnessDualViewContexts, type DynamicWitnessDeps, type WitnessDualViewResult } from "./dynamic-witness.js";
+import { scoreGeometry } from "../kernel/geometry-score.js";
+import type { Finding } from "@pwnkit/shared";
 
 // ── The stored assumption model (durable, versioned like InvariantModel) ────────
 
@@ -1174,6 +1176,96 @@ export interface DualViewOptions {
   log?: (msg: string) => void;
 }
 
+// ── DUAL-VIEW WEAPONIZABILITY RANKING (replaces the alphabetical tiebreak) ────────
+//
+// The dual-view contexts feed the EXPENSIVE dynamic KASAN oracle under a small daily
+// budget (default ~10/run). v2 ranked them by `unprivEntry` then ALPHABETICALLY by
+// object/caller — so a flywheel run spent its whole witness budget on the
+// alphabetically-first candidates every day, and a genuinely high-value seam that
+// sorted late was NEVER witnessed. This scores each candidate by how likely its
+// VIOLATION is a WEAPONIZABLE LPE (a class the KASAN oracle can actually witness), so
+// the top-N — the ones witnessed — are the highest-value, not the alphabetically-first.
+// Alphabetical survives only as the FINAL deterministic tiebreak.
+
+/** securityRelevance rank: lifetime (UAF) / type (type-confusion) highest, then bounds, authz, other. */
+const RELEVANCE_RANK: Record<SecurityRelevance, number> = {
+  lifetime: 5,
+  type: 4,
+  bounds: 3,
+  authz: 2,
+  other: 1,
+};
+
+/**
+ * kind rank: the UAF / double-free / refcount / ownership-exclusive classes — whose
+ * violation is a LIFETIME bug the KASAN oracle can witness — rank above the
+ * range/non-null classes (a missing bounds/null check is rarely a dual-view seam).
+ */
+const KIND_RANK: Record<AssumptionKind, number> = {
+  "ownership-exclusive": 3,
+  "refcount-positive": 3,
+  "called-once": 3,
+  "state-precondition": 3,
+  revalidated: 2,
+  "field-initialized": 2,
+  "size-consistent": 2,
+  "lock-held": 2,
+  "validated-range": 1,
+  "non-null": 1,
+};
+
+/** Geometry bonus is capped below the KIND weight (100) so it only breaks kind-ties, never overrides them. */
+const GEOMETRY_BONUS_CAP = 90;
+
+/**
+ * OBJECT-ON-A-WEAPONIZABLE-SLAB hint — reuse hunt-scan's {@link scoreGeometry} on a
+ * synthetic finding built from the assumption's object type + kind + predicate. It
+ * only fires when the object prose names a known elastic-reclaim spray (msg_msg,
+ * pipe_buffer, …), a sibling-type class (qdisc/HFSC/…), or an `_ops` fn-ptr struct —
+ * i.e. the geometry that turns a UAF/OOB into root. HONEST LIMIT: a mined assumption's
+ * prose is usually just a bare type name with no crash-shape, so this bonus is 0 for
+ * most candidates; it is a fine tiebreak among equal relevance/kind, not a primary key.
+ * Only POSITIVE geometry is credited (the DoS penalty is meaningless on assumption prose).
+ */
+function assumptionGeometryBonus(a: Assumption): number {
+  const object = (a.object ?? a.oracle.target ?? "").trim();
+  if (!object) return 0;
+  const synthetic = {
+    title: object,
+    description: `${a.predicate} ${a.kind} ${a.securityRelevance}`,
+    evidence: { analysis: `${object} ${a.oracle.target ?? ""}` },
+    category: "",
+  } as unknown as Finding;
+  const g = scoreGeometry(synthetic);
+  return g.geometryScore > 0 ? Math.min(g.geometryScore, GEOMETRY_BONUS_CAP) : 0;
+}
+
+export interface DualViewScore {
+  /** Higher = more likely a weaponizable dual-view LPE. */
+  score: number;
+  rationale: string[];
+}
+
+/**
+ * Score an assumption's dual-view WEAPONIZABILITY: securityRelevance (dominant) →
+ * kind → object-on-a-weaponizable-slab geometry bonus. The three tiers are separated
+ * (relevance ×1000, kind ×100, geometry 0–90) so a higher-relevance candidate ALWAYS
+ * outranks a lower-relevance one regardless of kind/geometry, and geometry only breaks
+ * kind-ties. Deterministic + pure — no I/O, no LLM.
+ */
+export function scoreDualViewWeaponizability(a: Assumption): DualViewScore {
+  const rel = RELEVANCE_RANK[a.securityRelevance] ?? 0;
+  const kind = KIND_RANK[a.kind] ?? 0;
+  const geom = assumptionGeometryBonus(a);
+  const score = rel * 1000 + kind * 100 + geom;
+  const rationale = [
+    `securityRelevance=${a.securityRelevance} (rank ${rel}/5)`,
+    `kind=${a.kind} (rank ${kind}/3)`,
+    ...(geom > 0 ? [`+${geom} object-on-weaponizable-slab geometry ('${a.object ?? a.oracle.target}')`] : []),
+  ];
+  return { score, rationale };
+}
+
 /**
  * The DUAL-API / CROSS-PHASE enumerator. For every cross-api/cross-phase assumption
  * (see {@link isCrossApiAssumption}), find distinct entry pairs reaching the same
@@ -1294,9 +1386,16 @@ export function scanDualViewContexts(
   if (suppressed.size > 0) {
     log(`[dual-view] suppressed ${suppressed.size} pervasive object type(s): ${[...suppressed.entries()].map(([t, r]) => `${t} (${r})`).join("; ")}`);
   }
+  // RANK by WEAPONIZABILITY (not alphabet): unprivEntry first (keep), then the
+  // per-assumption weaponizability score (relevance → kind → object-slab geometry), so
+  // the top-N (the ones the expensive KASAN oracle witnesses) are the highest-value.
+  // Alphabetical (object, caller) survives only as the FINAL deterministic tiebreak.
+  const scoreById = new Map<string, number>();
+  for (const a of kept) scoreById.set(a.id, scoreDualViewWeaponizability(a).score);
   contexts.sort(
     (x, y) =>
       Number(y.unprivEntry) - Number(x.unprivEntry) ||
+      (scoreById.get(y.assumptionId) ?? 0) - (scoreById.get(x.assumptionId) ?? 0) ||
       (x.object ?? "").localeCompare(y.object ?? "") ||
       x.caller.localeCompare(y.caller),
   );
@@ -1478,8 +1577,16 @@ export interface AssumptionHuntInput {
    * The caller-scan (single-view) contexts still flow through the static gate.
    */
   dynamicWitness?: {
-    /** Cap the dual-view candidates run through the (expensive) oracle. Default 8. */
+    /** Cap the dual-view candidates run through the (expensive) oracle. Default 10. */
     maxCandidates?: number;
+    /**
+     * CROSS-RUN ROTATION state path (e.g. `<model-dir>/.witnessed-candidates.json`).
+     * When set, candidates witnessed within the TTL are skipped so consecutive runs
+     * cover fresh candidates. Omit to disable rotation.
+     */
+    rotationStatePath?: string;
+    /** Clock injection for deterministic rotation tests. */
+    now?: number;
   } & DynamicWitnessDeps;
   log?: (msg: string) => void;
 }
@@ -1563,13 +1670,15 @@ export async function runAssumptionHunt(input: AssumptionHuntInput): Promise<Ass
   // refutes them all). The caller-scan contexts keep the static gate below.
   let witness: WitnessDualViewResult | undefined;
   if (input.dynamicWitness && dualViewContexts.length > 0) {
-    const { maxCandidates, ...deps } = input.dynamicWitness;
+    const { maxCandidates, rotationStatePath, now, ...deps } = input.dynamicWitness;
     witness = await witnessDualViewContexts({
       contexts: dualViewContexts,
       kept: crossCheck.kept,
       bodies,
       subsystem: input.subsystem,
       ...(maxCandidates !== undefined ? { maxCandidates } : {}),
+      ...(rotationStatePath !== undefined ? { rotationStatePath } : {}),
+      ...(now !== undefined ? { now } : {}),
       deps: deps as DynamicWitnessDeps,
       log,
     });

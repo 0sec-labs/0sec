@@ -91,8 +91,8 @@ async function recencyAction(opts: RecencyOpts): Promise<void> {
     ...(opts.dynamicWitness
       ? {
           dynamicWitness: {
-            maxCandidatesPerRun: parsePositive("--witness-candidates", opts.witnessCandidates, 8),
-            maxCandidatesPerFile: parsePositive("--witness-candidates-per-file", opts.witnessCandidatesPerFile, 4),
+            maxCandidatesPerRun: parsePositive("--witness-candidates", opts.witnessCandidates, 10),
+            maxCandidatesPerFile: parsePositive("--witness-candidates-per-file", opts.witnessCandidatesPerFile, 6),
             maxRoundsPerCandidate: parsePositive("--witness-rounds", opts.witnessRounds, 2),
           },
         }
@@ -154,8 +154,8 @@ export function registerRecencyHuntCommand(program: Command): void {
     .option("--max-classify-files <N>", "Cap in-scope files sent to the LLM classifier (default 80; snapshot merge-window cost control)")
     .option("--detectors <list>", "Comma-separated detectors per semantic file: dataflow,refcount,race,dual-view (default the three static; dual-view is opt-in)")
     .option("--dynamic-witness", "Run the full machine: assumption-mining dual-view enumerator → KASAN synthesize→boot→witness oracle. Implies dual-view. VM boots are expensive — bounded by the budget below.")
-    .option("--witness-candidates <N>", "Dynamic-witness RUN budget: total dual-view candidates booted through the KASAN oracle per run (default 8)")
-    .option("--witness-candidates-per-file <N>", "Per-file cap on witnessed candidates, clamped to the run budget (default 4)")
+    .option("--witness-candidates <N>", "Dynamic-witness RUN budget: total dual-view candidates booted through the KASAN oracle per run (default 10)")
+    .option("--witness-candidates-per-file <N>", "Per-file cap on witnessed candidates, clamped to the run budget (default 6)")
     .option("--witness-rounds <N>", "Bounded PoC-repair rounds per candidate — each is one VM boot (default 2)")
     .option("--remine-assumptions", "Force a fresh assumption mine for dual-view each run (default: reuse a stored per-file model if present)")
     .option("--output <path>", "Write the report JSON here instead of stdout")

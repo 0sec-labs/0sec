@@ -21,10 +21,23 @@ import {
   extractSplatRegion,
   candidateReferenceTokens,
   makeDefaultSynthesizePoc,
+  preFilterDualViewContexts,
+  candidateStableId,
+  candidateStableIdFromContext,
+  loadRotationState,
+  saveRotationState,
+  pruneRotationState,
+  isWitnessedWithinTtl,
+  ROTATION_TTL_MS,
+  ROTATION_STATE_VERSION,
+  type RotationState,
   type DualViewCandidate,
   type PocSynthesisInput,
   type BootPocFn,
 } from "./dynamic-witness.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { LlmApiRuntime } from "../runtime/index.js";
 import type { ReproducerResult } from "../triage/kernel-oracle.js";
 import type { Assumption, ViolatingContext } from "./assumption-mining.js";
@@ -361,5 +374,162 @@ describe("witnessDualViewContexts", () => {
     const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: "clean" }));
     const out = await witnessDualViewContexts({ contexts, kept, bodies, subsystem: "net/unix", maxCandidates: 1, deps: { synthesizePoc: OK_SYNTH, bootPoc: boot, maxRounds: 1 } });
     expect(out.results).toHaveLength(1);
+  });
+});
+
+// ── CHANGE 3: cheap pre-filter ───────────────────────────────────────────────────
+
+describe("preFilterDualViewContexts — drop the obviously-benign before the oracle", () => {
+  it("DROPS an authz (non-memory-safety) candidate but KEEPS a real lifetime one", () => {
+    const bodies = new Map<string, string>([
+      ["lifetime_b", "int lifetime_b(struct obj *o){ return o->x; }"],
+      ["authz_b", "int authz_b(struct thing *t){ return t->y; }"],
+    ]);
+    const byId = new Map<string, Assumption>([
+      ["life#1", assumptionFix({ id: "life#1", subject: "life_s", securityRelevance: "lifetime" })],
+      ["authz#1", assumptionFix({ id: "authz#1", subject: "authz_s", securityRelevance: "authz" })],
+    ]);
+    const contexts = [
+      dvContext({ assumptionId: "life#1", caller: "lifetime_b", object: "obj" }),
+      dvContext({ assumptionId: "authz#1", caller: "authz_b", object: "thing" }),
+    ];
+    const { kept, dropped } = preFilterDualViewContexts(contexts, byId, bodies);
+    expect(kept.map((c) => c.caller)).toEqual(["lifetime_b"]);
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0].ctx.caller).toBe("authz_b");
+    expect(dropped[0].reason).toMatch(/not memory-safety/);
+  });
+
+  it("DROPS a candidate whose entryB SELF-ENFORCES the establisher (illusory skip)", () => {
+    const bodies = new Map<string, string>([
+      // entryB flag-tests the object it supposedly reaches unguarded → self-enforcing.
+      ["guarded_b", "int guarded_b(struct obj *o){ if (o->flags & OBJ_DEAD) return -1; return o->x; }"],
+    ]);
+    const a = assumptionFix({
+      id: "s#1",
+      subject: "s",
+      securityRelevance: "lifetime",
+      oracle: { mechanism: "establisher-absent-cross-api", target: "o->flags", establisherToken: "obj_lock" },
+    });
+    const byId = new Map<string, Assumption>([["s#1", a]]);
+    const contexts = [dvContext({ assumptionId: "s#1", caller: "guarded_b", object: "obj" })];
+    const { kept, dropped } = preFilterDualViewContexts(contexts, byId, bodies);
+    expect(kept).toHaveLength(0);
+    expect(dropped[0].reason).toMatch(/self-enforc|flag-test/);
+  });
+
+  it("DROPS a candidate whose entryB directly calls the establisher (both-paths-same-guard)", () => {
+    const bodies = new Map<string, string>([
+      ["locked_b", "int locked_b(struct obj *o){ obj_lock(o); return o->x; }"],
+    ]);
+    const a = assumptionFix({
+      id: "s#2",
+      subject: "s",
+      securityRelevance: "lifetime",
+      oracle: { mechanism: "establisher-absent-cross-api", target: "o", establisherToken: "obj_lock" },
+    });
+    const byId = new Map<string, Assumption>([["s#2", a]]);
+    const contexts = [dvContext({ assumptionId: "s#2", caller: "locked_b", object: "obj" })];
+    const { kept, dropped } = preFilterDualViewContexts(contexts, byId, bodies);
+    expect(kept).toHaveLength(0);
+    expect(dropped[0].reason).toMatch(/directly calls establisher/);
+  });
+
+  it("KEEPS a candidate whose assumption is unknown (cannot judge → conservative)", () => {
+    const contexts = [dvContext({ assumptionId: "orphan#9", caller: "b" })];
+    const { kept, dropped } = preFilterDualViewContexts(contexts, new Map(), new Map());
+    expect(kept).toHaveLength(1);
+    expect(dropped).toHaveLength(0);
+  });
+});
+
+// ── CHANGE 2: cross-run rotation ─────────────────────────────────────────────────
+
+describe("rotation state — stable id + TTL + pruning", () => {
+  it("candidateStableId is stable + differs on any component change", () => {
+    const base = { object: "fuse_req", entryA: "a", entryB: "b", entryBFile: "f.c", assumptionId: "x#1", predicate: "p" };
+    const id = candidateStableId(base);
+    expect(candidateStableId(base)).toBe(id); // stable
+    expect(candidateStableId({ ...base, entryB: "c" })).not.toBe(id);
+    expect(candidateStableId({ ...base, object: "dma_buf" })).not.toBe(id);
+  });
+
+  it("candidateStableIdFromContext derives the id from the context fields", () => {
+    const id = candidateStableIdFromContext(dvContext(), "stable association");
+    expect(id).toBe(
+      candidateStableId({
+        object: "unix_sock",
+        entryA: "__unix_find_socket_byname",
+        entryB: "unix_dgram_peer_wake_relay",
+        entryBFile: "net/unix/af_unix.c",
+        assumptionId: "unix_update_edges#1",
+        predicate: "stable association",
+      }),
+    );
+  });
+
+  it("isWitnessedWithinTtl is true inside the TTL, false after it", () => {
+    const now = Date.parse("2026-07-20T00:00:00Z");
+    const state: RotationState = {
+      version: ROTATION_STATE_VERSION,
+      candidates: { id1: { verdict: "refuted", witnessedAt: new Date(now - 3 * 86_400_000).toISOString(), object: "o", entryA: "a", entryB: "b" } },
+    };
+    expect(isWitnessedWithinTtl(state, "id1", now)).toBe(true); // 3d ago < 14d TTL
+    expect(isWitnessedWithinTtl(state, "id1", now + ROTATION_TTL_MS)).toBe(false); // now past TTL
+    expect(isWitnessedWithinTtl(state, "missing", now)).toBe(false);
+  });
+
+  it("pruneRotationState drops entries past the retention window", () => {
+    const now = Date.parse("2026-07-20T00:00:00Z");
+    const state: RotationState = {
+      version: ROTATION_STATE_VERSION,
+      candidates: {
+        fresh: { verdict: "refuted", witnessedAt: new Date(now - 5 * 86_400_000).toISOString(), object: "o", entryA: "a", entryB: "b" },
+        stale: { verdict: "refuted", witnessedAt: new Date(now - 40 * 86_400_000).toISOString(), object: "o", entryA: "a", entryB: "b" },
+      },
+    };
+    const pruned = pruneRotationState(state, now);
+    expect(Object.keys(pruned.candidates)).toEqual(["fresh"]); // stale (>28d) dropped
+  });
+});
+
+describe("witnessDualViewContexts — rotation skips already-witnessed within TTL", () => {
+  const mkBodies = () =>
+    new Map<string, string>([
+      ["unix_dgram_peer_wake_relay", "int unix_dgram_peer_wake_relay(struct unix_sock *u){ return u->x; }"],
+      ["__unix_find_socket_byname", "int __unix_find_socket_byname(struct unix_sock *u){ return 0; }"],
+    ]);
+  const kept = [assumptionFix({ id: "unix_update_edges#1", subject: "unix_update_edges", securityRelevance: "lifetime" })];
+  const contexts = [dvContext()];
+
+  it("run 1 witnesses; run 2 (within TTL) SKIPS it; run 3 (past TTL) re-includes it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "witness-rotation-"));
+    const rotationStatePath = join(dir, ".witnessed-candidates.json");
+    const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: "clean, no splat" }));
+    const t0 = Date.parse("2026-07-20T00:00:00Z");
+    const deps = { synthesizePoc: OK_SYNTH, bootPoc: boot, maxRounds: 1 };
+
+    // Run 1: fresh candidate → witnessed (refuted), recorded.
+    const r1 = await witnessDualViewContexts({ contexts, kept, bodies: mkBodies(), subsystem: "net/unix", rotationStatePath, now: t0, deps });
+    expect(r1.results).toHaveLength(1);
+    const persisted = loadRotationState(rotationStatePath);
+    expect(Object.keys(persisted.candidates)).toHaveLength(1);
+
+    // Run 2: 3 days later, still within the 14d TTL → SKIPPED (no oracle run).
+    const r2 = await witnessDualViewContexts({ contexts, kept, bodies: mkBodies(), subsystem: "net/unix", rotationStatePath, now: t0 + 3 * 86_400_000, deps });
+    expect(r2.results).toHaveLength(0);
+
+    // Run 3: past the TTL → re-included (the code may have changed since).
+    const r3 = await witnessDualViewContexts({ contexts, kept, bodies: mkBodies(), subsystem: "net/unix", rotationStatePath, now: t0 + ROTATION_TTL_MS + 86_400_000, deps });
+    expect(r3.results).toHaveLength(1);
+  });
+
+  it("without a rotationStatePath every run witnesses the same candidate (no memory)", async () => {
+    const boot = vi.fn<BootPocFn>().mockResolvedValue(result({ dmesg: "clean" }));
+    const deps = { synthesizePoc: OK_SYNTH, bootPoc: boot, maxRounds: 1 };
+    const a = await witnessDualViewContexts({ contexts, kept, bodies: mkBodies(), subsystem: "net/unix", deps });
+    const b = await witnessDualViewContexts({ contexts, kept, bodies: mkBodies(), subsystem: "net/unix", deps });
+    expect(a.results).toHaveLength(1);
+    expect(b.results).toHaveLength(1); // no rotation memory → re-tested
   });
 });

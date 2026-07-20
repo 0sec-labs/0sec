@@ -674,11 +674,13 @@ export interface RecencyExtraDetectResult {
 export interface RecencyDynamicWitnessConfig {
   /**
    * Total dual-view candidates run through the KASAN oracle across the WHOLE run.
-   * Default 8. This is the hard cost ceiling — at most this many synthesize→boot
+   * Default 10 (bumped from 8: ranking + rotation + the pre-filter mean the budget now
+   * lands on a cleaner, higher-value, non-repeating pool, so a modestly larger cap buys
+   * real coverage). This is the hard cost ceiling — at most this many synthesize→boot
    * loops per flywheel run regardless of how many files surface candidates.
    */
   maxCandidatesPerRun?: number;
-  /** Per-file cap on witnessed candidates (also clamped to the remaining run budget). Default 4. */
+  /** Per-file cap on witnessed candidates (also clamped to the remaining run budget). Default 6. */
   maxCandidatesPerFile?: number;
   /** Bounded PoC-repair rounds per candidate — each round is one VM boot. Default 2. */
   maxRoundsPerCandidate?: number;
@@ -713,7 +715,7 @@ export interface RecencyDualViewInput {
    * (the honest static-only mode — the static skeptic refutes this class, so we do
    * not waste it on them).
    */
-  witnessBudget?: { maxCandidates: number; maxRounds: number; deps?: DynamicWitnessDeps };
+  witnessBudget?: { maxCandidates: number; maxRounds: number; rotationStatePath?: string; deps?: DynamicWitnessDeps };
   log?: (msg: string) => void;
 }
 
@@ -1074,6 +1076,7 @@ export async function runRecencyDualViewDetector(input: RecencyDualViewInput): P
             maxCandidates: wb.maxCandidates,
             maxRounds: wb.maxRounds,
             runtime: input.runtime,
+            ...(wb.rotationStatePath ? { rotationStatePath: wb.rotationStatePath } : {}),
             ...(wb.deps ?? {}),
           },
         }
@@ -1128,9 +1131,13 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
   // what remains; the budget decrements by candidates actually witnessed. Absent a
   // `dynamicWitness` config the budget is 0 — dual-view then only enumerates seams.
   const dwConfig = input.dynamicWitness;
-  let witnessBudgetRemaining = dwConfig ? dwConfig.maxCandidatesPerRun ?? 8 : 0;
-  const dwPerFile = dwConfig?.maxCandidatesPerFile ?? 4;
+  let witnessBudgetRemaining = dwConfig ? dwConfig.maxCandidatesPerRun ?? 10 : 0;
+  const dwPerFile = dwConfig?.maxCandidatesPerFile ?? 6;
   const dwRounds = dwConfig?.maxRoundsPerCandidate ?? 2;
+  // CROSS-RUN ROTATION state — one durable file per modelDir so consecutive daily runs
+  // over the same tree/window test FRESH dual-view candidates instead of the same
+  // ranked top-N. Reusing a modelDir across days is exactly when this earns its keep.
+  const rotationStatePath = join(input.modelDir, ".witnessed-candidates.json");
 
   const range = resolveRange(input.tree, { range: input.range, hours: input.hours }, git);
   const generatedAt = new Date().toISOString();
@@ -1283,7 +1290,7 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
         const perFileCap = Math.min(dwPerFile, witnessBudgetRemaining);
         const witnessBudget =
           dwConfig && perFileCap > 0
-            ? { maxCandidates: perFileCap, maxRounds: dwRounds, ...(dwConfig.deps ? { deps: dwConfig.deps } : {}) }
+            ? { maxCandidates: perFileCap, maxRounds: dwRounds, rotationStatePath, ...(dwConfig.deps ? { deps: dwConfig.deps } : {}) }
             : undefined;
         const dv = await dualViewDetect({
           sourceRoot: input.tree,
@@ -1344,7 +1351,7 @@ export async function runRecencyHunt(input: RecencyHuntInput): Promise<RecencyHu
     notes.push(
       `Dual-view funnel: ${candidatesByDetector.dualView} seam candidate(s) → ${dualViewWitnessAttempted} witness-attempted (KASAN oracle) → ${survivorsByDetector.dualView} WITNESSED. ` +
         (dwConfig
-          ? `Dynamic-witness budget: ${dwConfig.maxCandidatesPerRun ?? 8} candidate(s)/run × ${dwRounds} round(s) each (VM boots — the hard cost ceiling).`
+          ? `Dynamic-witness budget: ${dwConfig.maxCandidatesPerRun ?? 10} candidate(s)/run × ${dwRounds} round(s) each (VM boots — the hard cost ceiling).`
           : `No --dynamic-witness budget configured — dual-view enumerated seams only (0 witnessed; the static skeptic refutes this class, so it is not run on them).`),
     );
   }
