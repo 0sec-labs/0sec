@@ -187,7 +187,7 @@ export function registerAssumptionHuntCommand(program: Command): void {
     .option("--no-dual-view", "Disable the v2 dual-api/cross-phase enumerator (caller-scan only — the v1 behavior)")
     .option("--dynamic-witness", "v3: route dual-view candidates to the KASAN synthesize→boot→witness oracle (bypasses the static skeptic). Needs a KASAN VM env (PWNKIT_KERNEL_QEMU_*).")
     .option("--witness-rounds <N>", "Bounded PoC-repair rounds per dual-view candidate (default 3)")
-    .option("--witness-candidates <N>", "Cap dual-view candidates run through the dynamic oracle (default 8)")
+    .option("--witness-candidates <N>", "Cap dual-view candidates run through the dynamic oracle (default 10)")
     .option("--witness-model <name>", "Model for PoC synthesis (default: runtime default)")
     .option("--excerpt-dir <path>", "Where finder-targeting excerpts are written (default: os tmpdir)")
     .option("--runtime <mode>", "Engine runtime (default api)")

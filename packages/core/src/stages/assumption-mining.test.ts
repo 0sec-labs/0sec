@@ -24,6 +24,7 @@ import {
   scanViolatingContexts,
   buildFocusedCandidates,
   scanDualViewContexts,
+  scoreDualViewWeaponizability,
   isCrossApiAssumption,
   objectTypeToken,
   subjectSelfEnforces,
@@ -395,6 +396,80 @@ describe("scanDualViewContexts — cross-phase distinct-entry pairs", () => {
     expect(scanDualViewContexts(wkept, buildCallGraph(ws), ws, buildFunctionBodyIndex(ws), { maxTouchers: 2 })).toHaveLength(0);
     // With a generous maxTouchers it fires (w_setup establishes wlock; w_a/w_b/w_c skip).
     expect(scanDualViewContexts(wkept, buildCallGraph(ws), ws, buildFunctionBodyIndex(ws), { maxTouchers: 14 }).length).toBeGreaterThan(0);
+  });
+});
+
+// ── weaponizability ranking (replaces the alphabetical tiebreak) ─────────────────
+
+describe("scoreDualViewWeaponizability — weaponizability ranking", () => {
+  it("ranks a lifetime/UAF-class assumption above a bounds/validated-range one", () => {
+    const lifetime = assumption({
+      id: "z#1",
+      subject: "reply_z",
+      kind: "ownership-exclusive",
+      securityRelevance: "lifetime",
+      object: "struct zzz_obj",
+    });
+    const bounds = assumption({
+      id: "a#1",
+      subject: "reply_a",
+      kind: "validated-range",
+      securityRelevance: "bounds",
+      object: "struct aaa_obj",
+    });
+    expect(scoreDualViewWeaponizability(lifetime).score).toBeGreaterThan(
+      scoreDualViewWeaponizability(bounds).score,
+    );
+  });
+
+  it("relevance dominates kind: a lifetime/non-null outranks an authz/ownership-exclusive", () => {
+    const lifetimeWeakKind = assumption({ id: "l#1", subject: "s1", kind: "non-null", securityRelevance: "lifetime" });
+    const authzStrongKind = assumption({ id: "z#2", subject: "s2", kind: "ownership-exclusive", securityRelevance: "authz" });
+    expect(scoreDualViewWeaponizability(lifetimeWeakKind).score).toBeGreaterThan(
+      scoreDualViewWeaponizability(authzStrongKind).score,
+    );
+  });
+
+  it("SORTS the alphabetically-later high-value seam to the FRONT (the whole point)", () => {
+    // Two dual-view seams. The alphabetically-EARLIER object (aaa_obj) is a low-value
+    // bounds/validated-range assumption; the alphabetically-LATER object (zzz_obj) is a
+    // high-value lifetime/ownership-exclusive one. Both entries are unprivileged (no
+    // internal caller). The OLD alphabetical sort put aaa_obj first (and it would eat
+    // the witness budget); the NEW weaponizability sort must put zzz_obj first.
+    const src = `
+      int req_a(struct aaa_obj *o) { validate_len(o); o->x = 1; return 0; }
+      int rep_a(struct aaa_obj *o) { o->x = 2; return 0; }
+      int req_z(struct zzz_obj *o) { lock_obj(o); o->y = 1; return 0; }
+      int rep_z(struct zzz_obj *o) { o->y = 2; return 0; }
+    `;
+    const sources = [{ file: "d.c", text: src }];
+    const cg = buildCallGraph(sources);
+    const bodies = buildFunctionBodyIndex(sources);
+    const kept: Assumption[] = [
+      assumption({
+        id: "rep_a#1",
+        subject: "rep_a",
+        kind: "validated-range",
+        securityRelevance: "bounds",
+        provenance: "relied-on-cross-api",
+        object: "struct aaa_obj",
+        oracle: { mechanism: "establisher-absent-cross-api", target: "o", establisherToken: "validate_len" },
+      }),
+      assumption({
+        id: "rep_z#1",
+        subject: "rep_z",
+        kind: "ownership-exclusive",
+        securityRelevance: "lifetime",
+        provenance: "relied-on-cross-api",
+        object: "struct zzz_obj",
+        oracle: { mechanism: "establisher-absent-cross-api", target: "o", establisherToken: "lock_obj" },
+      }),
+    ];
+    const ctx = scanDualViewContexts(kept, cg, sources, bodies);
+    expect(ctx.length).toBe(2);
+    // Weaponizability ranking wins over the alphabetical (aaa < zzz) tiebreak.
+    expect(ctx[0].object).toBe("zzz_obj");
+    expect(ctx[1].object).toBe("aaa_obj");
   });
 });
 

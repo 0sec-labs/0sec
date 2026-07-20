@@ -40,15 +40,20 @@
  * static candidate into a real dynamic verdict.
  */
 
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ReproducerResult, CrashReport } from "../triage/kernel-oracle.js";
 import { runReproducerInKernelVm } from "../triage/kernel-vm-runner.js";
 import { LlmApiRuntime } from "../runtime/index.js";
 import type { RuntimeMode } from "@pwnkit/shared";
-import type {
-  Assumption,
-  AssumptionKind,
-  SecurityRelevance,
-  ViolatingContext,
+import {
+  isMechanizableEstablisher,
+  subjectSelfEnforces,
+  type Assumption,
+  type AssumptionKind,
+  type SecurityRelevance,
+  type ViolatingContext,
 } from "./assumption-mining.js";
 
 // ── The dual-view candidate (input to the oracle) ────────────────────────────────
@@ -572,6 +577,188 @@ export async function witnessAssumptionViolation(
   };
 }
 
+// ── CHEAP PRE-FILTER (drop the obviously-benign before the expensive witness) ─────
+//
+// The dual-view enumerator can surface 100+ candidates on a hot file; most are
+// pervasive-but-benign cross-phase pairs. Booting each through the ~minutes-long KASAN
+// oracle is the budget bottleneck, so a cheap DETERMINISTIC pre-filter removes the
+// candidates the oracle STRUCTURALLY cannot promote or that are illusory skips, leaving
+// the budget for a cleaner pool. CONSERVATIVE by design — every rule has a principled
+// reason a genuine bug cannot match it, and drops are logged.
+
+/**
+ * The securityRelevance classes the KASAN oracle can WITNESS: a real dynamic verdict
+ * requires a memory-safety splat (UAF / OOB / double-free). lifetime → UAF, type →
+ * type-confusion UAF, bounds → OOB. An `authz` (skipped capability check) or `other`
+ * assumption produces NO memory-safety splat, so the oracle can never confirm it —
+ * witnessing it only burns budget. (Those still flow through the static caller-scan
+ * path elsewhere; they are just not a fit for the dynamic dual-view oracle.)
+ */
+const WITNESSABLE_RELEVANCE = new Set<SecurityRelevance>(["lifetime", "type", "bounds"]);
+
+export interface DualViewPreFilterResult {
+  kept: ViolatingContext[];
+  dropped: Array<{ ctx: ViolatingContext; reason: string }>;
+}
+
+/**
+ * Drop obviously-benign dual-view contexts before the expensive oracle. Rules (each
+ * conservative, each logged):
+ *   1. securityRelevance not memory-safety → the KASAN oracle cannot witness it.
+ *   2. entryB SELF-ENFORCES the establisher (the same tested {@link subjectSelfEnforces}
+ *      1b uses) — the "skip" is really guarded, so it is not a latent bug.
+ *   3. entryB directly CALLS the establisher token/alias — both phases take the guard,
+ *      the dual-view "skip" is illusory (both-paths-clearly-same-lock).
+ * A context whose assumption is not in `byId` is KEPT (cannot judge → do not drop).
+ * Non-dual-view contexts are passed through untouched (not this oracle's class).
+ */
+export function preFilterDualViewContexts(
+  contexts: ViolatingContext[],
+  byId: Map<string, Assumption>,
+  bodies: Map<string, string>,
+): DualViewPreFilterResult {
+  const kept: ViolatingContext[] = [];
+  const dropped: Array<{ ctx: ViolatingContext; reason: string }> = [];
+  for (const ctx of contexts) {
+    if (!ctx.dualView) {
+      kept.push(ctx);
+      continue;
+    }
+    const a = byId.get(ctx.assumptionId);
+    if (!a) {
+      kept.push(ctx);
+      continue;
+    }
+    // Rule 1: only a memory-safety relevance can produce a witnessable KASAN splat.
+    if (!WITNESSABLE_RELEVANCE.has(a.securityRelevance)) {
+      dropped.push({
+        ctx,
+        reason: `securityRelevance '${a.securityRelevance}' is not memory-safety — the KASAN oracle can only witness lifetime/type/bounds (UAF/OOB/double-free), so this can never be confirmed dynamically`,
+      });
+      continue;
+    }
+    const entryBBody = bodies.get(ctx.caller);
+    if (entryBBody) {
+      // Rule 2: entryB self-enforces the establisher (illusory skip) — reuse 1b's check.
+      const selfReason = subjectSelfEnforces(entryBBody, a);
+      if (selfReason) {
+        dropped.push({ ctx, reason: `entryB ${ctx.caller}() ${selfReason}` });
+        continue;
+      }
+      // Rule 3: entryB directly calls the establisher token/alias (both-paths-same-guard).
+      const toks = [a.oracle.establisherToken, ...(a.oracle.establisherAliases ?? [])].filter(isMechanizableEstablisher);
+      const present = toks.find((t) => new RegExp(`\\b${escapeRe(t)}\\s*\\(`).test(entryBBody));
+      if (present) {
+        dropped.push({
+          ctx,
+          reason: `entryB ${ctx.caller}() directly calls establisher '${present}' — both phases take the guard (illusory dual-view skip)`,
+        });
+        continue;
+      }
+    }
+    kept.push(ctx);
+  }
+  return { kept, dropped };
+}
+
+// ── CROSS-RUN ROTATION (coverage accumulates instead of re-testing the same top-N) ─
+//
+// Without persistence, consecutive daily flywheel runs witness the SAME top-N
+// candidates every day (whatever ranks highest), so a 100+ candidate backlog is never
+// covered — the budget is spent re-confirming yesterday's refutations. A small durable
+// state records which candidates were already witnessed (+ verdict + when); each run
+// PREFERS un-witnessed candidates and skips ones witnessed within a TTL, re-including
+// them after the TTL (the code may have changed). Bounded + self-pruning.
+
+/** Rotation-state schema version — bump if the shape changes. */
+export const ROTATION_STATE_VERSION = 1 as const;
+/** Re-witness a candidate only after this long (the code may have changed since). */
+export const ROTATION_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+/** Drop rotation entries older than this on save (self-pruning window). */
+const ROTATION_RETENTION_MS = 2 * ROTATION_TTL_MS; // 28 days
+/** Hard cap on stored entries (drop oldest beyond this) so the file stays bounded. */
+const ROTATION_MAX_ENTRIES = 5000;
+
+export interface RotationEntry {
+  verdict: WitnessVerdict;
+  /** ISO timestamp of the run that witnessed this candidate. */
+  witnessedAt: string;
+  object: string;
+  entryA: string;
+  entryB: string;
+}
+
+export interface RotationState {
+  version: number;
+  /** Stable candidate id → its last witness record. */
+  candidates: Record<string, RotationEntry>;
+}
+
+/** Stable candidate id = short sha256 of object + entryA + entryB + file + assumption(+predicate). */
+export function candidateStableId(parts: {
+  object: string;
+  entryA: string;
+  entryB: string;
+  entryBFile?: string;
+  assumptionId: string;
+  predicate?: string;
+}): string {
+  const key = [parts.object, parts.entryA, parts.entryB, parts.entryBFile ?? "", parts.assumptionId, parts.predicate ?? ""].join(" ");
+  return createHash("sha256").update(key).digest("hex").slice(0, 16);
+}
+
+/** Stable id for a dual-view {@link ViolatingContext} (+ the mined predicate for cross-remine stability). */
+export function candidateStableIdFromContext(ctx: ViolatingContext, predicate: string): string {
+  return candidateStableId({
+    object: ctx.object ?? "",
+    entryA: ctx.pairedEntry ?? "",
+    entryB: ctx.caller,
+    entryBFile: ctx.callerFile,
+    assumptionId: ctx.assumptionId,
+    predicate,
+  });
+}
+
+/** Load rotation state (a fresh empty state on any read/parse/version error). */
+export function loadRotationState(path: string): RotationState {
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as RotationState;
+    if (raw && raw.version === ROTATION_STATE_VERSION && raw.candidates && typeof raw.candidates === "object") {
+      return raw;
+    }
+  } catch {
+    /* fresh */
+  }
+  return { version: ROTATION_STATE_VERSION, candidates: {} };
+}
+
+/** Prune expired entries + bound the entry count (keep the most recent). Pure. */
+export function pruneRotationState(state: RotationState, now = Date.now()): RotationState {
+  const entries = Object.entries(state.candidates)
+    .filter(([, e]) => {
+      const t = Date.parse(e.witnessedAt);
+      return Number.isFinite(t) && now - t < ROTATION_RETENTION_MS;
+    })
+    .sort((a, b) => Date.parse(b[1].witnessedAt) - Date.parse(a[1].witnessedAt))
+    .slice(0, ROTATION_MAX_ENTRIES);
+  return { version: ROTATION_STATE_VERSION, candidates: Object.fromEntries(entries) };
+}
+
+/** Write the (pruned) rotation state, creating parent dirs. */
+export function saveRotationState(path: string, state: RotationState): void {
+  const pruned = pruneRotationState(state);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(pruned, null, 2) + "\n", "utf8");
+}
+
+/** True when `id` was witnessed within the TTL (so this run should SKIP it). */
+export function isWitnessedWithinTtl(state: RotationState, id: string, now = Date.now(), ttlMs = ROTATION_TTL_MS): boolean {
+  const e = state.candidates[id];
+  if (!e) return false;
+  const t = Date.parse(e.witnessedAt);
+  return Number.isFinite(t) && now - t < ttlMs;
+}
+
 // ── Orchestration: run the oracle over the dual-view contexts of a hunt ──────────
 
 export interface WitnessDualViewInput {
@@ -582,8 +769,17 @@ export interface WitnessDualViewInput {
   /** Subsystem body index (for the source excerpts). */
   bodies: Map<string, string>;
   subsystem: string;
-  /** Cap the candidates run through the (expensive) dynamic oracle. Default 8. */
+  /** Cap the candidates run through the (expensive) dynamic oracle. Default 10. */
   maxCandidates?: number;
+  /**
+   * CROSS-RUN ROTATION state file (e.g. `<model-dir>/.witnessed-candidates.json`). When
+   * set, candidates witnessed within {@link ROTATION_TTL_MS} are SKIPPED so consecutive
+   * runs cover FRESH candidates; verdicts are recorded back after the run. Omit to
+   * disable rotation (every run selects the ranked top-N with no memory).
+   */
+  rotationStatePath?: string;
+  /** Clock injection for deterministic rotation tests (default Date.now()). */
+  now?: number;
   deps?: DynamicWitnessDeps;
   log?: (msg: string) => void;
 }
@@ -604,15 +800,53 @@ export interface WitnessDualViewResult {
 export async function witnessDualViewContexts(input: WitnessDualViewInput): Promise<WitnessDualViewResult> {
   const log = input.log ?? input.deps?.log ?? (() => {});
   const byId = new Map(input.kept.map((a) => [a.id, a]));
-  const cap = input.maxCandidates ?? 8;
+  const cap = input.maxCandidates ?? 10;
+  const now = input.now ?? Date.now();
+
+  // The contexts arrive WEAPONIZABILITY-RANKED from scanDualViewContexts (highest-value
+  // first). Keep only the dual-view class (the static caller-scan class is not this
+  // oracle's job) and preserve that order through pre-filter + rotation + the cap.
+  const dualCtxs = input.contexts.filter((c) => c.dualView);
+
+  // CHANGE 3 — cheap pre-filter: drop the obviously-benign before the expensive oracle.
+  const pf = preFilterDualViewContexts(dualCtxs, byId, input.bodies);
+  for (const d of pf.dropped) {
+    log(`[witness] pre-filter dropped ${d.ctx.caller}⇄${d.ctx.pairedEntry ?? "?"} on struct ${d.ctx.object ?? "?"}: ${d.reason}`);
+  }
+  if (pf.dropped.length) {
+    log(`[witness] pre-filter kept ${pf.kept.length}/${dualCtxs.length} dual-view candidate(s) (${pf.dropped.length} benign dropped)`);
+  }
+
+  // CHANGE 2 — cross-run rotation: prefer un-witnessed candidates so coverage
+  // accumulates across daily runs instead of re-testing the same ranked top-N.
+  const rotationState = input.rotationStatePath ? loadRotationState(input.rotationStatePath) : null;
+  const idOf = (ctx: ViolatingContext): string =>
+    candidateStableIdFromContext(ctx, byId.get(ctx.assumptionId)?.predicate ?? "");
+
+  const selected: ViolatingContext[] = [];
+  let skippedByRotation = 0;
+  for (const ctx of pf.kept) {
+    if (rotationState && isWitnessedWithinTtl(rotationState, idOf(ctx), now)) {
+      skippedByRotation++;
+      continue;
+    }
+    selected.push(ctx);
+    if (selected.length >= cap) break;
+  }
+  if (skippedByRotation) {
+    log(`[witness] rotation skipped ${skippedByRotation} candidate(s) already witnessed within the ${ROTATION_TTL_MS / 86_400_000}d TTL — testing fresh ones`);
+  }
+
   const candidates: DualViewCandidate[] = [];
-  for (const ctx of input.contexts) {
-    if (!ctx.dualView) continue;
+  const idByCandidate = new Map<DualViewCandidate, string>();
+  for (const ctx of selected) {
     const a = byId.get(ctx.assumptionId);
     if (!a) continue;
     const cand = dualViewCandidateFromContext(ctx, a, input.bodies, input.subsystem);
-    if (cand) candidates.push(cand);
-    if (candidates.length >= cap) break;
+    if (cand) {
+      candidates.push(cand);
+      idByCandidate.set(cand, idOf(ctx));
+    }
   }
   log(`[witness] running the dynamic oracle on ${candidates.length} dual-view candidate(s) (bypassing the static skeptic)`);
 
@@ -620,6 +854,24 @@ export async function witnessDualViewContexts(input: WitnessDualViewInput): Prom
   for (const cand of candidates) {
     results.push(await witnessAssumptionViolation(cand, { ...input.deps, log }));
   }
+
+  // CHANGE 2 — record verdicts so the NEXT run rotates to fresh candidates.
+  if (rotationState && input.rotationStatePath) {
+    const at = new Date(now).toISOString();
+    for (const r of results) {
+      const id = idByCandidate.get(r.candidate);
+      if (!id) continue;
+      rotationState.candidates[id] = {
+        verdict: r.verdict,
+        witnessedAt: at,
+        object: r.candidate.object,
+        entryA: r.candidate.entryA,
+        entryB: r.candidate.entryB,
+      };
+    }
+    saveRotationState(input.rotationStatePath, rotationState);
+  }
+
   return {
     results,
     confirmed: results.filter((r) => r.verdict === "confirmed"),
