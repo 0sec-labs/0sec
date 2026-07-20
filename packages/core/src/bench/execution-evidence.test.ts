@@ -138,7 +138,7 @@ describe("0research execution evidence projection", () => {
     expect(researchExecutionEvidenceRef(evidence)).toMatch(/^execution-evidence:sha256:/);
   });
 
-  it("emits schema v3 only when the declared candidate exactly matches executed variants", () => {
+  it("matches the non-promotable synthetic schema-v3 contract when the candidate matches executed variants", () => {
     const options = inputs();
     for (const lane of [options.development, options.heldOut, options.negativeControls]) {
       lane.run.tournament.variants[1].variant.promptOverrides = {
@@ -158,6 +158,13 @@ describe("0research execution evidence projection", () => {
         treeDigest: `sha256:${"7".repeat(64)}`,
       },
     });
+    const golden = JSON.parse(
+      readFileSync(new URL("./improvement-execution-evidence-v3.synthetic-fixture.json", import.meta.url), "utf8"),
+    ) as ResearchExecutionEvidence;
+    expect(evidence).toEqual(golden);
+    expect(researchExecutionEvidenceDigest(evidence)).toBe(
+      "sha256:456cc709c2230bdf2035f529631dcdf0b62d181bda36fac0f5215824851d2e59",
+    );
     expect(evidence.schemaVersion).toBe(3);
     expect(evidence.variantBinding).toEqual({
       mode: "candidate_change",
