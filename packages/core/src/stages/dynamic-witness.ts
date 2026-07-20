@@ -142,12 +142,93 @@ export function dualViewCandidateFromContext(
   };
 }
 
+// ── Witness MODE + race-shape detection ──────────────────────────────────────────
+//
+// The single-threaded synth boots one sequential PoC per round. That is STRUCTURALLY
+// unable to construct a multi-thread race/teardown interleave — so for a RACE-CLASS
+// seam (DirtyCred/DirtyPipe class: a put racing a use, a concurrent swap of the same
+// object, a double-fetch during use), a `refuted` from the single-thread synth only
+// means "my sequential PoC didn't trigger it", NOT "safe". The race mode adds a synth
+// path that emits a genuinely CONCURRENT PoC (N pthreads hammering entryA vs entryB on
+// the SAME object under a start barrier, CPU-pinned, 100k+ iterations) to WIDEN the
+// window. The KASAN boot + object-bound-splat witness check are IDENTICAL — only the
+// PoC SHAPE and the "give the race many attempts" differ.
+
+/** Which PoC shape the oracle synthesizes for a seam. */
+export type WitnessMode =
+  | "single" // the original single-threaded sequential PoC (unchanged)
+  | "race" // a concurrent multi-thread PoC (pthreads + barrier + affinity + hammer loop)
+  | "auto"; // pick `race` for a race-shaped seam, `single` otherwise (see resolveWitnessMode)
+
+/** Race-PoC knobs — worker-thread count and per-thread iteration budget. */
+export interface RaceConfig {
+  /** Concurrent worker threads driving entryA vs entryB. */
+  threads: number;
+  /** Iterations each worker loops to widen the race window. */
+  iters: number;
+}
+
+export const DEFAULT_RACE_THREADS = 4;
+export const DEFAULT_RACE_ITERS = 200_000;
+export const DEFAULT_RACE_CONFIG: RaceConfig = { threads: DEFAULT_RACE_THREADS, iters: DEFAULT_RACE_ITERS };
+
+/**
+ * The assumption kinds whose VIOLATION is inherently a concurrent/teardown INTERLEAVE
+ * (timing-dependent), not a sequential ordering bug. These are the DirtyCred/DirtyPipe
+ * family the single-threaded synth cannot express: a held-lock guarantee a concurrent
+ * unlocked path violates, a same-type object swapped underneath a consumer, a
+ * put racing a use, a double-init under concurrent re-entry, a value changing between
+ * check and use.
+ */
+const RACE_SHAPED_KINDS = new Set<AssumptionKind>([
+  "lock-held",
+  "ownership-exclusive",
+  "refcount-positive",
+  "called-once",
+  "revalidated",
+]);
+
+/**
+ * A seam is RACE-SHAPED when either signal holds:
+ *   1. its assumption kind is a concurrency/teardown kind (the primary signal), OR
+ *   2. entry B is unprivileged-reachable AND the relevance is memory-safety
+ *      (lifetime/type) — i.e. both phases are concurrently reachable from unprivileged
+ *      syscalls and the credible violation is a concurrent teardown/use of the object.
+ * Conservative: a non-race kind with no unpriv/memory-safety signal stays single.
+ */
+export function isRaceShapedCandidate(c: DualViewCandidate): boolean {
+  if (RACE_SHAPED_KINDS.has(c.kind)) return true;
+  if (c.unprivEntry && (c.securityRelevance === "lifetime" || c.securityRelevance === "type")) return true;
+  return false;
+}
+
+/**
+ * Resolve a {@link WitnessMode} against one candidate to the concrete PoC shape:
+ * `single`/`race` pass through; `auto` picks `race` for a race-shaped seam and
+ * `single` otherwise. `single` is guaranteed byte-for-byte the original path.
+ */
+export function resolveWitnessMode(mode: WitnessMode, c: DualViewCandidate): "single" | "race" {
+  if (mode === "single") return "single";
+  if (mode === "race") return "race";
+  return isRaceShapedCandidate(c) ? "race" : "single";
+}
+
 // ── PoC synthesis (LLM boundary — injectable for tests) ──────────────────────────
 
 export interface PocSynthesisInput {
   candidate: DualViewCandidate;
   /** 1-based synthesis round. */
   round: number;
+  /**
+   * The PoC SHAPE to synthesize. `"single"` (default/undefined) is the original
+   * single-threaded sequential PoC — its prompt is byte-for-byte unchanged. `"race"`
+   * asks for a genuinely CONCURRENT multi-thread PoC (pthreads + start barrier + CPU
+   * pinning + a high-iteration hammer loop) so a cross-phase RACE/teardown interleave
+   * the single-threaded synth cannot express gets many attempts to fire.
+   */
+  mode?: "single" | "race";
+  /** Race knobs (threads/iterations). Present when `mode === "race"`. */
+  race?: RaceConfig;
   /** The PoC from the previous round (present on rounds > 1). */
   priorCSource?: string;
   /**
@@ -194,8 +275,93 @@ const SYNTH_SYSTEM =
   "  5. Make it deterministic-ish and bounded: exit within ~20s even if it does not trigger (the harness caps " +
   "the run). Emit via the fenced C block only; a one-paragraph plan before it is fine.";
 
+const RACE_SYNTH_SYSTEM =
+  "You are a world-class Linux kernel exploit engineer writing a genuinely CONCURRENT, MULTI-THREAD " +
+  "PROOF-OF-CONCEPT race trigger, not a description and not a single-threaded stub. You are given a " +
+  "DUAL-VIEW / CROSS-PHASE assumption candidate whose violation is a RACE: a long-lived kernel object reached " +
+  "by TWO distinct entries/phases, where entry A holds a guarantee (a held lock / a validated ref / an " +
+  "exclusive owner / a live refcount) and entry B, run CONCURRENTLY on the SAME object instance, tears it " +
+  "down or mutates it out from under A — the DirtyCred/DirtyPipe class (a put racing a use, a same-type " +
+  "object swapped mid-use, a double-fetch, a concurrent teardown). Your job: produce a SELF-CONTAINED, " +
+  "UNPRIVILEGED C program that races entry A against entry B on the SAME object to trip a KASAN " +
+  "use-after-free / out-of-bounds / double-free.\n\n" +
+  "HARD RULES:\n" +
+  "  1. Output ONE complete C file in a single ```c fenced block. It MUST compile with " +
+  "`gcc -O0 -static -o poc poc.c -lpthread` on a modern glibc. Include <pthread.h>, <sched.h>, <unistd.h>. " +
+  "No external headers beyond libc/uapi; if a syscall wrapper is missing, use syscall(2) with __NR_ directly.\n" +
+  "  2. GENUINELY CONCURRENT STRUCTURE — all of these, not a sketch:\n" +
+  "     • A `pthread_barrier_t` start barrier so every worker begins the contended window at the SAME instant " +
+  "(initialize it for exactly the number of threads that wait on it, and have each worker `pthread_barrier_wait` " +
+  "before its hammer loop).\n" +
+  "     • N worker threads via `pthread_create` — roughly half driving entry A's path, half driving entry B's " +
+  "path, all on the SAME shared object (same fd / same socket / same registered buffer/id).\n" +
+  "     • CPU PINNING: each worker calls `sched_setaffinity` onto a DISTINCT core (cpu = worker_index % " +
+  "get_nprocs()) so A and B run on different physical CPUs and actually overlap.\n" +
+  "     • A tight HAMMER LOOP of a HIGH iteration count (100000+ per thread) around the contended syscall pair, " +
+  "and an OUTER loop that RE-ARMS the object (re-create/re-register) each attempt so the window is retried many " +
+  "times — a race almost never fires on the first pass.\n" +
+  "  3. Drop privileges early (setuid/setgid to 65534) once setup is unprivileged, OR run fully unprivileged " +
+  "from the start (SCM_RIGHTS, AF_UNIX, io_uring, userns) — the object must be reachable without root.\n" +
+  "  4. Do NOT print fabricated kernel logs. NEVER printf a 'BUG: KASAN' / 'use-after-free' / 'general " +
+  "protection' string — the witness is the KERNEL's splat on serial; a PoC that prints one is rejected as " +
+  "fabrication. Print only your own progress markers (e.g. iteration counts).\n" +
+  "  5. Bounded: cap total wall time (~20s) with an overall attempt ceiling and join all threads before exit, " +
+  "so it terminates even when the race does not fire (the harness also caps the run). Emit the fenced C block; " +
+  "a one-paragraph plan before it is fine.";
+
+/** The race-scaffold spec appended to the user prompt so the model emits the required concurrent structure. */
+function raceScaffoldSpec(c: DualViewCandidate, race: RaceConfig): string {
+  return (
+    `## RACE SYNTHESIS — emit a CONCURRENT multi-thread PoC\n` +
+    `This seam is race-shaped: the violation of '${c.predicate}' on struct ${c.object} is a concurrent ` +
+    `interleave, NOT a sequential A-then-B ordering. A single-threaded PoC CANNOT witness it. Race ` +
+    `entry A (${c.entryA}, which establishes ${c.establisherToken}) against entry B (${c.entryB}, which skips ` +
+    `it) on the SAME struct ${c.object} instance.\n\n` +
+    `REQUIRED structure (all must appear in the emitted C):\n` +
+    `- pthread_barrier_t start barrier; every worker pthread_barrier_wait()s before the hammer loop.\n` +
+    `- ${race.threads} worker threads via pthread_create: ~half drive ${c.entryA}'s syscall path, ~half drive ` +
+    `${c.entryB}'s, all on ONE shared object.\n` +
+    `- sched_setaffinity pinning each worker to a distinct CPU (cpu = idx % get_nprocs()).\n` +
+    `- a per-thread hammer loop of ${race.iters}+ iterations around the contended syscalls, inside an outer ` +
+    `loop that RE-ARMS the object each attempt.\n` +
+    `- join all threads; bounded ~20s wall clock; no fabricated splat strings.\n`
+  );
+}
+
+/** Compose the per-round race synthesis prompt (candidate + race scaffold + excerpts + prior feedback). */
+export function buildRaceSynthesisPrompt(input: PocSynthesisInput): string {
+  const c = input.candidate;
+  const race = input.race ?? DEFAULT_RACE_CONFIG;
+  const excerpts = c.sources
+    .map((s) => `### ${s.label} — ${s.fn}()\n\`\`\`c\n${clip(s.code, 8000)}\n\`\`\``)
+    .join("\n\n");
+  const header =
+    `## Dual-view RACE candidate (subsystem: ${c.subsystem})\n` +
+    `- object (type reached + contended by both views): struct ${c.object}\n` +
+    `- entry A (ESTABLISHES ${c.establisherToken}): ${c.entryA}()\n` +
+    `- entry B (SKIPS ${c.establisherToken}, race it): ${c.entryB}()\n` +
+    `- relied-on subject: ${c.subject}()\n` +
+    `- assumption kind: ${c.kind} (${c.securityRelevance})\n` +
+    `- relied-on precondition (entry B races to violate): ${c.predicate}\n` +
+    `- unprivileged-reachable entry B: ${c.unprivEntry ? "yes" : "unknown"}\n\n` +
+    `${c.detail}\n`;
+  if (input.round > 1) {
+    return (
+      `${header}\n${raceScaffoldSpec(c, race)}\n## Prior race PoC (round ${input.round - 1}) did NOT witness the bug — FIX it.\n` +
+      `\`\`\`c\n${clip(input.priorCSource ?? "", 9000)}\n\`\`\`\n\n` +
+      `## Boot feedback (compile error, or serial/dmesg with NO object-bound KASAN splat)\n` +
+      `\`\`\`\n${clip(input.priorFeedback ?? "(none captured)", 6000)}\n\`\`\`\n\n` +
+      `Diagnose why the race did not fire (window too narrow? threads not on the same instance? barrier/affinity ` +
+      `missing? too few iterations? compile error?) and emit a corrected complete concurrent C file that keeps ` +
+      `the required race structure.\n\n## Source excerpts\n\n${excerpts}`
+    );
+  }
+  return `${header}\n${raceScaffoldSpec(c, race)}\n## Source excerpts\n\n${excerpts}\n\nSynthesize the concurrent race PoC now.`;
+}
+
 /** Compose the per-round synthesis prompt (the candidate + excerpts + prior feedback). */
 export function buildSynthesisPrompt(input: PocSynthesisInput): string {
+  if (input.mode === "race") return buildRaceSynthesisPrompt(input);
   const c = input.candidate;
   const excerpts = c.sources
     .map((s) => `### ${s.label} — ${s.fn}()\n\`\`\`c\n${clip(s.code, 8000)}\n\`\`\``)
@@ -264,8 +430,9 @@ export function extractCFromLlmOutput(text: string): string | null {
 export function makeDefaultSynthesizePoc(_runtime: RuntimeMode, model?: string, timeoutMs = 300_000): SynthesizePocFn {
   return async (input) => {
     const rt = new LlmApiRuntime({ type: "api", timeout: timeoutMs, ...(model ? { model } : {}) });
+    const system = input.mode === "race" ? RACE_SYNTH_SYSTEM : SYNTH_SYSTEM;
     const res = await rt.executeNative(
-      SYNTH_SYSTEM,
+      system,
       [{ role: "user", content: [{ type: "text", text: buildSynthesisPrompt(input) }] }],
       [],
     );
@@ -481,6 +648,15 @@ export interface DynamicWitnessDeps {
   model?: string;
   /** Bounded PoC-repair budget (synthesis→boot→witness rounds). Default 3. */
   maxRounds?: number;
+  /**
+   * PoC-shape mode. `single` (unchanged) synthesizes a sequential PoC; `race` a
+   * concurrent multi-thread PoC; `auto` picks `race` for a race-shaped seam and
+   * `single` otherwise. Default `auto` — a NON-race seam resolves to `single`, so the
+   * default preserves the original single-thread behaviour unless race actually applies.
+   */
+  witnessMode?: WitnessMode;
+  /** Race knobs (threads/iters) used when the resolved mode is `race`. Defaults applied per field. */
+  raceConfig?: Partial<RaceConfig>;
   log?: (msg: string) => void;
 }
 
@@ -498,6 +674,17 @@ export async function witnessAssumptionViolation(
   const maxRounds = Math.max(1, deps.maxRounds ?? 3);
   const synthesize = deps.synthesizePoc ?? makeDefaultSynthesizePoc(deps.runtime ?? "api", deps.model);
   const boot = deps.bootPoc ?? defaultBootPoc;
+  // Resolve the PoC shape ONCE per candidate. `auto` (default) picks `race` only for a
+  // race-shaped seam; a non-race seam resolves to `single` and the synthesis input +
+  // prompt are byte-for-byte the original path.
+  const resolvedMode = resolveWitnessMode(deps.witnessMode ?? "auto", candidate);
+  const raceConfig: RaceConfig = {
+    threads: deps.raceConfig?.threads ?? DEFAULT_RACE_THREADS,
+    iters: deps.raceConfig?.iters ?? DEFAULT_RACE_ITERS,
+  };
+  if (resolvedMode === "race") {
+    log(`[witness]   race-shaped seam → CONCURRENT PoC synthesis (${raceConfig.threads} threads × ${raceConfig.iters} iters)`);
+  }
 
   const attempts: WitnessAttempt[] = [];
   let priorCSource: string | undefined;
@@ -508,7 +695,15 @@ export async function witnessAssumptionViolation(
     log(`[witness] ${candidate.assumptionId} ${candidate.entryA}⇄${candidate.entryB} on struct ${candidate.object} — round ${round}/${maxRounds}: synthesizing PoC`);
     let synth: PocSynthesisResult | null = null;
     try {
-      synth = await synthesize({ candidate, round, ...(priorCSource ? { priorCSource } : {}), ...(priorFeedback ? { priorFeedback } : {}) });
+      synth = await synthesize({
+        candidate,
+        round,
+        // Only the race path adds mode/race to the input — a single-resolved seam keeps
+        // the original input shape (mode undefined), so its prompt is byte-for-byte unchanged.
+        ...(resolvedMode === "race" ? { mode: "race" as const, race: raceConfig } : {}),
+        ...(priorCSource ? { priorCSource } : {}),
+        ...(priorFeedback ? { priorFeedback } : {}),
+      });
     } catch (err) {
       log(`[witness]   synthesis error: ${err instanceof Error ? err.message : String(err)}`);
     }

@@ -47,6 +47,21 @@ interface AssumptionHuntOpts {
   witnessRounds?: string;
   witnessCandidates?: string;
   witnessModel?: string;
+  witnessMode?: string;
+  witnessRaceThreads?: string;
+  witnessRaceIters?: string;
+}
+
+type WitnessModeName = "single" | "race" | "auto";
+
+/** Parse `--witness-mode single|race|auto` → validated mode (default undefined = engine's `auto`). */
+function parseWitnessMode(raw: string | undefined): WitnessModeName | undefined {
+  if (raw === undefined) return undefined;
+  const m = raw.trim();
+  if (m !== "single" && m !== "race" && m !== "auto") {
+    throw new Error(`invalid --witness-mode '${raw}' (allowed: single, race, auto)`);
+  }
+  return m;
 }
 
 /** Run the seedless assumption-mining hunt and return a JSON-ready outcome. Exposed for testing. */
@@ -95,6 +110,17 @@ export async function runAssumptionHuntCli(sourceRoot: string, opts: AssumptionH
             ...(opts.witnessModel ? { model: opts.witnessModel } : {}),
             ...(opts.witnessRounds ? { maxRounds: parseInt(opts.witnessRounds, 10) } : {}),
             ...(opts.witnessCandidates ? { maxCandidates: parseInt(opts.witnessCandidates, 10) } : {}),
+            // Race-capable witness knobs: mode defaults to the engine's `auto`; the race
+            // thread/iteration knobs only override the defaults when supplied.
+            ...(parseWitnessMode(opts.witnessMode) ? { witnessMode: parseWitnessMode(opts.witnessMode) } : {}),
+            ...(opts.witnessRaceThreads || opts.witnessRaceIters
+              ? {
+                  raceConfig: {
+                    ...(opts.witnessRaceThreads ? { threads: parseInt(opts.witnessRaceThreads, 10) } : {}),
+                    ...(opts.witnessRaceIters ? { iters: parseInt(opts.witnessRaceIters, 10) } : {}),
+                  },
+                }
+              : {}),
             log,
           },
         }
@@ -189,6 +215,9 @@ export function registerAssumptionHuntCommand(program: Command): void {
     .option("--witness-rounds <N>", "Bounded PoC-repair rounds per dual-view candidate (default 3)")
     .option("--witness-candidates <N>", "Cap dual-view candidates run through the dynamic oracle (default 10)")
     .option("--witness-model <name>", "Model for PoC synthesis (default: runtime default)")
+    .option("--witness-mode <mode>", "PoC shape: single (sequential), race (concurrent multi-thread), auto (race for race-shaped seams; default)")
+    .option("--witness-race-threads <N>", "Race-mode worker threads driving entryA vs entryB (default 4)")
+    .option("--witness-race-iters <N>", "Race-mode per-thread hammer iterations to widen the race window (default 200000)")
     .option("--excerpt-dir <path>", "Where finder-targeting excerpts are written (default: os tmpdir)")
     .option("--runtime <mode>", "Engine runtime (default api)")
     .option("--format <fmt>", "Output format (json)", "json")

@@ -507,6 +507,27 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
     expect(md).toContain("BUG: KASAN");
   });
 
+  it("threads the race-capable witness knobs (witnessMode + race threads/iters) into the oracle deps", async () => {
+    const hunt = async (input: SubsystemInvariantHuntInput): Promise<SubsystemInvariantHuntResult> => ({
+      model: { modelVersion: 1, subsystem: input.subsystem, subsystemFiles: input.subsystemFiles, objects: [], builtAt: "t" },
+      modelPath: input.modelPath, modelLoaded: false, violations: [],
+      plan: { model: {} as never, violations: [], brief: {} as never, candidates: [] },
+      hunt: { findings: [], confirmed: [], duplicates: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
+    });
+    let seenDeps: Record<string, unknown> | undefined;
+    const dualView = async (input: RecencyDualViewInput): Promise<RecencyDualViewResult> => {
+      seenDeps = input.witnessBudget?.deps as Record<string, unknown> | undefined;
+      return { candidateCount: 1, witnessAttempted: 0, survivors: [], refuted: 0, inconclusive: 0 };
+    };
+    await runRecencyHunt({
+      tree: "/root/linux-next", hours: 24, runtime: "api", modelDir: "/tmp/rf-models",
+      dynamicWitness: { maxCandidatesPerRun: 4, witnessMode: "race", raceThreads: 8, raceIters: 12345 },
+      deps: { git, classify, hunt, detect: noExtra, dualView },
+    });
+    expect(seenDeps?.witnessMode).toBe("race");
+    expect(seenDeps?.raceConfig).toEqual({ threads: 8, iters: 12345 });
+  });
+
   it("without a dynamicWitness budget, an explicit dual-view detector enumerates seams but witnesses nothing", async () => {
     const hunt = async (input: SubsystemInvariantHuntInput): Promise<SubsystemInvariantHuntResult> => ({
       model: { modelVersion: 1, subsystem: input.subsystem, subsystemFiles: input.subsystemFiles, objects: [], builtAt: "t" },
