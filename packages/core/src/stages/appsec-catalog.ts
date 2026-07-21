@@ -75,9 +75,21 @@ export interface AppsecArchetype {
   /** The engine lens/seed id that implements this archetype, or null (this registry IS the implementation). */
   engineLens: string | null;
   route: AppsecRoute;
+  /**
+   * Provenance: how this archetype entered the registry. "authored" (the human
+   * seed pack) is the implicit default when the field is absent; "synthesized"
+   * marks an entry the self-improving lens loop generated + validated. Optional
+   * + additive so the seed entries (which omit it) parse unchanged.
+   */
+  source?: "authored" | "synthesized";
+  /** ISO-8601 stamp of when the lens loop validated a synthesized entry. */
+  validatedAt?: string;
+  /** The miss refs (file:line) the synthesized entry was built to close. */
+  missRefs?: string[];
 }
 
-interface RawAppsecArchetype {
+/** The on-disk (snake_case) shape. Exported so the safe writer emits byte-identical entries. */
+export interface RawAppsecArchetype {
   uid: string;
   id: string;
   domain: string;
@@ -91,6 +103,10 @@ interface RawAppsecArchetype {
   confirmable: string;
   engine_lens: string | null;
   route: string;
+  /** Provenance (optional/additive — absent on the authored seed entries). */
+  source?: "authored" | "synthesized";
+  validated_at?: string;
+  miss_refs?: string[];
 }
 
 function mapRawAppsecArchetypes(raw: RawAppsecArchetype[]): AppsecArchetype[] {
@@ -108,6 +124,9 @@ function mapRawAppsecArchetypes(raw: RawAppsecArchetype[]): AppsecArchetype[] {
     confirmableNote: a.confirmable,
     engineLens: a.engine_lens,
     route: a.route as AppsecRoute,
+    ...(a.source ? { source: a.source } : {}),
+    ...(a.validated_at ? { validatedAt: a.validated_at } : {}),
+    ...(a.miss_refs ? { missRefs: [...a.miss_refs] } : {}),
   }));
 }
 

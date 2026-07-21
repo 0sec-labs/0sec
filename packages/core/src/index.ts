@@ -362,7 +362,52 @@ export {
   appsecArchetypeToFinderLens,
   loadAppsecFinderLenses,
 } from "./stages/appsec-catalog.js";
-export type { AppsecRoute, AppsecArchetype } from "./stages/appsec-catalog.js";
+export type { AppsecRoute, AppsecArchetype, RawAppsecArchetype } from "./stages/appsec-catalog.js";
+// Self-improving lens loop — miss ─▶ synthesize ─▶ bench-validate ─▶ register.
+// Turns a confirmed finder MISS into a new, validated, registered appsec lens.
+// Fail-closed; adds LENSES, never confirms FINDINGS. See stages/lens-synthesis/.
+export {
+  runLensSynthesisLoop,
+  captureLensCandidates,
+  coverageGapToCandidate,
+  confirmedMissToCandidate,
+  persistMisses,
+  synthesizeArchetypes,
+  clusterCandidates,
+  makeDefaultLensSynthesisModel,
+  isCrossLanguageHint,
+  parseSynthesizedContent,
+  SYNTH_TOOL,
+  SYNTH_TOOL_NAME,
+  validateCandidateLens,
+  makeFinderLensProbe,
+  registerArchetype,
+  buildRegistryEntry,
+} from "./stages/lens-synthesis/index.js";
+export type {
+  LensCandidate,
+  LensCandidateSource,
+  ConfirmedMiss,
+  MissInput,
+  SynthesizedArchetype,
+  SynthesizedArchetypeContent,
+  ValidationFixture,
+  ValidationCorpus,
+  LensProbe,
+  LensProbeOutcome,
+  LensValidationReport,
+  LensScorecardSummary,
+  RegisteredLens,
+  LensSynthesisInput,
+  LensSynthesisDeps,
+  LensSynthesisResult,
+  LensSynthesisModel,
+  LensCandidateCluster,
+  SynthesizeOptions,
+  FinderLensProbeOptions,
+  ValidateOptions,
+  RegisterOutcome,
+} from "./stages/lens-synthesis/index.js";
 export {
   checkNovelty,
   syncLoreMirror,
@@ -632,6 +677,7 @@ export type {
   HuntScanOptions,
   HuntScanResult,
   HuntFindingRecord,
+  CoverageGap,
   FinderLens,
   VerifyLens,
   MultiLensVerifierOptions,
