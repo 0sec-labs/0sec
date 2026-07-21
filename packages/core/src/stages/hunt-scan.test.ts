@@ -334,6 +334,96 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
     expect(res.finderCompleted).toBe(1);
     expect(res.finderCompleted + res.finderTimedOut + res.finderErrored).toBe(res.scanned);
   });
+
+  it("a finder that streams a finding then hangs surfaces the partial (tagged partial/timed-out, NOT confirmed) AND records an incomplete-coverage entry", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "20";
+    process.env.HUNT_FINDER_MAX_RETRIES = "0";
+    agenticScanMock.mockReset();
+    // The hung finder emits ONE `finding` event (raw save_finding args) before
+    // it hangs forever — mirrors agentic-scanner.ts streaming a save_finding
+    // per turn, then the Codex backend stalling mid-call.
+    agenticScanMock.mockImplementation(
+      async ({
+        config,
+        onEvent,
+      }: {
+        config: { target: string };
+        onEvent?: (e: { type: string; message: string; data?: unknown }) => void;
+      }) => {
+        if (config.target === "/src/hangs.c") {
+          onEvent?.({
+            type: "finding",
+            message: "method-authz bypass",
+            data: {
+              title: "method-authz bypass",
+              severity: "high",
+              category: "missing-validation",
+              description: "partial lead observed before the finder hung",
+              evidence_request: "GET /admin",
+              evidence_response: "200 OK",
+            },
+          });
+          return new Promise(() => {}); // never resolves — hang after streaming the partial
+        }
+        return { findings: [] };
+      },
+    );
+
+    // Capture the finding + its status AT the verify gate: if the code had
+    // auto-confirmed the partial, status would be "confirmed" here.
+    const statusAtVerify: string[] = [];
+    const verify: NonNullable<Parameters<typeof runHuntScan>[0]["verify"]> = async (finding) => {
+      statusAtVerify.push(finding.status);
+      return { confirmed: false, reason: "unproven partial" };
+    };
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/hangs.c" }],
+      runtime: "api",
+      concurrency: 1,
+      verify,
+    });
+
+    // (a) The partial is surfaced instead of an empty array.
+    expect(res.finderTimedOut).toBe(1);
+    expect(res.findings).toHaveLength(1);
+    const partial = res.findings[0];
+    expect(partial.title).toBe("method-authz bypass");
+    expect(partial.severity).toBe("high");
+    expect(partial.triageNote).toContain("partial/timed-out");
+
+    // (b) A structured incomplete-coverage entry is recorded for the cell.
+    expect(res.incompleteCoverage).toEqual([
+      { file: "/src/hangs.c", lensId: "", reason: "timeout", budgetMs: 20 },
+    ]);
+
+    // (c) The partial is adjudicated by verify — reached it as "discovered",
+    // never auto-confirmed, and (verify said no) is NOT in `confirmed`.
+    expect(statusAtVerify).toEqual(["discovered"]);
+    expect(partial.status).not.toBe("confirmed");
+    expect(res.confirmed).toHaveLength(0);
+  });
+
+  it("a finder that hangs with NO streamed findings still records the coverage gap (signal is independent of partial recovery)", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "20";
+    process.env.HUNT_FINDER_MAX_RETRIES = "0";
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async () => new Promise(() => {})); // hang, emit nothing
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/silent.c" }],
+      runtime: "api",
+      concurrency: 1,
+    });
+
+    expect(res.finderTimedOut).toBe(1);
+    expect(res.findings).toHaveLength(0);
+    expect(res.incompleteCoverage).toEqual([
+      { file: "/src/silent.c", lensId: "", reason: "timeout", budgetMs: 20 },
+    ]);
+  });
 });
 
 describe("runHuntScan — memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1)", () => {
