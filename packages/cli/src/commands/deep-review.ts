@@ -39,6 +39,13 @@ import { statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
 import type { Finding, RuntimeMode } from "@pwnkit/shared";
 import type { FinderLens, VerifyLens } from "@pwnkit/core";
+// The one non-type value import from the core barrel here: the appsec lens
+// registry loader. The barrel is already eagerly loaded at CLI boot
+// (packages/cli/src/index.ts imports maybeSubscribeCloudEventSink from it), so
+// this adds no new startup cost; it lets `defaultFinderLenses` stay a plain
+// module-eval const (its reference identity is relied on by selectProfileLenses
+// and its tests) while sourcing the appsec lenses from the data-driven JSON.
+import { loadAppsecFinderLenses } from "@pwnkit/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
 
 /** Hard cap mirroring the review pipeline's 5000-source-file scope limit
@@ -104,13 +111,13 @@ function defaultModels(): string[] | undefined {
 const DEFAULT_CONCURRENCY = 8;
 
 /**
- * Generic finder lenses for profiles without a bespoke on-chain lens set
- * (default / c-library / linux-kernel / cardano-haskell / unknown). Splits a
- * broad source review into focused best-of-N sweeps whose findings UNION —
- * the same depth-method shape as the on-chain `*FinderLenses`, but language-
- * and domain-agnostic.
+ * The four broad, always-present generic finder lenses. Language- and domain-
+ * agnostic best-of-N sweeps whose findings UNION — the same depth-method shape
+ * as the on-chain `*FinderLenses`. These stay a hardcoded const (not data-
+ * driven) because they are the deliberately-coarse fallback buckets;
+ * {@link defaultFinderLenses} widens them with the data-driven appsec pack.
  */
-export const defaultFinderLenses: FinderLens[] = [
+const genericFinderLenses: FinderLens[] = [
   {
     id: "memory-safety",
     challengeHint:
@@ -132,6 +139,21 @@ export const defaultFinderLenses: FinderLens[] = [
       "Hunt SECRETS / CRYPTO misuse only: hardcoded credentials, a weak/predictable RNG used for security, a broken or misused cryptographic primitive (ECB, static IV/nonce, missing MAC verification, non-constant-time compare), or a signature/token check that can be forged or replayed. Cite the exact misuse.",
   },
 ];
+
+/**
+ * Generic finder lenses for profiles without a bespoke on-chain lens set
+ * (default / c-library / linux-kernel / cardano-haskell / unknown): the four
+ * coarse {@link genericFinderLenses} UNIONED with the data-driven, cross-
+ * language appsec lens registry ({@link loadAppsecFinderLenses}, backed by
+ * `packages/core/src/stages/data/appsec-archetypes.json`). The appsec lenses
+ * ADD coverage — os-command-injection, method-authz-differential, template-
+ * xss/SSTI, sso-trust, and resource-exhaustion-DoS — the four generic buckets
+ * under-weighted (the Swiss engagement misses). Each appsec lens has a distinct
+ * id, so they union with the generics rather than colliding on the best-of-N
+ * group key. On-chain profiles keep their bespoke sets and never see these (see
+ * {@link selectProfileLenses}); only the default fallback bucket is widened.
+ */
+export const defaultFinderLenses: FinderLens[] = [...genericFinderLenses, ...loadAppsecFinderLenses()];
 
 /**
  * Generic verify lenses (multi-lens refute quorum) for the default profile
