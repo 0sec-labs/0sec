@@ -228,6 +228,93 @@ export function selectProfileLenses(profile: string | undefined, sets: ProfileLe
 }
 
 /**
+ * Stack-aware DEFAULT-profile lens selection (B3).
+ *
+ * The generic default fallback runs ALL {@link defaultFinderLenses} — including
+ * `memory-safety` — on every non-on-chain target. On managed/GC'd code (C#,
+ * Java, JS/TS, Python, Go, Ruby, PHP) that lens is pure noise: there is no
+ * manual allocation / bounds / lifetime surface for it to bite, so it burns a
+ * finder slot and returns nothing. This is the exact Swiss-miss shape — a
+ * deep_review of a C#/Angular app ran memory-safety and found nothing while the
+ * real authz/injection surface went under-weighted.
+ *
+ * We infer the target's stack from its candidate file extensions and, ONLY on
+ * the default fall-through, drop `memory-safety` for a clearly-managed stack
+ * (widening the appsec/authz angles that actually apply) while keeping the full
+ * set — memory-safety primary — for native C/C++/Rust and for mixed/unknown
+ * trees (the safe default). On-chain profiles are untouched; they never reach
+ * this path (see {@link selectProfileLenses}).
+ */
+type StackKind = "native" | "managed-web" | "mixed" | "unknown";
+
+/** Extensions whose presence signals a NATIVE (manual-memory) stack — the one
+ *  place `memory-safety` is the primary angle. Rust is included per the task:
+ *  its `unsafe` surface keeps memory-safety relevant. */
+const NATIVE_SOURCE_EXTS = new Set([
+  "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "hxx", "rs",
+]);
+/** Extensions signalling a MANAGED / web / GC'd stack, where memory-safety is
+ *  noise and the appsec + authz + injection lenses carry the real surface.
+ *  Includes the C# project-manifest extensions (`.csproj`/`.sln`/…) since those
+ *  are an unambiguous managed signal even when they surface as a candidate. */
+const MANAGED_WEB_EXTS = new Set([
+  "cs", "csproj", "sln", "vbproj", "fsproj",           // .NET / C#
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "vue", "svelte", // JS/TS front+back
+  "java", "kt", "kts", "scala",                        // JVM
+  "py", "rb", "php", "go",                             // scripting / Go
+  "html", "htm", "cshtml", "razor", "aspx", "jsp",     // web templates
+]);
+
+/** Lowercased final extension of a path's basename (`Foo.t.sol` → `sol`), or ""
+ *  for an extensionless file. Backslash-aware for Windows-style candidate paths. */
+function fileExt(path: string): string {
+  const base = path.split(/[/\\]+/).pop() ?? path;
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/**
+ * Infer the target stack from candidate file extensions. Native-only →
+ * "native"; managed-only → "managed-web"; both present → "mixed"; neither
+ * recognized → "unknown". Pure + testable — the signal comes only from the
+ * paths passed in (the enumerated candidates), never the filesystem.
+ */
+export function detectStack(files: string[]): StackKind {
+  let native = 0;
+  let managed = 0;
+  for (const f of files) {
+    const ext = fileExt(f);
+    if (NATIVE_SOURCE_EXTS.has(ext)) native++;
+    else if (MANAGED_WEB_EXTS.has(ext)) managed++;
+  }
+  if (native === 0 && managed === 0) return "unknown";
+  if (native === 0) return "managed-web";
+  if (managed === 0) return "native";
+  return "mixed";
+}
+
+/** The generic memory-safety lens id — the one lens dropped for a managed
+ *  stack. Must match {@link genericFinderLenses}[0]; the managed-web test guards
+ *  the drift (it asserts the lens is gone AND the rest remain). */
+const MEMORY_SAFETY_LENS_ID = "memory-safety";
+
+/**
+ * Stack-aware finder-lens set for the DEFAULT profile fall-through. For a
+ * clearly-managed stack, drop `memory-safety` (noise on GC'd code), keeping the
+ * appsec + input-validation + auth-logic + secrets-crypto angles that apply.
+ * For native and for mixed/unknown, return {@link defaultFinderLenses}
+ * UNCHANGED — same reference — so memory-safety stays primary and the existing
+ * reference-identity contract holds. Pure over its `defaultFinder` argument.
+ */
+export function selectDefaultFinderLensesForStack(files: string[], defaultFinder: FinderLens[]): FinderLens[] {
+  if (detectStack(files) === "managed-web") {
+    return defaultFinder.filter((l) => l.id !== MEMORY_SAFETY_LENS_ID);
+  }
+  // native | mixed | unknown → full set, memory-safety primary (unchanged).
+  return defaultFinder;
+}
+
+/**
  * EVM/Foundry repos vendor their dependencies under `lib/` (forge-std,
  * openzeppelin, solmate, …), keep unit tests as `*.t.sol` under `test/`, and
  * put deploy helpers under `script/` / `scripts/`. NONE of that is protocol
@@ -294,12 +381,66 @@ export interface DeepReviewEnumResult {
   overCap: boolean;
 }
 
+/** Top-level module (first path segment under `scopeRoot`) a candidate belongs
+ *  to; root-level files share the `"."` bucket. Backslash-aware. Used to spread
+ *  the candidate budget across subsystems instead of clustering on one. */
+function topLevelModule(absPath: string, scopeRoot: string): string {
+  const rel = relative(scopeRoot, absPath);
+  if (rel === "" || rel.startsWith("..")) return ".";
+  const segments = rel.split(/[/\\]+/).filter(Boolean);
+  return segments.length > 1 ? segments[0]! : ".";
+}
+
+/**
+ * Module-spread candidate selection (B1). Purely largest-first clusters the
+ * whole budget on the single biggest subsystem — a trustbroker scan spent all 8
+ * slots inside the `waf/config` module and never reached `HrdController`. To
+ * guarantee breadth we group ranked files by top-level module and round-robin
+ * across modules (visited in order of their largest file), still preferring
+ * larger files WITHIN a module. Every module gets a candidate before any module
+ * gets its second, so the budget spans subsystems. Deterministic; a single-
+ * module tree degrades to plain largest-first (identical to the old behavior).
+ */
+export function selectCandidatesModuleSpread(
+  entries: { p: string; size: number }[],
+  scopeRoot: string,
+  maxCandidates: number,
+): string[] {
+  const cmp = (a: { p: string; size: number }, b: { p: string; size: number }): number =>
+    b.size - a.size || a.p.localeCompare(b.p);
+  const byModule = new Map<string, { p: string; size: number }[]>();
+  for (const e of entries) {
+    const key = topLevelModule(e.p, scopeRoot);
+    let group = byModule.get(key);
+    if (!group) byModule.set(key, (group = []));
+    group.push(e);
+  }
+  const groups = [...byModule.values()];
+  for (const g of groups) g.sort(cmp);
+  // Modules ordered by their largest (already-sorted head) file — deterministic.
+  groups.sort((a, b) => cmp(a[0]!, b[0]!));
+  const cap = Math.max(1, maxCandidates);
+  const out: string[] = [];
+  for (let round = 0; out.length < cap; round++) {
+    let advanced = false;
+    for (const g of groups) {
+      if (round >= g.length) continue;
+      out.push(g[round]!.p);
+      advanced = true;
+      if (out.length >= cap) break;
+    }
+    if (!advanced) break; // every module exhausted
+  }
+  return out;
+}
+
 /**
  * Seedless candidate enumeration: count the scope (short-circuit at the cap),
- * then collect and rank source files largest-first, capping to `maxCandidates`.
- * Largest-first prioritizes the densest surface (mirrors the surface-hunt
- * enumeration in `@pwnkit/benchmark`'s hunt-surface.ts). Pure over its injected
- * helpers. Returns absolute paths (as `collectScopeFiles` does).
+ * then collect and rank source files, capping to `maxCandidates`. Ranking is
+ * module-spread (see {@link selectCandidatesModuleSpread}): larger files win
+ * within a module, but the budget round-robins across top-level modules so a
+ * single dense subsystem cannot starve the others of coverage. Pure over its
+ * injected helpers. Returns absolute paths (as `collectScopeFiles` does).
  */
 export function enumerateDeepReviewCandidates(
   scopeRoot: string,
@@ -307,7 +448,7 @@ export function enumerateDeepReviewCandidates(
   opts: {
     maxCandidates: number;
     fileCap?: number;
-    /** Drop candidate paths for which this returns true BEFORE the largest-first
+    /** Drop candidate paths for which this returns true BEFORE the module-spread
      *  cap — used to keep test/vendored files out of the evm-onchain finder set
      *  so the budget goes to protocol source (see {@link isNonProtocolEvmPath}). */
     exclude?: (absPath: string) => boolean;
@@ -321,12 +462,10 @@ export function enumerateDeepReviewCandidates(
   const totalFiles = helpers.countScopeFilesUpTo(scopeRoot, fileCap);
   const overCap = totalFiles > fileCap;
   const files = helpers.collectScopeFiles(scopeRoot, { maxFiles: fileCap });
-  const candidates = files
+  const entries = files
     .filter((p) => !exclude(p))
-    .map((p) => ({ p, size: fileSize(p) }))
-    .sort((a, b) => b.size - a.size || a.p.localeCompare(b.p))
-    .slice(0, Math.max(1, opts.maxCandidates))
-    .map((x) => x.p);
+    .map((p) => ({ p, size: fileSize(p) }));
+  const candidates = selectCandidatesModuleSpread(entries, scopeRoot, opts.maxCandidates);
   return { candidates, totalFiles, overCap };
 }
 
@@ -451,7 +590,7 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       };
     }
 
-    const { finderLenses, verifyLenses, matchedProfile } = selectProfileLenses(opts.profile, {
+    const { finderLenses: selectedFinderLenses, verifyLenses, matchedProfile } = selectProfileLenses(opts.profile, {
       evmFinderLenses,
       evmVerifyLenses,
       solanaFinderLenses,
@@ -463,6 +602,17 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       moveFinderLenses,
       moveVerifyLenses,
     });
+
+    // B3 — stack-aware lens selection: ONLY on the default fall-through. On a
+    // clearly-managed target (C#/JS/TS/Java/Python/Go …) drop the memory-safety
+    // lens (noise on GC'd code) and lean on the appsec/authz/injection angles;
+    // native and mixed/unknown trees keep the full set (memory-safety primary),
+    // returned by the SAME reference so nothing changes for them. On-chain
+    // profiles never enter this branch — their bespoke sets are untouched.
+    const finderLenses =
+      matchedProfile === "default"
+        ? selectDefaultFinderLensesForStack(candidatePaths, selectedFinderLenses)
+        : selectedFinderLenses;
 
     log(
       `[deep-review] ${candidatePaths.length} candidate file(s) (of ${totalFiles}${overCap ? "+" : ""}) ` +
