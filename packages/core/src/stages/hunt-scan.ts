@@ -31,6 +31,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import type { Finding, RuntimeMode, ScanConfig } from "@pwnkit/shared";
 import { agenticScan } from "../agentic-scanner.js";
 import {
@@ -250,6 +251,27 @@ export interface HuntFindingRecord {
   duplicate: boolean;
 }
 
+/**
+ * One (file × lens) coverage cell that was NOT fully hunted because its finder
+ * exceeded the wall-clock budget and was abandoned (see HUNT_FINDER_TIMEOUT_MS).
+ * Emitted as a structured signal — not just a log line — so a future
+ * self-improving coverage loop can consume "these cells were never fully
+ * hunted" and re-hunt them. Any findings the abandoned finder streamed BEFORE
+ * the hang are still returned in {@link HuntScanResult.findings} (tagged
+ * partial/timed-out); this record is the orthogonal "coverage is incomplete"
+ * signal, independent of whether partials were recovered.
+ */
+export interface CoverageGap {
+  /** Candidate path (the file / dir / subsystem site the finder was hunting). */
+  file: string;
+  /** Specialized-lens id for this cell ("" for the default sentinel lens). */
+  lensId: string;
+  /** Why the cell is incomplete. Currently only the finder wall-clock timeout. */
+  reason: "timeout";
+  /** The per-finder wall-clock budget (ms) that was exceeded (see huntFinderTimeoutMs). */
+  budgetMs: number;
+}
+
 export interface HuntScanResult {
   /** Every candidate finding the finders surfaced. */
   findings: Finding[];
@@ -276,6 +298,17 @@ export interface HuntScanResult {
   warnings: string[];
   /** The full per-finding tuple for every raw finding — see {@link HuntFindingRecord}. */
   records: HuntFindingRecord[];
+  /**
+   * (file × lens) cells whose finder was abandoned for exceeding the
+   * per-finder wall-clock budget — see {@link CoverageGap}. Optional/additive:
+   * absent on callers/fakes that predate it, empty when every finder finished
+   * within budget. This is the substrate a future self-improving coverage loop
+   * consumes to re-hunt the cells that were never fully explored. Distinct from
+   * `findings`: partials the abandoned finder streamed before the hang are
+   * still in `findings` (tagged partial/timed-out); this only says the cell's
+   * coverage is INCOMPLETE.
+   */
+  incompleteCoverage?: CoverageGap[];
 }
 
 // ── Stage ────────────────────────────────────────────────────────────────────
@@ -403,6 +436,60 @@ async function runFinderResilient<T>(
     }
     return { status: "errored", error: lastError };
   }
+}
+
+/** Provenance tag stamped on findings recovered from an abandoned (timed-out) finder. */
+const PARTIAL_TIMEOUT_PROVENANCE = "partial/timed-out";
+
+const FINDING_SEVERITIES: ReadonlySet<string> = new Set(["critical", "high", "medium", "low", "info"]);
+
+/**
+ * Reconstruct a {@link Finding} from a streamed `save_finding` event payload
+ * captured while a finder was running, used ONLY to recover partial evidence
+ * from a finder that HUNG and got abandoned at the timeout (its normalized
+ * report never returns). agenticScan emits one `finding` event per save_finding
+ * tool call as the finder works (agentic-scanner.ts onTurn handler), carrying
+ * the raw tool arguments in `event.data`.
+ *
+ * The canonical args→Finding mapping lives in the tool executor
+ * (agent/tools.ts `saveFinding`); we cannot reach it from here without the
+ * finder completing, so this mirrors the structurally load-bearing subset so a
+ * recovered lead enters the SAME verify gate as a completed finder's findings.
+ * Deliberately conservative — some streamed calls are ones the executor would
+ * have rejected (empty-PoC / fabricated-path), so we do NOT treat these as
+ * ground truth: `status` stays "discovered" (verify is the sole adjudicator —
+ * NEVER auto-confirmed) and `triageNote` records the partial/timed-out
+ * provenance. Returns null when the payload lacks the minimum (a title) to be a
+ * real lead.
+ */
+function partialFindingFromEvent(data: unknown): Finding | null {
+  if (!data || typeof data !== "object") return null;
+  const args = data as Record<string, unknown>;
+  const title = typeof args.title === "string" && args.title.trim() ? args.title : undefined;
+  if (!title) return null;
+  const severity: Finding["severity"] =
+    typeof args.severity === "string" && FINDING_SEVERITIES.has(args.severity)
+      ? (args.severity as Finding["severity"])
+      : "medium";
+  return {
+    id: randomUUID(),
+    templateId: typeof args.template_id === "string" ? args.template_id : "hunt-partial",
+    title,
+    description: typeof args.description === "string" ? args.description : "",
+    severity,
+    // Mirrors the executor's permissive cast (agent/tools.ts): category is a
+    // free-form label here, not switched on downstream. Default matches the
+    // engine's generic bucket.
+    category: (typeof args.category === "string" ? args.category : "other") as Finding["category"],
+    status: "discovered",
+    evidence: {
+      request: typeof args.evidence_request === "string" ? args.evidence_request : "",
+      response: typeof args.evidence_response === "string" ? args.evidence_response : "",
+      analysis: typeof args.evidence_analysis === "string" ? args.evidence_analysis : undefined,
+    },
+    triageNote: `${PARTIAL_TIMEOUT_PROVENANCE}: finder hung before completion; evidence recovered from the pre-timeout stream`,
+    timestamp: Date.now(),
+  };
 }
 
 function huntHint(brief: HuntBrief | undefined, candidate: HuntCandidate, lensHint?: string): string {
@@ -714,6 +801,11 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   const judgeTopK = Math.max(1, opts.judgeTopK ?? 1);
   const judgeCandidates = opts.judgeCandidates ?? judgeHuntCandidatesWithLlm;
   const warnings: string[] = [];
+  // Structured coverage-gap signal: (file × lens) cells abandoned at the
+  // finder timeout. Fed back on the result as `incompleteCoverage` for a future
+  // self-improving loop. `.push` from the concurrent pool below is safe — same
+  // single-threaded, between-await mutation pattern as `warnings`.
+  const coverageGaps: CoverageGap[] = [];
 
   // Memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1, hunt-flywheel.ts): OFF by
   // default (`priming` stays `null`, every use below is a no-op and the run
@@ -764,7 +856,17 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   const finderMaxRetries = huntFinderMaxRetries();
 
   const reports = await pool(runs, concurrency, async (run) => {
+    // Partial-evidence capture. agenticScan streams a `finding` event per
+    // save_finding tool call as the finder works. When the finder HANGS and is
+    // abandoned at the timeout, its returned promise never resolves — but the
+    // findings it already streamed are real leads we must NOT silently discard
+    // (this is exactly how the epb method-authz lead was lost). We accumulate
+    // them off the event stream so a timed-out cell surfaces its partials
+    // instead of an empty array. Reset at the top of each attempt so only the
+    // LAST attempt's partials survive a transient-error retry.
+    let partials: Finding[] = [];
     const attemptOnce = async () => {
+      partials = [];
       const dbPath = freshHuntDb();
       try {
         const config: ScanConfig = {
@@ -781,15 +883,34 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           config,
           dbPath,
           challengeHint: huntHint(opts.brief, run.candidate, run.lens.challengeHint),
+          onEvent: (event) => {
+            if (event.type !== "finding") return;
+            const partial = partialFindingFromEvent(event.data);
+            if (partial) partials.push(partial);
+          },
         });
       } finally {
         cleanupHuntDb(dbPath);
       }
     };
     const outcome = await runFinderResilient(attemptOnce, { timeoutMs: finderTimeoutMs, maxRetries: finderMaxRetries });
-    if (outcome.status === "timed-out") {
-      warnings.push(`hunt: finder timed out on ${run.candidate.path} after ${finderTimeoutMs}ms — abandoned, skipping`);
-    } else if (outcome.status === "errored") {
+    let findings: Finding[];
+    if (outcome.status === "completed") {
+      findings = outcome.value?.findings ?? [];
+    } else if (outcome.status === "timed-out") {
+      // Recover whatever the finder streamed before it hung. Snapshot NOW — the
+      // abandoned call may keep running, but we've captured the evidence
+      // observed up to the budget. Each partial re-enters the SAME verify gate
+      // (status stays "discovered" — never auto-confirmed). Also emit the
+      // structured coverage-gap so a self-improving loop can re-hunt this cell.
+      findings = partials;
+      const recovered = findings.length > 0 ? ` — recovered ${findings.length} partial finding(s)` : "";
+      warnings.push(
+        `hunt: finder timed out on ${run.candidate.path} after ${finderTimeoutMs}ms — abandoned${recovered}`,
+      );
+      coverageGaps.push({ file: run.candidate.path, lensId: run.lens.id, reason: "timeout", budgetMs: finderTimeoutMs });
+    } else {
+      findings = [];
       warnings.push(`hunt: finder failed on ${run.candidate.path}: ${String(outcome.error).slice(0, 120)}`);
     }
     return {
@@ -798,7 +919,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       lensId: run.lens.id,
       attempt: run.attempt,
       status: outcome.status,
-      findings: outcome.status === "completed" ? (outcome.value?.findings ?? []) : ([] as Finding[]),
+      findings,
     };
   });
 
@@ -1016,5 +1137,6 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     finderErrored,
     warnings,
     records: [...records.values()],
+    incompleteCoverage: coverageGaps,
   };
 }
