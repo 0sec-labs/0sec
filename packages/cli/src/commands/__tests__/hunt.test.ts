@@ -9,6 +9,7 @@ const {
   runHuntScanMock,
   makeSkepticVerifierMock,
   buildInvariantHuntContextMock,
+  buildGraphSliceHuntContextMock,
   localMirrorsMock,
   syncLoreMirrorMock,
   makeLloreJudgeMock,
@@ -24,6 +25,7 @@ const {
     runHuntScanMock: vi.fn(),
     makeSkepticVerifierMock: vi.fn(() => skepticVerifier),
     buildInvariantHuntContextMock: vi.fn(),
+    buildGraphSliceHuntContextMock: vi.fn(),
     localMirrorsMock: vi.fn(),
     syncLoreMirrorMock: vi.fn(),
     makeLloreJudgeMock: vi.fn(() => noveltyJudge),
@@ -40,6 +42,7 @@ vi.mock("@pwnkit/core", () => ({
   runHuntScan: runHuntScanMock,
   makeSkepticVerifier: makeSkepticVerifierMock,
   buildInvariantHuntContext: buildInvariantHuntContextMock,
+  buildGraphSliceHuntContext: buildGraphSliceHuntContextMock,
   localMirrors: localMirrorsMock,
   syncLoreMirror: syncLoreMirrorMock,
   makeLloreJudge: makeLloreJudgeMock,
@@ -144,6 +147,7 @@ describe("runHunt — novelty gate wiring", () => {
     ]);
     makeLloreJudgeMock.mockClear();
     buildInvariantHuntContextMock.mockReset().mockResolvedValue(null);
+    buildGraphSliceHuntContextMock.mockReset().mockReturnValue(null);
     getCloudSinkConfigMock.mockReset().mockReturnValue(null);
     postFindingMock.mockReset().mockResolvedValue(undefined);
   });
@@ -403,6 +407,79 @@ describe("runHunt — novelty gate wiring", () => {
     expect(outcome.result).toMatchObject({
       invariant: { enabled: false },
       warnings: [expect.stringContaining("model build exploded")],
+    });
+  });
+
+  it("injects the graph-slice prompt block into the finder brief when --graph-slice is set", async () => {
+    buildGraphSliceHuntContextMock.mockReturnValueOnce({
+      subsystem: "net/unix",
+      cpgPath: `${tmpRoot}/.pwnkit/cpg/net__unix.json`,
+      targetFunctions: ["unix_attach_fds"],
+      resolvedTargets: 1,
+      opsEdges: 2,
+      stats: { functions: 5, files: ["net/unix/af_unix.c", "net/unix/garbage.c"], callEdges: 7, chars: 1234 },
+      promptBlock: "GRAPH REACHABILITY SLICE of net/unix around the seed's fix site",
+    });
+
+    const outcome = await runHunt({ sourceRoot: tmpRoot, seedPath, graphSlice: true, verify: false });
+
+    expect(buildGraphSliceHuntContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRoot: tmpRoot,
+      seedDiff: "diff --git a/foo.c b/foo.c\n",
+    }));
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.brief.pattern).toContain("index before array access");
+    expect(opts.brief.pattern).toContain("GRAPH REACHABILITY SLICE of net/unix");
+    expect(outcome.result).toMatchObject({
+      graph_slice: {
+        enabled: true,
+        subsystem: "net/unix",
+        target_functions: ["unix_attach_fds"],
+        resolved_targets: 1,
+        ops_edges: 2,
+        functions: 5,
+        files: 2,
+        call_edges: 7,
+      },
+    });
+  });
+
+  it("passes an explicit --cpg path through to the graph-slice stage", async () => {
+    buildGraphSliceHuntContextMock.mockReturnValueOnce(null);
+
+    await runHunt({ sourceRoot: tmpRoot, seedPath, graphSlice: true, cpgPath: "/data/net__unix.json", verify: false });
+
+    expect(buildGraphSliceHuntContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      cpgPath: "/data/net__unix.json",
+    }));
+  });
+
+  it("leaves the brief untouched when --graph-slice yields no context (fail-open)", async () => {
+    buildGraphSliceHuntContextMock.mockReturnValueOnce(null);
+
+    const outcome = await runHunt({ sourceRoot: tmpRoot, seedPath, graphSlice: true, verify: false });
+
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.brief.pattern).toBe("index before array access");
+    expect(outcome.result).toMatchObject({
+      graph_slice: { enabled: false },
+      warnings: [expect.stringContaining("no CPG/scope/slice derivable")],
+    });
+  });
+
+  it("continues the plain hunt when the graph-slice stage throws (fail-open)", async () => {
+    buildGraphSliceHuntContextMock.mockImplementationOnce(() => {
+      throw new Error("cpg parse exploded");
+    });
+
+    const outcome = await runHunt({ sourceRoot: tmpRoot, seedPath, graphSlice: true, verify: false });
+
+    expect(runHuntScanMock).toHaveBeenCalledOnce();
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.brief.pattern).toBe("index before array access");
+    expect(outcome.result).toMatchObject({
+      graph_slice: { enabled: false },
+      warnings: [expect.stringContaining("cpg parse exploded")],
     });
   });
 });
