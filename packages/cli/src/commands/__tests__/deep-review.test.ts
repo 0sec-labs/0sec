@@ -7,6 +7,9 @@ import {
   selectProfileLenses,
   enumerateDeepReviewCandidates,
   isNonProtocolEvmPath,
+  detectStack,
+  selectDefaultFinderLensesForStack,
+  selectCandidatesModuleSpread,
   defaultFinderLenses,
   defaultVerifyLenses,
   type ProfileLensSets,
@@ -213,6 +216,136 @@ describe("isNonProtocolEvmPath — evm candidate scoping (test/vendored exclusio
   });
 });
 
+// ── B3: stack-aware default-profile lens selection ───────────────────────────
+
+describe("detectStack — infer target stack from candidate extensions", () => {
+  it("detects a managed/web stack (C#/Angular) — the memory-safety-is-noise case", () => {
+    const files = [
+      "/app/src/Controllers/HrdController.cs",
+      "/app/src/waf/Config.cs",
+      "/app/web/src/app/app.component.ts",
+      "/app/web/src/index.html",
+    ];
+    expect(detectStack(files)).toBe("managed-web");
+  });
+
+  it("detects a native stack (C/C++) — memory-safety primary", () => {
+    expect(detectStack(["/proj/src/parser.c", "/proj/include/parser.h", "/proj/src/vm.cpp"])).toBe("native");
+  });
+
+  it("treats Rust as native (its unsafe surface keeps memory-safety relevant)", () => {
+    expect(detectStack(["/proj/src/lib.rs", "/proj/src/main.rs"])).toBe("native");
+  });
+
+  it("detects Go / Python / Java / PHP / Ruby as managed", () => {
+    expect(detectStack(["/svc/main.go", "/svc/handler.go"])).toBe("managed-web");
+    expect(detectStack(["/svc/app.py"])).toBe("managed-web");
+    expect(detectStack(["/svc/Main.java", "/svc/pom-generated/X.java"])).toBe("managed-web");
+    expect(detectStack(["/svc/index.php"])).toBe("managed-web");
+    expect(detectStack(["/svc/app.rb"])).toBe("managed-web");
+  });
+
+  it("returns mixed when both native and managed sources are present (safe default)", () => {
+    expect(detectStack(["/proj/native/ext.c", "/proj/web/app.ts"])).toBe("mixed");
+  });
+
+  it("returns unknown when nothing is recognized (e.g. only .sol / no source)", () => {
+    expect(detectStack(["/repo/src/Vault.sol", "/repo/src/Token.sol"])).toBe("unknown");
+    expect(detectStack([])).toBe("unknown");
+    expect(detectStack(["/repo/Makefile", "/repo/README"])).toBe("unknown");
+  });
+});
+
+describe("selectDefaultFinderLensesForStack — drop memory-safety on managed code", () => {
+  it("managed-web: drops memory-safety, keeps input-validation + auth-logic + secrets-crypto + all appsec", () => {
+    const files = ["/app/HrdController.cs", "/app/app.component.ts"];
+    const lenses = selectDefaultFinderLensesForStack(files, defaultFinderLenses);
+    const ids = lenses.map((l) => l.id);
+    expect(ids).not.toContain("memory-safety");
+    expect(ids).toEqual(expect.arrayContaining(["input-validation", "auth-logic", "secrets-crypto"]));
+    for (const id of APPSEC_LENS_IDS) expect(ids).toContain(id);
+    // Exactly the full set minus the one memory-safety lens.
+    expect(lenses).toHaveLength(defaultFinderLenses.length - 1);
+  });
+
+  it("native: returns the full default set UNCHANGED (same reference — memory-safety primary)", () => {
+    const lenses = selectDefaultFinderLensesForStack(["/proj/parser.c"], defaultFinderLenses);
+    expect(lenses).toBe(defaultFinderLenses);
+    expect(lenses.map((l) => l.id)).toContain("memory-safety");
+  });
+
+  it("mixed / unknown: returns the full default set UNCHANGED (safe default, same reference)", () => {
+    expect(selectDefaultFinderLensesForStack(["/p/ext.c", "/p/app.ts"], defaultFinderLenses)).toBe(defaultFinderLenses);
+    expect(selectDefaultFinderLensesForStack(["/repo/Vault.sol"], defaultFinderLenses)).toBe(defaultFinderLenses);
+    expect(selectDefaultFinderLensesForStack([], defaultFinderLenses)).toBe(defaultFinderLenses);
+  });
+});
+
+// ── B1: module-spread candidate selection ────────────────────────────────────
+
+describe("selectCandidatesModuleSpread — spread the budget across subsystems", () => {
+  it("round-robins across top-level modules instead of clustering on the biggest one", () => {
+    // The `waf` module has the 3 largest files; largest-first would take all 3
+    // slots there and never reach `hrd`/`auth`. Module-spread must include all.
+    const entries = [
+      { p: "/app/waf/a.cs", size: 9000 },
+      { p: "/app/waf/b.cs", size: 8000 },
+      { p: "/app/waf/c.cs", size: 7000 },
+      { p: "/app/hrd/HrdController.cs", size: 500 },
+      { p: "/app/auth/Login.cs", size: 400 },
+    ];
+    const picked = selectCandidatesModuleSpread(entries, "/app", 3);
+    const modules = new Set(picked.map((p) => p.split("/")[2]));
+    // Breadth: 3 slots span 3 distinct modules, not 3 files from `waf`.
+    expect(modules).toEqual(new Set(["waf", "hrd", "auth"]));
+    // Within a module, the largest file wins → waf's `a.cs` is the waf pick.
+    expect(picked).toContain("/app/waf/a.cs");
+    expect(picked).not.toContain("/app/waf/b.cs");
+  });
+
+  it("visits modules by their largest file, then takes each module's next-largest in later rounds", () => {
+    const entries = [
+      { p: "/app/waf/a.cs", size: 9000 },
+      { p: "/app/waf/b.cs", size: 8000 },
+      { p: "/app/hrd/x.cs", size: 6000 },
+      { p: "/app/hrd/y.cs", size: 5000 },
+    ];
+    // 4-slot budget over 2 modules → round 1: waf/a, hrd/x; round 2: waf/b, hrd/y.
+    expect(selectCandidatesModuleSpread(entries, "/app", 4)).toEqual([
+      "/app/waf/a.cs",
+      "/app/hrd/x.cs",
+      "/app/waf/b.cs",
+      "/app/hrd/y.cs",
+    ]);
+  });
+
+  it("degrades to plain largest-first for a single-module tree (old behavior preserved)", () => {
+    const entries = [
+      { p: "/app/src/big.ts", size: 9000 },
+      { p: "/app/src/mid.ts", size: 5000 },
+      { p: "/app/src/small.ts", size: 100 },
+    ];
+    expect(selectCandidatesModuleSpread(entries, "/app", 2)).toEqual(["/app/src/big.ts", "/app/src/mid.ts"]);
+  });
+
+  it("enumerateDeepReviewCandidates spreads across modules given a clustered tree", () => {
+    const sizes: Record<string, number> = {
+      "/app/waf/a.cs": 9000,
+      "/app/waf/b.cs": 8000,
+      "/app/waf/c.cs": 7000,
+      "/app/hrd/HrdController.cs": 500,
+      "/app/auth/Login.cs": 400,
+    };
+    const h: DeepReviewEnumHelpers = {
+      collectScopeFiles: () => Object.keys(sizes),
+      countScopeFilesUpTo: () => Object.keys(sizes).length,
+      fileSize: (p) => sizes[p] ?? 0,
+    };
+    const r = enumerateDeepReviewCandidates("/app", h, { maxCandidates: 3 });
+    expect(new Set(r.candidates.map((p) => p.split("/")[2]))).toEqual(new Set(["waf", "hrd", "auth"]));
+  });
+});
+
 // ── runDeepReview wiring (with @pwnkit/core mocked, mirrors hunt.test.ts) ─────
 
 const {
@@ -379,6 +512,43 @@ describe("runDeepReview — seedless lens-driven review", () => {
     const opts = runHuntScanMock.mock.calls[0]![0];
     expect(opts.lenses).toBe(defaultFinderLenses);
     expect((makeMultiLensVerifierMock.mock.calls[0] as unknown[])[0]).toBe(defaultVerifyLenses);
+  });
+
+  it("B3: default profile on a MANAGED (C#/Angular) target drops memory-safety from the finder set", async () => {
+    // The exact Swiss-miss shape: a C#/Angular app. Default profile → stack-aware
+    // selection must run appsec/authz/injection, NOT memory-safety.
+    collectScopeFilesMock.mockReturnValue([
+      "/app/src/Controllers/HrdController.cs",
+      "/app/web/src/app/app.component.ts",
+    ]);
+    countScopeFilesUpToMock.mockReturnValue(2);
+    await runDeepReview({ target: "/app" }); // no profile → default fall-through
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    const ids = (opts.lenses as { id: string }[]).map((l) => l.id);
+    expect(ids).not.toContain("memory-safety");
+    expect(ids).toEqual(expect.arrayContaining(["input-validation", "auth-logic", "secrets-crypto"]));
+    for (const id of APPSEC_LENS_IDS) expect(ids).toContain(id);
+    // Verify quorum is unchanged (B3 only reshapes the finder set).
+    expect((makeMultiLensVerifierMock.mock.calls[0] as unknown[])[0]).toBe(defaultVerifyLenses);
+  });
+
+  it("B3: default profile on a NATIVE (C) target keeps the full default finder set (memory-safety primary)", async () => {
+    collectScopeFilesMock.mockReturnValue(["/proj/src/parser.c", "/proj/include/parser.h"]);
+    countScopeFilesUpToMock.mockReturnValue(2);
+    await runDeepReview({ target: "/proj" }); // default fall-through, native tree
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.lenses).toBe(defaultFinderLenses); // same reference — unchanged
+    expect((opts.lenses as { id: string }[]).map((l) => l.id)).toContain("memory-safety");
+  });
+
+  it("B3 REGRESSION: on-chain profiles are NOT stack-adjusted even on managed-looking files", async () => {
+    // A `.ts`-heavy Solana repo must still get the bespoke Solana finder set,
+    // never the managed-web-adjusted default set.
+    collectScopeFilesMock.mockReturnValue(["/repo/programs/x.ts", "/repo/app/y.ts"]);
+    countScopeFilesUpToMock.mockReturnValue(2);
+    await runDeepReview({ target: "/repo", profile: "solana-onchain" });
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.lenses).toEqual([{ id: "sol-f", challengeHint: "x" }]);
   });
 
   it("posts gated leads to the cloud sink as 'discovered' candidates when in cloud mode", async () => {
