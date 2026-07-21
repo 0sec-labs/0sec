@@ -353,6 +353,16 @@ export type {
   ArchetypeSweepOptions,
   ArchetypeSweepResult,
 } from "./stages/archetype-catalog.js";
+// The cross-language appsec lens registry — the data-driven sibling of the
+// kernel/FreeBSD/Chromium archetype packs, mapped straight to FinderLens[] for
+// the seedless finder surfaces (`deep-review` / `hunt`). See appsec-catalog.ts.
+export {
+  appsecArchetypesPath,
+  loadAppsecArchetypes,
+  appsecArchetypeToFinderLens,
+  loadAppsecFinderLenses,
+} from "./stages/appsec-catalog.js";
+export type { AppsecRoute, AppsecArchetype } from "./stages/appsec-catalog.js";
 export {
   checkNovelty,
   syncLoreMirror,

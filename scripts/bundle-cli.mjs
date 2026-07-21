@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
 
 const outdir = "dist";
 
@@ -113,6 +113,23 @@ for (const benchFile of ["corpus-v1.json", "example-manifest.json"]) {
     `packages/core/src/bench/${benchFile}`,
     `${outdir}/chunks/${benchFile}`,
   );
+}
+
+// Archetype/lens registries: packages/core/src/stages/appsec-catalog.ts (and the
+// kernel/freebsd/chromium archetype-catalog loaders) resolve their bundled JSON
+// via `new URL("./data/<file>.json", import.meta.url)`. The core package build
+// co-locates them (`cp src/stages/data/*.json dist/stages/data/`), but esbuild
+// splits those modules into `dist/chunks/`, so `import.meta.url` points at the
+// chunk and the loader reads `dist/chunks/data/<file>.json`. The appsec loader
+// runs at MODULE-EVAL (deep-review's `defaultFinderLenses` const → every command
+// incl. `pwnkit --help`), so a missing copy is a hard boot crash, not a lazy
+// failure — mirror the bench-corpus copy above into the chunk-relative `data/`
+// dir. Keep in sync with the files those loaders read (whole *.json glob, same
+// as the core build's copy step).
+const stagesDataSrc = "packages/core/src/stages/data";
+mkdirSync(`${outdir}/chunks/data`, { recursive: true });
+for (const dataFile of readdirSync(stagesDataSrc).filter((f) => f.endsWith(".json"))) {
+  copyFileSync(`${stagesDataSrc}/${dataFile}`, `${outdir}/chunks/data/${dataFile}`);
 }
 
 // Fix double shebang

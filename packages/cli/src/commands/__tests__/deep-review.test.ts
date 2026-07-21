@@ -82,6 +82,33 @@ describe("selectProfileLenses", () => {
     expect(defaultVerifyLenses.length).toBeGreaterThan(0);
     expect(defaultFinderLenses.length).toBeGreaterThan(0);
   });
+
+  it("default finder set unions the 4 generic lenses with the 5 data-driven appsec lenses", () => {
+    const ids = defaultFinderLenses.map((l) => l.id);
+    // The generic buckets are preserved …
+    expect(ids).toEqual(expect.arrayContaining(["memory-safety", "input-validation", "auth-logic", "secrets-crypto"]));
+    // … and every appsec lens is added on top (the Swiss-miss coverage classes).
+    for (const id of APPSEC_LENS_IDS) expect(ids).toContain(id);
+    expect(defaultFinderLenses).toHaveLength(4 + APPSEC_LENS_IDS.length);
+    // No id collisions — each lens is its own best-of-N group.
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("REGRESSION: no on-chain profile's finder set carries an appsec lens", () => {
+    for (const set of [
+      SETS.evmFinderLenses,
+      SETS.solanaFinderLenses,
+      SETS.cardanoFinderLenses,
+      SETS.cairoFinderLenses,
+      SETS.moveFinderLenses,
+    ]) {
+      const ids = set.map((l) => l.id);
+      for (const appsecId of APPSEC_LENS_IDS) expect(ids).not.toContain(appsecId);
+    }
+    // And the on-chain branches return their bespoke set by reference, untouched.
+    expect(selectProfileLenses("evm-onchain", SETS).finderLenses).toBe(SETS.evmFinderLenses);
+    expect(selectProfileLenses("solana-onchain", SETS).finderLenses).toBe(SETS.solanaFinderLenses);
+  });
 });
 
 describe("enumerateDeepReviewCandidates", () => {
@@ -229,7 +256,29 @@ vi.mock("@pwnkit/core", () => ({
   cairoVerifyLenses: [{ id: "cairo-v", challengeHint: "y" }],
   moveFinderLenses: [{ id: "move-f", challengeHint: "x" }],
   moveVerifyLenses: [{ id: "move-v", challengeHint: "y" }],
+  // Mirrors the real appsec registry's 5 lens ids (validated against the JSON in
+  // packages/core's appsec-catalog.test.ts) so defaultFinderLenses — which
+  // spreads this at module-eval — carries them here. The barrel is mocked in
+  // this file, so this stands in for the data-driven loader.
+  loadAppsecFinderLenses: () => [
+    { id: "os-command-injection", challengeHint: "appsec-cmd" },
+    { id: "method-authz-differential", challengeHint: "appsec-authz" },
+    { id: "template-xss-ssti", challengeHint: "appsec-xss" },
+    { id: "sso-trust", challengeHint: "appsec-sso" },
+    { id: "resource-exhaustion-dos", challengeHint: "appsec-dos" },
+  ],
 }));
+
+/** The 5 data-driven appsec lens ids the default fallback set must carry (kept in
+ *  sync with appsec-archetypes.json; the JSON itself is asserted in core's
+ *  appsec-catalog.test.ts). */
+const APPSEC_LENS_IDS = [
+  "os-command-injection",
+  "method-authz-differential",
+  "template-xss-ssti",
+  "sso-trust",
+  "resource-exhaustion-dos",
+];
 
 const { runDeepReview } = await import("../deep-review.js");
 

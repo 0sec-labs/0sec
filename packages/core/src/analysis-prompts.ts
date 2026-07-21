@@ -389,6 +389,13 @@ Look for patterns automated tools miss:
 - Business logic flaws: bypassing validation, type confusion
 - Unsafe deserialization
 
+**Cross-Language App-Layer Classes** (hunt these across ANY runtime — Node, .NET, Java, Python, PHP, Ruby)
+- OS command injection: attacker-influenced data reaching a process/shell exec sink — Node exec/spawn(shell:true)/execSync, .NET Process.Start / ProcessStartInfo.FileName=cmd.exe with concatenated Arguments, Java Runtime.exec(String)/ProcessBuilder (esp. sh -c), Python subprocess(shell=True)/os.system, backticks, any string-built shell command. A fixed argv array with no shell and no attacker-controlled leading-dash flag is safe.
+- Method-level authorization differential + IDOR: sibling routes/handlers/service-methods on the SAME resource where one lacks the [Authorize]/@PreAuthorize/policy/role guard or ownership/tenant/scope check its Update/Delete siblings enforce; a query keyed only on a caller-supplied id with no owner predicate. The signal is the DIFFERENCE between siblings — cite both the guarded and the unguarded reachable handler.
+- Template/HTML XSS and SSTI: user/controller input reaching an HTML or template render without context-correct escaping — Angular bypassSecurityTrustHtml/[innerHTML], React dangerouslySetInnerHTML, Vue v-html, Handlebars {{{triple}}}/SafeString, Velocity/Freemarker/Thymeleaf(th:utext)/JSP/Jinja2 render_template_string where DATA is spliced into the template SOURCE (SSTI → possible RCE). A template engine compiling a developer-authored template is by-design; the finding is untrusted DATA reaching the markup/template-code context.
+- SSO / identity-federation trust: SAML/OIDC/OAuth2/JWT assertion-validation flaws — unverified or forged SAML signature, XML signature wrapping, issuer/audience/redirect_uri allowlist not enforced server-side (or matched by startsWith/substring), RelayState reflection, missing state/nonce/PKCE, JWT alg:none / unverified signature / RS256↔HS256 algorithm-confusion. Prove the specific check on the assertion path is absent or bypassable — the presence of a SAML/OIDC library is not the finding.
+- Resource-exhaustion / algorithmic DoS: an attacker-controlled value driving an unbounded loop, sleep, allocation, decompression, fan-out, or regex backtracking with no cap/timeout/ratio — Retry-After → Thread.sleep/setTimeout, zip-bomb/decompression without a size or ratio limit, ReDoS, new byte[n] with attacker-supplied n, an endpoint honoring a user-supplied count with no server cap, mass-assignment. Cite the attacker-controlled magnitude and the unbounded consumer.
+
 ### Phase 3: Data Flow Tracing
 For the most promising findings:
 1. Identify the entry point (exported function, route handler, API surface)
