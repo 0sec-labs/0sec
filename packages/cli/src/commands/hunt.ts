@@ -87,6 +87,8 @@ interface HuntOpts {
   noveltyRequired?: boolean;
   methodology?: boolean;
   invariant?: boolean;
+  graphSlice?: boolean;
+  cpg?: string;
   output?: string;
   runtime?: string;
   timeout?: string;
@@ -161,6 +163,15 @@ export async function runHunt(opts: {
    * deterministic violation hypotheses into every finder prompt as context.
    */
   invariant?: boolean;
+  /**
+   * Graph-slice finder: before candidate generation, load the pre-exported CPG
+   * of the seed-touched subsystem and inject a compact interprocedural
+   * reachability slice around the fix site into every finder prompt as context.
+   * Fail-open — no CPG / no scope degrades to the flat-text finder.
+   */
+  graphSlice?: boolean;
+  /** Explicit CPG graphson JSON path (overrides the `.pwnkit/cpg/<subsystem>.json` convention). */
+  cpgPath?: string;
   runtime?: RuntimeMode;
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -170,6 +181,7 @@ export async function runHunt(opts: {
     runHuntScan,
     makeSkepticVerifier,
     buildInvariantHuntContext,
+    buildGraphSliceHuntContext,
     localMirrors,
     syncLoreMirror,
     makeLloreJudge,
@@ -277,6 +289,33 @@ export async function runHunt(opts: {
       }
     }
 
+    // Graph-slice stage (--graph-slice): BEFORE candidate generation, load the
+    // seed-touched subsystem's PRE-EXPORTED CPG and build a compact
+    // interprocedural reachability slice around the fix site. Injected into
+    // every finder prompt as a context block below (SAME channel as --invariant)
+    // — it adds NO candidates and changes NO gate. Fail-open: no scope, no CPG
+    // export, or an empty slice degrades to the plain flat-text hunt.
+    let graphSliceCtx: ReturnType<typeof buildGraphSliceHuntContext> = null;
+    const graphSliceWarnings: string[] = [];
+    if (opts.graphSlice) {
+      try {
+        graphSliceCtx = buildGraphSliceHuntContext({
+          sourceRoot,
+          seedDiff,
+          ...(opts.cpgPath ? { cpgPath: opts.cpgPath } : {}),
+          log,
+        });
+        if (!graphSliceCtx) {
+          graphSliceWarnings.push("hunt: --graph-slice set but no CPG/scope/slice derivable — continuing with the flat-text finder");
+          log(`[hunt] ${graphSliceWarnings[graphSliceWarnings.length - 1]}`);
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        graphSliceWarnings.push(`hunt: graph-slice stage failed, continuing without it: ${reason.slice(0, 160)}`);
+        log(`[hunt] ${graphSliceWarnings[graphSliceWarnings.length - 1]}`);
+      }
+    }
+
     const plan = await generateVariantCandidates({
       sourceRoot,
       fix: { diff: seedDiff, reference: opts.ref ?? opts.seedPath },
@@ -327,9 +366,12 @@ export async function runHunt(opts: {
     // Engine A context injection: the invariant rules + violation hypotheses ride
     // the SAME prompt channel the methodology preset uses (brief.pattern), so
     // every finder run sees them while chasing the seed's bug class.
-    const huntBrief = invariantCtx
-      ? { ...baseBrief, pattern: `${baseBrief.pattern}\n\n${invariantCtx.promptBlock}` }
-      : baseBrief;
+    // Both context stages ride the SAME brief.pattern channel and compose: the
+    // invariant rules and the reachability slice are additive finder context.
+    let huntPattern = baseBrief.pattern;
+    if (invariantCtx) huntPattern = `${huntPattern}\n\n${invariantCtx.promptBlock}`;
+    if (graphSliceCtx) huntPattern = `${huntPattern}\n\n${graphSliceCtx.promptBlock}`;
+    const huntBrief = huntPattern === baseBrief.pattern ? baseBrief : { ...baseBrief, pattern: huntPattern };
     const res = await runHuntScan({
       sourceRoot,
       candidates,
@@ -410,10 +452,24 @@ export async function runHunt(opts: {
               violations: invariantCtx.violations.length,
             }
           : { enabled: false },
+        graph_slice: graphSliceCtx
+          ? {
+              enabled: true,
+              subsystem: graphSliceCtx.subsystem,
+              cpg_path: graphSliceCtx.cpgPath,
+              target_functions: graphSliceCtx.targetFunctions,
+              resolved_targets: graphSliceCtx.resolvedTargets,
+              ops_edges: graphSliceCtx.opsEdges,
+              functions: graphSliceCtx.stats.functions,
+              files: graphSliceCtx.stats.files.length,
+              call_edges: graphSliceCtx.stats.callEdges,
+              slice_chars: graphSliceCtx.stats.chars,
+            }
+          : { enabled: false },
         ingested: sinkCfg ? ingested : null,
         gated,
         methodology: opts.methodology === true,
-        warnings: [...invariantWarnings, ...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),
+        warnings: [...invariantWarnings, ...graphSliceWarnings, ...noveltyWarnings, ...plan.warnings, ...res.warnings].slice(0, 10),
         note: opts.novelty
           ? "LEADS, not confirmed 0-days. Novelty-duplicate leads were dropped when lore mirrors matched; still verify the real sink before disclosure."
           : "LEADS, not confirmed 0-days. Verify the real sink + upstream-fix (novelty) before disclosure.",
@@ -454,6 +510,8 @@ async function huntAction(opts: HuntOpts): Promise<void> {
       : {}),
     methodology: opts.methodology === true,
     invariant: opts.invariant === true,
+    graphSlice: opts.graphSlice === true,
+    ...(opts.cpg ? { cpgPath: opts.cpg } : {}),
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
@@ -493,6 +551,8 @@ export function registerHuntCommand(program: Command): void {
     .option("--novelty-required", "Abort before discovery when novelty evidence is unavailable")
     .option("--methodology", "Use the kernel-LPE methodology preset: lifecycle/provenance lenses, best-of-4, top-2 skeptic gate, reachable-first")
     .option("--invariant", "Engine A: build (or load) the seed-touched subsystem's stored invariant model and inject its rules + deterministic violation hypotheses into every finder prompt")
+    .option("--graph-slice", "Load the seed-touched subsystem's pre-exported Joern CPG and inject a compact interprocedural reachability slice around the fix site into every finder prompt (needs scripts/provision-cpg.sh; fail-open to flat-text)")
+    .option("--cpg <path>", "Explicit CPG graphson JSON path for --graph-slice (default: <source>/.pwnkit/cpg/<subsystem>.json)")
     .option("--output <path>", "Write the hunt result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")
     .option("--timeout <ms>", "Accepted cloud agent timeout budget in milliseconds", "600000")

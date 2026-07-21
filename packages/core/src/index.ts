@@ -613,6 +613,40 @@ export type {
   InvariantHuntContextInput,
   InvariantHuntContext,
 } from "./stages/invariant-hunt-context.js";
+// Graph-slice finder stage (`pwnkit hunt --graph-slice`): the deterministic
+// interprocedural slicer over a pre-exported Joern CPG (graphson JSON) + its
+// seed-diff adapter. Feeds the finder a compact cross-function/cross-file
+// reachability slice around the fix site — the multi-step chain the flat
+// per-file read cannot assemble. See
+// docs/operations/graph-native-lpe-harness-2026-07-21.md.
+export {
+  Cpg,
+  loadCpg,
+  injectOps,
+  findTargets,
+  buildSlice,
+  renderSlice,
+  sliceAroundTargets,
+  LIFETIME_SINKS,
+} from "./stages/graph-slice.js";
+export type {
+  CpgNode,
+  CallEdge,
+  OpsMap,
+  OpsSynthEdge,
+  SliceResult,
+  SliceRenderStats,
+  SourceLoader,
+} from "./stages/graph-slice.js";
+export {
+  buildGraphSliceHuntContext,
+  extractTouchedFunctions,
+  formatGraphSlicePromptBlock,
+} from "./stages/graph-slice-hunt-context.js";
+export type {
+  GraphSliceHuntContextInput,
+  GraphSliceHuntContext,
+} from "./stages/graph-slice-hunt-context.js";
 // Race-widening smell-hunter (kernelCTF Pipeline #3): the LLM hunts the
 // ExpRace/Calif smell — unlock(A) -> [sleep/mutex/GFP_KERNEL alloc/copy_from_user]
 // -> lock(B) with attacker state across the gap — and maps each smell's
