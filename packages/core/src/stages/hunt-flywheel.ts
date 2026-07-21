@@ -45,6 +45,7 @@ import { readFileSync } from "node:fs";
 import type { Finding } from "@pwnkit/shared";
 import { loadKernelArchetypes, symbolsFromDetectionSignature } from "./archetype-catalog.js";
 import type { HuntBrief, HuntFindingRecord } from "./hunt-scan.js";
+import type { LensCandidate } from "./lens-synthesis/types.js";
 
 // ── Opt-in gate ──────────────────────────────────────────────────────────────
 
@@ -321,6 +322,18 @@ export interface HuntMemoryOptions {
 export class HuntMemory {
   private readonly memories: HuntMemoryRecord[] = [];
 
+  /**
+   * The self-improving lens loop's miss store — a store DISJOINT from the
+   * 5-layer priming `memories` above. It holds CANDIDATE lenses (proposals to
+   * hunt a class the finder missed), which stage 2 of the lens loop clusters
+   * and synthesizes. It is intentionally NOT a `HuntMemoryLayer` and never
+   * enters `recall`/`prime`/`scoreMemory`, so the "primes, never confirms"
+   * invariant on the priming path is byte-unaffected: recording a miss cannot
+   * change any recall score, any rank-bonus, or any cost-route. See
+   * lens-synthesis/miss-capture.ts.
+   */
+  private readonly missCandidates: LensCandidate[] = [];
+
   constructor(opts: HuntMemoryOptions = {}) {
     this.preseedArchetypes();
     if (opts.corpusPath) this.loadCorpus(opts.corpusPath);
@@ -518,6 +531,32 @@ export class HuntMemory {
       confirmed,
       weight: confirmed ? 1.15 : 0.85,
     });
+  }
+
+  // ── Lens-loop miss store (disjoint from the priming layers) ──────────────
+  //
+  // These three methods are the ONLY surface that touches `missCandidates`.
+  // None of them reads or writes the 5-layer `memories`, and none is called by
+  // `recall`/`prime`, so they cannot perturb priming. This stores lens
+  // PROPOSALS; it never confirms a finding — the invariant holds.
+
+  /** Persist ONE coverage-miss candidate for the lens-synthesis loop to consume. */
+  recordMiss(candidate: LensCandidate): void {
+    this.missCandidates.push(candidate);
+  }
+
+  /** How many miss candidates are queued. */
+  missCandidateCount(): number {
+    return this.missCandidates.length;
+  }
+
+  /**
+   * Return every queued miss candidate and CLEAR the store (drain semantics),
+   * so a subsequent loop run starts from an empty queue and cannot
+   * double-synthesize the same miss. Returns a copy — the caller owns it.
+   */
+  drainMissCandidates(): LensCandidate[] {
+    return this.missCandidates.splice(0, this.missCandidates.length);
   }
 }
 

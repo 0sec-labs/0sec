@@ -46,6 +46,7 @@ import {
   registerHuntCommand,
   registerRecencyHuntCommand,
   registerDeepReviewCommand,
+  registerLensSynthCommand,
   registerMemsafetyCommand,
   registerAssumptionHuntCommand,
   registerSpecdriftCommand,
@@ -109,6 +110,7 @@ registerExploitCommand(program);
 registerHuntCommand(program);
 registerRecencyHuntCommand(program);
 registerDeepReviewCommand(program);
+registerLensSynthCommand(program);
 registerMemsafetyCommand(program);
 registerAssumptionHuntCommand(program);
 registerSpecdriftCommand(program);
@@ -159,7 +161,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "cloud", "xnu-fuzz", "research", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "cloud", "xnu-fuzz", "research", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {
