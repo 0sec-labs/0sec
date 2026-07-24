@@ -33,6 +33,7 @@ export { registerH1Command } from "./h1.js";
 export { registerAuthCommand } from "./auth.js";
 export { registerIntelCommand } from "./intel.js";
 export { registerReconCommand } from "./recon.js";
+export { registerConsoleCommand } from "./console.js";
 export { registerJsReconCommand } from "./js-recon.js";
 export { registerNpmDiscoveryCommand } from "./npm-discovery.js";
 export { registerCloudCommand } from "./cloud.js";
