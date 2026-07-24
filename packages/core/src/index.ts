@@ -1637,6 +1637,21 @@ export type {
 // (success rate, FP rate vs known-negatives, cost-per-success) + CI gate.
 export * from "./bench/index.js";
 
+// ── Interactive operator console: unified conversational front-end that drives
+// the full tool registry through the real ToolExecutor + LlmApiRuntime. ──
+export {
+  createConsoleSession,
+  createConsoleRuntime,
+  buildConsoleSystemPrompt,
+} from "./console/index.js";
+export type {
+  ConsoleSession,
+  ConsoleSessionConfig,
+  ConsoleRenderCallbacks,
+  ConsoleTurnOutcome,
+  ConsoleStopReason,
+} from "./console/index.js";
+
 // ── Recon mode: domain surface enumeration (pwnkit#769) ──
 // Given a domain, probes well-known OpenAPI/Swagger + MCP endpoints and emits
 // a deduped, structured asset inventory consumable as discovered_assets.
