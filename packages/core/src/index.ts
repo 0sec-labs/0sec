@@ -433,6 +433,27 @@ export type {
 } from "./stages/novelty-check.js";
 export { generateVariantCandidates } from "./stages/variant-candidates.js";
 export type { VariantHuntInput, VariantHuntPlan } from "./stages/variant-candidates.js";
+// Base-vs-patch differential dedup gate + per-sanitizer-class stack-trace crash
+// dedup (issue #1501, ATLANTIS). The gate is a HuntVerifier, so it drops into
+// runHuntScan's `opts.verify` slot or composes after skeptic+prover via composeGate.
+export {
+  normalizeFrame,
+  crashSignatureFromText,
+  crashSignatureFromReport,
+  signatureKey,
+  sameCrash,
+  dedupByCrashSignature,
+  dedupFindingsByCrashSignature,
+  makeDifferentialGate,
+} from "./stages/differential-dedup.js";
+export type {
+  CrashSignature,
+  CrashGroup,
+  BuildVersion,
+  CrashRunResult,
+  DifferentialReproducer,
+  DifferentialGateOptions,
+} from "./stages/differential-dedup.js";
 // Invariant-checker candidate-gen (kernelCTF Pipeline #2): recover a subsystem's
 // lock/refcount/state invariant, then hypothesize concurrent unprivileged
 // violations. Sibling of variant-candidates; plugs into runHuntScan.
