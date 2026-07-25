@@ -63,6 +63,22 @@ describe("estimateCost", () => {
       .toBeCloseTo(3.0 + 15.0, 5);
   });
 
+  it("prices Azure Foundry deployment aliases at Azure-specific rates", () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 1_000_000 };
+    expect(estimateCost(usage, "DeepSeek-V4-Pro")).toBeCloseTo(1.74 + 3.48, 5);
+    expect(estimateCost(usage, "DeepSeek-V4-Flash")).toBeCloseTo(0.19 + 0.51, 5);
+    expect(estimateCost(usage, "Kimi-K2.7-Code")).toBeCloseTo(0.95 + 4.00, 5);
+    expect(estimateCost(usage, "gpt-oss-120b")).toBeCloseTo(0.15 + 0.60, 5);
+  });
+
+  it("prices cached Kimi K2.7 Code input at the Azure rate", () => {
+    const cost = estimateCost(
+      { inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 600_000 },
+      "Kimi-K2.7-Code",
+    );
+    expect(cost).toBeCloseTo(0.4 * 0.95 + 0.6 * 0.19, 5);
+  });
+
   it("applies cached-input rate when cachedInputTokens is set", () => {
     // Sonnet 4.6: $3 input, $0.30 cached. 1M input total, 600k cached, 400k uncached
     // → 0.4 * 3 + 0.6 * 0.30 = 1.2 + 0.18 = 1.38
