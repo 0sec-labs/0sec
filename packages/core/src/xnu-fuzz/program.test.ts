@@ -40,6 +40,16 @@ describe("program wire format", () => {
     expect(() => decodeProgram(new Uint8Array(12))).toThrow(/magic/);
   });
 
+  it("rejects truncated and trailing wire payloads", () => {
+    const valid = encodeProgram([
+      { selector: 1, scalarInput: [], structureInput: new Uint8Array(0), scalarOutCnt: 0, structOutSize: 0 },
+    ]);
+    expect(() => decodeProgram(valid.slice(0, valid.byteLength - 1))).toThrow(/truncated program/);
+    const trailing = new Uint8Array(valid.byteLength + 1);
+    trailing.set(valid);
+    expect(() => decodeProgram(trailing)).toThrow(/trailing bytes/);
+  });
+
   it("accepts FuzzInput-shaped calls directly (lengthLabel ignored)", () => {
     const decoded = decodeProgram(
       encodeProgram([

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TartVmLane, planSingleShardRun, type VmLaneConfig, type CommandRunner } from "./harness.js";
+import { encodeProgram } from "./program.js";
+import { createXnuFuzzReceipt, xnuArtifactDigest } from "./receipt.js";
 import type { FuzzInput } from "./input-gen.js";
 
 const baseConfig: VmLaneConfig = {
@@ -46,6 +48,19 @@ describe("TartVmLane — guardrail", () => {
     expect(() =>
       lane.runShard({ shardId: 0, selectors: [0], privilege: "sandbox" }, [[oneCall]]),
     ).toThrow(/refused/);
+  });
+  it("replays receipts without invoking tart or requiring VM spawn", () => {
+    const rec = recorder();
+    const lane = new TartVmLane(baseConfig, rec.runner);
+    const program = encodeProgram([oneCall]);
+    const payload = new Uint8Array([1, 2, 3]);
+    const receipt = createXnuFuzzReceipt({
+      target: { id: "model:iosurface", digest: xnuArtifactDigest(new Uint8Array([0])) },
+      program: { id: "program:receipt", bytes: program },
+      payload: { id: "payload:receipt", bytes: payload },
+    });
+    expect(lane.replayReceipt(receipt, { program, payload })).toMatchObject({ status: "accepted" });
+    expect(rec.calls).toEqual([]);
   });
 });
 
