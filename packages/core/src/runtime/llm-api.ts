@@ -1120,6 +1120,18 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.model = requestedModel ?? detected.defaultModel;
     }
 
+    // Azure GPT-5.6 Sol rejects function tools on /chat/completions even
+    // with reasoning_effort="none". The same deployment supports tools on
+    // /responses, so upgrade only this exact Azure deployment. Other Azure
+    // models keep the operator-selected wire API.
+    if (
+      this.provider === "azure"
+      && this.model.toLowerCase() === "gpt-5.6-sol"
+      && this.wireApi === "chat_completions"
+    ) {
+      this.wireApi = "responses";
+    }
+
     // Fire-and-forget startup banner. For Azure, this probes `/models`
     // once for the x-ms-region header so operators can see where their
     // traffic physically lands (data-residency transparency). The probe
@@ -1781,13 +1793,6 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
               parameters: t.input_schema,
             },
           }));
-          // Azure's GPT-5.6 Sol chat-completions deployment rejects function
-          // tools when reasoning is enabled (including the model default).
-          // Sol supports the same tools when reasoning_effort is explicitly
-          // disabled. Responses-wire requests keep their normal reasoning path.
-          if (this.provider === "azure" && this.model.toLowerCase() === "gpt-5.6-sol") {
-            body.reasoning_effort = "none";
-          }
         }
 
         res = await this.postWithRetry(JSON.stringify(body), controller.signal);
