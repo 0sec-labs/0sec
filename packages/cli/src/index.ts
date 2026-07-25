@@ -164,3 +164,21 @@ async function showInteractiveMenu(): Promise<void> {
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
 const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "cloud", "xnu-fuzz", "research", "console", "help"];
+
+if (userArgs.length === 0) {
+  showInteractiveMenu().catch((err) => {
+    console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+    process.exit(2);
+  });
+} else if (userArgs.length >= 1 && !knownCommands.includes(userArgs[0]) && !userArgs[0].startsWith("-")) {
+  const route = detectAndRoute(userArgs[0]);
+  if (route) {
+    const extraArgs = userArgs.slice(1);
+    process.argv = [process.argv[0], process.argv[1], ...route, ...extraArgs];
+    program.parse();
+  } else {
+    program.parse();
+  }
+} else {
+  program.parse();
+}

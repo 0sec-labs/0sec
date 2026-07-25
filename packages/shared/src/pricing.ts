@@ -48,11 +48,17 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   // Azure Foundry deployment names (verified 2026-07-25) — exact aliases
   // forwarded by the engine. DeepSeek/gpt-oss rates use the Azure-specific `azure_ai/*` LiteLLM feed
   // entries (not the cheaper direct-provider rates). Kimi is Microsoft's
-  // published Global Standard price for K2.7 Code.
+  // published Global Standard price for K2.7 Code. GPT-5.6 SOL, Luna, and
+  // Terra use Microsoft's Global Standard short-context rates; Azure Cost
+  // Management remains authoritative for cache writes and long-context usage,
+  // which this schema cannot represent.
   "DeepSeek-V4-Pro": { input: 1.74, output: 3.48 },
   "DeepSeek-V4-Flash": { input: 0.19, output: 0.51 },
   "Kimi-K2.7-Code": { input: 0.95, output: 4.00, cachedInput: 0.19 },
   "gpt-oss-120b": { input: 0.15, output: 0.60 },
+  "gpt-5.6-sol": { input: 5.00, output: 30.00, cachedInput: 0.50 },
+  "gpt-5.6-luna": { input: 1.00, output: 6.00, cachedInput: 0.10 },
+  "gpt-5.6-terra": { input: 2.50, output: 15.00, cachedInput: 0.25 },
   default: { input: 3.00, output: 15.00 },
 };
 
