@@ -101,3 +101,16 @@ export interface TargetModel {
   abi: "IOExternalMethodDispatch2022";
   userClients: UserClientModel[];
 }
+
+/** Immutable reference to an exact byte artifact recorded in an XNU receipt. */
+export interface XnuArtifactReference {
+  id: string;
+  digest: string;
+  byteLength: number;
+}
+
+/** Immutable reference to the target model a receipt was generated against. */
+export interface XnuTargetReference {
+  id: string;
+  digest: string;
+}

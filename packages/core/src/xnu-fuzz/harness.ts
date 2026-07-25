@@ -18,6 +18,11 @@
 
 import { execFileSync } from "node:child_process";
 import { encodeProgram, type ProgramCall } from "./program.js";
+import {
+  XnuReceiptReplayer,
+  type XnuReceiptArtifacts,
+  type XnuReceiptReplayOutcome,
+} from "./receipt.js";
 import type { FuzzInput } from "./input-gen.js";
 
 export interface VmLaneConfig {
@@ -70,6 +75,7 @@ const PANIC_GLOB = "panic-*.txt";
 
 export class TartVmLane {
   private readonly tart: string;
+  private readonly receiptReplayer = new XnuReceiptReplayer();
   constructor(
     private readonly config: VmLaneConfig,
     private readonly run: CommandRunner = defaultRunner,
@@ -91,6 +97,15 @@ export class TartVmLane {
       };
     }
     return { ok: true };
+  }
+
+  /**
+   * Verify and deduplicate an immutable receipt without touching tart, a VM, or
+   * an IOKit target. An "accepted" result means only that the artifacts are
+   * bound to a new receipt; it never represents target execution.
+   */
+  replayReceipt(receipt: unknown, artifacts: XnuReceiptArtifacts): XnuReceiptReplayOutcome {
+    return this.receiptReplayer.replay(receipt, artifacts);
   }
 
   /** Ephemeral VM name for a shard — distinct so panicked clones are discardable. */

@@ -28,6 +28,19 @@ vi.mock("./agent-runner.js", () => ({ runAnalysisAgent: (o: any) => runAnalysisA
 vi.mock("@pwnkit/db", () => ({}));
 // Keep the static scanner cheap/deterministic.
 vi.mock("./shared-analysis.js", () => ({ runSelectedStaticScan: () => [] }));
+// Kernel variant hunting is separately tested. Keep this prompt-wiring suite
+// hermetic: it must never resolve or execute a host Foxguard binary.
+vi.mock("./kernel/variant-hunt.js", () => ({
+  runKernelVariantHunt: async (options: { tree: string }) => ({
+    tree: options.tree,
+    startedAt: "1970-01-01T00:00:00.000Z",
+    completedAt: "1970-01-01T00:00:00.000Z",
+    durationMs: 0,
+    foxguardFindings: [],
+    findings: [],
+    warnings: [],
+  }),
+}));
 
 let sourceReview: typeof import("./review.js").sourceReview;
 let tree: string;

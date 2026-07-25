@@ -16,6 +16,8 @@ export {
   type SelectorModel,
   type UserClientModel,
   type TargetModel,
+  type XnuArtifactReference,
+  type XnuTargetReference,
 } from "./types.js";
 export {
   parseDispatchTable,
@@ -63,6 +65,19 @@ export {
   PROGRAM_VERSION,
   type ProgramCall,
 } from "./program.js";
+
+// §3.3 — non-executing artifact receipt, replay, and deduplication
+export {
+  XNU_RECEIPT_SCHEMA_VERSION,
+  xnuArtifactDigest,
+  createXnuFuzzReceipt,
+  validateXnuFuzzReceipt,
+  XnuReceiptReplayer,
+  type XnuFuzzReceipt,
+  type XnuReceiptReplayOutcome,
+  type CreateXnuFuzzReceiptInput,
+  type XnuReceiptArtifacts,
+} from "./receipt.js";
 
 // §3 — macOS-VM execution lane
 export {

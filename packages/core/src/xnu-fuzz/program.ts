@@ -69,22 +69,38 @@ export function encodeProgram(calls: (FuzzInput | ProgramCall)[]): Uint8Array {
 export function decodeProgram(buf: Uint8Array): ProgramCall[] {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   let off = 0;
-  const magic = view.getUint32(off, true); off += 4;
+  const requireBytes = (count: number, label: string): void => {
+    if (count > buf.byteLength - off) throw new Error(`truncated program while reading ${label}`);
+  };
+  const u32 = (label: string): number => {
+    requireBytes(4, label);
+    const value = view.getUint32(off, true);
+    off += 4;
+    return value;
+  };
+
+  const magic = u32("magic");
   if (magic !== PROGRAM_MAGIC) throw new Error(`bad program magic 0x${magic.toString(16)}`);
-  const version = view.getUint32(off, true); off += 4;
+  const version = u32("version");
   if (version !== PROGRAM_VERSION) throw new Error(`unsupported program version ${version}`);
-  const count = view.getUint32(off, true); off += 4;
+  const count = u32("call count");
   const calls: ProgramCall[] = [];
   for (let i = 0; i < count; i++) {
-    const selector = view.getUint32(off, true); off += 4;
-    const scn = view.getUint32(off, true); off += 4;
+    const selector = u32(`call ${i} selector`);
+    const scn = u32(`call ${i} scalar input count`);
+    if (scn > Math.floor((buf.byteLength - off) / 8)) throw new Error(`truncated program while reading call ${i} scalars`);
     const scalarInput: bigint[] = [];
-    for (let j = 0; j < scn; j++) { scalarInput.push(view.getBigUint64(off, true)); off += 8; }
-    const sis = view.getUint32(off, true); off += 4;
+    for (let j = 0; j < scn; j++) {
+      scalarInput.push(view.getBigUint64(off, true));
+      off += 8;
+    }
+    const sis = u32(`call ${i} structure input size`);
+    requireBytes(sis, `call ${i} structure input`);
     const structureInput = buf.slice(off, off + sis); off += sis;
-    const scalarOutCnt = view.getUint32(off, true); off += 4;
-    const structOutSize = view.getUint32(off, true); off += 4;
+    const scalarOutCnt = u32(`call ${i} scalar output count`);
+    const structOutSize = u32(`call ${i} structure output size`);
     calls.push({ selector, scalarInput, structureInput, scalarOutCnt, structOutSize });
   }
+  if (off !== buf.byteLength) throw new Error("program has trailing bytes");
   return calls;
 }
