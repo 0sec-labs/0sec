@@ -24,6 +24,7 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.AZURE_OPENAI_BASE_URL;
     delete process.env.AZURE_OPENAI_MODEL;
+    delete process.env.AZURE_OPENAI_WIRE_API;
     delete process.env.ANTHROPIC_BASE_URL;
     // kimi/z-ai are valid providers in the priority chain too — a shell that
     // exports them (e.g. an agent session routed through Moonshot/GLM) leaks
@@ -102,6 +103,22 @@ describe("LlmApiRuntime provider detection", () => {
     const diagnostics = rt.getConfigurationDiagnostics();
     expect(diagnostics.valid).toBe(true);
     expect(diagnostics.reason).toBeUndefined();
+  });
+
+  it("uses Responses wire format for the exact Azure GPT-5.6 Sol deployment", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.AZURE_OPENAI_API_KEY = "azure-key-123";
+    process.env.AZURE_OPENAI_BASE_URL = "https://example-resource.openai.azure.com/openai/v1";
+    process.env.AZURE_OPENAI_WIRE_API = "chat_completions";
+
+    process.env.AZURE_OPENAI_MODEL = "gpt-5.6-sol";
+    const sol = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((sol as any).wireApi).toBe("responses");
+
+    process.env.AZURE_OPENAI_MODEL = "gpt-5.6-luna";
+    const luna = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((luna as any).wireApi).toBe("chat_completions");
   });
 
   it("detects provider from explicit config key prefix", () => {
@@ -440,42 +457,6 @@ describe("LlmApiRuntime chat completions format", () => {
     expect(msgs[2].tool_calls[0].function.name).toBe("http_request");
     expect(msgs[3].role).toBe("tool");
     expect(msgs[3].tool_call_id).toBe("tc1");
-  });
-
-  it("disables reasoning for Azure GPT-5.6 Sol chat-completions tools", async () => {
-    (rt as any).provider = "azure";
-    (rt as any).model = "gpt-5.6-sol";
-
-    await rt.executeNative(
-      "system",
-      [{ role: "user", content: [{ type: "text", text: "inspect" }] }],
-      [{
-        name: "read_file",
-        description: "Read a source file",
-        input_schema: { type: "object", properties: {} },
-      }],
-    );
-
-    expect(capturedBody.reasoning_effort).toBe("none");
-    expect(capturedBody.tools).toHaveLength(1);
-  });
-
-  it("does not disable chat-completions reasoning for Azure GPT-5.6 Luna", async () => {
-    (rt as any).provider = "azure";
-    (rt as any).model = "gpt-5.6-luna";
-
-    await rt.executeNative(
-      "system",
-      [{ role: "user", content: [{ type: "text", text: "inspect" }] }],
-      [{
-        name: "read_file",
-        description: "Read a source file",
-        input_schema: { type: "object", properties: {} },
-      }],
-    );
-
-    expect(capturedBody.reasoning_effort).toBeUndefined();
-    expect(capturedBody.tools).toHaveLength(1);
   });
 });
 
