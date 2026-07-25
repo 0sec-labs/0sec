@@ -441,6 +441,42 @@ describe("LlmApiRuntime chat completions format", () => {
     expect(msgs[3].role).toBe("tool");
     expect(msgs[3].tool_call_id).toBe("tc1");
   });
+
+  it("disables reasoning for Azure GPT-5.6 Sol chat-completions tools", async () => {
+    (rt as any).provider = "azure";
+    (rt as any).model = "gpt-5.6-sol";
+
+    await rt.executeNative(
+      "system",
+      [{ role: "user", content: [{ type: "text", text: "inspect" }] }],
+      [{
+        name: "read_file",
+        description: "Read a source file",
+        input_schema: { type: "object", properties: {} },
+      }],
+    );
+
+    expect(capturedBody.reasoning_effort).toBe("none");
+    expect(capturedBody.tools).toHaveLength(1);
+  });
+
+  it("does not disable chat-completions reasoning for Azure GPT-5.6 Luna", async () => {
+    (rt as any).provider = "azure";
+    (rt as any).model = "gpt-5.6-luna";
+
+    await rt.executeNative(
+      "system",
+      [{ role: "user", content: [{ type: "text", text: "inspect" }] }],
+      [{
+        name: "read_file",
+        description: "Read a source file",
+        input_schema: { type: "object", properties: {} },
+      }],
+    );
+
+    expect(capturedBody.reasoning_effort).toBeUndefined();
+    expect(capturedBody.tools).toHaveLength(1);
+  });
 });
 
 // ── Response Parsing ──

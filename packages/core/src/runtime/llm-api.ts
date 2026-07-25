@@ -1781,6 +1781,13 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
               parameters: t.input_schema,
             },
           }));
+          // Azure's GPT-5.6 Sol chat-completions deployment rejects function
+          // tools when reasoning is enabled (including the model default).
+          // Sol supports the same tools when reasoning_effort is explicitly
+          // disabled. Responses-wire requests keep their normal reasoning path.
+          if (this.provider === "azure" && this.model.toLowerCase() === "gpt-5.6-sol") {
+            body.reasoning_effort = "none";
+          }
         }
 
         res = await this.postWithRetry(JSON.stringify(body), controller.signal);
