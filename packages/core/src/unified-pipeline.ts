@@ -1137,16 +1137,16 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   // $3-capped 0review scan could really spend research($3) + N×verify($3);
   // prod review scans landed at $4.99 / $6.36).
   const costLedger = new ScanCostLedger();
+  // Engine-resolved model id, stamped on scan_completed and used for pricing.
+  // Assigned once the API runtime is probed below; stays undefined when
+  // nothing resolved a model (for example, a CLI runtime with no model pick).
+  let resolvedModel: string | undefined;
   /** True once the shared ledger's cumulative cost has reached the ceiling. */
   const scanCostCeilingTripped = (): boolean =>
     opts.costCeilingUsd !== undefined &&
     opts.costCeilingUsd > 0 &&
-    costLedger.costUsd(opts.model) >= opts.costCeilingUsd;
+    costLedger.costUsd(resolvedModel ?? opts.model) >= opts.costCeilingUsd;
 
-  // Engine-resolved model id, stamped on scan_completed. Assigned once the
-  // API runtime is probed (below); stays undefined when nothing resolved a
-  // model (e.g. a CLI runtime ran the scan with no --model pick).
-  let resolvedModel: string | undefined;
   let phaseIndex = 0;
   let openPhase:
     | {
@@ -1801,7 +1801,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                 timeout: opts.timeout,
                 depth: opts.depth,
                 apiKey: opts.apiKey,
-                model: opts.model,
+                model: resolvedModel,
                 costCeilingUsd: opts.costCeilingUsd,
                 costLedger,
               },
@@ -1846,7 +1846,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                     timeout: opts.timeout,
                     depth: opts.depth,
                     apiKey: opts.apiKey,
-                    model: opts.model,
+                    model: resolvedModel,
                     costCeilingUsd: opts.costCeilingUsd,
                     costLedger,
                   },
@@ -1890,7 +1890,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
               timeout: opts.timeout,
               depth: opts.depth,
               apiKey: opts.apiKey,
-              model: opts.model,
+              model: resolvedModel,
               costCeilingUsd: opts.costCeilingUsd,
               costLedger,
             },
@@ -2058,7 +2058,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         // so the run lands cost_exceeded rather than a clean pass.
         warnings.push({
           stage: "verify",
-          message: `Verification skipped: scan cost ceiling of $${opts.costCeilingUsd} reached during research ($${costLedger.costUsd(opts.model).toFixed(4)} spent). Findings left unverified.`,
+          message: `Verification skipped: scan cost ceiling of $${opts.costCeilingUsd} reached during research ($${costLedger.costUsd(resolvedModel ?? opts.model).toFixed(4)} spent). Findings left unverified.`,
         });
         findings = findings.map((finding) => {
           const decision = isDisclosureWorthy(finding, "inconclusive");
@@ -2127,7 +2127,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                   timeout: Math.min(opts.timeout ?? 120_000, 120_000),
                   depth: "quick",
                   apiKey: opts.apiKey,
-                  model: opts.model,
+                  model: resolvedModel,
                   costCeilingUsd: opts.costCeilingUsd,
                   costLedger,
                 },
