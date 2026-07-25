@@ -1269,11 +1269,16 @@ describe("runPipeline — scan_completed event stream", () => {
     expect(breakdown[0]!.cost_out as number).toBeCloseTo(0.3, 5);
   });
 
-  it("stamps the API runtime's resolved default model when no model was picked", async () => {
+  it("threads the API runtime's resolved default model into scan pricing", async () => {
     const repoDir = freshTmpDir("repo-scan-completed-default-model");
     writeFileSync(join(repoDir, "app.ts"), "// fixture");
     process.env.PWNKIT_CLOUD_EVENTS = "1";
-    runAnalysisAgentMock.mockResolvedValue({ findings: [] });
+    runAnalysisAgentMock.mockImplementation(async (args: MockAgentArgs) => {
+      expect(args.config.model).toBe("claude-fake-default");
+      const usage = { inputTokens: 100_000, outputTokens: 10_000 };
+      args.config.costLedger?.add(usage, args.config.model);
+      return { findings: [], usage, turns: 1 };
+    });
 
     const { events, unsubscribe } = captureBusEvents();
     try {
@@ -1292,14 +1297,18 @@ describe("runPipeline — scan_completed event stream", () => {
 
     const completed = events.filter((e) => e.type === "scan_completed");
     expect(completed).toHaveLength(1);
-    // FakeLlmApiRuntime.resolvedModel() stand-in for the provider default —
-    // proves the pipeline reads the runtime's resolved model rather than
-    // leaving the field absent (CI review scans dispatch with model=NULL).
-    expect(completed[0]!.payload.model).toBe("claude-fake-default");
-    // No metered usage recorded (mock returns no usage) → cost fields
-    // omitted, never a fabricated $0.
-    expect(completed[0]!.payload.cost_usd).toBeUndefined();
-    expect(completed[0]!.payload.cost_breakdown).toBeUndefined();
+    // FakeLlmApiRuntime.resolvedModel() stands in for an env/provider default.
+    // The same resolved id must key the cost ledger, not only the completion
+    // metadata; otherwise env-selected Azure scans fall back to $3/$15.
+    const payload = completed[0]!.payload;
+    expect(payload.model).toBe("claude-fake-default");
+    expect(payload.cost_usd).toBeCloseTo(0.45, 5);
+    expect(payload.cost_breakdown).toEqual([
+      expect.objectContaining({
+        provider: "anthropic",
+        model: "claude-fake-default",
+      }),
+    ]);
   });
 
   it("cost-trip completions also carry the full field set", async () => {
