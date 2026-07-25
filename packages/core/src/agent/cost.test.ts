@@ -71,6 +71,23 @@ describe("estimateCost", () => {
     expect(estimateCost(usage, "gpt-oss-120b")).toBeCloseTo(0.15 + 0.60, 5);
   });
 
+  it("prices exact Azure GPT-5.6 SOL, Luna, and Terra deployment names", () => {
+    const expected = {
+      "gpt-5.6-sol": { input: 5.00, output: 30.00, cachedInput: 0.50 },
+      "gpt-5.6-luna": { input: 1.00, output: 6.00, cachedInput: 0.10 },
+      "gpt-5.6-terra": { input: 2.50, output: 15.00, cachedInput: 0.25 },
+    };
+
+    for (const [model, rates] of Object.entries(expected)) {
+      expect(getRates(model)).toEqual(rates);
+      expect(getRates(model)).not.toEqual(MODEL_PRICING.default);
+      expect(estimateCost(
+        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
+        model,
+      )).toBeCloseTo(rates.input + rates.output, 5);
+    }
+  });
+
   it("prices cached Kimi K2.7 Code input at the Azure rate", () => {
     const cost = estimateCost(
       { inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 600_000 },
