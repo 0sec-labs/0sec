@@ -45,6 +45,14 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   "k3": { input: 3.0, output: 15.0, cachedInput: 0.30 },
   "k3[1m]": { input: 3.0, output: 15.0, cachedInput: 0.30 },
   "kimi-for-coding": { input: 3.0, output: 15.0, cachedInput: 0.30 },
+  // Azure Foundry deployment names (verified 2026-07-25) — exact aliases
+  // forwarded by the engine. DeepSeek/gpt-oss rates use the Azure-specific `azure_ai/*` LiteLLM feed
+  // entries (not the cheaper direct-provider rates). Kimi is Microsoft's
+  // published Global Standard price for K2.7 Code.
+  "DeepSeek-V4-Pro": { input: 1.74, output: 3.48 },
+  "DeepSeek-V4-Flash": { input: 0.19, output: 0.51 },
+  "Kimi-K2.7-Code": { input: 0.95, output: 4.00, cachedInput: 0.19 },
+  "gpt-oss-120b": { input: 0.15, output: 0.60 },
   default: { input: 3.00, output: 15.00 },
 };
 
