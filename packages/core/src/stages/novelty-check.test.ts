@@ -7,12 +7,16 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Finding } from "@pwnkit/shared";
 import {
   deriveSearchTerms,
   findingToQuery,
   searchLoreMirror,
   checkNovelty,
+  syncLoreMirror,
   type GitRunner,
   type LoreMirror,
   type NoveltyJudge,
@@ -83,6 +87,35 @@ describe("findingToQuery", () => {
     expect(ids).toEqual(expect.arrayContaining(["ref_frame_idx", "V4L2_AV1_TOTAL_REFS_PER_FRAME"]));
     // defaults to excluding our own postings
     expect(q.excludeFrom).toContain("0sec.ai");
+  });
+});
+
+describe("syncLoreMirror", () => {
+  it("creates a missing mirror root before cloning", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "pwnkit-lore-sync-"));
+    const rootDir = join(parent, "nested", "mirrors");
+    const git: GitRunner = async (args) => {
+      if (args[0] === "ls-remote") {
+        if (args[2]?.endsWith("/0.git")) return "";
+        throw new Error("no more epochs");
+      }
+      return "";
+    };
+
+    try {
+      const mirrors = await syncLoreMirror({
+        rootDir,
+        lists: ["linux-media"],
+        git,
+      });
+
+      expect(existsSync(rootDir)).toBe(true);
+      expect(mirrors).toEqual([
+        { list: "linux-media", epoch: 0, dir: join(rootDir, "linux-media__0") },
+      ]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });
 

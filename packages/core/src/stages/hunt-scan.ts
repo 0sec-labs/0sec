@@ -1118,9 +1118,9 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           log(`[hunt] novelty: DROP "${finding.title}" — duplicate of ${result.duplicates.map((d) => d.messageId).join(", ")}`);
         }
       } catch (e) {
-        // A novelty-gate failure must not silently drop a real finding: keep it.
-        warnings.push(`hunt: novelty check failed for ${finding.title}: ${String(e).slice(0, 100)}`);
-        novel.push(finding);
+        warnings.push(
+          `hunt: novelty check failed for ${finding.title}; withholding lead: ${String(e).slice(0, 100)}`,
+        );
       }
     }
     confirmed = novel;
