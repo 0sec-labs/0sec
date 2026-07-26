@@ -790,6 +790,24 @@ describe("runNativeAgentLoop cost ceiling", () => {
     expect(state.turnCount).toBe(3);
   });
 
+  it("keeps the configured model rate in the final estimated cost", async () => {
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 1,
+        target: "https://example.com",
+        scanId: "model-specific-final-cost",
+        costModel: "DeepSeek-V4-Pro",
+      },
+      runtime: createCostBurningRuntime(1_000_000, 1_000_000),
+      db: null,
+    });
+
+    expect(state.estimatedCostUsd).toBeCloseTo(1.74 + 3.48, 5);
+  });
+
   it("does NOT abort when running cost is well below the ceiling", async () => {
     // Tiny per-turn cost; $100 ceiling → never hit.
     const runtime = createCostBurningRuntime(100, 100);
