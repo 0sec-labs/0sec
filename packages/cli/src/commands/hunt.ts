@@ -236,7 +236,7 @@ export async function runHunt(opts: {
           : localMirrors(noveltyRoot, noveltyLists);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
-        noveltyWarnings.push(`hunt: novelty sync failed, continuing without duplicate suppression: ${reason.slice(0, 160)}`);
+        noveltyWarnings.push(`hunt: novelty sync failed: ${reason.slice(0, 160)}`);
         log(`[hunt] ${noveltyWarnings[noveltyWarnings.length - 1]}`);
       }
     }
@@ -245,20 +245,17 @@ export async function runHunt(opts: {
       const message =
         `novelty requested but no lore mirrors found under ${noveltyRoot} ` +
         `for ${noveltyLists.join(",") || "(no lists)"}`;
-      if (opts.novelty.required) {
-        return {
-          exitCode: 3,
-          result: {
-            mode: "hunt",
-            seed: opts.ref ?? opts.seedPath,
-            candidates: 0,
-            novelty: { enabled: true, required: true, mirrors: [] },
-            warnings: [...noveltyWarnings, `hunt: ${message}; aborting fail-closed`],
-            note: "Discovery did not run because novelty evidence was required but unavailable.",
-          },
-        };
-      }
-      log(`[hunt] ${message}; continuing fail-open`);
+      return {
+        exitCode: 3,
+        result: {
+          mode: "hunt",
+          seed: opts.ref ?? opts.seedPath,
+          candidates: 0,
+          novelty: { enabled: true, required: true, mirrors: [] },
+          warnings: [...noveltyWarnings, `hunt: ${message}; aborting fail-closed`],
+          note: "Discovery did not run because requested novelty evidence was unavailable.",
+        },
+      };
     }
 
     // 1. Seed → variant-hunt plan (bug class + grep'd candidate sites).
@@ -427,7 +424,7 @@ export async function runHunt(opts: {
         novelty: opts.novelty
           ? {
               enabled: true,
-              required: opts.novelty.required === true,
+              required: true,
               root: noveltyRoot,
               lists: noveltyLists,
               mirrors: noveltyMirrors.map((m) => ({ list: m.list, epoch: m.epoch, dir: m.dir })),
@@ -490,7 +487,6 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     seedPath: opts.seed,
     ...(opts.ref ? { ref: opts.ref } : {}),
     concurrency: parsePositive("--concurrency", opts.concurrency, 4),
-    maxCandidates: parsePositive("--max-candidates", opts.maxCandidates, 40),
     skipCandidates: parseNonNegative("--skip-candidates", opts.skipCandidates, 0),
     ...(opts.models ? { models: opts.models.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
     ...(opts.reachableOnly ? { reachableOnly: true } : {}),
@@ -542,13 +538,13 @@ export function registerHuntCommand(program: Command): void {
     .option("--reachable-only", "Restrict candidates to paths built + zero-cap reachable on the kernelCTF COS target (default: HUNT_REACHABLE_ONLY env)")
     .option("--reachable-prefer", "Sort kernelCTF-reachable candidates first, without dropping any (default: HUNT_REACHABLE_PREFER env)")
     .option("--no-verify", "Skip the skeptic gate (emit all raw findings — triage only, never disclosure)")
-    .option("--novelty", "After the skeptic gate, drop confirmed findings duplicated by lore.kernel.org mirror patches")
+    .option("--novelty", "Require lore.kernel.org duplicate suppression; abort before discovery when evidence is unavailable")
     .option("--novelty-root <path>", "Lore mirror root (default: PWNKIT_LORE_MIRROR_ROOT or /root/lore-mirror)")
     .option("--novelty-lists <a,b>", "Comma-separated lore lists to search (default: PWNKIT_LORE_LISTS or linux-media)")
     .option("--novelty-recent-epochs <N>", "Newest public-inbox epochs to sync per list when --novelty-sync is set (default 1)")
     .option("--novelty-sync", "Clone/fetch lore mirrors before running the novelty gate")
     .option("--novelty-model <model>", "Optional model override for the lore duplicate judge")
-    .option("--novelty-required", "Abort before discovery when novelty evidence is unavailable")
+    .option("--novelty-required", "Legacy alias; --novelty already aborts when evidence is unavailable")
     .option("--methodology", "Use the kernel-LPE methodology preset: lifecycle/provenance lenses, best-of-4, top-2 skeptic gate, reachable-first")
     .option("--invariant", "Engine A: build (or load) the seed-touched subsystem's stored invariant model and inject its rules + deterministic violation hypotheses into every finder prompt")
     .option("--graph-slice", "Load the seed-touched subsystem's pre-exported Joern CPG and inject a compact interprocedural reachability slice around the fix site into every finder prompt (needs scripts/provision-cpg.sh; fail-open to flat-text)")

@@ -36,7 +36,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Finding } from "@pwnkit/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
@@ -139,6 +139,7 @@ export async function discoverEpochs(
  * Returns the synced epoch clones.
  */
 export async function syncLoreMirror(opts: LoreSyncOptions): Promise<LoreMirror[]> {
+  mkdirSync(opts.rootDir, { recursive: true });
   const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
   const git = opts.git ?? liveGit;
   const log = opts.log ?? (() => {});

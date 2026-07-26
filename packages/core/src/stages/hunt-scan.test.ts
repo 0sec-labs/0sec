@@ -214,6 +214,32 @@ describe("runHuntScan — best-of-N + judge gate", () => {
     // No spurious "no brief to judge against" truncation warning was emitted.
     expect(res.warnings.some((w) => w.includes("no brief to judge against"))).toBe(false);
   });
+
+  it("withholds a confirmed finding when its novelty check fails", async () => {
+    agenticScanMock.mockReset().mockResolvedValue({
+      findings: [mkFinding("f-novelty", "OOB read in foo_handler", "foo_handler in foo.c")],
+    });
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }],
+      runtime: "api",
+      concurrency: 1,
+      verify: async () => ({ confirmed: true, reason: "reproduced" }),
+      novelty: {
+        mirrors: [{ list: "linux-media", epoch: 1, dir: "/missing/mirror" }],
+        git: async () => {
+          throw new Error("mirror unavailable");
+        },
+      },
+    });
+
+    expect(res.findings.map((finding) => finding.id)).toEqual(["f-novelty"]);
+    expect(res.confirmed).toEqual([]);
+    expect(res.warnings).toEqual([
+      expect.stringContaining("novelty check failed for OOB read in foo_handler; withholding lead"),
+    ]);
+  });
 });
 
 describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUNT_FINDER_MAX_RETRIES)", () => {
