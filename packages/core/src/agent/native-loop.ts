@@ -1583,8 +1583,10 @@ export async function runNativeAgentLoop(
     }
   }
 
-  // Compute estimated cost
-  state.estimatedCostUsd = estimateCost(state.totalUsage);
+  // Keep the final return value on the same model-specific rate used for every
+  // turn and cost-ceiling check; dropping costModel here reprices Azure runs at
+  // the generic fallback after the loop completes.
+  state.estimatedCostUsd = estimateCost(state.totalUsage, config.costModel);
 
   // If none of the break paths set a summary, the loop exited naturally by
   // completing all maxTurns iterations. Only in that case do we stamp the
