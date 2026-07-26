@@ -74,6 +74,28 @@ export const MODEL_PRICING: Record<string, ModelRates> = {
   ...OSS_PRICING,
 };
 
+// Azure's runtime model id is the operator deployment name. Accept casing
+// differences and Azure's version suffixes while keeping all other pricing
+// keys exact, so a deployment such as `DeepSeek-V4-Pro-2026-04-23` cannot
+// silently fall back to the generic $3/$15 rate.
+const AZURE_DEPLOYMENT_PRICE_ALIASES = new Map<string, string>([
+  ["deepseek-v4-pro", "DeepSeek-V4-Pro"],
+  ["deepseek-v4-flash", "DeepSeek-V4-Flash"],
+  ["kimi-k2.7-code", "Kimi-K2.7-Code"],
+  ["gpt-oss-120b", "gpt-oss-120b"],
+  ["gpt-5.6-sol", "gpt-5.6-sol"],
+  ["gpt-5.6-luna", "gpt-5.6-luna"],
+  ["gpt-5.6-terra", "gpt-5.6-terra"],
+]);
+
+function azureDeploymentPriceKey(model: string): string | null {
+  const lower = model.toLowerCase();
+  for (const [alias, canonical] of AZURE_DEPLOYMENT_PRICE_ALIASES) {
+    if (lower === alias || lower.startsWith(`${alias}-`)) return canonical;
+  }
+  return null;
+}
+
 /** Known vendor prefixes to strip (e.g. "openai/gpt-4o" -> "gpt-4o"). */
 function normalizeModel(model: string): string {
   const prefixes = [
@@ -97,7 +119,8 @@ function normalizeModel(model: string): string {
 
 export function getRates(model?: string): ModelRates {
   const key = model ? normalizeModel(model) : "";
-  const rates = MODEL_PRICING[key];
+  const aliasKey = azureDeploymentPriceKey(key);
+  const rates = MODEL_PRICING[key] ?? (aliasKey ? MODEL_PRICING[aliasKey] : undefined);
   if (!rates) {
     if (model) console.warn(`[pwnkit] Unknown model for cost estimation: ${model}`);
     return MODEL_PRICING.default;
