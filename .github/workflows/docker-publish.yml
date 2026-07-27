@@ -188,6 +188,46 @@ jobs:
           cache-from: type=gha,scope=pwnkit
           cache-to: type=gha,mode=max,scope=pwnkit
 
+      - name: Smoke-test published image
+        run: |
+          set -euo pipefail
+          # The :sha tag is stamped on every build (see the tag plan above), so
+          # the first line of the metadata tag list is always a valid, immutable
+          # ref for the image this job just pushed — unlike :latest, which is
+          # tip-gated and may point at a different build.
+          IMAGE="$(echo '${{ steps.meta.outputs.tags }}' | head -n1)"
+          echo "Smoke-testing $IMAGE"
+          docker pull "$IMAGE"
+          # Exec every tool as the non-root `ubuntu` user the image drops to.
+          # Any failure fails the job so broken tool additions can't silently
+          # ship — and, importantly, so the E2B template dispatch below never
+          # fires for an image whose tooling is broken.
+          docker run --rm --entrypoint bash "$IMAGE" -c '
+            set -e
+            echo "=== whoami ===" && whoami
+            echo "=== node ==="          && node --version
+            echo "=== ripgrep ==="       && rg --version | head -1
+            echo "=== nmap ==="          && nmap --version | head -1
+            # AD / cloud-identity tooling.
+            # `command -v` is the existence assertion (it exits non-zero when the
+            # binary is missing); the piped version banner is informational —
+            # piping would otherwise swallow a non-zero exit.
+            echo "=== ldapsearch ==="    && command -v ldapsearch && ldapsearch -VV 2>&1 | head -1
+            echo "=== klist ==="         && command -v klist && klist -V 2>&1 | head -1
+            echo "=== kinit ==="         && command -v kinit
+            for t in secretsdump.py GetUserSPNs.py GetNPUsers.py psexec.py wmiexec.py ntlmrelayx.py; do
+              echo "=== impacket $t ===" && command -v "$t" && "$t" -h 2>&1 | head -3
+            done
+            echo "=== certipy ==="        && command -v certipy && certipy --help 2>&1 | head -3
+            echo "=== bloodhound-ce ==="  && command -v bloodhound-ce-python && bloodhound-ce-python --help 2>&1 | head -3
+            echo "=== azurehound ==="     && command -v azurehound && azurehound --help 2>&1 | head -3
+            # The AD venv must NOT shadow the system interpreter: the agent
+            # helper scripts import the apt-managed requests/bs4 via plain
+            # `python3`, and a venv on PATH would silently hide them.
+            echo "=== system python deps ===" && python3 -c "import requests, bs4; print(\"py deps ok\")"
+            echo "ALL_TOOLS_OK"
+          '
+
       - name: Notify 0sec E2B template workflow
         if: ${{ success() }}
         env:

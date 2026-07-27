@@ -11,7 +11,8 @@
 #     ghcr.io/peaktwilight/pwnkit:latest scan --target https://example.com
 #
 # Build args:
-#   INSTALL_SECLISTS=1   include SecLists wordlists (~1GB extra, off by default)
+#   INSTALL_SECLISTS=1     include SecLists wordlists (~1GB extra, off by default)
+#   AZUREHOUND_VERSION=vX  pin the AzureHound release (checksum-verified, see below)
 
 # ---------- Stage 1: builder ----------
 FROM node:20-bookworm AS builder
@@ -81,6 +82,78 @@ RUN if [ "$INSTALL_SECLISTS" = "1" ]; then \
         apt-get update && apt-get install -y --no-install-recommends seclists \
         && rm -rf /var/lib/apt/lists/*; \
     fi
+
+# ---------- Active Directory / cloud-identity tooling ----------
+# Kept as its own block (rather than folded into the base apt line above) so it
+# lands before the app COPY: iterating on engine code doesn't re-run any of it.
+#
+#   ldap-utils   ldapsearch — raw LDAP enumeration, the cheap first probe before
+#                committing to a full graph collection
+#   krb5-user    kinit/klist/kdestroy — ticket handling for Kerberos-auth runs
+#                and for feeding TGTs to the impacket scripts below
+#   python3-venv ubuntu:24.04 ships python3 without ensurepip; needed for the
+#                venv created in the next layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ldap-utils krb5-user python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Impacket + Certipy + the BloodHound CE collector come from PyPI, not apt.
+#
+# ubuntu:24.04 marks the system interpreter EXTERNALLY-MANAGED (PEP 668), so a
+# bare `pip install` aborts. The two escapes are `--break-system-packages` and a
+# venv; this uses a venv. `--break-system-packages` would let these packages'
+# deep, tightly-pinned dependency trees (certipy-ad pins cryptography and
+# impacket to exact minor ranges) overwrite the apt-managed python3-requests /
+# python3-bs4 that the agent's own helper scripts import — a silent way to break
+# unrelated scanning.
+#
+# The venv is deliberately NOT added to PATH: its bin/ contains a `python3` that
+# would shadow the system interpreter and hide those same apt-installed modules.
+# The console scripts are symlinked into /usr/local/bin instead — their shebangs
+# hardcode the venv interpreter's absolute path, so they resolve correctly when
+# invoked through the symlink.
+#
+# Impacket declares its examples via setuptools `scripts=`, so they install
+# under their original filenames (secretsdump.py, GetUserSPNs.py, GetNPUsers.py,
+# psexec.py, wmiexec.py, ntlmrelayx.py, ...) — hence the *.py symlink loop.
+# bloodhound-ce is the CE-format collector whose JSON the `adgraph` analyzer
+# ingests; the legacy `bloodhound` package emits the old pre-CE schema.
+RUN python3 -m venv /opt/ad-tools \
+    && /opt/ad-tools/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/ad-tools/bin/pip install --no-cache-dir \
+        impacket==0.13.1 \
+        certipy-ad==5.1.0 \
+        bloodhound-ce==1.9.1 \
+    && for f in /opt/ad-tools/bin/*.py; do ln -sf "$f" /usr/local/bin/; done \
+    && ln -sf /opt/ad-tools/bin/certipy /usr/local/bin/certipy \
+    && ln -sf /opt/ad-tools/bin/bloodhound-ce-python /usr/local/bin/bloodhound-ce-python \
+    && rm -rf /root/.cache/pip
+
+# AzureHound — the Azure/Entra collector. It's a Go binary shipped as a GitHub
+# release asset, so there's no apt/pip package to pin; instead the tag is pinned
+# and the download is checked against a SHA-256 recorded here. These two digests
+# are the vendor-published `.sha256` sidecars, independently reproduced by
+# downloading and hashing both archives (2026-07-27) — not copied on trust. If
+# SpecterOps ever replaces the assets behind the tag, this build fails loudly
+# instead of silently shipping different code.
+#
+# Default-on (unlike INSTALL_SECLISTS) because it's ~13MB and verifiable; the
+# opt-in pattern is reserved for heavy or unverifiable additions.
+ARG AZUREHOUND_VERSION=v3.0.0
+ARG TARGETARCH
+RUN set -eux; \
+    arch="${TARGETARCH:-amd64}"; \
+    case "$arch" in \
+        amd64) sha256=d4bc8a09d90a5e6f0a1c8850ac732e6eeee93767edb13c1bdb85082156821d39 ;; \
+        arm64) sha256=40811a96fc95022e49186de14b5defeabbb21e27d9300382b0405057c2f66365 ;; \
+        *) echo "AzureHound ${AZUREHOUND_VERSION}: no pinned checksum for TARGETARCH=${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/azurehound.zip \
+        "https://github.com/SpecterOps/AzureHound/releases/download/${AZUREHOUND_VERSION}/AzureHound_${AZUREHOUND_VERSION}_linux_${arch}.zip"; \
+    echo "${sha256}  /tmp/azurehound.zip" | sha256sum -c -; \
+    unzip -j /tmp/azurehound.zip azurehound -d /usr/local/bin; \
+    chmod +x /usr/local/bin/azurehound; \
+    rm -f /tmp/azurehound.zip
 
 WORKDIR /app
 
