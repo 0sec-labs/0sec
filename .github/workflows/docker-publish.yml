@@ -54,6 +54,14 @@ jobs:
     # faster than GitHub's 2-vCPU hosted runners and shares the buildx layer
     # cache with the other image builds. amd64-only (below) so no QEMU needed.
     runs-on: [self-hosted, Linux, X64]
+    env:
+      # Suppress build-record artifact upload — see the 0sec-side fix.
+      # docker/build-push-action v6 uploads a `.dockerbuild` record per
+      # build by default; those accumulated org-wide and exhausted the
+      # Actions artifact storage quota on 2026-07-28, which skipped this
+      # very workflow's publish job. We never consume these records.
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_SUMMARY: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
