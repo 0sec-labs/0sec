@@ -766,6 +766,119 @@ describe("makeMultiLensVerifier — multi-lens verify quorum (depth method)", ()
   it("throws when constructed with zero lenses", () => {
     expect(() => makeMultiLensVerifier([], base)).toThrow(/at least one/);
   });
+
+  // ── Refute decorrelation observability (issue #661) ───────────────────────
+  //
+  // The quorum is only as independent as its weakest adjudicating lens, and the
+  // whole point of the `decorrelation` field is that this must be VISIBLE from
+  // outside the process rather than inferred.
+
+  /** Per-lens fake that also reports a decorrelation verdict. */
+  const makeDecorrelatingPass =
+    (byLens: Record<string, { crossFamily: boolean; status: string } | undefined>) =>
+    (lens: { id: string; challengeHint: string }) =>
+    async () => ({
+      confirmed: true,
+      reason: "survived",
+      ...(byLens[lens.id]
+        ? { decorrelation: byLens[lens.id] as { crossFamily: boolean; status: "enforced" | "no-distinct-family" } }
+        : {}),
+    });
+
+  it("reports the quorum as cross-family only when EVERY adjudicating lens was", async () => {
+    const allCross = makeMultiLensVerifier(lenses, {
+      ...base,
+      makePass: makeDecorrelatingPass(
+        Object.fromEntries(lenses.map((l) => [l.id, { crossFamily: true, status: "enforced" }])),
+      ),
+    });
+    const v = await allCross(finding, candidate);
+    expect(v.decorrelation).toEqual({ crossFamily: true, status: "enforced" });
+  });
+
+  it("surfaces the WEAKEST lens when one fell back to the finder's own family", async () => {
+    const mixed = makeMultiLensVerifier(lenses, {
+      ...base,
+      makePass: makeDecorrelatingPass({
+        reachability: { crossFamily: true, status: "enforced" },
+        completeness: { crossFamily: true, status: "enforced" },
+        novelty: { crossFamily: false, status: "no-distinct-family" },
+        scope: { crossFamily: true, status: "enforced" },
+      }),
+    });
+    const v = await mixed(finding, candidate);
+    expect(v.decorrelation).toEqual({ crossFamily: false, status: "no-distinct-family" });
+  });
+
+  it("invents nothing when the injected passes report no decorrelation at all", async () => {
+    const verify = makeMultiLensVerifier(lenses, {
+      ...base,
+      makePass: makePassFrom({ reachability: true, completeness: true, novelty: true, scope: true }),
+    });
+    const v = await verify(finding, candidate);
+    expect(v.decorrelation).toBeUndefined();
+  });
+});
+
+describe("runHuntScan — refute decorrelation is persisted per finding", () => {
+  it("stamps the verifier's decorrelation report onto the finding record (and omits it when absent)", async () => {
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-x", "a finding", "")] }));
+
+    const withReport = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "a.c" }],
+      runtime: "api",
+      verify: async () => ({
+        confirmed: true,
+        reason: "survived",
+        decorrelation: { crossFamily: true, status: "enforced", finderFamily: "anthropic", refuterFamily: "z-ai" },
+      }),
+    });
+    expect(withReport.records[0]?.decorrelation).toEqual({
+      crossFamily: true,
+      status: "enforced",
+      finderFamily: "anthropic",
+      refuterFamily: "z-ai",
+    });
+
+    // A verifier that reports nothing must not gain a fabricated one.
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding("f-y", "a finding", "")] }));
+    const withoutReport = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "a.c" }],
+      runtime: "api",
+      verify: async () => ({ confirmed: true, reason: "survived" }),
+    });
+    expect(withoutReport.records[0]?.decorrelation).toBeUndefined();
+  });
+
+  it("logs a run-level correlation summary so a fully-correlated run is visible as it happens", async () => {
+    agenticScanMock.mockReset();
+    // Distinct ids per candidate — `records` is keyed by finding id, so reusing
+    // one id would collapse both findings into a single record.
+    let n = 0;
+    agenticScanMock.mockImplementation(async () => ({ findings: [mkFinding(`f-z${n++}`, "a finding", "")] }));
+
+    const lines: string[] = [];
+    await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "a.c" }, { path: "b.c" }],
+      runtime: "api",
+      verify: async () => ({
+        confirmed: false,
+        reason: "refuted",
+        decorrelation: { crossFamily: false, status: "no-distinct-family" },
+      }),
+      log: (m) => lines.push(m),
+    });
+
+    const summary = lines.find((l) => l.includes("refute decorrelation"));
+    expect(summary).toBeDefined();
+    expect(summary).toContain("0/2 verdict(s) cross-family");
+    expect(summary).toContain("no-distinct-family=2");
+  });
 });
 
 describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {

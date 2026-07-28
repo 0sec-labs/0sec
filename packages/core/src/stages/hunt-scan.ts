@@ -44,7 +44,14 @@ import {
 import { judgeHuntCandidatesWithLlm, type HuntCandidateJudge } from "./hunt-judge.js";
 import { HuntMemory, huntFlywheelEnabled, primedOrderKey, type HuntPriming } from "./hunt-flywheel.js";
 import { huntNegativesEnabled, matchNegative, negativeContext, type KnownNegative } from "./hunt-negatives.js";
-import { crossFamilyRefuteEnabled, selectCrossFamilyRefuter } from "./hunt-cross-family.js";
+import {
+  availableRefuterCandidates,
+  crossFamilyRefuteEnabled,
+  describeRefuterChoice,
+  selectCrossFamilyRefuter,
+  type CrossFamilyRefuteChoice,
+  type CrossFamilyStatus,
+} from "./hunt-cross-family.js";
 import { scoreGeometry } from "../kernel/geometry-score.js";
 
 // Per-scan throwaway SQLite DB. The finders/skeptics run concurrently and the
@@ -103,11 +110,43 @@ export interface FinderLens {
   challengeHint: string;
 }
 
-/** Skeptic+prover gate: refute (assume-FP) then build+run+sanitizer reproduce. Never self-graded. */
+/**
+ * Whether the refute pass that produced a verdict was actually decorrelated from
+ * the finder — the OBSERVABILITY primitive for the adversarial arm (issue #661).
+ *
+ * Before this, the only outward evidence that cross-family refutation had done
+ * anything was a substring buried in a free-text `reason`, which meant "the
+ * feature is working" and "the feature silently passthrough'd on every finding
+ * because no candidate roster was ever wired up" looked identical from outside
+ * the process. That was the deeper problem: an adversarial gate whose
+ * independence you cannot measure is an assumption, not a control.
+ *
+ * Emitted per verdict by {@link makeSkepticVerifier}, aggregated per finding by
+ * {@link makeMultiLensVerifier}, and persisted on {@link HuntFindingRecord} so
+ * the hunt corpus carries the answer for every historical finding.
+ */
+export interface RefuteDecorrelation {
+  /** True ONLY when the refute pass ran on a model family the finder does not belong to. */
+  crossFamily: boolean;
+  /** Why — including the reason it did NOT decorrelate. See {@link CrossFamilyStatus}. */
+  status: CrossFamilyStatus;
+  /** The finder family (or `+`-joined families) the refuter avoided, when known. */
+  finderFamily?: string;
+  /** The family that actually ran the refute pass, when known. */
+  refuterFamily?: string;
+  /** The model the refute pass actually ran on (undefined = the provider default). */
+  refuterModel?: string;
+}
+
+/**
+ * Skeptic+prover gate: refute (assume-FP) then build+run+sanitizer reproduce.
+ * Never self-graded. `decorrelation` is optional and additive — verifiers that
+ * predate it (and every injected test/prod fake) simply omit it.
+ */
 export type HuntVerifier = (
   finding: Finding,
   candidate: HuntCandidate,
-) => Promise<{ confirmed: boolean; reason: string }>;
+) => Promise<{ confirmed: boolean; reason: string; decorrelation?: RefuteDecorrelation }>;
 
 export interface HuntScanOptions {
   sourceRoot: string;
@@ -247,6 +286,16 @@ export interface HuntFindingRecord {
   /** Set only for findings that actually ran through `opts.verify`. */
   skepticConfirmed?: boolean;
   skepticReason?: string;
+  /**
+   * Whether the refute pass behind `skepticConfirmed` was decorrelated from the
+   * finder, and if not, why (see {@link RefuteDecorrelation}). Present only when
+   * the injected verifier reports it — so it is absent for custom/fake
+   * verifiers, and for corpus rows written before #661. Persisting it here is
+   * what makes correlation auditable AFTER the fact: given a corpus row you can
+   * now tell whether "refuted by the skeptic" meant "a second family disagreed"
+   * or "the same model reconsidered".
+   */
+  decorrelation?: RefuteDecorrelation;
   /** True when the novelty gate ruled this (confirmed) finding a duplicate. */
   duplicate: boolean;
 }
@@ -545,28 +594,50 @@ export function makeSkepticVerifier(opts: {
    */
   focus?: string;
   /**
-   * OPTIONAL cross-family refuter (issue #661, `PWNKIT_HUNT_CROSS_FAMILY=1`).
-   * When enabled AND a distinct second family is available, force this refute
+   * OPTIONAL cross-family refuter (issue #661, `PWNKIT_HUNT_CROSS_FAMILY`, now
+   * default ON). When a distinct second family is reachable, force this refute
    * pass onto a model of a DIFFERENT family than the finder so their errors
    * decorrelate before a finding is promoted. Defaults to
-   * {@link crossFamilyRefuteEnabled}. OFF, or no distinct family available →
-   * the configured `model` is used unchanged (byte-identical to today).
+   * {@link crossFamilyRefuteEnabled}. Disabled, no distinct family available, or
+   * a failed cross-family call → the configured `model` is used (byte-identical
+   * to the pre-#661 path); the verdict's `decorrelation.status` says which.
    */
   crossFamilyRefute?: boolean;
   /** Finder model/family the cross-family refuter must decorrelate from. */
   finderModel?: string;
-  /** Alternate refuter models to pick a distinct family from, tried in order. */
+  /**
+   * ALL finder models in play, when the hunt fans out over several. The refuter
+   * avoids EVERY one of their families — refuting a two-model hunt with one of
+   * its own finder families leaves half the findings correlated.
+   */
+  finderModels?: readonly string[];
+  /**
+   * Alternate refuter models to pick a distinct family from, tried in order.
+   * Defaults to {@link availableRefuterCandidates} — the families whose auth is
+   * actually configured in this process.
+   */
   refuterCandidates?: readonly string[];
+  /** Optional run log; receives one line describing the refuter decorrelation decision. */
+  log?: (msg: string) => void;
 }): HuntVerifier {
   // Cross-family refuter selection is static (all inputs come from opts), so
   // resolve it ONCE. Passthrough when disabled / no distinct family → the config
   // model and reason strings below stay byte-identical to before this existed.
+  //
+  // The candidate roster defaults to the families whose auth is present: no
+  // production call site names one, so without this default the selector would
+  // have nothing to choose from and default-ON would be pure theatre.
   const refuter = selectCrossFamilyRefuter({
     enabled: opts.crossFamilyRefute ?? crossFamilyRefuteEnabled(),
     ...(opts.finderModel ? { finderModel: opts.finderModel } : {}),
+    ...(opts.finderModels ? { finderModels: opts.finderModels } : {}),
     ...(opts.model ? { refuterModel: opts.model } : {}),
-    ...(opts.refuterCandidates ? { candidates: opts.refuterCandidates } : {}),
+    candidates: opts.refuterCandidates ?? availableRefuterCandidates(),
   });
+  // One line per constructed skeptic, so a run log shows whether the adversarial
+  // arm is actually adversarial — including the single-provider case, where the
+  // honest answer is "it is not".
+  opts.log?.(`[hunt] ${describeRefuterChoice(refuter)}`);
   return async (finding, candidate) => {
     let hint =
       `ADVERSARIAL REVIEW. A prior pass claims this finding in ${candidate.path}:\n` +
@@ -628,7 +699,7 @@ export function makeSkepticVerifier(opts: {
     // targets the one claim, so "quick" depth keeps the gate fast enough to run
     // per-finding at scale (a "deep" full-template scan took ~10min on a 10-line
     // file in smoke testing — prohibitive across many findings).
-    const config: ScanConfig = {
+    const baseConfig = {
       target: candidate.path,
       depth: "quick",
       format: "json",
@@ -636,23 +707,56 @@ export function makeSkepticVerifier(opts: {
       timeout: 60_000,
       runtime: opts.runtime,
       repoPath: opts.sourceRoot,
-      ...(refuter.model ? { model: refuter.model } : {}),
+    } as const;
+
+    /** Run one refute pass on `model`, in its own throwaway DB. */
+    const refutePass = async (model?: string): Promise<boolean> => {
+      const config: ScanConfig = { ...baseConfig, ...(model ? { model } : {}) };
+      const dbPath = freshHuntDb();
+      try {
+        const report = await agenticScan({ config, dbPath, challengeHint: hint });
+        return (report.findings ?? []).length > 0;
+      } finally {
+        cleanupHuntDb(dbPath);
+      }
     };
-    const dbPath = freshHuntDb();
+
+    let choice: CrossFamilyRefuteChoice = refuter;
+    let survived: boolean;
     try {
-      const report = await agenticScan({ config, dbPath, challengeHint: hint });
-      const survived = (report.findings ?? []).length > 0;
-      // Only annotate when a cross-family refuter actually ran — the default
-      // (same-family / disabled) reason strings stay byte-identical to today.
-      const note = refuter.crossFamily
-        ? ` (cross-family refuter: ${refuter.refuterFamily} vs finder ${refuter.finderFamily})`
-        : "";
-      return survived
-        ? { confirmed: true, reason: `survived adversarial refute pass${note}` }
-        : { confirmed: false, reason: `refuted: skeptic could not reproduce the claim from source${note}` };
-    } finally {
-      cleanupHuntDb(dbPath);
+      survived = await refutePass(refuter.model);
+    } catch (e) {
+      // GRACEFUL DEGRADATION, and the reason default-ON is safe. A cross-family
+      // model id can be unreachable for reasons we cannot detect from env alone
+      // (the key is present but the account has no access to that model, the
+      // provider is down). Upstream treats a THROWING verifier as fail-closed —
+      // runHuntScan records a warning and drops the finding, makeMultiLensVerifier
+      // counts the lens as errored and lowers the survivor count — so letting
+      // this propagate would silently DELETE real findings for an infrastructure
+      // reason. Retry once on the originally-configured model: we lose
+      // decorrelation, we do not lose the gate, and `status` records that we did.
+      if (!refuter.crossFamily) throw e;
+      const detail = String(e).slice(0, 120);
+      opts.log?.(`[hunt] cross-family refuter ${refuter.model} failed (${detail}); degrading to same-family refute`);
+      choice = { model: opts.model, crossFamily: false, status: "degraded-refuter-error" };
+      survived = await refutePass(opts.model);
     }
+
+    // Only annotate when a cross-family refuter actually ran — the default
+    // (same-family / disabled) reason strings stay byte-identical to today.
+    const note = choice.crossFamily
+      ? ` (cross-family refuter: ${choice.refuterFamily} vs finder ${choice.finderFamily})`
+      : "";
+    const decorrelation: RefuteDecorrelation = {
+      crossFamily: choice.crossFamily,
+      status: choice.status,
+      ...(choice.finderFamily ? { finderFamily: choice.finderFamily } : {}),
+      ...(choice.refuterFamily ? { refuterFamily: choice.refuterFamily } : {}),
+      ...(choice.model ? { refuterModel: choice.model } : {}),
+    };
+    return survived
+      ? { confirmed: true, reason: `survived adversarial refute pass${note}`, decorrelation }
+      : { confirmed: false, reason: `refuted: skeptic could not reproduce the claim from source${note}`, decorrelation };
   };
 }
 
@@ -695,14 +799,18 @@ export interface MultiLensVerifierOptions {
   negatives?: readonly KnownNegative[];
   /**
    * OPTIONAL cross-family refuter (issue #661), forwarded to each skeptic pass.
-   * When enabled AND a distinct family is available, every lens refutes with a
-   * DIFFERENT family than the finder. OFF / no distinct family → byte-identical.
+   * When a distinct family is reachable, every lens refutes with a DIFFERENT
+   * family than the finder. Disabled / no distinct family → byte-identical.
    */
   crossFamilyRefute?: boolean;
   /** Finder model/family the cross-family refuter must decorrelate from. */
   finderModel?: string;
+  /** ALL finder models in play; the refuter avoids every one of their families. */
+  finderModels?: readonly string[];
   /** Alternate refuter models to pick a distinct family from, tried in order. */
   refuterCandidates?: readonly string[];
+  /** Optional run log, forwarded to each skeptic pass (one decorrelation line per lens). */
+  log?: (msg: string) => void;
   /**
    * Confirmation threshold: a finding is confirmed ONLY when 0 lenses refute it
    * AND at least `quorum` lenses survive. Default = majority `ceil(N/2)`.
@@ -740,7 +848,9 @@ export function makeMultiLensVerifier(lenses: VerifyLens[], opts: MultiLensVerif
         ...(opts.negatives ? { negatives: opts.negatives } : {}),
         ...(opts.crossFamilyRefute !== undefined ? { crossFamilyRefute: opts.crossFamilyRefute } : {}),
         ...(opts.finderModel ? { finderModel: opts.finderModel } : {}),
+        ...(opts.finderModels ? { finderModels: opts.finderModels } : {}),
         ...(opts.refuterCandidates ? { refuterCandidates: opts.refuterCandidates } : {}),
+        ...(opts.log ? { log: opts.log } : {}),
         focus: lens.challengeHint,
       }));
   const passes = lenses.map((lens) => ({ lens, run: makePass(lens) }));
@@ -749,33 +859,59 @@ export function makeMultiLensVerifier(lenses: VerifyLens[], opts: MultiLensVerif
       passes.map(async ({ lens, run }) => {
         try {
           const v = await run(finding, candidate);
-          return { lensId: lens.id, survived: v.confirmed, errored: false };
+          return { lensId: lens.id, survived: v.confirmed, errored: false, decorrelation: v.decorrelation };
         } catch {
           // A pass that throws couldn't adjudicate — counts as neither a
           // survival nor a refute, so it just lowers the survivor count.
-          return { lensId: lens.id, survived: false, errored: true };
+          return { lensId: lens.id, survived: false, errored: true, decorrelation: undefined };
         }
       }),
     );
     const refuted = results.filter((r) => !r.survived && !r.errored);
     const survived = results.filter((r) => r.survived);
+    // Quorum-level decorrelation: the quorum is only as decorrelated as its
+    // WEAKEST adjudicating lens. If any lens fell back to the finder's own
+    // family (degraded call, no distinct family), reporting the quorum as
+    // cross-family would overstate the independence behind the verdict — so
+    // `crossFamily` requires every adjudicating lens to have been cross-family,
+    // and the reported status is the first non-cross-family one.
+    const decorrelation = aggregateDecorrelation(results.map((r) => r.decorrelation));
     if (refuted.length > 0) {
       return {
         confirmed: false,
         reason: `multi-lens: refuted by ${refuted.map((r) => r.lensId).join(", ")} (${survived.length}/${lenses.length} survived, quorum ${quorum})`,
+        ...(decorrelation ? { decorrelation } : {}),
       };
     }
     if (survived.length >= quorum) {
       return {
         confirmed: true,
         reason: `multi-lens quorum met: ${survived.length}/${lenses.length} lenses survived, 0 refuted (quorum ${quorum})`,
+        ...(decorrelation ? { decorrelation } : {}),
       };
     }
     return {
       confirmed: false,
       reason: `multi-lens below quorum: ${survived.length}/${lenses.length} survived < ${quorum}, 0 refuted`,
+      ...(decorrelation ? { decorrelation } : {}),
     };
   };
+}
+
+/**
+ * Collapse per-lens {@link RefuteDecorrelation} reports into one quorum-level
+ * report, conservatively: cross-family only when EVERY lens that reported one
+ * was cross-family, and the surfaced status is the first non-cross-family lens's
+ * (i.e. the reason independence was lost). Returns undefined when no lens
+ * reported — e.g. an injected `makePass` fake — so nothing is invented.
+ */
+function aggregateDecorrelation(
+  reports: ReadonlyArray<RefuteDecorrelation | undefined>,
+): RefuteDecorrelation | undefined {
+  const present = reports.filter((d): d is RefuteDecorrelation => d !== undefined);
+  if (present.length === 0) return undefined;
+  const weakest = present.find((d) => !d.crossFamily);
+  return weakest ?? present[0];
 }
 
 /** Group key for best-of-N judging: per (ORIGINAL candidate site, model) — NOT per candidate
@@ -1078,6 +1214,10 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         if (record) {
           record.skepticConfirmed = v.confirmed;
           record.skepticReason = v.reason;
+          // Additive: only stamped when the injected verifier reports it, so
+          // custom/fake verifiers leave it undefined rather than claiming a
+          // decorrelation that never happened.
+          if (v.decorrelation) record.decorrelation = v.decorrelation;
         }
         // Incremental persistence: hand each confirmed finding to the caller
         // AS IT LANDS (see HuntScanOptions.onConfirmed) so a mid-sweep kill
@@ -1098,6 +1238,22 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     });
     confirmed = verdicts.filter((f): f is Finding => f != null);
     log(`[hunt] ${confirmed.length}/${toVerify.length} finding(s) confirmed by the skeptic+prover gate`);
+    // Run-level correlation summary (issue #661). Without this the only way to
+    // learn that every verdict came from the finder's own family was to read the
+    // corpus afterwards. A run that reports 0 decorrelated verdicts had a
+    // same-witness adversarial gate, and the operator should see that as it
+    // happens — not discover it when a finding turns out to be a hallucination.
+    const gated = [...records.values()].filter((r) => r.decorrelation);
+    if (gated.length > 0) {
+      const decorrelated = gated.filter((r) => r.decorrelation?.crossFamily).length;
+      const statuses = new Map<string, number>();
+      for (const r of gated) {
+        const s = r.decorrelation?.status ?? "unknown";
+        statuses.set(s, (statuses.get(s) ?? 0) + 1);
+      }
+      const breakdown = [...statuses].map(([s, n]) => `${s}=${n}`).join(", ");
+      log(`[hunt] refute decorrelation: ${decorrelated}/${gated.length} verdict(s) cross-family (${breakdown})`);
+    }
   }
 
   // OPTIONAL novelty gate: drop confirmed findings that duplicate an on-list
