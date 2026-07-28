@@ -83,6 +83,41 @@ const loadScopeMock = vi.fn<(path: string) => ScopeShim>();
 const extractAttributionFromScopeJsonMock = vi.fn();
 const resolveAttributionMock = vi.fn();
 const parseRateLimitFlagMock = vi.fn();
+const resolveEngagementProfileMock = vi.fn();
+const extractEngagementFromScopeJsonMock = vi.fn();
+const describeEngagementPostureMock = vi.fn();
+
+/**
+ * Minimal posture fixtures. The resolver itself is unit-tested in
+ * `@pwnkit/core` (scope/engagement-profile.test.ts); here we only care that
+ * mcp-server consults it and applies what comes back.
+ */
+function standardPosture() {
+  return {
+    profile: "standard",
+    active: false,
+    resetBurstProbe: true,
+    webReconPrepass: "direct-fetch",
+    wafEvasionLadder: true,
+    jitter: undefined,
+    rateLimitRps: 5,
+    sources: {},
+  };
+}
+
+function conservativePosture(overrides: Record<string, unknown> = {}) {
+  return {
+    profile: "conservative",
+    active: true,
+    resetBurstProbe: false,
+    webReconPrepass: "rate-limited",
+    wafEvasionLadder: false,
+    jitter: { baseMs: 750 },
+    rateLimitRps: 1,
+    sources: {},
+    ...overrides,
+  };
+}
 
 // Capture the args ToolExecutor was constructed with so we can assert
 // authConfig / scope / rateLimiter / allowScanners get threaded right.
@@ -158,6 +193,9 @@ vi.mock("@pwnkit/core", () => ({
   resolveAttribution: resolveAttributionMock,
   RateLimiter: FakeRateLimiter,
   parseRateLimitFlag: parseRateLimitFlagMock,
+  resolveEngagementProfile: resolveEngagementProfileMock,
+  extractEngagementFromScopeJson: extractEngagementFromScopeJsonMock,
+  describeEngagementPosture: describeEngagementPostureMock,
 }));
 
 // Capture pwnkitDB construction order vs scope validation. PR #295's
@@ -165,8 +203,14 @@ vi.mock("@pwnkit/core", () => ({
 // opened; we assert the call-order is now scope-first.
 const dbCtorCalls: Array<string | undefined> = [];
 const dbInstances: Array<{ close: ReturnType<typeof vi.fn> }> = [];
+const logEventCalls: Array<Record<string, unknown>> = [];
+const logEventMock = vi.fn((event: Record<string, unknown>): string => {
+  logEventCalls.push(event);
+  return "event-id";
+});
 class FakePwnkitDB {
   close = vi.fn();
+  logEvent = logEventMock;
   constructor(dbPath?: string) {
     dbCtorCalls.push(dbPath);
     dbInstances.push(this);
@@ -254,7 +298,25 @@ const ENV_KEYS = [
   "PWNKIT_MCP_AUTH_JSON",
   "PWNKIT_MCP_ATTRIBUTION_HEADERS_JSON",
   "PWNKIT_MCP_ATTRIBUTION_UA_TOKEN",
+  "PWNKIT_ENGAGEMENT_PROFILE",
+  "PWNKIT_WAF_EVASION",
 ];
+
+// Same exit harness as scan.test.ts: process.exit throws so the action
+// unwinds into runCli's catch, and we can assert the code the CLI chose.
+interface ExitTracker {
+  firstCode?: number;
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeExitMock(tracker: ExitTracker): any {
+  return vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    const c = (code ?? 0) as number;
+    if (tracker.firstCode === undefined) tracker.firstCode = c;
+    throw new Error(`__exit__:${c}`);
+  }) as never);
+}
+let tracker: ExitTracker;
+let exitSpy: { mockRestore: () => void };
 
 beforeEach(() => {
   loadScopeMock.mockReset();
@@ -263,17 +325,39 @@ beforeEach(() => {
     headers: [],
     uaToken: undefined,
   });
-  parseRateLimitFlagMock.mockReset().mockReturnValue({ default: 5, perHost: {} });
+  parseRateLimitFlagMock.mockReset().mockReturnValue({ default: { rps: 5 }, perHost: {} });
+  resolveEngagementProfileMock.mockReset().mockReturnValue(standardPosture());
+  extractEngagementFromScopeJsonMock.mockReset().mockReturnValue(undefined);
+  describeEngagementPostureMock.mockReset().mockImplementation((posture: {
+    profile: string;
+    wafEvasionLadder: boolean;
+    jitter?: { baseMs: number };
+    rateLimitRps: number;
+  }) => ({
+    profile: posture.profile,
+    applied_at: "2026-07-28T00:00:00.000Z",
+    reset_endpoint_burst_probe: "disabled",
+    web_recon_prepass: "rate-limited",
+    waf_evasion_ladder: posture.wafEvasionLadder ? "enabled" : "disabled",
+    request_jitter: posture.jitter ? "full-jitter" : "none",
+    jitter_base_ms: posture.jitter?.baseMs ?? 0,
+    per_host_rps: posture.rateLimitRps,
+    sources: {},
+  }));
   getToolsForRoleMock.mockClear();
   toolExecutorCtorCalls.length = 0;
   toolExecutorInstances.length = 0;
   rateLimiterCtorCalls.length = 0;
   dbCtorCalls.length = 0;
   dbInstances.length = 0;
+  logEventCalls.length = 0;
+  logEventMock.mockClear();
   registerToolCalls.length = 0;
   serverConnectMock.mockClear().mockResolvedValue(undefined);
   serverCloseMock.mockClear().mockResolvedValue(undefined);
 
+  tracker = {};
+  exitSpy = makeExitMock(tracker);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -284,6 +368,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  exitSpy.mockRestore();
   errSpy.mockRestore();
   logSpy.mockRestore();
   for (const k of ENV_KEYS) {
@@ -713,5 +798,154 @@ describe("mcp-server — tool registration", () => {
     })) as { content: Array<{ text: string }>; structuredContent?: { success: boolean; error?: string } };
     expect(result.content[0]!.text).toMatch(/^ERROR: denied by scope/);
     expect(result.structuredContent?.success).toBe(false);
+  });
+});
+
+// ── Engagement hardening posture ────────────────────────────────────────────
+//
+// The gap this closes: `mcp-server` used to build its own RateLimiter and
+// ignore the engagement profile entirely, so a session run during a client
+// engagement was silently loud while the operator believed the conservative
+// posture was in force. These tests pin the four properties that matter:
+// defaults unchanged, posture applied, rate resolved by MINIMUM, and a bad
+// profile name failing with scan's exit code.
+
+const baseArgs = [
+  "mcp-server",
+  "--target",
+  "https://example.com",
+  "--scan-id",
+  "scan-abc",
+];
+
+describe("mcp-server — engagement hardening profile", () => {
+  it("no profile requested → rate-limit config reaches RateLimiter untouched", async () => {
+    await runCli(baseArgs);
+    // Identity, not just deep-equality: nothing in the posture path may
+    // rewrite the config when the operator did not opt in.
+    const parsed = parseRateLimitFlagMock.mock.results[0]!.value;
+    expect(rateLimiterCtorCalls).toHaveLength(1);
+    expect(rateLimiterCtorCalls[0]).toBe(parsed);
+    // ...and no audit record is written for a default session.
+    expect(logEventCalls).toHaveLength(0);
+  });
+
+  it("resolves the posture with scope-file / env / CLI inputs and threads it onto the executor", async () => {
+    const scope: ScopeShim = allowingScope();
+    loadScopeMock.mockReturnValueOnce(scope);
+    extractEngagementFromScopeJsonMock.mockReturnValueOnce({ profile: "conservative" });
+    await runCli([...baseArgs, "--scope", "/tmp/scope.json"]);
+    expect(extractEngagementFromScopeJsonMock).toHaveBeenCalledWith(scope.raw);
+    const args = resolveEngagementProfileMock.mock.calls[0]![0];
+    expect(args.scopeFileBlock).toEqual({ profile: "conservative" });
+    expect(args.env).toBe(process.env);
+    // The resolved posture is handed to the tool executor, which is where the
+    // WAF-evasion ladder decision is read.
+    expect(toolExecutorCtorCalls[0]!.ctx.engagement).toEqual(standardPosture());
+  });
+
+  it("--engagement-profile is forwarded as the CLI input", async () => {
+    await runCli([...baseArgs, "--engagement-profile", "conservative"]);
+    expect(resolveEngagementProfileMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cliProfile: "conservative" }),
+    );
+  });
+
+  it("--no-waf-evasion sets cliWafEvasion=false; absence leaves it unset", async () => {
+    await runCli([...baseArgs, "--no-waf-evasion"]);
+    expect(resolveEngagementProfileMock.mock.calls[0]![0].cliWafEvasion).toBe(false);
+
+    resolveEngagementProfileMock.mockClear();
+    await runCli(baseArgs);
+    // Unset, NOT `true` — so the scope file / env keep their precedence.
+    expect(resolveEngagementProfileMock.mock.calls[0]![0].cliWafEvasion).toBeUndefined();
+  });
+
+  it("active profile lowers the default rate and adds jitter", async () => {
+    resolveEngagementProfileMock.mockReturnValue(conservativePosture());
+    await runCli([...baseArgs, "--engagement-profile", "conservative"]);
+    expect(rateLimiterCtorCalls[0]).toMatchObject({
+      default: { rps: 1 },
+      jitter: { baseMs: 750 },
+    });
+  });
+
+  it("an explicit --rate-limit looser than the profile does NOT raise the rate", async () => {
+    // The dangerous case: operator passes both, and the flag silently wins.
+    parseRateLimitFlagMock.mockReturnValue({ default: { rps: 50, burst: 100 } });
+    resolveEngagementProfileMock.mockReturnValue(conservativePosture());
+    await runCli([
+      ...baseArgs,
+      "--engagement-profile",
+      "conservative",
+      "--rate-limit",
+      "50:100",
+    ]);
+    // Minimum wins: 1 rps, and burst is clamped with it (burst is the bucket
+    // capacity — a burst of 100 on a 1 rps bucket is still a 100-request
+    // opening volley).
+    expect(rateLimiterCtorCalls[0]).toMatchObject({ default: { rps: 1, burst: 1 } });
+  });
+
+  it("an explicit --rate-limit quieter than the profile is preserved", async () => {
+    parseRateLimitFlagMock.mockReturnValue({ default: { rps: 0.2 } });
+    resolveEngagementProfileMock.mockReturnValue(conservativePosture());
+    await runCli([...baseArgs, "--engagement-profile", "conservative", "--rate-limit", "0.2"]);
+    expect(rateLimiterCtorCalls[0]).toMatchObject({ default: { rps: 0.2 } });
+  });
+
+  it("clamps per-host overrides too, not just the default bucket", async () => {
+    parseRateLimitFlagMock.mockReturnValue({
+      default: { rps: 5 },
+      perHost: { "api.example.com": { rps: 20 }, "slow.example.com": { rps: 0.5 } },
+    });
+    resolveEngagementProfileMock.mockReturnValue(conservativePosture());
+    await runCli([...baseArgs, "--engagement-profile", "conservative"]);
+    expect(rateLimiterCtorCalls[0]).toMatchObject({
+      default: { rps: 1 },
+      perHost: { "api.example.com": { rps: 1 }, "slow.example.com": { rps: 0.5 } },
+    });
+  });
+
+  it("records the auditable posture event when a profile is active", async () => {
+    resolveEngagementProfileMock.mockReturnValue(conservativePosture());
+    await runCli([...baseArgs, "--engagement-profile", "conservative"]);
+    expect(logEventCalls).toHaveLength(1);
+    const event = logEventCalls[0]!;
+    expect(event.scanId).toBe("scan-abc");
+    expect(event.eventType).toBe("engagement_posture_applied");
+    expect(event.payload).toMatchObject({
+      profile: "conservative",
+      waf_evasion_ladder: "disabled",
+      request_jitter: "full-jitter",
+      per_host_rps: 1,
+    });
+  });
+
+  it("a failed audit write does not stop the server from starting", async () => {
+    // pipeline_events FKs to scans(id); an MCP session pointed at a scan this
+    // DB has never seen must still serve.
+    resolveEngagementProfileMock.mockReturnValue(conservativePosture());
+    logEventMock.mockImplementationOnce(() => {
+      throw new Error("FOREIGN KEY constraint failed");
+    });
+    await runCli([...baseArgs, "--engagement-profile", "conservative"]);
+    expect(serverConnectMock).toHaveBeenCalledOnce();
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+      /could not persist engagement posture/,
+    );
+  });
+
+  it("exits 2 when the profile fails validation in core, before the DB is opened", async () => {
+    resolveEngagementProfileMock.mockImplementation(() => {
+      throw new Error("Unknown engagement profile 'stealth'. Supported: standard, conservative.");
+    });
+    await runCli([...baseArgs, "--engagement-profile", "stealth"]);
+    expect(tracker.firstCode).toBe(2); // same code `pwnkit scan` uses
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+      /Unknown engagement profile/,
+    );
+    expect(dbCtorCalls).toHaveLength(0);
+    expect(toolExecutorCtorCalls).toHaveLength(0);
   });
 });
