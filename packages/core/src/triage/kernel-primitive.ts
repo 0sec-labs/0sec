@@ -611,7 +611,12 @@ export function classifyPrimitiveFromDmesg(
   return classifyKernelPrimitive(report);
 }
 
-function sniffCrashType(dmesg: string): CrashType | undefined {
+/**
+ * Sniff the KASAN crash type from raw splat text. Exported so callers that need
+ * to build a full {@link CrashReport} (not just the primitive label) reuse THIS
+ * parse instead of standing up a second one — see `hunt-prove-stage.ts`.
+ */
+export function sniffCrashType(dmesg: string): CrashType | undefined {
   if (/use-after-free/i.test(dmesg)) return "kasan-uaf";
   if (/out-of-bounds/i.test(dmesg)) return "kasan-oob";
   if (/double-free/i.test(dmesg)) return "kasan-double-free";

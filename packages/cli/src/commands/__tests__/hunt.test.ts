@@ -17,15 +17,21 @@ const {
   prepareMock,
   getCloudSinkConfigMock,
   postFindingMock,
+  makeHuntProveStageMock,
   noveltyJudge,
+  proveStage,
 } = vi.hoisted(() => {
   const skepticVerifier = vi.fn();
   const noveltyJudge = vi.fn();
+  const proveStage = vi.fn();
   return {
     generateVariantCandidatesMock: vi.fn(),
     runHuntScanMock: vi.fn(),
     makeSkepticVerifierMock: vi.fn(() => skepticVerifier),
     loadKnownNegativesFromEnvMock: vi.fn(() => []),
+    // Typed param so `mock.calls[0][0]` is inspectable (the deps the CLI builds).
+    makeHuntProveStageMock: vi.fn((_deps: { escalation?: { minCeiling?: string } }) => proveStage),
+    proveStage,
     buildInvariantHuntContextMock: vi.fn(),
     buildGraphSliceHuntContextMock: vi.fn(),
     localMirrorsMock: vi.fn(),
@@ -49,12 +55,13 @@ vi.mock("@pwnkit/core", () => ({
   localMirrors: localMirrorsMock,
   syncLoreMirror: syncLoreMirrorMock,
   makeLloreJudge: makeLloreJudgeMock,
+  makeHuntProveStage: makeHuntProveStageMock,
   prepare: prepareMock,
   getCloudSinkConfig: getCloudSinkConfigMock,
   postFinding: postFindingMock,
 }));
 
-const { leadToCandidateFinding, runHunt } = await import("../hunt.js");
+const { leadToCandidateFinding, runHunt, parseCeiling } = await import("../hunt.js");
 
 function makeLead(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -472,5 +479,98 @@ describe("runHunt — novelty gate wiring", () => {
       graph_slice: { enabled: false },
       warnings: [expect.stringContaining("cpg parse exploded")],
     });
+  });
+});
+
+// ── PROVE stage wiring (`--exploitability`) ──────────────────────────────────
+//
+// The oracle it wires boots REAL QEMU, so what these tests pin is the DISPATCH:
+// that the flag actually reaches `runHuntScan.opts.exploitability` (it never did
+// before), and that it stays off by default so routine hunts cannot boot a VM.
+
+describe("runHunt — PROVE stage (--exploitability) dispatch", () => {
+  let tmpRoot: string;
+  let seedPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-hunt-prove-"));
+    seedPath = join(tmpRoot, "seed.patch");
+    writeFileSync(seedPath, "diff --git a/foo.c b/foo.c\n", "utf8");
+
+    generateVariantCandidatesMock.mockReset().mockResolvedValue({
+      brief: { bugClass: "missing bounds check", pattern: "index before array access" },
+      grepPatterns: ["foo"],
+      candidates: [{ path: "drivers/media/foo.c" }],
+      warnings: [],
+    });
+    runHuntScanMock.mockReset().mockResolvedValue({
+      findings: [],
+      confirmed: [],
+      duplicates: [],
+      scanned: 1,
+      warnings: [],
+    });
+    makeHuntProveStageMock.mockClear();
+    prepareMock.mockReset().mockImplementation(async (target: string) => ({
+      targetType: "source-code",
+      resolvedTarget: target,
+      repoPath: target,
+      cleanup: vi.fn(),
+    }));
+    getCloudSinkConfigMock.mockReset().mockReturnValue(null);
+    localMirrorsMock.mockReset().mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT wire the PROVE stage by default (routine hunts never boot a VM)", async () => {
+    await runHunt({ sourceRoot: tmpRoot, seedPath, runtime: "api" });
+
+    expect(makeHuntProveStageMock).not.toHaveBeenCalled();
+    expect(runHuntScanMock.mock.calls[0]![0].exploitability).toBeUndefined();
+  });
+
+  it("wires the PROVE stage into runHuntScan when --exploitability is set", async () => {
+    await runHunt({ sourceRoot: tmpRoot, seedPath, runtime: "api", exploitability: true });
+
+    expect(makeHuntProveStageMock).toHaveBeenCalledOnce();
+    // The actual reachability assertion: the gate lands on the option that
+    // runHuntScan composes as its terminal stage.
+    expect(runHuntScanMock.mock.calls[0]![0].exploitability).toBe(proveStage);
+  });
+
+  it("passes the impact-ceiling bar through to the pre-filter", async () => {
+    await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      runtime: "api",
+      exploitability: true,
+      proveMinCeiling: "oob-write",
+    });
+
+    const deps = makeHuntProveStageMock.mock.calls[0]![0];
+    expect(deps.escalation).toEqual({ minCeiling: "oob-write" });
+  });
+
+  it("defaults the pre-filter bar to the escalation gate's own default", async () => {
+    await runHunt({ sourceRoot: tmpRoot, seedPath, runtime: "api", exploitability: true });
+
+    const deps = makeHuntProveStageMock.mock.calls[0]![0];
+    // Empty object ⇒ the gate applies its documented `info-leak` default.
+    expect(deps.escalation).toEqual({});
+  });
+});
+
+describe("parseCeiling", () => {
+  it("accepts every rung on the impact ladder", () => {
+    for (const c of ["dos-only", "info-leak", "oob-write", "uaf-control"]) {
+      expect(parseCeiling(c)).toBe(c);
+    }
+  });
+
+  it("rejects a typo rather than silently defaulting", () => {
+    expect(() => parseCeiling("oob-wrote")).toThrow(/invalid --prove-min-ceiling/);
   });
 });
