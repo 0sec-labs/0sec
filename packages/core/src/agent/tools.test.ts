@@ -1104,6 +1104,56 @@ describe("ToolExecutor", () => {
     expect(artifactEvent.payload.response.status).toBe(200);
   });
 
+  it("stamps the caller's correlationId onto the artifact (tool_calls join key)", async () => {
+    const loggedEvents: any[] = [];
+    const mockDb = {
+      logEvent: (event: any) => { loggedEvents.push(event); },
+    } as any;
+    const dbExecutor = new ToolExecutor(ctx, mockDb);
+
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '{"result":"ok"}',
+      headers: new Headers({ "content-type": "application/json" }),
+    } as Response)));
+
+    await dbExecutor.execute(
+      { name: "http_request", arguments: { url: "https://example.com/api", method: "GET" } },
+      { correlationId: "corr-abc" },
+    );
+
+    vi.restoreAllMocks();
+
+    const artifactEvent = loggedEvents.find((e) => e.eventType === "tool_artifact");
+    expect(artifactEvent.payload.correlationId).toBe("corr-abc");
+  });
+
+  it("omits correlationId on the artifact when the caller supplies none", async () => {
+    const loggedEvents: any[] = [];
+    const mockDb = {
+      logEvent: (event: any) => { loggedEvents.push(event); },
+    } as any;
+    const dbExecutor = new ToolExecutor(ctx, mockDb);
+
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '{"result":"ok"}',
+      headers: new Headers({ "content-type": "application/json" }),
+    } as Response)));
+
+    await dbExecutor.execute({
+      name: "http_request",
+      arguments: { url: "https://example.com/api", method: "GET" },
+    });
+
+    vi.restoreAllMocks();
+
+    const artifactEvent = loggedEvents.find((e) => e.eventType === "tool_artifact");
+    expect(artifactEvent.payload.correlationId).toBeUndefined();
+  });
+
   // ── unknown tool ──
 
   it("rejects unknown tools", async () => {

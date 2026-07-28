@@ -7,6 +7,8 @@ import { formatSarif } from "./sarif.js";
 export { generatePdfReport } from "./pdf.js";
 export { renderReplay } from "./replay.js";
 export type { ReplayData } from "./replay.js";
+export { formatTimeline, isTimelineFormat, TIMELINE_FORMATS } from "./timeline.js";
+export type { TimelineEntry, TimelineExport, TimelineFormat } from "./timeline.js";
 
 export function formatReport(report: ScanReport, format: OutputFormat): string {
   switch (format) {

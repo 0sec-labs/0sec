@@ -205,6 +205,13 @@ export interface ToolCallStartedPayload {
   tool: string;
   turn: number;
   args_preview: string;
+  /**
+   * Absolute wall clock (epoch ms) at which the invocation started. The bus
+   * itself carries no clock, so without this a consumer can only recover
+   * relative ordering — not the "at 14:32:07.412 UTC we sent X" timeline a SOC
+   * cross-reference needs.
+   */
+  ts: number;
 }
 
 export interface ToolCallCompletedPayload {
@@ -213,6 +220,8 @@ export interface ToolCallCompletedPayload {
   duration_ms: number;
   status: "ok" | "error";
   error?: string;
+  /** Absolute wall clock (epoch ms) at which the invocation completed. */
+  ts: number;
 }
 
 export interface LlmPlannerInvokedPayload {

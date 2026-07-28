@@ -1097,6 +1097,20 @@ export type { VisibleActions } from "./scan-ui-state.js";
 // in the agentic scanner and reusable by logs / cloud-sink / dashboard).
 export { toolCallPreview, summariseTurnToolCalls } from "./agent/tool-preview.js";
 
+// Action-level durable action log: the per-invocation `tool_calls` payload
+// shape, its redacted args preview, the `tool_calls` ↔ `tool_artifact`
+// correlation id, and a reader that tolerates pre-upgrade (turn-level) rows.
+export {
+  newCorrelationId,
+  redactedArgsPreview,
+  buildToolCallLogEntry,
+  buildToolCallsPayload,
+  readToolCallNames,
+  ACTION_LOG_ARG_VALUE_MAX,
+  ACTION_LOG_ARGS_MAX,
+} from "./agent/action-log.js";
+export type { ToolCallLogEntry, ToolCallsLogPayload } from "./agent/action-log.js";
+
 // Opt-in cloud-sink: POST findings/leads to the orchestrator
 // (`POST /scans/:id/findings`) when PWNKIT_CLOUD_SINK + PWNKIT_CLOUD_SCAN_ID are
 // set. Exposed so `pwnkit hunt` can ingest its gated leads as candidate
@@ -1805,3 +1819,4 @@ export type {
 export * from "./xnu-fuzz/index.js";
 export * from "./adgraph/index.js";
 export * from "./identity/index.js";
+export * from "./attack/index.js";

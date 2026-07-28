@@ -307,3 +307,98 @@ describe("runAgentLoop budget warnings (#408)", () => {
     expect(finalPrompt).not.toContain(BUDGET_WARNING_HARD);
   });
 });
+
+// ── Action-level durable action log (loop.ts call site) ──────────────────
+//
+// Same contract as the native loop: the persisted `tool_calls` event is
+// action-level, with a per-invocation wall clock, redacted arguments, and a
+// correlation id that joins to the `tool_artifact` row.
+
+describe("runAgentLoop — action-level tool_calls log", () => {
+  it("logs one entry per action with its own wall clock and correlation id", async () => {
+    const runtime = scriptedRuntime([
+      "<command>echo first</command><command>echo second</command>",
+      "<flag>FLAG{action-log}</flag>",
+    ]);
+
+    const events: any[] = [];
+    const db = {
+      logEvent: (event: any) => { events.push(event); },
+      saveSession: () => {},
+    } as any;
+
+    const before = Date.now();
+    await runAgentLoop({
+      config: {
+        role: "audit",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 5,
+        target: "http://example.test",
+        scanId: "loop-action-log",
+        dispatchMode: "xml",
+      },
+      runtime,
+      db,
+    });
+    const after = Date.now();
+
+    const toolCallEvents = events.filter((e) => e.eventType === "tool_calls");
+    expect(toolCallEvents.length).toBeGreaterThanOrEqual(1);
+
+    const payload = toolCallEvents[0].payload;
+    expect(payload.calls).toHaveLength(2);
+    const [a, b] = payload.calls;
+
+    expect(a.name).toBe("bash");
+    expect(a.args).toContain("echo first");
+    expect(b.args).toContain("echo second");
+    expect(a.startedAt).toBeGreaterThanOrEqual(before);
+    expect(b.startedAt).toBeLessThanOrEqual(after);
+    expect(b.startedAt).toBeGreaterThanOrEqual(a.startedAt);
+    expect(b.startedAt).toBeGreaterThanOrEqual(a.startedAt + a.durationMs);
+    expect(typeof a.durationMs).toBe("number");
+    expect(a.correlationId).toBeTruthy();
+    expect(a.correlationId).not.toBe(b.correlationId);
+
+    // sessionId + the pre-upgrade mirrors are still on the payload.
+    expect(typeof payload.sessionId).toBe("string");
+    expect(payload.tools).toEqual(["bash", "bash"]);
+    expect(payload.results).toHaveLength(2);
+  });
+
+  it("redacts credentials out of the logged arguments", async () => {
+    const runtime = scriptedRuntime([
+      `<command>curl -H "Authorization: Bearer sup3rs3cr3t" http://example.test/admin</command>`,
+      "<flag>FLAG{action-log-redact}</flag>",
+    ]);
+
+    const events: any[] = [];
+    const db = {
+      logEvent: (event: any) => { events.push(event); },
+      saveSession: () => {},
+    } as any;
+
+    await runAgentLoop({
+      config: {
+        role: "audit",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 5,
+        target: "http://example.test",
+        scanId: "loop-action-log-redact",
+        dispatchMode: "xml",
+      },
+      runtime,
+      db,
+    });
+
+    const entry = events
+      .filter((e) => e.eventType === "tool_calls")
+      .flatMap((e) => e.payload.calls as any[])
+      .find((c) => c.name === "bash");
+    expect(entry).toBeDefined();
+    expect(entry.args).not.toContain("sup3rs3cr3t");
+    expect(entry.args).toContain("http://example.test/admin");
+  });
+});

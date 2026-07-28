@@ -1787,3 +1787,292 @@ describe("isTransientLlmError", () => {
     ).toBe(false);
   });
 });
+
+// ── Action-level durable action log ───────────────────────────────────────
+//
+// The `tool_calls` DB event is the audit trail a SOC cross-reference is built
+// from. It has to be action-level: one entry per invocation, each with its own
+// wall clock and a correlation id that joins it to the `tool_artifact` row
+// carrying the real URL/method/command.
+
+describe("runNativeAgentLoop — action-level tool_calls log", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function collectingDb(): { events: any[]; db: any } {
+    const events: any[] = [];
+    return {
+      events,
+      db: {
+        logEvent: (event: any) => { events.push(event); },
+        saveSession: () => {},
+      } as any,
+    };
+  }
+
+  it("logs one entry per action with distinct, ascending startedAt within a turn", async () => {
+    let turnNum = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative() {
+        turnNum++;
+        if (turnNum === 1) {
+          return {
+            content: [
+              { type: "tool_use", id: "tc1", name: "http_request", input: { url: "https://example.com/a", method: "GET" } },
+              { type: "tool_use", id: "tc2", name: "http_request", input: { url: "https://example.com/b", method: "GET" } },
+            ],
+            stopReason: "tool_use",
+            durationMs: 10,
+          };
+        }
+        return {
+          content: [{ type: "tool_use", id: "tc3", name: "done", input: { summary: "Done" } }],
+          stopReason: "tool_use",
+          durationMs: 10,
+        };
+      },
+      async isAvailable() { return true; },
+    };
+
+    // Slow the transport enough that two sequential calls cannot share a
+    // millisecond — the timeline is the product here.
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 6));
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "ok",
+        headers: new Headers({ "content-type": "text/plain" }),
+      } as unknown as Response;
+    }));
+
+    const { events, db } = collectingDb();
+    const before = Date.now();
+    await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 3,
+        target: "https://example.com",
+        scanId: "action-log-scan",
+      },
+      runtime,
+      db,
+    });
+    const after = Date.now();
+
+    const toolCallEvents = events.filter((e) => e.eventType === "tool_calls");
+    expect(toolCallEvents.length).toBeGreaterThanOrEqual(1);
+
+    const firstTurn = toolCallEvents[0].payload;
+    expect(firstTurn.calls).toHaveLength(2);
+    const [a, b] = firstTurn.calls;
+
+    expect(a.name).toBe("http_request");
+    expect(b.name).toBe("http_request");
+    // Per-action wall clock — distinct and ascending, not one shared stamp.
+    expect(a.startedAt).toBeLessThan(b.startedAt);
+    expect(a.startedAt).toBeGreaterThanOrEqual(before);
+    expect(b.startedAt).toBeLessThanOrEqual(after);
+    // Per-action duration.
+    expect(a.durationMs).toBeGreaterThan(0);
+    expect(b.startedAt).toBeGreaterThanOrEqual(a.startedAt + a.durationMs);
+    // Arguments, not just names.
+    expect(a.args).toContain("https://example.com/a");
+    expect(b.args).toContain("https://example.com/b");
+    // Correlation ids are per-invocation.
+    expect(a.correlationId).toBeTruthy();
+    expect(b.correlationId).toBeTruthy();
+    expect(a.correlationId).not.toBe(b.correlationId);
+
+    // Back-compat mirrors survive for readers that predate the upgrade.
+    expect(firstTurn.tools).toEqual(["http_request", "http_request"]);
+    expect(firstTurn.results).toHaveLength(2);
+  });
+
+  it("stamps the same correlationId on the tool_calls entry and its tool_artifact", async () => {
+    let turnNum = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative() {
+        turnNum++;
+        if (turnNum === 1) {
+          return {
+            content: [
+              { type: "tool_use", id: "tc1", name: "http_request", input: { url: "https://example.com/joinme", method: "GET" } },
+            ],
+            stopReason: "tool_use",
+            durationMs: 10,
+          };
+        }
+        return {
+          content: [{ type: "tool_use", id: "tc2", name: "done", input: { summary: "Done" } }],
+          stopReason: "tool_use",
+          durationMs: 10,
+        };
+      },
+      async isAvailable() { return true; },
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => "ok",
+      headers: new Headers({ "content-type": "text/plain" }),
+    } as unknown as Response)));
+
+    const { events, db } = collectingDb();
+    await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 3,
+        target: "https://example.com",
+        scanId: "action-log-join-scan",
+      },
+      runtime,
+      db,
+    });
+
+    const entry = events
+      .filter((e) => e.eventType === "tool_calls")
+      .flatMap((e) => e.payload.calls as any[])
+      .find((c) => c.name === "http_request");
+    expect(entry).toBeDefined();
+
+    const artifact = events.find(
+      (e) => e.eventType === "tool_artifact" && e.payload.tool === "http_request",
+    );
+    expect(artifact).toBeDefined();
+    // The join key: exact, not timestamp-proximity guesswork.
+    expect(artifact.payload.correlationId).toBe(entry.correlationId);
+    // The artifact still carries the real request detail.
+    expect(artifact.payload.request.url).toBe("https://example.com/joinme");
+  });
+
+  it("redacts credentials out of the logged arguments", async () => {
+    let turnNum = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative() {
+        turnNum++;
+        if (turnNum === 1) {
+          return {
+            content: [
+              {
+                type: "tool_use",
+                id: "tc1",
+                name: "http_request",
+                input: {
+                  url: "https://example.com/admin",
+                  method: "GET",
+                  headers: { Authorization: "Bearer sup3rs3cr3t", Cookie: "session=leakme" },
+                },
+              },
+            ],
+            stopReason: "tool_use",
+            durationMs: 10,
+          };
+        }
+        return {
+          content: [{ type: "tool_use", id: "tc2", name: "done", input: { summary: "Done" } }],
+          stopReason: "tool_use",
+          durationMs: 10,
+        };
+      },
+      async isAvailable() { return true; },
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => "ok",
+      headers: new Headers({ "content-type": "text/plain" }),
+    } as unknown as Response)));
+
+    const { events, db } = collectingDb();
+    await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 3,
+        target: "https://example.com",
+        scanId: "action-log-redact-scan",
+      },
+      runtime,
+      db,
+    });
+
+    const entry = events
+      .filter((e) => e.eventType === "tool_calls")
+      .flatMap((e) => e.payload.calls as any[])
+      .find((c) => c.name === "http_request");
+    expect(entry).toBeDefined();
+    expect(entry.args).not.toContain("sup3rs3cr3t");
+    expect(entry.args).not.toContain("leakme");
+    expect(entry.args).toContain("<REDACTED-Authorization>");
+    expect(entry.args).toContain("<REDACTED-Cookie>");
+    // The evidence an analyst actually needs survives redaction.
+    expect(entry.args).toContain("https://example.com/admin");
+  });
+
+  it("emits absolute wall-clock ts on the tool_call bus events", async () => {
+    let turnNum = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative() {
+        turnNum++;
+        return {
+          content: [{ type: "tool_use", id: `tc${turnNum}`, name: "done", input: { summary: "Done" } }],
+          stopReason: "tool_use",
+          durationMs: 10,
+        };
+      },
+      async isAvailable() { return true; },
+    };
+
+    const seen: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const unsubscribe = eventBus.subscribe({
+      emit(type, payload) {
+        if (type === "tool_call_started" || type === "tool_call_completed") {
+          seen.push({ type, payload });
+        }
+      },
+    });
+
+    const before = Date.now();
+    try {
+      await runNativeAgentLoop({
+        config: {
+          role: "discovery",
+          systemPrompt: "test",
+          tools: [],
+          maxTurns: 2,
+          target: "https://example.com",
+          scanId: "action-log-bus-scan",
+        },
+        runtime,
+        db: null,
+      });
+    } finally {
+      unsubscribe();
+    }
+    const after = Date.now();
+
+    const started = seen.find((e) => e.type === "tool_call_started");
+    const completed = seen.find((e) => e.type === "tool_call_completed");
+    expect(started).toBeDefined();
+    expect(completed).toBeDefined();
+    for (const e of [started!, completed!]) {
+      expect(typeof e.payload.ts).toBe("number");
+      expect(e.payload.ts as number).toBeGreaterThanOrEqual(before);
+      expect(e.payload.ts as number).toBeLessThanOrEqual(after);
+    }
+    expect(completed!.payload.ts as number).toBeGreaterThanOrEqual(started!.payload.ts as number);
+  });
+});
