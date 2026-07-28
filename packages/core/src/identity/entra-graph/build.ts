@@ -166,9 +166,18 @@ export function buildEntraGraph(snapshot: TenantSnapshot, opts: BuildEntraGraphO
       properties: {
         displayname: user.displayName,
         userprincipalname: user.userPrincipalName,
+        mail: user.mail,
         usertype: (user.userType ?? "").toLowerCase(),
         accountenabled: user.accountEnabled,
         onpremisessyncenabled: user.onPremisesSyncEnabled,
+        // Correspondence anchors for `./hybrid/`. No Entra-only analyzer reads
+        // these; they exist so the hybrid bridge can join this node to an
+        // on-premises one without re-parsing the snapshot.
+        onpremisesimmutableid: user.onPremisesImmutableId,
+        onpremisessecurityidentifier: user.onPremisesSecurityIdentifier,
+        onpremisesdistinguishedname: user.onPremisesDistinguishedName,
+        onpremisessamaccountname: user.onPremisesSamAccountName,
+        onpremisesdomainname: user.onPremisesDomainName,
         ismfaregistered: user.isMfaRegistered,
       },
     });
@@ -191,6 +200,9 @@ export function buildEntraGraph(snapshot: TenantSnapshot, opts: BuildEntraGraphO
         securityenabled: group.securityEnabled,
         membershiprule: group.membershipRule,
         onpremisessyncenabled: group.onPremisesSyncEnabled,
+        onpremisessecurityidentifier: group.onPremisesSecurityIdentifier,
+        onpremisesdistinguishedname: group.onPremisesDistinguishedName,
+        onpremisessamaccountname: group.onPremisesSamAccountName,
       },
     });
   }

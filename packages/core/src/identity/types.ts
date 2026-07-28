@@ -184,6 +184,18 @@ export interface TenantUser {
   createdDateTime?: string;
   /** True when the account is mastered on-premises and synced by Entra Connect. */
   onPremisesSyncEnabled?: boolean;
+  /**
+   * Base64 of the source object's `objectGUID` (or `mS-DS-ConsistencyGuid` when
+   * the Connect anchor was moved). This is the anchor Entra Connect itself joins
+   * on, so it is the highest-confidence link back to an on-premises object.
+   * Consumed by `./hybrid/` — nothing else in this module reads it.
+   */
+  onPremisesImmutableId?: string;
+  /** The source object's `objectSid`, verbatim. Equally authoritative. */
+  onPremisesSecurityIdentifier?: string;
+  onPremisesDistinguishedName?: string;
+  onPremisesSamAccountName?: string;
+  onPremisesDomainName?: string;
   signInActivity?: {
     lastSignInDateTime?: string;
     lastNonInteractiveSignInDateTime?: string;
@@ -207,6 +219,10 @@ export interface TenantGroup {
   isAssignableToRole?: boolean;
   visibility?: string;
   onPremisesSyncEnabled?: boolean;
+  /** Same hybrid-correspondence anchors as `TenantUser`. Read by `./hybrid/`. */
+  onPremisesSecurityIdentifier?: string;
+  onPremisesDistinguishedName?: string;
+  onPremisesSamAccountName?: string;
   createdDateTime?: string;
 }
 

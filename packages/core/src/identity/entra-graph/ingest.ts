@@ -205,6 +205,14 @@ function toUser(o: Record<string, unknown>): TenantUser | undefined {
     userType: str(pick(o, "userType")),
     createdDateTime: str(pick(o, "createdDateTime")),
     onPremisesSyncEnabled: bool(pick(o, "onPremisesSyncEnabled")),
+    // Hybrid-correspondence anchors. Carried through even though no posture
+    // check reads them: `../hybrid/` joins the on-premises graph on these, and
+    // dropping them here would silently make every hybrid path unfindable.
+    onPremisesImmutableId: str(pick(o, "onPremisesImmutableId", "immutableId")),
+    onPremisesSecurityIdentifier: str(pick(o, "onPremisesSecurityIdentifier")),
+    onPremisesDistinguishedName: str(pick(o, "onPremisesDistinguishedName")),
+    onPremisesSamAccountName: str(pick(o, "onPremisesSamAccountName")),
+    onPremisesDomainName: str(pick(o, "onPremisesDomainName")),
   };
 }
 
@@ -219,6 +227,9 @@ function toGroup(o: Record<string, unknown>): TenantGroup | undefined {
     securityEnabled: bool(pick(o, "securityEnabled")),
     groupTypes: strArray(pick(o, "groupTypes")),
     membershipRule: str(pick(o, "membershipRule")),
+    onPremisesSecurityIdentifier: str(pick(o, "onPremisesSecurityIdentifier")),
+    onPremisesDistinguishedName: str(pick(o, "onPremisesDistinguishedName")),
+    onPremisesSamAccountName: str(pick(o, "onPremisesSamAccountName")),
   };
 }
 

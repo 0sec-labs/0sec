@@ -143,6 +143,13 @@ export type {
 // neither builds nor traverses a graph over the network.
 export * from "./entra-graph/index.js";
 
+// The seam between the two. `../adgraph/` and `./entra-graph/` each stop at the
+// synchronisation boundary; this joins their graphs and computes the paths that
+// cross it — the ones neither single-directory assessment can structurally find.
+// Offline like both of its inputs: it re-keys two in-memory graphs and compares
+// attributes already present on them.
+export * from "./hybrid/index.js";
+
 export interface IdentityAssessmentOptions {
   /**
    * OAuth2 bearer token with directory read scopes. Ignored when `client` or

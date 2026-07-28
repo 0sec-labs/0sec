@@ -349,7 +349,9 @@ export async function collectTenantSnapshot(
   const users = await step(warnings, "users", async () =>
     await client.collect<TenantUser>("/users", {
       $select:
-        "id,displayName,userPrincipalName,mail,accountEnabled,userType,createdDateTime,onPremisesSyncEnabled,signInActivity",
+        "id,displayName,userPrincipalName,mail,accountEnabled,userType,createdDateTime,onPremisesSyncEnabled," +
+        "onPremisesImmutableId,onPremisesSecurityIdentifier,onPremisesDistinguishedName,onPremisesSamAccountName," +
+        "onPremisesDomainName,signInActivity",
       $top: 999,
     }),
   ) ?? [];
@@ -372,7 +374,9 @@ export async function collectTenantSnapshot(
   const groups = await step(warnings, "groups", async () =>
     await client.collect<TenantGroup>("/groups", {
       $select:
-        "id,displayName,description,mailEnabled,securityEnabled,groupTypes,membershipRule,isAssignableToRole,visibility,onPremisesSyncEnabled,createdDateTime",
+        "id,displayName,description,mailEnabled,securityEnabled,groupTypes,membershipRule,isAssignableToRole," +
+        "visibility,onPremisesSyncEnabled,onPremisesSecurityIdentifier,onPremisesDistinguishedName," +
+        "onPremisesSamAccountName,createdDateTime",
       $top: 999,
     }),
   ) ?? [];
