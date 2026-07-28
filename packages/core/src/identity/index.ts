@@ -137,6 +137,12 @@ export type {
 // to be used as one. Import it directly from `./identity/xml.js` if you are
 // working inside this module.
 
+// Attack-path analysis. The posture checks above answer "what is
+// misconfigured"; this answers "what can be reached, and how". Same split as
+// `../adgraph/` for on-premises AD. Both input routes are offline analysis —
+// neither builds nor traverses a graph over the network.
+export * from "./entra-graph/index.js";
+
 export interface IdentityAssessmentOptions {
   /**
    * OAuth2 bearer token with directory read scopes. Ignored when `client` or

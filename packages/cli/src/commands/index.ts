@@ -38,6 +38,7 @@ export { registerJsReconCommand } from "./js-recon.js";
 export { registerNpmDiscoveryCommand } from "./npm-discovery.js";
 export { registerIdentityCommand } from "./identity.js";
 export { registerAdGraphCommand } from "./adgraph.js";
+export { registerEntraGraphCommand } from "./entragraph.js";
 export { registerCloudCommand } from "./cloud.js";
 export { registerXnuFuzzCommand } from "./xnu-fuzz.js";
 export { registerResearchCommand } from "./research.js";
