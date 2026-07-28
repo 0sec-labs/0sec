@@ -82,6 +82,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
           (config.scope || config.enforcement ? new WafDetector() : undefined)),
     allowScanners: config.allowScanners,
     attribution: config.attribution,
+    engagement: config.engagement,
     recentToolResultTexts,
     loadedSkills: new Set<string>(),
   };

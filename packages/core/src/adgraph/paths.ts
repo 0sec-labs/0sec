@@ -70,7 +70,12 @@ export function describeEdgeTechnique(kind: AdEdgeKind): string {
   return AD_EDGE_TECHNIQUES[kind] ?? `holds the ${kind} relationship over the target`;
 }
 
-export interface TraversalOptions {
+/**
+ * Traversal knobs. `E` defaults to {@link AdEdge}, so `TraversalOptions` reads
+ * exactly as it did before this file was parameterised; a second directory
+ * model supplies its own edge type instead.
+ */
+export interface TraversalOptions<E extends AdEdge = AdEdge> {
   /** Maximum hop count. Default 8 — deeper paths are rarely actionable. */
   maxDepth?: number;
   /** Maximum paths returned. Default 25. */
@@ -84,7 +89,14 @@ export interface TraversalOptions {
    * weight would break the label-setting invariant this search relies on.
    * Default: every edge costs 1, so cost equals hop count.
    */
-  edgeCost?: (edge: AdEdge) => number;
+  edgeCost?: (edge: E) => number;
+  /**
+   * How a single hop is written up on {@link AttackPathStep.technique}.
+   * Defaults to the on-prem AD table above; a caller with a different edge
+   * taxonomy passes its own resolver rather than seeing every hop fall through
+   * to the generic "holds the X relationship" wording.
+   */
+  describeEdge?: (edge: E) => string;
   /**
    * Hard ceiling on relaxations, as a runaway guard on very large graphs.
    * Default 500_000. Hitting it truncates results rather than throwing.
@@ -96,7 +108,7 @@ const DEFAULT_MAX_DEPTH = 8;
 const DEFAULT_MAX_RESULTS = 25;
 const DEFAULT_MAX_EXPANSIONS = 500_000;
 
-function resolveEdgeFilter(opts: TraversalOptions): (edge: AdEdge) => boolean {
+function resolveEdgeFilter<E extends AdEdge>(opts: TraversalOptions<E>): (edge: E) => boolean {
   const allowed = opts.allowedEdgeKinds ? new Set(opts.allowedEdgeKinds) : undefined;
   const denied = opts.deniedEdgeKinds ? new Set(opts.deniedEdgeKinds) : undefined;
   if (!allowed && !denied) return () => true;
@@ -107,7 +119,7 @@ function resolveEdgeFilter(opts: TraversalOptions): (edge: AdEdge) => boolean {
   };
 }
 
-function resolveEdgeCost(opts: TraversalOptions): (edge: AdEdge) => number {
+function resolveEdgeCost<E extends AdEdge>(opts: TraversalOptions<E>): (edge: E) => number {
   const fn = opts.edgeCost;
   if (!fn) return () => 1;
   return (edge) => {
@@ -176,13 +188,14 @@ class LabelHeap {
 // ---------------------------------------------------------------------------
 
 /** Materialise an ordered edge-index list into an {@link AttackPath}. */
-export function buildAttackPath(
-  graph: AdGraph,
+export function buildAttackPath<N extends AdNode = AdNode, E extends AdEdge = AdEdge>(
+  graph: AdGraph<N, E>,
   edgeIndices: number[],
-  edgeCost: (edge: AdEdge) => number = () => 1,
-): AttackPath | undefined {
+  edgeCost: (edge: E) => number = () => 1,
+  describeEdge: (edge: E) => string = (edge) => describeEdgeTechnique(edge.kind),
+): AttackPath<N, E> | undefined {
   if (edgeIndices.length === 0) return undefined;
-  const steps: AttackPathStep[] = [];
+  const steps: AttackPathStep<N, E>[] = [];
   let cost = 0;
   for (const edgeIndex of edgeIndices) {
     const edge = graph.edges[edgeIndex];
@@ -191,7 +204,7 @@ export function buildAttackPath(
     const to = graph.nodes.get(edge.target);
     if (!from || !to) return undefined;
     cost += edgeCost(edge);
-    steps.push({ from, edge, to, technique: `${from.label} ${describeEdgeTechnique(edge.kind)}` });
+    steps.push({ from, edge, to, technique: `${from.label} ${describeEdge(edge)}` });
   }
   return {
     sourceId: steps[0]!.from.objectId,
@@ -227,17 +240,18 @@ export function buildAttackPath(
  *
  * Traversal is directional — `source -> target` only.
  */
-export function shortestPaths(
-  graph: AdGraph,
+export function shortestPaths<N extends AdNode = AdNode, E extends AdEdge = AdEdge>(
+  graph: AdGraph<N, E>,
   sourceIds: Iterable<string>,
   targetIds: Iterable<string>,
-  opts: TraversalOptions = {},
-): AttackPath[] {
+  opts: TraversalOptions<E> = {},
+): AttackPath<N, E>[] {
   const maxDepth = Math.max(1, opts.maxDepth ?? DEFAULT_MAX_DEPTH);
   const maxResults = Math.max(1, opts.maxResults ?? DEFAULT_MAX_RESULTS);
   const maxExpansions = Math.max(1, opts.maxExpansions ?? DEFAULT_MAX_EXPANSIONS);
   const passesFilter = resolveEdgeFilter(opts);
   const edgeCost = resolveEdgeCost(opts);
+  const describeEdge = opts.describeEdge ?? ((edge: E) => describeEdgeTechnique(edge.kind));
 
   const targets = new Set<string>();
   for (const id of targetIds) if (graph.nodes.has(id)) targets.add(id);
@@ -316,7 +330,7 @@ export function shortestPaths(
     }
   }
 
-  const paths: AttackPath[] = [];
+  const paths: AttackPath<N, E>[] = [];
   for (const label of bestLabelByTarget.values()) {
     const edgeIndices: number[] = [];
     for (let cursor = label; cursor !== -1; cursor = labelPrev[cursor]!) {
@@ -324,7 +338,7 @@ export function shortestPaths(
       if (edgeIndex !== -1) edgeIndices.push(edgeIndex);
     }
     edgeIndices.reverse();
-    const path = buildAttackPath(graph, edgeIndices, edgeCost);
+    const path = buildAttackPath(graph, edgeIndices, edgeCost, describeEdge);
     if (path) paths.push(path);
   }
 
@@ -336,13 +350,13 @@ export function shortestPaths(
 // Reachability
 // ---------------------------------------------------------------------------
 
-function bfs(
-  graph: AdGraph,
+function bfs<N extends AdNode, E extends AdEdge>(
+  graph: AdGraph<N, E>,
   startIds: Iterable<string>,
   maxDepth: number,
   index: Map<string, number[]>,
-  step: (edge: AdEdge) => string,
-  opts: TraversalOptions,
+  step: (edge: E) => string,
+  opts: TraversalOptions<E>,
 ): Map<string, number> {
   const passesFilter = resolveEdgeFilter(opts);
   const maxExpansions = Math.max(1, opts.maxExpansions ?? DEFAULT_MAX_EXPANSIONS);
@@ -380,11 +394,11 @@ function bfs(
  * Every node reachable by following edges forward from `sourceIds`, mapped to
  * its minimum hop distance. Sources are included at depth 0. O(V + E).
  */
-export function reachableFrom(
-  graph: AdGraph,
+export function reachableFrom<N extends AdNode = AdNode, E extends AdEdge = AdEdge>(
+  graph: AdGraph<N, E>,
   sourceIds: Iterable<string>,
   maxDepth = DEFAULT_MAX_DEPTH,
-  opts: TraversalOptions = {},
+  opts: TraversalOptions<E> = {},
 ): Map<string, number> {
   return bfs(graph, sourceIds, maxDepth, graph.outbound, (edge) => edge.target, opts);
 }
@@ -397,11 +411,11 @@ export function reachableFrom(
  * path searches — narrow the candidate set with one reverse BFS, then run
  * {@link shortestPaths} only for the survivors.
  */
-export function reachableTo(
-  graph: AdGraph,
+export function reachableTo<N extends AdNode = AdNode, E extends AdEdge = AdEdge>(
+  graph: AdGraph<N, E>,
   targetIds: Iterable<string>,
   maxDepth = DEFAULT_MAX_DEPTH,
-  opts: TraversalOptions = {},
+  opts: TraversalOptions<E> = {},
 ): Map<string, number> {
   return bfs(graph, targetIds, maxDepth, graph.inbound, (edge) => edge.source, opts);
 }

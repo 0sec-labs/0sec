@@ -147,10 +147,15 @@ export interface AdEdge {
  * Indexed AD graph. Adjacency is stored as edge *indices* into `edges` rather
  * than edge copies so a 100k-node / 1M-edge graph stays flat in memory and
  * neighbour lookup is O(degree) with no per-hop allocation.
+ *
+ * The `N` / `E` parameters exist so a second directory model can reuse the
+ * traversal layer in `paths.ts` without widening these types: they default to
+ * the on-prem AD shapes, so every AD call site reads `AdGraph` exactly as
+ * before. See `../identity/entra-graph/` for the Entra ID instantiation.
  */
-export interface AdGraph {
-  nodes: Map<string, AdNode>;
-  edges: AdEdge[];
+export interface AdGraph<N extends AdNode = AdNode, E extends AdEdge = AdEdge> {
+  nodes: Map<string, N>;
+  edges: E[];
   /** objectId -> indices of edges leaving that node. */
   outbound: Map<string, number[]>;
   /** objectId -> indices of edges entering that node. */
@@ -174,18 +179,18 @@ export interface AdGraphMeta {
   ingestedAt: string;
 }
 
-export interface AttackPathStep {
-  from: AdNode;
-  edge: AdEdge;
-  to: AdNode;
+export interface AttackPathStep<N extends AdNode = AdNode, E extends AdEdge = AdEdge> {
+  from: N;
+  edge: E;
+  to: N;
   /** One-line description of how this hop is abused. */
   technique: string;
 }
 
-export interface AttackPath {
+export interface AttackPath<N extends AdNode = AdNode, E extends AdEdge = AdEdge> {
   sourceId: string;
   targetId: string;
-  steps: AttackPathStep[];
+  steps: AttackPathStep<N, E>[];
   /** Hop count. Always `steps.length`; carried explicitly for sorting. */
   length: number;
   /** Sum of edge costs. Equals `length` under the default uniform costing. */

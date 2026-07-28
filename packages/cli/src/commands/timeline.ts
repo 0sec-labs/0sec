@@ -9,8 +9,14 @@
  * The data is already there and already immutable: `pipeline_events` is the
  * audit trail the engine writes as it runs, and `db.getEvents(scanId)` returns
  * it in timestamp order. This command reads it, derives a human-readable
- * action summary per event, tags each with MITRE ATT&CK techniques, and renders
- * it as markdown (report appendix), CSV (spreadsheet / SIEM import) or JSON.
+ * action summary per event, tags each with MITRE ATT&CK and MITRE ATLAS
+ * techniques, and renders it as markdown (report appendix), CSV (spreadsheet /
+ * SIEM import) or JSON.
+ *
+ * The two taxonomies are carried side by side and never merged: ATT&CK
+ * (Enterprise, `T####`) describes conventional adversary behaviour, ATLAS
+ * (`AML.T####`) describes attacks on AI systems. Most rows carry only an
+ * ATT&CK tag; rows where the engine acted against an LLM target carry both.
  *
  * Read-only. It opens the database, reads, and closes. It never writes to the
  * audit trail it is exporting.
@@ -18,7 +24,7 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { techniquesForEvent, type AttackTechnique } from "@pwnkit/core";
+import { atlasTechniquesForEvent, techniquesForEvent } from "@pwnkit/core";
 import {
   formatTimeline,
   isTimelineFormat,
@@ -65,7 +71,7 @@ export function registerTimelineCommand(program: Command): void {
   program
     .command("timeline")
     .description(
-      "Export a scan's immutable pipeline-event audit trail as a chronological, MITRE ATT&CK-tagged forensic record — UTC ISO-8601 timestamps, per-event action summaries, ready to hand to a client SOC for detection cross-referencing.",
+      "Export a scan's immutable pipeline-event audit trail as a chronological, MITRE ATT&CK- and ATLAS-tagged forensic record — UTC ISO-8601 timestamps, per-event action summaries, ready to hand to a client SOC for detection cross-referencing.",
     )
     .argument("<scanId>", "Scan id to export (see `pwnkit history`)")
     .option("--format <format>", `Output format: ${TIMELINE_FORMATS.join(", ")}`, "markdown")
@@ -73,7 +79,7 @@ export function registerTimelineCommand(program: Command): void {
     .option("--until <iso>", "Only include events at or before this timestamp (ISO-8601)")
     .option(
       "--attack-only",
-      "Only include events that map to a MITRE ATT&CK technique, dropping pipeline lifecycle noise",
+      "Only include events that map to a MITRE ATT&CK or ATLAS technique, dropping pipeline lifecycle noise",
     )
     .option("--db-path <path>", "Path to SQLite database")
     .action(async (scanId: string, opts: TimelineOptions) => {
@@ -180,8 +186,16 @@ export function buildTimelineEntries(
     if (opts.untilMs !== undefined && row.timestamp > opts.untilMs) continue;
 
     const payload = parsePayload(row.payload);
-    const techniques = techniquesForRow(row.eventType, payload);
-    if (opts.attackOnly === true && techniques.length === 0) continue;
+    const tools = toolNames(payload);
+    const techniques = resolveTechniques(techniquesForEvent, row.eventType, tools);
+    const atlasTechniques = resolveTechniques(atlasTechniquesForEvent, row.eventType, tools);
+    // Mapped in *either* matrix is enough to survive the filter. An ATLAS-only
+    // row is precisely the AI-engagement evidence this export exists to carry;
+    // dropping it because Enterprise ATT&CK has no word for it would be the
+    // taxonomy gap silently deleting data.
+    if (opts.attackOnly === true && techniques.length === 0 && atlasTechniques.length === 0) {
+      continue;
+    }
 
     entries.push({
       timestamp: toUtcIso(row.timestamp),
@@ -191,19 +205,28 @@ export function buildTimelineEntries(
       ...(row.findingId ? { findingId: row.findingId } : {}),
       action: truncate(describeEvent(row, payload, artifacts), MAX_ACTION_LENGTH),
       techniques,
+      atlasTechniques,
     });
   }
   return entries;
 }
 
-function techniquesForRow(eventType: string, payload: Record<string, unknown>): AttackTechnique[] {
-  const tools = toolNames(payload);
-  if (tools.length === 0) return techniquesForEvent(eventType);
+/**
+ * Runs one matrix's event lookup over every tool named in the turn, deduping by
+ * technique id. Shared by the ATT&CK and ATLAS passes: the resolution rule is
+ * identical, only the mapping function differs.
+ */
+function resolveTechniques<T extends { id: string }>(
+  lookup: (eventType: string, toolName?: string) => T[],
+  eventType: string,
+  tools: string[],
+): T[] {
+  if (tools.length === 0) return lookup(eventType);
 
   const seen = new Set<string>();
-  const out: AttackTechnique[] = [];
+  const out: T[] = [];
   for (const tool of tools) {
-    for (const technique of techniquesForEvent(eventType, tool)) {
+    for (const technique of lookup(eventType, tool)) {
       if (seen.has(technique.id)) continue;
       seen.add(technique.id);
       out.push(technique);

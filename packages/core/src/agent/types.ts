@@ -2,6 +2,7 @@ import type { Finding, AttackResult, TargetInfo, AuthConfig, NamedIdentity } fro
 import type { ScopePolicy } from "../scope/scope.js";
 import type { RateLimiter } from "../scope/rate-limit.js";
 import type { AttributionConfig } from "../scope/attribution.js";
+import type { EngagementPosture } from "../scope/engagement-profile.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import type { LootLedger } from "./loot.js";
 import type { OastCollaborator } from "../oast/types.js";
@@ -128,6 +129,14 @@ export interface AgentConfig {
    */
   attribution?: AttributionConfig;
   /**
+   * Resolved engagement hardening posture (`scope/engagement-profile.ts`).
+   * Read at the WAF chokepoint to decide whether a blocked response escalates
+   * into the adaptive evasion ladder. When undefined the tool falls back to
+   * resolving the standalone `PWNKIT_WAF_EVASION` env opt-out, so the default
+   * (ladder enabled) is unchanged.
+   */
+  engagement?: EngagementPosture;
+  /**
    * Tool-call dispatch protocol (pwnkit#232). When unset or `"json"`, the
    * legacy `TOOL_CALL: <name> {...}` line format is used. When `"xml"`,
    * the loop drives the model with the `<command>` / `<flag>` /
@@ -221,6 +230,8 @@ export interface ToolContext {
    * suppression gate (pwnkit#217). Only consulted when `scope` is set.
    */
   allowScanners?: boolean;
+  /** See `AgentConfig.engagement`. */
+  engagement?: EngagementPosture;
   /** See `AgentConfig.attribution` (pwnkit#216). */
   attribution?: AttributionConfig;
   /**

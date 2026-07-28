@@ -33,11 +33,15 @@ const loadScopeMock = vi.fn();
 const parseRateLimitFlagMock = vi.fn();
 const resolveAttributionMock = vi.fn();
 const extractAttributionFromScopeJsonMock = vi.fn();
+const resolveEngagementProfileMock = vi.fn();
+const extractEngagementFromScopeJsonMock = vi.fn();
 vi.mock("@pwnkit/core", () => ({
   loadScope: loadScopeMock,
   parseRateLimitFlag: parseRateLimitFlagMock,
   resolveAttribution: resolveAttributionMock,
   extractAttributionFromScopeJson: extractAttributionFromScopeJsonMock,
+  resolveEngagementProfile: resolveEngagementProfileMock,
+  extractEngagementFromScopeJson: extractEngagementFromScopeJsonMock,
 }));
 
 const { registerScanCommand } = await import("../scan.js");
@@ -90,6 +94,8 @@ beforeEach(() => {
   parseRateLimitFlagMock.mockReset();
   resolveAttributionMock.mockReset();
   extractAttributionFromScopeJsonMock.mockReset();
+  resolveEngagementProfileMock.mockReset();
+  extractEngagementFromScopeJsonMock.mockReset();
   tracker = {};
   exitSpy = makeExitMock(tracker);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -281,6 +287,55 @@ describe("scan — --scope validation", () => {
     const opts = runUnifiedMock.mock.calls[0]![0];
     expect(opts.scopeFile).toBe(scopePath);
     expect(opts.allowScanners).toBe(true);
+  });
+});
+
+describe("scan — engagement hardening profile", () => {
+  it("threads --engagement-profile through to runUnified", async () => {
+    await runCli([
+      "scan",
+      "--target",
+      "https://example.com",
+      "--engagement-profile",
+      "conservative",
+    ]);
+    expect(runUnifiedMock).toHaveBeenCalledOnce();
+    const opts = runUnifiedMock.mock.calls[0]![0];
+    expect(opts.engagementProfile).toBe("conservative");
+    // The posture is pre-validated at boot, through the core resolver.
+    expect(resolveEngagementProfileMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cliProfile: "conservative" }),
+    );
+  });
+
+  it("--no-waf-evasion sets wafEvasion=false; absence leaves it unset", async () => {
+    await runCli(["scan", "--target", "https://example.com", "--no-waf-evasion"]);
+    expect(runUnifiedMock.mock.calls[0]![0].wafEvasion).toBe(false);
+
+    runUnifiedMock.mockClear();
+    await runCli(["scan", "--target", "https://example.com"]);
+    const opts = runUnifiedMock.mock.calls[0]![0];
+    // Unset, NOT `true` — so the scope file / env keep their precedence.
+    expect(opts.wafEvasion).toBeUndefined();
+    expect(opts.engagementProfile).toBeUndefined();
+  });
+
+  it("exits 2 when the profile fails validation in core", async () => {
+    resolveEngagementProfileMock.mockImplementation(() => {
+      throw new Error("Unknown engagement profile 'stealth'. Supported: standard, conservative.");
+    });
+    await runCli([
+      "scan",
+      "--target",
+      "https://example.com",
+      "--engagement-profile",
+      "stealth",
+    ]);
+    expect(tracker.firstCode).toBe(2);
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+      /Unknown engagement profile/,
+    );
+    expect(runUnifiedMock).not.toHaveBeenCalled();
   });
 });
 

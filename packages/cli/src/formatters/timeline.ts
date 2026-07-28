@@ -4,9 +4,9 @@
  * Turns the immutable `pipeline_events` audit trail of a single scan into a
  * chronological, client-deliverable record: one row per event, each carrying a
  * UTC ISO-8601 timestamp, the pipeline stage, the agent that acted, a
- * human-readable action summary, and the MITRE ATT&CK technique(s) the action
- * maps to. Clients cross-reference this against their own SOC detections, so
- * the contract is deliberately narrow:
+ * human-readable action summary, and the MITRE technique(s) the action maps
+ * to. Clients cross-reference this against their own SOC detections, so the
+ * contract is deliberately narrow:
  *
  *   • Timestamps are ALWAYS UTC ISO-8601. Epoch-ms never reaches the output —
  *     a raw millisecond integer is unreadable in a report appendix and
@@ -14,12 +14,17 @@
  *   • Row order is the order the events happened in. Nothing is reordered,
  *     grouped, or deduplicated: the value of an audit trail is that it is
  *     complete.
+ *   • ATT&CK and ATLAS are separate fields, separate CSV columns and separate
+ *     markdown columns. They are two matrices with disjoint id namespaces
+ *     (`T####` vs `AML.T####`); merging them into one cell would claim
+ *     coverage in a matrix the client may not run. A row may carry either,
+ *     both, or neither.
  *
  * Rendering only. Reading the DB, filtering the window and deriving the action
  * summaries lives in `../commands/timeline.ts`.
  */
 
-import type { AttackTechnique } from "@pwnkit/core";
+import type { AtlasTechnique, AttackTechnique } from "@pwnkit/core";
 
 export type TimelineFormat = "json" | "csv" | "markdown";
 
@@ -38,7 +43,10 @@ export interface TimelineEntry {
   findingId?: string;
   /** Human-readable summary of what actually happened, derived from the payload. */
   action: string;
+  /** MITRE ATT&CK (Enterprise) techniques. Never merged with `atlasTechniques`. */
   techniques: AttackTechnique[];
+  /** MITRE ATLAS techniques — populated only for actions against an AI system. */
+  atlasTechniques: AtlasTechnique[];
 }
 
 export interface TimelineExport {
@@ -86,6 +94,11 @@ const CSV_COLUMNS = [
   "action",
   "attackTechniqueIds",
   "attackTactics",
+  // Appended, never interleaved with the ATT&CK columns — an importer that
+  // only knows the ATT&CK pair keeps working, and the two taxonomies stay
+  // visibly distinct in a spreadsheet.
+  "atlasTechniqueIds",
+  "atlasTactics",
 ] as const;
 
 function formatTimelineCsv(record: TimelineExport): string {
@@ -101,6 +114,8 @@ function formatTimelineCsv(record: TimelineExport): string {
         entry.action,
         entry.techniques.map((t) => t.id).join(" "),
         uniq(entry.techniques.map((t) => t.tactic)).join(" "),
+        entry.atlasTechniques.map((t) => t.id).join(" "),
+        uniq(entry.atlasTechniques.map((t) => t.tactic)).join(" "),
       ]
         .map(csvCell)
         .join(","),
@@ -129,10 +144,14 @@ function formatTimelineMarkdown(record: TimelineExport): string {
   if (record.filters.since) out.push(`- **Since:** ${record.filters.since}`);
   if (record.filters.until) out.push(`- **Until:** ${record.filters.until}`);
   if (record.filters.attackOnly) {
-    out.push(`- **Filter:** ATT&CK-mapped events only (pipeline lifecycle events omitted)`);
+    out.push(`- **Filter:** technique-mapped events only (pipeline lifecycle events omitted)`);
   }
   out.push("");
   out.push("All timestamps are UTC (ISO-8601).");
+  out.push("");
+  out.push(
+    "ATT&CK (Enterprise) and ATLAS (AI systems) are separate matrices; a row may carry either, both, or neither.",
+  );
   out.push("");
 
   if (record.entries.length === 0) {
@@ -141,8 +160,8 @@ function formatTimelineMarkdown(record: TimelineExport): string {
     return out.join("\n");
   }
 
-  out.push("| # | Timestamp (UTC) | Stage | Event | Agent | Finding | Action | ATT&CK |");
-  out.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  out.push("| # | Timestamp (UTC) | Stage | Event | Agent | Finding | Action | ATT&CK | ATLAS |");
+  out.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   record.entries.forEach((entry, i) => {
     out.push(
       "| " +
@@ -154,7 +173,8 @@ function formatTimelineMarkdown(record: TimelineExport): string {
           mdCell(entry.agentRole ?? "—"),
           mdCell(entry.findingId ?? "—"),
           mdCell(entry.action),
-          entry.techniques.length > 0 ? entry.techniques.map(mdTechnique).join(", ") : "—",
+          mdTechniques(entry.techniques),
+          mdTechniques(entry.atlasTechniques),
         ].join(" | ") +
         " |",
     );
@@ -163,7 +183,11 @@ function formatTimelineMarkdown(record: TimelineExport): string {
   return out.join("\n");
 }
 
-function mdTechnique(technique: AttackTechnique): string {
+function mdTechniques(techniques: Array<AttackTechnique | AtlasTechnique>): string {
+  return techniques.length > 0 ? techniques.map(mdTechnique).join(", ") : "—";
+}
+
+function mdTechnique(technique: AttackTechnique | AtlasTechnique): string {
   const label = mdCell(`${technique.id} ${technique.name}`);
   return technique.url ? `[${label}](${technique.url})` : label;
 }

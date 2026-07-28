@@ -212,6 +212,24 @@ export interface ScanConfig {
   httpAuditAllowedPaths?: string[];
   httpAuditRateLimitRps?: number;
   httpAuditKillAfterSec?: number;
+  /**
+   * Engagement hardening profile (`--engagement-profile <name>`). `"standard"`
+   * (or unset) is the historical, unchanged behaviour. `"conservative"` applies
+   * a single quiet posture for authorized enterprise engagements: no
+   * password-reset burst probe, the web-recon pre-pass routed through the
+   * per-host rate limiter, no WAF-evasion ladder, full jitter on the token
+   * bucket, and a reduced default per-host rps. Lower precedence than the scope
+   * file's `engagement` block and `PWNKIT_ENGAGEMENT_PROFILE`. See
+   * `scope/engagement-profile.ts` in `@pwnkit/core`.
+   */
+  engagementProfile?: string;
+  /**
+   * Standalone opt-out for the adaptive WAF-evasion ladder, independent of the
+   * engagement profile (`--no-waf-evasion` → `false`). Unset = enabled, which
+   * is the historical default. Lower precedence than the scope file's
+   * `engagement.waf_evasion` and `PWNKIT_WAF_EVASION`.
+   */
+  wafEvasion?: boolean;
 }
 
 // ── Attack Templates ──
@@ -1202,6 +1220,43 @@ export interface ScanReport {
    * and the kill-switch outcome of an authed HTTP scan.
    */
   enforcementSummary?: EnforcementSummary;
+  /**
+   * Engagement-posture audit record. Present ONLY when an engagement hardening
+   * profile was actually applied (`--engagement-profile conservative` or an
+   * equivalent env / scope-file setting); undefined for default scans, so
+   * ordinary reports are byte-for-byte unchanged. It states which loud
+   * behaviours were suppressed and which configuration source decided each
+   * one — the evidence handed to a client alongside the findings.
+   */
+  engagementPosture?: EngagementPostureRecord;
+}
+
+/**
+ * Auditable record of the engagement hardening posture a scan ran under.
+ * Built by `describeEngagementPosture` in `@pwnkit/core`
+ * (`scope/engagement-profile.ts`). snake_case keys match the
+ * `enforcement_summary` contract; the values are the posture as APPLIED, not
+ * as requested.
+ */
+export interface EngagementPostureRecord {
+  /** Resolved profile name (`standard` / `conservative`). */
+  profile: string;
+  /** ISO timestamp the posture was rendered. */
+  applied_at: string;
+  /** Whether the bounded password-reset burst probe was allowed to fire. */
+  reset_endpoint_burst_probe: "enabled" | "disabled";
+  /** How the deterministic web-recon pre-pass issued HTTP. */
+  web_recon_prepass: "direct-fetch" | "rate-limited";
+  /** Whether a blocked response escalated into the adaptive evasion ladder. */
+  waf_evasion_ladder: "enabled" | "disabled";
+  /** Token-bucket pacing shape. */
+  request_jitter: "full-jitter" | "none";
+  /** Upper bound of the per-request random delay, ms (0 when no jitter). */
+  jitter_base_ms: number;
+  /** Default per-host requests-per-second applied to the token buckets. */
+  per_host_rps: number;
+  /** Which configuration source decided each field (scope-file / env / cli / default). */
+  sources: Record<string, string>;
 }
 
 /**

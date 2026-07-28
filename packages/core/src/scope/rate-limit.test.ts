@@ -343,3 +343,90 @@ describe("parseRetryAfter", () => {
     expect(parseRetryAfter("not-a-date", 1_000_000)).toBe(0);
   });
 });
+
+// ── Full-jitter pacing (engagement hardening) ───────────────────────────────
+//
+// A fixed-interval bucket produces a perfectly periodic request train, which
+// is a strong automation signal to a behavioural SOC. The engagement profile
+// turns on full jitter; these tests pin both halves of the contract — that it
+// is genuinely absent by default, and genuinely present when configured.
+
+describe("TokenBucket — jitter", () => {
+  it("is OFF by default: no extra sleep on a satisfied acquire", async () => {
+    const c = virtualClock();
+    const b = new TokenBucket(5, 5, c.nowFn, c.sleepFn);
+    await b.acquire();
+    await b.acquire();
+    expect(c.sleeps()).toEqual([]);
+  });
+
+  it("sleeps a full-jitter delay in [0, baseMs] on every acquire when configured", async () => {
+    const c = virtualClock();
+    // rng stub walks 0.0 → 0.25 → 0.5 → 0.75 so the delays are deterministic.
+    const values = [0.0, 0.25, 0.5, 0.75];
+    let i = 0;
+    const b = new TokenBucket(100, 100, c.nowFn, c.sleepFn, {
+      baseMs: 800,
+      rng: () => values[i++ % values.length],
+    });
+    for (let n = 0; n < 4; n++) await b.acquire();
+    // jitterFor(0, 800, rng) === floor(rng() * 800).
+    expect(c.sleeps()).toEqual([200, 400, 600]); // the 0.0 draw sleeps 0 → skipped
+    for (const ms of c.sleeps()) {
+      expect(ms).toBeGreaterThanOrEqual(0);
+      expect(ms).toBeLessThanOrEqual(800);
+    }
+  });
+
+  it("jitter is additive to the token pacing, not a replacement for it", async () => {
+    const c = virtualClock();
+    const b = new TokenBucket(1, 1, c.nowFn, c.sleepFn, { baseMs: 500, rng: () => 0.5 });
+    await b.acquire(); // bucket starts full → jitter only
+    c.reset();
+    await b.acquire(); // dry → refill wait AND jitter (250ms)
+    const sleeps = c.sleeps();
+    // The refill wait dominates (the 250ms jitter already advanced the clock,
+    // so the bucket needs ~750ms more) and the jitter rides on top of it.
+    expect(sleeps.some((ms) => ms >= 700)).toBe(true);
+    expect(sleeps).toContain(250);
+  });
+
+  it("baseMs = 0 is treated as no jitter", async () => {
+    const c = virtualClock();
+    const b = new TokenBucket(5, 5, c.nowFn, c.sleepFn, { baseMs: 0 });
+    await b.acquire();
+    expect(c.sleeps()).toEqual([]);
+  });
+});
+
+describe("RateLimiter — jitter", () => {
+  it("paces the non-blocking fast path too, so an idle scan is not periodic", async () => {
+    const c = virtualClock();
+    const rl = new RateLimiter(
+      { default: { rps: 100, burst: 100 }, jitter: { baseMs: 400, rng: () => 0.5 } },
+      { nowFn: c.nowFn, sleepFn: c.sleepFn },
+    );
+    // Bucket is nowhere near dry — these all take the tryConsume fast path.
+    await rl.acquire("https://api.example.com/a");
+    await rl.acquire("https://api.example.com/b");
+    expect(c.sleeps()).toEqual([200, 200]);
+  });
+
+  it("applies jitter per host bucket, and not at all when unconfigured", async () => {
+    const c = virtualClock();
+    const plain = new RateLimiter(
+      { default: { rps: 100, burst: 100 } },
+      { nowFn: c.nowFn, sleepFn: c.sleepFn },
+    );
+    await plain.acquire("https://api.example.com/a");
+    expect(c.sleeps()).toEqual([]);
+
+    const jittered = new RateLimiter(
+      { default: { rps: 100, burst: 100 }, jitter: { baseMs: 1000, rng: () => 0.9 } },
+      { nowFn: c.nowFn, sleepFn: c.sleepFn },
+    );
+    await jittered.acquire("https://one.example.com/");
+    await jittered.acquire("https://two.example.com/");
+    expect(c.sleeps()).toEqual([900, 900]);
+  });
+});

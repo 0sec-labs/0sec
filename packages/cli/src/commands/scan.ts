@@ -168,6 +168,14 @@ export function registerScanCommand(program: Command): void {
       "--rate-limit <spec>",
       "Per-host requests-per-second cap for outbound scan traffic. Plain number (e.g. '5') sets the default rps; comma-separated form 'api.example.com=5,*.example.com=3:6,2' allows per-host overrides and a fallback default. Default is 5 rps when unset. Each host carries an independent token bucket; 429 responses honour Retry-After (with a conservative 60s floor).",
     )
+    .option(
+      "--engagement-profile <name>",
+      "Engagement hardening posture for authorized enterprise work. 'standard' (default) is the existing behaviour. 'conservative' applies ONE quiet posture: no password-reset burst probe, the deterministic web-recon pre-pass routed through the per-host rate limiter, no adaptive WAF-evasion ladder, full jitter on the token bucket, and a reduced default of 1 rps/host. The applied posture is recorded in the report as `engagementPosture` so it can be handed to the client as evidence. Lower precedence than the scope file's `engagement` block and PWNKIT_ENGAGEMENT_PROFILE.",
+    )
+    .option(
+      "--no-waf-evasion",
+      "Disable the adaptive WAF-evasion ladder (default: on). When a response classifies as blocked, the engine normally retries with encoding/casing/whitespace-mutated payload variants, which escalates a routine WAF block into a SOC incident. Detection and reporting of the block are unaffected. Independent of --engagement-profile; env form: PWNKIT_WAF_EVASION=0.",
+    )
     .option("--tui", "Open the local terminal UI after the scan completes", false)
     .option(
       "--features <list>",
@@ -414,6 +422,32 @@ export function registerScanCommand(program: Command): void {
         process.exit(2);
       }
 
+      // Pre-validate the engagement hardening posture. Same rationale as the
+      // attribution pre-flight: a typo'd `--engagement-profile`, a bad
+      // PWNKIT_ENGAGEMENT_RATE_RPS, or a malformed scope-file `engagement`
+      // block must fail here, not after the loud default already ran.
+      // `--no-waf-evasion` sets opts.wafEvasion to false; commander leaves it
+      // `true` when the flag is absent, which we map back to "unset" so the
+      // scope file / env keep their precedence.
+      const cliWafEvasion = opts.wafEvasion === false ? false : undefined;
+      try {
+        const {
+          loadScope,
+          resolveEngagementProfile,
+          extractEngagementFromScopeJson,
+        } = await import("@pwnkit/core");
+        const policy = scopeFile ? loadScope(scopeFile) : undefined;
+        resolveEngagementProfile({
+          scopeFileBlock: policy ? extractEngagementFromScopeJson(policy.raw) : undefined,
+          env: process.env,
+          cliProfile: opts.engagementProfile as string | undefined,
+          cliWafEvasion,
+        });
+      } catch (err) {
+        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        process.exit(2);
+      }
+
       // Resolve cost ceiling: --cost-ceiling flag wins over PWNKIT_COST_CEILING_USD env.
       let costCeilingUsd: number | undefined;
       const ceilingSource =
@@ -472,6 +506,8 @@ export function registerScanCommand(program: Command): void {
         allowScanners: opts.allowScanners as boolean | undefined,
         attributionHeaders: opts.attributionHeader as string[] | undefined,
         attributionUaToken: opts.attributionUa as string | undefined,
+        engagementProfile: opts.engagementProfile as string | undefined,
+        wafEvasion: cliWafEvasion,
         dispatchMode: opts.dispatch as "json" | "xml" | "auto" | undefined,
         emit: validateEmitTarget(opts.emit as string | undefined),
         emitPrBase: opts.base as string | undefined,

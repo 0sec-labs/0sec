@@ -29,6 +29,7 @@ import {
   type WafResponseLike,
 } from "../scope/waf-detect.js";
 import { detectScannerBinary } from "../scope/scanner-binaries.js";
+import { isWafEvasionLadderEnabled } from "../scope/engagement-profile.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
 import { sendPrompt, extractResponseText } from "../http.js";
 import { buildAuthHeaders } from "./prompts.js";
@@ -1854,9 +1855,16 @@ export class ToolExecutor {
     // is wired (authorized engagement — scope/enforcement configured), we walk
     // the evasion ladder through the SAME rate-limited / in-scope `sendHttp`
     // path, recording every attempt as evidence.
+    //
+    // The ladder is opt-out: an engagement hardening profile (or the standalone
+    // `--no-waf-evasion` / `PWNKIT_WAF_EVASION=0`) turns it off, because
+    // auto-escalating a WAF block into encoded/mutated retries is what turns a
+    // routine block into a SOC incident. Detection still runs — we report the
+    // block, we just don't try to beat it. See `scope/engagement-profile.ts`.
     let wafInfo: Record<string, unknown> | undefined;
     const verdict = classifyResponse({ status: first.res.status, headers: first.res.headers, body: first.body });
     if (verdict.blocked) {
+      const evasionLadderEnabled = isWafEvasionLadderEnabled(this.ctx.engagement);
       this.ctx.wafDetector?.recordBlock(url, verdict);
       wafInfo = {
         detected: true,
@@ -1866,9 +1874,12 @@ export class ToolExecutor {
         confidence: verdict.fingerprint?.confidence ?? null,
         reason: verdict.reason,
         authorized_engagement: true,
+        ...(evasionLadderEnabled
+          ? {}
+          : { evasion: { enabled: false, reason: "evasion ladder disabled by engagement posture" } }),
       };
 
-      if (this.ctx.wafDetector) {
+      if (this.ctx.wafDetector && evasionLadderEnabled) {
         // Capture the underlying send for the variant that ultimately runs, so
         // a bypassing response (with its real sent-headers) becomes the result.
         let lastSend: { res: Response; body: string; sentHeaders: Record<string, string> } | null = null;

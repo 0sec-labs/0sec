@@ -13,6 +13,7 @@ import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } fro
 import { SessionEngine } from "./session.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import type { AttributionConfig } from "../scope/attribution.js";
+import type { EngagementPosture } from "../scope/engagement-profile.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
@@ -226,6 +227,13 @@ export interface NativeAgentConfig {
    */
   attribution?: AttributionConfig;
   /**
+   * Resolved engagement hardening posture (`scope/engagement-profile.ts`).
+   * Same propagation shape as `attribution`: resolved once in the scanner and
+   * threaded onto the ToolContext, where the WAF chokepoint consults it before
+   * escalating a block into the adaptive evasion ladder.
+   */
+  engagement?: EngagementPosture;
+  /**
    * Methodology skill IDs to auto-load into context before the loop starts
    * (#557). Used by EGATS specialist routing so a class branch begins with the
    * matching playbook already in its system prompt. Each skill's content is
@@ -414,6 +422,7 @@ export async function runNativeAgentLoop(
           (config.scope || config.enforcement ? new WafDetector() : undefined)),
     allowScanners: config.allowScanners,
     attribution: config.attribution,
+    engagement: config.engagement,
     loot,
     oast,
   };

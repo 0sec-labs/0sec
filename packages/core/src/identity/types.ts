@@ -492,6 +492,83 @@ export interface FederationConfig {
   directorySyncEnabled?: boolean;
 }
 
+// ── directory relationships ──
+//
+// The collections below are what turn a flat posture snapshot into a graph.
+// They are optional and collected only when the caller asks for them
+// (`CollectSnapshotOptions.includeDirectoryRelationships`), because every one of
+// them is a per-object fan-out against Graph: reading them on a large tenant
+// costs hundreds of extra GETs that the 27 posture checks do not need.
+
+/**
+ * What a membership or ownership row points at. Wider than
+ * {@link IdentityPrincipalType} by exactly one arm: a device can be a group
+ * member and a device can have a registered owner, but a device is never the
+ * subject of a posture finding, so it has no place in the finding vocabulary.
+ */
+export type DirectoryPrincipalType = IdentityPrincipalType | "device";
+
+/** `/groups/{id}/members` — one row per (group, member) pair. */
+export interface DirectoryMembership {
+  groupId: string;
+  memberId: string;
+  /** Resolved from the member's `@odata.type` when Graph reported one. */
+  memberType?: DirectoryPrincipalType;
+  memberDisplayName?: string;
+}
+
+/**
+ * `/{collection}/{id}/owners` — one row per (object, owner) pair. Ownership is
+ * a control edge in Entra: an application owner can add credentials to the app,
+ * a group owner can add members to the group.
+ */
+export interface DirectoryOwnership {
+  /** Object id of the owned application, service principal, group, or device. */
+  objectId: string;
+  ownerId: string;
+  ownerType?: DirectoryPrincipalType;
+  ownerDisplayName?: string;
+}
+
+/** `/devices`. Collected for completeness of the directory graph. */
+export interface TenantDevice {
+  id: string;
+  displayName?: string;
+  /** The device's own GUID, distinct from the directory object id. */
+  deviceId?: string;
+  operatingSystem?: string;
+  /** `AzureAd` | `ServerAd` | `Workplace`. */
+  trustType?: string;
+  isCompliant?: boolean;
+  isManaged?: boolean;
+  accountEnabled?: boolean;
+}
+
+/**
+ * `/directory/administrativeUnits`. An AU scopes a role assignment to a subset
+ * of the directory, so an AU-scoped admin is emphatically *not* a tenant-wide
+ * one — the graph builder keeps the two apart.
+ */
+export interface AdministrativeUnitRecord {
+  id: string;
+  displayName?: string;
+  description?: string;
+  isMemberManagementRestricted?: boolean;
+  /** Joined from `/directory/administrativeUnits/{id}/members`. */
+  memberIds?: string[];
+}
+
+/** Everything the graph builder needs beyond the posture snapshot itself. */
+export interface TenantRelationships {
+  groupMembers: DirectoryMembership[];
+  groupOwners: DirectoryOwnership[];
+  applicationOwners: DirectoryOwnership[];
+  servicePrincipalOwners: DirectoryOwnership[];
+  devices: TenantDevice[];
+  deviceOwners: DirectoryOwnership[];
+  administrativeUnits: AdministrativeUnitRecord[];
+}
+
 // ── snapshot ──
 
 /**
@@ -516,6 +593,14 @@ export interface TenantSnapshot {
   roleEligibilitySchedules: RoleEligibilitySchedule[];
   conditionalAccessPolicies: ConditionalAccessPolicy[];
   federationConfig: FederationConfig;
+  /**
+   * Membership, ownership, device and administrative-unit edges. Absent unless
+   * the caller asked for them; the 27 posture checks never read this field, so
+   * a snapshot without it is still a complete input for `runAllAnalyzers`.
+   * `buildEntraGraph` treats absent as "no relationships collected" and says so
+   * in the graph metadata rather than reporting an empty directory.
+   */
+  relationships?: TenantRelationships;
   /**
    * Collections the token could not read (missing scope, throttled, endpoint
    * unavailable). Non-empty means the snapshot is partial and absent findings

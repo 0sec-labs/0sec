@@ -1223,12 +1223,12 @@ export function summarizeFindings(findings: IdentityFinding[]): {
  * usually use the template id as the definition id, but custom roles do not,
  * and we should not rely on the coincidence.
  */
-function templateIdFor(snapshot: TenantSnapshot, roleDefinitionId: string): string {
+export function templateIdFor(snapshot: TenantSnapshot, roleDefinitionId: string): string {
   const definition = snapshot.roleDefinitions.find((d) => d.id === roleDefinitionId);
   return definition?.templateId ?? roleDefinitionId;
 }
 
-function roleDisplayName(snapshot: TenantSnapshot, roleDefinitionId: string): string {
+export function roleDisplayName(snapshot: TenantSnapshot, roleDefinitionId: string): string {
   const definition = snapshot.roleDefinitions.find((d) => d.id === roleDefinitionId);
   if (definition?.displayName) return definition.displayName;
   return roleTemplateName(templateIdFor(snapshot, roleDefinitionId));
@@ -1257,7 +1257,7 @@ function hasEligibility(snapshot: TenantSnapshot, principalId: string, roleDefin
   );
 }
 
-function isLiveEligibility(status: string | undefined): boolean {
+export function isLiveEligibility(status: string | undefined): boolean {
   if (status === undefined) return true;
   const normalized = status.toLowerCase();
   return normalized === "provisioned" || normalized === "granted";

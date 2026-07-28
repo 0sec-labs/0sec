@@ -30,7 +30,27 @@
  *   separately; see CLAUDE.md / DoD on #214.
  */
 
+import { jitterFor } from "./waf-detect.js";
+
 // ── Types ────────────────────────────────────────────────────────────────
+
+/**
+ * Full-jitter pacing on top of the token bucket (engagement hardening).
+ *
+ * A fixed-interval bucket produces a perfectly periodic request train, which
+ * is arguably a STRONGER automation signal to a behavioural SOC than bursty
+ * traffic. When configured, every satisfied acquire additionally sleeps a
+ * uniform random `[0, baseMs]` (via the shared `jitterFor` helper), so the
+ * inter-request interval stops being a constant.
+ *
+ * Undefined (the default) = fixed-interval, unchanged behaviour.
+ */
+export interface JitterConfig {
+  /** Upper bound of the uniform random delay, in milliseconds. */
+  baseMs: number;
+  /** Injectable randomness for tests. Defaults to `Math.random`. */
+  rng?: () => number;
+}
 
 /** Per-host bucket configuration. */
 export interface HostRateConfig {
@@ -49,6 +69,11 @@ export interface RateLimiterConfig {
   default: HostRateConfig;
   /** Per-host overrides keyed by lowercased hostname. */
   perHost?: Record<string, HostRateConfig>;
+  /**
+   * Optional full-jitter pacing applied to EVERY host bucket. Omitted by
+   * default, which keeps the historical fixed-interval behaviour.
+   */
+  jitter?: JitterConfig;
 }
 
 // ── Internal bucket state ────────────────────────────────────────────────
@@ -85,12 +110,14 @@ export class TokenBucket {
   private state: Bucket;
   private readonly nowFn: () => number;
   private readonly sleepFn: (ms: number) => Promise<void>;
+  private readonly jitter?: JitterConfig;
 
   constructor(
     rps: number,
     capacity: number = rps,
     nowFn: () => number = () => Date.now(),
     sleepFn: (ms: number) => Promise<void> = defaultSleep,
+    jitter?: JitterConfig,
   ) {
     if (!Number.isFinite(rps) || rps <= 0) {
       throw new Error(`TokenBucket: rps must be a positive finite number, got ${rps}`);
@@ -100,6 +127,7 @@ export class TokenBucket {
     }
     this.nowFn = nowFn;
     this.sleepFn = sleepFn;
+    this.jitter = jitter && jitter.baseMs > 0 ? jitter : undefined;
     this.state = {
       tokens: capacity,
       refillRatePerMs: rps / 1000,
@@ -159,6 +187,7 @@ export class TokenBucket {
       this.refill();
       if (this.state.tokens >= n) {
         this.state.tokens -= n;
+        await this.pace();
         return;
       }
       const tokensNeeded = n - this.state.tokens;
@@ -166,6 +195,20 @@ export class TokenBucket {
       // eslint-disable-next-line no-await-in-loop
       await this.sleepFn(waitMs);
     }
+  }
+
+  /**
+   * Sleep the configured full-jitter delay. No-op (and no `await`-visible
+   * sleep) when no jitter is configured, so the default path is unchanged.
+   *
+   * Reuses `jitterFor` from `waf-detect.ts` — attempt 0 with an injected rng
+   * yields full jitter in `[0, baseMs]` — rather than growing a second
+   * jitter implementation.
+   */
+  async pace(): Promise<void> {
+    if (!this.jitter) return;
+    const ms = jitterFor(0, this.jitter.baseMs, this.jitter.rng ?? Math.random);
+    if (ms > 0) await this.sleepFn(ms);
   }
 
   /**
@@ -203,6 +246,7 @@ export class RateLimiter {
   private readonly buckets = new Map<string, TokenBucket>();
   private readonly defaultCfg: HostRateConfig;
   private readonly perHost: Record<string, HostRateConfig>;
+  private readonly jitter?: JitterConfig;
   private readonly nowFn: () => number;
   private readonly sleepFn: (ms: number) => Promise<void>;
   /**
@@ -231,6 +275,7 @@ export class RateLimiter {
     } = {},
   ) {
     this.defaultCfg = config.default;
+    this.jitter = config.jitter;
     this.perHost = {};
     if (config.perHost) {
       for (const [host, cfg] of Object.entries(config.perHost)) {
@@ -278,6 +323,7 @@ export class RateLimiter {
         cfg.burst ?? cfg.rps,
         this.nowFn,
         this.sleepFn,
+        this.jitter,
       );
       this.buckets.set(host, bucket);
     }
@@ -299,7 +345,15 @@ export class RateLimiter {
     // wait, which is the signal the http_audit summary counts. tryConsume
     // consumes the token on the fast path, so we only fall through to the
     // blocking acquire (and fire the observer) when the bucket was dry.
-    if (bucket.tryConsume(n)) return;
+    // The fast path still pays the jitter delay when configured — otherwise a
+    // scan that never saturates its bucket (the common case at 1 rps with a
+    // slow agent loop) would stay perfectly periodic, which is exactly the
+    // signal jitter exists to break. `pace()` is a no-op without jitter, so
+    // the default fast path is unchanged.
+    if (bucket.tryConsume(n)) {
+      await bucket.pace();
+      return;
+    }
     this.onThrottle?.();
     await bucket.acquire(n);
   }
