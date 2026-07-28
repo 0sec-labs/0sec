@@ -23,12 +23,14 @@ export type IdentityFindingCategory =
   | "conditional-access"
   | "app-registrations"
   | "service-principals"
-  | "federation";
+  | "federation"
+  | "tokens";
 
 /**
- * Stable rule identifier. One per check implemented in `analyzers.ts`.
- * `IdentityFinding.id` is per-instance (rule + affected object) so callers can
- * dedupe across runs; `check` is the rule itself so callers can group.
+ * Stable rule identifier. One per check implemented in `analyzers.ts` or
+ * `tokens.ts`. `IdentityFinding.id` is per-instance (rule + affected object) so
+ * callers can dedupe across runs; `check` is the rule itself so callers can
+ * group.
  */
 export type IdentityCheck =
   // privileged-roles
@@ -62,7 +64,36 @@ export type IdentityCheck =
   | "federation-no-signing-certificate-rollover"
   | "federation-signing-certificate-update-failed"
   | "federation-request-signing-not-required"
-  | "federation-insecure-endpoint";
+  | "federation-insecure-endpoint"
+  // tokens — JWT (see `tokens.ts`; offline analysis of supplied material)
+  | "token-unrecognized-format"
+  | "jwt-malformed"
+  | "jwt-alg-none"
+  | "jwt-algorithm-confusion-exposure"
+  | "jwt-unsafe-key-identifier"
+  | "jwt-missing-expiry"
+  | "jwt-excessive-lifetime"
+  | "jwt-expired"
+  | "jwt-untrusted-issuer"
+  | "jwt-weak-audience"
+  | "jwt-missing-replay-controls"
+  | "jwt-sensitive-claim-data"
+  | "jwt-overly-broad-scope"
+  // tokens — Entra-specific
+  | "entra-token-type-mismatch"
+  | "entra-token-weak-client-binding"
+  | "entra-token-privileged-wids"
+  | "entra-token-multi-tenant-issuer"
+  | "entra-token-long-lived-session"
+  // tokens — SAML
+  | "saml-malformed"
+  | "saml-unsigned-assertion"
+  | "saml-signature-wrapping-exposure"
+  | "saml-weak-conditions"
+  | "saml-missing-audience-restriction"
+  | "saml-weak-subject-confirmation"
+  | "saml-nameid-comment-truncation"
+  | "saml-golden-saml-preconditions";
 
 export type IdentityPrincipalType =
   | "user"

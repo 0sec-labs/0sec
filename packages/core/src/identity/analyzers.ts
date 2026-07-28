@@ -1207,6 +1207,7 @@ export function summarizeFindings(findings: IdentityFinding[]): {
     "app-registrations": 0,
     "service-principals": 0,
     federation: 0,
+    tokens: 0,
   };
   for (const finding of findings) {
     bySeverity[finding.severity] += 1;
@@ -1432,7 +1433,17 @@ function daysBetween(iso: string, now: Date): number | undefined {
   return (now.getTime() - then) / DAY_MS;
 }
 
-/** Exported so `IdentityCheck` stays the single list of implemented rules. */
+/**
+ * Exported so `IdentityCheck` stays the single list of implemented rules.
+ *
+ * The `tokens` block at the end is implemented in `tokens.ts`, not here. Those
+ * checks are input-driven rather than snapshot-driven — they analyse a token or
+ * assertion the operator supplies — so `runAllAnalyzers` does not run them, but
+ * they belong in the one catalog anything that renders check coverage reads.
+ * The literals are repeated rather than imported to keep `tokens.ts → analyzers.ts`
+ * a one-way dependency (`tokens.ts` reuses the role-template sets above);
+ * `TOKEN_CHECKS` in `tokens.ts` is asserted against this list in the tests.
+ */
 export const IDENTITY_CHECKS: readonly IdentityCheck[] = [
   "excessive-standing-global-admins",
   "insufficient-global-admins",
@@ -1461,6 +1472,33 @@ export const IDENTITY_CHECKS: readonly IdentityCheck[] = [
   "federation-signing-certificate-update-failed",
   "federation-request-signing-not-required",
   "federation-insecure-endpoint",
+  // tokens — implemented in `tokens.ts`
+  "token-unrecognized-format",
+  "jwt-malformed",
+  "jwt-alg-none",
+  "jwt-algorithm-confusion-exposure",
+  "jwt-unsafe-key-identifier",
+  "jwt-missing-expiry",
+  "jwt-excessive-lifetime",
+  "jwt-expired",
+  "jwt-untrusted-issuer",
+  "jwt-weak-audience",
+  "jwt-missing-replay-controls",
+  "jwt-sensitive-claim-data",
+  "jwt-overly-broad-scope",
+  "entra-token-type-mismatch",
+  "entra-token-weak-client-binding",
+  "entra-token-privileged-wids",
+  "entra-token-multi-tenant-issuer",
+  "entra-token-long-lived-session",
+  "saml-malformed",
+  "saml-unsigned-assertion",
+  "saml-signature-wrapping-exposure",
+  "saml-weak-conditions",
+  "saml-missing-audience-restriction",
+  "saml-weak-subject-confirmation",
+  "saml-nameid-comment-truncation",
+  "saml-golden-saml-preconditions",
 ];
 
 function isMultiTenant(signInAudience: string | undefined): boolean {

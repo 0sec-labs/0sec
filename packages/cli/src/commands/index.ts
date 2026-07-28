@@ -41,4 +41,5 @@ export { registerAdGraphCommand } from "./adgraph.js";
 export { registerCloudCommand } from "./cloud.js";
 export { registerXnuFuzzCommand } from "./xnu-fuzz.js";
 export { registerResearchCommand } from "./research.js";
+export { registerTimelineCommand } from "./timeline.js";
 export { runUnified } from "./run.js";

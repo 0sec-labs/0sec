@@ -18,6 +18,12 @@ import {
   formatXmlOutputBatch,
 } from "./xml-dispatch.js";
 import { registerSignalCleanup } from "./signal-cleanup.js";
+import {
+  newCorrelationId,
+  buildToolCallLogEntry,
+  buildToolCallsPayload,
+  type ToolCallLogEntry,
+} from "./action-log.js";
 import { features } from "./features.js";
 import { formatJitSkillsInstruction } from "./skills/index.js";
 import {
@@ -349,9 +355,25 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
     // Execute each tool call
     consecutiveNoToolTurns = 0;
     const toolResults: Array<{ name: string; result: { success: boolean; output: unknown; error?: string } }> = [];
+    // Action-level durable log for this turn — one entry per invocation with
+    // its own wall clock and the correlation id that joins it to the
+    // `tool_artifact` row the executor persists.
+    const actionLog: ToolCallLogEntry[] = [];
     for (const call of toolCalls) {
-      const toolResult = await executor.execute(call);
+      const correlationId = newCorrelationId();
+      const toolStartedAt = Date.now();
+      const toolResult = await executor.execute(call, { correlationId });
+      const toolEndedAt = Date.now();
       toolResults.push({ name: call.name, result: toolResult });
+      actionLog.push(
+        buildToolCallLogEntry({
+          call,
+          correlationId,
+          startedAt: toolStartedAt,
+          endedAt: toolEndedAt,
+          result: { success: toolResult.success, error: toolResult.error },
+        }),
+      );
 
       // Check if agent called done
       if (call.name === "done" && toolResult.success) {
@@ -387,12 +409,10 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
         stage: config.role,
         eventType: "tool_calls",
         agentRole: config.role,
-        payload: {
-          sessionId,
-          turn: state.turnCount,
-          tools: toolCalls.map((call) => call.name),
-          results: toolResults.map((entry) => ({ success: entry.result.success, error: entry.result.error })),
-        },
+        // Action-level: one entry per invocation with its own startedAt /
+        // durationMs / redacted args / correlationId. `tools` + `results` are
+        // still emitted for readers that predate the upgrade.
+        payload: { sessionId, ...buildToolCallsPayload(state.turnCount, actionLog) },
         timestamp: Date.now(),
       });
     }

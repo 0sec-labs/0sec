@@ -36,6 +36,12 @@ import {
 } from "../untrusted-sanitizer.js";
 import { DeltaBatcherSet } from "./delta-batcher.js";
 import { toolCallPreview } from "./tool-preview.js";
+import {
+  newCorrelationId,
+  buildToolCallLogEntry,
+  buildToolCallsPayload,
+  type ToolCallLogEntry,
+} from "./action-log.js";
 import { registerSignalCleanup } from "./signal-cleanup.js";
 import {
   validateFindingInline,
@@ -1091,6 +1097,10 @@ export async function runNativeAgentLoop(
     const toolCalls: ToolCall[] = [];
     const toolResults: ToolResult[] = [];
     const toolResultBlocks: NativeContentBlock[] = [];
+    // Action-level durable log for this turn (one entry per tool invocation,
+    // each with its own wall clock + the correlation id that joins it to the
+    // `tool_artifact` row). Persisted below as the `tool_calls` payload.
+    const actionLog: ToolCallLogEntry[] = [];
     // Inline-validation context notes accumulated this turn (#554). Appended as
     // text blocks to the tool-results user message below so the agent sees the
     // confirmed/unconfirmed verdict on its NEXT turn.
@@ -1099,6 +1109,12 @@ export async function runNativeAgentLoop(
     for (const block of toolUseBlocks) {
       const call: ToolCall = { name: block.name, arguments: block.input };
       toolCalls.push(call);
+
+      // Correlation id for this single invocation — threaded into the executor
+      // so any `tool_artifact` it persists carries the same key, and recorded
+      // on the action-log entry below.
+      const correlationId = newCorrelationId();
+      const toolStartedAt = Date.now();
 
       // Bus event: tool_call_started. `args_preview` is a short, safe
       // rendering of the tool invocation suitable for dashboard UI.
@@ -1112,6 +1128,7 @@ export async function runNativeAgentLoop(
         tool: block.name,
         turn: state.turnCount,
         args_preview: argsPreview,
+        ts: toolStartedAt,
       });
 
       // Shadow journal: record the tool call (#494). `block.id` is the native
@@ -1125,9 +1142,18 @@ export async function runNativeAgentLoop(
         callId: block.id,
       });
 
-      const toolStartedAt = Date.now();
-      const toolResult = await executor.execute(call);
+      const toolResult = await executor.execute(call, { correlationId });
+      const toolEndedAt = Date.now();
       toolResults.push(toolResult);
+      actionLog.push(
+        buildToolCallLogEntry({
+          call,
+          correlationId,
+          startedAt: toolStartedAt,
+          endedAt: toolEndedAt,
+          result: { success: toolResult.success, error: toolResult.error },
+        }),
+      );
 
       // Shadow journal: record the tool result (#494). Large outputs are
       // sidecarred by the writer; here we only attach the raw output and let
@@ -1145,9 +1171,10 @@ export async function runNativeAgentLoop(
       eventBus.emit("tool_call_completed", {
         tool: block.name,
         turn: state.turnCount,
-        duration_ms: Date.now() - toolStartedAt,
+        duration_ms: toolEndedAt - toolStartedAt,
         status: toolResult.success ? "ok" : "error",
         ...(toolResult.success ? {} : { error: toolResult.error ?? "unknown" }),
+        ts: toolEndedAt,
       });
 
       // Bus event: finding_ingested — fires whenever the agent successfully
@@ -1502,11 +1529,10 @@ export async function runNativeAgentLoop(
         stage: config.role,
         eventType: "tool_calls",
         agentRole: config.role,
-        payload: {
-          turn: state.turnCount,
-          tools: toolCalls.map((c) => c.name),
-          results: toolResults.map((r) => ({ success: r.success, error: r.error })),
-        },
+        // Action-level: one entry per invocation with its own startedAt /
+        // durationMs / redacted args / correlationId. `tools` + `results` are
+        // still emitted for readers that predate the upgrade.
+        payload: buildToolCallsPayload(state.turnCount, actionLog),
         timestamp: Date.now(),
       });
     }

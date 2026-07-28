@@ -1609,6 +1609,18 @@ export class ToolExecutor {
   private _totalNonDoneToolCalls: number = 0;
   private _doneRejections: number = 0;
 
+  /**
+   * Correlation id of the tool invocation currently being dispatched, set by
+   * `execute()` from the caller-supplied id. `persistToolArtifact` stamps it
+   * onto the `tool_artifact` row so an artifact (which carries the real URL /
+   * method / command) joins EXACTLY to its `tool_calls` entry instead of being
+   * matched by timestamp proximity. Null for callers that don't pass one.
+   *
+   * Safe as instance state because tool dispatch is sequential in both agent
+   * loops — one `execute()` is awaited to completion before the next starts.
+   */
+  private _correlationId: string | null = null;
+
   constructor(ctx: ToolContext, db: pwnkitDB | null = null) {
     this.ctx = ctx;
     this.db = db;
@@ -1697,7 +1709,17 @@ export class ToolExecutor {
     }
   }
 
-  async execute(call: ToolCall): Promise<ToolResult> {
+  /**
+   * Dispatch one tool call.
+   *
+   * `opts.correlationId` is the action-level join key minted by the agent loop
+   * (see `agent/action-log.ts`); it is stamped onto any `tool_artifact` this
+   * call persists. Restored (not just cleared) on exit so a nested dispatch
+   * can't strand a stale id.
+   */
+  async execute(call: ToolCall, opts?: { correlationId?: string }): Promise<ToolResult> {
+    const previousCorrelationId = this._correlationId;
+    this._correlationId = opts?.correlationId ?? null;
     try {
       // Coverage-gate accounting (#audit-laziness). Counted BEFORE dispatch
       // so a tool that throws still contributes to the "total tool calls"
@@ -1728,6 +1750,8 @@ export class ToolExecutor {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: msg };
+    } finally {
+      this._correlationId = previousCorrelationId;
     }
   }
 
@@ -1936,7 +1960,14 @@ export class ToolExecutor {
     }
   }
 
-  /** Persist a tool call's request/response as a first-class run artifact via the event pipeline. */
+  /**
+   * Persist a tool call's request/response as a first-class run artifact via
+   * the event pipeline.
+   *
+   * Stamps the in-flight `correlationId` (when the caller supplied one) so the
+   * artifact joins exactly to its `tool_calls` entry — the artifact carries the
+   * real URL / method / command, the entry carries the wall clock.
+   */
   private persistToolArtifact(toolName: string, data: Record<string, unknown>): void {
     if (!this.db) return;
     try {
@@ -1944,7 +1975,11 @@ export class ToolExecutor {
         scanId: this.ctx.scanId,
         stage: "attack",
         eventType: "tool_artifact",
-        payload: { tool: toolName, ...data },
+        payload: {
+          tool: toolName,
+          ...(this._correlationId ? { correlationId: this._correlationId } : {}),
+          ...data,
+        },
         timestamp: Date.now(),
       });
     } catch {

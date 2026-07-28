@@ -259,6 +259,7 @@ export class ProcessRuntime implements Runtime {
               tool: "shell",
               turn: turnNumber,
               args_preview: item.command.slice(0, 200),
+              ts: Date.now(),
             });
           } else if (itemType === "mcp_tool_call") {
             // Codex emits item.started for MCP tool calls with the call's
@@ -280,6 +281,7 @@ export class ProcessRuntime implements Runtime {
               tool: `${server}__${tool}`,
               turn: turnNumber,
               args_preview: argsPreview.slice(0, 200),
+              ts: Date.now(),
             });
           }
           return;
@@ -299,6 +301,7 @@ export class ProcessRuntime implements Runtime {
               turn: turnNumber,
               duration_ms: durationMs,
               status: "ok",
+              ts: Date.now(),
             });
           } else if (itemType === "mcp_tool_call") {
             // Pair with the corresponding item.started above. Codex sets
@@ -326,6 +329,7 @@ export class ProcessRuntime implements Runtime {
               duration_ms: durationMs,
               status,
               ...(errorMsg ? { error: errorMsg.slice(0, 400) } : {}),
+              ts: Date.now(),
             });
           } else if (itemType === "function_call" || itemType === "tool_call") {
             // Legacy / non-MCP function-call shape — kept for forward-
@@ -345,12 +349,14 @@ export class ProcessRuntime implements Runtime {
               tool: toolName,
               turn: turnNumber,
               args_preview: detail.slice(0, 200),
+              ts: Date.now(),
             });
             eventBus.emit("tool_call_completed", {
               tool: toolName,
               turn: turnNumber,
               duration_ms: 0,
               status: "ok",
+              ts: Date.now(),
             });
           } else if (itemType === "reasoning") {
             const reasoningText =

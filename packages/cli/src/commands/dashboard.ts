@@ -8,6 +8,7 @@ import { URL } from "node:url";
 import type { Command } from "commander";
 import chalk from "chalk";
 import type { FindingTriageStatus } from "@pwnkit/shared";
+import { readToolCallNames } from "@pwnkit/core";
 
 type DashboardOptions = {
   dbPath?: string;
@@ -272,9 +273,13 @@ function summarizeRecentEvent(event: {
 
   if (headline) return headline;
 
-  if (Array.isArray(payload.tools) && payload.tools.length > 0) {
+  // `tool_calls` rows come in two shapes: action-level rows carry
+  // `calls[].name`, rows written before that upgrade carry only
+  // `tools: string[]`. This is an append-only audit table — read both.
+  const toolNames = readToolCallNames(payload);
+  if (toolNames.length > 0) {
     const turn = typeof payload.turn === "number" ? `turn ${payload.turn} · ` : "";
-    return `${turn}tools: ${payload.tools.join(", ")}`;
+    return `${turn}tools: ${toolNames.join(", ")}`;
   }
 
   if (typeof payload.excerpt === "string" && payload.excerpt.trim()) {

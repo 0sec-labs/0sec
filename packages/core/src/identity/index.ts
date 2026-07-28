@@ -111,6 +111,32 @@ export type {
   ServicePrincipalOptions,
 } from "./analyzers.js";
 
+// Token / assertion analysis. Offline by construction — see `tokens.ts`. These
+// are deliberately NOT part of `runIdentityAssessment`: they analyse material
+// the operator supplies rather than anything the Graph collector reads.
+export {
+  analyzeJwt,
+  analyzeSamlAssertion,
+  analyzeToken,
+  classifyEntraToken,
+  decodeJwtUnverified,
+  MSA_TENANT_ID,
+  PUBLIC_CLIENT_APP_IDS,
+  redactTokenValue,
+  TOKEN_CHECKS,
+  tokenFingerprint,
+} from "./tokens.js";
+export type {
+  DecodedJwt,
+  JwtDecodeResult,
+  TokenAnalysisOptions,
+} from "./tokens.js";
+// `./xml.ts` is deliberately NOT re-exported. It is the narrow structural
+// reader the SAML checks are built on, not a general-purpose XML parser, and
+// putting names like `parseXml` on the `@pwnkit/core` surface would invite it
+// to be used as one. Import it directly from `./identity/xml.js` if you are
+// working inside this module.
+
 export interface IdentityAssessmentOptions {
   /**
    * OAuth2 bearer token with directory read scopes. Ignored when `client` or
