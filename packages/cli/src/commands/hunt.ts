@@ -29,6 +29,7 @@ import type { Command } from "commander";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Finding, RuntimeMode } from "@pwnkit/shared";
+import type { ImpactCeiling } from "@pwnkit/core";
 
 /**
  * #1051 — map a gated hunt LEAD onto the cloud-sink finding shape as a
@@ -89,6 +90,8 @@ interface HuntOpts {
   invariant?: boolean;
   graphSlice?: boolean;
   cpg?: string;
+  exploitability?: boolean;
+  proveMinCeiling?: string;
   output?: string;
   runtime?: string;
   timeout?: string;
@@ -99,6 +102,17 @@ function parsePositive(flag: string, raw: string | undefined, dflt: number): num
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) throw new Error(`invalid ${flag} '${raw}' (expected positive integer)`);
   return n;
+}
+
+const IMPACT_CEILINGS: readonly ImpactCeiling[] = ["dos-only", "info-leak", "oob-write", "uaf-control"];
+
+/** Validate `--prove-min-ceiling` against the impact ladder (fail fast on a typo). */
+export function parseCeiling(raw: string): ImpactCeiling {
+  const v = raw.trim() as ImpactCeiling;
+  if (!IMPACT_CEILINGS.includes(v)) {
+    throw new Error(`invalid --prove-min-ceiling '${raw}' (expected one of: ${IMPACT_CEILINGS.join(", ")})`);
+  }
+  return v;
 }
 
 function parseNonNegative(flag: string, raw: string | undefined, dflt: number): number {
@@ -172,6 +186,21 @@ export async function runHunt(opts: {
   graphSlice?: boolean;
   /** Explicit CPG graphson JSON path (overrides the `.pwnkit/cpg/<subsystem>.json` convention). */
   cpgPath?: string;
+  /**
+   * PROVE stage (#1119): run the execution-verified exploitability oracle as a
+   * terminal gate after the skeptic+prover pair. This BOOTS REAL QEMU VMs per
+   * confirmed finding, so it is opt-in and requires `--verify` (there is nothing
+   * to prove without a confirmed finding). Each finding is bound to its OWN
+   * reproducer via `makeHuntProveStage`; findings with no extractable C
+   * reproducer pass through unproven rather than being dropped.
+   */
+  exploitability?: boolean;
+  /**
+   * Minimum assessed impact ceiling required to spend VM budget on a finding
+   * (the cheap, VM-free SyzScope pre-filter). Default `info-leak` — i.e. only
+   * `dos-only` bugs are filtered out before QEMU is touched.
+   */
+  proveMinCeiling?: ImpactCeiling;
   runtime?: RuntimeMode;
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -186,6 +215,7 @@ export async function runHunt(opts: {
     localMirrors,
     syncLoreMirror,
     makeLloreJudge,
+    makeHuntProveStage,
     prepare,
     getCloudSinkConfig,
     postFinding,
@@ -399,6 +429,26 @@ export async function runHunt(opts: {
               log,
             }),
           }),
+      // PROVE stage (#1119) — the terminal gate. Only wired on --exploitability,
+      // because it boots REAL QEMU per confirmed finding. runHuntScan itself
+      // ignores it (with a warning) when `verify` is absent, so --no-verify
+      // --exploitability degrades safely instead of booting anything.
+      ...(opts.exploitability
+        ? {
+            exploitability: makeHuntProveStage({
+              // Cheap VM-free pre-filter: never spend a QEMU slot on a dos-only bug.
+              escalation: opts.proveMinCeiling ? { minCeiling: opts.proveMinCeiling } : {},
+              onVerdict: (f, _c, v) =>
+                log(
+                  `[hunt:prove] ${f.title}: maxObserved=${v.maxObservedClass} upgraded=${v.upgraded} ` +
+                    `reachesPrivesc=${v.reachesPrivesc} proven=${v.provenExploitability}`,
+                ),
+              onEscalation: (f, _c, v) =>
+                log(`[hunt:prove] ${f.title}: impact ceiling ${v.ceiling} (${v.basis}, conf ${v.confidence})`),
+              log,
+            }),
+          }
+        : {}),
       ...(opts.novelty && noveltyMirrors.length > 0
         ? {
             novelty: {
@@ -527,6 +577,8 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     invariant: opts.invariant === true,
     graphSlice: opts.graphSlice === true,
     ...(opts.cpg ? { cpgPath: opts.cpg } : {}),
+    exploitability: opts.exploitability === true,
+    ...(opts.proveMinCeiling ? { proveMinCeiling: parseCeiling(opts.proveMinCeiling) } : {}),
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
@@ -568,6 +620,18 @@ export function registerHuntCommand(program: Command): void {
     .option("--invariant", "Engine A: build (or load) the seed-touched subsystem's stored invariant model and inject its rules + deterministic violation hypotheses into every finder prompt")
     .option("--graph-slice", "Load the seed-touched subsystem's pre-exported Joern CPG and inject a compact interprocedural reachability slice around the fix site into every finder prompt (needs scripts/provision-cpg.sh; fail-open to flat-text)")
     .option("--cpg <path>", "Explicit CPG graphson JSON path for --graph-slice (default: <source>/.pwnkit/cpg/<subsystem>.json)")
+    .option(
+      "--exploitability",
+      "PROVE stage: after the skeptic+prover gate, run the execution-verified exploitability oracle " +
+        "on each confirmed finding (GREBE diversify + SCAVY differential). BOOTS REAL QEMU VMs — " +
+        "requires staged kernel-VM artifacts and is ignored under --no-verify. Never rejects a finding; " +
+        "it stamps a proven verdict and gates the weaponize budget.",
+    )
+    .option(
+      "--prove-min-ceiling <ceiling>",
+      "[--exploitability] Minimum assessed impact ceiling worth a VM slot: dos-only|info-leak|oob-write|uaf-control " +
+        "(default info-leak — filters out dos-only before QEMU is touched)",
+    )
     .option("--output <path>", "Write the hunt result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")
     .option("--timeout <ms>", "Accepted cloud agent timeout budget in milliseconds", "600000")
