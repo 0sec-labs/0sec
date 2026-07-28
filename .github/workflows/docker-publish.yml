@@ -191,11 +191,24 @@ jobs:
       - name: Smoke-test published image
         run: |
           set -euo pipefail
-          # The :sha tag is stamped on every build (see the tag plan above), so
-          # the first line of the metadata tag list is always a valid, immutable
-          # ref for the image this job just pushed — unlike :latest, which is
-          # tip-gated and may point at a different build.
-          IMAGE="$(echo '${{ steps.meta.outputs.tags }}' | head -n1)"
+          # Smoke-test BY DIGEST, not by tag.
+          #
+          # This previously took `head -n1` of the metadata tag list on the
+          # assumption that the :sha tag is always first. It isn't: on the
+          # `workflow_run` path the list leads with `:main` (type=ref), and
+          # `:main` is not among the tags this trigger actually pushes — the
+          # push emits :sha and :latest. `docker pull` then hit a tag that
+          # does not exist, and GHCR answers "unauthorized" rather than 404
+          # for a private package, so the failure read as an auth problem for
+          # months of runs (e52a2e8, 2026-07-27) while the push underneath had
+          # succeeded perfectly.
+          #
+          # `steps.build.outputs.digest` is the immutable digest the push step
+          # just produced. It cannot drift from what was pushed, it cannot be
+          # reordered by a tag-plan change, and it is exactly the reference the
+          # release manifest pins — so this now smoke-tests the artifact we
+          # actually promote.
+          IMAGE="ghcr.io/${{ github.repository_owner }}/pwnkit@${{ steps.build.outputs.digest }}"
           echo "Smoke-testing $IMAGE"
           docker pull "$IMAGE"
           # Exec every tool as the non-root `ubuntu` user the image drops to.
