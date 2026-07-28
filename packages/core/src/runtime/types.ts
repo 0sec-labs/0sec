@@ -75,7 +75,24 @@ export interface NativeToolDef {
 export interface NativeRuntimeResult {
   content: NativeContentBlock[];
   stopReason: "end_turn" | "tool_use" | "max_tokens" | "error";
-  usage?: { inputTokens: number; outputTokens: number };
+  /**
+   * `inputTokens` is always the TOTAL prompt size (uncached + cache reads +
+   * cache writes), never the wire's post-cache remainder — see
+   * `runtime/prompt-cache.ts` → `readCacheUsage` for why that normalisation is
+   * load-bearing for cost accounting and compaction triggering.
+   *
+   * The two cache fields are populated only by providers that report them
+   * (Anthropic), and are consumed by `estimateCost` / `ScanCostLedger` to price
+   * cache reads at the cached-input rate.
+   */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    /** Prompt tokens served from cache this request (~0.1x input price). */
+    cachedInputTokens?: number;
+    /** Prompt tokens written to cache this request (~1.25x input price). */
+    cacheWriteTokens?: number;
+  };
   durationMs: number;
   error?: string;
 }
