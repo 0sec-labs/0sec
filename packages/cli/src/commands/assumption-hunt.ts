@@ -88,7 +88,16 @@ export async function runAssumptionHuntCli(sourceRoot: string, opts: AssumptionH
   const verify =
     opts.skipHunt || opts.noVerify
       ? undefined
-      : makeSkepticVerifier({ sourceRoot: root, runtime, ...(models?.[0] ? { model: models[0] } : {}) });
+      : // `finderModels` decorrelates the refute pass from the finder fan-out
+        // when a second provider is configured (#661); with one provider it
+        // passes straight through to `models[0]`, as before.
+        makeSkepticVerifier({
+          sourceRoot: root,
+          runtime,
+          ...(models?.[0] ? { model: models[0] } : {}),
+          ...(models && models.length > 0 ? { finderModels: models } : {}),
+          log,
+        });
 
   const res = await runAssumptionHunt({
     sourceRoot: root,

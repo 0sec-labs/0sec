@@ -180,6 +180,7 @@ export async function runHunt(opts: {
     generateVariantCandidates,
     runHuntScan,
     makeSkepticVerifier,
+    loadKnownNegativesFromEnv,
     buildInvariantHuntContext,
     buildGraphSliceHuntContext,
     localMirrors,
@@ -379,7 +380,25 @@ export async function runHunt(opts: {
       ...(attemptsPerCandidate ? { attemptsPerCandidate } : {}),
       ...(judgeTopK ? { judgeTopK } : {}),
       ...(judgeModel ? { judgeModel } : {}),
-      ...(opts.verify === false ? {} : { verify: makeSkepticVerifier({ sourceRoot, runtime, ...(opts.models?.[0] ? { model: opts.models[0] } : {}) }) }),
+      // The skeptic is handed `models[0]` — i.e. by default the refute pass runs
+      // on the SAME MODEL that found the bug, which is the correlated-error
+      // problem in #661. `finderModels` lets the cross-family selector avoid
+      // every family in the finder fan-out (not just the first) and swap the
+      // refuter to a different family when one is configured; when only one
+      // provider is configured it passes through to exactly this model. `log`
+      // makes that decision visible in the run log instead of implicit.
+      ...(opts.verify === false
+        ? {}
+        : {
+            verify: makeSkepticVerifier({
+              sourceRoot,
+              runtime,
+              ...(opts.models?.[0] ? { model: opts.models[0] } : {}),
+              ...(opts.models && opts.models.length > 0 ? { finderModels: opts.models } : {}),
+              negatives: loadKnownNegativesFromEnv(),
+              log,
+            }),
+          }),
       ...(opts.novelty && noveltyMirrors.length > 0
         ? {
             novelty: {
