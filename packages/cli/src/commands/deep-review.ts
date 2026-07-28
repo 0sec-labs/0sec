@@ -623,7 +623,14 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       sourceRoot,
       runtime,
       ...(models?.[0] ? { model: models[0] } : {}),
+      // Every verify lens is a refute pass on `models[0]` — the same model the
+      // finders ran on. Passing the full finder set lets the cross-family
+      // selector move the refutation off ALL finder families when a second
+      // provider is configured (#661), and `log` records what it decided —
+      // including "it could not", which is the case worth knowing about.
+      ...(models && models.length > 0 ? { finderModels: models } : {}),
       ...(opts.quorum ? { quorum: opts.quorum } : {}),
+      log,
     });
 
     // Post each gated lead to the cloud-sink as a CANDIDATE finding (same path
