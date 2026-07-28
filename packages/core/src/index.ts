@@ -1270,8 +1270,46 @@ export {
   primitiveBaselineClass,
   provenExploitabilityScore,
 } from "./triage/exploitability-upgrade.js";
+// Per-finding PROVE stage — the adapter that makes the kernel-VM exploitability
+// oracle reachable as `runHuntScan`'s `opts.exploitability` (see the module
+// header for why the gate must be built per finding, not once per hunt).
+export {
+  makeHuntProveStage,
+  defaultReproducerFor,
+  defaultDmesgFor,
+} from "./triage/hunt-prove-stage.js";
+export type {
+  HuntProveStageDeps,
+  ProveOracles,
+  ProveOracleInput,
+} from "./triage/hunt-prove-stage.js";
+
+// SyzScope-style impact-ceiling gate (triage/escalation-gate.ts) — the CHEAP,
+// VM-free pre-filter in front of the PROVE oracle above.
+//
+// NOTE on the deliberate alias: `escalation-gate.ts` also exports a
+// `shouldWeaponize`, but it is a DIFFERENT predicate from the one exported above
+// from `exploitability-upgrade.ts` (ceiling >= bar vs. oracle-proven upgrade).
+// Both are legitimate; exporting both under one name is what previously kept the
+// escalation gate off this public surface entirely. It is re-exported here as
+// `ceilingClearsWeaponizeBar` so callers must say which question they mean.
+export {
+  assessEscalation,
+  describeEscalation,
+  maxCeiling,
+  parseLlmEscalation,
+  shouldWeaponize as ceilingClearsWeaponizeBar,
+} from "./triage/escalation-gate.js";
+export type {
+  EscalationVerdict,
+  ImpactCeiling,
+  EscalationBasis,
+  AssessEscalationOptions,
+} from "./triage/escalation-gate.js";
+
 export type {
   ExploitabilityVerdict as KernelExploitabilityVerdict,
+  EscalationPreGate,
   UpgradeTrial,
   PrivescTarget,
   DiversifyOracle,
