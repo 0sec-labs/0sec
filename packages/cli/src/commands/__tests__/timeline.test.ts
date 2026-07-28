@@ -9,12 +9,15 @@
  *     not a crash and not a half-rendered table.
  *   • Rows come out in ascending timestamp order regardless of input order.
  *   • Every timestamp is UTC ISO-8601; epoch-ms never reaches the client.
- *   • `--attack-only` keeps exactly the ATT&CK-mapped events.
+ *   • `--attack-only` keeps exactly the technique-mapped events.
+ *   • ATT&CK and ATLAS stay in separate fields and columns — the two matrices
+ *     have disjoint id namespaces and must never be merged into one cell.
  *
  * Boundaries mocked at module level: `@pwnkit/db` (no native SQLite bindings,
- * no WAL files) and `@pwnkit/core`'s `techniquesForEvent` (the ATT&CK mapping
- * is owned by `packages/core/src/attack/mitre.ts`; this suite tests how the
- * command *uses* the mapping, not the mapping itself).
+ * no WAL files) and `@pwnkit/core`'s `techniquesForEvent` /
+ * `atlasTechniquesForEvent` (the mappings are owned by
+ * `packages/core/src/attack/mitre.ts` and `.../atlas.ts`; this suite tests how
+ * the command *uses* them, not the mappings themselves).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,7 +60,11 @@ vi.mock("@pwnkit/db", () => {
 });
 
 const techniquesForEventMock = vi.fn();
-vi.mock("@pwnkit/core", () => ({ techniquesForEvent: techniquesForEventMock }));
+const atlasTechniquesForEventMock = vi.fn();
+vi.mock("@pwnkit/core", () => ({
+  techniquesForEvent: techniquesForEventMock,
+  atlasTechniquesForEvent: atlasTechniquesForEventMock,
+}));
 
 const { registerTimelineCommand } = await import("../timeline.js");
 
@@ -69,6 +76,14 @@ const T1190 = {
   name: "Exploit Public-Facing Application",
   tactic: "initial-access",
   url: "https://attack.mitre.org/techniques/T1190/",
+  role: "primary" as const,
+};
+
+const AML_T0051 = {
+  id: "AML.T0051",
+  name: "LLM Prompt Injection",
+  tactic: "Execution",
+  url: "https://atlas.mitre.org/techniques/AML.T0051",
   role: "primary" as const,
 };
 
@@ -151,10 +166,18 @@ beforeEach(() => {
   dbState.ctorPaths = [];
   process.exitCode = undefined;
   techniquesForEventMock.mockReset();
+  atlasTechniquesForEventMock.mockReset();
   // Only tool-bearing events carry a technique; lifecycle events are the
   // "noise" `--attack-only` is meant to drop.
   techniquesForEventMock.mockImplementation((eventType: string) =>
     eventType === "tool_artifact" || eventType === "tool_calls" ? [T1190] : [],
+  );
+  // ATLAS is sparser than ATT&CK by design: only actions against an AI system
+  // get a tag, so here only the `send_prompt` tool resolves.
+  atlasTechniquesForEventMock.mockImplementation((eventType: string, toolName?: string) =>
+    (eventType === "tool_artifact" || eventType === "tool_calls") && toolName === "send_prompt"
+      ? [AML_T0051]
+      : [],
   );
 });
 
@@ -182,7 +205,8 @@ describe("timeline — empty scan", () => {
 
     const lines = io.out().split("\n").filter((l) => l.length > 0);
     expect(lines).toEqual([
-      "timestamp,stage,eventType,agentRole,findingId,action,attackTechniqueIds,attackTactics",
+      "timestamp,stage,eventType,agentRole,findingId,action,attackTechniqueIds,attackTactics," +
+        "atlasTechniqueIds,atlasTactics",
     ]);
   });
 
@@ -304,6 +328,121 @@ describe("timeline — ATT&CK tagging", () => {
     io.restore();
 
     expect(JSON.parse(io.out()).entries[0].techniques).toEqual([T1190]);
+  });
+});
+
+describe("timeline — ATLAS tagging", () => {
+  /** An LLM-target turn alongside a conventional one. */
+  function llmEvents(): FakeEventRow[] {
+    return [
+      event({
+        eventType: "scan_start",
+        timestamp: T0,
+        payload: JSON.stringify({ target: "https://llm.example" }),
+      }),
+      event({
+        eventType: "tool_calls",
+        agentRole: "attack",
+        timestamp: T0 + 1_000,
+        payload: JSON.stringify({ turn: 1, tools: ["send_prompt"] }),
+      }),
+      event({
+        eventType: "tool_calls",
+        agentRole: "attack",
+        timestamp: T0 + 2_000,
+        payload: JSON.stringify({ turn: 2, tools: ["http_request"] }),
+      }),
+    ];
+  }
+
+  it("carries ATLAS techniques in a field separate from ATT&CK", async () => {
+    dbState.events = llmEvents();
+
+    const io = captureIO();
+    await runCli(["timeline", SCAN_ID, "--format", "json"]);
+    io.restore();
+
+    const entries = JSON.parse(io.out()).entries as Array<{
+      eventType: string;
+      action: string;
+      techniques: unknown[];
+      atlasTechniques: unknown[];
+    }>;
+
+    const llmTurn = entries.find((e) => e.action.includes("send_prompt"))!;
+    expect(llmTurn.techniques).toEqual([T1190]);
+    expect(llmTurn.atlasTechniques).toEqual([AML_T0051]);
+
+    // A conventional turn keeps its ATT&CK tag and gets no ATLAS tag — the
+    // matrices are complementary, not interchangeable.
+    const webTurn = entries.find((e) => e.action.includes("http_request"))!;
+    expect(webTurn.techniques).toEqual([T1190]);
+    expect(webTurn.atlasTechniques).toEqual([]);
+
+    // Lifecycle events carry neither.
+    const scanStart = entries.find((e) => e.eventType === "scan_start")!;
+    expect(scanStart.techniques).toEqual([]);
+    expect(scanStart.atlasTechniques).toEqual([]);
+  });
+
+  it("passes the tool name through to the ATLAS mapping", async () => {
+    dbState.events = llmEvents();
+
+    const io = captureIO();
+    await runCli(["timeline", SCAN_ID, "--format", "json"]);
+    io.restore();
+
+    expect(atlasTechniquesForEventMock).toHaveBeenCalledWith("tool_calls", "send_prompt");
+    expect(atlasTechniquesForEventMock).toHaveBeenCalledWith("tool_calls", "http_request");
+    expect(atlasTechniquesForEventMock).toHaveBeenCalledWith("scan_start");
+  });
+
+  it("renders ATT&CK and ATLAS as distinct markdown columns", async () => {
+    dbState.events = llmEvents();
+
+    const io = captureIO();
+    await runCli(["timeline", SCAN_ID]);
+    io.restore();
+
+    expect(io.out()).toContain("| Action | ATT&CK | ATLAS |");
+    expect(io.out()).toContain(
+      "[AML.T0051 LLM Prompt Injection](https://atlas.mitre.org/techniques/AML.T0051)",
+    );
+    expect(io.out()).toContain(
+      "[T1190 Exploit Public-Facing Application](https://attack.mitre.org/techniques/T1190/)",
+    );
+  });
+
+  it("writes ATLAS ids and tactics to their own CSV columns", async () => {
+    dbState.events = llmEvents();
+
+    const io = captureIO();
+    await runCli(["timeline", SCAN_ID, "--format", "csv"]);
+    io.restore();
+
+    const lines = io.out().split("\n").filter((l) => l.length > 0);
+    const llmRow = lines.find((l) => l.includes("send_prompt"))!;
+    const webRow = lines.find((l) => l.includes("http_request"))!;
+
+    // ATT&CK columns then ATLAS columns, never one merged cell.
+    expect(llmRow).toContain("T1190,initial-access,AML.T0051,Execution");
+    // No AI target, so the two trailing ATLAS columns are empty.
+    expect(webRow).toContain("T1190,initial-access,,");
+  });
+
+  it("--attack-only keeps a row that maps only in ATLAS", async () => {
+    // ATT&CK has no word for this turn; ATLAS does. Filtering on ATT&CK alone
+    // would delete the AI evidence the export exists to carry.
+    techniquesForEventMock.mockImplementation(() => []);
+    dbState.events = llmEvents();
+
+    const io = captureIO();
+    await runCli(["timeline", SCAN_ID, "--format", "json", "--attack-only"]);
+    io.restore();
+
+    const entries = JSON.parse(io.out()).entries as Array<{ action: string }>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.action).toContain("send_prompt");
   });
 });
 

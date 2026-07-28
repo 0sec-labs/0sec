@@ -57,6 +57,13 @@ export interface ReportStageCtx {
   emit: ScanListener;
   emitScanCompleted: EmitScanCompleted;
   attachEnforcementSummary: (report: ScanReport, config: ScanConfig) => void;
+  /**
+   * Attaches the engagement-posture audit record when a hardening profile was
+   * applied (`scope/engagement-profile.ts`). Optional so existing callers /
+   * fixtures that build a ctx without it keep working — a scan that never
+   * requested a profile has nothing to attach anyway.
+   */
+  attachEngagementPosture?: (report: ScanReport, config: ScanConfig) => void;
 }
 
 /**
@@ -140,6 +147,7 @@ export async function runReportStage(
     },
   };
   attachEnforcementSummary(report, config);
+  ctx.attachEngagementPosture?.(report, config);
 
   // Attach conversation trace (discovery + attack) when available.
   // Only native-mode runs produce messages; legacy CLI runs don't.

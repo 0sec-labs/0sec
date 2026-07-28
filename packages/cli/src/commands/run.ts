@@ -76,6 +76,16 @@ export interface RunOptions {
   /** `--attribution-ua <token>` (pwnkit#216). */
   attributionUaToken?: string;
   /**
+   * `--engagement-profile <name>` — engagement hardening posture
+   * (`standard` / `conservative`). Threaded into ScanConfig.engagementProfile.
+   */
+  engagementProfile?: string;
+  /**
+   * `--no-waf-evasion` → false. Standalone opt-out for the adaptive
+   * WAF-evasion ladder, independent of the engagement profile.
+   */
+  wafEvasion?: boolean;
+  /**
    * http_audit env-bridge config (FROZEN CONTRACT). Populated by the scan
    * command from PWNKIT_TARGET_* env vars only when `mode === "http_audit"`;
    * undefined otherwise. The core (`agenticScan`) turns these into an
@@ -488,6 +498,8 @@ export async function runUnified(opts: RunOptions): Promise<void> {
             allowScanners: opts.allowScanners,
             attributionHeaders: opts.attributionHeaders,
             attributionUaToken: opts.attributionUaToken,
+            engagementProfile: opts.engagementProfile,
+            wafEvasion: opts.wafEvasion,
             dispatchMode: opts.dispatchMode,
             httpAuditAllowedHosts: opts.httpAuditAllowedHosts,
             httpAuditAllowedPaths: opts.httpAuditAllowedPaths,

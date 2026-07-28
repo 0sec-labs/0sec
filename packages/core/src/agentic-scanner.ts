@@ -91,6 +91,13 @@ import {
   extractAttributionFromScopeJson,
 } from "./scope/attribution.js";
 import type { AttributionConfig } from "./scope/attribution.js";
+import {
+  resolveEngagementProfile,
+  extractEngagementFromScopeJson,
+  describeEngagementPosture,
+  effectiveFallbackRps,
+} from "./scope/engagement-profile.js";
+import type { EngagementPosture } from "./scope/engagement-profile.js";
 import { resolveLocalTargetPath } from "./path-resolution.js";
 import { runMemSafetyScan } from "./stages/memsafety-scan.js";
 import type { MemSafetyScanOptions } from "./stages/memsafety-scan.js";
@@ -119,10 +126,21 @@ function getOrCreateRateLimiter(config: ScanConfig): RateLimiter {
     // (PWNKIT_TARGET_RATE_LIMIT_RPS, default 5) rather than the --rate-limit
     // flag; the flag form isn't part of the worker contract. Otherwise we
     // honour the parsed --rate-limit spec with the usual 5 rps default.
-    const fallbackRps = config.mode === "http_audit"
+    const modeFallbackRps = config.mode === "http_audit"
       ? (config.httpAuditRateLimitRps ?? 5)
       : 5;
-    const cfg = parseRateLimitFlag(config.rateLimit ?? "", fallbackRps);
+    // Engagement hardening: an active profile lowers the default rps and adds
+    // full jitter so the request train stops being periodic. It can only ever
+    // make the scan QUIETER — we take the min, never the profile's number when
+    // the operator already configured something slower. An explicit
+    // `--rate-limit` default still wins (parseRateLimitFlag only consumes the
+    // fallback when the spec carries no default).
+    const posture = resolveEngagementForConfig(config);
+    const cfg = parseRateLimitFlag(
+      config.rateLimit ?? "",
+      effectiveFallbackRps(posture, modeFallbackRps),
+    );
+    if (posture.jitter) cfg.jitter = { baseMs: posture.jitter.baseMs };
     // Wire the throttle observer into the http_audit enforcement tracker so
     // every blocked acquire / 429 park bumps `rate_limited_count`. No-op for
     // every other mode (tracker is undefined).
@@ -133,6 +151,42 @@ function getOrCreateRateLimiter(config: ScanConfig): RateLimiter {
     RATE_LIMITER_CACHE.set(config, rl);
   }
   return rl;
+}
+
+/**
+ * Per-scan engagement-posture cache. The posture is pure config (no I/O beyond
+ * the already-cached scope file) but it is read at several call sites — the
+ * rate limiter, the web-recon pre-pass, every agent config, and the report —
+ * so resolve it once per ScanConfig and hand the same object around.
+ *
+ * Returns the `standard` posture (unchanged engine behaviour) when nothing is
+ * configured, so this is safe to call unconditionally.
+ */
+const ENGAGEMENT_CACHE = new WeakMap<ScanConfig, EngagementPosture>();
+function resolveEngagementForConfig(config: ScanConfig): EngagementPosture {
+  const cached = ENGAGEMENT_CACHE.get(config);
+  if (cached) return cached;
+  const scope = resolveScopeForConfig(config);
+  const posture = resolveEngagementProfile({
+    scopeFileBlock: scope ? extractEngagementFromScopeJson(scope.raw) : undefined,
+    env: process.env,
+    cliProfile: config.engagementProfile,
+    cliWafEvasion: config.wafEvasion,
+  });
+  ENGAGEMENT_CACHE.set(config, posture);
+  return posture;
+}
+
+/**
+ * Attach the engagement-posture audit record to a report. Only present when a
+ * hardening profile was actually applied, so default scans emit byte-for-byte
+ * identical reports. Mutates `report` in place; called on every report return
+ * path so the evidence is always there when it applies.
+ */
+function attachEngagementPosture(report: ScanReport, config: ScanConfig): void {
+  const posture = resolveEngagementForConfig(config);
+  if (!posture.active) return;
+  report.engagementPosture = describeEngagementPosture(posture);
 }
 
 /**
@@ -676,6 +730,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
   // instead of crashing inside the discovery agent's first fetch.
   buildAttributionForConfig(config);
 
+  // Engagement hardening profile. Resolved (and validated) once at boot for
+  // the same reason as attribution: an unknown `--engagement-profile` name or
+  // a malformed scope-file `engagement` block is a config error the operator
+  // should see now, not after the loud default has already run. Resolving to
+  // the `standard` posture is a no-op — nothing changes unless opted in.
+  const enteredPosture = resolveEngagementForConfig(config);
+
   const db = await (async () => {
     try {
       const { pwnkitDB } = await import("@pwnkit/db");
@@ -703,6 +764,31 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       timestamp: Date.now(),
     });
     emit({ type: "stage:start", stage: "discovery", message: "Resuming scan..." });
+  }
+
+  // Record the applied engagement posture in the scan's own event log, so the
+  // "how did you run this against our estate?" answer is auditable from the DB
+  // as well as from the report block. Only when a profile is actually active —
+  // default scans log nothing new.
+  if (enteredPosture.active) {
+    const postureRecord = describeEngagementPosture(enteredPosture);
+    db.logEvent({
+      scanId,
+      stage: "discovery",
+      eventType: "engagement_posture_applied",
+      payload: { ...postureRecord },
+      timestamp: Date.now(),
+    });
+    emit({
+      type: "stage:start",
+      stage: "discovery",
+      message:
+        `Engagement profile '${postureRecord.profile}': ` +
+        `reset-burst probe ${postureRecord.reset_endpoint_burst_probe}, ` +
+        `WAF evasion ladder ${postureRecord.waf_evasion_ladder}, ` +
+        `pre-pass ${postureRecord.web_recon_prepass}, ` +
+        `${postureRecord.per_host_rps} rps/host with ${postureRecord.request_jitter}`,
+    });
   }
 
   // Determine runtime mode
@@ -1220,7 +1306,17 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     if (isWebPrepass && features.webRecon) {
       try {
         const { runWebReconPrePass } = await import("./stages/web-recon-prepass.js");
-        const { findings: rf, promptBlock } = await runWebReconPrePass(config);
+        // Engagement hardening: when a profile is active the pre-pass runs
+        // through the shared per-host token bucket (it uses raw `fetch`
+        // otherwise) and its password-reset burst probe is suppressed.
+        const prepassPosture = resolveEngagementForConfig(config);
+        const { findings: rf, promptBlock } = await runWebReconPrePass(config, {
+          posture: prepassPosture,
+          rateLimiter:
+            prepassPosture.webReconPrepass === "rate-limited"
+              ? getOrCreateRateLimiter(config)
+              : undefined,
+        });
         reconFindings = rf;
         if (promptBlock) {
           apiSpecPromptText = apiSpecPromptText
@@ -1492,6 +1588,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         ...(partialTraceMessages.length > 0 ? { trace: partialTraceMessages } : {}),
       };
       attachEnforcementSummary(partialReport, config);
+      attachEngagementPosture(partialReport, config);
 
       const dbScan = db.getScan(scanId);
       if (dbScan) {
@@ -1586,6 +1683,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         ...(killTrace.length > 0 ? { trace: killTrace } : {}),
       };
       attachEnforcementSummary(killReport, config);
+      attachEngagementPosture(killReport, config);
 
       const dbScan = db.getScan(scanId);
       if (dbScan) {
@@ -3059,7 +3157,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     // enforcement cache) and are handed in via ctx.
     return await runReportStage(
       { allFindings, attackState, discoveryState, config, scanId, routingDecisions },
-      { db, emit, emitScanCompleted, attachEnforcementSummary },
+      { db, emit, emitScanCompleted, attachEnforcementSummary, attachEngagementPosture },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -3237,6 +3335,7 @@ async function runNativeDiscovery(
       enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
+      engagement: resolveEngagementForConfig(config),
       costCeilingUsd: config.costCeilingUsd,
       costModel: config.model,
     },
@@ -3470,6 +3569,7 @@ async function runNativeAttack(
       enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
+      engagement: resolveEngagementForConfig(config),
       costCeilingUsd: config.costCeilingUsd,
       costModel: config.model,
     },
@@ -3538,6 +3638,7 @@ async function runNativeAttack(
         enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
+      engagement: resolveEngagementForConfig(config),
         costCeilingUsd: config.costCeilingUsd,
         costModel: config.model,
       },
@@ -3786,6 +3887,7 @@ export async function runNativeVerify(
         enforcement: resolveEnforcementForConfig(config),
         allowScanners: config.allowScanners,
         attribution: buildAttributionForConfig(config),
+        engagement: resolveEngagementForConfig(config),
         costCeilingUsd: config.costCeilingUsd,
         costModel: config.model,
       },
@@ -3860,6 +3962,7 @@ async function runLegacyDiscovery(
       enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
+      engagement: resolveEngagementForConfig(config),
       dispatchMode: config.dispatchMode,
       modelHint: config.model,
     },
@@ -3936,6 +4039,7 @@ async function runLegacyAttack(
       enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
+      engagement: resolveEngagementForConfig(config),
       dispatchMode: config.dispatchMode,
       modelHint: config.model,
     },
@@ -4008,6 +4112,7 @@ async function runLegacyVerify(
       enforcement: resolveEnforcementForConfig(config),
       allowScanners: config.allowScanners,
       attribution: buildAttributionForConfig(config),
+      engagement: resolveEngagementForConfig(config),
       dispatchMode: config.dispatchMode,
       modelHint: config.model,
     },

@@ -2801,6 +2801,7 @@ import { PathPolicy, EnforcementTracker } from "../scope/enforcement.js";
 import { ScopePolicy as HttpAuditScopePolicy } from "../scope/scope.js";
 import { RateLimiter } from "../scope/rate-limit.js";
 import { WafDetector } from "../scope/waf-detect.js";
+import { resolveEngagementProfile } from "../scope/engagement-profile.js";
 
 describe("detectHttpEgressSegments", () => {
   it("detects curl / wget / httpie", () => {
@@ -3066,6 +3067,109 @@ describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () =>
       expect(output.waf).toBeUndefined();
       expect(fetchStub).toHaveBeenCalledTimes(1);
       expect(ctx.wafDetector!.summary().waf_detected).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // ── Ladder opt-out (engagement hardening) ──
+  // Escalating a WAF block into encoded/mutated retries is what turns a routine
+  // block into a SOC incident. The ladder must be disableable — via a posture
+  // OR standalone via PWNKIT_WAF_EVASION=0 — while detection keeps working.
+  it("does NOT run the evasion ladder under a conservative engagement posture", async () => {
+    const ctx = wafCtx({ engagement: resolveEngagementProfile({ cliProfile: "conservative" }) });
+    const fetchStub = vi.fn(async () => ({
+      status: 403,
+      headers: new Headers({ server: "cloudflare", "cf-ray": "7d-LHR" }),
+      text: async () => "Attention Required! | Cloudflare",
+    } as unknown as Response));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const ex = new ToolExecutor(ctx, null);
+      const result = await ex.execute({
+        name: "http_request",
+        arguments: {
+          url: "https://api.example.com/api/search?q=1%20UNION%20SELECT%20pwd%20FROM%20users",
+          method: "GET",
+        },
+      });
+      const output = result.output as Record<string, any>;
+      // Exactly ONE request: the baseline. No mutated variants on the wire.
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      // Detection still reports the block — we just don't try to beat it.
+      expect(output.waf.detected).toBe(true);
+      expect(output.waf.vendor).toBe("cloudflare");
+      expect(output.waf.evasion).toEqual({
+        enabled: false,
+        reason: "evasion ladder disabled by engagement posture",
+      });
+      const summary = ctx.wafDetector!.summary();
+      expect(summary.waf_detected).toBe(true);
+      expect(summary.total_blocks).toBe(1);
+      expect(summary.total_bypasses).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("honours the standalone PWNKIT_WAF_EVASION=0 opt-out with no posture wired", async () => {
+    const ctx = wafCtx();
+    const fetchStub = vi.fn(async () => ({
+      status: 403,
+      headers: new Headers({ server: "cloudflare", "cf-ray": "7d-LHR" }),
+      text: async () => "Attention Required! | Cloudflare",
+    } as unknown as Response));
+    vi.stubGlobal("fetch", fetchStub);
+    const prev = process.env.PWNKIT_WAF_EVASION;
+    process.env.PWNKIT_WAF_EVASION = "0";
+    try {
+      const ex = new ToolExecutor(ctx, null);
+      const result = await ex.execute({
+        name: "http_request",
+        arguments: {
+          url: "https://api.example.com/api/search?q=1%20UNION%20SELECT%20pwd",
+          method: "GET",
+        },
+      });
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect((result.output as Record<string, any>).waf.evasion.enabled).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.PWNKIT_WAF_EVASION;
+      else process.env.PWNKIT_WAF_EVASION = prev;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("ladder still runs by default (no posture, no env override)", async () => {
+    const ctx = wafCtx();
+    let n = 0;
+    const fetchStub = vi.fn(async () => {
+      n += 1;
+      return n === 1
+        ? ({
+            status: 403,
+            headers: new Headers({ server: "cloudflare", "cf-ray": "7d-LHR" }),
+            text: async () => "Attention Required! | Cloudflare",
+          } as unknown as Response)
+        : ({
+            status: 200,
+            headers: new Headers({ "content-type": "text/html" }),
+            text: async () => "<html>ok</html>",
+          } as unknown as Response);
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const ex = new ToolExecutor(ctx, null);
+      const result = await ex.execute({
+        name: "http_request",
+        arguments: {
+          url: "https://api.example.com/api/search?q=1%20UNION%20SELECT%20pwd",
+          method: "GET",
+        },
+      });
+      const output = result.output as Record<string, any>;
+      expect(fetchStub.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(output.waf.evasion.bypassed).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }

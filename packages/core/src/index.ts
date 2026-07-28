@@ -22,6 +22,30 @@ export type {
   AttributionScopeJson,
 } from "./scope/attribution.js";
 
+// Engagement hardening profile. One opt-in posture that makes the engine
+// behave conservatively on an authorized engagement (no reset-endpoint burst
+// probe, rate-limited web-recon pre-pass, no WAF-evasion ladder, jittered
+// pacing, reduced rps) plus the auditable record of what was applied.
+export {
+  resolveEngagementProfile,
+  parseEngagementProfileName,
+  extractEngagementFromScopeJson,
+  describeEngagementPosture,
+  effectiveFallbackRps,
+  isWafEvasionLadderEnabled,
+  ENGAGEMENT_PROFILE_NAMES,
+  CONSERVATIVE_RPS,
+  CONSERVATIVE_JITTER_MS,
+  STANDARD_RPS,
+} from "./scope/engagement-profile.js";
+export type {
+  EngagementPosture,
+  EngagementProfileName,
+  EngagementProfileInputs,
+  EngagementScopeBlock,
+  EngagementSource,
+} from "./scope/engagement-profile.js";
+
 export { scan } from "./scanner.js";
 export type { ScanEvent, ScanListener, ScanEventType } from "./scanner.js";
 export { agenticScan } from "./agentic-scanner.js";
@@ -893,6 +917,7 @@ export {
 export type {
   HostRateConfig,
   RateLimiterConfig,
+  JitterConfig,
 } from "./scope/rate-limit.js";
 
 // http_audit enforcement (path allowlist + counters + kill switch)

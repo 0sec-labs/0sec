@@ -296,6 +296,93 @@ describe("runWebReconPrePass", () => {
   });
 });
 
+// ── Engagement hardening (scope/engagement-profile.ts) ─────────────────────
+//
+// Two loud behaviours live in this stage: the password-reset burst probe and
+// the fact that every probe here uses raw `fetch`, bypassing the per-host
+// token bucket. These tests pin the default (unchanged) behaviour and the
+// hardened behaviour separately.
+
+import { resolveEngagementProfile } from "../scope/engagement-profile.js";
+import { RateLimiter } from "../scope/rate-limit.js";
+
+/** Root HTML advertising a password-reset endpoint, which arms the probe. */
+const RESET_HTML =
+  '<html><body><a href="/forgot-password">Forgot password?</a></body></html>';
+
+function stubResetTarget(): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") return res(404, "");
+    if (url === BASE || url === `${BASE}/`) {
+      return res(200, RESET_HTML, { "content-type": "text/html" });
+    }
+    return res(404, "");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock as unknown as ReturnType<typeof vi.fn>;
+}
+
+function postCalls(fetchMock: ReturnType<typeof vi.fn>): unknown[] {
+  return fetchMock.mock.calls.filter(
+    (call: unknown[]) => (call[1] as RequestInit | undefined)?.method === "POST",
+  );
+}
+
+describe("runWebReconPrePass — engagement hardening", () => {
+  it("default: fires the bounded reset-endpoint burst (unchanged behaviour)", async () => {
+    const fetchMock = stubResetTarget();
+    const { findings } = await runWebReconPrePass(makeConfig());
+    // DEFAULT_BURST = 15 sequential POSTs at the reset endpoint.
+    expect(postCalls(fetchMock).length).toBe(15);
+    expect(
+      findings.some((f) => f.templateId === "web-recon-rate-limit"),
+    ).toBe(true);
+  });
+
+  it("default: passing an explicit standard posture changes nothing", async () => {
+    const fetchMock = stubResetTarget();
+    await runWebReconPrePass(makeConfig(), {
+      posture: resolveEngagementProfile(),
+    });
+    expect(postCalls(fetchMock).length).toBe(15);
+  });
+
+  it("conservative: sends NO reset POSTs and leaves a lead instead", async () => {
+    const fetchMock = stubResetTarget();
+    const { findings, promptBlock } = await runWebReconPrePass(makeConfig(), {
+      posture: resolveEngagementProfile({ cliProfile: "conservative" }),
+    });
+    expect(postCalls(fetchMock).length).toBe(0);
+    expect(
+      findings.some((f) => f.templateId === "web-recon-rate-limit"),
+    ).toBe(false);
+    expect(promptBlock).toContain("DISABLED for this engagement");
+  });
+
+  it("conservative: routes every probe through the per-host rate limiter", async () => {
+    stubResetTarget();
+    const limiter = new RateLimiter({ default: { rps: 1000, burst: 1000 } });
+    const acquire = vi.spyOn(limiter, "acquire");
+    await runWebReconPrePass(makeConfig(), {
+      posture: resolveEngagementProfile({ cliProfile: "conservative" }),
+      rateLimiter: limiter,
+    });
+    expect(acquire).toHaveBeenCalled();
+    // Every acquired URL is a pre-pass probe against the target host.
+    for (const call of acquire.mock.calls) {
+      expect(String(call[0])).toContain("app.example.com");
+    }
+  });
+
+  it("no limiter supplied = no pacing calls (default path untouched)", async () => {
+    stubResetTarget();
+    const limiter = new RateLimiter({ default: { rps: 1000, burst: 1000 } });
+    const acquire = vi.spyOn(limiter, "acquire");
+    await runWebReconPrePass(makeConfig());
+    expect(acquire).not.toHaveBeenCalled();
+  });
+});
+
 import { isInScopeUrl } from "./web-recon-prepass.js";
 import { describe as describe2, it as it2, expect as expect2 } from "vitest";
 describe2("isInScopeUrl SSRF guard", () => {

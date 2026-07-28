@@ -37,6 +37,8 @@ import { scanJsArtifacts } from "../recon/js-artifacts.js";
 import { checkEmailPosture } from "../recon/dns-email.js";
 import { enumerateSubdomains, type DiscoveredHost } from "../recon/subdomains.js";
 import { probeRateLimit } from "../recon/rate-limit.js";
+import type { RateLimiter } from "../scope/rate-limit.js";
+import type { EngagementPosture } from "../scope/engagement-profile.js";
 import {
   runFrameworkCveChecks,
   type FrameworkCveResult,
@@ -57,6 +59,21 @@ export interface WebReconPrePassResult {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+export interface WebReconPrePassOptions {
+  /**
+   * Resolved engagement posture (`scope/engagement-profile.ts`). When omitted
+   * the pre-pass behaves exactly as before: raw un-paced fetches and the
+   * password-reset burst probe enabled.
+   */
+  posture?: EngagementPosture;
+  /**
+   * Per-host token bucket. Supplied by the scanner when the posture asks for a
+   * `rate-limited` pre-pass; every probe then acquires a token before egress
+   * and reports 429s back so the bucket parks. Omitted = historical raw fetch.
+   */
+  rateLimiter?: RateLimiter;
+}
+
 /**
  * Run the deterministic web-recon pre-pass against `config.target`.
  *
@@ -66,6 +83,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  */
 export async function runWebReconPrePass(
   config: ScanConfig,
+  options: WebReconPrePassOptions = {},
 ): Promise<WebReconPrePassResult> {
   const findings: Finding[] = [];
   const leads: string[] = [];
@@ -79,6 +97,16 @@ export async function runWebReconPrePass(
   const targetHost = safeHost(target);
   const domain = registrableDomain(target);
 
+  // Engagement hardening (`scope/engagement-profile.ts`). Two knobs land here:
+  //   * `rateLimiter` — when supplied, every pre-pass probe acquires a per-host
+  //     token before egress and feeds 429s back into the bucket, closing the
+  //     "the pre-pass bypasses the rate limiter" gap. Undefined = raw fetch,
+  //     which is the historical behaviour.
+  //   * `posture.resetBurstProbe` — when false, the password-reset burst probe
+  //     is skipped entirely and downgraded to a prompt lead.
+  const limiter = options.rateLimiter;
+  const resetBurstProbeAllowed = options.posture?.resetBurstProbe ?? true;
+
   // A local, non-destructive GET wrapper used by every fetch-driven module.
   const fetchResponse = async (url: string): Promise<ReconResponse> => {
     // SSRF guard: never follow a target-derived URL (JS chunk src, etc.) off the
@@ -87,6 +115,7 @@ export async function runWebReconPrePass(
     if (!isInScopeUrl(url, targetHost, domain)) {
       return { status: 0, headers: {}, body: "" };
     }
+    if (limiter) await limiter.acquire(url);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
@@ -99,6 +128,7 @@ export async function runWebReconPrePass(
         redirect: "manual",
         signal: controller.signal,
       });
+      limiter?.noteResponse(url, res);
       const body = await res.text();
       const headers: Record<string, string> = {};
       res.headers.forEach((value, key) => {
@@ -174,6 +204,7 @@ export async function runWebReconPrePass(
           if (!isInScopeUrl(url, targetHost, domain)) {
             return { status: 0, headers: {}, body: "" };
           }
+          if (limiter) await limiter.acquire(url);
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), timeout);
           try {
@@ -186,6 +217,7 @@ export async function runWebReconPrePass(
               redirect: "manual",
               signal: controller.signal,
             });
+            limiter?.noteResponse(url, res);
             const body = await res.text();
             const h: Record<string, string> = {};
             res.headers.forEach((value, key) => {
@@ -363,16 +395,22 @@ export async function runWebReconPrePass(
   // ── 7. Rate-limit lead (prefer skipping speculative POSTs) ──
   // Only probe when a password-reset-style endpoint is obvious from the
   // baseline body; otherwise leave a lead and send no POSTs.
+  //
+  // Under an engagement hardening profile the probe is OFF entirely: a rapid
+  // burst of unauthenticated password-reset POSTs is indistinguishable from
+  // credential stuffing to a SOC, and no finding is worth that page. The lead
+  // below tells the agent to raise it as a manual test instead.
   const resetEndpoint = baseline?.body
     ? findPasswordResetEndpoint(base, baseline.body)
     : undefined;
   // SSRF guard: only POST to a reset endpoint that is on the target's own
   // host/domain — never one a hostile target's HTML steered us to off-scope.
-  if (resetEndpoint && isInScopeUrl(resetEndpoint, targetHost, domain)) {
+  if (resetBurstProbeAllowed && resetEndpoint && isInScopeUrl(resetEndpoint, targetHost, domain)) {
     try {
       const invalidEmail = `pwnkit-noreply-${randomUUID().slice(0, 8)}@invalid.example`;
       const probe = await probeRateLimit({
         request: async () => {
+          if (limiter) await limiter.acquire(resetEndpoint);
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), timeout);
           try {
@@ -410,6 +448,10 @@ export async function runWebReconPrePass(
     } catch {
       // Rate-limit probe failed — continue.
     }
+  } else if (!resetBurstProbeAllowed) {
+    leads.push(
+      "Anti-automation testing on sensitive endpoints (password-reset / OTP) is DISABLED for this engagement by the hardening profile — do not send request bursts. Report missing rate limiting as a manual test item for the client instead.",
+    );
   } else {
     leads.push(
       "If you find a password-reset or OTP endpoint, test rate limiting with a safe, clearly-invalid email (e.g. a non-existent @invalid.example address) — no real mail should be triggered.",
