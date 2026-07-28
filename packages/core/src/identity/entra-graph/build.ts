@@ -47,6 +47,19 @@ export interface BuildEntraGraphOptions {
   maxDerivedEdgesPerSource?: number;
   /** Injected clock for `meta.ingestedAt`. */
   now?: () => Date;
+  /**
+   * Where the snapshot came from. Defaults to `tenant-snapshot` (a live
+   * read-only Graph collection). `./ingest.ts` passes `azurehound` when the
+   * snapshot was reconstructed from an offline export, so a reader can tell
+   * whether a missing relationship means "not present in the directory" or
+   * "the collector was never asked for it".
+   */
+  origin?: EntraGraphMeta["origin"];
+  /**
+   * Extra source-type labels for `meta.sourceTypes` — the offline path records
+   * which AzureHound collections were actually present.
+   */
+  sourceTypes?: string[];
 }
 
 /** Graph object ids are case-insensitive; Graph lower-cases, AzureHound upper-cases. */
@@ -476,9 +489,9 @@ export function buildEntraGraph(snapshot: TenantSnapshot, opts: BuildEntraGraphO
   return indexGraph(b, {
     tenantId,
     tenantDisplayName: snapshot.tenantDisplayName,
-    origin: "tenant-snapshot",
+    origin: opts.origin ?? "tenant-snapshot",
     relationshipsCollected: relationships !== undefined,
-    sourceTypes: ["tenant-snapshot"],
+    sourceTypes: opts.sourceTypes ?? [opts.origin ?? "tenant-snapshot"],
     warnings: [...b.warnings],
     ingestedAt: now().toISOString(),
     roleCount: roleNodes.size,

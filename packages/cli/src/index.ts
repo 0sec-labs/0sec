@@ -62,6 +62,7 @@ import {
   registerNpmDiscoveryCommand,
   registerIdentityCommand,
   registerAdGraphCommand,
+  registerEntraGraphCommand,
   registerCloudCommand,
   registerXnuFuzzCommand,
   registerResearchCommand,
@@ -130,6 +131,7 @@ registerJsReconCommand(program);
 registerNpmDiscoveryCommand(program);
 registerIdentityCommand(program);
 registerAdGraphCommand(program);
+registerEntraGraphCommand(program);
 registerCloudCommand(program);
 registerXnuFuzzCommand(program);
 registerResearchCommand(program);
@@ -169,7 +171,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "entragraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {
