@@ -73,32 +73,113 @@ export interface AnalysisAgentResult {
 
 // ── Depth → maxTurns mapping ──
 
-function getMaxTurns(
+/**
+ * Read a positive-integer turn budget from the environment. Invalid, zero, and
+ * negative values are ignored rather than clamped — a typo'd sweep parameter
+ * should fall back to the tuned default, not silently pin the agent to one turn.
+ */
+function envTurns(key: string): number | undefined {
+  const raw = process.env[key];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) return undefined;
+  return parsed;
+}
+
+/**
+ * Resolve the maximum number of agent-loop turns for a run.
+ *
+ * ── Why these numbers changed (prompt caching) ──
+ *
+ * The previous budgets — verify capped at 8 turns, audit at 30 — were set
+ * against PR #198 heartbeat data showing per-turn LLM latency growing with
+ * conversation history: 5s at turn 1, 60s at turn 14. That growth was never
+ * about the model thinking harder; it was the engine re-prefilling the entire
+ * transcript on every stateless request. Trimming turns treated the symptom by
+ * capping how long the agent was allowed to think.
+ *
+ * Prompt caching (`runtime/prompt-cache.ts`, default ON) addresses the cause:
+ * the system prompt, tool schemas, and settled conversation are now marked with
+ * `cache_control` breakpoints and re-read from cache instead of re-billed and
+ * re-prefilled each turn. The late-turn tax that justified the tight caps is
+ * substantially paid down, so the budgets are re-derived from what the WORK
+ * needs rather than from what the latency curve could tolerate.
+ *
+ * For scale: a competitive system on the same class of task (Crystalline,
+ * 89.6% on CyberGym) runs a mean of ~169 turns/task. Everything below still
+ * sits at or under that, deliberately.
+ *
+ * ── The real cost guard ──
+ *
+ * Turns are a crude proxy for spend. The actual ceiling is `costCeilingUsd` /
+ * `ScanCostLedger`, which cuts a run on dollars regardless of turn count — so
+ * raising turns raises the CEILING on work, not the floor on spend. A run that
+ * finishes in 6 turns still costs 6 turns. That asymmetry is what makes these
+ * increases safe: they only bind on runs that were being truncated mid-work.
+ *
+ * ── Legacy branch deliberately unchanged ──
+ *
+ * The legacy branch goes through `execute()` (prompt-in/text-out), not
+ * `executeNative()`, and prompt caching is implemented only on the native
+ * path. The latency/cost argument above therefore does not apply to it, so its
+ * budgets stay exactly as they were. Only `verify` gets a small legacy bump,
+ * on task-shape grounds rather than caching (see below).
+ *
+ * ── Env overrides ──
+ *
+ * All budgets are overridable without a rebuild so they can be swept:
+ *   PWNKIT_MAX_TURNS         — every role and purpose
+ *   PWNKIT_MAX_TURNS_VERIFY  — verify runs only
+ *   PWNKIT_MAX_TURNS_AUDIT   — audit research runs
+ *   PWNKIT_MAX_TURNS_REVIEW  — review research runs
+ * The specific variable wins over the global one when both are set.
+ */
+export function getMaxTurns(
   role: "audit" | "review",
   depth: string | undefined,
   branch: "native" | "legacy",
   purpose: "research" | "verify" = "research",
 ): number {
-  // Verify reproves one specific finding and should never need more than
-  // a handful of turns; cap it tight regardless of depth so verify-wave
-  // wall-clock stays bounded. (See PR #198 heartbeat data: per-turn LLM
-  // call duration grows with conversation history — 5s at turn 1, 60s at
-  // turn 14 — so trimming late verify turns is the highest-leverage cut.)
+  const globalOverride = envTurns("PWNKIT_MAX_TURNS");
+
   if (purpose === "verify") {
-    return branch === "native" ? 8 : 10;
+    const override = envTurns("PWNKIT_MAX_TURNS_VERIFY") ?? globalOverride;
+    if (override !== undefined) return override;
+    // Verify reproves ONE specific finding, so it genuinely doesn't need a
+    // research-scale budget. But 8 turns was below the floor for the task:
+    // reproducing a finding costs roughly read target → write PoC → run it →
+    // read the failure → fix → re-run, which is 6 turns with zero slack for a
+    // single wrong assumption. Runs were hitting the cap mid-debug and getting
+    // scored as "could not reproduce" — a false negative manufactured by the
+    // budget rather than by the evidence. 20 affords two full debug cycles and
+    // still lands at ~12% of the Crystalline reference.
+    return branch === "native" ? 20 : 12;
   }
   if (role === "audit") {
+    const override = envTurns("PWNKIT_MAX_TURNS_AUDIT") ?? globalOverride;
+    if (override !== undefined) return override;
     if (branch === "native") {
-      return depth === "deep" ? 30 : depth === "default" ? 20 : 10;
+      // Doubled across the board. Audit walks a dependency/source tree, and
+      // depth is the operator's explicit statement of how much of it to walk;
+      // 30 turns for "deep" was under-serving that request on any non-trivial
+      // package. `quick` moves 10 → 15 only, since its whole contract is to
+      // stay cheap.
+      return depth === "deep" ? 60 : depth === "default" ? 40 : 15;
     }
-    // legacy
+    // legacy — unchanged, no caching on this path
     return depth === "deep" ? 50 : depth === "default" ? 50 : 15;
   }
   // review
+  const override = envTurns("PWNKIT_MAX_TURNS_REVIEW") ?? globalOverride;
+  if (override !== undefined) return override;
   if (branch === "native") {
-    return depth === "deep" ? 100 : depth === "default" ? 40 : 15;
+    // `deep` 100 → 150 brings the one budget meant for exhaustive work in line
+    // with the ~169-turn competitive reference. `default` 40 → 60 and `quick`
+    // 15 → 20 are scaled more conservatively: they are the common path, so a
+    // bad increase there is paid on every scan rather than on opt-in runs.
+    return depth === "deep" ? 150 : depth === "default" ? 60 : 20;
   }
-  // legacy
+  // legacy — unchanged, no caching on this path
   return depth === "deep" ? 100 : depth === "default" ? 50 : 15;
 }
 

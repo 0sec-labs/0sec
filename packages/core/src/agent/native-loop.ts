@@ -274,7 +274,15 @@ export interface NativeAgentState {
   targetInfo: Partial<TargetInfo>;
   done: boolean;
   summary: string;
-  totalUsage: { inputTokens: number; outputTokens: number };
+  /**
+   * `inputTokens` is total prompt tokens (cached spans included), so the
+   * compaction trigger below keeps measuring real context growth regardless of
+   * cache hit rate. `cachedInputTokens` is tracked alongside it purely so
+   * `estimateCost` can price those tokens at the cached-input rate instead of
+   * full price — without it, a well-cached run would report roughly 10x its
+   * actual input spend.
+   */
+  totalUsage: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
   /** Set to true when the loop stopped early because no save_finding was called by the halfway point. */
   earlyStopNoProgress: boolean;
   /** Brief description of tools/approaches used before the early stop (for retry context). */
@@ -544,7 +552,7 @@ export async function runNativeAgentLoop(
     targetInfo: toolCtx.targetInfo,
     done: false,
     summary: "",
-    totalUsage: { inputTokens: 0, outputTokens: 0 },
+    totalUsage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
     earlyStopNoProgress: false,
     attemptSummary: "",
     progressSummary: "",
@@ -863,6 +871,7 @@ export async function runNativeAgentLoop(
     if (result.usage) {
       state.totalUsage.inputTokens += result.usage.inputTokens;
       state.totalUsage.outputTokens += result.usage.outputTokens;
+      state.totalUsage.cachedInputTokens += result.usage.cachedInputTokens ?? 0;
       // Fold this turn into the shared per-scan ledger (when threaded) so
       // sibling agent sessions see this spend in their own ceiling checks.
       // The session's pricing model keys the ledger's per-model buckets,
@@ -902,6 +911,22 @@ export async function runNativeAgentLoop(
     // Trigger at 60% of context window (~77k tokens for 128k models).
     // Allow multiple compactions as context regrows — don't re-compact until
     // tokens have grown by at least 30k since last compaction.
+    //
+    // PROMPT-CACHE INTERACTION: this REWRITES history (middle turns collapse
+    // into a summary message), which changes the cached prefix and therefore
+    // invalidates every message-level cache entry. That is unavoidable — any
+    // rewrite of a prefix-matched cache voids it by definition — and it is
+    // still the right trade: compaction only fires once the transcript is large
+    // enough that carrying it is worse than re-establishing it. Recovery is
+    // automatic and needs no bookkeeping here: `llm-api.ts` re-plans breakpoints
+    // from the CURRENT message array on every request, so the next call writes a
+    // fresh set over the rewritten transcript and the turn after that reads it
+    // back. The system prompt + tool schemas keep hitting throughout — compaction
+    // never touches them, and they carry their own breakpoint.
+    //
+    // The threshold itself is measured against total prompt tokens (cache reads
+    // included), so a high cache hit rate does not silently defer compaction
+    // past the real context limit. See `readCacheUsage` in runtime/prompt-cache.ts.
     const COMPACTION_THRESHOLD = 77_000;
     const COMPACTION_REGROW = 30_000;
     if (

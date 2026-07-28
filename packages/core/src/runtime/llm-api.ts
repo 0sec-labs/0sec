@@ -15,6 +15,15 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "@pwnkit/shared";
+import { features } from "../agent/features.js";
+import {
+  MESSAGE_CACHE_BREAKPOINTS,
+  planMessageBreakpoints,
+  providerSupportsPromptCache,
+  readCacheUsage,
+  withCacheControl,
+  type WireBlock,
+} from "./prompt-cache.js";
 
 /** Safely parse JSON tool arguments; returns empty object on malformed input. */
 function safeParseJson(raw: string | null | undefined): Record<string, unknown> {
@@ -1298,6 +1307,29 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     return { thinking: { type: "enabled", budget_tokens: budget } };
   }
 
+  /**
+   * Per-turn prompt-cache accounting line, so a run can be shown to actually
+   * be hitting cache rather than assumed to be. Off unless
+   * `PWNKIT_DEBUG_PROMPT_CACHE` is set — this fires once per agent turn, and an
+   * unconditional line would interleave with the TUI on every scan.
+   *
+   * The same numbers reach the cloud without this flag: `cachedInputTokens`
+   * flows into `ScanCostLedger` and the `scan_completed` cost breakdown, which
+   * is the durable, queryable proof. This is the local fast path.
+   */
+  private logCacheUsage(usage: NativeRuntimeResult["usage"]): void {
+    if (!usage || !process.env.PWNKIT_DEBUG_PROMPT_CACHE) return;
+    const read = usage.cachedInputTokens ?? 0;
+    const write = usage.cacheWriteTokens ?? 0;
+    const hitRate = usage.inputTokens > 0
+      ? Math.round((read / usage.inputTokens) * 100)
+      : 0;
+    console.error(
+      `[pwnkit] prompt-cache ${this.providerLabel}: read=${read} write=${write} ` +
+      `uncached=${usage.inputTokens - read - write} total_in=${usage.inputTokens} hit=${hitRate}%`,
+    );
+  }
+
   /** Friendly provider name for error messages. */
   private get providerLabel(): string {
     switch (this.provider) {
@@ -1941,9 +1973,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         return streamed;
       } else {
         // Anthropic Messages API format
-        const apiMessages = messages.map((m) => ({
+        const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m) => ({
           role: m.role,
-          content: m.content.map((block) => {
+          content: m.content.map((block): WireBlock => {
             if (block.type === "text") return { type: "text", text: block.text };
             if (block.type === "tool_use") {
               return { type: "tool_use", id: block.id, name: block.name, input: block.input };
@@ -1956,15 +1988,52 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
                 ...(block.is_error ? { is_error: true } : {}),
               };
             }
+            // Unreachable for the current block union (`block` narrows to
+            // `never` here); kept as the original passthrough so an added
+            // block kind degrades to "sent as-is" rather than being dropped.
             return block;
           }),
         }));
+
+        // ── Prompt caching ──
+        // Only Anthropic (and explicitly opted-in Anthropic-compatible
+        // endpoints) get `cache_control`. This branch is the ONLY one that can
+        // emit it: the OpenAI chat-completions and Responses branches above
+        // build their bodies independently and never reach this code, so the
+        // Azure / OpenAI / Codex / OpenRouter wires are structurally incapable
+        // of receiving an Anthropic-shaped field.
+        const cacheEnabled =
+          features.promptCache && providerSupportsPromptCache(this.provider);
+
+        for (const index of cacheEnabled
+          ? planMessageBreakpoints(apiMessages, MESSAGE_CACHE_BREAKPOINTS)
+          : []) {
+          // Mark the message's LAST block so the cached prefix covers it whole.
+          // Breakpoints are recomputed from the current array on every call and
+          // never carried across turns — which is exactly what makes recovery
+          // from `native-loop`'s compaction automatic: compaction rewrites the
+          // transcript and voids these entries, and the next call simply plans
+          // fresh breakpoints over the rewritten history.
+          const blocks = apiMessages[index]?.content;
+          const lastBlock = blocks?.length ? blocks[blocks.length - 1] : undefined;
+          if (blocks && lastBlock) blocks[blocks.length - 1] = withCacheControl(lastBlock);
+        }
 
         const body: Record<string, unknown> = {
           model: this.model,
           max_tokens: 8192,
           ...this.anthropicThinkingField(),
-          system,
+          // The remaining breakpoint goes on the system prompt. Because the
+          // wire renders `tools` → `system` → `messages`, one marker here
+          // caches the tool schemas AND the system prompt together — the
+          // largest, most static span in the request, and the one that never
+          // changes for the lifetime of an agent session. Sent as a block array
+          // (the only shape that accepts `cache_control`) when caching is on,
+          // and left as a plain string otherwise so non-caching providers see a
+          // byte-identical body to before this change.
+          system: cacheEnabled
+            ? [withCacheControl({ type: "text", text: system })]
+            : system,
           messages: apiMessages,
         };
 
@@ -2017,7 +2086,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       // Parse response into unified content blocks
       let content: NativeContentBlock[];
       let stopReason: "end_turn" | "tool_use" | "max_tokens" | "error";
-      let usage: { inputTokens: number; outputTokens: number } | undefined;
+      let usage: NativeRuntimeResult["usage"];
 
       if (this.isOpenAICompat && this.wireApi === "chat_completions") {
         const choice = json.choices?.[0];
@@ -2136,11 +2205,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           : json.stop_reason === "max_tokens" ? "max_tokens" as const
           : "end_turn" as const;
 
+        // `readCacheUsage` re-adds the cached spans that Anthropic subtracts
+        // out of `input_tokens`, so `inputTokens` keeps meaning "total prompt
+        // tokens" whether or not caching is active — see prompt-cache.ts.
         if (json.usage) {
-          usage = {
-            inputTokens: json.usage.input_tokens ?? 0,
-            outputTokens: json.usage.output_tokens ?? 0,
-          };
+          usage = readCacheUsage(json.usage);
+          this.logCacheUsage(usage);
         }
       }
 

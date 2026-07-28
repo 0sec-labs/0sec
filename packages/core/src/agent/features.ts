@@ -503,6 +503,36 @@ export const features = {
   get oastCollaborator(): boolean {
     return env("PWNKIT_FEATURE_OAST", false);
   },
+
+  /**
+   * Anthropic prompt caching (`cache_control: {type: "ephemeral"}`) over the
+   * stable request prefix — tool schemas, system prompt, and the settled part
+   * of the conversation. See `runtime/prompt-cache.ts` for the placement
+   * strategy and the wire contract it encodes.
+   *
+   * Default ON — and unlike every other flag in this file, that default is not
+   * an A/B judgement call. Where a moat layer trades cost for recall, caching
+   * is strictly dominant on the axes we care about: the same prompt, the same
+   * tokens, the same model output, at ~0.1x input price and materially lower
+   * per-turn prefill latency on every turn after the first. The engine
+   * re-sends the entire transcript each turn (stateless Messages API), so the
+   * saving compounds with conversation length — precisely where the pain is.
+   * There is no recall or behaviour dimension to ablate here, which is why
+   * this ships enabled rather than waiting on a benchmark.
+   *
+   * It is also gated on provider support and fails closed: only providers
+   * verified to honour `cache_control` receive it, so a non-Anthropic wire can
+   * never see an Anthropic-shaped field regardless of this flag (see
+   * `providerSupportsPromptCache`).
+   *
+   * Disable via PWNKIT_FEATURE_PROMPT_CACHE=0 — worth doing only to isolate a
+   * suspected provider-side caching bug, or to measure the uncached baseline.
+   * Implemented as a getter so a late env mutation (CLI `--features`, which
+   * runs after this module is imported) is honoured at request-build time.
+   */
+  get promptCache(): boolean {
+    return env("PWNKIT_FEATURE_PROMPT_CACHE", true);
+  },
 };
 
 function env(key: string, defaultValue: boolean): boolean {
