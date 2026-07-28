@@ -310,17 +310,39 @@ export type {
   HuntCorpusRow,
   HuntProofReport,
 } from "./stages/hunt-flywheel.js";
-// Learned negatives (PWNKIT_HUNT_NEGATIVES=1): a known-refuted-shape memory
-// that attaches prior refute reasons to the skeptic prompt as context. Never
-// auto-rejects; see hunt-negatives.ts's header.
-export { huntNegativesEnabled, loadKnownNegatives, matchNegative, negativeContext, NEGATIVE_MIN } from "./stages/hunt-negatives.js";
+// Learned negatives (PWNKIT_HUNT_NEGATIVES, default ON): a known-refuted-shape
+// memory that attaches prior refute reasons to the skeptic prompt as context.
+// Never auto-rejects, and inert until a caller supplies a corpus; see
+// hunt-negatives.ts's header.
+export {
+  huntNegativesEnabled,
+  loadKnownNegatives,
+  loadKnownNegativesFromEnv,
+  matchNegative,
+  negativeContext,
+  NEGATIVE_MIN,
+  MAX_KNOWN_NEGATIVES,
+  MAX_NEGATIVE_REASON_CHARS,
+} from "./stages/hunt-negatives.js";
 export type { KnownNegative, NegativeMatch } from "./stages/hunt-negatives.js";
-// Cross-family adversarial refuter (PWNKIT_HUNT_CROSS_FAMILY=1, issue #661):
-// force the refute pass onto a DIFFERENT model family than the finder before a
-// finding is promoted, so their errors decorrelate. OFF by default; see
-// hunt-cross-family.ts's header for the assume-FP-safe passthrough invariant.
-export { crossFamilyRefuteEnabled, selectCrossFamilyRefuter } from "./stages/hunt-cross-family.js";
-export type { CrossFamilyRefuteConfig, CrossFamilyRefuteChoice } from "./stages/hunt-cross-family.js";
+// Cross-family adversarial refuter (PWNKIT_HUNT_CROSS_FAMILY, default ON, issue
+// #661): force the refute pass onto a DIFFERENT model family than the finder
+// before a finding is promoted, so their errors decorrelate. Degrades to the
+// same-family refute (never to a dropped finding) when only one provider is
+// configured; see hunt-cross-family.ts's header for the assume-FP-safe invariant.
+export {
+  crossFamilyRefuteEnabled,
+  selectCrossFamilyRefuter,
+  availableRefuterCandidates,
+  refuterFamily,
+  describeRefuterChoice,
+} from "./stages/hunt-cross-family.js";
+export type {
+  CrossFamilyRefuteConfig,
+  CrossFamilyRefuteChoice,
+  CrossFamilyStatus,
+} from "./stages/hunt-cross-family.js";
+export type { RefuteDecorrelation } from "./stages/hunt-scan.js";
 // Kernel archetype catalog (multi-archetype hunt seeding; ported from 0verse's
 // 90-archetype registry, kernel-domain subset). Data + brief mapping are always
 // inert/available; `planArchetypeSweep` is env-gated (PWNKIT_ARCHETYPE_SWEEP=1).

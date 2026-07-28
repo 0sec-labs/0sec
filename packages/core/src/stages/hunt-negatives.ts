@@ -29,13 +29,51 @@
 import type { Finding } from "@pwnkit/shared";
 import { findingTokens, jaccard, loadHuntCorpusRows, memoryTokens, type HuntCorpusRow } from "./hunt-flywheel.js";
 
-/** Default OFF — mirrors `huntFlywheelEnabled()` / `archetypeSweepEnabled()`'s opt-in discipline. */
+/**
+ * Default ON. Unlike `huntFlywheelEnabled()` — which reorders the verify queue
+ * and therefore changes WHICH findings get gated — this flag only appends at
+ * most one paragraph of prior-refute context to a skeptic prompt that was going
+ * to run anyway. It costs no extra LLM call, and it is INERT unless a caller
+ * actually supplies a corpus of known negatives (`opts.negatives` /
+ * {@link loadKnownNegativesFromEnv}), so the default-ON blast radius on a
+ * deployment with no corpus is exactly zero. Set `PWNKIT_HUNT_NEGATIVES=0` to
+ * pin the old behaviour for an ablation.
+ *
+ * The residual risk is ANCHORING — a skeptic told "this shape was refuted
+ * before" rubber-stamping the refutation of a genuinely new bug. Three things
+ * bound it: the context is explicitly labelled as overridable (see
+ * {@link negativeContext}), only the single BEST match is ever attached, and the
+ * prior reason is truncated ({@link MAX_NEGATIVE_REASON_CHARS}) so it can never
+ * dominate the prompt.
+ */
 export function huntNegativesEnabled(): boolean {
-  return !["", "0", "false", "no"].includes((process.env.PWNKIT_HUNT_NEGATIVES ?? "").toLowerCase());
+  const raw = process.env.PWNKIT_HUNT_NEGATIVES;
+  // Unset → ON. Explicitly empty/0/false/no → OFF (matches the `env()` helper
+  // convention in agent/features.ts, where an unset var takes the default).
+  if (raw === undefined) return true;
+  return !["", "0", "false", "no"].includes(raw.toLowerCase());
 }
 
 /** A shape must clear this Jaccard floor to attach negative context — the same order-of-magnitude bar as the flywheel's `PRIME_MIN`. */
 export const NEGATIVE_MIN = 0.18;
+
+/**
+ * Hard cap on the derived negatives set. `matchNegative` is O(negatives) token
+ * jaccard per finding, run once per finding per verify lens, so an unbounded
+ * corpus turns the gate's cheap labelling step into a per-finding hot loop as
+ * the corpus grows over months of hunts. The MOST RECENT rows are kept (the
+ * corpus is append-only, so the tail is the freshest refute evidence and the
+ * one most likely to describe a shape this run will re-derive).
+ */
+export const MAX_KNOWN_NEGATIVES = 500;
+
+/**
+ * Hard cap on how much of a prior refute reason is quoted into the skeptic
+ * prompt. Corpus reasons are free text written by an earlier skeptic and have
+ * no length bound; a multi-kilobyte one would both blow up the prompt and drown
+ * the finding under discussion.
+ */
+export const MAX_NEGATIVE_REASON_CHARS = 400;
 
 export interface KnownNegative {
   key: string;
@@ -53,6 +91,9 @@ export interface KnownNegative {
  * debug-gated driver "bug" that's dead code on the target, or a path already
  * fixed upstream. Best-effort: a missing/empty/unparseable corpus is a
  * no-op, same discipline as `HuntMemory.loadCorpus`.
+ *
+ * Bounded to the most recent {@link MAX_KNOWN_NEGATIVES} rows — see that
+ * constant for why an unbounded set is a per-finding cost.
  */
 export function loadKnownNegatives(corpusPath: string): KnownNegative[] {
   const rows = loadHuntCorpusRows(corpusPath);
@@ -61,7 +102,26 @@ export function loadKnownNegatives(corpusPath: string): KnownNegative[] {
     if (row.skepticConfirmed !== false) continue;
     negatives.push(negativeFromRow(row));
   }
-  return negatives;
+  return negatives.length > MAX_KNOWN_NEGATIVES ? negatives.slice(-MAX_KNOWN_NEGATIVES) : negatives;
+}
+
+/**
+ * The known-negatives set for the ambient run, or `[]` when no corpus is
+ * configured.
+ *
+ * `HUNT_CORPUS_PATH` is the same env var `@pwnkit/benchmark`'s
+ * `resolveHuntCorpusPath()` reads, so a bench sweep and a CLI hunt share one
+ * corpus without core taking a dependency on the benchmark package (see this
+ * module's header). There is deliberately NO fallback default path: the
+ * package-relative default lives inside `@pwnkit/benchmark` and guessing at it
+ * from here would silently feed a hunt refute-context it never asked for. Unset
+ * env → empty set → the negatives feature is inert, which is exactly the
+ * default-ON contract in {@link huntNegativesEnabled}.
+ */
+export function loadKnownNegativesFromEnv(): KnownNegative[] {
+  const path = process.env.HUNT_CORPUS_PATH;
+  if (!path || !path.trim()) return [];
+  return loadKnownNegatives(path.trim());
 }
 
 function negativeFromRow(row: HuntCorpusRow): KnownNegative {
@@ -109,11 +169,21 @@ export function matchNegative(
   return best;
 }
 
-/** The context string attached to the skeptic prompt for a matched negative — a label + an explicit override instruction, never an instruction to auto-drop. */
+/**
+ * The context string attached to the skeptic prompt for a matched negative — a
+ * label + an explicit override instruction, never an instruction to auto-drop.
+ * The quoted prior reason is truncated to {@link MAX_NEGATIVE_REASON_CHARS} so
+ * an unbounded corpus string can never dominate the prompt over the finding
+ * actually under review.
+ */
 export function negativeContext(match: NegativeMatch): string {
+  const reason =
+    match.negative.reason.length > MAX_NEGATIVE_REASON_CHARS
+      ? `${match.negative.reason.slice(0, MAX_NEGATIVE_REASON_CHARS)}…`
+      : match.negative.reason;
   return (
     "KNOWN PRIOR REFUTE (learned negative): a finding with this shape was investigated before and refuted — " +
-    `"${match.negative.reason}" (${match.negative.provenance}). This is a LABEL, not an auto-dismissal: only ` +
+    `"${reason}" (${match.negative.provenance}). This is a LABEL, not an auto-dismissal: only ` +
     "surface this finding if you can point to a NEW distinguishing fact (a different sink, a changed guard, a " +
     "different reachable path) that overrides that prior refute."
   );
