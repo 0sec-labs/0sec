@@ -1966,6 +1966,119 @@ describe("ToolExecutor — scope enforcement (pwnkit#215)", () => {
   });
 });
 
+// pwnkit#133. The guards above all live inside `if (this.ctx.scope)`, and
+// `ctx.scope` is undefined on every local run without `--scope` and on every
+// cloud scan mode except http_audit. That is not going to change (fail-closed
+// by default would break every shipping mode), so the requirement is that the
+// absence is never SILENT: an unscoped bash command that reaches the network
+// must leave a `scope_guards_inert` record in the scan event log, and
+// PWNKIT_REQUIRE_SCOPE=1 must turn it into a refusal.
+//
+// These tests fail if someone deletes the signal.
+
+describe("ToolExecutor — unscoped bash egress is visible (pwnkit#133)", () => {
+  const ORIGINAL_REQUIRE_SCOPE = process.env.PWNKIT_REQUIRE_SCOPE;
+
+  afterEach(() => {
+    if (ORIGINAL_REQUIRE_SCOPE === undefined) delete process.env.PWNKIT_REQUIRE_SCOPE;
+    else process.env.PWNKIT_REQUIRE_SCOPE = ORIGINAL_REQUIRE_SCOPE;
+  });
+
+  function unscopedCtx(): ToolContext {
+    return {
+      target: "https://api.example.com",
+      scanId: `test-scope-guard-${Math.random().toString(36).slice(2)}`,
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      // scope intentionally absent — this is the cloud-scan shape.
+    };
+  }
+
+  it("records a scope_guards_inert artifact when an unscoped bash command carries a URL", async () => {
+    const loggedEvents: any[] = [];
+    const db = { logEvent: (event: any) => { loggedEvents.push(event); } } as any;
+    const ex = new ToolExecutor(unscopedCtx(), db);
+
+    // `echo` does not egress, so this test never touches the network — but the
+    // URL is statically visible, which is exactly the case the (inert) scope
+    // grep would have inspected.
+    const result = await ex.execute({
+      name: "bash",
+      arguments: { command: "echo https://exfil.example.net/beacon" },
+    });
+    expect(result.success).toBe(true);
+
+    const inert = loggedEvents.find(
+      (e) => e.eventType === "tool_artifact" && e.payload?.scope_guards === "inert",
+    );
+    expect(inert).toBeDefined();
+    expect(inert.payload.tool).toBe("bash");
+    expect(inert.payload.unscoped_egress_urls).toContain("https://exfil.example.net/beacon");
+    // The named guards must be in the payload — that list is what makes the
+    // event answer "which checks did NOT run?" after the fact.
+    expect(inert.payload.inert_guards.length).toBeGreaterThan(0);
+    expect(inert.payload.inert_guards).toContain("bash_out_of_scope_url_refusal");
+  });
+
+  it("stays quiet for unscoped bash that never reaches the network", async () => {
+    const loggedEvents: any[] = [];
+    const db = { logEvent: (event: any) => { loggedEvents.push(event); } } as any;
+    const ex = new ToolExecutor(unscopedCtx(), db);
+
+    await ex.execute({ name: "bash", arguments: { command: "echo hello" } });
+
+    expect(
+      loggedEvents.find((e) => e.payload?.scope_guards === "inert"),
+    ).toBeUndefined();
+  });
+
+  it("does not fire the signal when a scope IS configured (guards ran)", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const loggedEvents: any[] = [];
+    const db = { logEvent: (event: any) => { loggedEvents.push(event); } } as any;
+    const ex = new ToolExecutor(
+      { ...unscopedCtx(), scope: ScopePolicy.fromJson({ in_scope: ["*.example.com"] }) },
+      db,
+    );
+
+    await ex.execute({
+      name: "bash",
+      arguments: { command: "echo https://api.example.com/ok" },
+    });
+
+    expect(
+      loggedEvents.find((e) => e.payload?.scope_guards === "inert"),
+    ).toBeUndefined();
+  });
+
+  it("refuses outright under PWNKIT_REQUIRE_SCOPE=1", async () => {
+    process.env.PWNKIT_REQUIRE_SCOPE = "1";
+    const ex = new ToolExecutor(unscopedCtx(), null);
+
+    const result = await ex.execute({
+      name: "bash",
+      arguments: { command: "echo hello" },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/PWNKIT_REQUIRE_SCOPE/);
+    expect(result.error).toMatch(/no engagement scope is configured/);
+  });
+
+  it("PWNKIT_REQUIRE_SCOPE=1 does not affect a scan that HAS a scope", async () => {
+    process.env.PWNKIT_REQUIRE_SCOPE = "1";
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const ex = new ToolExecutor(
+      { ...unscopedCtx(), scope: ScopePolicy.fromJson({ in_scope: ["*.example.com"] }) },
+      null,
+    );
+
+    const result = await ex.execute({ name: "bash", arguments: { command: "echo hello" } });
+    expect(result.success).toBe(true);
+  });
+});
+
 // pwnkit#217. Generic-scanner-traffic suppression. When scope is loaded
 // the agent must refuse `sqlmap`, `nikto`, `gobuster`, `dirb`, `wfuzz`,
 // `ffuf`, and the noisy nmap modes (`-sV`, `-A`). The unit tests for

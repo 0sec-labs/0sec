@@ -98,6 +98,11 @@ import {
   effectiveFallbackRps,
 } from "./scope/engagement-profile.js";
 import type { EngagementPosture } from "./scope/engagement-profile.js";
+import {
+  describeScopeGuards,
+  scopeRequiredRefusal,
+  SCOPE_GUARDS_INERT_EVENT,
+} from "./scope/scope-guard.js";
 import { resolveLocalTargetPath } from "./path-resolution.js";
 import { runMemSafetyScan } from "./stages/memsafety-scan.js";
 import type { MemSafetyScanOptions } from "./stages/memsafety-scan.js";
@@ -722,6 +727,26 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     }
   }
 
+  // Scope-guard visibility (pwnkit#133). `resolveScopeForConfig` — not the
+  // `scope` local above — is the single authority for what every agent's
+  // `ctx.scope` will be, because http_audit synthesises a host policy from
+  // `httpAuditAllowedHosts` instead of reading a file. When it returns
+  // undefined, the bash egress guards nested in `if (ctx.scope)` are inert for
+  // the whole scan.
+  //
+  // Fail-CLOSED here only when explicitly opted in. Fail-closed by default
+  // would break every scan mode we currently ship: the cloud dispatcher emits
+  // no `--scope` for any mode except http_audit, and most of those modes
+  // (source review, package audit, kernel review) have no live target to be
+  // out of scope of. So the default is fail-LOUD — the warning below plus the
+  // `scope_guards_inert` event — and `PWNKIT_REQUIRE_SCOPE=1`
+  // (`pwnkit scan --require-scope`) is the switch for engagements that must
+  // never run unscoped. Thrown before the DB opens so it costs nothing.
+  const scopeGuards = describeScopeGuards(!!resolveScopeForConfig(config));
+  if (!scopeGuards.active && scopeGuards.required) {
+    throw new Error(scopeRequiredRefusal("scan"));
+  }
+
   // Attribution-header config (pwnkit#216). Resolved by every per-stage
   // helper below via `buildAttributionForConfig(config)` — see that
   // function for the actual three-source merge. We pre-flight here so a
@@ -764,6 +789,31 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       timestamp: Date.now(),
     });
     emit({ type: "stage:start", stage: "discovery", message: "Resuming scan..." });
+  }
+
+  // Record the inert-guard fact in the scan's OWN event log (pwnkit#133), not
+  // just on stdout: cloud scans have no console to read, and the whole point
+  // of the issue is that a reviewer must be able to answer "did the bash
+  // egress guards run on this scan?" after the fact. Paired with the operator-
+  // facing warning so a local run can't miss it either.
+  if (!scopeGuards.active) {
+    db.logEvent({
+      scanId,
+      stage: "discovery",
+      eventType: SCOPE_GUARDS_INERT_EVENT,
+      payload: {
+        mode: config.mode ?? "default",
+        target: config.target,
+        inert_guards: scopeGuards.inertGuards,
+        remediation: "pass --scope <file>, or --require-scope to refuse unscoped runs",
+      },
+      timestamp: Date.now(),
+    });
+    emit({
+      type: "stage:start",
+      stage: "discovery",
+      message: `Warning: ${scopeGuards.message}`,
+    });
   }
 
   // Record the applied engagement posture in the scan's own event log, so the

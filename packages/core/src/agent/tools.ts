@@ -29,6 +29,7 @@ import {
   type WafResponseLike,
 } from "../scope/waf-detect.js";
 import { detectScannerBinary } from "../scope/scanner-binaries.js";
+import { describeScopeGuards, scopeRequiredRefusal } from "../scope/scope-guard.js";
 import { isWafEvasionLadderEnabled } from "../scope/engagement-profile.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
 import { sendPrompt, extractResponseText } from "../http.js";
@@ -3587,6 +3588,34 @@ export class ToolExecutor {
             error: `bash refused: ${hit.reason}`,
           };
         }
+      }
+    } else {
+      // ── No engagement scope: make the inert guards VISIBLE (pwnkit#133) ──
+      // Everything above is nested in `if (this.ctx.scope)`, and `ctx.scope`
+      // is undefined on every local run without `--scope` and on every cloud
+      // scan mode except http_audit (the dispatcher emits no `--scope`). The
+      // guards silently not running is the actual defect: a reviewer reading
+      // the block above concludes bash egress is checked when it is not.
+      //
+      // Fail-loud by default (see `agenticScan`'s boot warning for the
+      // reasoning), fail-closed under PWNKIT_REQUIRE_SCOPE. Here we record
+      // the destinations of any command that actually reaches the network
+      // with the guards off, so the scan event log answers "what did unscoped
+      // bash talk to?" instead of nothing at all.
+      const guards = describeScopeGuards(false);
+      if (guards.required) {
+        return { success: false, output: null, error: scopeRequiredRefusal("bash") };
+      }
+      const unscopedUrls = extractUrls(command);
+      const egressSegments = detectHttpEgressSegments(command);
+      if (unscopedUrls.length > 0 || egressSegments.length > 0) {
+        this.persistToolArtifact("bash", {
+          scope_guards: "inert",
+          inert_guards: guards.inertGuards,
+          unscoped_egress_urls: unscopedUrls.slice(0, 10),
+          unscoped_egress_segments: egressSegments.slice(0, 10).map((s) => s.slice(0, 120)),
+          note: guards.message,
+        });
       }
     }
 
