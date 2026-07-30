@@ -4,6 +4,14 @@
 // extraction + redirect-final-URL re-check in the crawler).
 export { loadScope, matchUrl, ScopePolicy, extractUrls } from "./scope/scope.js";
 export type { ScopeJson, ScopeMatch, ScopeRule } from "./scope/scope.js";
+export {
+  describeScopeGuards,
+  isScopeRequired,
+  scopeRequiredRefusal,
+  SCOPE_DEPENDENT_BASH_GUARDS,
+  SCOPE_GUARDS_INERT_EVENT,
+} from "./scope/scope-guard.js";
+export type { ScopeGuardStatus } from "./scope/scope-guard.js";
 
 // Attribution-header injection (pwnkit#216). Builds on scope ingestion:
 // configures per-engagement headers + UA override that get merged into

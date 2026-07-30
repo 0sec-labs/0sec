@@ -150,6 +150,7 @@ export function registerScanCommand(program: Command): void {
     .option("--auth <json>", "Auth credentials as JSON string or path to JSON file (types: bearer, cookie, basic, header)")
     .option("--scope <path>", "Path to a JSON scope file ({in_scope, out_of_scope} arrays of host / *.domain / cidr rules). Out-of-scope URLs return as ToolResult.error at every fetch site. See pwnkit#215.")
     .option("--allow-scanners", "Disable the generic-scanner suppression gate (pwnkit#217). When --scope is set, the agent refuses to spawn sqlmap/wpscan/nikto/gobuster/dirb/wfuzz/ffuf/`nmap -sV`/`nmap -A` by default; pass this flag only when the engagement explicitly permits generic-scanner traffic.", false)
+    .option("--require-scope", "Refuse to start unless an engagement scope is configured (pwnkit#133). The bash egress guards (out-of-scope URL refusal, http_audit path allowlist, generic-scanner suppression, auth-header injection) only run when a ScopePolicy is set; without this flag a scan with no --scope warns loudly and records a `scope_guards_inert` event but still runs. Equivalent to PWNKIT_REQUIRE_SCOPE=1.", false)
     .option(
       "--attribution-header <name=value>",
       "Attribution header to attach to in-scope outbound requests (pwnkit#216). Repeatable: pass `--attribution-header X-A=1 --attribution-header X-B=2`. Lower precedence than the scope file's `attribution.headers` block and PWNKIT_ATTRIBUTION_HEADERS env var. NEVER attached to out-of-scope traffic.",
@@ -318,6 +319,15 @@ export function registerScanCommand(program: Command): void {
       // time. See GitHub issue #82.
       if (opts.decoyDetection === false) {
         process.env.PWNKIT_FEATURE_DECOY_DETECTION = "0";
+      }
+
+      // --require-scope → fail closed when no engagement scope is configured
+      // (pwnkit#133). Same env-var mechanism as above: the core reads
+      // PWNKIT_REQUIRE_SCOPE at scan boot and at the bash tool, which is also
+      // how the cloud worker (which builds argv from a fixed table) can turn
+      // strictness on without an engine release.
+      if (opts.requireScope) {
+        process.env.PWNKIT_REQUIRE_SCOPE = "1";
       }
 
       // Parse --auth flag if provided
