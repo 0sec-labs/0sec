@@ -6,6 +6,9 @@ export default defineConfig({
     alias: pwnkitWorkspaceAliases,
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    // Root-level runner modules (honest-eval.ts, exploit-runner.ts) live beside
+    // the package root, outside the `src` rootDir tsc compiles; their tests sit
+    // next to them.
+    include: ["src/**/*.test.ts", "*.test.ts"],
   },
 });

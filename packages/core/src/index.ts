@@ -260,6 +260,17 @@ export type {
 // Exploit scan stage (agentic weaponize-to-root, injectable target executor).
 export { runExploitScan } from "./stages/exploit-scan.js";
 export type { ExploitTarget, ExploitExecutor, ExploitScanOptions, ExploitScanResult } from "./stages/exploit-scan.js";
+// Nonce-bound root proof + out-of-band module-load denial for the exploit lane.
+// A `uid=0` regex over model-influenced output is NOT a root proof; adapters
+// (ExploitGym) must verify their own proof artifact against the same challenge.
+export {
+  mintRootProofChallenge,
+  verifyRootProof,
+  rootProofInstructions,
+} from "./stages/exploit-stage-gate.js";
+export type { RootProofChallenge, RootProofVerdict, RootProofInput } from "./stages/exploit-stage-gate.js";
+export { detectOutOfBandModuleLoad } from "./triage/bug-attribution.js";
+export type { OutOfBandModuleLoad } from "./triage/bug-attribution.js";
 // Domain-agnostic exploit-chain model + web/app planner (#976). Generalizes
 // ADR-058's kernel chain-planner over the capability alphabet; the web instance
 // (ADR-059's deferred `WebPrimitiveNode`) composes SSRF→metadata→RCE, IDOR→ATO,
