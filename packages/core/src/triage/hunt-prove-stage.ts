@@ -33,6 +33,7 @@ import {
   type DiversifyOracle,
   type DifferentialOracle,
   type EscalationPreGate,
+  type ExploitabilityGateDeps,
   type ExploitabilityVerdict,
 } from "./exploitability-upgrade.js";
 import { makeKernelVmOracles, type KernelVmOraclesDeps } from "./exploitability-oracle-runner.js";
@@ -85,13 +86,13 @@ export interface HuntProveStageDeps {
   /**
    * The expensive weaponize→root call, gated by the PROVE stage's own
    * `shouldWeaponize` budget check. Left unset in a source-only hunt (there is no
-   * target executor to weaponize INTO); wired by callers that have one.
+   * target executor to weaponize INTO); wired by callers that have one, typically
+   * as `makeWeaponizeHook(runWeaponization)`.
+   *
+   * Deliberately aliased to the gate's own slot type so the two cannot drift —
+   * this stage only forwards it.
    */
-  weaponize?: (
-    finding: Finding,
-    candidate: HuntCandidate,
-    verdict: ExploitabilityVerdict,
-  ) => Promise<void>;
+  weaponize?: ExploitabilityGateDeps["weaponize"];
   minCleanBoots?: number;
   log?: (msg: string) => void;
 }

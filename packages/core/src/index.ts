@@ -1334,6 +1334,14 @@ export {
   foldExploitabilityIntoSeverity,
   shouldWeaponize,
   makeExploitabilityGate,
+  // The `weaponize` slot fillers: `makeWeaponizeHook` adapts any
+  // `runWeaponization`-shaped driver into the gate's dependency;
+  // `weaponizationProven` / `foldWeaponizationIntoVerdict` are the conservative
+  // fold (only a demonstrated arb-write/root rung may move a verdict).
+  makeWeaponizeHook,
+  weaponizationProven,
+  foldWeaponizationIntoVerdict,
+  WEAPONIZATION_PROVEN_BAR,
   reachableTargets,
   parseWidenTarget,
   primitiveBaselineClass,
@@ -1397,6 +1405,10 @@ export type {
   FoldSeverityOptions,
   PrimitiveResolver,
   ExploitabilityGateDeps,
+  WeaponizeContext,
+  WeaponizationOutcome,
+  WeaponizationRecord,
+  WeaponizationRunner,
 } from "./triage/exploitability-upgrade.js";
 
 // REAL kernel-VM adapter for the PROVE oracle — the prod observation source
