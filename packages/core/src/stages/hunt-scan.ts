@@ -198,8 +198,14 @@ export interface HuntScanOptions {
    * {@link composeGate} short-circuits on the first stage that rejects, this only
    * runs on skeptic+prover-CONFIRMED findings; it never rejects a reproduced bug
    * — it stamps an `ExploitabilityVerdict` and gates the expensive
-   * weaponize→root call (`runExploitScan`) on `upgraded || reachesPrivesc`. Build
-   * it with `makeExploitabilityGate(deps)` from triage/exploitability-upgrade.ts.
+   * weaponize→root call on `upgraded || reachesPrivesc`. Build it with
+   * `makeExploitabilityGate(deps)` from triage/exploitability-upgrade.ts (or
+   * `makeHuntProveStage` for the per-finding prod wiring). That gate's
+   * `weaponize` slot is filled with `makeWeaponizeHook(runWeaponization)`; left
+   * unfilled, the PROVE stage stamps the verdict and spends no weaponize budget.
+   * A weaponization result only ever RAISES the verdict, and only when the
+   * escalation ladder actually demonstrated an `arb-write`/`root` rung — an
+   * inconclusive run leaves the verdict untouched.
    * Additive — omit it and the gate is exactly the skeptic+prover pair as before.
    * Requires `opts.verify` to be set (there is nothing to run the PROVE stage on
    * otherwise); ignored with a warning when `opts.verify` is absent.
