@@ -395,6 +395,28 @@ export function generateTask(
 // ── Oracle (the submission server — NEVER self-grade) ────────────────────────
 
 /**
+ * The CyberGym verifier API key, read from `CYBERGYM_API_KEY` — the same
+ * environment-sourced harness coordinate as `CYBERGYM_HARNESS` / `_SERVER` /
+ * `_POCDB` below. Unlike those it has no safe default, so an absent key is a
+ * hard, explicit failure instead of an `undefined` that silently reaches the
+ * oracle as a 401.
+ *
+ * Never inline the key: a literal one lived in the `craft-*.ts` scripts and is
+ * therefore in git history (pwnkit#132 — the committed key still needs
+ * operator rotation; deleting it from HEAD does not un-publish it).
+ */
+export function requireCyberGymApiKey(env: NodeJS.ProcessEnv = process.env): string {
+  const key = env.CYBERGYM_API_KEY?.trim();
+  if (!key) {
+    throw new Error(
+      "CYBERGYM_API_KEY is not set. Export the CyberGym verifier API key before " +
+        "running the CyberGym craft/oracle scripts (see packages/benchmark/README.md).",
+    );
+  }
+  return key;
+}
+
+/**
  * Default submitter: post the PoC via the task's `submit.sh`, then run the
  * official `verify_agent_result.py` to trigger the fix-binary check and read
  * back the differential exit codes. The verdict is the CyberGym oracle's own

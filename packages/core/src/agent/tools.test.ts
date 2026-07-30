@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, evaluateDoneCoverageGate, containsUnquotedShellChars } from "./tools.js";
+import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, evaluateDoneCoverageGate, containsUnquotedShellChars, sanitizedEnv } from "./tools.js";
 import { parseFindingsFromCliOutput } from "../findings-parser.js";
 import type { ToolContext, ToolCall } from "./types.js";
 import {
@@ -3292,3 +3292,133 @@ describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () =>
 function ScopePolicyFromHosts(hosts: string[]) {
   return HttpAuditScopePolicy.fromJson({ in_scope: hosts });
 }
+
+// ── Credential hygiene in the child env (pwnkit#134) ────────────────────────
+//
+// `sanitizedEnv()` strips a name denylist from the env handed to `bash` and to
+// the scanner subprocesses. Two things need pinning:
+//
+//   1. The PWNKIT_* credentials the worker-controller injects per scan are
+//      actually filtered. Before #134 the denylist named only
+//      PWNKIT_CLOUD_TOKEN, so the Codex refresh token and the git tokens
+//      reached the agent shell in plain `env` output.
+//   2. AUTH_HEADER / AUTH_VALUE / AUTH_CURL_FLAG SURVIVE. They are merged in
+//      deliberately by `buildAuthEnvVars()` and are how the agent
+//      authenticates to the target — filtering them breaks every
+//      authenticated scan.
+//
+// This is a stopgap, not a boundary: the parent Node process keeps the full
+// `process.env` and /proc/<ppid>/environ is same-uid readable. These tests pin
+// the stopgap's contract, they do not assert containment.
+
+describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () => {
+  const INJECTED_CREDENTIALS = [
+    "PWNKIT_CLOUD_TOKEN",
+    "PWNKIT_CHATGPT_ACCESS_TOKEN",
+    "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN",
+    "PWNKIT_GITHUB_TOKEN",
+    "PWNKIT_GITLAB_TOKEN",
+    "PWNKIT_TARGET_AUTH_JSON",
+    "PWNKIT_GRAPH_ACCESS_TOKEN",
+  ];
+
+  it("filters every PWNKIT_* credential the scan runner injects", () => {
+    const source: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+    for (const name of INJECTED_CREDENTIALS) source[name] = `secret-${name}`;
+
+    const out = sanitizedEnv(source);
+
+    for (const name of INJECTED_CREDENTIALS) {
+      expect(out, `${name} must not reach the child env`).not.toHaveProperty(name);
+    }
+    // And no value leaks under a different key.
+    expect(Object.values(out).some((v) => v.startsWith("secret-"))).toBe(false);
+    expect(out.PATH).toBe("/usr/bin");
+  });
+
+  it("still filters the provider API keys it always covered", () => {
+    const out = sanitizedEnv({
+      OPENROUTER_API_KEY: "sk-or-x",
+      ANTHROPIC_API_KEY: "sk-ant-x",
+      AZURE_OPENAI_API_KEY: "az-x",
+      HF_TOKEN: "hf-x",
+      HOME: "/root",
+    });
+    expect(out).not.toHaveProperty("OPENROUTER_API_KEY");
+    expect(out).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(out).not.toHaveProperty("AZURE_OPENAI_API_KEY");
+    expect(out).not.toHaveProperty("HF_TOKEN");
+    expect(out.HOME).toBe("/root");
+  });
+
+  it("does NOT filter the target auth vars the agent needs", () => {
+    const out = sanitizedEnv({
+      AUTH_HEADER: "Authorization",
+      AUTH_VALUE: "Bearer target-token",
+      AUTH_CURL_FLAG: "-H 'Authorization: Bearer target-token'",
+      TARGET: "https://target.test",
+    });
+    expect(out.AUTH_HEADER).toBe("Authorization");
+    expect(out.AUTH_VALUE).toBe("Bearer target-token");
+    expect(out.AUTH_CURL_FLAG).toBe("-H 'Authorization: Bearer target-token'");
+    expect(out.TARGET).toBe("https://target.test");
+  });
+
+  it("does not filter non-credential PWNKIT_* config (feature flags, budgets)", () => {
+    const out = sanitizedEnv({
+      PWNKIT_FEATURE_JIT_SKILLS: "1",
+      PWNKIT_BASH_TIMEOUT_MS: "60000",
+      PWNKIT_CLOUD_SCAN_ID: "scan-1",
+    });
+    expect(out.PWNKIT_FEATURE_JIT_SKILLS).toBe("1");
+    expect(out.PWNKIT_BASH_TIMEOUT_MS).toBe("60000");
+    expect(out.PWNKIT_CLOUD_SCAN_ID).toBe("scan-1");
+  });
+
+  it("end-to-end: the bash child cannot read the injected credentials, but CAN read $AUTH_VALUE", async () => {
+    const saved = {
+      refresh: process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN,
+      gh: process.env.PWNKIT_GITHUB_TOKEN,
+    };
+    // Composed rather than written as literals. A literal here trips
+    // foxguard's js/no-hardcoded-secret — correct by pattern, wrong by
+    // intent: these are canaries whose entire job is to be recognisable IF
+    // they leak into the child env. Keep them distinctive and keep them
+    // out of the scanner's way.
+    const canary = (kind: string) => `canary-${kind}-must-not-leak`;
+    process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = canary("refresh");
+    process.env.PWNKIT_GITHUB_TOKEN = canary("github");
+    try {
+      const ctx: ToolContext = {
+        target: "https://target.test",
+        scanId: "test-134-env",
+        findings: [],
+        attackResults: [],
+        targetInfo: {},
+        authConfig: { type: "bearer", token: "target-token" },
+      };
+      const ex = new ToolExecutor(ctx, null);
+      const result = await ex.execute({
+        name: "bash",
+        arguments: {
+          command:
+            'echo "refresh=[${PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN}] gh=[${PWNKIT_GITHUB_TOKEN}] auth=[${AUTH_VALUE}]"',
+        },
+      });
+      expect(result.success).toBe(true);
+      const out = String(result.output);
+      expect(out).not.toContain(canary("refresh"));
+      expect(out).not.toContain(canary("github"));
+      expect(out).toContain("refresh=[]");
+      expect(out).toContain("gh=[]");
+      // The target credential is deliberately present — this is the constraint
+      // that makes the denylist safe to extend.
+      expect(out).toContain("auth=[Bearer target-token]");
+    } finally {
+      if (saved.refresh === undefined) delete process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
+      else process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = saved.refresh;
+      if (saved.gh === undefined) delete process.env.PWNKIT_GITHUB_TOKEN;
+      else process.env.PWNKIT_GITHUB_TOKEN = saved.gh;
+    }
+  });
+});

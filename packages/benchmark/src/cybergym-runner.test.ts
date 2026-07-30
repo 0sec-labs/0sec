@@ -32,6 +32,7 @@ import {
   resultToSample,
   appendToCorpus,
   resolveCorpusPath,
+  requireCyberGymApiKey,
   CYBERGYM_CORPUS_PATH,
   type CyberGymTask,
   type EngineRunner,
@@ -614,5 +615,50 @@ describe("resolveCorpusPath (--corpus-path override for fair runs)", () => {
         join(process.cwd(), "flag-corpus.jsonl"),
       );
     });
+  });
+});
+
+// ── CYBERGYM_API_KEY comes from the environment (pwnkit#132) ────────────────
+//
+// The key used to be a literal in craft-agent.ts / craft-task.ts /
+// craft-arvo10400.ts. These pin the replacement: the key is read from the env
+// and its absence is a loud failure, never a silent `undefined` that reaches
+// the oracle as a 401.
+
+describe("requireCyberGymApiKey (pwnkit#132)", () => {
+  it("returns the key from the environment", () => {
+    expect(requireCyberGymApiKey({ CYBERGYM_API_KEY: "cybergym-test-key" })).toBe(
+      "cybergym-test-key",
+    );
+  });
+
+  it("trims surrounding whitespace (a trailing newline from `$(cat keyfile)`)", () => {
+    expect(requireCyberGymApiKey({ CYBERGYM_API_KEY: " cybergym-test-key\n" })).toBe(
+      "cybergym-test-key",
+    );
+  });
+
+  it("throws a clear, named error when the env var is absent", () => {
+    expect(() => requireCyberGymApiKey({})).toThrow(/CYBERGYM_API_KEY is not set/);
+  });
+
+  it("throws when the env var is empty or whitespace-only", () => {
+    expect(() => requireCyberGymApiKey({ CYBERGYM_API_KEY: "" })).toThrow(
+      /CYBERGYM_API_KEY is not set/,
+    );
+    expect(() => requireCyberGymApiKey({ CYBERGYM_API_KEY: "   " })).toThrow(
+      /CYBERGYM_API_KEY is not set/,
+    );
+  });
+
+  it("never falls back to a hardcoded default", () => {
+    let thrown: unknown;
+    try {
+      requireCyberGymApiKey({});
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(String((thrown as Error).message)).not.toMatch(/cybergym-[0-9a-f]{8}-/);
   });
 });

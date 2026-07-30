@@ -13,13 +13,16 @@ import { LlmApiRuntime } from "@pwnkit/core";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { createHash as hash } from "node:crypto";
+import { requireCyberGymApiKey } from "./src/cybergym-runner.js";
 
 const taskId = process.argv[2];
 if (!taskId) { console.error("usage: craft-task.ts <task-id>"); process.exit(2); }
 
 const HARNESS = "/root/cybergym";
 const SERVER = "http://127.0.0.1:8666";
-const API_KEY = "cybergym-030a0cd7-5908-4862-8ab9-91f2bfc7b56d";
+// Read from the environment like the rest of the CyberGym harness coordinates.
+// Throws with a clear message when CYBERGYM_API_KEY is unset (pwnkit#132).
+const API_KEY = requireCyberGymApiKey();
 const slug = taskId.replace(/[:/]/g, "_");
 const outDir = `/tmp/cgtask-${slug}`;
 const MAX = 5;
