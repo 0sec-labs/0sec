@@ -487,6 +487,25 @@ pnpm --filter @pwnkit/benchmark cybergym \
   --harness-dir /root/cybergym --json
 ```
 
+### CyberGym harness environment
+
+Every CyberGym coordinate is read from the environment — nothing is
+hardcoded (pwnkit#132):
+
+| Env | Meaning | Default |
+|---|---|---|
+| `CYBERGYM_HARNESS` | the `sunblaze-ucb/cybergym` checkout | `/root/cybergym` |
+| `CYBERGYM_SERVER` | submission server URL | `http://127.0.0.1:8666` |
+| `CYBERGYM_POCDB` | `poc.db` path | `<harness>/server_poc/poc.db` |
+| `CYBERGYM_MASK_MAP` | `gen_task --mask-map` file | `<harness>/mask_map.json` |
+| `CYBERGYM_API_KEY` | verifier API key | **required, no default** |
+
+`CYBERGYM_API_KEY` has no default on purpose: `requireCyberGymApiKey()`
+(`src/cybergym-runner.ts`) throws when it is unset rather than letting an
+`undefined` reach the oracle as a 401. The `craft-*.ts` scripts read it
+through that helper. Never inline a key — a committed literal stays in git
+history forever.
+
 The full fair-run protocol (firewall, one-container-per-task, relaunch
 policy, Wilson-CI reporting) lives in the
 [runbook](../../../docs/operations/runbooks/cybergym-harness.md) and

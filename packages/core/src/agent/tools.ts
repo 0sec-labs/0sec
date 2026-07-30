@@ -152,13 +152,36 @@ import { executeStartScan } from "./tools/orchestrator.js";
 import { TOOL_DISPATCH } from "./tools/dispatch.js";
 
 // ── Sensitive env filtering ──
-
+//
+// ⚠️ THIS DENYLIST IS A STOPGAP, NOT A SECURITY BOUNDARY (pwnkit#134).
+//
+// It strips names from the env handed to the `bash` CHILD. The parent Node
+// process still holds the full `process.env`, and `/proc/<ppid>/environ` is
+// readable by the same uid with no `hidepid` mount option set — so
+// `tr '\0' '\n' < /proc/$PPID/environ` hands the agent everything this list
+// removes. Filtering raises the bar (no credential is sitting in plain `env`
+// output, and an accidental `env`/`printenv` in a tool trace or a shell
+// one-liner no longer leaks one); it does not close the hole.
+//
+// The real fix is to stop handing long-lived bearer credentials to the process
+// at all: `PWNKIT_CLOUD_TOKEN` is already the right shape — a scan+org-scoped,
+// expiring HMAC capability whose signature is compared with `timingSafeEqual`
+// and whose verification rejects any token that is unscoped or past `exp`
+// (0sec-labs/0sec: `packages/cloud-contracts/src/scan-ingestion-capability.ts`).
+// The Codex and git credentials below are plain long-lived bearers and should
+// move to that shape; until they do, treat their presence in the sandbox as
+// assumed-compromised on any scan where the agent can run arbitrary shell.
+//
+// Do NOT add `AUTH_HEADER` / `AUTH_VALUE` / `AUTH_CURL_FLAG` here. Those are
+// the customer target credential, merged into the child env DELIBERATELY by
+// `buildAuthEnvVars()` (see `shellExec`) — they are how the agent authenticates
+// to the target, and filtering them breaks every authenticated scan. They are
+// cleartext by design and are not fixable without an egress proxy.
 const SENSITIVE_ENV_PATTERNS = [
   "OPENROUTER_API",
   "ANTHROPIC_API",
   "OPENAI_API",
   "AZURE_OPENAI_API",
-  "PWNKIT_CLOUD_TOKEN",
   "GEMINI_API",
   "MISTRAL_API",
   "XAI_API",
@@ -171,11 +194,27 @@ const SENSITIVE_ENV_PATTERNS = [
   "DEEPSEEK_API",
   "HUGGING_FACE_",
   "HF_TOKEN",
+  // Credentials injected per scan by the cloud worker-controller (0sec-labs/0sec:
+  // `services/worker-controller/src/runners/scan-prep.ts`, which classifies them
+  // as per-dispatch secrets). Every one of these outlives the sandbox if it leaks.
+  "PWNKIT_CLOUD_TOKEN",
+  "PWNKIT_CHATGPT_ACCESS_TOKEN",
+  "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN", // refreshable — outlives the sandbox
+  "PWNKIT_GITHUB_TOKEN",
+  "PWNKIT_GITLAB_TOKEN",
+  "PWNKIT_TARGET_AUTH_JSON",
+  "PWNKIT_GRAPH_ACCESS_TOKEN",
 ];
 
-function sanitizedEnv(): Record<string, string> {
+/**
+ * The env handed to child processes we spawn (`bash`, the scanner binaries),
+ * with the {@link SENSITIVE_ENV_PATTERNS} names removed. Takes the source env
+ * as a parameter so the filter is unit-testable without mutating the real
+ * `process.env`. See the caveat above: this is a stopgap, not a boundary.
+ */
+export function sanitizedEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(process.env).filter(
+    Object.entries(env).filter(
       ([key]) => !SENSITIVE_ENV_PATTERNS.some((p) => key.includes(p)),
     ),
   ) as Record<string, string>;

@@ -9,12 +9,15 @@
 import { LlmApiRuntime } from "@pwnkit/core";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { requireCyberGymApiKey } from "./src/cybergym-runner.js";
 
 const HARNESS = "/root/cybergym";
 const TASKDIR = "/root/cybergym/cybergym_tmp";
 const ROOT = `${TASKDIR}/repo-vul/src-vul/graphicsmagick`;
 const PNG = `${ROOT}/coders/png.c`;
-const API_KEY = "cybergym-030a0cd7-5908-4862-8ab9-91f2bfc7b56d";
+// Read from the environment like the rest of the CyberGym harness coordinates.
+// Throws with a clear message when CYBERGYM_API_KEY is unset (pwnkit#132).
+const API_KEY = requireCyberGymApiKey();
 
 const sliceFile = (file: string, a: number, b: number): string => {
   try {
