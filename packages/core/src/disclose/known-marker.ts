@@ -18,10 +18,21 @@ import type { Finding } from "@pwnkit/shared";
 
 // ── Marker patterns ────────────────────────────────────────────────────────
 
-/** Regex that matches explicit TODO / FIXME / XXX markers in source text. */
+/** Regex matching the source markers which signal documented maintainer awareness. */
 const SOURCE_MARKER_RE =
-  /\b(TODO|FIXME|XXX)\b(?:[(:]\s*(.*?)\s*[):])?|(\bknown\s+limitation\b|\bdocumented\s+limitation\b)/gi;
+  /\b(TODO|FIXME|XXX|HACK)\b(?:[(:]\s*(.*?)\s*[):])?|(\bknown[ -](?:limitation|issue)s?\b|\bdocumented[ -]limitation\b)/gi;
 
+
+/**
+ * Fast boolean form of the same marker vocabulary used by {@link detectKnownMarkers}.
+ * Keep source-range gates and disclosure-draft warnings semantically aligned.
+ */
+export function hasKnownMarkerText(source: string): boolean {
+  SOURCE_MARKER_RE.lastIndex = 0;
+  const matched = SOURCE_MARKER_RE.test(source);
+  SOURCE_MARKER_RE.lastIndex = 0;
+  return matched;
+}
 /**
  * One recognized known-marker occurrence.
  *

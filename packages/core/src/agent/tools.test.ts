@@ -325,7 +325,7 @@ describe("ToolExecutor", () => {
   it("marks an exact cited source range with an in-tree maintainer marker", async () => {
     const root = mkdtempSync(join(tmpdir(), "pwnkit-known-marker-"));
     try {
-      writeFileSync(join(root, "parser.ts"), "// TODO: validate length\nparse(input);\n");
+      writeFileSync(join(root, "parser.ts"), "// HACK: temporary compatibility path\nparse(input);\n");
       ctx.scopePath = root;
       const result = await executor.execute({
         name: "save_finding",
@@ -333,7 +333,7 @@ describe("ToolExecutor", () => {
           title: "Parser length issue",
           severity: "high",
           category: "missing-validation",
-          description: "Cited source contains an explicit maintainer TODO.",
+          description: "Cited source contains an explicit maintainer HACK marker.",
           evidence_request: "parser.ts:1",
           evidence_response: "parse(input)",
           source_path: "parser.ts",
