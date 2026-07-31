@@ -45,19 +45,23 @@ describe("detectKnownMarkers", () => {
     expect(signal.markers[0].context).toContain("return JSON.parse");
   });
 
-  it("recognizes TODO, FIXME, XXX, and documented limitation phrasing", () => {
+  it("recognizes TODO, FIXME, XXX, HACK, and documented-awareness phrasing", () => {
     const signal = detectKnownMarkers([
       "// TODO: handle edge case",
       "// FIXME(security): validate URL",
       "// XXX: revisit before shipping",
+      "// HACK: temporary compatibility path",
       "This is a known limitation of the parser.",
+      "This is a known issue in the parser.",
       "This behavior is a documented limitation.",
     ].join("\n"));
     expect(signal.markers.map((marker) => marker.marker)).toEqual([
       "todo",
       "fixme",
       "xxx",
+      "hack",
       "known limitation",
+      "known issue",
       "documented limitation",
     ]);
   });

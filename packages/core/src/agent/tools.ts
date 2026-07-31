@@ -58,6 +58,7 @@ import {
   isSuggestionAcceptable,
   probeFileRefTarget,
 } from "../findings-parser.js";
+import { hasKnownMarkerText } from "../disclose/known-marker.js";
 import {
   probeS3Bucket,
   classifyTakeover,
@@ -1547,10 +1548,7 @@ function probeEvidence(resp: ProbeResponse): Record<string, unknown> {
 }
 
 // #674 Part E — only an exact, workspace-contained citation can establish
-// maintainer awareness. Narrative evidence and lower-case prose are never used.
-const IN_TREE_KNOWN_MARKER_TOKENS = /\b(?:TODO|FIXME|XXX|HACK)\b/;
-const IN_TREE_KNOWN_LIMITATION = /known[ -](?:limitation|issue)s?/i;
-
+// maintainer awareness. The vocabulary is shared with disclosure-draft warnings.
 function citedSourceHasKnownMarker(
   absolutePath: string,
   startLine: number,
@@ -1559,7 +1557,7 @@ function citedSourceHasKnownMarker(
   try {
     const lines = readFileSync(absolutePath, "utf8").split(/\r?\n/);
     const cited = lines.slice(startLine - 1, endLine).join("\n");
-    return IN_TREE_KNOWN_MARKER_TOKENS.test(cited) || IN_TREE_KNOWN_LIMITATION.test(cited);
+    return hasKnownMarkerText(cited);
   } catch {
     // The source annotation remains valid even when a concurrent edit makes
     // this best-effort read fail; never invent maintainer awareness.
