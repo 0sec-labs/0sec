@@ -20,6 +20,11 @@ export const features = {
   get loopDetection(): boolean { return env("PWNKIT_FEATURE_LOOP_DETECTION", true); },
   /** Compress middle messages when context exceeds 30k tokens */
   get contextCompaction(): boolean { return env("PWNKIT_FEATURE_CONTEXT_COMPACTION", true); },
+  /**
+   * Re-send the opaque, model-bound Responses output item array on the next
+   * turn. Default ON; set to 0 only for matched retained-reasoning A/B runs.
+   */
+  get retainedReasoning(): boolean { return env("PWNKIT_FEATURE_RETAINED_REASONING", true); },
   /** Exploit script templates in shell prompt (blind SQLi, SSTI, auth chain) */
   get scriptTemplates(): boolean { return env("PWNKIT_FEATURE_SCRIPT_TEMPLATES", true); },
   /** Dynamic vulnerability playbooks injected after recon phase */

@@ -171,6 +171,42 @@ describe("Responses reasoning echo-back", () => {
     });
   });
 
+  it("reconstructs matching items when retained reasoning is disabled for an A/B run", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    stubFetchCapturing(bodies, [completedEvent([])]);
+    const previous = process.env.PWNKIT_FEATURE_RETAINED_REASONING;
+    process.env.PWNKIT_FEATURE_RETAINED_REASONING = "0";
+    try {
+      await rt.executeNative("sys", [
+        { role: "user", content: [{ type: "text", text: "go" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I should list the directory." },
+            { type: "tool_use", id: "call_1", name: "list_dir", input: { path: "." } },
+          ],
+          providerRaw: {
+            provider: "openai",
+            model: "gpt-5.5",
+            wireApi: "responses",
+            output: [REASONING_ITEM, FUNCTION_CALL_ITEM],
+          },
+        },
+      ], []);
+    } finally {
+      if (previous === undefined) delete process.env.PWNKIT_FEATURE_RETAINED_REASONING;
+      else process.env.PWNKIT_FEATURE_RETAINED_REASONING = previous;
+    }
+
+    const input = bodies[0]!.input as Array<Record<string, unknown>>;
+    expect(input.some((item) => item.type === "reasoning")).toBe(false);
+    expect(input).toContainEqual({
+      role: "assistant",
+      content: [{ type: "output_text", text: "I should list the directory." }],
+    });
+    expect(input).toContainEqual(FUNCTION_CALL_ITEM);
+  });
+
   it("falls back to reconstruction when the model differs (ensemble / model switch)", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     stubFetchCapturing(bodies, [completedEvent([])]);
