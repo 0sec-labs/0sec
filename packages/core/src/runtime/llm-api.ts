@@ -2012,11 +2012,32 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           // requests. Only the loops with no context strategy of their own ask
           // for it — the native loop compacts client-side and must not be
           // compacted twice.
+          //
+          // SHAPE IS LOAD-BEARING and was verified live against
+          // chatgpt.com/backend-api/codex/responses, because this backend
+          // rejects unknown and mis-typed body fields rather than ignoring
+          // them (a bogus field returns
+          // `400 Unsupported parameter: <name>`):
+          //   [{"type":"compaction","compact_threshold":N}]  → 200
+          //   {"compaction":{"compact_threshold":N}}         → 400 expected an
+          //                                                    array of objects
+          //   [{"compaction":{...}}]                         → 400 missing
+          //                                                    'context_management[0].type'
+          //   []                                             → 400 minimum
+          //                                                    length 1
+          // The object form is what the public Responses docs show; it is not
+          // what this backend takes. Never emit the key with an empty array —
+          // that is a hard 400, hence the guard rather than a `.filter()`.
+          //
+          // Only the two stages that opt in send this, and they run on the
+          // Codex backend. The shape is UNVERIFIED on plain OpenAI / Azure
+          // Responses; if a caller ever enables it there, verify with a live
+          // request before trusting it.
           ...(this.serverCompactionTokens
             ? {
-                context_management: {
-                  compaction: { compact_threshold: this.serverCompactionTokens },
-                },
+                context_management: [
+                  { type: "compaction", compact_threshold: this.serverCompactionTokens },
+                ],
               }
             : {}),
         };

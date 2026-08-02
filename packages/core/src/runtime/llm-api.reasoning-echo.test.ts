@@ -306,19 +306,31 @@ describe("server-side compaction (opt-in)", () => {
     return bodies[0]!;
   }
 
+  // The key must be ABSENT when compaction is off: `context_management: []` is
+  // a hard 400 (`empty array. Expected an array with minimum length 1`), and
+  // this backend rejects unknown/mis-typed fields rather than ignoring them.
   it("is off unless asked for — the native loop compacts client-side", async () => {
     expect(await bodyFor()).not.toHaveProperty("context_management");
   });
 
-  it("sends the requested compact_threshold", async () => {
-    expect((await bodyFor(150_000)).context_management).toEqual({
-      compaction: { compact_threshold: 150_000 },
-    });
+  // Array-of-tagged-objects, verified live against the Codex backend. The
+  // object form the public docs show returns
+  // `400 Invalid type for 'context_management': expected an array of objects`.
+  it("sends the array form with an explicit type and the requested threshold", async () => {
+    expect((await bodyFor(150_000)).context_management).toEqual([
+      { type: "compaction", compact_threshold: 150_000 },
+    ]);
   });
 
   it("clamps up to the API minimum of 1000", async () => {
-    expect((await bodyFor(10)).context_management).toEqual({
-      compaction: { compact_threshold: 1000 },
-    });
+    expect((await bodyFor(10)).context_management).toEqual([
+      { type: "compaction", compact_threshold: 1000 },
+    ]);
+  });
+
+  it("never emits the object form the public docs describe", async () => {
+    const sent = (await bodyFor(150_000)).context_management;
+    expect(Array.isArray(sent)).toBe(true);
+    expect(sent).not.toHaveProperty("compaction");
   });
 });
