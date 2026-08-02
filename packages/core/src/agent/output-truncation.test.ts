@@ -122,7 +122,7 @@ describe("formatTruncated", () => {
 
   it("prepends the original token count and line count when truncated", () => {
     const text = Array.from({ length: 40 }, () => "z".repeat(49)).join("\n"); // 2000 bytes, 40 lines
-    const out = formatTruncated(text, { limit: 100, mode: "bytes" });
+    const out = formatTruncated(text, { limit: 1_000, mode: "bytes" });
     const lines = out.split("\n");
     expect(lines[0]).toBe("Warning: truncated output (original token count: 500)");
     expect(lines[1]).toBe("Total output lines: 40");
@@ -137,5 +137,10 @@ describe("formatTruncated", () => {
     );
     expect(out.endsWith("FAILED: exit code 1")).toBe(true);
     expect(out).toContain("starting");
+  });
+
+  it("keeps the rendered output within the requested model-visible budget", () => {
+    const out = formatTruncated("x".repeat(10_000), { limit: 100, mode: "tokens" });
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(100 * BYTES_PER_TOKEN);
   });
 });
