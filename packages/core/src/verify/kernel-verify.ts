@@ -65,7 +65,6 @@ import {
   extractKernelFindingMetadata,
   selectSubsystemSourceSlice,
 } from "./kernel-prompts.js";
-import type { SpecGenOptions } from "../kernel/spec-gen.js";
 import { checkAlreadyFixed } from "../kernel/fix-commit-intel.js";
 import type {
   WeaponizationSummary,
@@ -266,12 +265,6 @@ export interface KernelVerifyOptions {
    * `syzlangSpecContext` to do anything; absent ⇒ the block is silently skipped.
    */
   specGenRuntime?: NativeRuntime;
-  /**
-   * Optional validation configuration for the generated syzlang spec. Pass
-   * `createSyzCheckValidator()` here to add semantic validation; absent keeps
-   * the current structural-only default and never changes verification gates.
-   */
-  specGenOptions?: SpecGenOptions;
 }
 
 /**
@@ -579,7 +572,6 @@ export async function verifyStaticKernelFinding(
           metadata,
           subsystemSlice: sourceSlice,
           llm: opts.specGenRuntime,
-          ...(opts.specGenOptions ? { specGenOptions: opts.specGenOptions } : {}),
         })
       : undefined;
 
