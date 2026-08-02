@@ -3432,17 +3432,25 @@ describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () 
     expect(out.PATH).toBe("/usr/bin");
   });
 
-  it("still filters the provider API keys it always covered", () => {
+  it("filters provider and provider-adjacent API keys", () => {
     const out = sanitizedEnv({
       OPENROUTER_API_KEY: "sk-or-x",
       ANTHROPIC_API_KEY: "sk-ant-x",
       AZURE_OPENAI_API_KEY: "az-x",
+      Z_AI_API_KEY: "zai-x",
+      KIMI_API_KEY: "kimi-x",
+      WPSCAN_API_TOKEN: "wpscan-x",
+      GITHUB_TOKEN: "github-x",
       HF_TOKEN: "hf-x",
       HOME: "/root",
     });
     expect(out).not.toHaveProperty("OPENROUTER_API_KEY");
     expect(out).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(out).not.toHaveProperty("AZURE_OPENAI_API_KEY");
+    expect(out).not.toHaveProperty("Z_AI_API_KEY");
+    expect(out).not.toHaveProperty("KIMI_API_KEY");
+    expect(out).not.toHaveProperty("WPSCAN_API_TOKEN");
+    expect(out).not.toHaveProperty("GITHUB_TOKEN");
     expect(out).not.toHaveProperty("HF_TOKEN");
     expect(out.HOME).toBe("/root");
   });
@@ -3515,6 +3523,39 @@ describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () 
       else process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = saved.refresh;
       if (saved.gh === undefined) delete process.env.PWNKIT_GITHUB_TOKEN;
       else process.env.PWNKIT_GITHUB_TOKEN = saved.gh;
+    }
+  });
+
+  it("does not inherit provider credentials into run_command processes", async () => {
+    const envName = "Z_AI_API_KEY";
+    const previous = process.env[envName];
+    const canary = "canary-zai-must-not-leak";
+    const scopePath = mkdtempSync(join(tmpdir(), "pwnkit-credential-pipeline-"));
+    process.env[envName] = canary;
+    try {
+      const ex = new ToolExecutor(
+        {
+          target: "https://target.test",
+          scanId: "test-134-pipeline-env",
+          findings: [],
+          attackResults: [],
+          targetInfo: {},
+          scopePath,
+        },
+        null,
+      );
+      const result = await ex.execute({
+        name: "run_command",
+        arguments: {
+          command: `awk 'BEGIN { print ENVIRON["${envName}"] }'`,
+        },
+      });
+      expect(result.success).toBe(true);
+      expect(String(result.output)).not.toContain(canary);
+    } finally {
+      rmSync(scopePath, { recursive: true, force: true });
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
     }
   });
 });

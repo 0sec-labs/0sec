@@ -8,6 +8,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { sanitizedEnv } from "./sanitized-env.js";
 
 export interface PtySession {
   id: string;
@@ -51,7 +52,7 @@ export class PtySessionManager {
 
     const proc = spawn("/bin/bash", ["--norc", "--noprofile", "-i"], {
       cwd,
-      env: { ...process.env, ...opts?.env, TERM: "dumb" },
+      env: { ...sanitizedEnv(), ...opts?.env, TERM: "dumb" },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
