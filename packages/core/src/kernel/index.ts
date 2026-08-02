@@ -102,13 +102,6 @@ export type {
   SyzlangValidationResult,
 } from "./spec-gen.js";
 
-// Concrete opt-in syzkaller semantic validation adapter — the `syz-check`
-// follow-up spec-gen.ts promises. Builds on the SyzlangValidator contract.
-// Pass the return value of `createSyzCheckValidator` as `validator` in
-// SpecGenOptions to opt in. Validation only — does not confirm findings.
-export { createSyzCheckValidator, assertSemanticResult, statusMessage, defaultSyzProcessExecutor } from "./syz-check-validator.js";
-export type { SyzkallerSemanticResult, SyzProcessExecutor, SyzExecResult, SyzkallerSemanticOptions } from "./syz-check-validator.js";
-
 // SyzBridge-style upstream PoC → downstream distro/LTS adaptation (NDSS'24).
 // Analysis-only: produces a config/env delta + precondition plan (and optional
 // LLM-suggested source adjustments) to run an upstream reproducer on an older
