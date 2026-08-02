@@ -1022,8 +1022,15 @@ export async function runNativeAgentLoop(
       break;
     }
 
-    // Append assistant response
-    state.messages.push({ role: "assistant", content: result.content });
+    // Append assistant response. `providerRaw` rides along so the next request
+    // can replay this turn's reasoning items verbatim instead of dropping them
+    // (see ProviderRawOutput); the runtime only replays it back to the same
+    // provider+model+wireApi that produced it.
+    state.messages.push({
+      role: "assistant",
+      content: result.content,
+      ...(result.providerRaw ? { providerRaw: result.providerRaw } : {}),
+    });
 
     // Extract tool_use blocks
     const textBlocks = result.content.filter(

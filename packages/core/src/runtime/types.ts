@@ -52,9 +52,41 @@ export interface RuntimeContext {
 
 // ── Native Runtime (structured messages + tool_use) ──
 
+/**
+ * The provider's own response items, carried VERBATIM so they can be echoed
+ * back on the next turn.
+ *
+ * This exists for retained reasoning on the Responses API. Reasoning items are
+ * opaque (`encrypted_content`) and must be replayed exactly, in order, with the
+ * item they produced immediately after them — a reconstructed twin trips
+ * `400 Item 'rs_…' of type 'reasoning' was provided without its required
+ * following item`. Keeping the raw array and splicing it back whole satisfies
+ * the ordering rule by construction, and keeps `NativeContentBlock` free of
+ * provider-specific shapes.
+ *
+ * `provider` / `model` / `wireApi` are the identity this array is bound to.
+ * Encrypted reasoning is only valid for the model that produced it, so the
+ * consumer MUST compare all three before replaying and fall back to
+ * reconstruction on any mismatch. That comparison is also the model-switch
+ * strip point (ensemble runs, mid-conversation re-detection).
+ */
+export interface ProviderRawOutput {
+  provider: string;
+  model: string;
+  wireApi: string;
+  /** The provider's `response.output` array, untouched. */
+  output: unknown[];
+}
+
 export interface NativeMessage {
   role: "user" | "assistant";
   content: NativeContentBlock[];
+  /**
+   * Assistant turns only. Opaque provider items for this turn — see
+   * {@link ProviderRawOutput}. Plain JSON, so it survives the session
+   * persist/resume round-trip.
+   */
+  providerRaw?: ProviderRawOutput;
 }
 
 export type NativeContentBlock =
@@ -95,6 +127,13 @@ export interface NativeRuntimeResult {
   };
   durationMs: number;
   error?: string;
+  /**
+   * The provider's raw response items for this turn, when the wire format has
+   * items worth replaying (Responses API). Callers that maintain a message
+   * history should carry this onto the assistant message they push — see
+   * {@link ProviderRawOutput}.
+   */
+  providerRaw?: ProviderRawOutput;
 }
 
 export interface NativeStreamCallbacks {
