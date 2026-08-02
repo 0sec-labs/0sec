@@ -740,6 +740,7 @@ export interface KernelExploitState {
 export type KernelEscalationRung =
   | "none"
   | "attempted"
+  | "triggered"
   | "reclaim"
   | "arb-read"
   | "arb-write"
