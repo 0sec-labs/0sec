@@ -27,6 +27,7 @@ describe("installBenchmarkJsonHandling", () => {
   it("returns a concise 400 for malformed JSON and preserves subsequent requests", async () => {
     const url = await startApp();
 
+    // foxguard: ignore[js/no-ssrf] URL is an ephemeral loopback server from startApp().
     const malformed = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -35,6 +36,7 @@ describe("installBenchmarkJsonHandling", () => {
     expect(malformed.status).toBe(400);
     await expect(malformed.json()).resolves.toEqual({ error: "malformed_json" });
 
+    // foxguard: ignore[js/no-ssrf] URL is an ephemeral loopback server from startApp().
     const valid = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
