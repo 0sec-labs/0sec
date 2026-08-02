@@ -15,6 +15,17 @@ export interface RuntimeConfig {
   onThinking?: (text: string) => void;
   /** JSON Schema for structured output (Claude --json-schema, Codex --output-schema) */
   outputSchema?: Record<string, unknown>;
+  /**
+   * Opt in to SERVER-SIDE context compaction (Responses API only) at this
+   * prompt-token threshold. Values below 1000 are clamped up to the API
+   * minimum; omit to leave compaction off.
+   *
+   * Deliberately opt-in: the native agent loop runs its own structured
+   * compaction (`native-loop.ts`, which preserves credential-bearing messages
+   * verbatim) and must not be compacted twice. It is for the loops that have no
+   * context strategy at all — `craft-scan` and `exploit-scan`.
+   */
+  serverCompactionTokens?: number;
 }
 
 export interface RuntimeResult {

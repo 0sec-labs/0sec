@@ -545,6 +545,29 @@ const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_DEFAULT_MODEL = "gpt-5.5";
 
 /**
+ * Server-side compaction threshold, in prompt tokens, for the long agent loops
+ * that have no context strategy of their own (`craft-scan`: 120 steps,
+ * `exploit-scan`: 90 steps — both grow monotonically until the provider limit
+ * or the wall-clock deadline kills the run).
+ *
+ * Why 150,000:
+ *
+ *  - It must leave room for one more full turn AFTER compaction fires. The
+ *    gpt-5 family takes ~272k input tokens, and a single craft/exploit turn can
+ *    add the system prompt + tool schemas + several 10,000-token tool outputs.
+ *    150k leaves ~120k of headroom, so a compaction that lands mid-turn cannot
+ *    be immediately overrun.
+ *  - It must be high enough that a run which finishes in a handful of steps
+ *    never pays for one. Compaction rewrites the prefix, which voids prompt
+ *    caching for the turn after it — worth it once a transcript is genuinely
+ *    large, pure loss on a short run.
+ *  - It is well above the native loop's 77k client-side threshold on purpose:
+ *    that path preserves credential-bearing messages verbatim and is the better
+ *    strategy where it exists. This is the fallback for loops that have none.
+ */
+export const LOOP_SERVER_COMPACTION_TOKENS = 150_000;
+
+/**
  * Process-lifetime session id used as the `session_id` header for the
  * chatgpt-codex provider when no scan-specific id is in scope (e.g.
  * the local CLI's `pwnkit audit foo --runtime api` path without a
@@ -1123,6 +1146,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private wireApi: WireApi;
   private reasoningEffort?: string;
   private azureConfig: ReturnType<typeof parseCodexAzureConfig>;
+  private serverCompactionTokens?: number;
 
   constructor(config: RuntimeConfig) {
     this.config = config;
@@ -1135,6 +1159,11 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     this.baseUrl = detected.baseUrl;
     this.wireApi = detected.wireApi;
     this.reasoningEffort = process.env.PWNKIT_REASONING_EFFORT ?? detected.reasoningEffort;
+    // `compact_threshold` has an API minimum of 1000; clamp rather than send a
+    // value the server will reject on the hot path of every request.
+    this.serverCompactionTokens = config.serverCompactionTokens !== undefined
+      ? Math.max(1000, config.serverCompactionTokens)
+      : undefined;
     const requestedModel = config.model ?? process.env.PWNKIT_MODEL;
     // "free" is a special alias for the free OpenRouter model
     if (requestedModel === "free" && this.provider === "openrouter") {
@@ -1967,6 +1996,18 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
                   summary: "auto",
                 },
                 include: ["reasoning.encrypted_content"],
+              }
+            : {}),
+          // Server-side compaction, opt-in per runtime. ZDR-friendly: it works
+          // with `store: false`, so nothing is retained server-side between
+          // requests. Only the loops with no context strategy of their own ask
+          // for it — the native loop compacts client-side and must not be
+          // compacted twice.
+          ...(this.serverCompactionTokens
+            ? {
+                context_management: {
+                  compaction: { compact_threshold: this.serverCompactionTokens },
+                },
               }
             : {}),
         };

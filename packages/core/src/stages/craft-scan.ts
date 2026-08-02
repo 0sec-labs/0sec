@@ -35,7 +35,7 @@ import { tmpdir } from "node:os";
 import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { estimateCost } from "@pwnkit/shared";
-import { LlmApiRuntime } from "../runtime/llm-api.js";
+import { LlmApiRuntime, LOOP_SERVER_COMPACTION_TOKENS } from "../runtime/llm-api.js";
 import { formatTruncated, truncateMiddle } from "../agent/output-truncation.js";
 import { lookupFormatPrimer, knownFormatIds } from "./format-knowledge.js";
 import { PROVER_TOOL_NAMES, listProverPluginIds, proverToolDefs, runProverTool } from "./prover/index.js";
@@ -468,7 +468,15 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       warnings.push(`craft: wall-clock deadline reached (${opts.deadlineMs}ms) after ${steps} step(s) — exiting gracefully with accumulated work`);
       break;
     }
-    const rt = new LlmApiRuntime({ type: "api", ...(opts.model ? { model: opts.model } : {}), timeout: opts.llmTimeoutMs ?? 240_000 });
+    // `serverCompactionTokens`: this loop appends to `messages` for up to 120
+    // steps and never prunes. Server-side compaction is the only context
+    // strategy it has.
+    const rt = new LlmApiRuntime({
+      type: "api",
+      ...(opts.model ? { model: opts.model } : {}),
+      timeout: opts.llmTimeoutMs ?? 240_000,
+      serverCompactionTokens: LOOP_SERVER_COMPACTION_TOKENS,
+    });
     let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown; providerRaw?: unknown };
     try {
       res = await rt.executeNative(system, messages as never, tools as never,
