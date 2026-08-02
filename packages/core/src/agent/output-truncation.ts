@@ -139,12 +139,33 @@ export function truncateMiddle(text: string, options: TruncateOptions = {}): Tru
  * verbatim with no header.
  */
 export function formatTruncated(text: string, policy: TruncateOptions = {}): string {
-  const result = truncateMiddle(text, policy);
-  if (!result.truncated) return result.text;
-  return [
-    `Warning: truncated output (original token count: ${result.originalTokens})`,
-    `Total output lines: ${result.originalLines}`,
+  const initial = truncateMiddle(text, policy);
+  if (!initial.truncated) return initial.text;
+
+  const limit = policy.limit ?? DEFAULT_TOOL_OUTPUT_TOKENS;
+  const mode = policy.mode ?? "tokens";
+  const byteBudget = Math.max(0, mode === "tokens" ? limit * BYTES_PER_TOKEN : limit);
+  const header = [
+    `Warning: truncated output (original token count: ${initial.originalTokens})`,
+    `Total output lines: ${initial.originalLines}`,
     "",
-    result.text,
   ].join("\n");
+  const headerBytes = Buffer.byteLength(header, "utf8");
+
+  // The marker inserted by truncateMiddle is model-visible too. Reserve the
+  // header first, then tighten the retained body until the final rendering
+  // fits the caller's advertised cap.
+  if (headerBytes >= byteBudget) return headSlice(header, byteBudget);
+  let bodyBudget = byteBudget - headerBytes;
+  let body = truncateMiddle(text, { mode: "bytes", limit: bodyBudget });
+  let rendered = `${header}\n${body.text}`;
+  while (Buffer.byteLength(rendered, "utf8") > byteBudget && bodyBudget > 0) {
+    bodyBudget = Math.max(0, bodyBudget - (Buffer.byteLength(rendered, "utf8") - byteBudget));
+    body = truncateMiddle(text, { mode: "bytes", limit: bodyBudget });
+    rendered = `${header}\n${body.text}`;
+  }
+
+  return Buffer.byteLength(rendered, "utf8") <= byteBudget
+    ? rendered
+    : headSlice(rendered, byteBudget);
 }
