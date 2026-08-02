@@ -244,6 +244,180 @@ describe("assembleBundleIndex (#168 spec columns)", () => {
     const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
     expect(md).toContain("Issue with \\| pipe in title");
   });
+
+  it("includes sha256 artifact provenance from verification_result.evidence_artifacts", () => {
+    const finding = baseFinding({
+      id: "prov-001",
+      verification_result: {
+        finding_id: "prov-001",
+        status: "not_reproduced",
+        mode: "deterministic",
+        engine_version: "1.0",
+        started_at: "2026-01-01T00:00:00Z",
+        completed_at: "2026-01-01T00:00:01Z",
+        duration_ms: 1000,
+        commands: [],
+        assertions: [],
+        evidence_artifacts: [
+          { kind: "stdout", path: "artifacts/x", sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", bytes: 10 },
+          { kind: "screenshot", path: "artifacts/y.png", sha256: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", bytes: 20 },
+        ],
+        engine_metadata: { os: "linux", arch: "x64" },
+      },
+    });
+    const e = entry({ finding, id: finding.id, title: finding.title });
+    const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
+    expect(md).toContain("| provenance |");
+    expect(md).toContain("`abcdef012345…`");
+    expect(md).not.toContain("fedcba987654");
+  });
+
+  it("includes provenance from researchEvidence[].artifacts as single-hash cell", () => {
+    const finding = baseFinding({
+      id: "prov-002",
+      researchEvidence: [
+        {
+          schemaVersion: 1,
+          evidenceId: "ev-002",
+          findingId: "prov-002",
+          target: { kind: "repo", locator: "acme/foo" },
+          provenance: { producer: "adapter", runId: "r1", startedAt: "2026-01-01T00:00:00Z" },
+          grade: "reproduced",
+          novelty: { state: "novel", sources: ["cve"], scanned: 1 },
+          artifacts: [
+            { kind: "capture", path: "trace.bin", sha256: "1111111111111111111111111111111111111111111111111111111111111111", bytes: 50 },
+          ],
+        },
+      ],
+    });
+    const e = entry({ finding, id: finding.id, title: finding.title });
+    const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
+    expect(md).toContain("`111111111111…`");
+  });
+
+  it("shows the first hash and retained count when both sources supply artifacts", () => {
+    const finding = baseFinding({
+      id: "prov-003",
+      verification_result: {
+        finding_id: "prov-003",
+        status: "not_reproduced",
+        mode: "deterministic",
+        engine_version: "1.0",
+        started_at: "2026-01-01T00:00:00Z",
+        completed_at: "2026-01-01T00:00:01Z",
+        duration_ms: 1000,
+        commands: [],
+        assertions: [],
+        evidence_artifacts: [
+          { kind: "stdout", path: "a.txt", sha256: "a000000000000000000000000000000000000000000000000000000000000001" },
+        ],
+        engine_metadata: { os: "linux", arch: "x64" },
+      },
+      researchEvidence: [
+        {
+          schemaVersion: 1,
+          evidenceId: "ev-003",
+          findingId: "prov-003",
+          target: { kind: "repo", locator: "acme/foo" },
+          provenance: { producer: "adapter", runId: "r1", startedAt: "2026-01-01T00:00:00Z" },
+          grade: "reproduced",
+          novelty: { state: "novel", sources: ["cve"], scanned: 1 },
+          artifacts: [
+            { kind: "cap", path: "x.bin", sha256: "b000000000000000000000000000000000000000000000000000000000000002" },
+            { kind: "cap", path: "y.bin", sha256: "c000000000000000000000000000000000000000000000000000000000000003" },
+          ],
+        },
+      ],
+    });
+    const e = entry({ finding, id: finding.id, title: finding.title });
+    const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
+    expect(md).toContain("`a00000000000…` +2");
+  });
+
+  it("shows em-dash in provenance column when no evidence artifacts are present", () => {
+    const e = entry();
+    const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
+    const lines = md.split("\n").filter((l) => l.includes(" keep |"));
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    expect(lines[0]).toMatch(/\| — \|$/);
+  });
+
+  it("rejects malformed sha256 hex strings (not 64 hex chars)", () => {
+    // Build with invalid sha256 — must be duck-typed since these aren't valid
+    // zod-validated VerificationResult/ResearchEvidenceEnvelope objects.
+    const finding = baseFinding({ id: "prov-badhash" });
+    (finding as unknown as Record<string, unknown>).verification_result = {
+      evidence_artifacts: [
+        { sha256: "abc" }, // too short
+        { sha256: "00000000000000000000000000000000000000000000000000000000000000ZZ" }, // non-hex
+      ],
+    };
+    (finding as unknown as Record<string, unknown>).researchEvidence = [
+      {
+        artifacts: [{ sha256: "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg" }],
+      },
+    ];
+    const e = entry({ finding, id: finding.id, title: finding.title });
+    const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
+    const lines = md.split("\n").filter((l) => l.includes(" keep |"));
+    expect(lines[0]).toMatch(/\| — \|$/);
+  });
+
+  it("redacts sensitive header values from the title column", () => {
+    const finding = baseFinding({
+      id: "secret-leak-001",
+      title: `Authorization: Bearer ${"a".repeat(90)}`,
+    });
+    const e = entry({ finding, title: finding.title });
+    const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
+    // The JWT payload is redacted in the title displayed in INDEX.md.
+    expect(md).toContain("<REDACTED-Authorization>");
+    expect(md).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+  });
+
+  it("redacts sensitive values from the dropped reason column", () => {
+    const finding = baseFinding({
+      id: "drop-secret-001",
+      title: "Token in drop reason",
+    });
+    const e = entry({
+      finding,
+      title: finding.title,
+      patchStatus: "fixed",
+      filingState: "drop",
+      dropReason: "bearer token Bearer abcdef-secret found in logs",
+    });
+    const md = assembleBundleIndex([e], { scanIds: ["scan-x"] });
+    expect(md).toContain("<REDACTED-Bearer>");
+    expect(md).not.toContain("abcdef-secret");
+  });
+
+  it("preserves deterministic index output with supplied generatedAt, unchanged by provenance fields", () => {
+    const ts = new Date("2026-04-27T12:00:00Z");
+    const sha = "a".repeat(64);
+    const vr = {
+      finding_id: "det-prov-001",
+      status: "not_reproduced" as const,
+      mode: "deterministic" as const,
+      engine_version: "1.0",
+      started_at: "2026-01-01T00:00:00Z",
+      completed_at: "2026-01-01T00:00:01Z",
+      duration_ms: 1000,
+      commands: [],
+      assertions: [],
+      evidence_artifacts: [{ kind: "stdout", path: "x", sha256: sha, bytes: 1 }],
+      engine_metadata: { os: "linux", arch: "x64" as const },
+    };
+    // Run twice with identical inputs — must produce identical output.
+    const finding1 = baseFinding({ id: "det-prov-001", verification_result: vr });
+    const finding2 = baseFinding({ id: "det-prov-001", verification_result: vr });
+    const e1 = entry({ finding: finding1, id: finding1.id, title: finding1.title });
+    const e2 = entry({ finding: finding2, id: finding2.id, title: finding2.title });
+    const md1 = assembleBundleIndex([e1], { scanIds: ["scan-aaaa"], generatedAt: ts });
+    const md2 = assembleBundleIndex([e2], { scanIds: ["scan-aaaa"], generatedAt: ts });
+    expect(md1).toBe(md2);
+    expect(md1).toContain("- Generated: 2026-04-27T12:00:00.000Z");
+  });
 });
 
 // ── formatDroppedReason / droppedFilename ───────────────────────────────────

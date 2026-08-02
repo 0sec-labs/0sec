@@ -25,6 +25,7 @@
 import type { Finding } from "@pwnkit/shared";
 import type { PatchStatus, ReverifyResult } from "./canary.js";
 import type { PocExecutionReport, PocOverallVerdict } from "./poc-runtime.js";
+import { redactSensitiveHeaders } from "./template.js";
 
 /** Whether a finding should land in the bundle, _dropped/, or be flagged. */
 export type FilingState = "keep" | "drop" | "needs-review";
@@ -167,10 +168,40 @@ export function formatDroppedReason(args: {
 }
 
 /**
+ * Extract SHA-256 hex digests from a finding's already-attached evidence
+ * artifacts. Two typed sources are consulted:
+ *
+ *   1. `finding.verification_result?.evidence_artifacts` — written by the
+ *      #193 deterministic replay runner when it persists stdout/stderr/
+ *      screenshot captures during PoC reverify.
+ *   2. `finding.researchEvidence[].artifacts` — carried by the research
+ *      envelope's retained-artifact list from the shared adapter plane.
+ *
+ * Every hash is validated as a 64-char hex string (case-insensitive) before
+ * being included, matching the `EvidenceArtifactSchema` zod regex.
+ * Deduplicated and sorted for stable rendering.
+ */
+function findingProvenanceHashes(finding: Finding): string[] {
+  const HEX64 = /^[0-9a-f]{64}$/i;
+  const seen = new Set<string>();
+
+  for (const art of finding.verification_result?.evidence_artifacts ?? []) {
+    if (art.sha256 && HEX64.test(art.sha256)) seen.add(art.sha256.toLowerCase());
+  }
+
+  for (const envelope of finding.researchEvidence ?? []) {
+    for (const art of envelope.artifacts ?? []) {
+      if (art.sha256 && HEX64.test(art.sha256)) seen.add(art.sha256.toLowerCase());
+    }
+  }
+
+  return [...seen].sort();
+}
+
+/**
  * Render the INDEX.md a disclosure bundle ships at its root. Filing-order
  * columns per the #168 spec:
- *
- *     finding-id | severity | title | gate-status | behavioural | filing-state
+ *     finding-id | severity | title | gate-status | behavioural | filing-state | provenance
  *
  * `gate-status` is the canary patch status, `behavioural` is the #171 verdict,
  * and `filing-state` is the {@link decideFilingState} verdict.
@@ -195,6 +226,22 @@ export function assembleBundleIndex(
     !r ? "—" : r.length > max ? r.slice(0, max - 1) + "…" : r;
   const escapePipe = (s: string): string => s.replace(/\|/g, "\\|");
 
+  // Render a stable, inspectable digest even when a finding carries multiple
+  // artifacts; the suffix reports additional retained hashes without turning
+  // the review table into an unbounded artifact dump.
+  const formatProvenance = (e: BundleEntry): string => {
+    const hashes = findingProvenanceHashes(e.finding);
+    if (hashes.length === 0) return "—";
+    const first = `\`${hashes[0].slice(0, 12)}…\``;
+    return hashes.length === 1 ? first : `${first} +${hashes.length - 1}`;
+  };
+
+  // Redact sensitive values in rendered INDEX fields.
+  const redactTitle = (e: BundleEntry): string =>
+    escapePipe(truncateTitle(redactSensitiveHeaders(e.finding.title)));
+  const redactReason = (e: BundleEntry): string =>
+    escapePipe(truncateReason(e.dropReason ? redactSensitiveHeaders(e.dropReason) : undefined));
+
   if (entries.length === 0) {
     return [
       "# Disclosure batch",
@@ -218,13 +265,13 @@ export function assembleBundleIndex(
   lines.push(
     "## Filing order",
     "",
-    "| finding-id | severity | title | gate-status | behavioural | filing-state |",
-    "|---|---|---|---|---|---|",
+    "| finding-id | severity | title | gate-status | behavioural | filing-state | provenance |",
+    "|---|---|---|---|---|---|---|",
   );
   for (const e of drafts) {
     const id = e.finding.id.slice(0, 8);
-    const titleCell = `[${escapePipe(truncateTitle(e.finding.title))}](./${e.filename})`;
-    lines.push(`| \`${id}\` | ${e.finding.severity} | ${titleCell} | ${e.patchStatus ?? "—"} | ${e.behaviouralVerdict ?? "—"} | ${e.filingState} |`);
+    const titleCell = `[${redactTitle(e)}](./${e.filename})`;
+    lines.push(`| \`${id}\` | ${e.finding.severity} | ${titleCell} | ${e.patchStatus ?? "—"} | ${e.behaviouralVerdict ?? "—"} | ${e.filingState} | ${formatProvenance(e)} |`);
   }
 
   if (dropped.length > 0) {
@@ -232,13 +279,13 @@ export function assembleBundleIndex(
       "",
       "## Dropped",
       "",
-      "| finding-id | severity | title | gate-status | behavioural | reason |",
-      "|---|---|---|---|---|---|",
+      "| finding-id | severity | title | gate-status | behavioural | reason | provenance |",
+      "|---|---|---|---|---|---|---|",
     );
     for (const e of dropped) {
       const id = e.finding.id.slice(0, 8);
-      const titleCell = `[${escapePipe(truncateTitle(e.finding.title))}](./_dropped/${droppedFilename(e)})`;
-      lines.push(`| \`${id}\` | ${e.finding.severity} | ${titleCell} | ${e.patchStatus ?? "—"} | ${e.behaviouralVerdict ?? "—"} | ${escapePipe(truncateReason(e.dropReason))} |`);
+      const titleCell = `[${redactTitle(e)}](./_dropped/${droppedFilename(e)})`;
+      lines.push(`| \`${id}\` | ${e.finding.severity} | ${titleCell} | ${e.patchStatus ?? "—"} | ${e.behaviouralVerdict ?? "—"} | ${redactReason(e)} | ${formatProvenance(e)} |`);
     }
   }
 
