@@ -3,6 +3,7 @@ import type { ScanListener } from "./scanner.js";
 import { createRuntime } from "./runtime/index.js";
 import type { RuntimeType } from "./runtime/index.js";
 import { LlmApiRuntime } from "./runtime/llm-api.js";
+import { createEphemeralCodexHome, isEphemeralScope } from "./runtime/codex-home.js";
 import { detectAvailableRuntimes, pickRuntimeForStage } from "./runtime/registry.js";
 import { runAgentLoop } from "./agent/loop.js";
 import { runNativeAgentLoop } from "./agent/native-loop.js";
@@ -295,10 +296,22 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
     };
 
     const { ProcessRuntime } = await import("./runtime/process.js");
+    // Run-scoped CODEX_HOME when the working directory is code we just
+    // downloaded (a package-audit temp tree). The Codex CLI records a trust
+    // decision for whatever directory it runs in, into the OPERATOR's
+    // ~/.codex/config.toml — and trust gates project-local config, hooks, exec
+    // policies and MCP servers, so a hostile package's `.codex/config.toml`
+    // becomes execution on a host with no OS sandbox. See runtime/codex-home.ts.
+    // A real checkout is left alone: trusting your own repo is the point.
+    const codexHome =
+      runtimeType === "codex" && isEphemeralScope(scopePath)
+        ? createEphemeralCodexHome()
+        : undefined;
     const cliRuntime = new ProcessRuntime({
       type: runtimeType,
       timeout: config.timeout ?? 600_000,
       cwd: scopePath,
+      ...(codexHome ? { env: { CODEX_HOME: codexHome.path } } : {}),
       outputSchema: findingsSchema,
       onToolCall: (name, detail) => {
         emit({
@@ -316,16 +329,23 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
       },
     });
 
-    const result = await cliRuntime.execute(cliPrompt, {
-      systemPrompt: cliSystemPrompt,
-      // scanId is required for ProcessRuntime's codex stream-event
-      // relay to fire (see process.ts:emitScanEvents gate). Without it
-      // audit-mode CLI scans through codex run silently on the
-      // cloud-side dashboard — the codex agent does the work, but no
-      // turn/tool-call/cost events surface for the live trace. Same
-      // scanId we already pass through the rest of the agent runner.
-      scanId,
-    });
+    let result;
+    try {
+      result = await cliRuntime.execute(cliPrompt, {
+        systemPrompt: cliSystemPrompt,
+        // scanId is required for ProcessRuntime's codex stream-event
+        // relay to fire (see process.ts:emitScanEvents gate). Without it
+        // audit-mode CLI scans through codex run silently on the
+        // cloud-side dashboard — the codex agent does the work, but no
+        // turn/tool-call/cost events surface for the live trace. Same
+        // scanId we already pass through the rest of the agent runner.
+        scanId,
+      });
+    } finally {
+      // Discards any trust entry, project-local config or hook the run
+      // picked up; syncs back only a rotated credential.
+      codexHome?.dispose();
+    }
 
     if (result.error && !result.output) {
       emit({
