@@ -39,7 +39,7 @@ const STRUCTURALLY_INVALID_SPEC = [
 
 /** Executor that returns status 0 — syz-check accepted the spec. */
 function fakeExecutorSuccess(): SyzProcessExecutor {
-  return () => ({ stdout: "", stderr: "", status: 0 });
+  return (_args, _opts) => ({ stdout: "", stderr: "", status: 0 });
 }
 
 /** Executor that returns non-zero with parseable syz-check stderr. */
@@ -49,7 +49,7 @@ function fakeExecutorReject(
     "input.txt:2: unknown field \"nonexistent\"",
   ],
 ): SyzProcessExecutor {
-  return () => ({
+  return (_args, _opts) => ({
     stdout: "",
     stderr: stderrLines.join("\n"),
     status: 1,
@@ -61,7 +61,7 @@ function fakeExecutorReject(
  * abnormal rejection the validator falls back to wrapping.
  */
 function fakeExecutorAbnormalReject(): SyzProcessExecutor {
-  return () => ({
+  return (_args, _opts) => ({
     stdout: "",
     stderr: "syz-check: internal error: cannot open archive",
     status: 2,
@@ -69,14 +69,14 @@ function fakeExecutorAbnormalReject(): SyzProcessExecutor {
 }
 
 /**
- * Executor that throws ENOENT — the configured binary doesn't exist.
+ * Executor that throws ENOENT — the syz-check binary doesn't exist.
  * This is the ONLY reason the executor throws (launch failure).
  */
 function fakeExecutorMissing(): SyzProcessExecutor {
   const err = new Error("spawn syz-check ENOENT") as NodeJS.ErrnoException;
   err.code = "ENOENT";
   err.message = "spawn syz-check ENOENT";
-  return () => { throw err; };
+  return (_args, _opts) => { throw err; };
 }
 
 /**
@@ -86,7 +86,7 @@ function fakeExecutorNotExecutable(): SyzProcessExecutor {
   const err = new Error("spawn syz-check EACCES") as NodeJS.ErrnoException;
   err.code = "EACCES";
   err.message = "spawn syz-check EACCES";
-  return () => { throw err; };
+  return (_args, _opts) => { throw err; };
 }
 
 // ── Tests ──
@@ -161,22 +161,25 @@ describe("createSyzCheckValidator", () => {
     expect(executorSpy).not.toHaveBeenCalled();
   });
 
-  it("passes extraArgs and temp-file path to the executor", () => {
+  it("passes extraArgs and temp-file path as array-shaped args to the executor", () => {
     const executorSpy = vi.fn(fakeExecutorSuccess()) as unknown as SyzProcessExecutor;
     const validator = createSyzCheckValidator({
-      binary: "/custom/syz-check",
       extraArgs: ["-arch", "amd64"],
       executor: executorSpy,
     });
     validator(VALID_SPEC);
 
     expect(executorSpy).toHaveBeenCalledOnce();
-    const [file, args] = executorSpy.mock.calls[0];
-    expect(file).toBe("/custom/syz-check");
+    const [args, options] = executorSpy.mock.calls[0];
+    // args is an array — proves array-shaped argument passing
+    expect(Array.isArray(args)).toBe(true);
     expect(args).toContain("-arch");
     expect(args).toContain("amd64");
     // Last argument is the temp-file path — ends with "input.txt"
     expect(args[args.length - 1]).toMatch(/input\.txt$/);
+    // options is a plain object with required fields
+    expect(options).toHaveProperty("cwd");
+    expect(options).toHaveProperty("encoding", "utf-8");
   });
 
   it("satisfies the SyzlangValidator type contract (valid: boolean + errors)", () => {
@@ -233,10 +236,11 @@ describe("statusMessage", () => {
 });
 
 describe("defaultSyzProcessExecutor", () => {
-  it("is exported and throws on a nonexistent binary (smoke)", () => {
+  it("is exported and throws on a nonexistent PATH-resolved syz-check (smoke)", () => {
+    // The default executor always spawns the literal "syz-check" binary via
+    // argument arrays — no shell interpolation, no injectable executable.
     expect(() =>
       defaultSyzProcessExecutor(
-        "/nonexistent/syz-check",
         ["--version"],
         { cwd: "/tmp", encoding: "utf-8", maxBuffer: 1024, timeout: 1000 },
       ),

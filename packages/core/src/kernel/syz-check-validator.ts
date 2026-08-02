@@ -97,23 +97,26 @@ export interface SyzExecResult {
  *
  * Tests substitute a pure fake that returns the desired {@link SyzExecResult}
  * without spawning a real process.
+ *
+ * The default executor always spawns the literal `"syz-check"` binary.
+ * A custom executor may hardcode whatever binary path it prefers — the
+ * executor receives only argv and options, not an executable name.
  */
 export type SyzProcessExecutor = (
-  file: string,
   args: string[],
   options: { cwd: string; encoding: BufferEncoding; maxBuffer: number; timeout: number },
 ) => SyzExecResult;
 
 /**
- * Default process executor: shells real `syz-check` (or any configured
- * binary) via {@link spawnSync}.
- *
- * Uses argument arrays exclusively — never shell interpolation.
- * Throws only on ENOENT/EACCES (binary cannot be launched); non-zero exit
- * codes are returned in the result's `status` field.
+ * Default process executor invokes the literal `"syz-check"` binary with
+ * argument arrays — never shell interpolation.
+ * The binary name is hardcoded so that no external caller can inject an
+ * arbitrary executable into the spawning path. Throws only on
+ * ENOENT/EACCES (binary cannot be launched); non-zero exit codes are
+ * returned in the result's `status` field.
  */
-export const defaultSyzProcessExecutor: SyzProcessExecutor = (file, args, options) => {
-  const result = spawnSync(file, args, {
+export const defaultSyzProcessExecutor: SyzProcessExecutor = (args, options) => {
+  const result = spawnSync("syz-check", args, {
     cwd: options.cwd,
     encoding: options.encoding,
     maxBuffer: options.maxBuffer,
@@ -181,18 +184,13 @@ function parseSyzErrors(stderr: string): SyzlangValidationError[] {
  */
 export interface SyzkallerSemanticOptions {
   /**
-   * Path to the syz-check (or equivalent) binary.
-   * Default: `"syz-check"` (resolved via `PATH`).
-   */
-  binary?: string;
-  /**
    * Extra argument array appended to the invocation.
    * The temp-file path is always the final argument.
    */
   extraArgs?: string[];
   /**
    * Synchronous process executor. Defaults to {@link defaultSyzProcessExecutor}
-   * which wraps `spawnSync`. Tests inject a fake here.
+   * which wraps `spawnSync("syz-check", ...)`. Tests inject a fake here.
    */
   executor?: SyzProcessExecutor;
   /**
@@ -209,14 +207,14 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
 
 /**
- * Create a {@link SyzlangValidator} that runs syz-check through a configured
- * binary.
+ * Create a {@link SyzlangValidator} that invokes the literal `syz-check`
+ * binary by default, or an explicitly injected fixed executor.
  *
  * The returned validator:
- *   1. Runs structural validation first (no shell-out).
+ *   1. Runs structural validation first (no process spawn).
  *   2. Only if structural passes, writes the spec to an isolated temp file.
- *   3. Invokes the configured binary with argument arrays (never shell
- *      interpolation), passing the temp-file path as the final arg.
+ *   3. Invokes with argument arrays (never shell interpolation), passing the
+ *      temp-file path as the final argument.
  *   4. Maps the outcome to a {@link SyzkallerSemanticResult}.
  *   5. Cleans up the temp file.
  *
@@ -226,9 +224,8 @@ const DEFAULT_MAX_BUFFER = 1024 * 1024;
 export function createSyzCheckValidator(
   opts: SyzkallerSemanticOptions = {},
 ): SyzlangValidator {
-  const binary = opts.binary ?? "syz-check";
   const extraArgs = opts.extraArgs ?? [];
-  const exec = opts.executor ?? defaultSyzProcessExecutor;
+  const runProcess = opts.executor ?? defaultSyzProcessExecutor;
   const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBuffer = opts.maxBuffer ?? DEFAULT_MAX_BUFFER;
 
@@ -244,7 +241,7 @@ export function createSyzCheckValidator(
     try {
       // Step 3: invoke binary with argument arrays — no shell interpolation.
       const args = [...extraArgs, tmp.path];
-      const result = exec(binary, args, {
+      const result = runProcess(args, {
         cwd: tmp.dir,
         encoding: "utf-8",
         maxBuffer,
@@ -278,7 +275,7 @@ export function createSyzCheckValidator(
         return {
           status: "toolchain-unavailable",
           valid: false,
-          errors: [{ line: 0, message: `cannot execute ${binary}: ${nodeErr.message}` }],
+          errors: [{ line: 0, message: `cannot execute syz-check: ${nodeErr.message}` }],
         };
       }
 
