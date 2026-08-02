@@ -27,6 +27,11 @@
 import type { Finding, PocStep } from "@pwnkit/shared";
 import { redactSensitiveHeaders } from "./template.js";
 import { evidenceKindForFinding } from "../triage/verify-verdict.js";
+import {
+  analyzeFindingForKnownMarkers,
+  detectKnownMarkers,
+} from "./known-marker.js";
+import type { KnownMarkerSignal } from "./known-marker.js";
 
 /** Structured vendor-notification draft. Strings are already redacted. */
 export interface VendorNotificationDraft {
@@ -45,6 +50,11 @@ export interface VendorNotificationDraft {
   remediation?: string;
   /** True only for a confirmed + reproduced-PoC finding (the safe-to-notify gate). */
   reproduced: boolean;
+  /**
+   * Advisory known-marker signal. It never blocks assembly, affects severity,
+   * alters verification evidence, or auto-submits a draft.
+   */
+  markerWarnings?: KnownMarkerSignal;
 }
 
 export interface EvidencePackOptions {
@@ -59,6 +69,13 @@ export interface EvidencePackOptions {
    * (`pwnkit/AGENTS.md` HackerOne bright lines). The draft is still DRAFT-only.
    */
   allowUnreproduced?: boolean;
+  /**
+   * Source evidence text to classify for TODO/FIXME/XXX and documented
+   * limitation markers. The result is an operator-review signal only.
+   */
+  sourceEvidence?: string;
+  /** Optional source path retained with marker context for operator review. */
+  sourceEvidencePath?: string;
 }
 
 export class UnreproducedFindingError extends Error {
@@ -170,6 +187,25 @@ export function assembleEvidencePack(
     return parts.length ? redact(parts.join("\n\n")) : undefined;
   })();
 
+  // #674: classifier output is advisory only. Combine supplied source evidence
+  // with any explicit markers already present in the finding's evidence fields.
+  let markerWarnings: KnownMarkerSignal | undefined;
+  if (opts.sourceEvidence !== undefined) {
+    markerWarnings = detectKnownMarkers(
+      opts.sourceEvidence,
+      opts.sourceEvidencePath,
+    );
+  }
+  const findingMarkers = analyzeFindingForKnownMarkers(finding);
+  if (findingMarkers.hasKnownMarker) {
+    markerWarnings = markerWarnings
+      ? {
+          hasKnownMarker: true,
+          markers: [...markerWarnings.markers, ...findingMarkers.markers],
+        }
+      : findingMarkers;
+  }
+
   return {
     findingId: finding.id,
     title: finding.title,
@@ -180,6 +216,7 @@ export function assembleEvidencePack(
     reproSteps,
     remediation,
     reproduced,
+    markerWarnings,
   };
 }
 
@@ -209,6 +246,15 @@ export function renderVendorNotificationMarkdown(
       "",
     );
   }
+  if (draft.markerWarnings?.hasKnownMarker) {
+    out.push(
+      "> **[WARN] Known-marker signal (#674).** The supplied source evidence contains " +
+        "explicit TODO / FIXME / XXX markers or documented-limitation phrasing. " +
+        "This is a courtesy operator-review warning, not a verdict. Review the " +
+        "Known markers section before deciding whether to file.",
+      "",
+    );
+  }
   out.push(`**Severity (estimate):** ${draft.severity}`, "");
   out.push("## What", "", draft.what, "");
   out.push("## Where", "", draft.where, "");
@@ -224,6 +270,30 @@ export function renderVendorNotificationMarkdown(
   }
   if (draft.remediation) {
     out.push("## Suggested remediation", "", draft.remediation, "");
+  }
+  if (draft.markerWarnings?.hasKnownMarker) {
+    out.push("## Known markers (courtesy / operator review)", "");
+    out.push(
+      "_The source evidence contains the following explicit markers. This is a " +
+        "conservative regex match: review each item before deciding whether the " +
+        "finding is worth filing._",
+      "",
+    );
+    for (const marker of draft.markerWarnings.markers) {
+      out.push(`- **\`${marker.marker}\`**`);
+      if (marker.sourcePath) {
+        out.push(`  - Source: \`${marker.sourcePath}\``);
+      }
+      if (marker.lineNumber) {
+        out.push(`  - Line ${marker.lineNumber}: \`${marker.line}\``);
+      } else {
+        out.push(`  - \`${marker.line}\``);
+      }
+      if (marker.context) {
+        out.push(`  - Context:\n\`\`\`\n${marker.context}\n\`\`\``);
+      }
+      out.push("");
+    }
   }
   return out.join("\n").replace(/\n{3,}/g, "\n\n");
 }

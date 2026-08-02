@@ -452,6 +452,38 @@ describe("runHunt — novelty gate wiring", () => {
     }));
   });
 
+  it("passes explicit ops-harvest files through to the graph-slice stage", async () => {
+    buildGraphSliceHuntContextMock.mockReturnValueOnce(null);
+
+    await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      graphSlice: true,
+      opsHarvestSourceFiles: ["net/unix/af_unix.c", "net/core/sock.c"],
+      verify: false,
+    });
+
+    expect(buildGraphSliceHuntContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      opsHarvestSourceFiles: ["net/unix/af_unix.c", "net/core/sock.c"],
+    }));
+  });
+
+  it("passes an explicit graph-slice hop radius through to the stage", async () => {
+    buildGraphSliceHuntContextMock.mockReturnValueOnce(null);
+
+    await runHunt({
+      sourceRoot: tmpRoot,
+      seedPath,
+      graphSlice: true,
+      graphSliceHops: 8,
+      verify: false,
+    });
+
+    expect(buildGraphSliceHuntContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      hops: 8,
+    }));
+  });
+
   it("leaves the brief untouched when --graph-slice yields no context (fail-open)", async () => {
     buildGraphSliceHuntContextMock.mockReturnValueOnce(null);
 

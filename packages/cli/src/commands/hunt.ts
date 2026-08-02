@@ -90,6 +90,8 @@ interface HuntOpts {
   invariant?: boolean;
   graphSlice?: boolean;
   cpg?: string;
+  opsHarvest?: string;
+  graphSliceHops?: string;
   exploitability?: boolean;
   proveMinCeiling?: string;
   output?: string;
@@ -186,6 +188,14 @@ export async function runHunt(opts: {
   graphSlice?: boolean;
   /** Explicit CPG graphson JSON path (overrides the `.pwnkit/cpg/<subsystem>.json` convention). */
   cpgPath?: string;
+  /**
+   * Optional comma-separated repo-relative C source files whose static
+   * ops-struct initializers should resolve indirect calls in the graph slice.
+   * Omit it to preserve the precomputed `.ops.json` path.
+   */
+  opsHarvestSourceFiles?: string[];
+  /** Graph traversal radius for --graph-slice. Unset preserves the stage default (3). */
+  graphSliceHops?: number;
   /**
    * PROVE stage (#1119): run the execution-verified exploitability oracle as a
    * terminal gate after the skeptic+prover pair. This BOOTS REAL QEMU VMs per
@@ -332,6 +342,10 @@ export async function runHunt(opts: {
           seedDiff,
           ...(opts.cpgPath ? { cpgPath: opts.cpgPath } : {}),
           log,
+          ...(opts.opsHarvestSourceFiles !== undefined
+            ? { opsHarvestSourceFiles: opts.opsHarvestSourceFiles }
+            : {}),
+          ...(opts.graphSliceHops !== undefined ? { hops: opts.graphSliceHops } : {}),
         });
         if (!graphSliceCtx) {
           graphSliceWarnings.push("hunt: --graph-slice set but no CPG/scope/slice derivable — continuing with the flat-text finder");
@@ -577,6 +591,17 @@ async function huntAction(opts: HuntOpts): Promise<void> {
     invariant: opts.invariant === true,
     graphSlice: opts.graphSlice === true,
     ...(opts.cpg ? { cpgPath: opts.cpg } : {}),
+    ...(opts.opsHarvest !== undefined
+      ? {
+          opsHarvestSourceFiles: opts.opsHarvest
+            .split(",")
+            .map((path) => path.trim())
+            .filter(Boolean),
+        }
+      : {}),
+    ...(opts.graphSliceHops
+      ? { graphSliceHops: parsePositive("--graph-slice-hops", opts.graphSliceHops, 3) }
+      : {}),
     exploitability: opts.exploitability === true,
     ...(opts.proveMinCeiling ? { proveMinCeiling: parseCeiling(opts.proveMinCeiling) } : {}),
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
@@ -620,6 +645,14 @@ export function registerHuntCommand(program: Command): void {
     .option("--invariant", "Engine A: build (or load) the seed-touched subsystem's stored invariant model and inject its rules + deterministic violation hypotheses into every finder prompt")
     .option("--graph-slice", "Load the seed-touched subsystem's pre-exported Joern CPG and inject a compact interprocedural reachability slice around the fix site into every finder prompt (needs scripts/provision-cpg.sh; fail-open to flat-text)")
     .option("--cpg <path>", "Explicit CPG graphson JSON path for --graph-slice (default: <source>/.pwnkit/cpg/<subsystem>.json)")
+    .option(
+      "--ops-harvest <paths>",
+      "[--graph-slice] Comma-separated repo-relative C files to harvest static ops-struct initializers from; overrides a precomputed .ops.json",
+    )
+    .option(
+      "--graph-slice-hops <N>",
+      "[--graph-slice] Call-graph radius around the seed functions (default 3; use 8 for the exp527 known answer)",
+    )
     .option(
       "--exploitability",
       "PROVE stage: after the skeptic+prover gate, run the execution-verified exploitability oracle " +

@@ -30,6 +30,7 @@ import { join } from "node:path";
 import {
   Cpg,
   injectOps,
+  injectHarvestedOps,
   sliceAroundTargets,
   type OpsMap,
   type SliceRenderStats,
@@ -37,6 +38,7 @@ import {
 } from "./graph-slice.js";
 import { deriveSubsystemScope } from "./invariant-hunt-context.js";
 import { resolveContainedSourcePath } from "./subsystem-invariant-model.js";
+import { harvestOps } from "../graph/ops-harvest.js";
 
 // ── Touched-function derivation ────────────────────────────────────────────────
 
@@ -97,8 +99,33 @@ export interface GraphSliceHuntContextInput {
    * Path to the pre-harvested ops map (Phase-1 indirect-call edges). Default:
    * `<sourceRoot>/.pwnkit/cpg/<subsystem-slug>.ops.json`. Optional — absent just
    * means no ops-struct edges are synthesized.
+   *
+   * When BOTH `opsPath` and `opsHarvestSourceFiles` are set, the in-process
+   * harvester takes precedence (it is fresher — always runs against the current
+   * tree). Omit `opsHarvestSourceFiles` to use `opsPath`; set it to `[]` to opt
+   * out of both sources.
    */
   opsPath?: string;
+  /**
+   * OPTIONAL in-process ops-struct harvesting (Phase-1b of the graph-native
+   * harness): a list of C source files to harvest for designated-initializer
+   * assignments (`.recv_actor = unix_stream_read_actor`). When provided:
+   *
+   * 1. Each file is read and parsed with tree-sitter-c through `c-dataflow.ts`.
+   * 2. Designated-initializer assignments inside struct/union initializer blocks
+   *    are collected as (struct, field, fn) tuples.
+   * 3. Each tuple is matched to an unresolved dynamic CPG CALL with the same
+   *    dispatch field in the same source file, yielding a `caller → callee`
+   *    synth edge.
+   * 4. Edges are injected via {@link injectHarvestedOps} — the same synthCallees /
+   *    synthCallers mechanism as the pre-computed ops map.
+   *
+   * ABSENT (undefined): the stage falls back to `opsPath` (pre-computed JSON) or
+   * runs without ops edges. EMPTY array: explicitly opts out of BOTH — no ops
+   * edges are synthesized. Parsing failure on any file is logged and SKIPPED
+   * (does not abort the slice — flat-text behavior is preserved).
+   */
+  opsHarvestSourceFiles?: string[];
   /** BFS hop radius for the slice. Default 3 (matches the bench A/B proof). */
   hops?: number;
   log?: (msg: string) => void;
@@ -169,12 +196,49 @@ function defaultCpgPaths(sourceRoot: string, subsystem: string): { cpg: string; 
 }
 
 /**
+ * Run the in-process ops harvester against the given source files and inject
+ * the resolved edges into the CPG. Returns the number of edges synthesized.
+ * Read failures are logged and skipped (fail-open).
+ */
+function tryHarvestAndInject(
+  cpg: Cpg,
+  sourceRoot: string,
+  sourceFiles: string[],
+  log: (msg: string) => void,
+): number {
+  let total = 0;
+  for (const relPath of sourceFiles) {
+    const abs = resolveContainedSourcePath(sourceRoot, relPath);
+    if (!abs || !existsSync(abs)) {
+      log(`[graph-slice] ops-harvest: source file not found at ${relPath} (resolved: ${abs ?? "null"}) — skipping`);
+      continue;
+    }
+    let src: string;
+    try {
+      src = readFileSync(abs, "utf8");
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log(`[graph-slice] ops-harvest: failed to read ${abs}: ${reason.slice(0, 120)} — skipping`);
+      continue;
+    }
+    const edges = harvestOps(src, relPath);
+    if (edges.length === 0) continue;
+    const added = injectHarvestedOps(cpg, edges);
+    total += added;
+    if (added > 0) {
+      log(`[graph-slice] ops-harvest: ${edges.length} designated-initializer assignments found in ${relPath} → ${added} synth edge(s) resolved`);
+    }
+  }
+  return total;
+}
+
+/**
  * Build the graph-slice context for a seeded hunt. Derives the subsystem scope
  * + touched functions from the seed diff, loads the PRE-EXPORTED CPG JSON (and
- * an optional ops map), slices `hops` deep around the touched functions, and
- * returns the formatted prompt block. Returns null — the caller degrades to the
- * plain flat-text hunt — when ANY precondition is missing: no scope, no CPG
- * file, no touched functions, or an empty slice.
+ * an optional ops map OR runs in-process harvesting), slices `hops` deep around
+ * the touched functions, and returns the formatted prompt block. Returns null —
+ * the caller degrades to the plain flat-text hunt — when ANY precondition is
+ * missing: no scope, no CPG file, no touched functions, or an empty slice.
  */
 export function buildGraphSliceHuntContext(
   input: GraphSliceHuntContextInput,
@@ -212,17 +276,23 @@ export function buildGraphSliceHuntContext(
     return null;
   }
 
-  // Phase 1 (optional): synthesize ops-struct indirect-call edges from a
-  // pre-harvested ops map. Absent just means no synthesized edges.
+  // Phase 1: synthesize ops-struct indirect-call edges.
+  // Priority: in-process harvester > pre-computed ops map > none.
   let opsEdges = 0;
-  const opsPath = input.opsPath ?? defaults.ops;
-  if (existsSync(opsPath)) {
-    try {
-      const ops = JSON.parse(readFileSync(opsPath, "utf8")) as OpsMap;
-      opsEdges = injectOps(cpg, ops);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      log(`[graph-slice] ops map at ${opsPath} unreadable, continuing without ops edges: ${reason.slice(0, 120)}`);
+  if (input.opsHarvestSourceFiles !== undefined) {
+    // Explicit opt-in (or explicit-opt-out via empty array).
+    opsEdges = tryHarvestAndInject(cpg, input.sourceRoot, input.opsHarvestSourceFiles, log);
+  } else {
+    // Legacy path: pre-computed ops_map.json.
+    const opsPath = input.opsPath ?? defaults.ops;
+    if (existsSync(opsPath)) {
+      try {
+        const ops = JSON.parse(readFileSync(opsPath, "utf8")) as OpsMap;
+        opsEdges = injectOps(cpg, ops);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        log(`[graph-slice] ops map at ${opsPath} unreadable, continuing without ops edges: ${reason.slice(0, 120)}`);
+      }
     }
   }
 
