@@ -335,6 +335,7 @@ describe("normalizeFinding", () => {
         startLine: 41,
         endLine: 42,
         suggestion: "safeParse(input)",
+        knownMarker: true,
       },
     });
     expect(out.reviewAnnotation).toEqual({
@@ -342,6 +343,7 @@ describe("normalizeFinding", () => {
       startLine: 41,
       endLine: 42,
       suggestion: "safeParse(input)",
+      knownMarker: true,
     });
   });
 

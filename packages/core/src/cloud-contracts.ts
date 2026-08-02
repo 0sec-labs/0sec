@@ -91,6 +91,8 @@ export interface CloudSinkFinding {
     startLine: number;
     endLine?: number;
     suggestion?: string;
+    /** Exact cited source range has an in-tree maintainer-awareness marker. */
+    knownMarker?: boolean;
   };
   /** Unix epoch milliseconds. */
   timestamp: number;

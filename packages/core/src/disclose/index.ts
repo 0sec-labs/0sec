@@ -74,3 +74,11 @@ export type {
   VendorNotificationDraft,
   EvidencePackOptions,
 } from "./evidence-pack.js";
+export {
+  detectKnownMarkers,
+  analyzeFindingForKnownMarkers,
+} from "./known-marker.js";
+export type {
+  KnownMarker,
+  KnownMarkerSignal,
+} from "./known-marker.js";

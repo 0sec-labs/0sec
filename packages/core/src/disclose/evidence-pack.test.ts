@@ -90,6 +90,36 @@ describe("assembleEvidencePack", () => {
     const draft = assembleEvidencePack(reproducedFinding());
     expect(draft.where).toMatch(/to be filled in/i);
   });
+
+  it("attaches location-bearing marker warnings without blocking assembly", () => {
+    const draft = assembleEvidencePack(reproducedFinding(), {
+      sourceEvidence: "// TODO: validate the URL before fetching\nfetch(url);",
+      sourceEvidencePath: "src/fetch.ts",
+    });
+    expect(draft.reproduced).toBe(true);
+    expect(draft.markerWarnings).toMatchObject({
+      hasKnownMarker: true,
+      markers: [{ marker: "todo", sourcePath: "src/fetch.ts", lineNumber: 1 }],
+    });
+  });
+
+  it("retains a clean source-evidence signal without inventing warnings", () => {
+    const draft = assembleEvidencePack(reproducedFinding(), {
+      sourceEvidence: "function parse(input: string) { return JSON.parse(input); }",
+    });
+    expect(draft.markerWarnings?.hasKnownMarker).toBe(false);
+  });
+
+  it("also detects explicit markers in a finding's own evidence fields", () => {
+    const draft = assembleEvidencePack(reproducedFinding({
+      evidence: {
+        request: "GET /",
+        response: "200 OK",
+        analysis: "// FIXME: the allowlist check is missing here",
+      },
+    }));
+    expect(draft.markerWarnings?.markers[0]?.marker).toBe("fixme");
+  });
 });
 
 describe("renderVendorNotificationMarkdown", () => {
@@ -127,5 +157,17 @@ describe("renderVendorNotificationMarkdown", () => {
       assembleEvidencePack(reproducedFinding(), { target: "acme-app" }),
     );
     expect(md).not.toContain("sk-supersecret-token-value");
+  });
+
+  it("renders marker details as an advisory operator-review section", () => {
+    const draft = assembleEvidencePack(reproducedFinding(), {
+      sourceEvidence: "line before\n// TODO: validate input\nline after",
+      sourceEvidencePath: "src/parser.ts",
+    });
+    const md = renderVendorNotificationMarkdown(draft);
+    expect(md).toContain("[WARN] Known-marker signal");
+    expect(md).toContain("## Known markers (courtesy / operator review)");
+    expect(md).toContain("Source: `src/parser.ts`");
+    expect(md).toContain("// TODO: validate input");
   });
 });

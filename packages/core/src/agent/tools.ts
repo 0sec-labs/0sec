@@ -1611,6 +1611,27 @@ function probeEvidence(resp: ProbeResponse): Record<string, unknown> {
   };
 }
 
+// #674 Part E — only an exact, workspace-contained citation can establish
+// maintainer awareness. Narrative evidence and lower-case prose are never used.
+const IN_TREE_KNOWN_MARKER_TOKENS = /\b(?:TODO|FIXME|XXX|HACK)\b/;
+const IN_TREE_KNOWN_LIMITATION = /known[ -](?:limitation|issue)s?/i;
+
+function citedSourceHasKnownMarker(
+  absolutePath: string,
+  startLine: number,
+  endLine: number,
+): boolean {
+  try {
+    const lines = readFileSync(absolutePath, "utf8").split(/\r?\n/);
+    const cited = lines.slice(startLine - 1, endLine).join("\n");
+    return IN_TREE_KNOWN_MARKER_TOKENS.test(cited) || IN_TREE_KNOWN_LIMITATION.test(cited);
+  } catch {
+    // The source annotation remains valid even when a concurrent edit makes
+    // this best-effort read fail; never invent maintainer awareness.
+    return false;
+  }
+}
+
 // ── Tool Executor ──
 
 export class ToolExecutor {
@@ -4174,9 +4195,8 @@ export class ToolExecutor {
       // yields no lineCount for directories/oversized/unreadable files, in
       // which case the line-range check is skipped (conservative).
       // `this.ctx.scopePath` is guaranteed set by the workspace guard above.
-      const probe = probeFileRefTarget(
-        resolve(this.ctx.scopePath!, sourcePath),
-      );
+      const sourceAbsolute = resolve(this.ctx.scopePath!, sourcePath);
+      const probe = probeFileRefTarget(sourceAbsolute);
       const lastLine =
         endLine !== undefined ? (endLine as number) : (startLine as number);
       if (
@@ -4201,6 +4221,13 @@ export class ToolExecutor {
           suggestion.length > 0 &&
           isSuggestionAcceptable(suggestion)
             ? { suggestion }
+            : {}),
+          ...(citedSourceHasKnownMarker(
+            sourceAbsolute,
+            startLine as number,
+            lastLine,
+          )
+            ? { knownMarker: true }
             : {}),
         };
       }

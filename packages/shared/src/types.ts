@@ -574,6 +574,12 @@ export interface Finding {
     endLine?: number;
     /** Replacement text for a provider-native suggestion block. */
     suggestion?: string;
+    /**
+     * Exact cited source lines contain a maintainer-awareness marker
+     * (TODO/FIXME/XXX/HACK or a known-limitation note). The cloud holds
+     * automatic disclosure promotion; this never drops the finding.
+     */
+    knownMarker?: boolean;
   };
   /**
    * Ordered proof-of-concept step graph (pwnkit#170). Optional and additive —

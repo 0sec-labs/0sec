@@ -399,6 +399,9 @@ function normalizeReviewAnnotation(
     isSuggestionAcceptable(suggestion)
       ? { suggestion }
       : {}),
+    ...(value.knownMarker === true || value.known_marker === true
+      ? { knownMarker: true }
+      : {}),
   };
 }
 

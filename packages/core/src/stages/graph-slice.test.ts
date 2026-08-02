@@ -26,6 +26,7 @@ import {
   Cpg,
   buildSlice,
   findTargets,
+  injectHarvestedOps,
   injectOps,
   renderSlice,
   sliceAroundTargets,
@@ -63,12 +64,20 @@ function method(
   return { "@type": "g:Vertex", id: { "@value": id }, label: "METHOD", properties: props };
 }
 
-function callNode(id: number, code: string, line: number): unknown {
+function callNode(id: number, code: string, line: number, name?: string): unknown {
+  const props: Record<string, unknown> = {
+    CODE: vProp(code),
+    LINE_NUMBER: vProp(line),
+  };
+  if (name) {
+    props.NAME = vProp(name);
+    props.METHOD_FULL_NAME = vProp(name);
+  }
   return {
     "@type": "g:Vertex",
     id: { "@value": id },
     label: "CALL",
-    properties: { CODE: vProp(code), LINE_NUMBER: vProp(line) },
+    properties: props,
   };
 }
 
@@ -117,6 +126,25 @@ function fixtureCpg(): Cpg {
   return Cpg.fromGraphson(buildFixtureGraphson());
 }
 
+/**
+ * `joern-export --repr all --format graphson` carries AST parent/child edges
+ * and CALL-node metadata, but no semantic CONTAINS/CALL edges. This mirrors the
+ * exact shape provision-cpg.sh produces on a real kernel subtree.
+ */
+function buildAstOnlyGraphson(): unknown {
+  const vertices = [
+    method(1, "entry", "net/example.c", 1, 20),
+    method(2, "helper", "net/helper.c", 1, 10),
+    callNode(101, "helper()", 5, "helper"),
+    callNode(102, "kfree(ptr)", 7, "kfree"),
+  ];
+  const edges = [
+    edge("AST", 1, 101),
+    edge("AST", 1, 102),
+  ];
+  return { "@type": "g:Graph", "@value": { vertices, edges } };
+}
+
 // ── (a) loader + call graph ─────────────────────────────────────────────────────
 
 describe("Cpg.fromGraphson", () => {
@@ -133,6 +161,18 @@ describe("Cpg.fromGraphson", () => {
     expect(cpg.allCallees(2).map(([m]) => cpg.mname(m))).toContain("kvmalloc_array");
   });
 });
+
+  it("derives containment and direct calls from AST-only Joern exports", () => {
+    const cpg = Cpg.fromGraphson(buildAstOnlyGraphson());
+    expect(cpg.enclosing.get(101)).toBe(1);
+    expect(cpg.allCallees(1).map(([id]) => cpg.mname(id)).sort()).toEqual([
+      "helper",
+      "kfree",
+    ]);
+    expect(cpg.isExternal(cpg.allCallees(1).find(([id]) => cpg.mname(id) === "kfree")![0])).toBe(
+      true,
+    );
+  });
 
 // ── (b) target resolution ───────────────────────────────────────────────────────
 
@@ -171,10 +211,47 @@ describe("buildSlice + renderSlice", () => {
     // the alloc + free chain the flat single-file read (af_unix.c only) misses
     expect(text).toContain("kvmalloc_array");
     expect(text).toContain("kvfree");
+    expect(text).toContain("## Reachable methods by hop (structural index)");
+    expect(text.indexOf("## Reachable methods by hop")).toBeLessThan(
+      text.indexOf("## Call/dataflow edges"),
+    );
+    expect(text).toContain("hop 0: unix_attach_fds");
+    expect(text).toContain("## Shortest reachability witnesses (bidirectional call graph)");
+    expect(text).toContain("unix_attach_fds <-> unix_destroy_fpl <-> kvfree");
     // crosses a FILE boundary: both source files appear
     expect(stats.files).toContain("net/unix/af_unix.c");
     expect(stats.files).toContain("net/unix/garbage.c");
     expect(stats.functions).toBeGreaterThanOrEqual(3);
+  });
+
+  it("renders outgoing seed edges before an alphabetically earlier upstream caller", () => {
+    const cpg = fixtureCpg();
+    const upstream = {
+      label: "METHOD",
+      props: {
+        NAME: "aaa_upstream",
+        FULL_NAME: "aaa_upstream",
+        FILENAME: "a.c",
+        LINE_NUMBER: 1,
+        LINE_NUMBER_END: 4,
+      },
+    };
+    const call = {
+      label: "CALL",
+      props: { CODE: "unix_attach_fds(...)", LINE_NUMBER: 2 },
+    };
+    cpg.nodes.set(7, upstream);
+    cpg.methods.set(7, upstream);
+    cpg.methodByName.set("aaa_upstream", [7]);
+    cpg.methodByFullName.set("aaa_upstream", 7);
+    cpg.nodes.set(106, call);
+    cpg.enclosing.set(106, 7);
+    cpg.callees.set(7, [[1, 106]]);
+    cpg.callers.set(1, [[7, 106]]);
+
+    const slice = buildSlice(cpg, findTargets(cpg, "unix_attach_fds"), 3);
+    const firstEdge = renderSlice(cpg, slice).text.split("\n").find((line) => line.includes("->"));
+    expect(firstEdge).toContain("unix_attach_fds");
   });
 });
 
@@ -195,6 +272,35 @@ describe("injectOps", () => {
     const after = sliceAroundTargets(cpg, ["unix_attach_fds"], { hops: 3 });
     expect(after).not.toBeNull();
     expect(after!.text).toContain("unix_close");
+  });
+});
+
+describe("injectHarvestedOps", () => {
+  it("resolves a file-scope initializer through its matching dynamic call site", () => {
+    const cpg = fixtureCpg();
+    const added = injectHarvestedOps(cpg, [{
+      structName: "proto_ops",
+      field: "close",
+      fnName: "unix_close",
+      file: "net/unix/af_unix.c",
+      line: 2,
+    }]);
+    expect(added).toBe(1);
+    expect(cpg.allCallees(1)).toContainEqual([6, 105]);
+
+    const sliced = sliceAroundTargets(cpg, ["unix_attach_fds"], { hops: 3 });
+    expect(sliced?.text).toContain("unix_close");
+  });
+
+  it("does not match the same dispatch field from another source file", () => {
+    const cpg = fixtureCpg();
+    expect(injectHarvestedOps(cpg, [{
+      structName: "proto_ops",
+      field: "close",
+      fnName: "unix_close",
+      file: "net/core/sock.c",
+      line: 2,
+    }])).toBe(0);
   });
 });
 
@@ -268,6 +374,23 @@ describe("buildGraphSliceHuntContext", () => {
     expect(ctx!.promptBlock).toContain("kvmalloc_array");
     expect(ctx!.promptBlock).toContain("kvfree");
     expect(ctx!.stats.files).toContain("net/unix/garbage.c");
+  });
+
+  it("harvests current ops initializers and resolves their dynamic call sites", () => {
+    const { sourceRoot, seedDiff } = makeTree();
+    const source = Array(1600).fill("/* line */");
+    source[0] = "const struct proto_ops unix_ops = {";
+    source[1] = "  .close = unix_close,";
+    source[2] = "};";
+    writeFileSync(join(sourceRoot, "net", "unix", "af_unix.c"), source.join("\n"));
+
+    const ctx = buildGraphSliceHuntContext({
+      sourceRoot,
+      seedDiff,
+      opsHarvestSourceFiles: ["net/unix/af_unix.c"],
+    });
+    expect(ctx?.opsEdges).toBe(1);
+    expect(ctx?.promptBlock).toContain("unix_close");
   });
 
   it("fail-opens (null) when no CPG export exists for the subsystem", () => {

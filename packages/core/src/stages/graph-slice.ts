@@ -15,8 +15,8 @@
  *
  *   Joern CPG export (graphson JSON) ─▶ {@link loadCpg}
  *     ─▶ interprocedural call graph + intra-procedural DDG (REACHING_DEF)
- *     ─▶ {@link injectOps} (Phase 1: synthesize the ops-struct indirect-call
- *        edges Joern leaves as dead-ends — pre-harvested edge list)
+ *     ─▶ {@link injectOps}/{@link injectHarvestedOps} (Phase 1: synthesize
+ *        ops-struct indirect-call edges Joern leaves as dead-ends)
  *     ─▶ {@link buildSlice} (BFS N hops caller/callee, surfacing lifetime sinks)
  *     ─▶ {@link renderSlice} (compact markdown: edges + path lines only)
  *
@@ -117,18 +117,89 @@ export class Cpg {
   /** DDG adjacency (REACHING_DEF), intra-procedural. */
   readonly ddg = new Map<number, number[]>();
   readonly ddgRev = new Map<number, number[]>();
+  /** Negative ids reserved for external call targets absent from a GraphSON export. */
+  private nextSyntheticMethodId = -1;
 
-  private pushEdge(map: Map<number, Array<[number, number]>>, key: number, val: [number, number]): void {
-    const cur = map.get(key);
-    if (cur) cur.push(val);
-    else map.set(key, [val]);
+  private addSyntheticLifetimeSink(name: string): number {
+    const existing = this.methodByName.get(name)?.find((id) => this.isExternal(id));
+    if (existing !== undefined) return existing;
+    const id = this.nextSyntheticMethodId--;
+    const node: CpgNode = {
+      label: "METHOD",
+      props: {
+        NAME: name,
+        FULL_NAME: name,
+        FILENAME: "",
+        LINE_NUMBER: 0,
+        LINE_NUMBER_END: 0,
+        IS_EXTERNAL: true,
+      },
+    };
+    this.nodes.set(id, node);
+    this.methods.set(id, node);
+    const byName = this.methodByName.get(name);
+    if (byName) byName.push(id);
+    else this.methodByName.set(name, [id]);
+    this.methodByFullName.set(name, id);
+    return id;
+  }
+
+  private addResolvedCall(caller: number, callee: number, callNode: number): void {
+    this.pushEdge(this.callees, caller, [callee, callNode]);
+    this.pushEdge(this.callers, callee, [caller, callNode]);
+  }
+
+  private deriveAstEnclosingMethods(): void {
+    const children = new Map<number, number[]>();
+    for (const [parent, child] of this.edges.get("AST") ?? []) {
+      const cur = children.get(parent);
+      if (cur) cur.push(child);
+      else children.set(parent, [child]);
+    }
+    for (const methodId of this.methods.keys()) {
+      const stack = [...(children.get(methodId) ?? [])];
+      const seen = new Set<number>();
+      while (stack.length > 0) {
+        const nodeId = stack.pop()!;
+        if (seen.has(nodeId)) continue;
+        seen.add(nodeId);
+        // Nested METHOD nodes own their own AST subtree; kernel C has no nested
+        // functions, but keeping this boundary makes mixed-language CPG exports safe.
+        if (nodeId !== methodId && this.nodes.get(nodeId)?.label === "METHOD") continue;
+        this.enclosing.set(nodeId, methodId);
+        stack.push(...(children.get(nodeId) ?? []));
+      }
+    }
+  }
+
+  private deriveCallsFromCallNodes(): void {
+    for (const [callNode, node] of this.nodes) {
+      if (node.label !== "CALL") continue;
+      const caller = this.enclosing.get(callNode);
+      if (caller === undefined) continue;
+      const names = [node.props.METHOD_FULL_NAME, node.props.NAME]
+        .filter((name): name is string => typeof name === "string" && name.length > 0)
+        .filter((name, index, values) => values.indexOf(name) === index)
+        .filter((name) => !name.startsWith("<operator>") && !name.startsWith("<operators>"));
+      const callees = new Set<number>();
+      for (const name of names) {
+        const exact = this.methodByFullName.get(name);
+        if (exact !== undefined) callees.add(exact);
+        for (const target of this.methodByName.get(name) ?? []) callees.add(target);
+      }
+      if (callees.size === 0) {
+        const lifetimeName = names.find((name) => LIFETIME_SINKS.has(name));
+        if (lifetimeName) callees.add(this.addSyntheticLifetimeSink(lifetimeName));
+      }
+      for (const callee of callees) {
+        if (this.isExternal(callee) && !LIFETIME_SINKS.has(this.mname(callee))) continue;
+        this.addResolvedCall(caller, callee, callNode);
+      }
+    }
   }
 
   private buildIndexes(): void {
-    // enclosing method for every contained node
-    for (const [out, inn] of this.edges.get("CONTAINS") ?? []) {
-      if (this.nodes.get(out)?.label === "METHOD") this.enclosing.set(inn, out);
-    }
+    // Method lookup must precede both GraphSON linkage shapes below.
     for (const [nid, n] of this.nodes) {
       if (n.label !== "METHOD") continue;
       this.methods.set(nid, n);
@@ -141,14 +212,35 @@ export class Cpg {
       }
       if (typeof fn === "string") this.methodByFullName.set(fn, nid);
     }
-    // call graph from resolved CALL edges: CALL-node --CALL--> callee METHOD
-    for (const [callNode, callee] of this.edges.get("CALL") ?? []) {
-      if (this.nodes.get(callee)?.label !== "METHOD") continue;
-      const caller = this.enclosing.get(callNode);
-      if (caller === undefined) continue;
-      this.pushEdge(this.callees, caller, [callee, callNode]);
-      this.pushEdge(this.callers, callee, [caller, callNode]);
+
+    // Older / synthetic fixtures carry Joern's semantic CONTAINS edges.
+    // `joern-export --repr all --format graphson` instead carries only AST
+    // parent/child edges, so derive the same method containment when CONTAINS is
+    // absent. Without this fallback a provisioner-produced CPG has zero callers.
+    const contains = this.edges.get("CONTAINS") ?? [];
+    if (contains.length > 0) {
+      for (const [out, inn] of contains) {
+        if (this.nodes.get(out)?.label === "METHOD") this.enclosing.set(inn, out);
+      }
+    } else {
+      this.deriveAstEnclosingMethods();
     }
+
+    // Semantic CALL edges exist in some GraphSON exports. The `--repr all`
+    // export produced by provision-cpg.sh has CALL nodes but no CALL edges;
+    // resolve direct calls from their METHOD_FULL_NAME / NAME properties instead.
+    const callEdges = this.edges.get("CALL") ?? [];
+    if (callEdges.length > 0) {
+      for (const [callNode, callee] of callEdges) {
+        if (this.nodes.get(callee)?.label !== "METHOD") continue;
+        const caller = this.enclosing.get(callNode);
+        if (caller === undefined) continue;
+        this.addResolvedCall(caller, callee, callNode);
+      }
+    } else {
+      this.deriveCallsFromCallNodes();
+    }
+
     // DDG adjacency
     for (const [out, inn] of this.edges.get("REACHING_DEF") ?? []) {
       const a = this.ddg.get(out);
@@ -159,6 +251,13 @@ export class Cpg {
       else this.ddgRev.set(inn, [out]);
     }
   }
+
+  private pushEdge(map: Map<number, Array<[number, number]>>, key: number, val: [number, number]): void {
+    const cur = map.get(key);
+    if (cur) cur.push(val);
+    else map.set(key, [val]);
+  }
+
 
   /** Build a CPG from a parsed graphson export object (`{ "@value": { vertices, edges } }`). */
   static fromGraphson(doc: unknown): Cpg {
@@ -248,11 +347,8 @@ export const LIFETIME_SINKS: ReadonlySet<string> = new Set([
  * Phase 1: add synthesized call edges from a pre-harvested ops map (produced by
  * `ops_harvest.py`). Resolves the kernel's ops-struct indirect dispatch
  * (`sk->sk_prot->close(...)`) that Joern leaves as unresolved dead-ends into
- * concrete caller→callee edges. Returns the number of edges added.
- *
- * MVP loads a PRE-COMPUTED edge list (mirrors python `inject_ops`); harvesting
- * the `.field = fn` initializers in-process via the existing tree-sitter infra
- * (`c-dataflow.ts` `parseC`) is a documented follow-up.
+ * concrete caller→callee edges. In-process harvesting uses
+ * {@link injectHarvestedOps}; both forms populate the same synth-edge indexes.
  */
 export function injectOps(cpg: Cpg, ops: OpsMap): number {
   let added = 0;
@@ -302,6 +398,8 @@ export interface SliceResult {
   dist: Map<number, number>;
   /** internal call edges within the slice. */
   callEdges: CallEdge[];
+  /** child method id → prior node on one shortest undirected call-graph path from a root. */
+  parents: Map<number, number>;
 }
 
 /**
@@ -314,6 +412,7 @@ export interface SliceResult {
 export function buildSlice(cpg: Cpg, targetMids: number[], hops: number): SliceResult {
   const dist = new Map<number, number>();
   const q: number[] = [];
+  const parents = new Map<number, number>();
   for (const t of targetMids) {
     dist.set(t, 0);
     q.push(t);
@@ -330,6 +429,7 @@ export function buildSlice(cpg: Cpg, targetMids: number[], hops: number): SliceR
       if (cpg.isExternal(nb) && !LIFETIME_SINKS.has(cpg.mname(nb))) continue;
       if (!dist.has(nb)) {
         dist.set(nb, d + 1);
+        parents.set(nb, m);
         q.push(nb);
       }
     }
@@ -341,7 +441,7 @@ export function buildSlice(cpg: Cpg, targetMids: number[], hops: number): SliceR
       if (sliceMids.has(callee)) callEdges.push([m, callee, cn, "call"]);
     }
   }
-  return { dist, callEdges };
+  return { dist, callEdges, parents };
 }
 
 /** Which source lines of `mid` to surface: signature + linking call-sites + lifetime calls. */
@@ -385,7 +485,7 @@ export function renderSlice(
   loadSource?: SourceLoader,
   opsNote?: string,
 ): { text: string; stats: SliceRenderStats } {
-  const { dist, callEdges } = slice;
+  const { dist, callEdges, parents } = slice;
   const sliceMids = [...dist.keys()];
   const internal = sliceMids.filter((m) => !cpg.isExternal(m));
   const files = [...new Set(internal.map((m) => cpg.mfile(m)))].sort();
@@ -401,9 +501,54 @@ export function renderSlice(
   out.push(`functions: ${internal.length}  files: ${files.length} (${files.join(", ")})`);
   if (opsNote) out.push(opsNote);
   out.push("");
+  // Put a compact structural index ahead of verbose call-site lines. A bounded
+  // prompt can then still name distant lifecycle functions even when its full
+  // edge list is truncated.
+  const namesByHop = new Map<number, Set<string>>();
+  for (const m of internal) {
+    const hop = dist.get(m)!;
+    const names = namesByHop.get(hop);
+    if (names) names.add(cpg.mname(m));
+    else namesByHop.set(hop, new Set([cpg.mname(m)]));
+  }
+  out.push("## Reachable methods by hop (structural index)");
+  for (const hop of [...namesByHop.keys()].sort((a, b) => a - b)) {
+    out.push(`  hop ${hop}: ${[...(namesByHop.get(hop) ?? [])].sort().join(", ")}`);
+  }
+  out.push("");
+  // The full edge list can exceed the finder-context cap. Give the model
+  // verifiable, shortest structural witnesses to distant lifecycle-relevant
+  // methods before that list, while marking the BFS as bidirectional.
+  const witnessName = /(?:alloc|free|release|destroy|exit|lock|unlock|ref|timer|signal|delete)/i;
+  const witnesses = sliceMids
+    .filter((m) => parents.has(m) && witnessName.test(cpg.mname(m)))
+    .sort((a, b) => (dist.get(b)! - dist.get(a)!) || cpg.mname(a).localeCompare(cpg.mname(b)))
+    .slice(0, 20);
+  if (witnesses.length > 0) {
+    out.push("## Shortest reachability witnesses (bidirectional call graph)");
+    for (const endpoint of witnesses) {
+      const path = [endpoint];
+      let current = endpoint;
+      while (parents.has(current)) {
+        current = parents.get(current)!;
+        path.push(current);
+      }
+      out.push(`  ${path.reverse().map((m) => cpg.mname(m)).join(" <-> ")} [hop ${dist.get(endpoint)}]`);
+    }
+    out.push("");
+  }
   out.push("## Call/dataflow edges (interprocedural)");
   const seen = new Set<string>();
   const sortedEdges = [...callEdges].sort((x, y) => {
+    // Prompt blocks have a hard cap. Emit call sites FROM the seed roots before
+    // inbound/upstream edges or alphabetically earlier siblings so truncation
+    // cannot hide the very fix-site chain the finder needs to judge.
+    const callerDistance = (edge: CallEdge) => dist.get(edge[0]) ?? Number.MAX_SAFE_INTEGER;
+    const calleeDistance = (edge: CallEdge) => dist.get(edge[1]) ?? Number.MAX_SAFE_INTEGER;
+    const callerDiff = callerDistance(x) - callerDistance(y);
+    if (callerDiff !== 0) return callerDiff;
+    const calleeDiff = calleeDistance(x) - calleeDistance(y);
+    if (calleeDiff !== 0) return calleeDiff;
     const fx = cpg.mfile(x[0]);
     const fy = cpg.mfile(y[0]);
     if (fx !== fy) return fx < fy ? -1 : 1;
@@ -468,4 +613,91 @@ export function sliceAroundTargets(
   const slice = buildSlice(cpg, [...targets], opts.hops ?? 3);
   const { text, stats } = renderSlice(cpg, slice, opts.loadSource, opts.opsNote);
   return { text, stats, targetCount: targets.size };
+}
+
+// ── In-process ops harvest integration ─────────────────────────────────────────
+
+/**
+ * Import type for the harvest module's edge shape (avoids a circular
+ * dependency — the harvester module lives in `../graph/` and does NOT
+ * import from stages).
+ */
+export interface HarvestEdgeInput {
+  structName: string;
+  field: string;
+  fnName: string;
+  file: string;
+  line: number;
+}
+
+/**
+ * Resolve harvested ops-struct edges against a loaded CPG. Static initializer
+ * lines live at file scope, not inside a CPG METHOD, so the resolver instead
+ * matches each harvested field against an unresolved dynamic CALL expression
+ * (`state->recv_actor(...)`) in the same source file and wires that call site's
+ * enclosing method to the assigned handler.
+ *
+ * `structName` is retained as evidence for callers but is not type-resolved:
+ * Joern's GraphSON export does not expose enough receiver-type information for
+ * a sound struct match. File + dispatch-field matching is deliberately bounded;
+ * Phase 2's points-to analysis is the precise follow-up.
+ */
+function dispatchFieldFromCallCode(code: string | undefined): string | undefined {
+  if (!code) return undefined;
+  const paren = code.indexOf("(");
+  if (paren < 0) return undefined;
+  const matches = [...code.slice(0, paren).matchAll(/(?:->|\.)\s*([A-Za-z_][A-Za-z0-9_]*)\s*/g)];
+  return matches.length > 0 ? matches[matches.length - 1][1] : undefined;
+}
+
+function sameSourceFile(cpgFile: string, harvestedFile: string): boolean {
+  if (cpgFile === harvestedFile) return true;
+  const cpgBase = cpgFile.slice(cpgFile.lastIndexOf("/") + 1);
+  const harvestedBase = harvestedFile.slice(harvestedFile.lastIndexOf("/") + 1);
+  return cpgBase === harvestedBase;
+}
+
+/**
+ * Inject synthesized edges from static ops initializers at their matching
+ * dynamic dispatch sites. Returns the number of distinct caller→callee edges
+ * added.
+ */
+export function injectHarvestedOps(cpg: Cpg, edges: HarvestEdgeInput[]): number {
+  if (edges.length === 0) return 0;
+
+  const byField = new Map<string, HarvestEdgeInput[]>();
+  for (const edge of edges) {
+    const existing = byField.get(edge.field);
+    if (existing) existing.push(edge);
+    else byField.set(edge.field, [edge]);
+  }
+
+  const addedEdges = new Set<string>();
+  let added = 0;
+  for (const [callNode, node] of cpg.nodes) {
+    if (node.label !== "CALL") continue;
+    const caller = cpg.enclosing.get(callNode);
+    if (caller === undefined || cpg.isExternal(caller)) continue;
+    const field = dispatchFieldFromCallCode(cpg.nodeCode(callNode));
+    if (!field) continue;
+
+    for (const edge of byField.get(field) ?? []) {
+      if (!sameSourceFile(cpg.mfile(caller), edge.file)) continue;
+      for (const callee of cpg.methodByName.get(edge.fnName) ?? []) {
+        if (cpg.isExternal(callee)) continue;
+        const key = `${caller}:${callee}:${callNode}`;
+        if (addedEdges.has(key)) continue;
+        addedEdges.add(key);
+
+        const callees = cpg.synthCallees.get(caller);
+        if (callees) callees.push([callee, callNode]);
+        else cpg.synthCallees.set(caller, [[callee, callNode]]);
+        const callers = cpg.synthCallers.get(callee);
+        if (callers) callers.push([caller, callNode]);
+        else cpg.synthCallers.set(callee, [[caller, callNode]]);
+        added++;
+      }
+    }
+  }
+  return added;
 }

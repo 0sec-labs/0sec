@@ -322,6 +322,61 @@ describe("ToolExecutor", () => {
     }
   });
 
+  it("marks an exact cited source range with an in-tree maintainer marker", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-known-marker-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "// TODO: validate length\nparse(input);\n");
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Parser length issue",
+          severity: "high",
+          category: "missing-validation",
+          description: "Cited source contains an explicit maintainer TODO.",
+          evidence_request: "parser.ts:1",
+          evidence_response: "parse(input)",
+          source_path: "parser.ts",
+          source_start_line: 1,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(ctx.findings[0]?.reviewAnnotation?.knownMarker).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark a citation because a marker appears outside its exact range", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-known-marker-range-"));
+    try {
+      writeFileSync(join(root, "parser.ts"), "// TODO: unrelated cleanup\nparse(input);\n");
+      ctx.scopePath = root;
+      const result = await executor.execute({
+        name: "save_finding",
+        arguments: {
+          title: "Parser length issue",
+          severity: "high",
+          category: "missing-validation",
+          description: "Only line two is cited.",
+          evidence_request: "parser.ts:2",
+          evidence_response: "parse(input)",
+          source_path: "parser.ts",
+          source_start_line: 2,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(ctx.findings[0]?.reviewAnnotation).toEqual({
+        path: "parser.ts",
+        startLine: 2,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("save_finding rejects an annotation path outside the workspace", async () => {
     const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
     try {

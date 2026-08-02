@@ -22,10 +22,15 @@
 #     -> writes <source-root>/.pwnkit/cpg/net__unix.json  (the convention the
 #        stage loads by default). Then run:
 #        pwnkit hunt --source /root/linux-6.12-git --seed fix.patch --graph-slice
+# For code selected by kernel Kconfig, pass its enabled symbols as a
+# comma-separated environment variable, for example:
+#   PWNKIT_CPG_DEFINES=CONFIG_SMB_SERVER_KERBEROS5=1 provision-cpg.sh …
+# This lets c2cpg retain the compiled branch instead of indexing the fallback
+# `#else` stub.
 #
-# The optional Phase-1 ops map (<slug>.ops.json) is produced separately by the
-# tree-sitter ops harvester (bench:/root/graph-lpe/ops_harvest.py) — the stage
-# picks it up automatically when present next to the CPG JSON.
+# Phase-1 static dispatch can use either a precomputed `<slug>.ops.json` next
+# to the CPG, or the in-process harvester:
+#   pwnkit hunt ... --graph-slice --ops-harvest net/unix/af_unix.c
 set -euo pipefail
 
 SRC_ROOT="${1:?usage: provision-cpg.sh <source-root> <subsystem> [out-dir] [joern-cli-dir]}"
@@ -46,19 +51,31 @@ mkdir -p "$OUT_DIR"
 
 # Heap: roughly 2x the source footprint, capped; net/ (38MB) needed ~16GB.
 XMX="${PWNKIT_CPG_XMX:-16000}"
+CPG_DEFINES="${PWNKIT_CPG_DEFINES:-}"
+
+declare -a C2CPG_ARGS
+C2CPG_ARGS=(-J-Xmx"${XMX}"m)
+if [ -n "$CPG_DEFINES" ]; then
+  IFS=',' read -r -a C2CPG_DEFINES_ARRAY <<< "$CPG_DEFINES"
+  for DEFINE in "${C2CPG_DEFINES_ARRAY[@]}"; do
+    DEFINE="${DEFINE//[[:space:]]/}"
+    [ -n "$DEFINE" ] || continue
+    C2CPG_ARGS+=(--define "$DEFINE")
+  done
+  echo "[provision-cpg] enabled preprocessor definitions: ${CPG_DEFINES}" >&2
+fi
 
 echo "[provision-cpg] c2cpg over ${SUBSYS_DIR} (Xmx=${XMX}m) ..." >&2
-"${JOERN_DIR}/c2cpg.sh" -J-Xmx"${XMX}"m "$SUBSYS_DIR" --output "$CPG_BIN"
+"${JOERN_DIR}/c2cpg.sh" "${C2CPG_ARGS[@]}" "$SUBSYS_DIR" --output "$CPG_BIN"
 
-# Add the DDG/PDG dataflow overlay (REACHING_DEF edges the slicer walks), then
-# export the whole CPG to graphson JSON.
-echo "[provision-cpg] ossdataflow overlay + graphson export ..." >&2
-"${JOERN_DIR}/joern" --script /dev/stdin <<EOF
-importCpg("${CPG_BIN}")
-run.ossdataflow
-save
-EOF
-
+# GraphSON's supported whole-CPG representation is `all`: it contains the
+# METHOD/CALL/AST nodes the slicer needs and Joern computes a missing dataflow
+# overlay while exporting. Do NOT pre-run `joern --script ... run.ossdataflow`:
+# on Joern 4 it can leave a non-interactive process hung after saving, while
+# joern-export completes the same overlay itself. There is no call-only GraphSON
+# representation (`--repr ast` is unsupported for graphson), so do not expose a
+# misleading skip-dataflow switch.
+echo "[provision-cpg] exporting GraphSON + dataflow overlay ..." >&2
 "${JOERN_DIR}/joern-export" --repr all --format graphson --out "$EXPORT_DIR" "$CPG_BIN"
 
 # joern-export writes export.json (+ optional shards) into EXPORT_DIR.
