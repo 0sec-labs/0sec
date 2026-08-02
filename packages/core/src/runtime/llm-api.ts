@@ -2245,6 +2245,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         }
       } else if (this.isOpenAICompat && this.wireApi === "responses") {
         content = [];
+        // Reasoning summaries are surfaced to the UI and then DROPPED from
+        // `content` — see the reasoning branch below.
+        const reasoningSummaries: string[] = [];
         // Keep the raw item array so the next turn can replay the reasoning
         // items verbatim — see ProviderRawOutput.
         providerRaw = {
@@ -2265,15 +2268,21 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           }
 
           if (item.type === "reasoning") {
+            // The summary is a lossy PARAPHRASE of reasoning we now return
+            // properly: the raw item (with its `encrypted_content`) rides back
+            // on `providerRaw` and is spliced verbatim into the next request.
+            // Pushing the paraphrase into `content` too made it a permanent
+            // assistant text block that the agent loop replays as `output_text`
+            // on every later turn — S·T(T−1)/2 tokens over a T-turn run, at
+            // full input price because the Responses path has no prompt
+            // caching. So: surface it to the UI, never to `content`.
             const summaryParts = Array.isArray(item.summary)
               ? item.summary
                   .map((block: Record<string, unknown>) => typeof block.text === "string" ? block.text : "")
                   .filter((text: string) => text.trim().length > 0)
               : [];
             const reasoningText = summaryParts.join("\n").trim();
-            if (reasoningText) {
-              content.push({ type: "text", text: reasoningText });
-            }
+            if (reasoningText) reasoningSummaries.push(reasoningText);
             continue;
           }
 
@@ -2282,9 +2291,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
               content.push({ type: "text", text: block.text as string });
             } else if (block.type === "summary_text" || block.type === "reasoning_text") {
               const text = typeof block.text === "string" ? block.text : "";
-              if (text.trim()) content.push({ type: "text", text });
+              if (text.trim()) reasoningSummaries.push(text);
             }
           }
+        }
+
+        // Non-streaming has no `response.reasoning_summary_text.*` events, so
+        // this is the only place the dashboard's thinking channel gets fed on
+        // this path. Once per response, matching the Anthropic branch below.
+        if (callbacks?.onThinking && reasoningSummaries.length > 0) {
+          callbacks.onThinking(reasoningSummaries.join("\n"));
         }
 
         stopReason = content.some((block) => block.type === "tool_use") ? "tool_use" : "end_turn";
@@ -2614,6 +2630,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     const outputItems =
       streamedOutputItems.length > 0 ? streamedOutputItems : completedOutput;
     const content: NativeContentBlock[] = [];
+    // Reasoning summaries are surfaced to the UI and then DROPPED — never
+    // pushed into `content`. See the reasoning branch below.
+    const reasoningSummaries: string[] = [];
     for (const item of outputItems) {
       if (item.type === "function_call") {
         content.push({
@@ -2625,13 +2644,20 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         continue;
       }
       if (item.type === "reasoning") {
+        // The summary is a lossy PARAPHRASE of reasoning we now return
+        // properly: the raw item (with its `encrypted_content`) rides back on
+        // `providerRaw` and is spliced verbatim into the next request. Pushing
+        // the paraphrase into `content` too made it a permanent assistant text
+        // block that the agent loop replays as `output_text` on every later
+        // turn — S·T(T−1)/2 tokens over a T-turn run, at full input price
+        // because the Responses path has no prompt caching.
         const summaryParts = Array.isArray(item.summary)
           ? item.summary
               .map((block: Record<string, unknown>) => typeof block.text === "string" ? block.text : "")
               .filter((text: string) => text.trim().length > 0)
           : [];
         const reasoningText = summaryParts.join("\n").trim();
-        if (reasoningText) content.push({ type: "text", text: reasoningText });
+        if (reasoningText) reasoningSummaries.push(reasoningText);
         continue;
       }
       for (const block of (item.content as Array<Record<string, unknown>> | undefined) ?? []) {
@@ -2639,6 +2665,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           content.push({ type: "text", text: String(block.text ?? "") });
         }
       }
+    }
+
+    // The summary normally reached the UI live through
+    // `response.reasoning_summary_text.delta`, in which case `lastThinkingEmit`
+    // is already set and emitting here would show the same text twice. This is
+    // only the fallback for a stream that carried the reasoning item but no
+    // summary events.
+    if (lastThinkingEmit === 0 && reasoningSummaries.length > 0) {
+      thinkingText = reasoningSummaries.join("\n");
+      emitThinking(true);
     }
 
     const usageRecord = completedResponse.usage as Record<string, unknown> | undefined;
