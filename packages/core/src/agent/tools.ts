@@ -34,6 +34,7 @@ import { isWafEvasionLadderEnabled } from "../scope/engagement-profile.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
 import { sendPrompt, extractResponseText } from "../http.js";
 import { buildAuthHeaders } from "./prompts.js";
+import { formatTruncated } from "./output-truncation.js";
 import {
   runStructuralSqliProbeAsync,
   type ProbeObservation,
@@ -3762,7 +3763,10 @@ export class ToolExecutor {
       return { success: false, output: null, error: outcome.message.slice(0, 2_000) };
     }
 
-    const combined = outcome.combined.slice(0, 10_000);
+    // Middle-out under the shared tool-output policy. The old head-only
+    // 10,000-CHAR slice dropped the tail of every long run — and for a scanner
+    // the tail is the verdict (exit status, sanitizer summary, final error).
+    const combined = formatTruncated(outcome.combined);
 
     // Many pentesting tools exit non-zero on findings — if we got output,
     // surface it as success regardless of exit code (preserves prior behaviour).
@@ -4548,17 +4552,22 @@ export class ToolExecutor {
     }
 
     const requestedPath = args.path as string;
-    const maxLines = (args.max_lines as number) ?? 500;
+    // `max_lines` is honoured when the CALLER asks for it. There is no implicit
+    // 500-line head cap any more: a head-only line slice silently hid the end of
+    // every long file, and the shared tool-output policy already bounds size
+    // while keeping both ends.
+    const maxLines = typeof args.max_lines === "number" ? args.max_lines : undefined;
     const path = resolveScopedPath(this.ctx.scopePath, requestedPath);
 
     const content = readFileSync(path, "utf-8");
     const lines = content.split("\n");
-    const truncated = lines.length > maxLines;
-    const output = lines.slice(0, maxLines).join("\n");
+    const lineLimited = maxLines !== undefined && lines.length > maxLines;
+    const selected = lineLimited ? lines.slice(0, maxLines).join("\n") : content;
+    const output = formatTruncated(selected);
 
     return {
       success: true,
-      output: { content: output, totalLines: lines.length, truncated },
+      output: { content: output, totalLines: lines.length, truncated: lineLimited || output !== selected },
     };
   }
 

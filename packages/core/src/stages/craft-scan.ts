@@ -36,6 +36,7 @@ import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { estimateCost } from "@pwnkit/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
+import { formatTruncated, truncateMiddle } from "../agent/output-truncation.js";
 import { lookupFormatPrimer, knownFormatIds } from "./format-knowledge.js";
 import { PROVER_TOOL_NAMES, listProverPluginIds, proverToolDefs, runProverTool } from "./prover/index.js";
 import { fdpEncodeToolDef, runFdpEncode } from "../agent/input-encoder.js";
@@ -189,8 +190,14 @@ export interface CraftAttemptSummary {
 
 // ── Stage ────────────────────────────────────────────────────────────────────
 
-const clip = (s: string, n = 7000) =>
-  s.length > n ? s.slice(0, n) + `\n...[truncated ${s.length - n} chars]` : s;
+/**
+ * Byte-capped clip for text spliced INTO a prompt sentence (descriptions,
+ * sanitizer excerpts, oracle errors). Middle-out rather than head-only: a
+ * sanitizer report puts its SUMMARY line last, and the old head slice threw it
+ * away. No banner — these land mid-sentence. Model-visible tool output goes
+ * through `formatTruncated` under the shared token policy instead.
+ */
+const clip = (s: string, n = 7000) => truncateMiddle(s, { limit: n, mode: "bytes" }).text;
 
 export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanResult> {
   const log = opts.log ?? (() => {});
@@ -249,7 +256,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     if (!existsSync(abs) || statSync(abs).isDirectory()) return `(not a readable file: ${p})`;
     const L = readFileSync(abs, "utf8").split("\n");
     const s = Math.max(1, a ?? 1), e = Math.min(L.length, b ?? Math.min(L.length, s + 400));
-    return clip(L.slice(s - 1, e).map((ln, i) => `${s + i}: ${ln}`).join("\n"), 12000);
+    return formatTruncated(L.slice(s - 1, e).map((ln, i) => `${s + i}: ${ln}`).join("\n"));
   };
   const grep = (pattern: string, p?: string) => {
     try {
@@ -534,7 +541,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
         else if (tu.name === "submit_poc") out = await submitPoc(String(tu.input.python ?? ""));
         else out = `unknown tool ${tu.name}`;
       } catch (e) { out = `tool error: ${String(e).slice(0, 300)}`; }
-      results.push({ type: "tool_result", tool_use_id: tu.id, content: clip(out) });
+      results.push({ type: "tool_result", tool_use_id: tu.id, content: formatTruncated(out) });
       if (passed || oracleUnreachable) break;
     }
     messages.push({ role: "user", content: results });

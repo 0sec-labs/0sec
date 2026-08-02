@@ -18,7 +18,7 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     description: "Read a source code file. Returns numbered lines. Path must be within the scoped directory (usually the package or repo root). Start by reading package.json to understand the project structure, then follow imports.",
     parameters: {
       path: { type: "string", description: "File path (relative to scope root or absolute)" },
-      max_lines: { type: "number", description: "Max lines to read (default 500). Use for large files." },
+      max_lines: { type: "number", description: "Read only the first N lines. Omit to read the whole file (large files are truncated in the middle, keeping both ends)." },
     },
     required: ["path"],
   },
