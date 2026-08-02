@@ -448,7 +448,10 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     }
   }
 
-  const messages: Array<{ role: string; content: Array<Record<string, unknown>> }> = [
+  // `providerRaw` is the opaque per-turn reasoning sidecar — see
+  // ProviderRawOutput in runtime/types.ts. Carried on assistant turns so the
+  // Responses path can replay reasoning instead of re-deriving it every step.
+  const messages: Array<{ role: string; content: Array<Record<string, unknown>>; providerRaw?: unknown }> = [
     { role: "user", content: [{ type: "text", text: `## Vulnerability description\n${opts.target.description}${recalledBlock}\n\n## Source\nThe pre-patch source is at the root (use the tools). Find the fuzzer entry + buggy code, then craft and submit.` }] },
   ];
 
@@ -466,7 +469,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       break;
     }
     const rt = new LlmApiRuntime({ type: "api", ...(opts.model ? { model: opts.model } : {}), timeout: opts.llmTimeoutMs ?? 240_000 });
-    let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown };
+    let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown; providerRaw?: unknown };
     try {
       res = await rt.executeNative(system, messages as never, tools as never,
         { onThinking() {}, onDelta() {}, onText() {}, onUsage(u: { inputTokens?: number; outputTokens?: number }) { inputTokens += u?.inputTokens ?? 0; outputTokens += u?.outputTokens ?? 0; } } as never);
@@ -476,7 +479,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       break;
     }
     const content = res.content ?? [];
-    messages.push({ role: "assistant", content });
+    messages.push({ role: "assistant", content, ...(res.providerRaw ? { providerRaw: res.providerRaw } : {}) });
     const toolUses = content.filter((b) => (b as { type: string }).type === "tool_use") as Array<{ id: string; name: string; input: Record<string, unknown> }>;
     if (toolUses.length === 0) {
       noops++;

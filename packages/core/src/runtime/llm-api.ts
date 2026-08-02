@@ -25,6 +25,20 @@ import {
   type WireBlock,
 } from "./prompt-cache.js";
 
+/**
+ * Read `usage.input_tokens_details.cached_tokens` off a Responses payload.
+ *
+ * Returns `{}` when the provider does not report it, so spreading the result
+ * never plants an explicit `undefined` on the usage object. Unlike Anthropic,
+ * the Responses API counts cached tokens INSIDE `input_tokens`, so this is
+ * observability only — no re-adding, no double counting.
+ */
+function readResponsesCachedTokens(usage: Record<string, unknown>): { cachedInputTokens?: number } {
+  const details = usage.input_tokens_details as Record<string, unknown> | undefined;
+  const cached = Number(details?.cached_tokens ?? 0);
+  return Number.isFinite(cached) && cached > 0 ? { cachedInputTokens: cached } : {};
+}
+
 /** Safely parse JSON tool arguments; returns empty object on malformed input. */
 function safeParseJson(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) return {};
@@ -1850,6 +1864,38 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             ];
 
         for (const m of messages) {
+          // ── Retained reasoning ──
+          // When this assistant turn carries the provider's own item array AND
+          // it was produced by exactly this provider+model+wireApi, replay it
+          // verbatim. That is the only supported way to return encrypted
+          // reasoning on this backend: `previous_response_id` is unsupported,
+          // and a field-by-field reconstruction cannot honour "a reasoning item
+          // must be immediately followed by the item it produced" — the flush
+          // below emits pending text as a `{role, content}` message BEFORE the
+          // function_call, which would land a message between the two and 400
+          // with `Item 'rs_…' … without its required following item`.
+          //
+          // The `continue` is load-bearing: falling through would emit the raw
+          // items AND their reconstructed twins.
+          //
+          // Any identity mismatch degrades to today's exact behaviour, which is
+          // also the model-switch strip point — encrypted reasoning is bound to
+          // the model that produced it. That covers the ensemble runtime
+          // (`openrouter.ts`), which hands ONE shared messages array to N models
+          // and appends the winner's turn back: every non-producing model sees a
+          // mismatch and reconstructs, instead of 400-ing on a sibling's items.
+          if (
+            m.role === "assistant"
+            && m.providerRaw
+            && m.providerRaw.provider === this.provider
+            && m.providerRaw.model === this.model
+            && m.providerRaw.wireApi === this.wireApi
+            && m.providerRaw.output.length > 0
+          ) {
+            input.push(...(m.providerRaw.output as Array<Record<string, unknown>>));
+            continue;
+          }
+
           // Collect text blocks into a role-based message. The OpenAI Responses
           // API distinguishes text content by producer: user/system/developer
           // roles use `input_text`, but the assistant role must use
@@ -2087,6 +2133,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       let content: NativeContentBlock[];
       let stopReason: "end_turn" | "tool_use" | "max_tokens" | "error";
       let usage: NativeRuntimeResult["usage"];
+      // Set on the Responses path only — the wire formats that have no
+      // replayable item array leave it undefined and keep today's behaviour.
+      let providerRaw: NativeRuntimeResult["providerRaw"];
 
       if (this.isOpenAICompat && this.wireApi === "chat_completions") {
         const choice = json.choices?.[0];
@@ -2125,6 +2174,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         }
       } else if (this.isOpenAICompat && this.wireApi === "responses") {
         content = [];
+        // Keep the raw item array so the next turn can replay the reasoning
+        // items verbatim — see ProviderRawOutput.
+        providerRaw = {
+          provider: this.provider,
+          model: this.model,
+          wireApi: this.wireApi,
+          output: (json.output ?? []) as unknown[],
+        };
         for (const item of json.output ?? []) {
           if (item.type === "function_call") {
             content.push({
@@ -2165,6 +2222,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           usage = {
             inputTokens: json.usage.input_tokens ?? 0,
             outputTokens: json.usage.output_tokens ?? 0,
+            // Responses `input_tokens` already includes the cached span, so
+            // this is instrumentation only — see the streaming path.
+            ...readResponsesCachedTokens(json.usage as Record<string, unknown>),
           };
         }
       } else {
@@ -2219,6 +2279,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         stopReason,
         usage,
         durationMs: Date.now() - start,
+        ...(providerRaw ? { providerRaw } : {}),
       };
     } catch (err) {
       clearTimeout(timer);
@@ -2514,6 +2575,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       ? {
           inputTokens: Number(usageRecord.input_tokens ?? 0),
           outputTokens: Number(usageRecord.output_tokens ?? 0),
+          // Responses `input_tokens` already INCLUDES the cached span (unlike
+          // Anthropic, which subtracts it), so no normalisation is needed —
+          // this is purely so cache behaviour becomes observable. Without it
+          // the Codex cache hit rate is unmeasurable: `prompt-cache.ts`
+          // instruments the Anthropic path only.
+          ...readResponsesCachedTokens(usageRecord),
         }
       : undefined;
 
@@ -2522,6 +2589,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       stopReason: content.some((item) => item.type === "tool_use") ? "tool_use" : "end_turn",
       usage,
       durationMs: Date.now() - start,
+      // `outputItems` is the complete, correctly-ordered response array —
+      // reasoning items with their `encrypted_content` still attached, each
+      // immediately followed by the item it produced. Handing it back lets the
+      // next turn replay it verbatim instead of re-deriving the reasoning.
+      providerRaw: {
+        provider: this.provider,
+        model: this.model,
+        wireApi: this.wireApi,
+        output: outputItems,
+      },
     };
   }
 
