@@ -282,3 +282,43 @@ describe("Responses reasoning echo-back", () => {
     expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
   });
 });
+
+describe("server-side compaction (opt-in)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function bodyFor(serverCompactionTokens?: number): Promise<Record<string, unknown>> {
+    const rt = new LlmApiRuntime({
+      type: "api",
+      timeout: 5000,
+      apiKey: "test-key",
+      model: "gpt-5.5",
+      ...(serverCompactionTokens !== undefined ? { serverCompactionTokens } : {}),
+    });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "responses";
+    (rt as any).apiKey = "test-key";
+    const bodies: Array<Record<string, unknown>> = [];
+    stubFetchCapturing(bodies, [completedEvent([])]);
+    await rt.executeNative("sys", [{ role: "user", content: [{ type: "text", text: "go" }] }], []);
+    return bodies[0]!;
+  }
+
+  it("is off unless asked for — the native loop compacts client-side", async () => {
+    expect(await bodyFor()).not.toHaveProperty("context_management");
+  });
+
+  it("sends the requested compact_threshold", async () => {
+    expect((await bodyFor(150_000)).context_management).toEqual({
+      compaction: { compact_threshold: 150_000 },
+    });
+  });
+
+  it("clamps up to the API minimum of 1000", async () => {
+    expect((await bodyFor(10)).context_management).toEqual({
+      compaction: { compact_threshold: 1000 },
+    });
+  });
+});
