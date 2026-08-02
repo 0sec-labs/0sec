@@ -864,7 +864,16 @@ function parseCodexAzureConfig(): {
     const wireApiMatch = azureSectionMatch?.[1]?.match(/wire_api\s*=\s*"([^"]+)"/);
     const azureModelMatch = azureSectionMatch?.[1]?.match(/model\s*=\s*"([^"]+)"/);
     const topLevelModelMatch = content.match(/^\s*model\s*=\s*"([^"]+)"/m);
-    const reasoningMatch = content.match(/model_reasoning_effort\s*=\s*"([^"]+)"/);
+    // Scoped like its siblings above. Unscoped, this matched the FIRST
+    // `model_reasoning_effort` anywhere in the file — including one set inside
+    // an unrelated `[plugins."…"]` section, which a reordering of the file
+    // would silently hand to every Responses-path scan. Prefer the azure
+    // section, then the top-level keys (everything before the first
+    // `[section]` header); never a foreign section.
+    const topLevelSection = content.split(/^\[/m)[0] ?? "";
+    const reasoningMatch =
+      azureSectionMatch?.[1]?.match(/model_reasoning_effort\s*=\s*"([^"]+)"/)
+      ?? topLevelSection.match(/^\s*model_reasoning_effort\s*=\s*"([^"]+)"/m);
 
     return {
       baseUrl: baseUrlMatch?.[1],
