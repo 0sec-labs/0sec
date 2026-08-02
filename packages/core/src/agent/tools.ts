@@ -947,24 +947,19 @@ function executePipeline(
   };
 }
 
-function validateScopedCommand(tokens: string[], scopePath?: string): void {
-  const scopeRoot = scopePath ? resolve(scopePath) : null;
-  for (const token of tokens.slice(1)) {
+function validateScopedCommand(tokens: string[], scopePath?: string): string[] {
+  return tokens.map((token, index) => {
+    if (index === 0) return token;
     if (isAbsolute(token)) {
-      // Allow absolute paths that resolve INSIDE the scan's scope dir
-      // (e.g. /tmp/pwnkit-audit-xxxxxxxx/node_modules/lodash/lodash.js
-      // when scope is /tmp/pwnkit-audit-xxxxxxxx). Without this the
-      // agent kept burning turns rewriting full paths to relative ones
-      // while exploring its own scratch dir — pure friction with no
-      // security benefit. The scope check still rejects /etc/passwd
-      // and friends.
-      if (scopeRoot) {
-        const resolvedToken = resolve(token);
-        if (
-          resolvedToken === scopeRoot ||
-          resolvedToken.startsWith(scopeRoot + "/")
-        ) {
-          continue;
+      // Canonicalize the operand used at the process sink. Lexical resolve() is
+      // insufficient: package tarballs may carry symlinks to credentials outside
+      // the audit directory, and validating then executing the original spelling
+      if (scopePath) {
+        try {
+          return resolveScopedPath(scopePath, token);
+        } catch {
+          // Fall through to the public refusal below; do not expose the
+          // resolved host path to an untrusted audit agent.
         }
       }
       throw new Error(`Absolute paths are not allowed in scoped commands: ${token}`);
@@ -972,7 +967,8 @@ function validateScopedCommand(tokens: string[], scopePath?: string): void {
     if (/(^|\/)\.\.(\/|$)/.test(token)) {
       throw new Error(`Parent-path traversal is not allowed in scoped commands: ${token}`);
     }
-  }
+    return token;
+  });
 }
 
 function normalizeLoopbackHost(hostname: string): string {
@@ -4664,7 +4660,7 @@ export class ToolExecutor {
 
       try {
         validateCommandTokens(tokens);
-        validateScopedCommand(tokens, this.ctx.scopePath);
+        tokens = validateScopedCommand(tokens, this.ctx.scopePath);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { success: false, output: null, error: msg };

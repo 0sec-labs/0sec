@@ -8,10 +8,11 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const ORIGINAL_JIT_SKILLS_ENV = process.env.PWNKIT_FEATURE_JIT_SKILLS;
 const ORIGINAL_LOOT_LEDGER_ENV = process.env.PWNKIT_FEATURE_LOOT_LEDGER;
@@ -1210,6 +1211,46 @@ describe("ToolExecutor", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("scoped local directory");
+  });
+
+  describe("scope symlink escapes", () => {
+    let root: string;
+    let secret: string;
+    let scopedExecutor: ToolExecutor;
+
+    beforeEach(() => {
+      const parent = mkdtempSync(join(tmpdir(), "pwnkit-scope-symlink-"));
+      root = join(parent, "audit");
+      secret = join(parent, "operator-secret.txt");
+      mkdirSync(root);
+      writeFileSync(secret, "operator credential\n");
+      symlinkSync(secret, join(root, "package-link"));
+      scopedExecutor = new ToolExecutor({ ...ctx, scopePath: root }, null);
+    });
+
+    afterEach(() => {
+      rmSync(dirname(root), { recursive: true, force: true });
+    });
+
+    it("rejects read_file through a symlink leaving the scope", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "package-link" },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Path escapes the allowed scope");
+    });
+
+    it("rejects run_command through a symlink leaving the scope", async () => {
+      const result = await scopedExecutor.execute({
+        name: "run_command",
+        arguments: { command: `cat ${join(root, "package-link")}` },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Absolute paths are not allowed");
+    });
   });
 
   // ── apply_patch — pwnkit#230 (executor-level integration) ──
