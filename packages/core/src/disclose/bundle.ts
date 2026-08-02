@@ -201,8 +201,7 @@ function findingProvenanceHashes(finding: Finding): string[] {
 /**
  * Render the INDEX.md a disclosure bundle ships at its root. Filing-order
  * columns per the #168 spec:
- *
- *     finding-id | severity | title | gate-status | behavioural | filing-state
+ *     finding-id | severity | title | gate-status | behavioural | filing-state | provenance
  *
  * `gate-status` is the canary patch status, `behavioural` is the #171 verdict,
  * and `filing-state` is the {@link decideFilingState} verdict.
