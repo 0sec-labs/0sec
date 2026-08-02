@@ -36,6 +36,10 @@ interface ChallengeResult {
   expectedCategories: string[];
   durationMs: number;
   error?: string;
+  attackTurns?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUsd?: number;
 }
 
 interface BenchmarkReport {
@@ -48,6 +52,10 @@ interface BenchmarkReport {
   detectionRate: number;
   flagExtractionRate: number;
   totalDurationMs: number;
+  retainedReasoning?: boolean;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalEstimatedCostUsd: number;
   results: ChallengeResult[];
   categoryBreakdown: Record<string, { total: number; passed: number; rate: number }>;
   difficultyBreakdown: Record<string, { total: number; passed: number; rate: number }>;
@@ -126,6 +134,10 @@ async function runBenchmark(): Promise<BenchmarkReport> {
     difficultyBreakdown[key] = diff;
   }
 
+  const totalInputTokens = results.reduce((total, result) => total + (result.inputTokens ?? 0), 0);
+  const totalOutputTokens = results.reduce((total, result) => total + (result.outputTokens ?? 0), 0);
+  const totalEstimatedCostUsd = results.reduce((total, result) => total + (result.estimatedCostUsd ?? 0), 0);
+
   const report: BenchmarkReport = {
     timestamp: new Date().toISOString(),
     depth,
@@ -136,6 +148,12 @@ async function runBenchmark(): Promise<BenchmarkReport> {
     detectionRate: passed / challenges.length,
     flagExtractionRate: flagsFound / challenges.length,
     totalDurationMs: Date.now() - startTime,
+    ...(useAgentic
+      ? { retainedReasoning: process.env.PWNKIT_FEATURE_RETAINED_REASONING !== "0" }
+      : {}),
+    totalInputTokens,
+    totalOutputTokens,
+    totalEstimatedCostUsd,
     results,
     categoryBreakdown,
     difficultyBreakdown,
@@ -209,6 +227,14 @@ async function runChallenge(challenge: Challenge, port: number): Promise<Challen
       matchedCategories,
       expectedCategories: challenge.expectedCategories,
       durationMs: Date.now() - start,
+      ...(report.benchmarkMeta
+        ? {
+            attackTurns: report.benchmarkMeta.attackTurns,
+            inputTokens: report.benchmarkMeta.inputTokens,
+            outputTokens: report.benchmarkMeta.outputTokens,
+            estimatedCostUsd: report.benchmarkMeta.estimatedCostUsd,
+          }
+        : {}),
     };
   } catch (err) {
     return {
@@ -254,6 +280,11 @@ async function main() {
       console.log(`  Detection rate:    \x1b[1m${(report.detectionRate * 100).toFixed(1)}%\x1b[0m  (${report.passed}/${report.totalChallenges})`);
       console.log(`  Flag extraction:   \x1b[1m${(report.flagExtractionRate * 100).toFixed(1)}%\x1b[0m`);
       console.log(`  Total time:        ${(report.totalDurationMs / 1000).toFixed(1)}s`);
+      if (useAgentic) {
+        console.log(`  Retained reasoning: ${report.retainedReasoning ? "on" : "off"}`);
+        console.log(`  Tokens (in/out):  ${report.totalInputTokens}/${report.totalOutputTokens}`);
+        console.log(`  Estimated cost:   $${report.totalEstimatedCostUsd.toFixed(4)}`);
+      }
       console.log("\n  By difficulty:");
       for (const [level, data] of Object.entries(report.difficultyBreakdown)) {
         console.log(`    ${level.padEnd(8)} ${data.passed}/${data.total}  (${(data.rate * 100).toFixed(0)}%)`);

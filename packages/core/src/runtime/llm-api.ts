@@ -1923,7 +1923,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           // and appends the winner's turn back: every non-producing model sees a
           // mismatch and reconstructs, instead of 400-ing on a sibling's items.
           if (
-            m.role === "assistant"
+            features.retainedReasoning
+            && m.role === "assistant"
             && m.providerRaw
             && m.providerRaw.provider === this.provider
             && m.providerRaw.model === this.model
