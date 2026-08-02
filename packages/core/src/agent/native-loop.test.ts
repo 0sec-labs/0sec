@@ -1120,6 +1120,120 @@ describe("compactMessagesWithLLM — preserve credential-bearing messages (pwnki
   });
 });
 
+describe("compactMessagesWithLLM — same-role tail runs are merged, not dropped", () => {
+  function summarizingRuntime(): NativeRuntime {
+    return {
+      type: "api" as const,
+      async executeNative(): Promise<NativeRuntimeResult> {
+        return {
+          content: [{ type: "text", text: "## Summary\n- Explored several routine endpoints and made no notable progress." }],
+          stopReason: "end_turn",
+          durationMs: 1,
+        };
+      },
+      async isAvailable() { return true; },
+    };
+  }
+
+  /**
+   * 30 messages, with a consecutive-user run inside the preserved tail: the
+   * agent loop injects extra user messages (loot, playbooks, loop and budget
+   * warnings) routinely, so an injected nudge lands immediately before the
+   * `tool_result` answering the assistant's call. The tail-splice used to drop
+   * the second of the two — usually the tool_result.
+   */
+  function conversationWithConsecutiveUserTail(): NativeMessage[] {
+    const messages: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Investigate the target service" }] },
+    ];
+    for (let i = 1; i < 30; i++) {
+      const role = i % 2 === 1 ? "assistant" : "user";
+      messages.push({ role, content: [{ type: "text", text: `Routine turn ${i}.` }] });
+    }
+    // Tail is the last 10 (indices 20..29). Index 27 is an assistant turn with
+    // a tool call; 28 is an injected nudge; 29 is the tool result.
+    messages[27] = {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "call_9", name: "bash", input: { command: "id" } }],
+    };
+    messages[28] = { role: "user", content: [{ type: "text", text: "[loop warning] you are repeating yourself" }] };
+    messages[29] = { role: "user", content: [{ type: "tool_result", tool_use_id: "call_9", content: "uid=0(root)" }] };
+    return messages;
+  }
+
+  it("keeps the tool_result that follows an injected user message", async () => {
+    const compacted = await compactMessagesWithLLM(
+      conversationWithConsecutiveUserTail(),
+      summarizingRuntime(),
+      "system",
+    );
+
+    const last = compacted.at(-1)!;
+    expect(last.role).toBe("user");
+    // Both the injected nudge AND the tool_result are present, in order, on one
+    // merged message — not one of them silently dropped.
+    expect(last.content).toEqual([
+      { type: "text", text: "[loop warning] you are repeating yourself" },
+      { type: "tool_result", tool_use_id: "call_9", content: "uid=0(root)" },
+    ]);
+    // The call it answers is still there, immediately before it.
+    expect(compacted.at(-2)!.content).toContainEqual({
+      type: "tool_use", id: "call_9", name: "bash", input: { command: "id" },
+    });
+    // Role alternation still holds across the whole compacted array.
+    for (let i = 1; i < compacted.length; i++) {
+      expect(compacted[i]!.role).not.toBe(compacted[i - 1]!.role);
+    }
+  });
+
+  /** 30 alternating messages with two consecutive ASSISTANT turns at 27/28. */
+  function conversationWithConsecutiveAssistantTail(secondModel: string): NativeMessage[] {
+    const messages: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Investigate the target service" }] },
+    ];
+    for (let i = 1; i < 30; i++) {
+      const role = i % 2 === 1 ? "assistant" : "user";
+      messages.push({ role, content: [{ type: "text", text: `Routine turn ${i}.` }] });
+    }
+    messages[27] = {
+      role: "assistant",
+      content: [{ type: "text", text: "first" }],
+      providerRaw: { provider: "openai", model: "gpt-5.5", wireApi: "responses", output: [{ type: "reasoning", id: "rs_1" }] },
+    };
+    messages[28] = {
+      role: "assistant",
+      content: [{ type: "text", text: "second" }],
+      providerRaw: { provider: "openai", model: secondModel, wireApi: "responses", output: [{ type: "reasoning", id: "rs_2" }] },
+    };
+    // Close the run so exactly two assistant turns are adjacent.
+    messages[29] = { role: "user", content: [{ type: "text", text: "Routine turn 29." }] };
+    return messages;
+  }
+
+  it("merges providerRaw only when both sides came from the same provider+model+wireApi", async () => {
+    const merged = (await compactMessagesWithLLM(
+      conversationWithConsecutiveAssistantTail("gpt-5.5"),
+      summarizingRuntime(),
+      "system",
+    ))
+      .find((m) => m.content.some((b) => b.type === "text" && b.text === "first"))!;
+    expect(merged.content).toEqual([{ type: "text", text: "first" }, { type: "text", text: "second" }]);
+    expect(merged.providerRaw!.output).toEqual([{ type: "reasoning", id: "rs_1" }, { type: "reasoning", id: "rs_2" }]);
+
+    // Now make the second turn come from a different model: the sidecar must be
+    // dropped (reconstruction is safe; replaying a foreign model's encrypted
+    // reasoning is a 400).
+    const mismatched = (await compactMessagesWithLLM(
+      conversationWithConsecutiveAssistantTail("other-model"),
+      summarizingRuntime(),
+      "system",
+    ))
+      .find((m) => m.content.some((b) => b.type === "text" && b.text === "first"))!;
+    expect(mismatched.content).toHaveLength(2);
+    expect(mismatched.providerRaw).toBeUndefined();
+  });
+});
+
 // ── Two-stage budget warnings (pwnkit#408, Strix-inspired) ──
 
 describe("computeBudgetWarningTurns", () => {

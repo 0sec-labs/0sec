@@ -1929,12 +1929,45 @@ export async function compactMessagesWithLLM(
   let lastRole: "user" | "assistant" = "user";
   for (let i = tailIdx; i < tail.length; i++) {
     const msg = tail[i]!;
-    if (msg.role === lastRole) continue;
+    if (msg.role === lastRole) {
+      // MERGE the same-role run, never drop it. The loop injects extra user
+      // messages routinely — loot, playbooks, loop warnings, budget warnings —
+      // so consecutive user messages are normal, and the one being dropped was
+      // often the `tool_result`-bearing message, i.e. the answer to the tool
+      // call the assistant just made. Dropping it also orphans that call.
+      compacted[compacted.length - 1] = mergeSameRole(compacted[compacted.length - 1]!, msg);
+      continue;
+    }
     compacted.push(msg);
     lastRole = msg.role;
   }
 
   return compacted;
+}
+
+/**
+ * Concatenate two same-role messages into one.
+ *
+ * `providerRaw` (the opaque reasoning sidecar) survives only when both sides
+ * carry one from the same provider+model+wireApi — concatenating the two raw
+ * arrays keeps each one's internal ordering, so every reasoning item is still
+ * immediately followed by the item it produced. When only one side has it the
+ * sidecar is DROPPED: replaying it verbatim would skip the other message's
+ * content entirely, and falling back to reconstruction is the safe direction.
+ */
+function mergeSameRole(a: NativeMessage, b: NativeMessage): NativeMessage {
+  const merged: NativeMessage = { role: a.role, content: [...a.content, ...b.content] };
+  const rawA = a.providerRaw;
+  const rawB = b.providerRaw;
+  if (
+    rawA && rawB
+    && rawA.provider === rawB.provider
+    && rawA.model === rawB.model
+    && rawA.wireApi === rawB.wireApi
+  ) {
+    merged.providerRaw = { ...rawA, output: [...rawA.output, ...rawB.output] };
+  }
+  return merged;
 }
 
 // ── Progress Summary Generation ──
