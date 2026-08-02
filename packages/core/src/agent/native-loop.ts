@@ -1084,8 +1084,16 @@ export async function runNativeAgentLoop(
       // Only allow early exit if the agent has done meaningful work:
       // - At least 4 turns (read files, ran commands, analyzed code)
       // - OR explicitly called the done tool (handled below in tool execution)
+      // `textContent.trim()` is load-bearing: an empty-text end_turn is not a
+      // conclusion. It used to be impossible to hit on the Responses path
+      // because the reasoning summary was flattened into `content`, so the
+      // model's *thinking* became the scan's reported summary. That paraphrase
+      // no longer enters `content` (llm-api.ts), which leaves a genuinely
+      // silent turn silent — and marking it `done` with an empty summary would
+      // report `status: "success"` alongside the "reached max turns" fallback
+      // string from the tail of this function. Nudge the agent instead.
       const minTurns = Math.min(4, config.maxTurns);
-      if (state.turnCount >= minTurns && result.stopReason === "end_turn") {
+      if (state.turnCount >= minTurns && result.stopReason === "end_turn" && textContent.trim()) {
         state.summary = textContent;
         state.done = true;
         break;

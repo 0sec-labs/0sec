@@ -9,6 +9,11 @@
  *   2. an assistant message carrying `providerRaw` is spliced VERBATIM on the
  *      next request when provider+model+wireApi match, and falls back to the
  *      reconstructed representation on any mismatch.
+ *   3. the reasoning SUMMARY — a lossy paraphrase of what (1) carries properly
+ *      — stays out of `content` entirely and reaches the UI's thinking
+ *      channel exactly once. A text block there would be replayed as
+ *      `output_text` on every later turn and would also become the scan's
+ *      reported summary on a clean end_turn.
  *
  * The mismatch case is what keeps the ensemble runtime (openrouter.ts, which
  * shares one messages array across N models) from 400-ing on a sibling's
@@ -97,8 +102,12 @@ describe("Responses reasoning echo-back", () => {
     expect(result.providerRaw!.wireApi).toBe("responses");
     // Verbatim: the encrypted blob and the item ordering both survive.
     expect(result.providerRaw!.output).toEqual([REASONING_ITEM, FUNCTION_CALL_ITEM]);
-    // The flattened summary still reaches `content` for the UI (unchanged).
-    expect(result.content).toContainEqual({ type: "text", text: "I should list the directory." });
+    // …and the summary is NOT ALSO flattened into `content`: the raw item is
+    // the real reasoning, the summary is a paraphrase, and a text block here
+    // gets replayed as `output_text` on every later turn.
+    expect(result.content).toEqual([
+      { type: "tool_use", id: "call_1", name: "list_dir", input: { path: "." } },
+    ]);
   });
 
   it("survives the session persist/resume JSON round-trip", async () => {
@@ -244,6 +253,83 @@ describe("Responses reasoning echo-back", () => {
 
     const input = bodies[0]!.input as Array<Record<string, unknown>>;
     expect(input.some((item) => item.type === "reasoning")).toBe(false);
+  });
+
+  it("keeps the summary out of content when the turn ends with a message", async () => {
+    stubFetchCapturing([], [
+      { type: "response.output_item.done", item: REASONING_ITEM },
+      {
+        type: "response.output_item.done",
+        item: { type: "message", role: "assistant", content: [{ type: "output_text", text: "the directory is empty" }] },
+      },
+      completedEvent([]),
+    ]);
+
+    const result = await rt.executeNative("sys", [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ], []);
+
+    // Only the model's actual answer — not its thinking. `native-loop` joins
+    // every text block into `state.summary` on a clean end_turn, so a leaked
+    // paraphrase here becomes the scan's reported conclusion.
+    expect(result.content).toEqual([{ type: "text", text: "the directory is empty" }]);
+    expect(JSON.stringify(result.content)).not.toContain("I should list the directory.");
+  });
+
+  it("still routes the summary to onThinking, exactly once, when the stream emits summary deltas", async () => {
+    // Two summary PARTS. `response.reasoning_summary_text.done` overwrites
+    // rather than appends, so the streamed thinking text ends up as part two
+    // alone while the item's joined summary is both parts — different text and
+    // different length, which is what defeats the emit throttle's
+    // same-length guard. Anything but an explicit "already emitted?" check
+    // shows the user a second, longer copy of the same thinking.
+    const twoPartItem = {
+      ...REASONING_ITEM,
+      summary: [
+        { type: "summary_text", text: "First I check the listing." },
+        { type: "summary_text", text: "Then I read the files." },
+      ],
+    };
+    stubFetchCapturing([], [
+      { type: "response.reasoning_summary_text.done", text: "First I check the listing." },
+      { type: "response.reasoning_summary_text.done", text: "Then I read the files." },
+      { type: "response.output_item.done", item: twoPartItem },
+      { type: "response.output_item.done", item: FUNCTION_CALL_ITEM },
+      completedEvent([]),
+    ]);
+
+    const onThinking = vi.fn();
+    const result = await rt.executeNative("sys", [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ], [], { onThinking });
+
+    // Only what the stream delivered. The item-array fallback must not fire.
+    expect(onThinking.mock.calls.map((c) => c[0])).toEqual([
+      "First I check the listing.",
+      "Then I read the files.",
+    ]);
+    expect(result.content.some((b) => b.type === "text")).toBe(false);
+  });
+
+  it("falls back to the reasoning item for onThinking when no summary deltas were streamed", async () => {
+    // The item array is the only carrier here — dropping it from `content`
+    // without this fallback would black out the dashboard thinking channel.
+    stubFetchCapturing([], [
+      { type: "response.output_item.done", item: REASONING_ITEM },
+      { type: "response.output_item.done", item: FUNCTION_CALL_ITEM },
+      completedEvent([]),
+    ]);
+
+    const onThinking = vi.fn();
+    const result = await rt.executeNative("sys", [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ], [], { onThinking });
+
+    expect(onThinking).toHaveBeenCalledTimes(1);
+    expect(onThinking).toHaveBeenCalledWith("I should list the directory.");
+    expect(result.content).toEqual([
+      { type: "tool_use", id: "call_1", name: "list_dir", input: { path: "." } },
+    ]);
   });
 
   it("reports cached_tokens from the Responses usage payload", async () => {

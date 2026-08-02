@@ -189,6 +189,54 @@ describe("runNativeAgentLoop", () => {
     expect(state.done).toBe(true);
   });
 
+  it("does not accept a silent end_turn as a conclusion", async () => {
+    // On the Responses path a reasoning-only turn used to arrive with the
+    // model's flattened thinking in `content`, so an early exit here reported
+    // the paraphrase as the scan summary. The paraphrase is gone now, which
+    // leaves genuinely empty content — that must not exit as `done` with an
+    // empty summary. Non-zero `outputTokens` is what distinguishes this from
+    // the empty-response transient above: the model spent tokens thinking and
+    // then said nothing.
+    let callCount = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative() {
+        callCount++;
+        if (callCount >= 6) {
+          return {
+            content: [{ type: "tool_use", id: "tc1", name: "done", input: { summary: "Real conclusion" } }],
+            stopReason: "tool_use",
+            usage: { inputTokens: 10, outputTokens: 5 },
+            durationMs: 50,
+          };
+        }
+        return {
+          content: [],
+          stopReason: "end_turn",
+          usage: { inputTokens: 10, outputTokens: 40 },
+          durationMs: 50,
+        };
+      },
+      async isAvailable() { return true; },
+    };
+
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "discovery",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 10,
+        target: "https://example.com",
+        scanId: "test-scan",
+      },
+      runtime,
+      db: null,
+    });
+
+    expect(state.summary).toBe("Real conclusion");
+    expect(state.turnCount).toBeGreaterThanOrEqual(6);
+  });
+
   it("executes tool calls and collects results", async () => {
     let turnNum = 0;
     const runtime: NativeRuntime = {
