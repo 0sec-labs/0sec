@@ -9,6 +9,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { installBenchmarkJsonHandling } from "./benchmark-json.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -82,7 +83,7 @@ async function runBenchmark(): Promise<BenchmarkReport> {
 
   // Start challenge server
   const app = express();
-  app.use(express.json());
+  installBenchmarkJsonHandling(app);
 
   for (const challenge of challenges) {
     challenge.mount(app);
