@@ -188,6 +188,9 @@ describe("runCliPathTraversalReplayFixture", () => {
   });
 
   it("finishes when a command ignores SIGTERM past the timeout", async () => {
+    // A 200ms timeout races Node startup under the parallel core suite, before
+    // this child can install its SIGTERM handler. Keep the exercise focused on
+    // the SIGKILL fallback rather than scheduler load.
     const result = await runCliPathTraversalReplayFixture({
       commandArgv: [
         process.execPath,
@@ -195,7 +198,7 @@ describe("runCliPathTraversalReplayFixture", () => {
         "-e",
         "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);",
       ],
-      timeoutMs: 200,
+      timeoutMs: 1_000,
       engineVersion: "test",
     });
 
