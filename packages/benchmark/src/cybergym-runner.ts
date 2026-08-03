@@ -757,6 +757,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
   const memory = process.env.CYBERGYM_MEMORY_DB
     ? new CraftMemoryStore(process.env.CYBERGYM_MEMORY_DB)
     : undefined;
+  const cpgPath = process.env.CYBERGYM_CPG_PATH;
   if (memory) preseedMemory(memory);
   const report = await agenticScan({
     config: {
@@ -781,6 +782,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
       description: task.description,
       language: detectLanguage(task.repoRoot),
       taskId: task.taskId,
+      ...(cpgPath ? { cpg: { cpgPath } } : {}),
     },
     craft: {
       maxSteps: opts.maxSteps,
