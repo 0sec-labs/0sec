@@ -34,6 +34,7 @@ export {
 } from "./registry.js";
 
 export { pngProverPlugin } from "./png.js";
+export { mngProverPlugin } from "./mng.js";
 export { zipProverPlugin } from "./zip.js";
 
 export {

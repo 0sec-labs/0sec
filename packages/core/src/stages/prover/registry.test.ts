@@ -174,7 +174,7 @@ describe("craft-loop tool seam", () => {
 
   it("tells the agent which formats exist when it asks for one that does not", () => {
     const out = runProverValidate({ bytesHex: "0102030405060708", format: "heif" });
-    expect(out).toMatch(/Available: png, zip/);
+    expect(out).toMatch(/Available: png, mng, zip/);
     expect(out).toMatch(/format_reference/);
   });
 });
