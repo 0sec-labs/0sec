@@ -7,7 +7,6 @@ set -euo pipefail
 : "${CYBERGYM_ROOT:=/srv/cybergym}"
 : "${CYBERGYM_NETWORK:=cybergym-internal}"
 : "${PWNKIT_CYBERGYM_IMAGE:=pwnkit-cybergym-agent:local}"
-: "${CYBERGYM_PROXY:=http://cybergym-proxy:3128}"
 : "${CYBERGYM_AUTH_FILE:=${HOME}/.codex/auth.json}"
 : "${CYBERGYM_SERVER:?set CYBERGYM_SERVER to the submission server on the internal-network gateway}"
 : "${CYBERGYM_ORACLE_BRIDGE:?set CYBERGYM_ORACLE_BRIDGE to the host-bound oracle bridge}"
@@ -35,15 +34,21 @@ for path in \
 done
 
 docker network inspect "${CYBERGYM_NETWORK}" >/dev/null
+proxy_ip="$(docker inspect --format '{{with index .NetworkSettings.Networks "cybergym-internal"}}{{.IPAddress}}{{end}}' cybergym-proxy)"
+[[ -n "${proxy_ip}" ]] || {
+  printf 'CyberGym proxy is not attached to %s\n' "${CYBERGYM_NETWORK}" >&2
+  exit 2
+}
+cybergym_proxy="http://${proxy_ip}:3128"
 install -d -m 0700 "${CYBERGYM_ROOT}/results"
 chown 10001:10001 "${CYBERGYM_ROOT}/results"
 
 exec docker run --rm \
-  --env HTTP_PROXY="${CYBERGYM_PROXY}" \
-  --env HTTPS_PROXY="${CYBERGYM_PROXY}" \
+  --env HTTP_PROXY="${cybergym_proxy}" \
+  --env HTTPS_PROXY="${cybergym_proxy}" \
   --env NO_PROXY="127.0.0.1,localhost,${server_host},${bridge_host}" \
-  --env http_proxy="${CYBERGYM_PROXY}" \
-  --env https_proxy="${CYBERGYM_PROXY}" \
+  --env http_proxy="${cybergym_proxy}" \
+  --env https_proxy="${cybergym_proxy}" \
   --env no_proxy="127.0.0.1,localhost,${server_host},${bridge_host}" \
   --env NODE_USE_ENV_PROXY=1 \
   --read-only \
