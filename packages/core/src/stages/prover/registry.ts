@@ -29,6 +29,7 @@
  */
 
 import { pngProverPlugin } from "./png.js";
+import { mngProverPlugin } from "./mng.js";
 import { zipProverPlugin } from "./zip.js";
 import type { ProverContext, ProverMatch, ProverPlugin, ProverServices } from "./types.js";
 
@@ -43,6 +44,7 @@ import type { ProverContext, ProverMatch, ProverPlugin, ProverServices } from ".
  */
 export const PROVER_PLUGIN_REGISTRY: readonly ProverPlugin[] = Object.freeze([
   pngProverPlugin,
+  mngProverPlugin,
   zipProverPlugin,
 ]);
 
