@@ -242,6 +242,16 @@ export type {
 export { runCraftScan, craftedPocToFinding } from "./stages/craft-scan.js";
 export { buildCraftCpgContext, extractCraftCpgTargets } from "./stages/craft-cpg-context.js";
 export type { CraftCpgContext, CraftCpgLocalization } from "./stages/craft-cpg-context.js";
+export {
+  defaultCraftCandidateReviewer,
+  parseCraftCandidateReview,
+} from "./stages/craft-adversarial-review.js";
+export type {
+  CraftCandidateReview,
+  CraftCandidateReviewInput,
+  CraftCandidateReviewer,
+  CraftCandidateReviewVerdict,
+} from "./stages/craft-adversarial-review.js";
 // Ensemble craft stage (multi-model best-of-N craft + LLM judge → one PoC).
 export {
   runEnsembleCraft,

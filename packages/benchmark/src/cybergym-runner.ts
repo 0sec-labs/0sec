@@ -77,7 +77,7 @@ import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { agenticScan, CraftMemoryStore, preseedMemory, consolidateMemory, runEnsembleCraft, parseEnsembleModels } from "@pwnkit/core";
+import { agenticScan, CraftMemoryStore, preseedMemory, consolidateMemory, runEnsembleCraft, parseEnsembleModels, defaultCraftCandidateReviewer } from "@pwnkit/core";
 import type { CraftPocEvaluator, CraftScanOptions, CraftScanResult, CraftCandidateJudge, MemSafetyTarget } from "@pwnkit/core";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { sanitizeTraceText } from "./xbow-runner.js";
@@ -758,6 +758,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     ? new CraftMemoryStore(process.env.CYBERGYM_MEMORY_DB)
     : undefined;
   const cpgPath = process.env.CYBERGYM_CPG_PATH;
+  const adversarialReviewModel = process.env.CYBERGYM_ADVERSARIAL_REVIEW_MODEL?.trim();
   if (memory) preseedMemory(memory);
   const report = await agenticScan({
     config: {
@@ -808,6 +809,9 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
       // costs no graded budget, so it's a cheap lever on the hard tail.
       ...(process.env.CYBERGYM_MAX_TESTS
         ? { maxTests: Math.max(1, parseInt(process.env.CYBERGYM_MAX_TESTS, 10)) }
+        : {}),
+      ...(adversarialReviewModel
+        ? { reviewCandidate: defaultCraftCandidateReviewer({ model: adversarialReviewModel }) }
         : {}),
       // Ungraded vul-side self-test: post via submit.sh (which runs the PoC on
       // the VULNERABLE binary and returns its exit code) but DO NOT run the
@@ -1035,6 +1039,8 @@ export async function runTaskBestOfN(
     const memory = process.env.CYBERGYM_MEMORY_DB
       ? new CraftMemoryStore(process.env.CYBERGYM_MEMORY_DB)
       : undefined;
+    const cpgPath = process.env.CYBERGYM_CPG_PATH;
+    const adversarialReviewModel = process.env.CYBERGYM_ADVERSARIAL_REVIEW_MODEL?.trim();
     if (memory) preseedMemory(memory);
 
     const ensemble = await runEnsembleCraft({
@@ -1043,6 +1049,7 @@ export async function runTaskBestOfN(
         description: task.description,
         language: detectLanguage(task.repoRoot),
         taskId: task.taskId,
+        ...(cpgPath ? { cpg: { cpgPath } } : {}),
       },
       runtime: deps.runtime,
       n: deps.bestOfN,
@@ -1057,6 +1064,9 @@ export async function runTaskBestOfN(
           : Math.max(6, Math.min(12, Math.ceil(deps.maxSteps / 3))),
         ...(process.env.CYBERGYM_MAX_TESTS
           ? { maxTests: Math.max(1, parseInt(process.env.CYBERGYM_MAX_TESTS, 10)) }
+          : {}),
+        ...(adversarialReviewModel
+          ? { reviewCandidate: defaultCraftCandidateReviewer({ model: adversarialReviewModel }) }
           : {}),
         testPoc: vulOnly,
         evaluatePoc: vulOnly,
