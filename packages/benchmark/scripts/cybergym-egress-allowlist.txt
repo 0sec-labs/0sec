@@ -1,0 +1,5 @@
+# CyberGym agent egress. Keep this narrower than CyberGym's default list.
+# The task submission server and oracle bridge stay on the internal network and
+# are reached through NO_PROXY, never this proxy.
+auth.openai.com
+chatgpt.com
