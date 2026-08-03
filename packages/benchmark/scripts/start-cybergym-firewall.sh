@@ -19,7 +19,8 @@ allowlist="${script_dir}/cybergym-egress-allowlist.txt"
   exit 2
 }
 
-"${CYBERGYM_PYTHON}" -m cybergym.firewall start --allowlist "${allowlist}"
+# `update` recreates a pre-existing proxy with the checked-in allowlist too.
+"${CYBERGYM_PYTHON}" -m cybergym.firewall update --allowlist "${allowlist}"
 
 status="$("${CYBERGYM_PYTHON}" -m cybergym.firewall status)"
 gateway="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["network"]["host_gateway"])' <<<"${status}")"
