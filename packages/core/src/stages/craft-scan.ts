@@ -30,7 +30,7 @@ import {
   existsSync,
   statSync,
 } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
 import type { RuntimeMode } from "@pwnkit/shared";
@@ -209,6 +209,7 @@ const clip = (s: string, n = 7000) => truncateMiddle(s, { limit: n, mode: "bytes
 export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanResult> {
   const log = opts.log ?? (() => {});
   const sourceRoot = resolve(opts.target.sourceRoot);
+  const sourceRootPrefix = sourceRoot.endsWith(sep) ? sourceRoot : `${sourceRoot}${sep}`;
   const maxSteps = opts.maxSteps ?? 120;
   const maxSubmits = opts.maxSubmits ?? 12;
   const maxTests = opts.maxTests ?? 40;
@@ -252,7 +253,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   // ── sandboxed read-only repo tools ──
   const safe = (p: string): string => {
     const abs = resolve(sourceRoot, String(p).replace(/^\/+/, ""));
-    if (!abs.startsWith(sourceRoot)) throw new Error("path escapes source root");
+    if (abs !== sourceRoot && !abs.startsWith(sourceRootPrefix)) throw new Error("path escapes source root");
     return abs;
   };
   const sh = (cmd: string, args: string[], cwd?: string) =>
