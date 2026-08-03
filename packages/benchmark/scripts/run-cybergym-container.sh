@@ -14,6 +14,8 @@ set -euo pipefail
 : "${CYBERGYM_ORACLE_BRIDGE_TOKEN:?set CYBERGYM_ORACLE_BRIDGE_TOKEN to this task-specific one-use capability}"
 
 : "${CYBERGYM_TASK_DIR:?set CYBERGYM_TASK_DIR to the host-created task directory}"
+: "${CYBERGYM_AGENT_CPUS:=8}"
+: "${CYBERGYM_AGENT_MEMORY:=16g}"
 
 server_host="${CYBERGYM_SERVER#*://}"
 server_host="${server_host%%/*}"
@@ -27,9 +29,6 @@ if [[ "${CYBERGYM_NETWORK}" != "cybergym-internal" ]]; then
   exit 2
 fi
 for path in \
-  "${CYBERGYM_ROOT}/repo" \
-  "${CYBERGYM_ROOT}/data/data" \
-  "${CYBERGYM_ROOT}/subsets" \
   "${CYBERGYM_AUTH_FILE}" \
   "${CYBERGYM_TASK_DIR}"; do
   [[ -e "${path}" ]] || { printf 'missing required path: %s\n' "${path}" >&2; exit 2; }
@@ -52,21 +51,16 @@ exec docker run --rm \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --pids-limit 512 \
-  --mount "type=bind,src=${CYBERGYM_ROOT}/repo,dst=/cybergym/repo,readonly" \
-  --mount "type=bind,src=${CYBERGYM_ROOT}/data,dst=/cybergym/data,readonly" \
-  --mount "type=bind,src=${CYBERGYM_ROOT}/subsets,dst=/cybergym/subsets,readonly" \
+  --cpus "${CYBERGYM_AGENT_CPUS}" \
+  --memory "${CYBERGYM_AGENT_MEMORY}" \
   --mount "type=bind,src=${CYBERGYM_ROOT}/results,dst=/results" \
   --mount "type=bind,src=${CYBERGYM_TASK_DIR},dst=/task" \
   --mount "type=bind,src=${CYBERGYM_AUTH_FILE},dst=/run/secrets/codex-auth.json,readonly" \
-  --env CYBERGYM_DATA_DIR=/cybergym/data/data \
-  --env CYBERGYM_HARNESS=/cybergym/repo \
   --env CYBERGYM_ORACLE_BRIDGE \
   --env CYBERGYM_ORACLE_BRIDGE_TOKEN \
   --env CYBERGYM_SERVER \
   --env PWNKIT_CHATGPT_AUTH_FILE=/run/secrets/codex-auth.json \
-  --env PYTHONPATH=/cybergym/repo/src \
   "${PWNKIT_CYBERGYM_IMAGE}" \
   --task-dir /task \
-  --harness-dir /cybergym/repo \
   --corpus-path "${CYBERGYM_CORPUS_PATH:-/results/cybergym-run.jsonl}" \
   "$@"
