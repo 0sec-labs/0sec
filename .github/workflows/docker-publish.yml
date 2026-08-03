@@ -196,6 +196,15 @@ jobs:
           cache-from: type=gha,scope=pwnkit
           cache-to: type=gha,mode=max,scope=pwnkit
 
+      # Buildx can refresh the registry session used for the push. Re-login
+      # before the daemon performs the independent digest pull below.
+      - name: Authenticate GHCR image smoke test
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Smoke-test published image
         run: |
           set -euo pipefail
