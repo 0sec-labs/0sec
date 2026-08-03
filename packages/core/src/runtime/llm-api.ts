@@ -1537,12 +1537,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         });
       } catch (error) {
         const cause = error instanceof Error ? error.cause : undefined;
-        const causeDetail =
+        const causeCode =
           cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string"
-            ? ` (${cause.code})`
-            : "";
+            ? cause.code
+            : "unknown";
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`${this.providerLabel} transport failure: ${message}${causeDetail}`, {
+        throw new Error(`${this.providerLabel} transport failure [${causeCode}]: ${message}`, {
           cause: error,
         });
       }
