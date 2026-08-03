@@ -44,8 +44,8 @@ COPY LICENSE README.md ./
 
 RUN pnpm install --frozen-lockfile --prod=false && pnpm build
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin agent \
-    && mkdir -p /results /opt/corepack \
-    && chown -R agent:agent /results /opt/corepack
+    && mkdir -p /results /opt/corepack /run/cybergym \
+    && chown -R agent:agent /results /opt/corepack /run/cybergym
 
 USER agent
 

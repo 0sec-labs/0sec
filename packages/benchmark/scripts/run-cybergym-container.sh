@@ -43,6 +43,18 @@ cybergym_proxy="http://${proxy_ip}:3128"
 install -d -m 0700 "${CYBERGYM_ROOT}/results"
 chown 10001:10001 "${CYBERGYM_ROOT}/results"
 
+cpg_mount=()
+if [[ -n "${CYBERGYM_CPG_PATH:-}" ]]; then
+  [[ -f "${CYBERGYM_CPG_PATH}" ]] || {
+    printf 'missing CyberGym CPG export: %s\n' "${CYBERGYM_CPG_PATH}" >&2
+    exit 2
+  }
+  cpg_mount=(
+    --mount "type=bind,src=${CYBERGYM_CPG_PATH},dst=/run/cybergym/cpg.json,readonly"
+    --env CYBERGYM_CPG_PATH=/run/cybergym/cpg.json
+  )
+fi
+
 exec docker run --rm \
   --network "${CYBERGYM_NETWORK}" \
   --env HTTP_PROXY="${cybergym_proxy}" \
@@ -62,6 +74,7 @@ exec docker run --rm \
   --mount "type=bind,src=${CYBERGYM_ROOT}/results,dst=/results" \
   --mount "type=bind,src=${CYBERGYM_TASK_DIR},dst=/task" \
   --mount "type=bind,src=${CYBERGYM_AUTH_FILE},dst=/run/secrets/codex-auth.json,readonly" \
+  "${cpg_mount[@]}" \
   --env CYBERGYM_ORACLE_BRIDGE \
   --env CYBERGYM_ORACLE_BRIDGE_TOKEN \
   --env CYBERGYM_SERVER \

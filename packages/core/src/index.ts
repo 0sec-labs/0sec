@@ -240,6 +240,8 @@ export type {
 // Craft scan stage (agentic reason→craft→submit→refine, injectable PoC oracle):
 // the sibling of the fuzz path that needs no target build.
 export { runCraftScan, craftedPocToFinding } from "./stages/craft-scan.js";
+export { buildCraftCpgContext, extractCraftCpgTargets } from "./stages/craft-cpg-context.js";
+export type { CraftCpgContext, CraftCpgLocalization } from "./stages/craft-cpg-context.js";
 // Ensemble craft stage (multi-model best-of-N craft + LLM judge → one PoC).
 export {
   runEnsembleCraft,
