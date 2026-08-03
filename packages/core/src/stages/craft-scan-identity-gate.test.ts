@@ -1,6 +1,6 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { executeNative } = vi.hoisted(() => ({ executeNative: vi.fn() }));
@@ -57,5 +57,38 @@ describe("runCraftScan identity submission gate", () => {
     expect(graded).toBe(false);
     expect(result.submits).toBe(0);
     expect(result.passed).toBe(false);
+  });
+
+  it("does not let source tools read a sibling whose name shares the source prefix", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-root-"));
+    const sibling = `${sourceRoot}-sibling`;
+    mkdirSync(sibling);
+    writeFileSync(join(sibling, "outside.txt"), "outside-sentinel");
+    try {
+      executeNative
+        .mockResolvedValueOnce({
+          content: [{
+            type: "tool_use",
+            id: "read-outside",
+            name: "read_file",
+            input: { path: `../${basename(sibling)}/outside.txt` },
+          }],
+          stopReason: "tool_use",
+        })
+        .mockResolvedValueOnce({ content: [], stopReason: "end_turn" });
+
+      await runCraftScan({
+        target: { sourceRoot, description: "Trigger parser bug.", language: "c" },
+        runtime: "api",
+        maxSteps: 2,
+        evaluatePoc: async () => ({ triggered: false, output: "" }),
+      });
+
+      expect(JSON.stringify(executeNative.mock.calls[1])).not.toContain("outside-sentinel");
+      expect(JSON.stringify(executeNative.mock.calls[1])).toContain("path escapes source root");
+    } finally {
+      rmSync(sourceRoot, { recursive: true, force: true });
+      rmSync(sibling, { recursive: true, force: true });
+    }
   });
 });
