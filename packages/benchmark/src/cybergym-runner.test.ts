@@ -32,6 +32,7 @@ import {
   runTaskRepeated,
   cleanupOwnedTaskDir,
   resultToSample,
+  extractCraftEvidence,
   appendToCorpus,
   resolveCorpusPath,
   requireCyberGymApiKey,
@@ -613,6 +614,14 @@ describe("corpus persistence (mirror kernel-weaponization-collector)", () => {
       refusedReason: "no crash found",
       warnings: ["craft: no confirmed PoC after 2 submit(s) / 5 step(s)"],
       craftAttempts: [{ submit: 1, pocPath: "/tmp/poc", triggered: false, output: "no crash" }],
+      craftEvidence: [{
+        sequence: 1,
+        kind: "identity",
+        status: "refuted",
+        summary: "final submission bytes differed from the self-tested candidate",
+        step: 2,
+        candidateSha256: "b".repeat(64),
+      }],
       durationMs: 900,
     };
     const sample = resultToSample(refused);
@@ -622,8 +631,46 @@ describe("corpus persistence (mirror kernel-weaponization-collector)", () => {
     expect(sample.firstSubmitPassed).toBe(false);
     expect(sample.warnings).toEqual(["craft: no confirmed PoC after 2 submit(s) / 5 step(s)"]);
     expect(sample.craftAttempts).toEqual([{ submit: 1, pocPath: "/tmp/poc", triggered: false, output: "no crash" }]);
+    expect(sample.craftEvidence).toEqual([{
+      sequence: 1,
+      kind: "identity",
+      status: "refuted",
+      summary: "final submission bytes differed from the self-tested candidate",
+      step: 2,
+      candidateSha256: "b".repeat(64),
+    }]);
     expect(sample.pocSha256).toBeUndefined();
     expect(sample.id).toBe("arvo:30000:no-poc");
+  });
+});
+
+describe("craft evidence receipt extraction", () => {
+  it("keeps only structured, bounded evidence records", () => {
+    const records = extractCraftEvidence([{
+      type: "craft_evidence",
+      records: [{
+        sequence: 1,
+        kind: "oracle",
+        status: "validated",
+        summary: "differential oracle confirmed the candidate",
+        stage: "counterexample",
+        step: 3,
+        candidateSha256: "a".repeat(64),
+      }],
+    }]);
+    expect(records).toEqual([{
+      sequence: 1,
+      kind: "oracle",
+      status: "validated",
+      summary: "differential oracle confirmed the candidate",
+      stage: "counterexample",
+      step: 3,
+      candidateSha256: "a".repeat(64),
+    }]);
+    expect(extractCraftEvidence([{
+      type: "craft_evidence",
+      records: [{ sequence: 1, kind: "oracle", status: "validated", summary: "x".repeat(481) }],
+    }])).toBeUndefined();
   });
 });
 

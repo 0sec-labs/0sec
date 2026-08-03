@@ -624,7 +624,12 @@ async function runCraftScanStage(
     summary,
     findings,
     warnings: result.warnings.map((message) => ({ stage: "attack" as const, message })),
-    trace: [{ type: "craft_attempts", attempts: result.attempts }],
+    trace: [
+      { type: "craft_attempts", attempts: result.attempts },
+      ...(result.evidence && result.evidence.length > 0
+        ? [{ type: "craft_evidence", records: result.evidence }]
+        : []),
+    ],
     benchmarkMeta: {
       attackTurns: result.steps,
       model: result.model,

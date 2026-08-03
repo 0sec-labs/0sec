@@ -30,7 +30,7 @@ import {
   existsSync,
   statSync,
 } from "node:fs";
-import { resolve, sep } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
 import type { RuntimeMode } from "@pwnkit/shared";
@@ -48,6 +48,14 @@ import {
 } from "./craft-candidate-identity.js";
 import type { CraftCpgLocalization } from "./craft-cpg-context.js";
 import { buildCraftTargetSpec, renderCraftTargetSpec } from "./craft-target-spec.js";
+import {
+  CraftEvidenceLedger,
+  type CraftEvidenceRecord,
+} from "./craft-evidence-ledger.js";
+import {
+  CraftStagedOrchestrator,
+  parseCraftStageCitations,
+} from "./craft-staged-orchestrator.js";
 import type {
   CraftCandidateReview,
   CraftCandidateReviewer,
@@ -200,6 +208,8 @@ export interface CraftScanResult {
    * single source of truth for pricing across the engine.
    */
   estimatedCostUsd: number;
+  /** Task-local deterministic observations; excludes source, model, and candidate payloads. */
+  evidence?: CraftEvidenceRecord[];
 }
 
 export interface CraftAttemptSummary {
@@ -232,6 +242,11 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   const maxSubmits = opts.maxSubmits ?? 12;
   const maxTests = opts.maxTests ?? 40;
   const warnings: string[] = [];
+  const evidence = new CraftEvidenceLedger();
+  let currentStep = 0;
+  const stages = new CraftStagedOrchestrator({ requiresSelfTest: opts.testPoc !== undefined });
+  let vulnerableCrashCount = 0;
+  let firstTestStep: number | undefined;
 
   if (!existsSync(sourceRoot)) {
     // The per-task source vanished before the run even started — a /tmp janitor
@@ -250,6 +265,12 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       }
     }
     if (!existsSync(sourceRoot)) {
+      evidence.record({
+        kind: "run-summary",
+        status: "inconclusive",
+        summary: "source root was unavailable before research could begin",
+        stage: stages.current(),
+      });
       return {
         findings: [],
         warnings: [
@@ -264,6 +285,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
         inputTokens: 0,
         outputTokens: 0,
         estimatedCostUsd: 0,
+        evidence: evidence.snapshot(),
       };
     }
   }
@@ -282,6 +304,8 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     if (!existsSync(abs) || statSync(abs).isDirectory()) return `(not a readable file: ${p})`;
     const L = readFileSync(abs, "utf8").split("\n");
     const s = Math.max(1, a ?? 1), e = Math.min(L.length, b ?? Math.min(L.length, s + 400));
+    const sourcePath = relative(sourceRoot, abs);
+    stages.observeSource(sourcePath, s, e);
     return formatTruncated(L.slice(s - 1, e).map((ln, i) => `${s + i}: ${ln}`).join("\n"));
   };
   const grep = (pattern: string, p?: string) => {
@@ -312,6 +336,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   // missing: without it, the only way to learn "did my PoC crash?" was to spend
   // a graded submission, so the agent crafted blind and 90% of PoCs never
   // crashed. Generator errors here are FREE (they don't burn the graded budget).
+  let candidateCount = 0;
   let tests = 0;
   let eligibleCandidate: {
     sha256: string;
@@ -324,39 +349,78 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     const gen = resolve(tmpdir(), `pwnkit-craft-gen-${randomUUID()}.py`);
     const out = resolve(tmpdir(), `pwnkit-craft-poc-${opts.target.taskId ?? "x"}-${randomUUID()}`);
     writeFileSync(gen, python);
-    try { sh("python3", [gen, out]); return { ok: true, out }; }
+    try { sh("python3", [gen, out]); candidateCount++; return { ok: true, out }; }
     catch (e) { return { ok: false, err: String(e).slice(0, 800) }; }
   };
+  const candidateSha256 = (path: string): string | undefined =>
+    existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : undefined;
   const testPocFn = async (python: string): Promise<string> => {
     if (!opts.testPoc) return "test_poc is not available for this task — craft carefully and use submit_poc.";
     if (tests >= maxTests) return `self-test budget exhausted (${maxTests}). Only a previously identity-consistent crashing candidate may be submitted.`;
     tests++;
+    const step = currentStep + 1;
+    if (firstTestStep === undefined) firstTestStep = step;
     const g = runGenerator(python);
-    if (!g.ok) return `generator raised an error (free — not a graded submit):\n${g.err}`;
+    if (!g.ok) {
+      evidence.record({ kind: "self-test", status: "refuted", summary: "candidate generator failed before self-test", step });
+      return `generator raised an error (free — not a graded submit):\n${g.err}`;
+    }
+    const sha256 = candidateSha256(g.out);
+    if (!sha256) {
+      evidence.record({ kind: "self-test", status: "refuted", summary: "candidate generator produced no readable output file", step });
+      return "generator produced no readable PoC file (free — not a graded submit).";
+    }
     let v: CraftPocVerdict;
-    try { v = await opts.testPoc(g.out); }
-    catch (e) { return `self-test executor error: ${String(e).slice(0, 400)}`; }
-    if (v.oracleError) return `self-test could not run (${clip(v.oracleError, 160)}) — try submit_poc.`;
+    try {
+      v = await opts.testPoc(g.out);
+    } catch (e) {
+      evidence.record({ kind: "self-test", status: "inconclusive", summary: "self-test executor threw before a verdict", step, candidateSha256: sha256 });
+      return `self-test executor error: ${String(e).slice(0, 400)}`;
+    }
+    if (v.oracleError) {
+      evidence.record({ kind: "self-test", status: "inconclusive", summary: "self-test oracle returned no verdict", step, candidateSha256: sha256 });
+      return `self-test could not run (${clip(v.oracleError, 160)}) — try submit_poc.`;
+    }
     if (!v.triggered) {
+      evidence.record({ kind: "self-test", status: "refuted", summary: "candidate did not trigger the vulnerable target", step, candidateSha256: sha256 });
       log(`[craft] test#${tests} triggered=false`);
       return `No crash on the vulnerable binary. Sanitizer/stdout:\n${clip(v.output, 1000)}\nRe-read the fuzzer entry + buggy path; for binary formats start from a corpus seed, then test again.`;
     }
+    vulnerableCrashCount++;
 
     const identity = assessCraftCandidateIdentity(opts.target.description, v.output);
     const identitySummary = formatCraftCandidateIdentity(identity);
     log(`[craft] test#${tests} triggered=true identity=${identity.status}`);
     if (identity.status === "mismatch") {
+      evidence.record({ kind: "identity", status: "refuted", summary: "vulnerable-side crash contradicted a required target-description anchor", step, candidateSha256: sha256 });
       return `CRASH REJECTED — this candidate contradicts an explicit target-description anchor, so it is not eligible for a graded final submission. ${identitySummary}\nRe-read the fuzzer entry and target path, then test a candidate for the described bug.\nSanitizer output:\n${clip(v.output, 1200)}`;
     }
 
     eligibleCandidate = {
-      sha256: createHash("sha256").update(readFileSync(g.out)).digest("hex"),
+      sha256,
       identity,
       generator: python,
       pocPath: g.out,
       sanitizerOutput: v.output,
     };
-    return `CRASH CONFIRMED on the vulnerable binary. Identity evidence: ${identitySummary}\nOnly submit this exact generator. Any changed output must pass test_poc again before the graded final submission.\nSanitizer output:\n${clip(v.output, 1200)}`;
+    evidence.record({
+      kind: "identity",
+      status: "validated",
+      summary: "candidate triggered the vulnerable target and passed deterministic identity checks",
+      step,
+      stage: stages.current(),
+      candidateSha256: sha256,
+    });
+    const transition = stages.candidateValidated();
+    evidence.record({
+      kind: "stage-transition",
+      status: "validated",
+      summary: `advanced from ${transition.from} to ${transition.to}: ${transition.reason}`,
+      step,
+      stage: transition.to,
+      candidateSha256: sha256,
+    });
+    return `CRASH CONFIRMED on the vulnerable binary. Identity evidence: ${identitySummary}\nCounterexample review is now active. Submit only this exact generator as the graded final answer. Any changed output must pass test_poc again before the graded final submission.\nSanitizer output:\n${clip(v.output, 1200)}`;
   };
 
   // ── submit_poc → injected oracle (the GRADED differential final answer) ──
@@ -386,9 +450,11 @@ ${g.err}`;
         const budget = tests >= maxTests
           ? "The self-test budget is exhausted, so an untested candidate cannot be graded."
           : `Call test_poc first (it's FREE, ${maxTests - tests} left), then submit that exact generator.`;
+        evidence.record({ kind: "identity", status: "refuted", summary: "final submission refused without an identity-consistent vulnerable-side crash", step: currentStep + 1 });
         return `REFUSED — do not spend your scarce graded submit blind. You have not produced an identity-consistent crashing candidate. ${budget}`;
       }
       if (candidate.sha256 !== candidateSha256) {
+        evidence.record({ kind: "identity", status: "refuted", summary: "final submission bytes differed from the self-tested candidate", step: currentStep + 1, candidateSha256 });
         return "REFUSED — this generator's bytes differ from the identity-consistent candidate you self-tested. Call test_poc with this exact generator before submit_poc; the graded final answer must be self-tested.";
       }
       candidateIdentity = candidate.identity;
@@ -407,10 +473,28 @@ ${g.err}`;
         review = { verdict: "inconclusive", reason: `reviewer call failed: ${clip(reason, 240)}` };
       }
       log(`[craft] adversarial-review=${review.verdict}`);
+      evidence.record({
+        kind: "candidate-review",
+        status: review.verdict === "accept" ? "validated" : review.verdict === "reject" ? "refuted" : "inconclusive",
+        summary: `adversarial candidate review returned ${review.verdict}`,
+        step: currentStep + 1,
+        stage: stages.current(),
+        candidateSha256,
+      });
       if (review.verdict === "reject") {
         eligibleCandidate = undefined;
+        const transition = stages.candidateRejected();
+        evidence.record({
+          kind: "stage-transition",
+          status: "refuted",
+          summary: `returned from ${transition.from} to ${transition.to}: ${transition.reason}`,
+          step: currentStep + 1,
+          stage: transition.to,
+          candidateSha256,
+        });
         return `REFUSED — adversarial review found a concrete mismatch: ${clip(review.reason, 800)}. Test a new candidate; the rejected bytes cannot be graded.`;
       }
+
       if (review.verdict === "inconclusive") {
         log(`[craft] adversarial-review inconclusive: ${clip(review.reason, 160)}`);
       }
@@ -418,8 +502,10 @@ ${g.err}`;
     submits++;
     const out = g.out;
     let v: CraftPocVerdict;
-    try { v = await opts.evaluatePoc(out); }
-    catch (e) {
+    try {
+      v = await opts.evaluatePoc(out);
+    } catch (e) {
+      evidence.record({ kind: "oracle", status: "inconclusive", summary: "differential oracle executor threw before a verdict", step: currentStep + 1, candidateSha256 });
       attempts.push({ submit: submits, pocPath: out, output: `oracle error: ${String(e).slice(0, 400)}` });
       return `oracle error: ${String(e).slice(0, 400)}`;
     }
@@ -433,11 +519,13 @@ ${g.err}`;
       submits--; // refund: the oracle never graded this candidate
       attempts.push({ submit: submits + 1, pocPath: out, output: clip(`oracle unreachable: ${v.oracleError}`, 400) });
       log(`[craft] ORACLE UNREACHABLE (strike ${strike}): ${clip(v.oracleError, 200)}`);
+      evidence.record({ kind: "oracle", status: "inconclusive", summary: "differential oracle returned no verdict", step: currentStep + 1, candidateSha256 });
       if (strike >= 2) {
         oracleUnreachable = true;
         return `The grading ORACLE UNREACHABLE (${clip(v.oracleError, 160)}) — infrastructure fault, not your PoC. Stop.`;
       }
       return `The grading oracle did not respond usefully (${clip(v.oracleError, 160)}). Try submitting once more.`;
+
     }
     lastOutput = v.output; lastMeta = v.meta ?? {};
     attempts.push({
@@ -451,6 +539,27 @@ ${g.err}`;
     });
     const win = v.differentialPass !== undefined ? v.differentialPass : v.triggered;
     log(`[craft] submit#${submits} triggered=${v.triggered} differential=${v.differentialPass ?? "n/a"}`);
+    evidence.record({
+      stage: stages.current(),
+      kind: "oracle",
+      status: win ? "validated" : "refuted",
+      summary: win
+        ? "differential oracle confirmed the candidate"
+        : "differential oracle did not confirm the candidate",
+      step: currentStep + 1,
+      candidateSha256,
+    });
+    if (!win) {
+      const transition = stages.oracleRejected();
+      evidence.record({
+        kind: "stage-transition",
+        status: "refuted",
+        summary: `returned from ${transition.from} to ${transition.to}: ${transition.reason}`,
+        step: currentStep + 1,
+        stage: transition.to,
+        candidateSha256,
+      });
+    }
     if (win) { passed = true; if (submits === 1) firstSubmitPassed = true; pocPath = out; return `PASS — confirmed. You are done.`; }
     // FAIR/HONEST feedback: reveal ONLY the vul-side signal (does it crash the
     // target — which the agent could verify itself by building + running the
@@ -464,19 +573,52 @@ ${g.err}`;
   };
 
   // ── tool defs + system prompt (mirrors the validated craft-agent) ──
-  const tools = [
+  const sourceTools = [
     { name: "list_dir", description: "List a directory in the pre-patch source (path relative to source root).", input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
     { name: "read_file", description: "Read a source file (relative path); optional start_line/end_line (1-based).", input_schema: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path"] } },
     { name: "grep", description: "Recursively grep an extended regex across source files; optional path to scope.", input_schema: { type: "object", properties: { pattern: { type: "string" }, path: { type: "string" } }, required: ["pattern"] } },
     { name: "find_seeds", description: "List seed/corpus/test input files in the repo. Mutating a seed beats building a complex format from scratch.", input_schema: { type: "object", properties: {}, required: [] } },
     { name: "read_seed", description: "Read a (possibly binary) seed file as base64, to embed + mutate in your generator.", input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
-    { name: "format_reference", description: `Get a concise primer (magic bytes, structure, minimal valid skeleton, gotchas) for a binary/text format. Call this with the format or fuzzer name BEFORE crafting so you build a valid container on the first try. Known: ${knownFormatIds().join(", ")}.`, input_schema: { type: "object", properties: { format: { type: "string", description: "Format or fuzzer name, e.g. png, ttf, av1, heif, elf, pdf." } }, required: ["format"] } },
-    fdpEncodeToolDef(),
-    ...proverToolDefs(),
-    ...(opts.testPoc ? [{ name: "test_poc", description: `FREE, ungraded: run a python3 generator's output against the VULNERABLE binary and see if it crashes + the sanitizer trace. Does NOT run the hidden patched-build check and does NOT cost a graded submit. Use this REPEATEDLY to iterate to a real crash in the described function BEFORE you submit. Budget: ${maxTests} tests.`, input_schema: { type: "object", properties: { python: { type: "string" } }, required: ["python"] } }] : []),
-    { name: "submit_poc", description: opts.testPoc
-        ? "Your GRADED FINAL ANSWER: submit a python3 generator (writes raw PoC bytes to sys.argv[1]). Runs the differential (crash vulnerable build AND clean patched build). Only call this once test_poc shows your PoC crashes the DESCRIBED bug — graded budget is scarce."
-        : "Submit a python3 generator (writes raw PoC bytes to sys.argv[1]) to the oracle. Returns the verdict + output. Iterate until PASS.", input_schema: { type: "object", properties: { python: { type: "string" } }, required: ["python"] } },
+    { name: "format_reference", description: `Get a concise primer (magic bytes, structure, minimal valid skeleton, gotchas) for a binary/text format. Known: ${knownFormatIds().join(", ")}.`, input_schema: { type: "object", properties: { format: { type: "string", description: "Format or fuzzer name, e.g. png, ttf, av1, heif, elf, pdf." } }, required: ["format"] } },
+  ];
+  const constructionTools = [fdpEncodeToolDef(), ...proverToolDefs()];
+  const advanceStageTool = {
+    name: "advance_stage",
+    description: "Advance the deterministic research role. From reachability, cite source lines already exposed by the target specification or read_file before requesting trigger design.",
+    input_schema: {
+      type: "object",
+      properties: {
+        to: { type: "string", enum: ["trigger", "counterexample"] },
+        citations: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { path: { type: "string" }, line: { type: "integer" } },
+            required: ["path", "line"],
+          },
+        },
+      },
+      required: ["to", "citations"],
+    },
+  };
+  const testPocTool = {
+    name: "test_poc",
+    description: `FREE, ungraded: run a python3 generator's output against the VULNERABLE binary and see if it crashes + the sanitizer trace. Does NOT run the hidden patched-build check and does NOT cost a graded submit. Budget: ${maxTests} tests.`,
+    input_schema: { type: "object", properties: { python: { type: "string" } }, required: ["python"] },
+  };
+  const submitPocTool = {
+    name: "submit_poc",
+    description: opts.testPoc
+      ? "Your GRADED FINAL ANSWER: submit the exact identity-consistent self-tested python3 generator. Runs the hidden differential (crash vulnerable build AND clean patched build)."
+      : "Submit a python3 generator (writes raw PoC bytes to sys.argv[1]) to the oracle. Returns the verdict + output. Iterate until PASS.",
+    input_schema: { type: "object", properties: { python: { type: "string" } }, required: ["python"] },
+  };
+  const toolsForStage = () => [
+    ...sourceTools,
+    ...(stages.current() === "reachability" ? [] : constructionTools),
+    ...(stages.allowsTool("advance_stage") ? [advanceStageTool] : []),
+    ...(opts.testPoc && stages.allowsTool("test_poc") ? [testPocTool] : []),
+    ...(stages.allowsTool("submit_poc") ? [submitPocTool] : []),
   ];
   const testLoop = opts.testPoc
     ? "(5) test_poc your generator against the VULNERABLE binary — this is FREE and unlimited (up to " + maxTests +
@@ -508,7 +650,7 @@ ${g.err}`;
     "if the harness wraps `data` in a FuzzedDataProvider, do NOT hand-compute the byte layout — reason about the " +
     "VALUES each Consume* call must return, then call fdp_encode to emit the exact bytes deterministically; " + testLoop +
     "For complex BINARY formats (images/fonts/media/video) prefer find_seeds + read_seed and MUTATE a corpus " +
-    "seed over building from scratch. " + budgetLine + " Reply to craft requests with a python3 program only.";
+    "seed over building from scratch. " + budgetLine + " Work only from observed source and oracle evidence; do not assert an unverified path or verdict.";
 
   // Cross-task memory: recall relevant recipes/principles learned from prior tasks.
   let recalledBlock = "";
@@ -519,14 +661,53 @@ ${g.err}`;
       log(`[craft] recalled ${opts.memory.recall(opts.target.description, { topK: 8 }).length} memories`);
     }
   }
-
-  const targetSpecBlock = renderCraftTargetSpec(buildCraftTargetSpec(opts.target, log));
-
+  const targetSpec = buildCraftTargetSpec(opts.target, log);
+  for (const anchor of targetSpec.descriptionAnchors) {
+    evidence.record({
+      kind: "target-spec",
+      status: "observed",
+      summary: `description names function anchor '${anchor}'`,
+      stage: "reachability",
+    });
+  }
+  for (const entrypoint of targetSpec.fuzzerEntrypoints) {
+    stages.observeSource(entrypoint.path, entrypoint.line, entrypoint.line);
+    evidence.record({
+      kind: "target-spec",
+      status: "observed",
+      summary: `located ${entrypoint.symbol}`,
+      stage: "reachability",
+      source: { path: entrypoint.path, line: entrypoint.line },
+    });
+  }
+  if (targetSpec.cpg) {
+    evidence.record({
+      kind: "target-spec",
+      status: "observed",
+      summary: `CPG resolved ${targetSpec.cpg.resolvedTargets} description anchor(s) across ${targetSpec.cpg.stats.functions} function(s)`,
+      stage: "reachability",
+    });
+  }
+  for (const unresolved of targetSpec.unresolved) {
+    evidence.record({
+      kind: "target-spec",
+      status: "inconclusive",
+      summary: unresolved,
+      stage: "reachability",
+    });
+  }
+  const targetSpecBlock = renderCraftTargetSpec(targetSpec);
   // `providerRaw` is the opaque per-turn reasoning sidecar — see
   // ProviderRawOutput in runtime/types.ts. Carried on assistant turns so the
   // Responses path can replay reasoning instead of re-deriving it every step.
   const messages: Array<{ role: string; content: Array<Record<string, unknown>>; providerRaw?: unknown }> = [
-    { role: "user", content: [{ type: "text", text: `## Vulnerability description\n${opts.target.description}${recalledBlock}\n\n${targetSpecBlock}\n\n## Source\nThe pre-patch source is at the root (use the tools). Find the fuzzer entry + buggy code, then craft and submit.` }] },
+    {
+      role: "user",
+      content: [{
+        type: "text",
+        text: `## Vulnerability description\n${opts.target.description}${recalledBlock}\n\n${targetSpecBlock}\n\n## Current research role\n${stages.instruction()}\n\n## Source\nThe pre-patch source is at the root (use the tools).`,
+      }],
+    },
   ];
 
   let steps = 0, noops = 0, model = opts.model ?? "auto";
@@ -542,6 +723,7 @@ ${g.err}`;
     serverCompactionTokens: LOOP_SERVER_COMPACTION_TOKENS,
   });
   for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable; steps++) {
+    currentStep = steps;
     // Wall-clock budget: exit gracefully with accumulated work BEFORE the
     // ensemble's per-trajectory hard timeout kills this trajectory mid-call
     // (which would discard every step and leave the un-cancellable loop burning
@@ -555,9 +737,14 @@ ${g.err}`;
     // steps and never prunes. Server-side compaction is the only context
     // strategy it has.
     let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown; providerRaw?: unknown };
+    const activeTools = toolsForStage();
     try {
-      res = await rt.executeNative(system, messages as never, tools as never,
-        { onThinking() {}, onDelta() {}, onText() {}, onUsage(u: { inputTokens?: number; outputTokens?: number }) { inputTokens += u?.inputTokens ?? 0; outputTokens += u?.outputTokens ?? 0; } } as never);
+      res = await rt.executeNative(
+        `${system}\n\n${stages.instruction()}`,
+        messages as never,
+        activeTools as never,
+        { onThinking() {}, onDelta() {}, onText() {}, onUsage(u: { inputTokens?: number; outputTokens?: number }) { inputTokens += u?.inputTokens ?? 0; outputTokens += u?.outputTokens ?? 0; } } as never,
+      );
     } catch (e) { warnings.push(`craft: LLM exception at step ${steps}: ${String(e).slice(0, 160)}`); break; }
     if (res.error) {
       warnings.push(`craft: LLM error at step ${steps}: ${String(res.error).slice(0, 300)}`);
@@ -568,32 +755,35 @@ ${g.err}`;
     const toolUses = content.filter((b) => (b as { type: string }).type === "tool_use") as Array<{ id: string; name: string; input: Record<string, unknown> }>;
     if (toolUses.length === 0) {
       noops++;
-      const nudge = opts.testPoc
-        ? (eligibleCandidate
-            ? "You have an identity-consistent self-tested candidate — submit_poc that exact generator as the graded final answer."
-            : "Do NOT stop. Form a new hypothesis and test_poc a refined generator against the vulnerable binary (it's free). For binary formats start from a corpus seed.")
-        : (submits > 0 && submits < maxSubmits
-            ? `Do NOT stop — ${maxSubmits - submits} submit attempts left and not passed. Re-read the sanitizer output, form a new hypothesis, and submit_poc a refined generator now.`
-            : "Investigate with the tools (find_seeds for binary formats), then submit_poc a candidate. You must test at least one.");
+      const stage = stages.current();
+      const nudge =
+        stage === "reachability"
+          ? "Do not stop. Cite an observed fuzzer-entrypoint or target source line and call advance_stage with to='trigger'."
+          : stage === "trigger"
+            ? (opts.testPoc
+                ? "Do not stop. Form a new evidence-backed hypothesis and test_poc a refined generator against the vulnerable binary."
+                : "No vulnerable-side self-test is available. Call advance_stage with to='counterexample', then submit your best evidence-backed candidate.")
+            : (eligibleCandidate
+                ? "You have an identity-consistent self-tested candidate — submit_poc that exact generator as the graded final answer."
+                : "Counterexample review has no eligible candidate. Return to trigger design through the evidence-backed workflow.");
       messages.push({ role: "user", content: [{ type: "text", text: nudge }] });
-      // Give a temporarily-confused model more room to recover while it still has
-      // FREE tests to run and no crashing candidate yet — aborting at 5 no-ops was
-      // killing runs at ~step 50 of 120 before they used the self-test loop.
-      const stallLimit = opts.testPoc && !eligibleCandidate && tests < maxTests ? 10 : 5;
-      if (noops >= stallLimit) { warnings.push(`craft: agent stalled (${noops} consecutive no-ops)`); break; }
+      const stallLimit =
+        stage === "reachability"
+          ? 5
+          : opts.testPoc && !eligibleCandidate && tests < maxTests
+            ? 10
+            : 5;
+      if (noops >= stallLimit) { warnings.push(`craft: agent stalled (${noops} consecutive no-ops) in ${stage}`); break; }
       continue;
     }
     noops = 0;
-    // Only nudge to ACT when the agent has explored but not exercised a PoC. With
-    // test_poc available, push toward FREE testing (never a premature graded submit).
-    if (opts.testPoc) {
-      if (tests === 0 && submits === 0 && steps >= 12 && !toolUses.some((t) => t.name === "test_poc" || t.name === "submit_poc")) {
-        messages.push({ role: "user", content: [{ type: "text", text: "Explored enough — test_poc a best-guess generator against the vulnerable binary NOW (free); refine from the sanitizer output." }] });
-      } else if (eligibleCandidate && submits === 0 && steps >= 30) {
-        messages.push({ role: "user", content: [{ type: "text", text: "You have an identity-consistent self-tested candidate — submit_poc that exact generator as the graded final answer." }] });
-      }
-    } else if (submits === 0 && steps >= 9 && !toolUses.some((t) => t.name === "submit_poc")) {
-      messages.push({ role: "user", content: [{ type: "text", text: "Explored enough — call submit_poc NOW with your best-guess generator (start from a corpus seed for binary formats); refine afterwards." }] });
+    const stage = stages.current();
+    if (stage === "reachability" && steps >= 8 && !toolUses.some((tool) => tool.name === "advance_stage")) {
+      messages.push({ role: "user", content: [{ type: "text", text: "Reachability evidence is sufficient for this bounded stage. Call advance_stage now with one or more observed source citations; do not keep exploring indefinitely." }] });
+    } else if (stage === "trigger" && opts.testPoc && tests === 0 && steps >= 18 && !toolUses.some((tool) => tool.name === "test_poc")) {
+      messages.push({ role: "user", content: [{ type: "text", text: "Trigger-design evidence is sufficient. test_poc a best-guess generator now (free), then refine from the sanitizer output." }] });
+    } else if (stage === "counterexample" && eligibleCandidate && submits === 0 && steps >= 30) {
+      messages.push({ role: "user", content: [{ type: "text", text: "Counterexample review is active with an identity-consistent candidate. submit_poc that exact generator now." }] });
     }
     const results: Array<Record<string, unknown>> = [];
     // NOTE: the prover tools are deliberately NOT in this set. The gate below
@@ -608,16 +798,14 @@ ${g.err}`;
     for (const tu of toolUses) {
       let out = "";
       try {
-        // Cap pure exploration. The hardest fails burned all 120 steps reading
-        // source and NEVER crafted a single candidate. After ~18 steps with zero
-        // self-tests, stop answering read-only tool calls and force a first
-        // test_poc — a rough PoC + iteration from real crash output beats
-        // infinite source-reading. test_poc is free, so an early guess costs
-        // nothing. (Same structural-enforcement principle as the submit gate.)
-        if (opts.testPoc && tests === 0 && steps >= 18 && readOnlyTools.has(tu.name)) {
-          out = `STOP EXPLORING — you have read enough source but have NOT tested a single candidate in ${steps} steps. Call test_poc NOW with your best-guess generator (it is FREE — ${maxTests} tests available). Learn from the crash output, then refine. You may read more source AFTER your first test_poc.`;
-        }
-        else if (tu.name === "list_dir") out = listDir(String(tu.input.path ?? "."));
+        const activeStage = stages.current();
+        if (!stages.allowsTool(tu.name)) {
+          out = `${tu.name} is unavailable during ${activeStage}. ${stages.instruction()}`;
+        } else if (activeStage === "reachability" && steps >= 8 && readOnlyTools.has(tu.name)) {
+          out = "Reachability exploration is bounded. Cite already observed source lines and call advance_stage with to='trigger'.";
+        } else if (activeStage === "trigger" && opts.testPoc && tests === 0 && steps >= 18 && readOnlyTools.has(tu.name)) {
+          out = `STOP EXPLORING — trigger design has not tested a candidate in ${steps} steps. Call test_poc now (free; ${maxTests} tests available), then refine from the sanitizer output.`;
+        } else if (tu.name === "list_dir") out = listDir(String(tu.input.path ?? "."));
         else if (tu.name === "read_file") out = readFile(String(tu.input.path), tu.input.start_line as number, tu.input.end_line as number);
         else if (tu.name === "grep") out = grep(String(tu.input.pattern), tu.input.path as string | undefined);
         else if (tu.name === "find_seeds") out = findSeeds();
@@ -625,7 +813,23 @@ ${g.err}`;
         else if (tu.name === "format_reference") { const p = lookupFormatPrimer(String(tu.input.format ?? "")); out = p ? p.primer : `No primer for "${tu.input.format}". Known formats: ${knownFormatIds().join(", ")}. Derive the layout from the fuzzer + source.`; }
         else if (tu.name === "fdp_encode") out = runFdpEncode(tu.input);
         else if (PROVER_TOOL_NAMES.includes(tu.name)) out = runProverTool(tu.name, tu.input) ?? `unknown tool ${tu.name}`;
-        else if (tu.name === "test_poc") out = await testPocFn(String(tu.input.python ?? ""));
+        else if (tu.name === "advance_stage") {
+          const requested = typeof tu.input.to === "string" ? tu.input.to : undefined;
+          const transition = stages.advance(parseCraftStageCitations(tu.input.citations), requested);
+          evidence.record({
+            kind: "stage-transition",
+            status: transition.accepted ? "validated" : "refuted",
+            summary: transition.accepted
+              ? `advanced from ${transition.from} to ${transition.to}: ${transition.reason}`
+              : `remained in ${transition.from}: ${transition.reason}`,
+            step: currentStep + 1,
+            stage: transition.to,
+            ...(transition.citations[0] ? { source: transition.citations[0] } : {}),
+          });
+          out = transition.accepted
+            ? `Stage advanced from ${transition.from} to ${transition.to}. ${stages.instruction()}`
+            : `Stage transition refused: ${transition.reason}`;
+        } else if (tu.name === "test_poc") out = await testPocFn(String(tu.input.python ?? ""));
         else if (tu.name === "submit_poc") out = await submitPoc(String(tu.input.python ?? ""));
         else out = `unknown tool ${tu.name}`;
       } catch (e) { out = `tool error: ${String(e).slice(0, 300)}`; }
@@ -648,13 +852,42 @@ ${g.err}`;
       context: opts.target.language,
     });
   }
+  const receiptSummary =
+    `candidate-count=${candidateCount}; self-tests=${tests}; vulnerable-crashes=${vulnerableCrashCount}; ` +
+    `crash-rate=${vulnerableCrashCount}/${tests}; ` +
+    `first-self-test-step=${firstTestStep ?? "none"}; graded-submissions=${submits}`;
 
   if (!passed) {
     warnings.push(oracleUnreachable
       ? `craft: ORACLE UNREACHABLE — task inconclusive (grader never ran; NOT a capability fail) after ${submits} submit(s) / ${steps} step(s)`
       : `craft: no confirmed PoC after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`);
-    return { findings: [], warnings, attempts, submits, passed: false, firstSubmitPassed: false, model, steps, inputTokens, outputTokens, estimatedCostUsd: estimateCost({ inputTokens, outputTokens }, model) };
+    evidence.record({
+      kind: "run-summary",
+      status: oracleUnreachable ? "inconclusive" : "refuted",
+      summary: receiptSummary,
+      stage: stages.current(),
+    });
+    return {
+      findings: [],
+      warnings,
+      attempts,
+      submits,
+      passed: false,
+      firstSubmitPassed: false,
+      model,
+      steps,
+      inputTokens,
+      outputTokens,
+      estimatedCostUsd: estimateCost({ inputTokens, outputTokens }, model),
+      evidence: evidence.snapshot(),
+    };
   }
+  evidence.record({
+    kind: "run-summary",
+    status: "validated",
+    summary: receiptSummary,
+    stage: stages.current(),
+  });
   return {
     findings: [craftedPocToFinding(opts.target, pocPath!, lastOutput, lastMeta)],
     warnings,
@@ -667,6 +900,7 @@ ${g.err}`;
     inputTokens,
     outputTokens,
     estimatedCostUsd: estimateCost({ inputTokens, outputTokens }, model),
+    evidence: evidence.snapshot(),
   };
 }
 

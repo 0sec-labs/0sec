@@ -292,9 +292,36 @@ describe("runEnsembleCraft", () => {
     expect(result.warnings.some((w) => /model-a: error/.test(w))).toBe(true);
   });
 
+  it("keeps re-sequenced stage receipts when no trajectory produces a candidate", async () => {
+    const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> => ({
+      ...craftResult({ model: opts.model ?? "auto" }),
+      evidence: [{
+        sequence: 1,
+        kind: "run-summary",
+        status: "refuted",
+        summary: `trajectory ${opts.model ?? "auto"} had no crashing candidate`,
+        stage: "trigger",
+      }],
+    });
+    const result = await runEnsembleCraft({
+      target: TARGET,
+      runtime: "auto",
+      n: 2,
+      models: ["model-a", "model-b"],
+      craft: { evaluatePoc: async () => ({ triggered: false, output: "" }) },
+      runCraft,
+      judge: async () => new Map(),
+    });
+
+    expect(result.evidence).toEqual([
+      expect.objectContaining({ sequence: 1, trajectory: 1, summary: "trajectory model-a had no crashing candidate" }),
+      expect.objectContaining({ sequence: 2, trajectory: 2, summary: "trajectory model-b had no crashing candidate" }),
+    ]);
+  });
+
   it("returns an honest failed result when no trajectory crashes (no PoC to grade)", async () => {
     const runCraft = async (opts: CraftScanOptions): Promise<CraftScanResult> =>
-      craftResult({ model: opts.model ?? "auto" }); // no pocPath → no crash
+      craftResult({ model: opts.model ?? "auto" });
     let judged = 0;
     const judge: CraftCandidateJudge = async () => {
       judged++;
