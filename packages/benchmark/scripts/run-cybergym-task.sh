@@ -11,8 +11,9 @@ fi
 task_id="$1"
 shift
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+: "${PWNKIT_ROOT:=$(cd -- "${script_dir}/../../.." && pwd)}"
 : "${CYBERGYM_ROOT:=/srv/cybergym}"
-: "${PWNKIT_ROOT:=/srv/pwnkit}"
 : "${CYBERGYM_PYTHON:=${CYBERGYM_ROOT}/venv/bin/python}"
 : "${CYBERGYM_DIFFICULTY:=level1}"
 : "${CYBERGYM_SERVER_API_KEY_FILE:=${CYBERGYM_ROOT}/secrets/server-api-key}"
