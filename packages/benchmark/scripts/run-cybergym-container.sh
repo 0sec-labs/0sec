@@ -79,6 +79,8 @@ exec docker run --rm \
   --env CYBERGYM_ORACLE_BRIDGE_TOKEN \
   --env CYBERGYM_SERVER \
   --env PWNKIT_CHATGPT_AUTH_FILE=/run/secrets/codex-auth.json \
+  --env CYBERGYM_LLM_TIMEOUT_MS \
+  --env CYBERGYM_CRAFT_DEADLINE_MS \
   "${PWNKIT_CYBERGYM_IMAGE}" \
   --task-dir /task \
   --corpus-path "${CYBERGYM_CORPUS_PATH:-/results/cybergym-run.jsonl}" \

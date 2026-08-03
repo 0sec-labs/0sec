@@ -2137,10 +2137,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           controller.signal,
         );
 
-        clearTimeout(timer);
 
         if (!res.ok) {
           const responseText = await res.text();
+          clearTimeout(timer);
           return {
             content: [{ type: "text", text: "" }],
             stopReason: "error",
@@ -2152,6 +2152,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         const streamed = await this.consumeResponsesStream(res, start, callbacks, {
           idleTimeoutMs: llmStreamIdleTimeoutMs(),
         });
+        clearTimeout(timer);
         return streamed;
       } else {
         // Anthropic Messages API format
@@ -2475,8 +2476,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     }
 
     // Idle watchdog on EVERY read — see llmStreamIdleTimeoutMs for why. The
-    // overall call timer is already disarmed by the time we get here (headers
-    // arrived), so without this nothing bounds a silently-held stream.
+    // overall request timer stays armed through this stream; the watchdog adds
+    // a tighter bound for a silent stream between otherwise-valid SSE events.
     const idleTimeoutMs = opts?.idleTimeoutMs ?? llmStreamIdleTimeoutMs();
     let stalled = false;
     const readBounded = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
