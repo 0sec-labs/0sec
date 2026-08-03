@@ -296,6 +296,49 @@ describe("runCraftScan identity submission gate", () => {
     expect(result.passed).toBe(false);
   });
 
+  it("promotes deterministic reachability evidence after four source-only turns", async () => {
+    const sourceOnly = (id: string) => ({
+      content: [{ type: "tool_use", id, name: "list_dir", input: { path: "." } }],
+      stopReason: "tool_use",
+    });
+    executeNative
+      .mockResolvedValueOnce(sourceOnly("source-1"))
+      .mockResolvedValueOnce(sourceOnly("source-2"))
+      .mockResolvedValueOnce(sourceOnly("source-3"))
+      .mockResolvedValueOnce(sourceOnly("source-4"))
+      .mockResolvedValueOnce({
+        content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: generator("A") } }],
+        stopReason: "tool_use",
+      });
+
+    const result = await runCraftScan({
+      target: {
+        sourceRoot: taskRoot("craft-reachability-budget-"),
+        description: "A heap-buffer-overflow occurs in `parse_header()`.",
+        language: "c",
+      },
+      runtime: "api",
+      maxSteps: 5,
+      maxTests: 1,
+      maxSubmits: 1,
+      testPoc: async () => ({ triggered: true, output: matchingSanitizerOutput }),
+      evaluatePoc: async () => ({ triggered: false, output: "" }),
+    });
+
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "stage-transition",
+        status: "validated",
+        stage: "trigger",
+        summary: "advanced from reachability to trigger: bounded reachability budget exhausted",
+        step: 4,
+      }),
+      expect.objectContaining({ kind: "identity", status: "validated", stage: "trigger" }),
+    ]));
+    expect(executeNative.mock.calls[4][2].map((tool: { name: string }) => tool.name)).toContain("test_poc");
+    expect(executeNative.mock.calls[4][2].map((tool: { name: string }) => tool.name)).not.toContain("submit_poc");
+  });
+
   it("keeps one runtime for the whole craft trajectory", async () => {
     executeNative
       .mockResolvedValueOnce({ content: [], stopReason: "end_turn" })
