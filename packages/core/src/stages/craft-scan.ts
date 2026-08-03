@@ -247,6 +247,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   const stages = new CraftStagedOrchestrator({ requiresSelfTest: opts.testPoc !== undefined });
   let vulnerableCrashCount = 0;
   let firstTestStep: number | undefined;
+  let lastReachabilityCitation: { path: string; line: number } | undefined;
 
   if (!existsSync(sourceRoot)) {
     // The per-task source vanished before the run even started — a /tmp janitor
@@ -306,6 +307,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     const s = Math.max(1, a ?? 1), e = Math.min(L.length, b ?? Math.min(L.length, s + 400));
     const sourcePath = relative(sourceRoot, abs);
     stages.observeSource(sourcePath, s, e);
+    lastReachabilityCitation = { path: sourcePath, line: s };
     return formatTruncated(L.slice(s - 1, e).map((ln, i) => `${s + i}: ${ln}`).join("\n"));
   };
   const grep = (pattern: string, p?: string) => {
@@ -709,13 +711,12 @@ ${g.err}`;
       }],
     },
   ];
-
+  const reachabilityStepCap = 4;
   let steps = 0, noops = 0, model = opts.model ?? "auto";
   let inputTokens = 0, outputTokens = 0;
   const loopStart = Date.now();
-  // Keep one runtime for the trajectory. Besides avoiding per-step provider
-  // discovery, this preserves provider-owned auth/connection state while the
-  // opaque providerRaw sidecar keeps the reasoning chain intact in messages.
+  // Keep one runtime for the trajectory so provider-owned state and retained
+  // reasoning remain available across the deterministic stage transitions.
   const rt = new LlmApiRuntime({
     type: "api",
     ...(opts.model ? { model: opts.model } : {}),
@@ -724,11 +725,29 @@ ${g.err}`;
   });
   for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable; steps++) {
     currentStep = steps;
-    // Wall-clock budget: exit gracefully with accumulated work BEFORE the
-    // ensemble's per-trajectory hard timeout kills this trajectory mid-call
-    // (which would discard every step and leave the un-cancellable loop burning
-    // tokens in the background). Checked at the top of each step so an in-flight
-    // call finishes (bounded by llmTimeoutMs) and its result is banked first.
+    if (stages.current() === "reachability" && steps >= reachabilityStepCap) {
+      const fallbackCitation = lastReachabilityCitation ?? targetSpec.fuzzerEntrypoints[0];
+      if (fallbackCitation) {
+        const transition = stages.advance([fallbackCitation], "trigger");
+        if (transition.accepted) {
+          evidence.record({
+            kind: "stage-transition",
+            status: "validated",
+            summary: `advanced from ${transition.from} to ${transition.to}: bounded reachability budget exhausted`,
+            step: steps,
+            stage: transition.to,
+            source: fallbackCitation,
+          });
+          messages.push({
+            role: "user",
+            content: [{
+              type: "text",
+              text: `Reachability budget is complete. Deterministic evidence advanced the role to trigger design. ${stages.instruction()}`,
+            }],
+          });
+        }
+      }
+    }
     if (opts.deadlineMs !== undefined && Date.now() - loopStart >= opts.deadlineMs) {
       warnings.push(`craft: wall-clock deadline reached (${opts.deadlineMs}ms) after ${steps} step(s) — exiting gracefully with accumulated work`);
       break;
@@ -778,7 +797,7 @@ ${g.err}`;
     }
     noops = 0;
     const stage = stages.current();
-    if (stage === "reachability" && steps >= 8 && !toolUses.some((tool) => tool.name === "advance_stage")) {
+    if (stage === "reachability" && steps >= reachabilityStepCap && !toolUses.some((tool) => tool.name === "advance_stage")) {
       messages.push({ role: "user", content: [{ type: "text", text: "Reachability evidence is sufficient for this bounded stage. Call advance_stage now with one or more observed source citations; do not keep exploring indefinitely." }] });
     } else if (stage === "trigger" && opts.testPoc && tests === 0 && steps >= 18 && !toolUses.some((tool) => tool.name === "test_poc")) {
       messages.push({ role: "user", content: [{ type: "text", text: "Trigger-design evidence is sufficient. test_poc a best-guess generator now (free), then refine from the sanitizer output." }] });
@@ -801,7 +820,7 @@ ${g.err}`;
         const activeStage = stages.current();
         if (!stages.allowsTool(tu.name)) {
           out = `${tu.name} is unavailable during ${activeStage}. ${stages.instruction()}`;
-        } else if (activeStage === "reachability" && steps >= 8 && readOnlyTools.has(tu.name)) {
+        } else if (activeStage === "reachability" && steps >= reachabilityStepCap && readOnlyTools.has(tu.name)) {
           out = "Reachability exploration is bounded. Cite already observed source lines and call advance_stage with to='trigger'.";
         } else if (activeStage === "trigger" && opts.testPoc && tests === 0 && steps >= 18 && readOnlyTools.has(tu.name)) {
           out = `STOP EXPLORING — trigger design has not tested a candidate in ${steps} steps. Call test_poc now (free; ${maxTests} tests available), then refine from the sanitizer output.`;
