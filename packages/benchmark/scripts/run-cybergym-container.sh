@@ -44,6 +44,7 @@ install -d -m 0700 "${CYBERGYM_ROOT}/results"
 chown 10001:10001 "${CYBERGYM_ROOT}/results"
 
 exec docker run --rm \
+  --network "${CYBERGYM_NETWORK}" \
   --env HTTP_PROXY="${cybergym_proxy}" \
   --env HTTPS_PROXY="${cybergym_proxy}" \
   --env NO_PROXY="127.0.0.1,localhost,${server_host},${bridge_host}" \
