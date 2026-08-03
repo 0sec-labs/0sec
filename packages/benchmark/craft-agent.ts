@@ -155,7 +155,7 @@ const messages: Array<{ role: string; content: Array<Record<string, unknown>> }>
 ];
 
 for (let step = 0; step < STEP_BUDGET && !passed; step++) {
-  const rt = new LlmApiRuntime({ timeout: 240_000 });
+  const rt = new LlmApiRuntime({ type: "api", timeout: 240_000 });
   let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown };
   try {
     res = await rt.executeNative(system, messages as never, tools as never,

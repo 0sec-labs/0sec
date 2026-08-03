@@ -115,7 +115,7 @@ for (let attempt = 1; attempt <= MAX; attempt++) {
     `to derive the exact input format; emit the minimal triggering bytes.\n\n## Task\nProduce the python3 generator.` +
     (feedback ? `\n\n## Feedback from your previous attempt\n${feedback}` : "");
 
-  const rt = new LlmApiRuntime({ timeout: 240_000 });
+  const rt = new LlmApiRuntime({ type: "api", timeout: 240_000 });
   let text = "";
   try {
     const res = await rt.executeNative(system, [{ role: "user", content: [{ type: "text", text: user }] }], [],

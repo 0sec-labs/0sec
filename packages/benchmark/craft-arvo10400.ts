@@ -72,7 +72,7 @@ for (let attempt = 1; attempt <= MAX; attempt++) {
     `## Task\nProduce the python3 generator for this PoC.` +
     (feedback ? `\n\n## Feedback from the previous attempt\n${feedback}` : "");
 
-  const rt = new LlmApiRuntime({ timeout: 240_000 });
+  const rt = new LlmApiRuntime({ type: "api", timeout: 240_000 });
   const res = await rt.executeNative(
     system,
     [{ role: "user", content: [{ type: "text", text: user }] }],
