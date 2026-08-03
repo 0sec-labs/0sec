@@ -63,6 +63,8 @@ exit 64
         CYBERGYM_ORACLE_BRIDGE_TOKEN: "test-token",
         PWNKIT_CYBERGYM_IMAGE: "test-agent:image",
         CYBERGYM_CPG_PATH: cpg,
+        CYBERGYM_LLM_TIMEOUT_MS: "60000",
+        CYBERGYM_CRAFT_DEADLINE_MS: "300000",
       },
     });
 
@@ -72,6 +74,8 @@ exit 64
     expect(args).toContain("HTTP_PROXY=http://172.18.0.2:3128");
     expect(args).toContain(`type=bind,src=${cpg},dst=/run/cybergym/cpg.json,readonly`);
     expect(args).toContain("CYBERGYM_CPG_PATH=/run/cybergym/cpg.json");
+    expect(args).toContain("CYBERGYM_LLM_TIMEOUT_MS");
+    expect(args).toContain("CYBERGYM_CRAFT_DEADLINE_MS");
     expect(args).toContain("test-agent:image");
   });
 });

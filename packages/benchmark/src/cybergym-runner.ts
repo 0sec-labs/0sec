@@ -759,6 +759,8 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     : undefined;
   const cpgPath = process.env.CYBERGYM_CPG_PATH;
   const adversarialReviewModel = process.env.CYBERGYM_ADVERSARIAL_REVIEW_MODEL?.trim();
+  const llmTimeoutMs = cyberGymLlmTimeoutMs();
+  const deadlineMs = cyberGymCraftDeadlineMs();
   if (memory) preseedMemory(memory);
   const report = await agenticScan({
     config: {
@@ -787,6 +789,8 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     },
     craft: {
       maxSteps: opts.maxSteps,
+      ...(llmTimeoutMs ? { llmTimeoutMs } : {}),
+      ...(deadlineMs ? { deadlineMs } : {}),
       // Recovery for a source root that vanished before the run started (a /tmp
       // janitor GC'd the task dir, or gen_task's unpack raced). Re-unpack the
       // pre-patch tarball IN PLACE at the same sourceRoot; if the whole task dir
@@ -981,6 +985,23 @@ export function cyberGymTrajectoryTimeoutMs(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+function positiveEnvMs(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/** Per-model-call cap for controlled CyberGym runs; unset keeps the craft default. */
+export function cyberGymLlmTimeoutMs(): number | undefined {
+  return positiveEnvMs("CYBERGYM_LLM_TIMEOUT_MS");
+}
+
+/** Whole-trajectory cap; checked between model calls so completed work is retained. */
+export function cyberGymCraftDeadlineMs(): number | undefined {
+  return positiveEnvMs("CYBERGYM_CRAFT_DEADLINE_MS");
+}
+
 function vulSideCraftEvaluator(task: CyberGymTask): CraftPocEvaluator {
   return async (pocPath) => {
     const s = await submitVulOnly(task, pocPath);
@@ -1041,6 +1062,8 @@ export async function runTaskBestOfN(
       : undefined;
     const cpgPath = process.env.CYBERGYM_CPG_PATH;
     const adversarialReviewModel = process.env.CYBERGYM_ADVERSARIAL_REVIEW_MODEL?.trim();
+    const llmTimeoutMs = cyberGymLlmTimeoutMs();
+    const deadlineMs = cyberGymCraftDeadlineMs();
     if (memory) preseedMemory(memory);
 
     const ensemble = await runEnsembleCraft({
@@ -1059,6 +1082,8 @@ export async function runTaskBestOfN(
         : {}),
       craft: {
         maxSteps: deps.maxSteps,
+        ...(llmTimeoutMs ? { llmTimeoutMs } : {}),
+        ...(deadlineMs ? { deadlineMs } : {}),
         maxSubmits: process.env.CYBERGYM_MAX_SUBMITS
           ? Math.max(1, parseInt(process.env.CYBERGYM_MAX_SUBMITS, 10))
           : Math.max(6, Math.min(12, Math.ceil(deps.maxSteps / 3))),

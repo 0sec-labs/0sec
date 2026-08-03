@@ -1251,10 +1251,11 @@ describe("LlmApiRuntime stream idle watchdog", () => {
     delete process.env[IDLE_ENV];
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
-  const mkStreamingRt = () => {
-    const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test" });
+  const mkStreamingRt = (timeout = 5000) => {
+    const rt = new LlmApiRuntime({ type: "api", timeout, apiKey: "test" });
     (rt as any).provider = "openai";
     (rt as any).wireApi = "responses";
     (rt as any).apiKey = "test";
@@ -1299,6 +1300,41 @@ describe("LlmApiRuntime stream idle watchdog", () => {
     const result = await rt.executeNative("sys", userMsg, []);
     expect(result.stopReason).toBe("error");
     expect(result.error).toContain("stalled");
+  });
+
+  it("applies the total request timeout even while an SSE stream keeps yielding", async () => {
+    vi.useFakeTimers();
+    process.env[IDLE_ENV] = "1000";
+    const rt = mkStreamingRt(80);
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("missing abort signal");
+      let interval: ReturnType<typeof setInterval> | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          interval = setInterval(() => {
+            controller.enqueue(new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "." })}\n\n`,
+            ));
+          }, 10);
+          signal.addEventListener("abort", () => {
+            clearInterval(interval);
+            controller.error(signal.reason);
+          }, { once: true });
+        },
+        cancel() {
+          clearInterval(interval);
+        },
+      });
+      return { ok: true, body };
+    }));
+
+    const pending = rt.executeNative("sys", userMsg, []);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await pending;
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("timed out");
   });
 
   it("healthy streams complete well inside the idle window", async () => {

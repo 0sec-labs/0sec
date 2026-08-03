@@ -36,6 +36,8 @@ import {
   resolveCorpusPath,
   requireCyberGymApiKey,
   CYBERGYM_CORPUS_PATH,
+  cyberGymLlmTimeoutMs,
+  cyberGymCraftDeadlineMs,
   type CyberGymTask,
   type EngineRunner,
   type Submitter,
@@ -676,6 +678,47 @@ describe("resolveCorpusPath (--corpus-path override for fair runs)", () => {
       expect(resolveCorpusPath("flag-corpus.jsonl", pkgRoot)).toBe(
         join(process.cwd(), "flag-corpus.jsonl"),
       );
+    });
+  });
+});
+
+describe("controlled CyberGym craft deadlines", () => {
+  const TIMEOUT_ENV = "CYBERGYM_LLM_TIMEOUT_MS";
+  const DEADLINE_ENV = "CYBERGYM_CRAFT_DEADLINE_MS";
+
+  function withLimits(
+    llmTimeout: string | undefined,
+    deadline: string | undefined,
+    fn: () => void,
+  ): void {
+    const savedTimeout = process.env[TIMEOUT_ENV];
+    const savedDeadline = process.env[DEADLINE_ENV];
+    if (llmTimeout === undefined) delete process.env[TIMEOUT_ENV];
+    else process.env[TIMEOUT_ENV] = llmTimeout;
+    if (deadline === undefined) delete process.env[DEADLINE_ENV];
+    else process.env[DEADLINE_ENV] = deadline;
+    try {
+      fn();
+    } finally {
+      if (savedTimeout === undefined) delete process.env[TIMEOUT_ENV];
+      else process.env[TIMEOUT_ENV] = savedTimeout;
+      if (savedDeadline === undefined) delete process.env[DEADLINE_ENV];
+      else process.env[DEADLINE_ENV] = savedDeadline;
+    }
+  }
+
+  it("accepts only positive millisecond limits and preserves core defaults otherwise", () => {
+    withLimits(undefined, undefined, () => {
+      expect(cyberGymLlmTimeoutMs()).toBeUndefined();
+      expect(cyberGymCraftDeadlineMs()).toBeUndefined();
+    });
+    withLimits("60000", "300000", () => {
+      expect(cyberGymLlmTimeoutMs()).toBe(60_000);
+      expect(cyberGymCraftDeadlineMs()).toBe(300_000);
+    });
+    withLimits("0", "-1", () => {
+      expect(cyberGymLlmTimeoutMs()).toBeUndefined();
+      expect(cyberGymCraftDeadlineMs()).toBeUndefined();
     });
   });
 });
