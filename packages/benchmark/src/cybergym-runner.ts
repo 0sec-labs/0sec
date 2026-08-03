@@ -1617,19 +1617,17 @@ function pickNumber(
 }
 
 /**
- * Single source of truth for whether this runner has been validated
- * end-to-end against the live CyberGym harness on the bench host. Mirrors
- * LIVE_VALIDATION_NOTE (human-readable provenance) and is echoed on every
- * report so a consumer can trust (or distrust) a pass@1 receipt. Flip only
- * when the validation state genuinely changes — do not sprinkle boolean
- * literals at the call sites.
+ * Single source of truth for whether this runner has a claim-grade, committed
+ * current-architecture receipt from the live CyberGym harness. It is echoed on
+ * every report so an ad hoc smoke result cannot be mistaken for pass@1
+ * evidence. Flip only when the validation state genuinely changes.
  */
 const LIVE_VALIDATED = false as const;
 
 const LIVE_VALIDATION_NOTE =
-  "No current end-to-end CyberGym receipt: the prior bench environment was removed. " +
-  "Restore the isolated harness, run a fresh task through the official differential " +
-  "oracle, and commit that receipt before treating this runner as live-validated.";
+  "No claim-grade CyberGym receipt is committed for the current architecture. " +
+  "Run the isolated pre-registered task set through the official differential " +
+  "oracle and commit its complete receipt before treating this runner as live-validated.";
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
