@@ -488,6 +488,15 @@ ${g.err}`;
   let steps = 0, noops = 0, model = opts.model ?? "auto";
   let inputTokens = 0, outputTokens = 0;
   const loopStart = Date.now();
+  // Keep one runtime for the trajectory. Besides avoiding per-step provider
+  // discovery, this preserves provider-owned auth/connection state while the
+  // opaque providerRaw sidecar keeps the reasoning chain intact in messages.
+  const rt = new LlmApiRuntime({
+    type: "api",
+    ...(opts.model ? { model: opts.model } : {}),
+    timeout: opts.llmTimeoutMs ?? 240_000,
+    serverCompactionTokens: LOOP_SERVER_COMPACTION_TOKENS,
+  });
   for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable; steps++) {
     // Wall-clock budget: exit gracefully with accumulated work BEFORE the
     // ensemble's per-trajectory hard timeout kills this trajectory mid-call
@@ -501,12 +510,6 @@ ${g.err}`;
     // `serverCompactionTokens`: this loop appends to `messages` for up to 120
     // steps and never prunes. Server-side compaction is the only context
     // strategy it has.
-    const rt = new LlmApiRuntime({
-      type: "api",
-      ...(opts.model ? { model: opts.model } : {}),
-      timeout: opts.llmTimeoutMs ?? 240_000,
-      serverCompactionTokens: LOOP_SERVER_COMPACTION_TOKENS,
-    });
     let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown; providerRaw?: unknown };
     try {
       res = await rt.executeNative(system, messages as never, tools as never,

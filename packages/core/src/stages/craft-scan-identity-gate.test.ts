@@ -3,10 +3,17 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { executeNative } = vi.hoisted(() => ({ executeNative: vi.fn() }));
+const { executeNative, runtimeConstructed } = vi.hoisted(() => ({
+  executeNative: vi.fn(),
+  runtimeConstructed: vi.fn(),
+}));
 
 vi.mock("../runtime/llm-api.js", () => ({
   LlmApiRuntime: class {
+    constructor() {
+      runtimeConstructed();
+    }
+
     executeNative = executeNative;
   },
   LOOP_SERVER_COMPACTION_TOKENS: 20_000,
@@ -23,7 +30,10 @@ const generator = (payload: string) =>
   `import pathlib, sys\npathlib.Path(sys.argv[1]).write_bytes(${JSON.stringify(payload)}.encode())\n`;
 
 describe("runCraftScan identity submission gate", () => {
-  beforeEach(() => executeNative.mockReset());
+  beforeEach(() => {
+    executeNative.mockReset();
+    runtimeConstructed.mockReset();
+  });
 
   it("refuses a final generator whose bytes were not self-tested", async () => {
     executeNative
@@ -174,5 +184,24 @@ describe("runCraftScan identity submission gate", () => {
     } finally {
       rmSync(sourceRoot, { recursive: true, force: true });
     }
+  });
+
+  it("keeps one runtime for the whole craft trajectory", async () => {
+    executeNative
+      .mockResolvedValueOnce({ content: [], stopReason: "end_turn" })
+      .mockResolvedValueOnce({ content: [], stopReason: "end_turn" });
+
+    await runCraftScan({
+      target: {
+        sourceRoot: mkdtempSync(join(tmpdir(), "craft-runtime-")),
+        description: "Trigger parser bug.",
+        language: "c",
+      },
+      runtime: "api",
+      maxSteps: 2,
+      evaluatePoc: async () => ({ triggered: false, output: "" }),
+    });
+
+    expect(runtimeConstructed).toHaveBeenCalledTimes(1);
   });
 });
