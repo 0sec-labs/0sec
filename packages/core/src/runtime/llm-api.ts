@@ -1527,12 +1527,25 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       // provider config / PWNKIT_* env), never user/attacker input; same
       // trusted endpoint the client already POSTed to, now wrapped in retry.
       // foxguard: ignore[js/no-ssrf]
-      const res = await fetch(this.buildUrl(), {
-        method: "POST",
-        headers: await this.ensureFreshHeaders(),
-        body: bodyJson,
-        signal,
-      });
+      let res: Response;
+      try {
+        res = await fetch(this.buildUrl(), {
+          method: "POST",
+          headers: await this.ensureFreshHeaders(),
+          body: bodyJson,
+          signal,
+        });
+      } catch (error) {
+        const cause = error instanceof Error ? error.cause : undefined;
+        const causeDetail =
+          cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string"
+            ? ` (${cause.code})`
+            : "";
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${this.providerLabel} transport failure: ${message}${causeDetail}`, {
+          cause: error,
+        });
+      }
       if (res.ok || !isRetryableHttpStatus(res.status)) {
         return res;
       }
