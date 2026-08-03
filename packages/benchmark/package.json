@@ -42,7 +42,8 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --noEmit -p tsconfig.typecheck.json && tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "bench": "tsx src/runner.ts",
     "bench:quick": "tsx src/runner.ts --depth quick",
     "bench:agentic": "tsx src/runner.ts --agentic --runtime auto",
