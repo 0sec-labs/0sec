@@ -42,6 +42,7 @@ import {
   type CraftScanResult,
   type CraftAttemptSummary,
 } from "./craft-scan.js";
+import { mergeCraftEvidence } from "./craft-evidence-ledger.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -418,6 +419,7 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
   const aggOutput = sum(results.map((r) => r.outputTokens));
   const aggCost = sum(results.map((r) => r.estimatedCostUsd));
   const aggSubmits = sum(results.map((r) => r.submits));
+  const mergedEvidence = mergeCraftEvidence(results.map((result) => result.evidence));
 
   // A candidate exists when its trajectory's injected oracle already reported a
   // crash (runCraftScan only sets pocPath on a win). No self-grading here.
@@ -456,6 +458,7 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
       inputTokens: aggInput,
       outputTokens: aggOutput,
       estimatedCostUsd: aggCost,
+      ...(mergedEvidence.length > 0 ? { evidence: mergedEvidence } : {}),
     };
   }
 
@@ -505,5 +508,6 @@ export async function runEnsembleCraft(opts: EnsembleCraftOptions): Promise<Craf
         : []),
       ...(usedFallback ? ["ensemble judge failed; used heuristic selector fallback"] : []),
     ],
+    ...(mergedEvidence.length > 0 ? { evidence: mergedEvidence } : {}),
   };
 }

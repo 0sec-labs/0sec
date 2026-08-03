@@ -831,6 +831,23 @@ export type {
   CraftScanOptions,
   CraftScanResult,
 } from "./stages/craft-scan.js";
+export type {
+  CraftEvidenceInput,
+  CraftEvidenceKind,
+  CraftEvidenceRecord,
+  CraftEvidenceStage,
+  CraftEvidenceStatus,
+} from "./stages/craft-evidence-ledger.js";
+export { mergeCraftEvidence } from "./stages/craft-evidence-ledger.js";
+export {
+  CraftStagedOrchestrator,
+  parseCraftStageCitations,
+} from "./stages/craft-staged-orchestrator.js";
+export type {
+  CraftStageCitation,
+  CraftStageTransition,
+  CraftStagedOrchestratorOptions,
+} from "./stages/craft-staged-orchestrator.js";
 // Cross-task learning memory (the 5-tier "Crystalline-style" moat).
 export { CraftMemoryStore, preseedMemory, consolidateMemory } from "./craft-memory/index.js";
 export type { Memory, MemoryLevel } from "./craft-memory/index.js";

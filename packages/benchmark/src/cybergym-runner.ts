@@ -78,7 +78,14 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { agenticScan, CraftMemoryStore, preseedMemory, consolidateMemory, runEnsembleCraft, parseEnsembleModels, defaultCraftCandidateReviewer } from "@pwnkit/core";
-import type { CraftPocEvaluator, CraftScanOptions, CraftScanResult, CraftCandidateJudge, MemSafetyTarget } from "@pwnkit/core";
+import type {
+  CraftCandidateJudge,
+  CraftEvidenceRecord,
+  CraftPocEvaluator,
+  CraftScanOptions,
+  CraftScanResult,
+  MemSafetyTarget,
+} from "@pwnkit/core";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { sanitizeTraceText } from "./xbow-runner.js";
 import { aggregateRuns, type RepeatRun } from "./wilson.js";
@@ -171,6 +178,8 @@ export interface CyberGymEngineOutput {
   warnings?: string[];
   /** Bounded summaries of candidate PoCs submitted to the oracle. */
   craftAttempts?: unknown[];
+  /** Task-local deterministic stage receipts; excludes source, model, and candidate payloads. */
+  craftEvidence?: CraftEvidenceRecord[];
   /** True when the engine refused / produced no candidate PoC at all. */
   refused?: boolean;
   /** Free-form reason when the engine refused or produced nothing usable. */
@@ -210,6 +219,8 @@ export interface CyberGymResult {
   warnings?: string[];
   /** Bounded summaries of candidate PoCs submitted to the oracle. */
   craftAttempts?: unknown[];
+  /** Task-local deterministic stage receipts; excludes source, model, and candidate payloads. */
+  craftEvidence?: CraftEvidenceRecord[];
   /** Same-PoC oracle rechecks requested after an initial pass. */
   stabilityRechecks?: number;
   /** True only when the initial pass and all configured same-PoC rechecks pass. */
@@ -890,6 +901,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
         Array.isArray((entry as { attempts?: unknown }).attempts),
       ) as { attempts?: unknown[] } | undefined)?.attempts)
     : undefined;
+  const craftEvidence = extractCraftEvidence(rawTrace);
   const submits = typeof meta.craftSubmits === "number" ? meta.craftSubmits : undefined;
   const craftPassed = typeof meta.craftPassed === "boolean" ? meta.craftPassed : undefined;
   const craftFirstSubmitPassed =
@@ -924,6 +936,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     ...(craftFirstSubmitPassed !== undefined ? { craftFirstSubmitPassed } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(craftAttempts && craftAttempts.length > 0 ? { craftAttempts } : {}),
+    ...(craftEvidence && craftEvidence.length > 0 ? { craftEvidence } : {}),
     ...(pocPath
       ? {}
       : { refused: true, refusedReason }),
@@ -1236,6 +1249,9 @@ export async function runTaskOnce(
         ...(engine.craftAttempts && engine.craftAttempts.length > 0
           ? { craftAttempts: engine.craftAttempts }
           : {}),
+        ...(engine.craftEvidence && engine.craftEvidence.length > 0
+          ? { craftEvidence: engine.craftEvidence }
+          : {}),
         verdict: infraFault ? "error" : "fail",
         passed: false,
         refused: true,
@@ -1279,6 +1295,9 @@ export async function runTaskOnce(
         : {}),
       ...(engine.craftAttempts && engine.craftAttempts.length > 0
         ? { craftAttempts: engine.craftAttempts }
+        : {}),
+      ...(engine.craftEvidence && engine.craftEvidence.length > 0
+        ? { craftEvidence: engine.craftEvidence }
         : {}),
       pocSha256,
       ...verdictFields,
@@ -1358,6 +1377,7 @@ export interface CyberGymSample {
   firstSubmitPassed?: boolean;
   warnings?: string[];
   craftAttempts?: unknown[];
+  craftEvidence?: CraftEvidenceRecord[];
   stabilityRechecks?: number;
   stablePass?: boolean;
   stabilityResults?: Array<{ verdict: CyberGymVerdict; pocId?: string; submitExitCode?: number }>;
@@ -1390,6 +1410,7 @@ export function resultToSample(r: CyberGymResult): CyberGymSample {
     ...(r.firstSubmitPassed !== undefined ? { firstSubmitPassed: r.firstSubmitPassed } : {}),
     ...(r.warnings && r.warnings.length > 0 ? { warnings: r.warnings } : {}),
     ...(r.craftAttempts && r.craftAttempts.length > 0 ? { craftAttempts: r.craftAttempts } : {}),
+    ...(r.craftEvidence && r.craftEvidence.length > 0 ? { craftEvidence: r.craftEvidence } : {}),
     ...(r.stabilityRechecks !== undefined ? { stabilityRechecks: r.stabilityRechecks } : {}),
     ...(r.stablePass !== undefined ? { stablePass: r.stablePass } : {}),
     ...(r.stabilityResults && r.stabilityResults.length > 0
@@ -1401,6 +1422,86 @@ export function resultToSample(r: CyberGymResult): CyberGymSample {
     durationMs: r.durationMs,
     ...(r.error ? { error: r.error } : {}),
   };
+}
+
+/**
+ * Extract a bounded, structured craft receipt from the engine trace. This is a
+ * local trust boundary: malformed or payload-bearing trace objects are dropped
+ * rather than reaching the durable benchmark JSONL.
+ */
+export function extractCraftEvidence(trace: readonly unknown[] | undefined): CraftEvidenceRecord[] | undefined {
+  const entry = trace?.find(isCraftEvidenceEnvelope);
+  if (!entry || entry.records.length === 0 || !entry.records.every(isCraftEvidenceRecord)) {
+    return undefined;
+  }
+  return entry.records.map((record) => ({
+    sequence: record.sequence,
+    kind: record.kind,
+    status: record.status,
+    summary: record.summary,
+    ...(record.step !== undefined ? { step: record.step } : {}),
+    ...(record.stage ? { stage: record.stage } : {}),
+    ...(record.trajectory !== undefined ? { trajectory: record.trajectory } : {}),
+    ...(record.candidateSha256 ? { candidateSha256: record.candidateSha256 } : {}),
+    ...(record.source ? { source: { ...record.source } } : {}),
+  }));
+}
+
+function isCraftEvidenceEnvelope(value: unknown): value is { records: unknown[] } {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("type" in value) || value.type !== "craft_evidence") return false;
+  return "records" in value && Array.isArray(value.records);
+}
+
+function isCraftEvidenceRecord(value: unknown): value is CraftEvidenceRecord {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("sequence" in value) || !("kind" in value) || !("status" in value) || !("summary" in value)) return false;
+  if (
+    typeof value.sequence !== "number" ||
+    !Number.isInteger(value.sequence) ||
+    value.sequence < 1 ||
+    typeof value.kind !== "string" ||
+    !["target-spec", "stage-transition", "self-test", "identity", "candidate-review", "oracle", "run-summary"].includes(value.kind) ||
+    typeof value.status !== "string" ||
+    !["observed", "validated", "refuted", "inconclusive"].includes(value.status) ||
+    typeof value.summary !== "string" ||
+    value.summary.length === 0 ||
+    value.summary.length > 480
+  ) return false;
+  if (
+    "step" in value &&
+    value.step !== undefined &&
+    (typeof value.step !== "number" || !Number.isInteger(value.step) || value.step < 1)
+  ) return false;
+  if (
+    "stage" in value &&
+    value.stage !== undefined &&
+    (typeof value.stage !== "string" || !["reachability", "trigger", "counterexample"].includes(value.stage))
+  ) return false;
+  if (
+    "trajectory" in value &&
+    value.trajectory !== undefined &&
+    (typeof value.trajectory !== "number" || !Number.isInteger(value.trajectory) || value.trajectory < 1)
+  ) return false;
+  if (
+    "candidateSha256" in value &&
+    value.candidateSha256 !== undefined &&
+    (typeof value.candidateSha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.candidateSha256))
+  ) return false;
+  if ("source" in value && value.source !== undefined) {
+    const source = value.source;
+    if (
+      typeof source !== "object" ||
+      source === null ||
+      !("path" in source) ||
+      typeof source.path !== "string" ||
+      source.path.length === 0 ||
+      ("line" in source &&
+        source.line !== undefined &&
+        (typeof source.line !== "number" || !Number.isInteger(source.line) || source.line < 1))
+    ) return false;
+  }
+  return true;
 }
 
 /** Serialize a sample to a single JSONL line (stable key order). */

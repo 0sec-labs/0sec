@@ -29,6 +29,25 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow /src/parser.c:42:8 in parse_head
 const generator = (payload: string) =>
   `import pathlib, sys\npathlib.Path(sys.argv[1]).write_bytes(${JSON.stringify(payload)}.encode())\n`;
 
+const taskRoot = (prefix: string): string => {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  writeFileSync(
+    join(root, "fuzz.c"),
+    "int LLVMFuzzerTestOneInput(const unsigned char *data, unsigned long size) { return 0; }\n",
+  );
+  return root;
+};
+
+const advanceToTrigger = () => ({
+  content: [{
+    type: "tool_use",
+    id: "advance",
+    name: "advance_stage",
+    input: { to: "trigger", citations: [{ path: "fuzz.c", line: 1 }] },
+  }],
+  stopReason: "tool_use",
+});
+
 describe("runCraftScan identity submission gate", () => {
   beforeEach(() => {
     executeNative.mockReset();
@@ -37,6 +56,7 @@ describe("runCraftScan identity submission gate", () => {
 
   it("refuses a final generator whose bytes were not self-tested", async () => {
     executeNative
+      .mockResolvedValueOnce(advanceToTrigger())
       .mockResolvedValueOnce({
         content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: generator("A") } }],
         stopReason: "tool_use",
@@ -49,12 +69,12 @@ describe("runCraftScan identity submission gate", () => {
     let graded = false;
     const result = await runCraftScan({
       target: {
-        sourceRoot: mkdtempSync(join(tmpdir(), "craft-identity-gate-")),
+        sourceRoot: taskRoot("craft-identity-gate-"),
         description: "A heap-buffer-overflow occurs in `parse_header()`.",
         language: "c",
       },
       runtime: "api",
-      maxSteps: 2,
+      maxSteps: 3,
       maxTests: 2,
       maxSubmits: 1,
       testPoc: async () => ({ triggered: true, output: matchingSanitizerOutput }),
@@ -67,10 +87,22 @@ describe("runCraftScan identity submission gate", () => {
     expect(graded).toBe(false);
     expect(result.submits).toBe(0);
     expect(result.passed).toBe(false);
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "identity",
+        status: "validated",
+        summary: "candidate triggered the vulnerable target and passed deterministic identity checks",
+      }),
+      expect.objectContaining({
+        kind: "identity",
+        status: "refuted",
+        summary: "final submission bytes differed from the self-tested candidate",
+      }),
+    ]));
   });
 
   it("does not let source tools read a sibling whose name shares the source prefix", async () => {
-    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-root-"));
+    const sourceRoot = taskRoot("craft-root-");
     const sibling = `${sourceRoot}-sibling`;
     mkdirSync(sibling);
     writeFileSync(join(sibling, "outside.txt"), "outside-sentinel");
@@ -104,6 +136,7 @@ describe("runCraftScan identity submission gate", () => {
 
   it("never grades an untested candidate after the self-test budget is exhausted", async () => {
     executeNative
+      .mockResolvedValueOnce(advanceToTrigger())
       .mockResolvedValueOnce({
         content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: generator("A") } }],
         stopReason: "tool_use",
@@ -116,12 +149,12 @@ describe("runCraftScan identity submission gate", () => {
     let graded = false;
     const result = await runCraftScan({
       target: {
-        sourceRoot: mkdtempSync(join(tmpdir(), "craft-identity-budget-")),
+        sourceRoot: taskRoot("craft-identity-budget-"),
         description: "A heap-buffer-overflow occurs in `parse_header()`.",
         language: "c",
       },
       runtime: "api",
-      maxSteps: 2,
+      maxSteps: 3,
       maxTests: 1,
       maxSubmits: 1,
       testPoc: async () => ({ triggered: false, output: "clean run" }),
@@ -137,7 +170,7 @@ describe("runCraftScan identity submission gate", () => {
   });
 
   it("submits the exact bytes that passed the vulnerable-side self-test", async () => {
-    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-stateful-generator-"));
+    const sourceRoot = taskRoot("craft-stateful-generator-");
     const counter = join(sourceRoot, "counter");
     const statefulGenerator =
       `import pathlib, sys\ncounter = pathlib.Path(${JSON.stringify(counter)})\n` +
@@ -146,6 +179,7 @@ describe("runCraftScan identity submission gate", () => {
       "pathlib.Path(sys.argv[1]).write_bytes(str(value).encode())\n";
     try {
       executeNative
+        .mockResolvedValueOnce(advanceToTrigger())
         .mockResolvedValueOnce({
           content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: statefulGenerator } }],
           stopReason: "tool_use",
@@ -164,7 +198,7 @@ describe("runCraftScan identity submission gate", () => {
           language: "c",
         },
         runtime: "api",
-        maxSteps: 2,
+        maxSteps: 3,
         maxTests: 1,
         maxSubmits: 1,
         testPoc: async (pocPath) => {
@@ -178,7 +212,41 @@ describe("runCraftScan identity submission gate", () => {
       });
 
       expect(selfTestBytes).toBe("1");
+      expect(result.evidence).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "stage-transition",
+          status: "validated",
+          stage: "trigger",
+          summary: "advanced from reachability to trigger: reachability evidence cited",
+        }),
+        expect.objectContaining({
+          kind: "stage-transition",
+          status: "validated",
+          stage: "counterexample",
+          summary: "advanced from trigger to counterexample: identity-consistent vulnerable-side crash observed",
+        }),
+        expect.objectContaining({
+          kind: "oracle",
+          status: "validated",
+          stage: "counterexample",
+          summary: "differential oracle confirmed the candidate",
+        }),
+        expect.objectContaining({
+          kind: "run-summary",
+          status: "validated",
+          stage: "counterexample",
+          summary: "candidate-count=1; self-tests=1; vulnerable-crashes=1; crash-rate=1/1; first-self-test-step=2; graded-submissions=1",
+        }),
+      ]));
       expect(gradedBytes).toBe("1");
+      const toolNamesAt = (call: number): string[] =>
+        executeNative.mock.calls[call][2].map((tool: { name: string }) => tool.name);
+      expect(toolNamesAt(0)).toContain("advance_stage");
+      expect(toolNamesAt(0)).not.toContain("test_poc");
+      expect(toolNamesAt(1)).toContain("test_poc");
+      expect(toolNamesAt(1)).not.toContain("submit_poc");
+      expect(toolNamesAt(2)).toContain("submit_poc");
+      expect(toolNamesAt(2)).not.toContain("test_poc");
       expect(result.passed).toBe(true);
       expect(result.submits).toBe(1);
     } finally {
@@ -189,6 +257,7 @@ describe("runCraftScan identity submission gate", () => {
   it("returns a concretely refuted candidate to the self-test loop before grading", async () => {
     const testedGenerator = generator("A");
     executeNative
+      .mockResolvedValueOnce(advanceToTrigger())
       .mockResolvedValueOnce({
         content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: testedGenerator } }],
         stopReason: "tool_use",
@@ -202,12 +271,12 @@ describe("runCraftScan identity submission gate", () => {
     let reviewed = false;
     const result = await runCraftScan({
       target: {
-        sourceRoot: mkdtempSync(join(tmpdir(), "craft-adversarial-review-")),
+        sourceRoot: taskRoot("craft-adversarial-review-"),
         description: "A heap-buffer-overflow occurs in `parse_header()`.",
         language: "c",
       },
       runtime: "api",
-      maxSteps: 2,
+      maxSteps: 3,
       maxTests: 1,
       maxSubmits: 1,
       testPoc: async () => ({ triggered: true, output: matchingSanitizerOutput }),
@@ -234,7 +303,7 @@ describe("runCraftScan identity submission gate", () => {
 
     await runCraftScan({
       target: {
-        sourceRoot: mkdtempSync(join(tmpdir(), "craft-runtime-")),
+        sourceRoot: taskRoot("craft-runtime-"),
         description: "Trigger parser bug.",
         language: "c",
       },
