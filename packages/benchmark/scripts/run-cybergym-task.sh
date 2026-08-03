@@ -16,12 +16,12 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 : "${CYBERGYM_ROOT:=/srv/cybergym}"
 : "${CYBERGYM_PYTHON:=${CYBERGYM_ROOT}/venv/bin/python}"
 : "${CYBERGYM_DIFFICULTY:=level1}"
-: "${CYBERGYM_SERVER_API_KEY_FILE:=${CYBERGYM_ROOT}/secrets/server-api-key}"
 : "${CYBERGYM_BRIDGE_CAPABILITIES:=${CYBERGYM_ROOT}/bridge/capabilities.json}"
+: "${CYBERGYM_AUTH_FILE:=${HOME}/.codex/auth.json}"
 
 bridge_script="${PWNKIT_ROOT}/packages/benchmark/scripts/cybergym-oracle-bridge.py"
 container_script="${PWNKIT_ROOT}/packages/benchmark/scripts/run-cybergym-container.sh"
-for path in "${CYBERGYM_PYTHON}" "${bridge_script}" "${container_script}" "${CYBERGYM_SERVER_API_KEY_FILE}"; do
+for path in "${CYBERGYM_PYTHON}" "${bridge_script}" "${container_script}" "${CYBERGYM_AUTH_FILE}"; do
   [[ -e "${path}" ]] || { printf 'missing required path: %s\n' "${path}" >&2; exit 2; }
 done
 
@@ -32,13 +32,17 @@ gateway="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["network"]["
   exit 2
 }
 
-install -d -m 0700 "${CYBERGYM_ROOT}/tasks"
+install -d -m 0700 "${CYBERGYM_ROOT}/tasks" "${CYBERGYM_ROOT}/credentials"
 task_dir="$(mktemp -d "${CYBERGYM_ROOT}/tasks/${task_id//:/-}.XXXXXX")"
+credential_copy=""
 token=""
 cleanup() {
   if [[ -n "${token}" ]]; then
     "${CYBERGYM_PYTHON}" "${bridge_script}" revoke \
       --capabilities "${CYBERGYM_BRIDGE_CAPABILITIES}" --token "${token}" >/dev/null || true
+  fi
+  if [[ -n "${credential_copy}" ]]; then
+    rm -f "${credential_copy}"
   fi
   if [[ "${CYBERGYM_KEEP_TASKS:-0}" != "1" ]]; then
     rm -rf "${task_dir}"
@@ -59,12 +63,15 @@ token="$("${CYBERGYM_PYTHON}" "${bridge_script}" issue \
   --capabilities "${CYBERGYM_BRIDGE_CAPABILITIES}" --agent-id "${agent_id}")"
 
 # The container runs as UID 10001 and must unpack the task archive and write
-# candidate PoCs. It has no write access to the harness, corpus, bridge state,
-# model credentials, verifier key, or shared database.
+# candidate PoCs. Its task-scoped auth copy is deleted on exit; it has no
+# access to the harness, corpus, bridge state, verifier key, or shared database.
+credential_copy="$(mktemp "${CYBERGYM_ROOT}/credentials/codex-auth.XXXXXX")"
+install -m 0400 -o 10001 -g 10001 "${CYBERGYM_AUTH_FILE}" "${credential_copy}"
 chown -R 10001:10001 "${task_dir}"
 
 export CYBERGYM_TASK_DIR="${task_dir}"
 export CYBERGYM_SERVER="http://${gateway}:8666"
 export CYBERGYM_ORACLE_BRIDGE="http://${gateway}:8667"
 export CYBERGYM_ORACLE_BRIDGE_TOKEN="${token}"
+export CYBERGYM_AUTH_FILE="${credential_copy}"
 "${container_script}" --task-id "${task_id}" --difficulty "${CYBERGYM_DIFFICULTY}" "$@"
