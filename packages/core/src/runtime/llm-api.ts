@@ -214,6 +214,18 @@ export function isRetryableHttpStatus(status: number): boolean {
   );
 }
 
+/** Network errors that can clear after DNS/proxy/TCP backoff. */
+function isRetryableTransportCode(code: string): boolean {
+  return [
+    "EAI_AGAIN",
+    "ECONNRESET",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_SOCKET",
+  ].includes(code);
+}
+
 /** Max retries after the initial attempt. `PWNKIT_LLM_MAX_RETRIES` (default 6). */
 function llmMaxRetries(): number {
   const raw = process.env.PWNKIT_LLM_MAX_RETRIES;
@@ -1546,6 +1558,22 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             ? `@${cause.hostname}`
             : "";
         const message = error instanceof Error ? error.message : String(error);
+        const maxRetries = llmMaxRetries();
+        const maxWaitMs = llmMaxRetryWaitMs();
+        const delay = retryBackoffMs(attempt);
+        if (
+          isRetryableTransportCode(causeCode) &&
+          attempt < maxRetries &&
+          waitedOtherMs + delay <= maxWaitMs
+        ) {
+          process.stderr.write(
+            `[pwnkit] ${this.providerLabel} transport ${causeCode} — backoff ${delay}ms ` +
+              `(retry ${attempt + 1}/${maxRetries})\n`,
+          );
+          waitedOtherMs += delay;
+          await sleepWithAbort(delay, signal);
+          continue;
+        }
         throw new Error(`${this.providerLabel} transport failure [${causeCode}${causeHost}]: ${message}`, {
           cause: error,
         });
