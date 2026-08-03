@@ -37,6 +37,7 @@ done
 
 docker network inspect "${CYBERGYM_NETWORK}" >/dev/null
 install -d -m 0700 "${CYBERGYM_ROOT}/results"
+chown 10001:10001 "${CYBERGYM_ROOT}/results"
 
 exec docker run --rm \
   --env HTTP_PROXY="${CYBERGYM_PROXY}" \
