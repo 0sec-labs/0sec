@@ -484,8 +484,10 @@ const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
 const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const FREE_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
+const DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com";
+const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "chatgpt-codex" | "z-ai" | "kimi";
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi";
 type WireApi = "chat_completions" | "responses";
 
 // ── Z.ai GLM (flat-rate Coding Plan key) ───────────────────────────────
@@ -898,7 +900,14 @@ function parseCodexAzureConfig(): {
 function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (!model) return undefined;
   const m = model.toLowerCase();
-  // Explicit provider prefix → OpenRouter meta-routing (one key, many models).
+  // Direct DeepSeek uses its stable API model name; OpenRouter routes use an
+  // explicit vendor-qualified model id below.
+  // DeepSeek direct inference. `deepseek-v4-flash` is the stable API model
+  // name for the Flash 0731 revision, distinct from Azure's deployment id and
+  // OpenRouter's vendor-qualified route.
+  if (m === DEEPSEEK_DEFAULT_MODEL) {
+    return process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined;
+  }
   if (m.startsWith("openrouter/")) return process.env.OPENROUTER_API_KEY ? "openrouter" : undefined;
   // GLM / Z.ai.
   if (m.startsWith("glm-") || m.startsWith("z-ai/") || m.includes("glm")) {
@@ -927,7 +936,8 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
  * Detect which API provider to use based on available keys.
  * When `preferredModel` maps to a provider whose auth is present, that wins
  * (per-call routing). Otherwise priority: PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN ->
- * ANTHROPIC_API_KEY -> Z_AI_API_KEY -> AZURE_OPENAI_API_KEY -> OPENAI_API_KEY -> OPENROUTER_API_KEY (last-resort)
+ * ANTHROPIC_API_KEY -> DEEPSEEK_API_KEY -> Z_AI_API_KEY -> AZURE_OPENAI_API_KEY ->
+ * OPENAI_API_KEY -> OPENROUTER_API_KEY (last-resort)
  */
 function detectProvider(configApiKey?: string, preferredModel?: string): {
   provider: ApiProvider;
@@ -971,6 +981,10 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
   // present, that provider wins over the global env priority — so one process
   // can fan calls across providers (gpt-5.5→codex, glm-5.2→z-ai, claude→anthropic).
   switch (providerForModel(preferredModel)) {
+    case "deepseek":
+      return { provider: "deepseek", apiKey: process.env.DEEPSEEK_API_KEY as string,
+        baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
+        defaultModel: DEEPSEEK_DEFAULT_MODEL, wireApi: "responses" };
     case "z-ai":
       return { provider: "z-ai", apiKey: process.env.Z_AI_API_KEY as string,
         baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, defaultModel: ZAI_DEFAULT_MODEL, wireApi: "chat_completions" };
@@ -1037,45 +1051,26 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
-  // NOTE: OpenRouter is intentionally checked LAST (just before the no-key
-  // fallback), not here. It is a last-resort meta-provider; a stale or leaked
-  // OPENROUTER_API_KEY must never outrank an explicitly-configured z-ai or
-  // chatgpt-codex credential during a per-call multi-provider fan-out.
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
+  // Direct DeepSeek is the first metered fallback after the Codex
+  // subscription. Its native Responses API supports Flash 0731 tool calling.
+  const deepseekKey = process.env.DEEPSEEK_API_KEY;
+  if (deepseekKey) {
     return {
-      provider: "anthropic",
-      apiKey: anthropicKey,
-      baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
-      defaultModel: DEFAULT_ANTHROPIC_MODEL,
-      wireApi: "chat_completions",
+      provider: "deepseek",
+      apiKey: deepseekKey,
+      baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
+      defaultModel: DEEPSEEK_DEFAULT_MODEL,
+      wireApi: "responses",
     };
   }
 
-  // Z.ai GLM — Anthropic-compatible wire. Selected by Z_AI_API_KEY; in the
-  // cloud path the worker injects exactly this one key when the operator
-  // picks the z-ai provider. Rides the anthropic header/url/parser paths.
-  const zaiKey = process.env.Z_AI_API_KEY;
-  if (zaiKey) {
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  if (openrouterKey) {
     return {
-      provider: "z-ai",
-      apiKey: zaiKey,
-      baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL,
-      defaultModel: ZAI_DEFAULT_MODEL,
-      wireApi: "chat_completions",
-    };
-  }
-
-  // Moonshot Kimi K3 — Anthropic-compatible wire, same treatment as z-ai.
-  // Selected by KIMI_API_KEY (explicit operator opt-in). Defaults to
-  // api.kimi.com/coding — distinct from z.ai — so kimi never hits Z.ai.
-  const kimiKey = process.env.KIMI_API_KEY;
-  if (kimiKey) {
-    return {
-      provider: "kimi",
-      apiKey: kimiKey,
-      baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL,
-      defaultModel: KIMI_DEFAULT_MODEL,
+      provider: "openrouter",
+      apiKey: openrouterKey,
+      baseUrl: "https://openrouter.ai/api/v1",
+      defaultModel: DEFAULT_OPENROUTER_MODEL,
       wireApi: "chat_completions",
     };
   }
@@ -1104,16 +1099,37 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
-  // OpenRouter — last-resort meta-provider (many models, one key). Checked
-  // AFTER z-ai / azure / openai so a stale or leaked OPENROUTER_API_KEY can't
-  // hijack a run that has a valid z-ai or chatgpt-codex credential.
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  if (openrouterKey) {
+  // Z.ai GLM and Moonshot Kimi are explicit alternatives. They are tried
+  // before Anthropic so Anthropic remains the final provider fallback.
+  const zaiKey = process.env.Z_AI_API_KEY;
+  if (zaiKey) {
     return {
-      provider: "openrouter",
-      apiKey: openrouterKey,
-      baseUrl: "https://openrouter.ai/api/v1",
-      defaultModel: DEFAULT_OPENROUTER_MODEL,
+      provider: "z-ai",
+      apiKey: zaiKey,
+      baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL,
+      defaultModel: ZAI_DEFAULT_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
+
+  const kimiKey = process.env.KIMI_API_KEY;
+  if (kimiKey) {
+    return {
+      provider: "kimi",
+      apiKey: kimiKey,
+      baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL,
+      defaultModel: KIMI_DEFAULT_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
+
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    return {
+      provider: "anthropic",
+      apiKey: anthropicKey,
+      baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com",
+      defaultModel: DEFAULT_ANTHROPIC_MODEL,
       wireApi: "chat_completions",
     };
   }
@@ -1219,6 +1235,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.provider === "openrouter" ||
       this.provider === "openai" ||
       this.provider === "azure" ||
+      this.provider === "deepseek" ||
       // chatgpt-codex always speaks Responses API; treat it as
       // OpenAI-compat for body-shape branching purposes (the Responses
       // wire-API code paths below already key on `wireApi === "responses"`
@@ -1389,6 +1406,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "anthropic": return "Anthropic";
       case "openai": return "OpenAI";
       case "azure": return "Azure OpenAI";
+      case "deepseek": return "DeepSeek";
       case "chatgpt-codex": return "ChatGPT (Codex backend)";
       case "z-ai": return "Z.ai (GLM)";
       case "kimi": return "Kimi (Moonshot)";
@@ -1400,6 +1418,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "No provider credential found. Set one of:\n" +
       "  export PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN=... (ChatGPT Codex subscription auth)\n" +
       "  export OPENROUTER_API_KEY=sk-or-...   (OpenRouter — many models, one key)\n" +
+      "  export DEEPSEEK_API_KEY=...           (DeepSeek — direct Flash 0731 inference)\n" +
       "  export ANTHROPIC_API_KEY=sk-ant-...    (Anthropic — direct Claude access)\n" +
       "  export AZURE_OPENAI_API_KEY=...        (Azure OpenAI — reuse your Codex Azure provider)\n" +
       "  export OPENAI_API_KEY=sk-...           (OpenAI — direct GPT access)\n" +

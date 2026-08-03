@@ -19,6 +19,8 @@ describe("LlmApiRuntime provider detection", () => {
 
   beforeEach(() => {
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_BASE_URL;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.AZURE_OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -44,8 +46,10 @@ describe("LlmApiRuntime provider detection", () => {
     // spew log lines or attempt real network probes.
     process.env.PWNKIT_SKIP_PROVIDER_BANNER = "1";
   });
-
   afterEach(() => {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in origEnv)) delete process.env[key];
+    }
     Object.assign(process.env, origEnv);
   });
 
@@ -54,6 +58,20 @@ describe("LlmApiRuntime provider detection", () => {
     const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
     expect((rt as any).provider).toBe("openrouter");
     expect((rt as any).apiKey).toBe("sk-or-test123");
+    expect(await rt.isAvailable()).toBe(true);
+  });
+
+  it("selects direct DeepSeek Flash 0731 before Azure for its exact API model", async () => {
+    process.env.DEEPSEEK_API_KEY = "deepseek-key-123";
+    process.env.AZURE_OPENAI_API_KEY = "azure-key-should-not-win";
+    process.env.PWNKIT_MODEL = "deepseek-v4-flash";
+
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+
+    expect((rt as any).provider).toBe("deepseek");
+    expect((rt as any).baseUrl).toBe("https://api.deepseek.com");
+    expect((rt as any).model).toBe("deepseek-v4-flash");
+    expect((rt as any).wireApi).toBe("responses");
     expect(await rt.isAvailable()).toBe(true);
   });
 
