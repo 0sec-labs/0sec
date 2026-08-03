@@ -186,6 +186,47 @@ describe("runCraftScan identity submission gate", () => {
     }
   });
 
+  it("returns a concretely refuted candidate to the self-test loop before grading", async () => {
+    const testedGenerator = generator("A");
+    executeNative
+      .mockResolvedValueOnce({
+        content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: testedGenerator } }],
+        stopReason: "tool_use",
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: "tool_use", id: "submit", name: "submit_poc", input: { python: testedGenerator } }],
+        stopReason: "tool_use",
+      });
+
+    let graded = false;
+    let reviewed = false;
+    const result = await runCraftScan({
+      target: {
+        sourceRoot: mkdtempSync(join(tmpdir(), "craft-adversarial-review-")),
+        description: "A heap-buffer-overflow occurs in `parse_header()`.",
+        language: "c",
+      },
+      runtime: "api",
+      maxSteps: 2,
+      maxTests: 1,
+      maxSubmits: 1,
+      testPoc: async () => ({ triggered: true, output: matchingSanitizerOutput }),
+      reviewCandidate: async (input) => {
+        reviewed = input.generator === testedGenerator && input.identity.status === "match";
+        return { verdict: "reject", reason: "candidate misses the required mode byte" };
+      },
+      evaluatePoc: async () => {
+        graded = true;
+        return { triggered: true, differentialPass: true, output: matchingSanitizerOutput };
+      },
+    });
+
+    expect(reviewed).toBe(true);
+    expect(graded).toBe(false);
+    expect(result.submits).toBe(0);
+    expect(result.passed).toBe(false);
+  });
+
   it("keeps one runtime for the whole craft trajectory", async () => {
     executeNative
       .mockResolvedValueOnce({ content: [], stopReason: "end_turn" })

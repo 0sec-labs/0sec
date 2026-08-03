@@ -47,6 +47,10 @@ import {
   type CraftCandidateIdentity,
 } from "./craft-candidate-identity.js";
 import { buildCraftCpgContext, type CraftCpgLocalization } from "./craft-cpg-context.js";
+import type {
+  CraftCandidateReview,
+  CraftCandidateReviewer,
+} from "./craft-adversarial-review.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -136,6 +140,12 @@ export interface CraftScanOptions {
    * stage degrades to the old submit-only behaviour.
    */
   testPoc?: CraftPocEvaluator;
+  /**
+   * Optional independent reviewer for an identity-consistent, self-tested
+   * candidate. A concrete rejection returns the agent to test_poc; unavailable
+   * or ambiguous review remains inconclusive and never self-grades the PoC.
+   */
+  reviewCandidate?: CraftCandidateReviewer;
   /**
    * Cross-task learning memory (the Crystalline-style moat). When provided, the
    * agent recalls relevant recipes/principles at task start and the outcome is
@@ -306,6 +316,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     sha256: string;
     identity: CraftCandidateIdentity;
     generator: string;
+    sanitizerOutput: string;
     pocPath: string;
   } | undefined;
   const runGenerator = (python: string): { ok: true; out: string } | { ok: false; err: string } => {
@@ -317,7 +328,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   };
   const testPocFn = async (python: string): Promise<string> => {
     if (!opts.testPoc) return "test_poc is not available for this task — craft carefully and use submit_poc.";
-    if (tests >= maxTests) return `self-test budget exhausted (${maxTests}). Submit your best crashing candidate with submit_poc.`;
+    if (tests >= maxTests) return `self-test budget exhausted (${maxTests}). Only a previously identity-consistent crashing candidate may be submitted.`;
     tests++;
     const g = runGenerator(python);
     if (!g.ok) return `generator raised an error (free — not a graded submit):\n${g.err}`;
@@ -342,6 +353,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       identity,
       generator: python,
       pocPath: g.out,
+      sanitizerOutput: v.output,
     };
     return `CRASH CONFIRMED on the vulnerable binary. Identity evidence: ${identitySummary}\nOnly submit this exact generator. Any changed output must pass test_poc again before the graded final submission.\nSanitizer output:\n${clip(v.output, 1200)}`;
   };
@@ -379,6 +391,28 @@ ${g.err}`;
         return "REFUSED — this generator's bytes differ from the identity-consistent candidate you self-tested. Call test_poc with this exact generator before submit_poc; the graded final answer must be self-tested.";
       }
       candidateIdentity = candidate.identity;
+    }
+    if (opts.reviewCandidate && eligibleCandidate) {
+      let review: CraftCandidateReview;
+      try {
+        review = await opts.reviewCandidate({
+          target: { description: opts.target.description, ...(opts.target.taskId ? { taskId: opts.target.taskId } : {}) },
+          generator: eligibleCandidate.generator,
+          sanitizerOutput: eligibleCandidate.sanitizerOutput,
+          identity: eligibleCandidate.identity,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        review = { verdict: "inconclusive", reason: `reviewer call failed: ${clip(reason, 240)}` };
+      }
+      log(`[craft] adversarial-review=${review.verdict}`);
+      if (review.verdict === "reject") {
+        eligibleCandidate = undefined;
+        return `REFUSED — adversarial review found a concrete mismatch: ${clip(review.reason, 800)}. Test a new candidate; the rejected bytes cannot be graded.`;
+      }
+      if (review.verdict === "inconclusive") {
+        log(`[craft] adversarial-review inconclusive: ${clip(review.reason, 160)}`);
+      }
     }
     submits++;
     const out = g.out;
