@@ -589,6 +589,48 @@ describe("LlmApiRuntime response parsing", () => {
   });
 });
 
+  it("retries a transient transport failure before failing the native turn", async () => {
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test" });
+    // Test-only mutable view: force the OpenAI-compatible branch without env setup.
+    const mutableRuntime = rt as unknown as {
+      provider: string;
+      wireApi: string;
+      apiKey: string;
+    };
+    mutableRuntime.provider = "openai";
+    mutableRuntime.wireApi = "chat_completions";
+    mutableRuntime.apiKey = "test";
+    const transportError = Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("connect timed out"), {
+        code: "UND_ERR_CONNECT_TIMEOUT",
+      }),
+    });
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(transportError)
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({
+          choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+      } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("PWNKIT_LLM_MAX_RETRIES", "1");
+    vi.stubEnv("PWNKIT_LLM_MAX_RETRY_WAIT_MS", "500");
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    try {
+      const result = await rt.executeNative("sys", [
+        { role: "user", content: [{ type: "text", text: "go" }] },
+      ], []);
+      expect(result.stopReason).toBe("end_turn");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    }
+  });
+
 // ── Live Azure Integration (only runs when AZURE_OPENAI_API_KEY is set) ──
 
 const hasAzureKey = !!process.env.AZURE_OPENAI_API_KEY;
