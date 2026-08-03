@@ -22,7 +22,7 @@
  *     discloses nothing itself.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   readFileSync,
@@ -41,6 +41,11 @@ import { lookupFormatPrimer, knownFormatIds } from "./format-knowledge.js";
 import { PROVER_TOOL_NAMES, listProverPluginIds, proverToolDefs, runProverTool } from "./prover/index.js";
 import { fdpEncodeToolDef, runFdpEncode } from "../agent/input-encoder.js";
 import { CraftMemoryStore } from "../craft-memory/store.js";
+import {
+  assessCraftCandidateIdentity,
+  formatCraftCandidateIdentity,
+  type CraftCandidateIdentity,
+} from "./craft-candidate-identity.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -186,6 +191,8 @@ export interface CraftAttemptSummary {
   differentialPass?: boolean;
   output: string;
   meta?: Record<string, unknown>;
+  /** Vulnerable-side crash evidence that cleared the identity gate. */
+  identity?: CraftCandidateIdentity;
 }
 
 // ── Stage ────────────────────────────────────────────────────────────────────
@@ -286,7 +293,8 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   // missing: without it, the only way to learn "did my PoC crash?" was to spend
   // a graded submission, so the agent crafted blind and 90% of PoCs never
   // crashed. Generator errors here are FREE (they don't burn the graded budget).
-  let tests = 0, hasCrashingCandidate = false;
+  let tests = 0;
+  let eligibleCandidate: { sha256: string; identity: CraftCandidateIdentity } | undefined;
   const runGenerator = (python: string): { ok: true; out: string } | { ok: false; err: string } => {
     const gen = resolve(tmpdir(), `pwnkit-craft-gen-${randomUUID()}.py`);
     const out = resolve(tmpdir(), `pwnkit-craft-poc-${opts.target.taskId ?? "x"}-${randomUUID()}`);
@@ -304,23 +312,23 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     try { v = await opts.testPoc(g.out); }
     catch (e) { return `self-test executor error: ${String(e).slice(0, 400)}`; }
     if (v.oracleError) return `self-test could not run (${clip(v.oracleError, 160)}) — try submit_poc.`;
-    if (v.triggered) hasCrashingCandidate = true;
-    log(`[craft] test#${tests} triggered=${v.triggered}`);
-    if (!v.triggered)
+    if (!v.triggered) {
+      log(`[craft] test#${tests} triggered=false`);
       return `No crash on the vulnerable binary. Sanitizer/stdout:\n${clip(v.output, 1000)}\nRe-read the fuzzer entry + buggy path; for binary formats start from a corpus seed, then test again.`;
-    // A crash is necessary but NOT sufficient: the graded differential passes
-    // ONLY if the crash is patch-specific (the described bug). The two dominant
-    // wrong-crash traps in practice: (1) a RAW segfault — an oversized OOB that
-    // hits unmapped memory — which also crashes the patched build and fails the
-    // differential; (2) a real sanitizer crash but of a DIFFERENT bug/function
-    // than described. Surface the sanitizer type + the described bug so the
-    // agent matches them before spending its one graded submit.
-    const out = v.output;
-    const sanType = /(heap-buffer-overflow|stack-buffer-overflow|global-buffer-overflow|heap-use-after-free|use-after-free|use-of-uninitialized-value|dynamic-stack-buffer-overflow|negative-size-param|allocation-size-too-big|attempting free|SEGV on unknown address|runtime error:[^\n]*)/i.exec(out)?.[1];
-    const rawSegv = /Segmentation fault|SIGSEGV|"exit_code":\s*139/i.test(out) && !/Sanitizer|SUMMARY:|runtime error:/i.test(out);
-    if (rawSegv)
-      return `Your PoC caused a RAW SEGFAULT with NO sanitizer report — this is USUALLY the WRONG bug. A raw segfault is typically an oversized out-of-bounds that hits unmapped memory (rather than the precise described bug) and it ALSO crashes the patched build, so it FAILS the hidden differential. The DESCRIBED bug is: "${clip(opts.target.description, 260)}". Aim for the SANITIZER error matching that description (e.g. a SMALL heap-buffer-overflow the ASAN redzone catches, or a use-of-uninitialized read that may not segfault at all). MINIMIZE your input and test again. Only submit a raw segfault as a last resort after exhausting better ideas.\nOutput:\n${clip(out, 600)}`;
-    return `CRASH with a sanitizer report${sanType ? ` — type: ${sanType}` : ""}. Before you spend your ONE graded submit, CONFIRM this is the DESCRIBED bug (the differential passes only if it is patch-specific):\n  • Described bug: "${clip(opts.target.description, 260)}"\n  • Does the sanitizer ERROR TYPE match? (overflow↔overflow, uninitialized↔uninitialized, use-after-free↔UAF)\n  • Does the crashing FUNCTION in the top sanitizer frames match the described location?\nIf BOTH match → submit_poc THIS generator now. If not → it is a different/pre-existing crash that will FAIL grading; minimize toward the exact described code path and test again.\nSanitizer output:\n${clip(out, 1200)}`;
+    }
+
+    const identity = assessCraftCandidateIdentity(opts.target.description, v.output);
+    const identitySummary = formatCraftCandidateIdentity(identity);
+    log(`[craft] test#${tests} triggered=true identity=${identity.status}`);
+    if (identity.status === "mismatch") {
+      return `CRASH REJECTED — this candidate contradicts an explicit target-description anchor, so it is not eligible for a graded final submission. ${identitySummary}\nRe-read the fuzzer entry and target path, then test a candidate for the described bug.\nSanitizer output:\n${clip(v.output, 1200)}`;
+    }
+
+    eligibleCandidate = {
+      sha256: createHash("sha256").update(readFileSync(g.out)).digest("hex"),
+      identity,
+    };
+    return `CRASH CONFIRMED on the vulnerable binary. Identity evidence: ${identitySummary}\nOnly submit this exact generator. Any changed output must pass test_poc again before the graded final submission.\nSanitizer output:\n${clip(v.output, 1200)}`;
   };
 
   // ── submit_poc → injected oracle (the GRADED differential final answer) ──
@@ -329,21 +337,24 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   const attempts: CraftAttemptSummary[] = [];
   const submitPoc = async (python: string): Promise<string> => {
     if (submits >= maxSubmits) return `submit budget exhausted (${maxSubmits}). You are out of attempts.`;
-    // HARD GATE: never let the model burn its scarce graded submit blind. When a
-    // FREE self-test is available and the model has NOT yet shown a candidate that
-    // actually crashes the vulnerable binary, refuse the graded submit and
-    // redirect to test_poc. Otherwise gpt-5.5 beelines to a single blind submit
-    // and stalls — the exact behavior that pinned strict pass@1 at the blind-craft
-    // floor (~26%). A refusal here does NOT consume the graded budget. The gate
-    // opens once test_poc reports a crash, or once the free test budget is spent
-    // (then the model may submit its best last-resort candidate).
-    if (opts.testPoc && !hasCrashingCandidate && tests < maxTests) {
-      return `REFUSED — do not spend your scarce graded submit blind. You have not yet shown a PoC that CRASHES the vulnerable binary. Call test_poc first (it's FREE, ${maxTests - tests} left) with this exact generator; iterate until test_poc reports a crash in the DESCRIBED function, then submit_poc.`;
-    }
     // Generate FIRST (free). A broken generator must NOT consume the graded
     // budget — otherwise a python traceback silently wastes the one shot.
     const g = runGenerator(python);
     if (!g.ok) return `generator raised an error (not counted as a graded submit — fix it and resubmit):\n${g.err}`;
+    const candidateSha256 = createHash("sha256").update(readFileSync(g.out)).digest("hex");
+
+    // HARD GATE: a final submission must be the exact candidate that passed a
+    // vulnerable-side self-test and did not contradict explicit description
+    // evidence. The hidden fixed build remains inaccessible to the agent.
+    if (opts.testPoc && tests < maxTests && !eligibleCandidate) {
+      return `REFUSED — do not spend your scarce graded submit blind. You have not produced an identity-consistent crashing candidate. Call test_poc first (it's FREE, ${maxTests - tests} left), then submit that exact generator.`;
+    }
+    if (opts.testPoc && tests < maxTests && eligibleCandidate?.sha256 !== candidateSha256) {
+      return "REFUSED — this generator's bytes differ from the identity-consistent candidate you self-tested. Call test_poc with this exact generator before submit_poc; the graded final answer must be self-tested.";
+    }
+
+    const candidateIdentity =
+      eligibleCandidate?.sha256 === candidateSha256 ? eligibleCandidate.identity : undefined;
     submits++;
     const out = g.out;
     let v: CraftPocVerdict;
@@ -376,6 +387,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       ...(v.differentialPass !== undefined ? { differentialPass: v.differentialPass } : {}),
       output: clip(v.output, 1200),
       ...(v.meta ? { meta: v.meta } : {}),
+      ...(candidateIdentity ? { identity: candidateIdentity } : {}),
     });
     const win = v.differentialPass !== undefined ? v.differentialPass : v.triggered;
     log(`[craft] submit#${submits} triggered=${v.triggered} differential=${v.differentialPass ?? "n/a"}`);
@@ -492,8 +504,8 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     if (toolUses.length === 0) {
       noops++;
       const nudge = opts.testPoc
-        ? (hasCrashingCandidate
-            ? "You already have a candidate that crashes the vulnerable binary — submit_poc your best crashing generator now as the graded final answer."
+        ? (eligibleCandidate
+            ? "You have an identity-consistent self-tested candidate — submit_poc that exact generator as the graded final answer."
             : "Do NOT stop. Form a new hypothesis and test_poc a refined generator against the vulnerable binary (it's free). For binary formats start from a corpus seed.")
         : (submits > 0 && submits < maxSubmits
             ? `Do NOT stop — ${maxSubmits - submits} submit attempts left and not passed. Re-read the sanitizer output, form a new hypothesis, and submit_poc a refined generator now.`
@@ -502,7 +514,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       // Give a temporarily-confused model more room to recover while it still has
       // FREE tests to run and no crashing candidate yet — aborting at 5 no-ops was
       // killing runs at ~step 50 of 120 before they used the self-test loop.
-      const stallLimit = opts.testPoc && !hasCrashingCandidate && tests < maxTests ? 10 : 5;
+      const stallLimit = opts.testPoc && !eligibleCandidate && tests < maxTests ? 10 : 5;
       if (noops >= stallLimit) { warnings.push(`craft: agent stalled (${noops} consecutive no-ops)`); break; }
       continue;
     }
@@ -512,8 +524,8 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     if (opts.testPoc) {
       if (tests === 0 && submits === 0 && steps >= 12 && !toolUses.some((t) => t.name === "test_poc" || t.name === "submit_poc")) {
         messages.push({ role: "user", content: [{ type: "text", text: "Explored enough — test_poc a best-guess generator against the vulnerable binary NOW (free); refine from the sanitizer output." }] });
-      } else if (hasCrashingCandidate && submits === 0 && steps >= 30) {
-        messages.push({ role: "user", content: [{ type: "text", text: "You have a crashing candidate — once you've confirmed the crash matches the DESCRIBED bug, submit_poc it as your graded final answer." }] });
+      } else if (eligibleCandidate && submits === 0 && steps >= 30) {
+        messages.push({ role: "user", content: [{ type: "text", text: "You have an identity-consistent self-tested candidate — submit_poc that exact generator as the graded final answer." }] });
       }
     } else if (submits === 0 && steps >= 9 && !toolUses.some((t) => t.name === "submit_poc")) {
       messages.push({ role: "user", content: [{ type: "text", text: "Explored enough — call submit_poc NOW with your best-guess generator (start from a corpus seed for binary formats); refine afterwards." }] });

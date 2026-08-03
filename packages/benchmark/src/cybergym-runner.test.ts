@@ -20,7 +20,9 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  generateTask,
   parseTaskDir,
+  verifyThroughOracleBridge,
   parseSubmitOutput,
   parseVerifyOutput,
   verdictFromPocRecords,
@@ -129,6 +131,66 @@ describe("parseTaskDir", () => {
     const dir = mkdtempSync(join(tmpdir(), "cybergym-empty-"));
     tmpDirs.push(dir);
     expect(() => parseTaskDir(dir)).toThrow(/description\.txt/);
+  });
+});
+
+describe("generateTask", () => {
+  it("uses the current module entry point with explicit data and oracle coordinates", () => {
+    const harness = mkdtempSync(join(tmpdir(), "cybergym-harness-"));
+    tmpDirs.push(harness);
+    const entrypoint = join(harness, "src", "cybergym", "task");
+    mkdirSync(entrypoint, { recursive: true });
+    writeFileSync(join(entrypoint, "gen_task.py"), "# marker\n");
+
+    const fakePython = join(harness, "python");
+    writeFileSync(
+      fakePython,
+      `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const args = process.argv.slice(2);
+const value = (name) => args[args.indexOf(name) + 1];
+const out = value("--out-dir");
+mkdirSync(join(out, "repo-vul"), { recursive: true });
+writeFileSync(join(out, "description.txt"), "Heap overflow in arvo:123 parse_header().");
+writeFileSync(join(out, "repo-vul", "parser.c"), "int main(void) { return 0; }");
+writeFileSync(join(out, "invocation.json"), JSON.stringify(args));
+`,
+      { mode: 0o755 },
+    );
+
+    const previousPython = process.env.CYBERGYM_PYTHON;
+    const previousData = process.env.CYBERGYM_DATA_DIR;
+    const previousServer = process.env.CYBERGYM_SERVER;
+    process.env.CYBERGYM_PYTHON = fakePython;
+    process.env.CYBERGYM_DATA_DIR = "/mounted/cybergym-data";
+    process.env.CYBERGYM_SERVER = "http://172.20.0.1:8666";
+
+    let task: CyberGymTask | undefined;
+    try {
+      task = generateTask("arvo:123", "level1", harness);
+      const args = JSON.parse(readFileSync(join(task.taskDir, "invocation.json"), "utf8")) as string[];
+      expect(args).toEqual(expect.arrayContaining([
+        "-m",
+        "cybergym.task.gen_task",
+        "--task-id",
+        "arvo:123",
+        "--difficulty",
+        "level1",
+        "--data-dir",
+        "/mounted/cybergym-data",
+        "--server",
+        "http://172.20.0.1:8666",
+      ]));
+    } finally {
+      if (task) cleanupOwnedTaskDir(task.taskDir);
+      if (previousPython === undefined) delete process.env.CYBERGYM_PYTHON;
+      else process.env.CYBERGYM_PYTHON = previousPython;
+      if (previousData === undefined) delete process.env.CYBERGYM_DATA_DIR;
+      else process.env.CYBERGYM_DATA_DIR = previousData;
+      if (previousServer === undefined) delete process.env.CYBERGYM_SERVER;
+      else process.env.CYBERGYM_SERVER = previousServer;
+    }
   });
 });
 
@@ -615,6 +677,60 @@ describe("resolveCorpusPath (--corpus-path override for fair runs)", () => {
         join(process.cwd(), "flag-corpus.jsonl"),
       );
     });
+  });
+});
+
+describe("verifyThroughOracleBridge", () => {
+  it("accepts only the exact agent and PoC record it submitted", async () => {
+    let request: { url: string; token: string | null; body: unknown } | undefined;
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      request = {
+        url: String(input),
+        token: new Headers(init?.headers).get("x-cybergym-bridge-token"),
+        body: JSON.parse(String(init?.body)),
+      };
+      return new Response(
+        JSON.stringify({
+          agent_id: "agent-1",
+          poc_id: "poc-1",
+          vul_exit_code: 139,
+          fix_exit_code: 0,
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const output = await verifyThroughOracleBridge(
+      "http://172.20.0.1:8667/",
+      "one-use-capability",
+      "agent-1",
+      "poc-1",
+      fetchImpl,
+    );
+
+    expect(request).toEqual({
+      url: "http://172.20.0.1:8667/verify",
+      token: "one-use-capability",
+      body: { agent_id: "agent-1", poc_id: "poc-1" },
+    });
+    expect(verdictFromPocRecords(output, "poc-1")).toBe("pass");
+  });
+
+  it("rejects a bridge response for a different record", async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ agent_id: "agent-2", poc_id: "poc-1" }), {
+        status: 200,
+      })) as typeof fetch;
+
+    await expect(
+      verifyThroughOracleBridge(
+        "http://172.20.0.1:8667",
+        "one-use-capability",
+        "agent-1",
+        "poc-1",
+        fetchImpl,
+      ),
+    ).rejects.toThrow(/mismatched record/);
   });
 });
 
