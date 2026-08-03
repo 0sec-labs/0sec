@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,6 +89,90 @@ describe("runCraftScan identity submission gate", () => {
     } finally {
       rmSync(sourceRoot, { recursive: true, force: true });
       rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it("never grades an untested candidate after the self-test budget is exhausted", async () => {
+    executeNative
+      .mockResolvedValueOnce({
+        content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: generator("A") } }],
+        stopReason: "tool_use",
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: "tool_use", id: "submit", name: "submit_poc", input: { python: generator("B") } }],
+        stopReason: "tool_use",
+      });
+
+    let graded = false;
+    const result = await runCraftScan({
+      target: {
+        sourceRoot: mkdtempSync(join(tmpdir(), "craft-identity-budget-")),
+        description: "A heap-buffer-overflow occurs in `parse_header()`.",
+        language: "c",
+      },
+      runtime: "api",
+      maxSteps: 2,
+      maxTests: 1,
+      maxSubmits: 1,
+      testPoc: async () => ({ triggered: false, output: "clean run" }),
+      evaluatePoc: async () => {
+        graded = true;
+        return { triggered: true, differentialPass: true, output: matchingSanitizerOutput };
+      },
+    });
+
+    expect(graded).toBe(false);
+    expect(result.submits).toBe(0);
+    expect(result.passed).toBe(false);
+  });
+
+  it("submits the exact bytes that passed the vulnerable-side self-test", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-stateful-generator-"));
+    const counter = join(sourceRoot, "counter");
+    const statefulGenerator =
+      `import pathlib, sys\ncounter = pathlib.Path(${JSON.stringify(counter)})\n` +
+      "value = int(counter.read_text() if counter.exists() else '0') + 1\n" +
+      "counter.write_text(str(value))\n" +
+      "pathlib.Path(sys.argv[1]).write_bytes(str(value).encode())\n";
+    try {
+      executeNative
+        .mockResolvedValueOnce({
+          content: [{ type: "tool_use", id: "test", name: "test_poc", input: { python: statefulGenerator } }],
+          stopReason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "tool_use", id: "submit", name: "submit_poc", input: { python: statefulGenerator } }],
+          stopReason: "tool_use",
+        });
+
+      let selfTestBytes = "";
+      let gradedBytes = "";
+      const result = await runCraftScan({
+        target: {
+          sourceRoot,
+          description: "A heap-buffer-overflow occurs in `parse_header()`.",
+          language: "c",
+        },
+        runtime: "api",
+        maxSteps: 2,
+        maxTests: 1,
+        maxSubmits: 1,
+        testPoc: async (pocPath) => {
+          selfTestBytes = readFileSync(pocPath, "utf8");
+          return { triggered: true, output: matchingSanitizerOutput };
+        },
+        evaluatePoc: async (pocPath) => {
+          gradedBytes = readFileSync(pocPath, "utf8");
+          return { triggered: true, differentialPass: true, output: matchingSanitizerOutput };
+        },
+      });
+
+      expect(selfTestBytes).toBe("1");
+      expect(gradedBytes).toBe("1");
+      expect(result.passed).toBe(true);
+      expect(result.submits).toBe(1);
+    } finally {
+      rmSync(sourceRoot, { recursive: true, force: true });
     }
   });
 });
