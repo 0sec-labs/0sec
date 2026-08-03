@@ -1,13 +1,15 @@
 # syntax=docker/dockerfile:1.7
 #
-# Reproducible CyberGym agent image. The benchmark harness, task corpus, oracle,
-# and credentials are mounted at runtime; none are baked into this image.
+# Reproducible CyberGym agent image. The host passes only a generated task,
+# a write-only result directory, and short-lived model credentials at runtime.
 FROM node:24.5.0-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 
 ENV CI=1 \
     NODE_ENV=production \
+    COREPACK_HOME=/opt/corepack \
+    HOME=/tmp \
     PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH
 
@@ -42,8 +44,8 @@ COPY LICENSE README.md ./
 
 RUN pnpm install --frozen-lockfile --prod=false && pnpm build
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin agent \
-    && mkdir -p /results \
-    && chown agent:agent /results
+    && mkdir -p /results /opt/corepack \
+    && chown -R agent:agent /results /opt/corepack
 
 USER agent
 
