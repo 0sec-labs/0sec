@@ -243,6 +243,16 @@ export { runCraftScan, craftedPocToFinding } from "./stages/craft-scan.js";
 export { buildCraftCpgContext, extractCraftCpgTargets } from "./stages/craft-cpg-context.js";
 export type { CraftCpgContext, CraftCpgLocalization } from "./stages/craft-cpg-context.js";
 export {
+  buildCraftTargetSpec,
+  findCraftFuzzerEntrypoints,
+  renderCraftTargetSpec,
+} from "./stages/craft-target-spec.js";
+export type {
+  CraftFuzzerEntrypoint,
+  CraftTargetSpec,
+  CraftTargetSpecInput,
+} from "./stages/craft-target-spec.js";
+export {
   defaultCraftCandidateReviewer,
   parseCraftCandidateReview,
 } from "./stages/craft-adversarial-review.js";

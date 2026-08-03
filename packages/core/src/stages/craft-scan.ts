@@ -46,7 +46,8 @@ import {
   formatCraftCandidateIdentity,
   type CraftCandidateIdentity,
 } from "./craft-candidate-identity.js";
-import { buildCraftCpgContext, type CraftCpgLocalization } from "./craft-cpg-context.js";
+import type { CraftCpgLocalization } from "./craft-cpg-context.js";
+import { buildCraftTargetSpec, renderCraftTargetSpec } from "./craft-target-spec.js";
 import type {
   CraftCandidateReview,
   CraftCandidateReviewer,
@@ -519,15 +520,13 @@ ${g.err}`;
     }
   }
 
-  const cpgBlock = opts.target.cpg
-    ? buildCraftCpgContext(opts.target.description, opts.target.cpg, log)?.promptBlock ?? ""
-    : "";
+  const targetSpecBlock = renderCraftTargetSpec(buildCraftTargetSpec(opts.target, log));
 
   // `providerRaw` is the opaque per-turn reasoning sidecar — see
   // ProviderRawOutput in runtime/types.ts. Carried on assistant turns so the
   // Responses path can replay reasoning instead of re-deriving it every step.
   const messages: Array<{ role: string; content: Array<Record<string, unknown>>; providerRaw?: unknown }> = [
-    { role: "user", content: [{ type: "text", text: `## Vulnerability description\n${opts.target.description}${recalledBlock}${cpgBlock ? `\n\n${cpgBlock}` : ""}\n\n## Source\nThe pre-patch source is at the root (use the tools). Find the fuzzer entry + buggy code, then craft and submit.` }] },
+    { role: "user", content: [{ type: "text", text: `## Vulnerability description\n${opts.target.description}${recalledBlock}\n\n${targetSpecBlock}\n\n## Source\nThe pre-patch source is at the root (use the tools). Find the fuzzer entry + buggy code, then craft and submit.` }] },
   ];
 
   let steps = 0, noops = 0, model = opts.model ?? "auto";
