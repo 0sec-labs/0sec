@@ -49,7 +49,13 @@ exit 64
     executable(join(bin, "chown"), "#!/usr/bin/env bash\nexit 0\n");
 
     const script = resolve(import.meta.dirname, "../scripts/run-cybergym-container.sh");
-    const result = spawnSync("bash", [script, "--task-id", "arvo:10731"], {
+    const result = spawnSync("bash", [
+      script,
+      "--task-id",
+      "arvo:10731",
+      "--corpus-path",
+      "/results/explicit.jsonl",
+    ], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -76,6 +82,10 @@ exit 64
     expect(args).toContain("CYBERGYM_CPG_PATH=/run/cybergym/cpg.json");
     expect(args).toContain("CYBERGYM_LLM_TIMEOUT_MS");
     expect(args).toContain("CYBERGYM_CRAFT_DEADLINE_MS");
+    expect(args).toContain("/results/explicit.jsonl");
+    expect(args).toContain("--task-dir");
+    expect(args).toContain("/task");
+    expect(args).not.toContain("/results/cybergym-run.jsonl");
     expect(args).toContain("test-agent:image");
   });
 });

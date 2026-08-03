@@ -55,6 +55,17 @@ if [[ -n "${CYBERGYM_CPG_PATH:-}" ]]; then
   )
 fi
 
+has_corpus_path=0
+for arg in "$@"; do
+  if [[ "${arg}" == "--corpus-path" || "${arg}" == --corpus-path=* ]]; then
+    has_corpus_path=1
+    break
+  fi
+done
+if [[ "${has_corpus_path}" == 0 ]]; then
+  set -- --corpus-path "${CYBERGYM_CORPUS_PATH:-/results/cybergym-run.jsonl}" "$@"
+fi
+
 exec docker run --rm \
   --network "${CYBERGYM_NETWORK}" \
   --env HTTP_PROXY="${cybergym_proxy}" \
@@ -83,5 +94,4 @@ exec docker run --rm \
   --env CYBERGYM_CRAFT_DEADLINE_MS \
   "${PWNKIT_CYBERGYM_IMAGE}" \
   --task-dir /task \
-  --corpus-path "${CYBERGYM_CORPUS_PATH:-/results/cybergym-run.jsonl}" \
   "$@"
