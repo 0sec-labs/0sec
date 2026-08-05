@@ -80,6 +80,7 @@ exec docker run --rm \
   --env no_proxy="127.0.0.1,localhost,${server_host},${bridge_host}" \
   --env NODE_USE_ENV_PROXY=1 \
   --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,size=4g \
   --cap-drop ALL \
   --cap-add CHOWN \
   --cap-add SETUID \
