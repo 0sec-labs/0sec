@@ -487,7 +487,7 @@ const DEFAULT_OPENAI_MODEL = "gpt-4o";
 const DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi";
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen";
 type WireApi = "chat_completions" | "responses";
 
 // ── Z.ai GLM (flat-rate Coding Plan key) ───────────────────────────────
@@ -527,6 +527,19 @@ function zaiThinkingBudget(): number {
 // from z.ai so kimi requests never hit api.z.ai.
 const KIMI_DEFAULT_BASE_URL = "https://api.kimi.com/coding";
 const KIMI_DEFAULT_MODEL = "k3";
+
+// ── Alibaba Model Studio Qwen (Token Plan subscription key) ────────────
+//
+// Qwen rides the OpenAI-compatible `compatible-mode` wire (Bearer +
+// `/chat/completions`) — NOT the Anthropic `/v1/messages` path z-ai/kimi
+// use (verified live 2026-08-05: POST …/compatible-mode/v1/chat/completions
+// with Bearer + model "qwen3.8-max" → HTTP 200; `/models` lists the full
+// subscription catalog). The default base URL is the Token Plan endpoint
+// (credit-billed, nightly off-peak discounts); a workspace PAYG endpoint
+// can be substituted via QWEN_BASE_URL. Default model is the Qwen3.8-Max
+// flagship (2.4T MoE); override with PWNKIT_MODEL.
+const QWEN_DEFAULT_BASE_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
+const QWEN_DEFAULT_MODEL = "qwen3.8-max";
 
 // ── ChatGPT Codex backend (subscription auth) ──────────────────────────
 //
@@ -917,6 +930,10 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (m.startsWith("k3") || m.startsWith("kimi")) {
     return process.env.KIMI_API_KEY ? "kimi" : undefined;
   }
+  // Qwen / Alibaba Model Studio.
+  if (m.startsWith("qwen")) {
+    return process.env.QWEN_API_KEY ? "qwen" : undefined;
+  }
   // OpenAI GPT-5 / o-series → ChatGPT-Codex subscription if present, else OpenAI.
   if (/^gpt-|^o[1-4](?:[-_]|$)/.test(m)) {
     if (process.env.PWNKIT_CHATGPT_ACCESS_TOKEN || process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN) return "chatgpt-codex";
@@ -991,6 +1008,9 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     case "kimi":
       return { provider: "kimi", apiKey: process.env.KIMI_API_KEY as string,
         baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL, defaultModel: KIMI_DEFAULT_MODEL, wireApi: "chat_completions" };
+    case "qwen":
+      return { provider: "qwen", apiKey: process.env.QWEN_API_KEY as string,
+        baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, defaultModel: QWEN_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "chatgpt-codex":
       return { provider: "chatgpt-codex", apiKey: "", baseUrl: CODEX_API_ENDPOINT,
         defaultModel: process.env.PWNKIT_MODEL ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
@@ -1123,6 +1143,19 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // Alibaba Qwen — same explicit-opt-in treatment as z-ai/kimi, still
+  // before the Anthropic final fallback.
+  const qwenKey = process.env.QWEN_API_KEY;
+  if (qwenKey) {
+    return {
+      provider: "qwen",
+      apiKey: qwenKey,
+      baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL,
+      defaultModel: QWEN_DEFAULT_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
+
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
@@ -1236,6 +1269,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.provider === "openai" ||
       this.provider === "azure" ||
       this.provider === "deepseek" ||
+      this.provider === "qwen" ||
       // chatgpt-codex always speaks Responses API; treat it as
       // OpenAI-compat for body-shape branching purposes (the Responses
       // wire-API code paths below already key on `wireApi === "responses"`
@@ -1410,6 +1444,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "chatgpt-codex": return "ChatGPT (Codex backend)";
       case "z-ai": return "Z.ai (GLM)";
       case "kimi": return "Kimi (Moonshot)";
+      case "qwen": return "Qwen (Alibaba Model Studio)";
     }
   }
 
@@ -1423,7 +1458,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export AZURE_OPENAI_API_KEY=...        (Azure OpenAI — reuse your Codex Azure provider)\n" +
       "  export OPENAI_API_KEY=sk-...           (OpenAI — direct GPT access)\n" +
       "  export Z_AI_API_KEY=...                (Z.ai GLM — flat-rate Coding Plan, Anthropic-compatible)\n" +
-      "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)"
+      "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)\n" +
+      "  export QWEN_API_KEY=...                (Alibaba Qwen — Token Plan sub, OpenAI-compatible)"
     );
   }
 
