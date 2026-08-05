@@ -62,11 +62,12 @@ agent_id="$("${CYBERGYM_PYTHON}" -c 'import sys; from pathlib import Path; sourc
 token="$("${CYBERGYM_PYTHON}" "${bridge_script}" issue \
   --capabilities "${CYBERGYM_BRIDGE_CAPABILITIES}" --agent-id "${agent_id}")"
 
-# The container runs as UID 10001 and must unpack the task archive and write
-# candidate PoCs. Its task-scoped auth copy is deleted on exit; it has no
-# access to the harness, corpus, bridge state, verifier key, or shared database.
+# The trusted container runner is root only to read the task-scoped credential;
+# model-written Python runs as UID 10002. Its auth copy is deleted on exit; it
+# has no access to the harness, corpus, bridge state, verifier key, or shared
+# database.
 credential_copy="$(mktemp "${CYBERGYM_ROOT}/credentials/codex-auth.XXXXXX")"
-install -m 0400 -o 10001 -g 10001 "${CYBERGYM_AUTH_FILE}" "${credential_copy}"
+install -m 0400 -o 0 -g 0 "${CYBERGYM_AUTH_FILE}" "${credential_copy}"
 chown -R 10001:10001 "${task_dir}"
 
 export CYBERGYM_TASK_DIR="${task_dir}"

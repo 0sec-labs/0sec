@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Reproducible CyberGym agent image. The host passes only a generated task,
-# a write-only result directory, and short-lived model credentials at runtime.
+# a write-only result directory, and root-owned short-lived model credentials.
 FROM node:24.5.0-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -44,9 +44,11 @@ COPY LICENSE README.md ./
 
 RUN pnpm install --frozen-lockfile --prod=false && pnpm build
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin agent \
+    && useradd --create-home --uid 10002 --shell /usr/sbin/nologin candidate \
     && mkdir -p /results /opt/corepack /run/cybergym \
     && chown -R agent:agent /results /opt/corepack /run/cybergym
 
-USER agent
+# The trusted Node runner stays root solely to read the root-owned credential
+# file. Model-written Python is explicitly spawned as `candidate` (UID 10002).
 
 ENTRYPOINT ["pnpm", "--filter", "@pwnkit/benchmark", "cybergym"]

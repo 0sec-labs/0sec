@@ -134,6 +134,47 @@ describe("runCraftScan identity submission gate", () => {
     }
   });
 
+  it("rejects a symlinked generator output before any privileged oracle can read it", async () => {
+    executeNative
+      .mockResolvedValueOnce(advanceToTrigger())
+      .mockResolvedValueOnce({
+        content: [{
+          type: "tool_use",
+          id: "test-symlink",
+          name: "test_poc",
+          input: { python: "import os, sys\nos.symlink('/etc/passwd', sys.argv[1])\n" },
+        }],
+        stopReason: "tool_use",
+      });
+
+    let selfTested = false;
+    const result = await runCraftScan({
+      target: {
+        sourceRoot: taskRoot("craft-symlink-output-"),
+        description: "A heap-buffer-overflow occurs in `parse_header()`.",
+        language: "c",
+      },
+      runtime: "api",
+      maxSteps: 2,
+      maxTests: 1,
+      testPoc: async () => {
+        selfTested = true;
+        return { triggered: false, output: "" };
+      },
+      evaluatePoc: async () => ({ triggered: false, output: "" }),
+    });
+
+    expect(selfTested).toBe(false);
+    expect(result.submits).toBe(0);
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "self-test",
+        status: "refuted",
+        summary: "candidate generator failed before self-test",
+      }),
+    ]));
+  });
+
   it("never grades an untested candidate after the self-test budget is exhausted", async () => {
     executeNative
       .mockResolvedValueOnce(advanceToTrigger())

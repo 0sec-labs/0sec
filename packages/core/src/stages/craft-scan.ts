@@ -25,12 +25,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
-  readFileSync,
-  writeFileSync,
+  chmodSync,
+  chownSync,
   existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
 import type { RuntimeMode } from "@pwnkit/shared";
@@ -121,6 +125,14 @@ export interface CraftScanOptions {
    * "run the vulnerable binary you were given" loop the SOTA agents rely on.
    */
   maxTests?: number;
+  /**
+   * Run model-written Python generators as this unprivileged Unix user. The
+   * surrounding agent may retain provider credentials; the generator must not.
+   * Unset preserves the normal local-run behavior.
+   */
+  generatorUid?: number;
+  /** Group paired with `generatorUid`; defaults to the same numeric ID. */
+  generatorGid?: number;
   /** Per-LLM-call timeout (ms). Default 240_000. */
   llmTimeoutMs?: number;
   /**
@@ -347,15 +359,59 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     sanitizerOutput: string;
     pocPath: string;
   } | undefined;
-  const runGenerator = (python: string): { ok: true; out: string } | { ok: false; err: string } => {
-    const gen = resolve(tmpdir(), `pwnkit-craft-gen-${randomUUID()}.py`);
-    const out = resolve(tmpdir(), `pwnkit-craft-poc-${opts.target.taskId ?? "x"}-${randomUUID()}`);
-    writeFileSync(gen, python);
-    try { sh("python3", [gen, out]); candidateCount++; return { ok: true, out }; }
-    catch (e) { return { ok: false, err: String(e).slice(0, 800) }; }
+  const generatorEnv = (): NodeJS.ProcessEnv => {
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) {
+      if (/(?:^|_)(?:TOKEN|SECRET|API_KEY|AUTH|PASSWORD|CREDENTIALS?)(?:_|$)/i.test(key)) {
+        delete env[key];
+      }
+    }
+    return env;
   };
-  const candidateSha256 = (path: string): string | undefined =>
-    existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : undefined;
+  const runGenerator = (python: string): { ok: true; out: string } | { ok: false; err: string } => {
+    const dir = mkdtempSync(join(tmpdir(), "pwnkit-craft-"));
+    const gen = join(dir, "generator.py");
+    const out = join(dir, "poc");
+    const sandbox = opts.generatorUid === undefined
+      ? undefined
+      : { uid: opts.generatorUid, gid: opts.generatorGid ?? opts.generatorUid };
+    try {
+      writeFileSync(gen, python, { mode: 0o600 });
+      if (sandbox) {
+        chownSync(gen, sandbox.uid, sandbox.gid);
+        chownSync(dir, sandbox.uid, sandbox.gid);
+      }
+      execFileSync("python3", [gen, out], {
+        encoding: "utf8",
+        stdio: "pipe",
+        maxBuffer: 64 * 1024 * 1024,
+        env: generatorEnv(),
+        ...(sandbox ?? {}),
+      });
+      if (sandbox) {
+        // Freeze the directory before privileged code reads its result. This
+        // closes the normal post-exit replacement path for the model process.
+        chownSync(dir, 0, 0);
+        chmodSync(dir, 0o700);
+        chownSync(out, 0, 0);
+        chmodSync(out, 0o400);
+      }
+      const output = lstatSync(out, { throwIfNoEntry: false });
+      if (!output?.isFile() || output.nlink !== 1) {
+        return { ok: false, err: "generator output must be one regular, unlinked file" };
+      }
+      candidateCount++;
+      return { ok: true, out };
+    } catch (e) {
+      return { ok: false, err: String(e).slice(0, 800) };
+    }
+  };
+  const readCandidateSha256 = (path: string): string | undefined => {
+    const output = lstatSync(path, { throwIfNoEntry: false });
+    return output?.isFile() && output.nlink === 1
+      ? createHash("sha256").update(readFileSync(path)).digest("hex")
+      : undefined;
+  };
   const testPocFn = async (python: string): Promise<string> => {
     if (!opts.testPoc) return "test_poc is not available for this task — craft carefully and use submit_poc.";
     if (tests >= maxTests) return `self-test budget exhausted (${maxTests}). Only a previously identity-consistent crashing candidate may be submitted.`;
@@ -367,7 +423,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       evidence.record({ kind: "self-test", status: "refuted", summary: "candidate generator failed before self-test", step });
       return `generator raised an error (free — not a graded submit):\n${g.err}`;
     }
-    const sha256 = candidateSha256(g.out);
+    const sha256 = readCandidateSha256(g.out);
     if (!sha256) {
       evidence.record({ kind: "self-test", status: "refuted", summary: "candidate generator produced no readable output file", step });
       return "generator produced no readable PoC file (free — not a graded submit).";
@@ -440,7 +496,10 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
         : runGenerator(python);
     if (!g.ok) return `generator raised an error (not counted as a graded submit — fix it and resubmit):
 ${g.err}`;
-    const candidateSha256 = createHash("sha256").update(readFileSync(g.out)).digest("hex");
+    const candidateSha256 = readCandidateSha256(g.out);
+    if (!candidateSha256) {
+      return "generator produced no readable regular PoC file (not counted as a graded submit — fix it and resubmit).";
+    }
 
     // HARD GATE: a final submission must be the exact candidate that passed a
     // vulnerable-side self-test and did not contradict explicit description
