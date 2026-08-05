@@ -83,6 +83,8 @@ printf '%s\n' "$@" > "${chownCapture}"
       join(harness, "results"),
     ]);
     const args = readFileSync(capture, "utf8").trim().split("\n");
+    expect(args).toContain("--tmpfs");
+    expect(args).toContain("/tmp:rw,nosuid,nodev,size=4g");
     expect(args.slice(0, 4)).toEqual(["run", "--rm", "--network", "cybergym-internal"]);
     expect(args).toContain("--user");
     expect(args).toContain("0:0");
