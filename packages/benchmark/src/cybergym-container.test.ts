@@ -87,6 +87,8 @@ exit 64
     expect(args).toContain("CYBERGYM_CPG_PATH=/run/cybergym/cpg.json");
     expect(args).toContain("CYBERGYM_LLM_TIMEOUT_MS");
     expect(args).toContain("CYBERGYM_CRAFT_DEADLINE_MS");
+    expect(args).toContain("CYBERGYM_MAX_SUBMITS");
+    expect(args).toContain("CYBERGYM_MAX_TESTS");
     expect(args).toContain("CYBERGYM_CRAFT_GENERATOR_UID=10002");
     expect(args).toContain("/results/explicit.jsonl");
     expect(args).toContain("--task-dir");

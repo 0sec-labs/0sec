@@ -99,6 +99,8 @@ exec docker run --rm \
   --env CYBERGYM_CRAFT_GENERATOR_UID=10002 \
   --env CYBERGYM_LLM_TIMEOUT_MS \
   --env CYBERGYM_CRAFT_DEADLINE_MS \
+  --env CYBERGYM_MAX_SUBMITS \
+  --env CYBERGYM_MAX_TESTS \
   "${PWNKIT_CYBERGYM_IMAGE}" \
   --task-dir /task \
   "$@"
