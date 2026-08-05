@@ -27,6 +27,7 @@ describe("run-cybergym-container.sh", () => {
     const auth = join(root, "auth.json");
     const capture = join(root, "docker-args.txt");
     const cpg = join(root, "task.cpg.json");
+    const chownCapture = join(root, "chown-args.txt");
     mkdirSync(bin);
     mkdirSync(task);
     writeFileSync(auth, "{}");
@@ -46,7 +47,9 @@ if [[ "$1" == "run" ]]; then
 fi
 exit 64
 `);
-    executable(join(bin, "chown"), "#!/usr/bin/env bash\nexit 0\n");
+    executable(join(bin, "chown"), `#!/usr/bin/env bash
+printf '%s\n' "$@" > "${chownCapture}"
+`);
 
     const script = resolve(import.meta.dirname, "../scripts/run-cybergym-container.sh");
     const result = spawnSync("bash", [
@@ -75,6 +78,10 @@ exit 64
     });
 
     expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(chownCapture, "utf8").trim().split("\n")).toEqual([
+      "0:0",
+      join(harness, "results"),
+    ]);
     const args = readFileSync(capture, "utf8").trim().split("\n");
     expect(args.slice(0, 4)).toEqual(["run", "--rm", "--network", "cybergym-internal"]);
     expect(args).toContain("--user");

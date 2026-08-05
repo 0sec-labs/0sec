@@ -41,7 +41,7 @@ proxy_ip="$(docker inspect --format '{{with index .NetworkSettings.Networks "cyb
 }
 cybergym_proxy="http://${proxy_ip}:3128"
 install -d -m 0700 "${CYBERGYM_ROOT}/results"
-chown 10001:10001 "${CYBERGYM_ROOT}/results"
+chown 0:0 "${CYBERGYM_ROOT}/results"
 
 cpg_mount=()
 if [[ -n "${CYBERGYM_CPG_PATH:-}" ]]; then
