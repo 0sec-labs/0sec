@@ -66,8 +66,12 @@ if [[ "${has_corpus_path}" == 0 ]]; then
   set -- --corpus-path "${CYBERGYM_CORPUS_PATH:-/results/cybergym-run.jsonl}" "$@"
 fi
 
+# The trusted Node parent needs CHOWN/SETUID/SETGID only to spawn model-written
+# Python as the unprivileged `candidate` user and recover its output; the
+# execed child does not retain them.
 exec docker run --rm \
   --network "${CYBERGYM_NETWORK}" \
+  --user 0:0 \
   --env HTTP_PROXY="${cybergym_proxy}" \
   --env HTTPS_PROXY="${cybergym_proxy}" \
   --env NO_PROXY="127.0.0.1,localhost,${server_host},${bridge_host}" \
@@ -76,8 +80,10 @@ exec docker run --rm \
   --env no_proxy="127.0.0.1,localhost,${server_host},${bridge_host}" \
   --env NODE_USE_ENV_PROXY=1 \
   --read-only \
-  --tmpfs /tmp:rw,nosuid,nodev,size=4g \
   --cap-drop ALL \
+  --cap-add CHOWN \
+  --cap-add SETUID \
+  --cap-add SETGID \
   --security-opt no-new-privileges \
   --pids-limit 512 \
   --cpus "${CYBERGYM_AGENT_CPUS}" \
@@ -90,6 +96,7 @@ exec docker run --rm \
   --env CYBERGYM_ORACLE_BRIDGE_TOKEN \
   --env CYBERGYM_SERVER \
   --env PWNKIT_CHATGPT_AUTH_FILE=/run/secrets/codex-auth.json \
+  --env CYBERGYM_CRAFT_GENERATOR_UID=10002 \
   --env CYBERGYM_LLM_TIMEOUT_MS \
   --env CYBERGYM_CRAFT_DEADLINE_MS \
   "${PWNKIT_CYBERGYM_IMAGE}" \

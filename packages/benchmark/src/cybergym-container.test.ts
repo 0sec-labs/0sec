@@ -77,11 +77,17 @@ exit 64
     expect(result.status, result.stderr).toBe(0);
     const args = readFileSync(capture, "utf8").trim().split("\n");
     expect(args.slice(0, 4)).toEqual(["run", "--rm", "--network", "cybergym-internal"]);
+    expect(args).toContain("--user");
+    expect(args).toContain("0:0");
+    expect(args).toContain("CHOWN");
+    expect(args).toContain("SETUID");
+    expect(args).toContain("SETGID");
     expect(args).toContain("HTTP_PROXY=http://172.18.0.2:3128");
     expect(args).toContain(`type=bind,src=${cpg},dst=/run/cybergym/cpg.json,readonly`);
     expect(args).toContain("CYBERGYM_CPG_PATH=/run/cybergym/cpg.json");
     expect(args).toContain("CYBERGYM_LLM_TIMEOUT_MS");
     expect(args).toContain("CYBERGYM_CRAFT_DEADLINE_MS");
+    expect(args).toContain("CYBERGYM_CRAFT_GENERATOR_UID=10002");
     expect(args).toContain("/results/explicit.jsonl");
     expect(args).toContain("--task-dir");
     expect(args).toContain("/task");

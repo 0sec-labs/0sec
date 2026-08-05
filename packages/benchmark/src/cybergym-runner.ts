@@ -772,6 +772,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
   const adversarialReviewModel = process.env.CYBERGYM_ADVERSARIAL_REVIEW_MODEL?.trim();
   const llmTimeoutMs = cyberGymLlmTimeoutMs();
   const deadlineMs = cyberGymCraftDeadlineMs();
+  const generatorUid = cyberGymCraftGeneratorUid();
   if (memory) preseedMemory(memory);
   const report = await agenticScan({
     config: {
@@ -802,6 +803,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
       maxSteps: opts.maxSteps,
       ...(llmTimeoutMs ? { llmTimeoutMs } : {}),
       ...(deadlineMs ? { deadlineMs } : {}),
+      ...(generatorUid ? { generatorUid } : {}),
       // Recovery for a source root that vanished before the run started (a /tmp
       // janitor GC'd the task dir, or gen_task's unpack raced). Re-unpack the
       // pre-patch tarball IN PLACE at the same sourceRoot; if the whole task dir
@@ -998,11 +1000,20 @@ export function cyberGymTrajectoryTimeoutMs(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-function positiveEnvMs(name: string): number | undefined {
+function positiveEnvInt(name: string): number | undefined {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return undefined;
   const value = Number.parseInt(raw, 10);
   return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function positiveEnvMs(name: string): number | undefined {
+  return positiveEnvInt(name);
+}
+
+/** UID used only for model-written Python inside the privileged benchmark runner. */
+export function cyberGymCraftGeneratorUid(): number | undefined {
+  return positiveEnvInt("CYBERGYM_CRAFT_GENERATOR_UID");
 }
 
 /** Per-model-call cap for controlled CyberGym runs; unset keeps the craft default. */
@@ -1077,6 +1088,7 @@ export async function runTaskBestOfN(
     const adversarialReviewModel = process.env.CYBERGYM_ADVERSARIAL_REVIEW_MODEL?.trim();
     const llmTimeoutMs = cyberGymLlmTimeoutMs();
     const deadlineMs = cyberGymCraftDeadlineMs();
+    const generatorUid = cyberGymCraftGeneratorUid();
     if (memory) preseedMemory(memory);
 
     const ensemble = await runEnsembleCraft({
@@ -1097,6 +1109,7 @@ export async function runTaskBestOfN(
         maxSteps: deps.maxSteps,
         ...(llmTimeoutMs ? { llmTimeoutMs } : {}),
         ...(deadlineMs ? { deadlineMs } : {}),
+        ...(generatorUid ? { generatorUid } : {}),
         maxSubmits: process.env.CYBERGYM_MAX_SUBMITS
           ? Math.max(1, parseInt(process.env.CYBERGYM_MAX_SUBMITS, 10))
           : Math.max(6, Math.min(12, Math.ceil(deps.maxSteps / 3))),

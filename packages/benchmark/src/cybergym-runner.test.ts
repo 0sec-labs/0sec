@@ -39,6 +39,7 @@ import {
   CYBERGYM_CORPUS_PATH,
   cyberGymLlmTimeoutMs,
   cyberGymCraftDeadlineMs,
+  cyberGymCraftGeneratorUid,
   type CyberGymTask,
   type EngineRunner,
   type Submitter,
@@ -467,9 +468,11 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     const task = parseTaskDir(makeTaskDir(), "arvo:10400");
     const previousBestOfN = process.env.CYBERGYM_BEST_OF_N;
     const previousModels = process.env.CYBERGYM_BESTOFN_MODELS;
+    const previousGeneratorUid = process.env.CYBERGYM_CRAFT_GENERATOR_UID;
     process.env.CYBERGYM_BEST_OF_N = "3";
     process.env.CYBERGYM_BESTOFN_MODELS = "model-a,model-b,model-c";
 
+    process.env.CYBERGYM_CRAFT_GENERATOR_UID = "10002";
     // Injected craft seam: one crashing PoC per trajectory, distinct crash text.
     const generated: string[] = [];
     const outputs = [
@@ -481,6 +484,7 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
       // Each trajectory's evaluator must be the ungraded vul-side self-test —
       // the strict pass@1 trick (the N runs never grade differentially).
       expect(opts.evaluatePoc).toBeDefined();
+      expect(opts.generatorUid).toBe(10_002);
       const i = generated.length;
       const pocPath = join(task.taskDir, `candidate-${i}.poc`);
       writeFileSync(pocPath, Buffer.from([i]));
@@ -536,6 +540,8 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
       else process.env.CYBERGYM_BEST_OF_N = previousBestOfN;
       if (previousModels === undefined) delete process.env.CYBERGYM_BESTOFN_MODELS;
       else process.env.CYBERGYM_BESTOFN_MODELS = previousModels;
+      if (previousGeneratorUid === undefined) delete process.env.CYBERGYM_CRAFT_GENERATOR_UID;
+      else process.env.CYBERGYM_CRAFT_GENERATOR_UID = previousGeneratorUid;
     }
   });
 });
@@ -767,6 +773,27 @@ describe("controlled CyberGym craft deadlines", () => {
       expect(cyberGymLlmTimeoutMs()).toBeUndefined();
       expect(cyberGymCraftDeadlineMs()).toBeUndefined();
     });
+  });
+});
+
+describe("untrusted craft generator UID", () => {
+  const UID_ENV = "CYBERGYM_CRAFT_GENERATOR_UID";
+
+  it("accepts only a positive explicit UID", () => {
+    const saved = process.env[UID_ENV];
+    try {
+      delete process.env[UID_ENV];
+      expect(cyberGymCraftGeneratorUid()).toBeUndefined();
+      process.env[UID_ENV] = "10002";
+      expect(cyberGymCraftGeneratorUid()).toBe(10_002);
+      process.env[UID_ENV] = "0";
+      expect(cyberGymCraftGeneratorUid()).toBeUndefined();
+      process.env[UID_ENV] = "-1";
+      expect(cyberGymCraftGeneratorUid()).toBeUndefined();
+    } finally {
+      if (saved === undefined) delete process.env[UID_ENV];
+      else process.env[UID_ENV] = saved;
+    }
   });
 });
 
