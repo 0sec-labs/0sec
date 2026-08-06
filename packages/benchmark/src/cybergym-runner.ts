@@ -587,11 +587,35 @@ export const submitVulOnly = async (
   if (!existsSync(submitScript)) {
     throw new Error(`CyberGym task missing submit.sh: ${task.taskDir}`);
   }
-  const submitOut = execFileSync("bash", [submitScript, pocPath], {
-    cwd: task.taskDir,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
+  let submitOut: string;
+  try {
+    submitOut = execFileSync("bash", [submitScript, pocPath], {
+      cwd: task.taskDir,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  } catch (error) {
+    // submit.sh can exit nonzero while still having printed the JSON result
+    // (e.g. the server rejected a pathological PoC and the script propagates
+    // the failure AFTER the response). Swallow the partial stdout and let
+    // parseSubmitOutput decide — a parseable verdict beats an untyped throw,
+    // and the craft loop treats a parseable "no crash" as a legitimate
+    // self-test outcome instead of an inconclusive executor fault.
+    const err = error as { stdout?: unknown; status?: number };
+    const partial =
+      typeof err.stdout === "string"
+        ? err.stdout
+        : Buffer.isBuffer(err.stdout)
+          ? err.stdout.toString("utf8")
+          : "";
+    if (partial.trim()) {
+      submitOut = partial;
+    } else {
+      throw new Error(
+        `submit.sh exited ${err.status ?? "?"} with no parseable output: ${String((error as Error).message).slice(0, 300)}`,
+      );
+    }
+  }
   const submit = parseSubmitOutput(submitOut);
   return { ...submit, raw: submitOut.trim() };
 };
