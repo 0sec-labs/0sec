@@ -111,6 +111,7 @@ import { runCraftScan } from "./stages/craft-scan.js";
 import type { CraftTarget, CraftScanOptions } from "./stages/craft-scan.js";
 import { runEnsembleCraft, resolveEnsembleModels } from "./stages/ensemble-craft.js";
 import { runReportStage } from "./agentic/stages/report.js";
+import { applyFindingPostProcess } from "./agentic/finding-postprocess.js";
 
 /**
  * Per-scan rate-limiter cache (#214). The limiter is stateful — buckets
@@ -3210,6 +3211,31 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     // trace + webhook, and fires `scan_completed`. `emitScanCompleted` and
     // `attachEnforcementSummary` stay owned here (they close over the bus /
     // enforcement cache) and are handed in via ctx.
+    // ── Post-scan post-process (flag-gated, default OFF) ──
+    // Intra-scan semantic dedupe + incremental ranking over the final finding
+    // set, right before the report stage. Mutates findings in place with
+    // additive optional fields; fail-soft — a post-process error never fails
+    // the scan (the pass itself is also fail-soft per batch).
+    if (features.semanticDedupe || features.incrementalRank) {
+      try {
+        const collapsed = await applyFindingPostProcess(allFindings, nativeRuntime, {
+          semanticDedupe: features.semanticDedupe,
+          incrementalRank: features.incrementalRank,
+          scanId,
+        });
+        emit({
+          type: "stage:end",
+          stage: "report",
+          message: `Post-process: ${collapsed} duplicate(s) collapsed across ${allFindings.length} findings`,
+        });
+      } catch (err) {
+        emit({
+          type: "thinking",
+          message: `Post-scan post-process skipped: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+
     return await runReportStage(
       { allFindings, attackState, discoveryState, config, scanId, routingDecisions },
       { db, emit, emitScanCompleted, attachEnforcementSummary, attachEngagementPosture },

@@ -234,3 +234,30 @@ export {
   BUSINESS_IMPACT_RANK,
 } from "./impact-assessment.js";
 export type { AssessImpactOptions } from "./impact-assessment.js";
+export {
+  SEMANTIC_DEDUPE_BATCH_SIZE,
+  buildDedupePrompt,
+  validateDedupePayload,
+  mappingFromClusters,
+  semanticDedupe,
+} from "./semantic-dedupe.js";
+export type {
+  DedupeItem,
+  DedupeOptions,
+  DedupeResult,
+  DedupePayload,
+  FindingMapping,
+} from "./semantic-dedupe.js";
+export { DedupeValidationError } from "./semantic-dedupe.js";
+export {
+  buildRankPrompt,
+  validateRankPayload,
+  applyRankUpdates,
+  rankIncremental,
+} from "./incremental-rank.js";
+export type {
+  RankedAnchor,
+  RankedResult,
+  BuildRankPromptOptions,
+  RankIncrementalOptions,
+} from "./incremental-rank.js";
