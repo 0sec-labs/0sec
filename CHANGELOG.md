@@ -9,6 +9,40 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and pwnkit adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 on the published `pwnkit-cli` npm package and the GitHub Release tag.
 
+## [0.12.0] - 2026-07-17
+
+### Added — z-ai (GLM) and kimi (Moonshot) providers
+
+pwnkit-cli can now drive scans through Z.ai's GLM models and Moonshot's Kimi K3
+"coding" endpoint. Both are Anthropic-compatible: they ride pwnkit's existing
+`/v1/messages` wire (`x-api-key` + `anthropic-version` headers, Anthropic-shaped
+request body + response parser) rather than the OpenAI chat/completions path.
+Each provider is selected by an explicit operator opt-in key, and either wins
+over the global env priority when the requested model maps to it (e.g.
+`glm-5.2` → z-ai, `k3` → kimi), so one process can fan calls across providers.
+
+- **feat(llm-api): add Z.ai GLM provider — Anthropic-compatible wire.**
+  Activated by `Z_AI_API_KEY`; base URL overridable via `Z_AI_BASE_URL`
+  (default `https://api.z.ai/api/anthropic`), default model `glm-5.2`. GLM's
+  hybrid reasoning is off by default on this endpoint, so pwnkit enables it via
+  the Anthropic extended-thinking field; the budget is tunable through
+  `PWNKIT_ZAI_THINKING_BUDGET` (default 2048, `0` disables).
+- **feat(llm-api): add Kimi K3 (Moonshot) provider + pricing** (#68).
+  Activated by `KIMI_API_KEY`; base URL overridable via `KIMI_BASE_URL`
+  (default `https://api.kimi.com/coding` — distinct from Z.ai so kimi requests
+  never hit api.z.ai), default model `k3`. K3 emits native `thinking` blocks on
+  the Anthropic wire, so no thinking body param is applied.
+- **note(runtime): prompt caching is opt-in and fails closed for these two.**
+  Because their cache semantics are unverified, GLM and Kimi emit **no**
+  `cache_control` markers by default (byte-identical bodies to before). Opt in
+  per provider via `PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS` (comma-separated, e.g.
+  `z-ai,kimi`).
+- **fix(runtime): guard the Anthropic-wire routing with a positive predicate.**
+  z-ai/kimi previously rode the Anthropic wire only by being absent from the
+  `isOpenAICompat` getter while carrying a misleading `wireApi:"chat_completions"`
+  tag. Routing now keys off an explicit `isAnthropicWire` predicate; the
+  `wireApi` field for these two is an inert, intentionally-unused default.
+
 ## [0.11.0] - 2026-05-16
 
 ### Added — chatgpt-codex direct-API provider
