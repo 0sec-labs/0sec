@@ -339,6 +339,30 @@ export function normalizeFinding(rawFinding: unknown): CloudSinkFinding {
   const researchEvidence = normalizePocSteps(raw.researchEvidence ?? raw.research_evidence);
   if (researchEvidence && researchEvidence.length > 0) normalized.researchEvidence = researchEvidence;
 
+  // ── semanticDedupe pass-through ───────────────────────────────────
+  // Engine-side intra-scan semantic dedupe mapping. Accept the structured
+  // object from the in-process OSS Finding or a plain object. Must carry
+  // all 4 expected fields or it is dropped (never blocks the finding).
+  const semanticDedupeRaw = raw.semanticDedupe;
+  if (isRecord(semanticDedupeRaw)) {
+    const { canonicalId, isCanonical, clusterId, reason } = semanticDedupeRaw;
+    if (
+      typeof canonicalId === "string" &&
+      typeof isCanonical === "boolean" &&
+      typeof clusterId === "string" &&
+      typeof reason === "string"
+    ) {
+      normalized.semanticDedupe = { canonicalId, isCanonical, clusterId, reason };
+    }
+  }
+
+  // ── findingRank pass-through ──────────────────────────────────────
+  // Engine-assigned per-scan rank. Must be a finite number or dropped.
+  const findingRankRaw = raw.findingRank;
+  if (typeof findingRankRaw === "number" && Number.isFinite(findingRankRaw)) {
+    normalized.findingRank = findingRankRaw;
+  }
+
   return normalized;
 }
 

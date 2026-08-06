@@ -111,7 +111,7 @@ import { runCraftScan } from "./stages/craft-scan.js";
 import type { CraftTarget, CraftScanOptions } from "./stages/craft-scan.js";
 import { runEnsembleCraft, resolveEnsembleModels } from "./stages/ensemble-craft.js";
 import { runReportStage } from "./agentic/stages/report.js";
-import { applyFindingPostProcess } from "./agentic/finding-postprocess.js";
+import { applyFindingPostProcess, loadPriorScanAnchors, type DedupeItem } from "./agentic/finding-postprocess.js";
 
 /**
  * Per-scan rate-limiter cache (#214). The limiter is stateful — buckets
@@ -3218,10 +3218,23 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     // the scan (the pass itself is also fail-soft per batch).
     if (features.semanticDedupe || features.incrementalRank) {
       try {
+        // Load prior-scan anchors for cross-scan dedupe when semanticDedupe
+        // is active and a local DB is available. Anchor-load failure must
+        // never fail the scan — proceed with no anchors on error.
+        let anchors: DedupeItem[] | undefined;
+        if (features.semanticDedupe) {
+          try {
+            anchors = await loadPriorScanAnchors(db, config.target, { excludeScanId: scanId });
+          } catch {
+            // Anchor load failure is non-fatal
+          }
+        }
+
         const collapsed = await applyFindingPostProcess(allFindings, nativeRuntime, {
           semanticDedupe: features.semanticDedupe,
           incrementalRank: features.incrementalRank,
           scanId,
+          anchors,
         });
         emit({
           type: "stage:end",
