@@ -1137,6 +1137,10 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       return { provider: "deepseek", apiKey: process.env.DEEPSEEK_API_KEY as string,
         baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
         defaultModel: DEEPSEEK_DEFAULT_MODEL, wireApi: "responses" };
+    // z-ai (GLM) and kimi (Moonshot) ride the Anthropic Messages wire (routed by
+    // LlmApiRuntime.isAnthropicWire — NOT by this `wireApi` field). The
+    // "chat_completions" below is an inert default that is intentionally UNUSED
+    // for these two providers; do NOT add them to isOpenAICompat.
     case "z-ai":
       return { provider: "z-ai", apiKey: process.env.Z_AI_API_KEY as string,
         baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, defaultModel: ZAI_DEFAULT_MODEL, wireApi: "chat_completions" };
@@ -1256,6 +1260,11 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
 
   // Z.ai GLM and Moonshot Kimi are explicit alternatives. They are tried
   // before Anthropic so Anthropic remains the final provider fallback.
+  //
+  // Z.ai GLM — Anthropic-compatible wire. Rides the anthropic
+  // header/url/parser paths (routed by LlmApiRuntime.isAnthropicWire). The
+  // `wireApi` below is an inert default that is intentionally UNUSED for z-ai;
+  // do NOT add z-ai to isOpenAICompat.
   const zaiKey = process.env.Z_AI_API_KEY;
   if (zaiKey) {
     return {
@@ -1267,6 +1276,10 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // Moonshot Kimi — Anthropic-compatible wire, same treatment as z-ai. Rides
+  // the Anthropic wire (routed by LlmApiRuntime.isAnthropicWire); the `wireApi`
+  // below is an inert default that is intentionally UNUSED for kimi — do NOT
+  // add kimi to isOpenAICompat.
   const kimiKey = process.env.KIMI_API_KEY;
   if (kimiKey) {
     return {
@@ -1406,7 +1419,15 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     }
   }
 
-  /** Whether this provider uses OpenAI-compatible chat/completions format. */
+  /**
+   * Whether this provider uses OpenAI-compatible chat/completions format.
+   *
+   * DO NOT add "z-ai" or "kimi" here. They speak the Anthropic Messages wire
+   * (see `isAnthropicWire`); adding them to this getter would silently route
+   * them to `/chat/completions` with a Bearer header and break them. Their
+   * `wireApi` field is set to "chat_completions" by detectProvider only as an
+   * inert default — it is intentionally unused for these two providers.
+   */
   private get isOpenAICompat(): boolean {
     return (
       this.provider === "openrouter" ||
@@ -1419,6 +1440,26 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       // wire-API code paths below already key on `wireApi === "responses"`
       // and produce a body codex's backend accepts as-is).
       this.provider === "chatgpt-codex"
+    );
+  }
+
+  /**
+   * Whether this provider speaks the Anthropic Messages wire (`/v1/messages`
+   * with `x-api-key` + `anthropic-version`, Anthropic-shaped body + response).
+   *
+   * z-ai (GLM) and kimi (Moonshot) are Anthropic-compatible endpoints, so they
+   * ride this wire alongside real Anthropic. This is the POSITIVE predicate
+   * that drives buildUrl / buildHeaders and the Anthropic branches of
+   * execute() / executeNative() — replacing the old implicit "everything that
+   * isn't isOpenAICompat" else-fallthrough, which was a footgun: adding a
+   * provider to isOpenAICompat, or trusting these two's `wireApi` field, would
+   * have silently mis-routed them off the Anthropic wire.
+   */
+  private get isAnthropicWire(): boolean {
+    return (
+      this.provider === "anthropic" ||
+      this.provider === "z-ai" ||
+      this.provider === "kimi"
     );
   }
 
@@ -1469,12 +1510,18 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       }
       return headers;
     }
-    // Anthropic
-    return {
-      "Content-Type": "application/json",
-      "x-api-key": this.apiKey,
-      "anthropic-version": "2023-06-01",
-    };
+    // Anthropic Messages wire — also serves the z-ai/GLM and kimi/Moonshot
+    // providers (see `isAnthropicWire`). Explicit positive check rather than a
+    // bare `else` so a provider that is neither OpenAI-compat nor Anthropic
+    // wire fails loudly here instead of silently getting Anthropic headers.
+    if (this.isAnthropicWire) {
+      return {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
+      };
+    }
+    throw new Error(`buildHeaders: provider ${this.provider} is not mapped to a wire`);
   }
 
   /**
@@ -1522,7 +1569,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     if (this.isOpenAICompat) {
       return `${this.baseUrl}/${this.wireApi === "responses" ? "responses" : "chat/completions"}`;
     }
-    return `${this.baseUrl}/v1/messages`;
+    // Anthropic Messages wire — also serves z-ai/GLM and kimi/Moonshot (see
+    // `isAnthropicWire`). Explicit positive check rather than a bare fallthrough
+    // so an unmapped provider fails loudly instead of silently hitting
+    // `/v1/messages`.
+    if (this.isAnthropicWire) {
+      return `${this.baseUrl}/v1/messages`;
+    }
+    throw new Error(`buildUrl: provider ${this.provider} is not mapped to a wire`);
   }
 
   /**
@@ -1946,8 +2000,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           }),
           controller.signal,
         );
-      } else {
-        // Anthropic Messages API format (also serves the z-ai/GLM provider).
+      } else if (this.isAnthropicWire) {
+        // Anthropic Messages API format (also serves the z-ai/GLM and
+        // kimi/Moonshot providers — see `isAnthropicWire`).
         res = await this.postWithRetry(
           () => JSON.stringify({
             model: this.model,
@@ -1958,6 +2013,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           }),
           controller.signal,
         );
+      } else {
+        throw new Error(`execute: provider ${this.provider} is not mapped to a wire`);
       }
 
       clearTimeout(timer);
@@ -2000,6 +2057,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
                   .join("\n")
               : "";
       } else {
+        // Anthropic Messages response (also z-ai/GLM + kimi/Moonshot).
         text =
           json.content
             ?.filter((b: { type: string }) => b.type === "text")
@@ -2360,8 +2418,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           idleTimeoutMs: llmStreamIdleTimeoutMs(),
         });
         return streamed;
-      } else {
-        // Anthropic Messages API format
+      } else if (this.isAnthropicWire) {
+        // Anthropic Messages API format (also serves the z-ai/GLM and
+        // kimi/Moonshot providers — see `isAnthropicWire`).
         const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m) => ({
           role: m.role,
           content: m.content.map((block): WireBlock => {
@@ -2434,6 +2493,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           () => JSON.stringify({ ...body, model: this.model }),
           controller.signal,
         );
+      } else {
+        throw new Error(`executeNative: provider ${this.provider} is not mapped to a wire`);
       }
 
       // Keep the abort timer ARMED through the body read. `fetch()` resolves as
@@ -2590,7 +2651,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           };
         }
       } else {
-        // Anthropic format (also serves the z-ai/GLM provider).
+        // Anthropic format (also serves the z-ai/GLM and kimi/Moonshot
+        // providers — see `isAnthropicWire`).
         const rawBlocks = (json.content ?? []) as Array<Record<string, unknown>>;
         // GLM (thinking enabled) streams a leading `thinking` block. Surface
         // it as reasoning for the UI, then DROP it from the content blocks:
