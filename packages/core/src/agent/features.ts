@@ -38,6 +38,15 @@ export const features = {
   /** Interactive PTY sessions for exploits requiring interactivity (reverse shells, DB clients, SSH) */
   get ptySession(): boolean { return env("PWNKIT_FEATURE_PTY_SESSION", false); },
   /**
+   * Persistent, COMPUTE-ONLY Python REPL (`python_exec`, Phase-0). A framed
+   * python3 kernel keeps state across calls for payload/parse/crypto/encode
+   * work; networking is blocked at the socket source whenever an engagement is
+   * active. Default OFF — opt in via PWNKIT_FEATURE_PYTHON_EXEC=1. Getter so
+   * the CLI `--features` flag (set after this module is imported) is honored at
+   * tool-dispatch time.
+   */
+  get pythonExec(): boolean { return env("PWNKIT_FEATURE_PYTHON_EXEC", false); },
+  /**
    * EGATS specialist routing (#557, HPTSA-inspired). When ON, an EGATS branch
    * whose hypothesis names a concrete vuln class (SQLi/XSS/SSRF/SSTI/IDOR/
    * auth-bypass) runs as a per-class SPECIALIST: a class system prompt built

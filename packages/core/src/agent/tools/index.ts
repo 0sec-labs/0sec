@@ -27,6 +27,7 @@ import {
   ORCHESTRATOR_TOOL_NAMES,
 } from "./orchestrator.js";
 import { oastToolDefinitions, OAST_TOOL_NAMES } from "./oast.js";
+import { pythonToolDefinitions } from "./python.js";
 
 export { SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES, OAST_TOOL_NAMES };
 
@@ -45,6 +46,7 @@ const DOMAIN_DEFINITIONS: Record<string, ToolDefinition> = {
   ...cloudToolDefinitions,
   ...orchestratorToolDefinitions,
   ...oastToolDefinitions,
+  ...pythonToolDefinitions,
 };
 
 // Canonical registry order, preserved verbatim from the pre-split tools.ts.
@@ -96,6 +98,7 @@ const TOOL_REGISTRY_ORDER = [
   "start_scan",
   "oast_register",
   "oast_poll",
+  "python_exec",
 ] as const;
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = Object.fromEntries(
