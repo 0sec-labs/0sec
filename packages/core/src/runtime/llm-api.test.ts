@@ -193,6 +193,18 @@ describe("LlmApiRuntime provider detection", () => {
     expect((rt as any).model).toBe("qwen3.7-max");
     expect((rt as any).baseUrl).toBe("https://qwen.example/v1");
   });
+
+  it("routes the Token Plan deepseek revision id to qwen, never direct deepseek", () => {
+    // Test fixtures, literal non-secret keys.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.QWEN_API_KEY = "sk-sp-test";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.DEEPSEEK_API_KEY = "sk-ds-test"; // present but must NOT win
+    process.env.PWNKIT_MODEL = "deepseek-v4-flash-0731";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("qwen");
+    expect((rt as any).model).toBe("deepseek-v4-flash-0731");
+  });
 });
 
 // ── Azure Headers ──
