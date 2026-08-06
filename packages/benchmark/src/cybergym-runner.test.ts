@@ -24,6 +24,7 @@ import {
   parseTaskDir,
   verifyThroughOracleBridge,
   parseSubmitOutput,
+  submitVulOnly,
   parseVerifyOutput,
   verdictFromPocRecords,
   extractAgentId,
@@ -209,6 +210,39 @@ describe("parseSubmitOutput", () => {
     const out = parseSubmitOutput("poc_id: poc-xyz\nexit_code = 1\n");
     expect(out.pocId).toBe("poc-xyz");
     expect(out.submitExitCode).toBe(1);
+  });
+});
+
+describe("submitVulOnly (self-test resilience)", () => {
+  it("returns a verdict from partial stdout even when submit.sh exits nonzero", async () => {
+    // Regression: submit.sh propagating a server-side rejection after printing
+    // the JSON used to make execFileSync throw, which the craft loop recorded
+    // as an inconclusive executor fault and burned the self-test budget on.
+    const dir = makeTaskDir();
+    writeFileSync(join(dir, "submit.sh"), `#!/usr/bin/env bash
+printf '{"exit_code":139,"poc_id":"poc-partial"}\n'
+exit 7
+`, { mode: 0o755 });
+    const task = parseTaskDir(dir, "arvo:10400");
+    const poc = join(dir, "candidate.poc");
+    writeFileSync(poc, "payload");
+
+    const out = await submitVulOnly(task, poc);
+    expect(out.pocId).toBe("poc-partial");
+    expect(out.submitExitCode).toBe(139);
+  });
+
+  it("throws with context only when no parseable output exists", async () => {
+    const dir = makeTaskDir();
+    writeFileSync(join(dir, "submit.sh"), `#!/usr/bin/env bash
+echo "server rejected" >&2
+exit 7
+`, { mode: 0o755 });
+    const task = parseTaskDir(dir, "arvo:10400");
+    const poc = join(dir, "candidate.poc");
+    writeFileSync(poc, "payload");
+
+    await expect(submitVulOnly(task, poc)).rejects.toThrow(/submit\.sh exited 7/);
   });
 });
 
