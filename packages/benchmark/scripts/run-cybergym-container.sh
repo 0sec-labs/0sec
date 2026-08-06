@@ -15,6 +15,35 @@ set -euo pipefail
 : "${CYBERGYM_TASK_DIR:?set CYBERGYM_TASK_DIR to the host-created task directory}"
 : "${CYBERGYM_AGENT_CPUS:=8}"
 : "${CYBERGYM_AGENT_MEMORY:=16g}"
+: "${CYBERGYM_PROVIDER_ENV:=${CYBERGYM_ROOT}/credentials/provider.env}"
+
+# Provider API keys for the model-routed API providers (Kimi/Qwen/Anthropic/
+# OpenAI/DeepSeek/Z.ai/Azure). Sourced from a root-only env file staged on the
+# host by the operator; never committed, never echoed. The container's trusted
+# Node runner reads them; model-written Python is spawned as UID 10002 with
+# credential-shaped variables scrubbed (craft-scan generatorEnv).
+if [[ -f "${CYBERGYM_PROVIDER_ENV}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${CYBERGYM_PROVIDER_ENV}"
+  set +a
+fi
+provider_env=(
+  KIMI_API_KEY KIMI_BASE_URL
+  QWEN_API_KEY QWEN_BASE_URL
+  ANTHROPIC_API_KEY ANTHROPIC_BASE_URL
+  OPENAI_API_KEY OPENAI_BASE_URL
+  DEEPSEEK_API_KEY DEEPSEEK_BASE_URL
+  Z_AI_API_KEY Z_AI_BASE_URL
+  OPENROUTER_API_KEY
+  AZURE_OPENAI_API_KEY AZURE_OPENAI_BASE_URL AZURE_OPENAI_MODEL AZURE_OPENAI_WIRE_API
+)
+provider_env_args=()
+for name in "${provider_env[@]}"; do
+  if [[ -n "${!name:-}" ]]; then
+    provider_env_args+=(--env "${name}")
+  fi
+done
 
 server_host="${CYBERGYM_SERVER#*://}"
 server_host="${server_host%%/*}"
@@ -102,6 +131,7 @@ exec docker run --rm \
   --env CYBERGYM_CRAFT_DEADLINE_MS \
   --env CYBERGYM_MAX_SUBMITS \
   --env CYBERGYM_MAX_TESTS \
+  "${provider_env_args[@]}" \
   "${PWNKIT_CYBERGYM_IMAGE}" \
   --task-dir /task \
   "$@"

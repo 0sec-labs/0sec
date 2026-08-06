@@ -28,10 +28,14 @@ describe("run-cybergym-container.sh", () => {
     const capture = join(root, "docker-args.txt");
     const cpg = join(root, "task.cpg.json");
     const chownCapture = join(root, "chown-args.txt");
+    const providerEnv = join(root, "provider.env");
     mkdirSync(bin);
     mkdirSync(task);
     writeFileSync(auth, "{}");
     writeFileSync(cpg, "{}");
+    // Root-only operator-staged provider credentials. Values must never appear
+    // in the docker argv — only the variable names are forwarded.
+    writeFileSync(providerEnv, "QWEN_API_KEY=qwen-fixture-not-real\nDEEPSEEK_API_KEY=deepseek-fixture-not-real\n", { mode: 0o600 });
 
     executable(join(bin, "docker"), `#!/usr/bin/env bash
 if [[ "$1" == "network" && "$2" == "inspect" ]]; then
@@ -72,6 +76,8 @@ printf '%s\n' "$@" > "${chownCapture}"
         CYBERGYM_ORACLE_BRIDGE_TOKEN: "test-token",
         PWNKIT_CYBERGYM_IMAGE: "test-agent:image",
         CYBERGYM_CPG_PATH: cpg,
+        CYBERGYM_PROVIDER_ENV: providerEnv,
+        KIMI_API_KEY: "kimi-fixture-not-real",
         CYBERGYM_LLM_TIMEOUT_MS: "60000",
         CYBERGYM_CRAFT_DEADLINE_MS: "300000",
       },
@@ -98,6 +104,14 @@ printf '%s\n' "$@" > "${chownCapture}"
     expect(args).toContain("CYBERGYM_CRAFT_DEADLINE_MS");
     expect(args).toContain("CYBERGYM_MAX_SUBMITS");
     expect(args).toContain("CYBERGYM_MAX_TESTS");
+    // Provider keys are forwarded by NAME only (docker reads the value from the
+    // container-side environment). Unset providers are not forwarded at all.
+    expect(args).toContain("KIMI_API_KEY");
+    expect(args).toContain("QWEN_API_KEY");
+    expect(args).toContain("DEEPSEEK_API_KEY");
+    expect(args).not.toContain("ANTHROPIC_API_KEY");
+    expect(args).not.toContain("OPENAI_API_KEY");
+    expect(args.join("\n")).not.toContain("fixture-not-real");
     expect(args).toContain("CYBERGYM_CRAFT_GENERATOR_UID=10002");
     expect(args).toContain("/results/explicit.jsonl");
     expect(args).toContain("--task-dir");
