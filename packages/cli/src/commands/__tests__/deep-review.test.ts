@@ -86,13 +86,13 @@ describe("selectProfileLenses", () => {
     expect(defaultFinderLenses.length).toBeGreaterThan(0);
   });
 
-  it("default finder set unions the 4 generic lenses with the 5 data-driven appsec lenses", () => {
+  it("default finder set unions the 5 generic lenses with the 5 data-driven appsec lenses", () => {
     const ids = defaultFinderLenses.map((l) => l.id);
     // The generic buckets are preserved …
-    expect(ids).toEqual(expect.arrayContaining(["memory-safety", "input-validation", "auth-logic", "secrets-crypto"]));
+    expect(ids).toEqual(expect.arrayContaining(["memory-safety", "input-validation", "auth-logic", "secrets-crypto", "cross-component"]));
     // … and every appsec lens is added on top (the Swiss-miss coverage classes).
     for (const id of APPSEC_LENS_IDS) expect(ids).toContain(id);
-    expect(defaultFinderLenses).toHaveLength(4 + APPSEC_LENS_IDS.length);
+    expect(defaultFinderLenses).toHaveLength(5 + APPSEC_LENS_IDS.length);
     // No id collisions — each lens is its own best-of-N group.
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -357,6 +357,8 @@ const {
   getCloudSinkConfigMock,
   postFindingMock,
   verifierFn,
+  runThreatModelPlannerMock,
+  createRuntimeMock,
 } = vi.hoisted(() => {
   const verifierFn = vi.fn();
   return {
@@ -368,6 +370,10 @@ const {
     getCloudSinkConfigMock: vi.fn(),
     postFindingMock: vi.fn(),
     verifierFn,
+    // Threat-model planner mocks: fail-closed by default (returns null → fallback to module-spread).
+    runThreatModelPlannerMock: vi.fn().mockResolvedValue(null),
+    // Return a minimal Runtime stub so the planner code path doesn't crash.
+    createRuntimeMock: vi.fn(() => ({ execute: vi.fn(), type: "api", isAvailable: vi.fn() })),
   };
 });
 
@@ -400,6 +406,13 @@ vi.mock("@pwnkit/core", () => ({
     { id: "sso-trust", challengeHint: "appsec-sso" },
     { id: "resource-exhaustion-dos", challengeHint: "appsec-dos" },
   ],
+  // Threat-model planner (B6): fail-closed mock — returns null so the fallback
+  // to module-spread selection is exercised, and createRuntime returns a stub.
+  createRuntime: createRuntimeMock,
+  runThreatModelPlanner: runThreatModelPlannerMock,
+  allocateCandidatesAcrossLanes: vi.fn(),
+  parseThreatLaneJson: vi.fn().mockReturnValue(null),
+  matchesLane: vi.fn().mockReturnValue(false),
 }));
 
 /** The 5 data-driven appsec lens ids the default fallback set must carry (kept in
@@ -444,6 +457,7 @@ describe("runDeepReview — seedless lens-driven review", () => {
       findings: [makeLead()],
       confirmed: [makeLead()],
       duplicates: [],
+      dropped: [],
       scanned: 8,
       finderCompleted: 8,
       finderTimedOut: 0,
@@ -572,7 +586,7 @@ describe("runDeepReview — seedless lens-driven review", () => {
         await opts.onConfirmed!(leadA);
         await opts.onConfirmed!(leadB);
         expect(postFindingMock).toHaveBeenCalledTimes(2); // persisted mid-sweep
-        return { findings: [leadA, leadB], confirmed: [leadA, leadB], duplicates: [], scanned: 8, warnings: [] };
+        return { findings: [leadA, leadB], confirmed: [leadA, leadB], duplicates: [], dropped: [], scanned: 8, warnings: [] };
       },
     );
 
@@ -589,7 +603,7 @@ describe("runDeepReview — seedless lens-driven review", () => {
     let wiredHook: unknown;
     runHuntScanMock.mockImplementation(async (opts: { onConfirmed?: unknown }) => {
       wiredHook = opts.onConfirmed;
-      return { findings: [makeLead()], confirmed: [makeLead()], duplicates: [], scanned: 8, warnings: [] };
+      return { findings: [makeLead()], confirmed: [makeLead()], duplicates: [], dropped: [], scanned: 8, warnings: [] };
     });
     const outcome = await runDeepReview({ target: "/repo", profile: "evm-onchain" });
     expect(wiredHook).toBeUndefined();
@@ -692,7 +706,7 @@ describe("runDeepReview — seedless lens-driven review", () => {
     // real work (finderCompleted > 0), nothing survived the quorum. Must NOT be
     // exit-non-zero, or the cloud worker marks the scan failed (CapyFi/Onyx).
     runHuntScanMock.mockResolvedValue({
-      findings: [], confirmed: [], duplicates: [],
+      findings: [], confirmed: [], duplicates: [], dropped: [],
       scanned: 8, finderCompleted: 8, finderTimedOut: 0, finderErrored: 0,
       warnings: [],
     });
@@ -704,7 +718,7 @@ describe("runDeepReview — seedless lens-driven review", () => {
   it("exits 0 when a PARTIAL subset of finders timed out but some completed (real coverage)", async () => {
     // 20/32 timing out (Onyx) still leaves real coverage — a success, not failure.
     runHuntScanMock.mockResolvedValue({
-      findings: [], confirmed: [], duplicates: [],
+      findings: [], confirmed: [], duplicates: [], dropped: [],
       scanned: 32, finderCompleted: 12, finderTimedOut: 20, finderErrored: 0,
       warnings: ["finder timed out on X — abandoned"],
     });
@@ -716,7 +730,7 @@ describe("runDeepReview — seedless lens-driven review", () => {
     // 0 of N completed = an LLM/backend failure (auth, total stall), NOT a clean
     // 0-finding result. This must still fail so real outages aren't masked.
     runHuntScanMock.mockResolvedValue({
-      findings: [], confirmed: [], duplicates: [],
+      findings: [], confirmed: [], duplicates: [], dropped: [],
       scanned: 8, finderCompleted: 0, finderTimedOut: 3, finderErrored: 5,
       warnings: ["fetch failed", "LLM auth error"],
     });
@@ -728,5 +742,165 @@ describe("runDeepReview — seedless lens-driven review", () => {
 
   it("rejects a subsystem that escapes the source tree", async () => {
     await expect(runDeepReview({ target: "/repo", subsystem: "../../etc" })).rejects.toThrow(/escapes/);
+  });
+
+  it("B6: useThreatModel calls the planner and falls back when it returns nothing", async () => {
+    // The mock planner returns null by default (fail-closed). The review should
+    // proceed with the normal module-spread candidate selection.
+    runThreatModelPlannerMock.mockClear();
+    await runDeepReview({ target: "/repo", profile: "evm-onchain", useThreatModel: true });
+    expect(runThreatModelPlannerMock).toHaveBeenCalledOnce();
+    expect(createRuntimeMock).toHaveBeenCalledOnce();
+    // Candidate selection still ran (module-spread fallback).
+    const opts = runHuntScanMock.mock.calls[0]![0];
+    expect(opts.candidates).toBeDefined();
+    expect(opts.candidates.length).toBe(2);
+  });
+
+  it("B6: useThreatModel is OFF by default — planner is NOT called", async () => {
+    runThreatModelPlannerMock.mockClear();
+    await runDeepReview({ target: "/repo" });
+    expect(runThreatModelPlannerMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── B6: Threat-model planner — pure function tests ───────────────────────────
+// These bypass the @pwnkit/core mock by importing directly from the source file.
+
+import type * as PwnkitCore from "@pwnkit/core";
+
+// Bypass the @pwnkit/core mock above via importActual (a direct relative
+// source import would escape the cli tsconfig rootDir and fail the build).
+const {
+  parseThreatLaneJson,
+  matchesLane: tlMatchesLane,
+  allocateCandidatesAcrossLanes: tlAllocateCandidatesAcrossLanes,
+} = await vi.importActual<typeof PwnkitCore>("@pwnkit/core");
+
+describe("parseThreatLaneJson — threat-model JSON parser", () => {
+  it("parses a valid JSON array of lanes", () => {
+    const lanes = parseThreatLaneJson(
+      '[{"name":"kv-r2","rationale":"KV consistency across R2 boundaries","subsystems":["kv","r2"]}]',
+    );
+    expect(lanes).toHaveLength(1);
+    expect(lanes![0]).toEqual({
+      name: "kv-r2",
+      rationale: "KV consistency across R2 boundaries",
+      subsystems: ["kv", "r2"],
+    });
+  });
+
+  it("strips markdown fences around the JSON", () => {
+    const lanes = parseThreatLaneJson(
+      "```json\n[{\"name\":\"a\",\"rationale\":\"b\",\"subsystems\":[\"c\"]}]\n```",
+    );
+    expect(lanes).toHaveLength(1);
+    expect(lanes![0].name).toBe("a");
+  });
+
+  it("returns null for invalid JSON", () => {
+    expect(parseThreatLaneJson("not json")).toBeNull();
+  });
+
+  it("returns null for non-array JSON", () => {
+    expect(parseThreatLaneJson('{"name":"x"}')).toBeNull();
+  });
+
+  it("skips incomplete lane entries (missing rationale or subsystems)", () => {
+    const lanes = parseThreatLaneJson(
+      '[{"name":"a","rationale":"","subsystems":["x"]},{"name":"b","rationale":"ok","subsystems":["y"]}]',
+    );
+    expect(lanes).toHaveLength(1);
+    expect(lanes![0].name).toBe("b");
+  });
+
+  it("returns null when no valid lanes survive the filter", () => {
+    expect(parseThreatLaneJson('[{"name":"a","rationale":"","subsystems":[]}]')).toBeNull();
+  });
+});
+
+describe("matchesLane — file-to-lane assignment", () => {
+  it("matches a file whose path prefix matches a subsystem", () => {
+    expect(tlMatchesLane("/repo/kv/store.ts", "/repo", ["kv", "r2"])).toBe(true);
+  });
+
+  it("does not match a file in an unrelated subsystem", () => {
+    expect(tlMatchesLane("/repo/auth/login.ts", "/repo", ["kv", "r2"])).toBe(false);
+  });
+
+  it("matches a deeply nested file under a subsystem prefix", () => {
+    expect(tlMatchesLane("/repo/sharing/scheduler/job.ts", "/repo", ["sharing", "scheduler"])).toBe(true);
+  });
+
+  it("returns false for a path that escapes the scope root", () => {
+    expect(tlMatchesLane("/other/repo/x.ts", "/repo", ["x"])).toBe(false);
+  });
+});
+
+describe("allocateCandidatesAcrossLanes — lane-aware budget spread", () => {
+  it("spreads candidates across lanes round-robin", () => {
+    const entries = [
+      { p: "/repo/kv/big.ts", size: 9000 },
+      { p: "/repo/kv/small.ts", size: 100 },
+      { p: "/repo/r2/big.ts", size: 7000 },
+      { p: "/repo/r2/small.ts", size: 50 },
+      { p: "/repo/auth/login.ts", size: 500 },
+    ];
+    const lanes = [{ name: "kv-r2", rationale: "x", subsystems: ["kv", "r2"] }];
+    const picked = tlAllocateCandidatesAcrossLanes(entries, lanes, "/repo", 2);
+    expect(picked).toHaveLength(2);
+    expect(picked).toContain("/repo/kv/big.ts");
+    expect(picked).toContain("/repo/auth/login.ts");
+  });
+
+  it("allocates across multiple lanes in priority order", () => {
+    const entries = [
+      { p: "/repo/kv/big.ts", size: 9000 },
+      { p: "/repo/r2/mid.ts", size: 5000 },
+      { p: "/repo/auth/login.ts", size: 400 },
+    ];
+    const lanes = [
+      { name: "data", rationale: "x", subsystems: ["kv", "r2"] },
+      { name: "identity", rationale: "y", subsystems: ["auth"] },
+    ];
+    const picked = tlAllocateCandidatesAcrossLanes(entries, lanes, "/repo", 2);
+    expect(picked).toEqual(["/repo/kv/big.ts", "/repo/auth/login.ts"]);
+  });
+
+  it("drops empty lanes (warning) when fewer files than lanes", () => {
+    const entries = [{ p: "/repo/kv/store.ts", size: 1000 }];
+    const lanes = [
+      { name: "kv-r2", rationale: "x", subsystems: ["kv"] },
+      { name: "identity", rationale: "y", subsystems: ["auth"] },
+    ];
+    const picked = tlAllocateCandidatesAcrossLanes(entries, lanes, "/repo", 3);
+    expect(picked).toEqual(["/repo/kv/store.ts"]);
+  });
+
+  it("handles budget smaller than lane count (round-robin selects subset)", () => {
+    const entries = [
+      { p: "/repo/kv/a.ts", size: 1000 },
+      { p: "/repo/r2/b.ts", size: 800 },
+      { p: "/repo/auth/c.ts", size: 600 },
+    ];
+    const lanes = [
+      { name: "data", rationale: "x", subsystems: ["kv"] },
+      { name: "edge", rationale: "y", subsystems: ["r2"] },
+      { name: "identity", rationale: "z", subsystems: ["auth"] },
+    ];
+    const picked = tlAllocateCandidatesAcrossLanes(entries, lanes, "/repo", 2);
+    expect(picked).toHaveLength(2);
+    expect(picked).toContain("/repo/kv/a.ts");
+    expect(picked).toContain("/repo/r2/b.ts");
+  });
+
+  it("preserves deterministic ordering within each lane (largest-first, path tie-break)", () => {
+    const entries = [
+      { p: "/repo/kv/z.ts", size: 100 },
+      { p: "/repo/kv/a.ts", size: 100 },
+    ];
+    const lanes = [{ name: "kv-r2", rationale: "x", subsystems: ["kv"] }];
+    const picked = tlAllocateCandidatesAcrossLanes(entries, lanes, "/repo", 2);
+    expect(picked).toEqual(["/repo/kv/a.ts", "/repo/kv/z.ts"]);
   });
 });

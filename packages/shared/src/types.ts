@@ -456,6 +456,21 @@ export type ReachabilityTier =
 export type Weaponizability = "dos-crash" | "info-leak" | "lpe-to-root" | "rce";
 
 /**
+ * Deployment context of a finding's exploit path — where the vulnerable code
+ * actually runs. Bounty programs reject dev/test/build-only findings outright,
+ * and the engine auto-downgrades them. Set by the mechanical path heuristic at
+ * lead→finding conversion; the model lens may refine it, but the mechanical
+ * tag wins on conflict (it is the deterministic floor).
+ *
+ * - `prod_reachable`: the vulnerable code is deployed to production or could
+ *   reach a production runtime via a trust-boundary crossing.
+ * - `dev_only`: dev-only surface (seeds, .dev.vars, dev servers).
+ * - `test_only`: files in test directories or matching test patterns.
+ * - `build_only`: build/config tooling, CI, scaffolding, generated code.
+ */
+export type DeploymentContext = "prod_reachable" | "dev_only" | "test_only" | "build_only";
+
+/**
  * The coarse, ranking-facing tier. This is the single knob the engine sorts on:
  * `noise` gets deprioritized, `headline` gets escalated. Ordered.
  */
@@ -710,6 +725,15 @@ export interface Finding {
    * column. See {@link ImpactAssessment}.
    */
   impactAssessment?: ImpactAssessment;
+  /**
+   * Deployment context classification (issue #1215). Set by the mechanical path
+   * heuristic at lead→finding conversion in {@link leadToCandidateFinding}.
+   * `prod_reachable` (default) means the heuristic found no dev/test/build
+   * evidence; it does NOT guarantee prod reachability. Optional and additive -
+   * findings produced before this field existed leave it undefined, and every
+   * downstream consumer must work in that case.
+   */
+  deploymentContext?: DeploymentContext;
   timestamp: number;
 }
 

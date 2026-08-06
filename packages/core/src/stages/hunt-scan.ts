@@ -34,6 +34,7 @@ import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Finding, RuntimeMode, ScanConfig } from "@pwnkit/shared";
 import { agenticScan } from "../agentic-scanner.js";
+import { stampDeploymentContext } from "./deployment-context.js";
 import {
   checkNovelty,
   findingToQuery,
@@ -327,6 +328,33 @@ export interface CoverageGap {
   budgetMs: number;
 }
 
+/**
+ * A finding that did NOT survive the engine's gates into `confirmed`.
+ * Every ingested candidate — whether dropped pre-gate by judge truncation
+ * or finder timeout, or post-gate by the skeptic quorum — appears in
+ * {@link HuntScanResult.dropped} with its reason. Nothing is silently absent.
+ * (deep-review postmortem, 2026-08-05)
+ */
+export interface HuntDroppedFinding {
+  /** The candidate finding itself (may carry partial/empty evidence). */
+  finding: Finding;
+  /** The candidate path (file) the finder was hunting. */
+  candidatePath: string;
+  /** The lens id that produced this finding. */
+  lensId: string;
+  /** Why the finding did NOT reach `confirmed`. */
+  dropReason:
+    | "finder_timeout"
+    | "judge_truncation"
+    | "verify_below_quorum"
+    | "verify_refuted"
+    | "verify_errored"
+    | "novelty_duplicate"
+    | "finder_errored";
+  /** Human-readable detail — the refute reason, the judge explanation, etc. */
+  detail: string;
+}
+
 export interface HuntScanResult {
   /** Every candidate finding the finders surfaced. */
   findings: Finding[];
@@ -337,6 +365,14 @@ export interface HuntScanResult {
    * fix. Empty unless `opts.novelty` is set. These are dropped from `confirmed`.
    */
   duplicates: Array<{ finding: Finding; novelty: LoreNoveltyResult }>;
+  /**
+   * Every ingested candidate that did NOT make it to `confirmed`, with the
+   * reason (deep-review postmortem fix). Nothing silently absent. Includes
+   * finder-timed-out partials, judge-truncated findings that never reached
+   * verify, findings refuted or below quorum by the skeptic gate, and
+   * novelty duplicates.
+   */
+  dropped: HuntDroppedFinding[];
   /** How many (candidate × model × lens × attempt) finder runs executed. */
   scanned: number;
   /**
@@ -368,11 +404,17 @@ export interface HuntScanResult {
 
 // ── Stage ────────────────────────────────────────────────────────────────────
 
-/** Run `tasks` with at most `limit` in flight; returns results in input order (failures → null). */
-async function pool<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<(R | null)[]> {
+/**
+ * Run `tasks` with at most `limit` in flight; returns results in input order
+ * (failures → null). When `limit` is an {@link AimdState}, the effective
+ * concurrency is read from `state.current` at worker-spawn time so a shrunk
+ * limit takes effect immediately for remaining items.
+ */
+async function pool<T, R>(items: T[], limit: number | AimdState, fn: (item: T, i: number) => Promise<R>): Promise<(R | null)[]> {
   const out: (R | null)[] = new Array(items.length).fill(null);
   let next = 0;
-  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+  const effectiveLimit = typeof limit === "number" ? limit : limit.current;
+  const workers = Array.from({ length: Math.max(1, Math.min(effectiveLimit, items.length)) }, async () => {
     for (;;) {
       const i = next++;
       if (i >= items.length) return;
@@ -381,6 +423,75 @@ async function pool<T, R>(items: T[], limit: number, fn: (item: T, i: number) =>
   });
   await Promise.all(workers);
   return out;
+}
+
+// ── AIMD concurrency for the finder fan-out ───────────────────────────────────
+//
+// When the provider is under sustained rate-limiting (429s), shrinking the
+// effective pool reduces pressure. AIMD (Additive Increase / Multiplicative
+// Decrease) is the canonical TCP congestion-control algorithm: on congestion
+// signal (a finder call whose error matches a 429-pattern) we halve the
+// concurrency; on a full window of clean completions we nudge it back up.
+//
+// The state is local to one `runHuntScan` call — each scan starts fresh, so
+// a burst on one target doesn't permanently kneecap the next.
+
+/** PWNKIT_HUNT_AIMD — set to "0" or "off" to disable adaptive concurrency. */
+function huntAimdEnabled(): boolean {
+  const raw = process.env.PWNKIT_HUNT_AIMD;
+  return raw === undefined || raw === "" || !/^(0|off|false|no)$/i.test(raw);
+}
+
+/**
+ * How many consecutive clean finder completions earn a +1 concurrency bump.
+ * `PWNKIT_HUNT_AIMD_RECOVERY_WINDOW` (default 5).
+ */
+function huntAimdRecoveryWindow(): number {
+  const raw = process.env.PWNKIT_HUNT_AIMD_RECOVERY_WINDOW;
+  if (!raw) return 5;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : 5;
+}
+
+/** 429-pattern signal for AIMD: a finder error containing a 429 reference. */
+const AIMD_429_SIGNAL_RE = /\b429\b|rate.?limit|too many requests|throttl/i;
+
+export class AimdState {
+  current: number;
+  private readonly initial: number;
+  private cleanStreak = 0;
+  private readonly recoveryWindow: number;
+
+  constructor(initialConcurrency: number) {
+    this.current = initialConcurrency;
+    this.initial = initialConcurrency;
+    this.recoveryWindow = huntAimdRecoveryWindow();
+  }
+
+  /** Call after each finder run to update the AIMD state from the outcome. */
+  recordResult(outcome: { status: string; error?: unknown }): void {
+    const isCongestion =
+      outcome.status === "errored" &&
+      outcome.error != null &&
+      AIMD_429_SIGNAL_RE.test(String(outcome.error));
+
+    if (isCongestion) {
+      // Multiplicative Decrease: halve on any 429-signal finder failure.
+      this.current = Math.max(1, Math.floor(this.current / 2));
+      this.cleanStreak = 0;
+    } else if (outcome.status === "completed") {
+      // Additive Increase: +1 after a full window of clean completions.
+      this.cleanStreak++;
+      if (this.cleanStreak >= this.recoveryWindow) {
+        this.current = Math.min(this.initial, this.current + 1);
+        this.cleanStreak = 0;
+      }
+    } else {
+      // timeout or non-429 error: don't shrink (already handled above for
+      // congestion), don't count toward recovery.
+      this.cleanStreak = 0;
+    }
+  }
 }
 
 // ── Finder-fanout resilience (env-gated) ─────────────────────────────────────
@@ -997,7 +1108,12 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   const finderTimeoutMs = huntFinderTimeoutMs();
   const finderMaxRetries = huntFinderMaxRetries();
 
-  const reports = await pool(runs, concurrency, async (run) => {
+  // Tighten the finder fan-out under sustained rate-limiting via AIMD
+  // (Additive Increase / Multiplicative Decrease) concurrency control.
+  const aimd = huntAimdEnabled() ? new AimdState(concurrency) : null;
+  const effectiveConcurrency = aimd ?? concurrency;
+
+  const reports = await pool(runs, effectiveConcurrency, async (run) => {
     // Partial-evidence capture. agenticScan streams a `finding` event per
     // save_finding tool call as the finder works. When the finder HANGS and is
     // abandoned at the timeout, its returned promise never resolves — but the
@@ -1055,6 +1171,8 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       findings = [];
       warnings.push(`hunt: finder failed on ${run.candidate.path}: ${String(outcome.error).slice(0, 120)}`);
     }
+    // Feed the outcome back into the AIMD concurrency controller.
+    aimd?.recordResult(outcome);
     return {
       candidate: run.candidate,
       model: run.model,
@@ -1134,9 +1252,12 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   }
 
   const toVerify: Array<{ finding: Finding; candidate: HuntCandidate }> = [];
+  const toVerifyIds = new Set<string>();
   for (const group of groups.values()) {
     if (group.length <= 1) {
-      toVerify.push(...group.map((g) => ({ finding: g.finding, candidate: g.candidate })));
+      const entries = group.map((g) => ({ finding: g.finding, candidate: g.candidate }));
+      for (const e of entries) toVerifyIds.add(e.finding.id);
+      toVerify.push(...entries);
       continue;
     }
     if (!opts.brief) {
@@ -1144,7 +1265,9 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       warnings.push(
         `hunt: ${group.length} attempts at ${group[0].candidate.path} but no brief to judge against; keeping first ${judgeTopK}`,
       );
-      toVerify.push(...group.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate })));
+      const entries = group.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate }));
+      for (const e of entries) toVerifyIds.add(e.finding.id);
+      toVerify.push(...entries);
       continue;
     }
     let scores: Map<string, { score: number; reason: string }>;
@@ -1177,7 +1300,9 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       const keyB = priming ? primedOrderKey(rawB, priming, b.finding) : rawB;
       return keyB - keyA || a.attempt - b.attempt;
     });
-    toVerify.push(...ranked.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate })));
+    const rankedEntries = ranked.slice(0, judgeTopK).map((g) => ({ finding: g.finding, candidate: g.candidate }));
+    for (const e of rankedEntries) toVerifyIds.add(e.finding.id);
+    toVerify.push(...rankedEntries);
   }
 
   // EXPLOITABLE-GEOMETRY RANK (LPE-hunt plan #0): re-order the verify queue by
@@ -1225,6 +1350,13 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           // decorrelation that never happened.
           if (v.decorrelation) record.decorrelation = v.decorrelation;
         }
+        // #1215 — stamp deployment context from the candidate path BEFORE
+        // onConfirmed. Every caller (hunt's runHunt also stamps in
+        // leadToCandidateFinding; the double-stamp is idempotent since the
+        // same path always produces the same classification). This ensures
+        // the deep-review path's onConfirmed callback sees the tag already set.
+        stampDeploymentContext(finding, candidate.path);
+
         // Incremental persistence: hand each confirmed finding to the caller
         // AS IT LANDS (see HuntScanOptions.onConfirmed) so a mid-sweep kill
         // still leaves the leads found so far. A throwing hook must not drop
@@ -1289,10 +1421,93 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     log(`[hunt] ${confirmed.length} novel, ${duplicates.length} duplicate after novelty gate`);
   }
 
+  // ── Build dropped array (deep-review postmortem fix) ──
+  // Every ingested candidate that did NOT make `confirmed` appears here
+  // with its explicit reason. Nothing silently absent.
+  const confirmedIds = new Set(confirmed.map((f) => f.id));
+  const duplicateIds = new Set(duplicates.map((d) => d.finding.id));
+  // Build a set of finding IDs from timed-out finder reports so we can
+  // distinguish judge-truncated findings from timeout partials. A timed-out
+  // report's findings are `partials` (whatever streamed before the hang);
+  // they are real findings, just possibly incomplete.
+  const timedOutFindingIds = new Set<string>();
+  for (const r of reports) {
+    if (r && r.status === "timed-out") {
+      for (const f of r.findings) timedOutFindingIds.add(f.id);
+    }
+  }
+  // Collect judge-truncated lens+model combos from groups with >1 members
+  // that dropped findings — we use their site group key for detection.
+  const dropped: HuntDroppedFinding[] = [];
+  for (const item of all) {
+    if (confirmedIds.has(item.finding.id)) continue;
+    const record = records.get(item.finding.id);
+    // Novelty duplicates get the explicit duplicate reason.
+    if (duplicateIds.has(item.finding.id)) {
+      const dupe = duplicates.find((d) => d.finding.id === item.finding.id);
+      dropped.push({
+        finding: item.finding,
+        candidatePath: item.candidate.path,
+        lensId: item.lensId,
+        dropReason: "novelty_duplicate",
+        detail: dupe
+          ? `duplicate of ${dupe.novelty.duplicates.map((d) => d.messageId).join(", ")}`
+          : "novelty match (duplicate)",
+      });
+      continue;
+    }
+    // Reached verify but failed the gate.
+    if (toVerifyIds.has(item.finding.id)) {
+      if (record?.skepticConfirmed === false) {
+        const isRefuted =
+          record.skepticReason?.includes("refuted") ?? false;
+        dropped.push({
+          finding: item.finding,
+          candidatePath: record.candidatePath,
+          lensId: item.lensId,
+          dropReason: isRefuted ? "verify_refuted" : "verify_below_quorum",
+          detail: record.skepticReason ?? "verify gate did not confirm",
+        });
+      } else if (record?.skepticConfirmed === undefined) {
+        // Made it into toVerify but verify couldn't adjudicate (errored).
+        dropped.push({
+          finding: item.finding,
+          candidatePath: record?.candidatePath ?? item.candidate.path,
+          lensId: item.lensId,
+          dropReason: "verify_errored",
+          detail: "verify gate threw or returned null",
+        });
+      }
+      continue;
+    }
+    // Never reached verify — check if from a timed-out finder that
+    // returned partials, or judge-truncated.
+    if (timedOutFindingIds.has(item.finding.id)) {
+      dropped.push({
+        finding: item.finding,
+        candidatePath: item.candidate.path,
+        lensId: item.lensId,
+        dropReason: "finder_timeout",
+        detail: `partial recovered from timed-out finder (${item.lensId})`,
+      });
+    } else {
+      dropped.push({
+        finding: item.finding,
+        candidatePath: item.candidate.path,
+        lensId: item.lensId,
+        dropReason: "judge_truncation",
+        detail: item.finding.id === record?.candidatePath
+          ? `did not reach verify gate (judge truncation for ${item.lensId})`
+          : `judge truncation: excluded from verify (path=${item.candidate.path}, lens=${item.lensId})`,
+      });
+    }
+  }
+
   return {
     findings: all.map((a) => a.finding),
     confirmed,
     duplicates,
+    dropped,
     scanned: runs.length,
     finderCompleted,
     finderTimedOut,

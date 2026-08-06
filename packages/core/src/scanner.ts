@@ -263,7 +263,40 @@ function relayScanEventToBus(event: ScanEvent): void {
         finding_id: typeof f.id === "string" ? f.id : undefined,
         severity: typeof f.severity === "string" ? f.severity : undefined,
         title: typeof f.title === "string" ? f.title : undefined,
+        description: typeof f.description === "string" ? f.description : undefined,
         category: typeof f.category === "string" ? f.category : undefined,
+        confidence:
+          typeof f.confidence === "number" && Number.isFinite(f.confidence)
+            ? f.confidence
+            : undefined,
+        evidence_request:
+          typeof f.evidence_request === "string" && f.evidence_request.trim()
+            ? f.evidence_request
+            : undefined,
+        evidence_response:
+          typeof f.evidence_response === "string" && f.evidence_response.trim()
+            ? f.evidence_response
+            : undefined,
+        evidence_analysis:
+          typeof f.evidence_analysis === "string" && f.evidence_analysis.trim()
+            ? f.evidence_analysis
+            : undefined,
+        source_path:
+          typeof f.source_path === "string" && f.source_path.trim()
+            ? f.source_path
+            : undefined,
+        source_start_line:
+          typeof f.source_start_line === "number" && Number.isInteger(f.source_start_line)
+            ? f.source_start_line
+            : undefined,
+        source_end_line:
+          typeof f.source_end_line === "number" && Number.isInteger(f.source_end_line)
+            ? f.source_end_line
+            : undefined,
+        poc_steps:
+          typeof f.poc_steps === "string" && f.poc_steps.trim()
+            ? f.poc_steps
+            : undefined,
       });
       return;
     }

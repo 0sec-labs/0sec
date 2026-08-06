@@ -67,6 +67,7 @@ export interface FindingIngestedPayload {
   finding_id?: string;
   severity?: string;
   title?: string;
+  description?: string;
   category?: string;
   /**
    * Agent-assessed confidence in [0,1]. Optional — sourced from the hybrid
@@ -75,6 +76,17 @@ export interface FindingIngestedPayload {
    * it absent; the cloud parser must accept absent as NULL.
    */
   confidence?: number;
+  /** Rich fields for cloud-side reconciliation so a pending finding
+   * carries evidence, not just a bare title (deep-review postmortem).
+   * All optional — additive and backward-compatible. */
+  evidence_request?: string;
+  evidence_response?: string;
+  evidence_analysis?: string;
+  source_path?: string;
+  source_start_line?: number;
+  source_end_line?: number;
+  poc_steps?: string;
+  verification_spec?: string;
   [k: string]: unknown;
 }
 
