@@ -1137,11 +1137,14 @@ export async function runTaskBestOfN(
 
     if (!ensemble.pocPath) {
       // No vul-side crashing candidate across the N trajectories → no graded
-      // submit. Distinguish an infra fault (source vanished / oracle
-      // unreachable) — which is inconclusive — from a genuine capability miss
-      // (fail), so a broken run never scores as a fake all-fail.
+      // submit. Distinguish an infrastructure fault (source vanished, oracle
+      // unreachable, or model provider unavailable) from a genuine capability
+      // miss, so a broken run never scores as a fake all-fail.
       const infraFault = ensemble.warnings.some(
-        (w) => w.includes("ORACLE UNREACHABLE") || w.includes("SOURCE MISSING"),
+        (w) =>
+          w.includes("ORACLE UNREACHABLE") ||
+          w.includes("SOURCE MISSING") ||
+          w.includes("LLM UNAVAILABLE"),
       );
       return {
         taskId: task.taskId,
@@ -1234,15 +1237,14 @@ export async function runTaskOnce(
     });
 
     if (!engine.pocPath) {
-      // Distinguish an INFRASTRUCTURE fault from a genuine capability miss. Two
-      // infra faults produce no PoC but must NOT be scored `fail` (that silently
-      // turns a broken run into a fake all-fail): (1) the grading oracle was
-      // never reachable — e.g. wrong server port → HTTP 404 ("ORACLE
-      // UNREACHABLE"); (2) the per-task source vanished before the run started —
-      // /tmp janitor or gen_task unpack race ("SOURCE MISSING"). The craft stage
-      // flags both; score either `error` (inconclusive, re-runnable) instead.
+      // Distinguish an INFRASTRUCTURE fault from a genuine capability miss.
+      // Oracle, source, and model-provider faults produce no PoC but must NOT
+      // be scored `fail` (that silently turns a broken run into a fake all-fail).
       const infraFault = (engine.warnings ?? []).some(
-        (w) => w.includes("ORACLE UNREACHABLE") || w.includes("SOURCE MISSING"),
+        (w) =>
+          w.includes("ORACLE UNREACHABLE") ||
+          w.includes("SOURCE MISSING") ||
+          w.includes("LLM UNAVAILABLE"),
       );
       return {
         taskId: task.taskId,
