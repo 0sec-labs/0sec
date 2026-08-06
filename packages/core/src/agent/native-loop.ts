@@ -1211,14 +1211,48 @@ export async function runNativeAgentLoop(
       if (block.name === "save_finding" && toolResult.success) {
         const f = toolResult.output as Record<string, unknown> | undefined;
         const input = block.input as Record<string, unknown>;
+        const confidence =
+          typeof input.confidence === "number" && Number.isFinite(input.confidence)
+            ? input.confidence
+            : undefined;
         eventBus.emit("finding_ingested", {
-          finding_id: typeof f?.id === "string" ? f.id : undefined,
+          finding_id: typeof f?.id === "string" ? f.id : typeof f?.findingId === "string" ? f.findingId : undefined,
           severity: typeof input.severity === "string" ? input.severity : undefined,
           title: typeof input.title === "string" ? input.title : undefined,
+          description: typeof input.description === "string" ? input.description : undefined,
           category: typeof input.category === "string" ? input.category : undefined,
-          confidence:
-            typeof input.confidence === "number" && Number.isFinite(input.confidence)
-              ? input.confidence
+          confidence,
+          evidence_request:
+            typeof input.evidence_request === "string" && input.evidence_request.trim()
+              ? input.evidence_request
+              : undefined,
+          evidence_response:
+            typeof input.evidence_response === "string" && input.evidence_response.trim()
+              ? input.evidence_response
+              : undefined,
+          evidence_analysis:
+            typeof input.evidence_analysis === "string" && input.evidence_analysis.trim()
+              ? input.evidence_analysis
+              : undefined,
+          source_path:
+            typeof input.source_path === "string" && input.source_path.trim()
+              ? input.source_path
+              : undefined,
+          source_start_line:
+            typeof input.source_start_line === "number" && Number.isInteger(input.source_start_line)
+              ? input.source_start_line
+              : undefined,
+          source_end_line:
+            typeof input.source_end_line === "number" && Number.isInteger(input.source_end_line)
+              ? input.source_end_line
+              : undefined,
+          poc_steps:
+            typeof input.poc_steps === "string" && input.poc_steps.trim()
+              ? input.poc_steps
+              : undefined,
+          verification_spec:
+            typeof input.verification_spec === "string" && input.verification_spec.trim()
+              ? input.verification_spec
               : undefined,
         });
         // Shadow journal: record the finding (#494) as a first-class entry so

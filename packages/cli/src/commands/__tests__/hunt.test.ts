@@ -59,6 +59,37 @@ vi.mock("@pwnkit/core", () => ({
   prepare: prepareMock,
   getCloudSinkConfig: getCloudSinkConfigMock,
   postFinding: postFindingMock,
+  // #1215 — leadToCandidateFinding calls stampDeploymentContext when a
+  // candidatePath is provided. The real classification + cap logic is tested
+  // in deployment-context.test.ts; this mock stamps the context field and
+  // applies the severity cap so the leadToCandidateFinding tests exercise
+  // the full wiring end-to-end at the CLI level.
+  stampDeploymentContext: vi.fn((f: Record<string, unknown>, path?: string) => {
+    if (!path) return;
+    const p = String(path).replace(/\\/g, "/");
+    const ctx =
+      /\.test\.(ts|js|tsx|jsx|py|go|rs|rb|java|kt)$/i.test(p) ||
+      /\/__tests__\//.test(p) ||
+      /\/test[s]?\//.test(p)
+        ? "test_only"
+        : /\/\.dev\.vars/.test(p) || /\/seed[s]?\//.test(p) || /\/dev[-_]/.test(p)
+          ? "dev_only"
+          : /\/node_modules\//.test(p) || /\/dist\//.test(p) || /\/build\//.test(p) || /\/\.next\//.test(p)
+            ? "build_only"
+            : "prod_reachable";
+    f.deploymentContext = ctx;
+    // Severity cap (subset of the real logic — enough for the wiring tests)
+    const sev = String(f.severity);
+    const cap =
+      ctx === "dev_only" ? "info" :
+      ctx === "test_only" ? "low" :
+      ctx === "build_only" ? "info" :
+      null;
+    const ranks: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+    if (cap && (ranks[sev] ?? 2) > (ranks[cap] ?? 0)) {
+      f.severity = cap;
+    }
+  }),
 }));
 
 const { leadToCandidateFinding, runHunt, parseCeiling } = await import("../hunt.js");
@@ -115,6 +146,63 @@ describe("leadToCandidateFinding (#1051)", () => {
     const evidence = out.evidence as { analysis: string };
     expect(evidence.analysis).toMatch(/LEAD|HYPOTHESIS/);
   });
+
+  // ── #1215 deployment-context tests ───────────────────────────────────────
+
+  it("stamps deploymentContext from an optional candidate path", () => {
+    const out = leadToCandidateFinding(
+      makeLead({ severity: "critical" }),
+      "uaf",
+      "ref",
+      "/app/tests/api.test.ts",
+    ) as unknown as Finding;
+    expect(out.deploymentContext).toBe("test_only");
+  });
+
+  it("caps severity for test-only findings by path", () => {
+    const out = leadToCandidateFinding(
+      makeLead({ severity: "critical" }),
+      "uaf",
+      "ref",
+      "/app/tests/api.test.ts",
+    ) as unknown as Finding;
+    expect(out.severity).toBe("low");
+  });
+
+  it("caps severity for dev-only findings by path", () => {
+    const out = leadToCandidateFinding(
+      makeLead({ severity: "high" }),
+      "uaf",
+      "ref",
+      "/app/.dev.vars",
+    ) as unknown as Finding;
+    expect(out.severity).toBe("info");
+  });
+
+  it("caps severity for build-only findings by path", () => {
+    const out = leadToCandidateFinding(
+      makeLead({ severity: "medium" }),
+      "uaf",
+      "ref",
+      "/app/node_modules/pkg/index.js",
+    ) as unknown as Finding;
+    expect(out.severity).toBe("info");
+  });
+
+  it("does NOT cap severity when candidatePath is omitted", () => {
+    const out = leadToCandidateFinding(makeLead({ severity: "high" }), "uaf", "ref");
+    expect(out.severity).toBe("high");
+  });
+
+  it("does NOT cap prod_reachable severity", () => {
+    const out = leadToCandidateFinding(
+      makeLead({ severity: "high" }),
+      "uaf",
+      "ref",
+      "/app/src/routes/api.ts",
+    ) as unknown as Finding;
+    expect(out.severity).toBe("high");
+  });
 });
 
 describe("runHunt — novelty gate wiring", () => {
@@ -139,6 +227,7 @@ describe("runHunt — novelty gate wiring", () => {
       findings: [],
       confirmed: [],
       duplicates: [],
+      dropped: [],
       scanned: 1,
       warnings: [],
     });
@@ -539,6 +628,7 @@ describe("runHunt — PROVE stage (--exploitability) dispatch", () => {
       findings: [],
       confirmed: [],
       duplicates: [],
+      dropped: [],
       scanned: 1,
       warnings: [],
     });

@@ -30,6 +30,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Finding, RuntimeMode } from "@pwnkit/shared";
 import type { ImpactCeiling } from "@pwnkit/core";
+import { stampDeploymentContext } from "@pwnkit/core";
 
 /**
  * #1051 — map a gated hunt LEAD onto the cloud-sink finding shape as a
@@ -40,12 +41,18 @@ import type { ImpactCeiling } from "@pwnkit/core";
  * gated behind the cloud's own adversarial verify (verify_status='verified').
  * Returned as a plain object — `postFinding` normalizes it to CloudSinkFinding.
  *
+ * When `candidatePath` is provided, the finding gets a deployment-context
+ * classification via mechanical path heuristics (issue #1215), with severity
+ * capped at low/info for dev-only/test-only/build-only code unless the evidence
+ * shows a trust-boundary bypass from production.
+ *
  * Exposed for unit testing the lead → finding mapping.
  */
 export function leadToCandidateFinding(
   finding: Finding,
   bugClass: string,
   seedRef: string,
+  candidatePath?: string,
 ): Record<string, unknown> {
   const evidence =
     (finding.evidence as { request?: string; response?: string; analysis?: string } | undefined) ??
@@ -54,6 +61,12 @@ export function leadToCandidateFinding(
     `Variant-hunt LEAD (bug class: ${bugClass}; seed: ${seedRef}). ` +
     `Surfaced by the recency hunt and gated by the adversarial skeptic — a HYPOTHESIS, ` +
     `not a confirmed bug. Verify the real sink + upstream-fix status (novelty) before any disclosure.`;
+
+  // #1215 — stamp deployment context and apply severity cap BEFORE serialising
+  // the finding. The path heuristic is the deterministic floor; the model lens
+  // (deployment-context verify lens) may overlap but never overrides it.
+  if (candidatePath) stampDeploymentContext(finding, candidatePath);
+
   return {
     ...finding,
     // LEADS are never confirmed/sendable: force candidate status so the cloud
@@ -485,8 +498,13 @@ export async function runHunt(opts: {
     let ingested = 0;
     if (sinkCfg) {
       const seedRef = opts.ref ?? opts.seedPath;
+      // #1215 — build a finding-id → candidate-path lookup from the scan records
+      // so leadToCandidateFinding can stamp the deployment context from the path.
+      const pathForId = new Map<string, string>();
+      for (const rec of res.records) pathForId.set(rec.finding.id, rec.candidatePath);
       for (const lead of leads) {
-        await postFinding(leadToCandidateFinding(lead, plan.brief.bugClass, seedRef), sinkCfg);
+        const candidatePath = pathForId.get(lead.id);
+        await postFinding(leadToCandidateFinding(lead, plan.brief.bugClass, seedRef, candidatePath), sinkCfg);
         ingested++;
       }
       log(`[hunt] posted ${ingested} lead(s) to the cloud-sink as candidate findings`);
@@ -521,6 +539,14 @@ export async function runHunt(opts: {
           title: f.title,
           severity: f.severity,
           analysis: f.evidence.analysis ?? "",
+        })),
+        dropped: res.dropped.map((d) => ({
+          title: d.finding.title,
+          severity: d.finding.severity,
+          candidatePath: d.candidatePath,
+          lensId: d.lensId,
+          dropReason: d.dropReason,
+          detail: d.detail,
         })),
         invariant: invariantCtx
           ? {

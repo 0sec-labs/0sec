@@ -48,6 +48,7 @@ function mkResult(overrides: Partial<HuntScanResult> = {}): HuntScanResult {
     findings: [],
     confirmed: [],
     duplicates: [],
+    dropped: [],
     scanned: 0,
     finderCompleted: 0,
     finderTimedOut: 0,
