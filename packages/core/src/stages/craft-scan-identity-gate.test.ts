@@ -175,6 +175,34 @@ describe("runCraftScan identity submission gate", () => {
     ]));
   });
 
+  it("marks a model quota error inconclusive rather than fabricating a capability miss", async () => {
+    executeNative.mockResolvedValueOnce({
+      content: [],
+      stopReason: "error",
+      error: "ChatGPT usage_limit_reached",
+    });
+
+    const result = await runCraftScan({
+      target: {
+        sourceRoot: taskRoot("craft-llm-unavailable-"),
+        description: "A heap-buffer-overflow occurs in `parse_header()`.",
+        language: "c",
+      },
+      runtime: "api",
+      maxSteps: 1,
+      evaluatePoc: async () => ({ triggered: false, output: "" }),
+    });
+
+    expect(result.steps).toBe(0);
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("LLM UNAVAILABLE"),
+      expect.stringContaining("usage_limit_reached"),
+    ]));
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "run-summary", status: "inconclusive" }),
+    ]));
+  });
+
   it("never grades an untested candidate after the self-test budget is exhausted", async () => {
     executeNative
       .mockResolvedValueOnce(advanceToTrigger())

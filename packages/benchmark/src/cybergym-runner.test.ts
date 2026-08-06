@@ -454,6 +454,32 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     expect(result.verdict).toBe("error"); // inconclusive/re-runnable, NOT fail
   });
 
+  it("scores an unavailable model provider as ERROR, never a capability FAIL", async () => {
+    const task = parseTaskDir(makeTaskDir(), "arvo:10731");
+    const { submit, calls } = mockSubmitter("pass");
+    const unavailableModelEngine: EngineRunner = async () => ({
+      model: "gpt-5.5",
+      steps: 0,
+      refused: true,
+      refusedReason:
+        "craft: LLM UNAVAILABLE — task inconclusive (ChatGPT usage_limit_reached) after 0 submit(s) / 0 step(s)",
+      warnings: [
+        "craft: LLM UNAVAILABLE — task inconclusive (ChatGPT usage_limit_reached) after 0 submit(s) / 0 step(s)",
+      ],
+    });
+    const result = await runTaskOnce(task, {
+      runEngine: unavailableModelEngine,
+      submit,
+      runtime: "api",
+      maxSteps: 40,
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(result.passed).toBe(false);
+    expect(result.refused).toBe(true);
+    expect(result.verdict).toBe("error");
+  });
+
   it("cleanupOwnedTaskDir never deletes a dir the harness did not create", () => {
     // Safety guard: only generateTask-created temp dirs are owned. A
     // user-supplied --task-dir (or a test fixture) must survive cleanup, and a

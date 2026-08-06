@@ -772,6 +772,7 @@ ${g.err}`;
   ];
   const reachabilityStepCap = 4;
   let steps = 0, noops = 0, model = opts.model ?? "auto";
+  let llmUnavailable: string | undefined;
   let inputTokens = 0, outputTokens = 0;
   const loopStart = Date.now();
   // Keep one runtime for the trajectory so provider-owned state and retained
@@ -782,6 +783,10 @@ ${g.err}`;
     timeout: opts.llmTimeoutMs ?? 240_000,
     serverCompactionTokens: LOOP_SERVER_COMPACTION_TOKENS,
   });
+  const stopForLlmError = (reason: unknown) => {
+    llmUnavailable = clip(String(reason), 300);
+    warnings.push(`craft: LLM UNAVAILABLE at step ${steps}: ${llmUnavailable}`);
+  };
   for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable; steps++) {
     currentStep = steps;
     if (stages.current() === "reachability" && steps >= reachabilityStepCap) {
@@ -823,9 +828,12 @@ ${g.err}`;
         activeTools as never,
         { onThinking() {}, onDelta() {}, onText() {}, onUsage(u: { inputTokens?: number; outputTokens?: number }) { inputTokens += u?.inputTokens ?? 0; outputTokens += u?.outputTokens ?? 0; } } as never,
       );
-    } catch (e) { warnings.push(`craft: LLM exception at step ${steps}: ${String(e).slice(0, 160)}`); break; }
+    } catch (e) {
+      stopForLlmError(e);
+      break;
+    }
     if (res.error) {
-      warnings.push(`craft: LLM error at step ${steps}: ${String(res.error).slice(0, 300)}`);
+      stopForLlmError(res.error);
       break;
     }
     const content = res.content ?? [];
@@ -919,7 +927,7 @@ ${g.err}`;
 
   // Cross-task memory: record this task as an episode (the consolidation loop
   // later promotes recurring patterns into reusable recipes/principles).
-  if (opts.memory && !oracleUnreachable) {
+  if (opts.memory && !oracleUnreachable && llmUnavailable === undefined) {
     const desc = opts.target.description.replace(/\s+/g, " ").slice(0, 200);
     opts.memory.remember({
       level: "episodic",
@@ -936,12 +944,15 @@ ${g.err}`;
     `first-self-test-step=${firstTestStep ?? "none"}; graded-submissions=${submits}`;
 
   if (!passed) {
+    const inconclusive = oracleUnreachable || llmUnavailable !== undefined;
     warnings.push(oracleUnreachable
       ? `craft: ORACLE UNREACHABLE — task inconclusive (grader never ran; NOT a capability fail) after ${submits} submit(s) / ${steps} step(s)`
-      : `craft: no confirmed PoC after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`);
+      : llmUnavailable !== undefined
+        ? `craft: LLM UNAVAILABLE — task inconclusive (${llmUnavailable}) after ${submits} submit(s) / ${steps} step(s)`
+        : `craft: no confirmed PoC after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`);
     evidence.record({
       kind: "run-summary",
-      status: oracleUnreachable ? "inconclusive" : "refuted",
+      status: inconclusive ? "inconclusive" : "refuted",
       summary: receiptSummary,
       stage: stages.current(),
     });
