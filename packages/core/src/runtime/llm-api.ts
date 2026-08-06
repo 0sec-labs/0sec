@@ -486,6 +486,11 @@ const FREE_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 const DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
+/** Alibaba Token Plan serves this exact DeepSeek revision id under the qwen
+ *  provider (credit-billed; see the worker's QWEN_TOKEN_PLAN_MODEL_IDS). The
+ *  id must never fall through to direct DeepSeek — their balances are
+ *  separate meters. */
+const QWEN_TOKEN_PLAN_DEEPSEEK_MODEL = "deepseek-v4-flash-0731";
 
 type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen";
 type WireApi = "chat_completions" | "responses";
@@ -1046,6 +1051,10 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
   // OpenRouter's vendor-qualified route.
   if (m === DEEPSEEK_DEFAULT_MODEL) {
     return process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined;
+  }
+  // Alibaba Token Plan DeepSeek revision: qwen-served, exact id.
+  if (m === QWEN_TOKEN_PLAN_DEEPSEEK_MODEL) {
+    return process.env.QWEN_API_KEY ? "qwen" : undefined;
   }
   if (m.startsWith("openrouter/")) return process.env.OPENROUTER_API_KEY ? "openrouter" : undefined;
   // GLM / Z.ai.
