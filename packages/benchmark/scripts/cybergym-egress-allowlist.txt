@@ -1,5 +1,17 @@
 # CyberGym agent egress. Keep this narrower than CyberGym's default list.
 # The task submission server and oracle bridge stay on the internal network and
 # are reached through NO_PROXY, never this proxy.
+#
+# ChatGPT Codex backend (subscription auth + responses).
 auth.openai.com
 chatgpt.com
+# Flat-rate / Token Plan subscription providers (API-key auth, model-routed).
+api.kimi.com
+token-plan.ap-southeast-1.maas.aliyuncs.com
+api.z.ai
+# Direct metered providers available to the benchmark container.
+api.anthropic.com
+api.openai.com
+api.deepseek.com
+# Azure OpenAI deployment host used by the operator account.
+zerosec-foundry-swc.cognitiveservices.azure.com
