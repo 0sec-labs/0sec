@@ -432,7 +432,10 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     try {
       v = await opts.testPoc(g.out);
     } catch (e) {
-      evidence.record({ kind: "self-test", status: "inconclusive", summary: "self-test executor threw before a verdict", step, candidateSha256: sha256 });
+      // Persist the bounded failure reason — a run whose self-test budget was
+      // eaten by executor faults is undiagnosable from the receipt otherwise.
+      const reason = clip(String(e).replace(/\s+/g, " ").trim(), 200);
+      evidence.record({ kind: "self-test", status: "inconclusive", summary: `self-test executor threw before a verdict: ${reason}`, step, candidateSha256: sha256 });
       return `self-test executor error: ${String(e).slice(0, 400)}`;
     }
     if (v.oracleError) {

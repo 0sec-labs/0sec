@@ -57,8 +57,14 @@ describe("model_reasoning_effort scoping in ~/.codex/config.toml", () => {
       "ANTHROPIC_API_KEY",
       "Z_AI_API_KEY",
       "KIMI_API_KEY",
+      "QWEN_API_KEY",
       "OPENAI_API_KEY",
       "OPENROUTER_API_KEY",
+      // DeepSeek is checked BEFORE azure in the env-priority chain; a shell
+      // that exports it (this dev host does) silently pre-empts azure and
+      // leaves reasoningEffort undefined. The test must be hermetic.
+      "DEEPSEEK_API_KEY",
+      "DEEPSEEK_BASE_URL",
       "AZURE_OPENAI_WIRE_API",
     ]) {
       vi.stubEnv(key, undefined);

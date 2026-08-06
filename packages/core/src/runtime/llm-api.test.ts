@@ -602,6 +602,46 @@ describe("LlmApiRuntime response parsing", () => {
     expect(block.input).toEqual({ prompt: "test" });
   });
 
+  it("emits onUsage for non-streaming wires (chat-completions AND anthropic)", async () => {
+    // Regression: usage previously reached only `result.usage`, so callback-
+    // only consumers (craft-scan) recorded 0 tokens on every non-streaming
+    // provider (kimi/z-ai/anthropic/qwen/openai/azure-chat).
+    const chatRt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test" });
+    (chatRt as any).provider = "qwen";
+    (chatRt as any).wireApi = "chat_completions";
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 30, completion_tokens: 10 },
+      }),
+    } as Response)));
+    const chatUsage: Array<{ inputTokens: number; outputTokens: number }> = [];
+    await chatRt.executeNative("sys", [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ], [], { onUsage: (u) => chatUsage.push(u) } as never);
+    expect(chatUsage).toEqual([{ inputTokens: 30, outputTokens: 10 }]);
+
+    const anthropicRt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test" });
+    (anthropicRt as any).provider = "kimi";
+    (anthropicRt as any).wireApi = "chat_completions";
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({
+        content: [{ type: "text", text: "done" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 41, output_tokens: 9 },
+      }),
+    } as Response)));
+    const anthropicUsage: Array<{ inputTokens: number; outputTokens: number }> = [];
+    await anthropicRt.executeNative("sys", [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ], [], { onUsage: (u) => anthropicUsage.push(u) } as never);
+    expect(anthropicUsage).toHaveLength(1);
+    expect(anthropicUsage[0]?.inputTokens).toBe(41);
+    expect(anthropicUsage[0]?.outputTokens).toBe(9);
+  });
+
   it("returns error result on API failure", async () => {
     const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test" });
     (rt as any).provider = "openai";
@@ -796,9 +836,19 @@ describe.skipIf(!hasAzureKey)("Azure Responses API live integration", () => {
     vi.restoreAllMocks();
     // Restore Azure key (provider detection tests delete it)
     process.env.AZURE_OPENAI_API_KEY = realAzureKey!;
-    // Ensure Azure wins priority (clear higher-priority keys)
+    // Ensure Azure wins priority deterministically: clear every higher-
+    // priority credential AND the operator's Codex login (auth file at
+    // ~/.codex/auth.json), which otherwise pre-empts azure on dev hosts.
     delete process.env.OPENROUTER_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.KIMI_API_KEY;
+    delete process.env.QWEN_API_KEY;
+    delete process.env.Z_AI_API_KEY;
+    delete process.env.PWNKIT_CHATGPT_ACCESS_TOKEN;
+    delete process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
+    process.env.PWNKIT_CHATGPT_AUTH_FILE = "/tmp/pwnkit-azure-live-test-no-auth.json";
   });
 
   it("completes a tool call and continuation round-trip", async () => {
