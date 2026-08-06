@@ -1557,6 +1557,8 @@ export interface ReviewConfig {
   /** Operator hypothesis to seed the agent with a specific research direction.
    *  Inspired by Xint Code's operator prompt that found CVE-2026-31431. */
   hypothesis?: string;
+  /** PR/MR discussion thread (untrusted) to review against. */
+  conversation?: string;
   /**
    * Known bug(s) to anchor the review on for variant analysis. When provided,
    * the linux-kernel review reframes from open-ended discovery to hunting
