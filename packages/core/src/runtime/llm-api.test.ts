@@ -33,6 +33,8 @@ describe("LlmApiRuntime provider detection", () => {
     // a credential into provider-detection tests otherwise.
     delete process.env.KIMI_API_KEY;
     delete process.env.KIMI_BASE_URL;
+    delete process.env.QWEN_API_KEY;
+    delete process.env.QWEN_BASE_URL;
     delete process.env.Z_AI_API_KEY;
     delete process.env.Z_AI_BASE_URL;
     delete process.env.PWNKIT_MODEL;
@@ -155,6 +157,38 @@ describe("LlmApiRuntime provider detection", () => {
     process.env.PWNKIT_MODEL = "gpt-4-turbo";
     const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
     expect((rt as any).model).toBe("gpt-4-turbo");
+  });
+
+  it("selects Qwen via QWEN_API_KEY with Token Plan defaults", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.QWEN_API_KEY = "sk-sp-test";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("qwen");
+    expect((rt as any).model).toBe("qwen3.8-max");
+    expect((rt as any).baseUrl).toBe(
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+    );
+    // OpenAI-compatible wire: Bearer auth + /chat/completions, NOT the
+    // Anthropic x-api-key + /v1/messages path z-ai/kimi ride.
+    const headers = (rt as any).buildHeaders();
+    expect(headers["Authorization"]).toBe("Bearer sk-sp-test");
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect((rt as any).buildUrl()).toBe(
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+    );
+  });
+
+  it("routes qwen-prefixed model picks to the qwen provider, honoring QWEN_BASE_URL", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.QWEN_API_KEY = "sk-sp-test";
+    process.env.QWEN_BASE_URL = "https://qwen.example/v1";
+    process.env.PWNKIT_MODEL = "qwen3.7-max";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("qwen");
+    expect((rt as any).model).toBe("qwen3.7-max");
+    expect((rt as any).baseUrl).toBe("https://qwen.example/v1");
   });
 });
 
