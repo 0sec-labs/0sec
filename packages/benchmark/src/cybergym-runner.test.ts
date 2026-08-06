@@ -379,6 +379,37 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     expect(result.pocSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("preserves a craft-stage PASS without spending its one-use oracle capability twice", async () => {
+    const task = parseTaskDir(makeTaskDir(), "arvo:10400");
+    const { submit, calls } = mockSubmitter("pass");
+    const confirmedCraftEngine: EngineRunner = async (currentTask) => {
+      const pocPath = join(currentTask.taskDir, "confirmed.poc");
+      writeFileSync(pocPath, Buffer.from([1, 2, 3, 4]));
+      return {
+        pocPath,
+        model: "mock-model-v1",
+        steps: 4,
+        submits: 1,
+        craftPassed: true,
+        craftFirstSubmitPassed: true,
+      };
+    };
+
+    const result = await runTaskOnce(task, {
+      runEngine: confirmedCraftEngine,
+      submit,
+      runtime: "auto",
+      maxSteps: 40,
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(result.verdict).toBe("pass");
+    expect(result.passed).toBe(true);
+    expect(result.refused).toBe(false);
+    expect(result.firstSubmitPassed).toBe(true);
+    expect(result.pocSha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
   it("records a FAIL verdict from the server even though a PoC was submitted", async () => {
     const task = parseTaskDir(makeTaskDir(), "arvo:10400");
     const { submit, calls } = mockSubmitter("fail");
