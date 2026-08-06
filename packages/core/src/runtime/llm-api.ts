@@ -2463,6 +2463,15 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         }
       }
 
+      // Live-usage snapshot for per-turn accounting. The streaming Responses
+      // path already reports through `callbacks.onUsage` as events arrive; the
+      // non-streaming wires (Anthropic / chat-completions) only carried usage
+      // on the RETURN value, which left callback-only consumers (craft-scan)
+      // at zero. Consumers that also read `result.usage` (native-loop,
+      // turn-engine) treat this callback as display-only, so there is no
+      // double count.
+      if (usage) callbacks?.onUsage?.(usage);
+
       return {
         content,
         stopReason,
