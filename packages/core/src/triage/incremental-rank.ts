@@ -19,6 +19,10 @@
  * @module
  */
 
+import {
+  classifyRefusal,
+  dumpModelOutput,
+} from "./llm-output-guard.js";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "../runtime/types.js";
 
 // ── Types ──
@@ -73,6 +77,12 @@ export interface RankIncrementalOptions {
   maxRetries?: number;
   /** Extra rubric text appended to the system prompt. */
   rubric?: string;
+  /** Enable writing raw model output as JSON debug artifacts on parse/validation failure. Default false. */
+  enableDump?: boolean;
+  /** Enable provider safety-refusal detection. When true, if the model response contains a refusal pattern,
+   *  remaining retries are skipped and the function returns targets appended after anchors in input order
+   *  with reasoning: 'provider-refused'. Default false. */
+  refusalGuard?: boolean;
 }
 
 // ── Prompt Builder ──
@@ -298,6 +308,10 @@ export interface ApplyResult {
    * but the anchor ORDER is immutable — this is intentional.
    */
   renumberedAnchors: RankedAnchor[];
+  /** Provider refusal events recorded when refusalGuard is enabled, keyed by pattern label and attempt number. */
+  refusals?: Array<{ pattern: string; attempt: number }>;
+  /** Paths of debug artifact files written when enableDump is enabled. */
+  dumpedArtifacts?: string[];
 }
 
 /**
@@ -395,6 +409,9 @@ export async function rankIncremental(
   const targetIds = new Set(targets.map((t) => t.id));
 
   let lastError: string | null = null;
+  const allRefusals: Array<{ pattern: string; attempt: number }> = [];
+  const allDumped: string[] = [];
+  let refused = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const { systemPrompt, userPrompt } = buildRankPrompt(anchors, targets, {
@@ -422,6 +439,16 @@ Correct the output and try again.`
     );
     const responseText = textBlocks.map((b) => b.text).join("\n").trim();
 
+    // ── Refusal guard ──
+    if (opts?.refusalGuard) {
+      const refusal = classifyRefusal(responseText);
+      if (refusal.refused) {
+        allRefusals.push({ pattern: refusal.pattern!, attempt });
+        refused = true;
+        break;
+      }
+    }
+
     // Strip markdown fences if present
     const jsonText = responseText.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
 
@@ -430,6 +457,10 @@ Correct the output and try again.`
       payload = JSON.parse(jsonText) as RankPayload;
     } catch {
       lastError = `Failed to parse LLM response as JSON — raw text: "${responseText.slice(0, 500)}"`;
+      if (opts?.enableDump) {
+        const p = dumpModelOutput({ raw: responseText, stage: "rank", attempt, scanId: undefined });
+        if (p) allDumped.push(p);
+      }
       continue;
     }
 
@@ -437,11 +468,18 @@ Correct the output and try again.`
       validateRankPayload(payload, anchors, targetIds);
     } catch (err) {
       lastError = err instanceof ValidationError ? err.message : String(err);
+      if (opts?.enableDump) {
+        const p = dumpModelOutput({ raw: responseText, stage: "rank", attempt, scanId: undefined });
+        if (p) allDumped.push(p);
+      }
       continue;
     }
 
-    // Success — apply and return
-    return applyRankUpdates(anchors, targets, payload);
+    // Success — apply and return with accumulated metadata
+    const rankResult = applyRankUpdates(anchors, targets, payload);
+    if (allRefusals.length > 0) (rankResult as ApplyResult).refusals = allRefusals;
+    if (allDumped.length > 0) (rankResult as ApplyResult).dumpedArtifacts = allDumped;
+    return rankResult;
   }
 
   // FAIL-SOFT: append targets after anchors in input order
@@ -450,11 +488,18 @@ Correct the output and try again.`
   const fallbackUpdates: RankedResult[] = targets.map((t) => ({
     id: t.id,
     rank: nextRank++,
+    reasoning: refused ? "provider-refused" : undefined,
   }));
   const fallbackRenumbered: RankedAnchor[] = fallbackAnchorEntries.map((a, i) => ({
     id: a.id,
     rank: i + 1,
   }));
 
-  return { updates: fallbackUpdates, renumberedAnchors: fallbackRenumbered };
+  const fallbackResult: ApplyResult = {
+    updates: fallbackUpdates,
+    renumberedAnchors: fallbackRenumbered,
+  };
+  if (allRefusals.length > 0) fallbackResult.refusals = allRefusals;
+  if (allDumped.length > 0) fallbackResult.dumpedArtifacts = allDumped;
+  return fallbackResult;
 }
