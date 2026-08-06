@@ -150,6 +150,8 @@ export interface RunOptions {
   subsystem?: string;
   /** Operator hypothesis for directed research. */
   hypothesis?: string;
+  /** PR/MR discussion thread (untrusted) to review against. */
+  conversation?: string;
   /**
    * Pre-computed candidate vulnerable spans, parsed from an external producer
    * (today: GemmaForge, schema `gemmaforge.leads/v1`). Only consumed when
@@ -536,6 +538,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
           reviewPackageEcosystem: opts.reviewPackageEcosystem,
           subsystem: opts.subsystem,
           hypothesis: opts.hypothesis,
+          conversation: opts.conversation,
           // External seeds (e.g. `gemmaforge scan` leads) — the pipeline
           // prepends them to the agent's worklist so they are surfaced
           // first in the prompt. `seedOnly` skips semgrep entirely when
