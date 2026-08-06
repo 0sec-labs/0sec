@@ -68,6 +68,19 @@ export class ScanCostLedger {
       model,
     );
   }
+  /** Exact cumulative spend derived from the per-model buckets. */
+  totalCostUsd(): number {
+    return this.costBreakdown()?.costUsd ?? 0;
+  }
+
+  /** Cumulative usage for the final cloud cost_update event. */
+  tokenUsage(): TokenUsageForPricing {
+    return {
+      inputTokens: this.inputTokens,
+      outputTokens: this.outputTokens,
+      cachedInputTokens: this.cachedInputTokens,
+    };
+  }
 
   /**
    * The model every contributing session used, when they all agree (and it

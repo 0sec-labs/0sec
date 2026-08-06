@@ -1152,7 +1152,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   const scanCostCeilingTripped = (): boolean =>
     opts.costCeilingUsd !== undefined &&
     opts.costCeilingUsd > 0 &&
-    costLedger.costUsd(resolvedModel ?? opts.model) >= opts.costCeilingUsd;
+    costLedger.totalCostUsd() >= opts.costCeilingUsd;
 
   let phaseIndex = 0;
   let openPhase:
@@ -2068,7 +2068,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         // so the run lands cost_exceeded rather than a clean pass.
         warnings.push({
           stage: "verify",
-          message: `Verification skipped: scan cost ceiling of $${opts.costCeilingUsd} reached during research ($${costLedger.costUsd(resolvedModel ?? opts.model).toFixed(4)} spent). Findings left unverified.`,
+          message: `Verification skipped: scan cost ceiling of $${opts.costCeilingUsd} reached during research ($${costLedger.totalCostUsd().toFixed(4)} spent). Findings left unverified.`,
         });
         findings = findings.map((finding) => {
           const decision = isDisclosureWorthy(finding, "inconclusive");

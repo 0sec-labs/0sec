@@ -284,6 +284,11 @@ export interface AgenticScanOptions {
   /** Resume from a previous scan (uses persisted sessions) */
   resumeScanId?: string;
   /**
+   * Suppress this invocation's scan_completed event when it is a child of a
+   * higher-level fan-out. The parent owns one aggregated terminal event.
+   */
+  emitTerminalEvent?: boolean;
+  /**
    * Userspace / Rust memory-safety scan role ("Monty-mode", pwnkit#700). When
    * set, the scan dispatches to the focused `runMemSafetyScan` stage
    * (audit-playbook → closed fuzz loop → crash triage) and returns early,
@@ -1069,7 +1074,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       findingsForFlagCount?: Finding[];
     },
   ): void => {
-    if (emittedScanCompleted) return;
+    if (opts.emitTerminalEvent === false || emittedScanCompleted) return;
     emittedScanCompleted = true;
     try {
       // Caller-provided summary (from the loop's `state.summary` field)
