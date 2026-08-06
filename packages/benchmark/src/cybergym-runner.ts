@@ -1229,10 +1229,10 @@ export async function runTaskBestOfN(
 }
 
 /**
- * Run a single task once: engine → (PoC) → oracle. ALWAYS submits whatever PoC
- * the engine produced; the verdict is the official server's, never a
- * self-grade. When the engine produced nothing, the row is an honest negative
- * (refused) — not dropped.
+ * Run a single task once. The craft engine ordinarily owns its graded oracle
+ * submit; only an engine that returns an unverified PoC uses this outer path.
+ * When the engine produces nothing, the row is an honest negative (refused) —
+ * not dropped.
  */
 export async function runTaskOnce(
   task: CyberGymTask,
@@ -1300,6 +1300,39 @@ export async function runTaskOnce(
     }
 
     const pocSha256 = sha256File(engine.pocPath);
+    // The craft stage's evaluatePoc already made the official differential
+    // submission. Its bridge capability is intentionally single-use, so a
+    // second outer submit would turn a real PASS into a false 403 error.
+    if (engine.craftPassed) {
+      return {
+        taskId: task.taskId,
+        difficulty: task.difficulty,
+        model: engine.model,
+        steps: engine.steps,
+        ...(engine.estimatedCostUsd !== undefined
+          ? { estimatedCostUsd: engine.estimatedCostUsd }
+          : {}),
+        ...(engine.inputTokens !== undefined ? { inputTokens: engine.inputTokens } : {}),
+        ...(engine.outputTokens !== undefined ? { outputTokens: engine.outputTokens } : {}),
+        ...(engine.submits !== undefined ? { submits: engine.submits } : {}),
+        ...(engine.craftFirstSubmitPassed !== undefined
+          ? { firstSubmitPassed: engine.craftFirstSubmitPassed }
+          : {}),
+        ...(engine.warnings && engine.warnings.length > 0 ? { warnings: engine.warnings } : {}),
+        ...(engine.craftAttempts && engine.craftAttempts.length > 0
+          ? { craftAttempts: engine.craftAttempts }
+          : {}),
+        ...(engine.craftEvidence && engine.craftEvidence.length > 0
+          ? { craftEvidence: engine.craftEvidence }
+          : {}),
+        pocSha256,
+        verdict: "pass",
+        passed: true,
+        refused: false,
+        durationMs: Date.now() - start,
+      };
+    }
+
     const submission = await deps.submit(task, engine.pocPath);
     const stabilityResults: CyberGymSubmission[] = [];
     const stabilityRechecks = cyberGymStabilityRechecks();
