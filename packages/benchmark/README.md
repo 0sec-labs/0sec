@@ -506,6 +506,20 @@ hardcoded (pwnkit#132):
 through that helper. Never inline a key — a committed literal stays in git
 history forever.
 
+### Isolated subscription runner
+
+`scripts/run-cybergym-task.sh` gives the container's trusted Node runner a
+task-scoped provider credential and the unpacked source tree. It runs as root
+only for those reads. Model-written Python generators run separately as UID
+`10002`, with credential-like environment variables removed; their output must
+be a single regular, unlinked file before privileged code uses it. The parent
+retains only `CHOWN`, `SETUID`, and `SETGID` to make that user transition and
+recover its result.
+
+A provider auth, quota, or transport failure is emitted as `LLM UNAVAILABLE`
+and scored `error` (inconclusive), never `fail`. Do not include those rows in a
+pass@1 denominator.
+
 The full fair-run protocol (firewall, one-container-per-task, relaunch
 policy, Wilson-CI reporting) lives in the
 [runbook](../../../docs/operations/runbooks/cybergym-harness.md) and
