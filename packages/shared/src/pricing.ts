@@ -45,6 +45,13 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   "k3": { input: 3.0, output: 15.0, cachedInput: 0.30 },
   "k3[1m]": { input: 3.0, output: 15.0, cachedInput: 0.30 },
   "kimi-for-coding": { input: 3.0, output: 15.0, cachedInput: 0.30 },
+  // Alibaba Model Studio Qwen (Token Plan) — list rates mirroring the 0cloud
+  // pricing source; actual spend is credit-billed at the operator's
+  // subscription discount, so reconcile to the Model Studio invoice. Only the
+  // entries the 0cloud rate source carries are pinned; the rest of the
+  // catalog deliberately warns + inherits `default` until they are.
+  "qwen3.8-max": { input: 2.00, output: 6.00 },
+  "qwen3.7-max": { input: 2.50, output: 7.50 },
   // Azure Foundry deployment names (verified 2026-07-25) — exact aliases
   // forwarded by the engine. DeepSeek/gpt-oss rates use the Azure-specific `azure_ai/*` LiteLLM feed
   // entries (not the cheaper direct-provider rates). Kimi is Microsoft's
@@ -166,6 +173,7 @@ export function modelProvider(model?: string): string {
   if (stripped.startsWith("mistral-")) return "mistral";
   if (stripped.startsWith("glm-")) return "z-ai";
   if (stripped.startsWith("k3") || stripped.startsWith("kimi")) return "kimi";
+  if (stripped.startsWith("qwen")) return "qwen";
   return "unknown";
 }
 
