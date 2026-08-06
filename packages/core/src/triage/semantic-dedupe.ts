@@ -21,6 +21,10 @@
  * Reimplemented fresh — no source text or prompt wording copied.
  */
 
+import {
+  classifyRefusal,
+  dumpModelOutput,
+} from "./llm-output-guard.js";
 import type {
   NativeRuntime,
   NativeMessage,
@@ -59,6 +63,12 @@ export interface DedupeOptions {
   maxRetries?: number;
   /** Scan identifier for building stable cluster ids. */
   scanId?: string;
+  /** Enable writing raw model output as JSON debug artifacts on parse/validation failure. Default false. */
+  enableDump?: boolean;
+  /** Enable provider safety-refusal detection. When true, if the model response contains a refusal pattern,
+   *  remaining retries are skipped and the batch falls back to singleton mappings with reason 'provider-refused'.
+   *  Default false. */
+  refusalGuard?: boolean;
 }
 
 /** Per-finding dedupe mapping. */
@@ -83,6 +93,10 @@ export interface DedupeResult {
   retries: number;
   /** Per-canonical cluster reason strings. */
   clusterReasons: Record<string, string>;
+  /** Provider refusal events recorded when refusalGuard is enabled, keyed by pattern label and attempt number. */
+  refusals?: Array<{ pattern: string; attempt: number }>;
+  /** Paths of debug artifact files written when enableDump is enabled. */
+  dumpedArtifacts?: string[];
 }
 
 /** Raw LLM output shape for a dedupe response. */
@@ -155,6 +169,7 @@ export function buildDedupePrompt(
     "Rules:",
     "- Cluster findings only when ONE fix would address the same root cause AND the same location or entrypoint.",
     "- NEVER cluster findings merely because they share the same vulnerability class (e.g., two different UAFs in different functions).",
+    "- DELIBERATE FALSIFICATION before merging: actively look for evidence two findings are DISTINCT — different root cause, different fix, different trigger path, different sink — and when uncertain, prefer keeping them separate (false merge is worse than false split: it hides a real vulnerability).",
     "- Existing anchors (previously-canonicalized findings) are immutable — they cannot be merged, demoted, or replaced.",
     "- Every target finding must appear exactly once across all clusters, including as singletons.",
     "- A singleton is a finding that has no semantic duplicate in the input.",
@@ -401,6 +416,8 @@ export async function semanticDedupe(
 
   let modelCalls = 0;
   let totalRetries = 0;
+  const allRefusals: Array<{ pattern: string; attempt: number }> = [];
+  const allDumped: string[] = [];
   let currentAnchorIds = new Set(anchorIdSet);
   let currentAnchors = [...srcAnchors];
   const currentAnchorMap = new Map(srcAnchors.map((a) => [a.id, a]));
@@ -412,6 +429,7 @@ export async function semanticDedupe(
 
     let lastError: string | undefined;
     let success = false;
+    let batchRefused = false;
     let clusters: DedupePayload["clusters"] = [];
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -452,12 +470,27 @@ export async function semanticDedupe(
         continue;
       }
 
+      // ── Refusal guard ──
+      if (opts.refusalGuard) {
+        const refusal = classifyRefusal(responseText);
+        if (refusal.refused) {
+          allRefusals.push({ pattern: refusal.pattern!, attempt });
+          lastError = "provider-refused";
+          batchRefused = true;
+          break;
+        }
+      }
+
       // Parse
       let payload: DedupePayload;
       try {
         payload = parseDedupeResponse(responseText);
       } catch (e) {
         lastError = `Parse error: ${e instanceof Error ? e.message : String(e)}`;
+        if (opts.enableDump) {
+          const p = dumpModelOutput({ raw: responseText, stage: "dedupe", attempt, scanId });
+          if (p) allDumped.push(p);
+        }
         continue;
       }
 
@@ -469,6 +502,10 @@ export async function semanticDedupe(
         break;
       } catch (e) {
         lastError = `Validation error: ${e instanceof Error ? e.message : String(e)}`;
+        if (opts.enableDump) {
+          const p = dumpModelOutput({ raw: responseText, stage: "dedupe", attempt, scanId });
+          if (p) allDumped.push(p);
+        }
         continue;
       }
     }
@@ -476,6 +513,15 @@ export async function semanticDedupe(
     if (!success) {
       // Fail-soft: every remaining target becomes its own canonical singleton
       const { mappings, clusterReasons } = buildFallbackMappings(batch, scanId);
+      // Override reason when refusal guard caused the skip
+      if (batchRefused) {
+        for (const id of Object.keys(mappings)) {
+          mappings[id].reason = "provider-refused";
+        }
+        for (const id of Object.keys(clusterReasons)) {
+          clusterReasons[id] = "provider-refused";
+        }
+      }
       Object.assign(allMappings, mappings);
       Object.assign(allClusterReasons, clusterReasons);
 
@@ -514,10 +560,13 @@ export async function semanticDedupe(
     }
   }
 
-  return {
+  const result: DedupeResult = {
     mappings: allMappings,
     modelCalls,
     retries: totalRetries,
     clusterReasons: allClusterReasons,
   };
+  if (allRefusals.length > 0) result.refusals = allRefusals;
+  if (allDumped.length > 0) result.dumpedArtifacts = allDumped;
+  return result;
 }
