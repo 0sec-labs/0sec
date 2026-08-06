@@ -51,6 +51,7 @@ describe("HuntResearchAdapter", () => {
           scanned: 3,
         },
       }],
+      dropped: [],
       scanned: 2,
       finderCompleted: 2,
       finderTimedOut: 0,

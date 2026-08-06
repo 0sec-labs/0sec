@@ -236,7 +236,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
         ],
         plan: { model: {} as never, violations: [], brief: {} as never, candidates: [{ path: "net/nfc/llcp_commands.c", hint: "h" }] },
         hunt: {
-          findings: [finding], confirmed: [finding], duplicates: [], scanned: 1,
+          findings: [finding], confirmed: [finding], duplicates: [], dropped: [], scanned: 1,
           finderCompleted: 1, finderTimedOut: 0, finderErrored: 0, warnings: [],
           records: [{ candidatePath: "net/nfc/llcp_commands.c", attempt: 0, finding, skepticConfirmed: true, skepticReason: "real unlocked access", duplicate: false }],
         },
@@ -294,7 +294,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
         model: { modelVersion: 1, subsystem: input.subsystem, subsystemFiles: input.subsystemFiles, objects: [], builtAt: "t" },
         modelPath: input.modelPath, modelLoaded: false, violations: [],
         plan: { model: {} as never, violations: [], brief: {} as never, candidates: [] },
-        hunt: { findings: [], confirmed: [], duplicates: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
+        hunt: { findings: [], confirmed: [], duplicates: [], dropped: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
       };
     };
     const report = await runRecencyHunt({
@@ -325,7 +325,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
       model: { modelVersion: 1, subsystem: input.subsystem, subsystemFiles: input.subsystemFiles, objects: [], builtAt: "t" },
       modelPath: input.modelPath, modelLoaded: false, violations: [],
       plan: { model: {} as never, violations: [], brief: {} as never, candidates: [] },
-      hunt: { findings: [], confirmed: [], duplicates: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
+      hunt: { findings: [], confirmed: [], duplicates: [], dropped: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
     });
     const report = await runRecencyHunt({
       tree: "/root/linux-next", hours: 24, runtime: "api", modelDir: "/tmp/rf-models",
@@ -370,7 +370,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
         ],
         plan: { model: {} as never, violations: [], brief: {} as never, candidates: [{ path: "net/nfc/llcp_commands.c", hint: "h" }] },
         hunt: {
-          findings: [finding], confirmed: [finding], duplicates: [], scanned: 1,
+          findings: [finding], confirmed: [finding], duplicates: [], dropped: [], scanned: 1,
           finderCompleted: 1, finderTimedOut: 0, finderErrored: 0, warnings: [],
           records: [{ candidatePath: "net/nfc/llcp_commands.c", attempt: 0, finding, skepticConfirmed: true, skepticReason: "r", duplicate: false }],
         },
@@ -471,7 +471,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
       model: { modelVersion: 1, subsystem: input.subsystem, subsystemFiles: input.subsystemFiles, objects: [], builtAt: "t" },
       modelPath: input.modelPath, modelLoaded: false, violations: [],
       plan: { model: {} as never, violations: [], brief: {} as never, candidates: [] },
-      hunt: { findings: [], confirmed: [], duplicates: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
+      hunt: { findings: [], confirmed: [], duplicates: [], dropped: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
     });
     const dualView = async (input: RecencyDualViewInput): Promise<RecencyDualViewResult> => {
       // The oracle budget was threaded through (dynamicWitness → witnessBudget).
@@ -512,7 +512,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
       model: { modelVersion: 1, subsystem: input.subsystem, subsystemFiles: input.subsystemFiles, objects: [], builtAt: "t" },
       modelPath: input.modelPath, modelLoaded: false, violations: [],
       plan: { model: {} as never, violations: [], brief: {} as never, candidates: [] },
-      hunt: { findings: [], confirmed: [], duplicates: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
+      hunt: { findings: [], confirmed: [], duplicates: [], dropped: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
     });
     let seenDeps: Record<string, unknown> | undefined;
     const dualView = async (input: RecencyDualViewInput): Promise<RecencyDualViewResult> => {
@@ -533,7 +533,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
       model: { modelVersion: 1, subsystem: input.subsystem, subsystemFiles: input.subsystemFiles, objects: [], builtAt: "t" },
       modelPath: input.modelPath, modelLoaded: false, violations: [],
       plan: { model: {} as never, violations: [], brief: {} as never, candidates: [] },
-      hunt: { findings: [], confirmed: [], duplicates: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
+      hunt: { findings: [], confirmed: [], duplicates: [], dropped: [], scanned: 0, finderCompleted: 0, finderTimedOut: 0, finderErrored: 0, warnings: [], records: [] },
     });
     let budgetSeen: unknown = "unset";
     const dualView = async (input: RecencyDualViewInput): Promise<RecencyDualViewResult> => {

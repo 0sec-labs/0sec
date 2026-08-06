@@ -38,7 +38,7 @@ import type { Command } from "commander";
 import { statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
 import type { Finding, RuntimeMode } from "@pwnkit/shared";
-import type { FinderLens, VerifyLens } from "@pwnkit/core";
+import type { FinderLens, ThreatLane, VerifyLens } from "@pwnkit/core";
 // The one non-type value import from the core barrel here: the appsec lens
 // registry loader. The barrel is already eagerly loaded at CLI boot
 // (packages/cli/src/index.ts imports maybeSubscribeCloudEventSink from it), so
@@ -78,6 +78,23 @@ function defaultMaxCandidates(): number {
   if (!raw) return DEFAULT_MAX_CANDIDATES;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_CANDIDATES;
+}
+
+/**
+ * Auto-scale the candidate budget with repo file count when no explicit
+ * --max-candidates or env override is set. A 408-file repo getting the same 8
+ * candidates as a 50-file repo under-sweeps larger targets (observed in the
+ * cloudflare-os campaign). Scale tiers:
+ *   ≤200 files:  8 (base — DEFAULT_MAX_CANDIDATES)
+ *   ≤500 files: 12
+ *   ≤2000 files: 16
+ *   >2000 files: 20
+ */
+function scaleMaxCandidates(fileCount: number): number {
+  if (fileCount > 2000) return 20;
+  if (fileCount > 500) return 16;
+  if (fileCount > 200) return 12;
+  return DEFAULT_MAX_CANDIDATES;
 }
 /** Default finder attempts per (candidate × lens × model). 1 = best-of-1: a pure
  *  cost/latency multiplier that adds LESS value than lens diversity, so the fast
@@ -138,6 +155,11 @@ const genericFinderLenses: FinderLens[] = [
     challengeHint:
       "Hunt SECRETS / CRYPTO misuse only: hardcoded credentials, a weak/predictable RNG used for security, a broken or misused cryptographic primitive (ECB, static IV/nonce, missing MAC verification, non-constant-time compare), or a signature/token check that can be forged or replayed. Cite the exact misuse.",
   },
+  {
+    id: "cross-component",
+    challengeHint:
+      "Hunt CROSS-COMPONENT bugs only: a bug whose exploit path spans two or more subsystems touching DIFFERENT trust boundaries — e.g. an API layer that passes unvalidated user input to a kernel driver, a storage layer whose consistency assumptions are violated by a separate async path, or a UX component whose state bleeds into an auth decision in a sibling module. Trace the path ACROSS the boundary and prove the attacker can reach BOTH sides. Ignore bugs fully contained within a single component.",
+  },
 ];
 
 /**
@@ -159,6 +181,14 @@ export const defaultFinderLenses: FinderLens[] = [...genericFinderLenses, ...loa
  * Generic verify lenses (multi-lens refute quorum) for the default profile
  * fallback. Mirrors the four self-check angles the on-chain profiles use —
  * reachability, completeness, novelty, scope/impact — but domain-agnostic.
+ *
+ * A fifth lens, `deployment-context`, was added in issue #1215 (deep-review
+ * postmortem). It asks the finder to assess whether the vulnerable code is
+ * deployed to production. The mechanical path heuristic (classifyDeploymentContext
+ * in deployment-context.ts) is the DETERMINISTIC FLOOR: if the path says
+ * test_only, the finding cannot be confirmed as prod-reachable even if the
+ * model disagrees. This lens only refutes on STRONG evidence — if uncertain,
+ * it MUST abstain (return an error) rather than falsely refuting.
  */
 export const defaultVerifyLenses: VerifyLens[] = [
   {
@@ -180,6 +210,16 @@ export const defaultVerifyLenses: VerifyLens[] = [
     id: "scope",
     challengeHint:
       "SCOPE / IMPACT: does exploiting this actually corrupt memory, leak secrets, escalate privilege, execute code, or move value / break a security invariant? A cosmetic missing check with no real impact is info/low, not a high-severity finding — refute it as such.",
+  },
+  {
+    id: "deployment-context",
+    challengeHint:
+      "DEPLOYMENT CONTEXT: is this finding's vulnerable code path actually deployed to a production runtime, or is it restricted to development, test, or build-only surfaces? \n\n" +
+      "Your job is to examine the finding's evidence AND your own reading of the candidate source to decide: can an attacker reach this code from a production entry point? \n\n" +
+      "- If the code is in a test file, a dev-only config (seeds, .dev.vars, dev-server), or build scaffolding (webpack, CI, vendored deps) with NO trust-boundary crossing from prod, refute it as dev/test/build-only.\n" +
+      "- If you find a trust-boundary bypass — a prod-routed entry point that reaches this code despite it being in a dev/test/build file — DO NOT refute; the finding is valid per the HackerOne rule.\n" +
+      "- If you are UNCERTAIN (the evidence is ambiguous or you cannot assess the deployment topology), ABSTAIN by returning an error. Never falsely refute a finding with weak evidence.\n" +
+      "PRIORITY: the mechanical path heuristic (file path classification) is the DETERMINISTIC FLOOR and overrides this lens on conflict. If the heuristic already tagged the finding as dev_only/test_only/build_only, the severity cap has already been applied — this lens exists to catch cases the heuristic misses (ambiguous paths, model-extracted evidence, cross-boundary reachability).",
   },
 ];
 
@@ -488,6 +528,9 @@ export interface RunDeepReviewOptions {
   maxCandidates?: number;
   /** Multi-lens quorum override (default: majority of the verify-lens count). */
   quorum?: number;
+  /** Enable the pre-selection threat-model planner pass (trust-boundary lanes).
+   *  When off (default), behavior is unchanged. */
+  useThreatModel?: boolean;
   runtime?: RuntimeMode;
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -516,7 +559,10 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
   } = await import("@pwnkit/core");
   const log = opts.log ?? (() => {});
   const runtime: RuntimeMode = opts.runtime ?? "api";
-  const maxCandidates = opts.maxCandidates ?? defaultMaxCandidates();
+  // Candidate budget: explicit flag > env > auto-scale from file count.
+  const explicitMaxCandidates = opts.maxCandidates;
+  const hasEnvMaxOverride = !!process.env.PWNKIT_DEEP_REVIEW_MAX_CANDIDATES;
+  const baseMaxCandidates = explicitMaxCandidates ?? defaultMaxCandidates();
   // Single-model × 1-attempt by default; both are opt-in deeper knobs (flag > env).
   const models = opts.models ?? defaultModels();
   const attemptsPerCandidate = opts.attemptsPerCandidate ?? defaultAttempts();
@@ -554,15 +600,43 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     // so largest-first would otherwise spend the whole budget on forge-std/tests
     // and time out). No behavior change for kernel / other profiles.
     const isEvmProfile = (opts.profile ?? "").trim().toLowerCase() === "evm-onchain";
-    const { candidates: candidatePaths, totalFiles, overCap } = enumerateDeepReviewCandidates(
-      scopeRoot,
-      { collectScopeFiles, countScopeFilesUpTo },
-      {
-        maxCandidates,
-        fileCap: DEEP_REVIEW_FILE_CAP,
-        ...(isEvmProfile ? { exclude: (p: string) => isNonProtocolEvmPath(p, scopeRoot) } : {}),
-      },
-    );
+
+    // Count scope files to auto-scale the candidate budget when no explicit cap
+    // was set. The postmortem (cloudflare-os campaign) showed a 408-file repo
+    // getting the same 8 candidates as a 50-file one, structurally under-sweeping.
+    // Priority: --max-candidates flag > PWNKIT_DEEP_REVIEW_MAX_CANDIDATES env > auto-scale.
+    const totalFiles = countScopeFilesUpTo(scopeRoot, DEEP_REVIEW_FILE_CAP);
+    const maxCandidates = explicitMaxCandidates
+      ?? (hasEnvMaxOverride ? baseMaxCandidates : scaleMaxCandidates(totalFiles));
+    const overCap = totalFiles > DEEP_REVIEW_FILE_CAP;
+    if (explicitMaxCandidates === undefined && maxCandidates !== baseMaxCandidates) {
+      log(`[deep-review] auto-scaled candidate cap from ${baseMaxCandidates} to ${maxCandidates} (${totalFiles} scope files)`);
+    }
+
+    // Threat-model planner (optional, default OFF): one cheap model call over the
+    // repo map to identify trust-boundary lanes, so per-file breadth does not miss
+    // cross-component bugs (the campaign's two best findings spanned KV/R2+UX and
+    // sharing+scheduler+spawner but per-file breadth structurally missed them).
+    let lanes: ThreatLane[] | null = null;
+    // Hoisted: allocateCandidatesAcrossLanes is always needed when lanes exist.
+    let allocateAcrossLanes: typeof import("@pwnkit/core").allocateCandidatesAcrossLanes | undefined;
+    if (opts.useThreatModel) {
+      const threatModule = await import("@pwnkit/core");
+      allocateAcrossLanes = threatModule.allocateCandidatesAcrossLanes;
+      // Map RuntimeMode to RuntimeType, defaulting to "api" for "auto".
+      const rtType = (runtime !== "auto" ? runtime : "api") as "api" | "claude" | "codex" | "gemini" | "ollama";
+      const plannerRuntime = threatModule.createRuntime({
+        type: rtType,
+        timeout: opts.timeoutMs ?? 600_000,
+        model: models?.[0],
+      });
+      lanes = await threatModule.runThreatModelPlanner(sourceRoot, plannerRuntime, log);
+      if (!lanes || lanes.length === 0) {
+        log("[threat-model] no lanes produced — continuing with default selection");
+      } else {
+        log(`[threat-model] planner returned ${lanes.length} lane(s) — will allocate candidates across boundaries`);
+      }
+    }
 
     if (overCap) {
       return {
@@ -576,6 +650,43 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
         },
       };
     }
+
+    // Enumerate candidate files (module-spread, scope-capped).
+    const { candidates: initialCandidates } = enumerateDeepReviewCandidates(
+      scopeRoot,
+      { collectScopeFiles, countScopeFilesUpTo },
+      {
+        maxCandidates,
+        fileCap: DEEP_REVIEW_FILE_CAP,
+        ...(isEvmProfile ? { exclude: (p: string) => isNonProtocolEvmPath(p, scopeRoot) } : {}),
+      },
+    );
+
+    // Lane-aware candidate re-allocation: when the threat model planner returned
+    // lanes, re-rank candidates so each trust boundary gets coverage.
+    const candidatePaths: string[] = initialCandidates.slice();
+    if (lanes && lanes.length > 0 && allocateAcrossLanes) {
+      // Collect the full entry list (same shape enumerateDeepReviewCandidates uses).
+      const allFiles = collectScopeFiles(scopeRoot, { maxFiles: DEEP_REVIEW_FILE_CAP });
+      const exclude = isEvmProfile
+        ? (p: string) => isNonProtocolEvmPath(p, scopeRoot)
+        : () => false;
+      const entries = allFiles
+        .filter((p) => !exclude(p))
+        .map((p) => {
+          try { return { p, size: statSync(p).size }; } catch { return { p, size: 0 }; }
+        });
+      const laneCandidates = allocateAcrossLanes(entries, lanes, scopeRoot, maxCandidates, log);
+      if (laneCandidates.length > 0) {
+        const prevModules = new Set(initialCandidates.map((p) => relative(scopeRoot, p).split(/[/\\]+/)[0]));
+        const laneModules = new Set(laneCandidates.map((p) => relative(scopeRoot, p).split(/[/\\]+/)[0]));
+        log(`[deep-review] threat-model re-allocated ${initialCandidates.length} → ${laneCandidates.length} candidate(s); ` +
+          `modules ${prevModules.size} → ${laneModules.size}`);
+        candidatePaths.length = 0;
+        candidatePaths.push(...laneCandidates);
+      }
+    }
+
     if (candidatePaths.length === 0) {
       return {
         exitCode: 2,
@@ -732,6 +843,14 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
           severity: f.severity,
           analysis: f.evidence.analysis ?? "",
         })),
+        dropped: res.dropped.map((d) => ({
+          title: d.finding.title,
+          severity: d.finding.severity,
+          candidatePath: d.candidatePath,
+          lensId: d.lensId,
+          dropReason: d.dropReason,
+          detail: d.detail,
+        })),
         ingested: sinkCfg ? ingested : null,
         warnings: res.warnings.slice(0, 10),
         note: "LEADS, not confirmed bugs. Each survived the multi-lens refute quorum; verify the real sink + impact before disclosure.",
@@ -751,6 +870,7 @@ interface DeepReviewOpts {
   concurrency?: string;
   maxCandidates?: string;
   quorum?: string;
+  threatModel?: boolean;
   runtime?: string;
   format?: string;
   output?: string;
@@ -779,6 +899,7 @@ async function deepReviewAction(target: string, opts: DeepReviewOpts): Promise<v
     concurrency: parsePositive("--concurrency", opts.concurrency, DEFAULT_CONCURRENCY),
     maxCandidates: parsePositive("--max-candidates", opts.maxCandidates, defaultMaxCandidates()),
     ...(opts.quorum ? { quorum: parsePositive("--quorum", opts.quorum, 1) } : {}),
+    ...(opts.threatModel ? { useThreatModel: true } : {}),
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
@@ -807,6 +928,7 @@ export function registerDeepReviewCommand(program: Command): void {
     .option("--attempts <N>", `Finder attempts per candidate×lens×model, best-of-N (default ${DEFAULT_ATTEMPTS}, or $PWNKIT_DEEP_REVIEW_ATTEMPTS)`)
     .option("--concurrency <N>", `Max finders in flight (default ${DEFAULT_CONCURRENCY})`)
     .option("--max-candidates <N>", `Cap candidate files hunted, largest-first (default ${DEFAULT_MAX_CANDIDATES}, or $PWNKIT_DEEP_REVIEW_MAX_CANDIDATES)`)
+    .option("--threat-model", "Enable pre-selection threat-model planner pass (trust-boundary lanes); default OFF")
     .option("--quorum <N>", "Multi-lens verify quorum (default: majority of the verify-lens count)")
     .option("--format <fmt>", "Output format (json)", "json")
     .option("--output <path>", "Write the result JSON to this path instead of stdout")

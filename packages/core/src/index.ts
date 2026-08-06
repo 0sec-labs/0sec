@@ -313,6 +313,10 @@ export type {
 } from "./exploit/chain/index.js";
 // Hunt scan stage (parallel novel-bug discovery: fan-out finders -> skeptic+prover gate).
 export { runHuntScan, makeSkepticVerifier, composeGate, makeMultiLensVerifier } from "./stages/hunt-scan.js";
+// Deployment-context classification — path heuristics + severity cap for findings
+// that target dev/test/build-only code paths (issue #1215, deep-review postmortem).
+export { classifyDeploymentContext, applyDeploymentContextCap, stampDeploymentContext, hasTrustBoundaryBypass } from "./stages/deployment-context.js";
+export type { DeploymentContext } from "@pwnkit/shared";
 // Depth-method specialized-lens sets, per on-chain review profile. These are
 // the ready-made `*FinderLenses` / `*VerifyLenses` fan-out + verify-quorum
 // axes the seedless `deep-review` command wires into runHuntScan (G-A).
@@ -773,6 +777,9 @@ export type {
 // bypassable. Plugs into runHuntScan as the `refine` hook (deepen, then verify).
 export { runSecondAudit, defaultSecondAuditModel, makeSecondAuditRefiner } from "./stages/second-audit.js";
 export type { SecondAuditInput, SecondAuditResult, SecondAuditModel } from "./stages/second-audit.js";
+// Threat-model planner stage — pre-candidate-selection trust-boundary lanes.
+export { runThreatModelPlanner, parseThreatLaneJson, allocateCandidatesAcrossLanes, matchesLane } from "./stages/threat-lanes.js";
+export type { ThreatLane } from "./stages/threat-lanes.js";
 export { extractSpecInvariants, mapInvariantsToImplementation, planSpecdriftHypotheses, runSpecdriftPlan, runSpecdriftScan } from "./specdrift/index.js";
 export type {
   DriftHypothesis,
@@ -797,6 +804,7 @@ export type {
   HuntScanOptions,
   HuntScanResult,
   HuntFindingRecord,
+  HuntDroppedFinding,
   CoverageGap,
   FinderLens,
   VerifyLens,

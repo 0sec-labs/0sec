@@ -7,6 +7,9 @@ import {
   retryBackoffMs,
   parseUsageLimitReached,
   QuotaExhaustedError,
+  parseLlmFallbackChain,
+  resolveFailoverProvider,
+  __resetFallbackChainForTests,
   __resetAzureRegionCacheForTests,
   __resetProviderStartupLogForTests,
 } from "./llm-api.js";
@@ -1318,5 +1321,266 @@ describe("LlmApiRuntime stream idle watchdog", () => {
   it("pins 401/403 as NON-retryable at the wire layer (auth fails fast)", () => {
     expect(isRetryableHttpStatus(401)).toBe(false);
     expect(isRetryableHttpStatus(403)).toBe(false);
+  });
+});
+
+// ── PWNKIT_LLM_FALLBACK ──────────────────────────────────────────────────────
+
+describe("parseLlmFallbackChain", () => {
+  const origVal = process.env.PWNKIT_LLM_FALLBACK;
+  afterEach(() => {
+    if (origVal === undefined) delete process.env.PWNKIT_LLM_FALLBACK;
+    else process.env.PWNKIT_LLM_FALLBACK = origVal;
+  });
+
+  it("returns empty when unset", () => {
+    delete process.env.PWNKIT_LLM_FALLBACK;
+    expect(parseLlmFallbackChain()).toEqual([]);
+  });
+
+  it("returns empty for empty string", () => {
+    process.env.PWNKIT_LLM_FALLBACK = "";
+    expect(parseLlmFallbackChain()).toEqual([]);
+  });
+
+  it("parses a single entry", () => {
+    process.env.PWNKIT_LLM_FALLBACK = "azure:gpt-5-deployment";
+    expect(parseLlmFallbackChain()).toEqual([
+      { provider: "azure", model: "gpt-5-deployment" },
+    ]);
+  });
+
+  it("parses multiple entries in order", () => {
+    process.env.PWNKIT_LLM_FALLBACK = "deepseek:deepseek-v4-flash,azure:gpt-5-deployment,openrouter:qwen/qwen-2.5-coder-32b-instruct";
+    expect(parseLlmFallbackChain()).toEqual([
+      { provider: "deepseek", model: "deepseek-v4-flash" },
+      { provider: "azure", model: "gpt-5-deployment" },
+      { provider: "openrouter", model: "qwen/qwen-2.5-coder-32b-instruct" },
+    ]);
+  });
+
+  it("skips unknown providers with a warning", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    process.env.PWNKIT_LLM_FALLBACK = "unknown:foo,openai:gpt-4o";
+    expect(parseLlmFallbackChain()).toEqual([
+      { provider: "openai", model: "gpt-4o" },
+    ]);
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("unknown provider"));
+    stderrSpy.mockRestore();
+  });
+
+  it("skips malformed entries with a warning", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    process.env.PWNKIT_LLM_FALLBACK = "justprovider,openai:gpt-4o";
+    expect(parseLlmFallbackChain()).toEqual([
+      { provider: "openai", model: "gpt-4o" },
+    ]);
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("malformed"));
+    stderrSpy.mockRestore();
+  });
+});
+
+describe("resolveFailoverProvider", () => {
+  const origEnv = { ...process.env };
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in origEnv)) delete process.env[k];
+    }
+    Object.assign(process.env, origEnv);
+  });
+
+  it("returns undefined when the provider's auth env is absent", () => {
+    delete process.env.DEEPSEEK_API_KEY;
+    expect(resolveFailoverProvider("deepseek", "deepseek-v4-flash")).toBeUndefined();
+  });
+
+  it("resolves deepseek when key is present", () => {
+    process.env.DEEPSEEK_API_KEY = "ds-key";
+    const cfg = resolveFailoverProvider("deepseek", "deepseek-v4-flash");
+    expect(cfg).not.toBeUndefined();
+    expect(cfg!.apiKey).toBe("ds-key");
+    expect(cfg!.wireApi).toBe("responses");
+  });
+
+  it("resolves openrouter when key is present", () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-fallback";
+    const cfg = resolveFailoverProvider("openrouter", "qwen/qwen-2.5-coder-32b-instruct");
+    expect(cfg).not.toBeUndefined();
+    expect(cfg!.apiKey).toBe("sk-or-fallback");
+    expect(cfg!.wireApi).toBe("chat_completions");
+  });
+
+  it("resolves azure when key and base URL are present", () => {
+    process.env.AZURE_OPENAI_API_KEY = "az-key";
+    process.env.AZURE_OPENAI_BASE_URL = "https://test.openai.azure.com";
+    const cfg = resolveFailoverProvider("azure", "gpt-5-deployment");
+    expect(cfg).not.toBeUndefined();
+    expect(cfg!.apiKey).toBe("az-key");
+    expect(cfg!.baseUrl).toContain("azure.com");
+  });
+
+  it("returns undefined for azure when base URL is missing", () => {
+    process.env.AZURE_OPENAI_API_KEY = "az-key";
+    delete process.env.AZURE_OPENAI_BASE_URL;
+    // No base URL from the codex config either (no file present)
+    expect(resolveFailoverProvider("azure", "gpt-5")).toBeUndefined();
+  });
+
+  it("resolves anthropic when key is present", () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-fallback";
+    const cfg = resolveFailoverProvider("anthropic", "claude-sonnet-4-20250514");
+    expect(cfg).not.toBeUndefined();
+    expect(cfg!.apiKey).toBe("sk-ant-fallback");
+  });
+});
+
+describe("LlmApiRuntime cross-provider failover (PWNKIT_LLM_FALLBACK)", () => {
+  const origEnv = { ...process.env };
+
+  function rateOnly429(): Response {
+    return {
+      ok: false,
+      status: 429,
+      headers: new Headers({ "retry-after": "0" }),
+      text: async () => '{"detail":"rate limit exceeded"}',
+    } as unknown as Response;
+  }
+
+  function okChat(text: string): Response {
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          choices: [{ message: { content: text }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        }),
+    } as unknown as Response;
+  }
+
+  beforeEach(() => {
+    // Start with a clean env for the primary provider.
+    for (const k of [
+      "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+      "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_BASE_URL", "OPENAI_API_KEY",
+      "KIMI_API_KEY", "QWEN_API_KEY", "Z_AI_API_KEY",
+      "PWNKIT_CHATGPT_ACCESS_TOKEN", "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN",
+      "PWNKIT_CHATGPT_ACCOUNT_ID", "PWNKIT_MODEL",
+      "PWNKIT_LLM_MAX_RETRIES", "PWNKIT_LLM_MAX_RETRY_WAIT_MS",
+      "PWNKIT_LLM_429_MAX_RETRIES", "PWNKIT_LLM_429_MAX_RETRY_WAIT_MS",
+      "PWNKIT_LLM_FALLBACK",
+    ]) {
+      if (!(k in origEnv)) delete process.env[k];
+    }
+    process.env.PWNKIT_CHATGPT_AUTH_FILE = "/tmp/pwnkit-provider-test-no-auth.json";
+    process.env.PWNKIT_SKIP_PROVIDER_BANNER = "1";
+    __resetFallbackChainForTests();
+  });
+
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in origEnv)) delete process.env[k];
+    }
+    Object.assign(process.env, origEnv);
+    __resetFallbackChainForTests();
+  });
+
+  it("fails over to the next provider after exhausting the 429 budget", async () => {
+    // Primary: OpenAI. Fallback: OpenRouter with a different model.
+    process.env.OPENAI_API_KEY = "sk-openai-primary";
+    process.env.OPENROUTER_API_KEY = "sk-or-fallback";
+    // Urgent: PWNKIT_LLM_FALLBACK entries and 12 429s for the primary.
+    // Tune 429 budget so it exhausts quickly: 1 retry then failover.
+    process.env.PWNKIT_LLM_429_MAX_RETRIES = "1";
+    process.env.PWNKIT_LLM_FALLBACK = "openrouter:qwen/qwen-2.5-coder-32b-instruct";
+
+    let fetchCalls = 0;
+    const fetchMock = vi.fn(async () => {
+      fetchCalls++;
+      if (fetchCalls <= 2) {
+        // Primary gets 1 initial + 1 retry = 2 calls, all 429.
+        return rateOnly429();
+      }
+      // Fallback provider succeeds.
+      return okChat("fallback worked");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const msg: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+
+    const rt = new LlmApiRuntime({ type: "api", timeout: 30_000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+
+    const result = await rt.executeNative("sys", msg, []);
+
+    expect(result.stopReason).not.toBe("error");
+    expect(result.error).toBeUndefined();
+    // 2 calls to primary (initial + 1 retry) + 1 call to fallback = 3 total.
+    expect(fetchCalls).toBeGreaterThanOrEqual(3);
+  });
+
+  it("surfaces the terminal error when the fallback chain is exhausted", async () => {
+    process.env.OPENAI_API_KEY = "sk-openai-primary";
+    process.env.OPENROUTER_API_KEY = "sk-or-fallback";
+    process.env.PWNKIT_LLM_429_MAX_RETRIES = "0";
+    process.env.PWNKIT_LLM_FALLBACK = "openrouter:qwen/qwen-2.5-coder-32b-instruct";
+
+    let callCount = 0;
+    const fetchMock = vi.fn(async () => {
+      callCount++;
+      return rateOnly429();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const msg: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+
+    const rt = new LlmApiRuntime({ type: "api", timeout: 10_000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+
+    const result = await rt.executeNative("sys", msg, []);
+
+    // Both primary and fallback exhausted — terminal error.
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("429");
+    // Initial (0 retries) to primary + initial (0 retries) to fallback = 2.
+    expect(callCount).toBe(2);
+  });
+
+  it("does NOT fail over for non-429 errors", async () => {
+    process.env.OPENAI_API_KEY = "sk-openai-primary";
+    process.env.OPENROUTER_API_KEY = "sk-or-fallback";
+    process.env.PWNKIT_LLM_FALLBACK = "openrouter:qwen/qwen-2.5-coder-32b-instruct";
+
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          text: async () => '{"error":"bad request"}',
+        }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const msg: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+
+    const rt = new LlmApiRuntime({ type: "api", timeout: 10_000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+
+    const result = await rt.executeNative("sys", msg, []);
+
+    // 400 fails fast — no retry, no failover.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.stopReason).toBe("error");
   });
 });
