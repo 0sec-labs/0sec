@@ -520,6 +520,31 @@ A provider auth, quota, or transport failure is emitted as `LLM UNAVAILABLE`
 and scored `error` (inconclusive), never `fail`. Do not include those rows in a
 pass@1 denominator.
 
+### Provider keys for the API-routed models
+
+`scripts/run-cybergym-container.sh` sources a root-only env file
+(`CYBERGYM_PROVIDER_ENV`, default `/srv/cybergym/credentials/provider.env`)
+on the host and forwards provider variables **by name only** into the
+container (`docker run --env NAME` — values never enter argv). Supported
+upstream set, all reachable through the Squid egress allowlist:
+
+| Provider | Variables | Default model |
+|---|---|---|
+| Kimi (Moonshot, flat-rate) | `KIMI_API_KEY` (+`KIMI_BASE_URL`) | `k3` |
+| Qwen (Alibaba Token Plan) | `QWEN_API_KEY` (+`QWEN_BASE_URL`) | `qwen3.8-max` |
+| DeepSeek direct | `DEEPSEEK_API_KEY` (+`DEEPSEEK_BASE_URL`) | `deepseek-v4-flash` |
+| Z.ai GLM (flat-rate) | `Z_AI_API_KEY` (+`Z_AI_BASE_URL`) | `glm-5.2` |
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o` |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` + `AZURE_OPENAI_MODEL` | deployment |
+| OpenRouter | `OPENROUTER_API_KEY` | gateway default |
+
+Pick the lane per task with `--model` (e.g. `--model qwen3.8-max`); the
+engine's per-call routing maps the model id to its natural provider when the
+key is present. The generator boundary already strips every credential-shaped
+variable from model-written Python, so these keys never reach untrusted
+code.
+
 The full fair-run protocol (firewall, one-container-per-task, relaunch
 policy, Wilson-CI reporting) lives in the
 [runbook](../../../docs/operations/runbooks/cybergym-harness.md) and
