@@ -13,5 +13,7 @@ api.z.ai
 api.anthropic.com
 api.openai.com
 api.deepseek.com
+# OpenRouter multi-model gateway.
+openrouter.ai
 # Azure OpenAI deployment host used by the operator account.
 zerosec-foundry-swc.cognitiveservices.azure.com
