@@ -498,9 +498,140 @@ const FREE_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 const DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
+/** Alibaba Token Plan serves this exact DeepSeek revision id under the qwen
+ *  provider (credit-billed; see the worker's QWEN_TOKEN_PLAN_MODEL_IDS). The
+ *  id must never fall through to direct DeepSeek — their balances are
+ *  separate meters. */
+const QWEN_TOKEN_PLAN_DEEPSEEK_MODEL = "deepseek-v4-flash-0731";
 
 type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen";
 type WireApi = "chat_completions" | "responses";
+
+// ── Cross-provider failover (429-exhausted → PWNKIT_LLM_FALLBACK) ────────
+//
+// When a provider exhausts its 429 rate-limit retry budget, the engine can
+// fail over to a configured ordered chain of backup providers instead of
+// surfacing a terminal error. Each entry is <providerId>:<model>, separated
+// by commas:
+//
+//   PWNKIT_LLM_FALLBACK=deepseek:deepseek-v4-flash,azure:gpt-5-deployment,openrouter:qwen/qwen-2.5-coder-32b-instruct
+//
+// Parsed once at module load; empty / unset → no failover (today's behaviour).
+
+interface FallbackEntry {
+  provider: ApiProvider;
+  model: string;
+}
+
+/**
+ * Parse the `PWNKIT_LLM_FALLBACK` env var into an ordered chain. Returns
+ * the empty array when the env var is absent, empty, or every entry is
+ * malformed (logged to stderr as a warning).
+ */
+export function parseLlmFallbackChain(): FallbackEntry[] {
+  const raw = process.env.PWNKIT_LLM_FALLBACK;
+  if (!raw || raw.trim().length === 0) return [];
+  const entries: FallbackEntry[] = [];
+  const VALID_PROVIDERS: Record<string, true> = {
+    openrouter: true, anthropic: true, openai: true, azure: true, deepseek: true,
+    "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true,
+  };
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx < 1 || colonIdx === trimmed.length - 1) {
+      process.stderr.write(`[pwnkit] PWNKIT_LLM_FALLBACK: malformed entry "${trimmed}" (expected provider:model)\n`);
+      continue;
+    }
+    const provider = trimmed.slice(0, colonIdx) as ApiProvider;
+    const model = trimmed.slice(colonIdx + 1).trim();
+    if (!VALID_PROVIDERS[provider]) {
+      process.stderr.write(`[pwnkit] PWNKIT_LLM_FALLBACK: unknown provider "${provider}" in "${trimmed}"\n`);
+      continue;
+    }
+    if (!model) {
+      process.stderr.write(`[pwnkit] PWNKIT_LLM_FALLBACK: empty model in "${trimmed}"\n`);
+      continue;
+    }
+    entries.push({ provider, model });
+  }
+  return entries;
+}
+
+/**
+ * Resolve a (provider, model) pair to the env-var-driven config fields a
+ * runtime needs. Returns `undefined` when the provider's auth env var is
+ * absent so the caller can skip that entry.
+ */
+export function resolveFailoverProvider(
+  provider: ApiProvider,
+  model: string,
+): { apiKey: string; baseUrl: string; wireApi: WireApi } | undefined {
+  switch (provider) {
+    case "deepseek": {
+      const key = process.env.DEEPSEEK_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL, wireApi: "responses" };
+    }
+    case "openrouter": {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: "https://openrouter.ai/api/v1", wireApi: "chat_completions" };
+    }
+    case "azure": {
+      const key = process.env.AZURE_OPENAI_API_KEY;
+      if (!key) return undefined;
+      const url = process.env.AZURE_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL;
+      if (!url) return undefined;
+      return { apiKey: key, baseUrl: url, wireApi: (process.env.AZURE_OPENAI_WIRE_API as WireApi) ?? "chat_completions" };
+    }
+    case "openai": {
+      const key = process.env.OPENAI_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: "https://api.openai.com/v1", wireApi: "chat_completions" };
+    }
+    case "anthropic": {
+      const key = process.env.ANTHROPIC_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com", wireApi: "chat_completions" };
+    }
+    case "chatgpt-codex": {
+      // Codex uses OAuth, not an api key — presence of refresh/access token = available.
+      if (!process.env.PWNKIT_CHATGPT_ACCESS_TOKEN && !process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN) return undefined;
+      return { apiKey: "", baseUrl: CODEX_API_ENDPOINT, wireApi: "responses" };
+    }
+    case "z-ai": {
+      const key = process.env.Z_AI_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.Z_AI_BASE_URL ?? ZAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+    }
+    case "kimi": {
+      const key = process.env.KIMI_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.KIMI_BASE_URL ?? KIMI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+    }
+    case "qwen": {
+      const key = process.env.QWEN_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+    }
+  }
+}
+
+// Reset the cached fallback chain. Test-only.
+export function __resetFallbackChainForTests(): void {
+  fallbackChainCache = undefined;
+}
+
+let fallbackChainCache: FallbackEntry[] | undefined;
+
+function getFallbackChain(): FallbackEntry[] {
+  if (fallbackChainCache === undefined) {
+    fallbackChainCache = parseLlmFallbackChain();
+  }
+  return fallbackChainCache;
+}
 
 // ── Z.ai GLM (flat-rate Coding Plan key) ───────────────────────────────
 //
@@ -933,6 +1064,10 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (m === DEEPSEEK_DEFAULT_MODEL) {
     return process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined;
   }
+  // Alibaba Token Plan DeepSeek revision: qwen-served, exact id.
+  if (m === QWEN_TOKEN_PLAN_DEEPSEEK_MODEL) {
+    return process.env.QWEN_API_KEY ? "qwen" : undefined;
+  }
   if (m.startsWith("openrouter/")) return process.env.OPENROUTER_API_KEY ? "openrouter" : undefined;
   // GLM / Z.ai.
   if (m.startsWith("glm-") || m.startsWith("z-ai/") || m.includes("glm")) {
@@ -1217,10 +1352,19 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private reasoningEffort?: string;
   private azureConfig: ReturnType<typeof parseCodexAzureConfig>;
   private serverCompactionTokens?: number;
+  /** Ordered fallback chain (PWNKIT_LLM_FALLBACK). Empty = no failover. */
+  private fallbackChain: FallbackEntry[];
+  /** Index into fallbackChain — which entry to try next. */
+  private fallbackIndex: number;
+  /** Whether we have already failed over (for observability — only log the switch once). */
+  private failedOver: boolean;
 
   constructor(config: RuntimeConfig) {
     this.config = config;
     this.azureConfig = parseCodexAzureConfig();
+    this.fallbackChain = getFallbackChain();
+    this.fallbackIndex = 0;
+    this.failedOver = false;
     // Thread the requested model into detection so provider follows the model
     // per-call (per-call multi-provider routing) when its auth is available.
     const detected = detectProvider(config.apiKey, config.model ?? process.env.PWNKIT_MODEL);
@@ -1564,8 +1708,59 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
    * refresh) so a token that rotated during the wait is picked up. The body
    * is fixed across attempts.
    */
+  /**
+   * Try the next fallback provider in the chain (PWNKIT_LLM_FALLBACK).
+   * Updates `this.provider`, `this.model`, `this.apiKey`, `this.baseUrl`,
+   * `this.wireApi` to match the next valid provider. Returns `true` when a
+   * valid next provider was found and switched to, `false` when the chain is
+   * exhausted.
+   */
+  private _tryFailover(): boolean {
+    while (this.fallbackIndex < this.fallbackChain.length) {
+      const entry = this.fallbackChain[this.fallbackIndex]!;
+      this.fallbackIndex++;
+      const cfg = resolveFailoverProvider(entry.provider, entry.model);
+      if (!cfg) {
+        process.stderr.write(
+          `[pwnkit] PWNKIT_LLM_FALLBACK: skipping ${entry.provider} (auth env missing)\n`,
+        );
+        continue;
+      }
+      this.provider = entry.provider;
+      this.model = entry.model;
+      this.apiKey = cfg.apiKey;
+      this.baseUrl = cfg.baseUrl;
+      this.wireApi = cfg.wireApi;
+      if (!this.failedOver) {
+        this.failedOver = true;
+        process.stderr.write(
+          `[pwnkit] 429 budget exhausted — failover to ${entry.provider} (${entry.model})\n`,
+        );
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * POST to the provider endpoint and, on a retryable HTTP status
+   * (429 rate-limit / transient 5xx), back off and retry — honoring a
+   * `Retry-After` header when present, otherwise exponential backoff with
+   * full jitter (so a burst of concurrent scans desynchronises instead of
+   * hammering the limit in lockstep).
+   *
+   * The body is supplied as a zero-arg factory (`bodyFactory`) so that when
+   * cross-provider failover fires (429 budget exhausted → next provider), the
+   * body can be regenerated with the new model name by calling the factory
+   * again, which reads `this.model` lazily.
+   *
+   * Retry + failover caps documented on `retryBackoffMs` / `llm429MaxRetries`.
+   *
+   * Headers are re-resolved per attempt (via ensureFreshHeaders → OAuth
+   * refresh) so a token that rotated during the wait is picked up.
+   */
   private async postWithRetry(
-    bodyJson: string,
+    bodyFactory: () => string,
     signal: AbortSignal,
   ): Promise<Response> {
     let waited429Ms = 0;
@@ -1580,7 +1775,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         res = await fetch(this.buildUrl(), {
           method: "POST",
           headers: await this.ensureFreshHeaders(),
-          body: bodyJson,
+          body: bodyFactory(),
           signal,
         });
       } catch (error) {
@@ -1670,13 +1865,31 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             })
           : res;
       if (attempt >= maxRetries) {
+        // 429 budget exhausted — try cross-provider failover before giving up.
+        if (is429 && this._tryFailover()) {
+          // Provider switched; reset retry state. The next bodyFactory() call
+          // picks up `this.model` for the new provider.
+          attempt = -1;
+          waited429Ms = 0;
+          waitedOtherMs = 0;
+          continue;
+        }
         return handBack();
       }
       const retryAfter = is429
         ? retryAfterMsFromHeaders(res.headers)
         : parseRetryAfterMs(res.headers?.get?.("retry-after"));
       const delay = retryAfter ?? retryBackoffMs(attempt, is429 ? 30_000 : 20_000);
-      if (waitedMs + delay > maxWaitMs) return handBack();
+      if (waitedMs + delay > maxWaitMs) {
+        // 429 cumulative backoff budget exhausted — try cross-provider failover.
+        if (is429 && this._tryFailover()) {
+          attempt = -1;
+          waited429Ms = 0;
+          waitedOtherMs = 0;
+          continue;
+        }
+        return handBack();
+      }
       // Drain the failed response so the socket is released before retrying
       // (429 bodies were already consumed above for classification).
       if (!is429) {
@@ -1696,7 +1909,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       });
       process.stderr.write(
         `[pwnkit] ${this.providerLabel} HTTP ${res.status} — backoff ${delay}ms ` +
-          `(retry ${attempt + 1}/${maxRetries})\n`,
+          `(retry ${attempt + 1}/${maxRetries}, budget ${waitedMs}/${maxWaitMs}ms used)\n`,
       );
       if (is429) {
         waited429Ms += delay;
@@ -1748,7 +1961,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         messages.push({ role: "user", content: prompt });
 
         res = await this.postWithRetry(
-          JSON.stringify({
+          () => JSON.stringify({
             model: this.model,
             [this.maxTokensParamKey]: 8192,
             messages,
@@ -1771,7 +1984,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
         const isCodex = this.provider === "chatgpt-codex";
         res = await this.postWithRetry(
-          JSON.stringify({
+          () => JSON.stringify({
             model: this.model,
             input,
             ...(isCodex ? { store: false } : { max_output_tokens: 8192 }),
@@ -1781,7 +1994,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       } else {
         // Anthropic Messages API format (also serves the z-ai/GLM provider).
         res = await this.postWithRetry(
-          JSON.stringify({
+          () => JSON.stringify({
             model: this.model,
             max_tokens: 8192,
             ...this.anthropicThinkingField(),
@@ -1979,7 +2192,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           }));
         }
 
-        res = await this.postWithRetry(JSON.stringify(body), controller.signal);
+        res = await this.postWithRetry(
+          () => JSON.stringify({ ...body, model: this.model }),
+          controller.signal,
+        );
       } else if (this.isOpenAICompat && this.wireApi === "responses") {
         // Responses API uses a flat list of items, not role-based messages.
         // function_call and function_call_output are top-level items, not nested
@@ -2169,7 +2385,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         }
 
         res = await this.postWithRetry(
-          JSON.stringify({ ...body, stream: true }),
+          () => JSON.stringify({ ...body, stream: true, model: this.model }),
           controller.signal,
         );
 
@@ -2260,7 +2476,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           body.tools = tools;
         }
 
-        res = await this.postWithRetry(JSON.stringify(body), controller.signal);
+        res = await this.postWithRetry(
+          () => JSON.stringify({ ...body, model: this.model }),
+          controller.signal,
+        );
       }
 
       // Keep the abort timer ARMED through the body read. `fetch()` resolves as

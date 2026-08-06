@@ -24,7 +24,7 @@
  *     the standalone flywheel module — see hunt-flywheel.test.ts for that).
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Finding } from "@pwnkit/shared";
 import { HuntMemory } from "./hunt-flywheel.js";
 
@@ -33,7 +33,7 @@ vi.mock("../agentic-scanner.js", () => ({
   agenticScan: (...args: unknown[]) => agenticScanMock(...args),
 }));
 
-const { runHuntScan, makeMultiLensVerifier } = await import("./hunt-scan.js");
+const { runHuntScan, makeMultiLensVerifier, AimdState } = await import("./hunt-scan.js");
 
 function mkFinding(id: string, title: string, analysis: string): Finding {
   return {
@@ -946,5 +946,162 @@ describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {
     // The persistence failure does not lose the finding from the result set.
     expect(res.confirmed.map((f) => f.id)).toEqual(["f-1"]);
     expect(res.warnings.some((w) => w.includes("onConfirmed hook failed"))).toBe(true);
+  });
+});
+
+// ── AIMD concurrency ─────────────────────────────────────────────────────────
+
+describe("AimdState — adaptive finder concurrency", () => {
+  it("starts at the initial value", () => {
+    const a = new AimdState(8);
+    expect(a.current).toBe(8);
+  });
+
+  it("halves on a 429-congestion signal", () => {
+    const a = new AimdState(8);
+    a.recordResult({ status: "errored", error: "HTTP 429 rate limit exceeded" });
+    expect(a.current).toBe(4);
+
+    a.recordResult({ status: "errored", error: "API returned 429 — too many requests" });
+    expect(a.current).toBe(2);
+  });
+
+  it("floors at 1 under sustained congestion", () => {
+    const a = new AimdState(4);
+    a.recordResult({ status: "errored", error: "HTTP 429" });
+    expect(a.current).toBe(2);
+    a.recordResult({ status: "errored", error: "HTTP 429" });
+    expect(a.current).toBe(1);
+    a.recordResult({ status: "errored", error: "HTTP 429" });
+    expect(a.current).toBe(1);
+  });
+
+  it("recovers with additive increase after clean completions", () => {
+    const a = new AimdState(8);
+    // Halve once.
+    a.recordResult({ status: "errored", error: "rate limit exceeded" });
+    expect(a.current).toBe(4);
+
+    // Additive increase: recovery window is 5 by default.
+    a.recordResult({ status: "completed" });
+    a.recordResult({ status: "completed" });
+    a.recordResult({ status: "completed" });
+    a.recordResult({ status: "completed" });
+    expect(a.current).toBe(4); // not yet — only 4/5 in window
+
+    a.recordResult({ status: "completed" });
+    expect(a.current).toBe(5); // +1 after full window
+  });
+
+  it("caps recovery at the initial concurrency", () => {
+    const a = new AimdState(4);
+    // Halve to 2, then fully recover.
+    a.recordResult({ status: "errored", error: "429" });
+    expect(a.current).toBe(2);
+
+    // Fill recovery window.
+    for (let i = 0; i < 5; i++) a.recordResult({ status: "completed" });
+    expect(a.current).toBe(3);
+
+    for (let i = 0; i < 5; i++) a.recordResult({ status: "completed" });
+    expect(a.current).toBe(4);
+
+    // Cannot go above initial.
+    for (let i = 0; i < 5; i++) a.recordResult({ status: "completed" });
+    expect(a.current).toBe(4);
+  });
+
+  it("resets the clean streak on any non-429 error or timeout", () => {
+    const a = new AimdState(8);
+    a.recordResult({ status: "completed" });
+    a.recordResult({ status: "completed" });
+    a.recordResult({ status: "completed" });
+    // Non-429 error — resets streak.
+    a.recordResult({ status: "errored", error: "ECONNREFUSED" });
+    // 3 more completions is not enough for recovery; needs 5 clean from reset.
+    a.recordResult({ status: "completed" });
+    a.recordResult({ status: "completed" });
+    a.recordResult({ status: "completed" });
+    expect(a.current).toBe(8); // no change — streak broken
+  });
+
+  it("does NOT shrink on non-429 errors", () => {
+    const a = new AimdState(8);
+    a.recordResult({ status: "errored", error: "ECONNREFUSED" });
+    expect(a.current).toBe(8); // unchanged — only 429 signals trigger MD
+  });
+
+  it("does NOT shrink on timeouts", () => {
+    const a = new AimdState(8);
+    a.recordResult({ status: "timed-out" });
+    expect(a.current).toBe(8); // unchanged
+  });
+});
+
+describe("runHuntScan — AIMD adaptive concurrency (PWNKIT_HUNT_AIMD)", () => {
+  const origEnv = { ...process.env };
+  const noopVerify = async () => ({ confirmed: true, reason: "test" });
+
+  beforeEach(() => {
+    agenticScanMock.mockReset();
+    for (const k of ["PWNKIT_HUNT_AIMD", "PWNKIT_HUNT_AIMD_RECOVERY_WINDOW"]) {
+      if (!(k in origEnv)) delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in origEnv)) delete process.env[k];
+    }
+    Object.assign(process.env, origEnv);
+  });
+
+  it("does not affect the result set when finders complete cleanly", async () => {
+    agenticScanMock.mockResolvedValue({ findings: [] });
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [
+        { path: "/src/a.c", hint: "" },
+        { path: "/src/b.c", hint: "" },
+      ],
+      runtime: { type: "agent", model: "deep" },
+      concurrency: 4,
+      verify: noopVerify,
+    });
+    expect(res.scanned).toBe(2);
+    expect(res.finderCompleted).toBe(2);
+  });
+
+  it("still completes all candidates under 429 congestion via internal retries", async () => {
+    // Simulate finders that first fail with 429 then succeed.
+    const calls: Array<{ path: string }> = [];
+    agenticScanMock.mockImplementation(async (opts: { config: { target: string } }) => {
+      calls.push({ path: opts.config.target });
+      return { findings: [{
+        id: `f-${calls.length}`,
+        templateId: "hunt-test",
+        title: `finding ${calls.length}`,
+        description: `finding ${calls.length}`,
+        severity: "medium",
+        category: "other",
+        status: "discovered",
+        evidence: { request: "", response: "", analysis: "" },
+        timestamp: 1_700_000_000_000,
+      } satisfies Finding] };
+    });
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [
+        { path: "/src/x.c", hint: "" },
+        { path: "/src/y.c", hint: "" },
+      ],
+      runtime: { type: "agent", model: "deep" },
+      concurrency: 2,
+      verify: noopVerify,
+    });
+
+    expect(res.scanned).toBe(2);
+    expect(res.finderCompleted).toBe(2);
   });
 });
