@@ -1612,7 +1612,7 @@ export async function runNativeAgentLoop(
     // spend, not grant each session the full ceiling independently.
     if (config.costCeilingUsd !== undefined && config.costCeilingUsd > 0) {
       const runningCost = config.costLedger
-        ? config.costLedger.costUsd(config.costModel)
+        ? config.costLedger.totalCostUsd()
         : estimateCost(state.totalUsage, config.costModel);
       if (runningCost >= config.costCeilingUsd) {
         state.costCeilingExceeded = true;

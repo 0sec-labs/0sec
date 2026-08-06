@@ -104,6 +104,18 @@ describe("agenticScan: scan_completed emission", () => {
     expect(typeof completedEvents[0]!.payload.duration_ms).toBe("number");
   });
 
+  it("suppresses terminal events when a parent fan-out owns aggregation", async () => {
+    await expect(
+      agenticScan({
+        config: baseConfig({ runtime: "codex" }),
+        dbPath,
+        emitTerminalEvent: false,
+      }),
+    ).rejects.toThrow(/Codex CLI live target scanning is not supported/);
+
+    expect(events.filter((e) => e.type === "scan_completed")).toHaveLength(0);
+  });
+
   it("guards against double-emit — the latch fires the event exactly once even across catch + finally", async () => {
     // Drive the same failing path; if the catch branch AND the finally
     // safety-net both emitted, we'd see two events. The `emittedScanCompleted`

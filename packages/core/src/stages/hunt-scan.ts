@@ -34,6 +34,7 @@ import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Finding, RuntimeMode, ScanConfig, ScanReport } from "@pwnkit/shared";
 import { agenticScan } from "../agentic-scanner.js";
+import { ScanCostLedger } from "../agent/cost-ledger.js";
 import { stampDeploymentContext } from "./deployment-context.js";
 import {
   checkNovelty,
@@ -156,6 +157,12 @@ export interface HuntScanOptions {
   /** Variant-hunt brief; omit for a generic bug hunt. */
   brief?: HuntBrief;
   runtime: RuntimeMode;
+  /**
+   * Shared scan-wide cost guard. When set, finder and verifier sessions use
+   * the same ledger and scheduling becomes serial after the ceiling is hit.
+   */
+  costCeilingUsd?: number;
+  costLedger?: ScanCostLedger;
   /** One or more finder models (diversity). Defaults to the configured provider. */
   models?: string[];
   /**
@@ -400,6 +407,8 @@ export interface HuntScanResult {
   finderCompleted: number;
   finderTimedOut: number;
   finderErrored: number;
+  /** True when the shared cost ceiling stopped remaining finder/verify work. */
+  costCeilingExceeded?: boolean;
   warnings: string[];
   /** The full per-finding tuple for every raw finding — see {@link HuntFindingRecord}. */
   records: HuntFindingRecord[];
@@ -709,6 +718,9 @@ export function makeSkepticVerifier(opts: {
   sourceRoot: string;
   runtime: RuntimeMode;
   model?: string;
+  /** Shared scan-wide ceiling and ledger, forwarded to the refute session. */
+  costCeilingUsd?: number;
+  costLedger?: ScanCostLedger;
   /**
    * OPTIONAL learned-negatives context (`PWNKIT_HUNT_NEGATIVES=1`, see
    * hunt-negatives.ts). When a finding matches a known-refuted shape closely
@@ -831,6 +843,8 @@ export function makeSkepticVerifier(opts: {
     // per-finding at scale (a "deep" full-template scan took ~10min on a 10-line
     // file in smoke testing — prohibitive across many findings).
     const baseConfig = {
+      ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
+      ...(opts.costLedger ? { costLedger: opts.costLedger } : {}),
       target: candidate.path,
       depth: "quick",
       format: "json",
@@ -936,6 +950,9 @@ export interface MultiLensVerifierOptions {
   crossFamilyRefute?: boolean;
   /** Finder model/family the cross-family refuter must decorrelate from. */
   finderModel?: string;
+  /** Shared scan-wide ceiling and ledger, forwarded to each refute lens. */
+  costCeilingUsd?: number;
+  costLedger?: ScanCostLedger;
   /** ALL finder models in play; the refuter avoids every one of their families. */
   finderModels?: readonly string[];
   /** Alternate refuter models to pick a distinct family from, tried in order. */
@@ -977,6 +994,8 @@ export function makeMultiLensVerifier(lenses: VerifyLens[], opts: MultiLensVerif
         runtime: opts.runtime,
         ...(opts.model ? { model: opts.model } : {}),
         ...(opts.negatives ? { negatives: opts.negatives } : {}),
+        ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
+        ...(opts.costLedger ? { costLedger: opts.costLedger } : {}),
         ...(opts.crossFamilyRefute !== undefined ? { crossFamilyRefute: opts.crossFamilyRefute } : {}),
         ...(opts.finderModel ? { finderModel: opts.finderModel } : {}),
         ...(opts.finderModels ? { finderModels: opts.finderModels } : {}),
@@ -986,18 +1005,35 @@ export function makeMultiLensVerifier(lenses: VerifyLens[], opts: MultiLensVerif
       }));
   const passes = lenses.map((lens) => ({ lens, run: makePass(lens) }));
   return async (finding, candidate) => {
-    const results = await Promise.all(
-      passes.map(async ({ lens, run }) => {
-        try {
-          const v = await run(finding, candidate);
-          return { lensId: lens.id, survived: v.confirmed, errored: false, decorrelation: v.decorrelation };
-        } catch {
-          // A pass that throws couldn't adjudicate — counts as neither a
-          // survival nor a refute, so it just lowers the survivor count.
-          return { lensId: lens.id, survived: false, errored: true, decorrelation: undefined };
+    type LensResult = {
+      lensId: string;
+      survived: boolean;
+      errored: boolean;
+      decorrelation: RefuteDecorrelation | undefined;
+    };
+    const runPass = async ({ lens, run }: (typeof passes)[number]): Promise<LensResult> => {
+      try {
+        const v = await run(finding, candidate);
+        return { lensId: lens.id, survived: v.confirmed, errored: false, decorrelation: v.decorrelation };
+      } catch {
+        // A pass that throws couldn't adjudicate — counts as neither a
+        // survival nor a refute, so it just lowers the survivor count.
+        return { lensId: lens.id, survived: false, errored: true, decorrelation: undefined };
+      }
+    };
+    let results: LensResult[];
+    if (opts.costLedger && opts.costCeilingUsd !== undefined) {
+      results = [];
+      for (const pass of passes) {
+        if (opts.costLedger.totalCostUsd() >= opts.costCeilingUsd) {
+          results.push({ lensId: pass.lens.id, survived: false, errored: true, decorrelation: undefined });
+        } else {
+          results.push(await runPass(pass));
         }
-      }),
-    );
+      }
+    } else {
+      results = await Promise.all(passes.map(runPass));
+    }
     const refuted = results.filter((r) => !r.survived && !r.errored);
     const survived = results.filter((r) => r.survived);
     // Quorum-level decorrelation: the quorum is only as decorrelated as its
@@ -1068,6 +1104,13 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   const judgeTopK = Math.max(1, opts.judgeTopK ?? 1);
   const judgeCandidates = opts.judgeCandidates ?? judgeHuntCandidatesWithLlm;
   const warnings: string[] = [];
+  const costLedger = opts.costLedger;
+  const costCeilingUsd = opts.costCeilingUsd;
+  const costCeilingEnabled = costLedger !== undefined && costCeilingUsd !== undefined;
+  const costCeilingReached = () =>
+    costCeilingEnabled && costLedger!.totalCostUsd() >= costCeilingUsd!;
+  // A shared running-total guard cannot safely reserve spend across concurrent
+  // sessions. Serial scheduling is deliberate only when the caller opts in.
   // Structured coverage-gap signal: (file × lens) cells abandoned at the
   // finder timeout. Fed back on the result as `incompleteCoverage` for a future
   // self-improving loop. `.push` from the concurrent pool below is safe — same
@@ -1124,6 +1167,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     `[hunt] ${opts.candidates.length} candidate(s) × ${models.length} model(s)${lensNote} × ${attemptsPerCandidate} attempt(s) ` +
       `= ${runs.length} finder run(s), ${concurrency}-wide`,
   );
+  if (costCeilingEnabled) log(`[hunt] enforcing shared $${costCeilingUsd!.toFixed(2)} cost ceiling serially`);
 
   const finderTimeoutMs = huntFinderTimeoutMs();
   const finderMaxRetries = huntFinderMaxRetries();
@@ -1131,9 +1175,21 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // Tighten the finder fan-out under sustained rate-limiting via AIMD
   // (Additive Increase / Multiplicative Decrease) concurrency control.
   const aimd = huntAimdEnabled() ? new AimdState(concurrency) : null;
-  const effectiveConcurrency = aimd ?? concurrency;
+  // An active scan-wide cost ceiling overrides both: a shared running-total
+  // guard cannot safely reserve spend across concurrent sessions.
+  const effectiveConcurrency = costCeilingEnabled ? 1 : aimd ?? concurrency;
 
   const reports = await pool(runs, effectiveConcurrency, async (run) => {
+    if (costCeilingReached()) {
+      return {
+        candidate: run.candidate,
+        model: run.model,
+        lensId: run.lens.id,
+        attempt: run.attempt,
+        status: "skipped" as const,
+        findings: [],
+      };
+    }
     // Partial-evidence capture. agenticScan streams a `finding` event per
     // save_finding tool call as the finder works. When the finder HANGS and is
     // abandoned at the timeout, its returned promise never resolves — but the
@@ -1161,10 +1217,13 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           runtime: opts.runtime,
           repoPath: opts.sourceRoot,
           ...(run.model ? { model: run.model } : {}),
+          ...(costCeilingUsd !== undefined ? { costCeilingUsd } : {}),
+          ...(costLedger ? { costLedger } : {}),
         };
         const scanPromise = agenticScan({
           config,
           dbPath,
+          emitTerminalEvent: false,
           challengeHint: huntHint(opts.brief, run.candidate, run.lens.challengeHint),
           onEvent: (event) => {
             if (event.type !== "finding") return;
@@ -1235,6 +1294,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     if (!r) { finderErrored++; continue; }
     if (r.status === "completed") finderCompleted++;
     else if (r.status === "timed-out") finderTimedOut++;
+    else if (r.status === "skipped") continue;
     else finderErrored++;
   }
   log(
@@ -1251,8 +1311,31 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // `judgeTopK` then silently drops the confirmed extra.
   const all: Array<{ finding: Finding; candidate: HuntCandidate; originPath: string; model?: string; lensId: string; attempt: number }> = [];
   for (const r of reports)
-    if (r) for (const finding of r.findings) all.push({ finding, candidate: r.candidate, originPath: r.candidate.path, model: r.model, lensId: r.lensId, attempt: r.attempt });
+    if (r && r.status !== "skipped") for (const finding of r.findings) all.push({ finding, candidate: r.candidate, originPath: r.candidate.path, model: r.model, lensId: r.lensId, attempt: r.attempt });
   log(`[hunt] finders surfaced ${all.length} candidate finding(s)`);
+  if (costCeilingReached()) {
+    warnings.push(`hunt: shared $${costCeilingUsd!.toFixed(2)} cost ceiling reached; skipping judge and verification`);
+    return {
+      findings: all.map((entry) => entry.finding),
+      confirmed: [],
+      duplicates: [],
+      dropped: [],
+      scanned: finderCompleted + finderTimedOut + finderErrored,
+      finderCompleted,
+      finderTimedOut,
+      finderErrored,
+      costCeilingExceeded: true,
+      warnings,
+      records: all.map((entry) => ({
+        candidatePath: entry.candidate.path,
+        model: entry.model,
+        attempt: entry.attempt,
+        finding: entry.finding,
+        duplicate: false,
+      })),
+      incompleteCoverage: coverageGaps,
+    };
+  }
 
   // OPTIONAL second-audit refinement: DEEPEN each finding's candidate (root cause
   // / fix-bypass) BEFORE grouping/judging/verifying. Runs in parallel; a refiner
@@ -1260,7 +1343,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // `all` up front means the deepened candidate propagates into `records`, the
   // best-of-N judge groups, and `toVerify` — deepen, then judge, then verify.
   if (opts.refine && all.length > 0) {
-    const refined = await pool(all, concurrency, async (entry) => {
+    const refined = await pool(all, effectiveConcurrency, async (entry) => {
       try {
         return await opts.refine!(entry.finding, entry.candidate);
       } catch (e) {
@@ -1383,7 +1466,11 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   let confirmed: Finding[] = [];
   if (verify && toVerify.length > 0) {
     const verifyFn = verify;
-    const verdicts = await pool(toVerify, concurrency, async ({ finding, candidate }) => {
+    const verdicts = await pool(toVerify, effectiveConcurrency, async ({ finding, candidate }) => {
+      if (costCeilingReached()) {
+        warnings.push(`hunt: shared $${costCeilingUsd!.toFixed(2)} cost ceiling reached; skipping verification for ${finding.title}`);
+        return null;
+      }
       try {
         const v = await verifyFn(finding, candidate);
         const record = records.get(finding.id);
@@ -1566,10 +1653,11 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     confirmed,
     duplicates,
     dropped,
-    scanned: runs.length,
+    scanned: finderCompleted + finderTimedOut + finderErrored,
     finderCompleted,
     finderTimedOut,
     finderErrored,
+    ...(costCeilingReached() ? { costCeilingExceeded: true } : {}),
     warnings,
     records: [...records.values()],
     incompleteCoverage: coverageGaps,

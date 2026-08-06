@@ -8,6 +8,7 @@ import {
   PRICING_SNAPSHOT_DATE,
   splitCost,
 } from "./cost.js";
+import { ScanCostLedger } from "./cost-ledger.js";
 
 describe("estimateCost", () => {
   it("uses default rates when model is missing", () => {
@@ -235,5 +236,20 @@ describe("modelProvider", () => {
     expect(modelProvider()).toBe("unknown");
     expect(modelProvider("")).toBe("unknown");
     expect(modelProvider("totally-made-up-model-9000")).toBe("unknown");
+  });
+});
+
+describe("ScanCostLedger", () => {
+  it("prices a shared multi-model total from per-model buckets", () => {
+    const ledger = new ScanCostLedger();
+    const solUsage = { inputTokens: 1_000_000, outputTokens: 0 };
+    const terraUsage = { inputTokens: 1_000_000, outputTokens: 0 };
+    ledger.add(solUsage, "gpt-5.6-sol");
+    ledger.add(terraUsage, "gpt-5.6-terra");
+
+    expect(ledger.totalCostUsd()).toBeCloseTo(
+      estimateCost(solUsage, "gpt-5.6-sol") + estimateCost(terraUsage, "gpt-5.6-terra"),
+      8,
+    );
   });
 });

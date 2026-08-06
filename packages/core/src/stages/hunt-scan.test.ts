@@ -27,6 +27,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Finding } from "@pwnkit/shared";
 import { HuntMemory } from "./hunt-flywheel.js";
+import { ScanCostLedger } from "../agent/cost-ledger.js";
 
 const agenticScanMock = vi.fn();
 vi.mock("../agentic-scanner.js", () => ({
@@ -1014,6 +1015,37 @@ describe("runHuntScan — incremental persistence (opts.onConfirmed)", () => {
     // The persistence failure does not lose the finding from the result set.
     expect(res.confirmed.map((f) => f.id)).toEqual(["f-1"]);
     expect(res.warnings.some((w) => w.includes("onConfirmed hook failed"))).toBe(true);
+  });
+});
+
+describe("runHuntScan — shared cost ceiling", () => {
+  it("stops queued finders before verification and suppresses child terminal events", async () => {
+    agenticScanMock.mockReset();
+    const ledger = new ScanCostLedger();
+    agenticScanMock.mockImplementation(async (opts: {
+      config: { costLedger?: ScanCostLedger };
+      emitTerminalEvent?: boolean;
+    }) => {
+      opts.config.costLedger?.add({ inputTokens: 1_000_000, outputTokens: 0 });
+      return { findings: [mkFinding("f-1", "bounded", "")] };
+    });
+    const verify = vi.fn(async () => ({ confirmed: true, reason: "should not run" }));
+
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }, { path: "/src/b.c" }],
+      runtime: "api",
+      concurrency: 8,
+      costCeilingUsd: 0.001,
+      costLedger: ledger,
+      verify,
+    });
+
+    expect(agenticScanMock).toHaveBeenCalledTimes(1);
+    expect(agenticScanMock.mock.calls[0]?.[0]).toMatchObject({ emitTerminalEvent: false });
+    expect(verify).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ scanned: 1, costCeilingExceeded: true });
+    expect(res.findings.map((finding) => finding.id)).toEqual(["f-1"]);
   });
 });
 
