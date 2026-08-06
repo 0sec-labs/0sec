@@ -288,6 +288,74 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
     expect(res.warnings.some((w) => w.includes("timed out") && w.includes("/src/hangs.c"))).toBe(true);
   });
 
+  it("flushes a finder's late (post-timeout) resolution via onLateFinderResult", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "20";
+    process.env.HUNT_FINDER_MAX_RETRIES = "0";
+    // Deferred promise the test resolves on its own schedule.
+    const lateCall = Promise.withResolvers<{ findings: Finding[] }>();
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(({ config }: { config: { target: string } }) => {
+      if (config.target === "/src/late.c") return lateCall.promise;
+      return Promise.resolve({ findings: [mkFinding("f-ok", "finding from ok.c", "")] });
+    });
+
+    const lateFlushed: string[] = [];
+    const res = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/late.c" }, { path: "/src/ok.c" }],
+      runtime: "api",
+      concurrency: 2,
+      verify: async () => ({ confirmed: true, reason: "ok" }),
+      onLateFinderResult: (f) => { lateFlushed.push(f.id); },
+    });
+    // The timed-out finder contributed nothing at assembly time.
+    expect(res.findings).toHaveLength(1);
+    expect(res.finderTimedOut).toBe(1);
+    expect(lateFlushed).toEqual([]);
+
+    // The abandoned call finishes AFTER the report is final: the flush must
+    // still surface its findings through the callback. Microtask flushes only
+    // — the continuation is a plain .then chain, no real time is involved.
+    lateCall.resolve({ findings: [mkFinding("f-late", "late finding", "")] });
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+    expect(lateFlushed).toEqual(["f-late"]);
+    // And it must NOT retroactively enter the returned report's findings.
+    expect(res.findings).toHaveLength(1);
+  });
+
+  it("records a late resolution landing before assembly in dropped[] as late_resolution", async () => {
+    process.env.HUNT_FINDER_TIMEOUT_MS = "20";
+    process.env.HUNT_FINDER_MAX_RETRIES = "0";
+    const lateCall = Promise.withResolvers<{ findings: Finding[] }>();
+    // Two gates make the interleaving deterministic: verifyEntered proves the
+    // finder pool has finished (timeout fired) and the gate is entered;
+    // verifyRelease holds assembly until the late resolution has landed.
+    const verifyEntered = Promise.withResolvers<void>();
+    const verifyRelease = Promise.withResolvers<void>();
+    agenticScanMock.mockReset();
+    agenticScanMock.mockImplementation(({ config }: { config: { target: string } }) => {
+      if (config.target === "/src/late.c") return lateCall.promise;
+      return Promise.resolve({ findings: [mkFinding("f-ok", "finding from ok.c", "")] });
+    });
+
+    const resPromise = runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/late.c" }, { path: "/src/ok.c" }],
+      runtime: "api",
+      concurrency: 2,
+      verify: async () => { verifyEntered.resolve(); await verifyRelease.promise; return { confirmed: true, reason: "ok" }; },
+    });
+    await verifyEntered.promise;
+    lateCall.resolve({ findings: [mkFinding("f-late", "late finding", "")] });
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+    verifyRelease.resolve();
+    const res = await resPromise;
+    const lateDrop = res.dropped.find((d) => d.finding.id === "f-late");
+    expect(lateDrop?.dropReason).toBe("late_resolution");
+    // The late finding never re-entered the gate: confirmed holds only ok.c's.
+    expect(res.confirmed.map((f) => f.id)).toEqual(["f-ok"]);
+  });
+
   it("a transient-error finder retries up to HUNT_FINDER_MAX_RETRIES then gives up on that candidate", async () => {
     process.env.HUNT_FINDER_TIMEOUT_MS = "5000";
     process.env.HUNT_FINDER_MAX_RETRIES = "2";

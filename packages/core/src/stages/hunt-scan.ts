@@ -32,7 +32,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import type { Finding, RuntimeMode, ScanConfig } from "@pwnkit/shared";
+import type { Finding, RuntimeMode, ScanConfig, ScanReport } from "@pwnkit/shared";
 import { agenticScan } from "../agentic-scanner.js";
 import { stampDeploymentContext } from "./deployment-context.js";
 import {
@@ -269,6 +269,19 @@ export interface HuntScanOptions {
    * so its streamed leads exactly equal `confirmed`.
    */
   onConfirmed?: (finding: Finding) => void | Promise<void>;
+  /**
+   * Late-resolution flush: a finder that exceeds HUNT_FINDER_TIMEOUT_MS is
+   * abandoned, but its underlying call may still resolve afterwards. When it
+   * does, every finding it produced is delivered here (never re-run through
+   * the verify gate — the gate may already have run). Arrivals before report
+   * assembly also appear in `dropped[]` with dropReason "late_resolution".
+   * Cloud sinks should post these like any discovered finding so the
+   * downstream verification queue adjudicates them.
+   */
+  onLateFinderResult?: (
+    finding: Finding,
+    ctx: { candidate: HuntCandidate; lensId: string; model?: string },
+  ) => void | Promise<void>;
   log?: (msg: string) => void;
 }
 
@@ -350,7 +363,8 @@ export interface HuntDroppedFinding {
     | "verify_refuted"
     | "verify_errored"
     | "novelty_duplicate"
-    | "finder_errored";
+    | "finder_errored"
+    | "late_resolution";
   /** Human-readable detail — the refute reason, the judge explanation, etc. */
   detail: string;
 }
@@ -1060,6 +1074,12 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
   // single-threaded, between-await mutation pattern as `warnings`.
   const coverageGaps: CoverageGap[] = [];
 
+  // Late finder resolutions: a finder abandoned at the timeout may still
+  // resolve afterwards. Its findings are recorded here (and flushed via
+  // opts.onLateFinderResult) instead of vanishing. Mutated from fire-and-
+  // forget continuations; reads happen single-threaded after the verify gate.
+  const lateArrivals: Array<{ finding: Finding; candidatePath: string; lensId: string }> = [];
+
   // Memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1, hunt-flywheel.ts): OFF by
   // default (`priming` stays `null`, every use below is a no-op and the run
   // is byte-identical to before this existed). When on and a brief is given,
@@ -1123,6 +1143,11 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
     // instead of an empty array. Reset at the top of each attempt so only the
     // LAST attempt's partials survive a transient-error retry.
     let partials: Finding[] = [];
+    // The raw agenticScan promise of the current attempt, captured so a
+    // finder abandoned at the timeout can still be harvested if it resolves
+    // late (see the timed-out branch below). A ref object because assignments
+    // happen inside the attemptOnce closure, invisible to TS's narrowing.
+    const lateRef: { current: Promise<ScanReport> | null } = { current: null };
     const attemptOnce = async () => {
       partials = [];
       const dbPath = freshHuntDb();
@@ -1137,7 +1162,7 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           repoPath: opts.sourceRoot,
           ...(run.model ? { model: run.model } : {}),
         };
-        return await agenticScan({
+        const scanPromise = agenticScan({
           config,
           dbPath,
           challengeHint: huntHint(opts.brief, run.candidate, run.lens.challengeHint),
@@ -1147,6 +1172,8 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
             if (partial) partials.push(partial);
           },
         });
+        lateRef.current = scanPromise;
+        return await scanPromise;
       } finally {
         cleanupHuntDb(dbPath);
       }
@@ -1167,6 +1194,24 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
         `hunt: finder timed out on ${run.candidate.path} after ${finderTimeoutMs}ms — abandoned${recovered}`,
       );
       coverageGaps.push({ file: run.candidate.path, lensId: run.lens.id, reason: "timeout", budgetMs: finderTimeoutMs });
+      // Late-resolution flush: the abandoned call may still finish after we've
+      // recorded the cell as timed-out. Harvest whatever it eventually produces
+      // — surfaced via opts.onLateFinderResult (cloud sink) and, if it lands
+      // before the report is assembled, dropped[] with reason "late_resolution".
+      // Never awaited: a late resolution must not extend the scan.
+      const hung = lateRef.current;
+      if (hung) {
+        void hung.then(
+          (lateReport) => {
+            const lateFindings = lateReport?.findings ?? [];
+            for (const late of lateFindings) {
+              lateArrivals.push({ finding: late, candidatePath: run.candidate.path, lensId: run.lens.id });
+              void opts.onLateFinderResult?.(late, { candidate: run.candidate, lensId: run.lens.id, model: run.model });
+            }
+          },
+          () => { /* a late rejection carries no recoverable findings */ },
+        );
+      }
     } else {
       findings = [];
       warnings.push(`hunt: finder failed on ${run.candidate.path}: ${String(outcome.error).slice(0, 120)}`);
@@ -1501,6 +1546,19 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
           : `judge truncation: excluded from verify (path=${item.candidate.path}, lens=${item.lensId})`,
       });
     }
+  }
+
+  // Late finder resolutions that landed while the pipeline was still
+  // assembling (typically during the verify gate): recorded here so the
+  // report accounts for them; they are never re-run through the gate.
+  for (const late of lateArrivals) {
+    dropped.push({
+      finding: late.finding,
+      candidatePath: late.candidatePath,
+      lensId: late.lensId,
+      dropReason: "late_resolution",
+      detail: "finder resolved after its timeout budget; not re-run through the verify gate",
+    });
   }
 
   return {
