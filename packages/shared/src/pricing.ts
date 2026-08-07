@@ -50,6 +50,10 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   // subscription discount, so reconcile to the Model Studio invoice. Only the
   // entries the 0cloud rate source carries are pinned; the rest of the
   // catalog deliberately warns + inherits `default` until they are.
+  // deepseek-v4-flash-0731 (Token Plan credit lane) is NOT pinned here on
+  // purpose: AZURE_DEPLOYMENT_PRICE_ALIASES already resolves it to the
+  // DeepSeek-V4-Flash list rate ($0.19/$0.51), the defensible anchor for a
+  // credit-billed variant whose per-credit rate Alibaba does not publish.
   "qwen3.8-max": { input: 2.00, output: 6.00 },
   "qwen3.7-max": { input: 2.50, output: 7.50 },
   // Azure Foundry deployment names (verified 2026-07-25) — exact aliases

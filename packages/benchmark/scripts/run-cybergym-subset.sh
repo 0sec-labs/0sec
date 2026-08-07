@@ -161,22 +161,25 @@ while IFS= read -r line; do
       break
     fi
     # No kept row: either an error row was just appended, or the runner died
-    # before writing one. Evict infra rows, wait out a quota wall, retry.
+    # before writing one. Evict infra rows, then ALWAYS retry up to the cap —
+    # a transient provider stall exits 0 with an evicted error row and no quota
+    # signature, and must not skip the task. The signature only chooses the
+    # backoff: quota wall → next window boundary; anything else → short wait.
     evict_infra_rows "${host_corpus}" "${task_id}"
-    if quota_signature "${task_log}" && (( attempt <= CYBERGYM_INFRA_RETRIES )); then
-      wait_s="$(seconds_to_next_boundary)"
-      printf '[subset] %s hit provider quota; sleeping %ss to next window\n' "${task_id}" "${wait_s}"
+    if (( attempt <= CYBERGYM_INFRA_RETRIES )); then
+      if quota_signature "${task_log}"; then
+        wait_s="$(seconds_to_next_boundary)"
+        printf '[subset] %s hit provider quota; sleeping %ss to next window\n' "${task_id}" "${wait_s}"
+      else
+        wait_s="${CYBERGYM_INFRA_RETRY_WAIT_SECONDS:-300}"
+        printf '[subset] %s not measured (rc=%d, infra/transient); retrying in %ss\n' "${task_id}" "${rc}" "${wait_s}"
+      fi
       sleep "${wait_s}"
-      continue
-    fi
-    if (( rc != 0 )) && (( attempt <= CYBERGYM_INFRA_RETRIES )); then
-      printf '[subset] %s runner exited %d; retrying\n' "${task_id}" "${rc}"
-      sleep 30
       continue
     fi
     # Out of retries: leave the last error state visible in the task log and
     # move on; the missing corpus row marks the task as not measured.
-    printf '[subset] %s NOT measured after %d attempt(s) — see %s\n' "${task_id}" "${attempt}" "${task_log}"
+    printf '[subset] %s NOT measured after %d attempt(s) — see %s\n' "${task_id}" "$((attempt - 1))" "${task_log}"
     break
   done
 done < "${subset_file}"
