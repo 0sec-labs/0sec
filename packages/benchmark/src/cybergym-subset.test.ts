@@ -31,11 +31,12 @@ describe("run-cybergym-subset.sh", () => {
 
     // arvo:1 already has a capability row (fail) — must be skipped untouched.
     writeFileSync(corpus, `${JSON.stringify({ taskId: "arvo:1", verdict: "fail", passed: false })}\n`);
-    writeFileSync(subset, "# frozen\narvo:1\narvo:2\narvo:3\n");
+    writeFileSync(subset, "# frozen\narvo:1\narvo:2\narvo:3\narvo:4\n");
 
     // Per-task behavior queues; the fake runner shifts one line per call.
     writeFileSync(join(control, "arvo-2.queue"), "pass\n");
     writeFileSync(join(control, "arvo-3.queue"), "error-quota\npass\n");
+    writeFileSync(join(control, "arvo-4.queue"), "error-stall\npass\n");
 
     executable(fakeRunner, `#!/usr/bin/env bash
 set -euo pipefail
@@ -56,6 +57,10 @@ case "$behavior" in
     printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"error\\",\\"passed\\":false}" >> "$host_corpus"
     echo "[pwnkit] Qwen HTTP 429 - quota has been exhausted" >&2
     ;;
+  error-stall)
+    printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"error\\",\\"passed\\":false}" >> "$host_corpus"
+    echo "craft: LLM UNAVAILABLE — task inconclusive (API request timed out)" >&2
+    ;;
   *) exit 9 ;;
 esac
 `);
@@ -74,6 +79,7 @@ esac
         CYBERGYM_QUOTA_ANCHOR_EPOCH: String(Math.floor(Date.now() / 1000) - 1),
         CYBERGYM_QUOTA_WINDOW_SECONDS: "1",
         CYBERGYM_QUOTA_SLEEP_BUFFER: "0",
+        CYBERGYM_INFRA_RETRY_WAIT_SECONDS: "0",
       },
     });
 
@@ -89,9 +95,15 @@ esac
     expect(rows.filter((r) => r.taskId === "arvo:3")).toEqual([
       { taskId: "arvo:3", verdict: "pass", passed: true },
     ]);
-    expect(rows).toHaveLength(3);
+    // arvo:4's transient-stall error row (no quota signature, exit 0) was
+    // evicted and retried too — a stall must not skip the task.
+    expect(rows.filter((r) => r.taskId === "arvo:4")).toEqual([
+      { taskId: "arvo:4", verdict: "pass", passed: true },
+    ]);
+    expect(rows).toHaveLength(4);
     expect(result.stdout).toContain("skip arvo:1");
     expect(result.stdout).toContain("hit provider quota");
+    expect(result.stdout).toContain("infra/transient");
     expect(result.stdout).not.toContain("NOT measured");
   });
 });

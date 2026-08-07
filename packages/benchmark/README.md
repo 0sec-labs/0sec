@@ -545,6 +545,57 @@ key is present. The generator boundary already strips every credential-shaped
 variable from model-written Python, so these keys never reach untrusted
 code.
 
+### Subscription topology — which models share which quota pool
+
+Measured and documented 2026-08-07. The one thing to internalize: **the
+Alibaba Token Plan is a single credit pool** — qwen, the plan-side DeepSeek
+variants, glm-5.2, and the image/audio models all burn the same 5-hour and
+7-day credit windows, and **production 0cloud shares the same key**. A
+benchmark sweep competes with production scans for the same quota.
+
+| Plan / credential | Billing | Models served | Quota mechanics | Shares pool with |
+|---|---|---|---|---|
+| Alibaba Model Studio **Token Plan** (Personal, Singapore) | prepaid credits | qwen3.8-max, qwen3.7-max, qwen3.7-plus, qwen3.6-flash, **deepseek-v4-pro**, **deepseek-v4-flash-0731**, glm-5.2 (+image/audio) | 5h rolling + 7-day fixed credit windows | **production 0cloud** (same key) |
+| Moonshot **Kimi for Coding** | flat-rate seat | k3 | plan windows | local dev only |
+| z.ai **GLM plan** | flat-rate seat | glm-5.2 (z.ai endpoint — a *different* glm-5.2 lane than the Token Plan copy) | plan windows | local dev only |
+| **ChatGPT Codex** (OAuth seat) | subscription | gpt-5.x-codex | plan quota | local dev only |
+| **Claude Max** (OAuth seat) | subscription | claude-* | plan quota | local dev only |
+| **DeepSeek direct API** | metered per-token | deepseek-v4-flash ($0.14/$0.28 per 1M) | none (metered) | — |
+| **Azure AI Foundry** | metered per-token | DeepSeek-V4-Pro ($1.74/$3.48), DeepSeek-V4-Flash ($0.19/$0.51), gpt-5.6-*, Kimi-K2.7-Code, gpt-oss-120b | none (metered) | production 0cloud |
+| **OpenRouter** | prepaid credits | gateway | per-token | — |
+
+Token Plan tiers (Personal, credits): Lite $6/mo → 700/5h + 2,500/7d;
+Standard $18/mo → 3,000/5h + 10,000/7d; Pro $68/mo → 12,000/5h + 40,000/7d.
+Extra Bundle $15 → 20,000 credits with **no window limits**. Team Edition is
+monthly-only (no 5h/7d windows): Max seat $200/mo → 250,000 credits. Our
+2026-08-06 5-hour wall is consistent with **Personal Standard** at
+≈1 credit per $0.001 of list rate — [INFERENCE], confirm against the
+console's usage-details page.
+
+### Quota math (measured, qwen3.8-max lane, 2026-08-06/07)
+
+Per-task input tokens on `cybergym-fair-v1` (60 steps max, 45-min deadline):
+444k–3.48M, mean ≈1.4M; output 20k–40k. At list rates ($2/$6 per 1M) that is
+**$0.9–$7.3, mean ≈$3 per task**. Consequences:
+
+- The full 80-task subset ≈ **$240 list-equivalent** (or ~250k credits).
+- Personal Standard (10k credits/7d) fits **~3 tasks/week** → the subset does
+  NOT fit Personal Edition. Options: ~12 Extra Bundles (~$180), Team Max seat
+  ($200, no windows), or a cheaper lane for breadth.
+- **deepseek-v4-flash-0731** resolves to $0.19/$0.51 per 1M (Azure list
+  anchor) — **~10× cheaper per token**; the 80-task sweep is ~$25
+  list-equivalent on that lane. Capability on the subset is unmeasured.
+- qwen3.8-max credit burn is **50% off 22:00–08:00 UTC+8** (16:00–02:00
+  Zurich): prefer those hours for sweep-heavy windows.
+
+ToS flags (Token Plan Personal): the plan prohibits non-interactive batch API
+scenarios and multi-device use. An automated 80-task sweep from `bench`
+while production 0cloud shares the key is arguably outside both; Team
+Edition is the compliant multi-seat path. Decide before scaling the sweep.
+
+Receipts always carry raw input/output token counts, so any price-table
+revision recomputes historical cost offline (`priceRun`).
+
 The full fair-run protocol (firewall, one-container-per-task, relaunch
 policy, Wilson-CI reporting) lives in the
 [runbook](../../../docs/operations/runbooks/cybergym-harness.md) and
