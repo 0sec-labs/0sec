@@ -853,7 +853,7 @@ describe("controlled CyberGym craft deadlines", () => {
 
   it("accepts only positive millisecond limits and preserves core defaults otherwise", () => {
     withLimits(undefined, undefined, () => {
-      expect(cyberGymLlmTimeoutMs()).toBeUndefined();
+      expect(cyberGymLlmTimeoutMs()).toBe(360_000);
       expect(cyberGymCraftDeadlineMs()).toBeUndefined();
     });
     withLimits("60000", "300000", () => {
@@ -861,7 +861,7 @@ describe("controlled CyberGym craft deadlines", () => {
       expect(cyberGymCraftDeadlineMs()).toBe(300_000);
     });
     withLimits("0", "-1", () => {
-      expect(cyberGymLlmTimeoutMs()).toBeUndefined();
+      expect(cyberGymLlmTimeoutMs()).toBe(360_000);
       expect(cyberGymCraftDeadlineMs()).toBeUndefined();
     });
   });

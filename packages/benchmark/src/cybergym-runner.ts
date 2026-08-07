@@ -1040,9 +1040,16 @@ export function cyberGymCraftGeneratorUid(): number | undefined {
   return positiveEnvInt("CYBERGYM_CRAFT_GENERATOR_UID");
 }
 
-/** Per-model-call cap for controlled CyberGym runs; unset keeps the craft default. */
-export function cyberGymLlmTimeoutMs(): number | undefined {
-  return positiveEnvMs("CYBERGYM_LLM_TIMEOUT_MS");
+/**
+ * Per-model-call cap for controlled CyberGym runs. Defaults to 360s: craft-loop
+ * contexts grow large (60 steps of source reads) and non-streaming providers
+ * legitimately exceed the 240s core default — Qwen Token Plan stalled a call at
+ * exactly 240s mid-task on 2026-08-06, aborting the run as LLM UNAVAILABLE.
+ * The whole-trajectory `CYBERGYM_CRAFT_DEADLINE_MS` bound still applies, so a
+ * longer per-call cap cannot extend the task budget. Env overrides.
+ */
+export function cyberGymLlmTimeoutMs(): number {
+  return positiveEnvMs("CYBERGYM_LLM_TIMEOUT_MS") ?? 360_000;
 }
 
 /** Whole-trajectory cap; checked between model calls so completed work is retained. */
