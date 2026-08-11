@@ -45,7 +45,7 @@ import type { FinderLens, ThreatLane, VerifyLens } from "@pwnkit/core";
 // this adds no new startup cost; it lets `defaultFinderLenses` stay a plain
 // module-eval const (its reference identity is relied on by selectProfileLenses
 // and its tests) while sourcing the appsec lenses from the data-driven JSON.
-import { loadAppsecFinderLenses } from "@pwnkit/core";
+import { eventBus, loadAppsecFinderLenses, ScanCostLedger } from "@pwnkit/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
 
 /** Hard cap mirroring the review pipeline's 5000-source-file scope limit
@@ -533,6 +533,8 @@ export interface RunDeepReviewOptions {
   useThreatModel?: boolean;
   runtime?: RuntimeMode;
   timeoutMs?: number;
+  /** Hard scan-wide USD ceiling. Overrides $PWNKIT_COST_CEILING_USD. */
+  costCeilingUsd?: number;
   log?: (msg: string) => void;
 }
 
@@ -557,6 +559,8 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     moveFinderLenses,
     moveVerifyLenses,
   } = await import("@pwnkit/core");
+  const costLedger = new ScanCostLedger();
+  const scanStartedAt = Date.now();
   const log = opts.log ?? (() => {});
   const runtime: RuntimeMode = opts.runtime ?? "api";
   // Candidate budget: explicit flag > env > auto-scale from file count.
@@ -739,6 +743,8 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       // selector move the refutation off ALL finder families when a second
       // provider is configured (#661), and `log` records what it decided —
       // including "it could not", which is the case worth knowing about.
+      ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
+      costLedger,
       ...(models && models.length > 0 ? { finderModels: models } : {}),
       ...(opts.quorum ? { quorum: opts.quorum } : {}),
       log,
@@ -769,6 +775,8 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       lenses: finderLenses,
       runtime,
       concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY,
+      ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
+      costLedger,
       attemptsPerCandidate,
       ...(models ? { models } : {}),
       verify,
@@ -794,14 +802,24 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     // which was wrongly failing completed 0-finding sweeps — CapyFi/Onyx,
     // 2026-07-08). We do NOT mask a GENUINE backend failure: if the sweep did no
     // work at all — every finder run errored or timed out, so NONE completed —
-    // that's an LLM/backend failure (auth, total stall), reported as exit 3. A
-    // PARTIAL subset timing out still produced real coverage and is a success.
+    // that is an LLM/backend failure. A PARTIAL subset timing out is a success.
     // (`finderCompleted` may be absent from older/mocked results; treat absent
     // as "did work" so we never flip a completed run to failure on missing data.)
     const sweptNothing =
       res.scanned > 0 &&
       typeof res.finderCompleted === "number" &&
       res.finderCompleted === 0;
+    const cost = costLedger.costBreakdown();
+    eventBus.emit("scan_completed", {
+      exit_reason: sweptNothing ? "failed" : res.costCeilingExceeded ? "cost_exceeded" : "completed",
+      findings: res.findings.length,
+      findings_count: res.findings.length,
+      duration_ms: Date.now() - scanStartedAt,
+      summary: res.costCeilingExceeded
+        ? `Deep review stopped at the $${opts.costCeilingUsd?.toFixed(2) ?? "configured"} cost ceiling.`
+        : `Deep review completed: ${res.scanned} finder runs, ${res.findings.length} findings, ${leads.length} leads.`,
+      ...(cost ? { cost_usd: cost.costUsd, cost_breakdown: cost.breakdown } : {}),
+    });
     if (sweptNothing) {
       return {
         exitCode: 3,
@@ -856,6 +874,17 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
         note: "LEADS, not confirmed bugs. Each survived the multi-lens refute quorum; verify the real sink + impact before disclosure.",
       },
     };
+  } catch (error) {
+    const cost = costLedger.costBreakdown();
+    eventBus.emit("scan_completed", {
+      exit_reason: "failed",
+      findings: 0,
+      findings_count: 0,
+      duration_ms: Date.now() - scanStartedAt,
+      summary: `Deep review failed: ${error instanceof Error ? error.message : String(error)}`,
+      ...(cost ? { cost_usd: cost.costUsd, cost_breakdown: cost.breakdown } : {}),
+    });
+    throw error;
   } finally {
     if (savedCloudSink !== undefined) process.env.PWNKIT_CLOUD_SINK = savedCloudSink;
     prepared.cleanup();
@@ -865,6 +894,7 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
 interface DeepReviewOpts {
   profile?: string;
   subsystem?: string;
+  costCeiling?: string;
   models?: string;
   attempts?: string;
   concurrency?: string;
@@ -886,10 +916,20 @@ function parsePositive(flag: string, raw: string | undefined, dflt: number): num
 
 async function deepReviewAction(target: string, opts: DeepReviewOpts): Promise<void> {
   if (!target || target.trim() === "") throw new Error("missing required argument: <target> (source tree path or git URL)");
+  const ceilingSource = opts.costCeiling ?? process.env.PWNKIT_COST_CEILING_USD;
+  let costCeilingUsd: number | undefined;
+  if (ceilingSource !== undefined && ceilingSource !== "") {
+    const parsed = Number(ceilingSource);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`invalid --cost-ceiling '${ceilingSource}' (expected positive USD amount)`);
+    }
+    costCeilingUsd = parsed;
+  }
 
   const { writeFileSync } = await import("node:fs");
   const outcome = await runDeepReview({
     target,
+    ...(costCeilingUsd !== undefined ? { costCeilingUsd } : {}),
     ...(opts.profile ? { profile: opts.profile } : {}),
     ...(opts.subsystem ? { subsystem: opts.subsystem } : {}),
     // Flag > env > single provider-default model. Only pass `models` when the
@@ -927,6 +967,7 @@ export function registerDeepReviewCommand(program: Command): void {
     .option("--models <a,b>", "Comma-separated finder models for diversity (default: single provider model, or $PWNKIT_DEEP_REVIEW_MODELS)")
     .option("--attempts <N>", `Finder attempts per candidate×lens×model, best-of-N (default ${DEFAULT_ATTEMPTS}, or $PWNKIT_DEEP_REVIEW_ATTEMPTS)`)
     .option("--concurrency <N>", `Max finders in flight (default ${DEFAULT_CONCURRENCY})`)
+    .option("--cost-ceiling <usd>", "Hard scan-wide USD ceiling. Overrides $PWNKIT_COST_CEILING_USD.")
     .option("--max-candidates <N>", `Cap candidate files hunted, largest-first (default ${DEFAULT_MAX_CANDIDATES}, or $PWNKIT_DEEP_REVIEW_MAX_CANDIDATES)`)
     .option("--threat-model", "Enable pre-selection threat-model planner pass (trust-boundary lanes); default OFF")
     .option("--quorum <N>", "Multi-lens verify quorum (default: majority of the verify-lens count)")

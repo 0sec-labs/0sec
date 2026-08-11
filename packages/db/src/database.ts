@@ -1097,6 +1097,16 @@ export class pwnkitDB {
       .all();
   }
 
+  listScansByTarget(target: string, opts?: { limit?: number }) {
+    const query = this.db
+      .select()
+      .from(schema.scans)
+      .where(eq(schema.scans.target, target))
+      .orderBy(desc(schema.scans.startedAt));
+    if (opts?.limit !== undefined) query.limit(opts.limit);
+    return query.all();
+  }
+
   // ── Targets ──
 
   upsertTarget(info: TargetInfo): string {
@@ -1271,6 +1281,10 @@ export class pwnkitDB {
       .where(eq(schema.findings.scanId, scanId))
       .orderBy(schema.findings.severity, schema.findings.timestamp)
       .all();
+  }
+
+  getScanFindings(scanId: string) {
+    return this.getFindings(scanId);
   }
 
   getLatestFindingForScan(scanId: string) {

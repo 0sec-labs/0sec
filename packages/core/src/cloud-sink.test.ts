@@ -541,6 +541,84 @@ describe("normalizeFinding", () => {
     expect(out.category).toBe("unknown");
     expect(out.status).toBe("discovered");
   });
+
+  it("passes through semanticDedupe when well-formed", () => {
+    const out = normalizeFinding({
+      title: "x",
+      semanticDedupe: {
+        canonicalId: "f-1",
+        isCanonical: true,
+        clusterId: "s1:f-1",
+        reason: "most representative",
+      },
+    });
+    expect(out.semanticDedupe).toEqual({
+      canonicalId: "f-1",
+      isCanonical: true,
+      clusterId: "s1:f-1",
+      reason: "most representative",
+    });
+  });
+
+  it("passes through semanticDedupe for duplicate findings", () => {
+    const out = normalizeFinding({
+      title: "x",
+      semanticDedupe: {
+        canonicalId: "f-2",
+        isCanonical: false,
+        clusterId: "s1:f-2",
+        reason: "duplicate of f-2",
+      },
+    });
+    expect(out.semanticDedupe?.isCanonical).toBe(false);
+    expect(out.semanticDedupe?.canonicalId).toBe("f-2");
+  });
+
+  it("drops malformed semanticDedupe (missing fields)", () => {
+    const out = normalizeFinding({
+      title: "x",
+      semanticDedupe: { canonicalId: "f-1" },
+    });
+    expect(out.semanticDedupe).toBeUndefined();
+  });
+
+  it("drops malformed semanticDedupe (wrong types)", () => {
+    const out = normalizeFinding({
+      title: "x",
+      semanticDedupe: {
+        canonicalId: "f-1",
+        isCanonical: "true",
+        clusterId: 123,
+        reason: "test",
+      },
+    });
+    expect(out.semanticDedupe).toBeUndefined();
+  });
+
+  it("passes through findingRank when finite", () => {
+    const out = normalizeFinding({ title: "x", findingRank: 3 });
+    expect(out.findingRank).toBe(3);
+  });
+
+  it("passes through findingRank = 0 (valid)", () => {
+    const out = normalizeFinding({ title: "x", findingRank: 0 });
+    expect(out.findingRank).toBe(0);
+  });
+
+  it("drops non-finite findingRank", () => {
+    expect(normalizeFinding({ title: "x", findingRank: Infinity }).findingRank).toBeUndefined();
+    expect(normalizeFinding({ title: "x", findingRank: NaN }).findingRank).toBeUndefined();
+  });
+
+  it("drops findingRank when not a number", () => {
+    expect(normalizeFinding({ title: "x", findingRank: "3" }).findingRank).toBeUndefined();
+  });
+
+  it("semanticDedupe and findingRank are both undefined when absent", () => {
+    const out = normalizeFinding({ title: "x" });
+    expect(out.semanticDedupe).toBeUndefined();
+    expect(out.findingRank).toBeUndefined();
+  });
 });
 
 // ── discovered-asset push (pwnkit#768 / #761) ──

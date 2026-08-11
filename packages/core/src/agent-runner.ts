@@ -70,6 +70,12 @@ export interface AnalysisAgentResult {
    * finding is held as inconclusive rather than rejected.
    */
   costCeilingExceeded?: boolean;
+  /**
+   * Questions for the PR author when the agent was blocked on knowledge
+   * only the team has (max 10, each ≤500 chars). Only populated by the
+   * CLI runtime path when the structured output includes them.
+   */
+  questions?: string[];
 }
 
 // ── Depth → maxTurns mapping ──
@@ -291,6 +297,12 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
           },
         },
         summary: { type: "string", description: "Brief summary of the audit" },
+        questions: {
+          type: "array",
+          items: { type: "string", description: "A self-contained question for the PR author (max 500 chars)" },
+          maxItems: 10,
+          description: "Questions for the PR author when the agent is blocked on knowledge only the team has",
+        },
       },
       required: ["findings", "summary"],
     };
@@ -365,6 +377,17 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
     } else {
       const findings = parseFindingsFromCliOutput(result.output, { templatePrefix, scopePath });
 
+      // Extract questions from JSON structured output
+      let questions: string[] | undefined;
+      try {
+        const parsed = JSON.parse(result.output.trim());
+        if (parsed.questions && Array.isArray(parsed.questions)) {
+          questions = validateQuestions(parsed.questions);
+        }
+      } catch {
+        // Not valid JSON — no questions to extract
+      }
+
       for (const f of findings) {
         emit({
           type: "finding",
@@ -376,10 +399,10 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
       emit({
         type: "stage:end",
         stage: "attack",
-        message: `CLI agent complete: ${findings.length} findings (${result.durationMs}ms)`,
+        message: `CLI agent complete: ${findings.length} findings${questions && questions.length > 0 ? `, ${questions.length} question(s)` : ""} (${result.durationMs}ms)`,
       });
 
-      return { findings };
+      return { findings, questions };
     }
   }
 
@@ -613,4 +636,23 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
   // only by the native API loop branch above. It does count turns, so those
   // are still attributable per-phase.
   return { findings: agentState.findings, usage: undefined, estimatedCostUsd: undefined, turns: agentState.turnCount };
+}
+
+/**
+ * Validate and sanitize a questions array from the agent's structured output.
+ * - Drops non-string or empty entries
+ * - Truncates entries exceeding 500 chars
+ * - Limits to 10 entries max
+ * Returns an empty array if all entries are invalid.
+ */
+export function validateQuestions(raw: unknown[]): string[] {
+  const valid: string[] = [];
+  for (const item of raw) {
+    if (valid.length >= 10) break;
+    if (typeof item === "string" && item.trim().length > 0) {
+      const trimmed = item.trim();
+      valid.push(trimmed.length > 500 ? trimmed.slice(0, 500) : trimmed);
+    }
+  }
+  return valid;
 }

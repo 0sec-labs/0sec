@@ -653,6 +653,33 @@ export interface Finding {
    */
   dedupRefs?: string[];
   /**
+   * Intra-scan semantic dedupe mapping (anchored incremental LLM clustering,
+   * `triage/semantic-dedupe.ts`, flag-gated `PWNKIT_FEATURE_SEMANTIC_DEDUPE`,
+   * default OFF). Optional and additive — undefined unless the post-pass ran.
+   * Canonical findings carry `isCanonical: true` and map to themselves;
+   * duplicates carry the canonical's id, a stable `clusterId` (`scanId:canonicalId`),
+   * and the clustering reason so downstream consumers can collapse or display
+   * the duplicate set without re-deriving it.
+   */
+  semanticDedupe?: {
+    /** Id of the canonical finding this finding maps to. */
+    canonicalId: string;
+    /** Whether this finding IS the canonical for its cluster. */
+    isCanonical: boolean;
+    /** Stable cluster identifier: `${scanId}:${canonicalId}`. */
+    clusterId: string;
+    /** Human-readable reason for the clustering decision. */
+    reason: string;
+  };
+  /**
+   * Incremental rank assigned by the ranking post-pass
+   * (`triage/incremental-rank.ts`, flag-gated
+   * `PWNKIT_FEATURE_INCREMENTAL_RANK`, default OFF). 1 = highest comparative
+   * promise for a security researcher. Optional and additive — undefined
+   * unless the post-pass ran; ranks are per-scan, not global.
+   */
+  findingRank?: number;
+  /**
    * Public-advisory novelty verdict (issue #851). Optional and additive —
    * undefined until the publishability layer's novelty step runs (flag-gated
    * via `PWNKIT_FEATURE_PUBLISHABILITY_GATE`, OSS ecosystems only). The
@@ -1557,6 +1584,8 @@ export interface ReviewConfig {
   /** Operator hypothesis to seed the agent with a specific research direction.
    *  Inspired by Xint Code's operator prompt that found CVE-2026-31431. */
   hypothesis?: string;
+  /** PR/MR discussion thread (untrusted) to review against. */
+  conversation?: string;
   /**
    * Known bug(s) to anchor the review on for variant analysis. When provided,
    * the linux-kernel review reframes from open-ended discovery to hunting

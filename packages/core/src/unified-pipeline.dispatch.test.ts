@@ -1476,6 +1476,75 @@ describe("runPipeline — diff-aware review", () => {
   });
 });
 
+describe("runPipeline — conversation threading", () => {
+  it("--conversation threads into the agent prompt", async () => {
+    const repoDir = freshTmpDir("repo-conv");
+    writeFileSync(join(repoDir, "f.ts"), "// fixture");
+
+    await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      conversation: "User: Check the login handler for SQL injection",
+      dbPath: freshDbPath(),
+    });
+
+    const args = runAnalysisAgentMock.mock.calls[0]![0];
+    expect(args.agentSystemPrompt).toContain("## REVIEW CONVERSATION (UNTRUSTED)");
+    expect(args.agentSystemPrompt).toContain("User: Check the login handler for SQL injection");
+    expect(args.agentSystemPrompt).toContain("UNTRUSTED DATA");
+  });
+
+  it("omits conversation block when conversation is not provided", async () => {
+    const repoDir = freshTmpDir("repo-noconv");
+    writeFileSync(join(repoDir, "g.ts"), "// fixture");
+
+    // Reset the mock to clear prior calls
+    runAnalysisAgentMock.mockClear();
+
+    await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      dbPath: freshDbPath(),
+    });
+
+    const args = runAnalysisAgentMock.mock.calls[0]![0];
+    expect(args.agentSystemPrompt).not.toContain("REVIEW CONVERSATION (UNTRUSTED)");
+  });
+
+  it("preserves hypothesis alongside conversation in the agent prompt", async () => {
+    const repoDir = freshTmpDir("repo-both");
+    writeFileSync(join(repoDir, "h.ts"), "// fixture");
+
+    runAnalysisAgentMock.mockClear();
+
+    await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      hypothesis: "Check the JWT validation middleware",
+      conversation: "User: Look at the password reset flow",
+      dbPath: freshDbPath(),
+    });
+
+    const args = runAnalysisAgentMock.mock.calls[0]![0];
+    expect(args.agentSystemPrompt).toContain("OPERATOR HYPOTHESIS");
+    expect(args.agentSystemPrompt).toContain("Check the JWT validation middleware");
+    expect(args.agentSystemPrompt).toContain("## REVIEW CONVERSATION (UNTRUSTED)");
+    expect(args.agentSystemPrompt).toContain("User: Look at the password reset flow");
+  });
+});
+
 // ── Report envelope shape ───────────────────────────────────────────────────
 
 describe("runPipeline — report envelope", () => {

@@ -38,6 +38,15 @@ export const features = {
   /** Interactive PTY sessions for exploits requiring interactivity (reverse shells, DB clients, SSH) */
   get ptySession(): boolean { return env("PWNKIT_FEATURE_PTY_SESSION", false); },
   /**
+   * Persistent, COMPUTE-ONLY Python REPL (`python_exec`, Phase-0). A framed
+   * python3 kernel keeps state across calls for payload/parse/crypto/encode
+   * work; networking is blocked at the socket source whenever an engagement is
+   * active. Default OFF — opt in via PWNKIT_FEATURE_PYTHON_EXEC=1. Getter so
+   * the CLI `--features` flag (set after this module is imported) is honored at
+   * tool-dispatch time.
+   */
+  get pythonExec(): boolean { return env("PWNKIT_FEATURE_PYTHON_EXEC", false); },
+  /**
    * EGATS specialist routing (#557, HPTSA-inspired). When ON, an EGATS branch
    * whose hypothesis names a concrete vuln class (SQLi/XSS/SSRF/SSTI/IDOR/
    * auth-bypass) runs as a per-class SPECIALIST: a class system prompt built
@@ -78,6 +87,23 @@ export const features = {
   get publishabilityGate(): boolean { return env("PWNKIT_FEATURE_PUBLISHABILITY_GATE", false); },
   /** PoV gate: require a working, executable PoC per finding or downgrade to info */
   get povGate(): boolean { return env("PWNKIT_FEATURE_POV_GATE", false); },
+  /**
+   * Intra-scan semantic dedupe post-pass (anchored incremental LLM
+   * clustering over the final finding set, `triage/semantic-dedupe.ts`).
+   * Marks duplicates with a canonical mapping + cluster reason instead of
+   * dropping them. Default OFF: it spends an LLM call per ≤50-finding batch
+   * after the scan, so it must be explicitly opted into before any A/B
+   * claim. Toggle via PWNKIT_FEATURE_SEMANTIC_DEDUPE.
+   */
+  get semanticDedupe(): boolean { return env("PWNKIT_FEATURE_SEMANTIC_DEDUPE", false); },
+  /**
+   * Incremental finding ranking post-pass (decimal-insertion between ranked
+   * anchors, `triage/incremental-rank.ts`). Orders the report by comparative
+   * promise (exploitability × impact × evidence strength). Default OFF: it
+   * spends an LLM call per ≤50-finding batch; opt in before any A/B claim.
+   * Toggle via PWNKIT_FEATURE_INCREMENTAL_RANK.
+   */
+  get incrementalRank(): boolean { return env("PWNKIT_FEATURE_INCREMENTAL_RANK", false); },
   /**
    * Static-finding PoC generation (#666 / EPIC #674 Part A). For findings that
    * ship with NO executable PoC (`pocSteps` empty — the static / code-analysis

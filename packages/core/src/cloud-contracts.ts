@@ -110,6 +110,21 @@ export interface CloudSinkFinding {
   verificationSpec?: CloudSinkVerificationSpec;
   /** Optional target-neutral research evidence envelopes. */
   researchEvidence?: unknown[];
+  /**
+   * Engine-side intra-scan semantic dedupe mapping (anchored LLM
+   * clustering). Optional and additive — the cloud persists or ignores
+   * based on its own schema.
+   */
+  semanticDedupe?: {
+    canonicalId: string;
+    isCanonical: boolean;
+    clusterId: string;
+    reason: string;
+  };
+  /**
+   * Engine-assigned per-scan rank (1 = highest comparative promise).
+   */
+  findingRank?: number;
 }
 
 /**
