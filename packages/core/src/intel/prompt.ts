@@ -18,7 +18,7 @@ export function formatTargetHistoryForPrompt(history: IntelTargetHistory): strin
     lines.push(`Matched hints: ${history.summary.matchedHints.slice(0, 8).join(", ")}`);
   }
   lines.push(
-    "Use these as sourced leads, not findings. For each relevant prior bug shape, collect the expected local evidence before reporting.",
+    "The playbooks below document ground already covered by prior analysis. These known bug classes and their prior findings will be automatically deduplicated. DO NOT re-derive or re-report them. Instead treat this as a coverage map: focus effort on UNEXPLORED attack surface -- files, entry points, and vulnerability classes not represented in the list below.",
   );
 
   for (const playbook of history.playbooks.slice(0, 4)) {

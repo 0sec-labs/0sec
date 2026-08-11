@@ -143,6 +143,13 @@ export interface PipelineOptions {
    */
   hypothesis?: string;
   /**
+   * PR/MR discussion thread (untrusted) to review against. The latest
+   * author message drives this run and must be answered explicitly in
+   * the final summary. When the agent is blocked on knowledge only the
+   * team has, it may add questions to the report's top-level `questions` array.
+   */
+  conversation?: string;
+  /**
    * External candidate vulnerable spans (e.g. from `gemmaforge scan`) to seed
    * the review agent's worklist alongside — or instead of — semgrep. Each
    * record carries its own source tag, so provenance survives into the agent
@@ -1145,7 +1152,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   const scanCostCeilingTripped = (): boolean =>
     opts.costCeilingUsd !== undefined &&
     opts.costCeilingUsd > 0 &&
-    costLedger.costUsd(resolvedModel ?? opts.model) >= opts.costCeilingUsd;
+    costLedger.totalCostUsd() >= opts.costCeilingUsd;
 
   let phaseIndex = 0;
   let openPhase:
@@ -1731,6 +1738,9 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       if (opts.hypothesis && prepared.resolvedType === "source-code") {
         emit({ type: "stage:start", stage: "research", message: `Operator hypothesis seeded: ${opts.hypothesis.slice(0, 200)}` });
       }
+      if (opts.conversation && prepared.resolvedType === "source-code") {
+        emit({ type: "stage:start", stage: "research", message: `Review conversation loaded (${opts.conversation.length} chars)` });
+      }
 
       // Pre-scan attack surface enumeration for kernel reviews (pwnkit#471).
       let attackSurfaceCtx: string | undefined;
@@ -1767,7 +1777,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
             ? xnuKernelReviewAgentPrompt(prepared.scopePath, semgrepFindings, undefined, opts.subsystem, opts.hypothesis)
             : opts.reviewProfile === "xnu-re"
             ? xnuReReviewAgentPrompt(prepared.scopePath, semgrepFindings, opts.subsystem, opts.hypothesis)
-            : reviewAgentPrompt(prepared.scopePath, semgrepFindings, changedFiles, !!opts.changedOnly, opts.hypothesis))
+            : reviewAgentPrompt(prepared.scopePath, semgrepFindings, changedFiles, !!opts.changedOnly, opts.hypothesis, opts.conversation))
         : agentSystemPrompt;
 
       // Per-file research loop (#285). When `perItemOrchestration` is on,
@@ -2058,7 +2068,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         // so the run lands cost_exceeded rather than a clean pass.
         warnings.push({
           stage: "verify",
-          message: `Verification skipped: scan cost ceiling of $${opts.costCeilingUsd} reached during research ($${costLedger.costUsd(resolvedModel ?? opts.model).toFixed(4)} spent). Findings left unverified.`,
+          message: `Verification skipped: scan cost ceiling of $${opts.costCeilingUsd} reached during research ($${costLedger.totalCostUsd().toFixed(4)} spent). Findings left unverified.`,
         });
         findings = findings.map((finding) => {
           const decision = isDisclosureWorthy(finding, "inconclusive");

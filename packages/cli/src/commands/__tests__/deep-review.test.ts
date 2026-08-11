@@ -356,6 +356,7 @@ const {
   countScopeFilesUpToMock,
   getCloudSinkConfigMock,
   postFindingMock,
+  eventBusEmitMock,
   verifierFn,
   runThreatModelPlannerMock,
   createRuntimeMock,
@@ -369,6 +370,7 @@ const {
     countScopeFilesUpToMock: vi.fn(),
     getCloudSinkConfigMock: vi.fn(),
     postFindingMock: vi.fn(),
+    eventBusEmitMock: vi.fn(),
     verifierFn,
     // Threat-model planner mocks: fail-closed by default (returns null → fallback to module-spread).
     runThreatModelPlannerMock: vi.fn().mockResolvedValue(null),
@@ -385,6 +387,10 @@ vi.mock("@pwnkit/core", () => ({
   countScopeFilesUpTo: countScopeFilesUpToMock,
   getCloudSinkConfig: getCloudSinkConfigMock,
   postFinding: postFindingMock,
+  eventBus: { emit: eventBusEmitMock },
+  ScanCostLedger: class {
+    costBreakdown() { return null; }
+  },
   evmFinderLenses: [{ id: "evm-f", challengeHint: "x" }],
   evmVerifyLenses: [{ id: "evm-v", challengeHint: "y" }],
   solanaFinderLenses: [{ id: "sol-f", challengeHint: "x" }],
@@ -466,6 +472,7 @@ describe("runDeepReview — seedless lens-driven review", () => {
     });
     getCloudSinkConfigMock.mockReset().mockReturnValue(null);
     postFindingMock.mockReset().mockResolvedValue(undefined);
+    eventBusEmitMock.mockReset();
   });
 
   it("selects the profile lens set and wires it into runHuntScan + multi-lens verify", async () => {
@@ -486,6 +493,29 @@ describe("runDeepReview — seedless lens-driven review", () => {
       { path: "/repo/src/Vault.sol" },
     ]);
     expect(outcome.result).toMatchObject({ mode: "deep_review", profile: "evm-onchain", confirmed: 1 });
+  });
+
+  it("emits one parent terminal event and threads one ledger through the whole review", async () => {
+    await runDeepReview({ target: "/repo", profile: "evm-onchain", costCeilingUsd: 1 });
+
+    const huntOptions = runHuntScanMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    const verifierOptions = (makeMultiLensVerifierMock.mock.calls[0] as unknown[] | undefined)?.[1] as Record<string, unknown>;
+    expect(huntOptions.costLedger).toBe(verifierOptions.costLedger);
+    expect(huntOptions.costCeilingUsd).toBe(1);
+    expect(eventBusEmitMock).toHaveBeenCalledWith(
+      "scan_completed",
+      expect.objectContaining({ exit_reason: "completed", findings_count: 1 }),
+    );
+  });
+
+  it("emits a failed parent terminal event when the review throws", async () => {
+    runHuntScanMock.mockRejectedValueOnce(new Error("provider unavailable"));
+
+    await expect(runDeepReview({ target: "/repo", profile: "evm-onchain" })).rejects.toThrow("provider unavailable");
+    expect(eventBusEmitMock).toHaveBeenCalledWith(
+      "scan_completed",
+      expect.objectContaining({ exit_reason: "failed" }),
+    );
   });
 
   it("evm-onchain: excludes test/vendored/script files from the finder candidate set", async () => {

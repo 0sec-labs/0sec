@@ -43,6 +43,26 @@ docker run --rm -e OPENROUTER_API_KEY=$KEY \
 
 For access, contact **security@0sec.ai**.
 
+### Provider API keys
+
+pwnkit picks a provider from whichever key is present (the requested model can
+also pin one). Set exactly one of the primary keys, e.g. `OPENROUTER_API_KEY`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or one of the Anthropic-compatible
+endpoints below.
+
+| Env var | Purpose |
+| --- | --- |
+| `Z_AI_API_KEY` | Enable the Z.ai **GLM** provider (Anthropic-compatible wire). |
+| `Z_AI_BASE_URL` | Override the Z.ai base URL (default `https://api.z.ai/api/anthropic`). |
+| `KIMI_API_KEY` | Enable the Moonshot **Kimi K3** provider (Anthropic-compatible wire). |
+| `KIMI_BASE_URL` | Override the Kimi base URL (default `https://api.kimi.com/coding`). |
+| `PWNKIT_ZAI_THINKING_BUDGET` | GLM extended-thinking token budget (default `2048`; `0` disables). |
+| `PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS` | Comma-separated providers to opt into prompt caching (e.g. `z-ai,kimi`). |
+
+Prompt caching is **opt-in and fails closed** for GLM and Kimi: with no
+`PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS` entry they send no cache markers, so their
+request bodies stay byte-identical to the uncached shape.
+
 ## Use
 
 ```bash

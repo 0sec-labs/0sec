@@ -47,6 +47,8 @@ function renderFinding(finding: Finding, index: number): string {
   const sev = SEVERITY_COLORS[finding.severity];
   const confidence = finding.confidence != null ? `${Math.round(finding.confidence * 100)}%` : null;
   const cvss = finding.cvssScore != null ? finding.cvssScore.toFixed(1) : null;
+  const rank = finding.findingRank != null ? `Rank: ${finding.findingRank}` : null;
+  const dedupe = finding.semanticDedupe ? `Canonical: ${escapeHtml(finding.semanticDedupe.canonicalId.slice(0, 12))}…` : null;
 
   return `
     <div class="finding-card">
@@ -59,6 +61,8 @@ function renderFinding(finding: Finding, index: number): string {
         ${finding.status === "confirmed" ? '<span class="meta-tag confirmed">Confirmed</span>' : `<span class="meta-tag">${escapeHtml(finding.status)}</span>`}
         ${confidence ? `<span class="meta-tag">Confidence: ${confidence}</span>` : ""}
         ${cvss ? `<span class="meta-tag">CVSS: ${cvss}</span>` : ""}
+        ${rank ? `<span class="meta-tag">${rank}</span>` : ""}
+        ${dedupe ? `<span class="meta-tag">${dedupe}</span>` : ""}
       </div>
       <p class="finding-desc">${escapeHtml(finding.description)}</p>
       ${finding.evidence.analysis ? `<div class="evidence-analysis"><strong>Analysis:</strong> ${escapeHtml(finding.evidence.analysis)}</div>` : ""}

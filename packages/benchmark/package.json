@@ -58,6 +58,7 @@
     "xbow:ensemble": "tsx src/xbow-runner.ts --agentic --runtime api --models anthropic/claude-sonnet-4.6,google/gemini-2.5-pro,openai/o3",
     "xbow:whitebox": "tsx src/xbow-runner.ts --agentic --white-box",
     "xbow:jit-skills-ab": "tsx src/jit-skills-ab.ts",
+    "xbow:python-exec-ab": "tsx src/python-exec-ab.ts",
     "autopenbench": "tsx src/autopenbench-runner.ts",
     "autopenbench:dry": "tsx src/autopenbench-runner.ts --dry-run",
     "cybench": "tsx src/cybench-runner.ts",

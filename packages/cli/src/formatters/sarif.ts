@@ -135,6 +135,8 @@ function findingToResult(finding: Finding, target: string): SarifResult {
   if (finding.inlineValidation) result.properties["inlineValidation"] = finding.inlineValidation;
   if (finding.supplyChain) result.properties["supplyChain"] = finding.supplyChain;
   if (finding.kernelExploit) result.properties["kernelExploit"] = finding.kernelExploit;
+  if (finding.semanticDedupe) result.properties["semanticDedupe"] = finding.semanticDedupe;
+  if (finding.findingRank !== undefined) result.properties["findingRank"] = finding.findingRank;
 
   return result;
 }

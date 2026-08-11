@@ -111,6 +111,7 @@ import { runCraftScan } from "./stages/craft-scan.js";
 import type { CraftTarget, CraftScanOptions } from "./stages/craft-scan.js";
 import { runEnsembleCraft, resolveEnsembleModels } from "./stages/ensemble-craft.js";
 import { runReportStage } from "./agentic/stages/report.js";
+import { applyFindingPostProcess, loadPriorScanAnchors, type DedupeItem } from "./agentic/finding-postprocess.js";
 
 /**
  * Per-scan rate-limiter cache (#214). The limiter is stateful — buckets
@@ -283,6 +284,11 @@ export interface AgenticScanOptions {
   challengeHint?: string;
   /** Resume from a previous scan (uses persisted sessions) */
   resumeScanId?: string;
+  /**
+   * Suppress this invocation's scan_completed event when it is a child of a
+   * higher-level fan-out. The parent owns one aggregated terminal event.
+   */
+  emitTerminalEvent?: boolean;
   /**
    * Userspace / Rust memory-safety scan role ("Monty-mode", pwnkit#700). When
    * set, the scan dispatches to the focused `runMemSafetyScan` stage
@@ -1074,7 +1080,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       findingsForFlagCount?: Finding[];
     },
   ): void => {
-    if (emittedScanCompleted) return;
+    if (opts.emitTerminalEvent === false || emittedScanCompleted) return;
     emittedScanCompleted = true;
     try {
       // Caller-provided summary (from the loop's `state.summary` field)
@@ -3210,6 +3216,44 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     // trace + webhook, and fires `scan_completed`. `emitScanCompleted` and
     // `attachEnforcementSummary` stay owned here (they close over the bus /
     // enforcement cache) and are handed in via ctx.
+    // ── Post-scan post-process (flag-gated, default OFF) ──
+    // Intra-scan semantic dedupe + incremental ranking over the final finding
+    // set, right before the report stage. Mutates findings in place with
+    // additive optional fields; fail-soft — a post-process error never fails
+    // the scan (the pass itself is also fail-soft per batch).
+    if (features.semanticDedupe || features.incrementalRank) {
+      try {
+        // Load prior-scan anchors for cross-scan dedupe when semanticDedupe
+        // is active and a local DB is available. Anchor-load failure must
+        // never fail the scan — proceed with no anchors on error.
+        let anchors: DedupeItem[] | undefined;
+        if (features.semanticDedupe) {
+          try {
+            anchors = await loadPriorScanAnchors(db, config.target, { excludeScanId: scanId });
+          } catch {
+            // Anchor load failure is non-fatal
+          }
+        }
+
+        const collapsed = await applyFindingPostProcess(allFindings, nativeRuntime, {
+          semanticDedupe: features.semanticDedupe,
+          incrementalRank: features.incrementalRank,
+          scanId,
+          anchors,
+        });
+        emit({
+          type: "stage:end",
+          stage: "report",
+          message: `Post-process: ${collapsed} duplicate(s) collapsed across ${allFindings.length} findings`,
+        });
+      } catch (err) {
+        emit({
+          type: "thinking",
+          message: `Post-scan post-process skipped: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+
     return await runReportStage(
       { allFindings, attackState, discoveryState, config, scanId, routingDecisions },
       { db, emit, emitScanCompleted, attachEnforcementSummary, attachEngagementPosture },

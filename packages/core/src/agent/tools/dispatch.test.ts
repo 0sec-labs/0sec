@@ -60,6 +60,8 @@ const EXPECTED_ROUTING: Record<string, string> = {
   // pwnkit#659 — OAST out-of-band interaction tools.
   oast_register: "oastRegister",
   oast_poll: "oastPoll",
+  // Phase-0 — persistent compute-only Python kernel.
+  python_exec: "pythonExec",
 };
 
 describe("TOOL_DISPATCH (pwnkit#614)", () => {

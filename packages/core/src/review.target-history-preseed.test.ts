@@ -79,6 +79,8 @@ describe("target-history preseed", () => {
     expect(block).toContain("## Prior Vulnerability Audit Graph");
     expect(block).toContain("CVE-2024-0001");
     expect(block).toContain("Source-to-sink path with function names.");
+    expect(block).toContain("DO NOT re-derive or re-report");
+    expect(block).toContain("UNEXPLORED attack surface");
     expect(events.at(-1)?.message).toContain("1 advisories, 1 playbooks");
   });
 

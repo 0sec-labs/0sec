@@ -73,6 +73,7 @@ import type { pwnkitDB } from "@pwnkit/db";
 import { features as featureFlags } from "./features.js";
 import { PtySessionManager } from "./pty-session.js";
 import { sanitizedEnv } from "./sanitized-env.js";
+import { PythonKernelManager } from "./python-kernel.js";
 import {
   runWpFingerprint,
   summarizeWpFingerprint,
@@ -1565,6 +1566,18 @@ function citedSourceHasKnownMarker(
   }
 }
 
+/** Cap a string to `max` chars, appending a truncation marker when clipped. */
+function capText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max) + `\n... [truncated ${text.length - max} chars]`;
+}
+
+/** Keep the last ~2KB of a traceback (the exception line + nearest frames). */
+function tracebackTail(trace: string): string {
+  const t = trace.trimEnd();
+  return t.length <= 2_000 ? t : "..." + t.slice(-2_000);
+}
+
 // ── Tool Executor ──
 
 export class ToolExecutor {
@@ -1576,6 +1589,7 @@ export class ToolExecutor {
   private _browserConsole: string[] = [];
   private _playwrightAvailable: boolean | null = null;
   private _ptyManager: PtySessionManager | null = null;
+  private _pyKernel: PythonKernelManager | null = null;
   /**
    * Set of proposed flag strings that the `done` tool rejected once as
    * likely decoys. A second `done` call with the same flag passes through
@@ -1695,6 +1709,10 @@ export class ToolExecutor {
       if (this._ptyManager) {
         this._ptyManager.cleanup();
         this._ptyManager = null;
+      }
+      if (this._pyKernel) {
+        this._pyKernel.cleanup();
+        this._pyKernel = null;
       }
     } catch {
       // Best-effort cleanup
@@ -4742,6 +4760,85 @@ export class ToolExecutor {
     }
   }
 
+  // ── Python kernel (feature-gated, compute-only) ──
+
+  private ensurePyKernel(): PythonKernelManager {
+    if (!this._pyKernel) {
+      this._pyKernel = new PythonKernelManager();
+    }
+    return this._pyKernel;
+  }
+
+  /**
+   * `python_exec` (Phase-0): run code in a persistent, COMPUTE-ONLY Python
+   * kernel. State persists across calls within a scan. Networking is blocked at
+   * the socket source whenever an engagement scope / enforcement tracker is
+   * configured, so `urllib` / `requests` / `http.client` fail closed — the
+   * agent must use `http_request` for HTTP.
+   */
+  private async pythonExec(args: Record<string, unknown>): Promise<ToolResult> {
+    if (!featureFlags.pythonExec) {
+      return { success: false, output: null, error: "python_exec is disabled. Set PWNKIT_FEATURE_PYTHON_EXEC=1 to enable." };
+    }
+
+    const code = (args.code as string) ?? "";
+    if (!code.trim()) {
+      return { success: false, output: null, error: "code is required" };
+    }
+
+    // http_audit kill switch: refuse to start (and, below, to return) once the
+    // wall-clock budget is exhausted.
+    if (this.ctx.enforcement?.isKillExpired()) {
+      return { success: false, output: null, error: "Kill switch expired — refusing to execute python_exec." };
+    }
+
+    // Per-call timeout clamp: default 30s, min 1s, max 120s.
+    const rawTimeout = typeof args.timeout === "number" ? args.timeout : 30;
+    const timeoutSec = Math.min(120, Math.max(1, rawTimeout));
+    const timeoutMs = timeoutSec * 1_000;
+
+    // EGRESS SAFETY: block networking whenever an authorized engagement is
+    // active (scope or enforcement configured). This is the whole point of the
+    // Phase-0 compute-only cut.
+    const blockNet = Boolean(this.ctx.scope || this.ctx.enforcement);
+    const mgr = this.ensurePyKernel();
+    mgr.blockNetworking = blockNet;
+
+    try {
+      const session = mgr.ensureDefaultSession();
+      if (args.reset === true) {
+        mgr.reset(session.id);
+      }
+
+      const frame = await mgr.send(session.id, code, timeoutMs);
+
+      // Intra-call kill-switch check: if the budget expired while executing,
+      // discard the result rather than acting on stale work.
+      if (this.ctx.enforcement?.isKillExpired()) {
+        return { success: false, output: null, error: "Kill switch expired mid-execution — python_exec result discarded." };
+      }
+
+      const stdout = capText(frame.stdout, 10_000);
+
+      if (frame.error) {
+        const tail = tracebackTail(frame.traceback ?? frame.error);
+        return {
+          success: false,
+          output: { stdout, stderr: frame.stderr },
+          error: tail,
+        };
+      }
+
+      const output: { stdout: string; value?: string; stderr?: string } = { stdout };
+      if (frame.value != null) output.value = frame.value;
+      if (frame.stderr) output.stderr = frame.stderr;
+      return { success: true, output };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: msg };
+    }
+  }
+
   // ── Web search (anti-cheat gated) ──
 
   private static WEB_SEARCH_BLOCKLIST = [
@@ -5471,6 +5568,8 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   const browserTools = opts?.hasBrowser ? ["browser"] : [];
   const webSearchTools = featureFlags.webSearch ? ["web_search"] : [];
   const ptyTools = featureFlags.ptySession ? ["pty_session"] : [];
+  // Phase-0 persistent compute-only Python kernel, opt-in (default off).
+  const pythonTools = featureFlags.pythonExec ? ["python_exec"] : [];
   const payloadTools = ["payload_lookup"];
   const wpTools = featureFlags.wpFingerprint ? ["wp_fingerprint"] : [];
   const mongoTools = featureFlags.mongoObjectIdForge ? ["mongo_objectid"] : [];
@@ -5500,6 +5599,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     ...browserTools,
     ...webSearchTools,
     ...ptyTools,
+    ...pythonTools,
     ...payloadTools,
     ...wpTools,
     ...mongoTools,
@@ -5532,7 +5632,10 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     && (featureFlags.agentFanout || !ORCHESTRATOR_TOOL_NAMES.includes(name))
     // #659 — OAST tools stay out of the audit/review "everything" set unless the
     // collaborator feature is on (parity with the gating above).
-    && (featureFlags.oastCollaborator || !OAST_TOOL_NAMES.includes(name)),
+    && (featureFlags.oastCollaborator || !OAST_TOOL_NAMES.includes(name))
+    // Phase-0 python_exec likewise stays out of the audit/review "everything"
+    // set unless the pythonExec feature is on (parity with the gating above).
+    && (featureFlags.pythonExec || name !== "python_exec"),
   );
 
   const roleTools: Record<string, string[]> = {

@@ -364,7 +364,7 @@ async function runReviewAgent(
       ? xnuReReviewAgentPrompt(repoPath, semgrepFindings, config.subsystem, config.hypothesis)
       : profile === "c-library"
       ? cppReviewAgentPrompt(repoPath, semgrepFindings, config.hypothesis)
-      : reviewAgentPrompt(repoPath, semgrepFindings, undefined, false, config.hypothesis);
+      : reviewAgentPrompt(repoPath, semgrepFindings, undefined, false, config.hypothesis, config.conversation);
   const cliSystemPrompt =
     profile === "linux-kernel"
       ? "You are a security researcher performing an authorized review of a Linux kernel source tree. Confirm the tree is actually a kernel tree before doing anything. Findings must be grounded at file:line and accompanied by a syzkaller-style or C-syscall reproducer shape — libFuzzer harnesses don't apply. Static-only findings are confidence 0.4 hypotheses until the kernel oracle (#271) verifies them. Do NOT compile or boot the kernel from this loop."

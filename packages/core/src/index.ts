@@ -1607,6 +1607,7 @@ export type {
   CostBreakdownEntry,
   ScanCompletedPayload,
 } from "./events/bus.js";
+export { ScanCostLedger } from "./agent/cost-ledger.js";
 
 // Live-agent state reducer (CLI TUI panel). Pure transform of
 // eventBus payloads into a "what the agent is doing right now"
