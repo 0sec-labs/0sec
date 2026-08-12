@@ -525,6 +525,30 @@ describe("LlmApiRuntime chat completions format", () => {
     expect(msgs[3].role).toBe("tool");
     expect(msgs[3].tool_call_id).toBe("tc1");
   });
+
+  it("attaches reasoning_effort on chat_completions only when explicitly set", async () => {
+    // Regression: the field previously only went out on the Responses wire, so
+    // every OpenAI-compatible provider (DeepSeek direct — where the knob is
+    // measured to matter) ran at the server default. Endpoints that don't
+    // know the field (Alibaba compatible-mode) silently ignore it, and the
+    // default request shape must stay byte-identical.
+    const messages: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
+
+    await rt.executeNative("system", messages, []);
+    expect(capturedBody.reasoning_effort).toBeUndefined();
+
+    (rt as any).reasoningEffort = "high";
+    await rt.executeNative("system", messages, []);
+    expect(capturedBody.reasoning_effort).toBe("high");
+  });
+
+  it("threads reasoning_effort through the legacy execute path too", async () => {
+    (rt as any).reasoningEffort = "low";
+    await rt.execute("prompt");
+    expect(capturedBody.reasoning_effort).toBe("low");
+  });
 });
 
 // ── Response Parsing ──
