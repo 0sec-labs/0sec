@@ -41,6 +41,7 @@ import {
   cyberGymLlmTimeoutMs,
   cyberGymCraftDeadlineMs,
   cyberGymCraftGeneratorUid,
+  cyberGymCostCeilingUsd,
   type CyberGymTask,
   type EngineRunner,
   type Submitter,
@@ -377,6 +378,56 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     expect(result.estimatedCostUsd).toBeCloseTo(0.42, 6);
     // PoC bytes are hashed for the corpus receipt.
     expect(result.pocSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("forwards a declared per-task cost ceiling to the engine", async () => {
+    const task = parseTaskDir(makeTaskDir(), "arvo:10400");
+    let observedCostCeiling: number | undefined;
+    const engine: EngineRunner = async (_task, opts) => {
+      observedCostCeiling = opts.costCeilingUsd;
+      return {
+        model: "mock-model-v1",
+        steps: 0,
+        refused: true,
+        refusedReason: "cost ceiling test",
+      };
+    };
+
+    await runTaskOnce(task, {
+      runEngine: engine,
+      submit: mockSubmitter("pass").submit,
+      runtime: "auto",
+      maxSteps: 40,
+      costCeilingUsd: 10,
+    });
+
+    expect(observedCostCeiling).toBe(10);
+  });
+
+  it("fails closed before an ensemble can bypass a declared cost ceiling", async () => {
+    const task = parseTaskDir(makeTaskDir(), "arvo:10400");
+    const savedBestOfN = process.env.CYBERGYM_BEST_OF_N;
+    let engineRan = false;
+    try {
+      process.env.CYBERGYM_BEST_OF_N = "2";
+      const result = await runTaskOnce(task, {
+        runEngine: async () => {
+          engineRan = true;
+          return { model: "mock-model-v1", steps: 0 };
+        },
+        submit: mockSubmitter("pass").submit,
+        runtime: "auto",
+        maxSteps: 40,
+        costCeilingUsd: 10,
+      });
+
+      expect(engineRan).toBe(false);
+      expect(result.verdict).toBe("error");
+      expect(result.error).toContain("CYBERGYM_BEST_OF_N=1");
+    } finally {
+      if (savedBestOfN === undefined) delete process.env.CYBERGYM_BEST_OF_N;
+      else process.env.CYBERGYM_BEST_OF_N = savedBestOfN;
+    }
   });
 
   it("preserves a craft-stage PASS without spending its one-use oracle capability twice", async () => {
@@ -864,6 +915,27 @@ describe("controlled CyberGym craft deadlines", () => {
       expect(cyberGymLlmTimeoutMs()).toBe(360_000);
       expect(cyberGymCraftDeadlineMs()).toBeUndefined();
     });
+  });
+});
+
+describe("CyberGym cost ceiling", () => {
+  const COST_CAP_ENV = "CYBERGYM_COST_CAP_USD";
+
+  it("returns a positive finite ceiling and rejects malformed input", () => {
+    const saved = process.env[COST_CAP_ENV];
+    try {
+      delete process.env[COST_CAP_ENV];
+      expect(cyberGymCostCeilingUsd()).toBeUndefined();
+      process.env[COST_CAP_ENV] = "10";
+      expect(cyberGymCostCeilingUsd()).toBe(10);
+      process.env[COST_CAP_ENV] = "0";
+      expect(() => cyberGymCostCeilingUsd()).toThrow(/positive finite/);
+      process.env[COST_CAP_ENV] = "not-a-number";
+      expect(() => cyberGymCostCeilingUsd()).toThrow(/positive finite/);
+    } finally {
+      if (saved === undefined) delete process.env[COST_CAP_ENV];
+      else process.env[COST_CAP_ENV] = saved;
+    }
   });
 });
 

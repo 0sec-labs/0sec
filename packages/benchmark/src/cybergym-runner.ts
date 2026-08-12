@@ -190,6 +190,8 @@ export interface CyberGymEngineOptions {
   model?: string;
   runtime: RuntimeMode;
   maxSteps: number;
+  /** Per-task engine spend ceiling. Undefined preserves unbounded legacy runs. */
+  costCeilingUsd?: number;
   craftEvaluatePocOverride?: CraftPocEvaluator;
 }
 
@@ -247,6 +249,8 @@ interface CyberGymReport {
   /** 95% Wilson CI for pass@1 across all tasks. */
   passAt1CI95: [number, number];
   totalEstimatedCostUsd: number;
+  /** Configured per-task spend ceiling, or null when no ceiling was requested. */
+  costCeilingUsd: number | null;
   results: CyberGymResult[];
   /** Present only when --repeat > 1. */
   repeatProtocol?: { N: number };
@@ -810,6 +814,9 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
       runtime: opts.runtime,
       ...(opts.model ? { model: opts.model } : {}),
       repoPath: task.repoRoot,
+      ...(opts.costCeilingUsd !== undefined
+        ? { costCeilingUsd: opts.costCeilingUsd }
+        : {}),
     },
     dbPath,
     // Craft path: the agent reads the pre-patch source with read-only tools and
@@ -1057,6 +1064,22 @@ export function cyberGymCraftDeadlineMs(): number | undefined {
   return positiveEnvMs("CYBERGYM_CRAFT_DEADLINE_MS");
 }
 
+/**
+ * Optional per-task dollar ceiling for controlled benchmark execution.
+ * Invalid values fail closed rather than silently disabling the declared cap.
+ */
+export function cyberGymCostCeilingUsd(): number | undefined {
+  const raw = process.env.CYBERGYM_COST_CAP_USD;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `CYBERGYM_COST_CAP_USD must be a positive finite number, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
 function vulSideCraftEvaluator(task: CyberGymTask): CraftPocEvaluator {
   return async (pocPath) => {
     const s = await submitVulOnly(task, pocPath);
@@ -1249,12 +1272,28 @@ export async function runTaskOnce(
     model?: string;
     runtime: RuntimeMode;
     maxSteps: number;
+    /** Per-task engine spend ceiling; unsupported ensemble runs fail closed. */
+    costCeilingUsd?: number;
     /** Ensemble seams (best-of-N only), forwarded to runTaskBestOfN → core. */
     runCraft?: (opts: CraftScanOptions) => Promise<CraftScanResult>;
     judge?: CraftCandidateJudge;
   },
 ): Promise<CyberGymResult> {
   const bestOfN = cyberGymBestOfN();
+  if (deps.costCeilingUsd !== undefined && bestOfN > 1) {
+    return {
+      taskId: task.taskId,
+      difficulty: task.difficulty,
+      model: deps.model ?? "auto",
+      steps: 0,
+      verdict: "error",
+      passed: false,
+      refused: false,
+      durationMs: 0,
+      error:
+        "CYBERGYM_COST_CAP_USD requires CYBERGYM_BEST_OF_N=1; ensemble cost accounting is not implemented.",
+    };
+  }
   if (bestOfN > 1) {
     return runTaskBestOfN(task, { ...deps, bestOfN });
   }
@@ -1265,6 +1304,9 @@ export async function runTaskOnce(
       ...(deps.model ? { model: deps.model } : {}),
       runtime: deps.runtime,
       maxSteps: deps.maxSteps,
+      ...(deps.costCeilingUsd !== undefined
+        ? { costCeilingUsd: deps.costCeilingUsd }
+        : {}),
     });
 
     if (!engine.pocPath) {
@@ -1766,7 +1808,7 @@ function resolveTasks(cfg: ReturnType<typeof parseArgs>): CyberGymTask[] {
 
 async function main(): Promise<void> {
   const cfg = parseArgs(process.argv.slice(2));
-
+  const costCeilingUsd = cyberGymCostCeilingUsd();
   if (!cfg.json) {
     console.log("\x1b[31m\x1b[1m  pwnkit x CyberGym benchmark\x1b[0m");
     console.log(
@@ -1792,6 +1834,7 @@ async function main(): Promise<void> {
         ...(cfg.model ? { model: cfg.model } : {}),
         runtime: cfg.runtime,
         maxSteps: cfg.maxSteps,
+        ...(costCeilingUsd !== undefined ? { costCeilingUsd } : {}),
       };
       const result =
         cfg.repeat > 1
@@ -1843,6 +1886,7 @@ async function main(): Promise<void> {
       (s, r) => s + (r.estimatedCostUsd ?? 0),
       0,
     ),
+    costCeilingUsd: costCeilingUsd ?? null,
     results,
     ...(cfg.repeat > 1 ? { repeatProtocol: { N: cfg.repeat } } : {}),
     liveValidated: LIVE_VALIDATED,
