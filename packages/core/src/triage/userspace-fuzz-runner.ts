@@ -88,6 +88,8 @@ const TOOLING_HINTS: Record<string, string> = {
   cargo: "cargo not found — install the Rust toolchain via https://rustup.rs",
   "cargo-fuzz":
     "cargo-fuzz not found — install with `cargo install cargo-fuzz` (requires a nightly toolchain for `cargo fuzz run`)",
+  "cargo-fuzz-harness":
+    "cargo-fuzz needs exactly one harness — pass `--harness <name>` or provide a source tree with one cargo-fuzz target",
   miri: "miri not found — install with `rustup +nightly component add miri`",
   clang: "clang not found — install LLVM/clang to compile the libFuzzer harness",
 };
@@ -335,8 +337,10 @@ function primitiveFromPanic(text: string): MemPrimitive {
 
 interface RunResult {
   output: string;
+  stdout: string;
   timedOut: boolean;
   signalled: boolean;
+  failed: boolean;
 }
 
 /** Run a child process under a wall-clock budget, capturing combined output. */
@@ -352,12 +356,19 @@ function runChild(
       args,
       { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, killSignal: "SIGKILL" },
       (error, stdout, stderr) => {
-        const output = `${stdout ?? ""}${stderr ?? ""}`;
+        const stdoutText = String(stdout ?? "");
+        const output = `${stdoutText}${String(stderr ?? "")}`;
         const timedOut = Boolean(
           error && (error as NodeJS.ErrnoException & { killed?: boolean }).killed,
         );
         const signalled = Boolean(error && (error as { signal?: string }).signal);
-        resolveRun({ output, timedOut, signalled });
+        resolveRun({
+          output,
+          stdout: stdoutText,
+          timedOut,
+          signalled,
+          failed: Boolean(error),
+        });
       },
     );
   });
@@ -457,6 +468,52 @@ export function cargoFuzzRunArgs(
   ];
 }
 
+/** Build the `cargo fuzz list` argument vector for harness discovery. */
+function cargoFuzzListArgs(fuzzDir: string | undefined): string[] {
+  return ["fuzz", "list", ...(fuzzDir ? ["--fuzz-dir", fuzzDir] : [])];
+}
+
+type HarnessDiscovery =
+  | { harnessEntry: string }
+  | { reason: string };
+
+/**
+ * Discover a cargo-fuzz target only when the source tree makes the choice
+ * unambiguous. Selecting an arbitrary harness would make scan evidence
+ * non-repeatable and can hide the relevant attack surface.
+ */
+async function discoverCargoFuzzHarness(
+  sourceRoot: string,
+  fuzzDir: string | undefined,
+  timeoutMs: number,
+): Promise<HarnessDiscovery> {
+  if (!existsSync(join(sourceRoot, fuzzDir ?? "fuzz", "Cargo.toml"))) {
+    return { reason: `no cargo-fuzz manifest at ${fuzzDir ?? "fuzz"}/Cargo.toml` };
+  }
+
+  const res = await runChild(
+    "cargo",
+    cargoFuzzListArgs(fuzzDir),
+    sourceRoot,
+    timeoutMs,
+  );
+  if (res.failed) return { reason: "cargo fuzz list failed" };
+
+  const harnesses = Array.from(
+    new Set(
+      res.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (harnesses.length === 1) return { harnessEntry: harnesses[0]! };
+  if (harnesses.length === 0) return { reason: "no cargo-fuzz harnesses found" };
+  return {
+    reason: `multiple cargo-fuzz harnesses found (${harnesses.join(", ")})`,
+  };
+}
+
 async function runRustLoop(
   opts: UserspaceFuzzOptions,
   ctx: LoopCtx,
@@ -465,6 +522,8 @@ async function runRustLoop(
   const sourceRoot = resolve(target.sourceRoot);
   const crashes: CrashArtifact[] = [];
   let iterations = 0;
+  let harnessEntry = target.harnessEntry;
+  let executedHarness: string | undefined;
 
   // cargo is the floor requirement for any Rust path.
   if (!(await cargoAvailable())) {
@@ -477,23 +536,39 @@ async function runRustLoop(
   if (!(await cargoFuzzAvailable())) {
     ctx.toolingMissing.push("cargo-fuzz");
     ctx.log(`[userspace-fuzz] ${TOOLING_HINTS["cargo-fuzz"]}`);
-  } else if (!target.harnessEntry) {
-    ctx.log(
-      "[userspace-fuzz] cargo-fuzz present but no harnessEntry given; skipping libFuzzer run",
-    );
   } else {
-    ctx.log(`[userspace-fuzz] cargo fuzz run ${target.harnessEntry} (<=${ctx.timeoutMs / 1000}s)`);
-    const res = await runChild(
-      "cargo",
-      cargoFuzzRunArgs(target.harnessEntry, target.fuzzDir, ctx.timeoutMs / 1000),
-      sourceRoot,
-      ctx.timeoutMs + 30_000, // grace beyond libFuzzer's own budget
-    );
-    iterations += 1;
-    const crash = parseCrashOutput(res.output, {
-      kind: res.timedOut ? "timeout" : undefined,
-    });
-    if (crash) crashes.push(crash);
+    if (!harnessEntry) {
+      const discovery = await discoverCargoFuzzHarness(
+        sourceRoot,
+        target.fuzzDir,
+        ctx.timeoutMs,
+      );
+      if ("reason" in discovery) {
+        ctx.toolingMissing.push("cargo-fuzz-harness");
+        ctx.log(
+          `[userspace-fuzz] ${discovery.reason}; ${TOOLING_HINTS["cargo-fuzz-harness"]}`,
+        );
+      } else {
+        harnessEntry = discovery.harnessEntry;
+        ctx.log(`[userspace-fuzz] auto-selected cargo-fuzz harness ${harnessEntry}`);
+      }
+    }
+
+    if (harnessEntry) {
+      ctx.log(`[userspace-fuzz] cargo fuzz run ${harnessEntry} (<=${ctx.timeoutMs / 1000}s)`);
+      const res = await runChild(
+        "cargo",
+        cargoFuzzRunArgs(harnessEntry, target.fuzzDir, ctx.timeoutMs / 1000),
+        sourceRoot,
+        ctx.timeoutMs + 30_000, // grace beyond libFuzzer's own budget
+      );
+      executedHarness = harnessEntry;
+      iterations += 1;
+      const crash = parseCrashOutput(res.output, {
+        kind: res.timedOut ? "timeout" : undefined,
+      });
+      if (crash) crashes.push(crash);
+    }
   }
 
   // ── miri UB run ────────────────────────────────────────────────────
@@ -519,10 +594,12 @@ async function runRustLoop(
 
   // cargo-fuzz stores its corpus under <fuzzDir>/corpus/<target> (default `fuzz`).
   const fuzzBase = target.fuzzDir ?? "fuzz";
-  const corpusDir = target.harnessEntry
-    ? join(sourceRoot, fuzzBase, "corpus", target.harnessEntry)
+  const corpusDir = harnessEntry
+    ? join(sourceRoot, fuzzBase, "corpus", harnessEntry)
     : join(sourceRoot, fuzzBase, "corpus");
-  return finishWithCorpus(crashes, iterations, corpusDir, ctx);
+  const result = finishWithCorpus(crashes, iterations, corpusDir, ctx);
+  if (executedHarness) result.executedHarness = executedHarness;
+  return result;
 }
 
 async function runCLoop(

@@ -9,6 +9,7 @@ import {
 import { ScanCostLedger } from "./cost-ledger.js";
 import { detectPlaybooks, buildPlaybookInjection, PLAYBOOKS } from "./playbooks.js";
 import type { NativeRuntime, NativeRuntimeResult, NativeMessage, NativeToolDef } from "../runtime/types.js";
+import type { Finding } from "@pwnkit/shared";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -281,6 +282,7 @@ describe("runNativeAgentLoop", () => {
 
   it("saves findings via save_finding tool", async () => {
     let turnNum = 0;
+    const savedFindings: Finding[] = [];
     const runtime: NativeRuntime = {
       type: "api" as const,
       async executeNative() {
@@ -323,11 +325,16 @@ describe("runNativeAgentLoop", () => {
       },
       runtime,
       db: null,
+      onFindingSaved: (finding) => {
+        savedFindings.push(finding);
+      },
     });
 
     expect(state.findings).toHaveLength(1);
     expect(state.findings[0].title).toBe("Test XSS");
     expect(state.findings[0].severity).toBe("high");
+    expect(savedFindings).toHaveLength(1);
+    expect(savedFindings[0]).toBe(state.findings[0]);
   });
 
   it("handles API errors gracefully", async () => {

@@ -36,7 +36,7 @@ export const oastToolDefinitions: Record<string, ToolDefinition> = {
   oast_poll: {
     name: "oast_poll",
     description:
-      "Poll the OAST collaborator for callbacks on a handle from oast_register and return a confirmed/inconclusive verdict via correlation-token matching. A verdict is `verified` only when a recorded DNS/HTTP/LDAP callback carries the handle's unique token on a channel valid for the class (blind XSS requires an HTTP beacon; DNS suffices for SSRF/RCE/SQLi/XXE). A confirmed callback is concrete, disclosure-grade evidence and is added to the loot ledger.",
+      "Poll the OAST collaborator for callbacks on a handle from oast_register and return a confirmed/inconclusive verdict via correlation-token matching. A verdict is `verified` only when a recorded DNS/HTTP/LDAP callback carries the handle's unique token on a channel valid for the class (blind XSS requires an HTTP beacon; DNS suffices for SSRF/RCE/SQLi/XXE). A confirmed callback is concrete, disclosure-grade evidence, is added to the loot ledger, and must be passed as oast_handle_id to save_finding to persist its verification state.",
     parameters: {
       handle_id: {
         type: "string",

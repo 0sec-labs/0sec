@@ -267,6 +267,8 @@ export interface NativeAgentLoopOptions {
   runtime: NativeRuntime;
   db: pwnkitDB | null;
   onTurn?: (turn: number, toolCalls: ToolCall[], results: ToolResult[]) => void;
+  /** Called only after a new finding has passed save_finding validation. */
+  onFindingSaved?: (finding: Finding) => void | Promise<void>;
   onEvent?: (eventType: string, payload: Record<string, unknown>) => void;
   /** Poll for user-injected messages at turn boundaries. */
   getPendingUserMessages?: () => string[];
@@ -354,7 +356,16 @@ export interface NativeAgentState {
 export async function runNativeAgentLoop(
   opts: NativeAgentLoopOptions,
 ): Promise<NativeAgentState> {
-  const { config, runtime, db, onTurn, onEvent, getPendingUserMessages, inlineValidationOracle } = opts;
+  const {
+    config,
+    runtime,
+    db,
+    onTurn,
+    onFindingSaved,
+    onEvent,
+    getPendingUserMessages,
+    inlineValidationOracle,
+  } = opts;
 
   const memoryPath = externalMemoryPath(config.scanId);
 
@@ -1272,63 +1283,69 @@ export async function runNativeAgentLoop(
         // the recovered VALUE, not the finding shape. No-op when trustGraph is
         // not opted in, so this single-target finding path is unchanged.
 
-        // ── onFindingSaved hook: inline validation (#554) ──
-        // The moment a high/critical finding is saved, run the cheap
-        // deterministic category oracle (the #553 PoV-gate→oracle delegation)
-        // against it and feed the verdict back so the agent stops piling on a
-        // confirmed lead — or knows not to assume success on an unconfirmed
-        // one. Stamps `finding.inlineValidation` so EGATS scoring and the batch
-        // triage can read it. Fires at most ONCE per newly-saved finding: a
-        // dedup merge (message !== "Finding saved") is skipped, and an inline
-        // error is inconclusive, never a false-positive. Behind a flag, so the
-        // default path is byte-identical to today.
+        // ── Accepted finding callback + inline validation (#554) ──
+        // First expose the actual persisted finding (not the agent's proposed
+        // tool arguments) to optional sinks. Then, for high/critical findings,
+        // run the cheap deterministic oracle and feed the verdict back so the
+        // agent stops piling on a confirmed lead — or knows not to assume
+        // success on an unconfirmed one. The callback fires only for a new
+        // saved record; a dedup merge is skipped. Inline errors remain
+        // inconclusive, never false-positive.
         const saveMsg = typeof f?.message === "string" ? f.message : "";
         const findingId = typeof f?.findingId === "string" ? f.findingId : undefined;
+        const saved =
+          saveMsg === "Finding saved" && findingId
+            ? toolCtx.findings.find((x) => x.id === findingId)
+            : undefined;
+        if (saved) {
+          try {
+            await onFindingSaved?.(saved);
+          } catch {
+            // External sinks must not make a successfully-saved local finding fail.
+          }
+        }
         if (
           features.inlineValidation &&
-          saveMsg === "Finding saved" &&
-          findingId
+          saved &&
+          shouldValidateInline(saved)
         ) {
-          const saved = toolCtx.findings.find((x) => x.id === findingId);
-          if (saved && shouldValidateInline(saved)) {
-            const inlineStartedAt = Date.now();
-            const outcome = await validateFindingInline(saved, config.target, {
-              oracle: inlineValidationOracle,
-            });
-            // Stamp the verdict on the finding so EGATS scoreEvidence and the
-            // batch oracle/PoV gate can read it (skip the redundant re-run).
-            saved.inlineValidation = {
-              confirmed: outcome.confirmed,
-              inconclusive: outcome.inconclusive,
-              reason: outcome.reason,
-              evidence: outcome.evidence || undefined,
-              confidence: outcome.confidence,
-            };
-            state.inlineValidations.push(outcome);
-            inlineValidationNotes.push(buildInlineValidationNote(outcome));
+          const inlineStartedAt = Date.now();
+          const outcome = await validateFindingInline(saved, config.target, {
+            oracle: inlineValidationOracle,
+          });
+          // Stamp the verdict on the finding so EGATS scoreEvidence and the
+          // batch oracle/PoV gate can read it (skip the redundant re-run).
+          saved.inlineValidation = {
+            confirmed: outcome.confirmed,
+            inconclusive: outcome.inconclusive,
+            reason: outcome.reason,
+            evidence: outcome.evidence || undefined,
+            confidence: outcome.confidence,
+          };
+          state.inlineValidations.push(outcome);
+          inlineValidationNotes.push(buildInlineValidationNote(outcome));
 
-            const inlinePayload = {
-              turn: state.turnCount,
-              findingId: outcome.findingId,
-              category: outcome.category,
-              severity: outcome.severity,
-              confirmed: outcome.confirmed,
-              inconclusive: outcome.inconclusive,
-              reason: outcome.reason,
-              durationMs: Date.now() - inlineStartedAt,
-            };
-            onEvent?.("inline_validation", inlinePayload);
-            eventBus.emit("inline_validation", inlinePayload);
-            if (db) {
-              db.logEvent({
-                scanId: config.scanId,
-                stage: config.role,
-                eventType: "inline_validation",
-                agentRole: config.role,
-                payload: inlinePayload,
-                timestamp: Date.now(),
-              });
-            }
+          const inlinePayload = {
+            turn: state.turnCount,
+            findingId: outcome.findingId,
+            category: outcome.category,
+            severity: outcome.severity,
+            confirmed: outcome.confirmed,
+            inconclusive: outcome.inconclusive,
+            reason: outcome.reason,
+            durationMs: Date.now() - inlineStartedAt,
+          };
+          onEvent?.("inline_validation", inlinePayload);
+          eventBus.emit("inline_validation", inlinePayload);
+          if (db) {
+            db.logEvent({
+              scanId: config.scanId,
+              stage: config.role,
+              eventType: "inline_validation",
+              agentRole: config.role,
+              payload: inlinePayload,
+              timestamp: Date.now(),
+            });
           }
         }
       }
