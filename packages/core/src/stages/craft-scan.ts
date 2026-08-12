@@ -305,9 +305,7 @@ export function craftStepBudget(maxSteps: number): {
   firstSelfTestStep: number;
 } {
   const boundedSteps = Math.max(1, Math.floor(maxSteps));
-  // Preserve the established four-turn source-evidence contract. Only the
-  // first-test deadline scales with a shortened total trajectory.
-  const reachabilityStepCap = 4;
+  const reachabilityStepCap = Math.min(4, Math.max(1, Math.floor(boundedSteps * 0.25)));
   const firstSelfTestStep = Math.min(
     18,
     Math.max(reachabilityStepCap + 1, Math.floor(boundedSteps * 0.45)),
@@ -543,15 +541,14 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       return `self-test executor error: ${String(e).slice(0, 400)}`;
     }
     if (v.oracleError) {
-      oracleUnreachable = true;
-      evidence.record({
-        kind: "self-test",
-        status: "inconclusive",
-        summary: "self-test oracle returned no verdict",
-        step,
-        candidateSha256: sha256,
-      });
-      return `The self-test oracle is UNREACHABLE (${clip(v.oracleError, 160)}) — infrastructure fault, not your PoC. Stop.`;
+      evidence.record({ kind: "self-test", status: "inconclusive", summary: "self-test oracle returned no verdict", step, candidateSha256: sha256 });
+      const strike = ++selfTestInfraStrikes;
+      if (strike >= 3) {
+        oracleUnreachable = true;
+        log(`[craft] SELF-TEST ORACLE UNREACHABLE (strike ${strike}): ${clip(v.oracleError, 200)}`);
+        return `The self-test oracle is UNREACHABLE (${clip(v.oracleError, 160)}) — infrastructure fault, not your PoC. Stop.`;
+      }
+      return `self-test could not run (${clip(v.oracleError, 160)}) — try submit_poc`;
     }
     // A real verdict (crash or clean) proves the oracle is alive.
     selfTestInfraStrikes = 0;

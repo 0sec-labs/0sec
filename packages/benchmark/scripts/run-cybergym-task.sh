@@ -37,6 +37,7 @@ gateway="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["network"]["
 # pinned digest. Fail before task generation or any model call if the required
 # local aliases are absent. Bootstrap must create each alias from the manifest's
 # exact digest, never pull a floating tag here.
+
 case "${task_id}" in
   arvo:*)
     task_number="${task_id#arvo:}"
