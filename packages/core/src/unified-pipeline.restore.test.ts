@@ -107,6 +107,8 @@ function makePersistedRow(
     pocSteps: null,
     verificationSpec: null,
     pocExecution: null,
+    semanticDedupe: null,
+    findingRank: null,
     timestamp: 0,
     ...overrides,
   };
@@ -243,7 +245,7 @@ describe("restorePersistedFinding (pwnkit#414 — six-field round-trip)", () => 
     }
   });
 
-  it("round-trips pocSteps / layerVerdicts / workflow fields / score through saveFinding → getFindings → restore", () => {
+  it("round-trips pocSteps / layerVerdicts / post-process fields / workflow fields / score through saveFinding → getFindings → restore", () => {
     const { db, scanId } = makeDb();
     try {
       const pocSteps = makePocSteps();
@@ -253,6 +255,13 @@ describe("restorePersistedFinding (pwnkit#414 — six-field round-trip)", () => 
         pocSteps,
         layerVerdicts,
         workflowStatus: "in_progress",
+        semanticDedupe: {
+          canonicalId: "canonical-finding",
+          isCanonical: false,
+          clusterId: "scan-1:canonical-finding",
+          reason: "same endpoint and root cause",
+        },
+        findingRank: 3,
         workflowAssignee: "alice",
       };
       db.saveFinding(scanId, finding);
@@ -274,6 +283,8 @@ describe("restorePersistedFinding (pwnkit#414 — six-field round-trip)", () => 
       expect(restored.workflowAssignee).toBe("alice");
       expect(restored.score).toBe(87);
       expect(restored.pocExecution).toEqual(pocExecution);
+      expect(restored.semanticDedupe).toEqual(finding.semanticDedupe);
+      expect(restored.findingRank).toBe(3);
       // workflowUpdatedAt is stamped by the writer on every save; it
       // should now thread back through the restore mapper as a string.
       expect(typeof restored.workflowUpdatedAt).toBe("string");
@@ -293,6 +304,8 @@ describe("restorePersistedFinding (pwnkit#414 — six-field round-trip)", () => 
     expect(restored.pocSteps).toBeUndefined();
     expect(restored.layerVerdicts).toBeUndefined();
     expect(restored.pocExecution).toBeUndefined();
+    expect(restored.semanticDedupe).toBeUndefined();
+    expect(restored.findingRank).toBeUndefined();
     // The rest of the row still restores cleanly.
     expect(restored.id).toBe("f-bad-json");
     expect(restored.title).toBe("still useful");

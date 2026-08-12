@@ -3242,6 +3242,17 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           scanId,
           anchors,
         });
+        // Findings were persisted before the report post-process. Re-save the
+        // additive mapping/rank so reports, later resumes, and cross-scan
+        // anchor loading observe the same canonical set.
+        for (const finding of allFindings) {
+          try {
+            db.saveFinding(scanId, finding);
+          } catch {
+            // Post-process persistence is informative; never fail a scan when
+            // the local DB becomes unavailable at its terminal stage.
+          }
+        }
         emit({
           type: "stage:end",
           stage: "report",
@@ -4231,6 +4242,8 @@ function dbFindingToFinding(dbf: {
   evidenceAnalysis: string | null;
   pocSteps?: string | null;
   layerVerdicts?: string | null;
+  semanticDedupe?: string | null;
+  findingRank?: number | null;
   timestamp: number;
 }): Finding {
   let layerVerdicts: LayerVerdict[] | undefined;
@@ -4275,6 +4288,40 @@ function dbFindingToFinding(dbf: {
       // hydration. The agent loop is free to repopulate on a future scan.
     }
   }
+  let semanticDedupe: Finding["semanticDedupe"];
+  if (dbf.semanticDedupe) {
+    try {
+      const parsed: unknown = JSON.parse(dbf.semanticDedupe);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "canonicalId" in parsed &&
+        typeof parsed.canonicalId === "string" &&
+        "isCanonical" in parsed &&
+        typeof parsed.isCanonical === "boolean" &&
+        "clusterId" in parsed &&
+        typeof parsed.clusterId === "string" &&
+        "reason" in parsed &&
+        typeof parsed.reason === "string"
+      ) {
+        semanticDedupe = {
+          canonicalId: parsed.canonicalId,
+          isCanonical: parsed.isCanonical,
+          clusterId: parsed.clusterId,
+          reason: parsed.reason,
+        };
+      }
+    } catch {
+      // Corrupt post-process metadata must not prevent a resume.
+    }
+  }
+  const persistedFindingRank = dbf.findingRank;
+  const findingRank =
+    typeof persistedFindingRank === "number" &&
+    Number.isSafeInteger(persistedFindingRank) &&
+    persistedFindingRank > 0
+      ? persistedFindingRank
+      : undefined;
   return {
     id: dbf.id,
     templateId: dbf.templateId,
@@ -4294,6 +4341,8 @@ function dbFindingToFinding(dbf: {
     ...(pocSteps ? { pocSteps } : {}),
     ...(layerVerdicts ? { layerVerdicts } : {}),
     ...(pocSteps ? { pocSteps } : {}),
+    ...(semanticDedupe ? { semanticDedupe } : {}),
+    ...(findingRank !== undefined ? { findingRank } : {}),
     timestamp: dbf.timestamp,
   };
 }

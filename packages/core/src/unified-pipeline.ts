@@ -664,12 +664,13 @@ type PersistedFindingRow = InferSelectModel<typeof dbSchema.findings>;
  */
 type RestorablePersistedFindingRow = Omit<
   PersistedFindingRow,
-  "verificationSpec" | "pocSteps" | "layerVerdicts" | "pocExecution"
+  "verificationSpec" | "pocSteps" | "layerVerdicts" | "pocExecution" | "semanticDedupe"
 > & {
   verificationSpec: PersistedFindingRow["verificationSpec"] | Finding["verificationSpec"];
   pocSteps: PersistedFindingRow["pocSteps"] | Finding["pocSteps"];
   layerVerdicts: PersistedFindingRow["layerVerdicts"] | Finding["layerVerdicts"];
   pocExecution: PersistedFindingRow["pocExecution"] | Finding["pocExecution"];
+  semanticDedupe: PersistedFindingRow["semanticDedupe"] | Finding["semanticDedupe"];
 };
 
 /**
@@ -691,6 +692,22 @@ function parseJsonColumn<T>(value: string | T | null | undefined): T | undefined
   }
   // Already-parsed object handed in by a shim/test double.
   return value;
+}
+
+function parseSemanticDedupe(
+  value: RestorablePersistedFindingRow["semanticDedupe"],
+): Finding["semanticDedupe"] {
+  const parsed = parseJsonColumn<Finding["semanticDedupe"]>(value);
+  if (
+    !parsed ||
+    typeof parsed.canonicalId !== "string" ||
+    typeof parsed.isCanonical !== "boolean" ||
+    typeof parsed.clusterId !== "string" ||
+    typeof parsed.reason !== "string"
+  ) {
+    return undefined;
+  }
+  return parsed;
 }
 
 /**
@@ -737,6 +754,14 @@ export function restorePersistedFinding(row: RestorablePersistedFindingRow): Fin
   const pocSteps = parseJsonColumn<PocStep[]>(row.pocSteps);
   const layerVerdicts = parseJsonColumn<LayerVerdict[]>(row.layerVerdicts);
   const pocExecution = parseJsonColumn<Finding["pocExecution"]>(row.pocExecution);
+  const semanticDedupe = parseSemanticDedupe(row.semanticDedupe);
+  const persistedFindingRank = row.findingRank;
+  const findingRank =
+    typeof persistedFindingRank === "number" &&
+    Number.isSafeInteger(persistedFindingRank) &&
+    persistedFindingRank > 0
+      ? persistedFindingRank
+      : undefined;
 
   return {
     id: row.id,
@@ -767,6 +792,8 @@ export function restorePersistedFinding(row: RestorablePersistedFindingRow): Fin
     pocSteps,
     verificationSpec,
     pocExecution,
+    ...(semanticDedupe ? { semanticDedupe } : {}),
+    ...(findingRank !== undefined ? { findingRank } : {}),
     timestamp: row.timestamp,
   };
 }

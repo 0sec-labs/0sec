@@ -143,6 +143,16 @@ export const findings = sqliteTable(
      */
     verificationSpec: text("verificationSpec"),
     /**
+     * JSON-stringified semantic-dedupe mapping assigned by the post-process
+     * pass. NULL until that opt-in pass runs. Keeping this with the finding
+     * preserves canonical anchors across later scans.
+     */
+    semanticDedupe: text("semanticDedupe"),
+    /**
+     * Per-scan post-process rank. NULL when incremental ranking did not run.
+     */
+    findingRank: integer("findingRank"),
+    /**
      * JSON-stringified PocExecutionReport written when `disclose --target-url`
      * runs the step graph against a live target. NULL until that runs. See
      * pwnkit#171.

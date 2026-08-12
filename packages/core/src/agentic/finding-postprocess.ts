@@ -36,6 +36,7 @@ export interface PriorScanLoader {
     category: string;
     description: string;
     reviewAnnotation?: { path?: string; startLine?: number } | null;
+    semanticDedupe?: { isCanonical?: boolean } | string | null;
   }>;
 }
 
@@ -69,6 +70,26 @@ function toDedupeItem(f: Finding): DedupeItem {
   };
 }
 
+function isPersistedDuplicate(
+  semanticDedupe: { isCanonical?: boolean } | string | null | undefined,
+): boolean {
+  if (semanticDedupe == null) return false;
+  let parsed: unknown = semanticDedupe;
+  if (typeof semanticDedupe === "string") {
+    try {
+      parsed = JSON.parse(semanticDedupe);
+    } catch {
+      return false;
+    }
+  }
+  return (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "isCanonical" in parsed &&
+    parsed.isCanonical === false
+  );
+}
+
 /**
  * Load finding anchors from the most recent prior scan for the same target.
  * Returns up to `opts.limit` (default 100) `DedupeItem` projections, or []
@@ -92,6 +113,9 @@ export async function loadPriorScanAnchors(
   const limit = opts?.limit ?? 100;
   const items: DedupeItem[] = [];
   for (const f of findings) {
+    // A persisted non-canonical finding is already represented by its cluster
+    // anchor. Do not bloat later prompts or let it compete as a second anchor.
+    if (isPersistedDuplicate(f.semanticDedupe)) continue;
     if (items.length >= limit) break;
     const loc = f.reviewAnnotation
       ? `${f.reviewAnnotation.path ?? "unknown"}:${f.reviewAnnotation.startLine ?? 0}`
