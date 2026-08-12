@@ -1,42 +1,97 @@
 /**
- * Unit test for the craft stage's wall-clock deadline (`deadlineMs`).
- *
- * The deadline exists so a slow trajectory (e.g. glm-5.2 via z.ai, ~15-30s/call
- * non-streaming) exits the loop GRACEFULLY with its accumulated work before the
- * ensemble's per-trajectory hard timeout kills it mid-call — which would discard
- * every step (0 counted) and leave the un-cancellable loop burning tokens in the
- * background. We prove the deadline short-circuits the loop with NO model call
- * (deadlineMs: 0 trips at the top of step 0), so the test needs no network/mock.
+ * Unit tests for the craft stage's bounded scheduling and fail-closed oracle
+ * handling. These use a mocked native runtime and never call a model.
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCraftScan, type CraftScanOptions } from "./craft-scan.js";
+import { craftStepBudget, runCraftScan, type CraftScanOptions } from "./craft-scan.js";
+import { LlmApiRuntime } from "../runtime/llm-api.js";
 
-describe("runCraftScan deadlineMs", () => {
-  it("exits gracefully at step 0 when the wall-clock deadline is already spent — no model call, honest 0-step result + deadline warning", async () => {
-    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-deadline-"));
-    let evaluated = false;
+const roots: string[] = [];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("craftStepBudget", () => {
+  it("reserves trigger-testing time in a short canary while preserving the long-run threshold", () => {
+    expect(craftStepBudget(15)).toEqual({ reachabilityStepCap: 3, firstSelfTestStep: 6 });
+    expect(craftStepBudget(40)).toEqual({ reachabilityStepCap: 4, firstSelfTestStep: 18 });
+    expect(craftStepBudget(5)).toEqual({ reachabilityStepCap: 1, firstSelfTestStep: 2 });
+  });
+});
+
+describe("runCraftScan infrastructure faults", () => {
+  it("marks a self-test oracle failure inconclusive instead of returning a capability fail", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-oracle-error-"));
+    roots.push(sourceRoot);
+    writeFileSync(
+      join(sourceRoot, "target.c"),
+      [
+        "#include <stddef.h>",
+        "int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {",
+        "  return size ? data[0] : 0;",
+        "}",
+      ].join("\n"),
+    );
+
+    vi.spyOn(LlmApiRuntime.prototype, "executeNative")
+      .mockResolvedValueOnce({
+        content: [{
+          type: "tool_use",
+          id: "advance-1",
+          name: "advance_stage",
+          input: { to: "trigger", citations: [{ path: "target.c", line: 2 }] },
+        }],
+        stopReason: "tool_use",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        durationMs: 1,
+      } as never)
+      .mockResolvedValueOnce({
+        content: [{
+          type: "tool_use",
+          id: "test-1",
+          name: "test_poc",
+          input: {
+            python: [
+              "from pathlib import Path",
+              "import sys",
+              "Path(sys.argv[1]).write_bytes(b'x')",
+            ].join("\n"),
+          },
+        }],
+        stopReason: "tool_use",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        durationMs: 1,
+      } as never);
+
+    const graded = vi.fn();
+    const selfTest = vi.fn(async () => ({
+      triggered: false,
+      output: "",
+      oracleError: "pinned vulnerable image unavailable",
+    }));
     const opts: CraftScanOptions = {
-      target: { sourceRoot, description: "some heap overflow", language: "c" },
-      runtime: "auto",
-      // 0 → the deadline is already reached on entry to the loop, so it breaks
-      // BEFORE constructing the LlmApiRuntime or issuing any request.
-      deadlineMs: 0,
-      evaluatePoc: async () => {
-        evaluated = true;
-        return { triggered: false, output: "" };
-      },
+      target: { sourceRoot, description: "reachable parser overflow", language: "c", taskId: "fixture:1" },
+      runtime: "api",
+      model: "gpt-5.5",
+      maxSteps: 15,
+      evaluatePoc: graded,
+      testPoc: selfTest,
     };
 
     const result = await runCraftScan(opts);
 
-    expect(evaluated).toBe(false); // never reached the oracle
+    expect(selfTest).toHaveBeenCalledTimes(1);
+    expect(graded).not.toHaveBeenCalled();
     expect(result.passed).toBe(false);
-    expect(result.steps).toBe(0);
-    expect(result.warnings.some((w) => /wall-clock deadline reached/.test(w))).toBe(true);
+    expect(result.steps).toBe(2);
+    expect(result.warnings.some((warning) => /ORACLE UNREACHABLE.*NOT a capability fail/.test(warning))).toBe(true);
+    expect(result.evidence?.some((record) => record.kind === "run-summary" && record.status === "inconclusive")).toBe(true);
   });
 });
 
