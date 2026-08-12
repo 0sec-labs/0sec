@@ -5,6 +5,7 @@ import {
   BUDGET_WARNING_HARD,
 } from "./native-loop.js";
 import type { Runtime, RuntimeResult } from "../runtime/types.js";
+import type { Finding } from "@pwnkit/shared";
 
 // The XML-dispatch loop tests use synthetic short flags like `FLAG{xml-mode}`
 // so they don't bind to any real benchmark answer. The default decoy validator
@@ -400,5 +401,67 @@ describe("runAgentLoop — action-level tool_calls log", () => {
     expect(entry).toBeDefined();
     expect(entry.args).not.toContain("sup3rs3cr3t");
     expect(entry.args).toContain("http://example.test/admin");
+  });
+});
+
+
+describe("runAgentLoop — finding persistence callback", () => {
+  it("emits only the finding that save_finding accepted", async () => {
+    const delivered: Finding[] = [];
+    const runtime = scriptedRuntime([
+      [
+        'TOOL_CALL: save_finding {"title":"Verified SSRF","severity":"high","category":"ssrf","evidence_request":"GET /fetch?url=http://probe","evidence_response":"202 Accepted"}',
+        'TOOL_CALL: done {"summary":"saved"}',
+      ].join("\n"),
+    ]);
+
+    const state = await runAgentLoop({
+      config: {
+        role: "audit",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 3,
+        target: "http://example.test",
+        scanId: "loop-finding-callback",
+      },
+      runtime,
+      db: null,
+      onFindingSaved: (finding) => {
+        delivered.push(finding);
+      },
+    });
+
+    expect(state.done).toBe(true);
+    expect(state.findings).toHaveLength(1);
+    expect(delivered).toEqual(state.findings);
+  });
+
+  it("does not emit a rejected save_finding call", async () => {
+    const delivered: Finding[] = [];
+    const runtime = scriptedRuntime([
+      [
+        'TOOL_CALL: save_finding {"title":"Unproven SSRF","severity":"high","category":"ssrf","evidence_request":"","evidence_response":""}',
+        'TOOL_CALL: done {"summary":"nothing saved"}',
+      ].join("\n"),
+    ]);
+
+    const state = await runAgentLoop({
+      config: {
+        role: "audit",
+        systemPrompt: "test",
+        tools: [],
+        maxTurns: 3,
+        target: "http://example.test",
+        scanId: "loop-rejected-finding",
+      },
+      runtime,
+      db: null,
+      onFindingSaved: (finding) => {
+        delivered.push(finding);
+      },
+    });
+
+    expect(state.findings).toEqual([]);
+    expect(delivered).toEqual([]);
   });
 });

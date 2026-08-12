@@ -18,7 +18,13 @@ import { resolveIdentities, compareRoles } from "@pwnkit/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import type { LootKind } from "./loot.js";
 import type { OastHandle } from "../oast/types.js";
-import { confirmOast, categoryToOastClass, deriveProbe, type OastClass } from "../oast/index.js";
+import {
+  confirmOast,
+  categoryToOastClass,
+  deriveProbe,
+  type OastClass,
+  type OastVerdict,
+} from "../oast/index.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import { extractUrls } from "../scope/scope.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
@@ -1580,6 +1586,15 @@ function tracebackTail(trace: string): string {
 
 // ── Tool Executor ──
 
+const OAST_CLASS_BY_NAME: Record<string, OastClass> = {
+  "blind-ssrf": "blind-ssrf",
+  "blind-xss": "blind-xss",
+  "oob-rce": "oob-rce",
+  "oob-sqli": "oob-sqli",
+  "xxe-oob": "xxe-oob",
+  jndi: "jndi",
+};
+
 export class ToolExecutor {
   private db: pwnkitDB | null;
   private ctx: ToolContext;
@@ -1599,11 +1614,14 @@ export class ToolExecutor {
   private _rejectedDecoyFlags: Set<string> = new Set();
 
   /**
-   * OAST interaction handles minted this scan (pwnkit#659), keyed by the id
-   * surfaced to the agent (`oast-1`). `oast_register` writes here; `oast_poll`
-   * looks up the handle so the correlation token survives across turns.
+   * OAST interaction handles minted this scan, plus verified callback verdicts
+   * keyed by the opaque handle id. `save_finding` consumes only this trusted
+   * cache, so an agent cannot turn a made-up callback string into verification.
    */
   private _oastHandles: Map<string, OastHandle> = new Map();
+  private _oastCandidates: Map<string, string> = new Map();
+  private _oastVerified: Map<string, { oastClass: OastClass; verdict: OastVerdict }> =
+    new Map();
 
   // ── Coverage-gate tracking (#audit-laziness) ──
   // Populated incrementally inside `execute()` so `markDone` can refuse
@@ -4016,7 +4034,7 @@ export class ToolExecutor {
     }
   }
 
-  private saveFinding(args: Record<string, unknown>): ToolResult {
+  private async saveFinding(args: Record<string, unknown>): Promise<ToolResult> {
     // pwnkit#283 — refuse empty-PoC findings upstream. Disclose already
     // refuses empty PoCs at render time (`disclose/template.ts` EmptyPocError),
     // but accepting them here silently inflates mid-scan telemetry and burns
@@ -4103,6 +4121,40 @@ export class ToolExecutor {
       }
     }
 
+    const oastHandleId =
+      typeof args.oast_handle_id === "string" ? args.oast_handle_id.trim() : "";
+    const oastProof = oastHandleId ? this._oastVerified.get(oastHandleId) : undefined;
+    if (oastHandleId && !oastProof) {
+      return {
+        success: false,
+        output: null,
+        error:
+          `oast_handle_id="${oastHandleId}" has no verified callback. ` +
+          "Call oast_poll after the trigger and pass its verified handle.",
+      };
+    }
+    const category = typeof args.category === "string" ? args.category : "";
+    if (oastProof && categoryToOastClass(category) !== oastProof.oastClass) {
+      return {
+        success: false,
+        output: null,
+        error:
+          `oast_handle_id="${oastHandleId}" confirmed ${oastProof.oastClass}, ` +
+          `which cannot verify finding category="${category}".`,
+      };
+    }
+    const suppliedAnalysis =
+      typeof args.evidence_analysis === "string" ? args.evidence_analysis : undefined;
+    const oastAnalysis = oastProof
+      ? `OAST callback verified (${oastProof.oastClass}/${oastProof.verdict.protocol}): ` +
+        oastProof.verdict.evidence
+      : undefined;
+    const evidenceAnalysis = oastAnalysis
+      ? suppliedAnalysis
+        ? `${suppliedAnalysis}\n\n${oastAnalysis}`
+        : oastAnalysis
+      : suppliedAnalysis;
+
     const finding: Finding = {
       id: randomUUID(),
       templateId: (args.template_id as string) ?? "manual",
@@ -4114,7 +4166,7 @@ export class ToolExecutor {
       evidence: {
         request: (args.evidence_request as string) ?? "",
         response: (args.evidence_response as string) ?? "",
-        analysis: args.evidence_analysis as string | undefined,
+        analysis: evidenceAnalysis,
       },
       timestamp: Date.now(),
     };
@@ -4262,6 +4314,36 @@ export class ToolExecutor {
       args.confidence = confidence;
     }
 
+    if (oastProof) {
+      if (finding.status === "false-positive") {
+        return {
+          success: false,
+          output: null,
+          error: "cannot attach OAST proof to a finding with an unverifiable source annotation",
+        };
+      }
+      finding.status = "verified";
+      finding.confidence = oastProof.verdict.confidence;
+      finding.triageStatus = "accepted";
+      finding.triageNote = `oast_verified: ${oastProof.verdict.evidence}`;
+      finding.layerVerdicts = [
+        {
+          layer: "oracle",
+          verdict: "pass",
+          confidence: oastProof.verdict.confidence,
+          reason: `OAST ${oastProof.oastClass} verified: ${oastProof.verdict.evidence}`,
+          durationMs: 0,
+          costUsd: 0,
+        },
+      ];
+
+      // Mirror the trusted proof onto the source call so the native loop's
+      // cloud-sink and event paths persist the same verification state.
+      args.status = finding.status;
+      args.confidence = finding.confidence;
+      args.evidence_analysis = finding.evidence.analysis ?? "";
+    }
+
     // pwnkit#281 — dedup against in-memory ctx.findings before append.
     // Surfaced by the 2026-05-07 control-flow audit (§H3 "prompt doing what
     // code should do"). The agent prompt already asks the model to query
@@ -4388,6 +4470,7 @@ export class ToolExecutor {
 
     const candidate = typeof args.candidate === "string" ? args.candidate.trim() : "";
     const probe = candidate ? deriveProbe(handle, candidate) : null;
+    if (probe) this._oastCandidates.set(handle.id, probe.nonce);
 
     return {
       success: true,
@@ -4400,7 +4483,7 @@ export class ToolExecutor {
         dns_host: probe ? probe.dnsHost : handle.dnsHost,
         candidate: probe ? probe.nonce : undefined,
         guidance:
-          "Inject http_url (blind SSRF/XSS/RCE HTTP callback) or dns_host (OOB-SQLi via xp_dirtree/UTL_HTTP/LOAD_FILE, JNDI/log4shell, DNS-exfil), trigger the payload, then call oast_poll with this handle_id to confirm.",
+          "Inject http_url (blind SSRF/XSS/RCE HTTP callback) or dns_host (OOB-SQLi via xp_dirtree/UTL_HTTP/LOAD_FILE, JNDI/log4shell, DNS-exfil), trigger the payload, then call oast_poll. After a verified callback, pass this handle_id as oast_handle_id to save_finding so the proof persists with the finding.",
       },
     };
   }
@@ -4433,10 +4516,12 @@ export class ToolExecutor {
       };
     }
 
-    // Resolve the OAST class from an explicit `class` or a finding category.
+    // Resolve a validated OAST class from an explicit class or finding category.
     const explicit = typeof args.class === "string" ? args.class.trim() : "";
     const category = typeof args.category === "string" ? args.category.trim() : "";
-    const oastClass = (explicit || categoryToOastClass(category)) as OastClass | null | "";
+    const oastClass = explicit
+      ? OAST_CLASS_BY_NAME[explicit]
+      : categoryToOastClass(category);
     if (!oastClass) {
       return {
         success: false,
@@ -4444,7 +4529,9 @@ export class ToolExecutor {
         error: "provide class (blind-ssrf|blind-xss|oob-rce|oob-sqli|xxe-oob|jndi) or a category",
       };
     }
-    const candidate = typeof args.candidate === "string" ? args.candidate.trim() : undefined;
+    const suppliedCandidate =
+      typeof args.candidate === "string" ? args.candidate.trim() : "";
+    const candidate = suppliedCandidate || this._oastCandidates.get(handle.id);
 
     const interactions = await collaborator.poll(handle);
     const verdict = confirmOast({
@@ -4457,6 +4544,7 @@ export class ToolExecutor {
     // Feed a confirmed callback into the loot ledger so the interaction host can
     // be chained into follow-up requests. Best-effort; no-op without a ledger.
     if (verdict.verified) {
+      this._oastVerified.set(handle.id, { oastClass, verdict });
       this.ctx.loot?.add({
         kind: "endpoint",
         value: handle.host,

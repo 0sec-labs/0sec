@@ -78,6 +78,11 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
       evidence_request: { type: "string", description: "The request/prompt that triggered the vuln" },
       evidence_response: { type: "string", description: "The response showing the vulnerability" },
       evidence_analysis: { type: "string", description: "Your analysis of why this is a vulnerability" },
+      oast_handle_id: {
+        type: "string",
+        description:
+          "OPTIONAL verified handle_id from oast_poll. Pass only after the callback verdict was verified; save_finding attaches the trusted callback evidence and marks the finding verified. The OAST class must match this finding's category.",
+      },
       source_path: {
         type: "string",
         description:

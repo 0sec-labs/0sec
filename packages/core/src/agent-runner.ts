@@ -468,8 +468,15 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
         runtime: apiRuntime as NativeRuntime,
         db,
         getPendingUserMessages: cloudInbox?.drain,
-        onTurn: (turn, toolCalls, _results) => {
-          const cloudSinkCfg = getCloudSinkConfig();
+        onFindingSaved: (finding) => {
+          emit({
+            type: "finding",
+            message: `[${finding.severity}] ${finding.title}`,
+            data: finding,
+          });
+          void postFinding(finding, getCloudSinkConfig());
+        },
+        onTurn: (turn, toolCalls) => {
           if (toolCalls.length === 0) {
             emit({
               type: "stage:start",
@@ -478,14 +485,6 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
             });
           }
           for (const call of toolCalls) {
-            if (call.name === "save_finding") {
-              emit({
-                type: "finding",
-                message: `[${call.arguments.severity}] ${call.arguments.title}`,
-                data: call.arguments,
-              });
-              void postFinding(call.arguments, cloudSinkCfg);
-            }
             emit({
               type: "stage:start",
               stage: "attack",
@@ -610,19 +609,13 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
     },
     runtime,
     db,
-    onTurn: (_turn, msg) => {
-      const calls = msg.toolCalls ?? [];
-      const cloudSinkCfg = getCloudSinkConfig();
-      for (const call of calls) {
-        if (call.name === "save_finding") {
-          emit({
-            type: "finding",
-            message: `[${call.arguments.severity}] ${call.arguments.title}`,
-            data: call.arguments,
-          });
-          void postFinding(call.arguments, cloudSinkCfg);
-        }
-      }
+    onFindingSaved: (finding) => {
+      emit({
+        type: "finding",
+        message: `[${finding.severity}] ${finding.title}`,
+        data: finding,
+      });
+      void postFinding(finding, getCloudSinkConfig());
     },
   });
 

@@ -37,6 +37,8 @@ export interface AgentLoopOptions {
   runtime: Runtime;
   db: pwnkitDB | null;
   onTurn?: (turn: number, message: AgentMessage) => void;
+  /** Called only after a new finding has passed save_finding validation. */
+  onFindingSaved?: (finding: Finding) => void | Promise<void>;
 }
 
 /**
@@ -50,7 +52,7 @@ export interface AgentLoopOptions {
  * 5. Repeat until agent calls `done` or hits maxTurns
  */
 export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> {
-  const { config, runtime, db, onTurn } = opts;
+  const { config, runtime, db, onTurn, onFindingSaved } = opts;
 
   // Shared buffers for JIT skill support (#458). The recentToolResultTexts
   // array is populated from tool result text below and threaded into the
@@ -375,6 +377,27 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
           result: { success: toolResult.success, error: toolResult.error },
         }),
       );
+
+      if (
+        call.name === "save_finding" &&
+        toolResult.success &&
+        toolResult.output &&
+        typeof toolResult.output === "object" &&
+        "message" in toolResult.output &&
+        toolResult.output.message === "Finding saved" &&
+        "findingId" in toolResult.output &&
+        typeof toolResult.output.findingId === "string"
+      ) {
+        const findingId = toolResult.output.findingId;
+        const saved = toolCtx.findings.find((finding) => finding.id === findingId);
+        if (saved) {
+          try {
+            await onFindingSaved?.(saved);
+          } catch {
+            // External sinks must not make a successfully-saved local finding fail.
+          }
+        }
+      }
 
       // Check if agent called done
       if (call.name === "done" && toolResult.success) {

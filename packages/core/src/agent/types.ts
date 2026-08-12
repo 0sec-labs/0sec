@@ -262,9 +262,11 @@ export interface ToolContext {
    * `oast_register` / `oast_poll` tools mint unique interaction handles and
    * poll for DNS/HTTP/LDAP callbacks to confirm blind/out-of-band classes
    * (blind SSRF/XSS, OOB RCE/SQLi, XXE-OOB, JNDI) via correlation-token
-   * matching. Created only when `features.oastCollaborator` is on AND a
-   * collaborator server is configured (PWNKIT_OAST_URL); undefined otherwise,
-   * in which case the OAST tools return a graceful "not deployed" result.
+   * matching. A verified handle can then be supplied to `save_finding`, which
+   * persists the callback as a verified finding. Created only when
+   * `features.oastCollaborator` is on AND a collaborator server is configured
+   * (PWNKIT_OAST_URL); undefined otherwise, in which case the OAST tools return
+   * a graceful "not deployed" result.
    */
   oast?: OastCollaborator;
 }

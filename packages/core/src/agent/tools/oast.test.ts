@@ -22,11 +22,26 @@ function baseCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   };
 }
 
+function registeredHandle(output: unknown): { handleId: string; dnsHost: string } {
+  if (
+    !output ||
+    typeof output !== "object" ||
+    !("handle_id" in output) ||
+    typeof output.handle_id !== "string" ||
+    !("dns_host" in output) ||
+    typeof output.dns_host !== "string"
+  ) {
+    throw new Error("oast_register did not return a handle");
+  }
+  return { handleId: output.handle_id, dnsHost: output.dns_host };
+}
+
 describe("OAST tool registry", () => {
-  it("registers oast_register and oast_poll", () => {
+  it("registers OAST tools and callback-to-finding evidence", () => {
     expect(TOOL_DEFINITIONS.oast_register).toBeDefined();
     expect(TOOL_DEFINITIONS.oast_poll).toBeDefined();
     expect(TOOL_DEFINITIONS.oast_poll.required).toContain("handle_id");
+    expect(TOOL_DEFINITIONS.save_finding.parameters.oast_handle_id).toBeDefined();
   });
 });
 
@@ -64,6 +79,63 @@ describe("oast_register / oast_poll wiring", () => {
     expect(loot.query({ search: out.host })).toHaveLength(1);
   });
 
+  it("persists a verified callback into the finding and cloud-sink call shape", async () => {
+    const collaborator = new InMemoryCollaborator({ baseDomain: "oast.test" });
+    const ctx = baseCtx({ oast: collaborator });
+    const exec = new ToolExecutor(ctx);
+    const reg = await exec.execute({ name: "oast_register", arguments: {} });
+    const { handleId, dnsHost } = registeredHandle(reg.output);
+
+    const unverified = await exec.execute({
+      name: "save_finding",
+      arguments: {
+        title: "Blind SSRF",
+        severity: "high",
+        category: "ssrf",
+        evidence_request: "GET /fetch?url=http://target",
+        evidence_response: "202 Accepted",
+        oast_handle_id: handleId,
+      },
+    });
+    expect(unverified.success).toBe(false);
+    expect(unverified.error).toMatch(/no verified callback/);
+    expect(ctx.findings).toEqual([]);
+
+    collaborator.inject({ protocol: "dns", timestamp: "t", queryName: dnsHost });
+    const poll = await exec.execute({
+      name: "oast_poll",
+      arguments: { handle_id: handleId, category: "ssrf" },
+    });
+    expect(poll.success).toBe(true);
+
+    const saveArgs: Record<string, unknown> = {
+      title: "Blind SSRF",
+      severity: "high",
+      category: "ssrf",
+      evidence_request: "GET /fetch?url=http://target",
+      evidence_response: "202 Accepted",
+      oast_handle_id: handleId,
+    };
+    const saved = await exec.execute({ name: "save_finding", arguments: saveArgs });
+    expect(saved.success).toBe(true);
+    expect(ctx.findings).toHaveLength(1);
+
+    const finding = ctx.findings[0]!;
+    expect(finding.status).toBe("verified");
+    expect(finding.triageStatus).toBe("accepted");
+    expect(finding.confidence).toBe(0.9);
+    expect(finding.evidence.analysis).toContain("OAST callback verified (blind-ssrf/dns)");
+    expect(finding.layerVerdicts).toEqual([
+      expect.objectContaining({
+        layer: "oracle",
+        verdict: "pass",
+        confidence: 0.9,
+      }),
+    ]);
+    expect(saveArgs.status).toBe("verified");
+    expect(saveArgs.evidence_analysis).toContain("OAST callback verified (blind-ssrf/dns)");
+  });
+
   it("ties a hit to a specific candidate via the candidate nonce", async () => {
     const collaborator = new InMemoryCollaborator({ baseDomain: "oast.test" });
     const exec = new ToolExecutor(baseCtx({ oast: collaborator }));
@@ -73,6 +145,12 @@ describe("oast_register / oast_poll wiring", () => {
     expect(out.candidate).toBe("paramb");
 
     collaborator.inject({ protocol: "http", timestamp: "t", queryName: out.dns_host, path: "/paramb" });
+
+    const defaultCandidate = await exec.execute({
+      name: "oast_poll",
+      arguments: { handle_id: out.handle_id, class: "blind-ssrf" },
+    });
+    expect(defaultCandidate.output).toMatchObject({ verified: true });
 
     const wrong = await exec.execute({
       name: "oast_poll",
