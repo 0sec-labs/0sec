@@ -158,5 +158,61 @@ describe("runCraftScan self-test oracle outage", () => {
       else process.env.OPENAI_API_KEY = prevKey;
       vi.unstubAllGlobals();
     }
+describe("runCraftScan generator deadline", () => {
+  it("refutes a non-terminating model generator without blocking the trajectory", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-generator-timeout-"));
+    roots.push(sourceRoot);
+    writeFileSync(join(sourceRoot, "target.c"), [
+      "#include <stddef.h>",
+      "int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {",
+      "  return size ? data[0] : 0;",
+      "}",
+      "",
+    ].join("\n"));
+
+    vi.spyOn(LlmApiRuntime.prototype, "executeNative")
+      .mockResolvedValueOnce({
+        content: [{
+          type: "tool_use",
+          id: "advance-1",
+          name: "advance_stage",
+          input: { to: "trigger", citations: [{ path: "target.c", line: 2 }] },
+        }],
+        stopReason: "tool_use",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        durationMs: 1,
+      } as never)
+      .mockResolvedValueOnce({
+        content: [{
+          type: "tool_use",
+          id: "test-1",
+          name: "test_poc",
+          input: { python: "while True:\n    pass\n" },
+        }],
+        stopReason: "tool_use",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        durationMs: 1,
+      } as never);
+
+    const selfTest = vi.fn();
+    const result = await runCraftScan({
+      target: { sourceRoot, description: "reachable parser overflow", language: "c", taskId: "fixture:timeout" },
+      runtime: "api",
+      model: "gpt-5.5",
+      maxSteps: 2,
+      generatorTimeoutMs: 250,
+      evaluatePoc: vi.fn(),
+      testPoc: selfTest,
+    });
+
+    expect(selfTest).not.toHaveBeenCalled();
+    expect(result.steps).toBe(2);
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "self-test",
+        status: "refuted",
+        summary: "candidate generator failed before self-test",
+      }),
+    ]));
   });
 });
