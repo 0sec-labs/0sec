@@ -36,6 +36,7 @@ import type { RuntimeMode } from "@pwnkit/shared";
 import { features } from "./agent/features.js";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "./runtime/types.js";
+import type { ToolCall } from "./agent/types.js";
 import { isMcpTarget } from "./http.js";
 import { discoverMcpTarget, runMcpSecurityChecks } from "./mcp.js";
 import { runLlmIpiAudit } from "./llm-ipi-audit.js";
@@ -3617,7 +3618,7 @@ async function runNativeAttack(
   const effectiveMaxTurns = isWeb ? Math.max(maxTurns, 15) : maxTurns;
 
   const cloudSinkCfg = getCloudSinkConfig();
-  const onTurnHandler = (turn: number, toolCalls: import("./agent/types.js").ToolCall[]) => {
+  const onTurnHandler = (turn: number, toolCalls: ToolCall[]) => {
     // One sub-action per tool call with a full preview (tool + first-order
     // argument) so the verbose TUI can show what the attack agent is
     // actually running on each turn — e.g. `turn 7: bash: nmap -sV t.com`
@@ -3631,19 +3632,6 @@ async function runNativeAttack(
           stage: "attack",
           message: `turn ${turn}: ${toolCallPreview(call)}`,
         });
-      }
-    }
-
-    for (const call of toolCalls) {
-      if (call.name === "save_finding") {
-        emit({
-          type: "finding",
-          message: `[${call.arguments.severity}] ${call.arguments.title}`,
-          data: call.arguments,
-        });
-        // Fire-and-forget: stream finding to opt-in webhook sink.
-        // Failures are logged in postFinding and never abort the scan.
-        void postFinding(call.arguments, cloudSinkCfg);
       }
     }
   };
@@ -3679,6 +3667,14 @@ async function runNativeAttack(
       if (eventType === "user:injected") {
         emit({ type: "user:injected", stage: "attack", message: String(payload.text ?? ""), data: payload });
       }
+    },
+    onFindingSaved: (finding) => {
+      emit({
+        type: "finding",
+        message: `[${finding.severity}] ${finding.title}`,
+        data: finding,
+      });
+      void postFinding(finding, cloudSinkCfg);
     },
     onTurn: onTurnHandler,
   });
@@ -4120,6 +4116,7 @@ async function runLegacyAttack(
     ? getToolsForRole("attack", { webMode: true, hasBrowser, allowScanners: config.allowScanners })
     : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
 
+  const cloudSinkCfg = getCloudSinkConfig();
   const state = await runAgentLoop({
     config: {
       role: "attack",
@@ -4161,18 +4158,14 @@ async function runLegacyAttack(
           });
         }
       }
-
-      const cloudSinkCfg = getCloudSinkConfig();
-      for (const call of calls) {
-        if (call.name === "save_finding") {
-          emit({
-            type: "finding",
-            message: `[${call.arguments.severity}] ${call.arguments.title}`,
-            data: call.arguments,
-          });
-          void postFinding(call.arguments, cloudSinkCfg);
-        }
-      }
+    },
+    onFindingSaved: (finding) => {
+      emit({
+        type: "finding",
+        message: `[${finding.severity}] ${finding.title}`,
+        data: finding,
+      });
+      void postFinding(finding, cloudSinkCfg);
     },
   });
   return {

@@ -74,7 +74,13 @@ export interface FuzzLoopResult {
   crashes: CrashArtifact[];
   corpusSize: number;
   durationMs: number;
-  /** Tooling that was required but absent, e.g. ["cargo-fuzz","miri"]. */
+  /** Cargo-fuzz target passed to `cargo fuzz run`, when a run was attempted. */
+  executedHarness?: string;
+  /**
+   * Execution prerequisites that were unavailable, e.g. `cargo-fuzz`, `miri`,
+   * or an unambiguous cargo-fuzz harness. A non-empty value is incomplete
+   * coverage, never a clean result.
+   */
   toolingMissing?: string[];
 }
 
