@@ -67,10 +67,17 @@ describe("VerificationCodePredicate types (pwnkit#193)", () => {
       query: "(call_expression)",
     };
 
+    const diff: VerificationCodePredicate = {
+      kind: "git-diff-applies",
+      baseCommit: "a".repeat(40),
+      diff: "diff --git a/proof.ts b/proof.ts\n",
+    };
+
     if (fc.kind === "file-contains") expect(fc.pattern).toBe("x");
     if (fmp.kind === "file-missing-pattern") expect(fmp.pattern).toBe("x");
     if (fe.kind === "file-exists") expect(fe.file).toBe("a.ts");
     if (ast.kind === "ast-shape") expect(ast.query).toBe("(call_expression)");
+    if (diff.kind === "git-diff-applies") expect(diff.baseCommit).toHaveLength(40);
   });
 });
 
@@ -189,6 +196,26 @@ describe("parseVerificationSpecArg (agent tool wire shape, pwnkit#193)", () => {
     expect(out).not.toBeNull();
     expect(out!.code).toHaveLength(1);
     expect(out!.code[0].kind).toBe("file-contains");
+  });
+
+  it("accepts a bounded full-commit git diff predicate", () => {
+    const diff = "diff --git a/proof.ts b/proof.ts\n";
+    const out = parseVerificationSpecArg({
+      code: [{ kind: "git-diff-applies", baseCommit: "a".repeat(40), diff }],
+    });
+    expect(out?.code).toEqual([
+      { kind: "git-diff-applies", baseCommit: "a".repeat(40), diff },
+    ]);
+  });
+
+  it("drops a git diff predicate with an invalid base commit or empty diff", () => {
+    const out = parseVerificationSpecArg({
+      code: [
+        { kind: "git-diff-applies", baseCommit: "deadbeef", diff: "diff --git a/a b/a\n" },
+        { kind: "git-diff-applies", baseCommit: "a".repeat(40), diff: "" },
+      ],
+    });
+    expect(out).toBeNull();
   });
 
   it("drops a malformed behavior block but keeps the spec", () => {
