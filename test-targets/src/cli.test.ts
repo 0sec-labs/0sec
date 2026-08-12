@@ -18,12 +18,16 @@ const noApiEnv = {
   OPENROUTER_API_KEY: "",
   ANTHROPIC_API_KEY: "",
   AZURE_OPENAI_API_KEY: "",
+  DEEPSEEK_API_KEY: "",
   OPENAI_API_KEY: "",
   Z_AI_API_KEY: "",
+  QWEN_API_KEY: "",
+  KIMI_API_KEY: "",
   PWNKIT_CHATGPT_ACCESS_TOKEN: "",
   PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: "",
   PWNKIT_CHATGPT_ACCOUNT_ID: "",
   PWNKIT_CODEX_AUTH_JSON_PATH: join(tmpdir(), "pwnkit-cli-test-no-codex-auth.json"),
+  PWNKIT_CHATGPT_AUTH_FILE: join(tmpdir(), "pwnkit-cli-test-no-codex-auth.json"),
   PWNKIT_SKIP_PROVIDER_BANNER: "1",
 };
 

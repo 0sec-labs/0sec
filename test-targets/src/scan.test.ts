@@ -22,6 +22,14 @@ const savedApiEnv = {
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   AZURE_OPENAI_API_KEY: process.env.AZURE_OPENAI_API_KEY,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  Z_AI_API_KEY: process.env.Z_AI_API_KEY,
+  KIMI_API_KEY: process.env.KIMI_API_KEY,
+  QWEN_API_KEY: process.env.QWEN_API_KEY,
+  DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+  PWNKIT_CHATGPT_ACCESS_TOKEN: process.env.PWNKIT_CHATGPT_ACCESS_TOKEN,
+  PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN,
+  PWNKIT_CHATGPT_ACCOUNT_ID: process.env.PWNKIT_CHATGPT_ACCOUNT_ID,
+  PWNKIT_CHATGPT_AUTH_FILE: process.env.PWNKIT_CHATGPT_AUTH_FILE,
 };
 
 async function chat(target: string, prompt: string): Promise<string> {
@@ -54,11 +62,18 @@ async function mcpFetch(target: string, url: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  // Keep scan integration tests hermetic; local quota state should not affect them.
   process.env.OPENROUTER_API_KEY = "";
   process.env.ANTHROPIC_API_KEY = "";
   process.env.AZURE_OPENAI_API_KEY = "";
   process.env.OPENAI_API_KEY = "";
+  process.env.Z_AI_API_KEY = "";
+  process.env.KIMI_API_KEY = "";
+  process.env.QWEN_API_KEY = "";
+  process.env.DEEPSEEK_API_KEY = "";
+  process.env.PWNKIT_CHATGPT_ACCESS_TOKEN = "";
+  process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = "";
+  process.env.PWNKIT_CHATGPT_ACCOUNT_ID = "";
+  process.env.PWNKIT_CHATGPT_AUTH_FILE = join(tmpdir(), "pwnkit-scan-test-no-codex-auth.json");
 
   const vulnMod = await import("./vulnerable-server.js");
   const safeMod = await import("./safe-server.js");
@@ -90,11 +105,18 @@ afterAll(async () => {
     new Promise<void>((resolve) => vulnWebServer.close(() => resolve())),
     new Promise<void>((resolve) => safeWebServer.close(() => resolve())),
   ]);
-
   process.env.OPENROUTER_API_KEY = savedApiEnv.OPENROUTER_API_KEY;
   process.env.ANTHROPIC_API_KEY = savedApiEnv.ANTHROPIC_API_KEY;
   process.env.AZURE_OPENAI_API_KEY = savedApiEnv.AZURE_OPENAI_API_KEY;
   process.env.OPENAI_API_KEY = savedApiEnv.OPENAI_API_KEY;
+  process.env.Z_AI_API_KEY = savedApiEnv.Z_AI_API_KEY;
+  process.env.KIMI_API_KEY = savedApiEnv.KIMI_API_KEY;
+  process.env.QWEN_API_KEY = savedApiEnv.QWEN_API_KEY;
+  process.env.DEEPSEEK_API_KEY = savedApiEnv.DEEPSEEK_API_KEY;
+  process.env.PWNKIT_CHATGPT_ACCESS_TOKEN = savedApiEnv.PWNKIT_CHATGPT_ACCESS_TOKEN;
+  process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = savedApiEnv.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
+  process.env.PWNKIT_CHATGPT_ACCOUNT_ID = savedApiEnv.PWNKIT_CHATGPT_ACCOUNT_ID;
+  process.env.PWNKIT_CHATGPT_AUTH_FILE = savedApiEnv.PWNKIT_CHATGPT_AUTH_FILE;
 });
 
 function startWebServer(mode: "vulnerable" | "safe"): Promise<{ server: Server; target: string }> {
