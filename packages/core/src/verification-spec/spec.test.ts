@@ -19,6 +19,7 @@
  *   8. Path safety: absolute paths and `..` escapes are rejected.
  *   9. Bad regex patterns flip the predicate to failed without throwing.
  */
+import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   mkdtempSync,
@@ -77,6 +78,47 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(repoRoot, { recursive: true, force: true });
 });
+
+function createGitDiffFixture(): {
+  root: string;
+  baseCommit: string;
+  diff: string;
+} {
+  const root = mkdtempSync(join(tmpdir(), "pwnkit-verify-git-"));
+  try {
+    writeFileSync(join(root, "proof.ts"), "export const vulnerable = true;\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    execFileSync("git", ["add", "proof.ts"], { cwd: root });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=PwnKit Test",
+        "-c",
+        "user.email=pwnkit-test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "base",
+      ],
+      { cwd: root },
+    );
+    const baseCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+    }).trim();
+    writeFileSync(join(root, "proof.ts"), "export const vulnerable = false;\n");
+    const diff = execFileSync("git", ["diff", "--", "proof.ts"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    execFileSync("git", ["checkout", "--quiet", "--", "proof.ts"], { cwd: root });
+    return { root, baseCommit, diff };
+  } catch (err) {
+    rmSync(root, { recursive: true, force: true });
+    throw err;
+  }
+}
 
 describe("evaluateVerificationSpec — file-contains", () => {
   it("passes when the pattern matches", async () => {
@@ -243,6 +285,142 @@ describe("evaluateVerificationSpec — ast-shape", () => {
     expect(result.passed).toBe(false);
     expect(result.failedPredicates).toHaveLength(1);
     expect(result.failedPredicates[0].reason).toMatch(/ast-shape.*not yet implemented/);
+  });
+});
+
+describe("evaluateVerificationSpec — git-diff-applies", () => {
+  it("passes when the evidence diff applies alongside an independent source predicate", async () => {
+    const fixture = createGitDiffFixture();
+    try {
+      const result = await evaluateVerificationSpec(
+        {
+          code: [
+            { kind: "file-exists", file: "proof.ts" },
+            {
+              kind: "git-diff-applies",
+              baseCommit: fixture.baseCommit,
+              diff: fixture.diff,
+            },
+          ],
+        },
+        fixture.root,
+      );
+      expect(result.passed).toBe(true);
+      expect(result.failedPredicates).toEqual([]);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("never treats a source-compatibility receipt as vulnerability proof alone", async () => {
+    const fixture = createGitDiffFixture();
+    try {
+      const result = await evaluateVerificationSpec(
+        {
+          code: [
+            {
+              kind: "git-diff-applies",
+              baseCommit: fixture.baseCommit,
+              diff: fixture.diff,
+            },
+          ],
+        },
+        fixture.root,
+      );
+      expect(result.passed).toBe(false);
+      expect(result.failedPredicates).toEqual([]);
+      expect(result.reason).toBe("no vulnerability predicates");
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when HEAD no longer matches the artifact base commit", async () => {
+    const fixture = createGitDiffFixture();
+    try {
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=PwnKit Test",
+          "-c",
+          "user.email=pwnkit-test@example.invalid",
+          "commit",
+          "--allow-empty",
+          "--quiet",
+          "-m",
+          "new head",
+        ],
+        { cwd: fixture.root },
+      );
+      const result = await evaluateVerificationSpec(
+        {
+          code: [
+            {
+              kind: "git-diff-applies",
+              baseCommit: fixture.baseCommit,
+              diff: fixture.diff,
+            },
+          ],
+        },
+        fixture.root,
+      );
+      expect(result.passed).toBe(false);
+      expect(result.failedPredicates[0]?.reason).toBe(
+        "git HEAD does not match diff base commit",
+      );
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when the diff cannot apply to the base checkout", async () => {
+    const fixture = createGitDiffFixture();
+    try {
+      const result = await evaluateVerificationSpec(
+        {
+          code: [
+            {
+              kind: "git-diff-applies",
+              baseCommit: fixture.baseCommit,
+              diff: fixture.diff.replace(
+                "export const vulnerable = true;",
+                "export const missing = true;",
+              ),
+            },
+          ],
+        },
+        fixture.root,
+      );
+      expect(result.passed).toBe(false);
+      expect(result.failedPredicates[0]?.reason).toBe(
+        "git diff does not apply cleanly",
+      );
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails an empty diff without invoking git apply", async () => {
+    const fixture = createGitDiffFixture();
+    try {
+      const result = await evaluateVerificationSpec(
+        {
+          code: [
+            {
+              kind: "git-diff-applies",
+              baseCommit: fixture.baseCommit,
+              diff: "",
+            },
+          ],
+        },
+        fixture.root,
+      );
+      expect(result.passed).toBe(false);
+      expect(result.failedPredicates[0]?.reason).toBe("git diff is empty");
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
   });
 });
 

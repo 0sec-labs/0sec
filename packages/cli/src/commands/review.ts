@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Command } from "commander";
 import chalk from "chalk";
 import type { ScanDepth, OutputFormat, RuntimeMode, SeedFinding } from "@pwnkit/shared";
@@ -152,6 +153,10 @@ export function registerReviewCommand(program: Command): void {
       "PR/MR discussion thread to review against (untrusted). The latest message drives this run.",
     )
     .option(
+      "--prior-findings <path>",
+      "JSON array of prior findings. Fresh review treats it as untrusted context and investigates variants without repeating the originals.",
+    )
+    .option(
       "--npm-dynamic",
       "Also run the npm dynamic-discovery detector sweep (SSPP fuzz / validation read-stability / SSRF parser-diff) over the package in a disposable sandbox. Only effective with --ecosystem npm. Confirmed leads flow into the same verify → disclosure path.",
       false,
@@ -246,6 +251,42 @@ export function registerReviewCommand(program: Command): void {
 
       const reviewPackageEcosystem = normalizePackageEcosystem(opts.ecosystem as string | undefined);
 
+      let priorFindings: Array<{
+        id: string;
+        title: string;
+        category: string;
+        description?: string;
+        location?: string;
+      }> | undefined;
+      const priorFindingsPath = opts.priorFindings as string | undefined;
+      if (priorFindingsPath) {
+        try {
+          const parsed: unknown = JSON.parse(await readFile(priorFindingsPath, "utf8"));
+          if (
+            !Array.isArray(parsed) ||
+            parsed.some(
+              (value) =>
+                !value ||
+                typeof value !== "object" ||
+                !("id" in value) ||
+                typeof value.id !== "string" ||
+                !("title" in value) ||
+                typeof value.title !== "string" ||
+                !("category" in value) ||
+                typeof value.category !== "string" ||
+                ("description" in value && value.description !== undefined && typeof value.description !== "string") ||
+                ("location" in value && value.location !== undefined && typeof value.location !== "string"),
+            )
+          ) {
+            throw new Error("must be a JSON array of { id, title, category, description?, location? }");
+          }
+          priorFindings = parsed;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`Invalid --prior-findings ${priorFindingsPath}: ${message}`);
+        }
+      }
+
       const branchFrom = opts.branchFrom as string | undefined;
       await runUnified({
         target: repo,
@@ -269,6 +310,7 @@ export function registerReviewCommand(program: Command): void {
         subsystem: opts.subsystem as string | undefined,
         hypothesis: opts.hypothesis as string | undefined,
         conversation: opts.conversation as string | undefined,
+        priorFindings,
         npmDynamicDiscovery: opts.npmDynamic as boolean | undefined,
         tui: opts.tui as boolean,
         seedFindings,

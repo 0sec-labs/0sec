@@ -1545,6 +1545,70 @@ describe("runPipeline — conversation threading", () => {
   });
 });
 
+describe("runPipeline — prior findings context", () => {
+  it("treats prior findings as untrusted variant-hunting context", async () => {
+    const repoDir = freshTmpDir("repo-prior-findings");
+    writeFileSync(join(repoDir, "search.ts"), "// fixture");
+
+    runAnalysisAgentMock.mockClear();
+    await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      priorFindings: [
+        {
+          id: "prior-sqli",
+          title: "SQL injection in search",
+          category: "sql-injection",
+          description: "Unsafe interpolation at src/search.ts:42",
+          location: "src/search.ts:42",
+        },
+      ],
+      dbPath: freshDbPath(),
+    });
+
+    const args = runAnalysisAgentMock.mock.calls[0]![0];
+    expect(args.agentSystemPrompt).toContain("## PRIOR FINDINGS (UNTRUSTED CONTEXT)");
+    expect(args.agentSystemPrompt).toContain("SQL injection in search");
+    expect(args.agentSystemPrompt).toContain("Do not repeat or promote them without fresh evidence");
+    expect(args.agentSystemPrompt).toContain("adjacent entry points");
+    expect(args.agentSystemPrompt).not.toContain("## REVIEW CONVERSATION (UNTRUSTED)");
+  });
+
+  it("threads prior findings into profile-specific source prompts", async () => {
+    const repoDir = freshTmpDir("repo-prior-findings-c-library");
+    writeFileSync(join(repoDir, "parser.c"), "// fixture");
+
+    runAnalysisAgentMock.mockClear();
+    await runPipeline({
+      target: repoDir,
+      targetType: "source-code",
+      reviewProfile: "c-library",
+      depth: "quick",
+      format: "json",
+      runtime: "api",
+      apiKey: "sk-fake",
+      priorFindings: [
+        {
+          id: "prior-oob",
+          title: "Out-of-bounds read in parser",
+          category: "memory-safety",
+          location: "src/parser.c:10",
+        },
+      ],
+      dbPath: freshDbPath(),
+    });
+
+    const args = runAnalysisAgentMock.mock.calls[0]![0];
+    expect(args.agentSystemPrompt).toContain("C/C++");
+    expect(args.agentSystemPrompt).toContain("## PRIOR FINDINGS (UNTRUSTED CONTEXT)");
+    expect(args.agentSystemPrompt).toContain("Out-of-bounds read in parser");
+  });
+});
+
 // ── Report envelope shape ───────────────────────────────────────────────────
 
 describe("runPipeline — report envelope", () => {

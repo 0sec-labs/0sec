@@ -1073,29 +1073,33 @@ export interface PocStep {
 
 /**
  * Code-level predicate. Each variant is a discriminated union keyed on
- * `kind`. All paths are repo-relative (resolved against the repoRoot the
- * verifier is given). Patterns are JS regex source strings (so they can
- * be persisted as JSON and re-hydrated cleanly).
+ * `kind`. File-based variants use repo-relative paths (resolved against the
+ * repoRoot the verifier is given). Patterns are JS regex source strings (so
+ * they can be persisted as JSON and re-hydrated cleanly).
  *
  * - `file-contains` — file exists AND its contents match `pattern` (with
  *   optional regex `flags`). The vulnerable shape should still be present.
  * - `file-missing-pattern` — file exists AND its contents do NOT match
  *   `pattern`. Used to assert that a fix-marker (e.g. an `assertAdmin`
  *   call) is still absent.
- * - `file-exists` — file simply exists. Cheapest predicate; useful when
- *   the vulnerable file has a stable name but the shape is hard to pin
+ * - `file-exists` — file simply exists. Cheapest predicate; useful when the
+ *   vulnerable file has a stable name but the shape is hard to pin
  *   with a single regex.
  * - `ast-shape` — tree-sitter query against the file's parsed AST.
  *   Stronger than regex but costs a tree-sitter dependency. Marked as
  *   not-yet-implemented in the OSS verifier; treated as "skipped" when
  *   evaluated, which is conservative (an unimplemented predicate cannot
  *   prove the finding is fixed).
+ * - `git-diff-applies` — an evidence diff generated at `baseCommit` still
+ *   applies cleanly to the repository HEAD. This proves source compatibility
+ *   of the artifact, not runtime exploitability.
  */
 export type VerificationCodePredicate =
   | { kind: "file-contains"; file: string; pattern: string; flags?: string }
   | { kind: "file-missing-pattern"; file: string; pattern: string; flags?: string }
   | { kind: "file-exists"; file: string }
-  | { kind: "ast-shape"; file: string; query: string };
+  | { kind: "ast-shape"; file: string; query: string }
+  | { kind: "git-diff-applies"; baseCommit: string; diff: string };
 
 /**
  * Behavioural predicate — a single HTTP step the verifier should replay
@@ -1126,8 +1130,11 @@ export interface VerificationBehavior {
 export interface VerificationSpec {
   /**
    * Code-level predicates that must all be true for the finding to remain
-   * vulnerable. Empty array is permitted (means "no code-level signal";
-   * verifier returns inconclusive when there is also no `behavior`).
+   * vulnerable. `git-diff-applies` is an artifact-compatibility receipt, not
+   * a vulnerability signal, so it must accompany at least one other code or
+   * behavioural predicate before a verifier can report a positive verdict.
+   * Empty array is permitted (means "no code-level signal"; verifier returns
+   * inconclusive when there is also no `behavior`).
    */
   code: VerificationCodePredicate[];
   /** Optional behavioural predicate. Requires target provisioning. */
