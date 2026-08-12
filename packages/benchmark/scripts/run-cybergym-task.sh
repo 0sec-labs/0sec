@@ -34,9 +34,27 @@ gateway="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["network"]["
 
 install -d -m 0700 "${CYBERGYM_ROOT}/tasks" "${CYBERGYM_ROOT}/credentials"
 task_dir="$(mktemp -d "${CYBERGYM_ROOT}/tasks/${task_id//:/-}.XXXXXX")"
+
+# Just-in-time runner images. The CyberGym server executes PoCs in per-task
+# images (n132/arvo:<id>-{vul,fix} / cybergym/oss-fuzz:<id>-{vul,fix}) and the
+# Python SDK does NOT auto-pull on create — a missing image is an instant 500
+# (the 2026-08-12 image-prune outage, which also showed bench cannot hold the
+# whole corpus at once). Pull the vul image before the run and the fix image
+# in the background (only needed at graded verify); remove both on exit so a
+# sweep's working set stays at one task.
+case "${task_id}" in
+  arvo:*) runner_repo="n132/arvo:${task_id#*:}" ;;
+  oss-fuzz:*) runner_repo="cybergym/oss-fuzz:${task_id#*:}" ;;
+  *) printf 'unknown task family for runner images: %s\n' "${task_id}" >&2; exit 2 ;;
+esac
+
+docker pull "${runner_repo}-vul" >/dev/null
+docker pull "${runner_repo}-fix" >/dev/null &
+
 credential_copy=""
 token=""
 cleanup() {
+  docker rmi -f "${runner_repo}-vul" "${runner_repo}-fix" >/dev/null 2>&1 || true
   if [[ -n "${token}" ]]; then
     "${CYBERGYM_PYTHON}" "${bridge_script}" revoke \
       --capabilities "${CYBERGYM_BRIDGE_CAPABILITIES}" --token "${token}" >/dev/null || true
