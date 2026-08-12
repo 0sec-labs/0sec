@@ -257,7 +257,9 @@ export function craftStepBudget(maxSteps: number): {
   firstSelfTestStep: number;
 } {
   const boundedSteps = Math.max(1, Math.floor(maxSteps));
-  const reachabilityStepCap = Math.min(4, Math.max(1, Math.floor(boundedSteps * 0.25)));
+  // Preserve the established four-turn source-evidence contract. Only the
+  // first-test deadline scales with a shortened total trajectory.
+  const reachabilityStepCap = 4;
   const firstSelfTestStep = Math.min(
     18,
     Math.max(reachabilityStepCap + 1, Math.floor(boundedSteps * 0.45)),
