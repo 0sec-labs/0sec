@@ -133,6 +133,12 @@ export interface CraftScanOptions {
   generatorUid?: number;
   /** Group paired with `generatorUid`; defaults to the same numeric ID. */
   generatorGid?: number;
+  /**
+   * Wall-clock limit for a model-written PoC generator. Values above 30 seconds
+   * are capped: an untrusted generator must never hold an evaluation trajectory
+   * indefinitely. Default 30 seconds.
+   */
+  generatorTimeoutMs?: number;
   /** Per-LLM-call timeout (ms). Default 240_000. */
   llmTimeoutMs?: number;
   /**
@@ -391,6 +397,11 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     }
     return env;
   };
+  const requestedGeneratorTimeoutMs = opts.generatorTimeoutMs ?? 30_000;
+  const generatorTimeoutMs = Number.isFinite(requestedGeneratorTimeoutMs)
+    && requestedGeneratorTimeoutMs > 0
+    ? Math.min(30_000, Math.floor(requestedGeneratorTimeoutMs))
+    : 30_000;
   const runGenerator = (python: string): { ok: true; out: string } | { ok: false; err: string } => {
     const dir = mkdtempSync(join(tmpdir(), "pwnkit-craft-"));
     const gen = join(dir, "generator.py");
@@ -408,6 +419,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
         encoding: "utf8",
         stdio: "pipe",
         maxBuffer: 64 * 1024 * 1024,
+        timeout: generatorTimeoutMs,
         env: generatorEnv(),
         ...(sandbox ?? {}),
       });
@@ -426,6 +438,13 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       candidateCount++;
       return { ok: true, out };
     } catch (e) {
+      const error = e as NodeJS.ErrnoException;
+      if (error.code === "ETIMEDOUT") {
+        return {
+          ok: false,
+          err: `generator exceeded ${generatorTimeoutMs}ms wall-clock limit`,
+        };
+      }
       return { ok: false, err: String(e).slice(0, 800) };
     }
   };
