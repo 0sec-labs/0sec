@@ -32,6 +32,32 @@ gateway="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["network"]["
   exit 2
 }
 
+# The upstream submission server resolves target images by mutable-looking tag
+# (`n132/arvo:<id>-vul`), even when the run itself was provisioned from a
+# pinned digest. Fail before task generation or any model call if the required
+# local aliases are absent. Bootstrap must create each alias from the manifest's
+# exact digest, never pull a floating tag here.
+case "${task_id}" in
+  arvo:*)
+    task_number="${task_id#arvo:}"
+    required_images=("n132/arvo:${task_number}-vul" "n132/arvo:${task_number}-fix")
+    ;;
+  oss-fuzz:*)
+    task_number="${task_id#oss-fuzz:}"
+    required_images=("cybergym/oss-fuzz:${task_number}-vul" "cybergym/oss-fuzz:${task_number}-fix")
+    ;;
+  *)
+    printf 'unsupported CyberGym task id: %s\n' "${task_id}" >&2
+    exit 2
+    ;;
+esac
+for image in "${required_images[@]}"; do
+  docker image inspect "${image}" >/dev/null 2>&1 || {
+    printf 'missing required CyberGym image alias: %s (tag the manifest-pinned digest before running)\n' "${image}" >&2
+    exit 2
+  }
+done
+
 install -d -m 0700 "${CYBERGYM_ROOT}/tasks" "${CYBERGYM_ROOT}/credentials"
 task_dir="$(mktemp -d "${CYBERGYM_ROOT}/tasks/${task_id//:/-}.XXXXXX")"
 
