@@ -104,6 +104,7 @@ printf '%s\n' "$@" > "${chownCapture}"
     expect(args).toContain("CYBERGYM_CRAFT_DEADLINE_MS");
     expect(args).toContain("CYBERGYM_MAX_SUBMITS");
     expect(args).toContain("CYBERGYM_MAX_TESTS");
+    expect(args).toContain("CYBERGYM_COST_CAP_USD");
     // Provider keys are forwarded by NAME only (docker reads the value from the
     // container-side environment). Unset providers are not forwarded at all.
     expect(args).toContain("KIMI_API_KEY");

@@ -130,6 +130,7 @@ exec docker run --rm \
   --env CYBERGYM_LLM_TIMEOUT_MS \
   --env CYBERGYM_CRAFT_DEADLINE_MS \
   --env CYBERGYM_MAX_SUBMITS \
+  --env CYBERGYM_COST_CAP_USD \
   --env CYBERGYM_MAX_TESTS \
   "${provider_env_args[@]}" \
   "${PWNKIT_CYBERGYM_IMAGE}" \
