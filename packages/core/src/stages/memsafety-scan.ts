@@ -14,11 +14,11 @@
  *
  * Discipline encoded here (these are load-bearing, not decoration):
  *   - **No fabricated findings.** When `FuzzLoopResult.toolingMissing` is
- *     non-empty (cargo-fuzz / miri / clang absent — the default state on the
- *     dev box today), the loop ran no real iterations. We surface that honestly
- *     as a `toolingMissing` list + warning and return ZERO findings, exactly
- *     like `kernel-vm-runner` degrades when QEMU is absent. Never invent a
- *     crash, never emit a "clean" confirmation we did not earn.
+ *     non-empty, a required execution prerequisite (cargo-fuzz, a selected
+ *     harness, miri, or clang) is unavailable. We surface that honestly as a
+ *     `toolingMissing` list + warning and return ZERO findings, exactly like
+ *     `kernel-vm-runner` degrades when QEMU is absent. Never invent a crash,
+ *     never emit a "clean" confirmation we did not earn.
  *   - **Assume-FP.** A captured crash is only a `confirmed` PoC when it
  *     reproduced under the sanitizer/Miri build with a saved input
  *     (`memCorruptionVerdict` enforces this). A bare panic / timeout / OOM is
@@ -90,14 +90,15 @@ export interface MemSafetyScanResult {
   /** The raw fuzz-loop result, surfaced for callers that want loop telemetry. */
   loop: FuzzLoopResult;
   /**
-   * Tooling that was required but absent (cargo-fuzz / miri / clang / cargo).
-   * Non-empty means the loop could not actually run — `findings` is empty by
-   * construction and the caller must report "could not run", not "clean".
+   * Execution prerequisites that were unavailable (cargo-fuzz, a selected
+   * harness, miri, clang, or cargo). Non-empty means the loop is incomplete:
+   * `findings` is empty by construction and the caller must report "could not
+   * complete", not "clean".
    */
   toolingMissing: string[];
   /** The playbook methodology injected for this run (Track A context). */
   playbookContext: string;
-  /** Human-readable, non-fatal notes (e.g. the tooling-absent explanation). */
+  /** Human-readable, non-fatal notes (e.g. an incomplete-loop explanation). */
   warnings: string[];
 }
 
@@ -242,12 +243,12 @@ export async function runMemSafetyScan(
 
   const toolingMissing = loop.toolingMissing ?? [];
 
-  // Tooling-absent contract: an empty-but-honest loop yields NO findings. Surface
-  // the missing tools so the caller reports "could not run", not "clean".
+  // Incomplete-loop contract: surface the missing prerequisite so the caller
+  // reports "could not complete", not "clean".
   if (toolingMissing.length > 0) {
     const note =
-      `[memsafety] fuzz loop could not run — missing tooling: ${toolingMissing.join(", ")}. ` +
-      "No findings emitted (no fabricated results).";
+      `[memsafety] fuzz loop could not complete — unavailable prerequisite: ` +
+      `${toolingMissing.join(", ")}. No findings emitted (no fabricated results).`;
     log(note);
     warnings.push(note);
   }

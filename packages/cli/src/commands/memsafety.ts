@@ -84,7 +84,10 @@ export interface RunMemSafetyOptions {
   language?: MemLanguage;
   /** Force the build system when auto-detection is wrong/ambiguous. */
   buildSystem?: MemBuildSystem;
-  /** libFuzzer / cargo-fuzz harness target name, when known. */
+  /**
+   * libFuzzer / cargo-fuzz harness target name. When omitted, the runner
+   * selects the sole existing cargo-fuzz target and otherwise fails closed.
+   */
   harnessEntry?: string;
   /** Non-standard cargo-fuzz directory relative to the source root. */
   fuzzDir?: string;
@@ -190,11 +193,9 @@ export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafety
 
     const reproduced = scan.details.filter((d) => d.verdict.verdict === "confirmed").length;
 
-    // Tooling-absent contract: the loop ran ZERO real iterations and emitted
-    // zero findings. That is an honest "could not run", never a clean pass —
-    // exit 2 (skipped) so it is not reported as a clean green scan. The
-    // toolchain lands with the E2B template (gate contract #3); until then this
-    // is the expected degraded state, surfaced loudly.
+    // Incomplete-loop contract: unavailable tooling or an ambiguous/missing
+    // harness is never a clean pass. Exit 2 so callers cannot report the
+    // zero-finding result as completed coverage.
     if (scan.toolingMissing.length > 0) {
       return {
         exitCode: 2,
@@ -203,12 +204,12 @@ export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafety
           source: scopeRoot,
           language,
           build_system: buildSystem,
-          harness: target.harnessEntry ?? null,
+          harness: scan.loop.executedHarness ?? null,
           tooling_missing: scan.toolingMissing,
           findings: 0,
           note:
-            "fuzz/sanitizer toolchain absent — the loop ran zero real iterations " +
-            "and emitted ZERO findings (honest degradation, NOT a clean pass). " +
+            "fuzz/sanitizer loop could not complete because an execution prerequisite " +
+            "was unavailable; emitted ZERO findings (honest degradation, NOT a clean pass). " +
             "Live memcorruption-repro validation of this role is pending (#702).",
           warnings: scan.warnings.slice(0, 10),
         },
@@ -222,7 +223,7 @@ export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafety
         source: scopeRoot,
         language,
         build_system: buildSystem,
-        harness: target.harnessEntry ?? null,
+        harness: scan.loop.executedHarness ?? null,
         iterations: scan.loop.iterations,
         findings: scan.findings.length,
         reproduced_memcorruption: reproduced,
@@ -324,9 +325,9 @@ export function registerMemsafetyCommand(program: Command): void {
     .description(
       "Userspace / Rust memory-safety scan (Monty-mode): clone a source tree, " +
         "build a fuzz/sanitizer harness, run the closed fuzz loop, and emit " +
-        "reproduced-memcorruption findings. Exit 0=loop ran (with or without " +
-        "crashes), 2=skipped (no build system detected, or fuzz toolchain absent), " +
-        "3=error (bad flags / unreadable target).",
+        "reproduced-memcorruption findings. Exit 0=loop completed (with or without " +
+        "crashes), 2=skipped (no build system detected or execution prerequisite " +
+        "unavailable), 3=error (bad flags / unreadable target).",
     )
     .argument("<source>", "Source tree to fuzz (a local path or a git URL)")
     .option("--subsystem <path>", "Narrow the scanned root to a subdirectory")

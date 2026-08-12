@@ -1,3 +1,7 @@
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, it, expect, afterEach } from "vitest";
 import {
   parseCrashOutput,
@@ -186,11 +190,106 @@ describe("parseCrashOutput — signature stability", () => {
 // ────────────────────────────────────────────────────────────────────
 
 const REAL_PATH = process.env.PATH;
+const fakeCargoDirs: string[] = [];
+
+afterEach(() => {
+  process.env.PATH = REAL_PATH;
+  for (const dir of fakeCargoDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function useFakeCargo(harnesses: string[]): string {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "pwnkit-fake-cargo-"));
+  fakeCargoDirs.push(fixtureDir);
+  const sourceRoot = join(fixtureDir, "source");
+  mkdirSync(sourceRoot);
+  mkdirSync(join(sourceRoot, "fuzz"), { recursive: true });
+  writeFileSync(
+    join(sourceRoot, "fuzz", "Cargo.toml"),
+    "[package]\nname = \"fake-fuzz\"\nversion = \"0.0.0\"\n",
+    "utf8",
+  );
+  const harnessOutput = harnesses.length > 0 ? `${harnesses.join("\n")}\n` : "";
+
+  writeFileSync(
+    join(fixtureDir, "cargo"),
+    `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") process.exit(0);
+if (args[0] === "fuzz" && args[1] === "--help") process.exit(0);
+if (args[0] === "fuzz" && args[1] === "list") {
+  process.stdout.write(${JSON.stringify(harnessOutput)});
+  process.exit(0);
+}
+if (args[0] === "fuzz" && args[1] === "run") {
+  process.stdout.write("Done. 1000 iterations, 0 crashes.\\n");
+  process.exit(0);
+}
+process.exit(1);
+`,
+    "utf8",
+  );
+  chmodSync(join(fixtureDir, "cargo"), 0o755);
+  process.env.PATH = fixtureDir;
+  return sourceRoot;
+}
+
+describe("runUserspaceFuzzLoop — cargo-fuzz harness discovery", () => {
+  it("auto-selects and runs the only existing cargo-fuzz harness", async () => {
+    const sourceRoot = useFakeCargo(["only_target"]);
+    const result = await runUserspaceFuzzLoop({
+      target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+      logger: () => {},
+    });
+
+    expect(result.toolingMissing).toBeUndefined();
+    expect(result.executedHarness).toBe("only_target");
+    expect(result.iterations).toBe(1);
+    expect(result.crashes).toEqual([]);
+  });
+
+  it("does not discover a cargo-fuzz target outside the source root", async () => {
+    const sourceRoot = useFakeCargo(["parent_target"]);
+    rmSync(join(sourceRoot, "fuzz"), { recursive: true, force: true });
+    const result = await runUserspaceFuzzLoop({
+      target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+      logger: () => {},
+    });
+
+    expect(result.executedHarness).toBeUndefined();
+    expect(result.iterations).toBe(0);
+    expect(result.toolingMissing).toContain("cargo-fuzz-harness");
+  });
+
+  it("fails closed when cargo-fuzz has no harnesses", async () => {
+    const sourceRoot = useFakeCargo([]);
+    const result = await runUserspaceFuzzLoop({
+      target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+      logger: () => {},
+    });
+
+    expect(result.executedHarness).toBeUndefined();
+    expect(result.iterations).toBe(0);
+    expect(result.crashes).toEqual([]);
+    expect(result.toolingMissing).toContain("cargo-fuzz-harness");
+  });
+
+  it("fails closed instead of choosing among multiple cargo-fuzz harnesses", async () => {
+    const sourceRoot = useFakeCargo(["parser", "network"]);
+    const result = await runUserspaceFuzzLoop({
+      target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+      logger: () => {},
+    });
+
+    expect(result.executedHarness).toBeUndefined();
+    expect(result.iterations).toBe(0);
+    expect(result.crashes).toEqual([]);
+    expect(result.toolingMissing).toContain("cargo-fuzz-harness");
+  });
+});
 
 describe("runUserspaceFuzzLoop — tooling-absent contract", () => {
-  afterEach(() => {
-    process.env.PATH = REAL_PATH;
-  });
 
   function withoutToolchain<T>(fn: () => Promise<T>): Promise<T> {
     // Point PATH at a directory with no executables so every probe ENOENTs.
