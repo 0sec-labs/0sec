@@ -44,6 +44,14 @@ export interface RunOptions {
   branchFromEntry?: number;
   diffBase?: string;
   changedOnly?: boolean;
+  /** Prior findings to use as untrusted variant-hunting context on a fresh review. */
+  priorFindings?: Array<{
+    id: string;
+    title: string;
+    category: string;
+    description?: string;
+    location?: string;
+  }>;
   depth: ScanDepth;
   format: OutputFormat;
   runtime: RuntimeMode;
@@ -519,6 +527,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
           resumeScanId: opts.resumeScanId,
           diffBase: opts.diffBase,
           changedOnly: opts.changedOnly,
+          priorFindings: opts.priorFindings,
           depth,
           format,
           runtime,

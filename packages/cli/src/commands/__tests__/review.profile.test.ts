@@ -5,6 +5,9 @@
  * the validator accepts the expected workflow selector values and rejects typos.
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
 
@@ -157,6 +160,43 @@ describe("pwnkit review --profile validator", () => {
     expect(opts.emit).toBe("pr");
     expect(opts.emitPrBase).toBe("develop");
     expect(opts.emitPrDryRun).toBe(true);
+  });
+
+  it("loads valid --prior-findings JSON and forwards it unchanged", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pwnkit-prior-findings-"));
+    const input = join(dir, "prior-findings.json");
+    const findings = [
+      {
+        id: "prior-sqli",
+        title: "SQL injection in search",
+        category: "sql-injection",
+        description: "Unsafe interpolation",
+        location: "src/search.ts:42",
+      },
+    ];
+    try {
+      writeFileSync(input, JSON.stringify(findings));
+      await runCli(["review", "./somerepo", "--prior-findings", input]);
+      expect(runUnifiedMock).toHaveBeenCalledOnce();
+      const opts = runUnifiedMock.mock.calls[0]![0] as Record<string, unknown>;
+      expect(opts.priorFindings).toEqual(findings);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed --prior-findings data before starting a review", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pwnkit-prior-findings-"));
+    const input = join(dir, "prior-findings.json");
+    try {
+      writeFileSync(input, JSON.stringify([{ title: "missing id and category" }]));
+      await expect(
+        runCli(["review", "./somerepo", "--prior-findings", input]),
+      ).rejects.toThrow(/Invalid --prior-findings/);
+      expect(runUnifiedMock).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("rejects an unknown --emit target with a clear error", async () => {
