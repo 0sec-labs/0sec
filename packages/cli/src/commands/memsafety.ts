@@ -239,7 +239,9 @@ export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafety
         note:
           reproduced > 0
             ? "reproduced memory-corruption PoC(s) captured under the sanitizer/Miri build."
-            : "fuzz loop ran; no crashes captured. This is NOT a proof of memory safety.",
+            : scan.findings.length > 0
+              ? "fuzz loop captured crash candidate(s), but no saved reproducer met the memory-corruption PoC gate."
+              : "fuzz loop ran; no crashes captured. This is NOT a proof of memory safety.",
       },
     };
   } finally {

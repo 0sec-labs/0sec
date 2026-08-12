@@ -520,6 +520,7 @@ async function runRustLoop(
 ): Promise<FuzzLoopResult> {
   const { target } = opts;
   const sourceRoot = resolve(target.sourceRoot);
+  const fuzzBase = target.fuzzDir ?? "fuzz";
   const crashes: CrashArtifact[] = [];
   let iterations = 0;
   let harnessEntry = target.harnessEntry;
@@ -566,6 +567,9 @@ async function runRustLoop(
       iterations += 1;
       const crash = parseCrashOutput(res.output, {
         kind: res.timedOut ? "timeout" : undefined,
+        inputPath: findLibfuzzerCrashInput(
+          join(sourceRoot, fuzzBase, "artifacts", harnessEntry),
+        ),
       });
       if (crash) crashes.push(crash);
     }
@@ -593,7 +597,6 @@ async function runRustLoop(
   }
 
   // cargo-fuzz stores its corpus under <fuzzDir>/corpus/<target> (default `fuzz`).
-  const fuzzBase = target.fuzzDir ?? "fuzz";
   const corpusDir = harnessEntry
     ? join(sourceRoot, fuzzBase, "corpus", harnessEntry)
     : join(sourceRoot, fuzzBase, "corpus");
