@@ -1064,7 +1064,11 @@ const VERIFICATION_PREDICATE_KINDS: ReadonlySet<string> = new Set([
   "file-missing-pattern",
   "file-exists",
   "ast-shape",
+  "git-diff-applies",
 ]);
+
+const FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+const MAX_VERIFICATION_DIFF_BYTES = 1_000_000;
 
 const VERIFICATION_BEHAVIOR_EXPECT_LITERALS: ReadonlySet<string> = new Set([
   "success",
@@ -1079,6 +1083,21 @@ function validateVerificationPredicate(
   if (typeof kind !== "string" || !VERIFICATION_PREDICATE_KINDS.has(kind)) {
     return null;
   }
+  if (kind === "git-diff-applies") {
+    const diff = raw.diff;
+    const baseCommit = raw.baseCommit;
+    if (
+      typeof diff !== "string" ||
+      diff.trim().length === 0 ||
+      Buffer.byteLength(diff, "utf8") > MAX_VERIFICATION_DIFF_BYTES ||
+      typeof baseCommit !== "string" ||
+      !FULL_GIT_OBJECT_ID_RE.test(baseCommit)
+    ) {
+      return null;
+    }
+    return { kind: "git-diff-applies", baseCommit, diff };
+  }
+
   const file = raw.file;
   if (typeof file !== "string" || file.length === 0) return null;
 

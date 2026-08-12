@@ -125,11 +125,15 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
       //   - { kind:"file-exists", file } — vulnerable file still present.
       //   - { kind:"ast-shape", file, query } — tree-sitter (not yet eval'd
       //     by the OSS verifier; record for future use).
+      //   - { kind:"git-diff-applies", baseCommit, diff } — a generated
+      //     unified PoC/evidence diff still applies to the exact base commit.
+      //     It proves source compatibility only and MUST accompany an
+      //     independent code or behavioural vulnerability predicate.
       // Pass as a JSON-encoded string to match the LLM tool wire format.
       verification_spec: {
         type: "string",
         description:
-          "OPTIONAL JSON-encoded VerificationSpec (pwnkit#193). Shape: { code: Array<{ kind:'file-contains'|'file-missing-pattern'|'file-exists'|'ast-shape', file, pattern?, flags?, query? }>, behavior?: { steps: Array<{ method, path, body?, expect: 'success'|'forbidden'|{status:number} }> } }. Populate code[] predicates from the file:line evidence you cited so cloud can re-verify the finding deterministically. Example for a SQLi at app/users.ts:43: code:[{kind:'file-contains',file:'app/users.ts',pattern:'db\\\\.query.*req\\\\.body'}]. Leave unset when you cannot pin the vulnerable shape to a regex.",
+          "OPTIONAL JSON-encoded VerificationSpec (pwnkit#193). Shape: { code: Array<{ kind:'file-contains'|'file-missing-pattern'|'file-exists'|'ast-shape'|'git-diff-applies', file?, pattern?, flags?, query?, baseCommit?, diff? }>, behavior?: { steps: Array<{ method, path, body?, expect: 'success'|'forbidden'|{status:number} }> } }. Populate code[] predicates from the file:line evidence you cited so cloud can re-verify the finding deterministically. Use git-diff-applies only as a companion to an independent code or behavioural predicate: it confirms a unified diff you generated against the exact full HEAD commit is compatible, never that the exploit works. Example for a SQLi at app/users.ts:43: code:[{kind:'file-contains',file:'app/users.ts',pattern:'db\\\\.query.*req\\\\.body'}]. Leave unset when you cannot pin the vulnerable shape to a regex.",
       },
       // Self-reported calibration of how confident the agent is that this
       // finding is a true positive. The cloud DB stores it in
