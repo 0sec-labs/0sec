@@ -11,12 +11,20 @@
 // target and are out of scope here — the helper short-circuits with a stable
 // `behavior eval not yet supported` reason.
 
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { resolve, isAbsolute, normalize, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve, isAbsolute, normalize, sep } from "node:path";
+import { promisify } from "node:util";
 import type {
   VerificationCodePredicate,
   VerificationSpec,
 } from "@pwnkit/shared";
+
+const execFileAsync = promisify(execFile);
+const MAX_GIT_DIFF_BYTES = 1_000_000;
+const GIT_CHECK_TIMEOUT_MS = 5_000;
+const FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
 /**
  * Result of a single predicate evaluation. `passed === true` means the
@@ -189,6 +197,86 @@ async function fileExists(absPath: string): Promise<boolean> {
   }
 }
 
+async function evaluateGitDiffApplies(
+  predicate: Extract<VerificationCodePredicate, { kind: "git-diff-applies" }>,
+  repoRoot: string,
+): Promise<PredicateResult> {
+  if (predicate.diff.trim().length === 0) {
+    return { predicate, passed: false, reason: "git diff is empty" };
+  }
+  if (Buffer.byteLength(predicate.diff, "utf8") > MAX_GIT_DIFF_BYTES) {
+    return {
+      predicate,
+      passed: false,
+      reason: `git diff exceeds ${MAX_GIT_DIFF_BYTES} bytes`,
+    };
+  }
+  if (!FULL_GIT_OBJECT_ID_RE.test(predicate.baseCommit)) {
+    return { predicate, passed: false, reason: "invalid git base commit" };
+  }
+
+  let head: string;
+  try {
+    const result = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+      cwd: repoRoot,
+      timeout: GIT_CHECK_TIMEOUT_MS,
+      maxBuffer: 4096,
+    });
+    head = result.stdout.trim();
+  } catch {
+    return {
+      predicate,
+      passed: false,
+      reason: "git repository HEAD unavailable",
+    };
+  }
+
+  if (head.toLowerCase() !== predicate.baseCommit.toLowerCase()) {
+    return {
+      predicate,
+      passed: false,
+      reason: "git HEAD does not match diff base commit",
+    };
+  }
+
+  let tempDir: string | undefined;
+  try {
+    tempDir = await fs.mkdtemp(join(tmpdir(), "pwnkit-verify-diff-"));
+    const patchPath = join(tempDir, "evidence.patch");
+    await fs.writeFile(patchPath, predicate.diff, { encoding: "utf8", mode: 0o600 });
+    await execFileAsync(
+      "git",
+      ["apply", "--check", "--whitespace=nowarn", "--", patchPath],
+      {
+        cwd: repoRoot,
+        timeout: GIT_CHECK_TIMEOUT_MS,
+        maxBuffer: 65_536,
+      },
+    );
+    return {
+      predicate,
+      passed: true,
+      reason: "git diff applies cleanly",
+    };
+  } catch {
+    // Do not surface `git apply` stderr: both the diff and target filenames may
+    // be attacker-influenced. The stable reason is enough for callers.
+    return {
+      predicate,
+      passed: false,
+      reason: "git diff does not apply cleanly",
+    };
+  } finally {
+    if (tempDir) {
+      try {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup; a stale private tmp directory is harmless.
+      }
+    }
+  }
+}
+
 async function evaluateOne(
   predicate: VerificationCodePredicate,
   repoRoot: string,
@@ -332,6 +420,9 @@ async function evaluateOne(
       };
     }
 
+
+    case "git-diff-applies":
+      return evaluateGitDiffApplies(predicate, repoRoot);
     case "ast-shape": {
       // Tree-sitter not yet wired in as a runtime dep. The conservative
       // contract is: an unimplemented predicate cannot prove the finding
@@ -363,7 +454,9 @@ async function evaluateOne(
  * Evaluate a {@link VerificationSpec} against `repoRoot` on disk.
  *
  * - Every `code[]` predicate is evaluated. The aggregate `passed` is true
- *   iff every predicate's `passed` is true.
+ *   iff every predicate held and at least one predicate actually describes
+ *   the vulnerable state. `git-diff-applies` validates artifact compatibility
+ *   only, so it cannot establish a positive verdict on its own.
  * - `failedPredicates` is the list of predicates whose `passed` was false
  *   (for caller-side rendering: "these predicates flipped → finding is
  *   partial-fix").
@@ -386,19 +479,22 @@ export async function evaluateVerificationSpec(
 
   const failedPredicates = results.filter((r) => !r.passed);
 
-  // Empty code[] with no behavior → no signal either way. Pass=false is
-  // the conservative default (the caller can't claim "still vulnerable"
-  // from zero predicates) but we surface it via `reason` so the caller
-  // can downgrade to `unknown` rather than `partial-fix`.
-  if (spec.code.length === 0 && !spec.behavior) {
+  const hasVulnerabilityPredicate = spec.code.some(
+    (predicate) => predicate.kind !== "git-diff-applies",
+  );
+
+  // An artifact receipt alone says nothing about whether the target remains
+  // vulnerable. Preserve the receipt result, but prevent callers from reading
+  // source compatibility as proof of exploitation.
+  if (!hasVulnerabilityPredicate && !spec.behavior) {
     return {
       passed: false,
-      failedPredicates: [],
-      reason: "no predicates",
+      failedPredicates,
+      reason: spec.code.length === 0 ? "no predicates" : "no vulnerability predicates",
     };
   }
 
-  const codePassed = failedPredicates.length === 0 && spec.code.length > 0;
+  const codePassed = failedPredicates.length === 0 && hasVulnerabilityPredicate;
 
   if (spec.behavior) {
     // Code-level passed and a behavioural step exists: we can't actually

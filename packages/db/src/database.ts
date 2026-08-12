@@ -464,6 +464,14 @@ export class pwnkitDB {
     if (!colNames.has("pocExecution")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN pocExecution TEXT");
     }
+    // Post-process metadata is optional and additive. Persisting it lets later
+    // scans use only prior canonical findings as semantic-dedupe anchors.
+    if (!colNames.has("semanticDedupe")) {
+      this.sqlite.exec("ALTER TABLE findings ADD COLUMN semanticDedupe TEXT");
+    }
+    if (!colNames.has("findingRank")) {
+      this.sqlite.exec("ALTER TABLE findings ADD COLUMN findingRank INTEGER");
+    }
     // Backfill NULL fingerprint / triageStatus / workflowStatus for rows
     // created before those columns existed.
     this.sqlite.exec("UPDATE findings SET fingerprint = id WHERE fingerprint IS NULL OR fingerprint = ''");
@@ -1198,6 +1206,19 @@ export class pwnkitDB {
     const verificationSpecJson = finding.verificationSpec
       ? JSON.stringify(finding.verificationSpec)
       : null;
+    // Post-process fields are emitted after agentic verification, so they must
+    // survive the final save/reload cycle rather than existing only in the
+    // in-memory report.
+    const semanticDedupeJson = finding.semanticDedupe
+      ? JSON.stringify(finding.semanticDedupe)
+      : null;
+    const candidateFindingRank = finding.findingRank;
+    const findingRank =
+      typeof candidateFindingRank === "number" &&
+      Number.isSafeInteger(candidateFindingRank) &&
+      candidateFindingRank > 0
+        ? candidateFindingRank
+        : null;
     // Backfill prose evidence from pocSteps for findings that only carry the
     // structured form, so legacy advisory templates / dashboards still see
     // request/response/analysis text. The structured pocSteps remain canonical.
@@ -1232,6 +1253,8 @@ export class pwnkitDB {
         layerVerdicts: layerVerdictsJson,
         pocSteps: pocStepsJson,
         verificationSpec: verificationSpecJson,
+        semanticDedupe: semanticDedupeJson,
+        findingRank,
         timestamp: finding.timestamp,
       })
       .onConflictDoUpdate({
@@ -1259,6 +1282,8 @@ export class pwnkitDB {
           layerVerdicts: layerVerdictsJson,
           pocSteps: pocStepsJson,
           verificationSpec: verificationSpecJson,
+          semanticDedupe: semanticDedupeJson,
+          findingRank,
           timestamp: finding.timestamp,
         },
       })
@@ -2324,6 +2349,8 @@ CREATE TABLE IF NOT EXISTS findings (
   pocSteps TEXT,
   verificationSpec TEXT,
   pocExecution TEXT,
+  semanticDedupe TEXT,
+  findingRank INTEGER,
   timestamp INTEGER NOT NULL
 );
 

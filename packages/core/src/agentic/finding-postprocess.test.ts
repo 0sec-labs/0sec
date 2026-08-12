@@ -74,6 +74,44 @@ describe("loadPriorScanAnchors", () => {
     ]);
   });
 
+  it("excludes persisted non-canonical findings from later anchor sets", async () => {
+    const db = makeFakeDb({
+      listScansByTarget: vi.fn().mockReturnValue([
+        { id: "s1", status: "completed", target: "https://example.com" },
+      ]),
+      getScanFindings: vi.fn().mockReturnValue([
+        {
+          id: "canonical",
+          title: "SQL injection in search",
+          category: "sql-injection",
+          description: "unsafe query",
+          semanticDedupe: JSON.stringify({
+            canonicalId: "canonical",
+            isCanonical: true,
+            clusterId: "s1:canonical",
+            reason: "unique root cause",
+          }),
+        },
+        {
+          id: "duplicate",
+          title: "SQLi via search",
+          category: "sql-injection",
+          description: "same unsafe query",
+          semanticDedupe: JSON.stringify({
+            canonicalId: "canonical",
+            isCanonical: false,
+            clusterId: "s1:canonical",
+            reason: "same root cause and endpoint",
+          }),
+        },
+      ]),
+    });
+
+    const result = await loadPriorScanAnchors(db, "https://example.com");
+
+    expect(result.map((item) => item.id)).toEqual(["canonical"]);
+  });
+
   it("caps results at opts.limit (default 100)", async () => {
     const findings = Array.from({ length: 50 }, (_, i) => ({
       id: `f-${i}`,
