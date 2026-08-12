@@ -32,6 +32,13 @@ const savedApiEnv = {
   PWNKIT_CHATGPT_AUTH_FILE: process.env.PWNKIT_CHATGPT_AUTH_FILE,
 };
 
+function restoreApiEnv(): void {
+  for (const [key, value] of Object.entries(savedApiEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
 async function chat(target: string, prompt: string): Promise<string> {
   const res = await fetch(target, {
     method: "POST",
@@ -105,18 +112,7 @@ afterAll(async () => {
     new Promise<void>((resolve) => vulnWebServer.close(() => resolve())),
     new Promise<void>((resolve) => safeWebServer.close(() => resolve())),
   ]);
-  process.env.OPENROUTER_API_KEY = savedApiEnv.OPENROUTER_API_KEY;
-  process.env.ANTHROPIC_API_KEY = savedApiEnv.ANTHROPIC_API_KEY;
-  process.env.AZURE_OPENAI_API_KEY = savedApiEnv.AZURE_OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = savedApiEnv.OPENAI_API_KEY;
-  process.env.Z_AI_API_KEY = savedApiEnv.Z_AI_API_KEY;
-  process.env.KIMI_API_KEY = savedApiEnv.KIMI_API_KEY;
-  process.env.QWEN_API_KEY = savedApiEnv.QWEN_API_KEY;
-  process.env.DEEPSEEK_API_KEY = savedApiEnv.DEEPSEEK_API_KEY;
-  process.env.PWNKIT_CHATGPT_ACCESS_TOKEN = savedApiEnv.PWNKIT_CHATGPT_ACCESS_TOKEN;
-  process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = savedApiEnv.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
-  process.env.PWNKIT_CHATGPT_ACCOUNT_ID = savedApiEnv.PWNKIT_CHATGPT_ACCOUNT_ID;
-  process.env.PWNKIT_CHATGPT_AUTH_FILE = savedApiEnv.PWNKIT_CHATGPT_AUTH_FILE;
+  restoreApiEnv();
 });
 
 function startWebServer(mode: "vulnerable" | "safe"): Promise<{ server: Server; target: string }> {
