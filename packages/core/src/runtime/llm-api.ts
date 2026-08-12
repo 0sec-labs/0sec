@@ -2019,6 +2019,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             model: this.model,
             [this.maxTokensParamKey]: 8192,
             messages,
+            // See executeNative: explicit reasoning_effort passthrough only.
+            ...(this.reasoningEffort
+              ? { reasoning_effort: this.reasoningEffort }
+              : {}),
           }),
           controller.signal,
         );
@@ -2238,6 +2242,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           [this.maxTokensParamKey]: 8192,
           messages: chatMessages,
         };
+
+        // reasoning_effort on the chat_completions wire — only when the
+        // operator set it explicitly (PWNKIT_REASONING_EFFORT / Azure config).
+        // DeepSeek direct honors it (measured 4x reasoning-token separation,
+        // 2026-08-12); endpoints that don't know the field (Alibaba
+        // compatible-mode) silently ignore it. Never apply the gpt-5/o1
+        // default here — default request shape must stay byte-identical.
+        if (this.reasoningEffort) {
+          body.reasoning_effort = this.reasoningEffort;
+        }
 
         if (tools.length > 0) {
           body.tools = tools.map((t) => ({
