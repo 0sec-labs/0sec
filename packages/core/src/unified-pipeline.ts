@@ -1825,7 +1825,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         }
       }
 
-      const effectiveSystemPrompt = prepared.resolvedType === "source-code"
+      const baseSystemPrompt = prepared.resolvedType === "source-code"
         ? (opts.reviewProfile === "linux-kernel"
             ? kernelReviewAgentPrompt(prepared.scopePath, semgrepFindings, undefined, opts.subsystem, opts.hypothesis, attackSurfaceCtx)
             : opts.reviewProfile === "c-library"
@@ -1853,9 +1853,14 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
                 !!opts.changedOnly,
                 opts.hypothesis,
                 opts.conversation,
-                buildPriorFindingsContext(opts.priorFindings),
               ))
         : agentSystemPrompt;
+      const priorFindingsContext =
+        prepared.resolvedType === "source-code" ? buildPriorFindingsContext(opts.priorFindings) : "";
+      const effectiveSystemPrompt =
+        prepared.resolvedType === "source-code" && priorFindingsContext
+          ? `${baseSystemPrompt}\n\n${priorFindingsContext}`
+          : baseSystemPrompt;
 
       // Per-file research loop (#285). When `perItemOrchestration` is on,
       // we run one agent session per source file with a focused per-file
