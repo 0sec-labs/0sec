@@ -276,40 +276,47 @@ function llm429MaxRetryWaitMs(): number {
 }
 
 /**
- * Plan-quota exhaustion (ChatGPT/Codex `usage_limit_reached`): the
- * subscription's plan-level quota is spent and resets in hours/days, so
- * retrying is pointless. Thrown by postWithRetry on the FIRST such 429 —
- * never retried — so the caller fails fast with a distinct, greppable error
- * and the orchestrator can reschedule after `resetsAtMs` instead of burning
- * the per-minute retry budget against a day-scale reset.
+ * Plan-quota exhaustion: a subscription or credit pool is spent and resets in
+ * hours/days, so retrying is pointless. The supported wire forms are Codex's
+ * `usage_limit_reached` and Alibaba Model Studio Token Plan's
+ * `insufficient_quota`. `postWithRetry` advances an explicit fallback chain
+ * immediately; when no fallback is usable it throws this typed error instead
+ * of burning the per-minute retry budget against a day-scale reset.
  */
 export class QuotaExhaustedError extends Error {
   override readonly name = "QuotaExhaustedError";
+  readonly quotaKind?: string;
   readonly planType?: string;
   readonly resetsAtMs?: number;
   readonly resetsInSeconds?: number;
 
   constructor(message: string, details: UsageLimitDetails) {
     super(message);
+    this.quotaKind = details.quotaKind;
     this.planType = details.planType;
     this.resetsAtMs = details.resetsAtMs;
     this.resetsInSeconds = details.resetsInSeconds;
   }
 }
 
-/** Parsed fields of a ChatGPT/Codex `usage_limit_reached` 429 body. */
+/** Parsed fields of a supported plan-quota-exhaustion 429 body. */
 export interface UsageLimitDetails {
+  quotaKind?: "usage_limit_reached" | "insufficient_quota";
   planType?: string;
   resetsAtMs?: number;
   resetsInSeconds?: number;
 }
 
 /**
- * Classify a 429 response body as plan-quota exhaustion. The ChatGPT Codex
- * backend nests the error object: `{"error":{"type":"usage_limit_reached",
- * "plan_type":"pro","resets_at":<epoch-s>,"resets_in_seconds":<n>}}`. Returns
- * undefined unless the body positively parses as that shape — an unparseable
- * 429 body stays a regular (retryable) rate limit.
+ * Classify a 429 response body as plan-quota exhaustion. Codex nests
+ * `{"error":{"type":"usage_limit_reached","plan_type":"pro",
+ * "resets_at":<epoch-s>,"resets_in_seconds":<n>}}`; Alibaba Model Studio
+ * Token Plan returns `{"error":{"type":"insufficient_quota",
+ * "code":"insufficient_quota",…}}`. Everything else remains a regular
+ * retryable rate limit.
+ *
+ * The historical name is preserved because it is exported from the runtime
+ * API; callers now receive a `quotaKind` that distinguishes the wire forms.
  */
 export function parseUsageLimitReached(
   body: string,
@@ -328,9 +335,24 @@ export function parseUsageLimitReached(
     typeof root?.error === "object" && root.error !== null
       ? (root.error as Record<string, unknown>)
       : root;
-  if (err?.type !== "usage_limit_reached") return undefined;
-  const details: UsageLimitDetails = {};
-  if (typeof err.plan_type === "string") details.planType = err.plan_type;
+  const errorType = typeof err?.type === "string" ? err.type : undefined;
+  const errorCode = typeof err?.code === "string" ? err.code : undefined;
+  const quotaKind =
+    errorType === "usage_limit_reached"
+      ? "usage_limit_reached"
+      : errorType === "insufficient_quota" || errorCode === "insufficient_quota"
+        ? "insufficient_quota"
+        : undefined;
+  if (!quotaKind || !err) return undefined;
+
+  const details: UsageLimitDetails = { quotaKind };
+  if (typeof err.plan_type === "string") {
+    details.planType = err.plan_type;
+  } else if (quotaKind === "insufficient_quota") {
+    // Alibaba's Token Plan response has no plan_type; preserve a useful,
+    // stable label for telemetry and terminal errors.
+    details.planType = "token-plan";
+  }
   if (typeof err.resets_in_seconds === "number" && Number.isFinite(err.resets_in_seconds)) {
     details.resetsInSeconds = err.resets_in_seconds;
   }
@@ -507,12 +529,12 @@ const QWEN_TOKEN_PLAN_DEEPSEEK_MODEL = "deepseek-v4-flash-0731";
 type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen";
 type WireApi = "chat_completions" | "responses";
 
-// ── Cross-provider failover (429-exhausted → PWNKIT_LLM_FALLBACK) ────────
+// ── Cross-provider failover (429 / quota-exhausted → PWNKIT_LLM_FALLBACK) ──
 //
-// When a provider exhausts its 429 rate-limit retry budget, the engine can
-// fail over to a configured ordered chain of backup providers instead of
-// surfacing a terminal error. Each entry is <providerId>:<model>, separated
-// by commas:
+// When a provider exhausts its 429 retry budget or reports a plan quota
+// exhaustion, the engine can fail over to a configured ordered chain of backup
+// providers instead of surfacing a terminal error. Each entry is
+// <providerId>:<model>, separated by commas:
 //
 //   PWNKIT_LLM_FALLBACK=deepseek:deepseek-v4-flash,azure:gpt-5-deployment,openrouter:qwen/qwen-2.5-coder-32b-instruct
 //
@@ -1369,15 +1391,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private fallbackChain: FallbackEntry[];
   /** Index into fallbackChain — which entry to try next. */
   private fallbackIndex: number;
-  /** Whether we have already failed over (for observability — only log the switch once). */
-  private failedOver: boolean;
 
   constructor(config: RuntimeConfig) {
     this.config = config;
     this.azureConfig = parseCodexAzureConfig();
     this.fallbackChain = getFallbackChain();
     this.fallbackIndex = 0;
-    this.failedOver = false;
     // Thread the requested model into detection so provider follows the model
     // per-call (per-call multi-provider routing) when its auth is available.
     const detected = detectProvider(config.apiKey, config.model ?? process.env.PWNKIT_MODEL);
@@ -1748,8 +1767,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
    *   cumulative, defaults 12 / 5min) since the limiter resets every ~60s;
    *   `Retry-After` / `retry-after-ms` headers are honored up to a 120s cap.
    * - plan-quota exhaustion (`usage_limit_reached`, resets in hours/days) →
-   *   throws QuotaExhaustedError on the FIRST response, never retried, so the
-   *   scan fails fast with a distinct error instead of burning retries.
+   *   skips retries and immediately advances `PWNKIT_LLM_FALLBACK`; if no
+   *   configured fallback has credentials, it throws QuotaExhaustedError.
    *
    * Other retryable statuses (transient 5xx) keep the generic budget:
    * PWNKIT_LLM_MAX_RETRIES (attempts) and PWNKIT_LLM_MAX_RETRY_WAIT_MS
@@ -1769,7 +1788,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
    * valid next provider was found and switched to, `false` when the chain is
    * exhausted.
    */
-  private _tryFailover(): boolean {
+  private _tryFailover(
+    reason: "plan quota exhausted" | "429 retry budget exhausted",
+  ): boolean {
     while (this.fallbackIndex < this.fallbackChain.length) {
       const entry = this.fallbackChain[this.fallbackIndex]!;
       this.fallbackIndex++;
@@ -1785,12 +1806,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.apiKey = cfg.apiKey;
       this.baseUrl = cfg.baseUrl;
       this.wireApi = cfg.wireApi;
-      if (!this.failedOver) {
-        this.failedOver = true;
-        process.stderr.write(
-          `[pwnkit] 429 budget exhausted — failover to ${entry.provider} (${entry.model})\n`,
-        );
-      }
+      process.stderr.write(
+        `[pwnkit] ${reason} — failover to ${entry.provider} (${entry.model})\n`,
+      );
       return true;
     }
     return false;
@@ -1804,9 +1822,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
    * hammering the limit in lockstep).
    *
    * The body is supplied as a zero-arg factory (`bodyFactory`) so that when
-   * cross-provider failover fires (429 budget exhausted → next provider), the
-   * body can be regenerated with the new model name by calling the factory
-   * again, which reads `this.model` lazily.
+   * cross-provider failover fires (plan quota or 429 retry budget exhausted →
+   * next provider), the body can be regenerated with the new model name by
+   * calling the factory again, which reads `this.model` lazily.
    *
    * Retry + failover caps documented on `retryBackoffMs` / `llm429MaxRetries`.
    *
@@ -1869,8 +1887,9 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
       const is429 = res.status === 429;
       // A 429 body distinguishes per-minute rate limiting (retry) from plan-
-      // quota exhaustion (fail fast), so it must be read to classify. If the
-      // response is handed back below, it is re-wrapped with the same body.
+      // quota exhaustion (advance configured fallback without retry), so it
+      // must be read to classify. If the response is handed back below, it is
+      // re-wrapped with the same body.
       let bodyText: string | undefined;
       if (is429) {
         try {
@@ -1892,17 +1911,25 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             planType: quota.planType ?? null,
             resetsAtMs: quota.resetsAtMs ?? null,
           });
+          const quotaKind = quota.quotaKind ?? "quota_exhausted";
           process.stderr.write(
-            `[pwnkit] ${this.providerLabel} usage_limit_reached — plan quota ` +
+            `[pwnkit] ${this.providerLabel} ${quotaKind} — plan quota ` +
               `exhausted (plan=${quota.planType ?? "unknown"}, ` +
-              `resets_at=${resetsAtIso}); failing without retry\n`,
+              `resets_at=${resetsAtIso}); skipping retry\n`,
           );
-          throw new QuotaExhaustedError(
-            `${this.providerLabel} usage_limit_reached: plan quota exhausted ` +
+          const quotaError = new QuotaExhaustedError(
+            `${this.providerLabel} ${quotaKind}: plan quota exhausted ` +
               `(plan=${quota.planType ?? "unknown"}, resets_at=${resetsAtIso}) ` +
               `— reschedulable after reset`,
             quota,
           );
+          if (this._tryFailover("plan quota exhausted")) {
+            attempt = -1;
+            waited429Ms = 0;
+            waitedOtherMs = 0;
+            continue;
+          }
+          throw quotaError;
         }
       }
 
@@ -1920,7 +1947,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           : res;
       if (attempt >= maxRetries) {
         // 429 budget exhausted — try cross-provider failover before giving up.
-        if (is429 && this._tryFailover()) {
+        if (is429 && this._tryFailover("429 retry budget exhausted")) {
           // Provider switched; reset retry state. The next bodyFactory() call
           // picks up `this.model` for the new provider.
           attempt = -1;
@@ -1936,7 +1963,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       const delay = retryAfter ?? retryBackoffMs(attempt, is429 ? 30_000 : 20_000);
       if (waitedMs + delay > maxWaitMs) {
         // 429 cumulative backoff budget exhausted — try cross-provider failover.
-        if (is429 && this._tryFailover()) {
+        if (is429 && this._tryFailover("429 retry budget exhausted")) {
           attempt = -1;
           waited429Ms = 0;
           waitedOtherMs = 0;

@@ -985,6 +985,23 @@ describe("parseUsageLimitReached", () => {
     expect(details?.resetsInSeconds).toBe(172_800);
   });
 
+  it("parses Alibaba Token Plan insufficient_quota", () => {
+    const details = parseUsageLimitReached(
+      JSON.stringify({
+        error: {
+          message:
+            "Your token-plan 1-week quota has been exhausted. The quota will reset at 08-12 21:25:00 UTC.",
+          type: "insufficient_quota",
+          code: "insufficient_quota",
+        },
+      }),
+    );
+    expect(details).toEqual({
+      quotaKind: "insufficient_quota",
+      planType: "token-plan",
+    });
+  });
+
   it("derives resetsAtMs from resets_in_seconds when resets_at is absent", () => {
     const before = Date.now();
     const details = parseUsageLimitReached(
@@ -1020,11 +1037,13 @@ describe("parseUsageLimitReached", () => {
 describe("QuotaExhaustedError", () => {
   it("carries the typed quota fields", () => {
     const err = new QuotaExhaustedError("msg", {
+      quotaKind: "usage_limit_reached",
       planType: "pro",
       resetsAtMs: 1_784_428_800_000,
       resetsInSeconds: 172_800,
     });
     expect(err.name).toBe("QuotaExhaustedError");
+    expect(err.quotaKind).toBe("usage_limit_reached");
     expect(err.planType).toBe("pro");
     expect(err.resetsAtMs).toBe(1_784_428_800_000);
     expect(err.resetsInSeconds).toBe(172_800);
@@ -1586,6 +1605,39 @@ describe("LlmApiRuntime cross-provider failover (PWNKIT_LLM_FALLBACK)", () => {
     } as unknown as Response;
   }
 
+  function quotaLimited(): Response {
+    return {
+      ok: false,
+      status: 429,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          error: {
+            type: "usage_limit_reached",
+            message: "Token Plan weekly quota exhausted.",
+            plan_type: "weekly",
+          },
+        }),
+    } as unknown as Response;
+  }
+
+  function alibabaTokenPlanQuotaLimited(): Response {
+    return {
+      ok: false,
+      status: 429,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          error: {
+            message:
+              "Your token-plan 1-week quota has been exhausted. The quota will reset at 08-12 21:25:00 UTC.",
+            type: "insufficient_quota",
+            code: "insufficient_quota",
+          },
+        }),
+    } as unknown as Response;
+  }
+
   function okChat(text: string): Response {
     return {
       ok: true,
@@ -1663,6 +1715,78 @@ describe("LlmApiRuntime cross-provider failover (PWNKIT_LLM_FALLBACK)", () => {
     expect(fetchCalls).toBeGreaterThanOrEqual(3);
   });
 
+  it("immediately advances the fallback chain on Alibaba Token Plan quota exhaustion", async () => {
+    // Test fixtures, literal non-secret keys.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENAI_API_KEY = "sk-openai-primary";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENROUTER_API_KEY = "sk-or-fallback";
+    process.env.PWNKIT_LLM_FALLBACK =
+      "openrouter:qwen/qwen-2.5-coder-32b-instruct";
+
+    let fetchCalls = 0;
+    const fetchMock = vi.fn(async () => {
+      fetchCalls++;
+      return fetchCalls === 1
+        ? alibabaTokenPlanQuotaLimited()
+        : okChat("fallback after quota");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const msg: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    const rt = new LlmApiRuntime({ type: "api", timeout: 30_000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+
+    const result = await rt.executeNative("sys", msg, []);
+
+    expect(result.stopReason).not.toBe("error");
+    expect(result.error).toBeUndefined();
+    // Quota is never retried: primary quota response, then declared fallback.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("openrouter.ai");
+  });
+
+  it("takes the deployed Token Plan → Kimi → Azure chain in order", async () => {
+    // Test fixtures, literal non-secret keys.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.QWEN_API_KEY = "sk-sp-qwen-primary";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.KIMI_API_KEY = "kimi-fallback";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.AZURE_OPENAI_API_KEY = "azure-fallback";
+    process.env.AZURE_OPENAI_BASE_URL = "https://azure.example/openai/v1";
+    process.env.PWNKIT_LLM_FALLBACK = "kimi:k3,azure:DeepSeek-V4-Pro";
+
+    let fetchCalls = 0;
+    const fetchMock = vi.fn(async () => {
+      fetchCalls++;
+      return fetchCalls < 3
+        ? alibabaTokenPlanQuotaLimited()
+        : okChat("Azure fallback worked");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const msg: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    const rt = new LlmApiRuntime({
+      type: "api",
+      timeout: 30_000,
+      model: "deepseek-v4-flash-0731",
+    });
+    const result = await rt.executeNative("sys", msg, []);
+
+    expect(result.stopReason).not.toBe("error");
+    expect(result.error).toBeUndefined();
+    expect(fetchCalls).toBe(3);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("token-plan.");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("api.kimi.com");
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("azure.example");
+  });
+
   it("surfaces the terminal error when the fallback chain is exhausted", async () => {
     process.env.OPENAI_API_KEY = "sk-openai-primary";
     process.env.OPENROUTER_API_KEY = "sk-or-fallback";
@@ -1691,6 +1815,32 @@ describe("LlmApiRuntime cross-provider failover (PWNKIT_LLM_FALLBACK)", () => {
     expect(result.error).toContain("429");
     // Initial (0 retries) to primary + initial (0 retries) to fallback = 2.
     expect(callCount).toBe(2);
+  });
+
+  it("surfaces quota exhaustion only after every configured fallback is exhausted", async () => {
+    // Test fixtures, literal non-secret keys.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENAI_API_KEY = "sk-openai-primary";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENROUTER_API_KEY = "sk-or-fallback";
+    process.env.PWNKIT_LLM_FALLBACK =
+      "openrouter:qwen/qwen-2.5-coder-32b-instruct";
+    const fetchMock = vi.fn(async () => alibabaTokenPlanQuotaLimited());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const msg: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    const rt = new LlmApiRuntime({ type: "api", timeout: 30_000, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+
+    const result = await rt.executeNative("sys", msg, []);
+
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("insufficient_quota");
+    // One immediate attempt per provider; neither weekly quota response retries.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("does NOT fail over for non-429 errors", async () => {
