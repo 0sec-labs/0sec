@@ -199,7 +199,10 @@ afterEach(() => {
   }
 });
 
-function useFakeCargo(harnesses: string[]): string {
+function useFakeCargo(
+  harnesses: string[],
+  runOutput = "Done. 1000 iterations, 0 crashes.\n",
+): string {
   const fixtureDir = mkdtempSync(join(tmpdir(), "pwnkit-fake-cargo-"));
   fakeCargoDirs.push(fixtureDir);
   const sourceRoot = join(fixtureDir, "source");
@@ -223,7 +226,7 @@ if (args[0] === "fuzz" && args[1] === "list") {
   process.exit(0);
 }
 if (args[0] === "fuzz" && args[1] === "run") {
-  process.stdout.write("Done. 1000 iterations, 0 crashes.\\n");
+  process.stdout.write(${JSON.stringify(runOutput)});
   process.exit(0);
 }
 process.exit(1);
@@ -247,6 +250,23 @@ describe("runUserspaceFuzzLoop — cargo-fuzz harness discovery", () => {
     expect(result.executedHarness).toBe("only_target");
     expect(result.iterations).toBe(1);
     expect(result.crashes).toEqual([]);
+  });
+
+  it("attaches a cargo-fuzz artifact input to a captured Rust crash", async () => {
+    const sourceRoot = useFakeCargo(["only_target"], ASAN_OOB_WRITE);
+    const artifactDir = join(sourceRoot, "fuzz", "artifacts", "only_target");
+    const inputPath = join(artifactDir, "crash-deadbeef");
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(inputPath, "reproducer", "utf8");
+
+    const result = await runUserspaceFuzzLoop({
+      target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+      logger: () => {},
+    });
+
+    expect(result.crashes).toHaveLength(1);
+    expect(result.crashes[0]!.kind).toBe("asan");
+    expect(result.crashes[0]!.inputPath).toBe(inputPath);
   });
 
   it("does not discover a cargo-fuzz target outside the source root", async () => {
