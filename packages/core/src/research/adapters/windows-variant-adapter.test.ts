@@ -290,6 +290,35 @@ describe("WindowsVariantResearchAdapter", () => {
     expect(runner).toHaveBeenCalledOnce();
   });
 
+  it("accepts the CWE-59 link-following vocabulary", async () => {
+    const { target, result, root } = setup();
+    const seed = result.seed as Record<string, unknown>;
+    seed.guard_delta = ["reparse-check"];
+    seed.sink_geometry = ["file-mutate", "file-open"];
+    seed.reference = "CWE-59 fixture: missing reparse check before path resolution";
+    const rows = result.candidates as Record<string, unknown>[];
+    rows[0]!.matched_sinks = ["file-mutate"];
+    rows[0]!.missing_seed_guards = ["reparse-check"];
+    rows[0]!.present_guards = [];
+    rows[0]!.lexical_parameter_sink_hint = ["parameter:found", "sink:file-mutate"];
+    rows[1]!.matched_sinks = ["file-open"];
+    rows[1]!.missing_seed_guards = ["reparse-check"];
+    rows[1]!.present_guards = ["client-impersonation", "no-reparse-open"];
+    rows[1]!.lexical_parameter_sink_hint = [];
+    const run = await runResearch(
+      new WindowsVariantResearchAdapter(async () => execution(result)),
+      target,
+      { artifactRoot: join(root, "artifacts") },
+    );
+    expect(run.candidates).toHaveLength(2);
+    expect(run.findings).toHaveLength(0);
+    expect(run.candidates[0]?.payload.row.matched_sinks).toEqual(["file-mutate"]);
+    expect(run.candidates[1]?.payload.row.present_guards).toEqual([
+      "client-impersonation",
+      "no-reparse-open",
+    ]);
+  });
+
   it("accepts opaque decorated PDB symbols without putting them raw in the locator", async () => {
     const { target, result, root } = setup();
     const row = (result.candidates as Record<string, unknown>[])[0]!;
