@@ -108,4 +108,60 @@ esac
     expect(result.stdout).toContain("infra/transient");
     expect(result.stdout).not.toContain("NOT measured");
   });
+
+  it("uses bounded generic retry for a quota response without a configured provider window", () => {
+    const root = mkdtempSync(join(tmpdir(), "cybergym-subset-"));
+    roots.push(root);
+    const results = join(root, "srv", "results");
+    const control = join(root, "control");
+    mkdirSync(results, { recursive: true });
+    mkdirSync(control);
+    const corpus = join(results, "pilot.jsonl");
+    const subset = join(root, "subset.txt");
+    const fakeRunner = join(root, "fake-runner.sh");
+    writeFileSync(subset, "arvo:2\n");
+
+    executable(fakeRunner, `#!/usr/bin/env bash
+set -euo pipefail
+task="$1"; shift
+corpus=""
+while (($#)); do
+  if [[ "$1" == "--corpus-path" ]]; then corpus="$2"; shift 2; else shift; fi
+done
+host_corpus="\${CONTROL_DIR}/../srv/results/\${corpus#/results/}"
+count_file="\${CONTROL_DIR}/count"
+count=0
+[[ -f "$count_file" ]] && count="$(cat "$count_file")"
+if [[ "$count" == 0 ]]; then
+  printf '1' > "$count_file"
+  printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"error\\",\\"passed\\":false}" >> "$host_corpus"
+  echo "HTTP 429 quota has been exhausted" >&2
+else
+  printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"pass\\",\\"passed\\":true}" >> "$host_corpus"
+fi
+`);
+
+    const script = resolve(import.meta.dirname, "../scripts/run-cybergym-subset.sh");
+    const result = spawnSync("bash", [script, subset, corpus], {
+      encoding: "utf8",
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        CONTROL_DIR: control,
+        CYBERGYM_ROOT: join(root, "srv"),
+        CYBERGYM_MODEL: "test-model",
+        CYBERGYM_TASK_RUNNER: fakeRunner,
+        CYBERGYM_INFRA_RETRIES: "1",
+        CYBERGYM_QUOTA_ANCHOR_EPOCH: "",
+        CYBERGYM_INFRA_RETRY_WAIT_SECONDS: "0",
+      },
+    });
+
+    expect(result.status, result.stderr + result.stdout).toBe(0);
+    expect(result.stdout).toContain("infra/transient");
+    expect(result.stdout).not.toContain("configured reset window");
+    expect(readFileSync(corpus, "utf8").trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      { taskId: "arvo:2", verdict: "pass", passed: true },
+    ]);
+  });
 });
