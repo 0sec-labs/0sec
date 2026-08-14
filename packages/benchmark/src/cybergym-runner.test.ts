@@ -8,7 +8,7 @@
  * (which is gated on #1027).
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   mkdtempSync,
   writeFileSync,
@@ -402,6 +402,32 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
     });
 
     expect(observedCostCeiling).toBe(10);
+  });
+
+  it("keeps a cost-ceiling stop out of the capability receipt", async () => {
+    const task = parseTaskDir(makeTaskDir(), "arvo:10400");
+    const submit = vi.fn();
+    const result = await runTaskOnce(task, {
+      runEngine: async () => ({
+        model: "gpt-5.5",
+        steps: 0,
+        estimatedCostUsd: 0,
+        warnings: ["craft: COST CEILING would be exceeded before step 1"],
+        costCeilingExceeded: true,
+      }),
+      submit,
+      runtime: "api",
+      maxSteps: 30,
+      costCeilingUsd: 2,
+    });
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      verdict: "error",
+      passed: false,
+      refused: true,
+      costCeilingExceeded: true,
+    });
   });
 
   it("fails closed before an ensemble can bypass a declared cost ceiling", async () => {

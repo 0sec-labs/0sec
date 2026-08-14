@@ -25,6 +25,13 @@ import {
   type WireBlock,
 } from "./prompt-cache.js";
 
+
+/**
+ * Explicit output bound used on every provider route that accepts one.
+ * ChatGPT Codex OAuth rejects an explicit Responses cap; callers that require
+ * a hard monetary ceiling must reject that route before making a request.
+ */
+export const NATIVE_COMPLETION_TOKEN_LIMIT = 8192;
 /**
  * Read `usage.input_tokens_details.cached_tokens` off a Responses payload.
  *
@@ -1181,6 +1188,36 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // Controlled benchmark runs bind a manifest's provider identity as well as
+  // its model route. Normal interactive scans retain model-first routing.
+  const forcedProviderRaw = process.env.PWNKIT_FORCE_PROVIDER?.trim();
+  if (forcedProviderRaw) {
+    const supported: readonly ApiProvider[] = [
+      "openrouter",
+      "anthropic",
+      "openai",
+      "azure",
+      "deepseek",
+      "chatgpt-codex",
+      "z-ai",
+      "kimi",
+      "qwen",
+    ];
+    if (!supported.includes(forcedProviderRaw as ApiProvider)) {
+      throw new Error(`PWNKIT_FORCE_PROVIDER is unsupported: ${forcedProviderRaw}`);
+    }
+    const model = preferredModel ?? process.env.PWNKIT_MODEL;
+    if (!model) {
+      throw new Error("PWNKIT_FORCE_PROVIDER requires an explicit model");
+    }
+    const provider = forcedProviderRaw as ApiProvider;
+    const resolved = resolveFailoverProvider(provider, model);
+    if (!resolved) {
+      throw new Error(`PWNKIT_FORCE_PROVIDER=${provider} has no configured credentials`);
+    }
+    return { provider, ...resolved, defaultModel: model };
+  }
+
   // Per-call routing: if the requested model maps to a provider whose auth is
   // present, that provider wins over the global env priority — so one process
   // can fan calls across providers (gpt-5.5→codex, glm-5.2→z-ai, claude→anthropic).
@@ -1466,6 +1503,15 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         // Swallow — startup logging must never abort runtime init.
       });
     }
+  }
+
+  /**
+   * A hard dollar ceiling needs a provider-enforced bound on the next response.
+   * ChatGPT Codex OAuth rejects `max_output_tokens`, so it cannot support that
+   * contract; callers must fail closed before making a metered comparison call.
+   */
+  get outputTokenLimit(): number | undefined {
+    return this.provider === "chatgpt-codex" ? undefined : NATIVE_COMPLETION_TOKEN_LIMIT;
   }
 
   /**
@@ -2062,7 +2108,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         res = await this.postWithRetry(
           () => JSON.stringify({
             model: this.model,
-            [this.maxTokensParamKey]: 8192,
+            [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
             messages,
             // See executeNative: explicit reasoning_effort passthrough only.
             ...(this.reasoningEffort
@@ -2090,7 +2136,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           () => JSON.stringify({
             model: this.model,
             input,
-            ...(isCodex ? { store: false } : { max_output_tokens: 8192 }),
+            ...(isCodex ? { store: false } : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
           }),
           controller.signal,
         );
@@ -2100,7 +2146,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         res = await this.postWithRetry(
           () => JSON.stringify({
             model: this.model,
-            max_tokens: 8192,
+            max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
             ...this.anthropicThinkingField(),
             ...(systemPrompt ? { system: systemPrompt } : {}),
             messages: [{ role: "user", content: prompt }],
@@ -2284,7 +2330,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
         const body: Record<string, unknown> = {
           model: this.model,
-          [this.maxTokensParamKey]: 8192,
+          [this.maxTokensParamKey]: NATIVE_COMPLETION_TOKEN_LIMIT,
           messages: chatMessages,
         };
 
@@ -2431,7 +2477,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           input,
           ...(isCodex
             ? { store: false, instructions: system }
-            : { max_output_tokens: 8192 }),
+            : { max_output_tokens: NATIVE_COMPLETION_TOKEN_LIMIT }),
           ...(reasoningEffort
             ? {
                 reasoning: {
@@ -2574,7 +2620,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
         const body: Record<string, unknown> = {
           model: this.model,
-          max_tokens: 8192,
+          max_tokens: NATIVE_COMPLETION_TOKEN_LIMIT,
           ...this.anthropicThinkingField(),
           // The remaining breakpoint goes on the system prompt. Because the
           // wire renders `tools` → `system` → `messages`, one marker here

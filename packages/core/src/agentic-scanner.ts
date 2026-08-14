@@ -571,6 +571,12 @@ async function runCraftScanStage(
   const runtime = ((config as { runtime?: RuntimeMode }).runtime ?? "auto") as RuntimeMode;
   const model = craft.model ?? (config as { model?: string }).model;
   const log = (message: string) => emit({ type: "thinking", message });
+  const craftOptions = {
+    ...craft,
+    ...(config.costCeilingUsd !== undefined
+      ? { costCeilingUsd: config.costCeilingUsd }
+      : {}),
+  };
 
   // Ensemble craft opt-in (OFF by default): when PWNKIT_ENSEMBLE_MODELS lists
   // more than one model, run N parallel craft trajectories across those models
@@ -586,12 +592,12 @@ async function runCraftScanStage(
           n: ensembleModels.length,
           models: ensembleModels,
           // `model` is per-trajectory in the ensemble; strip the single-model knob.
-          craft: (({ model: _drop, ...rest }) => rest)(craft),
+          craft: (({ model: _drop, ...rest }) => rest)(craftOptions),
           ...(model ? { judgeModel: model } : {}),
           log,
         })
       : await runCraftScan({
-          ...craft,
+          ...craftOptions,
           ...(model ? { model } : {}),
           target,
           runtime,
@@ -647,6 +653,9 @@ async function runCraftScanStage(
       outputTokens: result.outputTokens,
       estimatedCostUsd: result.estimatedCostUsd,
     },
+    ...(result.costCeilingExceeded
+      ? { costCeilingExceeded: true, exitReason: "cost_ceiling_exceeded" as const }
+      : {}),
   };
 }
 

@@ -25,6 +25,47 @@ describe("craftStepBudget", () => {
   });
 });
 
+describe("runCraftScan cost ceiling", () => {
+  it("stops before a provider call when the conservative next-call bound cannot fit", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-cost-ceiling-"));
+    roots.push(sourceRoot);
+    writeFileSync(
+      join(sourceRoot, "target.c"),
+      "int LLVMFuzzerTestOneInput(const unsigned char *data, unsigned long size) { return size ? data[0] : 0; }\n",
+    );
+    const executeNative = vi.spyOn(LlmApiRuntime.prototype, "executeNative");
+    const savedForceProvider = process.env.PWNKIT_FORCE_PROVIDER;
+    const savedOpenAiKey = process.env.OPENAI_API_KEY;
+    const savedSkipBanner = process.env.PWNKIT_SKIP_PROVIDER_BANNER;
+    process.env.PWNKIT_FORCE_PROVIDER = "openai";
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.PWNKIT_SKIP_PROVIDER_BANNER = "1";
+
+    try {
+      const result = await runCraftScan({
+        target: { sourceRoot, description: "bounded parser target", language: "c" },
+        runtime: "api",
+        model: "gpt-5.5",
+        maxSteps: 4,
+        costCeilingUsd: 0.001,
+        evaluatePoc: vi.fn(),
+      });
+
+      expect(executeNative).not.toHaveBeenCalled();
+      expect(result.costCeilingExceeded).toBe(true);
+      expect(result.steps).toBe(0);
+      expect(result.warnings.join("\n")).toContain("would be exceeded before step 1");
+    } finally {
+      if (savedForceProvider === undefined) delete process.env.PWNKIT_FORCE_PROVIDER;
+      else process.env.PWNKIT_FORCE_PROVIDER = savedForceProvider;
+      if (savedOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = savedOpenAiKey;
+      if (savedSkipBanner === undefined) delete process.env.PWNKIT_SKIP_PROVIDER_BANNER;
+      else process.env.PWNKIT_SKIP_PROVIDER_BANNER = savedSkipBanner;
+    }
+  });
+});
+
 describe("runCraftScan infrastructure faults", () => {
   it("marks a self-test oracle failure inconclusive instead of returning a capability fail", async () => {
     const sourceRoot = mkdtempSync(join(tmpdir(), "craft-oracle-error-"));

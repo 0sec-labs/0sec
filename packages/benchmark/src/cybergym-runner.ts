@@ -163,6 +163,8 @@ export interface CyberGymEngineOutput {
   steps: number;
   /** Estimated LLM spend, when the engine surfaced it. */
   estimatedCostUsd?: number;
+  /** True when the craft stage stopped before a call could violate its budget. */
+  costCeilingExceeded?: true;
   /** Raw token totals — lets cost be recomputed with any price table later. */
   inputTokens?: number;
   outputTokens?: number;
@@ -202,6 +204,8 @@ export interface CyberGymResult {
   model: string;
   steps: number;
   estimatedCostUsd?: number;
+  /** This row is budget-inconclusive, never a capability result. */
+  costCeilingExceeded?: true;
   /** Raw token totals — lets cost be recomputed with any price table later. */
   inputTokens?: number;
   outputTokens?: number;
@@ -922,6 +926,8 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
   const pocPath = extractPocPath(findings);
   const meta =
     (report as { benchmarkMeta?: Record<string, unknown> }).benchmarkMeta ?? {};
+  const costCeilingExceeded =
+    (report as { costCeilingExceeded?: unknown }).costCeilingExceeded === true;
   const warnings = ((report as { warnings?: Array<{ message?: unknown }> }).warnings ?? [])
     .map((warning) => warning.message)
     .filter((message): message is string => typeof message === "string" && message.length > 0);
@@ -955,6 +961,7 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
     ...(typeof meta.estimatedCostUsd === "number"
       ? { estimatedCostUsd: meta.estimatedCostUsd }
       : {}),
+    ...(costCeilingExceeded ? { costCeilingExceeded: true } : {}),
     ...(typeof meta.inputTokens === "number" ? { inputTokens: meta.inputTokens } : {}),
     ...(typeof meta.outputTokens === "number" ? { outputTokens: meta.outputTokens } : {}),
     ...(Array.isArray(rawTrace) && rawTrace.length > 0
@@ -1308,6 +1315,33 @@ export async function runTaskOnce(
         ? { costCeilingUsd: deps.costCeilingUsd }
         : {}),
     });
+    if (engine.costCeilingExceeded) {
+      return {
+        taskId: task.taskId,
+        difficulty: task.difficulty,
+        model: engine.model,
+        steps: engine.steps,
+        ...(engine.estimatedCostUsd !== undefined
+          ? { estimatedCostUsd: engine.estimatedCostUsd }
+          : {}),
+        ...(engine.inputTokens !== undefined ? { inputTokens: engine.inputTokens } : {}),
+        ...(engine.outputTokens !== undefined ? { outputTokens: engine.outputTokens } : {}),
+        ...(engine.submits !== undefined ? { submits: engine.submits } : {}),
+        ...(engine.warnings && engine.warnings.length > 0 ? { warnings: engine.warnings } : {}),
+        ...(engine.craftAttempts && engine.craftAttempts.length > 0
+          ? { craftAttempts: engine.craftAttempts }
+          : {}),
+        ...(engine.craftEvidence && engine.craftEvidence.length > 0
+          ? { craftEvidence: engine.craftEvidence }
+          : {}),
+        verdict: "error",
+        passed: false,
+        refused: true,
+        refusedReason: "declared cost ceiling prevented a scoreable provider call",
+        costCeilingExceeded: true,
+        durationMs: Date.now() - start,
+      };
+    }
 
     if (!engine.pocPath) {
       // Distinguish an INFRASTRUCTURE fault from a genuine capability miss.
