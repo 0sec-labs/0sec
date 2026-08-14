@@ -164,4 +164,50 @@ fi
       { taskId: "arvo:2", verdict: "pass", passed: true },
     ]);
   });
+
+  it("preserves a cost-ceiling receipt without retrying or treating it as capability evidence", () => {
+    const root = mkdtempSync(join(tmpdir(), "cybergym-subset-"));
+    roots.push(root);
+    const results = join(root, "srv", "results");
+    const control = join(root, "control");
+    mkdirSync(results, { recursive: true });
+    mkdirSync(control);
+    const corpus = join(results, "pilot.jsonl");
+    const subset = join(root, "subset.txt");
+    const fakeRunner = join(root, "fake-runner.sh");
+    writeFileSync(subset, "arvo:2\n");
+
+    executable(fakeRunner, `#!/usr/bin/env bash
+set -euo pipefail
+task="$1"; shift
+corpus=""
+while (($#)); do
+  if [[ "$1" == "--corpus-path" ]]; then corpus="$2"; shift 2; else shift; fi
+done
+host_corpus="\${CONTROL_DIR}/../srv/results/\${corpus#/results/}"
+printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"error\\",\\"passed\\":false,\\"costCeilingExceeded\\":true}" >> "$host_corpus"
+`);
+
+    const script = resolve(import.meta.dirname, "../scripts/run-cybergym-subset.sh");
+    const result = spawnSync("bash", [script, subset, corpus], {
+      encoding: "utf8",
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        CONTROL_DIR: control,
+        CYBERGYM_ROOT: join(root, "srv"),
+        CYBERGYM_MODEL: "test-model",
+        CYBERGYM_TASK_RUNNER: fakeRunner,
+        CYBERGYM_INFRA_RETRIES: "3",
+        CYBERGYM_INFRA_RETRY_WAIT_SECONDS: "0",
+      },
+    });
+
+    expect(result.status, result.stderr + result.stdout).toBe(3);
+    expect(result.stdout).not.toContain("infra/transient");
+    expect(result.stderr).toContain("BUDGET-INCONCLUSIVE rows=1");
+    expect(readFileSync(corpus, "utf8").trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      { taskId: "arvo:2", verdict: "error", passed: false, costCeilingExceeded: true },
+    ]);
+  });
 });

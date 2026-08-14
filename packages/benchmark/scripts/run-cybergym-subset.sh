@@ -11,6 +11,8 @@
 #   - The subset LIST is frozen; this driver never edits it.
 #   - Every CAPABILITY outcome (pass / fail / refused) is appended exactly once
 #     and never removed.
+#   - A `costCeilingExceeded` error is a terminal budget-inconclusive receipt,
+#     never a capability row and never an automatic retry.
 #   - Rows that are pure INFRASTRUCTURE artifacts (verdict=error: LLM quota
 #     wall, oracle unreachable, source missing) are evicted and the task is
 #     retried after the quota boundary, so the committed receipt carries one
@@ -65,9 +67,10 @@ log_dir="${host_corpus%.jsonl}.logs"
 install -d -m 0700 "${log_dir}"
 touch "${host_corpus}"
 
-# Task ids that already have a kept (capability) row in the corpus. verdict
-# "error" rows are infra artifacts pending eviction, not completions.
-done_ids() {
+# Task ids that already have a terminal receipt row. `costCeilingExceeded`
+# errors are terminal budget evidence, while other error rows remain retryable
+# infrastructure artifacts.
+terminal_ids() {
   python3 - "$1" <<'PY'
 import json, sys
 try:
@@ -80,16 +83,22 @@ try:
         except json.JSONDecodeError:
             continue
         task = row.get("taskId")
-        if isinstance(task, str) and row.get("verdict") != "error":
+        if (
+            isinstance(task, str)
+            and (
+                row.get("verdict") != "error"
+                or row.get("costCeilingExceeded") is True
+            )
+        ):
             print(task)
 except FileNotFoundError:
     pass
 PY
 }
 
-# verdict=error rows are infra artifacts (quota wall, oracle outage, missing
-# source) — never capability evidence. Evict THIS task's error rows so a retry
-# replaces them with a real attempt. pass/fail/refused rows are immutable.
+# verdict=error rows are normally infra artifacts (quota wall, oracle outage,
+# missing source). Preserve cost-ceiling errors: retrying them would spend more
+# after a declared budget-control failure.
 evict_infra_rows() {
   python3 - "$1" "$2" <<'PY'
 import json, sys
@@ -104,7 +113,11 @@ for line in open(path):
     except json.JSONDecodeError:
         kept.append(line.rstrip("\n"))
         continue
-    if row.get("taskId") == task and row.get("verdict") == "error":
+    if (
+        row.get("taskId") == task
+        and row.get("verdict") == "error"
+        and row.get("costCeilingExceeded") is not True
+    ):
         continue
     kept.append(line.rstrip("\n"))
 with open(path, "w") as out:
@@ -191,7 +204,7 @@ while IFS= read -r line; do
   task_id="${task_id//[[:space:]]/}"
   [[ -n "${task_id}" ]] || continue
   total=$((total + 1))
-  if done_ids "${host_corpus}" | grep -qxF "${task_id}"; then
+  if terminal_ids "${host_corpus}" | grep -qxF "${task_id}"; then
     printf '[subset] skip %s (receipt row present)\n' "${task_id}"
     continue
   fi
@@ -209,7 +222,7 @@ while IFS= read -r line; do
     rc=$?
 
     # A capability outcome (pass/fail/refused row) is final for this task.
-    if done_ids "${host_corpus}" | grep -qxF "${task_id}"; then
+    if terminal_ids "${host_corpus}" | grep -qxF "${task_id}"; then
       ran=$((ran + 1))
       break
     fi
@@ -247,4 +260,27 @@ while IFS= read -r line; do
   done
 done < "${subset_file}"
 
+budget_inconclusive_count() {
+  python3 - "$1" <<'PY'
+import json, sys
+count = 0
+try:
+    for line in open(sys.argv[1]):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("verdict") == "error" and row.get("costCeilingExceeded") is True:
+            count += 1
+except FileNotFoundError:
+    pass
+print(count)
+PY
+}
+
 printf '[subset] DONE %s ran=%d total=%d corpus=%s\n' "$(date -u +%FT%TZ)" "${ran}" "${total}" "${host_corpus}"
+budget_inconclusive="$(budget_inconclusive_count "${host_corpus}")"
+if (( budget_inconclusive > 0 )); then
+  printf '[subset] BUDGET-INCONCLUSIVE rows=%d corpus=%s\n' "${budget_inconclusive}" "${host_corpus}" >&2
+  exit 3
+fi

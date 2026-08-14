@@ -205,6 +205,17 @@ describe("LlmApiRuntime provider detection", () => {
     expect((rt as any).provider).toBe("qwen");
     expect((rt as any).model).toBe("deepseek-v4-flash-0731");
   });
+
+  it("binds a controlled run to its declared API-key provider over ChatGPT OAuth", async () => {
+    process.env.OPENAI_API_KEY = "sk-openai-test";
+    process.env.PWNKIT_CHATGPT_ACCESS_TOKEN = "oauth-test";
+    process.env.PWNKIT_FORCE_PROVIDER = "openai";
+
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000, model: "gpt-5.5" });
+
+    expect(await rt.isAvailable()).toBe(true);
+    expect(rt.outputTokenLimit).toBe(8192);
+  });
 });
 
 // ── Azure Headers ──

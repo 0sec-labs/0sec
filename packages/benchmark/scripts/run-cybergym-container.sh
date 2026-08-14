@@ -8,6 +8,8 @@ set -euo pipefail
 : "${CYBERGYM_NETWORK:=cybergym-internal}"
 : "${PWNKIT_CYBERGYM_IMAGE:=pwnkit-cybergym-agent:local}"
 : "${CYBERGYM_AUTH_FILE:=${HOME}/.codex/auth.json}"
+: "${CYBERGYM_AUTH_METHOD:=chatgpt-oauth}"
+: "${CYBERGYM_MODEL_PROVIDER:=}"
 : "${CYBERGYM_SERVER:?set CYBERGYM_SERVER to the submission server on the internal-network gateway}"
 : "${CYBERGYM_ORACLE_BRIDGE:?set CYBERGYM_ORACLE_BRIDGE to the host-bound oracle bridge}"
 : "${CYBERGYM_ORACLE_BRIDGE_TOKEN:?set CYBERGYM_ORACLE_BRIDGE_TOKEN to this task-specific one-use capability}"
@@ -28,6 +30,47 @@ if [[ -f "${CYBERGYM_PROVIDER_ENV}" ]]; then
   source "${CYBERGYM_PROVIDER_ENV}"
   set +a
 fi
+
+auth_mount=()
+auth_env=()
+provider_route_env=()
+case "${CYBERGYM_AUTH_METHOD}" in
+  chatgpt-oauth)
+    [[ -e "${CYBERGYM_AUTH_FILE}" ]] || {
+      printf 'missing required ChatGPT OAuth file: %s\n' "${CYBERGYM_AUTH_FILE}" >&2
+      exit 2
+    }
+    auth_mount=(
+      --mount "type=bind,src=${CYBERGYM_AUTH_FILE},dst=/run/secrets/codex-auth.json,readonly"
+    )
+    auth_env=(--env PWNKIT_CHATGPT_AUTH_FILE=/run/secrets/codex-auth.json)
+    ;;
+  api-key)
+    case "${CYBERGYM_MODEL_PROVIDER}" in
+      openai) required_provider_key=OPENAI_API_KEY ;;
+      openrouter) required_provider_key=OPENROUTER_API_KEY ;;
+      anthropic) required_provider_key=ANTHROPIC_API_KEY ;;
+      azure) required_provider_key=AZURE_OPENAI_API_KEY ;;
+      deepseek) required_provider_key=DEEPSEEK_API_KEY ;;
+      z-ai) required_provider_key=Z_AI_API_KEY ;;
+      kimi) required_provider_key=KIMI_API_KEY ;;
+      qwen) required_provider_key=QWEN_API_KEY ;;
+      *)
+        printf 'unsupported API-key CyberGym provider: %s\n' "${CYBERGYM_MODEL_PROVIDER}" >&2
+        exit 2
+        ;;
+    esac
+    [[ -n "${!required_provider_key:-}" ]] || {
+      printf 'missing required provider credential: %s\n' "${required_provider_key}" >&2
+      exit 2
+    }
+    provider_route_env=(--env "PWNKIT_FORCE_PROVIDER=${CYBERGYM_MODEL_PROVIDER}")
+    ;;
+  *)
+    printf 'unsupported CyberGym auth method: %s\n' "${CYBERGYM_AUTH_METHOD}" >&2
+    exit 2
+    ;;
+esac
 provider_env=(
   KIMI_API_KEY KIMI_BASE_URL
   QWEN_API_KEY QWEN_BASE_URL
@@ -57,7 +100,6 @@ if [[ "${CYBERGYM_NETWORK}" != "cybergym-internal" ]]; then
   exit 2
 fi
 for path in \
-  "${CYBERGYM_AUTH_FILE}" \
   "${CYBERGYM_TASK_DIR}"; do
   [[ -e "${path}" ]] || { printf 'missing required path: %s\n' "${path}" >&2; exit 2; }
 done
@@ -118,21 +160,20 @@ exec docker run --rm \
   --pids-limit 512 \
   --cpus "${CYBERGYM_AGENT_CPUS}" \
   --memory "${CYBERGYM_AGENT_MEMORY}" \
-  --mount "type=bind,src=${CYBERGYM_ROOT}/results,dst=/results" \
-  --mount "type=bind,src=${CYBERGYM_TASK_DIR},dst=/task" \
-  --mount "type=bind,src=${CYBERGYM_AUTH_FILE},dst=/run/secrets/codex-auth.json,readonly" \
-  "${cpg_mount[@]}" \
+  "${auth_mount[@]+"${auth_mount[@]}"}" \
+  "${cpg_mount[@]+"${cpg_mount[@]}"}" \
   --env CYBERGYM_ORACLE_BRIDGE \
   --env CYBERGYM_ORACLE_BRIDGE_TOKEN \
   --env CYBERGYM_SERVER \
-  --env PWNKIT_CHATGPT_AUTH_FILE=/run/secrets/codex-auth.json \
+  "${auth_env[@]+"${auth_env[@]}"}" \
+  "${provider_route_env[@]+"${provider_route_env[@]}"}" \
   --env CYBERGYM_CRAFT_GENERATOR_UID=10002 \
   --env CYBERGYM_LLM_TIMEOUT_MS \
   --env CYBERGYM_CRAFT_DEADLINE_MS \
   --env CYBERGYM_MAX_SUBMITS \
   --env CYBERGYM_COST_CAP_USD \
   --env CYBERGYM_MAX_TESTS \
-  "${provider_env_args[@]}" \
+  "${provider_env_args[@]+"${provider_env_args[@]}"}" \
   "${PWNKIT_CYBERGYM_IMAGE}" \
   --task-dir /task \
   "$@"

@@ -39,7 +39,10 @@ import { tmpdir } from "node:os";
 import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
 import type { RuntimeMode } from "@pwnkit/shared";
 import { estimateCost } from "@pwnkit/shared";
-import { LlmApiRuntime, LOOP_SERVER_COMPACTION_TOKENS } from "../runtime/llm-api.js";
+import {
+  LlmApiRuntime,
+  LOOP_SERVER_COMPACTION_TOKENS,
+} from "../runtime/llm-api.js";
 import { formatTruncated, truncateMiddle } from "../agent/output-truncation.js";
 import { lookupFormatPrimer, knownFormatIds } from "./format-knowledge.js";
 import { PROVER_TOOL_NAMES, listProverPluginIds, proverToolDefs, runProverTool } from "./prover/index.js";
@@ -155,6 +158,11 @@ export interface CraftScanOptions {
    * step-cap-only behaviour (unchanged for single-model runs).
    */
   deadlineMs?: number;
+  /**
+   * Hard per-trajectory API-equivalent spend ceiling. The stage reserves a
+   * conservative upper bound for every next provider call before issuing it.
+   */
+  costCeilingUsd?: number;
   /** The PoC oracle (CyberGym differential / local sanitizer runner). The GRADED final answer. */
   evaluatePoc: CraftPocEvaluator;
   /**
@@ -226,6 +234,8 @@ export interface CraftScanResult {
    * single source of truth for pricing across the engine.
    */
   estimatedCostUsd: number;
+  /** True when the stage stopped before a call could violate the declared ceiling. */
+  costCeilingExceeded?: true;
   /** Task-local deterministic observations; excludes source, model, and candidate payloads. */
   evidence?: CraftEvidenceRecord[];
 }
@@ -251,6 +261,38 @@ export interface CraftAttemptSummary {
  * through `formatTruncated` under the shared token policy instead.
  */
 const clip = (s: string, n = 7000) => truncateMiddle(s, { limit: n, mode: "bytes" }).text;
+
+/**
+ * The provider adds a small wire envelope around the inputs we serialize here.
+ * Reserve a deliberately conservative number of tokens so the guard remains
+ * safe when a provider changes request decoration.
+ */
+const COST_CEILING_REQUEST_OVERHEAD_TOKENS = 4096;
+
+function nextCraftCallUpperBoundUsd(
+  system: string,
+  messages: unknown,
+  tools: unknown,
+  model: string,
+  outputTokenLimit: number,
+): number {
+  try {
+    const requestBytes = Buffer.byteLength(
+      JSON.stringify({ system, messages, tools }),
+      "utf8",
+    );
+    return estimateCost(
+      {
+        inputTokens: requestBytes + COST_CEILING_REQUEST_OVERHEAD_TOKENS,
+        outputTokens: outputTokenLimit,
+      },
+      model,
+    );
+  } catch {
+    // A non-serializable request cannot be costed conservatively.
+    return Number.POSITIVE_INFINITY;
+  }
+}
 
 /**
  * Reserve enough of a bounded trajectory for test-and-refine work. The old
@@ -280,6 +322,16 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   const maxSteps = opts.maxSteps ?? 120;
   const maxSubmits = opts.maxSubmits ?? 12;
   const maxTests = opts.maxTests ?? 40;
+  const costCeilingUsd = opts.costCeilingUsd;
+  if (
+    costCeilingUsd !== undefined &&
+    (!Number.isFinite(costCeilingUsd) || costCeilingUsd <= 0)
+  ) {
+    throw new Error("craft costCeilingUsd must be a positive finite number");
+  }
+  if (costCeilingUsd !== undefined && !opts.model) {
+    throw new Error("craft costCeilingUsd requires an explicit model for deterministic pricing");
+  }
   const { reachabilityStepCap, firstSelfTestStep } = craftStepBudget(maxSteps);
   const warnings: string[] = [];
   const evidence = new CraftEvidenceLedger();
@@ -289,6 +341,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   let firstTestStep: number | undefined;
   let lastReachabilityCitation: { path: string; line: number } | undefined;
   let oracleUnreachable = false;
+  let costCeilingExceeded = false;
 
   if (!existsSync(sourceRoot)) {
     // The per-task source vanished before the run even started — a /tmp janitor
@@ -848,6 +901,7 @@ ${g.err}`;
     timeout: opts.llmTimeoutMs ?? 240_000,
     serverCompactionTokens: LOOP_SERVER_COMPACTION_TOKENS,
   });
+  const outputTokenLimit = rt.outputTokenLimit;
   const stopForLlmError = (reason: unknown) => {
     llmUnavailable = clip(String(reason), 300);
     warnings.push(`craft: LLM UNAVAILABLE at step ${steps}: ${llmUnavailable}`);
@@ -884,11 +938,36 @@ ${g.err}`;
     // `serverCompactionTokens`: this loop appends to `messages` for up to 120
     // steps and never prunes. Server-side compaction is the only context
     // strategy it has.
-    let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown; providerRaw?: unknown };
     const activeTools = toolsForStage();
+    const requestSystem = `${system}\n\n${stages.instruction()}`;
+    if (costCeilingUsd !== undefined) {
+      if (outputTokenLimit === undefined) {
+        costCeilingExceeded = true;
+        warnings.push(
+          "craft: COST CEILING unavailable — selected provider rejects an explicit output-token limit; no provider request made",
+        );
+        break;
+      }
+      const spentUsd = estimateCost({ inputTokens, outputTokens }, model);
+      const nextCallUpperBoundUsd = nextCraftCallUpperBoundUsd(
+        requestSystem,
+        messages,
+        activeTools,
+        model,
+        outputTokenLimit,
+      );
+      if (spentUsd + nextCallUpperBoundUsd > costCeilingUsd) {
+        costCeilingExceeded = true;
+        warnings.push(
+          `craft: COST CEILING would be exceeded before step ${steps + 1}: $${spentUsd.toFixed(6)} + up to $${nextCallUpperBoundUsd.toFixed(6)} > $${costCeilingUsd.toFixed(6)}; no provider request made`,
+        );
+        break;
+      }
+    }
+    let res: { content?: Array<Record<string, unknown>>; stopReason?: string; error?: unknown; providerRaw?: unknown };
     try {
       res = await rt.executeNative(
-        `${system}\n\n${stages.instruction()}`,
+        requestSystem,
         messages as never,
         activeTools as never,
         { onThinking() {}, onDelta() {}, onText() {}, onUsage(u: { inputTokens?: number; outputTokens?: number }) { inputTokens += u?.inputTokens ?? 0; outputTokens += u?.outputTokens ?? 0; } } as never,
@@ -899,6 +978,16 @@ ${g.err}`;
     }
     if (res.error) {
       stopForLlmError(res.error);
+      break;
+    }
+    if (
+      costCeilingUsd !== undefined &&
+      estimateCost({ inputTokens, outputTokens }, model) > costCeilingUsd
+    ) {
+      costCeilingExceeded = true;
+      warnings.push(
+        `craft: COST CEILING exceeded after provider response: $${estimateCost({ inputTokens, outputTokens }, model).toFixed(6)} > $${costCeilingUsd.toFixed(6)}; task is budget-inconclusive`,
+      );
       break;
     }
     const content = res.content ?? [];
@@ -1009,12 +1098,17 @@ ${g.err}`;
     `first-self-test-step=${firstTestStep ?? "none"}; graded-submissions=${submits}`;
 
   if (!passed) {
-    const inconclusive = oracleUnreachable || llmUnavailable !== undefined;
+    const inconclusive =
+      oracleUnreachable ||
+      llmUnavailable !== undefined ||
+      costCeilingExceeded;
     warnings.push(oracleUnreachable
       ? `craft: ORACLE UNREACHABLE — task inconclusive (grader never ran; NOT a capability fail) after ${submits} submit(s) / ${steps} step(s)`
       : llmUnavailable !== undefined
         ? `craft: LLM UNAVAILABLE — task inconclusive (${llmUnavailable}) after ${submits} submit(s) / ${steps} step(s)`
-        : `craft: no confirmed PoC after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`);
+        : costCeilingExceeded
+          ? `craft: COST CEILING — task budget-inconclusive after ${submits} submit(s) / ${steps} step(s)`
+          : `craft: no confirmed PoC after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`);
     evidence.record({
       kind: "run-summary",
       status: inconclusive ? "inconclusive" : "refuted",
@@ -1033,6 +1127,7 @@ ${g.err}`;
       inputTokens,
       outputTokens,
       estimatedCostUsd: estimateCost({ inputTokens, outputTokens }, model),
+      ...(costCeilingExceeded ? { costCeilingExceeded: true } : {}),
       evidence: evidence.snapshot(),
     };
   }
