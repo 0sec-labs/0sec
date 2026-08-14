@@ -16,17 +16,17 @@
 #     retried after the quota boundary, so the committed receipt carries one
 #     real attempt per task instead of a billing accident.
 #
-# Quota: Qwen Token Plan enforces 5h windows (observed reset anchor
-# 2026-08-06T13:31:00Z, every 18000s). On a quota signature in the task log the
-# driver sleeps to the next boundary instead of burning the remaining tasks
-# into error rows.
+# Quota windows are provider-specific. Set CYBERGYM_QUOTA_ANCHOR_EPOCH only
+# when the configured provider has a documented fixed reset boundary. Without
+# it, a quota-like response uses the ordinary bounded infrastructure retry
+# instead of assuming Qwen's five-hour Token Plan schedule.
 #
 # Usage: run-cybergym-subset.sh <subset-file> <host-corpus-path>
 # Env:   CYBERGYM_MODEL (required), CYBERGYM_MAX_STEPS (=60),
 #        CYBERGYM_MAX_SUBMITS (=1), CYBERGYM_MAX_TESTS (=24),
 #        CYBERGYM_LLM_TIMEOUT_MS (=360000), CYBERGYM_CRAFT_DEADLINE_MS (=2700000),
 #        CYBERGYM_INFRA_RETRIES (=4 per task),
-#        CYBERGYM_QUOTA_ANCHOR_EPOCH (Token Plan window anchor),
+#        CYBERGYM_QUOTA_ANCHOR_EPOCH (optional provider reset anchor),
 #        CYBERGYM_TASK_RUNNER (testing seam; default run-cybergym-task.sh).
 set -uo pipefail
 
@@ -43,7 +43,6 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 : "${CYBERGYM_LLM_TIMEOUT_MS:=360000}"
 : "${CYBERGYM_CRAFT_DEADLINE_MS:=2700000}"
 : "${CYBERGYM_INFRA_RETRIES:=4}"
-: "${CYBERGYM_QUOTA_ANCHOR_EPOCH:=$(date -ud "2026-08-06 13:31:00" +%s)}"
 : "${CYBERGYM_QUOTA_WINDOW_SECONDS:=18000}"
 : "${CYBERGYM_TASK_RUNNER:=${script_dir}/run-cybergym-task.sh}"
 export CYBERGYM_MAX_SUBMITS CYBERGYM_MAX_TESTS CYBERGYM_LLM_TIMEOUT_MS CYBERGYM_CRAFT_DEADLINE_MS
@@ -217,18 +216,23 @@ while IFS= read -r line; do
     # No kept row: either an error row was just appended, or the runner died
     # before writing one. Evict infra rows, then ALWAYS retry up to the cap —
     # a transient provider stall exits 0 with an evicted error row and no quota
-    # signature, and must not skip the task. The signature only chooses the
-    # backoff: quota wall → next window boundary; anything else → short wait.
+    # signature, and must not skip the task. A quota reset window is used only
+    # when the operator explicitly configured one for this provider.
     evict_infra_rows "${host_corpus}" "${task_id}"
     if (( attempt <= CYBERGYM_INFRA_RETRIES )); then
       if quota_signature "${task_log}"; then
         # A weekly/monthly plan wall outlasts the 5h window math; sleep to the
         # provider-stated reset when the engine surfaced one.
         wait_s="$(seconds_to_provider_reset "${task_log}")"
-        if [[ -z "${wait_s}" ]]; then
+        if [[ -z "${wait_s}" && -n "${CYBERGYM_QUOTA_ANCHOR_EPOCH:-}" ]]; then
           wait_s="$(seconds_to_next_boundary)"
         fi
-        printf '[subset] %s hit provider quota; sleeping %ss to reset/boundary\n' "${task_id}" "${wait_s}"
+        if [[ -n "${wait_s}" ]]; then
+          printf '[subset] %s hit provider quota; sleeping %ss to reset/boundary\n' "${task_id}" "${wait_s}"
+        else
+          wait_s="${CYBERGYM_INFRA_RETRY_WAIT_SECONDS:-300}"
+          printf '[subset] %s not measured (rc=%d, infra/transient); retrying in %ss\n' "${task_id}" "${rc}" "${wait_s}"
+        fi
       else
         wait_s="${CYBERGYM_INFRA_RETRY_WAIT_SECONDS:-300}"
         printf '[subset] %s not measured (rc=%d, infra/transient); retrying in %ss\n' "${task_id}" "${rc}" "${wait_s}"
