@@ -28,14 +28,17 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import {
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { parseSanitizerLog } from "../review/sanitizer-log.js";
 import type { Tier2HarnessArtifact } from "../review/c-cpp-tier2.js";
@@ -75,9 +78,20 @@ export interface UserspaceFuzzOptions {
    * throwaway tmp dir. Mirrors `KernelVmConfig.artifactDir`.
    */
   artifactDir?: string;
+  /**
+   * Total byte ceiling for persisted crash evidence. Omitted retains the
+   * existing local-research behavior; the cloud CLI requires this whenever it
+   * supplies `artifactDir`.
+   */
+  artifactMaxBytes?: number;
   /** Custom logger; defaults to `console.log`. Matches the kernel runner. */
   logger?: (line: string) => void;
 }
+
+const MEMSAFETY_ARTIFACT_SCHEMA = "pwnkit-memsafety-artifact/v1";
+const MIN_ARTIFACT_BYTES = 64 * 1024;
+const MANIFEST_RESERVE_BYTES = 8 * 1024;
+const MAX_RETAINED_LOG_BYTES = 64 * 1024;
 
 // ────────────────────────────────────────────────────────────────────
 // Tooling detection (degrade-when-absent, like QEMU/kernel-build inputs)
@@ -429,13 +443,161 @@ export async function runUserspaceFuzzLoop(
   const toolingMissing: string[] = [];
 
   try {
-    if (opts.target.language === "rust") {
-      return await runRustLoop(opts, { workDir, timeoutMs, toolingMissing, log, start });
+    const result =
+      opts.target.language === "rust"
+        ? await runRustLoop(opts, {
+            workDir,
+            timeoutMs,
+            toolingMissing,
+            log,
+            start,
+          })
+        : await runCLoop(opts, { workDir, timeoutMs, toolingMissing, log, start });
+    if (!ephemeral && result.crashes.length > 0) {
+      retainMemsafetyArtifacts({
+        artifactDir: workDir,
+        crashes: result.crashes,
+        maxBytes: opts.artifactMaxBytes,
+        run: {
+          language: opts.target.language,
+          build_system: opts.target.buildSystem,
+          fuzz_dir: opts.target.fuzzDir ?? "fuzz",
+          harness: result.executedHarness ?? opts.target.harnessEntry ?? null,
+          iterations: result.iterations,
+          corpus_size: result.corpusSize,
+          duration_ms: result.durationMs,
+        },
+      });
     }
-    return await runCLoop(opts, { workDir, timeoutMs, toolingMissing, log, start });
+    return result;
   } finally {
     if (ephemeral) rmSync(workDir, { recursive: true, force: true });
   }
+}
+
+interface RetainMemsafetyArtifactsInput {
+  artifactDir: string;
+  crashes: CrashArtifact[];
+  maxBytes: number | undefined;
+  run: Record<string, string | number | null>;
+}
+
+/**
+ * Retain only the bounded proof needed to re-run an observed crash. Source
+ * checkouts and fuzz corpora stay outside this directory. A missing or
+ * oversized input clears `CrashArtifact.inputPath`, so downstream PoV grading
+ * cannot claim that a reproducer survived when it did not.
+ */
+function retainMemsafetyArtifacts(input: RetainMemsafetyArtifactsInput): void {
+  const maxBytes = requireArtifactLimit(input.maxBytes);
+  let availableBytes = maxBytes - MANIFEST_RESERVE_BYTES;
+  const records: Array<Record<string, unknown>> = [];
+
+  for (const [index, crash] of input.crashes.entries()) {
+    const ordinal = String(index + 1).padStart(2, "0");
+    const record: Record<string, unknown> = {
+      signature: crash.signature,
+      kind: crash.kind,
+      primitive: crash.primitive ?? null,
+      stack: (crash.stack ?? []).slice(0, 10).map((frame) => frame.slice(0, 256)),
+    };
+    const logBytes = Buffer.from(crash.rawOutput ?? "", "utf8");
+    const retainedLogBytes = Math.min(
+      logBytes.byteLength,
+      MAX_RETAINED_LOG_BYTES,
+      availableBytes,
+    );
+    if (retainedLogBytes > 0) {
+      const relativePath = `logs/${ordinal}-${crash.kind}.txt`;
+      writeRetainedBytes(
+        input.artifactDir,
+        relativePath,
+        logBytes.subarray(0, retainedLogBytes),
+      );
+      record.log = relativePath;
+      if (retainedLogBytes < logBytes.byteLength) {
+        record.log_truncated = true;
+      }
+      availableBytes -= retainedLogBytes;
+    } else if (logBytes.byteLength > 0) {
+      record.log_omitted = "artifact budget exhausted";
+    }
+
+    if (crash.inputPath) {
+      const relativePath = `reproducers/${ordinal}-${crash.signature}.input`;
+      const copied = copyRetainedInput(
+        crash.inputPath,
+        input.artifactDir,
+        relativePath,
+        availableBytes,
+      );
+      if ("bytes" in copied) {
+        crash.inputPath = join(input.artifactDir, relativePath);
+        record.reproducer = relativePath;
+        availableBytes -= copied.bytes;
+      } else {
+        crash.inputPath = undefined;
+        record.reproducer_omitted = copied.reason;
+      }
+    }
+    records.push(record);
+  }
+
+  const manifest = Buffer.from(
+    JSON.stringify({
+      schema: MEMSAFETY_ARTIFACT_SCHEMA,
+      run: input.run,
+      crashes: records,
+    }) + "\n",
+    "utf8",
+  );
+  if (manifest.byteLength > MANIFEST_RESERVE_BYTES) {
+    throw new Error("memsafety artifact manifest exceeds its reserved budget");
+  }
+  writeFileSync(join(input.artifactDir, "manifest.json"), manifest);
+}
+
+function copyRetainedInput(
+  sourcePath: string,
+  artifactDir: string,
+  relativePath: string,
+  availableBytes: number,
+): { bytes: number } | { reason: string } {
+  try {
+    const source = lstatSync(sourcePath);
+    if (!source.isFile()) {
+      return { reason: "source reproducer is not a regular file" };
+    }
+    if (source.size > availableBytes) {
+      return { reason: "source reproducer exceeds remaining artifact budget" };
+    }
+    const destination = join(artifactDir, relativePath);
+    mkdirSync(dirname(destination), { recursive: true });
+    copyFileSync(sourcePath, destination);
+    return { bytes: source.size };
+  } catch {
+    return { reason: "source reproducer was unavailable for retention" };
+  }
+}
+
+function writeRetainedBytes(
+  artifactDir: string,
+  relativePath: string,
+  contents: Uint8Array,
+): void {
+  const destination = join(artifactDir, relativePath);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, contents);
+}
+
+function requireArtifactLimit(value: number | undefined): number {
+  const maxBytes = value ?? 8 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < MIN_ARTIFACT_BYTES) {
+    throw new Error(
+      `memsafety artifact byte ceiling must be at least ${MIN_ARTIFACT_BYTES}`,
+    );
+  }
+  return maxBytes;
 }
 
 interface LoopCtx {
