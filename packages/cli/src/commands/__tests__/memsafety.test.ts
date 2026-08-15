@@ -1,15 +1,38 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { Command } from "commander";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Pure helper only — no @pwnkit/core load needed (the fuzz loop / prepare paths
-// are exercised e2e in the sandbox, not in unit tests; live memcorruption-repro
-// validation of the role is tracked in #702).
-import { detectMemSafetyBuild } from "../memsafety.js";
+import { detectMemSafetyBuild, registerMemsafetyCommand } from "../memsafety.js";
+
+const core = vi.hoisted(() => ({
+  getCloudSinkConfig: vi.fn(),
+  postFinding: vi.fn(),
+  prepare: vi.fn(),
+  runMemSafetyScan: vi.fn(),
+}));
+vi.mock("@pwnkit/core", () => core);
 
 /** Build an `exists` probe that returns true only for the given relative paths. */
 function existsFor(root: string, present: string[]): (path: string) => boolean {
   const set = new Set(present.map((p) => `${root}/${p}`));
   return (path: string) => set.has(path);
 }
+
+const temporaryDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of temporaryDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  vi.restoreAllMocks();
+  core.getCloudSinkConfig.mockReset();
+  core.postFinding.mockReset();
+  core.prepare.mockReset();
+  core.runMemSafetyScan.mockReset();
+  process.exitCode = undefined;
+});
 
 describe("detectMemSafetyBuild", () => {
   const root = "/work/src";
@@ -47,5 +70,60 @@ describe("detectMemSafetyBuild", () => {
   it("returns null when no recognisable build system is present", () => {
     const d = detectMemSafetyBuild(root, existsFor(root, ["README.md"]));
     expect(d).toBeNull();
+  });
+});
+
+describe("registerMemsafetyCommand", () => {
+  it("accepts a bounded artifact destination without exposing credentials", () => {
+    const program = new Command();
+    registerMemsafetyCommand(program);
+    const command = program.commands.find((entry) => entry.name() === "memsafety");
+    expect(command).toBeDefined();
+    const flags = command!.options.map((option) => option.flags);
+    expect(flags).toContain("--artifact-dir <path>");
+    expect(flags).toContain("--artifact-max-bytes <bytes>");
+  });
+
+  it("forwards a paired bounded artifact destination to the fuzz stage", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "pwnkit-memsafety-cli-"));
+    temporaryDirs.push(sourceRoot);
+    writeFileSync(join(sourceRoot, "Cargo.toml"), "[package]\nname = \"fixture\"\n");
+    core.prepare.mockResolvedValue({
+      resolvedTarget: sourceRoot,
+      cleanup: vi.fn(),
+    });
+    core.getCloudSinkConfig.mockReturnValue(null);
+    core.runMemSafetyScan.mockResolvedValue({
+      findings: [],
+      details: [],
+      loop: { iterations: 1, crashes: [], corpusSize: 0, durationMs: 1 },
+      toolingMissing: [],
+      warnings: [],
+    });
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const program = new Command();
+    registerMemsafetyCommand(program);
+
+    await program.parseAsync(
+      [
+        "memsafety",
+        sourceRoot,
+        "--artifact-dir",
+        "./proof",
+        "--artifact-max-bytes",
+        "131072",
+      ],
+      { from: "user" },
+    );
+
+    expect(core.runMemSafetyScan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fuzz: expect.objectContaining({
+          artifactDir: resolve("./proof"),
+          artifactMaxBytes: 131072,
+        }),
+      }),
+    );
+    expect(stdout).toHaveBeenCalled();
   });
 });

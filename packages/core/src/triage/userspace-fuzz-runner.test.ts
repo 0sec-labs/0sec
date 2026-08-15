@@ -1,6 +1,14 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, it, expect, afterEach } from "vitest";
 import {
@@ -252,21 +260,88 @@ describe("runUserspaceFuzzLoop — cargo-fuzz harness discovery", () => {
     expect(result.crashes).toEqual([]);
   });
 
-  it("attaches a cargo-fuzz artifact input to a captured Rust crash", async () => {
+  it("retains a bounded cargo-fuzz reproducer outside the source tree", async () => {
     const sourceRoot = useFakeCargo(["only_target"], ASAN_OOB_WRITE);
-    const artifactDir = join(sourceRoot, "fuzz", "artifacts", "only_target");
-    const inputPath = join(artifactDir, "crash-deadbeef");
-    mkdirSync(artifactDir, { recursive: true });
-    writeFileSync(inputPath, "reproducer", "utf8");
+    const sourceArtifactDir = join(
+      sourceRoot,
+      "fuzz",
+      "artifacts",
+      "only_target",
+    );
+    const sourceInputPath = join(sourceArtifactDir, "crash-deadbeef");
+    mkdirSync(sourceArtifactDir, { recursive: true });
+    writeFileSync(sourceInputPath, "reproducer", "utf8");
+    const retainedRoot = mkdtempSync(join(tmpdir(), "pwnkit-retained-proof-"));
+    fakeCargoDirs.push(retainedRoot);
 
     const result = await runUserspaceFuzzLoop({
       target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+      artifactDir: retainedRoot,
+      artifactMaxBytes: 128 * 1024,
       logger: () => {},
     });
 
     expect(result.crashes).toHaveLength(1);
     expect(result.crashes[0]!.kind).toBe("asan");
-    expect(result.crashes[0]!.inputPath).toBe(inputPath);
+    expect(result.crashes[0]!.inputPath).toMatch(
+      new RegExp(`^${retainedRoot}/pwnkit-uf-`),
+    );
+    expect(readFileSync(result.crashes[0]!.inputPath!, "utf8")).toBe(
+      "reproducer",
+    );
+    const manifest = JSON.parse(
+      readFileSync(
+        join(dirname(dirname(result.crashes[0]!.inputPath!)), "manifest.json"),
+        "utf8",
+      ),
+    ) as {
+      schema: string;
+      run: Record<string, unknown>;
+      crashes: Array<Record<string, unknown>>;
+    };
+    expect(manifest.schema).toBe("pwnkit-memsafety-artifact/v1");
+    expect(manifest.run).toMatchObject({
+      language: "rust",
+      build_system: "cargo",
+      harness: "only_target",
+    });
+    expect(manifest.crashes[0]?.reproducer).toMatch(/^reproducers\//);
+    expect(JSON.stringify(manifest)).not.toContain(sourceRoot);
+  });
+
+  it("records an omitted over-budget reproducer without claiming it survived", async () => {
+    const sourceRoot = useFakeCargo(["only_target"], ASAN_OOB_WRITE);
+    const sourceArtifactDir = join(
+      sourceRoot,
+      "fuzz",
+      "artifacts",
+      "only_target",
+    );
+    mkdirSync(sourceArtifactDir, { recursive: true });
+    writeFileSync(
+      join(sourceArtifactDir, "crash-deadbeef"),
+      Buffer.alloc(64 * 1024),
+    );
+    const retainedRoot = mkdtempSync(join(tmpdir(), "pwnkit-retained-proof-"));
+    fakeCargoDirs.push(retainedRoot);
+
+    const result = await runUserspaceFuzzLoop({
+      target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+      artifactDir: retainedRoot,
+      artifactMaxBytes: 64 * 1024,
+      logger: () => {},
+    });
+
+    expect(result.crashes).toHaveLength(1);
+    expect(result.crashes[0]!.inputPath).toBeUndefined();
+    const runDir = join(
+      retainedRoot,
+      readdirSync(retainedRoot).find((name) => name.startsWith("pwnkit-uf-"))!,
+    );
+    const manifest = JSON.parse(
+      readFileSync(join(runDir, "manifest.json"), "utf8"),
+    ) as { crashes: Array<Record<string, unknown>> };
+    expect(manifest.crashes[0]?.reproducer_omitted).toMatch(/budget/);
   });
 
   it("does not discover a cargo-fuzz target outside the source root", async () => {
