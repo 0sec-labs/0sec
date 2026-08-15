@@ -364,6 +364,24 @@ export function parseUsageLimitReached(
   if (details.resetsAtMs == null && details.resetsInSeconds != null) {
     details.resetsAtMs = Date.now() + details.resetsInSeconds * 1000;
   }
+  // Alibaba Token Plan carries the reset in the message TEXT, not a numeric
+  // field: "Your token-plan 1-week quota has been exhausted. The quota will
+  // reset at 08-20 15:24:00 UTC." (the 5-hour variant omits the UTC suffix).
+  // Month-day only — assume the current year, roll forward if it lands past.
+  if (details.resetsAtMs == null && quotaKind === "insufficient_quota") {
+    const message = typeof err.message === "string" ? err.message : "";
+    const m = message.match(
+      /resets? at (\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\s*UTC)?/,
+    );
+    if (m) {
+      const now = Date.now();
+      const year = new Date(now).getUTCFullYear();
+      const at = (y: number) =>
+        Date.UTC(y, Number(m[1]) - 1, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]));
+      const ts = at(year);
+      details.resetsAtMs = ts > now ? ts : at(year + 1);
+    }
+  }
   return details;
 }
 
