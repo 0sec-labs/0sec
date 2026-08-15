@@ -229,8 +229,8 @@ while IFS= read -r line; do
     # No kept row: either an error row was just appended, or the runner died
     # before writing one. Evict infra rows, then ALWAYS retry up to the cap —
     # a transient provider stall exits 0 with an evicted error row and no quota
-    # signature, and must not skip the task. A quota reset window is used only
-    # when the operator explicitly configured one for this provider.
+    # signature. A provider-stated reset is trusted; otherwise a reset window
+    # is used only when the operator explicitly configured it.
     evict_infra_rows "${host_corpus}" "${task_id}"
     if (( attempt <= CYBERGYM_INFRA_RETRIES )); then
       if quota_signature "${task_log}"; then
