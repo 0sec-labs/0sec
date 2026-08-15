@@ -434,6 +434,9 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   // crashed. Generator errors here are FREE (they don't burn the graded budget).
   let candidateCount = 0;
   let tests = 0;
+  // Consecutive executor failures may be transient. Abort after three so a
+  // dead local executor cannot consume the full self-test and step budgets.
+  let selfTestInfraStrikes = 0;
   let eligibleCandidate: {
     sha256: string;
     identity: CraftCandidateIdentity;
@@ -541,14 +544,14 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     }
     if (v.oracleError) {
       oracleUnreachable = true;
-      evidence.record({ kind: "self-test", status: "inconclusive", summary: "self-test oracle returned no verdict", step, candidateSha256: sha256 });
-      const strike = ++selfTestInfraStrikes;
-      if (strike >= 3) {
-        oracleUnreachable = true;
-        log(`[craft] SELF-TEST ORACLE UNREACHABLE (strike ${strike}): ${clip(v.oracleError, 200)}`);
-        return `The self-test oracle is UNREACHABLE (${clip(v.oracleError, 160)}) — infrastructure fault, not your PoC. Stop.`;
-      }
-      return `self-test could not run (${clip(v.oracleError, 160)}) — try submit_poc.`;
+      evidence.record({
+        kind: "self-test",
+        status: "inconclusive",
+        summary: "self-test oracle returned no verdict",
+        step,
+        candidateSha256: sha256,
+      });
+      return `The self-test oracle is UNREACHABLE (${clip(v.oracleError, 160)}) — infrastructure fault, not your PoC. Stop.`;
     }
     // A real verdict (crash or clean) proves the oracle is alive.
     selfTestInfraStrikes = 0;
@@ -596,13 +599,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
 
   // ── submit_poc → injected oracle (the GRADED differential final answer) ──
   let submits = 0, passed = false, firstSubmitPassed = false, pocPath: string | undefined, lastOutput = "", lastMeta: Record<string, unknown> = {};
-  let oracleErrors = 0, oracleUnreachable = false;
-  // Consecutive infra failures of the FREE self-test path (executor throw or
-  // oracle no-verdict). A single transient error is retried by the agent, but
-  // three in a row means the oracle is down — abort as ORACLE UNREACHABLE so
-  // the task scores inconclusive (error), never a kept capability fail, and
-  // the model stops burning its test+step budgets against a dead oracle.
-  let selfTestInfraStrikes = 0;
+  let oracleErrors = 0;
   const attempts: CraftAttemptSummary[] = [];
   const submitPoc = async (python: string): Promise<string> => {
     if (submits >= maxSubmits) return `submit budget exhausted (${maxSubmits}). You are out of attempts.`;
