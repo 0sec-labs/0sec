@@ -43,4 +43,5 @@ export { registerCloudCommand } from "./cloud.js";
 export { registerXnuFuzzCommand } from "./xnu-fuzz.js";
 export { registerResearchCommand } from "./research.js";
 export { registerTimelineCommand } from "./timeline.js";
+export { registerFileReviewCommand } from "./file-review.js";
 export { runUnified } from "./run.js";
