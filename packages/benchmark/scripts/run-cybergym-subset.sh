@@ -142,7 +142,7 @@ try:
         line = line.strip()
         if line and "=" in line and not line.startswith("#"):
             k, v = line.split("=", 1); env[k] = v
-    base = env.get("QWEN_BASE_URL", "").rstrip("/")
+    base = env.get("QWEN_BASE_URL", "").rstrip("/") or "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
     key = env.get("QWEN_API_KEY", "")
     model = os.environ.get("CYBERGYM_MODEL", "")
     if base and key and model:
