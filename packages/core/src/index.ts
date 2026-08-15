@@ -1924,3 +1924,8 @@ export * from "./xnu-fuzz/index.js";
 export * from "./adgraph/index.js";
 export * from "./identity/index.js";
 export * from "./attack/index.js";
+
+// file-review — deepsec-pattern whole-repo review harness (scan → coverage
+// gate → batched AI investigation with refusal audit/field repair →
+// static revalidation), resumable with cost/duration caps.
+export * from "./file-review/index.js";
