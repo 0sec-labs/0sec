@@ -114,8 +114,29 @@ with open(path, "w") as out:
 PY
 }
 
+# Seconds until the provider-stated quota reset, if the task log carries one
+# (the engine prints resets_at=<iso> for plan-quota 429s, incl. the Alibaba
+# weekly). Falls back to "" so callers can use the window-anchor math.
+seconds_to_provider_reset() {
+  python3 - "$1" <<'PY'
+import datetime, re, sys, time
+try:
+    text = open(sys.argv[1], errors="ignore").read()
+except OSError:
+    sys.exit(0)
+matches = re.findall(r"resets_at=([0-9T:.\-+Z]+)", text)
+if not matches:
+    sys.exit(0)
+try:
+    t = datetime.datetime.fromisoformat(matches[-1].replace("Z", "+00:00")).timestamp()
+except ValueError:
+    sys.exit(0)
+print(max(0, int(t - time.time())) + int("${CYBERGYM_QUOTA_RESET_BUFFER:-60}"))
+PY
+}
+
 quota_signature() {
-  grep -qiE "quota has been exhausted|usage_limit_reached|HTTP 429" "$1"
+  grep -qiE "quota has been exhausted|usage_limit_reached|insufficient_quota|HTTP 429" "$1"
 }
 
 seconds_to_next_boundary() {
@@ -168,8 +189,13 @@ while IFS= read -r line; do
     evict_infra_rows "${host_corpus}" "${task_id}"
     if (( attempt <= CYBERGYM_INFRA_RETRIES )); then
       if quota_signature "${task_log}"; then
-        wait_s="$(seconds_to_next_boundary)"
-        printf '[subset] %s hit provider quota; sleeping %ss to next window\n' "${task_id}" "${wait_s}"
+        # A weekly/monthly plan wall outlasts the 5h window math; sleep to the
+        # provider-stated reset when the engine surfaced one.
+        wait_s="$(seconds_to_provider_reset "${task_log}")"
+        if [[ -z "${wait_s}" ]]; then
+          wait_s="$(seconds_to_next_boundary)"
+        fi
+        printf '[subset] %s hit provider quota; sleeping %ss to reset/boundary\n' "${task_id}" "${wait_s}"
       else
         wait_s="${CYBERGYM_INFRA_RETRY_WAIT_SECONDS:-300}"
         printf '[subset] %s not measured (rc=%d, infra/transient); retrying in %ss\n' "${task_id}" "${rc}" "${wait_s}"

@@ -1020,10 +1020,33 @@ describe("parseUsageLimitReached", () => {
         },
       }),
     );
+    // The reset arrives as message text (month-day, no year): current year,
+    // rolling forward a year when that lands in the past.
+    const y = new Date().getUTCFullYear();
+    let resets = Date.UTC(y, 7, 12, 21, 25, 0);
+    if (resets <= Date.now()) resets = Date.UTC(y + 1, 7, 12, 21, 25, 0);
     expect(details).toEqual({
       quotaKind: "insufficient_quota",
       planType: "token-plan",
+      resetsAtMs: resets,
     });
+  });
+
+  it("parses the Alibaba text reset without a UTC suffix (5-hour form)", () => {
+    const details = parseUsageLimitReached(
+      JSON.stringify({
+        error: {
+          message:
+            "Your token-plan 5-hour quota has been exhausted. The quota will reset at 12-31 15:24:00.",
+          type: "insufficient_quota",
+          code: "insufficient_quota",
+        },
+      }),
+    );
+    const y = new Date().getUTCFullYear();
+    let resets = Date.UTC(y, 11, 31, 15, 24, 0);
+    if (resets <= Date.now()) resets = Date.UTC(y + 1, 11, 31, 15, 24, 0);
+    expect(details?.resetsAtMs).toBe(resets);
   });
 
   it("derives resetsAtMs from resets_in_seconds when resets_at is absent", () => {

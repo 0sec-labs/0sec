@@ -54,8 +54,9 @@ case "$behavior" in
     printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"pass\\",\\"passed\\":true}" >> "$host_corpus"
     ;;
   error-quota)
-    printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"error\\",\\"passed\\":false}" >> "$host_corpus"
+    printf '%s\n' "{\\\"taskId\\\":\\\"$task\\\",\\\"verdict\\\":\\\"error\\\",\\\"passed\\\":false}" >> "$host_corpus"
     echo "[pwnkit] Qwen HTTP 429 - quota has been exhausted" >&2
+    echo "[pwnkit] Qwen insufficient_quota — plan quota exhausted (plan=token-plan, resets_at=$(date -u -d '+2 seconds' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+2S +%Y-%m-%dT%H:%M:%SZ)) — reschedulable after reset" >&2
     ;;
   error-stall)
     printf '%s\n' "{\\"taskId\\":\\"$task\\",\\"verdict\\":\\"error\\",\\"passed\\":false}" >> "$host_corpus"
@@ -79,6 +80,7 @@ esac
         CYBERGYM_QUOTA_ANCHOR_EPOCH: String(Math.floor(Date.now() / 1000) - 1),
         CYBERGYM_QUOTA_WINDOW_SECONDS: "1",
         CYBERGYM_QUOTA_SLEEP_BUFFER: "0",
+        CYBERGYM_QUOTA_RESET_BUFFER: "0",
         CYBERGYM_INFRA_RETRY_WAIT_SECONDS: "0",
       },
     });
