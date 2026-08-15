@@ -28,7 +28,7 @@
  */
 
 import type { Command } from "commander";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { resolve, join, sep } from "node:path";
 import type { RuntimeMode } from "@pwnkit/shared";
 import type { MemSafetyTarget } from "@pwnkit/core";
@@ -99,6 +99,13 @@ export interface RunMemSafetyOptions {
   /** Clone timeout budget in ms, forwarded to prepare(). */
   timeoutMs?: number;
   log?: (msg: string) => void;
+  /**
+   * Optional persistent root for bounded crash evidence. The caller owns its
+   * lifecycle; pwnkit never archives the source checkout beneath it.
+   */
+  artifactDir?: string;
+  /** Total retained crash-evidence byte ceiling paired with `artifactDir`. */
+  artifactMaxBytes?: number;
 }
 
 export interface MemSafetyOutcome {
@@ -178,6 +185,10 @@ export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafety
       fuzz: {
         ...(opts.runMiri != null ? { runMiri: opts.runMiri } : {}),
         ...(opts.fuzzTimeoutSec ? { timeoutSec: opts.fuzzTimeoutSec } : {}),
+        ...(opts.artifactDir ? { artifactDir: opts.artifactDir } : {}),
+        ...(opts.artifactMaxBytes !== undefined
+          ? { artifactMaxBytes: opts.artifactMaxBytes }
+          : {}),
       },
       logger: log,
     });
@@ -257,6 +268,8 @@ interface MemSafetyCliOpts {
   fuzzDir?: string;
   miri?: boolean;
   fuzzTimeout?: string;
+  artifactDir?: string;
+  artifactMaxBytes?: string;
   runtime?: string;
   format?: string;
   output?: string;
@@ -292,11 +305,37 @@ function parseBuildSystem(raw: string | undefined): MemBuildSystem | undefined {
   return v as MemBuildSystem;
 }
 
+function parseArtifactOptions(
+  opts: Pick<MemSafetyCliOpts, "artifactDir" | "artifactMaxBytes">,
+): Pick<RunMemSafetyOptions, "artifactDir" | "artifactMaxBytes"> {
+  const artifactDir = opts.artifactDir?.trim();
+  const artifactMaxBytes = opts.artifactMaxBytes;
+  if (!artifactDir && artifactMaxBytes !== undefined) {
+    throw new Error("--artifact-max-bytes requires --artifact-dir");
+  }
+  if (artifactDir && artifactMaxBytes === undefined) {
+    throw new Error("--artifact-dir requires --artifact-max-bytes");
+  }
+  if (!artifactDir) return {};
+  const maxBytes = parsePositive(
+    "--artifact-max-bytes",
+    artifactMaxBytes,
+    0,
+  );
+  if (maxBytes < 64 * 1024) {
+    throw new Error("--artifact-max-bytes must be at least 65536");
+  }
+  return {
+    artifactDir: resolve(artifactDir),
+    artifactMaxBytes: maxBytes,
+  };
+}
+
 async function memsafetyAction(target: string, opts: MemSafetyCliOpts): Promise<void> {
   if (!target || target.trim() === "") {
     throw new Error("missing required argument: <source> (source tree path or git URL)");
   }
-  const { writeFileSync } = await import("node:fs");
+  const artifact = parseArtifactOptions(opts);
   const outcome = await runMemSafety({
     target,
     ...(opts.subsystem ? { subsystem: opts.subsystem } : {}),
@@ -310,6 +349,7 @@ async function memsafetyAction(target: string, opts: MemSafetyCliOpts): Promise<
     ...(opts.fuzzTimeout
       ? { fuzzTimeoutSec: parsePositive("--fuzz-timeout", opts.fuzzTimeout, 60) }
       : {}),
+    ...artifact,
     ...(opts.runtime ? { runtime: opts.runtime as RuntimeMode } : {}),
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
@@ -342,6 +382,14 @@ export function registerMemsafetyCommand(program: Command): void {
     .option("--fuzz-dir <path>", "Non-standard cargo-fuzz directory (relative to source root)")
     .option("--miri", "Additionally run `cargo +nightly miri` for UB detection (Rust)", false)
     .option("--fuzz-timeout <sec>", "Fuzz wall-clock budget in seconds (default 60)")
+    .option(
+      "--artifact-dir <path>",
+      "Persist bounded crash evidence below this directory",
+    )
+    .option(
+      "--artifact-max-bytes <bytes>",
+      "Total retained crash-evidence byte ceiling (requires --artifact-dir)",
+    )
     .option("--format <fmt>", "Output format (json)", "json")
     .option("--output <path>", "Write the result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")

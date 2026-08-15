@@ -18,8 +18,16 @@ const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_RESULT_BYTES = 32 * 1024 * 1024;
 const MAX_TIMEOUT_MS = 300_000;
 const REACHABILITY = new Set(["unknown", "unprivileged-ioctl", "ordinary-child", "root-only", "internal-only"]);
-const SINKS = new Set(["copy", "fill", "indexed-store"]);
-const GUARDS = new Set(["bounds", "checked-arithmetic", "probe-read", "probe-write", "previous-mode", "privilege", "partition-capability"]);
+const SINKS = new Set([
+  "copy", "fill", "indexed-store",
+  // CWE-59 link-following family (privileged path-resolution sinks)
+  "file-open", "file-mutate", "registry-hive", "image-load",
+]);
+const GUARDS = new Set([
+  "bounds", "checked-arithmetic", "probe-read", "probe-write", "previous-mode", "privilege", "partition-capability",
+  // CWE-59 link-resolution guards
+  "no-reparse-open", "reparse-check", "final-path-verify", "client-impersonation",
+]);
 
 export interface WindowsVariantArtifactBinding {
   binarySha256: string;
