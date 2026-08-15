@@ -114,24 +114,57 @@ with open(path, "w") as out:
 PY
 }
 
-# Seconds until the provider-stated quota reset, if the task log carries one
-# (the engine prints resets_at=<iso> for plan-quota 429s, incl. the Alibaba
-# weekly). Falls back to "" so callers can use the window-anchor math.
+# Seconds until the provider-stated quota reset. Sources, in order: (1) the
+# task log's resets_at=<iso> (engine-surfaced), (2) a direct 1-token probe of
+# the provider, parsing "quota will reset at <date>" from its 429 body — the
+# plan weekly wall outlasts every local estimate, and only the provider knows
+# it. Prints nothing when neither yields a time; callers fall back to the
+# window-anchor math.
 seconds_to_provider_reset() {
   python3 - "$1" <<'PY'
-import datetime, re, sys, time
+import datetime, json, os, re, sys, time, urllib.request, urllib.error
 try:
     text = open(sys.argv[1], errors="ignore").read()
 except OSError:
-    sys.exit(0)
+    text = ""
 matches = re.findall(r"resets_at=([0-9T:.\-+Z]+)", text)
-if not matches:
-    sys.exit(0)
+if matches:
+    try:
+        t = datetime.datetime.fromisoformat(matches[-1].replace("Z", "+00:00")).timestamp()
+        print(max(0, int(t - time.time())) + int(os.environ.get("CYBERGYM_QUOTA_RESET_BUFFER", "60")))
+        sys.exit(0)
+    except ValueError:
+        pass
+# (2) probe: a 429 body names the reset ("will reset at 08-20 15:24:00 UTC").
 try:
-    t = datetime.datetime.fromisoformat(matches[-1].replace("Z", "+00:00")).timestamp()
-except ValueError:
-    sys.exit(0)
-print(max(0, int(t - time.time())) + int("${CYBERGYM_QUOTA_RESET_BUFFER:-60}"))
+    env = {}
+    for line in open(os.environ.get("CYBERGYM_PROVIDER_ENV", "/srv/cybergym/credentials/provider.env")):
+        line = line.strip()
+        if line and "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1); env[k] = v
+    base = env.get("QWEN_BASE_URL", "").rstrip("/")
+    key = env.get("QWEN_API_KEY", "")
+    model = os.environ.get("CYBERGYM_MODEL", "")
+    if base and key and model:
+        req = urllib.request.Request(
+            f"{base}/chat/completions",
+            data=json.dumps({"model": model, "messages": [{"role": "user", "content": "ok"}], "max_tokens": 1}).encode(),
+            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req, timeout=30)
+        except urllib.error.HTTPError as e:
+            m = re.search(r"resets? at (\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})", e.read().decode(errors="ignore"))
+            if m:
+                now = time.time()
+                year = datetime.datetime.fromtimestamp(now, datetime.UTC).year
+                def at(y):
+                    return datetime.datetime(y, int(m[1]), int(m[2]), int(m[3]), int(m[4]), int(m[5]), tzinfo=datetime.UTC).timestamp()
+                t = at(year)
+                if t <= now: t = at(year + 1)
+                print(max(0, int(t - now)) + int(os.environ.get("CYBERGYM_QUOTA_RESET_BUFFER", "60")))
+except OSError:
+    pass
 PY
 }
 
