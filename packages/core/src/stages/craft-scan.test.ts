@@ -136,13 +136,12 @@ describe("runCraftScan infrastructure faults", () => {
   });
 });
 
-describe("runCraftScan self-test oracle outage", () => {
-  it("aborts as ORACLE UNREACHABLE after 3 consecutive self-test infra failures instead of scoring a kept fail", async () => {
-    // Regression (2026-08-12, bench image-prune outage): the submission server
-    // 500'd every self-test, the craft loop burned all 24 tests + 60 steps
-    // against the dead oracle, and the task was recorded as a capability FAIL.
-    // Self-test infra failures must trip the same two-strike-style abort the
-    // graded path has.
+describe("runCraftScan self-test executor outage", () => {
+  it("aborts after three consecutive executor failures instead of scoring a kept fail", async () => {
+    // Regression: repeated local executor failures used to burn the full
+    // self-test and step budgets against an unusable oracle path, then record a
+    // capability fail. Transient executor errors get two retries; the third
+    // stops the task as infrastructure-inconclusive.
     const sourceRoot = mkdtempSync(join(tmpdir(), "craft-oracle-outage-"));
     writeFileSync(
       join(sourceRoot, "target.c"),
@@ -186,7 +185,7 @@ describe("runCraftScan self-test oracle outage", () => {
         evaluatePoc: async () => ({ triggered: false, output: "" }),
         testPoc: async () => {
           oracleCalls++;
-          return { triggered: false, output: "", oracleError: "self-test returned no poc_id (oracle 500)" };
+          throw new Error("self-test executor transport failure");
         },
       });
 
@@ -199,6 +198,9 @@ describe("runCraftScan self-test oracle outage", () => {
       else process.env.OPENAI_API_KEY = prevKey;
       vi.unstubAllGlobals();
     }
+  });
+});
+
 describe("runCraftScan generator deadline", () => {
   it("refutes a non-terminating model generator without blocking the trajectory", async () => {
     const sourceRoot = mkdtempSync(join(tmpdir(), "craft-generator-timeout-"));
