@@ -553,6 +553,23 @@ const QWEN_TOKEN_PLAN_DEEPSEEK_MODEL = "deepseek-v4-flash-0731";
 
 type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen";
 type WireApi = "chat_completions" | "responses";
+/**
+ * Azure Foundry deployment ids used by 0cloud. The worker can inject both
+ * the Azure primary key and a direct-DeepSeek fallback key; route a Foundry
+ * deployment to Azure before the env-priority fallback sees that second key.
+ *
+ * Keep this table aligned with the worker's AZURE_FOUNDRY_DEPLOYMENT_IDS.
+ */
+const AZURE_FOUNDRY_DEPLOYMENT_IDS: Record<string, true> = {
+  "deepseek-v4-flash": true,
+  "deepseek-v4-pro": true,
+  "kimi-k2.7-code": true,
+  "gpt-oss-120b": true,
+  "gpt-5.6-sol": true,
+  "gpt-5.6-luna": true,
+  "gpt-5.6-terra": true,
+};
+
 
 // ── Cross-provider failover (429 / quota-exhausted → PWNKIT_LLM_FALLBACK) ──
 //
@@ -1103,13 +1120,16 @@ function parseCodexAzureConfig(): {
 function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (!model) return undefined;
   const m = model.toLowerCase();
-  // Direct DeepSeek uses its stable API model name; OpenRouter routes use an
-  // explicit vendor-qualified model id below.
-  // DeepSeek direct inference. `deepseek-v4-flash` is the stable API model
-  // name for the Flash 0731 revision, distinct from Azure's deployment id and
-  // OpenRouter's vendor-qualified route.
-  if (m === DEEPSEEK_DEFAULT_MODEL) {
+  // Direct DeepSeek uses the exact lower-case stable API id. Azure exposes
+  // a separately cased deployment id for Flash, which is handled below.
+  if (model === DEEPSEEK_DEFAULT_MODEL) {
     return process.env.DEEPSEEK_API_KEY ? "deepseek" : undefined;
+  }
+  // Azure Foundry deployment ids must win when the worker injects a direct
+  // DeepSeek failover key; otherwise env priority would send the Azure model
+  // to the direct endpoint.
+  if (AZURE_FOUNDRY_DEPLOYMENT_IDS[m]) {
+    return process.env.AZURE_OPENAI_API_KEY ? "azure" : undefined;
   }
   // Alibaba Token Plan DeepSeek revision: qwen-served, exact id.
   if (m === QWEN_TOKEN_PLAN_DEEPSEEK_MODEL) {
@@ -1226,6 +1246,30 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       return { provider: "deepseek", apiKey: process.env.DEEPSEEK_API_KEY as string,
         baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEEPSEEK_DEFAULT_BASE_URL,
         defaultModel: DEEPSEEK_DEFAULT_MODEL, wireApi: "responses" };
+    case "azure": {
+      const azureKey = process.env.AZURE_OPENAI_API_KEY;
+      if (!azureKey) break;
+      const azureConfig = parseCodexAzureConfig();
+      return {
+        provider: "azure",
+        apiKey: azureKey,
+        baseUrl:
+          process.env.AZURE_OPENAI_BASE_URL ??
+          process.env.OPENAI_BASE_URL ??
+          azureConfig.baseUrl ??
+          "https://api.openai.com/v1",
+        defaultModel:
+          preferredModel ??
+          process.env.AZURE_OPENAI_MODEL ??
+          azureConfig.model ??
+          DEFAULT_OPENAI_MODEL,
+        wireApi:
+          (process.env.AZURE_OPENAI_WIRE_API as WireApi) ??
+          azureConfig.wireApi ??
+          "chat_completions",
+        reasoningEffort: azureConfig.reasoningEffort,
+      };
+    }
     // z-ai (GLM) and kimi (Moonshot) ride the Anthropic Messages wire (routed by
     // LlmApiRuntime.isAnthropicWire — NOT by this `wireApi` field). The
     // "chat_completions" below is an inert default that is intentionally UNUSED

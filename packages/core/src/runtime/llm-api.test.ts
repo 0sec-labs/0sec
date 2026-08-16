@@ -80,6 +80,25 @@ describe("LlmApiRuntime provider detection", () => {
     expect(await rt.isAvailable()).toBe(true);
   });
 
+  it("selects Azure Foundry Pro before an injected direct DeepSeek failover", async () => {
+    // Test fixtures, literal non-secret keys.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.DEEPSEEK_API_KEY = "deepseek-fallback-key";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.AZURE_OPENAI_API_KEY = "azure-primary-key";
+    process.env.AZURE_OPENAI_BASE_URL = "https://example-resource.openai.azure.com/openai/v1";
+    process.env.AZURE_OPENAI_MODEL = "DeepSeek-V4-Pro";
+    process.env.PWNKIT_MODEL = "DeepSeek-V4-Pro";
+
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    const diagnostics = rt.getConfigurationDiagnostics();
+
+    expect(diagnostics.valid).toBe(true);
+    expect(diagnostics.provider).toBe("azure");
+    expect(rt.resolvedModel()).toBe("DeepSeek-V4-Pro");
+    expect(await rt.isAvailable()).toBe(true);
+  });
+
   it("selects Anthropic when ANTHROPIC_API_KEY is set", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test456";
     const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
