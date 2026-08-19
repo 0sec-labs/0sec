@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   runNativeAgentLoop,
   compactMessagesWithLLM,
+  dropOldestMessages,
+  isContextWindowError,
   computeBudgetWarningTurns,
   BUDGET_WARNING_SOFT,
   BUDGET_WARNING_HARD,
@@ -1172,6 +1174,43 @@ describe("compactMessagesWithLLM — preserve credential-bearing messages (pwnki
     // is gone — only the LLM's paraphrase ("admin credentials") remains.
     expect(serialized).not.toContain("mfsmpKraken72");
     expect(serialized).toContain("[COMPACTED CONVERSATION SUMMARY]");
+  });
+});
+
+describe("context overflow recovery", () => {
+  it("classifies context rejections without treating rate limits as destructive", () => {
+    expect(isContextWindowError("maximum context length exceeded")).toBe(true);
+    expect(isContextWindowError("prompt is too long for this model")).toBe(true);
+    expect(isContextWindowError("429 rate limit exceeded")).toBe(false);
+  });
+
+  it("drops only old middle messages while preserving opening task, recent tail, and alternation", () => {
+    const messages: NativeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Opening task" }] },
+    ];
+    for (let index = 1; index <= 20; index++) {
+      messages.push({
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: `turn ${index}` }],
+      });
+    }
+    const tail = messages.slice(-6);
+
+    const pruned = dropOldestMessages(messages, 6);
+
+    expect(pruned.length).toBeLessThan(messages.length);
+    expect(pruned[0]).toBe(messages[0]);
+    expect(pruned[2]).toMatchObject({
+      role: "user",
+      content: [{
+        type: "text",
+        text: expect.stringContaining("CONTEXT OVERFLOW RECOVERY"),
+      }],
+    });
+    expect(pruned.at(-1)).toBe(tail.at(-1));
+    for (let index = 1; index < pruned.length; index++) {
+      expect(pruned[index]!.role).not.toBe(pruned[index - 1]!.role);
+    }
   });
 });
 

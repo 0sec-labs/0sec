@@ -394,8 +394,39 @@ export {
   NEGATIVE_MIN,
   MAX_KNOWN_NEGATIVES,
   MAX_NEGATIVE_REASON_CHARS,
+  loadKnownNegativesFromLedger,
 } from "./stages/hunt-negatives.js";
 export type { KnownNegative, NegativeMatch } from "./stages/hunt-negatives.js";
+// Shared hunt evidence ledger: the append-only, concurrency-safe claim store a
+// hunt CAMPAIGN coordinates through — claims carry their evidence and
+// dependencies, observations stay distinguishable from assumptions, and
+// disproven claims persist so parallel and sequential workers stop re-walking
+// dead ends. Complements the end-of-run corpus (which can only describe hunts
+// that already finished); see hunt-evidence-ledger.ts's header.
+export {
+  appendHuntClaim,
+  createHuntClaim,
+  validateHuntClaimRecord,
+  readHuntLedger,
+  loadHuntLedger,
+  resolveHuntLedger,
+  disprovenHuntClaims,
+  unresolvedHuntClaims,
+  staleHuntClaims,
+  HUNT_CLAIM_SCHEMA_VERSION,
+  MAX_CLAIM_STATEMENT_CHARS,
+  MAX_EVIDENCE_PER_CLAIM,
+} from "./stages/hunt-evidence-ledger.js";
+export type {
+  EvidenceStance,
+  ClaimStatus,
+  HuntEvidence,
+  HuntClaimShape,
+  HuntClaimRecord,
+  RecordHuntClaimInput,
+  ResolvedHuntClaim,
+  ReadHuntLedgerOptions,
+} from "./stages/hunt-evidence-ledger.js";
 // Cross-family adversarial refuter (PWNKIT_HUNT_CROSS_FAMILY, default ON, issue
 // #661): force the refute pass onto a DIFFERENT model family than the finder
 // before a finding is promoted, so their errors decorrelate. Degrades to the
