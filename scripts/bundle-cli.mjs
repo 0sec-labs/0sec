@@ -145,7 +145,7 @@ const publishPkg = {
   version: rootPkg.version,
   type: "module",
   description: rootPkg.description,
-  bin: { "pwnkit-cli": "./pwnkit.js" },
+  bin: { pwnkit: "./pwnkit.js" },
   files: ["pwnkit.js", "chunks", "attacks", "dashboard"],
   keywords: rootPkg.keywords,
   author: rootPkg.author,
@@ -170,4 +170,4 @@ writeFileSync(`${outdir}/package.json`, JSON.stringify(publishPkg, null, 2) + "\
 copyFileSync("LICENSE", `${outdir}/LICENSE`);
 copyFileSync("README.md", `${outdir}/README.md`);
 
-console.log(`Bundled pwnkit-cli v${rootPkg.version} → ${outdir}/`);
+console.log(`Bundled pwnkit v${rootPkg.version} → ${outdir}/`);
