@@ -30,6 +30,7 @@ interface SyzbotMineOpts {
 interface WeightsOpts {
   target: string;
   crashSummary?: string;
+  enabledSyscalls?: string;
   fromFile?: string;
   model?: string;
   maxEntries: string;
@@ -174,6 +175,7 @@ export function registerKernelCommand(program: Command): void {
     .description("Generate an LLM-derived syzkaller choice_weights.json for a kernelCTF target")
     .requiredOption("--target <version>", "Target kernel version, e.g. 6.12.101")
     .option("--crash-summary <path>", "File with recent crash descriptions to inform weighting")
+    .option("--enabled-syscalls <path>", "JSON array file of manager-enabled syscall names to constrain the plan")
     .option("--from-file <path>", "Validate/normalize a raw model JSON plan instead of calling the API")
     .option("--model <model>", "Override model (default: env/auto-detected)")
     .option("--max-entries <n>", "Maximum weighted syscalls", "48")
@@ -182,6 +184,9 @@ export function registerKernelCommand(program: Command): void {
     .action(async (opts: WeightsOpts) => {
       try {
         const crashSummary = opts.crashSummary ? readFileSync(opts.crashSummary, "utf8") : undefined;
+        const enabledSyscalls = opts.enabledSyscalls
+          ? (JSON.parse(readFileSync(opts.enabledSyscalls, "utf8")) as string[])
+          : undefined;
         const result = opts.fromFile
           ? syzChoiceWeightsFromPlan(readFileSync(opts.fromFile, "utf8"), {
               target: opts.target,
@@ -191,6 +196,7 @@ export function registerKernelCommand(program: Command): void {
           : await generateSyzChoiceWeights({
               target: opts.target,
               crashSummary,
+              enabledSyscalls,
               model: opts.model,
               maxEntries: parsePositiveInt(opts.maxEntries, "--max-entries", 128),
               log: (message) => console.error(message),

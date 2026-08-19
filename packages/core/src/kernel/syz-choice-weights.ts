@@ -21,6 +21,11 @@ export interface SyzChoiceWeightsOptions {
   target: string;
   /** Recent crash descriptions from the fleet, to inform weighting. */
   crashSummary?: string;
+  /**
+   * Syscall names the manager config enables. When set, the prompt restricts
+   * the plan to this universe (the fork rejects weights for anything else).
+   */
+  enabledSyscalls?: string[];
   /** Model override; default is env/auto-detected. */
   model?: string;
   /** Maximum weighted syscalls in the output. */
@@ -36,6 +41,7 @@ export interface SyzChoiceWeightsFile {
     provider: string;
     plan_hash: string;
     source_hash: string;
+    model?: string;
   };
   allowed_names: string[];
   weights: Record<string, number>;
@@ -70,10 +76,13 @@ export async function generateSyzChoiceWeights(
   const userPrompt = [
     `Target kernel: linux ${opts.target} (kernelCTF latest-LTS, x86_64).`,
     `Produce at most ${maxEntries} weighted syscalls for this target.`,
+    opts.enabledSyscalls?.length
+      ? `HARD CONSTRAINT: every weighted name MUST come from this enabled-syscall universe (the manager rejects any weight outside it). Runtime-support calls (nanosleep, getpid, wait4, exit...) get weight 1 or are omitted:\n${JSON.stringify(opts.enabledSyscalls)}`
+      : "",
     opts.crashSummary
       ? `Recent fleet crashes on this target (bias toward nearby unexplored surface, away from already-triaged dead ends):\n${opts.crashSummary.slice(0, 4000)}`
       : "No fleet crash history supplied; use generic kernelCTF LTS priors.",
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
 
   const runtime = new LlmApiRuntime({ type: "api", timeout: 120_000, model: opts.model });
   opts.log?.(`weights: requesting ${opts.target} plan from runtime (model=${opts.model ?? "auto"})`);
@@ -85,7 +94,7 @@ export async function generateSyzChoiceWeights(
   const planHash = createHash("sha256").update(SYSTEM_PROMPT + "\n" + userPrompt).digest("hex");
   const sourceHash = createHash("sha256").update(opts.crashSummary ?? opts.target).digest("hex");
   return {
-    file: buildWeightsFile(parsed, opts.target, planHash, sourceHash, opts.maxEntries ?? 48, "pwnkit/anthropic"),
+    file: buildWeightsFile(parsed, opts.target, planHash, sourceHash, opts.maxEntries ?? 48, "pwnkit/llm-api", opts.model),
     rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
   };
 }
@@ -115,6 +124,7 @@ function buildWeightsFile(
   sourceHash: string,
   maxEntries: number,
   provider: string,
+  model?: string,
 ): SyzChoiceWeightsFile {
   const weights = sanitizeWeights(parsed.weights, maxEntries);
   if (Object.keys(weights).length < 4) {
@@ -124,7 +134,7 @@ function buildWeightsFile(
     version: 1,
     target: { label: "linux/amd64" },
     created_at: new Date().toISOString(),
-    provenance: { provider, plan_hash: planHash, source_hash: sourceHash },
+    provenance: { provider, plan_hash: planHash, source_hash: sourceHash, ...(model ? { model } : {}) },
     allowed_names: Object.keys(weights),
     weights,
   };
