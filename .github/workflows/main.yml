@@ -24,6 +24,8 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install libFuzzer toolchain
+        run: sudo apt-get update && sudo apt-get install --yes clang
       - name: Build CLI
         run: pnpm build
       - name: Type-check
@@ -31,7 +33,7 @@ jobs:
       - name: Smoke CLI
         run: node dist/pwnkit.js --help
       - name: Run tests
-        run: pnpm test
+        run: pnpm test:public
         env:
           PWNKIT_CHATGPT_ACCESS_TOKEN: ""
           PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: ""
