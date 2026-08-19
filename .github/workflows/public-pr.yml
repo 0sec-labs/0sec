@@ -26,10 +26,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install libFuzzer toolchain
         run: sudo apt-get update && sudo apt-get install --yes clang
-      - name: Type-check
-        run: pnpm lint
       - name: Build CLI
         run: pnpm build
+      - name: Type-check
+        run: pnpm lint
       - name: Smoke CLI
         run: node dist/pwnkit.js --help
       - name: Run tests
