@@ -65,6 +65,7 @@ const excludedPaths = [
   "AGENTS.md",
   "CLAUDE.md",
   "docs",
+  "packages/core/src/bench/corpus-v1.json",
   "release-staging",
   "research",
   "packages/benchmark/results",

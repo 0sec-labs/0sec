@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
 
 const outdir = "dist";
 
@@ -107,12 +107,11 @@ cpSync("packages/dashboard/dist", `${outdir}/dashboard`, { recursive: true });
 // `dist/chunks/`, so the JSON must sit next to the chunk too — otherwise
 // `pwnkit bench run` (the nightly regression gate) fails with
 // `ENOENT dist/chunks/corpus-v1.json`. Keep in sync with the files paths.ts reads.
-mkdirSync(`${outdir}/chunks`, { recursive: true });
 for (const benchFile of ["corpus-v1.json", "example-manifest.json"]) {
-  copyFileSync(
-    `packages/core/src/bench/${benchFile}`,
-    `${outdir}/chunks/${benchFile}`,
-  );
+  const source = `packages/core/src/bench/${benchFile}`;
+  if (existsSync(source)) {
+    copyFileSync(source, `${outdir}/chunks/${benchFile}`);
+  }
 }
 
 // Archetype/lens registries: packages/core/src/stages/appsec-catalog.ts (and the
