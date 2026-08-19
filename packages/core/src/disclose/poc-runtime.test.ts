@@ -176,7 +176,7 @@ describe("executePocSteps — shell action", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps).toHaveLength(1);
     expect(report.steps[0].kind).toBe("passed");
     expect(report.steps[0].observedExit).toBe(0);
@@ -200,7 +200,7 @@ describe("executePocSteps — shell action", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps[0].kind).toBe("failed");
     expect(report.steps[0].observedExit).toBe(1);
     expect(report.steps[0].observedStderr).toBe("boom\n");
@@ -220,7 +220,7 @@ describe("executePocSteps — shell action", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    await executePocSteps(finding, { env: { TOKEN: "deadbeef" } });
+    await executePocSteps(finding, { env: { TOKEN: "deadbeef" }, scopeAllowlist: ["example.test"] });
     expect(calls[0].opts.env.TOKEN).toBe("deadbeef");
   });
 
@@ -236,7 +236,7 @@ describe("executePocSteps — shell action", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps[0].kind).toBe("errored");
     expect(report.steps[0].error).toContain("ENOENT");
   });
@@ -253,7 +253,7 @@ describe("executePocSteps — shell action", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    const report = await executePocSteps(finding, { timeoutMs: 25 });
+    const report = await executePocSteps(finding, { timeoutMs: 25, scopeAllowlist: ["example.test"] });
     expect(report.steps[0].kind).toBe("errored");
     expect(report.steps[0].error).toMatch(/timeout/);
   });
@@ -277,7 +277,7 @@ describe("executePocSteps — http action", () => {
         expect: { type: "http-status", status: 200 },
       },
     ]);
-    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108" });
+    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108", scopeAllowlist: ["localhost"] });
     expect(report.steps[0].kind).toBe("passed");
     expect(report.steps[0].observedStatus).toBe(200);
     expect(report.steps[0].observedResponseBody).toBe("hello world");
@@ -297,7 +297,7 @@ describe("executePocSteps — http action", () => {
         expect: { type: "http-status", status: [200, 201] },
       },
     ]);
-    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108" });
+    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108", scopeAllowlist: ["localhost"] });
     expect(report.steps[0].kind).toBe("failed");
     expect(report.steps[0].observedStatus).toBe(403);
     expect(report.overallVerdict).toBe("exploit_broken");
@@ -317,7 +317,7 @@ describe("executePocSteps — http action", () => {
         expect: { type: "body-contains", text: "instance_admin" },
       },
     ]);
-    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108" });
+    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108", scopeAllowlist: ["localhost"] });
     expect(report.steps[0].kind).toBe("passed");
     expect(report.overallVerdict).toBe("exploit_still_works");
   });
@@ -327,6 +327,7 @@ describe("executePocSteps — http action", () => {
     restore = setRuntimeDeps({ fetch: fetchFn });
     const target: PocExecutionTarget = {
       baseUrl: "http://localhost:3108",
+      scopeAllowlist: ["localhost"],
       personas: {
         attacker: {
           cookies: "session=abc123",
@@ -372,6 +373,7 @@ describe("executePocSteps — http action", () => {
     ]);
     const report = await executePocSteps(finding, {
       baseUrl: "http://localhost:3108",
+      scopeAllowlist: ["localhost"],
       timeoutMs: 25,
     });
     expect(report.steps[0].kind).toBe("errored");
@@ -389,7 +391,7 @@ describe("executePocSteps — http action", () => {
         action: { type: "http", method: "GET", url: "/relative" },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps[0].kind).toBe("errored");
     expect(report.steps[0].error).toContain("baseUrl");
   });
@@ -407,7 +409,7 @@ describe("executePocSteps — note action", () => {
         action: { type: "note", text: "Open the dashboard at /admin." },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps[0].kind).toBe("skipped");
     expect(report.steps[0].durationMs).toBeGreaterThanOrEqual(0);
   });
@@ -430,7 +432,7 @@ describe("executePocSteps — docker action", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps[0].kind).toBe("passed");
     expect(calls[0].cmd).toBe("docker");
     // run --rm comes first, then the user-provided args, then the image.
@@ -473,7 +475,7 @@ describe("executePocSteps — aggregate verdicts", () => {
         expect: { type: "body-contains", text: "instance_admin" },
       },
     ]);
-    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108" });
+    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108", scopeAllowlist: ["localhost"] });
     expect(report.steps.map((s) => s.kind)).toEqual(["passed", "passed", "passed"]);
     expect(report.overallVerdict).toBe("exploit_still_works");
   });
@@ -504,7 +506,7 @@ describe("executePocSteps — aggregate verdicts", () => {
         expect: { type: "body-contains", text: "instance_admin" },
       },
     ]);
-    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108" });
+    const report = await executePocSteps(finding, { baseUrl: "http://localhost:3108", scopeAllowlist: ["localhost"] });
     expect(report.steps[0].kind).toBe("passed");
     expect(report.steps[1].kind).toBe("failed");
     expect(report.overallVerdict).toBe("exploit_broken");
@@ -538,7 +540,7 @@ describe("executePocSteps — aggregate verdicts", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps).toHaveLength(3);
     expect(report.steps[0].kind).toBe("errored");
     expect(report.steps[1].kind).toBe("skipped");
@@ -548,7 +550,7 @@ describe("executePocSteps — aggregate verdicts", () => {
 
   it("an empty step graph → could_not_run", async () => {
     const finding = findingWith([]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps).toEqual([]);
     expect(report.overallVerdict).toBe("could_not_run");
     expect(report.findingId).toBe("finding-test");
@@ -574,7 +576,7 @@ describe("executePocSteps — output capture caps", () => {
         expect: { type: "exit-zero" },
       },
     ]);
-    const report = await executePocSteps(finding, {});
+    const report = await executePocSteps(finding, { scopeAllowlist: ["example.test"] });
     expect(report.steps[0].observedStdout!.length).toBeLessThanOrEqual(
       MAX_CAPTURE_BYTES + 64,
     );
@@ -599,6 +601,7 @@ describe("executePocSteps — per-host rate limit", () => {
     const t0 = Date.now();
     await executePocSteps(finding, {
       baseUrl: "http://rate-limited.example.com",
+      scopeAllowlist: ["rate-limited.example.com"],
       rpsPerHost: 2,
     });
     const elapsed = Date.now() - t0;
@@ -634,6 +637,7 @@ describe("executePocSteps — per-host rate limit", () => {
     // dispatch by checking the call counter after the wait window.
     const promise = executePocSteps(finding, {
       baseUrl: "http://cool-off.example.com",
+      scopeAllowlist: ["cool-off.example.com"],
       rpsPerHost: 100, // big so refills aren't the gate
       timeoutMs: 250,
     });
@@ -767,6 +771,28 @@ describe("executePocSteps — scope allowlist enforcement", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("refuses every executable action without a scope allowlist", async () => {
+    const { spawnFn, calls: spawnCalls } = makeFakeSpawn({ exitCode: 0 });
+    const { fetchFn, calls: fetchCalls } = makeFakeFetch(() => new Response("ok", { status: 200 }));
+    restore = setRuntimeDeps({ spawn: spawnFn, fetch: fetchFn });
+
+    for (const action of [
+      { type: "shell" as const, cmd: "echo should-not-run" },
+      { type: "docker" as const, image: "python:3.11-slim", args: [] },
+      { type: "http" as const, method: "GET", url: "https://api.acme.com/check" },
+    ]) {
+      const report = await executePocSteps(
+        findingWith([{ id: `missing-${action.type}`, kind: "verify", summary: "scope required", action }]),
+        {},
+      );
+      expect(report.steps[0].kind).toBe("errored");
+      expect(report.steps[0].error).toContain("requires a non-empty scope allowlist");
+    }
+
+    expect(spawnCalls).toHaveLength(0);
+    expect(fetchCalls).toHaveLength(0);
+  });
+
   it("allows shell step whose only URL token is in scope", async () => {
     const { spawnFn } = makeFakeSpawn({ exitCode: 0 });
     restore = setRuntimeDeps({ spawn: spawnFn });
@@ -783,5 +809,199 @@ describe("executePocSteps — scope allowlist enforcement", () => {
       scopeAllowlist: ["*.acme.com"],
     });
     expect(report.steps[0].kind).toBe("passed");
+  });
+
+  // ── Docker allowlist (PK-PUBLIC-004) ───────────────────────────────────
+
+  it("docker: absent allowlist refuses without dispatch", async () => {
+    const { spawnFn, calls } = makeFakeSpawn({ exitCode: 0 });
+    restore = setRuntimeDeps({ spawn: spawnFn });
+    const finding = findingWith([
+      {
+        id: "docker-missing-scope",
+        kind: "setup",
+        summary: "scope required",
+        action: { type: "docker", image: "python:3.11-slim", args: [] },
+        expect: { type: "exit-zero" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {});
+    expect(report.steps[0].kind).toBe("errored");
+    expect(report.steps[0].error).toContain("requires a non-empty scope allowlist");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("docker: refuses action with an out-of-scope URL in image", async () => {
+    const { spawnFn, calls } = makeFakeSpawn({ exitCode: 0 });
+    restore = setRuntimeDeps({ spawn: spawnFn });
+    const finding = findingWith([
+      {
+        id: "docker-evil",
+        kind: "setup",
+        summary: "evil registry",
+        action: { type: "docker", image: "evil-registry.com/malicious:latest", args: [] },
+        expect: { type: "exit-zero" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {
+      scopeAllowlist: ["acme.com", "*.acme.com"],
+    });
+    expect(report.steps[0].kind).toBe("errored");
+    expect(report.steps[0].error).toContain("out-of-scope docker registry");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("docker: refuses action with an out-of-scope URL in args", async () => {
+    const { spawnFn, calls } = makeFakeSpawn({ exitCode: 0 });
+    restore = setRuntimeDeps({ spawn: spawnFn });
+    const finding = findingWith([
+      {
+        id: "docker-evil-args",
+        kind: "setup",
+        summary: "evil arg",
+        action: { type: "docker", image: "python:3.11-slim", args: ["curl", "http://evil.com/x"] },
+        expect: { type: "exit-zero" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {
+      scopeAllowlist: ["acme.com", "*.acme.com"],
+    });
+    expect(report.steps[0].kind).toBe("errored");
+    expect(report.steps[0].error).toContain("out-of-scope url in docker action");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("docker: allows action whose URL tokens are in scope", async () => {
+    const { spawnFn, calls } = makeFakeSpawn({ exitCode: 0 });
+    restore = setRuntimeDeps({ spawn: spawnFn });
+    const finding = findingWith([
+      {
+        id: "docker-safe",
+        kind: "setup",
+        summary: "safe registry",
+        action: { type: "docker", image: "registry.acme.com/app:latest", args: [] },
+        expect: { type: "exit-zero" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {
+      scopeAllowlist: ["*.acme.com"],
+    });
+    expect(report.steps[0].kind).toBe("passed");
+    expect(calls).toHaveLength(1);
+  });
+
+  // ── HTTP redirect validation (PK-PUBLIC-005) ────────────────────────────
+
+  it("redirect: absolute off-target URL is rejected", async () => {
+    let callIndex = 0;
+    const { fetchFn, calls } = makeFakeFetch(() => {
+      callIndex++;
+      if (callIndex === 1) {
+        return new Response("", { status: 302, headers: { location: "http://evil.com/exfil" } });
+      }
+      return new Response("ok", { status: 200 });
+    });
+    restore = setRuntimeDeps({ fetch: fetchFn });
+
+    const finding = findingWith([
+      {
+        id: "redirect-evil",
+        kind: "exploit",
+        summary: "redirect",
+        action: { type: "http", method: "GET", url: "http://api.acme.com/redirect" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {
+      scopeAllowlist: ["*.acme.com"],
+      rpsPerHost: 100,
+    });
+    expect(report.steps[0].kind).toBe("errored");
+    expect(report.steps[0].error).toContain("redirect to out-of-scope host");
+    // Only the first fetch (the redirect response) should have been made.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("redirect: cross-scope redirect is rejected (in-scope → out-of-scope)", async () => {
+    let callIndex = 0;
+    const { fetchFn, calls } = makeFakeFetch(() => {
+      callIndex++;
+      if (callIndex === 1) {
+        return new Response("", { status: 301, headers: { location: "http://other.acme.com/evil" } });
+      }
+      return new Response("ok", { status: 200 });
+    });
+    restore = setRuntimeDeps({ fetch: fetchFn });
+
+    const finding = findingWith([
+      {
+        id: "cross-scope",
+        kind: "exploit",
+        summary: "cross",
+        action: { type: "http", method: "GET", url: "http://api.acme.com/step" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {
+      scopeAllowlist: ["api.acme.com"],
+      rpsPerHost: 100,
+    });
+    expect(report.steps[0].kind).toBe("errored");
+    expect(report.steps[0].error).toContain("redirect to out-of-scope host");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("redirect: same-scope redirect is allowed and evaluated", async () => {
+    let callIndex = 0;
+    const { fetchFn, calls } = makeFakeFetch(() => {
+      callIndex++;
+      if (callIndex === 1) {
+        return new Response("", { status: 302, headers: { location: "/final" } });
+      }
+      return new Response("inside scope", { status: 200 });
+    });
+    restore = setRuntimeDeps({ fetch: fetchFn });
+
+    const finding = findingWith([
+      {
+        id: "same-scope",
+        kind: "exploit",
+        summary: "follow redirect",
+        action: { type: "http", method: "GET", url: "http://api.acme.com/start" },
+        expect: { type: "body-contains", text: "inside scope" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {
+      baseUrl: "http://api.acme.com",
+      scopeAllowlist: ["api.acme.com"],
+      rpsPerHost: 100,
+    });
+    expect(report.steps[0].kind).toBe("passed");
+    expect(report.steps[0].observedResponseBody).toBe("inside scope");
+    // Two fetches: initial redirect response + the followed location.
+    expect(calls).toHaveLength(2);
+  });
+
+  it("redirect: loop exceeds MAX_REDIRECT_HOPS and errors", async () => {
+    const { fetchFn, calls } = makeFakeFetch(() =>
+      new Response("", { status: 302, headers: { location: "/loop" } }),
+    );
+    restore = setRuntimeDeps({ fetch: fetchFn });
+
+    const finding = findingWith([
+      {
+        id: "redirect-loop",
+        kind: "exploit",
+        summary: "loop",
+        action: { type: "http", method: "GET", url: "http://api.acme.com/start" },
+      },
+    ]);
+    const report = await executePocSteps(finding, {
+      baseUrl: "http://api.acme.com",
+      scopeAllowlist: ["api.acme.com"],
+      rpsPerHost: 100,
+    });
+    expect(report.steps[0].kind).toBe("errored");
+    expect(report.steps[0].error).toContain("too many redirects");
+    // 1 initial + 5 redirect hops = 6 fetches
+    expect(calls).toHaveLength(6);
   });
 });
