@@ -5,6 +5,7 @@ import type { AttributionConfig } from "../scope/attribution.js";
 import type { EngagementPosture } from "../scope/engagement-profile.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import type { LootLedger } from "./loot.js";
+import type { TaskLedger } from "./task-ledger.js";
 import type { OastCollaborator } from "../oast/types.js";
 import type { SessionEngine } from "./session.js";
 import type { WafDetector } from "../scope/waf-detect.js";
@@ -257,6 +258,24 @@ export interface ToolContext {
    * undefined otherwise so the default scan path is unchanged.
    */
   loot?: LootLedger;
+  /**
+   * Typed TODO / plan ledger. When set, the `plan` tool reads and mutates it,
+   * and the agent loop re-injects a compact plan block re-rendered from this
+   * structured state each turn (so the plan survives context compaction). The
+   * ledger's open tasks are also the anchor set for task-drift detection
+   * (`agent/drift.ts`). Created only when `features.agentPlan` is on;
+   * undefined otherwise, in which case `plan` returns a graceful
+   * "not enabled" result rather than an error.
+   */
+  plan?: TaskLedger;
+  /**
+   * The agent turn currently executing. Kept fresh by the loop so tools can
+   * stamp turn numbers on state they create (the plan ledger records the turn
+   * a task was added and last touched, which is what makes a stale task
+   * visible). Undefined outside the native loop, in which case turn stamps
+   * fall back to 0.
+   */
+  currentTurn?: number;
   /**
    * Hosted OAST interaction collaborator (pwnkit#659). When set, the
    * `oast_register` / `oast_poll` tools mint unique interaction handles and

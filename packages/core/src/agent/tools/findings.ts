@@ -223,6 +223,41 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
     },
   },
 
+  // Typed TODO / plan ledger. One tool with an `action` discriminator rather
+  // than five separate tools — five schemas in every request for one concept
+  // is a bad trade, and a small closed enum is something models get right.
+  // Arguments are Zod-validated (`validatePlanArgs`) and a rejection comes back
+  // as an is_error result so the model self-corrects, per agent/AGENTS.md §1.
+  plan: {
+    name: "plan",
+    description:
+      "Maintain your TODO list for this target. Your plan is re-shown to you every turn, so it is the one piece of state guaranteed to survive context compaction — keep it current and it will keep you on track across a long run. Use action='add' to record a task you intend to do (pass several at once by putting one task per line in `title`), action='start' to mark the task you are working on RIGHT NOW (only one task can be active; starting another sends the previous one back to pending), action='complete' when it is genuinely finished, action='drop' when you have ruled it out, action='note' to record what you learned on a task without closing it, and action='list' to see everything. Add and start a task BEFORE you begin work that is not already on the plan.",
+    parameters: {
+      action: {
+        type: "string",
+        description:
+          "What to do: add a task, start (make active) an existing task, complete it, drop it, note progress on it, or list the plan.",
+        enum: ["add", "start", "complete", "drop", "note", "list"],
+      },
+      title: {
+        type: "string",
+        description:
+          "Required for action='add'. One-line statement of the task. To seed several tasks in a single call, put one task per line.",
+      },
+      id: {
+        type: "string",
+        description:
+          "Required for action='start'|'complete'|'drop'|'note'. The task id, e.g. 'task-2'.",
+      },
+      detail: {
+        type: "string",
+        description:
+          "Optional for add/complete/drop; required for action='note'. The concrete approach, endpoint, payload, or what you learned.",
+      },
+    },
+    required: ["action"],
+  },
+
   update_finding: {
     name: "update_finding",
     description:
@@ -257,6 +292,7 @@ export const findingsDispatch: Record<string, string> = {
   save_finding: "saveFinding",
   query_findings: "queryFindings",
   use_loot: "useLoot",
+  plan: "planTool",
   update_finding: "updateFinding",
   done: "markDone",
 };

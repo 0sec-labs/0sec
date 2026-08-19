@@ -19,6 +19,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   save_finding: "saveFinding",
   query_findings: "queryFindings",
   use_loot: "useLoot",
+  plan: "planTool",
   update_finding: "updateFinding",
   read_file: "readFile",
   apply_patch: "applyPatch",

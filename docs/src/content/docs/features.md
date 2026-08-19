@@ -109,6 +109,8 @@ Supported providers: **ChatGPT Codex** subscription auth, **OpenRouter**
 | Playwright browser | auto in `web` mode | Real-browser verification for XSS, cracked XBEN-011 & XBEN-018 |
 | Web search | `PWNKIT_FEATURE_WEB_SEARCH=1` | Lets the agent look up CVE details and technique references |
 | JIT skills | `PWNKIT_FEATURE_JIT_SKILLS=1` | Tool-callable methodology prompts via `list_skills` and `load_skill` |
+| Agent plan | `PWNKIT_FEATURE_AGENT_PLAN=1` | Typed TODO ledger the agent maintains itself; survives context compaction |
+| Drift detection | `PWNKIT_FEATURE_DRIFT_DETECTION=1` | Flags divergence from the assigned objective (not repetition — see the loop detector) |
 
 ## Output formats
 

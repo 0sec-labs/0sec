@@ -543,6 +543,59 @@ export const features = {
   },
 
   /**
+   * Typed TODO / plan ledger (`packages/core/src/agent/task-ledger.ts`).
+   *
+   * When ON, the agent gets a `plan` tool that maintains a typed, validated
+   * task list (add / start / complete / drop / note / list), and the loop
+   * re-injects a compact plan block re-rendered from that structured state —
+   * so the plan survives `compactMessagesWithLLM` eating the message that
+   * carried it. Prior art: Tencent Xuanwu's Atuin moved 68.7% → 84.0% on
+   * CyberGym holding the model fixed, and agent-maintained TODO lists are a
+   * named component of that harness design.
+   *
+   * Default ON, on the same reasoning as `lootLedger` above: it is additive
+   * (one tool schema plus a size-capped block), it is structured state
+   * re-rendered per turn rather than a new search or reasoning layer, and the
+   * failure mode of an unused tool is a few hundred wasted schema tokens
+   * rather than wrong behavior. Note for whoever publishes benchmark numbers
+   * next: this DOES change the default tool list, so re-baseline before
+   * quoting a figure across this change. Disable via PWNKIT_FEATURE_AGENT_PLAN=0
+   * or `--features no-agent-plan` for ablation. Getter so the CLI `--features`
+   * flag (which sets the env var AFTER this module is imported) is honored at
+   * tool-dispatch time.
+   */
+  get agentPlan(): boolean {
+    return env("PWNKIT_FEATURE_AGENT_PLAN", false);
+  },
+
+  /**
+   * Task-drift detection (`packages/core/src/agent/drift.ts`).
+   *
+   * When ON, the loop tracks lexical "anchor contact" between each turn's
+   * activity and the objective + open plan tasks, and injects a re-anchoring
+   * message when contact has been absent for several consecutive turns. It is
+   * a pure function of the trajectory — no LLM call, no network, no per-turn
+   * cost. Complements `loopDetection`, which catches an agent repeating itself;
+   * drift is the opposite shape (novel activity every turn, none of it on-task)
+   * and is invisible to the loop detector.
+   *
+   * Default OFF, unlike `agentPlan` above, and the asymmetry is deliberate: the
+   * plan tool is a capability the model chooses to use, whereas this INJECTS
+   * unsolicited steering into a running agent based on a lexical heuristic
+   * whose false-positive rate has not been measured. The measurement needs
+   * labelled trajectories (replay stored benchmark runs, human-mark which fires
+   * were genuine derails) and that corpus does not exist yet — see the honest
+   * limitations section in the module doc, particularly that a legitimate pivot
+   * to a newly-discovered lead is lexically indistinguishable from a derail.
+   * Repo convention is explicit that behavior-steering features stay opt-in
+   * until A/B'd, and this is squarely one. Enable via
+   * PWNKIT_FEATURE_DRIFT_DETECTION=1 or `--features drift-detection`.
+   */
+  get driftDetection(): boolean {
+    return env("PWNKIT_FEATURE_DRIFT_DETECTION", false);
+  },
+
+  /**
    * OAST out-of-band interaction collaborator + oracle (#659).
    *
    * When ON, the attack/verify agents get `oast_register` / `oast_poll` to
