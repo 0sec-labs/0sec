@@ -9,38 +9,42 @@ All commands are available via `pwnkit <command>`. You can also skip the subcomm
 
 Probe AI/LLM apps, web apps, APIs, or MCP servers for vulnerabilities.
 
+Live network targets require `--scope <file>`. The CLI refuses an unscoped live
+target before making a request. Local source review and package audit commands
+do not need a network-target scope.
+
 ```bash
 # Scan an LLM API
-pwnkit scan --target https://api.example.com/chat
+pwnkit scan --target https://api.example.com/chat --scope ./scope.json
 
 # Scan a traditional web app
-pwnkit scan --target https://example.com --mode web
+pwnkit scan --target https://example.com --mode web --scope ./scope.json
 
 # Deep scan with Claude Code CLI
-pwnkit scan --target https://api.example.com/chat --depth deep --runtime claude
+pwnkit scan --target https://api.example.com/chat --scope ./scope.json --depth deep --runtime claude
 
 # Authenticated scan using a bearer token
-pwnkit scan --target https://api.example.com \
+pwnkit scan --target https://api.example.com --scope ./scope.json \
   --auth '{"type":"bearer","token":"eyJhbGciOi..."}'
 
 # Scan an API with an OpenAPI spec pre-loaded
-pwnkit scan --target https://api.example.com --api-spec ./openapi.yaml
+pwnkit scan --target https://api.example.com --scope ./scope.json --api-spec ./openapi.yaml
 
 # Run 5 attack strategies in parallel — first to succeed wins
-pwnkit scan --target https://example.com --mode web --race
+pwnkit scan --target https://example.com --mode web --scope ./scope.json --race
 
 # Evidence-Gated Attack Tree Search (EGATS)
-pwnkit scan --target https://example.com --mode web --egats
+pwnkit scan --target https://example.com --mode web --scope ./scope.json --egats
 
 # Abort cleanly if the scan exceeds a USD ceiling
-pwnkit scan --target https://example.com --mode web --cost-ceiling 5
+pwnkit scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
 
 # Export findings to GitHub Issues
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --export github:myorg/myrepo
 
 # Generate an HTML report (auto-opens in browser)
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --format html
 ```
 
@@ -49,7 +53,7 @@ pwnkit scan --target https://example.com --mode web \
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--target <url>` | The URL or `mcp://` endpoint to scan | (required) |
-| `--mode <mode>` | Scan mode: `probe`, `deep`, `mcp`, `web` | auto |
+| `--scope <file>` | JSON engagement scope for a live network target | (required for live targets) |
 | `--depth <depth>` | Scan depth: `quick`, `default`, `deep` | `default` |
 | `--runtime <rt>` | Runtime: `auto`, `api`, `claude`, `codex`, `gemini` | `auto` |
 | `--format <fmt>` | Output format: `terminal`, `json`, `md`, `html`, `sarif`, `pdf` | `terminal` |
@@ -93,7 +97,7 @@ The `--auth` flag accepts either an inline JSON string or a path to a JSON file.
 Point `--api-spec` at an OpenAPI 3.x or Swagger 2.0 document (JSON or YAML). pwnkit will parse the spec, extract all endpoints with their parameter schemas and auth requirements, and seed the recon phase with that knowledge so the agent starts pentesting with full endpoint awareness instead of having to crawl.
 
 ```bash
-pwnkit scan --target https://api.example.com --api-spec ./openapi.yaml
+pwnkit scan --target https://api.example.com --scope ./scope.json --api-spec ./openapi.yaml
 ```
 
 ### `--race` — best-of-N strategy racing
@@ -109,7 +113,7 @@ EGATS performs a beam search over a tree of attack hypotheses, pruning branches 
 Set a hard per-scan USD ceiling:
 
 ```bash
-pwnkit scan --target https://example.com --mode web --cost-ceiling 5
+pwnkit scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
 ```
 
 If cumulative estimated spend exceeds the ceiling, pwnkit:
