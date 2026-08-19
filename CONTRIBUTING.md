@@ -1,56 +1,56 @@
-# Development Guide
+# Contributing to pwnkit
 
-> **Internal use only.** This repository is proprietary software of 0sec Labs.
+Thanks for helping improve pwnkit.
+
+## Before you start
+
+- Work from a branch and keep each pull request focused.
+- Use only synthetic fixtures or targets you own or are explicitly authorized to
+  test.
+- Do not submit customer data, credentials, raw target traces, embargoed
+  vulnerabilities, or undisclosed exploit material.
+- Discuss broad changes in an issue before writing a large patch.
 
 ## Setup
 
 ```bash
-# Internal — this repo is private and closed-source.
-cd pwnkit
-pnpm install
-pnpm build        # builds all packages in dependency order + bundles CLI
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
 ```
 
-The CLI binary lands in `dist/pwnkit.js`. Test it with:
+The bundled CLI is `dist/pwnkit.js`:
 
 ```bash
 node dist/pwnkit.js --version
 node dist/pwnkit.js doctor
 ```
 
-## Running Tests
+## Checks
+
+Run the checks that cover your change before opening a pull request:
 
 ```bash
-# Start test targets
-pnpm vulnerable &
-pnpm safe &
+pnpm lint
+pnpm build
+pnpm test
+```
 
-# Run tests
+For test-target work, start the local fixtures in separate terminals:
+
+```bash
+pnpm vulnerable
+pnpm safe
 pnpm --filter @pwnkit/test-targets test
 ```
 
-## Adding Attack Templates
+## Attack templates
 
-Templates live in `packages/templates/attacks/`. Create a new YAML file:
+Templates live in `packages/templates/attacks/`. Add only authorized,
+non-sensitive examples. A template needs a stable id, category, severity,
+description, and payload metadata.
 
-```yaml
-id: your-template-id
-name: Your Template Name
-category: prompt-injection
-severity: high
-description: What this tests for
-owaspLlmTop10: "LLM01"
-depth: [quick, default, deep]
-payloads:
-  - id: payload-01
-    prompt: "Your attack prompt here"
-    description: Short description of this payload
-```
+## Pull requests
 
-## Submitting Changes
-
-1. Create a branch (`git checkout -b feat/my-feature`)
-2. Commit your changes
-3. Push and open a PR
-
-All PRs need to pass CI checks before merging.
+Describe the behavior changed, the tests run, and any scope or safety impact.
+By submitting a contribution, you agree that it is licensed under Apache-2.0.

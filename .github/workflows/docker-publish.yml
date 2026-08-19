@@ -151,7 +151,7 @@ jobs:
             org.opencontainers.image.title=pwnkit
             org.opencontainers.image.description=AI-powered agentic security scanner
             org.opencontainers.image.source=https://github.com/0sec-labs/pwnkit
-            org.opencontainers.image.licenses=LicenseRef-Proprietary
+            org.opencontainers.image.licenses=Apache-2.0
 
       - name: Build and push
         id: build

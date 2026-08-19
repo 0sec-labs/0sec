@@ -182,5 +182,3 @@ and `cost.ts` model rate table + prefix stripping (#257).
 - **docs(readme): drop stale v0.9.0 'npm shim' heads-up; clarify binary
   names** (#262)
 - **feat(bench): per-model cost aggregation in `consolidate-xbow` output** (#258)
-
-[0.11.0]: # <!-- archived: github.com/0sec-labs/pwnkit repo is private -->

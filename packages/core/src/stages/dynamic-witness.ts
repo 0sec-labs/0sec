@@ -940,8 +940,8 @@ export function pruneRotationState(state: RotationState, now = Date.now()): Rota
 }
 
 /** Write the (pruned) rotation state, creating parent dirs. */
-export function saveRotationState(path: string, state: RotationState): void {
-  const pruned = pruneRotationState(state);
+export function saveRotationState(path: string, state: RotationState, now = Date.now()): void {
+  const pruned = pruneRotationState(state, now);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(pruned, null, 2) + "\n", "utf8");
 }
@@ -1064,7 +1064,7 @@ export async function witnessDualViewContexts(input: WitnessDualViewInput): Prom
         entryB: r.candidate.entryB,
       };
     }
-    saveRotationState(input.rotationStatePath, rotationState);
+    saveRotationState(input.rotationStatePath, rotationState, now);
   }
 
   return {
