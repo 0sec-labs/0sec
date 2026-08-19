@@ -1,0 +1,385 @@
+% pwnkit: arXiv submission draft
+% Compile: pdflatex pwnkit-submission.tex && pdflatex pwnkit-submission.tex
+
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[numbers]{natbib}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+\title{pwnkit: Methodology-Aware Evaluation and Cost-Aware Triage for Autonomous Pentesting Agents}
+
+\author{
+  PwnKit Labs \\
+  \texttt{github.com/0sec-labs/pwnkit}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Autonomous pentesting agents are frequently summarized by a single benchmark
+headline, although reported performance is sensitive to retry protocol,
+benchmark substrate, model/runtime, turn budget, and evidence policy. We
+present pwnkit, an open-source shell-first pentesting framework with layered
+triage and blind verification, and pair it with a methodology-aware reporting
+protocol that separates retained artifact-backed evidence from historical mixed
+publication lines. In the current public ledger snapshot (2026-04-10), pwnkit
+reports a retained artifact-backed XBOW aggregate of 99/104. A 21-run triage
+ablation (2026-04-11) shows mode-dependent behavior: full-moat triage is a
+precision/recall tradeoff in white-box slices, a strict efficiency improvement
+in black-box slices, and weakly additive on npm-bench over default scaffolding.
+The primary contribution is a combined systems-and-methodology perspective in
+which evidence lineage and protocol disclosure are treated as first-class
+engineering surfaces for non-deterministic security agents.
+\end{abstract}
+
+\section{Introduction}
+
+Single benchmark percentages for autonomous security agents hide variance and
+protocol sensitivity. In practice, score changes can come from retry strategy,
+benchmark fork, or evidence accounting policy rather than meaningful capability
+changes. We frame pwnkit as both:
+
+\begin{itemize}[leftmargin=*]
+  \item a \textbf{systems artifact}: shell-first exploitation, layered triage,
+  blind verification, and multi-target operation;
+  \item a \textbf{methodology artifact}: protocol-explicit benchmark reporting,
+  retained-evidence lineage, and slice-aware interpretation.
+\end{itemize}
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item A reproducible benchmarking protocol for non-deterministic pentesting
+  agents (repeat framing, uncertainty, cost ceilings).
+  \item A machine-auditable ledger model separating retained artifact-backed and
+  historical mixed publication lines.
+  \item A productionized multi-layer triage stack integrated in a live scanner
+  pipeline, with per-layer verdict telemetry.
+  \item A mode-dependent ablation narrative reporting both positive and negative
+  outcomes, avoiding single-line ``moat works'' claims.
+  \item A learned-routing foundation for per-finding policy selection,
+  reported here as an offline modeling snapshot rather than a deployment
+  claim: the 99/104 aggregate in Table~\ref{tab:ledger} is produced
+  without the router active.
+\end{enumerate}
+
+\section{System Overview}
+
+The pipeline is:
+\[
+\texttt{Plan} \rightarrow \texttt{Discover} \rightarrow \texttt{Attack} \rightarrow \texttt{Triage} \rightarrow \texttt{Verify} \rightarrow \texttt{Report}
+\]
+
+For web targets, pwnkit uses shell-first execution (\texttt{bash} as primary
+tool), with structured helpers optional. Findings then pass through layered
+triage and verification before final reporting.
+
+Core implementation paths include scanner orchestration, unified pipeline
+execution, and triage modules in the core package.
+
+\section{Benchmark Methodology}
+
+We distinguish three reporting regimes:
+\begin{itemize}
+  \item single-shot,
+  \item best-of-K,
+  \item repeat-N per-attempt success rate with 95\% Wilson CI.
+\end{itemize}
+
+The benchmark ledger tracks:
+\begin{itemize}
+  \item retained artifact-backed totals (machine-reconstructible),
+  \item historical mixed local+CI publication totals (legacy publication line).
+\end{itemize}
+
+This separation is implemented in
+\texttt{packages/benchmark/results/benchmark-ledger.json} and reflected in the
+docs benchmark surface.
+
+\subsection{Current Ledger Snapshot (2026-04-10)}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Surface & Black-box & White-box & Aggregate \\
+\midrule
+Retained artifact-backed & 74/104 & 79/104 & 99/104 \\
+Historical mixed publication & 90/104 & 5 (white-box-only) & 95/104 \\
+\bottomrule
+\end{tabular}
+\caption{Current ledger surfaces are intentionally separated and should not be merged.}
+\label{tab:ledger}
+\end{table}
+
+\section{Triage Stack and Dynamic Routing}
+
+The triage stack combines deterministic filters, feature extraction,
+reachability and oracle checks, PoV/structured verify layers, memory-based
+suppression, and optional debate/tree-search layers. Per-layer telemetry is
+attached to findings, creating supervision data for learned per-finding routing.
+
+Dynamic routing motivation is empirical: no static profile dominates across
+white-box, black-box, and package slices.
+
+\subsection{Ablation Snapshot (2026-04-11)}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Profile & Flags & Findings & Cost (USD) & USD/flag \\
+\midrule
+\multicolumn{5}{l}{\textit{XBOW white-box (limit=50)}} \\
+none & 43/50 & 67 & 14.34 & 0.33 \\
+no-triage & 44/50 & 67 & 17.17 & 0.39 \\
+moat-only & 41/50 & 25 & 26.89 & 0.66 \\
+moat & 41/50 & 25 & 21.82 & 0.53 \\
+\midrule
+\multicolumn{5}{l}{\textit{XBOW black-box (limit=25)}} \\
+none & 18/25 & 27 & 13.72 & 0.76 \\
+no-triage & 19/25 & 34 & 10.37 & 0.55 \\
+moat-only & 18/25 & 13 & 11.22 & 0.62 \\
+moat & 19/25 & 14 & 10.04 & 0.53 \\
+\bottomrule
+\end{tabular}
+\caption{Ablation snapshot showing mode-dependent moat behavior.}
+\label{tab:ablation-xbow}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Profile & F1 & TPR & FPR & Safe correct \\
+\midrule
+none & 0.973 & 1.00 & 0.11 & 24/27 \\
+no-triage & 0.964 & 1.00 & 0.15 & 23/27 \\
+moat-only & 0.964 & 1.00 & 0.15 & 23/27 \\
+moat & 0.956 & 1.00 & 0.19 & 22/27 \\
+default & 0.956 & 1.00 & 0.19 & 22/27 \\
+\bottomrule
+\end{tabular}
+\caption{npm-bench profile outcomes (81 packages) from the same ablation set.}
+\label{tab:ablation-npm}
+\end{table}
+
+\section{Empirical Highlights}
+
+Current repository-reported posture includes:
+\begin{itemize}
+  \item retained artifact-backed XBOW aggregate at 99/104,
+  \item separate black-box and white-box lines,
+  \item a 21-run triage ablation matrix with mode-dependent outcomes.
+\end{itemize}
+
+Key methodological outcome: no static profile dominates all slices, so policy
+selection should be context-aware.
+
+\subsection{Dataset and router artifacts}
+
+Current intermediate artifacts include:
+
+\begin{itemize}
+  \item triage dataset v1 stats: 969 samples,
+  \item router v2 metadata: 1514 samples, 55 features, 5-fold CV mean
+  F1\,$\approx$\,0.962.
+\end{itemize}
+
+These are treated as offline modeling artifacts, not final deployment claims.
+The 99/104 retained artifact-backed aggregate reported in Table~\ref{tab:ledger}
+is produced by the static-profile triage stack described above, with the
+router v2 inactive at runtime.
+
+\section{Evaluation Details and Interpretation}
+
+This draft intentionally reports per-slice outcomes rather than collapsing all
+settings into one global number.
+
+\subsection{White-box versus black-box behavior}
+
+The ablation in Table~\ref{tab:ablation-xbow} shows that the same triage
+profile can have different utility depending on evidence availability. In
+white-box mode, source access increases the attack agent's direct exploit signal
+and some expensive triage layers can over-prune, producing a precision/recall
+tradeoff. In black-box mode, where candidate findings are noisier, additional
+verification layers provide clearer net benefit on findings efficiency and
+USD/flag.
+
+\subsection{Package slice caveat}
+
+Table~\ref{tab:ablation-npm} shows behavior distinct from XBOW slices. The
+current interpretation is that profile effects are entangled with scan
+scaffolding and coarse package-level labels. This motivates treating package
+evaluation as a separate operating regime rather than extrapolating web-target
+behavior.
+
+\subsection{Layer-level failure mode}
+
+Single-layer isolation runs reported in the project docs identify one recurring
+negative outlier (`egats`) on hard slices, while other layers are neutral or
+positive in that context. This supports a policy of feature-gated layer rollout
+and per-layer telemetry before broad default enablement.
+
+\section{Discussion}
+
+\subsection{Why methodology is part of the contribution}
+
+For stochastic, tool-using security agents, benchmarking is not just
+post-processing. Protocol choices alter reported results materially, so
+measurement design and evidence accounting are engineering surfaces that deserve
+explicit implementation and review.
+
+\subsection{Operational policy implication}
+
+The measured outcome is not "enable all layers always." A practical policy is:
+
+\begin{enumerate}[leftmargin=*]
+  \item keep deterministic/cheap layers broadly enabled,
+  \item gate expensive layers by context,
+  \item track per-layer impact over time,
+  \item promote only slice-robust defaults.
+\end{enumerate}
+
+\subsection{From static profiles to routing}
+
+The router path in current artifacts should be understood as an optimization
+framework rather than a completed deployment claim. The offline metrics are
+promising, but production value should be established by online A/B outcomes on
+explicitly frozen benchmark protocols.
+
+\section{Related Work}
+
+Current pwnkit docs position this work adjacent to three threads:
+
+\begin{itemize}
+  \item autonomous pentesting systems with differing orchestration styles
+  (single-agent, role-based, and multi-agent workflows),
+  \item triage pipelines combining deterministic checks and model-based
+  judgments,
+  \item hybrid feature+model signals for vulnerability classification and
+  filtering.
+\end{itemize}
+
+The comparative caveat is central: cross-project benchmark numbers are only
+loosely comparable unless protocol and substrate are aligned.
+
+Representative systems in the current pwnkit docs include BoxPwnr, Shannon,
+KinoSec, Cyber-AutoAgent, deadend-cli, and
+MAPTA\citep{boxpwnr,shannon,kinosec,cyberautoagent,deadend,mapta}.
+For FP-triage architecture context, pwnkit docs reference Endor Labs and
+Semgrep Assistant disclosures\citep{endor,semgrep}. For hybrid feature+model
+signals, pwnkit docs use VulnBERT-style framing as design inspiration rather
+than a direct task-equivalent claim\citep{vulnbert}.
+
+Table~\ref{tab:competitors} collects the self-reported XBOW aggregates for
+these systems. The numbers come from each project's own public disclosures,
+not from a common evaluation run on matched hardware, model, or harness; they
+are included for rough positioning, not as a leaderboard claim.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+System & Aggregate & Model / Approach & Notes \\
+\midrule
+BoxPwnr\citep{boxpwnr}             & 97.1\% (101/104) & Best-of-N, 10 configs  & Context compaction, loop detection \\
+Shannon\citep{shannon}              & 96.2\% (100/104) & White-box, multi-agent & Source-to-sink taint \\
+\textbf{pwnkit (this work)}         & \textbf{95.2\% (99/104)} & Shell-first, gpt-5.4   & Retained artifact-backed; see Table~\ref{tab:ledger} \\
+KinoSec\citep{kinosec}              & 92.3\% (96/104)  & Black-box HTTP only    & 50-turn hard cap \\
+Cyber-AutoAgent\citep{cyberautoagent} & 84.6\% (88/104)  & Meta-agent             & Self-rewriting prompts \\
+deadend-cli\citep{deadend}          & 77.6\% ($\sim$76/98) & Single-agent CLI     & ADaPT decomposition \\
+MAPTA\citep{mapta}                  & 76.9\% (80/104)  & 3-role multi-agent     & Evidence-gated branching \\
+\bottomrule
+\end{tabular}
+\caption{Self-reported XBOW aggregates across representative autonomous pentesting systems. Cross-project numbers are protocol-sensitive (differing model, harness, retry policy, challenge subset) and should be interpreted as rough positioning rather than a matched-conditions leaderboard.}
+\label{tab:competitors}
+\end{table}
+
+\section{Limitations and Threats to Validity}
+
+We highlight benchmark dependence, run-to-run variance, slice sensitivity,
+documentation and implementation drift risk, and cost-latency tradeoffs in deeper
+triage pipelines.
+
+Additional caveats:
+\begin{itemize}
+  \item package-level supervision can be coarse for per-finding labels;
+  \item leaderboard comparisons across projects are protocol-sensitive and
+  should be interpreted with caution;
+  \item rapidly evolving repos can create temporary doc/code mismatch.
+\end{itemize}
+
+\section{Claim Traceability Checklist}
+
+Before submission freeze, each numerical claim should be tied to:
+
+\begin{enumerate}[leftmargin=*]
+  \item an as-of date,
+  \item an artifact path,
+  \item protocol context (retry regime, budget, model/runtime),
+  \item whether the claim is retained artifact-backed or historical mixed.
+\end{enumerate}
+
+The companion files \texttt{docs/paper/evaluation.md} and
+\texttt{docs/paper/related\_work.md} exist to keep this audit step lightweight.
+
+\section{Reproducibility Notes}
+
+Canonical evidence files and runners are in:
+\begin{itemize}
+  \item \texttt{docs/src/content/docs/methodology.md}
+  \item \texttt{docs/src/content/docs/benchmark.md}
+  \item \texttt{docs/src/content/docs/research/2026-04-11-ablation.md}
+  \item \texttt{docs/src/content/docs/research/fp-reduction-moat.md}
+  \item \texttt{packages/benchmark/results/benchmark-ledger.json}
+  \item \texttt{packages/benchmark/results/triage-dataset-v1.stats.json}
+  \item \texttt{packages/benchmark/results/triage-router-v2-meta.json}
+  \item \texttt{packages/benchmark/src/xbow-runner.ts}
+  \item \texttt{packages/benchmark/src/wilson.ts}
+\end{itemize}
+
+Companion drafting notes:
+
+\begin{itemize}
+  \item \texttt{docs/paper/pwnkit.md}
+  \item \texttt{docs/paper/evaluation.md}
+  \item \texttt{docs/paper/related\_work.md}
+\end{itemize}
+
+\section{Conclusion}
+
+For autonomous pentesting agents, measurement protocol quality is part of the
+core contribution. pwnkit's current evidence suggests that transparent protocol
+disclosure, retained-evidence lineage, and mode-aware triage policy are more
+reliable than single headline percentages.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}

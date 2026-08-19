@@ -1,0 +1,54 @@
+---
+title: pwnkit
+description: Let autonomous AI agents hack you before attackers do.
+template: splash
+hero:
+  tagline: Fully autonomous agentic pentesting framework. Attacks AI/LLM apps, web apps, package ecosystems, and source code. Blind PoC verification to minimize false positives.
+  actions:
+    - text: Get Started
+      link: /getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/0sec-labs/pwnkit
+      variant: minimal
+      icon: external
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <Card title="One command, zero config" icon="rocket">
+    Run `pwnkit scan --target <url>` and get a verified security report in minutes.
+  </Card>
+  <Card title="Blind verification" icon="approve-check-circle">
+    Every finding is independently re-exploited by a second agent that never sees the original reasoning. False positives are killed automatically.
+  </Card>
+  <Card title="Bring your own AI" icon="setting">
+    Use your API key (OpenRouter, Anthropic, Azure OpenAI, OpenAI) or spawn Claude Code, Codex, or Gemini CLI with your existing subscription.
+  </Card>
+  <Card title="Full-spectrum pentesting" icon="list-format">
+    AI/LLM apps, web applications, package ecosystems, and source code repositories. Not just AI security -- pwnkit covers traditional web vulnerabilities too. **Cybench: 36/40 = 90.0%** on the first scored full 40-challenge run (single-config gpt-5.4, single-shot). XBOW retained-artifact aggregate: 103/104 = 99.0% (only XBEN-030 unsolved in any mode), with the load-bearing **gpt-5.4 cohort at 93/95 = 97.9% black-box** at **$5.20/flag** (~$0.48/run). Historical mixed publication line documented separately on the benchmark page.
+  </Card>
+</CardGrid>
+
+## Explore the docs
+
+### How it works
+
+- [Architecture](/architecture/) — the 5-stage pipeline, runtime adapters, and MCP integration
+- [Agent Loop](/agent-loop/) — how the autonomous loop thinks, calls tools, reflects, and stops
+- [Finding Triage](/triage/) — the multi-layer pipeline between research and verify agents
+- [Blind Verification](/blind-verification/) — why findings are re-exploited before they count
+- [Adversarial Evals](/adversarial-evals/) — how pwnkit extends beyond classic pentesting into attack-driven evaluation of AI systems
+
+### For enterprise buyers
+
+- [Enterprise readiness](/enterprise/) — SSO, BYOK, deployment options, data residency, audit, SLA, and compliance posture. The single source of truth for enterprise capability claims.
+
+### Research and benchmark analysis
+
+- [Research overview](/research/) — the index of design notes and experiments
+- [FP Reduction Moat](/research/fp-reduction-moat/) — the full false-positive reduction stack
+- [Finding Triage ML](/research/finding-triage-ml/) — the shipped triage layers and why they exist
+- [XBOW Analysis](/research/xbow-analysis/) — what moved the score and what still blocks the remaining challenges
+- [Benchmark](/benchmark/) — current results, caveats, and historical context

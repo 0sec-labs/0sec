@@ -1,0 +1,125 @@
+/* pwnkit docs — dark theme with crimson accents matching pwnkit.com */
+
+/* Starlight accent colors — used for links, active states, highlights */
+:root,
+:root[data-theme="light"],
+:root[data-theme="dark"] {
+  /* Crimson accent scale */
+  --sl-color-accent-low: #1a0a0a;
+  --sl-color-accent: #DC2626;
+  --sl-color-accent-high: #ef4444;
+
+  /* Gray scale — zinc tones matching the main site */
+  --sl-color-white: #fafafa;
+  --sl-color-gray-1: #e4e4e7;
+  --sl-color-gray-2: #a1a1aa;
+  --sl-color-gray-3: #71717a;
+  --sl-color-gray-4: #3f3f46;
+  --sl-color-gray-5: #27272a;
+  --sl-color-gray-6: #18181b;
+  --sl-color-black: #0a0a0a;
+
+  /* Surface colors — force dark everywhere */
+  --sl-color-bg: #0a0a0a;
+  --sl-color-bg-nav: #0e0e0e;
+  --sl-color-bg-sidebar: #0e0e0e;
+  --sl-color-bg-inline-code: rgba(220, 38, 38, 0.08);
+  --sl-color-hairline-shade: rgba(255, 255, 255, 0.08);
+  --sl-color-hairline-light: rgba(255, 255, 255, 0.04);
+  --sl-color-text: #e4e4e7;
+  --sl-color-text-accent: #ef4444;
+  --sl-color-text-invert: #0a0a0a;
+
+  /* Badge colors */
+  --sl-color-bg-badge: rgba(220, 38, 38, 0.12);
+
+  /* Fonts */
+  --sl-font: "Inter", "Segoe UI", system-ui, sans-serif;
+  --sl-font-mono: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+}
+
+/* ── Sidebar ── */
+nav[aria-label="Main"] a[aria-current="page"],
+nav[aria-label="Main"] a[aria-current="page"]:hover {
+  color: #DC2626 !important;
+  background: rgba(220, 38, 38, 0.1) !important;
+  border-color: #DC2626 !important;
+}
+
+nav[aria-label="Main"] a:hover {
+  color: #e4e4e7 !important;
+}
+
+/* ── Links ── */
+a:not([class]) {
+  color: #DC2626;
+}
+a:not([class]):hover {
+  color: #ef4444;
+}
+
+/* ── Inline code ── */
+:not(pre) > code {
+  background: rgba(220, 38, 38, 0.08) !important;
+  border: 1px solid rgba(220, 38, 38, 0.15) !important;
+  color: #ef4444 !important;
+  border-radius: 4px;
+  padding: 0.15em 0.35em;
+  font-size: 0.875em;
+}
+
+/* ── Code blocks ── */
+pre {
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 8px !important;
+  background: #111111 !important;
+}
+
+/* ── Headings ── */
+h1, h2, h3, h4 {
+  color: #fafafa !important;
+}
+
+/* ── Tables ── */
+table {
+  border-collapse: collapse;
+}
+th {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: #a1a1aa !important;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+}
+
+/* ── Hero / splash ── */
+.hero .tagline {
+  color: #a1a1aa !important;
+}
+
+/* ── Header ── */
+header.header {
+  border-bottom-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* ── Search ── */
+site-search button {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* ── Mobile menu ── */
+starlight-menu-button button {
+  color: #e4e4e7 !important;
+}
+
+/* ── Content card (on splash pages) ── */
+.card {
+  background: #141414 !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+.card:hover {
+  border-color: rgba(220, 38, 38, 0.3) !important;
+}

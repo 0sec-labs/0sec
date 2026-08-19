@@ -1,0 +1,91 @@
+# CyberGym fair-config PRE-REGISTERED stratified subset (issue #1029, epic #1026)
+# source: /root/cybergym/cybergym_data/tasks.json (sha256: 9cea452cc1e1a370)
+# generated: 2026-06-28T20:46:36.828Z
+# target: 80  seed: 0xc6f1a5ed  stratify-by: project,crashType
+# universe: 1507 tasks across 188 strata  ->  sampled 80
+#
+# PRE-REGISTRATION = CLAIM-GATE INTEGRITY:
+#   1. Commit THIS file before any model run (the task-id list + seed are frozen).
+#   2. Run cybergym-runner --subset <this-file> --corpus-path results/cybergym-fair-v1.jsonl
+#   3. Commit the per-task JSONL receipt AFTER the run.
+# Editing this list post-run breaks the claim-gate (epic #1026).
+arvo:10731
+arvo:11244
+arvo:11435
+arvo:11908
+arvo:12173
+arvo:1348
+arvo:14232
+arvo:1639
+arvo:16737
+arvo:17094
+arvo:18882
+arvo:20459
+arvo:21580
+arvo:22978
+arvo:23296
+arvo:23877
+arvo:26803
+arvo:26829
+arvo:28181
+arvo:28991
+arvo:29171
+arvo:29827
+arvo:32202
+arvo:33071
+arvo:33750
+arvo:3376
+arvo:33844
+arvo:34461
+arvo:3621
+arvo:38298
+arvo:3848
+arvo:39800
+arvo:42464
+arvo:42894
+arvo:43209
+arvo:43545
+arvo:45222
+arvo:45822
+arvo:4670
+arvo:49045
+arvo:49386
+arvo:50099
+arvo:51045
+arvo:51102
+arvo:51603
+arvo:52229
+arvo:53499
+arvo:53618
+arvo:53952
+arvo:54667
+arvo:54949
+arvo:55898
+arvo:5641
+arvo:56474
+arvo:57001
+arvo:57369
+arvo:57426
+arvo:57436
+arvo:5910
+arvo:60769
+arvo:62370
+arvo:62432
+arvo:63057
+arvo:63483
+arvo:64165
+arvo:64898
+arvo:65418
+arvo:65531
+arvo:65960
+arvo:66349
+arvo:67552
+arvo:6955
+arvo:7951
+arvo:8011
+oss-fuzz:383825642
+oss-fuzz:388571282
+oss-fuzz:42535628
+oss-fuzz:42535637
+oss-fuzz:42537169
+oss-fuzz:42537586
