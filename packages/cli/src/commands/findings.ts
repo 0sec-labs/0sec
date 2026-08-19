@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import chalk from "chalk";
-import type { FindingTriageStatus } from "@pwnkit/shared";
+import type { Finding, FindingTriageStatus, LayerVerdict } from "@pwnkit/shared";
 
 type FindingsListOptions = {
   dbPath?: string;
@@ -30,7 +30,33 @@ type FindingRow = {
   evidenceRequest: string;
   evidenceResponse: string;
   evidenceAnalysis?: string | null;
+  /**
+   * JSON-encoded `LayerVerdict[]` as persisted by the scanner. Nullable and
+   * possibly malformed — it is a TEXT column written across engine versions,
+   * so `parseLayerVerdicts` treats any parse failure as "no record" rather
+   * than throwing in a display path.
+   */
+  layerVerdicts?: string | null;
 };
+
+/**
+ * Decode the persisted `layerVerdicts` column into the array shape
+ * `summarizeTriageProvenance` expects.
+ *
+ * Intentionally lenient: this feeds a read-only display, and a finding whose
+ * verdict blob is unreadable should still render its evidence. A decode
+ * failure yields `[]`, which provenance reports as every layer `unrecorded` —
+ * the honest answer, and never a claim that a layer ran.
+ */
+function parseLayerVerdicts(raw: string | null | undefined): LayerVerdict[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as LayerVerdict[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 function resolveFindingsOptions(opts: FindingsListOptions, command?: Command): FindingsListOptions {
   const inherited = command?.parent && typeof command.parent.opts === "function"
@@ -320,6 +346,33 @@ export function registerFindingsCommand(program: Command): void {
           console.log(`  ${chalk.gray("Evidence \u2014 Analysis:")}`);
           console.log(`  ${chalk.dim(finding.evidenceAnalysis)}`);
         }
+        // ── Triage provenance ──
+        // The answer to "which FP-moat layers actually ran for this finding?".
+        // Rendered for EVERY finding, including ones where nothing ran: an
+        // absent section would read as "not applicable" when the truthful
+        // reading is "the moat did not run". Derived purely from the recorded
+        // verdicts, so it reflects the scan's configuration and not this
+        // shell's env — see `triage/provenance.ts`.
+        {
+          const { summarizeTriageProvenance, formatTriageProvenance } = await import(
+            "@pwnkit/core"
+          );
+          const provenance = summarizeTriageProvenance({
+            ...(finding as unknown as Finding),
+            layerVerdicts: parseLayerVerdicts(finding.layerVerdicts),
+          });
+          const [headline, totals, ...layerLines] = formatTriageProvenance(provenance);
+          console.log("");
+          console.log(`  ${chalk.gray("Triage provenance:")}`);
+          console.log(
+            `  ${provenance.moatEngaged ? chalk.green(headline) : chalk.yellow(headline)}`,
+          );
+          console.log(`  ${chalk.gray(totals)}`);
+          for (const line of layerLines) {
+            console.log(`  ${chalk.dim(line)}`);
+          }
+        }
+
         if (related.length > 1) {
           console.log("");
           console.log(`  ${chalk.gray("Related Findings:")}`);
