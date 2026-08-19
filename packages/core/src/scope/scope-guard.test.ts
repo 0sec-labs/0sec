@@ -12,7 +12,9 @@ import { describe, it, expect } from "vitest";
 import {
   describeScopeGuards,
   isScopeRequired,
+  networkScopeRequiredRefusal,
   scopeRequiredRefusal,
+  targetRequiresScope,
   SCOPE_DEPENDENT_BASH_GUARDS,
   SCOPE_GUARDS_INERT_EVENT,
 } from "./scope-guard.js";
@@ -76,5 +78,21 @@ describe("scopeRequiredRefusal", () => {
     expect(msg).toMatch(/^bash refused:/);
     expect(msg).toMatch(/PWNKIT_REQUIRE_SCOPE/);
     expect(msg).toMatch(/--scope/);
+  });
+});
+
+describe("targetRequiresScope", () => {
+  it("identifies live network protocols without gating local targets", () => {
+    expect(targetRequiresScope("https://example.com")).toBe(true);
+    expect(targetRequiresScope("http://example.com")).toBe(true);
+    expect(targetRequiresScope("mcp://example.com")).toBe(true);
+    expect(targetRequiresScope("lodash")).toBe(false);
+    expect(targetRequiresScope("./local-source")).toBe(false);
+  });
+
+  it("names the target and remediation in the live-target refusal", () => {
+    const message = networkScopeRequiredRefusal("https://example.com");
+    expect(message).toMatch(/https:\/\/example\.com/);
+    expect(message).toMatch(/--scope/);
   });
 });
