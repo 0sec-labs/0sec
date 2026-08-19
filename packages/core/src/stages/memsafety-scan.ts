@@ -148,12 +148,13 @@ export function crashArtifactToFinding(
   const category = memPrimitiveToCategory(exploitability.primitive);
   const stackSummary = (crash.stack ?? []).slice(0, 5).join(" → ");
 
+  const reproducerRef = crash.artifactRef ?? crash.inputPath;
   const reproduced = verdict.verdict === "confirmed";
   const description = [
     `Userspace ${crash.kind} crash in ${target.language} target (${target.sourceRoot}).`,
     `Primitive: ${exploitability.primitive} (op=${exploitability.readWrite}, controllable=${exploitability.controllable}).`,
     stackSummary ? `Stack: ${stackSummary}.` : "",
-    crash.inputPath ? `Reproducing input: ${crash.inputPath}.` : "",
+    reproducerRef ? `Reproducing input: ${reproducerRef}.` : "",
     reproduced
       ? "Reproduced under the sanitizer/Miri build (memory-corruption PoC)."
       : "Observed crash; not yet a reproduced memory-corruption PoC (inconclusive — not a rejection).",
@@ -191,7 +192,7 @@ export function crashArtifactToFinding(
     category,
     status: "discovered",
     evidence: {
-      request: crash.inputPath ?? "N/A (userspace crash artifact)",
+      request: reproducerRef ?? "N/A (userspace crash artifact)",
       response:
         rawOut.length > 4000 ? rawOut.slice(0, 4000) + "\n... [truncated]" : rawOut,
       analysis: analysisLines.join("\n"),
