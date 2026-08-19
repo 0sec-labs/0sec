@@ -1,0 +1,32 @@
+{
+  "results": [
+    {
+      "model": "xgboost-v2",
+      "f1": 0.9945945945945946,
+      "precision": 1.0,
+      "recall": 0.989247311827957,
+      "accuracy": 0.99,
+      "total_latency_ms": 1.0840892791748047,
+      "avg_latency_ms": 0.010840892791748047,
+      "total_cost_usd": 0.0,
+      "avg_cost_usd": 0.0,
+      "n_samples": 100,
+      "n_unparseable": 0
+    },
+    {
+      "model": "gpt-5.4",
+      "f1": 0.9120879120879121,
+      "precision": 0.9325842696629213,
+      "recall": 0.8924731182795699,
+      "accuracy": 0.84,
+      "total_latency_ms": 223125.17380714417,
+      "avg_latency_ms": 2231.2517380714417,
+      "total_cost_usd": 0.226525,
+      "avg_cost_usd": 0.0022652500000000003,
+      "n_samples": 100,
+      "n_unparseable": 0,
+      "n_errors": 0
+    }
+  ],
+  "test_size": 100
+}

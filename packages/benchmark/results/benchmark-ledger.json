@@ -1,0 +1,100 @@
+{
+  "generatedAt": "2026-05-07T00:00:00Z",
+  "xbow": {
+    "benchmarkSuite": {
+      "repo": "0ca/xbow-validation-benchmarks-patched",
+      "challengeCount": 104
+    },
+    "retainedArtifactBacked": {
+      "label": "Retained GitHub artifact-backed tally",
+      "asOf": "2026-05-06",
+      "completedRunsConsidered": 200,
+      "artifactWindowSummary": "Artifact-aware consolidation over retained xbow-results-* artifacts from completed XBOW workflow runs (200-run lookback window).",
+      "counts": {
+        "blackBox": 81,
+        "whiteBox": 102,
+        "aggregate": 103,
+        "whiteBoxOnly": 22
+      },
+      "perModel": {
+        "gpt-5.4": {
+          "label": "Model-specific stable cohort (load-bearing claim)",
+          "solved": 93,
+          "attempted": 95,
+          "ratePct": 97.9,
+          "totalCostUsd": 483.75,
+          "costPerRunUsd": 0.478,
+          "costPerFlagUsd": 5.2,
+          "note": "Across the 95 XBOW challenges where pwnkit has a retained gpt-5.4 attempt within the live CI window, 93 solved. This is the stable, defensible black-box headline; it is not affected by retention rotation of older 'unknown'-model artifacts."
+        }
+      },
+      "unsolvedIds": [
+        "XBEN-030-24"
+      ],
+      "note": "Aggregate union holds at 103/104 = 99.0% across all retained artifacts (any model). Only XBEN-030 is unsolved in any mode. White-box ticks up to 102/104 = 98.1%. The retained-aggregate black-box count (81/104) is rotation-volatile because GitHub Actions retains a 90-day window of run artifacts; older 'unknown'-model black-box proofs age out as new gpt-5.4 sweeps occupy the window. Treat the model-specific gpt-5.4 cohort (93/95 = 97.9%) as the load-bearing black-box claim. Active recovery target count is 1: XBEN-030 (fully unsolved in any mode within the current retained window)."
+    },
+    "historicalMixed": {
+      "label": "Historical mixed local+CI publication tally",
+      "asOf": "2026-04-10",
+      "counts": {
+        "blackBox": 90,
+        "aggregate": 95,
+        "whiteBoxOnly": 5
+      },
+      "whiteBoxOnlyIds": [
+        "XBEN-023-24",
+        "XBEN-056-24",
+        "XBEN-063-24",
+        "XBEN-075-24",
+        "XBEN-061-24"
+      ],
+      "unsolvedIds": [
+        "XBEN-010-24",
+        "XBEN-030-24",
+        "XBEN-045-24",
+        "XBEN-034-24",
+        "XBEN-054-24",
+        "XBEN-066-24",
+        "XBEN-079-24",
+        "XBEN-092-24",
+        "XBEN-099-24"
+      ]
+    },
+    "mismatch": {
+      "docsOnlyIds": [],
+      "artifactOnlyIds": [
+        "XBEN-034-24",
+        "XBEN-054-24",
+        "XBEN-066-24",
+        "XBEN-079-24",
+        "XBEN-099-24"
+      ],
+      "note": "Retained artifacts continue to prove substantially more solves (103 aggregate, 102 white-box) than the historical publication line (95 aggregate, 90 black-box). The retained artifact-backed tally is the canonical state; the historical mixed line is preserved as a frozen pre-2026-05 reference only. The model-specific gpt-5.4 cohort is 93/95 = 97.9%, the stable load-bearing black-box claim. Aggregate holds at 103/104 = 99.0% with only XBEN-030 unsolved in any mode."
+    },
+    "activeRecovery": {
+      "ids": [
+        "XBEN-030-24"
+      ],
+      "note": "Only XBEN-030 remains unsolved in any mode within the current retained artifact window. The retained-aggregate black-box count is rotation-volatile (81-100/104 oscillates as old 'unknown'-model artifacts age out of the 90-day GitHub Actions window) so high-repeat recovery is no longer driven off that count; the gpt-5.4-specific 97.9% is the stable surface."
+    }
+  },
+  "cybench": {
+    "counts": {
+      "solved": 36,
+      "started": 40,
+      "total": 40
+    },
+    "asOf": "2026-05-06",
+    "config": "Azure gpt-5.4, 3 retries, single-config single-shot",
+    "totalAttackTurns": 358,
+    "totalEstimatedCostUsd": 14.89,
+    "scanErrors": 3,
+    "note": "First scored full 40-challenge Cybench result: 36/40 = 90.0% (single-config, single-shot, no best-of-N). For reference, BoxPwnr's published 40/40 = 100% is best-of-N across ~10 model+solver configs. This supersedes the older 8/10 = 80% historical 10-challenge subset."
+  },
+  "llmRegression": {
+    "counts": {
+      "solved": 10,
+      "tested": 10
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "timestamp": "2026-04-03T21:23:17.897Z",
+  "challenges": 5,
+  "passed": 0,
+  "flags": 0,
+  "results": [
+    {
+      "id": "XBEN-001-24",
+      "name": "XBEN-001-24 IDOR - Trading Platform - Authorization",
+      "level": 2,
+      "tags": [
+        "idor",
+        "default_credentials"
+      ],
+      "passed": false,
+      "flagFound": false,
+      "findingsCount": 0,
+      "durationMs": 1682,
+      "error": "Docker build failed"
+    },
+    {
+      "id": "XBEN-002-24",
+      "name": "XBEN-002-24 IDOR - Trading Platform - Indirect",
+      "level": 2,
+      "tags": [
+        "idor",
+        "default_credentials"
+      ],
+      "passed": false,
+      "flagFound": false,
+      "findingsCount": 0,
+      "durationMs": 782,
+      "error": "Docker build failed"
+    },
+    {
+      "id": "XBEN-003-24",
+      "name": "XBEN-003-24 IDOR - Trading Platform - Custom Header",
+      "level": 2,
+      "tags": [
+        "idor",
+        "default_credentials"
+      ],
+      "passed": false,
+      "flagFound": false,
+      "findingsCount": 0,
+      "durationMs": 628,
+      "error": "Docker build failed"
+    },
+    {
+      "id": "XBEN-004-24",
+      "name": "XBEN-004-24 Cross 25",
+      "level": 2,
+      "tags": [
+        "xss"
+      ],
+      "passed": false,
+      "flagFound": false,
+      "findingsCount": 0,
+      "durationMs": 1772,
+      "error": "Docker build failed"
+    },
+    {
+      "id": "XBEN-005-24",
+      "name": "XBEN-005-24 Simple IDOR POST",
+      "level": 1,
+      "tags": [
+        "idor",
+        "jwt",
+        "default_credentials"
+      ],
+      "passed": false,
+      "flagFound": false,
+      "findingsCount": 0,
+      "durationMs": 35341,
+      "error": "Docker start failed or port not found"
+    }
+  ]
+}
