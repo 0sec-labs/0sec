@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { webPentestPrompt } from "../agent/prompts.js";
 import { LlmApiRuntime } from "./llm-api.js";
 import type { NativeMessage } from "./types.js";
 
@@ -124,6 +125,68 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
       ]);
       expect(result.stopReason).toBe("tool_use");
       expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 25 });
+    });
+    it("keeps every target credential shape out of the provider request", async () => {
+      process.env.KIMI_API_KEY = "kimi-test-key";
+      const rt = new LlmApiRuntime({ type: "api", timeout: 5000, model: "k3" });
+      const providerBodies: string[] = [];
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, opts: { body: string }) => {
+          providerBodies.push(opts.body);
+          return {
+            ok: true,
+            text: async () =>
+              JSON.stringify({
+                content: [{ type: "text", text: "done" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+          } as unknown as Response;
+        }),
+      );
+
+      const authCases = [
+        {
+          auth: { type: "bearer" as const, token: "provider-wire-bearer-canary" },
+          secrets: ["provider-wire-bearer-canary"],
+        },
+        {
+          auth: { type: "cookie" as const, value: "sid=provider-wire-cookie-canary" },
+          secrets: ["sid=provider-wire-cookie-canary"],
+        },
+        {
+          auth: {
+            type: "basic" as const,
+            username: "provider-wire-user-canary",
+            password: "provider-wire-password-canary",
+          },
+          secrets: ["provider-wire-user-canary", "provider-wire-password-canary"],
+        },
+        {
+          auth: {
+            type: "header" as const,
+            name: "X-Provider-Wire-Key",
+            value: "provider-wire-header-canary",
+          },
+          secrets: ["provider-wire-header-canary"],
+        },
+      ];
+
+      const messages: NativeMessage[] = [
+        { role: "user", content: [{ type: "text", text: "audit the authorized target" }] },
+      ];
+      for (const { auth, secrets } of authCases) {
+        await rt.executeNative(
+          webPentestPrompt("https://target.test", { auth }),
+          messages,
+          [],
+        );
+        const providerBody = providerBodies.at(-1)!;
+        expect(providerBody).toContain("Authenticated requests are configured");
+        for (const secret of secrets) expect(providerBody).not.toContain(secret);
+      }
     });
   });
 
