@@ -28,6 +28,11 @@
 
 import type { Finding } from "@pwnkit/shared";
 import { findingTokens, jaccard, loadHuntCorpusRows, memoryTokens, type HuntCorpusRow } from "./hunt-flywheel.js";
+import {
+  disprovenHuntClaims,
+  loadHuntLedger,
+  type ResolvedHuntClaim,
+} from "./hunt-evidence-ledger.js";
 
 /**
  * Default ON. Unlike `huntFlywheelEnabled()` — which reorders the verify queue
@@ -134,6 +139,61 @@ function negativeFromRow(row: HuntCorpusRow): KnownNegative {
     reason: row.skepticReason ?? "refuted by the skeptic gate",
     candidatePath: row.candidatePath ?? "",
     provenance: `record:${row.candidatePath ?? ""} model=${row.model ?? "default"}`,
+  };
+}
+
+/**
+ * Known negatives derived from a LIVE hunt evidence ledger
+ * (`hunt-evidence-ledger.ts`) rather than from the end-of-run corpus.
+ *
+ * Same output type, same {@link matchNegative} / {@link negativeContext} path,
+ * same anchoring bounds — the only thing that changes is freshness. The corpus
+ * source (`loadKnownNegatives`) can only ever describe hunts that have already
+ * FINISHED, because `appendToCorpus` runs after `runHuntScan` returns. A ledger
+ * is appended to as each verdict lands, so a shape a sibling worker killed two
+ * minutes ago is visible to this skeptic now, and to a second hunt process on
+ * the same campaign. That in-run window is where the re-walked dead ends
+ * actually are.
+ *
+ * The refute reason quoted into the prompt is built from the claim's
+ * OBSERVATIONS only. Assumption-stance evidence is deliberately dropped here:
+ * anchoring a skeptic on another worker's inference is exactly the failure this
+ * module's header warns about, and the ledger's terminal-status rule already
+ * guarantees a `disproven` claim carries at least one observation. Conflicted
+ * claims never reach this function ({@link disprovenHuntClaims} filters them),
+ * so a shape two workers disagree about never suppresses a third.
+ *
+ * A missing/unreadable ledger yields `[]` — inert, exactly like an unset
+ * corpus path.
+ */
+export function loadKnownNegativesFromLedger(ledgerPath: string): KnownNegative[] {
+  let claims: ResolvedHuntClaim[];
+  try {
+    claims = disprovenHuntClaims(loadHuntLedger(ledgerPath));
+  } catch {
+    return [];
+  }
+  const negatives = claims.map(negativeFromClaim);
+  return negatives.length > MAX_KNOWN_NEGATIVES ? negatives.slice(-MAX_KNOWN_NEGATIVES) : negatives;
+}
+
+function negativeFromClaim(claim: ResolvedHuntClaim): KnownNegative {
+  const observations = claim.observations.map((o) => `${o.statement} (${o.locator ?? o.source})`).join("; ");
+  const { classToks, sinkToks } = memoryTokens(
+    claim.shape.bugClass,
+    undefined,
+    `${claim.statement} ${observations}`,
+  );
+  // The worker that actually recorded the refutation, not the whole roster —
+  // provenance has to name one accountable producer to be worth reading.
+  const refuter = claim.records.filter((r) => r.status === "disproven").at(-1)?.worker ?? "unknown";
+  return {
+    key: `${claim.shape.path}:${claim.shape.bugClass}`,
+    classTokens: classToks,
+    sinkTokens: sinkToks,
+    reason: observations || claim.statement,
+    candidatePath: claim.shape.path,
+    provenance: `ledger:${claim.claimKey.slice("sha256:".length, "sha256:".length + 12)} worker=${refuter}`,
   };
 }
 

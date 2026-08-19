@@ -3626,7 +3626,16 @@ async function runNativeAttack(
     .map((n) => TOOL_DEFINITIONS[n])
     .filter((t): t is import("./agent/types.js").ToolDefinition => t !== undefined);
 
-  const tools = isWeb ? shellTools : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
+  // A white-box SOURCE review (repoPath set, no live web/http target) is a
+  // code audit, not a network/LLM pentest: give it the source-scoped tool set
+  // (read_file/run_command/bash — no send_prompt/http_request), the same set an
+  // isWeb white-box run already gets. Previously a source-only run (isWeb=false,
+  // hasSource=true — every seedless `deep_review` finder/verify) fell through to
+  // the full "attack" role, which hands it the live-target LLM/web attack tools
+  // (send_prompt, http_request). On repos with no such surface the finder burned
+  // its turns probing for prompt-injection / SSO-federation instead of auditing
+  // code, then found nothing. Scoping the toolset removes that drift.
+  const tools = (isWeb || hasSource) ? shellTools : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
 
   const effectiveMaxTurns = isWeb ? Math.max(maxTurns, 15) : maxTurns;
 
