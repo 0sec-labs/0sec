@@ -105,10 +105,28 @@ test("public source export contains build inputs and excludes private material",
     );
 
     const publishWorkflow = await readFile(join(outputDir, ".github/workflows/docker-publish.yml"), "utf8");
+    const triggerBoundary = publishWorkflow.indexOf("\npermissions:");
+    assert.notEqual(triggerBoundary, -1, "publisher workflow must declare permissions after triggers");
+    const publishTriggers = publishWorkflow.slice(0, triggerBoundary);
     assert.doesNotMatch(
-      publishWorkflow,
+      publishTriggers,
       /^\s*workflow_dispatch:/m,
       "the package-writer must not be manually dispatchable on an arbitrary ref",
+    );
+    assert.doesNotMatch(
+      publishTriggers,
+      /^\s*push:/m,
+      "a tag push must not reach the credentialed image publisher",
+    );
+    assert.doesNotMatch(
+      publishWorkflow,
+      /github\.event_name == 'push'/,
+      "the publisher must not accept an unconditional push event",
+    );
+    assert.doesNotMatch(
+      publishWorkflow,
+      /type=semver/,
+      "version tags require a separately reviewed release path",
     );
     for (const requiredTrustPredicate of [
       "github.event.workflow_run.conclusion == 'success'",
