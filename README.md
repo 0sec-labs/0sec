@@ -36,17 +36,6 @@ test. It is not a substitute for a written testing scope.
 
 ## Install
 
-### npm
-
-After the first npm release:
-
-```bash
-npx pwnkit@latest --help
-# or
-npm install --global pwnkit
-pwnkit --help
-```
-
 ### Source
 
 ```bash
@@ -93,12 +82,13 @@ environment and read each command's help before a connected scan.
 pwnkit ships an MCP server over stdio:
 
 ```bash
-npx -y pwnkit@latest mcp-server
+node dist/pwnkit.js mcp-server
 ```
 
-Use that command from an MCP-capable agent or editor. Herdr does not currently
-ship a built-in pwnkit integration target, so it should launch pwnkit through
-this MCP boundary or a managed terminal pane until a native Herdr adapter lands.
+Run that command from a built source checkout in an MCP-capable agent or editor.
+Herdr does not currently ship a built-in pwnkit integration target, so it should
+launch pwnkit through this MCP boundary or a managed terminal pane until a
+native Herdr adapter lands.
 
 ## Development
 
