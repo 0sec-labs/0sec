@@ -24,10 +24,10 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Type-check
-        run: pnpm lint
       - name: Build CLI
         run: pnpm build
+      - name: Type-check
+        run: pnpm lint
       - name: Smoke CLI
         run: node dist/pwnkit.js --help
       - name: Run tests
