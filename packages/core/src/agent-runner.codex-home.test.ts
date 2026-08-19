@@ -29,6 +29,18 @@ vi.mock("./agent/native-loop.js", () => ({
   runNativeAgentLoop: vi.fn(),
 }));
 
+vi.mock("./runtime/llm-api.js", () => ({
+  LlmApiRuntime: class {
+    getConfigurationDiagnostics() {
+      return { valid: true, provider: "openai", providerLabel: "OpenAI" };
+    }
+
+    async executeNative() {
+      throw new Error("native loop mock should intercept execution");
+    }
+  },
+}));
+
 vi.mock("../events/bus.js", () => ({
   eventBus: { emit: () => {}, on: () => () => {} },
 }));
@@ -71,7 +83,8 @@ describe("runAnalysisAgent — source scope runtime boundary", () => {
     dirs.push(operatorHome);
     writeFileSync(join(operatorHome, "config.toml"), OPERATOR_CONFIG);
     vi.stubEnv("CODEX_HOME", operatorHome);
-    vi.stubEnv("OPENAI_API_KEY", "sk-test-dummy");
+    // The native loop is mocked, so routing coverage requires no credential
+    // fixture or external provider configuration.
     mockedLoop.mockResolvedValue({
       findings: [],
       summary: "done",

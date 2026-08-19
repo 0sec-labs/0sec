@@ -21,6 +21,18 @@ vi.mock("./agent/native-loop.js", () => ({
   runNativeAgentLoop: vi.fn(),
 }));
 
+vi.mock("./runtime/llm-api.js", () => ({
+  LlmApiRuntime: class {
+    getConfigurationDiagnostics() {
+      return { valid: true, provider: "openai", providerLabel: "OpenAI" };
+    }
+
+    async executeNative() {
+      throw new Error("native loop mock should intercept execution");
+    }
+  },
+}));
+
 vi.mock("../events/bus.js", () => ({
   eventBus: { emit: () => {}, on: () => () => {} },
 }));
@@ -48,7 +60,8 @@ function opts(): Parameters<typeof runAnalysisAgent>[0] {
 describe("runAnalysisAgent — scoped source runtime boundary", () => {
   beforeEach(() => {
     state.cliConfigs.length = 0;
-    process.env.OPENAI_API_KEY = "sk-test-dummy";
+    // The runtime itself is mocked below; this test must not depend on a
+    // credential-shaped fixture to exercise routing.
     mockedLoop.mockResolvedValue({
       findings: [],
       summary: "done",
@@ -62,7 +75,6 @@ describe("runAnalysisAgent — scoped source runtime boundary", () => {
   });
 
   afterEach(() => {
-    delete process.env.OPENAI_API_KEY;
     vi.clearAllMocks();
   });
 
