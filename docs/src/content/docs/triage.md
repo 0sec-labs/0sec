@@ -276,15 +276,100 @@ a known lead.
 
 | Env var | Default | Stage |
 |---------|---------|-------|
+| `PWNKIT_FEATURE_HOLDING_IT_WRONG` | **on** | 1 |
+| `PWNKIT_FEATURE_EVIDENCE_GATE` | **on** | 2 |
 | `PWNKIT_FEATURE_REACHABILITY_GATE` | off | 4 |
 | `PWNKIT_FEATURE_MULTIMODAL` | off | 5 |
 | `PWNKIT_FEATURE_POV_GATE` | off | 6 |
+| `PWNKIT_FEATURE_PUBLISHABILITY_GATE` | off | 6 |
+| `PWNKIT_FEATURE_POC_GEN_STATIC` | off | 6 |
 | `PWNKIT_FEATURE_CONSENSUS_VERIFY` | off | 8 |
-| `PWNKIT_FEATURE_TRIAGE_MEMORIES` | off | 9 |
-| `PWNKIT_FEATURE_DEBATE` | off | 10 |
-| `PWNKIT_FEATURE_EGATS` | off | 11 |
+| `PWNKIT_FEATURE_LEARNED_ROUTER` | off | router |
+| `PWNKIT_FEATURE_DYNAMIC_TRIAGE` | off | router |
+
+`PWNKIT_FEATURE_TRIAGE_MEMORIES`, `PWNKIT_FEATURE_DEBATE`, and
+`PWNKIT_FEATURE_EGATS` appeared in earlier versions of this table but no
+longer exist in the codebase — `egats` was removed from the default
+aliases after the ablation measured it regressing the hardest slice
+([pwnkit#116](https://github.com/0sec-labs/pwnkit/issues/116)). Sections
+9-11 above describe layers that are no longer separately toggleable.
 
 See [Features](/features/) for the complete env-var inventory.
+
+## Enabling the whole moat at once
+
+Turning the moat on is a measurement, not an upgrade. The
+[2026-04-11 ablation](/research/2026-04-11-ablation/) found its effect is
+slice-dependent: a strict win on XBOW black-box, a 0-2 flag cost on
+white-box (inside run noise after the broken `egats` layer was removed),
+and a no-op on npm-bench. The large number people remember — roughly 60%
+fewer findings — is the moat working as intended; the flag count, which
+is the ground-truth-correct outcome, stayed roughly flat. Enable it to
+re-measure, not because it is expected to score better.
+
+Every gate above is off by default, so measuring what the moat is worth
+means setting six variables and getting all six right. `fp-moat` is a
+preset that names the set:
+
+```bash
+pwnkit scan --features fp-moat --target https://example.com
+# or, for CI where the command line is templated:
+PWNKIT_FEATURE_PRESET=fp-moat pwnkit scan --target https://example.com
+```
+
+It expands to `PWNKIT_FEATURE_REACHABILITY_GATE`, `_MULTIMODAL`,
+`_PUBLISHABILITY_GATE`, `_POV_GATE`, `_POC_GEN_STATIC`, and
+`_CONSENSUS_VERIFY`. The membership lives in
+`packages/core/src/agent/feature-presets.ts` and is pinned by test.
+
+A flag you set yourself always wins, so you can ablate one layer out of
+an otherwise-full moat:
+
+```bash
+PWNKIT_FEATURE_POV_GATE=0 pwnkit scan --features fp-moat …
+```
+
+The preset deliberately leaves out `PWNKIT_FEATURE_LEARNED_ROUTER` and
+`PWNKIT_FEATURE_DYNAMIC_TRIAGE`. Those decide which layers to *skip* per
+finding, so enabling them alongside the moat would let the router
+suppress the layers you are trying to measure.
+
+## Checking which layers actually ran
+
+Turning layers on is only half of a defensible claim. Each layer records
+a verdict on the finding as it executes, and `findings show` renders that
+record:
+
+```bash
+pwnkit findings show <id>
+```
+
+```
+  Triage provenance:
+  FP moat NOT engaged: no opt-in moat layer ran for this finding (always-on filters only)
+  Layers: 3 executed, 5 skipped, 3 unrecorded | 412ms | $0.0000
+    + holding_it_wrong   executed(pass) — no holding-it-wrong pattern matched
+    + evidence_gate      executed(pass) — evidence_completeness=0.83 > 0.5
+    - reachability       skipped(skip) — PWNKIT_FEATURE_REACHABILITY_GATE=0
+    …
+```
+
+Three things worth knowing about how to read this:
+
+- It is derived from the verdicts stored **on the finding**, never from
+  your current environment. A finding produced by a default scan still
+  reports the moat as not engaged even if you have every flag exported in
+  your shell — otherwise re-reading an old finding could silently
+  overstate what it went through.
+- `skipped` and `unrecorded` are different. `skipped` means the layer
+  recorded that it stood down, and the reason names the flag or the
+  missing precondition. `unrecorded` means no verdict exists at all.
+- Three layers are permanently `unrecorded`: `structured_verify`,
+  `consensus`, and `kernel_oracle` emit no verdict anywhere in the
+  engine, so their execution cannot be observed today. They are listed in
+  `UNINSTRUMENTED_LAYERS` and reported with an explicit
+  "no instrumentation" reason rather than being quietly counted as
+  skipped. Until that changes, they cannot back an FP-moat claim.
 
 ## Further reading
 
