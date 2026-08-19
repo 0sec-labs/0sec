@@ -2,7 +2,7 @@
   "name": "pwnkit",
   "type": "module",
   "version": "0.12.0",
-  "description": "Fully autonomous agentic pentesting for web apps, AI/LLM apps, package ecosystems, and source code.",
+  "description": "Open-source security research harness for authorized targets.",
   "bin": {
     "pwnkit": "dist/pwnkit.js"
   },
@@ -51,7 +51,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/0sec-labs/pwnkit.git"
+    "url": "git+ssh://git@github.com/0sec-labs/0sec.git"
   },
   "license": "MIT OR Apache-2.0",
   "engines": {

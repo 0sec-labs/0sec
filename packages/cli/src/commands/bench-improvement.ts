@@ -358,7 +358,7 @@ export function parseCiEvidence(value: unknown): CiEvidence {
   const repository = text(raw.repository, "CI evidence repository");
   const commitSha = text(raw.headSha, "CI evidence headSha");
   const treeDigest = digest(raw.treeDigest, "CI evidence treeDigest");
-  if (repository !== "0sec-labs/pwnkit") throw new Error("CI evidence repository must be 0sec-labs/pwnkit");
+  if (repository !== "0sec-labs/0sec") throw new Error("CI evidence repository must be 0sec-labs/0sec");
   if (!/^[0-9a-f]{40}$/.test(commitSha)) throw new Error("CI evidence headSha must be a full lowercase SHA");
   if (!Array.isArray(raw.checks)) throw new Error("CI evidence checks must be an array");
   const checks = raw.checks.map((value, index) => {

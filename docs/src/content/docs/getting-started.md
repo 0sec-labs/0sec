@@ -14,7 +14,7 @@ published yet.
 ### Source
 
 ```bash
-git clone https://github.com/0sec-labs/pwnkit.git
+git clone https://github.com/0sec-labs/0sec.git
 cd pwnkit
 corepack enable
 pnpm install --frozen-lockfile

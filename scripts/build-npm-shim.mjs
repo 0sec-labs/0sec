@@ -106,7 +106,7 @@ If you'd rather skip the launcher entirely and install the binary
 directly (zero Node, zero Bun, zero \`node_modules\`), run:
 
 \`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/0sec-labs/pwnkit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
 \`\`\`
 
 That drops a single binary into \`~/.pwnkit/bin/\`.
@@ -133,7 +133,7 @@ Install Bun and compile from source (\`scripts/bun-compile.sh\`) on those.
 
 ## Source
 
-<https://github.com/0sec-labs/pwnkit>
+<https://github.com/0sec-labs/0sec>
 `;
 writeFileSync(join(OUT, "README.md"), README);
 

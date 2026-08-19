@@ -147,7 +147,7 @@ is a no-op on npm-bench).
 - Assistant memories (Semgrep-style)
 - Adversarial debate (prosecutor vs defender vs judge)
 - EGATS (Evidence-Gated Attack Tree Search) — *opt-in only*, see
-  [#116](https://github.com/0sec-labs/pwnkit/issues/116): the single-feature
+  [#116](https://github.com/0sec-labs/0sec/issues/116): the single-feature
   ablation on 2026-04-11 showed this layer regresses on hard challenges
   and costs ~10× the next-worst layer per flag, so it's excluded from
   the `moat` profile by default.
@@ -195,7 +195,7 @@ is a no-op on npm-bench).
 
 pwnkit is one leg of an open-source three-part security stack:
 
-- **[pwnkit](https://github.com/0sec-labs/pwnkit)** — AI agent pentester (detect)
+- **[pwnkit](https://github.com/0sec-labs/0sec)** — AI agent pentester (detect)
 - **[foxguard](https://github.com/0sec-labs/foxguard)** — Rust security scanner (prevent)
 - **[opensoar](https://github.com/opensoar-hq/opensoar-core)** — Python-native SOAR platform (respond)
 

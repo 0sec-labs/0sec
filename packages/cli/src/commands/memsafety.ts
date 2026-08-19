@@ -17,7 +17,7 @@
  * run", NOT a clean pass — we surface it and exit 2 (skipped) so a dashboard
  * scan that never actually fuzzed is never reported as a clean green result.
  * Live memory-corruption-repro validation of this pipeline is still pending
- * (0sec-labs/pwnkit#702); this command does not fabricate a crash or a repro.
+ * (0sec-labs/0sec#702); this command does not fabricate a crash or a repro.
  *
  * Exit codes (aligned with `deep-review`):
  *   0 → the fuzz loop RAN (with or without captured crashes/findings). A clean

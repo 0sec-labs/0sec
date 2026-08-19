@@ -15,12 +15,12 @@ export default defineConfig({
   },
   integrations: [
     starlight({
-      title: "pwnkit",
+      title: "0sec",
       description:
-        "Documentation for pwnkit — fully autonomous agentic pentesting framework.",
+        "Open-source security research harness for authorized targets. The technical project and CLI are named pwnkit.",
       logo: {
-        src: "./src/assets/pwnkit-icon.gif",
-        alt: "pwnkit",
+        src: "./src/assets/0sec-aperture-white.svg",
+        alt: "0sec",
       },
       social: [
         {

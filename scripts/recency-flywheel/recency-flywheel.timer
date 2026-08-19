@@ -1,6 +1,6 @@
 [Unit]
 Description=Daily trigger for the 0sec recency flywheel
-Documentation=https://github.com/0sec-labs/pwnkit/blob/main/scripts/recency-flywheel/README.md
+Documentation=https://github.com/0sec-labs/0sec/blob/main/scripts/recency-flywheel/README.md
 
 [Timer]
 # Once a day, early morning bench-local. RandomizedDelay avoids colliding with

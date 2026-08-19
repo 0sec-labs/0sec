@@ -45,7 +45,7 @@ const evaluatorBundleDigest = sha256Bytes(
   ),
 );
 const producer = {
-  repository: "0sec-labs/pwnkit",
+  repository: "0sec-labs/0sec",
   commitSha: "a".repeat(40),
   treeDigest: `sha256:${"7".repeat(64)}`,
 };

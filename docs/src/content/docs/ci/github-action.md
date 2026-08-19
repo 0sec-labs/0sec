@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: 0sec-labs/pwnkit/.github/actions/pwnkit-scan@v1
+      - uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
         with:
           mode: pr
           profile: web
@@ -81,7 +81,7 @@ Set `fail-on-confirmed: true` (the default) to block merges when pwnkit
 reports a confirmed finding:
 
 ```yaml
-- uses: 0sec-labs/pwnkit/.github/actions/pwnkit-scan@v1
+- uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
   with:
     mode: pr
     fail-on-confirmed: true
@@ -114,7 +114,7 @@ See [API Keys](/api-keys/) for the full matrix.
 For reproducible scans pin the `pwnkit-cli` version:
 
 ```yaml
-- uses: 0sec-labs/pwnkit/.github/actions/pwnkit-scan@v1
+- uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
   with:
     pwnkit-version: "0.7.0"
 ```
@@ -123,7 +123,7 @@ For reproducible scans pin the `pwnkit-cli` version:
 
 ```yaml
 - id: pwnkit
-  uses: 0sec-labs/pwnkit/.github/actions/pwnkit-scan@v1
+  uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
   with:
     mode: pr
     fail-on-confirmed: false
@@ -140,4 +140,4 @@ self-hosted runners.
 
 - [White-Box Mode](/white-box-mode/) — what the source review actually does.
 - [API Keys](/api-keys/) — provider configuration.
-- The action source: [`.github/actions/pwnkit-scan/`](https://github.com/0sec-labs/pwnkit/tree/main/.github/actions/pwnkit-scan)
+- The action source: [`.github/actions/pwnkit-scan/`](https://github.com/0sec-labs/0sec/tree/main/.github/actions/pwnkit-scan)

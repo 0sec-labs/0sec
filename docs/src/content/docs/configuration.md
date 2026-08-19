@@ -148,7 +148,7 @@ pwnkit supports multiple output formats:
 In CI (GitHub Action), set `format: sarif` to populate the Security tab:
 
 ```yaml
-- uses: 0sec-labs/pwnkit@main
+- uses: 0sec-labs/0sec@main
   with:
     mode: review
     path: .

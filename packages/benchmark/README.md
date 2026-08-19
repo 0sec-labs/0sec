@@ -303,7 +303,7 @@ approximation) because N is small and rates can be near 0 or 1, where
 Wald produces degenerate intervals like `[0, 0]` or extends outside
 `[0, 1]`.
 
-[#81]: https://github.com/0sec-labs/pwnkit/issues/81
+[#81]: https://github.com/0sec-labs/0sec/issues/81
 
 #### Flags
 
@@ -351,7 +351,7 @@ pnpm --filter @pwnkit/benchmark xbow:jit-skills-ab \
   --only XBEN-010,XBEN-051,XBEN-061 --repeat 3 --json
 ```
 
-[#410]: https://github.com/0sec-labs/pwnkit/issues/410
+[#410]: https://github.com/0sec-labs/0sec/issues/410
 
 #### JSON output schema
 
