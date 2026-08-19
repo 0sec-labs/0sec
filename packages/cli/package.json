@@ -18,8 +18,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@opentui/core": "0.1.99",
-    "@opentui/react": "0.1.99",
+    "@opentui/core": "0.5.4",
+    "@opentui/react": "0.5.4",
     "@pwnkit/benchmark": "workspace:*",
     "@pwnkit/core": "workspace:*",
     "@pwnkit/db": "workspace:*",

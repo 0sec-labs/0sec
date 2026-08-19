@@ -13,6 +13,7 @@ mkdirSync(outdir, { recursive: true });
 // constants.ts can pick it up without a runtime fs read. See
 // packages/shared/src/constants.ts for the matching loader.
 const rootPkg = JSON.parse(readFileSync("package.json", "utf8"));
+const cliPkg = JSON.parse(readFileSync("packages/cli/package.json", "utf8"));
 const PKG_VERSION = rootPkg.version;
 
 function readBuildCommit() {
@@ -79,6 +80,11 @@ await build({
     // Keep both packages intact and declare them in the published tarball.
     "tree-sitter",
     "tree-sitter-c",
+    // OpenTUI's reconciler and the TUI chunks must resolve the same React
+    // instance. Bundling React here while OpenTUI loads it from node_modules
+    // produces the invalid-hook-call crash in the distributed Bun TUI.
+    "react",
+    "react/*",
     // opentui ships .wasm / tree-sitter query asset imports using the
     // `with { type: "file" }` attribute and conditionally imports `bun:ffi`.
     // esbuild can't inline either, so keep them external and ship them as
@@ -162,8 +168,9 @@ const publishPkg = {
     "node-sqlite3-wasm": rootPkg.dependencies["node-sqlite3-wasm"],
     "tree-sitter": rootPkg.dependencies["tree-sitter"],
     "tree-sitter-c": rootPkg.dependencies["tree-sitter-c"],
-    "@opentui/core": "0.1.99",
-    "@opentui/react": "0.1.99",
+    "@opentui/core": cliPkg.dependencies["@opentui/core"],
+    "@opentui/react": cliPkg.dependencies["@opentui/react"],
+    "react": cliPkg.dependencies.react,
   },
 };
 writeFileSync(`${outdir}/package.json`, JSON.stringify(publishPkg, null, 2) + "\n");
