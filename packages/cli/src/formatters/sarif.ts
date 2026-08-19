@@ -172,7 +172,7 @@ export function formatSarif(report: ScanReport): string {
           driver: {
             name: "pwnkit",
             version: VERSION,
-            informationUri: "https://github.com/0sec-labs/pwnkit",
+            informationUri: "https://github.com/0sec-labs/0sec",
             rules: Array.from(rulesMap.values()),
           },
         },

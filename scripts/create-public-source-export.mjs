@@ -27,7 +27,7 @@ if (!outputArg) {
 
 const outputDir = resolve(process.cwd(), outputArg);
 if (outputDir === repoRoot || outputDir.startsWith(`${repoRoot}${sep}`)) {
-  fail("output directory must be outside the private checkout");
+  fail("output directory must be outside the source checkout");
 }
 if (await exists(outputDir)) {
   fail(`output directory already exists: ${outputDir}`);
@@ -49,6 +49,8 @@ const publicRoots = [
   "README.md",
   "SECURITY.md",
   "assets/pwnkit-icon.gif",
+  "assets/0sec-aperture-ink.svg",
+  "assets/0sec-aperture-white.svg",
   "package.json",
   "packages",
   "pnpm-lock.yaml",

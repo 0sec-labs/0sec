@@ -114,9 +114,9 @@ jobs:
             type=ref,event=branch
             type=raw,value=latest,enable=${{ steps.latest_eligible.outputs.enabled }}
           labels: |
-            org.opencontainers.image.title=pwnkit
-            org.opencontainers.image.description=AI-powered agentic security scanner
-            org.opencontainers.image.source=https://github.com/0sec-labs/pwnkit
+            org.opencontainers.image.title=0sec
+            org.opencontainers.image.description=Open-source security research harness for authorized targets
+            org.opencontainers.image.source=https://github.com/0sec-labs/0sec
             org.opencontainers.image.licenses=MIT OR Apache-2.0
 
       - name: Build and push

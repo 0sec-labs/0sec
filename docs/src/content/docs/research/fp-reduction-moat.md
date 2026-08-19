@@ -3,7 +3,7 @@ title: FP Reduction Moat
 description: Measured behavior of pwnkit's 11-layer triage pipeline across benchmark slices, plus layer-by-layer implementation notes and references.
 ---
 
-> **Update 2026-04-12:** This page reflects the 21-profile ablation and follow-up reruns after EGATS was removed from default moat aliases. The measured effect remains slice-dependent: strong on XBOW black-box, a precision/recall trade on XBOW white-box, and variance-sensitive on npm-bench at current sample size. See the [2026-04-11 ablation results log](/research/2026-04-11-ablation/) for full tables and caveats, [pwnkit#72](https://github.com/0sec-labs/pwnkit/issues/72) for run tracking, and [pwnkit#116](https://github.com/0sec-labs/pwnkit/issues/116) for the EGATS profile change.
+> **Update 2026-04-12:** This page reflects the 21-profile ablation and follow-up reruns after EGATS was removed from default moat aliases. The measured effect remains slice-dependent: strong on XBOW black-box, a precision/recall trade on XBOW white-box, and variance-sensitive on npm-bench at current sample size. See the [2026-04-11 ablation results log](/research/2026-04-11-ablation/) for full tables and caveats, [pwnkit#72](https://github.com/0sec-labs/0sec/issues/72) for run tracking, and [pwnkit#116](https://github.com/0sec-labs/0sec/issues/116) for the EGATS profile change.
 
 pwnkit's triage pipeline is a stack of independent filters, each tuned for a different failure mode. Every layer is open-source, every layer is toggleable via feature flags, and each layer is represented in benchmarked profiles. This page documents measured outcomes, implementation details, and configuration surfaces.
 
@@ -73,7 +73,7 @@ Note that `moat` and `moat-only` produce identical flag count and finding count.
 
 **Interpretation (batch 1).** `default` and `moat` are identical on this run. Batch-1 attribution suggested the FPR shift from `none` to `default` came from stable features. Follow-up reruns showed meaningful variance, so this attribution should be treated as provisional until repeated runs are available.
 
-Also worth noting: **100% TPR across every profile.** Every malicious package and every vulnerable package in the 81-package set is caught regardless of which triage layers are on. The earlier `npm-bench-latest.json` snapshot showing F1=0.444 was on a different 30-package slice and no longer reflects reality — see [pwnkit#111](https://github.com/0sec-labs/pwnkit/issues/111).
+Also worth noting: **100% TPR across every profile.** Every malicious package and every vulnerable package in the 81-package set is caught regardless of which triage layers are on. The earlier `npm-bench-latest.json` snapshot showing F1=0.444 was on a different 30-package slice and no longer reflects reality — see [pwnkit#111](https://github.com/0sec-labs/0sec/issues/111).
 
 ### Single-feature isolation on stubborn-14 (white-box)
 
@@ -94,15 +94,15 @@ To figure out which moat layer causes the flag losses in white-box, each one was
 
 `feat-reach` is the clear winner: +3 flags at $1.61 per flag, less than half the cost of the default baseline.
 
-`egats` has been flagged for disable-by-default in [pwnkit#116](https://github.com/0sec-labs/pwnkit/issues/116).
+`egats` has been flagged for disable-by-default in [pwnkit#116](https://github.com/0sec-labs/0sec/issues/116).
 
 ### Takeaways
 
-1. **No single static policy wins on all three slices.** The moat helps on black-box XBOW, costs 2 flags on white-box XBOW, and is a batch-1 no-op on npm-bench. A static feature-flag system applied at the scan level can't optimize all three simultaneously. This is the direct motivation for learned dynamic routing — see [pwnkit#113](https://github.com/0sec-labs/pwnkit/issues/113).
+1. **No single static policy wins on all three slices.** The moat helps on black-box XBOW, costs 2 flags on white-box XBOW, and is a batch-1 no-op on npm-bench. A static feature-flag system applied at the scan level can't optimize all three simultaneously. This is the direct motivation for learned dynamic routing — see [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113).
 2. **The attack agent baseline is strong without triage.** 86% on the first 50 XBOW white-box challenges with triage disabled, and 100% recall on npm-bench across profiles in this run.
 3. **`egats` is the regressing layer in this isolation run.** Keep disabled by default and opt-in for research.
 4. **npm-bench FPR attribution needs repeat runs.** Batch-1 results pointed at stable features; batch-2 reruns showed high variance at this sample size.
-5. **Per-layer telemetry is now on.** Every finding produced after 2026-04-11 carries a `layerVerdicts` array that logs which layer touched it and what it did. That's the supervision signal for the learned-routing model in [pwnkit#113](https://github.com/0sec-labs/pwnkit/issues/113). See [pwnkit#112](https://github.com/0sec-labs/pwnkit/issues/112) for the instrumentation commit.
+5. **Per-layer telemetry is now on.** Every finding produced after 2026-04-11 carries a `layerVerdicts` array that logs which layer touched it and what it did. That's the supervision signal for the learned-routing model in [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113). See [pwnkit#112](https://github.com/0sec-labs/0sec/issues/112) for the instrumentation commit.
 
 ## Data foundation
 
@@ -234,7 +234,7 @@ runtime filters. The collector can emit labeled rows from:
 - blind-verify statuses in the local SQLite DB
 
 See [Triage Dataset](/research/triage-dataset/) for the JSONL schema and
-[issue #67](https://github.com/0sec-labs/pwnkit/issues/67) for the
+[issue #67](https://github.com/0sec-labs/0sec/issues/67) for the
 paper-plan that uses it.
 
 ### Conservative by default

@@ -401,7 +401,7 @@ export class pwnkitDB {
    * table_info is cached by SQLite) and the ALTERs are no-ops when the
    * column is already present, so running on a fresh DB is harmless.
    *
-   * See: https://github.com/0sec-labs/pwnkit/issues/420
+   * See: https://github.com/0sec-labs/0sec/issues/420
    */
   private migrate(): void {
     const cols = this.sqlite
@@ -2294,7 +2294,7 @@ function deriveEvidenceFromPocSteps(finding: Finding): { request: string; respon
 // method below handles ALTER TABLE for databases created by older versions;
 // fresh installs get every column from day one via this SQL.
 //
-// See: https://github.com/0sec-labs/pwnkit/issues/420
+// See: https://github.com/0sec-labs/0sec/issues/420
 
 const SCHEMA_TABLES_SQL = `
 CREATE TABLE IF NOT EXISTS scans (

@@ -24,7 +24,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const REPO = "0sec-labs/pwnkit";
+const REPO = "0sec-labs/0sec";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const CACHE_FILE = join(homedir(), ".pwnkit", "last-update-check");
 const FETCH_TIMEOUT_MS = 4000;

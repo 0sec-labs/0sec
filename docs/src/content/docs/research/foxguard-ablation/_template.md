@@ -135,7 +135,7 @@ the relevant numbers into a new dated `.md` file in this folder.
 ## Pinned Foxguard version
 
 `FOXGUARD_PINNED_TAG` in
-[`packages/core/src/shared-analysis.ts`](https://github.com/0sec-labs/pwnkit/blob/main/packages/core/src/shared-analysis.ts)
+[`packages/core/src/shared-analysis.ts`](https://github.com/0sec-labs/0sec/blob/main/packages/core/src/shared-analysis.ts)
 is the single source of truth. If you bump it, document the bump in a
 new dated artifact and re-run the gate.
 

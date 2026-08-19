@@ -291,7 +291,7 @@ a known lead.
 `PWNKIT_FEATURE_EGATS` appeared in earlier versions of this table but no
 longer exist in the codebase — `egats` was removed from the default
 aliases after the ablation measured it regressing the hardest slice
-([pwnkit#116](https://github.com/0sec-labs/pwnkit/issues/116)). Sections
+([pwnkit#116](https://github.com/0sec-labs/0sec/issues/116)). Sections
 9-11 above describe layers that are no longer separately toggleable.
 
 See [Features](/features/) for the complete env-var inventory.

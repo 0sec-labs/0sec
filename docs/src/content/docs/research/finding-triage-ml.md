@@ -201,7 +201,7 @@ Prosecutor vs. defender agents debate each finding with fresh contexts, and a sk
 
 ### Target Performance
 
-> **Update 2026-04-11 — the aspirational table below was contradicted by measurement.** The 21-run ablation posted on [pwnkit#72](https://github.com/0sec-labs/pwnkit/issues/72#issuecomment-4229956469) and documented on the [FP Reduction Moat](/research/fp-reduction-moat/) page shows the real effect is mode- and slice-dependent, not a monotonic 50% → under 5% progression. See that page for the measured numbers across XBOW white-box, XBOW black-box, and npm-bench.
+> **Update 2026-04-11 — the aspirational table below was contradicted by measurement.** The 21-run ablation posted on [pwnkit#72](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229956469) and documented on the [FP Reduction Moat](/research/fp-reduction-moat/) page shows the real effect is mode- and slice-dependent, not a monotonic 50% → under 5% progression. See that page for the measured numbers across XBOW white-box, XBOW black-box, and npm-bench.
 
 The stack was *designed* so each layer strips out a fraction of the false positives that survived the previous layer. The aspirational table below was derived from published reference numbers for SAST systems (Endor Labs, Semgrep Assistant) evaluated on differentially-labeled static findings — a different problem from agent-generated findings on exploitation benchmarks. It is preserved here only as design intent:
 
@@ -217,7 +217,7 @@ The actual measured effect on pwnkit (2026-04-11 ablation, gpt-5.4):
 - XBOW black-box @ limit=25: `moat` strictly dominates `none` — more flags (19 vs 18), 52% fewer findings (14 vs 27), cheaper per flag ($0.53 vs $0.76).
 - npm-bench (81 packages): 100% TPR across every profile. `default` and `moat` are F1-identical (0.956). The moat layers add zero FPR reduction on top of default; the FPR increase from `none` (0.11) to `default` (0.19) comes entirely from the stable features (early-stop, script templates, progress handoff), not from the moat layers.
 
-The honest end-to-end story is *not* "50% → under 5% FPR." It is "depending on mode and slice, the moat is either a Pareto tradeoff you choose to take (white-box XBOW) or a strict dominance result (black-box XBOW) or a no-op (npm-bench). A static feature-flag system applied at the scan level can't optimize all three slices simultaneously — which is the direct motivation for the [learned dynamic routing](https://github.com/0sec-labs/pwnkit/issues/113) paper."
+The honest end-to-end story is *not* "50% → under 5% FPR." It is "depending on mode and slice, the moat is either a Pareto tradeoff you choose to take (white-box XBOW) or a strict dominance result (black-box XBOW) or a no-op (npm-bench). A static feature-flag system applied at the scan level can't optimize all three slices simultaneously — which is the direct motivation for the [learned dynamic routing](https://github.com/0sec-labs/0sec/issues/113) paper."
 
 ## Related Work
 

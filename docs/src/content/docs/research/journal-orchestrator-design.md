@@ -3,7 +3,7 @@ title: Append-only execution journal + Orchestrator — Design Doc
 description: The architectural refactor that separates "what to do next" (Orchestrator agent) from "what has been done" (durable on-disk journal). Motivated by Provos / IronCurtain (Apr 2026) and BoxPwnr (97.1% XBOW), both of which validated the same pattern independently.
 ---
 
-> **Status:** Design doc, open for review. Tracking issue [pwnkit#224](https://github.com/0sec-labs/pwnkit/issues/224). Nothing is implemented yet; this page describes what we're going to build, why, and how we'll know it worked.
+> **Status:** Design doc, open for review. Tracking issue [pwnkit#224](https://github.com/0sec-labs/0sec/issues/224). Nothing is implemented yet; this page describes what we're going to build, why, and how we'll know it worked.
 
 ## The problem in one paragraph
 
@@ -154,10 +154,10 @@ Phase 4 — once stable, remove the legacy code path. Not before two consecutive
 - **Not a queue or scheduler.** The Orchestrator is one loop, sequential. Parallel specialist dispatch can come later when we have a workload that needs it.
 - **Not changing the tools.** `shellExec`, `httpRequest`, `saveFinding` etc. all keep their current signatures. The journal wraps them; it doesn't replace them.
 - **Not removing the in-memory state machine.** It still exists for the duration of a single specialist's run. It's just no longer the source of truth across dispatches.
-- **Not building #225 here.** This doc is the substrate. YAML-FSM workflows ([#225](https://github.com/0sec-labs/pwnkit/issues/225)) sit on top.
+- **Not building #225 here.** This doc is the substrate. YAML-FSM workflows ([#225](https://github.com/0sec-labs/0sec/issues/225)) sit on top.
 
 ## Tracking
 
-- Tracking issue: [pwnkit#224](https://github.com/0sec-labs/pwnkit/issues/224)
-- Companion issues: [#225 (YAML FSM workflows)](https://github.com/0sec-labs/pwnkit/issues/225), [#226 (C/C++ review profile)](https://github.com/0sec-labs/pwnkit/issues/226), [#227 (cost telemetry)](https://github.com/0sec-labs/pwnkit/issues/227)
+- Tracking issue: [pwnkit#224](https://github.com/0sec-labs/0sec/issues/224)
+- Companion issues: [#225 (YAML FSM workflows)](https://github.com/0sec-labs/0sec/issues/225), [#226 (C/C++ review profile)](https://github.com/0sec-labs/0sec/issues/226), [#227 (cost telemetry)](https://github.com/0sec-labs/0sec/issues/227)
 - Prior work referenced: [Provos — Finding Zero-Days with Any Model](https://www.provos.org/post/finding-zero-days-with-any-model/), [BoxPwnr](https://github.com/0ca/boxpwnr) (97.1% XBOW)

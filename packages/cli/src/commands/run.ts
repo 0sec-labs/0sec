@@ -603,7 +603,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
       console.log("");
       console.log(chalk.gray("  --tui post-scan view is no longer bundled in the npm package."));
       console.log(chalk.gray("  Install the standalone binary for the full OpenTUI experience:"));
-      console.log(chalk.gray("    curl -fsSL https://raw.githubusercontent.com/0sec-labs/pwnkit/main/install.sh | bash"));
+      console.log(chalk.gray("    curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash"));
       console.log("");
     }
 
