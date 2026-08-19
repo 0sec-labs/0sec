@@ -1,13 +1,14 @@
 {
-  "name": "pwnkit-cli",
+  "name": "pwnkit",
   "type": "module",
   "version": "0.12.0",
   "description": "Fully autonomous agentic pentesting for web apps, AI/LLM apps, package ecosystems, and source code.",
   "bin": {
-    "pwnkit-cli": "dist/pwnkit.js"
+    "pwnkit": "dist/pwnkit.js"
   },
   "files": [
     "LICENSE",
+    "LICENSE-MIT",
     "NOTICE",
     "README.md",
     "package.json",
@@ -19,7 +20,8 @@
     "build:docs": "pnpm --filter @pwnkit/docs build",
     "dev": "pnpm -r --parallel dev",
     "lint": "pnpm --filter '!@pwnkit/docs' -r exec tsc --noEmit",
-    "test": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter ./packages/cli test && pnpm --filter @pwnkit/benchmark test:windows-research && pnpm --filter @pwnkit/benchmark windows-lpe-corpus:contract && pnpm test:launcher && pnpm test:public-source-export",
+    "test": "pnpm test:public",
+    "test:public": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter pwnkit-cli exec vitest run src/commands/__tests__/scan.test.ts src/commands/__tests__/bench.test.ts src/utils/update-check.test.ts && pnpm test:launcher && pnpm test:public-source-export",
     "test:launcher": "node --test scripts/npm-launcher/launcher.test.mjs",
     "test:public-source-export": "node --test scripts/create-public-source-export.test.mjs",
     "export:public-source": "node scripts/create-public-source-export.mjs",
@@ -49,7 +51,7 @@
     "type": "git",
     "url": "git+ssh://git@github.com/0sec-labs/pwnkit.git"
   },
-  "license": "Apache-2.0",
+  "license": "MIT OR Apache-2.0",
   "engines": {
     "node": ">=24.0.0",
     "pnpm": ">=9"

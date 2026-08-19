@@ -100,7 +100,7 @@ function pocSteps(): PocStep[] {
         headers: {
           Authorization: `Bearer ${FAKE_JWT}`,
           Cookie: FAKE_COOKIE,
-          "X-Api-Key": "***REMOVED***",
+          "X-Api-Key": "AKIAIOSFODNN7EXAMPLE",
         },
       },
       expect: { type: "body-contains", text: '"users"' },
@@ -295,7 +295,7 @@ describe("coordinated-disclosure GTM motion (demo harness)", () => {
     // Redaction: no secret survives into the draft.
     expect(md).not.toContain(FAKE_JWT);
     expect(md).not.toContain("abc123-operator-session-do-not-leak");
-    expect(md).not.toContain("***REMOVED***");
+    expect(md).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(md).toContain("<REDACTED-Authorization>");
     expect(md).toContain("<REDACTED-Cookie>");
 

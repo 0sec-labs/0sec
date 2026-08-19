@@ -15,7 +15,7 @@
  *     path needs a temp DB file, so we skip it in the seed.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { Command } from "commander";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +35,8 @@ const resolveAttributionMock = vi.fn();
 const extractAttributionFromScopeJsonMock = vi.fn();
 const resolveEngagementProfileMock = vi.fn();
 const extractEngagementFromScopeJsonMock = vi.fn();
+const targetRequiresScopeMock = vi.fn((target: string) => /^https?:\/\//.test(target));
+const networkScopeRequiredRefusalMock = vi.fn((target: string) => `scope required for ${target}`);
 vi.mock("@pwnkit/core", () => ({
   loadScope: loadScopeMock,
   parseRateLimitFlag: parseRateLimitFlagMock,
@@ -42,6 +44,8 @@ vi.mock("@pwnkit/core", () => ({
   extractAttributionFromScopeJson: extractAttributionFromScopeJsonMock,
   resolveEngagementProfile: resolveEngagementProfileMock,
   extractEngagementFromScopeJson: extractEngagementFromScopeJsonMock,
+  targetRequiresScope: targetRequiresScopeMock,
+  networkScopeRequiredRefusal: networkScopeRequiredRefusalMock,
 }));
 
 const { registerScanCommand } = await import("../scan.js");
@@ -72,8 +76,24 @@ async function runCli(argv: string[]): Promise<void> {
     writeErr: () => undefined,
   });
   registerScanCommand(program);
+
+  const effectiveArgv = [...argv];
+  const targetIndex = effectiveArgv.indexOf("--target");
+  const target = targetIndex === -1 ? undefined : effectiveArgv[targetIndex + 1];
+  const isHttpAudit = effectiveArgv.includes("--mode")
+    && effectiveArgv[effectiveArgv.indexOf("--mode") + 1] === "http_audit";
+  if (
+    effectiveArgv[0] === "scan"
+    && target
+    && targetRequiresScopeMock(target)
+    && !isHttpAudit
+    && !effectiveArgv.includes("--scope")
+  ) {
+    effectiveArgv.push("--scope", defaultScopePath);
+  }
+
   try {
-    await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+    await program.parseAsync(["node", "pwnkit", ...effectiveArgv]);
   } catch {
     // commander.exitOverride() throws CommanderError on usage errors,
     // and our process.exit mock throws on hard exits. Both are expected.
@@ -84,23 +104,31 @@ async function runCli(argv: string[]): Promise<void> {
 
 let tracker: ExitTracker;
 let exitSpy: { mockRestore: () => void };
-let errSpy: ReturnType<typeof vi.spyOn>;
-let logSpy: ReturnType<typeof vi.spyOn>;
+let errSpy: MockInstance;
+let logSpy: MockInstance;
 let tmpRoot: string;
+let defaultScopePath = "";
 
 beforeEach(() => {
   runUnifiedMock.mockReset().mockResolvedValue(undefined);
-  loadScopeMock.mockReset();
+  loadScopeMock.mockReset().mockReturnValue({
+    raw: {},
+    match: () => ({ allowed: true }),
+  });
   parseRateLimitFlagMock.mockReset();
   resolveAttributionMock.mockReset();
   extractAttributionFromScopeJsonMock.mockReset();
   resolveEngagementProfileMock.mockReset();
   extractEngagementFromScopeJsonMock.mockReset();
+  targetRequiresScopeMock.mockClear();
+  networkScopeRequiredRefusalMock.mockClear();
   tracker = {};
   exitSpy = makeExitMock(tracker);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-scan-test-"));
+  defaultScopePath = join(tmpRoot, "scope.json");
+  writeFileSync(defaultScopePath, "{}");
 });
 
 afterEach(() => {

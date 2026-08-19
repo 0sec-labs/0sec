@@ -118,7 +118,7 @@ export const DEFAULT_REVIEW_MATCHERS: readonly ReviewMatcherSpec[] = [
     examples: [
       'apiKey = "sk-abc123def456ghi789jkl012"',
       "password: 'hunter2secretvalue'",
-      "***REMOVED***0",
+      "AKIAIOSFODNN7EXAMPLE0",
     ],
   },
   {

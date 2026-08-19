@@ -14,7 +14,7 @@ function fakeFetch(routes: Record<string, FetchTextResult>) {
 
 describe("redactSecret", () => {
   it("keeps a short prefix and the length, never the full value", () => {
-    const out = redactSecret("***REMOVED***");
+    const out = redactSecret("AKIAIOSFODNN7EXAMPLE");
     expect(out).toBe("AKIAIO…(20 chars)");
     expect(out).not.toContain("EXAMPLE");
   });
@@ -40,9 +40,9 @@ describe("scanBody — secret classification", () => {
   it("flags a high-signal AWS key, Stripe live key, Google key, and JWT", () => {
     const stripe = ["sk", "live", "4eC39HqLyjWDarjtT1zdp7dcABCD"].join("_");
     const body = [
-      "const a='***REMOVED***';",
+      "const a='AKIAIOSFODNN7EXAMPLE';",
       `const s='${stripe}';`,
-      "const g='***REMOVED***';",
+      "const g='AIzaSyB1234567890abcdefghijklmnopqrstuv';",
       "const t='eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.abcDEF123456';",
     ].join("\n");
     const hits = scanBody("https://e/app.js", body);
@@ -59,12 +59,12 @@ describe("scanBody — secret classification", () => {
   it("detects the patterns ported from foxguard (GitLab, npm, GitHub fine-grained, private key, generic api_key, bearer)", () => {
     const body = [
       "glpat-abcdefghijklmnopqrstuvwx",
-      "***REMOVED***",
-      "***REMOVED***",
+      "npm_abcdefghijklmnopqrstuvwxyz0123456789",
+      "github_pat_11ABCDEFG0abcdefghijkl",
       "-----BEGIN RSA PRIVATE KEY-----",
       `aws_secret_access_key = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY1234"`,
       `const o = { apiKey: "abcdef0123456789abcdef" };`,
-      "Authorization: Bearer ***REMOVED***",
+      "Authorization: Bearer abcdef0123456789ABCDEFXYZ",
     ].join("\n");
     const kinds = new Set(scanBody("https://e/app.js", body).map((h) => h.kind));
     expect(kinds.has("gitlab_token")).toBe(true);
@@ -95,7 +95,7 @@ describe("scanBody — secret classification", () => {
   });
 
   it("dedupes a repeated identical secret to a single hit", () => {
-    const key = "***REMOVED***";
+    const key = "AKIAIOSFODNN7EXAMPLE";
     const body = `a='${key}';b='${key}';c='${key}';`;
     const hits = scanBody("https://e/app.js", body).filter((h) => h.kind === "aws_access_key_id");
     expect(hits).toHaveLength(1);
@@ -156,7 +156,7 @@ describe("scanJsArtifacts", () => {
       baseUrl: "https://e",
       chunkUrls: ["https://e/app.js"],
       fetchText: fakeFetch({
-        "https://e/app.js": { status: 200, body: "const k='***REMOVED***'" },
+        "https://e/app.js": { status: 200, body: "const k='AKIAIOSFODNN7EXAMPLE'" },
       }),
     });
     const high = result.secrets.filter((s) => s.confidence === "high");

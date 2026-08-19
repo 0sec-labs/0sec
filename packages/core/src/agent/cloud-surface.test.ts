@@ -223,11 +223,11 @@ describe("SigV4 + identity parsing (pure)", () => {
       region: "us-east-1",
       host: "sts.amazonaws.com",
       body: "Action=GetCallerIdentity&Version=2011-06-15",
-      accessKeyId: "***REMOVED***",
+      accessKeyId: "AKIAIOSFODNN7EXAMPLE",
       secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
       amzDate: "20260617T000000Z",
     });
-    expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=***REMOVED***\/20260617\/us-east-1\/sts\/aws4_request/);
+    expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE\/20260617\/us-east-1\/sts\/aws4_request/);
     expect(headers.Authorization).toMatch(/Signature=[0-9a-f]{64}$/);
     expect(headers["X-Amz-Date"]).toBe("20260617T000000Z");
     expect(headers["X-Amz-Security-Token"]).toBeUndefined();

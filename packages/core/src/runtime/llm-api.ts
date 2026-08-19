@@ -565,6 +565,7 @@ const AZURE_FOUNDRY_DEPLOYMENT_IDS: Record<string, true> = {
   "deepseek-v4-pro": true,
   "kimi-k2.7-code": true,
   "gpt-oss-120b": true,
+  "gpt-5.4": true,
   "gpt-5.6-sol": true,
   "gpt-5.6-luna": true,
   "gpt-5.6-terra": true,
@@ -1208,10 +1209,26 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
-  // Controlled benchmark runs bind a manifest's provider identity as well as
-  // its model route. Normal interactive scans retain model-first routing.
+  // Cloud workers hand the selected provider to the sandbox explicitly. This
+  // wins over ambient credential precedence: fallback credentials must never
+  // become the primary merely because their key is also present. The older
+  // FORCE variant remains for controlled benchmark manifests.
+  const selectedProviderRaw = process.env.PWNKIT_SELECTED_PROVIDER?.trim();
   const forcedProviderRaw = process.env.PWNKIT_FORCE_PROVIDER?.trim();
-  if (forcedProviderRaw) {
+  if (
+    selectedProviderRaw &&
+    forcedProviderRaw &&
+    selectedProviderRaw !== forcedProviderRaw
+  ) {
+    throw new Error(
+      "PWNKIT_SELECTED_PROVIDER conflicts with PWNKIT_FORCE_PROVIDER",
+    );
+  }
+  const pinnedProviderRaw = selectedProviderRaw ?? forcedProviderRaw;
+  if (pinnedProviderRaw) {
+    const source = selectedProviderRaw
+      ? "PWNKIT_SELECTED_PROVIDER"
+      : "PWNKIT_FORCE_PROVIDER";
     const supported: readonly ApiProvider[] = [
       "openrouter",
       "anthropic",
@@ -1223,17 +1240,17 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       "kimi",
       "qwen",
     ];
-    if (!supported.includes(forcedProviderRaw as ApiProvider)) {
-      throw new Error(`PWNKIT_FORCE_PROVIDER is unsupported: ${forcedProviderRaw}`);
+    if (!supported.includes(pinnedProviderRaw as ApiProvider)) {
+      throw new Error(`${source} is unsupported: ${pinnedProviderRaw}`);
     }
     const model = preferredModel ?? process.env.PWNKIT_MODEL;
     if (!model) {
-      throw new Error("PWNKIT_FORCE_PROVIDER requires an explicit model");
+      throw new Error(`${source} requires an explicit model`);
     }
-    const provider = forcedProviderRaw as ApiProvider;
+    const provider = pinnedProviderRaw as ApiProvider;
     const resolved = resolveFailoverProvider(provider, model);
     if (!resolved) {
-      throw new Error(`PWNKIT_FORCE_PROVIDER=${provider} has no configured credentials`);
+      throw new Error(`${source}=${provider} has no configured credentials`);
     }
     return { provider, ...resolved, defaultModel: model };
   }

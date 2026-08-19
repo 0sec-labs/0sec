@@ -272,7 +272,7 @@ describe("Skill Registry", () => {
       const skills = [...registry.values()];
 
       const texts = [
-        "Authorization: Bearer ***REMOVED***",
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc",
         'JWT header: {"alg": "HS256", "typ": "JWT"}',
       ];
       const matched = matchTriggers(texts, skills);
