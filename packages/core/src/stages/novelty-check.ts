@@ -96,8 +96,8 @@ export interface LoreMirror {
 }
 
 const DEFAULT_BASE_URL = "https://lore.kernel.org";
-/** Our own postings — never treat these as a third-party duplicate. */
-export const OWN_FROM_MARKERS = ["0sec.ai", "doruk@", "peaktwilight"];
+/** Public ownership markers — never treat these postings as third-party duplicates. */
+export const OWN_FROM_MARKERS = ["0sec.ai", "doruk@"];
 
 function epochUrl(baseUrl: string, list: string, epoch: number): string {
   return `${baseUrl}/${list}/git/${epoch}.git`;

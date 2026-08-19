@@ -85,7 +85,7 @@ const res = await runHuntScan({
   ...(BEST_OF_N ? { attemptsPerCandidate: BEST_OF_N } : {}),
   ...(JUDGE_TOP_K ? { judgeTopK: JUDGE_TOP_K } : {}),
   ...(JUDGE_MODEL ? { judgeModel: JUDGE_MODEL } : {}),
-  verify: makeSkepticVerifier({ sourceRoot: SRC, runtime: "api", model: process.env.HUNT_SKEPTIC_MODEL || "glm-5.2" }),
+  verify: makeSkepticVerifier({ sourceRoot: SRC, runtime: "api", model: process.env.HUNT_SKEPTIC_MODEL || "glm-5.3" }),
   log: (m) => console.log(m),
 });
 

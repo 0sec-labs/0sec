@@ -768,7 +768,7 @@ export async function runVerify(opts: {
     // Always provide a cwd to the runtime. If the caller's target didn't set
     // one, allocate an isolated tmpdir so PoC steps cannot reach into the
     // operator's process.cwd() (#194 isolation requirement).
-    let target: PocExecutionTarget = baseTarget;
+    let target: PocExecutionTarget = { ...baseTarget, allowProcessActions: false };
     if (!baseTarget.cwd) {
       const isolated = allocateIsolatedWorkspace();
       cleanup = isolated.cleanup;

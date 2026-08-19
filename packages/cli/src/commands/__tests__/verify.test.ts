@@ -391,62 +391,61 @@ describe("runVerify", () => {
     }
   });
 
-  it("happy path — all verify steps pass → exit 0, status=reproduced", async () => {
+  it("happy path — in-scope HTTP proof passes → exit 0, status=reproduced", async () => {
     const finding = makeFinding([
       {
         id: "s1",
         kind: "exploit",
         summary: "exploit",
-        action: { type: "shell", cmd: "echo pwn" },
-        expect: { type: "exit-zero" },
+        action: { type: "http", method: "GET", url: "/" },
+        expect: { type: "http-status", status: 200 },
       },
       {
         id: "s2",
         kind: "verify",
         summary: "verify",
-        action: { type: "shell", cmd: "echo verified" },
-        expect: { type: "exit-zero" },
+        action: { type: "http", method: "GET", url: "/verify" },
+        expect: { type: "http-status", status: 200 },
       },
     ]);
     restore = setRuntimeDeps({
-      spawn: fakeSpawnFromMap({
-        "echo pwn": { exitCode: 0, stdout: "pwn\n" },
-        "echo verified": { exitCode: 0, stdout: "verified\n" },
-      }),
+      fetch: async () => new Response("verified", { status: 200 }),
     });
-    const findingPath = writeFinding(finding);
-    const outcome = await runVerify({ findingPath });
+    const targetPath = join(tmpRoot, "target.json");
+    writeFileSync(targetPath, JSON.stringify({ baseUrl: "https://example.com", scopeAllowlist: ["example.com"] }), "utf8");
+    const outcome = await runVerify({ findingPath: writeFinding(finding), targetPath });
     expect(outcome.exitCode).toBe(0);
     expect(outcome.result.status).toBe("reproduced");
     expect(outcome.result.finding_id).toBe(finding.id);
-    expect(outcome.result.commands.length).toBe(2);
-    expect(outcome.result.commands[0].argv).toEqual(["/bin/sh", "-c", "echo pwn"]);
-    expect(outcome.result.commands[0].exit_code).toBe(0);
-    expect(outcome.result.commands[0].stdout_excerpt).toContain("pwn");
-    expect(outcome.result.assertions.every((a) => a.passed)).toBe(true);
+    expect(outcome.result.commands).toHaveLength(2);
+    expect(outcome.result.commands[0].argv).toEqual(["GET", "/"]);
+    expect(outcome.result.commands[0].exit_code).toBe(200);
+    expect(outcome.result.commands[0].stdout_excerpt).toContain("verified");
+    expect(outcome.result.assertions.every((assertion) => assertion.passed)).toBe(true);
     expect(VerificationResultSchema.parse(outcome.result)).toEqual(outcome.result);
   });
 
-  it("negative path — a verify step fails → exit 1, status=not_reproduced", async () => {
+  it("negative path — an HTTP verify step fails → exit 1, status=not_reproduced", async () => {
     const finding = makeFinding([
       {
         id: "s1",
         kind: "verify",
         summary: "verify",
-        action: { type: "shell", cmd: "false" },
-        expect: { type: "exit-zero" },
+        action: { type: "http", method: "GET", url: "/" },
+        expect: { type: "http-status", status: 200 },
       },
     ]);
     restore = setRuntimeDeps({
-      spawn: fakeSpawnFromMap({ false: { exitCode: 1 } }),
+      fetch: async () => new Response("blocked", { status: 403 }),
     });
-    const findingPath = writeFinding(finding);
-    const outcome = await runVerify({ findingPath });
+    const targetPath = join(tmpRoot, "target.json");
+    writeFileSync(targetPath, JSON.stringify({ baseUrl: "https://example.com", scopeAllowlist: ["example.com"] }), "utf8");
+    const outcome = await runVerify({ findingPath: writeFinding(finding), targetPath });
     expect(outcome.exitCode).toBe(1);
     expect(outcome.result.status).toBe("not_reproduced");
-    expect(outcome.result.assertions.length).toBe(1);
+    expect(outcome.result.assertions).toHaveLength(1);
     expect(outcome.result.assertions[0].passed).toBe(false);
-    expect(outcome.result.commands[0].exit_code).toBe(1);
+    expect(outcome.result.commands[0].exit_code).toBe(403);
     expect(VerificationResultSchema.parse(outcome.result)).toEqual(outcome.result);
   });
 
@@ -599,154 +598,61 @@ describe("runVerify", () => {
   });
 });
 
-// ── Workspace isolation tests (CodeRabbit #194 — cwd safety) ────────────────
+// ── Public process-action containment ────────────────────────────────────────
 
-describe("runVerify workspace isolation", () => {
+describe("runVerify process-action containment", () => {
   let restore: (() => void) | undefined;
+
   afterEach(() => {
-    if (restore) {
-      restore();
-      restore = undefined;
-    }
+    restore?.();
+    restore = undefined;
   });
 
-  /**
-   * Spawn fake that records the third-arg `cwd` it was invoked with.
-   * Used to assert that `runVerify` always passes an isolated cwd through
-   * to the runtime, never `undefined` (which would fall through to
-   * `process.cwd()` in real `spawn`).
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- spawn shim is loose by design
-  function fakeSpawnRecordingCwd(seen: { cwd?: string; allCwds: string[] }): any {
-    return (
-      cmd: string,
-      args: string[],
-      opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
-    ) => {
-      seen.cwd = opts?.cwd;
-      seen.allCwds.push(opts?.cwd ?? "<undefined>");
-      const child = new FakeChild();
-      setImmediate(() => child.emit("close", 0));
-      void cmd;
-      void args;
-      return child;
-    };
-  }
-
-  it("when --target is omitted, spawn receives an isolated tmpdir cwd (never undefined)", async () => {
-    const finding = makeFinding([
+  function shellFinding() {
+    return makeFinding([
       {
         id: "s1",
         kind: "verify",
         summary: "verify",
-        action: { type: "shell", cmd: "echo isolated" },
+        action: { type: "shell", cmd: "echo should-not-run" },
         expect: { type: "exit-zero" },
       },
     ]);
-    const seen: { cwd?: string; allCwds: string[] } = { allCwds: [] };
-    restore = setRuntimeDeps({ spawn: fakeSpawnRecordingCwd(seen) });
-    const findingPath = writeFinding(finding);
+  }
 
-    await runVerify({ findingPath });
+  it("does not spawn a persisted shell PoC without a target file", async () => {
+    const calls: string[] = [];
+    restore = setRuntimeDeps({
+      spawn: ((cmd: string) => {
+        calls.push(cmd);
+        return new FakeChild();
+      }) as never,
+    });
 
-    expect(seen.cwd).toBeDefined();
-    expect(seen.cwd).not.toBe("");
-    // Must not be the test process cwd — that's exactly the isolation
-    // failure CodeRabbit flagged on PR #197.
-    expect(seen.cwd).not.toBe(process.cwd());
-    // Should land under os.tmpdir() with the recognisable prefix.
-    expect(seen.cwd).toMatch(/pwnkit-verify-/);
+    await runVerify({ findingPath: writeFinding(shellFinding()) });
+
+    expect(calls).toEqual([]);
   });
 
-  it("when --target supplies a cwd, spawn receives that cwd (caller wins)", async () => {
+  it("does not let a target file re-enable persisted shell execution", async () => {
     const callerCwd = mkdtempSync(join(tmpdir(), "pwnkit-verify-caller-"));
     try {
-      const finding = makeFinding([
-        {
-          id: "s1",
-          kind: "verify",
-          summary: "verify",
-          action: { type: "shell", cmd: "echo from-target" },
-          expect: { type: "exit-zero" },
-        },
-      ]);
-      const seen: { cwd?: string; allCwds: string[] } = { allCwds: [] };
-      restore = setRuntimeDeps({ spawn: fakeSpawnRecordingCwd(seen) });
-      const findingPath = writeFinding(finding);
+      const calls: string[] = [];
+      restore = setRuntimeDeps({
+        spawn: ((cmd: string) => {
+          calls.push(cmd);
+          return new FakeChild();
+        }) as never,
+      });
       const targetPath = join(tmpRoot, "target.json");
-      writeFileSync(targetPath, JSON.stringify({ cwd: callerCwd }), "utf8");
+      writeFileSync(targetPath, JSON.stringify({ cwd: callerCwd, allowProcessActions: true }), "utf8");
 
-      await runVerify({ findingPath, targetPath });
+      await runVerify({ findingPath: writeFinding(shellFinding()), targetPath });
 
-      expect(seen.cwd).toBe(callerCwd);
+      expect(calls).toEqual([]);
     } finally {
       rmSync(callerCwd, { recursive: true, force: true });
     }
-  });
-
-  it("cleans up the isolated tmpdir after execution completes", async () => {
-    const finding = makeFinding([
-      {
-        id: "s1",
-        kind: "verify",
-        summary: "verify",
-        action: { type: "shell", cmd: "echo cleanup" },
-        expect: { type: "exit-zero" },
-      },
-    ]);
-    const seen: { cwd?: string; allCwds: string[] } = { allCwds: [] };
-    restore = setRuntimeDeps({ spawn: fakeSpawnRecordingCwd(seen) });
-    const findingPath = writeFinding(finding);
-
-    await runVerify({ findingPath });
-
-    expect(seen.cwd).toBeDefined();
-    // The isolated dir should not survive past runVerify — leaving stale
-    // tmp dirs around would let a successor run see prior PoC state.
-    expect(existsSync(seen.cwd as string)).toBe(false);
-  });
-
-  it("cleans up the isolated tmpdir even when execution errors out", async () => {
-    // Force an error path: malformed finding JSON throws inside runVerify
-    // *after* the tmpdir has been allocated (we have to allocate first
-    // for the failure point to matter; readJson throws before allocation,
-    // so we use a finding that triggers a runtime error instead).
-    //
-    // Approach: use an unsupported action variant via a hand-crafted
-    // finding JSON. The runtime will bubble back with `errored` per-step
-    // — but that doesn't throw at the runVerify level, so we instead use
-    // a spawn fake that throws synchronously to provoke the catch.
-    const finding = makeFinding([
-      {
-        id: "s1",
-        kind: "verify",
-        summary: "verify",
-        action: { type: "shell", cmd: "boom" },
-        expect: { type: "exit-zero" },
-      },
-    ]);
-    let capturedCwd: string | undefined;
-    restore = setRuntimeDeps({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- spawn shim
-      spawn: ((
-        _cmd: string,
-        _args: string[],
-        opts?: { cwd?: string },
-      ) => {
-        capturedCwd = opts?.cwd;
-        // Don't throw — runtime catches that. Just resolve normally so the
-        // happy path runs through, then we assert cleanup happened.
-        const child = new FakeChild();
-        setImmediate(() => child.emit("close", 0));
-        return child;
-      }) as never,
-    });
-    const findingPath = writeFinding(finding);
-
-    await runVerify({ findingPath });
-
-    expect(capturedCwd).toBeDefined();
-    expect(existsSync(capturedCwd as string)).toBe(false);
   });
 });
 

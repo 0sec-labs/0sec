@@ -1,8 +1,8 @@
 /**
  * `pwnkit lens-synth` command tests — the CLI runs the full loop end-to-end with
  * an injected fake model + fake probe (no LLM, no finder), proving the manual
- * entry point wires miss-capture → synthesize → validate → register, honors
- * --dry-run, and validates the miss-input shape.
+ * entry point wires miss-capture → synthesize → validate → register, defaults
+ * to no write, and validates the miss-input shape.
  */
 
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -80,9 +80,19 @@ function registry(): { archetypes: Array<Record<string, unknown>> } {
 }
 
 describe("runLensSynthCommand", () => {
-  it("runs the full loop and registers a validated champion", async () => {
+  it("defaults to validation-only and does not write a champion", async () => {
     const result = await runLensSynthCommand(
       { missInput: missInputPath, registry: registryPath },
+      { model: toolModel, probe: cleanProbe },
+    );
+    expect(result.validations[0].passed).toBe(true);
+    expect(result.registered).toHaveLength(0);
+    expect(registry().archetypes).toHaveLength(1);
+  });
+
+  it("registers a validated champion only when explicitly promoted", async () => {
+    const result = await runLensSynthCommand(
+      { missInput: missInputPath, registry: registryPath, promote: true },
       { model: toolModel, probe: cleanProbe },
     );
     expect(result.registered.map((r) => r.id)).toEqual(["ssrf-url-fetch"]);
@@ -90,16 +100,6 @@ describe("runLensSynthCommand", () => {
     expect(reg.archetypes).toHaveLength(2);
     expect(reg.archetypes[1].source).toBe("synthesized");
     expect(reg.archetypes[1].miss_refs).toEqual(["app.py:7"]);
-  });
-
-  it("--dry-run validates but writes nothing", async () => {
-    const result = await runLensSynthCommand(
-      { missInput: missInputPath, registry: registryPath, dryRun: true },
-      { model: toolModel, probe: cleanProbe },
-    );
-    expect(result.validations[0].passed).toBe(true); // it WOULD have registered
-    expect(result.registered).toHaveLength(0); // but the cap-0 dry-run wrote nothing
-    expect(registry().archetypes).toHaveLength(1);
   });
 });
 

@@ -14,7 +14,7 @@
 #   AZUREHOUND_VERSION=vX  pin the AzureHound release (checksum-verified, see below)
 
 # ---------- Stage 1: builder ----------
-FROM node:20-bookworm AS builder
+FROM node:24-bookworm AS builder
 
 ENV PNPM_HOME=/root/.local/share/pnpm \
     PATH=/root/.local/share/pnpm:$PATH \
@@ -37,11 +37,9 @@ COPY LICENSE README.md ./
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
 
-# Install runtime production deps that the bundle externalizes
-# (better-sqlite3, drizzle-orm, cfonts) into dist/node_modules.
-# playwright is installed in the runtime stage via apt + pip-less npm install.
+# Install the bundle's locked runtime dependencies without lifecycle scripts.
 WORKDIR /app/dist
-RUN npm install --omit=dev --no-audit --no-fund
+RUN npm ci --omit=dev --ignore-scripts
 
 # ---------- Stage 2: runtime ----------
 FROM ubuntu:24.04 AS runtime
@@ -51,7 +49,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ENV NODE_ENV=production \
     PWNKIT_DOCKER=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH=/usr/local/bin:/usr/bin:/bin
 
 # Base system + Node 20 + pentest tooling.
@@ -159,12 +156,6 @@ WORKDIR /app
 # Copy the bundled CLI + its production node_modules from the builder
 COPY --from=builder /app/dist /app/dist
 
-# Install Playwright + Chromium with system deps.
-# Pinning to whatever the bundle's package.json expects via the workspace
-# isn't necessary — playwright is externalized, so any recent version works.
-RUN npm install -g playwright@1.48.0 \
-    && playwright install --with-deps chromium \
-    && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Make the bundled CLI globally invocable as `pwnkit`.
 RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit \

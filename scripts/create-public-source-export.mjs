@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { access, cp, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -43,6 +44,7 @@ const publicRoots = [
   "Dockerfile",
   "Dockerfile.prebuilt",
   "LICENSE",
+  "LICENSE-MIT",
   "NOTICE",
   "README.md",
   "SECURITY.md",
@@ -53,6 +55,9 @@ const publicRoots = [
   "pnpm-workspace.yaml",
   "scripts/assert-sqlite-wasm.mjs",
   "scripts/bundle-cli.mjs",
+  "scripts/dist-package-lock.json",
+  "scripts/docker-contract.test.mjs",
+  "scripts/runtime-lock.test.mjs",
   "scripts/npm-launcher",
   "scripts/ci-runner-bootstrap.sh",
   "scripts/smoke-cli.sh",
@@ -80,16 +85,39 @@ function slashPath(path) {
   return path.split(sep).join("/");
 }
 
-function isExcluded(sourcePath) {
-  const sourceRelative = slashPath(relative(repoRoot, sourcePath));
-  return excludedPaths.some(
-    (excluded) => sourceRelative === excluded || sourceRelative.startsWith(`${excluded}/`),
-  );
+function isUnder(path, root) {
+  return path === root || path.startsWith(`${root}/`);
 }
 
-await mkdir(outputDir, { recursive: false });
+function isGenerated(sourceRelative) {
+  return sourceRelative.endsWith(".tsbuildinfo") ||
+    sourceRelative.split("/").some((part) =>
+      ["node_modules", "dist", "dist-bin", "dist-npm"].includes(part),
+    );
+}
 
-for (const root of publicRoots) {
+function trackedPaths() {
+  try {
+    return execFileSync("git", ["-C", repoRoot, "ls-files", "-z"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    fail("could not read tracked source paths");
+  }
+}
+
+function isExcluded(sourceRelative) {
+  return excludedPaths.some((excluded) => isUnder(sourceRelative, excluded));
+}
+
+function isPublic(sourceRelative) {
+  return publicRoots.some((root) => isUnder(sourceRelative, root));
+}
+
+async function copyPublicRoot(root) {
   const source = join(repoRoot, root);
   if (!(await exists(source))) {
     fail(`required source path is missing: ${root}`);
@@ -97,8 +125,33 @@ for (const root of publicRoots) {
 
   await cp(source, join(outputDir, root), {
     recursive: true,
-    filter: (sourcePath) => !isExcluded(sourcePath),
+    dereference: false,
+    filter: (sourcePath) => {
+      const sourceRelative = slashPath(relative(repoRoot, sourcePath));
+      return !isExcluded(sourceRelative) && !isGenerated(sourceRelative);
+    },
   });
+}
+
+const tracked = (await exists(join(repoRoot, ".git"))) ? trackedPaths() : undefined;
+await mkdir(outputDir, { recursive: false });
+
+if (tracked) {
+  for (const root of publicRoots) {
+    if (!tracked.some((sourceRelative) => isUnder(sourceRelative, root))) {
+      fail(`required tracked source path is missing: ${root}`);
+    }
+  }
+
+  for (const sourceRelative of tracked) {
+    if (!isPublic(sourceRelative) || isExcluded(sourceRelative) || isGenerated(sourceRelative)) continue;
+
+    const destination = join(outputDir, sourceRelative);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(join(repoRoot, sourceRelative), destination, { dereference: false });
+  }
+} else {
+  for (const root of publicRoots) await copyPublicRoot(root);
 }
 
 for (const excluded of excludedPaths) {

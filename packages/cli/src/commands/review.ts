@@ -86,9 +86,8 @@ export function registerReviewCommand(program: Command): void {
     )
     .option(
       "--seed-findings <path>",
-      'Path to ND-JSON leads (e.g. from `gemmaforge scan`). "-" reads stdin. ' +
-        "Schema: gemmaforge.leads/v1 — see https://github.com/peaktwilight/gemmaforge/blob/main/docs/leads-schema.md. " +
-        "Tracked: pwnkit#368.",
+      'Path to ND-JSON leads from an external producer. "-" reads stdin. ' +
+        "Schema: gemmaforge.leads/v1. Tracked: pwnkit#368.",
     )
     .option(
       "--seed-only",

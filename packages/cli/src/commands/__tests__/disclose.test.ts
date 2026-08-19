@@ -482,6 +482,7 @@ describe("disclose — wiring sanity", () => {
     const target = executePocStepsMock.mock.calls[0]![1];
     expect(target.scopeAllowlist).toEqual(["example.com", "*.example.org"]);
     expect(target.baseUrl).toBe("http://localhost:3108");
+    expect(target.allowProcessActions).toBe(false);
   });
 
   it("passes --reverify-rps through as rpsPerHost on the PocExecutionTarget", async () => {

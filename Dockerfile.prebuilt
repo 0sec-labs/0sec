@@ -5,8 +5,14 @@
 # This is the publish path for environments where rebuilding the dashboard
 # bundle inside Docker is unstable. The bundle is still produced by
 # `pnpm build` before this image is built.
+#
+# Build context MUST be the verified ./dist directory (not the repo root):
+#   docker build -f Dockerfile.prebuilt -t pwnkit:prebuilt ./dist
+# This ensures the image receives only the pre-built bundle and its
+# externalized dependencies without weakening .dockerignore exclusions
+# (which exclude dist/ from the normal source-build Dockerfile context).
 
-FROM node:20-bookworm AS node-runtime
+FROM node:24-bookworm AS node-runtime
 
 FROM ubuntu:24.04 AS runtime
 
@@ -15,7 +21,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ENV NODE_ENV=production \
     PWNKIT_DOCKER=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH=/usr/local/bin:/usr/bin:/bin
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -39,21 +44,21 @@ RUN if [ "$INSTALL_SECLISTS" = "1" ]; then \
 
 WORKDIR /app
 
-COPY dist /app/dist
+# Build context must be the verified ./dist directory (not the repo root).
+# This ensures the prebuilt image receives only the pre-built bundle and
+# its externalized dependencies, without weakening the source-build
+# .dockerignore that excludes dist/ from the normal Dockerfile context.
+COPY . /app/dist
 
 WORKDIR /app/dist
-RUN npm install --omit=dev --no-audit --no-fund
-
-RUN npm install -g playwright@1.48.0 \
-    && playwright install --with-deps chromium \
-    && rm -rf /var/lib/apt/lists/* /root/.npm
+RUN npm ci --omit=dev --ignore-scripts
 
 RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit-cli \
     && chmod +x /app/dist/pwnkit.js
 
 RUN mkdir -p /work \
-    && chown -R ubuntu:ubuntu /work /app/dist /ms-playwright \
-    && chmod -R a+rX /app/dist /ms-playwright
+    && chown -R ubuntu:ubuntu /work /app/dist \
+    && chmod -R a+rX /app/dist
 USER ubuntu
 WORKDIR /work
 

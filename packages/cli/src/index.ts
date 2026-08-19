@@ -70,14 +70,11 @@ import {
   registerFileReviewCommand,
 } from "./commands/index.js";
 import { detectAndRoute } from "./routing.js";
-import { preloadBanner } from "./ui/banner.js";
 import { maybeNotifyUpdate } from "./utils/update-check.js";
 import { enforceSourceDistFreshness } from "./source-freshness.js";
 
 enforceSourceDistFreshness({ entryUrl: import.meta.url });
 
-// Start loading cfonts in the background so it's ready when the banner prints
-void preloadBanner();
 
 // Fire-and-forget update check. It only runs when PWNKIT_UPDATE_CHECK=1;
 // otherwise normal commands make no update request or cache write.

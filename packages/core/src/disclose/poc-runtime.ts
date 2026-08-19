@@ -61,14 +61,16 @@ export interface PocExecutionTarget {
    */
   rpsPerHost?: number;
   /**
-   * Optional comma-separated list of host patterns. When set, http and shell
-   * steps whose target host (or URL-shaped tokens in shell cmds) don't match
-   * are refused as `errored` — responsible-disclosure programs almost
-   * universally prohibit scanning out-of-scope hosts. Wildcards: `*.acme.com`
-   * matches subdomains but NOT `acme.com` itself (matches the typical
-   * subdomain-glob semantics used by major bug-bounty platforms).
+   * Required host patterns authorizing every executable PoC step. HTTP,
+   * shell, and docker actions refuse before dispatch when absent or empty.
+   * Wildcards: `*.acme.com` matches subdomains but not `acme.com`.
    */
   scopeAllowlist?: string[];
+  /**
+   * Public CLI callers set this false. Shell and Docker proof steps then
+   * refuse before spawning anything on the operator host.
+   */
+  allowProcessActions?: boolean;
 }
 
 /** Per-step verdict returned to the caller. */
@@ -117,6 +119,9 @@ const TRUNCATION_MARKER = "\n…[truncated at 1MiB]";
 
 /** Default per-host requests-per-second cap for http-action dispatch. */
 export const DEFAULT_RPS_PER_HOST = 2;
+
+/** Maximum redirect hops for http action dispatch (prevent open-redirect loops). */
+const MAX_REDIRECT_HOPS = 5;
 
 // ── Per-host token bucket (responsible-disclosure rate limit) ───────────────
 //
@@ -279,9 +284,32 @@ function hostMatchesAllowlist(host: string, allowlist: string[] | undefined): bo
   return false;
 }
 
+function scopeRequiredResult(
+  step: PocStep,
+  target: PocExecutionTarget,
+  start: number,
+): PocStepResult | undefined {
+  if (target.scopeAllowlist && target.scopeAllowlist.length > 0) return undefined;
+  return {
+    stepId: step.id,
+    kind: "errored",
+    durationMs: Date.now() - start,
+    error: "PoC reverify requires a non-empty scope allowlist",
+  };
+}
+
 function extractUrlsFromShellCommand(cmd: string): string[] {
   const matches = cmd.match(/https?:\/\/[^\s'"]+/g);
   return matches ?? [];
+}
+
+function dockerRegistryHost(image: string): string | undefined {
+  const separator = image.indexOf("/");
+  if (separator === -1) return undefined;
+  const firstSegment = image.slice(0, separator);
+  return firstSegment.includes(".") || firstSegment.includes(":") || firstSegment === "localhost"
+    ? firstSegment
+    : undefined;
 }
 
 /** Test-only export. */
@@ -371,6 +399,17 @@ async function executeStep(
   target: PocExecutionTarget,
 ): Promise<PocStepResult> {
   const start = Date.now();
+  if (
+    target.allowProcessActions === false &&
+    (step.action.type === "shell" || step.action.type === "docker")
+  ) {
+    return {
+      stepId: step.id,
+      kind: "errored",
+      durationMs: Date.now() - start,
+      error: `PoC ${step.action.type} actions require an isolated execution environment`,
+    };
+  }
   try {
     switch (step.action.type) {
       case "shell":
@@ -414,6 +453,9 @@ async function runShellStep(
   target: PocExecutionTarget,
   start: number,
 ): Promise<PocStepResult> {
+  const scopeError = scopeRequiredResult(step, target, start);
+  if (scopeError) return scopeError;
+
   // Scope allowlist (Fix 7): pre-flight extract any URL-shaped tokens and
   // refuse the whole command if any of them point at an out-of-scope host.
   if (target.scopeAllowlist && target.scopeAllowlist.length > 0) {
@@ -462,6 +504,40 @@ async function runDockerStep(
   target: PocExecutionTarget,
   start: number,
 ): Promise<PocStepResult> {
+  const scopeError = scopeRequiredResult(step, target, start);
+  if (scopeError) return scopeError;
+
+  const registryHost = dockerRegistryHost(action.image);
+  if (registryHost && !hostMatchesAllowlist(registryHost, target.scopeAllowlist)) {
+    return {
+      stepId: step.id,
+      kind: "errored",
+      durationMs: Date.now() - start,
+      error: `out-of-scope docker registry: ${registryHost} (allowlist: ${target.scopeAllowlist!.join(", ")})`,
+    };
+  }
+
+  // Scope allowlist: extract URL-shaped tokens from the docker image + args.
+  if (target.scopeAllowlist && target.scopeAllowlist.length > 0) {
+    const dockerTokens = [action.image, ...action.args].join(" ");
+    for (const u of extractUrlsFromShellCommand(dockerTokens)) {
+      let host: string;
+      try {
+        host = new URL(u).host;
+      } catch {
+        continue;
+      }
+      if (!hostMatchesAllowlist(host, target.scopeAllowlist)) {
+        return {
+          stepId: step.id,
+          kind: "errored",
+          durationMs: Date.now() - start,
+          error: `out-of-scope url in docker action: ${u} (allowlist: ${target.scopeAllowlist.join(", ")})`,
+        };
+      }
+    }
+  }
+
   const env = { ...process.env, ...(target.env ?? {}) };
   const cwd = target.cwd;
   const timeoutMs = target.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
@@ -483,6 +559,9 @@ async function runHttpStep(
   target: PocExecutionTarget,
   start: number,
 ): Promise<PocStepResult> {
+  const scopeError = scopeRequiredResult(step, target, start);
+  if (scopeError) return scopeError;
+
   const url = resolveUrl(action.url, target.baseUrl);
   if (!url) {
     return {
@@ -524,20 +603,71 @@ async function runHttpStep(
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
 
-  let response: Response;
+  // Manual redirect following with scope validation (PK-PUBLIC-005).
+  let finalResponse: Response;
   let body = "";
+  let currentUrl = url;
+  let redirectCount = 0;
   try {
-    response = await deps.fetch(url, {
-      method: action.method,
-      headers,
-      body: action.body,
-      signal: ac.signal,
-    });
-    body = await readBodyCapped(response);
-    if (response.status === 429) {
-      // Block subsequent acquires on this host until the cool-off expires.
-      const retryAfter = response.headers.get("retry-after");
-      markHostRateLimited(host, retryAfter);
+    while (true) {
+      finalResponse = await deps.fetch(currentUrl, {
+        method: action.method,
+        headers,
+        body: action.body,
+        signal: ac.signal,
+        redirect: "manual",
+      });
+
+      const status = finalResponse.status;
+      const isRedirect = [301, 302, 303, 307, 308].includes(status);
+
+      if (!isRedirect) {
+        body = await readBodyCapped(finalResponse);
+        if (status === 429) {
+          const retryAfter = finalResponse.headers.get("retry-after");
+          markHostRateLimited(host, retryAfter);
+        }
+        break;
+      }
+
+      // Redirect hop: validate target against scope allowlist.
+      redirectCount++;
+      if (redirectCount > MAX_REDIRECT_HOPS) {
+        try { finalResponse.body?.cancel(); } catch { /* discard */ }
+        clearTimeout(timer);
+        return {
+          stepId: step.id,
+          kind: "errored",
+          durationMs: Date.now() - start,
+          error: `too many redirects (exceeded ${MAX_REDIRECT_HOPS} hops)`,
+        };
+      }
+
+      const location = finalResponse.headers.get("location");
+      if (!location) {
+        // No Location header on redirect — treat as final response.
+        body = await readBodyCapped(finalResponse);
+        break;
+      }
+
+      const nextUrlStr = new URL(location, currentUrl).toString();
+      const nextHost = new URL(nextUrlStr).host;
+
+      if (!hostMatchesAllowlist(nextHost, target.scopeAllowlist)) {
+        try { finalResponse.body?.cancel(); } catch { /* discard */ }
+        clearTimeout(timer);
+        return {
+          stepId: step.id,
+          kind: "errored",
+          durationMs: Date.now() - start,
+          error: `redirect to out-of-scope host: ${nextHost} (allowlist: ${target.scopeAllowlist!.join(", ")})`,
+        };
+      }
+
+      // Discard the redirect response body.
+      try { finalResponse.body?.cancel(); } catch { /* discard */ }
+      currentUrl = nextUrlStr;
+      // Continue loop to follow the redirect.
     }
   } catch (err) {
     clearTimeout(timer);
@@ -553,14 +683,14 @@ async function runHttpStep(
   }
 
   const verdict = evaluateExpect(step.expect, {
-    status: response.status,
+    status: finalResponse.status,
     body,
   });
 
   return {
     stepId: step.id,
     kind: verdict.kind,
-    observedStatus: response.status,
+    observedStatus: finalResponse.status,
     observedResponseBody: body,
     durationMs: Date.now() - start,
     ...(verdict.error ? { error: verdict.error } : {}),

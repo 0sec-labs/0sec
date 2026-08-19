@@ -113,7 +113,7 @@ export function refuterFamily(model?: string): string {
 const REFUTER_ROSTER: ReadonlyArray<{ model: string; envKeys: readonly string[] }> = [
   { model: "claude-sonnet-4-6", envKeys: ["ANTHROPIC_API_KEY"] },
   { model: "gpt-5.5", envKeys: ["PWNKIT_CHATGPT_ACCESS_TOKEN", "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN", "OPENAI_API_KEY"] },
-  { model: "glm-5.2", envKeys: ["Z_AI_API_KEY"] },
+  { model: "glm-5.3", envKeys: ["Z_AI_API_KEY"] },
   { model: "k3", envKeys: ["KIMI_API_KEY"] },
   { model: "qwen3.8-max", envKeys: ["QWEN_API_KEY"] },
 ];
