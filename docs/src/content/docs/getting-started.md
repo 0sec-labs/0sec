@@ -33,18 +33,38 @@ docker run --rm ghcr.io/0sec-labs/pwnkit:latest --help
 pwnkit needs an LLM provider to power its agentic pipeline. Set one of these environment variables:
 
 ```bash
+# Set a matching provider key, then select its model with --model.
+
+# Z.ai GLM
+export Z_AI_API_KEY="..."
+
+# Alibaba Qwen
+export QWEN_API_KEY="..."
+
 # ChatGPT/Codex subscription auth
 export PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN="..."
 
-# Recommended — one key, many models
-export OPENROUTER_API_KEY="sk-or-..."
-
-# Or use a direct provider
+# Direct providers or OpenRouter
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
+export OPENROUTER_API_KEY="sk-or-..."
 ```
 
-pwnkit checks for credentials in this order: **ChatGPT Codex > OpenRouter > Anthropic > Azure OpenAI > OpenAI**. For ChatGPT Codex, run `codex login` and copy the refresh token from `~/.codex/auth.json` into `PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN`. For Azure, pwnkit needs both a base URL and a deployment/model name in addition to the key. You can set `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_MODEL`, and `AZURE_OPENAI_WIRE_API` explicitly, or let pwnkit reuse a valid Azure-backed `~/.codex/config.toml`. For the Responses API, the Azure base URL should include `/openai/v1`. If the selected API runtime is incomplete, pwnkit now stops with a configuration error instead of running a broken scan. If no provider credentials are set, the `api` runtime will not work, but you can still use source-review CLI runtimes such as `--runtime codex` or live scanning through `--runtime claude` if those CLIs are installed and authenticated.
+pwnkit routes an explicit `--model` or `PWNKIT_MODEL` to its matching configured
+provider. `glm-5.3` uses Z.ai. `qwen3.8-max` uses Alibaba Model Studio. Pin a
+model whenever multiple provider credentials are present.
+
+For ChatGPT Codex, run `codex login` and copy the refresh token from
+`~/.codex/auth.json` into `PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN`. For Azure,
+pwnkit needs both a base URL and a deployment/model name in addition to the
+key. You can set `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_MODEL`, and
+`AZURE_OPENAI_WIRE_API` explicitly, or let pwnkit reuse a valid Azure-backed
+`~/.codex/config.toml`. For the Responses API, the Azure base URL should include
+`/openai/v1`. If the selected API runtime is incomplete, pwnkit stops with a
+configuration error instead of running a broken scan. If no provider credentials
+are set, the `api` runtime will not work, but you can still use source-review
+CLI runtimes such as `--runtime codex` or live scanning through `--runtime
+claude` if those CLIs are installed and authenticated.
 
 See [API Keys](/api-keys/) for full details on supported providers.
 

@@ -1,6 +1,6 @@
 ---
 title: API Keys
-description: Supported LLM providers, environment variables, and priority order.
+description: Supported LLM providers, environment variables, and model routing.
 ---
 
 pwnkit's `api` runtime (the default) makes direct HTTP calls to an LLM provider. You need to set provider credentials as environment variables.
@@ -9,39 +9,49 @@ pwnkit's `api` runtime (the default) makes direct HTTP calls to an LLM provider.
 
 | Provider | Environment Variable | Notes |
 |----------|---------------------|-------|
+| **Z.ai GLM** | `Z_AI_API_KEY` | `glm-5.3` is the default for the Z.ai route. Uses Z.ai's Anthropic-compatible Messages API. |
+| **Alibaba Qwen** | `QWEN_API_KEY` | Use `--model qwen3.8-max` or `PWNKIT_MODEL=qwen3.8-max`. Uses Alibaba Model Studio's OpenAI-compatible endpoint. |
+| **Moonshot Kimi** | `KIMI_API_KEY` | Use `--model k3`. Uses Moonshot's Anthropic-compatible Coding endpoint. |
 | **ChatGPT Codex** | `PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN` | Uses ChatGPT/Codex subscription auth from `codex login`. Copy the refresh token from `~/.codex/auth.json`. |
-| **OpenRouter** | `OPENROUTER_API_KEY` | Recommended. One key, access to many models (Claude, GPT-4, Llama, Mistral, and more). Includes free-tier models. Get a key at [openrouter.ai](https://openrouter.ai). |
-| **Anthropic** | `ANTHROPIC_API_KEY` | Direct access to Claude models. Get a key at [console.anthropic.com](https://console.anthropic.com). |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | Direct DeepSeek API access. |
+| **OpenRouter** | `OPENROUTER_API_KEY` | Access to many hosted model families through one API. |
+| **Anthropic** | `ANTHROPIC_API_KEY` | Direct access to Claude models. |
 | **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | Azure-hosted OpenAI models. See [Azure configuration](#azure-openai-configuration) below for additional settings. |
-| **OpenAI** | `OPENAI_API_KEY` | Direct access to GPT models. Get a key at [platform.openai.com](https://platform.openai.com). |
+| **OpenAI** | `OPENAI_API_KEY` | Direct access to GPT models. |
 
-## Priority order
+## Model routing
 
-When multiple provider credentials are set, pwnkit uses this priority:
+Set `--model <id>` or `PWNKIT_MODEL=<id>` when more than one provider
+credential is present. pwnkit routes recognized model families to the provider
+whose credentials are configured:
 
-1. `PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN` (ChatGPT Codex subscription auth)
-2. `OPENROUTER_API_KEY`
-3. `ANTHROPIC_API_KEY`
-4. `AZURE_OPENAI_API_KEY`
-5. `OPENAI_API_KEY` (lowest priority)
+- `glm-*` / `z-ai/*` → Z.ai
+- `qwen*` → Alibaba Qwen
+- `k3` / `kimi*` → Moonshot Kimi
+- `claude*` / `anthropic/*` → Anthropic, then OpenRouter when direct Anthropic
+  credentials are absent
+- `gpt-*` / `o*` → ChatGPT Codex subscription when configured, otherwise
+  OpenAI
 
-Only one provider credential is needed. If you set multiple, the highest-priority one is used.
+Without an explicit model, pwnkit selects an available provider fallback. Pin a
+model rather than relying on ambient credential order.
 
 ## Setting your key
 
 ### macOS / Linux
-
 ```bash
-# Add to your shell profile (~/.zshrc, ~/.bashrc, etc.)
+# Set the provider key.
+export Z_AI_API_KEY="..."
+export QWEN_API_KEY="..."
+
+# Select its matching model at run time.
+pwnkit scan --target https://api.example.com --scope ./scope.json --model glm-5.3
+pwnkit scan --target https://api.example.com --scope ./scope.json --model qwen3.8-max
+
+# Or use OpenRouter.
 export OPENROUTER_API_KEY="sk-or-v1-..."
-```
 
-Then reload your shell or run `source ~/.zshrc`.
-
-For ChatGPT Codex subscription auth, run `codex login`, then copy
-`tokens.refresh_token` from `~/.codex/auth.json`:
-
-```bash
+# ChatGPT Codex subscription auth.
 export PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN="..."
 ```
 
@@ -58,14 +68,11 @@ Add the key as a repository secret, then reference it in your workflow:
     OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
-### Why OpenRouter is recommended
+## When to use OpenRouter
 
-OpenRouter acts as a unified gateway to many LLM providers. Benefits:
-
-- **One key, many models** — access Claude, GPT-4, Llama, Mistral, and others
-- **Free-tier models available** — useful for testing and CI
-- **Automatic fallback** — if one provider is down, OpenRouter can route to another
-- **Usage dashboard** — track costs across all models in one place
+OpenRouter is useful when you want to select a model family that is not
+available through a direct provider credential. It is not required for Z.ai
+GLM, Alibaba Qwen, Moonshot Kimi, Anthropic, OpenAI, Azure, or DeepSeek.
 
 ## Azure OpenAI configuration
 
@@ -97,9 +104,8 @@ If you rely on Codex config instead of env vars, make sure `~/.codex/config.toml
 If you prefer not to use API keys at all, you can use CLI runtimes for supported workflows. Claude can run live target scans through its native subscription loop. Codex and Gemini are source-review oriented CLI runtimes:
 
 ```bash
-# Use Claude Code CLI (requires Claude subscription)
-pwnkit scan --target https://api.example.com/chat --runtime claude
-
+# Use Claude Code CLI for an authorized live target
+pwnkit scan --target https://api.example.com/chat --scope ./scope.json --runtime claude
 # Use Codex CLI for source review
 pwnkit review ./my-repo --runtime codex
 
