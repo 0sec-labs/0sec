@@ -20,6 +20,8 @@ import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { features } from "./features.js";
 import { LootLedger } from "./loot.js";
+import { TaskLedger } from "./task-ledger.js";
+import { DriftMonitor } from "./drift.js";
 import { createCollaborator } from "../oast/index.js";
 import {
   maybeCreateTrustGraphSession,
@@ -392,6 +394,32 @@ export async function runNativeAgentLoop(
   // results and re-injects a compact "known footholds" block each turn.
   const loot = features.lootLedger ? new LootLedger() : undefined;
 
+  // Typed TODO / plan ledger. Threaded through ToolContext so the `plan` tool
+  // reads and mutates it; the loop below re-injects a compact plan block
+  // re-rendered from the structured state (which is what makes the plan
+  // survive compaction) and feeds its open tasks to the drift monitor.
+  const plan = features.agentPlan ? new TaskLedger() : undefined;
+
+  // Task-drift monitor. Deterministic, no LLM call — see agent/drift.ts.
+  //
+  // The objective anchor is a BOUNDED PREFIX of the system prompt, not the
+  // whole thing, and that bound is load-bearing rather than a micro-
+  // optimisation. The attack system prompts run to thousands of words and
+  // enumerate every vulnerability class the engine knows (`SQLI_SECTION`,
+  // `XSS_SECTION`, …); feeding all of it in would put essentially every
+  // security term into the anchor set, anchor contact would then be true on
+  // every conceivable turn, and the detector would be silent forever. The
+  // opening lines carry the actual mission statement, so that is what anchors.
+  // In practice the OPEN PLAN is the dominant anchor source, which is the
+  // intended design: drift is measured against what the agent said it would do.
+  const OBJECTIVE_PREFIX_CHARS = 600;
+  const driftMonitor = features.driftDetection
+    ? new DriftMonitor({
+        objective: config.systemPrompt.slice(0, OBJECTIVE_PREFIX_CHARS),
+        target: config.target,
+      })
+    : undefined;
+
   // pwnkit#659 — hosted OAST interaction collaborator. Built only when the
   // feature is on AND a collaborator server is configured (PWNKIT_OAST_URL);
   // `createCollaborator` returns undefined otherwise, in which case the
@@ -447,6 +475,7 @@ export async function runNativeAgentLoop(
     attribution: config.attribution,
     engagement: config.engagement,
     loot,
+    plan,
     oast,
   };
 
@@ -620,8 +649,12 @@ export async function runNativeAgentLoop(
   // drop-oldest pruning, and the retry cap prevents an endless shrink loop.
   let contextOverflowRecoveries = 0;
 
-  // Dynamic playbook injection — only inject once per session
+  // Dynamic playbook injection. `playbookInjected` now only records that the
+  // FIRST injection has happened (for event labelling); the structured
+  // `injectedPlaybookTypes` list is what the block is re-rendered from, so the
+  // methodology can be restored after a compaction erases the message.
   let playbookInjected = false;
+  let injectedPlaybookTypes: string[] = [];
   const recentToolResultTexts: string[] = [];
 
   // pwnkit#567 — loot-injection cadence. Re-surface the "known footholds"
@@ -631,6 +664,11 @@ export async function runNativeAgentLoop(
   // away. -1 sentinels force a first injection as soon as loot exists.
   let lastInjectedLootRevision = -1;
   let lastLootInjectionTurn = -1;
+
+  // Plan-injection cadence, same sentinels and same contract as the loot pair
+  // above: -1 forces a first injection as soon as the agent records any task.
+  let lastInjectedPlanRevision = -1;
+  let lastPlanInjectionTurn = -1;
 
   // JIT skill tracking (#458): share the recentToolResultTexts buffer and
   // a persistent loadedSkills set with the ToolContext so skill tools can
@@ -744,6 +782,10 @@ export async function runNativeAgentLoop(
     }
 
     state.turnCount++;
+    // Keep the tool context's turn stamp fresh so tools that record state can
+    // date it (the plan ledger stamps createdTurn / updatedTurn, which is what
+    // makes a task that has sat untouched for 20 turns visible as stale).
+    toolCtx.currentTurn = state.turnCount;
     const turnStartedAt = Date.now();
     // Mutable inside the try-block; read in the finally to stamp
     // agent_turn_completed with the right exit reason. Reassigned by
@@ -1471,10 +1513,11 @@ export async function runNativeAgentLoop(
     // playbooks need them (pre-injection) OR JIT skills are enabled
     // (skill trigger matching needs the full history). The buffer is the
     // same array reference threaded into toolCtx (#458).
-    if (
-      (features.dynamicPlaybooks && !playbookInjected)
-      || features.jitSkills
-    ) {
+    // The playbook half of this condition used to stop filling the buffer once
+    // the one-shot injection had fired. Now that the injection can be re-
+    // evaluated (below), the buffer has to keep flowing so a class detected
+    // only after deeper recon can still be picked up.
+    if (features.dynamicPlaybooks || features.jitSkills) {
       for (const block of toolResultBlocks) {
         if (block.type === "tool_result") {
           recentToolResultTexts.push(block.content);
@@ -1486,25 +1529,58 @@ export async function runNativeAgentLoop(
     // ── Dynamic playbook injection at ~30% budget ──
     // After initial reconnaissance, pattern-match tool results to detect
     // vulnerability types and inject targeted methodology playbooks.
+    //
+    // This block used to be strictly one-shot: a `playbookInjected` latch fired
+    // once and the methodology then lived ONLY in the transcript. That made it
+    // the one piece of injected guidance that did not survive compaction — a
+    // `compactMessagesWithLLM` pass at turn ~25 could silently erase the
+    // playbook injected at turn 12, so the feature aimed at long runs lost its
+    // content precisely on long runs. Worse for evaluation: whether the
+    // methodology was present at the end of a run depended on whether a
+    // compaction happened to land after the injection turn, which means an A/B
+    // of this flag would partly be measuring compaction timing rather than the
+    // feature.
+    //
+    // Fix follows the loot / plan pattern — re-render from structured state
+    // (the detected type list) rather than trusting the message to survive —
+    // with one refinement. Loot and plan re-inject on a fixed turn interval and
+    // accept duplicate blocks; a playbook block is up to ~3.6k tokens, so
+    // periodic duplication would be a real context cost. Instead we re-inject
+    // only when the block is ABSENT from the live message window, which is a
+    // cheap deterministic check over a bounded array and re-injects exactly
+    // when compaction ate it — zero duplicates in the steady state. The default
+    // for `dynamicPlaybooks` is deliberately unchanged (still OFF); this makes
+    // the mechanism sound so a future A/B measures the feature itself.
     const playbookPct = state.turnCount / config.maxTurns;
     if (
       features.dynamicPlaybooks
-      && !playbookInjected
       && playbookPct >= 0.3
       && recentToolResultTexts.length > 0
     ) {
       const detectedTypes = detectPlaybooks(recentToolResultTexts);
-      if (detectedTypes.length > 0) {
+      // Re-inject when the class set changed (deeper recon revealed another
+      // vuln class) or when the block is no longer present in the window.
+      const typesChanged =
+        detectedTypes.join("|") !== injectedPlaybookTypes.join("|");
+      const needsReinject =
+        detectedTypes.length > 0
+        && (typesChanged || !messagesContainText(state.messages, PLAYBOOK_MARKER));
+      if (needsReinject) {
         const playbookText = buildPlaybookInjection(detectedTypes);
         if (playbookText) {
           state.messages.push({
             role: "user",
             content: [{ type: "text", text: playbookText }],
           });
+          const isFirstInjection = !playbookInjected;
           playbookInjected = true;
+          injectedPlaybookTypes = detectedTypes;
           onEvent?.("playbook_injected", {
             turn: state.turnCount,
             types: detectedTypes,
+            // Distinguishes the initial injection from a post-compaction
+            // restore so the two are separable in run analysis.
+            reason: isFirstInjection ? "initial" : typesChanged ? "types_changed" : "restored",
           });
           if (db) {
             db.logEvent({
@@ -1554,6 +1630,82 @@ export async function runNativeAgentLoop(
             eventType: "loot_injected",
             agentRole: config.role,
             payload: { turn: state.turnCount, count: loot.size, revision: loot.revision },
+            timestamp: Date.now(),
+          });
+        }
+      }
+    }
+
+    // ── Plan (TODO ledger) injection ──
+    // Same mechanism and the same reason as the loot block above: the plan is
+    // re-rendered from STRUCTURED STATE, so `compactMessagesWithLLM` summarizing
+    // away or dropping the message that carried it costs nothing — the next
+    // injection reproduces it exactly. A plan that lived only in the transcript
+    // would not survive, which is precisely the failure the external-memory
+    // scratchpad has today.
+    //
+    // Throttled on the same revision-or-interval rule, but with a longer
+    // interval: unlike loot (where a credential captured at turn 12 must stay
+    // in the recent window), an unchanged plan re-pushed every third turn is
+    // pure repetition. Revision changes still inject immediately, so a plan the
+    // agent is actively maintaining is always current in context.
+    const PLAN_REINJECT_INTERVAL = 6;
+    if (
+      plan
+      && plan.size > 0
+      && (plan.revision !== lastInjectedPlanRevision
+        || state.turnCount - lastPlanInjectionTurn >= PLAN_REINJECT_INTERVAL)
+    ) {
+      const planText = plan.render();
+      if (planText) {
+        state.messages.push({
+          role: "user",
+          content: [{ type: "text", text: planText }],
+        });
+        lastInjectedPlanRevision = plan.revision;
+        lastPlanInjectionTurn = state.turnCount;
+        onEvent?.("plan_injected", {
+          turn: state.turnCount,
+          open: plan.open().length,
+          total: plan.size,
+          revision: plan.revision,
+        });
+      }
+    }
+
+    // ── Task-drift detection ──
+    // Deliberately placed alongside loop detection because the two are
+    // complementary halves of "the agent has stopped making progress":
+    // `loopDetector` catches repetition (same call over and over), this catches
+    // divergence (novel activity every turn, none of it on-task). Neither sees
+    // the other's failure mode. Deterministic and free — see agent/drift.ts for
+    // the signal and, importantly, for what it cannot see.
+    if (driftMonitor) {
+      driftMonitor.record(toolCalls, plan?.openText() ?? "");
+      const driftWarning = driftMonitor.detect();
+      if (driftWarning) {
+        state.messages.push({
+          role: "user",
+          content: [{ type: "text", text: driftWarning }],
+        });
+        const driftState = driftMonitor.state;
+        onEvent?.("drift_detected", {
+          turn: state.turnCount,
+          streak: driftState.streak,
+          anchorSize: driftState.anchorSize,
+          warningsIssued: driftState.warningsIssued,
+        });
+        if (db) {
+          db.logEvent({
+            scanId: config.scanId,
+            stage: config.role,
+            eventType: "drift_detected",
+            agentRole: config.role,
+            payload: {
+              turn: state.turnCount,
+              streak: driftState.streak,
+              anchorSize: driftState.anchorSize,
+            },
             timestamp: Date.now(),
           });
         }
@@ -2263,6 +2415,39 @@ class LoopDetector {
 
     return null;
   }
+}
+
+/**
+ * Header of the dynamic-playbook block, used as a presence marker so the loop
+ * can tell whether the methodology is still in the live message window or was
+ * removed by a compaction pass. Must stay in sync with the header emitted by
+ * `buildPlaybookInjection` (agent/playbooks.ts) — `sop-flags.test.ts` asserts
+ * that they match, so a rename there fails loudly here rather than silently
+ * disabling the restore.
+ */
+export const PLAYBOOK_MARKER = "## Dynamic Playbook Injection";
+
+/**
+ * Whether any message in the window contains `needle`.
+ *
+ * Bounded and cheap: the window is the loop's own conversation array (kept
+ * small by compaction) and the scan short-circuits on the first hit. Deliberately
+ * a substring test on serialized text rather than structural matching, because
+ * the block can come back in two shapes — as the original standalone user
+ * message, or folded into a compaction summary by
+ * `features.preserveCriticalMessages` (playbook text is full of "password" /
+ * "admin" / "token", so it frequently trips the critical-message regex). Either
+ * shape means the methodology is still in front of the model, and neither
+ * warrants re-injecting it.
+ */
+function messagesContainText(messages: NativeMessage[], needle: string): boolean {
+  for (const msg of messages) {
+    for (const block of msg.content) {
+      if (block.type === "text" && block.text.includes(needle)) return true;
+      if (block.type === "tool_result" && block.content.includes(needle)) return true;
+    }
+  }
+  return false;
 }
 
 const LOOP_WARNING =

@@ -71,6 +71,32 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     required: ["command"],
   },
 
+  plan: {
+    name: "plan",
+    description:
+      "Maintain the scan's compact task ledger. Add concrete next steps, mark the one currently being worked, then complete or drop it. Use list to review open work before changing approach.",
+    parameters: {
+      action: {
+        type: "string",
+        description: "Plan action",
+        enum: ["add", "start", "complete", "drop", "note", "list"],
+      },
+      title: {
+        type: "string",
+        description: "Task title for action add. A newline-separated list adds several tasks.",
+      },
+      id: {
+        type: "string",
+        description: "Task id for start, complete, drop, or note (for example task-2).",
+      },
+      detail: {
+        type: "string",
+        description: "Optional concrete note for add, complete, or drop; required for note.",
+      },
+    },
+    required: ["action"],
+  },
+
   spawn_agent: {
     name: "spawn_agent",
     description:
@@ -111,4 +137,5 @@ export const systemDispatch: Record<string, string> = {
   bash: "shellExec",
   spawn_agent: "spawnAgent",
   pty_session: "ptySession",
+  plan: "planTool",
 };

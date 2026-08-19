@@ -99,7 +99,7 @@ A catalog of every technique we have evaluated for improving pwnkit's autonomous
 
 ### 5. Dynamic Vulnerability Playbooks — SHIPPED
 
-**What:** After the initial recon phase, pattern-match tool-result text against a library of per-vulnerability playbooks and inject the best 1–3 matches into the conversation as a focused cheat-sheet. 13 playbooks are in the library: `sqli`, `ssti`, `idor`, `xss`, `ssrf`, `lfi`, `auth_bypass`, `blind_exploitation`, `cve_exploitation`, `command_injection`, `deserialization`, `request_smuggling`, `creative_idor`.
+**What:** After the initial recon phase, pattern-match tool-result text against a library of per-vulnerability playbooks and inject the best 1–3 matches into the conversation as a focused cheat-sheet. 21 playbooks are in the library: `sqli`, `structural_sqli`, `ssti`, `idor`, `access_control`, `xss`, `ssrf`, `lfi`, `auth_bypass`, `blind_exploitation`, `cve_exploitation`, `command_injection`, `deserialization`, `request_smuggling`, `creative_idor`, `prompt_injection`, `rag_poisoning`, `insecure_output_handling`, `excessive_agency`, `prompt_layer_write`, `rust_memsafety`.
 
 **Source:** CurriculumPT; Cyber-AutoAgent's self-rewriting prompts (this is the simpler cousin).
 

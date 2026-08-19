@@ -184,6 +184,8 @@ pwnkit ships a set of agent-improvement features behind environment-variable fla
 | `PWNKIT_FEATURE_CONTEXT_COMPACTION` | **on** | Compresses middle-of-conversation messages when the context exceeds 30k tokens. |
 | `PWNKIT_FEATURE_SCRIPT_TEMPLATES` | **on** | Adds exploit-script templates (blind SQLi, SSTI, auth chain) to the shell prompt. |
 | `PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS` | off | Injects technology-specific vulnerability playbooks after the recon phase. |
+| `PWNKIT_FEATURE_AGENT_PLAN` | off | Exposes a typed `plan` tool: the agent tracks its own TODO items, re-injected each turn so they survive compaction. Off by default because it adds a tool, a system-prompt block and a per-turn block to every scan — behaviour-changing, so it must be A/B'd before shipping on. |
+| `PWNKIT_FEATURE_DRIFT_DETECTION` | off | Warns when the agent stops working the assigned objective. Distinct from the loop detector, which catches repetition; a drifting agent produces a novel action every turn and never trips it. |
 | `PWNKIT_FEATURE_JIT_SKILLS` | off | Exposes `list_skills` and `load_skill` so agents can pull narrow methodology prompts only when needed. |
 | `PWNKIT_FEATURE_EXTERNAL_MEMORY` | off | Agent writes plan/creds to disk, re-injected at reflection checkpoints. |
 | `PWNKIT_FEATURE_PROGRESS_HANDOFF` | off | Injects prior-attempt findings when retrying, so retries don't restart from zero. |

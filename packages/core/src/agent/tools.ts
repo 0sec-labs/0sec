@@ -17,6 +17,7 @@ import type {
 import { resolveIdentities, compareRoles } from "@pwnkit/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
 import type { LootKind } from "./loot.js";
+import { applyPlanAction, validatePlanArgs } from "./task-ledger.js";
 import type { OastHandle } from "../oast/types.js";
 import {
   confirmOast,
@@ -4467,6 +4468,64 @@ export class ToolExecutor {
   }
 
   /**
+   * `plan` — read and mutate the agent's typed TODO ledger.
+   *
+   * Two-stage, per the structured-output discipline in agent/AGENTS.md §1:
+   * `validatePlanArgs` parses the raw payload against a Zod discriminated
+   * union first and a malformed call is returned as an ERROR result naming the
+   * offending field, so the model self-corrects on the next turn rather than
+   * silently no-oping. Only after validation does `applyPlanAction` touch the
+   * ledger. Semantic rejections from the ledger itself (unknown id, restarting
+   * a closed task, plan full) come back the same way and for the same reason.
+   *
+   * When the feature is off there is no ledger, and this returns a graceful
+   * explanatory success rather than an error — same contract as `use_loot` and
+   * `oast_register`, so a model that calls a disabled tool is informed, not
+   * punished with a failed turn.
+   */
+  private planTool(args: Record<string, unknown>): ToolResult {
+    const ledger = this.ctx.plan;
+    if (!ledger) {
+      return {
+        success: true,
+        output: {
+          enabled: false,
+          message:
+            "Plan tracking is not enabled for this scan. Continue without it — keep your objective in your own reasoning.",
+        },
+      };
+    }
+
+    const validated = validatePlanArgs(args);
+    if (!validated.ok) {
+      return { success: false, output: null, error: validated.error };
+    }
+
+    const turn = this.ctx.currentTurn ?? 0;
+    const result = applyPlanAction(ledger, validated.args, turn);
+    if (!result.ok) {
+      return { success: false, output: null, error: result.error };
+    }
+
+    return {
+      success: true,
+      output: {
+        message: result.message,
+        // Always return the full open plan, not just the mutated tasks: the
+        // model's next decision depends on what is LEFT, and echoing only the
+        // task it just touched invites it to lose track of the rest.
+        open: ledger.open().map((t) => ({
+          id: t.id,
+          title: t.title,
+          detail: t.detail,
+          status: t.status,
+        })),
+        total: ledger.size,
+      },
+    };
+  }
+
+  /**
    * `oast_register` (pwnkit#659) — mint a unique out-of-band interaction handle
    * from the hosted collaborator. Returns a unique subdomain + correlation
    * token + ready-to-inject payload URLs. When no collaborator is configured
@@ -5688,6 +5747,8 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   const skillTools = featureFlags.jitSkills ? ["list_skills", "load_skill"] : [];
   // pwnkit#567 — loot retrieval tool, only when the ledger feature is on.
   const lootTools = featureFlags.lootLedger ? ["use_loot"] : [];
+  // Typed TODO ledger — the `plan` tool, only when the feature is on.
+  const planTools = featureFlags.agentPlan ? ["plan"] : [];
   // pwnkit#555: scanner wrappers only when the engagement explicitly permits
   // generic-scanner traffic. Default-off preserves pwnkit#217 stealth.
   const scannerTools = opts?.allowScanners ? [...SCANNER_TOOL_NAMES] : [];
@@ -5717,6 +5778,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     ...mongoTools,
     ...skillTools,
     ...lootTools,
+    ...planTools,
     ...scannerTools,
     ...cloudTools,
     ...orchestratorTools,
@@ -5733,6 +5795,9 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // Keep use_loot out of the audit/review "everything" set when the loot
     // ledger feature is off (parity with the JIT-skill gating above).
     && (featureFlags.lootLedger || name !== "use_loot")
+    // The `plan` tool follows the same gating: out of the audit/review
+    // "everything" set when the plan ledger feature is off.
+    && (featureFlags.agentPlan || name !== "plan")
     // Scanner wrappers stay out of the audit/review "everything" set too,
     // unless the engagement opted in. Without this they'd leak into
     // allEnabledTools regardless of allowScanners (regression of pwnkit#217).

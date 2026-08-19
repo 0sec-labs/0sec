@@ -59,6 +59,7 @@ const TOOL_REGISTRY_ORDER = [
   "save_finding",
   "query_findings",
   "use_loot",
+  "plan",
   "update_finding",
   "read_file",
   "apply_patch",
