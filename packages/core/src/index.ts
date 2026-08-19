@@ -1958,6 +1958,17 @@ export * from "./adgraph/index.js";
 export * from "./identity/index.js";
 export * from "./attack/index.js";
 
+// Local, redacted reproducibility manifests for verified findings.
+export {
+  assembleReproducibilityManifest,
+  renderReproducibilityManifest,
+  UnverifiedFindingError,
+  IncompleteEvidenceError,
+} from "./disclose/reproducibility-manifest.js";
+export type {
+  ReproducibilityManifest,
+  ManifestOptions,
+} from "./disclose/reproducibility-manifest.js";
 // file-review — deepsec-pattern whole-repo review harness (scan → coverage
 // gate → batched AI investigation with refusal audit/field repair →
 // static revalidation), resumable with cost/duration caps.

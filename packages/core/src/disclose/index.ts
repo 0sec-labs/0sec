@@ -82,3 +82,13 @@ export type {
   KnownMarker,
   KnownMarkerSignal,
 } from "./known-marker.js";
+export {
+  assembleReproducibilityManifest,
+  renderReproducibilityManifest,
+  UnverifiedFindingError,
+  IncompleteEvidenceError,
+} from "./reproducibility-manifest.js";
+export type {
+  ReproducibilityManifest,
+  ManifestOptions,
+} from "./reproducibility-manifest.js";

@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import type { Finding, AttackCategory, Severity, Evidence, FindingStatus, PocStep } from "@pwnkit/shared";
@@ -37,6 +37,10 @@ import {
   DISCLOSURE_STATUSES,
   type DisclosureRecord,
   type DisclosureStatus,
+  assembleReproducibilityManifest,
+  renderReproducibilityManifest,
+  UnverifiedFindingError,
+  IncompleteEvidenceError,
 } from "@pwnkit/core";
 
 interface DiscloseOptions {
@@ -584,6 +588,14 @@ interface TrackOptions {
   out?: string;
 }
 
+interface ReviewOptions {
+  timestamp?: string;
+  toolVersion?: string;
+  modelConfig?: string;
+  target?: string;
+  out?: string;
+}
+
 /**
  * `disclose track <findingId>` — drive the disclosure tracking state machine.
  * With no `--record`, opens a fresh draft record. With `--record <file> --to
@@ -629,6 +641,36 @@ function discloseTrack(findingId: string, opts: TrackOptions): void {
     return;
   }
   console.log(json);
+}
+
+/**
+ * `disclose review <finding.json>` — render a local reproducibility manifest
+ * for a verified finding. Assembles the manifest from the finding JSON and
+ * renders it to stdout (or --out). Refuses non-verified findings and
+ * incomplete evidence. Never sends or publishes anything.
+ */
+function discloseReview(findingPath: string, opts: ReviewOptions): void {
+  const jsonPath = resolve(findingPath);
+  const raw = readFileSync(jsonPath, "utf8");
+  const finding = JSON.parse(raw) as Finding;
+  const manifest = assembleReproducibilityManifest(finding, {
+    timestamp: opts.timestamp,
+    toolVersion: opts.toolVersion,
+    modelConfig: opts.modelConfig,
+    targetIdentifier: opts.target,
+  });
+  const rendered = renderReproducibilityManifest(manifest);
+  if (opts.out) {
+    const outPath = resolve(opts.out);
+    const outDir = dirname(outPath);
+    if (!existsSync(outDir)) {
+      mkdirSync(outDir, { recursive: true });
+    }
+    writeFileSync(outPath, rendered + "\n", "utf8");
+    console.log(`Manifest written to ${outPath}`);
+  } else {
+    console.log(rendered);
+  }
 }
 
 export function registerDiscloseCommand(program: Command): void {
@@ -689,5 +731,35 @@ export function registerDiscloseCommand(program: Command): void {
     .option("--out <file>", "Write the record JSON to a file instead of stdout")
     .action((findingId: string, opts: TrackOptions) => {
       discloseTrack(findingId, opts);
+    });
+
+  discloseCmd
+    .command("review")
+    .description(
+      "Render a local reproducibility manifest for a verified finding. " +
+      "The manifest is deterministic, redacted, and safe for human inspection. " +
+      "Never sends or publishes anything.",
+    )
+    .argument("<finding.json>", "Path to a Finding JSON file")
+    .option("--timestamp <iso>", "Override generation timestamp for deterministic output")
+    .option("--tool-version <ver>", "Override tool version string")
+    .option("--model-config <str>", "Provider/model config, e.g. anthropic/claude-sonnet-4")
+    .option("--target <id>", "Override the finding target identifier")
+    .option("--out <file>", "Write manifest to a file instead of stdout")
+    .action((findingPath: string, opts: ReviewOptions) => {
+      try {
+        discloseReview(findingPath, opts);
+      } catch (err) {
+        if (err instanceof UnverifiedFindingError || err instanceof IncompleteEvidenceError) {
+          console.error(chalk.red(err.message));
+          process.exitCode = 2;
+        } else if (err instanceof SyntaxError && err.message.includes("JSON")) {
+          console.error(chalk.red(`Failed to read finding JSON: ${(err as Error).message}`));
+          process.exitCode = 2;
+        } else {
+          console.error(chalk.red(String(err)));
+          process.exitCode = 2;
+        }
+      }
     });
 }
