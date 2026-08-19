@@ -49,10 +49,8 @@ const DOMAIN_DEFINITIONS: Record<string, ToolDefinition> = {
   ...pythonToolDefinitions,
 };
 
-// Canonical registry order, preserved verbatim from the pre-split tools.ts.
-// getToolsForRole("audit"/"review") enumerates Object.keys(TOOL_DEFINITIONS),
-// so this insertion order is observable in the tool set handed to the model —
-// keep it byte-for-byte identical to avoid any behavior drift.
+// Canonical registry order. getToolsForRole("audit"/"review") enumerates
+// Object.keys(TOOL_DEFINITIONS), so keep additions deliberate and deterministic.
 const TOOL_REGISTRY_ORDER = [
   "http_request",
   "send_prompt",
@@ -62,6 +60,8 @@ const TOOL_REGISTRY_ORDER = [
   "plan",
   "update_finding",
   "read_file",
+  "list_files",
+  "search_files",
   "apply_patch",
   "run_command",
   "update_target",

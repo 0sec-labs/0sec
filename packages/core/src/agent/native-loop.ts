@@ -2636,6 +2636,9 @@ function buildContinuePrompt(config: NativeAgentConfig, turnCount: number, memor
     return `STATUS: ${remaining} turns left. Summarize what you have learned. What is your top hypothesis? Use your tools to test it.${memorySuffix}`;
   }
 
+  const scopedSourceAudit =
+    typeof config.scopePath === "string" && config.scopePath.trim().length > 0;
+
   switch (config.role) {
     case "discovery":
     case "attack":
@@ -2647,8 +2650,12 @@ function buildContinuePrompt(config: NativeAgentConfig, turnCount: number, memor
     case "review":
     default:
       return turnCount < 2
-        ? "You must use your tools to analyze the target. Start by reading files and running commands. Do not just describe what you would do — actually do it."
-        : "Continue your analysis. Use read_file to examine source code, run_command to search for patterns, and save_finding for any vulnerabilities. Call the done tool only when you have thoroughly analyzed the code.";
+        ? scopedSourceAudit
+          ? "You must use your scoped source tools to analyze the target. Start by listing files and reading source. Do not just describe what you would do — actually do it."
+          : "You must use your tools to analyze the target. Start by reading files and running commands. Do not just describe what you would do — actually do it."
+        : scopedSourceAudit
+          ? "Continue your analysis. Use list_files to map source, search_files with literal identifiers to trace patterns, read_file for full context, and save_finding for vulnerabilities. Call done only when you have thoroughly analyzed the code."
+          : "Continue your analysis. Use read_file to examine source code, run_command to search for patterns, and save_finding for any vulnerabilities. Call the done tool only when you have thoroughly analyzed the code.";
   }
 }
 
