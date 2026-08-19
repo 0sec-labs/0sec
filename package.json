@@ -18,7 +18,7 @@
     "build:bundle": "node ./scripts/bundle-cli.mjs",
     "build:docs": "pnpm --filter @pwnkit/docs build",
     "dev": "pnpm -r --parallel dev",
-    "lint": "pnpm -r exec tsc --noEmit",
+    "lint": "pnpm --filter '!@pwnkit/docs' -r exec tsc --noEmit",
     "test": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter ./packages/cli test && pnpm --filter @pwnkit/benchmark test:windows-research && pnpm --filter @pwnkit/benchmark windows-lpe-corpus:contract && pnpm test:launcher && pnpm test:public-source-export",
     "test:launcher": "node --test scripts/npm-launcher/launcher.test.mjs",
     "test:public-source-export": "node --test scripts/create-public-source-export.test.mjs",
