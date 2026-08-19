@@ -70,6 +70,23 @@ test("public source export contains build inputs and excludes private material",
       const text = await readFile(join(outputDir, sourcePath), "utf8");
       assert.doesNotMatch(text, /peaktwilight|github\.com\/0sec-labs\/0sec/i, `${sourcePath} leaks private source references`);
     }
+
+    const publicPrWorkflow = await readFile(join(outputDir, ".github/workflows/public-pr.yml"), "utf8");
+    assert.match(
+      publicPrWorkflow,
+      /^\s*runs-on:\s+ubuntu-latest\s*$/m,
+      "untrusted public PRs must use an ephemeral hosted runner",
+    );
+    assert.doesNotMatch(
+      publicPrWorkflow,
+      /\bself-hosted\b/i,
+      "untrusted public PRs must not execute on persistent runners",
+    );
+    assert.doesNotMatch(
+      publicPrWorkflow,
+      /\bsecrets\./i,
+      "untrusted public PRs must not receive repository secrets",
+    );
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
