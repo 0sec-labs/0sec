@@ -103,6 +103,21 @@ test("public source export contains build inputs and excludes private material",
       /\bsecrets\./i,
       "untrusted public PRs must not receive repository secrets",
     );
+    assert.match(
+      publicPrWorkflow,
+      /^\s*pull_request_target:/m,
+      "public PR policy must be sourced from protected main",
+    );
+    assert.doesNotMatch(
+      publicPrWorkflow,
+      /^\s*pull_request:/m,
+      "fork-provided workflows must not execute contributor code",
+    );
+    assert.doesNotMatch(
+      publicPrWorkflow,
+      /actions\/checkout|pnpm (?:install|build|test)|node dist\/pwnkit\.js/,
+      "public PR policy must not check out or execute contributor code",
+    );
 
     const publishWorkflow = await readFile(join(outputDir, ".github/workflows/docker-publish.yml"), "utf8");
     const triggerBoundary = publishWorkflow.indexOf("\npermissions:");
