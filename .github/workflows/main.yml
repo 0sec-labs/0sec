@@ -1,0 +1,47 @@
+name: "PwnKit: Main"
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwnkit-main-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Bootstrap runner
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm lint
+      - name: Build CLI
+        run: pnpm build
+      - name: Smoke CLI
+        run: node dist/pwnkit.js --help
+      - name: Run tests
+        run: pnpm test
+        env:
+          PWNKIT_CHATGPT_ACCESS_TOKEN: ""
+          PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: ""
+          PWNKIT_CHATGPT_ACCOUNT_ID: ""
+          PWNKIT_CHATGPT_AUTH_FILE: "/tmp/pwnkit-ci-no-auth.json"
+          PWNKIT_CODEX_AUTH_JSON_PATH: "/tmp/pwnkit-ci-no-auth.json"
+          OPENAI_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          QWEN_API_KEY: ""
+          DEEPSEEK_API_KEY: ""
+          AZURE_OPENAI_API_KEY: ""
+          KIMI_API_KEY: ""

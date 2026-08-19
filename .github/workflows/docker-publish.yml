@@ -5,21 +5,21 @@ name: "PwnKit: Publish Docker image"
 # Trigger model — mirrors dashboard-build.yml / services-publish.yml so
 # merged engine work doesn't drift out of production (see #522):
 #
-#   - successful PwnKit CI on main → SHA-tagged image + :main + refreshed
-#                                    :latest. This is the rolling-main path
-#                                    the worker-controller pins by default
-#                                    (PWNKIT_IMAGE=…/pwnkit:latest).
+#   - successful PwnKit: Main on main → SHA-tagged image + :main + refreshed
+#                                       :latest. This is the rolling-main path
+#                                       the worker-controller pins by default
+#                                       (PWNKIT_IMAGE=…/pwnkit:latest).
 #   - tag push (v*)                → SHA-tagged image AND a semver-tagged
 #                                    image (…/pwnkit:0.1.0) for controlled
 #                                    versioned releases.
 #   - workflow_dispatch            → manual rebuild (still tags :latest).
 #
-# Main publishes are chained from `PwnKit: CI` instead of running directly on
+# Main publishes are chained from `PwnKit: Main` instead of running directly on
 # push, so a bad engine cannot refresh :latest before the CI suite has passed.
 # Tag pushes still build directly.
 on:
   workflow_run:
-    workflows: ["PwnKit: CI"]
+    workflows: ["PwnKit: Main"]
     types: [completed]
     branches: [main]
   push:
