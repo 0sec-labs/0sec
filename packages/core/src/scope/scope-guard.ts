@@ -3,12 +3,10 @@
  *
  * A family of egress guards in `agent/tools.ts` is nested inside
  * `if (this.ctx.scope) { … }`. `ctx.scope` is `undefined` whenever no
- * `ScopePolicy` was configured — and `--scope` is optional in the CLI and is
- * never emitted by the cloud dispatcher (`services/worker-controller/
- * src/runners/args.ts` in 0sec-labs/0sec pushes no `--scope`). So on every
- * cloud scan mode except `http_audit` (which synthesises a host policy from
- * `httpAuditAllowedHosts`) and on every local run without `--scope`, those
- * guards are inert.
+ * `ScopePolicy` was configured. Managed dispatch historically omitted
+ * `--scope` for all modes except `http_audit`, which synthesizes a host policy
+ * from its allowed-host configuration. Local runs without `--scope` had the
+ * same inert guard state.
  *
  * That in itself is not automatically a vulnerability — most of those modes
  * (source review, package audit, kernel review) have no live target and no
