@@ -64,6 +64,17 @@ export function selectRunManifest(
   return subsetManifest(source, caseIds, opts.manifestId);
 }
 
+export function resolveManifestPath(
+  manifestPath: string | undefined,
+  bundledCorpusPath: string = corpusV1Path(),
+): string {
+  if (manifestPath) return manifestPath;
+  if (existsSync(bundledCorpusPath)) return bundledCorpusPath;
+  throw new Error(
+    "No bundled benchmark corpus is available. Pass --manifest <path> to run an external or public corpus.",
+  );
+}
+
 export function validateCaptureDestination(outputValue: string, ledgerValue: string): void {
   const output = resolve(outputValue);
   if (output === resolve(ledgerValue)) {
@@ -125,7 +136,7 @@ export function registerBenchCommand(program: Command): void {
   bench
     .command("run")
     .description("Run a variant tournament over the corpus and update the benchmark ledger")
-    .option("--manifest <path>", "Corpus manifest path (default: bundled corpus-v1.json)")
+    .option("--manifest <path>", "Corpus manifest path (required when no bundled corpus is present)")
     .option("--case-id <id>", "exact case id in a pre-registered manifest slice (repeatable)", collect, [])
     .option("--manifest-id <id>", "sealed slice id (required with --case-id)")
     .option("--variants <json|path>", "JSON array of variant descriptors, or a path to one")
@@ -147,15 +158,16 @@ export function registerBenchCommand(program: Command): void {
     .action(async (opts) => {
       const isJson = String(opts.format) === "json";
       let variants: BenchVariant[];
+      let manifestPath: string;
       try {
         variants = parseVariants(opts);
+        manifestPath = resolveManifestPath(opts.manifest ? String(opts.manifest) : undefined);
       } catch (err) {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));
         process.exit(2);
         return;
       }
 
-      const manifestPath = opts.manifest ? String(opts.manifest) : corpusV1Path();
       const sourceManifest = await loadManifest(manifestPath);
       const manifest = selectRunManifest(sourceManifest, {
         caseId: opts.caseId as string[],

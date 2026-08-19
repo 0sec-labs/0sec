@@ -43,6 +43,7 @@ test("public source export contains build inputs and excludes private material",
     for (const forbidden of [
       "AGENTS.md",
       "CLAUDE.md",
+      "packages/core/src/bench/corpus-v1.json",
       "docs",
       "release-staging",
       "research",
