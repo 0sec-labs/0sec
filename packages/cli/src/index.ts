@@ -79,17 +79,15 @@ enforceSourceDistFreshness({ entryUrl: import.meta.url });
 // Start loading cfonts in the background so it's ready when the banner prints
 void preloadBanner();
 
-// Fire-and-forget update check. Once-per-day GH API call; no-ops in CI,
-// pipes, or when PWNKIT_NO_UPDATE_CHECK / PWNKIT_OFFLINE is set. Never
-// blocks the actual command — we explicitly `void` the promise so it
-// runs concurrently with whatever subcommand the user invoked.
+// Fire-and-forget update check. It only runs when PWNKIT_UPDATE_CHECK=1;
+// otherwise normal commands make no update request or cache write.
 void maybeNotifyUpdate(VERSION);
 
 const program = new Command();
 
 program
-  .name("pwnkit-cli")
-  .description("Fully autonomous agentic pentesting framework")
+  .name("pwnkit")
+  .description("Open-source multi-model security research harness")
   .version(VERSION);
 
 registerScanCommand(program);
