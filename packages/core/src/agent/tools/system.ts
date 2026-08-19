@@ -15,10 +15,18 @@ import type { ToolDefinition } from "../types.js";
 export const systemToolDefinitions: Record<string, ToolDefinition> = {
   read_file: {
     name: "read_file",
-    description: "Read a source code file. Returns numbered lines. Path must be within the scoped directory (usually the package or repo root). Start by reading package.json to understand the project structure, then follow imports.",
+    description:
+      "Read a source code file, or a window of one. Path must be within the scoped directory (usually the package or repo root). " +
+      "Returns raw lines plus startLine/endLine/totalLines for exact file:line citations. " +
+      "Use offset (1-based, matching grep -n and rg -n) to read the middle of a large file. " +
+      "When a window does not reach end-of-file, the result gives the next offset to continue from.",
     parameters: {
       path: { type: "string", description: "File path (relative to scope root or absolute)" },
-      max_lines: { type: "number", description: "Read only the first N lines. Omit to read the whole file (large files are truncated in the middle, keeping both ends)." },
+      max_lines: { type: "number", description: "Max lines to read (default 500). Use for large files." },
+      offset: {
+        type: "number",
+        description: "1-based line number to start reading at (default 1). An offset past EOF returns an empty window with the file length.",
+      },
     },
     required: ["path"],
   },

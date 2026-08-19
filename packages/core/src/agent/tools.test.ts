@@ -43,6 +43,15 @@ describe("TOOL_DEFINITIONS", () => {
       expect(TOOL_DEFINITIONS[name].description).toBeTruthy();
     }
   });
+
+  it("advertises a 1-based read_file offset", () => {
+    const def = TOOL_DEFINITIONS.read_file;
+    expect(def.parameters.offset).toBeDefined();
+    expect(def.parameters.offset.type).toBe("number");
+    expect(def.parameters.offset.description).toContain("1-based");
+    expect(def.required).toEqual(["path"]);
+    expect(def.description).not.toContain("Returns numbered lines");
+  });
 });
 
 // ── Role-based Tool Selection ──
@@ -1245,6 +1254,104 @@ describe("ToolExecutor", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("scoped local directory");
+  });
+
+  describe("read_file windowed reads", () => {
+    let tmp: string;
+    let scopedExecutor: ToolExecutor;
+    const BIG_FILE = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    beforeEach(() => {
+      tmp = mkdtempSync(join(tmpdir(), "pwnkit-read-file-exec-"));
+      writeFileSync(join(tmp, "big.c"), BIG_FILE);
+      scopedExecutor = new ToolExecutor({ ...ctx, scopePath: tmp }, null);
+    });
+
+    afterEach(() => {
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it("returns the first 500 lines when no offset is given", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c" },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as {
+        content: string;
+        totalLines: number;
+        truncated: boolean;
+        startLine: number;
+        endLine: number;
+        nextOffset?: number;
+      };
+      expect(out.totalLines).toBe(1200);
+      expect(out.truncated).toBe(true);
+      expect(out.startLine).toBe(1);
+      expect(out.endLine).toBe(500);
+      expect(out.nextOffset).toBe(501);
+      expect(out.content.startsWith("line 1\nline 2\n")).toBe(true);
+    });
+
+    it("reads a window in the middle of the file", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 800, max_lines: 3 },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as { content: string; startLine: number; endLine: number };
+      expect(out.startLine).toBe(800);
+      expect(out.endLine).toBe(802);
+      expect(out.content.split("\n").slice(0, 3)).toEqual(["line 800", "line 801", "line 802"]);
+    });
+
+    it("signals truncation with the next offset", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 800, max_lines: 3 },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as { content: string };
+      expect(out.content).toContain("[pwnkit:read_file] TRUNCATED");
+      expect(out.content).toContain("showed lines 800-802 of 1200");
+      expect(out.content).toContain("offset=803");
+    });
+
+    it("returns an empty window for an offset past EOF", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 99999 },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as { content: string; totalLines: number; truncated: boolean };
+      expect(out.totalLines).toBe(1200);
+      expect(out.truncated).toBe(false);
+      expect(out.content).toContain("past the end of this file");
+    });
+
+    it("rejects a 0-based offset", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 0 },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("1-based");
+    });
+
+    it("enforces the scope guard before reading", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "../../../etc/passwd", offset: 1 },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("escapes the allowed scope");
+    });
   });
 
   it("run_command fails without scopePath", async () => {
