@@ -23,6 +23,29 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     required: ["path"],
   },
 
+  list_files: {
+    name: "list_files",
+    description:
+      "List regular files under the scoped source directory. Skips .git, node_modules, and symlinks. Use this to map source before reading individual files.",
+    parameters: {
+      path: { type: "string", description: "Optional file or directory path within the scoped source directory" },
+      limit: { type: "number", description: "Maximum files to return (default 100, maximum 500)" },
+    },
+  },
+
+  search_files: {
+    name: "search_files",
+    description:
+      "Search regular text files under the scoped source directory for a literal string. Skips symlinks, files larger than 256 KiB, .git, and node_modules.",
+    parameters: {
+      query: { type: "string", description: "Literal text to search for" },
+      path: { type: "string", description: "Optional file or directory path within the scoped source directory" },
+      case_sensitive: { type: "boolean", description: "Match case exactly (default false)" },
+      max_results: { type: "number", description: "Maximum matching lines to return (default 50, maximum 200)" },
+    },
+    required: ["query"],
+  },
+
   run_command: {
     name: "run_command",
     description:
@@ -98,6 +121,8 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
 // executor instance in agent/tools.ts (handler bodies stay private methods).
 export const systemDispatch: Record<string, string> = {
   read_file: "readFile",
+  list_files: "listFiles",
+  search_files: "searchFiles",
   run_command: "runCommand",
   update_target: "updateTarget",
   bash: "shellExec",

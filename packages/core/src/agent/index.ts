@@ -11,6 +11,13 @@ export type { XmlDispatchParse } from "./xml-dispatch.js";
 export { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
 export { discoveryPrompt, attackPrompt, verifyPrompt, reportPrompt, sourceVerifyPrompt, researchPrompt, blindVerifyPrompt } from "./prompts.js";
 export { features } from "./features.js";
+export {
+  FEATURE_PRESETS,
+  applyFeaturePreset,
+  applyFeaturePresetFromEnv,
+  resolveFeaturePreset,
+} from "./feature-presets.js";
+export type { FeaturePresetName, PresetApplication } from "./feature-presets.js";
 export { PtySessionManager } from "./pty-session.js";
 export type { PtySession } from "./pty-session.js";
 export { estimateCost } from "./cost.js";

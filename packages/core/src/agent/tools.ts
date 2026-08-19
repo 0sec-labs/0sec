@@ -120,6 +120,7 @@ import {
   JSFUCK_XSS_PAYLOAD,
 } from "./payloads.js";
 import { parsePatch, applyPatchOps } from "./apply-patch.js";
+import { listScopedFiles, searchScopedFiles } from "./tools/scoped-source.js";
 import {
   normalizeFindingTitle,
   levenshtein,
@@ -380,6 +381,25 @@ const ALLOWED_COMMANDS = new Set([
 // Block dangerous shell chars. Piping is handled manually without invoking a shell.
 const DISALLOWED_SHELL_CHARS = /[;&<>`$\n\r]/;
 const ALLOWED_NPM_SUBCOMMANDS = new Set(["audit", "view", "ls", "list"]);
+
+// A scoped source audit processes attacker-controlled package contents. Do not
+// offer generic process, network, or write capability inside that trust boundary.
+// agent-runner routes these roles through the tool-mediated API loop; this list
+// supplies only scope-canonicalized source browsing, fixed intel, and findings.
+const SCOPED_SOURCE_AUDIT_TOOLS: Record<string, true> = {
+  read_file: true,
+  list_files: true,
+  search_files: true,
+  intel_search_advisories: true,
+  intel_lookup_cve: true,
+  intel_search_similar: true,
+  intel_build_dossier: true,
+  intel_search_target_history: true,
+  query_findings: true,
+  save_finding: true,
+  update_finding: true,
+  done: true,
+};
 
 /**
  * Check whether `command` contains disallowed shell operator characters
@@ -1339,8 +1359,6 @@ const SOURCE_FILE_RE = /\.(ts|tsx|js|mjs|cjs|jsx|py|rs|go|java|rb|php|c|h|cpp|hp
 export interface CoverageGateInput {
   /** Distinct source files the agent has successfully read this session. */
   sourceFilesRead: number;
-  /** Successful `run_command` invocations this session. */
-  runCommandCount: number;
   /** Total non-`done` tool calls (success or failure) this session. */
   totalToolCalls: number;
   /** Milliseconds since the ToolExecutor was constructed. */
@@ -1366,10 +1384,9 @@ export interface CoverageGateDecision {
  *
  * Pass conditions (any of):
  *   1. At least N distinct source files read.
- *   2. At least one `run_command` invocation (agent ran a real shell command).
- *   3. Has been running > 60s with >= 5 tool calls (long enough that
+ *   2. Has been running > 60s with >= 5 tool calls (long enough that
  *      `done` likely follows a genuine investigation, not a 1-call bail).
- *   4. The agent has already been rejected twice — accept the third call
+ *   3. The agent has already been rejected twice — accept the third call
  *      so we never deadlock a legitimately-empty audit.
  */
 export function evaluateDoneCoverageGate(input: CoverageGateInput, env: NodeJS.ProcessEnv = process.env): CoverageGateDecision {
@@ -1391,22 +1408,20 @@ export function evaluateDoneCoverageGate(input: CoverageGateInput, env: NodeJS.P
   })();
 
   if (input.sourceFilesRead >= minFiles) return { pass: true };
-  if (input.runCommandCount >= 1) return { pass: true };
   if (input.elapsedMs > 60_000 && input.totalToolCalls >= 5) return { pass: true };
 
   // Build a model-facing rejection that names the specific deficit.
   const parts: string[] = [];
   parts.push(
     `done rejected: only ${input.sourceFilesRead} distinct source file(s) inspected `
-      + `(threshold: ${minFiles}), ${input.runCommandCount} run_command call(s), `
-      + `${input.totalToolCalls} total tool calls, elapsed ${Math.round(input.elapsedMs / 1000)}s.`,
+      + `(threshold: ${minFiles}), ${input.totalToolCalls} total tool calls, `
+      + `elapsed ${Math.round(input.elapsedMs / 1000)}s.`,
   );
   parts.push(
     "You have not actually audited the source yet — declaring the audit "
       + "complete now produces a 0-finding scan that misses real vulnerabilities. "
-      + "Read more source files (try the main exports listed in package.json's "
-      + "\"main\" / \"exports\", and at least src/index.* or lib/index.*), or run "
-      + "a `run_command` with grep/rg against the package to map the public API. "
+      + "Use list_files to map the tree, search_files with literal identifiers to "
+      + "trace the public API, then read the relevant source files. "
       + "Then call `done` again.",
   );
   return { pass: false, reason: parts.join(" ") };
@@ -1648,7 +1663,6 @@ export class ToolExecutor {
   // source. See `evaluateDoneCoverageGate` above.
   private _startedAt: number = Date.now();
   private _sourceFilesRead: Set<string> = new Set();
-  private _runCommandCount: number = 0;
   private _totalNonDoneToolCalls: number = 0;
   private _doneRejections: number = 0;
 
@@ -1768,6 +1782,19 @@ export class ToolExecutor {
     const previousCorrelationId = this._correlationId;
     this._correlationId = opts?.correlationId ?? null;
     try {
+      if (
+        (this.ctx.role === "audit" || this.ctx.role === "review") &&
+        typeof this.ctx.scopePath === "string" &&
+        this.ctx.scopePath.length > 0 &&
+        !Object.hasOwn(SCOPED_SOURCE_AUDIT_TOOLS, call.name)
+      ) {
+        return {
+          success: false,
+          output: null,
+          error: `Tool "${call.name}" is not available in a scoped source audit`,
+        };
+      }
+
       // Coverage-gate accounting (#audit-laziness). Counted BEFORE dispatch
       // so a tool that throws still contributes to the "total tool calls"
       // denominator — that matches the laziness-detection intent (the agent
@@ -1788,9 +1815,6 @@ export class ToolExecutor {
         if (path && SOURCE_FILE_RE.test(path)) {
           this._sourceFilesRead.add(path);
         }
-      }
-      if (call.name === "run_command" && result.success) {
-        this._runCommandCount += 1;
       }
 
       return result;
@@ -4652,6 +4676,30 @@ export class ToolExecutor {
     };
   }
 
+  private listFiles(args: Record<string, unknown>): ToolResult {
+    if (!this.ctx.scopePath) {
+      return {
+        success: false,
+        output: null,
+        error: "list_files requires a scoped local directory and is not available for remote target scanning",
+      };
+    }
+
+    return { success: true, output: listScopedFiles(this.ctx.scopePath, args) };
+  }
+
+  private searchFiles(args: Record<string, unknown>): ToolResult {
+    if (!this.ctx.scopePath) {
+      return {
+        success: false,
+        output: null,
+        error: "search_files requires a scoped local directory and is not available for remote target scanning",
+      };
+    }
+
+    return { success: true, output: searchScopedFiles(this.ctx.scopePath, args) };
+  }
+
   /**
    * apply_patch — pwnkit#230. Structured DSL for reliable file edits.
    * Refuses to run without a scopePath (same gate as read_file/run_command);
@@ -5616,7 +5664,6 @@ export class ToolExecutor {
     if (isSourceAudit) {
       const decision = evaluateDoneCoverageGate({
         sourceFilesRead: this._sourceFilesRead.size,
-        runCommandCount: this._runCommandCount,
         totalToolCalls: this._totalNonDoneToolCalls,
         elapsedMs: Date.now() - this._startedAt,
         priorRejections: this._doneRejections,
@@ -5751,8 +5798,8 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // Verify agent gets file tools when there's a local scope (audit/review mode)
     verify: opts?.hasScope ? [...networkTools, ...fileTools] : networkTools,
     report: [...common],
-    audit: allEnabledTools,
-    review: allEnabledTools,
+    audit: opts?.hasScope ? Object.keys(SCOPED_SOURCE_AUDIT_TOOLS) : allEnabledTools,
+    review: opts?.hasScope ? Object.keys(SCOPED_SOURCE_AUDIT_TOOLS) : allEnabledTools,
   };
 
   const toolNames = roleTools[role] ?? allEnabledTools;

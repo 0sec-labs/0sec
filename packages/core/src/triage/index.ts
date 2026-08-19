@@ -7,6 +7,17 @@
 
 export { extractFeatures, FEATURE_NAMES } from "./feature-extractor.js";
 export {
+  summarizeTriageProvenance,
+  formatTriageProvenance,
+  UNINSTRUMENTED_LAYERS,
+  OPT_IN_MOAT_LAYERS,
+} from "./provenance.js";
+export type {
+  TriageProvenance,
+  LayerProvenance,
+  LayerExecutionStatus,
+} from "./provenance.js";
+export {
   canAutoSuppress,
   canAutoSuppressDetailed,
   AUTO_SUPPRESS_PROTECTED_SEVERITIES,

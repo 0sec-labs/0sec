@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   NativeRuntime,
   NativeMessage,
@@ -132,6 +133,17 @@ const EXTERNAL_MEMORY_MAX_CHARS = 2000;
  */
 export function isTransientLlmError(errorMsg: string): boolean {
   return /\b(429|529|502|503|504)\b|overloaded|rate.?limit|temporarily|too many requests|ETIMEDOUT|ECONNRESET|throttl|stall/i.test(errorMsg);
+}
+
+/**
+ * Provider context-window rejection classifier. This is intentionally narrower
+ * than transient transport errors: pruning history changes the next request,
+ * so it must never fire for a rate limit or a generic 5xx.
+ */
+export function isContextWindowError(errorMsg: string): boolean {
+  return /context.{0,40}(?:window|length|limit)|(?:maximum|max).{0,20}context|too many tokens|prompt.{0,30}(?:too long|too large)|input.{0,30}(?:too long|too large)/i.test(
+    errorMsg,
+  );
 }
 
 // ── Native Agent Loop Config ──
@@ -603,6 +615,10 @@ export async function runNativeAgentLoop(
   // Context window compaction — allow re-compaction as context regrows
   let compactionCount = 0;
   let tokensAtLastCompaction = 0;
+  // Last-resort context-window recovery. Compaction normally runs before this
+  // is needed; a provider rejection is the only trigger for destructive
+  // drop-oldest pruning, and the retry cap prevents an endless shrink loop.
+  let contextOverflowRecoveries = 0;
 
   // Dynamic playbook injection — only inject once per session
   let playbookInjected = false;
@@ -998,6 +1014,32 @@ export async function runNativeAgentLoop(
     // Handle error or empty response
     if (result.error || (result.content.length === 0 && (!result.usage || result.usage.outputTokens === 0))) {
       const errorMsg = result.error || "API returned empty response (0 tokens) — model may be rate-limited or unavailable";
+      if (
+        result.error
+        && isContextWindowError(errorMsg)
+        && contextOverflowRecoveries < 2
+      ) {
+        const beforeCount = state.messages.length;
+        const preserveTailCount = Math.max(2, 10 - contextOverflowRecoveries * 4);
+        const pruned = dropOldestMessages(state.messages, preserveTailCount);
+        if (pruned.length < beforeCount) {
+          contextOverflowRecoveries++;
+          state.messages = pruned;
+          tokensAtLastCompaction = state.totalUsage.inputTokens;
+          process.stderr.write(
+            `[pwnkit] context overflow: pruned ${beforeCount - pruned.length} old messages `
+            + `(recovery ${contextOverflowRecoveries}/2)\n`,
+          );
+          onEvent?.("context_overflow_recovered", {
+            turn: state.turnCount,
+            messagesBefore: beforeCount,
+            messagesAfter: pruned.length,
+            recovery: contextOverflowRecoveries,
+          });
+          if (state.turnCount > 0) state.turnCount--;
+          continue;
+        }
+      }
       // Transient provider overload / rate-limit / 5xx → back off and retry the
       // SAME turn rather than killing the run. Doesn't consume a turn (the LLM
       // call failed before any tool ran), capped by MAX_TRANSIENT_RETRIES.
@@ -1005,10 +1047,10 @@ export async function runNativeAgentLoop(
       if (transient && transientRetries < MAX_TRANSIENT_RETRIES) {
         transientRetries++;
         const backoffMs = Math.min(20_000, 500 * 2 ** transientRetries);
-        process.stderr.write(`[pwnkit] transient LLM error (retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}, backoff ${backoffMs}ms): ${errorMsg.slice(0, 120)}\n`);
+        process.stderr.write(`[pwnkit] transient LLM error (retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}, backoff ${backoffMs}): ${errorMsg.slice(0, 120)}\n`);
         onEvent?.("agent_error", { turn: state.turnCount, error: `transient (retry ${transientRetries}): ${errorMsg.slice(0, 200)}` });
         if (state.turnCount > 0) state.turnCount--; // a failed transient turn must not burn budget
-        await new Promise((r) => setTimeout(r, backoffMs));
+        await delay(backoffMs);
         continue;
       }
       process.stderr.write(`[pwnkit] Agent loop error on turn ${state.turnCount}: ${errorMsg}\n`);
@@ -2029,6 +2071,61 @@ function mergeSameRole(a: NativeMessage, b: NativeMessage): NativeMessage {
   return merged;
 }
 
+/**
+ * Last-resort overflow recovery: preserve the opening task and recent tail,
+ * explicitly mark the removed middle, and normalize tail role alternation.
+ *
+ * This intentionally runs only after a provider rejects the request for its
+ * context window. Normal growth uses `compactMessagesWithLLM`, which preserves
+ * more evidence through a summary; this path trades detail for a bounded retry.
+ */
+export function dropOldestMessages(
+  messages: NativeMessage[],
+  preserveTailCount = 10,
+): NativeMessage[] {
+  if (messages.length <= preserveTailCount + 3) return messages;
+
+  const first = messages[0]!;
+  const tail = messages.slice(Math.max(1, messages.length - preserveTailCount));
+  const compacted: NativeMessage[] = [
+    first,
+    {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: "Earlier conversation context was pruned after a provider context-window rejection.",
+      }],
+    },
+    {
+      role: "user",
+      content: [{
+        type: "text",
+        text: `[CONTEXT OVERFLOW RECOVERY] Dropped ${messages.length - tail.length - 1} older messages. Continue from the preserved recent context.`,
+      }],
+    },
+  ];
+
+  let tailIndex = 0;
+  while (tailIndex < tail.length && tail[tailIndex]!.role !== "assistant") {
+    tailIndex++;
+  }
+
+  let lastRole: "user" | "assistant" = "user";
+  for (let index = tailIndex; index < tail.length; index++) {
+    const message = tail[index]!;
+    if (message.role === lastRole) {
+      compacted[compacted.length - 1] = mergeSameRole(
+        compacted[compacted.length - 1]!,
+        message,
+      );
+      continue;
+    }
+    compacted.push(message);
+    lastRole = message.role;
+  }
+  return compacted;
+}
+
 // ── Progress Summary Generation ──
 // When early-stop triggers, ask the LLM to produce a structured summary of what
 // was tried and discovered so the retry attempt can skip dead ends. Similar to
@@ -2354,6 +2451,8 @@ function buildContinuePrompt(config: NativeAgentConfig, turnCount: number, memor
     return `STATUS: ${remaining} turns left. Summarize what you have learned. What is your top hypothesis? Use your tools to test it.${memorySuffix}`;
   }
 
+  const scopedSourceAudit = typeof config.scopePath === "string" && config.scopePath.trim().length > 0;
+
   switch (config.role) {
     case "discovery":
     case "attack":
@@ -2365,8 +2464,12 @@ function buildContinuePrompt(config: NativeAgentConfig, turnCount: number, memor
     case "review":
     default:
       return turnCount < 2
-        ? "You must use your tools to analyze the target. Start by reading files and running commands. Do not just describe what you would do — actually do it."
-        : "Continue your analysis. Use read_file to examine source code, run_command to search for patterns, and save_finding for any vulnerabilities. Call the done tool only when you have thoroughly analyzed the code.";
+        ? scopedSourceAudit
+          ? "You must use your scoped source tools to analyze the target. Start by listing files and reading source. Do not just describe what you would do — actually do it."
+          : "You must use your tools to analyze the target. Start by reading files and running commands. Do not just describe what you would do — actually do it."
+        : scopedSourceAudit
+          ? "Continue your analysis. Use list_files to map source, search_files with literal identifiers to trace patterns, read_file for full context, and save_finding for vulnerabilities. Call done only when you have thoroughly analyzed the code."
+          : "Continue your analysis. Use read_file to examine source code, run_command to search for patterns, and save_finding for any vulnerabilities. Call the done tool only when you have thoroughly analyzed the code.";
   }
 }
 

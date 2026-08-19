@@ -392,8 +392,39 @@ export {
   NEGATIVE_MIN,
   MAX_KNOWN_NEGATIVES,
   MAX_NEGATIVE_REASON_CHARS,
+  loadKnownNegativesFromLedger,
 } from "./stages/hunt-negatives.js";
 export type { KnownNegative, NegativeMatch } from "./stages/hunt-negatives.js";
+// Shared hunt evidence ledger: the append-only, concurrency-safe claim store a
+// hunt CAMPAIGN coordinates through — claims carry their evidence and
+// dependencies, observations stay distinguishable from assumptions, and
+// disproven claims persist so parallel and sequential workers stop re-walking
+// dead ends. Complements the end-of-run corpus (which can only describe hunts
+// that already finished); see hunt-evidence-ledger.ts's header.
+export {
+  appendHuntClaim,
+  createHuntClaim,
+  validateHuntClaimRecord,
+  readHuntLedger,
+  loadHuntLedger,
+  resolveHuntLedger,
+  disprovenHuntClaims,
+  unresolvedHuntClaims,
+  staleHuntClaims,
+  HUNT_CLAIM_SCHEMA_VERSION,
+  MAX_CLAIM_STATEMENT_CHARS,
+  MAX_EVIDENCE_PER_CLAIM,
+} from "./stages/hunt-evidence-ledger.js";
+export type {
+  EvidenceStance,
+  ClaimStatus,
+  HuntEvidence,
+  HuntClaimShape,
+  HuntClaimRecord,
+  RecordHuntClaimInput,
+  ResolvedHuntClaim,
+  ReadHuntLedgerOptions,
+} from "./stages/hunt-evidence-ledger.js";
 // Cross-family adversarial refuter (PWNKIT_HUNT_CROSS_FAMILY, default ON, issue
 // #661): force the refute pass onto a DIFFERENT model family than the finder
 // before a finding is promoted, so their errors decorrelate. Degrades to the
@@ -900,6 +931,15 @@ export type { ParseSeedFindingsOptions } from "./seed-findings.js";
 
 // Agent system
 export { runAgentLoop, runNativeAgentLoop, ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, features, estimateCost } from "./agent/index.js";
+// Named bundles of PWNKIT_FEATURE_* vars — the documented way to enable the
+// full FP moat for an A/B run. See `agent/feature-presets.ts`.
+export {
+  FEATURE_PRESETS,
+  applyFeaturePreset,
+  applyFeaturePresetFromEnv,
+  resolveFeaturePreset,
+} from "./agent/feature-presets.js";
+export type { FeaturePresetName, PresetApplication } from "./agent/feature-presets.js";
 export { runEGATS, runEGATSWithDefaults, scoreEvidence, summariseTree } from "./agent/egats.js";
 export {
   clearSkillRegistry,
@@ -1158,6 +1198,21 @@ export {
 
 // Handcrafted feature extractor (45-element vector for triage classifiers)
 export { extractFeatures, FEATURE_NAMES } from "./triage/feature-extractor.js";
+
+// Per-finding triage provenance — which FP-moat layers actually ran, derived
+// from the recorded `layerVerdicts` rather than the current env. See
+// `triage/provenance.ts` for why that distinction is load-bearing.
+export {
+  summarizeTriageProvenance,
+  formatTriageProvenance,
+  UNINSTRUMENTED_LAYERS,
+  OPT_IN_MOAT_LAYERS,
+} from "./triage/provenance.js";
+export type {
+  TriageProvenance,
+  LayerProvenance,
+  LayerExecutionStatus,
+} from "./triage/provenance.js";
 
 // Remediation guidance
 export { generateRemediation, generateRemediationWithLLM } from "./remediation.js";

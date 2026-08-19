@@ -34,7 +34,7 @@ describe("TOOL_DEFINITIONS", () => {
   it("defines all expected tools", () => {
     const expected = [
       "http_request", "send_prompt", "save_finding", "query_findings",
-      "update_finding", "read_file", "run_command", "update_target", "payload_lookup", "done",
+      "update_finding", "read_file", "list_files", "search_files", "run_command", "update_target", "payload_lookup", "done",
       "list_skills", "load_skill",
     ];
     for (const name of expected) {
@@ -116,6 +116,26 @@ describe("getToolsForRole", () => {
     }
     for (const scanner of SCANNER_TOOL_NAMES) {
       expect(names).not.toContain(scanner);
+    }
+  });
+
+  it("removes execution capabilities from scoped source audits", () => {
+    for (const role of ["audit", "review"]) {
+      const names = getToolsForRole(role, { hasScope: true }).map((t) => t.name);
+      expect(names).toEqual([
+        "read_file",
+        "list_files",
+        "search_files",
+        "intel_search_advisories",
+        "intel_lookup_cve",
+        "intel_search_similar",
+        "intel_build_dossier",
+        "intel_search_target_history",
+        "query_findings",
+        "save_finding",
+        "update_finding",
+        "done",
+      ]);
     }
   });
 
@@ -266,6 +286,20 @@ describe("ToolExecutor", () => {
       targetInfo: {},
     };
     executor = new ToolExecutor(ctx, null);
+  });
+
+  it("rejects direct execution calls from a scoped source audit", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-scoped-audit-"));
+    try {
+      const scopedAudit = new ToolExecutor({ ...ctx, role: "audit", scopePath: root }, null);
+      for (const name of ["bash", "run_command", "apply_patch", "spawn_agent"]) {
+        const result = await scopedAudit.execute({ name, arguments: {} });
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/not available in a scoped source audit/);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   // ── save_finding ──
@@ -1305,6 +1339,52 @@ describe("ToolExecutor", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Absolute paths are not allowed");
+    });
+
+    it("rejects source browsing through a symlink leaving the scope", async () => {
+      const listed = await scopedExecutor.execute({
+        name: "list_files",
+        arguments: { path: "package-link" },
+      });
+      const searched = await scopedExecutor.execute({
+        name: "search_files",
+        arguments: { path: "package-link", query: "credential" },
+      });
+
+      expect(listed.success).toBe(false);
+      expect(listed.error).toContain("Path escapes the allowed scope");
+      expect(searched.success).toBe(false);
+      expect(searched.error).toContain("Path escapes the allowed scope");
+    });
+
+    it("lists and searches regular in-scope files without following symlinks", async () => {
+      mkdirSync(join(root, "src"));
+      mkdirSync(join(root, "node_modules"));
+      writeFileSync(join(root, "src", "entry.ts"), "export function dangerousCall(input: string) { return input; }\n");
+      writeFileSync(join(root, "node_modules", "ignored.ts"), "operator credential\n");
+
+      const listed = await scopedExecutor.execute({
+        name: "list_files",
+        arguments: {},
+      });
+      expect(listed.success).toBe(true);
+      expect(listed.output).toEqual({ files: ["src/entry.ts"], truncated: false });
+
+      const found = await scopedExecutor.execute({
+        name: "search_files",
+        arguments: { query: "dangerousCall" },
+      });
+      expect(found.success).toBe(true);
+      expect(found.output).toMatchObject({
+        matches: [{ path: "src/entry.ts", line: 1, content: "export function dangerousCall(input: string) { return input; }" }],
+      });
+
+      const escaped = await scopedExecutor.execute({
+        name: "search_files",
+        arguments: { query: "operator credential" },
+      });
+      expect(escaped.success).toBe(true);
+      expect(escaped.output).toMatchObject({ matches: [] });
     });
   });
 
@@ -2797,7 +2877,6 @@ describe("evaluateDoneCoverageGate", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 0,
-        runCommandCount: 0,
         totalToolCalls: 1, // the package.json read
         elapsedMs: 11_000,
         priorRejections: 0,
@@ -2813,7 +2892,6 @@ describe("evaluateDoneCoverageGate", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 3,
-        runCommandCount: 0,
         totalToolCalls: 3,
         elapsedMs: 5_000,
         priorRejections: 0,
@@ -2823,25 +2901,23 @@ describe("evaluateDoneCoverageGate", () => {
     expect(decision.pass).toBe(true);
   });
 
-  it("passes when at least one run_command was used (shell-driven recon)", () => {
+  it("rejects a command-only audit without source reads", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 0,
-        runCommandCount: 1,
         totalToolCalls: 1,
         elapsedMs: 5_000,
         priorRejections: 0,
       },
       baseEnv,
     );
-    expect(decision.pass).toBe(true);
+    expect(decision.pass).toBe(false);
   });
 
   it("passes after > 60s with >= 5 tool calls (long-running genuine audit)", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 0,
-        runCommandCount: 0,
         totalToolCalls: 5,
         elapsedMs: 61_000,
         priorRejections: 0,
@@ -2856,7 +2932,6 @@ describe("evaluateDoneCoverageGate", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 1,
-        runCommandCount: 0,
         totalToolCalls: 1,
         elapsedMs: 5_000,
         priorRejections: 0,
@@ -2870,7 +2945,6 @@ describe("evaluateDoneCoverageGate", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 0,
-        runCommandCount: 0,
         totalToolCalls: 1,
         elapsedMs: 1_000,
         priorRejections: 0,
@@ -2884,7 +2958,6 @@ describe("evaluateDoneCoverageGate", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 0,
-        runCommandCount: 0,
         totalToolCalls: 1,
         elapsedMs: 5_000,
         priorRejections: 2,
@@ -2939,7 +3012,7 @@ describe("ToolExecutor — `done` coverage gate integration (#audit-laziness)", 
     });
     expect(doneCall.success).toBe(false);
     expect(doneCall.error).toMatch(/done rejected/);
-    expect(doneCall.error).toMatch(/main exports/);
+    expect(doneCall.error).toMatch(/list_files/);
   });
 
   it("a follow-up tool-call sequence that reads 3 source files passes the gate", async () => {

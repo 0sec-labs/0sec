@@ -16,7 +16,7 @@ import type { NativeMessage } from "./types.js";
  * assertions below lock that footgun shut.
  */
 
-describe("Anthropic wire routing (z-ai / kimi)", () => {
+describe("Anthropic Messages wire routing and retained thinking", () => {
   const origEnv = { ...process.env };
 
   beforeEach(() => {
@@ -163,9 +163,178 @@ describe("Anthropic wire routing (z-ai / kimi)", () => {
       expect((rt as any).anthropicThinkingField()).toEqual({});
     });
 
-    it("returns an empty fragment for real Anthropic", () => {
-      const rt = runtimeForProvider("anthropic");
-      expect((rt as any).anthropicThinkingField()).toEqual({});
+    it("enables adaptive thinking for real Anthropic while retained reasoning is on", () => {
+      // Private helper observed through a narrow test-only shape.
+      const rt = runtimeForProvider("anthropic") as unknown as {
+        anthropicThinkingField(): Record<string, unknown>;
+      };
+      expect(rt.anthropicThinkingField()).toEqual({
+        thinking: { type: "adaptive" },
+      });
+    });
+
+    it("turns Claude adaptive thinking off for a retained-reasoning A/B run", () => {
+      const previous = process.env.PWNKIT_FEATURE_RETAINED_REASONING;
+      process.env.PWNKIT_FEATURE_RETAINED_REASONING = "0";
+      try {
+        // Private helper observed through a narrow test-only shape.
+        const rt = runtimeForProvider("anthropic") as unknown as {
+          anthropicThinkingField(): Record<string, unknown>;
+        };
+        expect(rt.anthropicThinkingField()).toEqual({});
+      } finally {
+        if (previous === undefined) delete process.env.PWNKIT_FEATURE_RETAINED_REASONING;
+        else process.env.PWNKIT_FEATURE_RETAINED_REASONING = previous;
+      }
+    });
+  });
+
+  // ── (c) Claude thinking/signature round-trip ──
+
+  describe("Claude retained thinking", () => {
+    const rawAssistantContent = [
+      { type: "thinking", thinking: "", signature: "opaque-thinking-signature" },
+      { type: "redacted_thinking", data: "opaque-redacted-block" },
+      {
+        type: "tool_use",
+        id: "toolu_1",
+        name: "read_file",
+        input: { path: "/workspace/target.c" },
+      },
+    ];
+
+    function jsonResponse(body: Record<string, unknown>): Response {
+      return {
+        ok: true,
+        text: async () => JSON.stringify(body),
+      } as unknown as Response;
+    }
+
+    function anthropicRuntime(): LlmApiRuntime {
+      process.env.ANTHROPIC_API_KEY = "anthropic-test-key";
+      return new LlmApiRuntime({
+        type: "api",
+        timeout: 5000,
+        model: "claude-opus-4-8",
+      });
+    }
+
+    it("replays the complete raw assistant turn without mutating it for cache control", async () => {
+      const rt = anthropicRuntime();
+      const bodies: Array<Record<string, unknown>> = [];
+      const responseBodies: Array<Record<string, unknown>> = [
+        {
+          content: rawAssistantContent,
+          stop_reason: "tool_use",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+        {
+          content: [{ type: "text", text: "done" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 12, output_tokens: 3 },
+        },
+      ];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, opts: { body: string }) => {
+          bodies.push(JSON.parse(opts.body) as Record<string, unknown>);
+          const response = responseBodies.shift();
+          if (!response) throw new Error("unexpected Anthropic request");
+          return jsonResponse(response);
+        }),
+      );
+
+      const first = await rt.executeNative(
+        "SYSTEM",
+        [{ role: "user", content: [{ type: "text", text: "inspect the target" }] }],
+        [],
+      );
+      expect(first.providerRaw?.output).toEqual(rawAssistantContent);
+      expect(bodies[0]!.thinking).toEqual({ type: "adaptive" });
+
+      await rt.executeNative(
+        "SYSTEM",
+        [
+          { role: "user", content: [{ type: "text", text: "inspect the target" }] },
+          {
+            role: "assistant",
+            content: first.content,
+            providerRaw: first.providerRaw,
+          },
+          {
+            role: "user",
+            content: [{
+              type: "tool_result",
+              tool_use_id: "toolu_1",
+              content: "int main(void) { return 0; }",
+            }],
+          },
+        ],
+        [],
+      );
+
+      const messages = bodies[1]!.messages as Array<{ role: string; content: unknown }>;
+      // Exact means exact: preserve empty thinking + signature, redacted block,
+      // tool_use ordering, and no cache_control decoration.
+      expect(messages[1]).toEqual({ role: "assistant", content: rawAssistantContent });
+    });
+
+    it("strips raw Claude thinking on a model mismatch and reconstructs the visible turn", async () => {
+      const rt = anthropicRuntime();
+      const bodies: Array<Record<string, unknown>> = [];
+      const responseBodies: Array<Record<string, unknown>> = [
+        {
+          content: rawAssistantContent,
+          stop_reason: "tool_use",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+        {
+          content: [{ type: "text", text: "done" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      ];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, opts: { body: string }) => {
+          bodies.push(JSON.parse(opts.body) as Record<string, unknown>);
+          const response = responseBodies.shift();
+          if (!response) throw new Error("unexpected Anthropic request");
+          return jsonResponse(response);
+        }),
+      );
+
+      const first = await rt.executeNative(
+        "SYSTEM",
+        [{ role: "user", content: [{ type: "text", text: "inspect the target" }] }],
+        [],
+      );
+      expect(first.providerRaw).toBeDefined();
+
+      await rt.executeNative(
+        "SYSTEM",
+        [
+          { role: "user", content: [{ type: "text", text: "inspect the target" }] },
+          {
+            role: "assistant",
+            content: first.content,
+            providerRaw: { ...first.providerRaw!, model: "other-model" },
+          },
+        ],
+        [],
+      );
+
+      const messages = bodies[1]!.messages as Array<{ role: string; content: unknown }>;
+      expect(JSON.stringify(messages[1]!.content)).not.toContain("opaque-thinking-signature");
+      expect(messages[1]).toMatchObject({
+        role: "assistant",
+        content: [{
+          type: "tool_use",
+          id: "toolu_1",
+          name: "read_file",
+          input: { path: "/workspace/target.c" },
+        }],
+      });
     });
   });
 

@@ -214,13 +214,13 @@ describe("isHoldingItWrong — verified-by-design npm duds (#802 regression)", (
     expect(isHoldingItWrong(f).isHoldingItWrong).toBe(true);
   });
 
-  // ── The two that are GENUINELY real — must survive the gate ──
+  // ── The one that is genuinely real must survive; build-control candidates do not ──
 
-  it("dd-trace-js: unescaped git URL interpolated into a JS banner is REAL (not suppressed)", () => {
+  it("dd-trace-js: banner interpolation requires pre-existing build control", () => {
     const f = makeFinding({
       title: "Code injection in dd-trace-js esbuild banner",
       description:
-        "datadog-esbuild interpolates an unescaped git remote.origin.url into a single-quoted JS banner string; a malicious repository URL injects arbitrary JS into every shipped bundle.",
+        "datadog-esbuild interpolates an unescaped git remote.origin.url into a single-quoted JS banner string. A quote can alter generated JavaScript, but an attacker must control the local Git configuration, source repository, or build environment before the build; a source repository's .git/config does not propagate to a clone.",
       category: "code-injection" as AttackCategory,
       evidence: {
         request:
@@ -229,9 +229,10 @@ describe("isHoldingItWrong — verified-by-design npm duds (#802 regression)", (
       },
     });
     const r = isHoldingItWrong(f);
-    expect(r.isHoldingItWrong).toBe(false);
-    expect(r.reason).toBeNull();
+    expect(r.isHoldingItWrong).toBe(true);
+    expect(r.reason).toMatch(/no independent trust boundary/i);
   });
+
 
   it("justeattakeaway: attacker filename interpolated into execSync is REAL (not suppressed)", () => {
     const f = makeFinding({

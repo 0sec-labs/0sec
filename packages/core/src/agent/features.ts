@@ -12,7 +12,32 @@
  *   - "always-on triage filters" (`holdingItWrong`, `evidenceGate`) default
  *     ON — they're the only filters that ran in every v0.6.0 ablation, so
  *     they need to be ablatable.
+ *
+ * ## Enabling the full FP moat for an A/B
+ *
+ * The "explicit enablement" noted above now has one documented form, so an
+ * A/B run does not depend on reconstructing the flag set by reading source:
+ *
+ *   PWNKIT_FEATURE_PRESET=fp-moat pwnkit scan …
+ *   pwnkit scan --features fp-moat …
+ *
+ * The preset's membership lives in `agent/feature-presets.ts` and is pinned by
+ * test. Applying it never overwrites a flag that is already set, so
+ * `PWNKIT_FEATURE_POV_GATE=0` alongside the preset gives you a clean
+ * single-layer ablation.
+ *
+ * Enabling layers is only half of a defensible claim; the other half is being
+ * able to show which layers ran on a given finding. That is
+ * `triage/provenance.ts` (`summarizeTriageProvenance`), which reads the
+ * recorded `layerVerdicts` rather than these flags — deliberately, since a
+ * finding is usually re-read under a different environment than it was
+ * produced in. It also reports which layers emit no telemetry at all
+ * (`structured_verify`, `consensus`, `kernel_oracle` — see
+ * `UNINSTRUMENTED_LAYERS`), because a layer we cannot observe cannot be part
+ * of a moat claim.
  */
+import { FEATURE_PRESETS, resolveFeaturePreset } from "./feature-presets.js";
+
 export const features = {
   /** Early-stop at 50% budget if no findings, retry with different strategy */
   get earlyStopRetry(): boolean { return env("PWNKIT_FEATURE_EARLY_STOP", true); },
@@ -566,8 +591,29 @@ export const features = {
   },
 };
 
+/**
+ * Resolve a flag's effective default, letting `PWNKIT_FEATURE_PRESET` raise it.
+ *
+ * Consulted only when the flag's own env var is unset, so an explicit
+ * `PWNKIT_FEATURE_POV_GATE=0` still beats `PWNKIT_FEATURE_PRESET=fp-moat` —
+ * that precedence is what makes single-layer ablation possible (see
+ * `feature-presets.ts`).
+ *
+ * Doing this here rather than in the CLI is deliberate: the preset then works
+ * for EVERY entry point that reads these flags — the CLI, the cloud worker,
+ * the benchmark runner — with no per-caller wiring to forget. A CI job can set
+ * one variable and know the whole engine honours it.
+ */
+function presetRaisesDefault(key: string): boolean {
+  const raw = process.env.PWNKIT_FEATURE_PRESET;
+  if (!raw) return false;
+  const preset = resolveFeaturePreset(raw);
+  if (!preset) return false;
+  return FEATURE_PRESETS[preset].includes(key);
+}
+
 function env(key: string, defaultValue: boolean): boolean {
   const val = process.env[key];
-  if (val === undefined) return defaultValue;
+  if (val === undefined) return defaultValue || presetRaisesDefault(key);
   return val !== "0" && val !== "false";
 }

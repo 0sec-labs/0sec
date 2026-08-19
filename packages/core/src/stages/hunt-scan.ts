@@ -45,7 +45,14 @@ import {
 } from "./novelty-check.js";
 import { judgeHuntCandidatesWithLlm, type HuntCandidateJudge } from "./hunt-judge.js";
 import { HuntMemory, huntFlywheelEnabled, primedOrderKey, type HuntPriming } from "./hunt-flywheel.js";
-import { huntNegativesEnabled, matchNegative, negativeContext, type KnownNegative } from "./hunt-negatives.js";
+import {
+  huntNegativesEnabled,
+  loadKnownNegativesFromLedger,
+  matchNegative,
+  negativeContext,
+  type KnownNegative,
+} from "./hunt-negatives.js";
+import { appendHuntClaim } from "./hunt-evidence-ledger.js";
 import {
   availableRefuterCandidates,
   crossFamilyRefuteEnabled,
@@ -730,6 +737,32 @@ export function makeSkepticVerifier(opts: {
    */
   negatives?: readonly KnownNegative[];
   /**
+   * OPTIONAL shared evidence ledger (`hunt-evidence-ledger.ts`) for this
+   * CAMPAIGN. When set, this verifier does two things per verdict, both
+   * additive and both skipped entirely when the option is absent:
+   *
+   *  - READS the ledger's disproven claims and unions them with `negatives`
+   *    for the known-negative match. `negatives` is resolved ONCE at
+   *    construction (it comes from the end-of-run corpus, which by definition
+   *    only describes hunts that already finished), so a sibling worker's
+   *    refutation from two minutes ago is invisible to it. The ledger is
+   *    re-read per verdict, which is the whole point — see the ledger module's
+   *    header for the in-run window this closes.
+   *  - APPENDS its own verdict as a claim, so the next worker (in this process
+   *    or another one on the same campaign) inherits it.
+   *
+   * Ledger I/O NEVER changes a verdict and never throws out of here: upstream
+   * treats a throwing verifier as fail-closed and DROPS the finding, so letting
+   * a disk error propagate would delete real findings for an I/O reason.
+   */
+  ledgerPath?: string;
+  /**
+   * Worker identity stamped on this verifier's ledger records. Defaults to
+   * `skeptic:<refuter model>`. Distinguishes independent corroboration (two
+   * workers, same conclusion) from an idempotent re-run of one worker.
+   */
+  workerId?: string;
+  /**
    * OPTIONAL lens focus — a single specialized angle this refute pass should
    * concentrate on (used by {@link makeMultiLensVerifier} to turn one skeptic
    * into a per-lens quorum member). Appended to the adversarial hint; absent →
@@ -829,8 +862,15 @@ export function makeSkepticVerifier(opts: {
     // reason as CONTEXT when this shape was already refuted before — a
     // label the skeptic reads, never an auto-rejection. The skeptic call
     // below is unchanged either way: it still runs, still decides.
-    if (huntNegativesEnabled() && opts.negatives && opts.negatives.length > 0) {
-      const match = matchNegative(finding, opts.negatives);
+    // The shared-ledger source (opts.ledgerPath) is re-read HERE rather than at
+    // construction so a dead end a sibling worker recorded mid-sweep is visible
+    // to this verdict. With no ledgerPath the pool is `opts.negatives`
+    // unchanged, so the matched context is byte-identical to before.
+    const ledgerNegatives = opts.ledgerPath ? loadKnownNegativesFromLedger(opts.ledgerPath) : [];
+    const negativePool =
+      ledgerNegatives.length > 0 ? [...(opts.negatives ?? []), ...ledgerNegatives] : opts.negatives ?? [];
+    if (huntNegativesEnabled() && negativePool.length > 0) {
+      const match = matchNegative(finding, negativePool);
       if (match) hint += `\n\n${negativeContext(match)}`;
     }
     // Lens focus (multi-lens quorum member): concentrate this one refute pass
@@ -899,10 +939,78 @@ export function makeSkepticVerifier(opts: {
       ...(choice.refuterFamily ? { refuterFamily: choice.refuterFamily } : {}),
       ...(choice.model ? { refuterModel: choice.model } : {}),
     };
-    return survived
+    const verdict: Awaited<ReturnType<HuntVerifier>> = survived
       ? { confirmed: true, reason: `survived adversarial refute pass${note}`, decorrelation }
       : { confirmed: false, reason: `refuted: skeptic could not reproduce the claim from source${note}`, decorrelation };
+
+    if (opts.ledgerPath) recordVerdictInLedger(opts, finding, candidate, choice, survived);
+    return verdict;
   };
+}
+
+/** Ledger-record ids accept a conservative alphabet; model names occasionally don't. */
+function ledgerId(raw: string): string {
+  const cleaned = raw.replace(/[^A-Za-z0-9._:/-]/g, "-").replace(/^[^A-Za-z0-9]+/, "");
+  return cleaned.slice(0, 159) || "unknown";
+}
+
+/**
+ * Persist one skeptic verdict as a claim on the shared campaign ledger.
+ *
+ * The evidence stance here is chosen carefully, because mislabelling it is how
+ * this feature would turn into an anchoring machine. The refute pass is a
+ * re-run of `agenticScan` over `candidate.path` with the adversarial hint, and
+ * the verdict is a fact ABOUT THAT PASS — re-runnable, with a locator and a
+ * named producer. So the recorded observation states exactly that ("an
+ * adversarial refute pass over X using model Y surfaced no reproducible
+ * claim"), not the stronger and unearned "the bug is not there". The finder's
+ * original claim is recorded alongside it as an ASSUMPTION, which is what it
+ * is until something reproduces it.
+ *
+ * Never throws — see `ledgerPath`'s doc comment for why a throwing verifier
+ * deletes findings.
+ */
+function recordVerdictInLedger(
+  opts: { ledgerPath?: string; workerId?: string; model?: string; log?: (msg: string) => void },
+  finding: Finding,
+  candidate: HuntCandidate,
+  choice: CrossFamilyRefuteChoice,
+  survived: boolean,
+): void {
+  const refuterModel = ledgerId(choice.model ?? opts.model ?? "default");
+  // Findings are model-authored: title/description can be empty or arbitrarily
+  // long, and the ledger validates both. Clamp here so a sloppy finding costs
+  // us a truncated record rather than a silently dropped one in the catch.
+  const title = finding.title.trim().slice(0, 2_000) || `unnamed claim at ${candidate.path}`;
+  const description = finding.description.trim().slice(0, 2_000) || title;
+  try {
+    appendHuntClaim(opts.ledgerPath!, {
+      shape: { path: candidate.path, bugClass: finding.category },
+      statement: title,
+      status: survived ? "unresolved" : "disproven",
+      // A SURVIVED refute is deliberately `unresolved`, not `validated`:
+      // surviving one adversarial pass is not a reproduction, and the ledger's
+      // terminal statuses are reserved for claims something actually settled.
+      evidence: [
+        {
+          stance: "observation",
+          statement: survived
+            ? `adversarial refute pass over ${candidate.path} using ${refuterModel} did not refute the claim`
+            : `adversarial refute pass over ${candidate.path} using ${refuterModel} surfaced no reproducible claim`,
+          source: refuterModel,
+          locator: candidate.path,
+        },
+        {
+          stance: "assumption",
+          statement: description,
+          source: ledgerId(finding.templateId || "finder"),
+        },
+      ],
+      worker: opts.workerId ? ledgerId(opts.workerId) : `skeptic:${refuterModel}`,
+    });
+  } catch (e) {
+    opts.log?.(`[hunt] evidence ledger append failed (verdict unaffected): ${String(e).slice(0, 120)}`);
+  }
 }
 
 /**

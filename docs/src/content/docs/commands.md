@@ -616,7 +616,7 @@ the selected export root while staying inside the sandbox.
 
 Read-only HackerOne hacker-API helpers — verify credentials, browse programs, and export a program's scope into the pwnkit scope-file format.
 
-Credentials live at `~/.pwnkit/h1.env` (or `~/.pwnkit/h1/<identifier>.env`) with format `H1_IDENTIFIER=<token-name>` and `H1_TOKEN=<44-char-value>`. The token is used as the password and the identifier as the username over HTTP Basic auth; nothing is ever written to logs.
+Credentials live at `~/.pwnkit/h1.env` (chmod 600) with format `H1_API_IDENTIFIER=<token-name>` and `H1_API_TOKEN=<44-char-value>`. The identifier is the friendly name set at token creation (NOT the H1 handle); the token is used as the password and the identifier as the username over HTTP Basic auth; nothing is ever written to logs.
 
 ```bash
 # Verify credentials

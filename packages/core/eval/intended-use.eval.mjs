@@ -1,8 +1,9 @@
 // Live eval (#802): does our LLM correctly apply the intended-use gate?
-// Runs the 7 ground-truth cases (5 verified-by-design npm duds + 2 genuinely-
-// real injections) through OUR LLM service (@0cloud/llm callLlm), credential
-// resolved from the `codex login` token — the same path the verify runners use.
-// No raw vendor key (see AGENTS.md "Use the unified LLM service, never raw keys").
+// Runs the 7 ground-truth cases (6 verified-by-design npm duds + 1 genuinely
+// real command injection) through OUR LLM service (@0cloud/llm callLlm),
+// credential resolved from the `codex login` token — the same path the verify
+// runners use. No raw vendor key (see AGENTS.md "Use the unified LLM service,
+// never raw keys").
 //
 // Run from the repo root: node pwnkit/packages/core/eval/intended-use.eval.mjs
 // Requires `codex login` (~/.codex/auth.json). Last result: 7/7 (gpt-5.5, 2026-06-03).
@@ -19,13 +20,13 @@ function codexTokenResolver() {
 
 const SYSTEM = `You are a security-triage judge. Decide if a candidate finding is a REAL vulnerability or BY-DESIGN (the API doing exactly what it is documented to do).
 
-A sink doing exactly what it is documented to do is NOT a vulnerability, even if it executes attacker-supplied code. Mark BY-DESIGN when ANY of:
-1. The untrusted input IS itself the template/expression/script the API exists to evaluate (template engines compiling templates, eval/new Function/vm.* by contract, expr-eval.toJSFunction).
+1. The untrusted input IS itself the template/expression/script the API exists to evaluate (template engines compiling templates, eval/new Function/vm.* by contract).
 2. It is only reachable under a NON-DEFAULT, opt-in unsafe option the app must explicitly enable (e.g. eval:'native'). Default path is safe.
 3. The PoC requires the caller/developer to pass the dangerous argument directly, or to pass a callable/constructor/function (attacker already runs code).
 4. The "escape" presupposes already executing inside the sandbox, or a malicious/compromised backend / provider SDK.
+5. The claim requires the attacker to control the source repository, local Git configuration, or build environment that supplies the value; no independent trust boundary is crossed.
 
-It IS REAL when untrusted DATA (a filename, URL, query param, header, path) is interpolated/concatenated into a code/command/query context that was never meant to be code (e.g. attacker-controlled filename into execSync, unescaped git URL into a JS string).
+It IS REAL when independently attacker-controlled DATA (a filename, URL, query param, header, path) is interpolated/concatenated into a code/command/query context that was never meant to be code (e.g. an attacker-controlled filename into execSync).
 
 Respond with ONLY compact JSON: {"verdict":"real"|"by-design","rationale":"<=20 words"}`;
 
@@ -35,7 +36,7 @@ const CASES = [
   { id: "expr-eval", expect: "by-design", text: "expr-eval sandbox escape: Parser.parse(expr).toJSFunction() builds a function via new Function; an attacker-controlled expression escapes to global scope. toJSFunction is an opt-in compile-to-JS escape hatch." },
   { id: "jsonpath-plus", expect: "by-design", text: "jsonpath-plus RCE: with the non-default eval:'native' option, an attacker-controlled JSONPath expression runs via new vm.Script().runInNewContext. The default 'safe' evaluator blocks this." },
   { id: "vm2", expect: "by-design", text: "vm2 sandbox escape: when NodeVM is configured with require:{builtin:['vm']}, sandboxed code escapes via runInNewContext. vm2 is deprecated; maintainer recommends isolated-vm." },
-  { id: "dd-trace-js", expect: "real", text: "dd-trace-js code injection: datadog-esbuild interpolates an unescaped git remote.origin.url into a single-quoted JS banner (`...= '${repositoryURL}';`); a malicious repo URL injects arbitrary JS into every shipped bundle." },
+  { id: "dd-trace-js", expect: "by-design", text: "dd-trace-js datadog-esbuild interpolates remote.origin.url into a single-quoted JS banner. A quote can alter generated JavaScript, but an attacker must already control the local Git configuration, source repository, or build environment; a source repository's .git/config does not propagate to a clone." },
   { id: "justeattakeaway", expect: "real", text: "@justeattakeaway/eslint-plugin command injection: git-utils.js runs execSync(`git show ${sha}:\"${relativeFilePath}\"`) where relativeFilePath is an attacker-controlled filename from the linted repo; a crafted filename injects shell commands in CI." },
 ];
 

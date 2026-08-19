@@ -176,6 +176,17 @@ const TEMPLATE_SSTI_OR_SANDBOX_PATTERNS: RegExp[] = [
   /already\s+(?:running|executing)\s+(?:inside|within)\s+the\s+sandbox/i,
 ];
 
+/**
+ * A source-level sink is not independently exploitable when the proposed
+ * attacker already controls the repository, local Git configuration, or build
+ * environment that supplies the value. This check must run before the generic
+ * interpolation override below.
+ */
+const PREEXISTING_BUILD_CONTROL_PATTERNS: RegExp[] = [
+  /\b(?:attacker|malicious)\b[^.]{0,120}\b(?:controls?|modif(?:y|ies)|writes?)\b[^.]{0,120}\b(?:local\s+git\s+(?:config(?:uration)?|metadata)|build\s+(?:environment|configuration)|source\s+repository)\b/i,
+  /\b(?:local\s+git\s+(?:config(?:uration)?|metadata)|remote\.origin\.url)\b[^.]{0,120}\b(?:requires?|only\s+(?:if|when)|presupposes)\b[^.]{0,120}\b(?:attacker|malicious)\b[^.]{0,80}\b(?:control|write|modif)/i,
+];
+
 // ────────────────────────────────────────────────────────────────────
 // Public API
 // ────────────────────────────────────────────────────────────────────
@@ -201,6 +212,16 @@ export function isHoldingItWrong(finding: Finding): HoldingItWrongResult {
   const response = finding.evidence?.response ?? "";
   const allText = `${title}\n${description}\n${analysis}`;
   const codeText = `${allText}\n${request}\n${response}`;
+
+
+  // 0. A quote-breaking source-level sink is not a vulnerability if the
+  //    supposed attacker already owns the build input that supplies it.
+  if (PREEXISTING_BUILD_CONTROL_PATTERNS.some((p) => p.test(allText))) {
+    return {
+      isHoldingItWrong: true,
+      reason: "The proposed attacker already controls the repository, local Git configuration, or build environment that supplies the value; no independent trust boundary is crossed.",
+    };
+  }
 
   // 0. Real-injection override (#802). If untrusted DATA is interpolated /
   //    concatenated into a sink by the library's own code path — and the

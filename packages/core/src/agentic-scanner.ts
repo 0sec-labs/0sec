@@ -3035,6 +3035,24 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
                 : "router excluded poc_gen",
           startedAt: Date.now(),
         });
+      } else {
+        // Flag is OFF — which is the shipped default. Record the skip so
+        // `poc_gen` is not silently absent from `layerVerdicts`.
+        //
+        // Every other layer already records its disabled state; this branch
+        // did not, so in a default scan `poc_gen` left NO trace at all. A
+        // reader of a finding could not distinguish "the PoC-gen layer was
+        // switched off" from "this engine build has no PoC-gen layer" — and
+        // an absent layer reads as an unremarkable gap rather than a
+        // deliberate configuration choice. `summarizeTriageProvenance` now
+        // reports this as `skipped` with the flag named, instead of the far
+        // weaker `unrecorded`.
+        pushLayerVerdict(finding, {
+          layer: "poc_gen",
+          verdict: "skip",
+          reason: "PWNKIT_FEATURE_POC_GEN_STATIC=0",
+          startedAt: Date.now(),
+        });
       }
 
       db.saveFinding?.(scanId, finding);
@@ -3633,7 +3651,16 @@ async function runNativeAttack(
     .map((n) => TOOL_DEFINITIONS[n])
     .filter((t): t is import("./agent/types.js").ToolDefinition => t !== undefined);
 
-  const tools = isWeb ? shellTools : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
+  // A white-box SOURCE review (repoPath set, no live web/http target) is a
+  // code audit, not a network/LLM pentest: give it the source-scoped tool set
+  // (read_file/run_command/bash — no send_prompt/http_request), the same set an
+  // isWeb white-box run already gets. Previously a source-only run (isWeb=false,
+  // hasSource=true — every seedless `deep_review` finder/verify) fell through to
+  // the full "attack" role, which hands it the live-target LLM/web attack tools
+  // (send_prompt, http_request). On repos with no such surface the finder burned
+  // its turns probing for prompt-injection / SSO-federation instead of auditing
+  // code, then found nothing. Scoping the toolset removes that drift.
+  const tools = (isWeb || hasSource) ? shellTools : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
 
   const effectiveMaxTurns = isWeb ? Math.max(maxTurns, 15) : maxTurns;
 

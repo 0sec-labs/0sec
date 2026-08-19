@@ -56,6 +56,17 @@ function safeParseJson(raw: string | null | undefined): Record<string, unknown> 
   }
 }
 
+/** True when persisted provider output is safe to replay as Anthropic blocks. */
+function isWireBlockArray(blocks: unknown[]): blocks is WireBlock[] {
+  return blocks.every(
+    (block) =>
+      block !== null
+      && typeof block === "object"
+      && !Array.isArray(block)
+      && typeof (block as Record<string, unknown>).type === "string",
+  );
+}
+
 /**
  * Cache for the resolved Azure region, keyed by base URL. The region is
  * probed once per process (per endpoint) and reused thereafter — see
@@ -1731,16 +1742,19 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   }
 
   /**
-   * Anthropic `thinking` body fragment for the z-ai/GLM provider. GLM's
-   * hybrid reasoning is OFF by default on its Anthropic endpoint; we enable
-   * it (a hacking engine wants the model reasoning) via the standard
-   * Anthropic extended-thinking field. Returns {} for every other provider
-   * (real Anthropic Claude already reasons; we don't change its behaviour)
-   * and when the budget is set to 0. The returned `thinking` blocks are
-   * dropped from parsed output (GLM doesn't require echoing them back —
-   * verified 2026-06-17), so this never perturbs the agent loop's history.
+   * Anthropic `thinking` body fragment.
+   *
+   * Real Anthropic Claude uses adaptive thinking, whose blocks must round-trip
+   * verbatim on the same model. z-ai/GLM requires its explicit budgeted
+   * variant. Kimi reasons natively and accepts neither field. The retained
+   * reasoning A/B turns Claude thinking off with the rest of the replay path;
+   * GLM retains its established behavior because it does not require echoing
+   * thinking blocks back.
    */
   private anthropicThinkingField(): Record<string, unknown> {
+    if (this.provider === "anthropic") {
+      return features.retainedReasoning ? { thinking: { type: "adaptive" } } : {};
+    }
     if (this.provider !== "z-ai") return {};
     const budget = zaiThinkingBudget();
     if (budget <= 0) return {};
@@ -2616,27 +2630,49 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       } else if (this.isAnthropicWire) {
         // Anthropic Messages API format (also serves the z-ai/GLM and
         // kimi/Moonshot providers — see `isAnthropicWire`).
-        const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m) => ({
-          role: m.role,
-          content: m.content.map((block): WireBlock => {
-            if (block.type === "text") return { type: "text", text: block.text };
-            if (block.type === "tool_use") {
-              return { type: "tool_use", id: block.id, name: block.name, input: block.input };
-            }
-            if (block.type === "tool_result") {
-              return {
-                type: "tool_result",
-                tool_use_id: block.tool_use_id,
-                content: block.content,
-                ...(block.is_error ? { is_error: true } : {}),
-              };
-            }
-            // Unreachable for the current block union (`block` narrows to
-            // `never` here); kept as the original passthrough so an added
-            // block kind degrades to "sent as-is" rather than being dropped.
-            return block;
-          }),
-        }));
+        const replayedRawMessageIndexes = new Set<number>();
+        const apiMessages: Array<{ role: string; content: WireBlock[] }> = messages.map((m, index) => {
+          // Anthropic requires an assistant turn containing thinking or
+          // redacted_thinking to be echoed back EXACTLY as received. Rebuilding
+          // it from visible text/tool blocks drops the signature and 400s on the
+          // next tool-use turn. The full response content array keeps each
+          // thinking block adjacent to the text/tool_use item it produced.
+          if (
+            features.retainedReasoning
+            && m.role === "assistant"
+            && m.providerRaw
+            && m.providerRaw.provider === this.provider
+            && m.providerRaw.model === this.model
+            && m.providerRaw.wireApi === this.wireApi
+            && m.providerRaw.output.length > 0
+            && isWireBlockArray(m.providerRaw.output)
+          ) {
+            replayedRawMessageIndexes.add(index);
+            return { role: m.role, content: m.providerRaw.output };
+          }
+
+          return {
+            role: m.role,
+            content: m.content.map((block): WireBlock => {
+              if (block.type === "text") return { type: "text", text: block.text };
+              if (block.type === "tool_use") {
+                return { type: "tool_use", id: block.id, name: block.name, input: block.input };
+              }
+              if (block.type === "tool_result") {
+                return {
+                  type: "tool_result",
+                  tool_use_id: block.tool_use_id,
+                  content: block.content,
+                  ...(block.is_error ? { is_error: true } : {}),
+                };
+              }
+              // Unreachable for the current block union (`block` narrows to
+              // `never` here); kept as the original passthrough so an added
+              // block kind degrades to "sent as-is" rather than being dropped.
+              return block;
+            }),
+          };
+        });
 
         // ── Prompt caching ──
         // Only Anthropic (and explicitly opted-in Anthropic-compatible
@@ -2651,6 +2687,11 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         for (const index of cacheEnabled
           ? planMessageBreakpoints(apiMessages, MESSAGE_CACHE_BREAKPOINTS)
           : []) {
+          // `cache_control` would mutate a replayed assistant turn and violate
+          // Anthropic's "echo exactly as received" signature contract. Keep the
+          // stable system breakpoint and other message breakpoints; skip only
+          // the opaque replayed turn.
+          if (replayedRawMessageIndexes.has(index)) continue;
           // Mark the message's LAST block so the cached prefix covers it whole.
           // Breakpoints are recomputed from the current array on every call and
           // never carried across turns — which is exactly what makes recovery
@@ -2779,14 +2820,18 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         // Reasoning summaries are surfaced to the UI and then DROPPED from
         // `content` — see the reasoning branch below.
         const reasoningSummaries: string[] = [];
-        // Keep the raw item array so the next turn can replay the reasoning
-        // items verbatim — see ProviderRawOutput.
-        providerRaw = {
-          provider: this.provider,
-          model: this.model,
-          wireApi: this.wireApi,
-          output: (json.output ?? []) as unknown[],
-        };
+        // Keep a non-empty raw item array so the next turn can replay the
+        // reasoning items verbatim — see ProviderRawOutput. Avoid persisting an
+        // empty sidecar on reasoning-free end_turn responses.
+        const rawOutput = (json.output ?? []) as unknown[];
+        if (rawOutput.length > 0) {
+          providerRaw = {
+            provider: this.provider,
+            model: this.model,
+            wireApi: this.wireApi,
+            output: rawOutput,
+          };
+        }
         for (const item of json.output ?? []) {
           if (item.type === "function_call") {
             content.push({
@@ -2849,12 +2894,28 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         // Anthropic format (also serves the z-ai/GLM and kimi/Moonshot
         // providers — see `isAnthropicWire`).
         const rawBlocks = (json.content ?? []) as Array<Record<string, unknown>>;
-        // GLM (thinking enabled) streams a leading `thinking` block. Surface
-        // it as reasoning for the UI, then DROP it from the content blocks:
-        // GLM does not require echoing thinking blocks back on follow-up tool
-        // turns (verified 2026-06-17), so keeping them out of `content` means
-        // the agent loop never replays them — and the fallthrough below never
-        // JSON-stringifies them into visible output.
+        const hasAnthropicThinking = rawBlocks.some(
+          (block) => block.type === "thinking" || block.type === "redacted_thinking",
+        );
+        // Claude signs its thinking blocks and requires the complete assistant
+        // content array to return untouched on the next turn. Keep that opaque
+        // sidecar only for the real Anthropic provider; GLM's documented
+        // contract does not require echoing its thinking blocks.
+        if (
+          features.retainedReasoning
+          && this.provider === "anthropic"
+          && hasAnthropicThinking
+        ) {
+          providerRaw = {
+            provider: this.provider,
+            model: this.model,
+            wireApi: this.wireApi,
+            output: rawBlocks,
+          };
+        }
+        // Surface visible thinking to the UI, then keep it out of
+        // NativeContentBlock. Claude's opaque raw assistant turn stays in
+        // providerRaw; GLM's thinking is intentionally not retained.
         if (callbacks?.onThinking) {
           const thinkingText = rawBlocks
             .filter((b) => b.type === "thinking")
@@ -3241,12 +3302,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       // reasoning items with their `encrypted_content` still attached, each
       // immediately followed by the item it produced. Handing it back lets the
       // next turn replay it verbatim instead of re-deriving the reasoning.
-      providerRaw: {
-        provider: this.provider,
-        model: this.model,
-        wireApi: this.wireApi,
-        output: outputItems,
-      },
+      ...(outputItems.length > 0
+        ? {
+            providerRaw: {
+              provider: this.provider,
+              model: this.model,
+              wireApi: this.wireApi,
+              output: outputItems,
+            },
+          }
+        : {}),
     };
   }
 
