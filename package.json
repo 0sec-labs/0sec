@@ -25,6 +25,7 @@
     "test:docker-contract": "node --test scripts/docker-contract.test.mjs",
     "test:runtime-lock": "node --test scripts/runtime-lock.test.mjs",
     "test:launcher": "node --test scripts/npm-launcher/launcher.test.mjs",
+    "test:public-source-export": "node --test scripts/create-public-source-export.test.mjs",
     "export:public-source": "node scripts/create-public-source-export.mjs",
     "bench": "pnpm --filter @pwnkit/benchmark bench",
     "bench:quick": "pnpm --filter @pwnkit/benchmark bench:quick",
