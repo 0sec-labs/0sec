@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
@@ -11,6 +13,8 @@ import {
 } from "./manifest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const privateCorpusPath = join(__dirname, "corpus-v1.json");
+const describePrivateCorpus = existsSync(privateCorpusPath) ? describe : describe.skip;
 
 function baseCase(overrides: Record<string, unknown> = {}) {
   return {
@@ -177,16 +181,16 @@ describe("parseManifest — source-audit + finding-match", () => {
   });
 });
 
-describe("loadManifest (corpus-v1.json — the real labeled corpus)", () => {
+describePrivateCorpus("loadManifest (corpus-v1.json — the real labeled corpus)", () => {
   it("loads + validates the committed corpus", async () => {
-    const m = await loadManifest(join(__dirname, "corpus-v1.json"));
+    const m = await loadManifest(privateCorpusPath);
     expect(m.id).toBe("0sec-bench-corpus-v1");
     expect(m.cases.length).toBeGreaterThanOrEqual(30);
     expect(m.cases.length).toBeLessThanOrEqual(60);
   });
 
   it("has ~1/3 known-negatives for a real FP-rate measurement", async () => {
-    const m = await loadManifest(join(__dirname, "corpus-v1.json"));
+    const m = await loadManifest(privateCorpusPath);
     const { positives, knownNegatives } = partitionCases(m.cases);
     expect(knownNegatives.length).toBeGreaterThanOrEqual(positives.length / 3 - 2);
     const negFraction = knownNegatives.length / m.cases.length;
@@ -195,7 +199,7 @@ describe("loadManifest (corpus-v1.json — the real labeled corpus)", () => {
   });
 
   it("spans the ICP: source-audit (npm), kernel, and a CI subset", async () => {
-    const m = await loadManifest(join(__dirname, "corpus-v1.json"));
+    const m = await loadManifest(privateCorpusPath);
     const sourceAudit = m.cases.filter((c) => c.target.kind === "source-audit");
     const kernel = m.cases.filter((c) => c.target.kind === "kernel");
     expect(sourceAudit.length).toBeGreaterThanOrEqual(20);
@@ -204,8 +208,7 @@ describe("loadManifest (corpus-v1.json — the real labeled corpus)", () => {
   });
 
   it("carries no inline exploit/corpus content (references + sink labels only)", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const raw = await readFile(join(__dirname, "corpus-v1.json"), "utf8");
+    const raw = await readFile(privateCorpusPath, "utf8");
     expect(raw).toMatch(/REFERENCES ONLY/);
     expect(raw).not.toMatch(/<script>/i);
     expect(raw).not.toMatch(/\bUNION\s+SELECT\b/i);
