@@ -262,6 +262,7 @@ const CATEGORY_MAP: Record<AttackCategory, AtlasTechnique[]> = {
   "integer-overflow": [],
   "integer-truncation": [],
   "race-condition": [],
+  "denial-of-service": [],
   "toctou": [],
   "type-confusion": [],
   "double-free": [],
