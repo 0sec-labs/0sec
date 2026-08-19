@@ -134,6 +134,24 @@ function validateEmitTarget(value: string | undefined): "pr" | undefined {
   process.exit(2);
 }
 
+/**
+ * `--features` tokens that name a PRESET rather than a single flag.
+ *
+ * Kept as a literal here on purpose: this handler must not import
+ * `@pwnkit/core` just to recognise a token, since core is loaded lazily so
+ * `--help` stays fast. The authoritative expansion still lives in core — this
+ * set only decides *which* tokens get forwarded as `PWNKIT_FEATURE_PRESET`.
+ *
+ * `feature-preset-tokens.test.ts` asserts every entry here resolves to a real
+ * preset in core, so the two cannot drift apart silently.
+ */
+export const PRESET_TOKENS: ReadonlySet<string> = new Set([
+  "fp-moat",
+  "fp_moat",
+  "fpmoat",
+  "moat",
+]);
+
 export function registerScanCommand(program: Command): void {
   program
     .command("scan")
@@ -181,7 +199,7 @@ export function registerScanCommand(program: Command): void {
     .option("--tui", "Open the local terminal UI after the scan completes", false)
     .option(
       "--features <list>",
-      "Comma-separated list of opt-in feature flags to enable for this scan (e.g. 'wp_fingerprint,web_search'). Each flag maps to the corresponding PWNKIT_FEATURE_<NAME> environment variable.",
+      "Comma-separated list of opt-in feature flags to enable for this scan (e.g. 'wp_fingerprint,web_search'). Each flag maps to the corresponding PWNKIT_FEATURE_<NAME> environment variable. The token 'fp-moat' is a preset that enables the full false-positive moat (reachability, multi-modal, publishability, pov-gate, poc-gen, consensus) for an A/B run; an env var you set yourself always wins over the preset, so 'PWNKIT_FEATURE_POV_GATE=0 --features fp-moat' is a single-layer ablation.",
     )
     .option(
       "--no-decoy-detection",
@@ -303,12 +321,30 @@ export function registerScanCommand(program: Command): void {
       // your shell. Flags that are declared as getters (e.g. wp_fingerprint)
       // re-read the env at access time and therefore honor this flag even
       // though it's applied inside the action handler.
+      //
+      // A token that names a PRESET (e.g. `fp-moat`) expands to that preset's
+      // whole flag set instead of becoming a single env var. Without this, the
+      // token would silently set the meaningless `PWNKIT_FEATURE_FP_MOAT` and
+      // enable nothing — a failure mode that looks like success, which is the
+      // worst possible one for a flag whose entire purpose is enabling an A/B.
+      //
+      // A preset token sets `PWNKIT_FEATURE_PRESET` instead of a single flag.
+      // The expansion itself lives in core (`agent/features.ts` consults the
+      // preset when a flag's own var is unset), so every entry point honours
+      // it — this handler only has to forward the name. Without this branch
+      // the token would set the meaningless `PWNKIT_FEATURE_FP_MOAT` and
+      // enable nothing: a failure that looks like success, which is the worst
+      // outcome for a flag whose only purpose is enabling an A/B.
       if (opts.features) {
         const tokens = String(opts.features)
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean);
         for (const token of tokens) {
+          if (PRESET_TOKENS.has(token.toLowerCase())) {
+            process.env.PWNKIT_FEATURE_PRESET = token.toLowerCase();
+            continue;
+          }
           const envName = `PWNKIT_FEATURE_${token.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
           process.env[envName] = "1";
         }

@@ -933,6 +933,15 @@ export type { ParseSeedFindingsOptions } from "./seed-findings.js";
 
 // Agent system
 export { runAgentLoop, runNativeAgentLoop, ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, features, estimateCost } from "./agent/index.js";
+// Named bundles of PWNKIT_FEATURE_* vars — the documented way to enable the
+// full FP moat for an A/B run. See `agent/feature-presets.ts`.
+export {
+  FEATURE_PRESETS,
+  applyFeaturePreset,
+  applyFeaturePresetFromEnv,
+  resolveFeaturePreset,
+} from "./agent/feature-presets.js";
+export type { FeaturePresetName, PresetApplication } from "./agent/feature-presets.js";
 export { runEGATS, runEGATSWithDefaults, scoreEvidence, summariseTree } from "./agent/egats.js";
 export {
   clearSkillRegistry,
@@ -1191,6 +1200,21 @@ export {
 
 // Handcrafted feature extractor (45-element vector for triage classifiers)
 export { extractFeatures, FEATURE_NAMES } from "./triage/feature-extractor.js";
+
+// Per-finding triage provenance — which FP-moat layers actually ran, derived
+// from the recorded `layerVerdicts` rather than the current env. See
+// `triage/provenance.ts` for why that distinction is load-bearing.
+export {
+  summarizeTriageProvenance,
+  formatTriageProvenance,
+  UNINSTRUMENTED_LAYERS,
+  OPT_IN_MOAT_LAYERS,
+} from "./triage/provenance.js";
+export type {
+  TriageProvenance,
+  LayerProvenance,
+  LayerExecutionStatus,
+} from "./triage/provenance.js";
 
 // Remediation guidance
 export { generateRemediation, generateRemediationWithLLM } from "./remediation.js";

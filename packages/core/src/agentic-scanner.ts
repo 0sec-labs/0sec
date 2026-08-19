@@ -3028,6 +3028,24 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
                 : "router excluded poc_gen",
           startedAt: Date.now(),
         });
+      } else {
+        // Flag is OFF — which is the shipped default. Record the skip so
+        // `poc_gen` is not silently absent from `layerVerdicts`.
+        //
+        // Every other layer already records its disabled state; this branch
+        // did not, so in a default scan `poc_gen` left NO trace at all. A
+        // reader of a finding could not distinguish "the PoC-gen layer was
+        // switched off" from "this engine build has no PoC-gen layer" — and
+        // an absent layer reads as an unremarkable gap rather than a
+        // deliberate configuration choice. `summarizeTriageProvenance` now
+        // reports this as `skipped` with the flag named, instead of the far
+        // weaker `unrecorded`.
+        pushLayerVerdict(finding, {
+          layer: "poc_gen",
+          verdict: "skip",
+          reason: "PWNKIT_FEATURE_POC_GEN_STATIC=0",
+          startedAt: Date.now(),
+        });
       }
 
       db.saveFinding?.(scanId, finding);
