@@ -1,12 +1,12 @@
 /**
- * Remediation guidance engine for pwnkit findings.
+ * Remediation guidance engine for 0sec findings.
  *
  * Provides both a static knowledge-base lookup and an LLM-enhanced path
  * for generating actionable fix guidance (code examples, library
  * recommendations, OWASP references) for each vulnerability category.
  */
 
-import type { Finding, AttackCategory } from "@pwnkit/shared";
+import type { Finding, AttackCategory } from "@0sec/shared";
 import type { NativeRuntime } from "./runtime/types.js";
 
 // ── Public types ──

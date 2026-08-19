@@ -7,7 +7,7 @@ description: "Aggregate analysis of 590 HackerOne programs visible to a research
 
 ## Lead
 
-Autonomous pentest agents are now a recognised category — Shannon, KinoSec, BoxPwnr, XBOW Inc., and pwnkit all sit somewhere between 78% and 99% on the [XBOW validation suite](https://github.com/xbow-engineering/validation-benchmarks) — and the obvious next question is where any of them can legally operate. Bug bounty is the largest standing target surface, and HackerOne is the largest single platform inside it. So we asked the only question that matters once the model can find bugs: *which programs will actually accept a report from an AI-driven pipeline without banning the researcher?* The answer turned out to be much narrower than the leaderboards imply.
+Autonomous pentest agents are now a recognised category — Shannon, KinoSec, BoxPwnr, XBOW Inc., and 0sec all sit somewhere between 78% and 99% on the [XBOW validation suite](https://github.com/xbow-engineering/validation-benchmarks) — and the obvious next question is where any of them can legally operate. Bug bounty is the largest standing target surface, and HackerOne is the largest single platform inside it. So we asked the only question that matters once the model can find bugs: *which programs will actually accept a report from an AI-driven pipeline without banning the researcher?* The answer turned out to be much narrower than the leaderboards imply.
 
 ## What changed in 2026
 
@@ -36,7 +36,7 @@ We then scored each program on six axes:
 2. **Bounty offered** — paid programmes weighted higher than VDPs.
 3. **Submission state** — `open` weighted higher than `paused`.
 4. **Automation-policy verdict** — regex classification over the policy markdown looking for terms like *automated*, *scanner*, *tool*, *fuzz*, and surrounding modifiers (*prohibited*, *not allowed*, *encouraged*, *with rate-limit*). Each program was bucketed into one of four classes: `banned`, `discouraged-or-cautious`, `silent`, or `allowed-with-rate-limit`.
-5. **Pwnkit-strength bug-class fit** — mentions of XSS, IDOR, SSRF, RCE, or SQLi in the policy markdown.
+5. **0sec-strength bug-class fit** — mentions of XSS, IDOR, SSRF, RCE, or SQLi in the policy markdown.
 6. **Gold Standard Safe Harbor** — the program-level flag indicating adoption of the GSSH legal-protection wording.
 
 The aggregated scores are normalised 0–100. Anything ≥80 is what we consider "AI-tool-ready by policy." Anything ≥70 is "workable with care."
@@ -169,9 +169,9 @@ Three takeaways.
 
 A consequence we did not expect when we started the audit: the rate-limiting effect of automation policy is much stronger than the rate-limiting effect of bug-class fit. We initially expected the gating factor to be "does this program have web assets the agent can attack." It is not. The gating factor is "does this program's policy let the agent run at all." Almost every paid programme has *some* web surface; only 21 have web surface plus a policy that lets us touch it.
 
-## What pwnkit does about it
+## What 0sec does about it
 
-The audit informed pwnkit's submission pipeline before we have submitted a single report.
+The audit informed 0sec's submission pipeline before we have submitted a single report.
 
 The disclose command — currently in review as [PR #206](https://github.com/0sec-labs/0sec/pull/206) — implements the conduct constraints the audit surfaced as hard gates rather than soft warnings:
 
@@ -183,7 +183,7 @@ The disclose command — currently in review as [PR #206](https://github.com/0se
 
 Each of these maps to one or more clauses in the May 2026 CoC. None of them are research advances; they are operational hygiene. We are surfacing them here because most published agents do not appear to implement them, and because the curl outcome — an entire programme shutdown over AI slop — is what happens at the limit when nobody does.
 
-We have not yet submitted a report from pwnkit through the disclose pipeline. We will not claim a success rate before that number is real.
+We have not yet submitted a report from 0sec through the disclose pipeline. We will not claim a success rate before that number is real.
 
 ## Closer
 
@@ -195,5 +195,5 @@ The leaderboard chase has been a useful forcing function for measuring raw capab
 - HackerOne API documentation — <https://docs.hackerone.com/en/articles/8475119-hackerone-api>
 - The New Stack on the curl programme closure — <https://thenewstack.io/curl-bug-bounty-flooded-by-ai-slop/>
 - BleepingComputer on AI-slop bug reports — <https://www.bleepingcomputer.com/news/security/curl-project-founder-snaps-over-ai-slop-bug-reports/>
-- pwnkit disclose command (PR #206) — <https://github.com/0sec-labs/0sec/pull/206>
+- 0sec disclose command (PR #206) — <https://github.com/0sec-labs/0sec/pull/206>
 - Gold Standard Safe Harbor wording — <https://www.hackerone.com/security-compliance/gold-standard-safe-harbor>

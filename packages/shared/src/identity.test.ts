@@ -10,7 +10,7 @@ import type { AuthConfig } from "./types.js";
 const bearer: AuthConfig = { type: "bearer", token: "tok-a" };
 const cookie: AuthConfig = { type: "cookie", value: "sid=b" };
 
-describe("resolveIdentities (back-compat shim, pwnkit#564)", () => {
+describe("resolveIdentities (back-compat shim, 0sec#564)", () => {
   it("wraps a legacy singular `auth` into a one-entry identity list", () => {
     const out = resolveIdentities({ auth: bearer });
     expect(out).toHaveLength(1);

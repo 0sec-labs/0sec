@@ -49,13 +49,13 @@ describe("compareVersions", () => {
 describe("shouldRunCheck", () => {
   it("requires an explicit opt-in", () => {
     expect(shouldRunCheck({}, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1" }, true)).toBe(true);
+    expect(shouldRunCheck({ "0SEC_UPDATE_CHECK": "1" }, true)).toBe(true);
   });
 
   it("honors explicit privacy and CI disablement", () => {
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1", PWNKIT_NO_UPDATE_CHECK: "1" }, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1", PWNKIT_OFFLINE: "1" }, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1", CI: "true" }, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1" }, false)).toBe(false);
+    expect(shouldRunCheck({ "0SEC_UPDATE_CHECK": "1", "0SEC_NO_UPDATE_CHECK": "1" }, true)).toBe(false);
+    expect(shouldRunCheck({ "0SEC_UPDATE_CHECK": "1", "0SEC_OFFLINE": "1" }, true)).toBe(false);
+    expect(shouldRunCheck({ "0SEC_UPDATE_CHECK": "1", CI: "true" }, true)).toBe(false);
+    expect(shouldRunCheck({ "0SEC_UPDATE_CHECK": "1" }, false)).toBe(false);
   });
 });

@@ -5,9 +5,9 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import chalk from "chalk";
-import { VERSION } from "@pwnkit/shared";
-import type { ScanDepth, OutputFormat, RuntimeMode, ScanMode, AuthConfig, ScanReport, SeedFinding } from "@pwnkit/shared";
-import type { CostBreakdownEntry } from "@pwnkit/core";
+import { VERSION } from "@0sec/shared";
+import type { ScanDepth, OutputFormat, RuntimeMode, ScanMode, AuthConfig, ScanReport, SeedFinding } from "@0sec/shared";
+import type { CostBreakdownEntry } from "@0sec/core";
 import { formatAuditReport, formatReviewReport, formatReport, generatePdfReport } from "../formatters/index.js";
 import { buildShareUrl, checkRuntimeAvailability, getRuntimeAvailability } from "../utils.js";
 
@@ -17,7 +17,7 @@ interface ScanCompletedCost {
   cost_per_flag?: number;
 }
 
-type CoreModule = typeof import("@pwnkit/core");
+type CoreModule = typeof import("@0sec/core");
 
 let coreModulePromise: Promise<CoreModule> | null = null;
 
@@ -31,7 +31,7 @@ async function loadCoreModule(): Promise<CoreModule> {
     const srcExists = process.versions.bun && existsSync(fileURLToPath(srcUrl));
     coreModulePromise = srcExists
       ? import(srcUrl.href) as Promise<CoreModule>
-      : import("@pwnkit/core");
+      : import("@0sec/core");
   }
   return coreModulePromise;
 }
@@ -75,13 +75,13 @@ export interface RunOptions {
   rateLimit?: string;
   /** Open the operator TUI after the run completes. */
   tui?: boolean;
-  /** Path to a JSON scope file (pwnkit#215). Threaded into ScanConfig.scopeFile. */
+  /** Path to a JSON scope file (0sec#215). Threaded into ScanConfig.scopeFile. */
   scopeFile?: string;
-  /** Opt-out for the scanner-binary suppression gate (pwnkit#217). Threaded into ScanConfig.allowScanners. */
+  /** Opt-out for the scanner-binary suppression gate (0sec#217). Threaded into ScanConfig.allowScanners. */
   allowScanners?: boolean;
-  /** Repeatable `--attribution-header NAME=VALUE` (pwnkit#216). */
+  /** Repeatable `--attribution-header NAME=VALUE` (0sec#216). */
   attributionHeaders?: string[];
-  /** `--attribution-ua <token>` (pwnkit#216). */
+  /** `--attribution-ua <token>` (0sec#216). */
   attributionUaToken?: string;
   /**
    * `--engagement-profile <name>` — engagement hardening posture
@@ -95,7 +95,7 @@ export interface RunOptions {
   wafEvasion?: boolean;
   /**
    * http_audit env-bridge config (FROZEN CONTRACT). Populated by the scan
-   * command from PWNKIT_TARGET_* env vars only when `mode === "http_audit"`;
+   * command from 0SEC_TARGET_* env vars only when `mode === "http_audit"`;
    * undefined otherwise. The core (`agenticScan`) turns these into an
    * in-memory ScopePolicy (host allowlist), PathPolicy (path-prefix
    * allowlist), per-host RateLimiter, and a wall-clock kill switch, all
@@ -106,7 +106,7 @@ export interface RunOptions {
   httpAuditRateLimitRps?: number;
   httpAuditKillAfterSec?: number;
   /**
-   * Tool-call dispatch protocol (pwnkit#232) — `json`, `xml`, or `auto`.
+   * Tool-call dispatch protocol (0sec#232) — `json`, `xml`, or `auto`.
    * Threaded into ScanConfig.dispatchMode and consulted only by the
    * legacy text-based agent loop.
    */
@@ -163,7 +163,7 @@ export interface RunOptions {
   /**
    * Pre-computed candidate vulnerable spans, parsed from an external producer
    * (today: GemmaForge, schema `gemmaforge.leads/v1`). Only consumed when
-   * `targetType === "source-code"`. See `pwnkit#368` for the broader plan to
+   * `targetType === "source-code"`. See `0sec#368` for the broader plan to
    * inject these into the agent's worklist before static scanner prioritisation runs.
    */
   seedFindings?: SeedFinding[];
@@ -176,7 +176,7 @@ export interface RunOptions {
    */
   npmDynamicDiscovery?: boolean;
   /**
-   * Emit target (pwnkit#377). Default unset → existing terminal/json/etc.
+   * Emit target (0sec#377). Default unset → existing terminal/json/etc.
    * `pr` → turn each reproduced finding into a GitHub PR (repro + suggested
    * patch from the fix-template registry). Unverified findings roll up into
    * a single `hypotheses.md`.
@@ -275,17 +275,16 @@ function getTargetType(report: any, opts: RunOptions): string | undefined {
   return report?.targetType ?? opts.targetType;
 }
 
-function emitResultLine(payload: ResultLinePayload): void {
-  if (process.env.PWNKIT_EMIT_RESULT_LINE !== "1" && !process.env.PWNKIT_CLOUD_SINK) return;
-  console.log(`PWNKIT_RESULT=${JSON.stringify(payload)}`);
+function emitResultLine(payload: ResultLinePayload): void {  if (process.env["0SEC_EMIT_RESULT_LINE"] !== "1" && !process.env["0SEC_CLOUD_SINK"]) return;
+  console.log(`0SEC_RESULT=${JSON.stringify(payload)}`);
 }
 
 function getCloudFinalSinkConfig(): { sinkUrl: string; scanId: string; token?: string } | null {
-  if (process.env.PWNKIT_FEATURE_CLOUD_SINK === "0") return null;
-  const sinkUrl = process.env.PWNKIT_CLOUD_SINK?.trim();
-  const scanId = process.env.PWNKIT_CLOUD_SCAN_ID?.trim();
+  if (process.env["0SEC_FEATURE_CLOUD_SINK"] === "0") return null;
+  const sinkUrl = process.env["0SEC_CLOUD_SINK"]?.trim();
+  const scanId = process.env["0SEC_CLOUD_SCAN_ID"]?.trim();
   if (!sinkUrl || !scanId) return null;
-  const token = process.env.PWNKIT_CLOUD_TOKEN?.trim() || undefined;
+  const token = process.env["0SEC_CLOUD_TOKEN"]?.trim() || undefined;
   return { sinkUrl, scanId, token };
 }
 
@@ -352,7 +351,7 @@ async function postFinalResultToCloud(report: unknown): Promise<void> {
   const url = `${config.sinkUrl.replace(/\/+$/, "")}/scans/${encodeURIComponent(config.scanId)}/findings`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-Pwnkit-Scan-Id": config.scanId,
+    "X-0sec-Scan-Id": config.scanId,
   };
   if (config.token) headers.Authorization = `Bearer ${config.token}`;
 
@@ -365,12 +364,12 @@ async function postFinalResultToCloud(report: unknown): Promise<void> {
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       process.stderr.write(
-        `[pwnkit cloud-sink] report POST ${url} returned ${res.status}: ${text.slice(0, 200)}\n`,
+        `[0sec cloud-sink] report POST ${url} returned ${res.status}: ${text.slice(0, 200)}\n`,
       );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[pwnkit cloud-sink] report POST ${url} failed: ${msg}\n`);
+    process.stderr.write(`[0sec cloud-sink] report POST ${url} failed: ${msg}\n`);
   }
 }
 
@@ -378,16 +377,16 @@ export async function runUnified(opts: RunOptions): Promise<void> {
   const { target, depth, format, runtime, timeout } = opts;
   const core = await loadCoreModule();
 
-  // ── Journal-based resume (pwnkit#374) ───────────────────────────────
+  // ── Journal-based resume (0sec#374) ───────────────────────────────
   let effectiveResumeScanId = opts.resumeScanId;
 
-  // ── Journal branching (pwnkit#250) ─────────────────────────────────
+  // ── Journal branching (0sec#250) ─────────────────────────────────
   if (opts.branchFromEntry !== undefined) {
     if (!effectiveResumeScanId) {
       console.error(chalk.red("--branch-from requires --resume <run-id>"));
       process.exit(2);
     }
-    const { branchJournal } = await import("@pwnkit/core");
+    const { branchJournal } = await import("@0sec/core");
     const result = branchJournal({
       runId: effectiveResumeScanId,
       fromEntry: opts.branchFromEntry,
@@ -426,13 +425,13 @@ export async function runUnified(opts: RunOptions): Promise<void> {
   // must not require the Codex CLI binary. Both env vars are valid
   // activations — refresh token is the long-lived OAuth credential the
   // local CLI uses, while access token is what the cloud worker forwards
-  // to sandboxes (see pwnkit-cloud PR #324). detectProvider in
+  // to sandboxes (see 0sec-cloud PR #324). detectProvider in
   // packages/core/src/runtime/llm-api.ts accepts either pair, so the
   // preflight gate must accept either pair too.
   const directCodexProviderConfigured =
     runtime === "codex" &&
-    (!!process.env.PWNKIT_CHATGPT_ACCESS_TOKEN?.trim() ||
-      !!process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN?.trim());
+    (!!process.env["0SEC_CHATGPT_ACCESS_TOKEN"]?.trim() ||
+      !!process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]?.trim());
   if (runtime !== "api" && runtime !== "auto" && !directCodexProviderConfigured) {
     const rt = core.createRuntime({ type: runtime, timeout });
     const available = await rt.isAvailable();
@@ -475,7 +474,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
         // Node fallback: plain stdout streaming (one tagged line per scan
         // event). The full TUI is OpenTUI under Bun — install via
         // `curl -fsSL .../install.sh | bash` (standalone binary) or
-        // `bun add -g pwnkit-cli` to get it.
+        // `bun add -g 0sec-cli` to get it.
         const { renderScanStream } = await import("../ui/scan-stream.js");
         inkUI = renderScanStream({ version: VERSION, target, depth, mode });
       }
@@ -538,8 +537,8 @@ export async function runUnified(opts: RunOptions): Promise<void> {
           timeout,
           packageVersion: opts.packageVersion,
           // Hard per-scan cost ceiling. Dropped here historically, so
-          // `pwnkit review` / `pwnkit audit` resolved
-          // PWNKIT_COST_CEILING_USD (e.g. the $3 0review ceiling) and then
+          // `0sec review` / `0sec audit` resolved
+          // 0SEC_COST_CEILING_USD (e.g. the $3 0review ceiling) and then
           // ran the whole pipeline UNCAPPED — prod 0review scans landed at
           // $4.99 / $6.36. The agenticScan branch above already threads it.
           costCeilingUsd: opts.costCeilingUsd,
@@ -570,7 +569,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
         const extension = format === "pdf" ? "pdf" : "html";
         const filePath = opts.reportPath
           ? resolve(opts.reportPath)
-          : join(tmpdir(), `pwnkit-report-${Date.now()}.${extension}`);
+          : join(tmpdir(), `0sec-report-${Date.now()}.${extension}`);
         if (format === "pdf") {
           await generatePdfReport(toScanReport(reportAny), filePath);
         } else {
@@ -616,7 +615,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
     const estimatedCostUsd = getEstimatedCost(reportAny);
     const usage = getUsage(reportAny);
 
-    // ── Emit findings as PRs (pwnkit#377) ──
+    // ── Emit findings as PRs (0sec#377) ──
     if (opts.emit === "pr") {
       const findings = (report as any).findings ?? [];
       const core = await loadCoreModule();
@@ -628,7 +627,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
       const repoRoot = opts.targetType === "source-code" && existsSync(target)
         ? resolve(target)
         : process.cwd();
-      const outDir = opts.emitOutDir ?? join(tmpdir(), `pwnkit-emit-${Date.now()}`);
+      const outDir = opts.emitOutDir ?? join(tmpdir(), `0sec-emit-${Date.now()}`);
       console.log(chalk.blue(`[emit pr] ${findings.length} finding(s); repo=${repoRoot} base=${opts.emitPrBase ?? "main"}${opts.emitPrDryRun ? " (dry-run)" : ""}`));
       const emitReport = await core.emitFindingsAsPRs(findings, {
         repoRoot,
@@ -670,7 +669,7 @@ export async function runUnified(opts: RunOptions): Promise<void> {
       }
     }
 
-    const ceilingRaw = process.env.PWNKIT_COST_CEILING_USD?.trim();
+    const ceilingRaw = process.env["0SEC_COST_CEILING_USD"]?.trim();
     if (ceilingRaw) {
       const ceiling = Number(ceilingRaw);
       if (Number.isFinite(ceiling) && estimatedCostUsd !== undefined && estimatedCostUsd > ceiling) {

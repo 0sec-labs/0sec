@@ -4,7 +4,7 @@
 // resolved from the `codex login` token — the same path the verify runners use.
 // No raw vendor key (see AGENTS.md "Use the unified LLM service, never raw keys").
 //
-// Run from the repo root: node pwnkit/packages/core/eval/intended-use.eval.mjs
+// Run from the repo root: node 0sec/packages/core/eval/intended-use.eval.mjs
 // Requires `codex login` (~/.codex/auth.json). Last result: 7/7 (gpt-5.5, 2026-06-03).
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";

@@ -5,22 +5,22 @@ import {
   BUDGET_WARNING_HARD,
 } from "./native-loop.js";
 import type { Runtime, RuntimeResult } from "../runtime/types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // The XML-dispatch loop tests use synthetic short flags like `FLAG{xml-mode}`
 // so they don't bind to any real benchmark answer. The default decoy validator
 // would reject those as suspicious sentences/taunts, which is the correct
 // product behavior but irrelevant to what these tests cover (the dispatch
 // layer, not the validator).
-const origDecoy = process.env.PWNKIT_FEATURE_DECOY_DETECTION;
+const origDecoy = process.env["0SEC_FEATURE_DECOY_DETECTION"];
 beforeAll(() => {
-  process.env.PWNKIT_FEATURE_DECOY_DETECTION = "0";
+  process.env["0SEC_FEATURE_DECOY_DETECTION"] = "0";
 });
 afterAll(() => {
   if (origDecoy === undefined) {
-    delete process.env.PWNKIT_FEATURE_DECOY_DETECTION;
+    delete process.env["0SEC_FEATURE_DECOY_DETECTION"];
   } else {
-    process.env.PWNKIT_FEATURE_DECOY_DETECTION = origDecoy;
+    process.env["0SEC_FEATURE_DECOY_DETECTION"] = origDecoy;
   }
 });
 
@@ -207,7 +207,7 @@ describe("runAgentLoop with XML dispatch", () => {
   });
 });
 
-// ── Two-stage budget warnings (pwnkit#408) ──
+// ── Two-stage budget warnings (0sec#408) ──
 //
 // The legacy `runAgentLoop` shares the same Strix-borrow helper with
 // `runNativeAgentLoop`. These tests verify the helper is wired into the
@@ -217,7 +217,7 @@ describe("runAgentLoop with XML dispatch", () => {
 // looking at the FIRST prompt that mentions each warning).
 
 describe("runAgentLoop budget warnings (#408)", () => {
-  const ENV_KEY = "PWNKIT_FEATURE_BUDGET_WARNINGS";
+  const ENV_KEY = "0SEC_FEATURE_BUDGET_WARNINGS";
   const originalEnv = process.env[ENV_KEY];
 
   afterEach(() => {

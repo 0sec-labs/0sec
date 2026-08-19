@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { CrashArtifact } from "./memsafety-types.js";
 import type { HuntCandidate } from "../stages/hunt-scan.js";
 import {

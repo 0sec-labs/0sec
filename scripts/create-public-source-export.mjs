@@ -48,7 +48,7 @@ const publicRoots = [
   "NOTICE",
   "README.md",
   "SECURITY.md",
-  "assets/pwnkit-icon.gif",
+  "assets/0sec-icon.gif",
   "assets/0sec-aperture-ink.svg",
   "assets/0sec-aperture-white.svg",
   "package.json",

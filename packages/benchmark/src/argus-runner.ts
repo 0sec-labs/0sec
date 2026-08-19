@@ -3,7 +3,7 @@
 /**
  * Argus Benchmark Runner
  *
- * Runs pwnkit against the Argus validation benchmarks (60 Dockerized web
+ * Runs 0sec against the Argus validation benchmarks (60 Dockerized web
  * vulnerability challenges from Pensar AI). Structurally very similar to
  * XBOW — each challenge is a self-contained Docker Compose stack with a
  * hidden flag.
@@ -32,9 +32,9 @@ import { execSync, spawnSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, statSync, appendFileSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agenticScan, scan } from "@pwnkit/core";
+import { agenticScan, scan } from "@0sec/core";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -76,7 +76,7 @@ function ensureRepo(repo: string, ref: string | undefined): string {
     .replace(/^https?:\/\//, "")
     .replace(/\.git$/, "")
     .replace(/[^\w.-]+/g, "_");
-  const dest = join(tmpdir(), "pwnkit-argus-cache", slug);
+  const dest = join(tmpdir(), "0sec-argus-cache", slug);
   const benchDir = join(dest, "benchmarks");
 
   if (existsSync(benchDir)) {
@@ -504,7 +504,7 @@ async function runChallengeOnce(challenge: ArgusChallenge): Promise<ArgusResult>
   try {
     let report: any;
     if (useAgentic) {
-      const dbPath = join(tmpdir(), `pwnkit-argus-${challenge.id}-${Date.now()}.db`);
+      const dbPath = join(tmpdir(), `0sec-argus-${challenge.id}-${Date.now()}.db`);
       report = await agenticScan({
         config: {
           target,
@@ -643,7 +643,7 @@ async function main() {
   }
 
   if (!jsonOutput) {
-    console.log("\x1b[36m\x1b[1m  pwnkit x Argus benchmark\x1b[0m");
+    console.log("\x1b[36m\x1b[1m  0sec x Argus benchmark\x1b[0m");
     console.log(`  mode: ${useAgentic ? "agentic" : "baseline"}  challenges: ${challenges.length}/60  retries: ${retries}`);
     console.log("");
   }

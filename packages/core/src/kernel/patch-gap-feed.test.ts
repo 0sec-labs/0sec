@@ -215,7 +215,7 @@ describe("kernel/patch-gap-feed: loadVulnsFeedFromDir (thin IO, real tmp fs — 
   });
 
   it("reads published/<year>/*.json, skips malformed files, sorts newest-first", () => {
-    repo = mkdtempSync(join(tmpdir(), "pwnkit-vulnsfeed-"));
+    repo = mkdtempSync(join(tmpdir(), "0sec-vulnsfeed-"));
     const published = join(repo, "cve", "published");
     mkdirSync(join(published, "2025"), { recursive: true });
     mkdirSync(join(published, "2026"), { recursive: true });
@@ -250,6 +250,6 @@ describe("kernel/patch-gap-feed: loadVulnsFeedFromDir (thin IO, real tmp fs — 
   });
 
   it("returns [] for a missing directory rather than throwing", () => {
-    expect(loadVulnsFeedFromDir({ vulnsRepoPath: join(tmpdir(), "pwnkit-does-not-exist-xyz") })).toEqual([]);
+    expect(loadVulnsFeedFromDir({ vulnsRepoPath: join(tmpdir(), "0sec-does-not-exist-xyz") })).toEqual([]);
   });
 });

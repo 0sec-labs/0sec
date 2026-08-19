@@ -18,7 +18,7 @@ export const CORE_REVIEW_PROMPT = `You are a security researcher reviewing sourc
 - When uncertain about a finding's exploitability in context, flag it with lowered confidence and explain the gap.
 
 ## Severity Classification
-Map severity to exploitability and impact using the pwnkit scale:
+Map severity to exploitability and impact using the 0sec scale:
 
 | Severity | Criteria |
 |----------|----------|

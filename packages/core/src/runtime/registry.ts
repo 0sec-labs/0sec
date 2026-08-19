@@ -1,5 +1,5 @@
 import type { RuntimeType } from "./types.js";
-import type { PipelineStage } from "@pwnkit/shared";
+import type { PipelineStage } from "@0sec/shared";
 
 export interface RuntimeInfo {
   type: RuntimeType;
@@ -26,7 +26,7 @@ export const RUNTIME_REGISTRY: readonly RuntimeInfo[] = [
   {
     type: "codex",
     command: "codex",
-    description: "Codex CLI / direct ChatGPT Codex provider — full parity across web scans, package audits (npm/pypi/cargo/oci), and source code review (incl. linux-kernel). Set PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN to enable subscription auth without the local CLI binary (#402).",
+    description: "Codex CLI / direct ChatGPT Codex provider — full parity across web scans, package audits (npm/pypi/cargo/oci), and source code review (incl. linux-kernel). Set 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN to enable subscription auth without the local CLI binary (#402).",
     strengths: ["verify", "source-analysis", "discovery"],
     supportsSystemPrompt: false,
   },
@@ -43,7 +43,7 @@ export const RUNTIME_REGISTRY: readonly RuntimeInfo[] = [
     // so detection tools that key off `command` don't crash; the registry
     // uses `isAvailable()` not `which(command)` for ollama.
     command: "ollama",
-    description: "Ollama (local) — Gemma 4 27B via /api/chat with native function-calling. Pairs with `--seed-findings` for full-local hunts. See pwnkit#369.",
+    description: "Ollama (local) — Gemma 4 27B via /api/chat with native function-calling. Pairs with `--seed-findings` for full-local hunts. See 0sec#369.",
     strengths: ["source-analysis", "discovery"],
     supportsSystemPrompt: true,
   },

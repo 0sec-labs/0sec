@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
 
-// `audit.ts` -> `run.ts` -> dynamic `import("@pwnkit/core")`. We stub
+// `audit.ts` -> `run.ts` -> dynamic `import("@0sec/core")`. We stub
 // `runUnified` at the module boundary so the gated-off (npm) path
 // doesn't actually try to spin up the unified pipeline. Use
 // `vi.hoisted` so the mock function reference exists when vitest hoists

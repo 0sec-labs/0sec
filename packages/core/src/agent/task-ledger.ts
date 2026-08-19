@@ -20,7 +20,7 @@
  * cannot measure divergence from an objective that was never written down.
  * `agent/drift.ts` consumes this ledger for exactly that.
  *
- * Design follows `agent/loot.ts` (the LootLedger, pwnkit#567) deliberately,
+ * Design follows `agent/loot.ts` (the LootLedger, 0sec#567) deliberately,
  * because that module already solved the hard part of this problem in this
  * codebase: it is a typed, deduped, size-capped store carrying a monotonic
  * `revision`, and the agent loop re-renders a compact block from the STRUCTURED

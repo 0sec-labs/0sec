@@ -39,7 +39,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { relative } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Finding, Severity } from "@pwnkit/shared";
+import type { Finding, Severity } from "@0sec/shared";
 import { collectScopeFiles } from "./source-files.js";
 
 // ────────────────────────────────────────────────────────────────────

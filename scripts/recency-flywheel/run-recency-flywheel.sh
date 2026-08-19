@@ -2,7 +2,7 @@
 #
 # run-recency-flywheel.sh — the daily RECENCY FLYWHEEL driver (bench).
 #
-# Fetches fresh linux-next, then runs `pwnkit recency-hunt` over the last N hours
+# Fetches fresh linux-next, then runs `0sec recency-hunt` over the last N hours
 # and writes a dated JSON + markdown report. ADDITIVE and NON-DISRUPTIVE: it only
 # fetches /root/linux-next (the snapshot repo — NOT the KASAN/kmsan build trees
 # under /root/next-recency or /root/kernel-objects) and runs one CLI process at
@@ -12,7 +12,7 @@
 # Env overrides (all optional):
 #   RECENCY_TREE      kernel tree to hunt          (default /root/linux-next)
 #   RECENCY_HOURS     freshness window in hours    (default 24)
-#   RECENCY_ENGINE    built pwnkit engine dir      (default /root/pwnkit-recency-flywheel)
+#   RECENCY_ENGINE    built 0sec engine dir      (default /root/0sec-recency-flywheel)
 #   RECENCY_REPORTS   dated report output dir      (default /root/recency-flywheel/reports)
 #   RECENCY_MODELS    per-file invariant models    (default /root/recency-flywheel/models)
 #   RECENCY_RUNTIME   engine runtime               (default codex — uses /root/.codex/auth.json)
@@ -26,7 +26,7 @@ set -uo pipefail
 
 TREE="${RECENCY_TREE:-/root/linux-next}"
 HOURS="${RECENCY_HOURS:-24}"
-ENGINE="${RECENCY_ENGINE:-/root/pwnkit-recency-flywheel}"
+ENGINE="${RECENCY_ENGINE:-/root/0sec-recency-flywheel}"
 REPORTS="${RECENCY_REPORTS:-/root/recency-flywheel/reports}"
 MODELS="${RECENCY_MODELS:-/root/recency-flywheel/models}"
 RUNTIME="${RECENCY_RUNTIME:-codex}"

@@ -1,5 +1,5 @@
 /**
- * Auth-boundary differential prober (pwnkit#770, part of #761).
+ * Auth-boundary differential prober (0sec#770, part of #761).
  *
  * Question this module answers, per endpoint: **is it reachable WITHOUT
  * credentials?** This is the "22 of 200 endpoints were unauthenticated"
@@ -23,7 +23,7 @@
  * consistent with the rest of the agent.
  */
 
-import type { AuthConfig } from "@pwnkit/shared";
+import type { AuthConfig } from "@0sec/shared";
 import { buildAuthHeaders } from "./prompts.js";
 
 // ── Types ──

@@ -53,7 +53,7 @@ const mockedLoop = vi.mocked(runNativeAgentLoop);
 const OPERATOR_CONFIG = [
   'model = "gpt-5.6-terra"',
   "",
-  '[projects."/private/var/folders/2b/T/pwnkit-audit-8103b3c8/node_modules/lodash"]',
+  '[projects."/private/var/folders/2b/T/0sec-audit-8103b3c8/node_modules/lodash"]',
   'trust_level = "trusted"',
   "",
 ].join("\n");
@@ -79,7 +79,7 @@ describe("runAnalysisAgent — source scope runtime boundary", () => {
 
   beforeEach(() => {
     state.cliConfigs.length = 0;
-    operatorHome = mkdtempSync(join(tmpdir(), "pwnkit-fake-codex-home-"));
+    operatorHome = mkdtempSync(join(tmpdir(), "0sec-fake-codex-home-"));
     dirs.push(operatorHome);
     writeFileSync(join(operatorHome, "config.toml"), OPERATOR_CONFIG);
     vi.stubEnv("CODEX_HOME", operatorHome);
@@ -104,7 +104,7 @@ describe("runAnalysisAgent — source scope runtime boundary", () => {
   });
 
   it("never launches Codex against a downloaded source scope", async () => {
-    const scope = mkdtempSync(join(tmpdir(), "pwnkit-audit-"));
+    const scope = mkdtempSync(join(tmpdir(), "0sec-audit-"));
     dirs.push(scope);
 
     await runAnalysisAgent(opts(scope));

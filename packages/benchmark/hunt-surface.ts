@@ -1,5 +1,5 @@
 /** Generic novel-bug hunt on under-audited surface: enumerate files -> runHuntScan (no seed). */
-import { runHuntScan, makeSkepticVerifier, applyReachabilityGate, applySurfaceRanking } from "@pwnkit/core";
+import { runHuntScan, makeSkepticVerifier, applyReachabilityGate, applySurfaceRanking } from "@0sec/core";
 import { execFileSync } from "node:child_process";
 import { appendToCorpus, resolveHuntCorpusPath } from "./src/hunt-corpus.js";
 
@@ -29,14 +29,14 @@ const BEST_OF_N = huntBestOfN();
 const JUDGE_TOP_K = huntJudgeTopK();
 const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
 // kernelCTF-reachability gate for candidate selection (default OFF -> today's
-// size-only ranking unchanged). See pwnkit/packages/core/src/stages/hunt-reachability.ts.
+// size-only ranking unchanged). See 0sec/packages/core/src/stages/hunt-reachability.ts.
 const REACHABLE_ONLY = process.env.HUNT_REACHABLE_ONLY === "1";
 const REACHABLE_PREFER = process.env.HUNT_REACHABLE_PREFER === "1";
 // Surface-desirability ranking (default OFF -> size-only ranking unchanged).
 // When ON, re-orders candidates so hard-to-fuzz stateful parsers of untrusted
 // input that are NOT recently swept float to the top of the (pre-cap) list,
 // where a source-review hunt has an edge over fuzzing. See
-// pwnkit/packages/core/src/stages/surface-desirability.ts.
+// 0sec/packages/core/src/stages/surface-desirability.ts.
 const SURFACE_RANK = process.env.HUNT_SURFACE_RANK === "1";
 
 // Enumerate .c files under the (under-audited) subsystem, largest first. The

@@ -29,7 +29,7 @@ export interface FileReviewPipelineOptions {
   rootPath: string;
   /** Project id; defaults to the rootPath basename. */
   projectId?: string;
-  /** Data dir for records; defaults to `<rootPath>/.pwnkit-review`. */
+  /** Data dir for records; defaults to `<rootPath>/.0sec-review`. */
   dataDir?: string;
   invoker: ReviewInvoker;
   /** Free-form project context appended to every investigation prompt (INFO.md). */
@@ -62,7 +62,7 @@ export async function runFileReviewPipeline(
 ): Promise<ReviewPipelineResult> {
   const startedAt = Date.now();
   const projectId = opts.projectId ?? (path.basename(opts.rootPath.replace(/\/$/, "")) || "project");
-  const dataDir = opts.dataDir ?? path.join(opts.rootPath, ".pwnkit-review");
+  const dataDir = opts.dataDir ?? path.join(opts.rootPath, ".0sec-review");
   const store = new ReviewStore({ dataDir });
   const log = opts.log ?? (() => {});
 

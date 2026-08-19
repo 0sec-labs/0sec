@@ -1,5 +1,5 @@
 /**
- * OAST collaborator implementations (pwnkit#659).
+ * OAST collaborator implementations (0sec#659).
  *
  * Three shapes behind the one `OastCollaborator` interface:
  *
@@ -14,7 +14,7 @@
  *  - `HttpCollaborator` — the deployable adapter. Talks to a self-hosted
  *    collaborator server (see `server.ts`) over a tiny documented REST contract.
  *    This is what production uses once the server is deployed with a wildcard
- *    DNS zone; the URL comes from `PWNKIT_OAST_URL`.
+ *    DNS zone; the URL comes from `0SEC_OAST_URL`.
  *
  * `createCollaborator()` picks the adapter from config/env and returns
  * `undefined` when nothing is configured — the feature stays dark until a real
@@ -233,19 +233,19 @@ function hostOf(url: string): string | null {
 
 /**
  * Build the collaborator for a scan from config/env. Precedence:
- *  1. explicit `serverUrl` (or `PWNKIT_OAST_URL`) → `HttpCollaborator`
+ *  1. explicit `serverUrl` (or `0SEC_OAST_URL`) → `HttpCollaborator`
  *  2. otherwise `undefined` — no collaborator; blind-class tools return a
  *     graceful "not deployed" result instead of faking hits.
  *
- * `PWNKIT_OAST_DOMAIN` overrides the callback base domain when the server's
+ * `0SEC_OAST_DOMAIN` overrides the callback base domain when the server's
  * DNS zone differs from its HTTP host (the common deployment shape).
  */
 export function createCollaborator(opts: {
   serverUrl?: string;
   baseDomain?: string;
 } = {}): OastCollaborator | undefined {
-  const serverUrl = opts.serverUrl ?? process.env.PWNKIT_OAST_URL;
+  const serverUrl = opts.serverUrl ?? process.env["0SEC_OAST_URL"];
   if (!serverUrl) return undefined;
-  const baseDomain = opts.baseDomain ?? process.env.PWNKIT_OAST_DOMAIN;
+  const baseDomain = opts.baseDomain ?? process.env["0SEC_OAST_DOMAIN"];
   return new HttpCollaborator({ serverUrl, baseDomain });
 }

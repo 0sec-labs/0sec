@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { AttackCategory, Finding, LayerVerdict, PocStep } from "@pwnkit/shared";
+import type { AttackCategory, Finding, LayerVerdict, PocStep } from "@0sec/shared";
 import {
   VERIFY_EVIDENCE_KINDS,
   VERIFY_EVIDENCE_KINDS_ENGINE_EXT,
@@ -8,7 +8,7 @@ import {
 
 // EPIC #674 — cross-workspace parity guard for the verify evidence-kind union.
 //
-// The pwnkit engine and the 0cloud orchestrator are decoupled by design (linked
+// The 0sec engine and the 0cloud orchestrator are decoupled by design (linked
 // only by the cloud-sink wire format), and the engine is a separate publishable
 // workspace that cannot import a private `@0cloud/*` package. So the engine
 // keeps its own copy of this union (`VerifyEvidenceKind` in `verify-verdict.ts`)

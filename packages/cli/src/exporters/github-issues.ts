@@ -1,4 +1,4 @@
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 interface GitHubIssue {
   title: string;
@@ -62,13 +62,13 @@ function buildIssueBody(finding: Finding): string {
   }
 
   lines.push("---");
-  lines.push(`*Exported by [pwnkit](https://github.com/0sec-labs/0sec) | Finding ID: \`${finding.id}\`*`);
+  lines.push(`*Exported by [0sec](https://github.com/0sec-labs/0sec) | Finding ID: \`${finding.id}\`*`);
 
   return lines.join("\n");
 }
 
 function getLabels(finding: Finding): string[] {
-  const labels: string[] = ["pwnkit", `severity:${finding.severity}`, `category:${finding.category}`];
+  const labels: string[] = ["0sec", `severity:${finding.severity}`, `category:${finding.category}`];
   return labels;
 }
 
@@ -102,7 +102,7 @@ async function githubApi<T>(
 }
 
 /**
- * Fetch all open issues with the "pwnkit" label to check for duplicates.
+ * Fetch all open issues with the "0sec" label to check for duplicates.
  * Paginates through all pages.
  */
 async function fetchExistingIssueTitles(repo: string, token: string): Promise<Set<string>> {
@@ -111,7 +111,7 @@ async function fetchExistingIssueTitles(repo: string, token: string): Promise<Se
   const perPage = 100;
 
   while (true) {
-    const url = `https://api.github.com/repos/${repo}/issues?state=open&labels=pwnkit&per_page=${perPage}&page=${page}`;
+    const url = `https://api.github.com/repos/${repo}/issues?state=open&labels=0sec&per_page=${perPage}&page=${page}`;
     const issues = await githubApi<GitHubIssue[]>("GET", url, token);
     for (const issue of issues) {
       titles.add(issue.title);
@@ -157,7 +157,7 @@ async function ensureLabels(repo: string, token: string, labels: string[]): Prom
  * Export findings as GitHub Issues.
  *
  * Each finding becomes one issue. Issues are deduplicated by title against
- * existing open issues that carry the "pwnkit" label.
+ * existing open issues that carry the "0sec" label.
  */
 export async function exportToGitHubIssues(
   findings: Finding[],
@@ -177,7 +177,7 @@ export async function exportToGitHubIssues(
 
   // Collect all unique labels we need and ensure they exist
   const allLabels = new Set<string>();
-  allLabels.add("pwnkit");
+  allLabels.add("0sec");
   for (const f of findings) {
     for (const l of getLabels(f)) {
       allLabels.add(l);

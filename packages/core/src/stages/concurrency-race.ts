@@ -1,6 +1,6 @@
 /**
  * Concurrency-aware analysis — a cross-function shared-field LOCKSET-INCONSISTENCY
- * race-CANDIDATE generator. pwnkit's first increment of concurrency awareness.
+ * race-CANDIDATE generator. 0sec's first increment of concurrency awareness.
  *
  * NOISE CONTROL (why the output is prover-feedable, not a dump): the raw
  * lockset-inconsistency signal is dominated by benign FP classes, so bounded

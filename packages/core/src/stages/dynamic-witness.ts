@@ -46,7 +46,7 @@ import { dirname } from "node:path";
 import type { ReproducerResult, CrashReport } from "../triage/kernel-oracle.js";
 import { runReproducerInKernelVm } from "../triage/kernel-vm-runner.js";
 import { LlmApiRuntime } from "../runtime/index.js";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import {
   isMechanizableEstablisher,
   subjectSelfEnforces,

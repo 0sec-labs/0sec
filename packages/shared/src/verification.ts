@@ -1,5 +1,5 @@
 /**
- * pwnkit#193 — VerificationResult schema (zod).
+ * 0sec#193 — VerificationResult schema (zod).
  *
  * Canonical, machine-checkable shape of the JSON payload the deterministic
  * replay verifier emits after running a finding's PoC. Cloud, the CLI, the
@@ -14,7 +14,7 @@
  * the result is self-describing across local/docker/qemu runners.
  *
  * This module is the SHAPE contract; the runner skeleton that produces it
- * lives in `@pwnkit/core/verify/replay-runner`. The two are deliberately
+ * lives in `@0sec/core/verify/replay-runner`. The two are deliberately
  * decoupled — cloud's ingest can consume the schema without pulling in any
  * runner dependency.
  */

@@ -87,13 +87,13 @@ describe("cppReviewAgentPrompt — hypothesis seeding (#467)", () => {
 
   it("requires self-contained poc_steps that replay in a fresh sandbox", () => {
     // The tier-1 false-refute root cause: poc_steps referenced ephemeral
-    // scan-sandbox paths (/tmp/pwnkit-harness/<id>/harness.c) that don't exist
+    // scan-sandbox paths (/tmp/0sec-harness/<id>/harness.c) that don't exist
     // when verify replays in a fresh sandbox → cc1 'No such file' → false refute.
     const prompt = cppReviewAgentPrompt("/tmp/libfoo", []);
     expect(prompt).toContain("SELF-CONTAINED");
     expect(prompt).toContain("FRESH sandbox");
     expect(prompt).toMatch(/git clone/);
-    expect(prompt).toMatch(/PWNKIT_EOF/);
+    expect(prompt).toMatch(/0SEC_EOF/);
     expect(prompt).toContain("No such file");
   });
 });
@@ -101,7 +101,7 @@ describe("cppReviewAgentPrompt — hypothesis seeding (#467)", () => {
 describe("scaffoldTier1Harness", () => {
   it("writes a harness file and returns clang build/run commands", async () => {
     const fixtureRoot = join(__dirname, "__fixtures__", "c-library-demo");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier1-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier1-"));
     try {
       const scaffold = await scaffoldTier1Harness({
         srcDir: fixtureRoot,
@@ -153,7 +153,7 @@ describe("scaffoldTier1Harness", () => {
     if (!(await hasLibFuzzerToolchain())) return;
 
     const fixtureRoot = join(__dirname, "__fixtures__", "c-library-demo");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier1-run-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier1-run-"));
     try {
       const scaffold = await scaffoldTier1Harness({
         srcDir: fixtureRoot,
@@ -189,7 +189,7 @@ describe("scaffoldTier1Harness", () => {
 describe("scaffoldTier2Harness", () => {
   it("links an explicit component subset and optional seed corpus directories", async () => {
     const fixtureRoot = join(__dirname, "__fixtures__", "c-library-demo");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-"));
     try {
       const scaffold = await scaffoldTier2Harness({
         srcDir: fixtureRoot,
@@ -302,7 +302,7 @@ describe("c-library-demo fixture", () => {
 });
 
 async function hasLibFuzzerToolchain(): Promise<boolean> {
-  const outDir = await mkdtemp(join(tmpdir(), "pwnkit-fuzzer-check-"));
+  const outDir = await mkdtemp(join(tmpdir(), "0sec-fuzzer-check-"));
   try {
     const source = join(outDir, "check.c");
     const binary = join(outDir, "check");

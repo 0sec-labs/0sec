@@ -21,7 +21,7 @@ import {
 
 // A passing exploit test (impact assertion held → proof).
 const FORGE_JSON_EXPLOIT_PASS = JSON.stringify({
-  "test/PwnkitExploit.t.sol:PwnkitExploit": {
+  "test/osecExploit.t.sol:osecExploit": {
     test_results: {
       "testExploitDrainsVault()": {
         status: "Success",
@@ -43,7 +43,7 @@ const FORGE_JSON_EXPLOIT_PASS = JSON.stringify({
 
 // A reverted exploit test (exploit did NOT reproduce → not_proven).
 const FORGE_JSON_EXPLOIT_FAIL = JSON.stringify({
-  "test/PwnkitExploit.t.sol:PwnkitExploit": {
+  "test/osecExploit.t.sol:osecExploit": {
     test_results: {
       "testExploitDrainsVault()": {
         status: "Failure",
@@ -72,7 +72,7 @@ const FORGE_JSON_INVARIANT_BROKEN = JSON.stringify({
 
 // A skipped test.
 const FORGE_JSON_SKIPPED = JSON.stringify({
-  "test/PwnkitExploit.t.sol:PwnkitExploit": {
+  "test/osecExploit.t.sol:osecExploit": {
     test_results: {
       "testExploit()": { status: "Skipped", reason: "vm.skip", counterexample: null, kind: "Standard" },
     },
@@ -218,16 +218,16 @@ describe("evmVerifyCacheKey", () => {
 });
 
 describe("env gate", () => {
-  const saved = { verify: process.env.PWNKIT_EVM_VERIFY, rpc: process.env.PWNKIT_EVM_FORK_RPC };
+  const saved = { verify: process.env["0SEC_EVM_VERIFY"], rpc: process.env["0SEC_EVM_FORK_RPC"] };
   beforeEach(() => {
-    delete process.env.PWNKIT_EVM_VERIFY;
-    delete process.env.PWNKIT_EVM_FORK_RPC;
+    delete process.env["0SEC_EVM_VERIFY"];
+    delete process.env["0SEC_EVM_FORK_RPC"];
   });
   afterEach(() => {
-    if (saved.verify === undefined) delete process.env.PWNKIT_EVM_VERIFY;
-    else process.env.PWNKIT_EVM_VERIFY = saved.verify;
-    if (saved.rpc === undefined) delete process.env.PWNKIT_EVM_FORK_RPC;
-    else process.env.PWNKIT_EVM_FORK_RPC = saved.rpc;
+    if (saved.verify === undefined) delete process.env["0SEC_EVM_VERIFY"];
+    else process.env["0SEC_EVM_VERIFY"] = saved.verify;
+    if (saved.rpc === undefined) delete process.env["0SEC_EVM_FORK_RPC"];
+    else process.env["0SEC_EVM_FORK_RPC"] = saved.rpc;
   });
 
   it("is OFF by default", () => {
@@ -235,21 +235,21 @@ describe("env gate", () => {
     expect(forgeAvailable()).toBe(false);
   });
 
-  it("respects PWNKIT_EVM_VERIFY truthiness (mirrors archetypeSweepEnabled)", () => {
+  it("respects 0SEC_EVM_VERIFY truthiness (mirrors archetypeSweepEnabled)", () => {
     for (const off of ["", "0", "false", "no"]) {
-      process.env.PWNKIT_EVM_VERIFY = off;
+      process.env["0SEC_EVM_VERIFY"] = off;
       expect(evmVerifyEnabled()).toBe(false);
     }
     for (const on of ["1", "true", "yes"]) {
-      process.env.PWNKIT_EVM_VERIFY = on;
+      process.env["0SEC_EVM_VERIFY"] = on;
       expect(evmVerifyEnabled()).toBe(true);
     }
   });
 
   it("forgeAvailable requires both the gate ON and a fork RPC", () => {
-    process.env.PWNKIT_EVM_VERIFY = "1";
+    process.env["0SEC_EVM_VERIFY"] = "1";
     expect(forgeAvailable()).toBe(false); // no RPC yet
-    process.env.PWNKIT_EVM_FORK_RPC = "https://rpc.example/archive";
+    process.env["0SEC_EVM_FORK_RPC"] = "https://rpc.example/archive";
     expect(forgeAvailable()).toBe(true);
     expect(evmForkRpc()).toBe("https://rpc.example/archive");
   });
@@ -261,7 +261,7 @@ describe("planEvmVerify", () => {
     testSource: "contract T {}",
     forkUrl: "https://rpc.example/archive",
     forkBlock: 20_000_000,
-    testContract: "PwnkitExploit",
+    testContract: "osecExploit",
   };
 
   it("assembles a normalized forge invocation but does NOT need the gate on (force)", () => {
@@ -273,16 +273,16 @@ describe("planEvmVerify", () => {
     expect(plan!.argv).toContain("--fork-block-number");
     expect(plan!.argv).toContain("20000000");
     expect(plan!.argv).toContain("--match-contract");
-    expect(plan!.argv).toContain("PwnkitExploit");
+    expect(plan!.argv).toContain("osecExploit");
     expect(plan!.cacheKey).toMatch(/^evm-/);
     expect(warnings).toHaveLength(0);
   });
 
   it("warns (but still plans) when the gate is off — like planArchetypeSweep", () => {
-    delete process.env.PWNKIT_EVM_VERIFY;
+    delete process.env["0SEC_EVM_VERIFY"];
     const { plan, warnings } = planEvmVerify(req);
     expect(plan).toBeDefined();
-    expect(warnings.some((w) => /PWNKIT_EVM_VERIFY/.test(w))).toBe(true);
+    expect(warnings.some((w) => /0SEC_EVM_VERIFY/.test(w))).toBe(true);
   });
 
   it("omits the plan and warns when no fork RPC is resolvable", () => {
@@ -315,14 +315,14 @@ describe("planEvmVerify", () => {
 });
 
 describe("runEvmVerify (default-safe gate)", () => {
-  const saved = process.env.PWNKIT_EVM_VERIFY;
+  const saved = process.env["0SEC_EVM_VERIFY"];
   afterEach(() => {
-    if (saved === undefined) delete process.env.PWNKIT_EVM_VERIFY;
-    else process.env.PWNKIT_EVM_VERIFY = saved;
+    if (saved === undefined) delete process.env["0SEC_EVM_VERIFY"];
+    else process.env["0SEC_EVM_VERIFY"] = saved;
   });
 
   it("is a no-op that never runs when the gate is off", async () => {
-    delete process.env.PWNKIT_EVM_VERIFY;
+    delete process.env["0SEC_EVM_VERIFY"];
     const result = await runEvmVerify({
       targetRepo: "/tmp/t",
       testSource: "contract T {}",

@@ -1,6 +1,6 @@
 import { gzipSync } from "zlib";
 import chalk from "chalk";
-import type { ScanReport, AuditReport, ReviewReport, RuntimeMode } from "@pwnkit/shared";
+import type { ScanReport, AuditReport, ReviewReport, RuntimeMode } from "@0sec/shared";
 
 export interface ApiRuntimeAvailability {
   configured: boolean;
@@ -16,7 +16,7 @@ export interface RuntimeAvailability {
 }
 
 export async function getRuntimeAvailability(): Promise<RuntimeAvailability> {
-  const { detectAvailableRuntimes, LlmApiRuntime } = await import("@pwnkit/core");
+  const { detectAvailableRuntimes, LlmApiRuntime } = await import("@0sec/core");
   const apiRuntimeDiagnostics = new LlmApiRuntime({ type: "api", timeout: 5_000 }).getConfigurationDiagnostics();
   const hasApiKey = apiRuntimeDiagnostics.valid;
   const availableRuntimes = [...(await detectAvailableRuntimes())];
@@ -58,7 +58,7 @@ export async function checkRuntimeAvailability(runtime: RuntimeMode): Promise<vo
   } else {
     console.log(chalk.yellow("  Warning: No API key or local agent runtime detected. AI analysis will be skipped."));
   }
-  console.log(chalk.gray("  Provider credentials: PWNKIT_CHATGPT_ACCESS_TOKEN | PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY, OPENAI_API_KEY"));
+  console.log(chalk.gray("  Provider credentials: 0SEC_CHATGPT_ACCESS_TOKEN | 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY, OPENAI_API_KEY"));
   console.log("");
 }
 

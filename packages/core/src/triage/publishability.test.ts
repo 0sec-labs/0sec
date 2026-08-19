@@ -21,7 +21,7 @@ import {
   type AdvisoryRef,
 } from "./publishability.js";
 import { canAutoSuppressDetailed } from "./can-auto-suppress.js";
-import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
+import type { AttackCategory, Finding, Severity } from "@0sec/shared";
 
 function makeFinding(overrides: Partial<Finding> = {}): Finding {
   return {

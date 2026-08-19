@@ -1,5 +1,5 @@
 /** Real novel-vuln variant hunt: seed from a proven fix, fan out finders, skeptic-gate. */
-import { generateVariantCandidates, runHuntScan, makeSkepticVerifier } from "@pwnkit/core";
+import { generateVariantCandidates, runHuntScan, makeSkepticVerifier } from "@0sec/core";
 import { readFileSync } from "node:fs";
 import { appendToCorpus, resolveHuntCorpusPath } from "./src/hunt-corpus.js";
 
@@ -26,7 +26,7 @@ const BEST_OF_N = huntBestOfN();
 const JUDGE_TOP_K = huntJudgeTopK();
 const JUDGE_MODEL = process.env.HUNT_JUDGE_MODEL;
 // kernelCTF-reachability gate for candidate selection (default OFF -> today's
-// density-only ranking unchanged). See pwnkit/packages/core/src/stages/hunt-reachability.ts.
+// density-only ranking unchanged). See 0sec/packages/core/src/stages/hunt-reachability.ts.
 const REACHABLE_ONLY = process.env.HUNT_REACHABLE_ONLY === "1";
 const REACHABLE_PREFER = process.env.HUNT_REACHABLE_PREFER === "1";
 

@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import { redactSensitiveHeaders, renderAdvisoryMarkdown } from "./index.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 describe("redactSensitiveHeaders — auth headers", () => {
   it("masks Authorization header values", () => {
@@ -161,7 +161,7 @@ describe("redactSensitiveHeaders — inline shell patterns", () => {
   });
 });
 
-function findingWithPocSteps(steps: import("@pwnkit/shared").PocStep[]): Finding {
+function findingWithPocSteps(steps: import("@0sec/shared").PocStep[]): Finding {
   return {
     id: "finding-poc-redact",
     templateId: "test",

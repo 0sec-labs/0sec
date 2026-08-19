@@ -11,8 +11,8 @@
  *     command to drop the finding, with the quoted prior reason truncated.
  *   - `makeSkepticVerifier` wiring (hunt-scan.ts): attaches the negative
  *     context to the skeptic prompt for a matching finding (default ON, and
- *     with PWNKIT_HUNT_NEGATIVES=1); at most ONE negative is ever attached; a
- *     novel finding's prompt is unaffected; PWNKIT_HUNT_NEGATIVES=0 restores
+ *     with 0SEC_HUNT_NEGATIVES=1); at most ONE negative is ever attached; a
+ *     novel finding's prompt is unaffected; 0SEC_HUNT_NEGATIVES=0 restores
  *     the old prompt exactly; the verifier NEVER auto-rejects on its own — it
  *     still calls the (mocked) finder and returns whatever that finder's
  *     outcome implies.
@@ -22,7 +22,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   huntNegativesEnabled,
   loadKnownNegatives,
@@ -66,22 +66,22 @@ function mkNegative(): KnownNegative {
 }
 
 describe("huntNegativesEnabled", () => {
-  it("is ON by default and OFF only for an explicit falsey PWNKIT_HUNT_NEGATIVES", () => {
-    const prev = process.env.PWNKIT_HUNT_NEGATIVES;
+  it("is ON by default and OFF only for an explicit falsey 0SEC_HUNT_NEGATIVES", () => {
+    const prev = process.env["0SEC_HUNT_NEGATIVES"];
     try {
-      delete process.env.PWNKIT_HUNT_NEGATIVES;
+      delete process.env["0SEC_HUNT_NEGATIVES"];
       expect(huntNegativesEnabled()).toBe(true);
-      process.env.PWNKIT_HUNT_NEGATIVES = "no";
+      process.env["0SEC_HUNT_NEGATIVES"] = "no";
       expect(huntNegativesEnabled()).toBe(false);
-      process.env.PWNKIT_HUNT_NEGATIVES = "0";
+      process.env["0SEC_HUNT_NEGATIVES"] = "0";
       expect(huntNegativesEnabled()).toBe(false);
-      process.env.PWNKIT_HUNT_NEGATIVES = "";
+      process.env["0SEC_HUNT_NEGATIVES"] = "";
       expect(huntNegativesEnabled()).toBe(false);
-      process.env.PWNKIT_HUNT_NEGATIVES = "1";
+      process.env["0SEC_HUNT_NEGATIVES"] = "1";
       expect(huntNegativesEnabled()).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_HUNT_NEGATIVES;
-      else process.env.PWNKIT_HUNT_NEGATIVES = prev;
+      if (prev === undefined) delete process.env["0SEC_HUNT_NEGATIVES"];
+      else process.env["0SEC_HUNT_NEGATIVES"] = prev;
     }
   });
 });
@@ -89,7 +89,7 @@ describe("huntNegativesEnabled", () => {
 describe("loadKnownNegatives / loadKnownNegativesFromEnv — bounded and inert by default", () => {
   /** A corpus of `n` refuted rows, in the JSONL shape `loadHuntCorpusRows` reads. */
   function writeCorpus(n: number, opts: { reasonChars?: number } = {}): string {
-    const path = join(tmpdir(), `pwnkit-negatives-test-${process.pid}-${Math.random().toString(36).slice(2)}.jsonl`);
+    const path = join(tmpdir(), `0sec-negatives-test-${process.pid}-${Math.random().toString(36).slice(2)}.jsonl`);
     const lines: string[] = [];
     for (let i = 0; i < n; i++) {
       lines.push(
@@ -139,7 +139,7 @@ describe("loadKnownNegatives / loadKnownNegativesFromEnv — bounded and inert b
     try {
       process.env.HUNT_CORPUS_PATH = path;
       expect(loadKnownNegativesFromEnv()).toHaveLength(3);
-      process.env.HUNT_CORPUS_PATH = join(tmpdir(), "pwnkit-does-not-exist.jsonl");
+      process.env.HUNT_CORPUS_PATH = join(tmpdir(), "0sec-does-not-exist.jsonl");
       expect(loadKnownNegativesFromEnv()).toEqual([]);
     } finally {
       rmSync(path, { force: true });
@@ -201,9 +201,9 @@ describe("negativeContext", () => {
 });
 
 describe("makeSkepticVerifier — learned-negatives wiring", () => {
-  it("attaches negative context to the prompt for a matching finding when PWNKIT_HUNT_NEGATIVES=1, but still calls the finder and honors its outcome", async () => {
-    const prev = process.env.PWNKIT_HUNT_NEGATIVES;
-    process.env.PWNKIT_HUNT_NEGATIVES = "1";
+  it("attaches negative context to the prompt for a matching finding when 0SEC_HUNT_NEGATIVES=1, but still calls the finder and honors its outcome", async () => {
+    const prev = process.env["0SEC_HUNT_NEGATIVES"];
+    process.env["0SEC_HUNT_NEGATIVES"] = "1";
     try {
       agenticScanMock.mockReset();
       let capturedHint = "";
@@ -229,14 +229,14 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
       // (survived), proving the negative note did not auto-reject anything.
       expect(result.confirmed).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_HUNT_NEGATIVES;
-      else process.env.PWNKIT_HUNT_NEGATIVES = prev;
+      if (prev === undefined) delete process.env["0SEC_HUNT_NEGATIVES"];
+      else process.env["0SEC_HUNT_NEGATIVES"] = prev;
     }
   });
 
   it("does not attach negative context for a novel finding with no matching shape", async () => {
-    const prev = process.env.PWNKIT_HUNT_NEGATIVES;
-    process.env.PWNKIT_HUNT_NEGATIVES = "1";
+    const prev = process.env["0SEC_HUNT_NEGATIVES"];
+    process.env["0SEC_HUNT_NEGATIVES"] = "1";
     try {
       agenticScanMock.mockReset();
       let capturedHint = "";
@@ -252,14 +252,14 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
 
       expect(capturedHint).not.toContain("KNOWN PRIOR REFUTE");
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_HUNT_NEGATIVES;
-      else process.env.PWNKIT_HUNT_NEGATIVES = prev;
+      if (prev === undefined) delete process.env["0SEC_HUNT_NEGATIVES"];
+      else process.env["0SEC_HUNT_NEGATIVES"] = prev;
     }
   });
 
   it("gate ON BY DEFAULT (env unset): a matching finding still gets its prior refute as context", async () => {
-    const prev = process.env.PWNKIT_HUNT_NEGATIVES;
-    delete process.env.PWNKIT_HUNT_NEGATIVES;
+    const prev = process.env["0SEC_HUNT_NEGATIVES"];
+    delete process.env["0SEC_HUNT_NEGATIVES"];
     try {
       agenticScanMock.mockReset();
       let capturedHint = "";
@@ -283,14 +283,14 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
       expect(capturedHint.match(/KNOWN PRIOR REFUTE/g)).toHaveLength(1);
       expect(result.confirmed).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_HUNT_NEGATIVES;
-      else process.env.PWNKIT_HUNT_NEGATIVES = prev;
+      if (prev === undefined) delete process.env["0SEC_HUNT_NEGATIVES"];
+      else process.env["0SEC_HUNT_NEGATIVES"] = prev;
     }
   });
 
   it("attaches at most ONE negative — the best match — even when many shapes match", async () => {
-    const prev = process.env.PWNKIT_HUNT_NEGATIVES;
-    delete process.env.PWNKIT_HUNT_NEGATIVES;
+    const prev = process.env["0SEC_HUNT_NEGATIVES"];
+    delete process.env["0SEC_HUNT_NEGATIVES"];
     try {
       agenticScanMock.mockReset();
       let capturedHint = "";
@@ -313,14 +313,14 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
 
       expect(capturedHint.match(/KNOWN PRIOR REFUTE/g)).toHaveLength(1);
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_HUNT_NEGATIVES;
-      else process.env.PWNKIT_HUNT_NEGATIVES = prev;
+      if (prev === undefined) delete process.env["0SEC_HUNT_NEGATIVES"];
+      else process.env["0SEC_HUNT_NEGATIVES"] = prev;
     }
   });
 
   it("gate explicitly OFF: no negative context attached even for a matching finding", async () => {
-    const prev = process.env.PWNKIT_HUNT_NEGATIVES;
-    process.env.PWNKIT_HUNT_NEGATIVES = "0";
+    const prev = process.env["0SEC_HUNT_NEGATIVES"];
+    process.env["0SEC_HUNT_NEGATIVES"] = "0";
     try {
       agenticScanMock.mockReset();
       let capturedHint = "";
@@ -340,8 +340,8 @@ describe("makeSkepticVerifier — learned-negatives wiring", () => {
 
       expect(capturedHint).not.toContain("KNOWN PRIOR REFUTE");
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_HUNT_NEGATIVES;
-      else process.env.PWNKIT_HUNT_NEGATIVES = prev;
+      if (prev === undefined) delete process.env["0SEC_HUNT_NEGATIVES"];
+      else process.env["0SEC_HUNT_NEGATIVES"] = prev;
     }
   });
 });

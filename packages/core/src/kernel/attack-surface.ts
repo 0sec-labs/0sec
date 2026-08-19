@@ -1,5 +1,5 @@
 /**
- * Known kernel attack-surface enumeration (pwnkit#471).
+ * Known kernel attack-surface enumeration (0sec#471).
  *
  * Provides a curated database of historically high-risk kernel subsystems
  * together with their CONFIG_* options, file paths, CVE density, and

@@ -1,7 +1,7 @@
 /**
  * The verify funnel — one verdict contract + one disclosure predicate.
  *
- * Verification in pwnkit happens on two separate scan loops that stay separate
+ * Verification in 0sec happens on two separate scan loops that stay separate
  * by design (different domains):
  *   - the agentic/web path (`agentic-scanner.ts` → structured verify +
  *     self-consistency, then `runNativeVerify`), and
@@ -25,7 +25,7 @@
  * implementations behaviour-compatible.
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   canAutoSuppressDetailed,
   type AutoSuppressGuard,

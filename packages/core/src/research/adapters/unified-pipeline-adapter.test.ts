@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { PipelineReport } from "../../unified-pipeline.js";
 import { runResearch } from "../research-runner.js";
 import { UnifiedPipelineResearchAdapter, type UnifiedPipelineTarget } from "./unified-pipeline-adapter.js";
@@ -28,7 +28,7 @@ describe("UnifiedPipelineResearchAdapter", () => {
       kind: "pipeline.unified", id: "web", location: report.target,
       config: { options: { targetType: "web-app", depth: "quick", format: "json" } },
     };
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-unified-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-unified-"));
     roots.push(artifactRoot);
     const result = await runResearch(new UnifiedPipelineResearchAdapter(pipeline), target, { artifactRoot, runId: "pipeline-run" });
 
@@ -49,7 +49,7 @@ describe("UnifiedPipelineResearchAdapter", () => {
       summary: { totalAttacks: 1, totalFindings: 1, critical: 0, high: 1, medium: 0, low: 0, info: 0 },
       findings: [finding], warnings: [],
     } as PipelineReport;
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-unified-held-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-unified-held-"));
     roots.push(root);
     const result = await runResearch(new UnifiedPipelineResearchAdapter(async () => report), {
       kind: "pipeline.unified", id: "held", location: "/src",

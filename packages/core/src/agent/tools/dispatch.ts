@@ -1,5 +1,5 @@
 /**
- * Tool dispatch table (pwnkit#614).
+ * Tool dispatch table (0sec#614).
  *
  * Merges every per-domain `*Dispatch` map (tool name → ToolExecutor handler
  * method name) into one lookup table. `ToolExecutor._dispatch` resolves the

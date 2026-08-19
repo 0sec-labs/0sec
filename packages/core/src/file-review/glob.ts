@@ -1,6 +1,6 @@
 // Minimal glob matching for the file-review pipeline. Supports the subset
 // deepsec's scanner/coverage layers use: `**`, `*`, `?`, `{a,b}`. No
-// dependency added to @pwnkit/core for this — patterns compile to anchored
+// dependency added to @0sec/core for this — patterns compile to anchored
 // regexes and matching is pure string work.
 
 const GLOB_SPECIALS = /[.+^${}()|[\]\\]/g;

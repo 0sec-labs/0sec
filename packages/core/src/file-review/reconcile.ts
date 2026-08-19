@@ -3,7 +3,7 @@
 // and fully testable — no network, no process spawning.
 
 import type { ReviewFileRecord, ReviewRevalidationVerdict } from "./types.js";
-import type { Severity } from "@pwnkit/shared";
+import type { Severity } from "@0sec/shared";
 
 // ── Inline JSON extractor ───────────────────────────────────────────────────
 // (parse.ts not yet created — extractFencedJson lives here for now)

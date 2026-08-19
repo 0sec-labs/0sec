@@ -44,12 +44,12 @@ async function fetchKevCatalog(
   opts: FetchOptions,
 ): Promise<KevCatalog> {
   const cache = new IntelCache(input.cacheDir);
-  const url = process.env.PWNKIT_CISA_KEV_URL ?? DEFAULT_KEV_URL;
+  const url = process.env["0SEC_CISA_KEV_URL"] ?? DEFAULT_KEV_URL;
   return await cachedJson<KevCatalog>(
     cache,
     "cisa-kev",
     url,
-    async () => await fetchJson(url, { headers: { "User-Agent": "pwnkit-intel/0.1" } }, opts) as KevCatalog,
+    async () => await fetchJson(url, { headers: { "User-Agent": "0sec-intel/0.1" } }, opts) as KevCatalog,
     { offline: input.offline, ttlMs: input.ttlMs },
   );
 }

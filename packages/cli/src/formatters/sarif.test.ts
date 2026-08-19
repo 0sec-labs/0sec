@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ScanReport } from "@pwnkit/shared";
+import type { ScanReport } from "@0sec/shared";
 import { formatSarif } from "./sarif.js";
 
 describe("formatSarif", () => {
@@ -23,7 +23,7 @@ describe("formatSarif", () => {
       findings: [
         {
           id: "finding-1",
-          templateId: "pwnkit:path-traversal",
+          templateId: "0sec:path-traversal",
           title: "Path traversal reads secrets",
           description: "A crafted path reads /etc/passwd.",
           severity: "high",
@@ -71,7 +71,7 @@ describe("formatSarif", () => {
     const result = sarif.runs[0].results[0];
 
     expect(sarif.version).toBe("2.1.0");
-    expect(result.partialFingerprints.primary).toBe("stable-fp|pwnkit:path-traversal|path-traversal|Path traversal reads secrets|pkg/file.ts");
+    expect(result.partialFingerprints.primary).toBe("stable-fp|0sec:path-traversal|path-traversal|Path traversal reads secrets|pkg/file.ts");
     expect(result.properties.evidence.request).toContain("../../etc/passwd");
     expect(result.properties.verificationResult.status).toBe("reproduced");
     expect(result.codeFlows[0].threadFlows[0].locations[0].location.message.text).toBe("exploit: Request traversal payload");
@@ -93,7 +93,7 @@ describe("formatSarif", () => {
       findings: [
         {
           id: "finding-2",
-          templateId: "pwnkit:test",
+          templateId: "0sec:test",
           title: "Test finding",
           description: "A finding with dedupe info.",
           severity: "high",
@@ -136,7 +136,7 @@ describe("formatSarif", () => {
       findings: [
         {
           id: "finding-3",
-          templateId: "pwnkit:test",
+          templateId: "0sec:test",
           title: "Ranked finding",
           description: "A finding with rank.",
           severity: "high",
@@ -169,7 +169,7 @@ describe("formatSarif", () => {
       findings: [
         {
           id: "finding-4",
-          templateId: "pwnkit:test",
+          templateId: "0sec:test",
           title: "Clean finding",
           description: "No dedupe or rank.",
           severity: "medium",

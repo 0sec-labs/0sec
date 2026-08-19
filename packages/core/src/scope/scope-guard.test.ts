@@ -1,5 +1,5 @@
 /**
- * Unit tests for the scope-guard visibility vocabulary (pwnkit#133).
+ * Unit tests for the scope-guard visibility vocabulary (0sec#133).
  *
  * These pin the *contract* the two call sites depend on:
  *   - the inert-guard list is non-empty and names the bash guards, so the
@@ -19,7 +19,7 @@ import {
   SCOPE_GUARDS_INERT_EVENT,
 } from "./scope-guard.js";
 
-describe("describeScopeGuards (pwnkit#133)", () => {
+describe("describeScopeGuards (0sec#133)", () => {
   it("reports the guards as active when a scope is configured, with nothing inert", () => {
     const status = describeScopeGuards(true, {});
     expect(status.active).toBe(true);
@@ -52,22 +52,22 @@ describe("describeScopeGuards (pwnkit#133)", () => {
   });
 });
 
-describe("isScopeRequired (PWNKIT_REQUIRE_SCOPE)", () => {
+describe("isScopeRequired (0SEC_REQUIRE_SCOPE)", () => {
   it("defaults to false so today's unscoped scan modes keep running", () => {
     expect(isScopeRequired({})).toBe(false);
-    expect(isScopeRequired({ PWNKIT_REQUIRE_SCOPE: "" })).toBe(false);
-    expect(isScopeRequired({ PWNKIT_REQUIRE_SCOPE: "0" })).toBe(false);
-    expect(isScopeRequired({ PWNKIT_REQUIRE_SCOPE: "false" })).toBe(false);
+    expect(isScopeRequired({ "0SEC_REQUIRE_SCOPE": "" })).toBe(false);
+    expect(isScopeRequired({ "0SEC_REQUIRE_SCOPE": "0" })).toBe(false);
+    expect(isScopeRequired({ "0SEC_REQUIRE_SCOPE": "false" })).toBe(false);
   });
 
   it("accepts the usual truthy spellings", () => {
     for (const raw of ["1", "true", "TRUE", "yes", " on "]) {
-      expect(isScopeRequired({ PWNKIT_REQUIRE_SCOPE: raw })).toBe(true);
+      expect(isScopeRequired({ "0SEC_REQUIRE_SCOPE": raw })).toBe(true);
     }
   });
 
   it("threads through describeScopeGuards as `required`", () => {
-    expect(describeScopeGuards(false, { PWNKIT_REQUIRE_SCOPE: "1" }).required).toBe(true);
+    expect(describeScopeGuards(false, { "0SEC_REQUIRE_SCOPE": "1" }).required).toBe(true);
     expect(describeScopeGuards(false, {}).required).toBe(false);
   });
 });
@@ -76,7 +76,7 @@ describe("scopeRequiredRefusal", () => {
   it("names the site and tells the operator how to fix it", () => {
     const msg = scopeRequiredRefusal("bash");
     expect(msg).toMatch(/^bash refused:/);
-    expect(msg).toMatch(/PWNKIT_REQUIRE_SCOPE/);
+    expect(msg).toMatch(/0SEC_REQUIRE_SCOPE/);
     expect(msg).toMatch(/--scope/);
   });
 });

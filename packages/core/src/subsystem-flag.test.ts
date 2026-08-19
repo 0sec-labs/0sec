@@ -1,5 +1,5 @@
 /**
- * Tests for the `--subsystem` flag implementation (pwnkit#466).
+ * Tests for the `--subsystem` flag implementation (0sec#466).
  *
  * Covers:
  *   - `parseSubsystems` utility: single, multiple, trailing-slash normalisation

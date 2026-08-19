@@ -143,7 +143,7 @@ describe("providerSupportsPromptCache", () => {
   const origEnv = { ...process.env };
 
   beforeEach(() => {
-    delete process.env.PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS;
+    delete process.env["0SEC_PROMPT_CACHE_EXTRA_PROVIDERS"];
   });
 
   afterEach(() => {
@@ -168,13 +168,13 @@ describe("providerSupportsPromptCache", () => {
   });
 
   it("honours the opt-in env allowlist", () => {
-    process.env.PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS = "z-ai, kimi";
+    process.env["0SEC_PROMPT_CACHE_EXTRA_PROVIDERS"] = "z-ai, kimi";
     expect(providerSupportsPromptCache("z-ai")).toBe(true);
     expect(providerSupportsPromptCache("kimi")).toBe(true);
   });
 
   it("fails closed — the allowlist cannot enable a non-Anthropic wire", () => {
-    process.env.PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS = "openai,azure,bogus";
+    process.env["0SEC_PROMPT_CACHE_EXTRA_PROVIDERS"] = "openai,azure,bogus";
     expect(providerSupportsPromptCache("openai")).toBe(false);
     expect(providerSupportsPromptCache("azure")).toBe(false);
     expect(providerSupportsPromptCache("bogus")).toBe(false);

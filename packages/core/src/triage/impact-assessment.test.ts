@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { NativeRuntime, NativeRuntimeResult } from "../runtime/types.js";
 import {
   assessImpact,

@@ -38,7 +38,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import type { NativeRuntime } from "../runtime/types.js";
 
@@ -431,7 +431,7 @@ export function makeLloreJudge(
   const attempts = Math.max(1, opts.attempts ?? 3);
   return async (query, candidates) => {
     if (candidates.length === 0) return [];
-    const debug = !!process.env.PWNKIT_NOVELTY_DEBUG;
+    const debug = !!process.env["0SEC_NOVELTY_DEBUG"];
     const runtime: NativeRuntime = new LlmApiRuntime({
       type: "api",
       timeout: opts.timeoutMs ?? 120_000,

@@ -1,8 +1,8 @@
 /**
- * Engagement-gated scanner-wrapper tool definitions (pwnkit#611 — split out of the monolithic
+ * Engagement-gated scanner-wrapper tool definitions (0sec#611 — split out of the monolithic
  * agent/tools.ts registry).
  *
- * Structured sqlmap/nmap/ffuf/nuclei wrappers (pwnkit#555), exposed only
+ * Structured sqlmap/nmap/ffuf/nuclei wrappers (0sec#555), exposed only
  * when the engagement passed --allow-scanners.
  *
  * Pure `ToolDefinition` metadata (name / description / parameter schema). The
@@ -13,7 +13,7 @@
 import type { ToolDefinition } from "../types.js";
 
 export const scannerToolDefinitions: Record<string, ToolDefinition> = {
-  // ── Engagement-gated structured scanner wrappers (pwnkit#555) ──
+  // ── Engagement-gated structured scanner wrappers (0sec#555) ──
   // These are ONLY present in the tool set when the engagement passed
   // --allow-scanners (ctx.allowScanners). See getToolsForRole + SCANNER_TOOL_NAMES.
   // They build a safe argv (no shell concat), enforce scope + rate-limit +
@@ -81,10 +81,10 @@ export const scannerToolDefinitions: Record<string, ToolDefinition> = {
 };
 
 /**
- * Names of the engagement-gated structured scanner wrappers (pwnkit#555).
+ * Names of the engagement-gated structured scanner wrappers (0sec#555).
  * These are exposed ONLY when the engagement passed --allow-scanners
  * (`opts.allowScanners`), preserving the stealthy generic-scanner-suppression
- * default (pwnkit#217). Kept as a module constant so both the role tool sets
+ * default (0sec#217). Kept as a module constant so both the role tool sets
  * and the `allEnabledTools` (audit/review) path filter on the same source.
  */
 export const SCANNER_TOOL_NAMES: ReadonlyArray<string> = [
@@ -94,7 +94,7 @@ export const SCANNER_TOOL_NAMES: ReadonlyArray<string> = [
   "run_nuclei",
 ];
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
 // this domain's definitions so a new tool adds its route here, not in a
 // shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
 // executor instance in agent/tools.ts (handler bodies stay private methods).

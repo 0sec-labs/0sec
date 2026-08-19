@@ -17,7 +17,7 @@ import {
 } from "./windows-lpe-paired-corpus.js";
 
 export const MSRC_WINDOWS_LPE_CAPABILITY_PROMOTION_SCHEMA =
-  "pwnkit.msrc-windows-lpe-capability-promotion/v1" as const;
+  "0sec.msrc-windows-lpe-capability-promotion/v1" as const;
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const CVE = /^CVE-[12][0-9]{3}-[0-9]{4,}$/;

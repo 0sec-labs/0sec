@@ -11,7 +11,7 @@ export interface Challenge {
   description: string;
   /** The flag hidden behind the vulnerability */
   flag: string;
-  /** Expected finding categories from pwnkit */
+  /** Expected finding categories from 0sec */
   expectedCategories: string[];
   /** Mount the challenge's HTTP handler on the express app */
   mount: (app: Express) => void;

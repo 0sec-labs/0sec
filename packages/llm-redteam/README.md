@@ -1,4 +1,4 @@
-# @pwnkit/llm-redteam
+# @0sec/llm-redteam
 
 Offensive LLM/agent **indirect-prompt-injection** engine — the attack-side mirror
 of `packages/benchmark`'s detection suite. Point it at any LLM/agent target,
@@ -27,7 +27,7 @@ frontier models.
 ## CLI
 
 ```bash
-pnpm --filter @pwnkit/llm-redteam build
+pnpm --filter @0sec/llm-redteam build
 node dist/cli.js strategies                 # list the strategy library
 node dist/cli.js gen install-package        # print generated candidate payloads
 node dist/cli.js run install-package        # campaign vs simulated models (no network)

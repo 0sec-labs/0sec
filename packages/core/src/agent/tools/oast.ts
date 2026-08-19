@@ -1,5 +1,5 @@
 /**
- * OAST (out-of-band interaction) tool definitions (pwnkit#659 — split out of the
+ * OAST (out-of-band interaction) tool definitions (0sec#659 — split out of the
  * monolithic agent/tools.ts registry, mirrors intel.ts / cloud.ts).
  *
  * Two tools let the native loop weaponize blind/out-of-band classes mid-scan:
@@ -62,7 +62,7 @@ export const oastToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614). Assembled by
+// Tool-name → ToolExecutor handler-method name (0sec#614). Assembled by
 // ./dispatch.ts; resolved off the executor instance in agent/tools.ts.
 export const oastDispatch: Record<string, string> = {
   oast_register: "oastRegister",

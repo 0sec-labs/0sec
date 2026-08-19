@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import type { NpmAuditFinding, Severity } from "@pwnkit/shared";
+import type { NpmAuditFinding, Severity } from "@0sec/shared";
 import type { ScanListener } from "./scanner.js";
 import { restoreHistoricalPackageFixture, shouldUseHistoricalPackageFallback } from "./historical-package-fallback.js";
 import { bufferToString } from "./shared-analysis.js";
@@ -325,7 +325,7 @@ function installNpmPackage(
   requestedVersion: string | undefined,
   emit: ScanListener,
 ): InstalledPackage {
-  const tempDir = join(tmpdir(), `pwnkit-audit-${randomUUID().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `0sec-audit-${randomUUID().slice(0, 8)}`);
   mkdirSync(tempDir, { recursive: true });
 
   const spec = requestedVersion ? `${packageName}@${requestedVersion}` : `${packageName}@latest`;
@@ -523,7 +523,7 @@ if not choices:
 choice = choices[0]
 filename = choice.get("filename") or pathlib.PurePosixPath(urllib.parse.urlparse(choice["url"]).path).name
 archive_path = download_dir / filename
-request = urllib.request.Request(choice["url"], headers={"User-Agent": "pwnkit-ci/0.1 (+https://github.com/0sec-labs/0sec)"})
+request = urllib.request.Request(choice["url"], headers={"User-Agent": "0sec-ci/0.1 (+https://github.com/0sec-labs/0sec)"})
 with urllib.request.urlopen(request, timeout=120) as response, archive_path.open("wb") as handle:
     handle.write(response.read())
 
@@ -546,7 +546,7 @@ function installPypiPackage(
   requestedVersion: string | undefined,
   emit: ScanListener,
 ): InstalledPackage {
-  const tempDir = join(tmpdir(), `pwnkit-audit-${randomUUID().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `0sec-audit-${randomUUID().slice(0, 8)}`);
   const downloadDir = join(tempDir, "downloads");
   const extractDir = join(tempDir, "src");
   mkdirSync(downloadDir, { recursive: true });
@@ -626,7 +626,7 @@ function installCargoPackage(
   requestedVersion: string | undefined,
   emit: ScanListener,
 ): InstalledPackage {
-  const tempDir = join(tmpdir(), `pwnkit-audit-${randomUUID().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `0sec-audit-${randomUUID().slice(0, 8)}`);
   const downloadDir = join(tempDir, "downloads");
   const extractDir = join(tempDir, "src");
   mkdirSync(downloadDir, { recursive: true });
@@ -669,7 +669,7 @@ function installCargoPackage(
 
   writeFileSync(
     join(tempDir, "Cargo.toml"),
-    `[package]\nname = "pwnkit-cargo-audit"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n${packageName} = "${resolvedVersion}"\n`,
+    `[package]\nname = "0sec-cargo-audit"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n${packageName} = "${resolvedVersion}"\n`,
     "utf8",
   );
   mkdirSync(join(tempDir, "src"), { recursive: true });
@@ -705,7 +705,7 @@ function buildCratesIoCurlArgs(url: string): string[] {
     "--connect-timeout",
     "20",
     "-H",
-    "User-Agent: pwnkit-ci/0.1 (+https://github.com/0sec-labs/0sec)",
+    "User-Agent: 0sec-ci/0.1 (+https://github.com/0sec-labs/0sec)",
     url,
   ];
 }
@@ -806,7 +806,7 @@ function installOciImage(
   requestedVersion: string | undefined,
   emit: ScanListener,
 ): InstalledPackage {
-  const tempDir = join(tmpdir(), `pwnkit-audit-${randomUUID().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `0sec-audit-${randomUUID().slice(0, 8)}`);
   const rootfsDir = join(tempDir, "rootfs");
   const exportTar = join(tempDir, "image.tar");
   mkdirSync(rootfsDir, { recursive: true });
@@ -1074,7 +1074,7 @@ export async function probePublicNpmRegistry(
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
   try {
     const res = await fetchImpl(url, {
-      headers: { Accept: "application/json", "User-Agent": "pwnkit-supply-chain/0.1" },
+      headers: { Accept: "application/json", "User-Agent": "0sec-supply-chain/0.1" },
       signal: controller.signal,
     });
     if (res.status === 404) return { exists: false };

@@ -236,7 +236,7 @@ describe("translateFoxguardJson", () => {
     expect(findings[0]!.ruleId).toBe("good");
   });
 
-  it("normalizes severity values into pwnkit's vocabulary (low/medium/high/critical/info)", () => {
+  it("normalizes severity values into 0sec's vocabulary (low/medium/high/critical/info)", () => {
     const json = JSON.stringify([
       { rule_id: "a", severity: "low", description: "", file: "a", line: 1 },
       { rule_id: "b", severity: "medium", description: "", file: "a", line: 1 },

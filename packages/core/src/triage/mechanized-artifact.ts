@@ -1,5 +1,5 @@
 /**
- * Engine C — the mechanized-artifact oracle (pwnkit#1228).
+ * Engine C — the mechanized-artifact oracle (0sec#1228).
  *
  * The FP-killer that converts LLM RECALL into PRECISION. The field's #1
  * convergent bottleneck (docs/operations/llm-lpe-innovation-plan.md): LLM
@@ -59,7 +59,7 @@
  */
 
 import { z } from "zod";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { CrashArtifact } from "./memsafety-types.js";
 import { isReproducedMemCorruption } from "./pov-gate.js";
 import type { VerifyVerdict, VerifySignal } from "./verify-verdict.js";

@@ -3,7 +3,7 @@
 /**
  * Cybench Benchmark Runner
  *
- * Runs pwnkit against the Cybench benchmark suite (40 real CTF challenges from
+ * Runs 0sec against the Cybench benchmark suite (40 real CTF challenges from
  * HackTheBox, project-sekai-ctf, GlacierCTF, hkcert-ctf, and other CTF platforms).
  * Categories: web, crypto, pwn, reverse, forensics, misc.
  *
@@ -31,9 +31,9 @@ import { execSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agenticScan } from "@pwnkit/core";
+import { agenticScan } from "@0sec/core";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CYBENCH_PATH = process.env.CYBENCH_PATH ?? "/tmp/cybench";
@@ -327,7 +327,7 @@ async function runChallengeOnce(challenge: CybenchChallenge): Promise<CybenchRes
   const hint = buildHint(challenge);
 
   try {
-    const dbPath = join(tmpdir(), `pwnkit-cybench-${challenge.id}-${Date.now()}.db`);
+    const dbPath = join(tmpdir(), `0sec-cybench-${challenge.id}-${Date.now()}.db`);
     const report = await agenticScan({
       config: {
         target,
@@ -431,7 +431,7 @@ async function main() {
   challenges = challenges.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log("\x1b[36m\x1b[1m  pwnkit x Cybench benchmark\x1b[0m");
+    console.log("\x1b[36m\x1b[1m  0sec x Cybench benchmark\x1b[0m");
     console.log(`  challenges: ${challenges.length}  retries: ${retries}`);
     console.log("");
   }

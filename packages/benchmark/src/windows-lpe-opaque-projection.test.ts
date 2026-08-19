@@ -286,7 +286,7 @@ describe("Windows LPE opaque holdout projection", () => {
 
   it("uses duplicate-key-safe nofollow loading and an agent mount containing projection.json only", () => {
     const bundle = createWindowsLpeOpaqueProjection(copy(fixture), { randomSource: deterministicRandom() });
-    const directory = mkdtempSync(resolve(tmpdir(), "pwnkit-opaque-projection-"));
+    const directory = mkdtempSync(resolve(tmpdir(), "0sec-opaque-projection-"));
     const outside = resolve(directory, "../outside-projection.json");
     try {
       const path = resolve(directory, "projection.json");
@@ -304,7 +304,7 @@ describe("Windows LPE opaque holdout projection", () => {
       rmSync(resolve(directory, "resolver.json"));
 
       chmodSync(path, 0o644);
-      writeFileSync(path, '{"schemaVersion":"pwnkit.windows-lpe-agent-projection/v1","schemaVersion":"shadow"}');
+      writeFileSync(path, '{"schemaVersion":"0sec.windows-lpe-agent-projection/v1","schemaVersion":"shadow"}');
       expect(() => loadWindowsLpeAgentProjection(path)).toThrow(/duplicate JSON key/);
       rmSync(path);
       writeFileSync(outside, JSON.stringify(bundle.projection));

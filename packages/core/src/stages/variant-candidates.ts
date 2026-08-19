@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import type { HuntBrief, HuntCandidate } from "./hunt-scan.js";
 import { applyReachabilityGate } from "./hunt-reachability.js";

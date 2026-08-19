@@ -3,14 +3,14 @@ import { scannerEngagementGate } from "./scanner-profile.js";
 import { ScopePolicy } from "../scope/scope.js";
 import { EnforcementTracker, PathPolicy } from "../scope/enforcement.js";
 
-// ── Authorized-engagement scanner profile gate (pwnkit#926) ──
+// ── Authorized-engagement scanner profile gate (0sec#926) ──
 //
 // Pure verdict function: no IO. We exercise the four rails (ENABLED / SCOPED /
 // IN-SCOPE / NOT-KILLED) directly, plus the http_audit path-allowlist leg.
 
 const scope = ScopePolicy.fromJson({ in_scope: ["*.example.com"] });
 
-describe("scannerEngagementGate — default OFF (pwnkit#217 stealth preserved)", () => {
+describe("scannerEngagementGate — default OFF (0sec#217 stealth preserved)", () => {
   it("refuses when allowScanners is unset (the safe default)", () => {
     const v = scannerEngagementGate("run_sqlmap", "https://api.example.com/?id=1", {
       scope,
@@ -30,7 +30,7 @@ describe("scannerEngagementGate — default OFF (pwnkit#217 stealth preserved)",
   });
 });
 
-describe("scannerEngagementGate — deny-by-default scope (pwnkit#926)", () => {
+describe("scannerEngagementGate — deny-by-default scope (0sec#926)", () => {
   it("refuses when allowScanners is true but NO scope policy is configured", () => {
     const v = scannerEngagementGate("run_sqlmap", "https://anything.test/?id=1", {
       allowScanners: true,

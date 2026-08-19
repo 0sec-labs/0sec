@@ -20,7 +20,7 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerDiscloseCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
 function reproducedFinding() {
@@ -39,7 +39,7 @@ function reproducedFinding() {
   };
 }
 
-describe("pwnkit disclose evidence-pack", () => {
+describe("0sec disclose evidence-pack", () => {
   let io: ReturnType<typeof captureIO>;
   let dir: string;
 

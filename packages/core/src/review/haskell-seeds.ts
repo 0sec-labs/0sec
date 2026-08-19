@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SemgrepFinding } from "@pwnkit/shared";
+import type { SemgrepFinding } from "@0sec/shared";
 
 /**
  * Haskell static-analysis SEED layer for the `cardano-haskell` review profile.

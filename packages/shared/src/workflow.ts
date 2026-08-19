@@ -1,10 +1,10 @@
-// ── YAML-defined FSM workflows (pwnkit#225) ─────────────────────────────────
+// ── YAML-defined FSM workflows (0sec#225) ─────────────────────────────────
 //
 // A workflow is a small finite-state machine that an orchestrator can step
 // through: each `state` invokes a named specialist, then transitions to the
 // next state based on the result. The shape here is the static-validation
 // surface — orchestrator interpretation (the actual specialist dispatch +
-// state transition loop) lives in pwnkit#249 and is out of scope for this
+// state transition loop) lives in 0sec#249 and is out of scope for this
 // schema PR.
 //
 // The schema is intentionally tiny:

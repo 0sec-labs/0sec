@@ -10,13 +10,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { agenticScan } from "./agentic-scanner.js";
 import { LlmApiRuntime } from "./runtime/llm-api.js";
-import type { ScanConfig } from "@pwnkit/shared";
+import type { ScanConfig } from "@0sec/shared";
 import type { ScanEvent } from "./scanner.js";
 
 function tmpDbPath(): string {
   return path.join(
     os.tmpdir(),
-    `pwnkit-scope-guard-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
+    `0sec-scope-guard-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
   );
 }
 
@@ -30,15 +30,15 @@ function baseConfig(overrides: Partial<ScanConfig> = {}): ScanConfig {
   } as ScanConfig;
 }
 
-describe("agenticScan — scope-guard visibility (pwnkit#133)", () => {
+describe("agenticScan — scope-guard visibility (0sec#133)", () => {
   let dbPath: string;
   let events: ScanEvent[];
-  const ORIGINAL_REQUIRE_SCOPE = process.env.PWNKIT_REQUIRE_SCOPE;
+  const ORIGINAL_REQUIRE_SCOPE = process.env["0SEC_REQUIRE_SCOPE"];
 
   beforeEach(() => {
     dbPath = tmpDbPath();
     events = [];
-    delete process.env.PWNKIT_REQUIRE_SCOPE;
+    delete process.env["0SEC_REQUIRE_SCOPE"];
     // Don't let a developer's persisted provider login turn these into live
     // native scans (same guard as agentic-scanner.events.test.ts).
     vi.spyOn(LlmApiRuntime.prototype, "getConfigurationDiagnostics").mockReturnValue({
@@ -51,8 +51,8 @@ describe("agenticScan — scope-guard visibility (pwnkit#133)", () => {
 
   afterEach(() => {
     try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
-    if (ORIGINAL_REQUIRE_SCOPE === undefined) delete process.env.PWNKIT_REQUIRE_SCOPE;
-    else process.env.PWNKIT_REQUIRE_SCOPE = ORIGINAL_REQUIRE_SCOPE;
+    if (ORIGINAL_REQUIRE_SCOPE === undefined) delete process.env["0SEC_REQUIRE_SCOPE"];
+    else process.env["0SEC_REQUIRE_SCOPE"] = ORIGINAL_REQUIRE_SCOPE;
     vi.restoreAllMocks();
   });
 
@@ -72,14 +72,14 @@ describe("agenticScan — scope-guard visibility (pwnkit#133)", () => {
   });
 
   it("keeps the global strictness switch for unscoped local modes", async () => {
-    process.env.PWNKIT_REQUIRE_SCOPE = "1";
+    process.env["0SEC_REQUIRE_SCOPE"] = "1";
     await expect(
       agenticScan({
         config: baseConfig({ target: "lodash" }),
         dbPath,
         onEvent: (e) => { events.push(e); },
       }),
-    ).rejects.toThrow(/PWNKIT_REQUIRE_SCOPE is set but no engagement scope is configured/);
+    ).rejects.toThrow(/0SEC_REQUIRE_SCOPE is set but no engagement scope is configured/);
   });
 
   it("stays silent when http_audit synthesises a host policy (guards active)", async () => {

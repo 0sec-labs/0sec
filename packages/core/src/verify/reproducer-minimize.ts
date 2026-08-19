@@ -1,5 +1,5 @@
 /**
- * Reproducer minimization (pwnkit#569).
+ * Reproducer minimization (0sec#569).
  *
  * A confirmed kernel reproducer is rarely minimal — syzkaller programs carry
  * dozens of incidental syscalls, and agent-authored C reproducers carry setup
@@ -17,7 +17,7 @@
  */
 
 import type { KernelVerifyRunner, KernelVerifyRunnerInput } from "./kernel-verify-types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 

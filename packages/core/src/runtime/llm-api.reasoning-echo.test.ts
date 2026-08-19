@@ -184,8 +184,8 @@ describe("Responses reasoning echo-back", () => {
   it("reconstructs matching items when retained reasoning is disabled for an A/B run", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     stubFetchCapturing(bodies, [completedEvent([])]);
-    const previous = process.env.PWNKIT_FEATURE_RETAINED_REASONING;
-    process.env.PWNKIT_FEATURE_RETAINED_REASONING = "0";
+    const previous = process.env["0SEC_FEATURE_RETAINED_REASONING"];
+    process.env["0SEC_FEATURE_RETAINED_REASONING"] = "0";
     try {
       await rt.executeNative("sys", [
         { role: "user", content: [{ type: "text", text: "go" }] },
@@ -204,8 +204,8 @@ describe("Responses reasoning echo-back", () => {
         },
       ], []);
     } finally {
-      if (previous === undefined) delete process.env.PWNKIT_FEATURE_RETAINED_REASONING;
-      else process.env.PWNKIT_FEATURE_RETAINED_REASONING = previous;
+      if (previous === undefined) delete process.env["0SEC_FEATURE_RETAINED_REASONING"];
+      else process.env["0SEC_FEATURE_RETAINED_REASONING"] = previous;
     }
 
     const input = bodies[0]!.input as Array<Record<string, unknown>>;

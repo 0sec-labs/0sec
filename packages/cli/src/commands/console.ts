@@ -9,7 +9,7 @@ import {
   type ConsoleSession,
   type ToolCall,
   type ToolResult,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 interface ConsoleOptions {
   target?: string;
@@ -20,12 +20,12 @@ interface ConsoleOptions {
 }
 
 /**
- * `pwnkit console` — the unified interactive chat cockpit.
+ * `0sec console` — the unified interactive chat cockpit.
  *
  * A single conversational surface where the operator talks to the engine and it
- * can invoke every pwnkit tool (recon, web pentest, source/package scan,
+ * can invoke every 0sec tool (recon, web pentest, source/package scan,
  * variant hunt, verify, patch-gen) in one place. Thin REPL over the engine-side
- * driver in `@pwnkit/core` (`createConsoleSession`) — the tool registry and LLM
+ * driver in `@0sec/core` (`createConsoleSession`) — the tool registry and LLM
  * runtime are the real ones the autonomous scanner uses; this command only owns
  * terminal I/O and rendering.
  */
@@ -183,7 +183,7 @@ function previewResult(result: ToolResult): string {
 
 function printBanner(session: ConsoleSession, target?: string): void {
   console.log("");
-  console.log(chalk.bold("pwnkit console") + chalk.dim(" — interactive operator cockpit"));
+  console.log(chalk.bold("0sec console") + chalk.dim(" — interactive operator cockpit"));
   console.log(chalk.dim(`  session ${session.scanId}`));
   console.log(chalk.dim(`  ${session.tools.length} tools available${target ? ` · target ${target}` : " · no target set"}`));
   console.log(chalk.dim("  /tools list · /help commands · /exit quit"));

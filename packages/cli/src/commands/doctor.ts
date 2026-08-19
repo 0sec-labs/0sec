@@ -19,7 +19,7 @@ export function registerDoctorCommand(program: Command): void {
       const hasSupportedNode = nodeMajor >= 20;
 
       console.log("");
-      console.log(chalk.red.bold("  ◆ pwnkit") + chalk.gray(" doctor"));
+      console.log(chalk.red.bold("  ◆ 0sec") + chalk.gray(" doctor"));
       console.log("");
       console.log(`  Node.js       ${hasSupportedNode ? chalk.green("ok") : chalk.red("bad")}  ${process.version}`);
       const apiStatus = hasApiKey
@@ -32,16 +32,16 @@ export function registerDoctorCommand(program: Command): void {
       console.log("");
 
       if (!hasSupportedNode) {
-        console.log(chalk.red("  Upgrade to Node 20+ before running pwnkit."));
+        console.log(chalk.red("  Upgrade to Node 20+ before running 0sec."));
       } else if (apiRuntime.configured && !apiRuntime.valid && apiRuntime.error) {
         console.log(chalk.red("  API runtime is configured but unusable."));
         console.log(chalk.gray(`  ${apiRuntime.error.split("\n").join("\n  ")}`));
       } else if (hasApiKey || availableRuntimes.length > 0) {
         console.log(chalk.green("  Ready to scan."));
         console.log(chalk.gray("  Try one of:"));
-        console.log(chalk.gray("    pwnkit scan --target https://example.com --mode web"));
-        console.log(chalk.gray("    pwnkit review ."));
-        console.log(chalk.gray("    pwnkit audit express"));
+        console.log(chalk.gray("    0sec scan --target https://example.com --mode web"));
+        console.log(chalk.gray("    0sec review ."));
+        console.log(chalk.gray("    0sec audit express"));
       } else {
         console.log(chalk.yellow("  Next step: install Claude/Codex/Gemini CLI or set an API key."));
       }

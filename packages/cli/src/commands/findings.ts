@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import chalk from "chalk";
-import type { Finding, FindingTriageStatus, LayerVerdict } from "@pwnkit/shared";
+import type { Finding, FindingTriageStatus, LayerVerdict } from "@0sec/shared";
 
 type FindingsListOptions = {
   dbPath?: string;
@@ -162,8 +162,8 @@ function groupFindings(rows: FindingRow[]): Array<{
 }
 
 async function renderFindingsList(opts: FindingsListOptions): Promise<void> {
-  const { pwnkitDB } = await import("@pwnkit/db");
-  const db = new pwnkitDB(opts.dbPath);
+  const { osecDB } = await import("@0sec/db");
+  const db = new osecDB(opts.dbPath);
   const rows = db.listFindings({
     scanId: opts.scan,
     severity: opts.severity,
@@ -180,7 +180,7 @@ async function renderFindingsList(opts: FindingsListOptions): Promise<void> {
   }
 
   console.log("");
-  console.log(chalk.red.bold("  \u25C6 pwnkit") + chalk.gray(opts.all ? ` findings (${rows.length})` : ` finding groups (${groupFindings(rows).length})`));
+  console.log(chalk.red.bold("  \u25C6 0sec") + chalk.gray(opts.all ? ` findings (${rows.length})` : ` finding groups (${groupFindings(rows).length})`));
   console.log("");
 
   if (opts.all) {
@@ -217,8 +217,8 @@ async function mutateTriage(
   triageNote: string | undefined,
   dbPath?: string,
 ): Promise<void> {
-  const { pwnkitDB } = await import("@pwnkit/db");
-  const db = new pwnkitDB(dbPath);
+  const { osecDB } = await import("@0sec/db");
+  const db = new osecDB(dbPath);
   try {
     const rows = db.listFindings({ limit: 5000 }) as FindingRow[];
     const finding = resolveFindingByPrefix(rows, id);
@@ -236,8 +236,8 @@ async function mutateTriage(
 }
 
 export function registerFindingsCommand(program: Command): void {
-  // `--all` only declared on the parent so `pwnkit findings list --all`
-  // and `pwnkit findings --all list` both resolve via the parent's parsed
+  // `--all` only declared on the parent so `0sec findings list --all`
+  // and `0sec findings --all list` both resolve via the parent's parsed
   // opts (see #325). If both parent and subcommand declared it, Commander
   // would clobber the user's `true` with the subcommand's default `false`.
   const findingsCmd = withFindingsListOptions(
@@ -301,8 +301,8 @@ export function registerFindingsCommand(program: Command): void {
     .argument("<id>", "Finding ID (full or prefix)")
     .option("--db-path <path>", "Path to SQLite database")
     .action(async (id: string, opts: { dbPath?: string }, command: Command) => {
-      const { pwnkitDB } = await import("@pwnkit/db");
-      const db = new pwnkitDB(resolveDbPath(opts, command));
+      const { osecDB } = await import("@0sec/db");
+      const db = new osecDB(resolveDbPath(opts, command));
 
       try {
         const all = db.listFindings({ limit: 5000 }) as FindingRow[];
@@ -314,7 +314,7 @@ export function registerFindingsCommand(program: Command): void {
         const related = finding.fingerprint ? db.getRelatedFindings(finding.fingerprint) as FindingRow[] : [finding];
 
         console.log("");
-        console.log(chalk.red.bold("  \u25C6 pwnkit") + chalk.gray(" finding detail"));
+        console.log(chalk.red.bold("  \u25C6 0sec") + chalk.gray(" finding detail"));
         console.log("");
 
         console.log(`  ${chalk.white.bold(finding.title)}`);
@@ -355,7 +355,7 @@ export function registerFindingsCommand(program: Command): void {
         // shell's env — see `triage/provenance.ts`.
         {
           const { summarizeTriageProvenance, formatTriageProvenance } = await import(
-            "@pwnkit/core"
+            "@0sec/core"
           );
           const provenance = summarizeTriageProvenance({
             ...(finding as unknown as Finding),

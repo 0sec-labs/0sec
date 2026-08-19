@@ -15,7 +15,7 @@ import {
   pairwiseDeltas,
   pickChampion,
   type BenchManifest,
-} from "@pwnkit/core";
+} from "@0sec/core";
 import {
   canonicalResultJson,
   parseCandidateMetadata,
@@ -81,7 +81,7 @@ afterEach(() => {
 });
 
 function root(): string {
-  const value = mkdtempSync(join(tmpdir(), "pwnkit-improvement-project-"));
+  const value = mkdtempSync(join(tmpdir(), "0sec-improvement-project-"));
   roots.push(value);
   return value;
 }
@@ -183,8 +183,8 @@ function fixtures() {
   const controls = pair(manifest("controls", true), 0, 0);
   const candidate = {
     schemaVersion: 1,
-    id: "pwnkit_source_hypothesis_001",
-    project: "pwnkit",
+    id: "osec_source_hypothesis_001",
+    project: "0sec",
     change: {
       kind: "prompt",
       knobs: { "source_audit.hypothesis": "Inspect parser state transitions." },
@@ -306,7 +306,7 @@ describe("offline 0research improvement projection", () => {
   it("emits the exact portable v1 result with deduplicated evidence", () => {
     const result = project();
     expect(result.schemaVersion).toBe(1);
-    expect(result.candidateId).toBe("pwnkit_source_hypothesis_001");
+    expect(result.candidateId).toBe("osec_source_hypothesis_001");
     expect(result.manifestId).toBe("research-run-v1");
     expect(result.heldOut.challenger.successRate).toBe(0.8);
     expect(result.negativeControls.challenger).toEqual({

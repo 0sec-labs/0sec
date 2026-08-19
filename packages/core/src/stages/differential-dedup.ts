@@ -3,7 +3,7 @@
  * adopted from the DARPA AIxCC winner ATLANTIS, MIT-licensed).
  *
  * ATLANTIS took 1,003 raw PoVs down to 118 verified uniques with two ideas this
- * module makes concrete for the pwnkit skeptic/triage stage:
+ * module makes concrete for the 0sec skeptic/triage stage:
  *
  *  1. BASE-vs-PATCH DIFFERENTIAL GATE (the fix-diff-seeded-bug proof). A variant
  *     candidate seeded off a fix diff (see variant-candidates.ts) is only a REAL
@@ -29,7 +29,7 @@
  * unit-tests hermetically.
  */
 
-import type { Finding, CrashReport } from "@pwnkit/shared";
+import type { Finding, CrashReport } from "@0sec/shared";
 import { parseCrashReport } from "../ingest/kernel-crash.js";
 import { parseKcsanReport } from "../triage/kcsan-race.js";
 import type { HuntCandidate, HuntVerifier } from "./hunt-scan.js";

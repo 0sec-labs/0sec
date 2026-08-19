@@ -6,10 +6,10 @@ import {
   type IdentityAssessmentResult,
   type IdentityFinding,
   type IdentitySeverity,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 /** Env var holding the Graph bearer token. Never a CLI argument — see below. */
-const TOKEN_ENV = "PWNKIT_GRAPH_ACCESS_TOKEN";
+const TOKEN_ENV = "0SEC_GRAPH_ACCESS_TOKEN";
 
 const DEFAULT_TIMEOUT_MS = "300000";
 
@@ -73,7 +73,7 @@ export function registerIdentityCommand(program: Command): void {
           chalk.red(
             `Missing ${TOKEN_ENV}. Export a Microsoft Graph access token with directory read scopes, e.g.\n` +
               `  export ${TOKEN_ENV}="$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)"\n` +
-              `The token is read from the environment only — pwnkit never accepts it as a command-line argument.`,
+              `The token is read from the environment only — 0sec never accepts it as a command-line argument.`,
           ),
         );
         process.exitCode = 2;

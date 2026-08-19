@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import chalk from "chalk";
-import { runRecon, ScopePolicy, type ReconAsset, type ReconResult } from "@pwnkit/core";
+import { runRecon, ScopePolicy, type ReconAsset, type ReconResult } from "@0sec/core";
 
 interface ReconOptions {
   json?: boolean;

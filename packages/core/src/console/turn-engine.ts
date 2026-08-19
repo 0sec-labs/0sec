@@ -15,7 +15,7 @@ import type { AgentRole, ToolCall, ToolContext, ToolDefinition, ToolResult } fro
 /**
  * Unified interactive chat console — engine-side turn driver.
  *
- * This is the conversational front-end for the pwnkit engine described in the
+ * This is the conversational front-end for the 0sec engine described in the
  * 0sec "operator cockpit" direction: one surface where an operator talks to the
  * engine and it can invoke every tool in the registry (recon, web pentest,
  * source-scan, variant-hunt, verify, patch-gen) in one place.
@@ -128,8 +128,8 @@ const DEFAULT_MAX_TOOL_ITERATIONS = 20;
  */
 export function buildConsoleSystemPrompt(opts: { target?: string; scanId: string }): string {
   return [
-    "You are the pwnkit operator console — an interactive security assistant with",
-    "direct access to the full pwnkit tool registry (reconnaissance, web pentest,",
+    "You are the 0sec operator console — an interactive security assistant with",
+    "direct access to the full 0sec tool registry (reconnaissance, web pentest,",
     "source and package scanning, variant hunting, exploit verification, and",
     "patch generation).",
     "",

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * pwnkit-llm — CLI for the offensive LLM red-team engine.
+ * 0sec-llm — CLI for the offensive LLM red-team engine.
  *
- *   pwnkit-llm strategies                 list the strategy library
- *   pwnkit-llm gen <behaviorId>           print generated candidate payloads
- *   pwnkit-llm run <behaviorId> [--target mock|chat]
+ *   0sec-llm strategies                 list the strategy library
+ *   0sec-llm gen <behaviorId>           print generated candidate payloads
+ *   0sec-llm run <behaviorId> [--target mock|chat]
  *       mock: simulated easy/hard models (no network)
  *       chat: needs LLM_BASEURL, LLM_API_KEY, LLM_MODELS (comma list)
  */
@@ -75,7 +75,7 @@ const main = async () => {
     case "gen": return gen(arg);
     case "run": return run(arg);
     default:
-      console.log("usage: pwnkit-llm <strategies|gen <behaviorId>|run <behaviorId> [--target mock|chat]>");
+      console.log("usage: 0sec-llm <strategies|gen <behaviorId>|run <behaviorId> [--target mock|chat]>");
       console.log(`behaviors: ${builtinBehaviors.map((b) => b.id).join(", ")}`);
   }
 };

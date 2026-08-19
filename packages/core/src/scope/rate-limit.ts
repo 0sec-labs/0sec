@@ -1,5 +1,5 @@
 /**
- * pwnkit#214 — Per-host token-bucket rate limiter for scan-side fetches.
+ * 0sec#214 — Per-host token-bucket rate limiter for scan-side fetches.
  *
  * Most coordinated-disclosure venues and pentest engagements specify a
  * max requests-per-second per host. The PoC-runtime side (`disclose`)

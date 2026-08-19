@@ -179,7 +179,7 @@ describe("evmOnchainReviewAgentPrompt", () => {
     // A genuinely-wired HIGH survives — a component with a live consumer or real
     // value flow keeps its severity (protects real bugs from the fail-closed gate).
     expect(hint).toMatch(/KEEPS its severity/i);
-    // Must cite concrete evidence of the negative, mirroring pwnkit#3's pattern.
+    // Must cite concrete evidence of the negative, mirroring 0sec#3's pattern.
     expect(hint).toMatch(/grep .*consumers|came back empty/i);
   });
 

@@ -3,7 +3,7 @@
  *
  * At the end of each scan we emit one JSONL record per finding to
  * `routing-trace.jsonl` under the scan's journal sidecar directory.
- * That file is the dataset the phase-2 learned router (pwnkit#113)
+ * That file is the dataset the phase-2 learned router (0sec#113)
  * trains on. The shape is documented in `RoutingTraceRecord` in
  * `router.ts`.
  *
@@ -13,7 +13,7 @@
 
 import { mkdirSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { extractRoutingFeatures } from "./features.js";
 import {
   buildTraceRecord,

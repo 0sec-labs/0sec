@@ -1,5 +1,5 @@
 /**
- * Findings / reporting tool definitions (pwnkit#611 — split out of the monolithic
+ * Findings / reporting tool definitions (0sec#611 — split out of the monolithic
  * agent/tools.ts registry).
  *
  * Tools that read and write the findings ledger, loot store, and the
@@ -38,7 +38,7 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
           "output-manipulation",
           "encoding-bypass",
           "multi-turn",
-          // Source-code audit categories (pwnkit audit)
+          // Source-code audit categories (0sec audit)
           "prototype-pollution",
           "path-traversal",
           "command-injection",
@@ -103,18 +103,18 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
         description:
           "OPTIONAL exact replacement text for source_start_line..source_end_line. Do not send a unified diff or markdown fence.",
       },
-      // pwnkit#170 — optional structured proof-of-concept step graph. When the
+      // 0sec#170 — optional structured proof-of-concept step graph. When the
       // agent has structured execution data (e.g. it actually ran the curl /
       // docker steps and observed predictable outputs), it can pass them as a
       // JSON string here. Each step has { id, kind, summary, action, expect? }.
-      // See PocStep / PocStepKind in @pwnkit/shared/types.ts. Optional —
+      // See PocStep / PocStepKind in @0sec/shared/types.ts. Optional —
       // findings with prose-only evidence MUST leave this unset.
       poc_steps: {
         type: "string",
         description:
-          "OPTIONAL JSON-encoded PocStep[] array (pwnkit#170). Each step: { id, kind: setup|auth|prerequisite|exploit|verify, summary, action: { type: shell|http|docker|note, ... }, expect?: { type: ... } }. Leave unset when you only have prose evidence.",
+          "OPTIONAL JSON-encoded PocStep[] array (0sec#170). Each step: { id, kind: setup|auth|prerequisite|exploit|verify, summary, action: { type: shell|http|docker|note, ... }, expect?: { type: ... } }. Leave unset when you only have prose evidence.",
       },
-      // pwnkit#193 — optional machine-executable verification contract. When
+      // 0sec#193 — optional machine-executable verification contract. When
       // the agent has cited concrete file:line evidence, it should populate
       // `code[]` predicates so cloud's canary watcher can later re-evaluate
       // the finding deterministically. Each predicate is one of:
@@ -133,7 +133,7 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
       verification_spec: {
         type: "string",
         description:
-          "OPTIONAL JSON-encoded VerificationSpec (pwnkit#193). Shape: { code: Array<{ kind:'file-contains'|'file-missing-pattern'|'file-exists'|'ast-shape'|'git-diff-applies', file?, pattern?, flags?, query?, baseCommit?, diff? }>, behavior?: { steps: Array<{ method, path, body?, expect: 'success'|'forbidden'|{status:number} }> } }. Populate code[] predicates from the file:line evidence you cited so cloud can re-verify the finding deterministically. Use git-diff-applies only as a companion to an independent code or behavioural predicate: it confirms a unified diff you generated against the exact full HEAD commit is compatible, never that the exploit works. Example for a SQLi at app/users.ts:43: code:[{kind:'file-contains',file:'app/users.ts',pattern:'db\\\\.query.*req\\\\.body'}]. Leave unset when you cannot pin the vulnerable shape to a regex.",
+          "OPTIONAL JSON-encoded VerificationSpec (0sec#193). Shape: { code: Array<{ kind:'file-contains'|'file-missing-pattern'|'file-exists'|'ast-shape'|'git-diff-applies', file?, pattern?, flags?, query?, baseCommit?, diff? }>, behavior?: { steps: Array<{ method, path, body?, expect: 'success'|'forbidden'|{status:number} }> } }. Populate code[] predicates from the file:line evidence you cited so cloud can re-verify the finding deterministically. Use git-diff-applies only as a companion to an independent code or behavioural predicate: it confirms a unified diff you generated against the exact full HEAD commit is compatible, never that the exploit works. Example for a SQLi at app/users.ts:43: code:[{kind:'file-contains',file:'app/users.ts',pattern:'db\\\\.query.*req\\\\.body'}]. Leave unset when you cannot pin the vulnerable shape to a regex.",
       },
       // Self-reported calibration of how confident the agent is that this
       // finding is a true positive. The cloud DB stores it in
@@ -148,7 +148,7 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
         description:
           "OPTIONAL self-reported confidence in [0,1]. Use 0.9+ only when the PoC actually executed and produced the expected output. 0.6–0.8 for solid evidence without execution. 0.3–0.5 for plausible but unverified leads. Leave unset when you have no signal.",
       },
-      // pwnkit#409 — structural validation at the report-creation boundary.
+      // 0sec#409 — structural validation at the report-creation boundary.
       // CVE / CWE / CVSS are shape-checked before persistence by
       // `validateFindingDraft` (agent/finding-validator.ts). Malformed values
       // come back to the agent as `validation_failed` so it can fix and
@@ -203,7 +203,7 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
     },
   },
 
-  // pwnkit#567 — retrieve previously captured footholds for exploit chaining.
+  // 0sec#567 — retrieve previously captured footholds for exploit chaining.
   use_loot: {
     name: "use_loot",
     description:
@@ -284,7 +284,7 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
 // this domain's definitions so a new tool adds its route here, not in a
 // shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
 // executor instance in agent/tools.ts (handler bodies stay private methods).

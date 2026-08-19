@@ -18,7 +18,7 @@ import {
   buildKernelVerifySystemPrompt,
   extractKernelFindingMetadata,
 } from "./kernel-prompts.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { NativeContentBlock } from "../runtime/types.js";
 
 function staticKernelFinding(overrides: Partial<Finding> = {}): Finding {
@@ -571,7 +571,7 @@ describe("kernel-prompts subsystem-slice + metadata", () => {
 
 describe("tier1VerdictToOracleResult", () => {
   function writeDmesg(text: string): string {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-tier1-test-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-tier1-test-"));
     const p = join(dir, "verify.dmesg");
     writeFileSync(p, text, "utf8");
     return p;

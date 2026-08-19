@@ -8,7 +8,7 @@ import { DEFAULT_REVIEW_MATCHERS } from "./matchers-default.js";
 import type { ReviewMatcherSpec } from "./types.js";
 
 function fixtureRepo(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-scan-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-scan-"));
   fs.mkdirSync(path.join(root, "src/api"), { recursive: true });
   fs.mkdirSync(path.join(root, "node_modules/dep"), { recursive: true });
   fs.writeFileSync(
@@ -100,7 +100,7 @@ describe("matchFileContent", () => {
 describe("runReviewScan", () => {
   it("writes candidates and pending status into records", () => {
     const root = fixtureRepo();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const store = new ReviewStore({ dataDir: dir });
     const matchers = compileMatchers(DEFAULT_REVIEW_MATCHERS);
 
@@ -117,7 +117,7 @@ describe("runReviewScan", () => {
 
   it("re-scan is additive and does not duplicate candidates", () => {
     const root = fixtureRepo();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const store = new ReviewStore({ dataDir: dir });
     const matchers = compileMatchers(DEFAULT_REVIEW_MATCHERS);
 
@@ -130,7 +130,7 @@ describe("runReviewScan", () => {
 
   it("analyzed files with unchanged hash stay out of the pending pool", () => {
     const root = fixtureRepo();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const store = new ReviewStore({ dataDir: dir });
     const matchers = compileMatchers(DEFAULT_REVIEW_MATCHERS);
 
@@ -146,7 +146,7 @@ describe("runReviewScan", () => {
 
   it("changed content re-enters the pending pool", () => {
     const root = fixtureRepo();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const store = new ReviewStore({ dataDir: dir });
     const matchers = compileMatchers(DEFAULT_REVIEW_MATCHERS);
 

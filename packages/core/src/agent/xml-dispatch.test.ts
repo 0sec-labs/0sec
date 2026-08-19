@@ -145,12 +145,12 @@ describe("formatXmlOutputBatch", () => {
 });
 
 describe("resolveDispatchMode", () => {
-  const origEnv = process.env.PWNKIT_DISPATCH;
+  const origEnv = process.env["0SEC_DISPATCH"];
   afterEach(() => {
     if (origEnv === undefined) {
-      delete process.env.PWNKIT_DISPATCH;
+      delete process.env["0SEC_DISPATCH"];
     } else {
-      process.env.PWNKIT_DISPATCH = origEnv;
+      process.env["0SEC_DISPATCH"] = origEnv;
     }
   });
 
@@ -160,7 +160,7 @@ describe("resolveDispatchMode", () => {
   });
 
   it("auto-picks XML for cheap providers", () => {
-    delete process.env.PWNKIT_DISPATCH;
+    delete process.env["0SEC_DISPATCH"];
     expect(resolveDispatchMode("auto", "deepseek/deepseek-chat")).toBe("xml");
     expect(resolveDispatchMode("auto", "google/gemini-flash-1.5")).toBe("xml");
     expect(resolveDispatchMode("auto", "openrouter/auto")).toBe("xml");
@@ -170,16 +170,16 @@ describe("resolveDispatchMode", () => {
   });
 
   it("auto-picks JSON for premium providers", () => {
-    delete process.env.PWNKIT_DISPATCH;
+    delete process.env["0SEC_DISPATCH"];
     expect(resolveDispatchMode("auto", "claude-3-5-sonnet-20240620")).toBe("json");
     expect(resolveDispatchMode("auto", "gpt-4o")).toBe("json");
     expect(resolveDispatchMode("auto", undefined)).toBe("json");
   });
 
-  it("PWNKIT_DISPATCH env var overrides auto", () => {
-    process.env.PWNKIT_DISPATCH = "xml";
+  it("0SEC_DISPATCH env var overrides auto", () => {
+    process.env["0SEC_DISPATCH"] = "xml";
     expect(resolveDispatchMode("auto", "claude-3-5-sonnet")).toBe("xml");
-    process.env.PWNKIT_DISPATCH = "json";
+    process.env["0SEC_DISPATCH"] = "json";
     expect(resolveDispatchMode("auto", "deepseek-chat")).toBe("json");
   });
 });

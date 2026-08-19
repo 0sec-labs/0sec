@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AttackResult, AttackOutcome, Finding, ScanConfig, ScanContext, TargetInfo } from "@pwnkit/shared";
+import type { AttackResult, AttackOutcome, Finding, ScanConfig, ScanContext, TargetInfo } from "@0sec/shared";
 import { RateLimiter, parseRateLimitFlag } from "../scope/rate-limit.js";
 
 /**

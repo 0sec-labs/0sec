@@ -22,7 +22,7 @@ async function exists(path) {
 }
 
 test("public source export contains build inputs and excludes private material", async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), "pwnkit-public-source-"));
+  const tempDir = await mkdtemp(join(tmpdir(), "0sec-public-source-"));
   const outputDir = join(tempDir, "export");
 
   try {
@@ -117,7 +117,7 @@ test("public source export contains build inputs and excludes private material",
     );
     assert.doesNotMatch(
       publicPrWorkflow,
-      /actions\/checkout|pnpm (?:install|build|test)|node dist\/pwnkit\.js/,
+      /actions\/checkout|pnpm (?:install|build|test)|node dist\/0sec\.js/,
       "public PR policy must not check out or execute contributor code",
     );
 

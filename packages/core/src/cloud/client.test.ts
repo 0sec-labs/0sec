@@ -35,7 +35,7 @@ describe("CloudClient.pingHealth — auth + headers", () => {
     const headers = (captured!.init.headers ?? {}) as Record<string, string>;
     expect(headers.Authorization).toBe(`Bearer ${SECRET}`);
     expect(headers.Accept).toBe("application/json");
-    expect(headers["User-Agent"]).toMatch(/^pwnkit-cli\//);
+    expect(headers["User-Agent"]).toMatch(/^0sec-cli\//);
   });
 });
 

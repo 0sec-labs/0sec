@@ -1,6 +1,6 @@
 # Vulnerability report: Unauthenticated SQL injection in CodeWall /api/reports org filter
 
-> **DRAFT — NOT SENT.** Auto-assembled vendor-notification draft. An operator must review, fill in any `to be filled in` fields, and send it manually. Nothing here is transmitted to a vendor by pwnkit. Embargo rules in `disclosure/AGENTS.md` apply.
+> **DRAFT — NOT SENT.** Auto-assembled vendor-notification draft. An operator must review, fill in any `to be filled in` fields, and send it manually. Nothing here is transmitted to a vendor by 0sec. Embargo rules in `disclosure/AGENTS.md` apply.
 
 **Severity (estimate):** critical
 

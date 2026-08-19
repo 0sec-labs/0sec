@@ -1,6 +1,6 @@
 // Shared helpers for tool-level dedup / similarity logic.
 //
-// pwnkit#281 — `saveFinding` needs cheap fuzzy title comparison so the same
+// 0sec#281 — `saveFinding` needs cheap fuzzy title comparison so the same
 // SQLi reported across attack + verify stages doesn't end up as 3 advisory
 // drafts. Keeping the helpers here lets future call sites (e.g. disclose
 // bundle dedup at `bundle.ts:218 assembleBundleIndex`) reuse the same
@@ -68,7 +68,7 @@ export function levenshtein(a: string, b: string): number {
 }
 
 /**
- * pwnkit#281 — fuzzy-title threshold for finding dedup. Levenshtein ≤ 5
+ * 0sec#281 — fuzzy-title threshold for finding dedup. Levenshtein ≤ 5
  * tolerates typical agent reformulations like "SQL injection in /users" vs
  * "SQL Injection in /users.php" (after normalization) without collapsing
  * legitimately distinct findings such as "/admin/users" vs "/admin/orders"

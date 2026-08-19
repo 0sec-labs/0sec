@@ -1,9 +1,9 @@
 /**
- * `pwnkit deep-review <target>` — the SEEDLESS depth-review scan (G-A).
+ * `0sec deep-review <target>` — the SEEDLESS depth-review scan (G-A).
  *
  * This is the "depth method" (PR #1162: specialized finder lenses × best-of-N +
  * the multi-lens verify quorum) exposed as a dispatchable, seedless product.
- * Unlike `pwnkit hunt` (which REQUIRES a `--seed` fix diff to derive variant
+ * Unlike `0sec hunt` (which REQUIRES a `--seed` fix diff to derive variant
  * candidate sites), deep-review needs no seed: it enumerates candidate files
  * straight from the prepared source tree and re-hunts each through the profile's
  * `*FinderLenses`, gating survivors through the profile's `*VerifyLenses`
@@ -37,15 +37,15 @@
 import type { Command } from "commander";
 import { statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
-import type { Finding, RuntimeMode } from "@pwnkit/shared";
-import type { FinderLens, ThreatLane, VerifyLens } from "@pwnkit/core";
+import type { Finding, RuntimeMode } from "@0sec/shared";
+import type { FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
 // The one non-type value import from the core barrel here: the appsec lens
 // registry loader. The barrel is already eagerly loaded at CLI boot
 // (packages/cli/src/index.ts imports maybeSubscribeCloudEventSink from it), so
 // this adds no new startup cost; it lets `defaultFinderLenses` stay a plain
 // module-eval const (its reference identity is relied on by selectProfileLenses
 // and its tests) while sourcing the appsec lenses from the data-driven JSON.
-import { eventBus, loadAppsecFinderLenses, ScanCostLedger } from "@pwnkit/core";
+import { eventBus, loadAppsecFinderLenses, ScanCostLedger } from "@0sec/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
 
 /** Hard cap mirroring the review pipeline's 5000-source-file scope limit
@@ -67,14 +67,14 @@ const DEEP_REVIEW_FILE_CAP = 5000;
  * (the deep_review "failed with 0 findings" incident, 2026-07-08). At the 8-wide
  * concurrency default that's ~4 sequential finder waves + the verify quorum,
  * landing a typical repo in ~8–12 min. Raise it with `--max-candidates` /
- * `PWNKIT_DEEP_REVIEW_MAX_CANDIDATES` (and/or `--models` / `--attempts`) when a
+ * `0SEC_DEEP_REVIEW_MAX_CANDIDATES` (and/or `--models` / `--attempts`) when a
  * target genuinely warrants a deeper sweep AND the timeout allows.
  */
 const DEFAULT_MAX_CANDIDATES = 8;
 /** Env override for {@link DEFAULT_MAX_CANDIDATES} so operators can tune the cap
  *  without a code change; the `--max-candidates` flag still overrides this. */
 function defaultMaxCandidates(): number {
-  const raw = process.env.PWNKIT_DEEP_REVIEW_MAX_CANDIDATES;
+  const raw = process.env["0SEC_DEEP_REVIEW_MAX_CANDIDATES"];
   if (!raw) return DEFAULT_MAX_CANDIDATES;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_CANDIDATES;
@@ -99,11 +99,11 @@ function scaleMaxCandidates(fileCount: number): number {
 /** Default finder attempts per (candidate × lens × model). 1 = best-of-1: a pure
  *  cost/latency multiplier that adds LESS value than lens diversity, so the fast
  *  default is a single attempt. Raise with `--attempts` /
- *  `PWNKIT_DEEP_REVIEW_ATTEMPTS` for a deliberate deeper (best-of-N) run. */
+ *  `0SEC_DEEP_REVIEW_ATTEMPTS` for a deliberate deeper (best-of-N) run. */
 const DEFAULT_ATTEMPTS = 1;
 /** Env override for {@link DEFAULT_ATTEMPTS}; the `--attempts` flag still wins. */
 function defaultAttempts(): number {
-  const raw = process.env.PWNKIT_DEEP_REVIEW_ATTEMPTS;
+  const raw = process.env["0SEC_DEEP_REVIEW_ATTEMPTS"];
   if (!raw) return DEFAULT_ATTEMPTS;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_ATTEMPTS;
@@ -112,11 +112,11 @@ function defaultAttempts(): number {
  * Default finder models. `undefined` = a SINGLE model (the configured provider
  * default) — multi-model fan-out is a pure duration multiplier that adds less
  * value than the 4 lens angles, so the fast default runs one model. Set a
- * comma-separated `PWNKIT_DEEP_REVIEW_MODELS` (or pass `--models`) for a
+ * comma-separated `0SEC_DEEP_REVIEW_MODELS` (or pass `--models`) for a
  * deliberate multi-model run. The `--models` flag still overrides the env.
  */
 function defaultModels(): string[] | undefined {
-  const raw = process.env.PWNKIT_DEEP_REVIEW_MODELS;
+  const raw = process.env["0SEC_DEEP_REVIEW_MODELS"];
   if (!raw) return undefined;
   const models = raw.split(",").map((s) => s.trim()).filter(Boolean);
   return models.length > 0 ? models : undefined;
@@ -403,7 +403,7 @@ export function isNonProtocolEvmPath(absPath: string, scopeRoot: string): boolea
 }
 
 /** File-walk helpers, injected so the enumeration logic is unit-testable
- *  without a real source tree. Match the `@pwnkit/core` signatures. */
+ *  without a real source tree. Match the `@0sec/core` signatures. */
 export interface DeepReviewEnumHelpers {
   collectScopeFiles: (dir: string, opts?: { maxFiles?: number; maxFileSize?: number; extensions?: Set<string> }) => string[];
   countScopeFilesUpTo: (dir: string, limit: number, opts?: { maxFileSize?: number; extensions?: Set<string> }) => number;
@@ -517,14 +517,14 @@ export interface RunDeepReviewOptions {
   /** Narrow the scope to a subdirectory (respects the review file cap). */
   subsystem?: string;
   /** Finder models for diversity (a fan-out axis alongside lenses). Default: a
-   *  single provider-default model (or $PWNKIT_DEEP_REVIEW_MODELS). */
+   *  single provider-default model (or $0SEC_DEEP_REVIEW_MODELS). */
   models?: string[];
   /** Finder attempts per (candidate × lens × model). Default 1 (or
-   *  $PWNKIT_DEEP_REVIEW_ATTEMPTS) — best-of-N is opt-in. */
+   *  $0SEC_DEEP_REVIEW_ATTEMPTS) — best-of-N is opt-in. */
   attemptsPerCandidate?: number;
   /** Max finders in flight. Default 8 (matches runHuntScan). */
   concurrency?: number;
-  /** Max candidate files hunted (largest-first). Default 8 (or $PWNKIT_DEEP_REVIEW_MAX_CANDIDATES). */
+  /** Max candidate files hunted (largest-first). Default 8 (or $0SEC_DEEP_REVIEW_MAX_CANDIDATES). */
   maxCandidates?: number;
   /** Multi-lens quorum override (default: majority of the verify-lens count). */
   quorum?: number;
@@ -533,7 +533,7 @@ export interface RunDeepReviewOptions {
   useThreatModel?: boolean;
   runtime?: RuntimeMode;
   timeoutMs?: number;
-  /** Hard scan-wide USD ceiling. Overrides $PWNKIT_COST_CEILING_USD. */
+  /** Hard scan-wide USD ceiling. Overrides $0SEC_COST_CEILING_USD. */
   costCeilingUsd?: number;
   log?: (msg: string) => void;
 }
@@ -558,14 +558,14 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     cairoVerifyLenses,
     moveFinderLenses,
     moveVerifyLenses,
-  } = await import("@pwnkit/core");
+  } = await import("@0sec/core");
   const costLedger = new ScanCostLedger();
   const scanStartedAt = Date.now();
   const log = opts.log ?? (() => {});
   const runtime: RuntimeMode = opts.runtime ?? "api";
   // Candidate budget: explicit flag > env > auto-scale from file count.
   const explicitMaxCandidates = opts.maxCandidates;
-  const hasEnvMaxOverride = !!process.env.PWNKIT_DEEP_REVIEW_MAX_CANDIDATES;
+  const hasEnvMaxOverride = !!process.env["0SEC_DEEP_REVIEW_MAX_CANDIDATES"];
   const baseMaxCandidates = explicitMaxCandidates ?? defaultMaxCandidates();
   // Single-model × 1-attempt by default; both are opt-in deeper knobs (flag > env).
   const models = opts.models ?? defaultModels();
@@ -594,8 +594,8 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
   // their RAW pre-gate findings as 'confirmed'. We disable that inner auto-post
   // and post ONLY the gated leads ourselves as honest 'discovered' candidates.
   const sinkCfg = getCloudSinkConfig();
-  const savedCloudSink = process.env.PWNKIT_CLOUD_SINK;
-  if (sinkCfg) delete process.env.PWNKIT_CLOUD_SINK;
+  const savedCloudSink = process.env["0SEC_CLOUD_SINK"];
+  if (sinkCfg) delete process.env["0SEC_CLOUD_SINK"];
 
   try {
     // EVM-scoped candidate filtering: for the evm-onchain profile, keep the
@@ -608,7 +608,7 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     // Count scope files to auto-scale the candidate budget when no explicit cap
     // was set. The postmortem (cloudflare-os campaign) showed a 408-file repo
     // getting the same 8 candidates as a 50-file one, structurally under-sweeping.
-    // Priority: --max-candidates flag > PWNKIT_DEEP_REVIEW_MAX_CANDIDATES env > auto-scale.
+    // Priority: --max-candidates flag > 0SEC_DEEP_REVIEW_MAX_CANDIDATES env > auto-scale.
     const totalFiles = countScopeFilesUpTo(scopeRoot, DEEP_REVIEW_FILE_CAP);
     const maxCandidates = explicitMaxCandidates
       ?? (hasEnvMaxOverride ? baseMaxCandidates : scaleMaxCandidates(totalFiles));
@@ -623,9 +623,9 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     // sharing+scheduler+spawner but per-file breadth structurally missed them).
     let lanes: ThreatLane[] | null = null;
     // Hoisted: allocateCandidatesAcrossLanes is always needed when lanes exist.
-    let allocateAcrossLanes: typeof import("@pwnkit/core").allocateCandidatesAcrossLanes | undefined;
+    let allocateAcrossLanes: typeof import("@0sec/core").allocateCandidatesAcrossLanes | undefined;
     if (opts.useThreatModel) {
-      const threatModule = await import("@pwnkit/core");
+      const threatModule = await import("@0sec/core");
       allocateAcrossLanes = threatModule.allocateCandidatesAcrossLanes;
       // Map RuntimeMode to RuntimeType, defaulting to "api" for "auto".
       const rtType = (runtime !== "auto" ? runtime : "api") as "api" | "claude" | "codex" | "gemini" | "ollama";
@@ -886,7 +886,7 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
     });
     throw error;
   } finally {
-    if (savedCloudSink !== undefined) process.env.PWNKIT_CLOUD_SINK = savedCloudSink;
+    if (savedCloudSink !== undefined) process.env["0SEC_CLOUD_SINK"] = savedCloudSink;
     prepared.cleanup();
   }
 }
@@ -916,7 +916,7 @@ function parsePositive(flag: string, raw: string | undefined, dflt: number): num
 
 async function deepReviewAction(target: string, opts: DeepReviewOpts): Promise<void> {
   if (!target || target.trim() === "") throw new Error("missing required argument: <target> (source tree path or git URL)");
-  const ceilingSource = opts.costCeiling ?? process.env.PWNKIT_COST_CEILING_USD;
+  const ceilingSource = opts.costCeiling ?? process.env["0SEC_COST_CEILING_USD"];
   let costCeilingUsd: number | undefined;
   if (ceilingSource !== undefined && ceilingSource !== "") {
     const parsed = Number(ceilingSource);
@@ -933,7 +933,7 @@ async function deepReviewAction(target: string, opts: DeepReviewOpts): Promise<v
     ...(opts.profile ? { profile: opts.profile } : {}),
     ...(opts.subsystem ? { subsystem: opts.subsystem } : {}),
     // Flag > env > single provider-default model. Only pass `models` when the
-    // flag is set; otherwise let runDeepReview resolve $PWNKIT_DEEP_REVIEW_MODELS.
+    // flag is set; otherwise let runDeepReview resolve $0SEC_DEEP_REVIEW_MODELS.
     ...(opts.models ? { models: opts.models.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
     ...(opts.attempts ? { attemptsPerCandidate: parsePositive("--attempts", opts.attempts, defaultAttempts()) } : {}),
     concurrency: parsePositive("--concurrency", opts.concurrency, DEFAULT_CONCURRENCY),
@@ -964,11 +964,11 @@ export function registerDeepReviewCommand(program: Command): void {
     .argument("<target>", "Source tree to review (a local path or a git URL)")
     .option("--profile <p>", "Lens profile: evm-onchain | solana-onchain | cardano-onchain | cairo-onchain | move-onchain (else a generic default lens set)")
     .option("--subsystem <path>", "Narrow the review scope to a subdirectory (respects the 5000-file review cap)")
-    .option("--models <a,b>", "Comma-separated finder models for diversity (default: single provider model, or $PWNKIT_DEEP_REVIEW_MODELS)")
-    .option("--attempts <N>", `Finder attempts per candidate×lens×model, best-of-N (default ${DEFAULT_ATTEMPTS}, or $PWNKIT_DEEP_REVIEW_ATTEMPTS)`)
+    .option("--models <a,b>", "Comma-separated finder models for diversity (default: single provider model, or $0SEC_DEEP_REVIEW_MODELS)")
+    .option("--attempts <N>", `Finder attempts per candidate×lens×model, best-of-N (default ${DEFAULT_ATTEMPTS}, or $0SEC_DEEP_REVIEW_ATTEMPTS)`)
     .option("--concurrency <N>", `Max finders in flight (default ${DEFAULT_CONCURRENCY})`)
-    .option("--cost-ceiling <usd>", "Hard scan-wide USD ceiling. Overrides $PWNKIT_COST_CEILING_USD.")
-    .option("--max-candidates <N>", `Cap candidate files hunted, largest-first (default ${DEFAULT_MAX_CANDIDATES}, or $PWNKIT_DEEP_REVIEW_MAX_CANDIDATES)`)
+    .option("--cost-ceiling <usd>", "Hard scan-wide USD ceiling. Overrides $0SEC_COST_CEILING_USD.")
+    .option("--max-candidates <N>", `Cap candidate files hunted, largest-first (default ${DEFAULT_MAX_CANDIDATES}, or $0SEC_DEEP_REVIEW_MAX_CANDIDATES)`)
     .option("--threat-model", "Enable pre-selection threat-model planner pass (trust-boundary lanes); default OFF")
     .option("--quorum <N>", "Multi-lens verify quorum (default: majority of the verify-lens count)")
     .option("--format <fmt>", "Output format (json)", "json")

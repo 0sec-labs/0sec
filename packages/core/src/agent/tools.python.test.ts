@@ -5,7 +5,7 @@ import type { ScopePolicy } from "../scope/scope.js";
 
 const T = 20_000;
 
-const FLAG = "PWNKIT_FEATURE_PYTHON_EXEC";
+const FLAG = "0SEC_FEATURE_PYTHON_EXEC";
 
 function baseCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -36,7 +36,7 @@ describe("python_exec tool handler", () => {
     await ex.cleanup();
     expect(res.success).toBe(false);
     expect(res.error).toMatch(/disabled/);
-    expect(res.error).toMatch(/PWNKIT_FEATURE_PYTHON_EXEC/);
+    expect(res.error).toMatch(/0SEC_FEATURE_PYTHON_EXEC/);
   });
 
   it("runs code and echoes a trailing expression when enabled", async () => {

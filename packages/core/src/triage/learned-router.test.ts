@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseModel, routeFinding } from "./learned-router.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 /**
  * Minimal XGBoost-JSON-shaped fixture. `base_score` is intentionally a

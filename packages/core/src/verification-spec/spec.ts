@@ -1,4 +1,4 @@
-// pwnkit#193 / pwnkit-cloud#111 — deterministic finding re-verification.
+// 0sec#193 / 0sec-cloud#111 — deterministic finding re-verification.
 //
 // `evaluateVerificationSpec` runs a finding's `VerificationSpec.code[]`
 // predicates against a target repo on disk and reports whether the finding
@@ -19,7 +19,7 @@ import { promisify } from "node:util";
 import type {
   VerificationCodePredicate,
   VerificationSpec,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 
 const execFileAsync = promisify(execFile);
 const MAX_GIT_DIFF_BYTES = 1_000_000;
@@ -241,7 +241,7 @@ async function evaluateGitDiffApplies(
 
   let tempDir: string | undefined;
   try {
-    tempDir = await fs.mkdtemp(join(tmpdir(), "pwnkit-verify-diff-"));
+    tempDir = await fs.mkdtemp(join(tmpdir(), "0sec-verify-diff-"));
     const patchPath = join(tempDir, "evidence.patch");
     await fs.writeFile(patchPath, predicate.diff, { encoding: "utf8", mode: 0o600 });
     await execFileAsync(

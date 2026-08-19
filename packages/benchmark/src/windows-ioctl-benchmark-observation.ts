@@ -11,7 +11,7 @@ import {
 import { wilsonIntervalTuple } from "./wilson.js";
 
 export const WINDOWS_IOCTL_BENCHMARK_OBSERVATION_SCHEMA =
-  "pwnkit.windows-ioctl-benchmark-observation/v1" as const;
+  "osec.windows-ioctl-benchmark-observation/v1" as const;
 
 export const WINDOWS_IOCTL_BENCHMARK_PROOF_LIMIT =
   "Evaluator-private import of commitment-bound 0verse Windows IOCTL static ranking and blinded aggregate evaluation only. It does not execute a target, resolve or expose a label, create a Research Finding, establish reachability, vulnerability, impact, novelty, claim or bounty eligibility, authorize disclosure, or provide weaponization evidence." as const;
@@ -34,7 +34,7 @@ export interface WindowsIoctlBenchmarkRankRow {
 
 export interface WindowsIoctlBenchmarkObservation {
   schemaVersion: typeof WINDOWS_IOCTL_BENCHMARK_OBSERVATION_SCHEMA;
-  pwnkit: {
+  "osec": {
     corpusId: string;
     corpusManifestSha256: string;
     projectionSha256: string;
@@ -333,7 +333,7 @@ export function validateWindowsIoctlBenchmarkObservation(
   }
 
   const top = exact(value, "observation", [
-    "schemaVersion", "pwnkit", "zeroverse", "counts", "rankRows", "evaluatorAggregate",
+    "schemaVersion", "osec", "zeroverse", "counts", "rankRows", "evaluatorAggregate",
     "timing", "cost", "safety", "proofLimit",
   ]);
   if (top.schemaVersion !== WINDOWS_IOCTL_BENCHMARK_OBSERVATION_SCHEMA) {
@@ -343,24 +343,24 @@ export function validateWindowsIoctlBenchmarkObservation(
     throw new Error("Windows IOCTL benchmark proof limit mismatch");
   }
 
-  const pwnkit = exact(top.pwnkit, "pwnkit", [
+  const osec = exact(top["osec"], "osec", [
     "corpusId", "corpusManifestSha256", "projectionSha256", "resolverSha256",
     "inventorySha256", "opaqueHandle",
   ]);
-  const pwnkitBindings = {
-    corpusId: pwnkit.corpusId,
-    corpusManifestSha256: digest(pwnkit.corpusManifestSha256, "pwnkit.corpusManifestSha256"),
-    projectionSha256: digest(pwnkit.projectionSha256, "pwnkit.projectionSha256"),
-    resolverSha256: digest(pwnkit.resolverSha256, "pwnkit.resolverSha256"),
-    inventorySha256: digest(pwnkit.inventorySha256, "pwnkit.inventorySha256"),
-    opaqueHandle: opaque(pwnkit.opaqueHandle, "pwnkit.opaqueHandle"),
+  const osecBindings = {
+    corpusId: osec.corpusId,
+    corpusManifestSha256: digest(osec.corpusManifestSha256, "osec.corpusManifestSha256"),
+    projectionSha256: digest(osec.projectionSha256, "osec.projectionSha256"),
+    resolverSha256: digest(osec.resolverSha256, "osec.resolverSha256"),
+    inventorySha256: digest(osec.inventorySha256, "osec.inventorySha256"),
+    opaqueHandle: opaque(osec.opaqueHandle, "osec.opaqueHandle"),
   };
-  if (pwnkitBindings.corpusId !== manifest.manifest.corpusId
-    || pwnkitBindings.corpusManifestSha256 !== manifest.manifestSha256
-    || pwnkitBindings.projectionSha256 !== bundle.projectionSha256
-    || pwnkitBindings.resolverSha256 !== bundle.resolverSha256
-    || pwnkitBindings.inventorySha256 !== bundle.inventorySha256
-    || pwnkitBindings.opaqueHandle !== handle) {
+  if (osecBindings.corpusId !== manifest.manifest.corpusId
+    || osecBindings.corpusManifestSha256 !== manifest.manifestSha256
+    || osecBindings.projectionSha256 !== bundle.projectionSha256
+    || osecBindings.resolverSha256 !== bundle.resolverSha256
+    || osecBindings.inventorySha256 !== bundle.inventorySha256
+    || osecBindings.opaqueHandle !== handle) {
     throw new Error("observation does not bind the evaluator corpus/projection/resolver context");
   }
 
@@ -510,7 +510,7 @@ export function validateWindowsIoctlBenchmarkObservation(
 
   const observation: WindowsIoctlBenchmarkObservation = {
     schemaVersion: WINDOWS_IOCTL_BENCHMARK_OBSERVATION_SCHEMA,
-    pwnkit: pwnkitBindings as WindowsIoctlBenchmarkObservation["pwnkit"],
+    "osec": osecBindings as WindowsIoctlBenchmarkObservation["osec"],
     zeroverse,
     counts,
     rankRows,

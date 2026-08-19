@@ -3,8 +3,8 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
-import type { Finding, AttackCategory, Severity, Evidence, FindingStatus, PocStep } from "@pwnkit/shared";
-import { DEFAULT_SEVERITY_FLOOR, meetsSeverityFloor } from "@pwnkit/shared";
+import type { Finding, AttackCategory, Severity, Evidence, FindingStatus, PocStep } from "@0sec/shared";
+import { DEFAULT_SEVERITY_FLOOR, meetsSeverityFloor } from "@0sec/shared";
 import { z } from "zod";
 import { pocStepArraySchema, formatZodError } from "./schemas.js";
 import {
@@ -41,7 +41,7 @@ import {
   renderReproducibilityManifest,
   UnverifiedFindingError,
   IncompleteEvidenceError,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 interface DiscloseOptions {
   dbPath?: string;
@@ -170,12 +170,12 @@ const VERDICT_COLOUR: Record<NonNullable<PocExecutionReport["overallVerdict"]>, 
 
 function resolveOutputDir(opts: DiscloseOptions, scanId: string): string {
   if (opts.outputDir) return resolve(opts.outputDir);
-  return join(homedir(), "pwnkit", "disclosures", `scan-${scanId.slice(0, 8)}`);
+  return join(homedir(), "0sec", "disclosures", `scan-${scanId.slice(0, 8)}`);
 }
 
 async function disclose(findingId: string | undefined, opts: DiscloseOptions): Promise<void> {
-  const { pwnkitDB } = await import("@pwnkit/db");
-  const db = new pwnkitDB(opts.dbPath);
+  const { osecDB } = await import("@0sec/db");
+  const db = new osecDB(opts.dbPath);
   try {
     const rows = db.listFindings({ scanId: opts.scan, limit: 5000 }) as FindingRow[];
     if (rows.length === 0) {
@@ -243,7 +243,7 @@ async function disclose(findingId: string | undefined, opts: DiscloseOptions): P
       ? opts.scopeAllowlist.split(",").map((s) => s.trim()).filter(Boolean)
       : undefined;
     const droppedDir = join(outputDir, "_dropped");
-    console.log(chalk.red.bold("\n  ◆ pwnkit") + chalk.gray(` disclose — ${selected.length} finding${selected.length === 1 ? "" : "s"}`));
+    console.log(chalk.red.bold("\n  ◆ 0sec") + chalk.gray(` disclose — ${selected.length} finding${selected.length === 1 ? "" : "s"}`));
     console.log(chalk.gray(`  output: ${outputDir}${opts.dryRun ? " (dry-run — nothing written)" : ""}`));
     console.log(chalk.gray(`  screenshots: ${freezeOn ? "on (freeze)" : opts.noScreenshots ? "disabled" : opts.dryRun ? "skipped (dry-run)" : "disabled (freeze not on PATH)"}`));
     if (reverifyOn) {
@@ -388,7 +388,7 @@ async function disclose(findingId: string | undefined, opts: DiscloseOptions): P
       // ── Filing-state gate (#168) ──
       // Combine code-level patch status (canary) and behavioural verdict
       // (#171) into a single keep / drop / needs-review verdict the operator
-      // sees in the INDEX. Logic lives in @pwnkit/core/disclose/bundle so the
+      // sees in the INDEX. Logic lives in @0sec/core/disclose/bundle so the
       // tests can exercise it without going through the CLI.
       const { filingState, dropReason } = decideFilingState({
         patchStatus,
@@ -509,7 +509,7 @@ async function disclose(findingId: string | undefined, opts: DiscloseOptions): P
 
     if (!opts.dryRun) {
       const indexPath = join(outputDir, "INDEX.md");
-      // Bundle index assembly is pure and lives in @pwnkit/core/disclose so
+      // Bundle index assembly is pure and lives in @0sec/core/disclose so
       // the table layout can be tested without touching the CLI / db / fs.
       const indexContent = assembleBundleIndex(results, { scanIds });
       writeFileSync(indexPath, indexContent, "utf8");
@@ -681,7 +681,7 @@ export function registerDiscloseCommand(program: Command): void {
     .argument("[findingId]", "Finding ID (or prefix). Omit to batch every finding at or above --severity-floor.")
     .option("--db-path <path>", "Path to SQLite database")
     .option("--scan <scanId>", "Restrict to findings from this scan")
-    .option("--output-dir <path>", "Directory to write advisories into (default ~/pwnkit/disclosures/scan-<id>)")
+    .option("--output-dir <path>", "Directory to write advisories into (default ~/0sec/disclosures/scan-<id>)")
     .option("--severity-floor <severity>", "In batch mode, only draft findings at or above this severity", DEFAULT_SEVERITY_FLOOR)
     .option("--no-screenshots", "Skip terminal-screenshot rendering even when freeze is available")
     .option("--repo <path>", "Local git checkout of the target repo to re-verify findings against")

@@ -1,11 +1,11 @@
 /**
- * `pwnkit recency-hunt` — the RECENCY FLYWHEEL surface.
+ * `0sec recency-hunt` — the RECENCY FLYWHEEL surface.
  *
  * Continuous kernel-LPE discovery on the freshness window: git-diff a fresh
  * linux-next range → reachability filter → SEMANTIC-vs-COSMETIC classifier →
  * the refined invariant engine (buildInvariantModel → dataflow violations →
  * runHuntScan adversarial gate) → ranked report. The engine lives in
- * `@pwnkit/core` ({@link runRecencyHunt}); this command is the thin surface + a
+ * `@0sec/core` ({@link runRecencyHunt}); this command is the thin surface + a
  * daily-scheduler entrypoint (`--report-dir` writes `YYYY-MM-DD.{json,md}`).
  *
  * A survivor is a LEAD, not a proven 0-day: verify real reachability + novelty
@@ -22,7 +22,7 @@
 import type { Command } from "commander";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 interface RecencyOpts {
   tree?: string;
@@ -82,7 +82,7 @@ function parseWitnessMode(raw: string | undefined): WitnessModeName | undefined 
 async function recencyAction(opts: RecencyOpts): Promise<void> {
   if (!opts.tree) throw new Error("missing required flag: --tree <kernel source tree>");
 
-  const { runRecencyHunt, renderRecencyReportMarkdown } = await import("@pwnkit/core");
+  const { runRecencyHunt, renderRecencyReportMarkdown } = await import("@0sec/core");
 
   const tree = resolve(opts.tree);
   const runtime: RuntimeMode = (opts.runtime as RuntimeMode) ?? "api";

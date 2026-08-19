@@ -8,13 +8,13 @@ import {
 } from "./tools.js";
 import { SessionEngine } from "./session.js";
 import type { ToolContext } from "./types.js";
-import type { NamedIdentity } from "@pwnkit/shared";
+import type { NamedIdentity } from "@0sec/shared";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// ── unit: similarity + diff verdicts (pwnkit#564) ──
+// ── unit: similarity + diff verdicts (0sec#564) ──
 
 describe("bodySimilarity", () => {
   it("is 1 for identical (whitespace/case-insensitive) bodies", () => {
@@ -132,7 +132,7 @@ const TWO_IDENTITIES: NamedIdentity[] = [
   { label: "bob", role: "user", auth: { type: "bearer", token: "bob-tok" } },
 ];
 
-describe("accessControlProbe integration (pwnkit#564)", () => {
+describe("accessControlProbe integration (0sec#564)", () => {
   it("confirms a BOLA finding when identity B retrieves identity A's object", async () => {
     const aliceObject = '{"id":1,"owner":"alice","email":"alice@example.com"}';
     // Vulnerable server: returns alice's object to ANYONE with a valid token.

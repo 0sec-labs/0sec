@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 const prepareKernelVmArtifactsMock = vi.fn();
 const verifyStandaloneKernelReproducerMock = vi.fn();
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   prepareKernelVmArtifacts: prepareKernelVmArtifactsMock,
   verifyStandaloneKernelReproducer: verifyStandaloneKernelReproducerMock,
   ingestArtifactsFromFile: vi.fn(() => []),
@@ -22,10 +22,10 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerIngestCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
-describe("pwnkit ingest standalone kernel reproducers", () => {
+describe("0sec ingest standalone kernel reproducers", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let previousExitCode: string | number | null | undefined;
@@ -68,7 +68,7 @@ describe("pwnkit ingest standalone kernel reproducers", () => {
   });
 
   it("runs a standalone C reproducer and prints JSON", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-ingest-repro-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-ingest-repro-"));
     const repro = join(dir, "poc.c");
     writeFileSync(repro, "int main(void) { return 0; }\n");
 
@@ -100,7 +100,7 @@ describe("pwnkit ingest standalone kernel reproducers", () => {
   });
 
   it("rejects ambiguous direct reproducer inputs", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-ingest-repro-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-ingest-repro-"));
     const repro = join(dir, "poc.c");
     writeFileSync(repro, "int main(void) { return 0; }\n");
 
@@ -111,7 +111,7 @@ describe("pwnkit ingest standalone kernel reproducers", () => {
   });
 
   it("rejects mixing a crash-dump path with a direct reproducer", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-ingest-repro-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-ingest-repro-"));
     const repro = join(dir, "poc.c");
     const crashDump = join(dir, "crash.txt");
     writeFileSync(repro, "int main(void) { return 0; }\n");
@@ -131,7 +131,7 @@ describe("pwnkit ingest standalone kernel reproducers", () => {
   });
 
   it("rejects --reproducer without --kernel-tree", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-ingest-repro-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-ingest-repro-"));
     const repro = join(dir, "poc.c");
     writeFileSync(repro, "int main(void) { return 0; }\n");
 
@@ -142,7 +142,7 @@ describe("pwnkit ingest standalone kernel reproducers", () => {
   });
 
   it("passes --kernel-config through to prepareKernelVmArtifacts", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-ingest-repro-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-ingest-repro-"));
     const repro = join(dir, "poc.syz");
     writeFileSync(repro, "r0 = openat$sysfs(0)\n");
 
@@ -170,7 +170,7 @@ describe("pwnkit ingest standalone kernel reproducers", () => {
   });
 
   it("treats the legacy --config flag as a --kernel-config alias", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-ingest-repro-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-ingest-repro-"));
     const repro = join(dir, "poc.c");
     writeFileSync(repro, "int main(void) { return 0; }\n");
 

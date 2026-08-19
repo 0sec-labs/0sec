@@ -9,7 +9,7 @@
  * testing (the file-size guard, per-archetype aggregation) live in
  * `src/hunt-sweep.ts`, tested in `src/hunt-sweep.test.ts`.
  *
- * Gated by `PWNKIT_ARCHETYPE_SWEEP=1` (via `planArchetypeSweep` ->
+ * Gated by `0SEC_ARCHETYPE_SWEEP=1` (via `planArchetypeSweep` ->
  * `archetypeSweepEnabled()`, default OFF) — running this without the env set
  * is a clean, logged no-op, not an error.
  */
@@ -25,7 +25,7 @@ import {
   planArchetypeSweep,
   type ArchetypeDomain,
   type ArchetypeRoute,
-} from "@pwnkit/core";
+} from "@0sec/core";
 import { resolveHuntCorpusPath } from "./src/hunt-corpus.js";
 import { runArchetypeSweep } from "./src/hunt-sweep.js";
 
@@ -114,8 +114,8 @@ console.log(
 
 if (!archetypeSweepEnabled()) {
   console.log(
-    "[hunt-sweep] PWNKIT_ARCHETYPE_SWEEP is not set to 1 — sweep disabled (this is the default). " +
-      "Set PWNKIT_ARCHETYPE_SWEEP=1 to run. Exiting cleanly.",
+    "[hunt-sweep] 0SEC_ARCHETYPE_SWEEP is not set to 1 — sweep disabled (this is the default). " +
+      "Set 0SEC_ARCHETYPE_SWEEP=1 to run. Exiting cleanly.",
   );
   process.exit(0);
 }

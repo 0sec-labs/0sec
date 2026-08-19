@@ -43,7 +43,7 @@ const RECORD = {
 
 describe("credential_shared journal kind", () => {
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-cred-shared-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "0sec-cred-shared-"));
     id = 0;
   });
 

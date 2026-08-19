@@ -115,7 +115,7 @@ function defaultHarnessPath(): string {
 export function localSandboxProvider(): SandboxProvider {
   return {
     async create(): Promise<SandboxSession> {
-      const workdir = await mkdtemp(join(tmpdir(), "pwnkit-npm-dyn-"));
+      const workdir = await mkdtemp(join(tmpdir(), "0sec-npm-dyn-"));
       return {
         workdir,
         run(cmd, args, runOpts) {

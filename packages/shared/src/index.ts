@@ -5,3 +5,4 @@ export * from "./pricing.js";
 export * from "./verification.js";
 export * from "./workflow.js";
 export * from "./research-evidence.js";
+export * from "./paths.js";

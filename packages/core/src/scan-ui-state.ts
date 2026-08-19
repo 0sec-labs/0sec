@@ -1,7 +1,7 @@
 /**
  * Pure reducers and selectors for the scan TUI's stage state.
  *
- * These helpers live in @pwnkit/core (instead of @pwnkit/cli) because they are
+ * These helpers live in @0sec/core (instead of @0sec/cli) because they are
  * pure TypeScript — no Ink, no React, no side effects — and because that
  * lets us test them in the existing vitest setup without spinning up a
  * separate test harness for the CLI package.
@@ -11,7 +11,7 @@
  * verbose toggle.
  */
 
-/** Caps for memory and display. Tuned for pwnkit's per-scan event volume. */
+/** Caps for memory and display. Tuned for 0sec's per-scan event volume. */
 export const STAGE_ACTION_HISTORY_CAP = 500;
 export const VERBOSE_ACTIONS_RENDER_CAP = 40;
 export const COMPACT_ACTIONS_RENDER_CAP = 3;

@@ -5,13 +5,13 @@
  * ## The problem
  *
  * The package-audit pipeline installs an arbitrary third-party package into
- * `$TMPDIR/pwnkit-audit-<uuid>` (`package-ecosystems.ts`) and then runs the
+ * `$TMPDIR/0sec-audit-<uuid>` (`package-ecosystems.ts`) and then runs the
  * analysis agent with `cwd` set to `<tempDir>/node_modules/<pkg>`
  * (`agent-runner.ts` → `runtime/process.ts`, which spawns `codex exec`). The
  * Codex CLI records a trust decision for whatever directory it runs in, into
  * the operator's own `~/.codex/config.toml`:
  *
- *     [projects."/private/var/folders/…/pwnkit-audit-8103b3c8/node_modules/lodash"]
+ *     [projects."/private/var/folders/…/0sec-audit-8103b3c8/node_modules/lodash"]
  *     trust_level = "trusted"
  *
  * Sixteen such entries were found on the dev host — one per audited package.
@@ -134,7 +134,7 @@ export function createEphemeralCodexHome(): EphemeralCodexHome | undefined {
   const source = operatorCodexHome();
   let dir: string;
   try {
-    dir = mkdtempSync(join(tmpdir(), "pwnkit-codex-home-"));
+    dir = mkdtempSync(join(tmpdir(), "0sec-codex-home-"));
   } catch {
     return undefined;
   }

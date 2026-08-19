@@ -164,10 +164,10 @@ describe("HttpCollaborator", () => {
 
 describe("createCollaborator", () => {
   it("returns undefined when nothing is configured", () => {
-    const prev = process.env.PWNKIT_OAST_URL;
-    delete process.env.PWNKIT_OAST_URL;
+    const prev = process.env["0SEC_OAST_URL"];
+    delete process.env["0SEC_OAST_URL"];
     expect(createCollaborator()).toBeUndefined();
-    if (prev !== undefined) process.env.PWNKIT_OAST_URL = prev;
+    if (prev !== undefined) process.env["0SEC_OAST_URL"] = prev;
   });
 
   it("builds an HttpCollaborator when a server URL is given", () => {

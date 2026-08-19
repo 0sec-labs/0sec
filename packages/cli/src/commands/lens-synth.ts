@@ -1,5 +1,5 @@
 /**
- * `pwnkit lens-synth --miss-input <path>` — run the SELF-IMPROVING LENS LOOP
+ * `0sec lens-synth --miss-input <path>` — run the SELF-IMPROVING LENS LOOP
  * on a miss-input once, manually.
  *
  *   miss-capture ─▶ synthesize (LLM) ─▶ validate (bench tournament, fail-closed)
@@ -41,7 +41,7 @@ import {
   type MissInput,
   type ValidationCorpus,
   type ValidationFixture,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 // ── Miss-input parsing (defensive) ────────────────────────────────────────
 

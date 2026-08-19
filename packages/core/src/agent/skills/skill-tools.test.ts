@@ -27,15 +27,15 @@ describe("Skill Tools (#457)", () => {
   let savedJitSkills: string | undefined;
 
   beforeEach(() => {
-    savedJitSkills = process.env.PWNKIT_FEATURE_JIT_SKILLS;
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "1";
+    savedJitSkills = process.env["0SEC_FEATURE_JIT_SKILLS"];
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "1";
     clearSkillRegistry();
     loadSkillRegistry(__dirname);
   });
 
   afterEach(() => {
-    if (savedJitSkills === undefined) delete process.env.PWNKIT_FEATURE_JIT_SKILLS;
-    else process.env.PWNKIT_FEATURE_JIT_SKILLS = savedJitSkills;
+    if (savedJitSkills === undefined) delete process.env["0SEC_FEATURE_JIT_SKILLS"];
+    else process.env["0SEC_FEATURE_JIT_SKILLS"] = savedJitSkills;
     clearSkillRegistry();
   });
 
@@ -248,18 +248,18 @@ describe("Skill Tools (#457)", () => {
   // ── Feature flag gating ─────────────────────────────────────────
 
   describe("feature flag gating", () => {
-    const originalEnv = process.env.PWNKIT_FEATURE_JIT_SKILLS;
+    const originalEnv = process.env["0SEC_FEATURE_JIT_SKILLS"];
 
     afterEach(() => {
       if (originalEnv === undefined) {
-        delete process.env.PWNKIT_FEATURE_JIT_SKILLS;
+        delete process.env["0SEC_FEATURE_JIT_SKILLS"];
       } else {
-        process.env.PWNKIT_FEATURE_JIT_SKILLS = originalEnv;
+        process.env["0SEC_FEATURE_JIT_SKILLS"] = originalEnv;
       }
     });
 
     it("both tools are absent from all roles when feature flag is off", () => {
-      process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+      process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
 
       for (const role of ["discovery", "attack", "verify", "report", "audit", "review"]) {
         const tools = getToolsForRole(role);
@@ -270,7 +270,7 @@ describe("Skill Tools (#457)", () => {
     });
 
     it("both tools are present for attack role when feature flag is on", () => {
-      process.env.PWNKIT_FEATURE_JIT_SKILLS = "1";
+      process.env["0SEC_FEATURE_JIT_SKILLS"] = "1";
 
       const tools = getToolsForRole("attack");
       const names = tools.map((t) => t.name);
@@ -279,7 +279,7 @@ describe("Skill Tools (#457)", () => {
     });
 
     it("both tools are present for audit role when feature flag is on", () => {
-      process.env.PWNKIT_FEATURE_JIT_SKILLS = "1";
+      process.env["0SEC_FEATURE_JIT_SKILLS"] = "1";
 
       const tools = getToolsForRole("audit");
       const names = tools.map((t) => t.name);
@@ -288,7 +288,7 @@ describe("Skill Tools (#457)", () => {
     });
 
     it("both tools are present for review role when feature flag is on", () => {
-      process.env.PWNKIT_FEATURE_JIT_SKILLS = "1";
+      process.env["0SEC_FEATURE_JIT_SKILLS"] = "1";
 
       const tools = getToolsForRole("review");
       const names = tools.map((t) => t.name);

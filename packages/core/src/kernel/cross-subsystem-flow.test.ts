@@ -16,7 +16,7 @@ import {
 let tmpRoot: string;
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-cross-subsystem-test-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "0sec-cross-subsystem-test-"));
 });
 
 afterEach(() => {

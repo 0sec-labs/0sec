@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { runResearch } from "../research-runner.js";
 import {
   WindowsHyperVImportAdapter,
@@ -18,7 +18,7 @@ let signerRoot = "";
 let signerKey = "";
 let allowedSigners = "";
 beforeAll(() => {
-  signerRoot = mkdtempSync(join(tmpdir(), "pwnkit-hyperv-signer-"));
+  signerRoot = mkdtempSync(join(tmpdir(), "0sec-hyperv-signer-"));
   signerKey = join(signerRoot, "acceptance-key");
   allowedSigners = join(signerRoot, "allowed-signers");
   execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", signerKey]);
@@ -26,10 +26,10 @@ beforeAll(() => {
     allowedSigners,
     `lab-acceptance ${readFileSync(join(signerRoot, "acceptance-key.pub"), "utf8")}`,
   );
-  process.env.PWNKIT_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS = allowedSigners;
+  process.env["0SEC_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS"] = allowedSigners;
 });
 afterAll(() => {
-  delete process.env.PWNKIT_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS;
+  delete process.env["0SEC_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS"];
   if (signerRoot) rmSync(signerRoot, { recursive: true, force: true });
 });
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -45,7 +45,7 @@ function setup(status: "REPRODUCED" | "NOT_REPRODUCED" = "REPRODUCED"): {
   analysis: string;
   receiptPath: string;
 } {
-  const root = mkdtempSync(join(tmpdir(), "pwnkit-hyperv-"));
+  const root = mkdtempSync(join(tmpdir(), "0sec-hyperv-"));
   roots.push(root);
   mkdirSync(join(root, "sidecars"));
   const observations: ZeroverseHyperVObservation[] = [];
@@ -362,7 +362,7 @@ describe("WindowsHyperVImportAdapter", () => {
     expect(absoluteResult.findings).toHaveLength(0);
 
     const linked = setup();
-    const outsideRoot = mkdtempSync(join(tmpdir(), "pwnkit-hyperv-outside-"));
+    const outsideRoot = mkdtempSync(join(tmpdir(), "0sec-hyperv-outside-"));
     roots.push(outsideRoot);
     const outside = join(outsideRoot, "outside.json");
     writeFileSync(outside, readFileSync(linked.transcript));

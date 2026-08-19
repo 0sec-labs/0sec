@@ -41,7 +41,7 @@ function endTurn(text: string): NativeRuntimeResult {
 describe("buildConsoleSystemPrompt", () => {
   it("frames the operator cockpit and includes target + session", () => {
     const p = buildConsoleSystemPrompt({ target: "https://example.com", scanId: "console-x" });
-    expect(p).toContain("pwnkit operator console");
+    expect(p).toContain("0sec operator console");
     expect(p).toContain("https://example.com");
     expect(p).toContain("console-x");
   });

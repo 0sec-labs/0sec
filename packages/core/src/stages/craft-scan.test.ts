@@ -34,12 +34,12 @@ describe("runCraftScan cost ceiling", () => {
       "int LLVMFuzzerTestOneInput(const unsigned char *data, unsigned long size) { return size ? data[0] : 0; }\n",
     );
     const executeNative = vi.spyOn(LlmApiRuntime.prototype, "executeNative");
-    const savedForceProvider = process.env.PWNKIT_FORCE_PROVIDER;
+    const savedForceProvider = process.env["0SEC_FORCE_PROVIDER"];
     const savedOpenAiKey = process.env.OPENAI_API_KEY;
-    const savedSkipBanner = process.env.PWNKIT_SKIP_PROVIDER_BANNER;
-    process.env.PWNKIT_FORCE_PROVIDER = "openai";
+    const savedSkipBanner = process.env["0SEC_SKIP_PROVIDER_BANNER"];
+    process.env["0SEC_FORCE_PROVIDER"] = "openai";
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.PWNKIT_SKIP_PROVIDER_BANNER = "1";
+    process.env["0SEC_SKIP_PROVIDER_BANNER"] = "1";
 
     try {
       const result = await runCraftScan({
@@ -56,12 +56,12 @@ describe("runCraftScan cost ceiling", () => {
       expect(result.steps).toBe(0);
       expect(result.warnings.join("\n")).toContain("would be exceeded before step 1");
     } finally {
-      if (savedForceProvider === undefined) delete process.env.PWNKIT_FORCE_PROVIDER;
-      else process.env.PWNKIT_FORCE_PROVIDER = savedForceProvider;
+      if (savedForceProvider === undefined) delete process.env["0SEC_FORCE_PROVIDER"];
+      else process.env["0SEC_FORCE_PROVIDER"] = savedForceProvider;
       if (savedOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = savedOpenAiKey;
-      if (savedSkipBanner === undefined) delete process.env.PWNKIT_SKIP_PROVIDER_BANNER;
-      else process.env.PWNKIT_SKIP_PROVIDER_BANNER = savedSkipBanner;
+      if (savedSkipBanner === undefined) delete process.env["0SEC_SKIP_PROVIDER_BANNER"];
+      else process.env["0SEC_SKIP_PROVIDER_BANNER"] = savedSkipBanner;
     }
   });
 });

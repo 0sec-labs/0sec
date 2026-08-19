@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { runResearch } from "../research-runner.js";
 import { LinuxBootMatrixImportAdapter, type ExternalKernelBootMatrixManifest, type LinuxBootMatrixTarget } from "./linux-boot-matrix-adapter.js";
 
@@ -10,7 +10,7 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 function setup(controlSignature = false): { target: LinuxBootMatrixTarget; root: string } {
-  const root = mkdtempSync(join(tmpdir(), "pwnkit-matrix-")); roots.push(root); mkdirSync(join(root, "logs"));
+  const root = mkdtempSync(join(tmpdir(), "0sec-matrix-")); roots.push(root); mkdirSync(join(root, "logs"));
   const boots = (side: "v" | "c", count: number) => Array.from({ length: count }, (_, i) => ({ id: `${side}${i + 1}`, logPath: `logs/${side}${i + 1}.log`, bootMarker: `BOOT-${side}${i + 1}` }));
   const manifest: ExternalKernelBootMatrixManifest = { schemaVersion: 1, executedBy: "authorized-colossus-harness", expectedSignature: "TARGET UAF", completionMarker: "RUN-DONE", minVulnerableHits: 2, minCleanControls: 3, vulnerable: { buildId: "vuln", boots: boots("v", 3) }, patched: { buildId: "fixed", boots: boots("c", 3) } };
   for (const [i, boot] of manifest.vulnerable.boots.entries()) writeFileSync(join(root, boot.logPath), `${boot.bootMarker}\n${i > 0 ? "TARGET UAF\n" : ""}RUN-DONE\n`);

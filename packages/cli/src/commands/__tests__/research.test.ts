@@ -7,7 +7,7 @@ import { Command } from "commander";
 const runResearchMock = vi.fn();
 class LinuxKernelResearchAdapterMock {}
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   LinuxKernelResearchAdapter: LinuxKernelResearchAdapterMock,
   runResearch: runResearchMock,
   postFinding: vi.fn(),
@@ -19,7 +19,7 @@ const roots: string[] = [];
 let logSpy: { mockRestore(): void };
 
 function fixture(): { kernelTree: string; reproducer: string; finding: string; artifactRoot: string } {
-  const root = mkdtempSync(join(tmpdir(), "pwnkit-research-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "0sec-research-cli-"));
   roots.push(root);
   const kernelTree = join(root, "linux");
   mkdirSync(kernelTree);
@@ -38,7 +38,7 @@ async function runCli(args: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerResearchCommand(program);
-  await program.parseAsync(["node", "pwnkit", ...args]);
+  await program.parseAsync(["node", "0sec", ...args]);
 }
 
 beforeEach(() => {
@@ -51,7 +51,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("pwnkit research linux oracle binding", () => {
+describe("0sec research linux oracle binding", () => {
   it("threads the required literal signature into the N-boot verifier", async () => {
     const files = fixture();
     runResearchMock.mockResolvedValue({ findings: [{ id: "verified" }], candidates: [], evidence: [] });

@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { loadH1Credentials, H1AuthMissingError } from "./credentials.js";
 
 function makeFakeHome(content: string | null, mode: number = 0o600): string {
-  const home = mkdtempSync(join(tmpdir(), "pwnkit-h1-creds-"));
+  const home = mkdtempSync(join(tmpdir(), "0sec-h1-creds-"));
   if (content !== null) {
-    mkdirSync(join(home, ".pwnkit"), { recursive: true, mode: 0o700 });
-    const path = join(home, ".pwnkit", "h1.env");
+    mkdirSync(join(home, ".0sec"), { recursive: true, mode: 0o700 });
+    const path = join(home, ".0sec", "h1.env");
     writeFileSync(path, content, { mode });
     chmodSync(path, mode);
   }

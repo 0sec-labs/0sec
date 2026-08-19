@@ -52,7 +52,7 @@ describe("default benchmark variant overrides", () => {
   });
 
   it("applies dynamic feature flags for one attempt and restores the environment", async () => {
-    const key = "PWNKIT_FEATURE_WEB_SEARCH";
+    const key = "0SEC_FEATURE_WEB_SEARCH";
     const previous = process.env[key];
     delete process.env[key];
     try {
@@ -70,7 +70,7 @@ describe("default benchmark variant overrides", () => {
   });
 
   it("restores flags even when the scan fails", async () => {
-    const key = "PWNKIT_FEATURE_EARLY_STOP";
+    const key = "0SEC_FEATURE_EARLY_STOP";
     process.env[key] = "parent";
     await expect(withVariantFeatureFlags({ early_stop: false }, async () => {
       throw new Error("scan failed");

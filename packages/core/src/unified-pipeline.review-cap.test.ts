@@ -2,7 +2,7 @@
  * The oversized-review guard must apply the file cap to the CHANGED set for a
  * diff-aware (`--changed-only --diff-base`) review, not the whole repo —
  * otherwise a 1-file PR on a large repo is rejected for the repo's size. We
- * set PWNKIT_REVIEW_MAX_FILES tiny so a repo with a handful of files exceeds
+ * set 0SEC_REVIEW_MAX_FILES tiny so a repo with a handful of files exceeds
  * the whole-repo cap while a 1-file diff stays under it.
  */
 import { execFileSync } from "node:child_process";
@@ -51,7 +51,7 @@ function git(args: string[], cwd: string) {
 
 /** Repo with 6 files on main (over a cap of 3) and 1 file changed on a branch. */
 function makeRepo(): { dir: string; baseSha: string } {
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-cap-"));
+  const dir = mkdtempSync(join(tmpdir(), "0sec-cap-"));
   // Force the initial branch to `main`: a CI runner whose git defaults
   // to `master` (no init.defaultBranch set) would otherwise make the
   // `git rev-parse main` below fail with "unknown revision".
@@ -79,15 +79,15 @@ function makeRepo(): { dir: string; baseSha: string } {
 describe("runPipeline — oversized-review guard vs diff-aware reviews", () => {
   let dir = "";
   let baseSha = "";
-  const savedCap = process.env.PWNKIT_REVIEW_MAX_FILES;
+  const savedCap = process.env["0SEC_REVIEW_MAX_FILES"];
 
   beforeEach(() => {
-    process.env.PWNKIT_REVIEW_MAX_FILES = "3";
+    process.env["0SEC_REVIEW_MAX_FILES"] = "3";
     ({ dir, baseSha } = makeRepo());
   });
   afterEach(() => {
-    if (savedCap === undefined) delete process.env.PWNKIT_REVIEW_MAX_FILES;
-    else process.env.PWNKIT_REVIEW_MAX_FILES = savedCap;
+    if (savedCap === undefined) delete process.env["0SEC_REVIEW_MAX_FILES"];
+    else process.env["0SEC_REVIEW_MAX_FILES"] = savedCap;
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -110,7 +110,7 @@ describe("runPipeline — oversized-review guard vs diff-aware reviews", () => {
         apiKey: "sk-fake",
         diffBase: baseSha,
         changedOnly: true,
-        dbPath: join(mkdtempSync(join(tmpdir(), "pwnkit-cap-db-")), "s.db"),
+        dbPath: join(mkdtempSync(join(tmpdir(), "0sec-cap-db-")), "s.db"),
       });
       expect(report).toBeTruthy();
     },
@@ -125,7 +125,7 @@ describe("runPipeline — oversized-review guard vs diff-aware reviews", () => {
         format: "json",
         runtime: "api",
         apiKey: "sk-fake",
-        dbPath: join(mkdtempSync(join(tmpdir(), "pwnkit-cap-db-")), "s.db"),
+        dbPath: join(mkdtempSync(join(tmpdir(), "0sec-cap-db-")), "s.db"),
       }),
     ).rejects.toThrow(/too large/i);
   });

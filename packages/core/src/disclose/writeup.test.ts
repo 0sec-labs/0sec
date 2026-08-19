@@ -144,7 +144,7 @@ describe("generateWriteup — assembly + gate", () => {
     expect(w.markdown).not.toContain("alice.smith@example.com");
     // Internal-only content + private channels stay out.
     expect(w.markdown).not.toContain("Email the maintainer privately");
-    // Attribution per disclosure/AGENTS.md hard rule #6 (0sec.ai, not pwnkit repo).
+    // Attribution per disclosure/AGENTS.md hard rule #6 (0sec.ai, not 0sec repo).
     expect(w.markdown).toContain("0sec.ai");
     // Public-safe metadata present.
     expect(w.markdown).toContain("CVE-2026-99999");

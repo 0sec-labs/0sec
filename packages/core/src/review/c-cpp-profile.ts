@@ -1,4 +1,4 @@
-import type { SemgrepFinding } from "@pwnkit/shared";
+import type { SemgrepFinding } from "@0sec/shared";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -89,11 +89,11 @@ ${semgrepSection}
 Every finding must be backed by a tier-1 (or higher) harness that triggers the bug under ASan or UBSan. A static-analysis-only finding is a hypothesis, not a finding. Refuse to file findings that lack execution proof.
 
 When you build a harness:
-- Drop it under \`/tmp/pwnkit-harness/<finding-id>/harness.c\`
+- Drop it under \`/tmp/0sec-harness/<finding-id>/harness.c\`
 - Compile with \`clang -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer\`
 - Run with \`-runs=100000 -timeout=10\` (libFuzzer) or until the sanitizer trips
 - Capture the sanitizer log as evidence
-- These \`/tmp/pwnkit-harness/...\` and cloned-repo paths exist ONLY in this scan
+- These \`/tmp/0sec-harness/...\` and cloned-repo paths exist ONLY in this scan
   sandbox. Do NOT reference them in poc_steps — the verify replay runs in a fresh
   sandbox. The poc_steps must clone the source + write the harness inline first
   (see the self-contained poc_steps rules below).
@@ -119,9 +119,9 @@ For each finding, call save_finding with these parameters:
 
   CRITICAL — poc_steps MUST be SELF-CONTAINED. They are replayed VERBATIM in a
   FRESH sandbox during verification, where NOTHING from this scan exists: not the
-  harness file you wrote, not the cloned repo, not any \`/tmp/pwnkit-harness/...\`
-  or \`/tmp/pwnkit-pipeline-.../repo\` path. A step that only runs
-  \`gcc /tmp/pwnkit-harness/<id>/harness.c ...\` will fail with
+  harness file you wrote, not the cloned repo, not any \`/tmp/0sec-harness/...\`
+  or \`/tmp/0sec-pipeline-.../repo\` path. A step that only runs
+  \`gcc /tmp/0sec-harness/<id>/harness.c ...\` will fail with
   "No such file or directory" and your finding will be discarded as unproven.
   Each poc_steps array must RECREATE everything it needs, in order:
 
@@ -130,7 +130,7 @@ For each finding, call save_finding with these parameters:
        checkout <commit-or-tag>\` (or installs the exact package version).
     2. Write the harness INLINE with a heredoc — the FULL harness source, never
        a bare path reference, e.g. \`mkdir -p /tmp/h && cat > /tmp/h/harness.c
-       <<'PWNKIT_EOF'\\n<entire harness source>\\nPWNKIT_EOF\`.
+       <<'0SEC_EOF'\\n<entire harness source>\\n0SEC_EOF\`.
     3. Compile + run, referencing ONLY paths steps 1-2 created.
     4. A \`"note"\` step describing the trigger path + expected sanitizer output.
 
@@ -148,7 +148,7 @@ For each finding, call save_finding with these parameters:
       "id": "write-harness",
       "kind": "exploit",
       "summary": "Write the tier-1 harness inline (self-contained, no scan-sandbox paths)",
-      "action": { "type": "shell", "cmd": "mkdir -p /tmp/h && cat > /tmp/h/harness.c <<'PWNKIT_EOF'\\n#include \\"/tmp/t/src/parser.c\\"\\nint main(){ unsigned char in[1]={0x01}; parse_header(in, sizeof in); return 0; }\\nPWNKIT_EOF" },
+      "action": { "type": "shell", "cmd": "mkdir -p /tmp/h && cat > /tmp/h/harness.c <<'0SEC_EOF'\\n#include \\"/tmp/t/src/parser.c\\"\\nint main(){ unsigned char in[1]={0x01}; parse_header(in, sizeof in); return 0; }\\n0SEC_EOF" },
       "expect": { "type": "exit-zero" }
     },
     {
@@ -205,7 +205,7 @@ export function buildTier1Harness(sig: FunctionSignature): string {
   const inputShape = sig.inputShape ?? "bytesAndLen";
   const callBlock = renderHarnessCall(sig.functionName, inputShape);
 
-  return `// pwnkit tier-1 libFuzzer harness — generated, do not edit by hand.
+  return `// 0sec tier-1 libFuzzer harness — generated, do not edit by hand.
 //
 // Target:
 //   ${sig.declaration}
@@ -280,7 +280,7 @@ export async function scaffoldTier1Harness(
 ): Promise<Tier1HarnessScaffold> {
   const srcDir = resolve(options.srcDir);
   const outputDir = resolve(
-    options.outputDir ?? join(srcDir, ".pwnkit-harness", options.entryFn.functionName),
+    options.outputDir ?? join(srcDir, ".0sec-harness", options.entryFn.functionName),
   );
   const clangPath = options.clangPath ?? "clang";
   const runTimeoutSec = options.runTimeoutSec ?? 60;
@@ -336,7 +336,7 @@ export async function scaffoldTier2Harness(
 
   const srcDir = resolve(options.srcDir);
   const outputDir = resolve(
-    options.outputDir ?? join(srcDir, ".pwnkit-harness", `${options.entryFn.functionName}-tier2`),
+    options.outputDir ?? join(srcDir, ".0sec-harness", `${options.entryFn.functionName}-tier2`),
   );
   const componentFiles = options.componentFiles.map((file) => resolve(srcDir, file));
   const seedCorpusDirs = (options.seedCorpusDirs ?? []).map((dir) => resolve(srcDir, dir));
@@ -408,7 +408,7 @@ async function discoverSourceFiles(srcDir: string, outputDir: string): Promise<s
 }
 
 async function assertLibFuzzerToolchain(clangPath: string): Promise<void> {
-  const workDir = await mkdtemp(join(tmpdir(), "pwnkit-libfuzzer-"));
+  const workDir = await mkdtemp(join(tmpdir(), "0sec-libfuzzer-"));
   try {
     const sourcePath = join(workDir, "toolchain-check.c");
     const outputPath = join(workDir, "toolchain-check");

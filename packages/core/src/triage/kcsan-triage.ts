@@ -1,7 +1,7 @@
 /**
  * KCSAN data-race triage (kernelCTF Pipeline #1, issue #1112).
  *
- * Wires a parsed {@link KcsanRace} through pwnkit's hunt-engine gate:
+ * Wires a parsed {@link KcsanRace} through 0sec's hunt-engine gate:
  *
  *   KcsanRace ──> HuntBrief + synthetic Finding
  *                     │
@@ -30,7 +30,7 @@
  * "inconclusive" verdict rather than a false confirm.
  */
 
-import type { Finding, RuntimeMode } from "@pwnkit/shared";
+import type { Finding, RuntimeMode } from "@0sec/shared";
 import {
   composeGate,
   makeSkepticVerifier,
@@ -97,16 +97,16 @@ export function kcsanRaceToFinding(race: KcsanRace, brief: HuntBrief): Finding {
 }
 
 /**
- * The `PWNKIT_KERNEL_QEMU_WIDEN_*` env the kernel VM runner reads to inject the
+ * The `0SEC_KERNEL_QEMU_WIDEN_*` env the kernel VM runner reads to inject the
  * `mdelay()` kprobe at the racing PC. Exposed (and unit-tested) as a pure
  * mapping; the prover applies it around the runner call since
  * `runReproducerInKernelVm` sources its config from `loadKernelVmConfigFromEnv`.
  */
 export function raceWidenEnv(race: KcsanRace, delayMs: number, offset: number): Record<string, string> {
   return {
-    PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL: race.a.fn,
-    PWNKIT_KERNEL_QEMU_WIDEN_OFFSET: `0x${offset.toString(16)}`,
-    PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS: String(delayMs),
+    "0SEC_KERNEL_QEMU_WIDEN_SYMBOL": race.a.fn,
+    "0SEC_KERNEL_QEMU_WIDEN_OFFSET": `0x${offset.toString(16)}`,
+    "0SEC_KERNEL_QEMU_WIDEN_DELAY_MS": String(delayMs),
   };
 }
 

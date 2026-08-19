@@ -8,7 +8,7 @@ import {
   inProcessProbe,
   type NpmDynamicDiscoveryResult,
   type PackageRef,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 interface NpmDiscoveryRunOptions {
   installDir?: string;

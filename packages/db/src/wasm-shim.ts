@@ -3,7 +3,7 @@
  *
  * Exposes `createShimmedDatabase(path)` and `createDrizzleFromShim(...)`,
  * both of which return objects that present the better-sqlite3 surface area
- * expected by drizzle-orm's `BetterSQLiteSession`. This lets pwnkit use a
+ * expected by drizzle-orm's `BetterSQLiteSession`. This lets 0sec use a
  * pure-WASM SQLite implementation (no native bindings, no NODE_MODULE_VERSION
  * drift) while keeping the existing drizzle query-builder code unchanged.
  *
@@ -182,7 +182,7 @@ class StatementShim {
 /**
  * better-sqlite3 Database look-alike. Wraps an engine-agnostic `RawDatabase`
  * (either node-sqlite3-wasm or bun:sqlite) and exposes the subset of the
- * better-sqlite3 API that pwnkit's database.ts and drizzle's
+ * better-sqlite3 API that 0sec's database.ts and drizzle's
  * `BetterSQLiteSession` actually call.
  */
 export class ShimmedDatabase {
@@ -202,7 +202,7 @@ export class ShimmedDatabase {
    * only uses it as a setter ("journal_mode = WAL", "foreign_keys = ON"), so
    * we just `exec()` the pragma and swallow errors — some PRAGMAs (notably
    * WAL journal mode) are not supported by node-sqlite3-wasm's VFS and error
-   * here, but losing them is acceptable for pwnkit's single-process workload.
+   * here, but losing them is acceptable for 0sec's single-process workload.
    */
   pragma(query: string, _opts?: { simple?: boolean }): unknown {
     try {
@@ -217,7 +217,7 @@ export class ShimmedDatabase {
    * better-sqlite3's `db.transaction(fn)` returns a callable object with
    * `.deferred`, `.immediate`, `.exclusive`, and `.default` methods, each
    * running `fn` inside a BEGIN/COMMIT of the corresponding isolation level.
-   * All three variants are functionally equivalent for pwnkit's single-writer
+   * All three variants are functionally equivalent for 0sec's single-writer
    * workload, so we wire them to the same underlying implementation.
    */
   transaction<Args extends unknown[], R>(fn: (...args: Args) => R) {

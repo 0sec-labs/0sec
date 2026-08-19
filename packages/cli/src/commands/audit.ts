@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import type { ScanDepth, OutputFormat, RuntimeMode } from "@pwnkit/shared";
+import type { ScanDepth, OutputFormat, RuntimeMode } from "@0sec/shared";
 import { runUnified } from "./run.js";
 
 const SUPPORTED_AUDIT_ECOSYSTEMS = new Set(["npm", "pypi", "cargo", "oci"]);
@@ -30,7 +30,7 @@ export function registerAuditCommand(program: Command): void {
     .option("--model <model>", "LLM model to use")
     .option("--cost-ceiling <usd>", "Hard per-audit USD cost ceiling. Aborts cleanly with partial findings if exceeded.")
     .option("--tui", "Open the local terminal UI after the audit completes", false)
-    .option("--resume <run-id>", "Resume a previous run from its journal on disk (pwnkit#374)")
+    .option("--resume <run-id>", "Resume a previous run from its journal on disk (0sec#374)")
     .option("--branch-from <entry-index>", "Branch the journal at the given entry index before resuming (requires --resume).")
     .option("--verbose", "Show detailed output", false)
     .option("--timeout <ms>", "AI agent timeout in milliseconds", "600000")
@@ -43,7 +43,7 @@ export function registerAuditCommand(program: Command): void {
       }
       let costCeilingUsd: number | undefined;
       const ceilingSource =
-        (opts.costCeiling as string | undefined) ?? process.env.PWNKIT_COST_CEILING_USD;
+        (opts.costCeiling as string | undefined) ?? process.env["0SEC_COST_CEILING_USD"];
       if (ceilingSource !== undefined && ceilingSource !== "") {
         const parsed = Number(ceilingSource);
         if (!Number.isFinite(parsed) || parsed <= 0) {

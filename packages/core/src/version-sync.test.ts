@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { VERSION } from "@pwnkit/shared";
+import { VERSION } from "@0sec/shared";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // packages/core/src/ -> packages/core -> packages -> repo root
 const rootPackageJson = resolve(here, "..", "..", "..", "package.json");
 
-describe("VERSION loader (from @pwnkit/shared/constants)", () => {
+describe("VERSION loader (from @0sec/shared/constants)", () => {
   // Smoke test for the version loader. After the v0.7.2 fix, VERSION is
   // sourced from the root package.json (either via esbuild's `define` in
   // bundled mode or via a one-time fs read in source/test mode), so this

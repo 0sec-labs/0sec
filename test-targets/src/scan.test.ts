@@ -26,10 +26,10 @@ const savedApiEnv = {
   KIMI_API_KEY: process.env.KIMI_API_KEY,
   QWEN_API_KEY: process.env.QWEN_API_KEY,
   DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
-  PWNKIT_CHATGPT_ACCESS_TOKEN: process.env.PWNKIT_CHATGPT_ACCESS_TOKEN,
-  PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN,
-  PWNKIT_CHATGPT_ACCOUNT_ID: process.env.PWNKIT_CHATGPT_ACCOUNT_ID,
-  PWNKIT_CHATGPT_AUTH_FILE: process.env.PWNKIT_CHATGPT_AUTH_FILE,
+  "0SEC_CHATGPT_ACCESS_TOKEN": process.env["0SEC_CHATGPT_ACCESS_TOKEN"],
+  "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN": process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"],
+  "0SEC_CHATGPT_ACCOUNT_ID": process.env["0SEC_CHATGPT_ACCOUNT_ID"],
+  "0SEC_CHATGPT_AUTH_FILE": process.env["0SEC_CHATGPT_AUTH_FILE"],
 };
 
 function restoreApiEnv(): void {
@@ -77,10 +77,10 @@ beforeAll(async () => {
   process.env.KIMI_API_KEY = "";
   process.env.QWEN_API_KEY = "";
   process.env.DEEPSEEK_API_KEY = "";
-  process.env.PWNKIT_CHATGPT_ACCESS_TOKEN = "";
-  process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = "";
-  process.env.PWNKIT_CHATGPT_ACCOUNT_ID = "";
-  process.env.PWNKIT_CHATGPT_AUTH_FILE = join(tmpdir(), "pwnkit-scan-test-no-codex-auth.json");
+  process.env["0SEC_CHATGPT_ACCESS_TOKEN"] = "";
+  process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"] = "";
+  process.env["0SEC_CHATGPT_ACCOUNT_ID"] = "";
+  process.env["0SEC_CHATGPT_AUTH_FILE"] = join(tmpdir(), "0sec-scan-test-no-codex-auth.json");
 
   const vulnMod = await import("./vulnerable-server.js");
   const safeMod = await import("./safe-server.js");
@@ -305,7 +305,7 @@ describe("Safe server responses", () => {
   });
 });
 
-describe("pwnkit scan integration", () => {
+describe("0sec scan integration", () => {
   it("completes a scan against the vulnerable target without errors", async () => {
     const report = await runScan({
       target: vulnTarget,
@@ -396,7 +396,7 @@ describe("pwnkit scan integration", () => {
   }, 30_000);
 
   it("lists findings from the parent findings command", async () => {
-    const dbPath = join(tmpdir(), `pwnkit-findings-${Date.now()}.db`);
+    const dbPath = join(tmpdir(), `0sec-findings-${Date.now()}.db`);
 
     await runScan(
       {

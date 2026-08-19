@@ -1,4 +1,4 @@
-import type { AttackCategory } from "@pwnkit/shared";
+import type { AttackCategory } from "@0sec/shared";
 
 export type AdversarialTargetClass =
   | "mcp-server"

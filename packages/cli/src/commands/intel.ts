@@ -9,7 +9,7 @@ import {
   type IntelDossier,
   type IntelTargetHistory,
   type VulnerabilityIntel,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 interface SearchOptions {
   ecosystem?: string;

@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { homeStateDir } from "@0sec/shared";
 import { createHash, randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -107,7 +108,7 @@ export interface KernelVmConfig {
   artifactDir?: string;
   /**
    * KASLR control. Default `false` keeps the historical `nokaslr` boot (stable
-   * symbol addresses for verification). Set `true` (PWNKIT_KERNEL_QEMU_KASLR=1)
+   * symbol addresses for verification). Set `true` (0SEC_KERNEL_QEMU_KASLR=1)
    * to boot with KASLR ON — exercises a leak-dependent exploit under randomized
    * base. Only meaningful when the env append does not already pin (no)kaslr.
    */
@@ -136,7 +137,7 @@ export interface KernelVmConfig {
    *
    * The exploit C is compiled STATICALLY on the host (the initramfs has no
    * toolchain) and packed as `/init`'s payload. Gated by
-   * `PWNKIT_KERNEL_QEMU_INITRAMFS=1` (set by `USE_KERNEL_WEAPONIZE=1`). When
+   * `0SEC_KERNEL_QEMU_INITRAMFS=1` (set by `USE_KERNEL_WEAPONIZE=1`). When
    * false the historical 9p verify/repro lane is used unchanged.
    */
   weaponizeInitramfs?: boolean;
@@ -264,8 +265,8 @@ function inferDiskFormat(diskImage: string): "raw" | "qcow2" {
 }
 
 function defaultKernelCacheDir(): string {
-  return process.env.PWNKIT_KERNEL_BUILD_CACHE?.trim() ||
-    join(homedir(), ".pwnkit", "kernel-cache");
+  return process.env["0SEC_KERNEL_BUILD_CACHE"]?.trim() ||
+    join(homeStateDir(), "kernel-cache");
 }
 
 /**
@@ -311,7 +312,7 @@ function sha256File(path: string): string {
 }
 
 function expectedKernelRelease(kernelTree: string, explicit?: string, requireExplicit = false): string {
-  const fromEnv = explicit?.trim() || process.env.PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE?.trim();
+  const fromEnv = explicit?.trim() || process.env["0SEC_KERNEL_QEMU_EXPECTED_RELEASE"]?.trim();
   if (fromEnv) {
     if (!RELEASE_RE.test(fromEnv)) throw new Error("invalid expected kernel release");
     return fromEnv;
@@ -329,7 +330,7 @@ function expectedKernelRelease(kernelTree: string, explicit?: string, requireExp
   const part = (name: string) => new RegExp(`^${name}\\s*=\\s*([^\\s#]+)`, "m").exec(makefile)?.[1];
   const version = part("VERSION"), patch = part("PATCHLEVEL"), sub = part("SUBLEVEL") ?? "0", extra = part("EXTRAVERSION") ?? "";
   const release = version && patch ? `${version}.${patch}.${sub}${extra}` : "";
-  if (!RELEASE_RE.test(release)) throw new Error("cannot determine expected kernel release; set PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE");
+  if (!RELEASE_RE.test(release)) throw new Error("cannot determine expected kernel release; set 0SEC_KERNEL_QEMU_EXPECTED_RELEASE");
   return release;
 }
 
@@ -363,7 +364,7 @@ function defaultBuildRunner(input: { kernelTree: string; outDir: string; configP
   ].find((candidate) => existsSync(candidate));
   if (!script) {
     throw new Error(
-      "kernel build script not found; set PWNKIT_KERNEL_QEMU_KERNEL/PWNKIT_KERNEL_QEMU_DISK to prebuilt artifacts or run from a source checkout",
+      "kernel build script not found; set 0SEC_KERNEL_QEMU_KERNEL/0SEC_KERNEL_QEMU_DISK to prebuilt artifacts or run from a source checkout",
     );
   }
   execFileSync("bash", [script, input.kernelTree, input.outDir, input.configProfile], {
@@ -374,14 +375,14 @@ function defaultBuildRunner(input: { kernelTree: string; outDir: string; configP
 export function prepareKernelVmArtifacts(opts: KernelBuildOptions): KernelVmArtifacts {
   const configProfile: KernelConfigProfile = opts.configProfile ?? "kasan";
   const log = opts.logger ?? ((line: string) => console.log(line));
-  const envKernel = process.env.PWNKIT_KERNEL_QEMU_KERNEL?.trim();
-  const envDisk = process.env.PWNKIT_KERNEL_QEMU_DISK?.trim();
+  const envKernel = process.env["0SEC_KERNEL_QEMU_KERNEL"]?.trim();
+  const envDisk = process.env["0SEC_KERNEL_QEMU_DISK"]?.trim();
   if (!opts.force && envKernel && envDisk && existsSync(envKernel) && existsSync(envDisk)) {
-    log(`[kernel-cache] env-override: using PWNKIT_KERNEL_QEMU_KERNEL/DISK (skipping build)`);
+    log(`[kernel-cache] env-override: using 0SEC_KERNEL_QEMU_KERNEL/DISK (skipping build)`);
     return {
       kernelImage: envKernel,
       diskImage: envDisk,
-      kernelConfig: process.env.PWNKIT_KERNEL_QEMU_CONFIG?.trim() || "",
+      kernelConfig: process.env["0SEC_KERNEL_QEMU_CONFIG"]?.trim() || "",
       cacheKey: "env",
       cacheDir: "",
       cacheStatus: "env",
@@ -454,12 +455,12 @@ function warnIfKcsanUnsupported(
 }
 
 export function loadKernelVmConfigFromEnv(): KernelVmConfig {
-  const kernelImage = process.env.PWNKIT_KERNEL_QEMU_KERNEL?.trim();
-  const diskImage = process.env.PWNKIT_KERNEL_QEMU_DISK?.trim();
+  const kernelImage = process.env["0SEC_KERNEL_QEMU_KERNEL"]?.trim();
+  const diskImage = process.env["0SEC_KERNEL_QEMU_DISK"]?.trim();
 
   const missing = [
-    !kernelImage ? "PWNKIT_KERNEL_QEMU_KERNEL" : "",
-    !diskImage ? "PWNKIT_KERNEL_QEMU_DISK" : "",
+    !kernelImage ? "0SEC_KERNEL_QEMU_KERNEL" : "",
+    !diskImage ? "0SEC_KERNEL_QEMU_DISK" : "",
   ].filter(Boolean);
 
   if (missing.length > 0) {
@@ -472,42 +473,42 @@ export function loadKernelVmConfigFromEnv(): KernelVmConfig {
   const resolvedDiskImage = diskImage!;
 
   // KASLR knob: default OFF (nokaslr) for stable verification; opt in with
-  // PWNKIT_KERNEL_QEMU_KASLR=1. An explicit env append always wins (the operator
+  // 0SEC_KERNEL_QEMU_KASLR=1. An explicit env append always wins (the operator
   // pinned the cmdline by hand), so we only inject (no)kaslr into the default.
-  const kaslr = /^(1|true|on|yes)$/i.test(process.env.PWNKIT_KERNEL_QEMU_KASLR?.trim() ?? "");
-  const explicitAppend = process.env.PWNKIT_KERNEL_QEMU_APPEND?.trim();
+  const kaslr = /^(1|true|on|yes)$/i.test(process.env["0SEC_KERNEL_QEMU_KASLR"]?.trim() ?? "");
+  const explicitAppend = process.env["0SEC_KERNEL_QEMU_APPEND"]?.trim();
   const kernelAppend = explicitAppend || buildKernelAppend(kaslr);
 
-  const widenSymbol = process.env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL?.trim() || undefined;
-  const widenOffsetRaw = process.env.PWNKIT_KERNEL_QEMU_WIDEN_OFFSET?.trim();
-  const widenDelayRaw = process.env.PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS?.trim();
+  const widenSymbol = process.env["0SEC_KERNEL_QEMU_WIDEN_SYMBOL"]?.trim() || undefined;
+  const widenOffsetRaw = process.env["0SEC_KERNEL_QEMU_WIDEN_OFFSET"]?.trim();
+  const widenDelayRaw = process.env["0SEC_KERNEL_QEMU_WIDEN_DELAY_MS"]?.trim();
 
   // Weaponization lane (lightweight busybox initramfs). `USE_KERNEL_WEAPONIZE=1`
-  // is the operator-facing alias; `PWNKIT_KERNEL_QEMU_INITRAMFS=1` is the
+  // is the operator-facing alias; `0SEC_KERNEL_QEMU_INITRAMFS=1` is the
   // explicit knob. Either enables it.
   const weaponizeInitramfs =
-    /^(1|true|on|yes)$/i.test(process.env.PWNKIT_KERNEL_QEMU_INITRAMFS?.trim() ?? "") ||
+    /^(1|true|on|yes)$/i.test(process.env["0SEC_KERNEL_QEMU_INITRAMFS"]?.trim() ?? "") ||
     /^(1|true|on|yes)$/i.test(process.env.USE_KERNEL_WEAPONIZE?.trim() ?? "");
-  const initramfsModules = (process.env.PWNKIT_KERNEL_QEMU_INITRAMFS_MODULES?.trim() || "")
+  const initramfsModules = (process.env["0SEC_KERNEL_QEMU_INITRAMFS_MODULES"]?.trim() || "")
     .split(/[:,\s]+/)
     .map((m) => m.trim())
     .filter(Boolean);
-  const busyboxPath = process.env.PWNKIT_KERNEL_QEMU_BUSYBOX?.trim() || undefined;
+  const busyboxPath = process.env["0SEC_KERNEL_QEMU_BUSYBOX"]?.trim() || undefined;
 
   return {
-    qemuBinary: process.env.PWNKIT_KERNEL_QEMU_BINARY?.trim() || "qemu-system-x86_64",
+    qemuBinary: process.env["0SEC_KERNEL_QEMU_BINARY"]?.trim() || "qemu-system-x86_64",
     kernelImage: resolvedKernelImage,
     diskImage: resolvedDiskImage,
-    diskFormat: (process.env.PWNKIT_KERNEL_QEMU_DISK_FORMAT?.trim() as "raw" | "qcow2" | undefined) || inferDiskFormat(resolvedDiskImage),
-    bootTimeoutSec: parseInt(process.env.PWNKIT_KERNEL_QEMU_BOOT_TIMEOUT_SEC?.trim() || "120", 10),
-    memoryMb: parseInt(process.env.PWNKIT_KERNEL_QEMU_MEMORY_MB?.trim() || "2048", 10),
-    smp: parseInt(process.env.PWNKIT_KERNEL_QEMU_SMP?.trim() || "2", 10),
+    diskFormat: (process.env["0SEC_KERNEL_QEMU_DISK_FORMAT"]?.trim() as "raw" | "qcow2" | undefined) || inferDiskFormat(resolvedDiskImage),
+    bootTimeoutSec: parseInt(process.env["0SEC_KERNEL_QEMU_BOOT_TIMEOUT_SEC"]?.trim() || "120", 10),
+    memoryMb: parseInt(process.env["0SEC_KERNEL_QEMU_MEMORY_MB"]?.trim() || "2048", 10),
+    smp: parseInt(process.env["0SEC_KERNEL_QEMU_SMP"]?.trim() || "2", 10),
     kernelAppend,
-    qemuAccel: process.env.PWNKIT_KERNEL_QEMU_ACCEL?.trim() || undefined,
-    initrdPath: process.env.PWNKIT_KERNEL_QEMU_INITRD?.trim() || undefined,
-    timeoutSec: parseInt(process.env.PWNKIT_KERNEL_QEMU_TIMEOUT_SEC?.trim() || "60", 10),
-    shareTag: process.env.PWNKIT_KERNEL_QEMU_SHARE_TAG?.trim() || "pwnkitshare",
-    artifactDir: process.env.PWNKIT_KERNEL_QEMU_ARTIFACT_DIR?.trim() || undefined,
+    qemuAccel: process.env["0SEC_KERNEL_QEMU_ACCEL"]?.trim() || undefined,
+    initrdPath: process.env["0SEC_KERNEL_QEMU_INITRD"]?.trim() || undefined,
+    timeoutSec: parseInt(process.env["0SEC_KERNEL_QEMU_TIMEOUT_SEC"]?.trim() || "60", 10),
+    shareTag: process.env["0SEC_KERNEL_QEMU_SHARE_TAG"]?.trim() || "osecshare",
+    artifactDir: process.env["0SEC_KERNEL_QEMU_ARTIFACT_DIR"]?.trim() || undefined,
     kaslr,
     ...(widenSymbol ? { widenSymbol } : {}),
     ...(widenOffsetRaw && Number.isFinite(parseInt(widenOffsetRaw, 16))
@@ -516,8 +517,8 @@ export function loadKernelVmConfigFromEnv(): KernelVmConfig {
     ...(widenDelayRaw && Number.isFinite(parseInt(widenDelayRaw, 10))
       ? { widenDelayMs: parseInt(widenDelayRaw, 10) }
       : {}),
-    ...(process.env.PWNKIT_KERNEL_QEMU_GUEST_BUILD_DIR?.trim()
-      ? { guestKernelBuildDir: process.env.PWNKIT_KERNEL_QEMU_GUEST_BUILD_DIR!.trim() }
+    ...(process.env["0SEC_KERNEL_QEMU_GUEST_BUILD_DIR"]?.trim()
+      ? { guestKernelBuildDir: process.env["0SEC_KERNEL_QEMU_GUEST_BUILD_DIR"]!.trim() }
       : {}),
     weaponizeInitramfs,
     ...(initramfsModules.length > 0 ? { initramfsModules } : {}),
@@ -532,7 +533,7 @@ export function loadKernelVmConfigFromEnv(): KernelVmConfig {
  */
 export function buildKernelAppend(kaslr: boolean): string {
   const base = "console=ttyS0 root=/dev/vda rw";
-  const tail = "panic=-1 init=/sbin/pwnkit-init";
+  const tail = "panic=-1 init=/sbin/0sec-init";
   return `${base} ${kaslr ? "kaslr" : "nokaslr"} ${tail}`;
 }
 
@@ -550,7 +551,7 @@ export function renderRaceWidenModuleSource(
 ): string {
   const off = `0x${offset.toString(16)}`;
   return [
-    "// pwnkit race-widening kprobe: inject mdelay() at the faulting PC to widen",
+    "// 0sec race-widening kprobe: inject mdelay() at the faulting PC to widen",
     "// the UAF/race window. Best-effort; harmless if the probe fails to register.",
     "#include <linux/module.h>",
     "#include <linux/kernel.h>",
@@ -574,7 +575,7 @@ export function renderRaceWidenModuleSource(
     "",
     "static int __init widen_init(void) {",
     "    kp.pre_handler = handler_pre;",
-    `    pr_info("pwnkit-widen: probing ${symbol}+${off} delay=%lums\\n", widen_delay_ms);`,
+    `    pr_info("0sec-widen: probing ${symbol}+${off} delay=%lums\\n", widen_delay_ms);`,
     "    return register_kprobe(&kp);",
     "}",
     "",
@@ -631,8 +632,8 @@ const RACE_HARNESS_BASE_HEADERS: readonly string[] = [
  *    register + the IPI bursts),
  *  - spins two CPU-pinned racer threads looping their `raceOp{A,B}` bodies,
  *  - wraps them in **Bad Epoll's non-crashing retry loop**: it re-races up to
- *    `maxIters` / `seconds` (both overridable via `PWNKIT_RACE_RETRIES` /
- *    `PWNKIT_RACE_SECONDS`) and NEVER dereferences freed memory or aborts —
+ *    `maxIters` / `seconds` (both overridable via `0SEC_RACE_RETRIES` /
+ *    `0SEC_RACE_SECONDS`) and NEVER dereferences freed memory or aborts —
  *    only the in-kernel KASAN/KCSAN splat (on the serial console) terminates
  *    the run. Prints a `PWNKIT-RACE` progress marker so the oracle sees liveness.
  *
@@ -671,14 +672,14 @@ export function renderRealIpiRaceHarness(spec: RealIpiRaceHarnessSpec): string {
     "",
     "static volatile int g_stop = 0;",
     "",
-    "static void pwnkit_pin_cpu(int cpu) {",
+    "static void osec_pin_cpu(int cpu) {",
     "  cpu_set_t set;",
     "  CPU_ZERO(&set);",
     "  CPU_SET(cpu, &set);",
     "  sched_setaffinity(0, sizeof(set), &set);",
     "}",
     "",
-    "static long pwnkit_env_long(const char *name, long dflt) {",
+    "static long osec_env_long(const char *name, long dflt) {",
     "  const char *v = getenv(name);",
     "  if (!v || !*v) return dflt;",
     "  char *end = NULL;",
@@ -686,18 +687,18 @@ export function renderRealIpiRaceHarness(spec: RealIpiRaceHarnessSpec): string {
     "  return (end && *end == '\\0' && n > 0) ? n : dflt;",
     "}",
     "",
-    `static void *pwnkit_racer_a(void *arg) {`,
+    `static void *osec_racer_a(void *arg) {`,
     "  (void)arg;",
-    `  pwnkit_pin_cpu(${cpuA});`,
+    `  osec_pin_cpu(${cpuA});`,
     "  while (!g_stop) {",
     `    ${spec.raceOpA}`,
     "  }",
     "  return NULL;",
     "}",
     "",
-    `static void *pwnkit_racer_b(void *arg) {`,
+    `static void *osec_racer_b(void *arg) {`,
     "  (void)arg;",
-    `  pwnkit_pin_cpu(${cpuB});`,
+    `  osec_pin_cpu(${cpuB});`,
     "  while (!g_stop) {",
     `    ${spec.raceOpB}`,
     "  }",
@@ -705,8 +706,8 @@ export function renderRealIpiRaceHarness(spec: RealIpiRaceHarnessSpec): string {
     "}",
     "",
     "int main(void) {",
-    `  long retries = pwnkit_env_long("PWNKIT_RACE_RETRIES", ${maxIters});`,
-    `  long seconds = pwnkit_env_long("PWNKIT_RACE_SECONDS", ${seconds});`,
+    `  long retries = osec_env_long("0SEC_RACE_RETRIES", ${maxIters});`,
+    `  long seconds = osec_env_long("0SEC_RACE_SECONDS", ${seconds});`,
     "  time_t deadline = time(NULL) + seconds;",
     "",
     "  /* Arm the widening tactics ONCE (freeze/register + IPI bursts). */",
@@ -718,8 +719,8 @@ export function renderRealIpiRaceHarness(spec: RealIpiRaceHarnessSpec): string {
     "  for (long iter = 0; iter < retries && time(NULL) < deadline; iter++) {",
     "    g_stop = 0;",
     "    pthread_t ta, tb;",
-    "    if (pthread_create(&ta, NULL, pwnkit_racer_a, NULL) != 0) break;",
-    "    if (pthread_create(&tb, NULL, pwnkit_racer_b, NULL) != 0) { g_stop = 1; pthread_join(ta, NULL); break; }",
+    "    if (pthread_create(&ta, NULL, osec_racer_a, NULL) != 0) break;",
+    "    if (pthread_create(&tb, NULL, osec_racer_b, NULL) != 0) { g_stop = 1; pthread_join(ta, NULL); break; }",
     "    usleep(200);",
     "    g_stop = 1;",
     "    pthread_join(ta, NULL);",
@@ -797,7 +798,7 @@ export function buildInitramfsKernelAppend(kaslr: boolean): string {
  * to the serial console (the only channel out of an initramfs with no share) so
  * the host can scrape one stream for both the run output and the dmesg splats.
  *
- * `raceEnv` is the `PWNKIT_RACE_*` knob set the emitted exploit reads via
+ * `raceEnv` is the `0SEC_RACE_*` knob set the emitted exploit reads via
  * getenv at runtime — exported into the exploit's environment here so the lane
  * can drive RACE_SECONDS/FLOOD_THREADS/etc. without recompiling.
  */
@@ -881,7 +882,7 @@ export function buildWeaponizeInitramfs(
     })();
   if (!busybox || !existsSync(busybox)) {
     throw new Error(
-      "weaponize-initramfs lane: no busybox found (set PWNKIT_KERNEL_QEMU_BUSYBOX to a STATIC busybox)",
+      "weaponize-initramfs lane: no busybox found (set 0SEC_KERNEL_QEMU_BUSYBOX to a STATIC busybox)",
     );
   }
   execFileSync("cp", [busybox, join(rootDir, "bin", "busybox")]);
@@ -964,18 +965,18 @@ export function buildInitramfsQemuCommand(
 }
 
 /**
- * The `PWNKIT_RACE_*` knob set the emitted exploit reads at runtime, sourced
+ * The `0SEC_RACE_*` knob set the emitted exploit reads at runtime, sourced
  * from the process env so the lane can be tuned without a rebuild. Only keys
  * that are actually set are forwarded (the exploit applies its own defaults).
  */
 export function collectRaceEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of [
-    "PWNKIT_RACE_FLOOD_THREADS",
-    "PWNKIT_RACE_SPRAY_THREADS",
-    "PWNKIT_RACE_PARK_US",
-    "PWNKIT_RACE_SECONDS",
-    "PWNKIT_RACE_SAME_CPU",
+    "0SEC_RACE_FLOOD_THREADS",
+    "0SEC_RACE_SPRAY_THREADS",
+    "0SEC_RACE_PARK_US",
+    "0SEC_RACE_SECONDS",
+    "0SEC_RACE_SAME_CPU",
   ]) {
     const v = process.env[key]?.trim();
     if (v) out[key] = v;
@@ -1007,8 +1008,8 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
     return [
       "#!/bin/sh",
       "set -eu",
-      "SHARE_DIR=/mnt/pwnkit",
-      "WORK_DIR=/tmp/pwnkit-run",
+      "SHARE_DIR=/mnt/0sec",
+      "WORK_DIR=/tmp/0sec-run",
       "mkdir -p \"$WORK_DIR\"",
       "compiled=0",
       "executed=0",
@@ -1072,17 +1073,17 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
           `KBUILD_DIR=${shellQuote(config.guestKernelBuildDir)}`,
           "widened=0",
           'if [ -d "$KBUILD_DIR" ] && command -v make >/dev/null 2>&1; then',
-          '  cp "$SHARE_DIR/pwnkit_widen.c" "$WORK_DIR/pwnkit_widen.c" 2>/dev/null || true',
-          '  printf "obj-m += pwnkit_widen.o\\n" > "$WORK_DIR/Makefile"',
+          '  cp "$SHARE_DIR/osec_widen.c" "$WORK_DIR/osec_widen.c" 2>/dev/null || true',
+          '  printf "obj-m += osec_widen.o\\n" > "$WORK_DIR/Makefile"',
           '  if make -C "$KBUILD_DIR" M="$WORK_DIR" modules >"$SHARE_DIR/widen.log" 2>&1 \\',
-          '     && insmod "$WORK_DIR/pwnkit_widen.ko" >>"$SHARE_DIR/widen.log" 2>&1; then',
+          '     && insmod "$WORK_DIR/osec_widen.ko" >>"$SHARE_DIR/widen.log" 2>&1; then',
           "    widened=1",
-          '    printf "%s\\n" "pwnkit-widen: insmod ok" >> "$SHARE_DIR/widen.log"',
+          '    printf "%s\\n" "0sec-widen: insmod ok" >> "$SHARE_DIR/widen.log"',
           "  else",
-          '    printf "%s\\n" "pwnkit-widen: build/insmod failed — running WITHOUT widening" >> "$SHARE_DIR/widen.log"',
+          '    printf "%s\\n" "0sec-widen: build/insmod failed — running WITHOUT widening" >> "$SHARE_DIR/widen.log"',
           "  fi",
           "else",
-          '  printf "%s\\n" "pwnkit-widen: no kernel build tree in guest — running WITHOUT widening" > "$SHARE_DIR/widen.log"',
+          '  printf "%s\\n" "0sec-widen: no kernel build tree in guest — running WITHOUT widening" > "$SHARE_DIR/widen.log"',
           "fi",
           'printf "%s\\n" "$widened" > "$SHARE_DIR/widened.ok"',
         ]
@@ -1097,8 +1098,8 @@ function renderGuestRunnerScript(config: KernelVmConfig, language: "c" | "syz" |
     "# after — so the captured output carries an ordered DROP(uid!=0)→ROOT(uid=0)",
     "# witness the oracle uses to confirm a genuine escalation. We must therefore",
     "# run it directly (as root), NOT via su/sudo to a lower uid.",
-    "SHARE_DIR=/mnt/pwnkit",
-    "WORK_DIR=/tmp/pwnkit-run",
+    "SHARE_DIR=/mnt/0sec",
+    "WORK_DIR=/tmp/0sec-run",
     "mkdir -p \"$WORK_DIR\"",
     "compiled=0",
     "executed=0",
@@ -1240,9 +1241,9 @@ async function runWeaponizeInitramfs(
   const hostTmpDir = config.artifactDir
     ? (() => {
         mkdirSync(config.artifactDir!, { recursive: true });
-        return mkdtempSync(join(config.artifactDir!, "pwnkit-initramfs-"));
+        return mkdtempSync(join(config.artifactDir!, "0sec-initramfs-"));
       })()
-    : mkdtempSync(join(tmpdir(), "pwnkit-initramfs-"));
+    : mkdtempSync(join(tmpdir(), "0sec-initramfs-"));
   const serialLogPath = join(hostTmpDir, "serial.log");
   const raceEnv = collectRaceEnv();
 
@@ -1330,19 +1331,19 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
   const hostTmpDir = config.artifactDir
     ? (() => {
         mkdirSync(config.artifactDir!, { recursive: true });
-        return mkdtempSync(join(config.artifactDir!, "pwnkit-kvm-"));
+        return mkdtempSync(join(config.artifactDir!, "0sec-kvm-"));
       })()
-    : mkdtempSync(join(tmpdir(), "pwnkit-kvm-"));
+    : mkdtempSync(join(tmpdir(), "0sec-kvm-"));
   const language = report.reproducerLanguage ?? "c";
   const request = report.executionAttestationRequest ?? (() => {
-    const release = process.env.PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE?.trim();
-    if (!release || !RELEASE_RE.test(release)) throw new Error("direct kernel VM execution requires PWNKIT_KERNEL_QEMU_EXPECTED_RELEASE");
+    const release = process.env["0SEC_KERNEL_QEMU_EXPECTED_RELEASE"]?.trim();
+    if (!release || !RELEASE_RE.test(release)) throw new Error("direct kernel VM execution requires 0SEC_KERNEL_QEMU_EXPECTED_RELEASE");
     return {
       nonce: randomBytes(16).toString("hex"),
       reproducerSha256: createHash("sha256").update(report.reproducer).digest("hex"),
       expectedKernelRelease: release,
       kernelImageSha256: sha256File(config.kernelImage),
-      kernelConfigSha256: sha256File(process.env.PWNKIT_KERNEL_QEMU_CONFIG?.trim() || ""),
+      kernelConfigSha256: sha256File(process.env["0SEC_KERNEL_QEMU_CONFIG"]?.trim() || ""),
     };
   })();
   const sourcePath = join(hostTmpDir, language === "syz" ? "repro.syz" : "repro.c");
@@ -1361,7 +1362,7 @@ export async function runReproducerInKernelVm(report: CrashReport): Promise<Repr
     config.widenDelayMs !== undefined
   ) {
     writeFileSync(
-      join(hostTmpDir, "pwnkit_widen.c"),
+      join(hostTmpDir, "osec_widen.c"),
       renderRaceWidenModuleSource(config.widenSymbol, config.widenOffset, config.widenDelayMs),
       "utf-8",
     );
@@ -1481,7 +1482,7 @@ export interface VerifyKernelFindingOptions {
   kernelTree: string;
   /** Kernel build profile (`kasan`, `defconfig+kasan`, ...). */
   kernelConfig?: KernelConfigProfile;
-  /** Override the default cache root (`~/.pwnkit/kernel-cache/`). */
+  /** Override the default cache root (`~/.0sec/kernel-cache/`). */
   cacheDir?: string;
   /** Force a fresh build even on cache hit. */
   forceBuild?: boolean;
@@ -1495,7 +1496,7 @@ export interface VerifyKernelFindingOptions {
   expectedSignature?: string;
   /**
    * Where to persist the captured dmesg log. Defaults to
-   * `<os.tmpdir()>/pwnkit-verify-<rand>.dmesg`. The file is written even on
+   * `<os.tmpdir()>/0sec-verify-<rand>.dmesg`. The file is written even on
    * `build_failed` / `run_failed`, with the available context.
    */
   dmesgOutPath?: string;
@@ -1542,7 +1543,7 @@ export function defaultDmesgOutPath(): string {
   // not collide on the same filename (the old `Date.now()` ms stamp could).
   const ns = process.hrtime.bigint().toString();
   const random = Math.random().toString(36).slice(2, 10);
-  return join(tmpdir(), `pwnkit-verify-${ns}-${random}.dmesg`);
+  return join(tmpdir(), `0sec-verify-${ns}-${random}.dmesg`);
 }
 
 /**
@@ -1561,7 +1562,7 @@ export function writeProofFileReadOnly(path: string, content: string): void {
 }
 
 /**
- * Tier-1 verification entry point for `pwnkit ingest --syz / --reproducer`.
+ * Tier-1 verification entry point for `0sec ingest --syz / --reproducer`.
  *
  * Builds the requested kernel config (cached), runs the reproducer in QEMU,
  * captures dmesg, and matches it against `expectedSignature` (when set).
@@ -1619,7 +1620,7 @@ export async function verifyKernelFinding(
 
   const build_cache_hit = artifacts.cacheStatus === "hit" || artifacts.cacheStatus === "env";
   mkdirSync(dirname(dmesgOutPath), { recursive: true });
-  const launchDir = mkdtempSync(join(dirname(dmesgOutPath), ".pwnkit-kernel-launch-"));
+  const launchDir = mkdtempSync(join(dirname(dmesgOutPath), ".0sec-kernel-launch-"));
   const stagedKernelImage = join(launchDir, "kernel.image");
   const stagedKernelConfig = join(launchDir, "kernel.config");
   let attestationRequest: KernelExecutionAttestationRequest;
@@ -1644,21 +1645,21 @@ export async function verifyKernelFinding(
 
   // Make the runner pick up the freshly built artifacts.
   const previousEnv = {
-    qemu: process.env.PWNKIT_KERNEL_QEMU,
-    kernel: process.env.PWNKIT_KERNEL_QEMU_KERNEL,
-    disk: process.env.PWNKIT_KERNEL_QEMU_DISK,
-    cfg: process.env.PWNKIT_KERNEL_QEMU_CONFIG,
-    cacheKey: process.env.PWNKIT_KERNEL_QEMU_CACHEKEY,
+    qemu: process.env["0SEC_KERNEL_QEMU"],
+    kernel: process.env["0SEC_KERNEL_QEMU_KERNEL"],
+    disk: process.env["0SEC_KERNEL_QEMU_DISK"],
+    cfg: process.env["0SEC_KERNEL_QEMU_CONFIG"],
+    cacheKey: process.env["0SEC_KERNEL_QEMU_CACHEKEY"],
   };
-  process.env.PWNKIT_KERNEL_QEMU = "1";
-  process.env.PWNKIT_KERNEL_QEMU_KERNEL = stagedKernelImage;
-  process.env.PWNKIT_KERNEL_QEMU_DISK = artifacts.diskImage;
+  process.env["0SEC_KERNEL_QEMU"] = "1";
+  process.env["0SEC_KERNEL_QEMU_KERNEL"] = stagedKernelImage;
+  process.env["0SEC_KERNEL_QEMU_DISK"] = artifacts.diskImage;
   if (artifacts.kernelConfig) {
-    process.env.PWNKIT_KERNEL_QEMU_CONFIG = stagedKernelConfig;
+    process.env["0SEC_KERNEL_QEMU_CONFIG"] = stagedKernelConfig;
   }
   // Booted-image identity for the weaponization oracle's wrong-kernel binding.
   if (artifacts.cacheKey) {
-    process.env.PWNKIT_KERNEL_QEMU_CACHEKEY = artifacts.cacheKey;
+    process.env["0SEC_KERNEL_QEMU_CACHEKEY"] = artifacts.cacheKey;
   }
 
   let runResult: ReproducerResult;
@@ -1688,11 +1689,11 @@ export async function verifyKernelFinding(
       build_cache_hit,
     };
   } finally {
-    process.env.PWNKIT_KERNEL_QEMU = previousEnv.qemu;
-    process.env.PWNKIT_KERNEL_QEMU_KERNEL = previousEnv.kernel;
-    process.env.PWNKIT_KERNEL_QEMU_DISK = previousEnv.disk;
-    process.env.PWNKIT_KERNEL_QEMU_CONFIG = previousEnv.cfg;
-    process.env.PWNKIT_KERNEL_QEMU_CACHEKEY = previousEnv.cacheKey;
+    process.env["0SEC_KERNEL_QEMU"] = previousEnv.qemu;
+    process.env["0SEC_KERNEL_QEMU_KERNEL"] = previousEnv.kernel;
+    process.env["0SEC_KERNEL_QEMU_DISK"] = previousEnv.disk;
+    process.env["0SEC_KERNEL_QEMU_CONFIG"] = previousEnv.cfg;
+    process.env["0SEC_KERNEL_QEMU_CACHEKEY"] = previousEnv.cacheKey;
     rmSync(launchDir, { recursive: true, force: true });
   }
 

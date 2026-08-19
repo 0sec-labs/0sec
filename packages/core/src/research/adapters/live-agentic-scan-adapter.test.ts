@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Finding, ScanReport } from "@pwnkit/shared";
+import type { Finding, ScanReport } from "@0sec/shared";
 import { runResearch } from "../research-runner.js";
 import { ResearchAdapterRegistry } from "../adapter-registry.js";
 import { LiveAgenticScanResearchAdapter, type LiveAgenticScanTarget } from "./live-agentic-scan-adapter.js";
@@ -41,7 +41,7 @@ describe("LiveAgenticScanResearchAdapter", () => {
     } as Finding;
     const scan = vi.fn(async () => reportWith(finding));
     const result = await runResearch(new LiveAgenticScanResearchAdapter(scan), target(), {
-      artifactRoot: tmpRoot("pwnkit-live-"), runId: "live-run",
+      artifactRoot: tmpRoot("0sec-live-"), runId: "live-run",
     });
 
     expect(scan).toHaveBeenCalledOnce();
@@ -58,7 +58,7 @@ describe("LiveAgenticScanResearchAdapter", () => {
       publishability: "needs_verify", evidence: { request: "", response: "" }, timestamp: 1,
     } as Finding;
     const result = await runResearch(new LiveAgenticScanResearchAdapter(async () => reportWith(finding)), target(), {
-      artifactRoot: tmpRoot("pwnkit-live-held-"), runId: "held-run",
+      artifactRoot: tmpRoot("0sec-live-held-"), runId: "held-run",
     });
     expect(result.envelopes[0]?.grade).toBe("candidate");
     expect(result.findings[0]?.evidence[0]?.status).toBe("inconclusive");
@@ -74,7 +74,7 @@ describe("LiveAgenticScanResearchAdapter", () => {
     const registry = new ResearchAdapterRegistry()
       .register("live.agentic-scan", () => new LiveAgenticScanResearchAdapter(scan));
 
-    const result = await registry.run(target(), { artifactRoot: tmpRoot("pwnkit-live-reg-"), runId: "reg-run" });
+    const result = await registry.run(target(), { artifactRoot: tmpRoot("0sec-live-reg-"), runId: "reg-run" });
 
     expect(scan).toHaveBeenCalledOnce();
     expect(result.findings[0].finding).toBe(finding);

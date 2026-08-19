@@ -5,7 +5,7 @@
  * The subsystem-invariant-model stage ({@link ./subsystem-invariant-model.ts})
  * is a complete SEEDLESS pipeline of its own (model → deterministic checker →
  * runHuntScan). This module is the THIN bridge that lets the seed-driven
- * `pwnkit hunt` flow reuse it as CONTEXT instead of as a standalone hunt:
+ * `0sec hunt` flow reuse it as CONTEXT instead of as a standalone hunt:
  *
  *   seed diff ──▶ touched-dir scope (the subsystem the fix lives in)
  *             ──▶ runSubsystemInvariantHunt({ skipHunt: true })
@@ -25,7 +25,7 @@
 
 import { readdirSync, statSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import {
   runSubsystemInvariantHunt,
   resolveContainedSourcePath,
@@ -113,7 +113,7 @@ export interface InvariantHuntContextInput {
   runtime: RuntimeMode;
   /**
    * Where the durable model JSON lives. Default:
-   * `<sourceRoot>/.pwnkit/invariant-models/<subsystem-slug>.json` — next to the
+   * `<sourceRoot>/.0sec/invariant-models/<subsystem-slug>.json` — next to the
    * tree it models, so a re-run of the same subsystem LOADS it (no LLM call) and
    * the deterministic checker re-runs against the current source for free.
    */
@@ -269,7 +269,7 @@ export async function buildInvariantHuntContext(
 
   const modelPath =
     input.modelPath ??
-    join(input.sourceRoot, ".pwnkit", "invariant-models", `${scope.subsystem.replaceAll("/", "__")}.json`);
+    join(input.sourceRoot, ".0sec", "invariant-models", `${scope.subsystem.replaceAll("/", "__")}.json`);
 
   const res = await runSubsystemInvariantHunt({
     sourceRoot: input.sourceRoot,

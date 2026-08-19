@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Skills ablation report generator — pwnkit#460.
+ * Skills ablation report generator — 0sec#460.
  *
  * Reads the 3 variant result artifacts from the skills-ablation workflow
  * (or local directories) and produces a markdown summary table with
  * per-variant metrics and deltas against the control.
  *
- * Decision criteria from pwnkit#410:
+ * Decision criteria from 0sec#410:
  *   - >5% finding-rate improvement  OR
  *   - >15% token/cost reduction
  *   to recommend defaulting JIT skills ON.
@@ -52,7 +52,7 @@ const skillsPath = getArg("skills", null);
 const combinedPath = getArg("combined", null);
 const outputPath = getArg("output", null);
 
-// ── Decision thresholds (from pwnkit#410) ─────────────────────────────────
+// ── Decision thresholds (from 0sec#410) ─────────────────────────────────
 
 const FINDING_RATE_THRESHOLD = 0.05; // >5% improvement
 const TOKEN_REDUCTION_THRESHOLD = 0.15; // >15% reduction
@@ -177,7 +177,7 @@ function computeDelta(treatment, control) {
     ? (treatment.meanDuration - control.meanDuration) / control.meanDuration
     : 0;
 
-  // Decision criteria from pwnkit#410:
+  // Decision criteria from 0sec#410:
   // >5% finding-rate improvement OR >15% token/cost reduction
   const findingRatePass = findingRateDelta > FINDING_RATE_THRESHOLD;
   const costReductionPass = costDelta < -TOKEN_REDUCTION_THRESHOLD;
@@ -214,11 +214,11 @@ function dur(ms) {
 function generateReport(variants) {
   const lines = [];
 
-  lines.push("## Skills Ablation Report (pwnkit#460)");
+  lines.push("## Skills Ablation Report (0sec#460)");
   lines.push("");
   lines.push(`Generated: ${new Date().toISOString()}`);
   lines.push("");
-  lines.push("Decision criteria from pwnkit#410: **>5% finding-rate improvement OR >15% token/cost reduction** to default JIT skills ON.");
+  lines.push("Decision criteria from 0sec#410: **>5% finding-rate improvement OR >15% token/cost reduction** to default JIT skills ON.");
   lines.push("");
 
   // ── Per-variant metrics table ──
@@ -353,7 +353,7 @@ function generateReport(variants) {
   lines.push("");
   lines.push("### Feature Flag Configuration");
   lines.push("");
-  lines.push("| Variant | `PWNKIT_FEATURE_JIT_SKILLS` | `PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS` |");
+  lines.push("| Variant | `0SEC_FEATURE_JIT_SKILLS` | `0SEC_FEATURE_DYNAMIC_PLAYBOOKS` |");
   lines.push("| --- | --- | --- |");
   lines.push("| `control` | `0` | `0` |");
   lines.push("| `skills-only` | `1` | `0` |");

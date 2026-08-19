@@ -78,7 +78,7 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
  * Effective price table = the auto-generated OSS rates (source of truth for every
  * model the feed covers) overlaid with the manual residue. OSS wins where it has
  * data, so refreshing the generated file is the only "maintenance" for those
- * models — no hand-typed rates. Run `pnpm --filter @pwnkit/shared sync-pricing`
+ * models — no hand-typed rates. Run `pnpm --filter @0sec/shared sync-pricing`
  * to check drift, `--write` to refresh.
  */
 export const MODEL_PRICING: Record<string, ModelRates> = {
@@ -134,7 +134,7 @@ export function getRates(model?: string): ModelRates {
   const aliasKey = azureDeploymentPriceKey(key);
   const rates = MODEL_PRICING[key] ?? (aliasKey ? MODEL_PRICING[aliasKey] : undefined);
   if (!rates) {
-    if (model) console.warn(`[pwnkit] Unknown model for cost estimation: ${model}`);
+    if (model) console.warn(`[0sec] Unknown model for cost estimation: ${model}`);
     return MODEL_PRICING.default;
   }
   return rates;

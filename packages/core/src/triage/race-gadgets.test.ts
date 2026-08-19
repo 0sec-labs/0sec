@@ -99,7 +99,7 @@ describe("widening gadget rendering", () => {
     const c = g.renderSetup();
     expect(c).toContain("timerfd_create");
     expect(c).toContain("25000");
-    expect(g.proverEnv()).toEqual({ PWNKIT_RACE_WIDEN_TIMERFD_NS: "25000" });
+    expect(g.proverEnv()).toEqual({ "0SEC_RACE_WIDEN_TIMERFD_NS": "25000" });
   });
 
   it("epoll_waitqueue_flood renders the loop and scales flood threads", () => {
@@ -109,9 +109,9 @@ describe("widening gadget rendering", () => {
     expect(c).toContain("epoll_ctl");
     expect(c).toContain("50000");
     const env = g.proverEnv();
-    expect(env.PWNKIT_RACE_WIDEN_EPOLL_ITEMS).toBe("50000");
+    expect(env["0SEC_RACE_WIDEN_EPOLL_ITEMS"]).toBe("50000");
     // ceil(50000/4096)=13 threads, clamped to <=64.
-    expect(Number(env.PWNKIT_RACE_FLOOD_THREADS)).toBe(13);
+    expect(Number(env["0SEC_RACE_FLOOD_THREADS"])).toBe(13);
   });
 
   it("cache_miss_stall strides the buffer and pins same-CPU", () => {
@@ -120,9 +120,9 @@ describe("widening gadget rendering", () => {
     expect(c).toContain("malloc");
     expect(c).toContain("128");
     const env = g.proverEnv();
-    expect(env.PWNKIT_RACE_WIDEN_CACHE_KB).toBe("8192");
-    expect(env.PWNKIT_RACE_WIDEN_CACHE_STRIDE).toBe("128");
-    expect(env.PWNKIT_RACE_SAME_CPU).toBe("1");
+    expect(env["0SEC_RACE_WIDEN_CACHE_KB"]).toBe("8192");
+    expect(env["0SEC_RACE_WIDEN_CACHE_STRIDE"]).toBe("128");
+    expect(env["0SEC_RACE_SAME_CPU"]).toBe("1");
   });
 
   it("mutex_sleep_widen maps holdUs to nanosleep + PARK_US", () => {
@@ -131,7 +131,7 @@ describe("widening gadget rendering", () => {
     expect(c).toContain("nanosleep");
     // 300us -> 300000 ns
     expect(c).toContain("300000");
-    expect(g.proverEnv()).toEqual({ PWNKIT_RACE_PARK_US: "300" });
+    expect(g.proverEnv()).toEqual({ "0SEC_RACE_PARK_US": "300" });
   });
 
   it("futex_hold renders a futex wait with the hold time", () => {
@@ -139,7 +139,7 @@ describe("widening gadget rendering", () => {
     const c = g.renderSetup();
     expect(c).toContain("SYS_futex");
     expect(c).toContain("FUTEX_WAIT");
-    expect(g.proverEnv()).toEqual({ PWNKIT_RACE_WIDEN_FUTEX_US: "750" });
+    expect(g.proverEnv()).toEqual({ "0SEC_RACE_WIDEN_FUTEX_US": "750" });
   });
 
   it("clamps out-of-range and non-numeric params to safe defaults", () => {
@@ -184,9 +184,9 @@ describe("composeGadgetSetup", () => {
     expect(composed.setupC).toContain("timerfd_interrupt");
     expect(composed.setupC).toContain("epoll_waitqueue_flood");
     // merged env carries keys from all three gadgets
-    expect(composed.proverEnv.PWNKIT_RACE_WIDEN_CACHE_KB).toBeDefined();
-    expect(composed.proverEnv.PWNKIT_RACE_WIDEN_TIMERFD_NS).toBeDefined();
-    expect(composed.proverEnv.PWNKIT_RACE_WIDEN_EPOLL_ITEMS).toBeDefined();
+    expect(composed.proverEnv["0SEC_RACE_WIDEN_CACHE_KB"]).toBeDefined();
+    expect(composed.proverEnv["0SEC_RACE_WIDEN_TIMERFD_NS"]).toBeDefined();
+    expect(composed.proverEnv["0SEC_RACE_WIDEN_EPOLL_ITEMS"]).toBeDefined();
   });
 
   it("later gadgets win on env key clashes", () => {
@@ -194,7 +194,7 @@ describe("composeGadgetSetup", () => {
       mutexSleepWidenGadget({ holdUs: 100 }),
       mutexSleepWidenGadget({ holdUs: 900 }),
     ]);
-    expect(composed.proverEnv.PWNKIT_RACE_PARK_US).toBe("900");
+    expect(composed.proverEnv["0SEC_RACE_PARK_US"]).toBe("900");
   });
 });
 
@@ -388,9 +388,9 @@ describe("prover glue helpers", () => {
   it("buildWidenEnv formats the widen env; empty for no widen", () => {
     expect(buildWidenEnv(undefined, 5)).toEqual({});
     expect(buildWidenEnv({ symbol: "ep_poll", offset: 0x1c }, 7)).toEqual({
-      PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL: "ep_poll",
-      PWNKIT_KERNEL_QEMU_WIDEN_OFFSET: "0x1c",
-      PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS: "7",
+      "0SEC_KERNEL_QEMU_WIDEN_SYMBOL": "ep_poll",
+      "0SEC_KERNEL_QEMU_WIDEN_OFFSET": "0x1c",
+      "0SEC_KERNEL_QEMU_WIDEN_DELAY_MS": "7",
     });
   });
 
@@ -413,7 +413,7 @@ describe("prover glue helpers", () => {
   });
 
   it("setEnv sets then restores prior values", () => {
-    const KEY = "PWNKIT_TEST_RACE_KEY_XYZ";
+    const KEY = "0SEC_TEST_RACE_KEY_XYZ";
     delete process.env[KEY];
     const restore = setEnv({ [KEY]: "on" });
     expect(process.env[KEY]).toBe("on");
@@ -444,9 +444,9 @@ describe("makeKernelVmRaceProver (VM stubbed)", () => {
       verify: async (opts) => {
         capturedOpts = opts;
         envAtVerify = {
-          cacheKb: process.env.PWNKIT_RACE_WIDEN_CACHE_KB,
-          widenSym: process.env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL,
-          widenDelay: process.env.PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS,
+          cacheKb: process.env["0SEC_RACE_WIDEN_CACHE_KB"],
+          widenSym: process.env["0SEC_KERNEL_QEMU_WIDEN_SYMBOL"],
+          widenDelay: process.env["0SEC_KERNEL_QEMU_WIDEN_DELAY_MS"],
         };
         return {
           status: "reproduced",
@@ -478,7 +478,7 @@ describe("makeKernelVmRaceProver (VM stubbed)", () => {
     expect(envAtVerify.widenSym).toBe("ep_poll");
     expect(envAtVerify.widenDelay).toBe("9");
     // and restored afterwards
-    expect(process.env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL).toBeUndefined();
+    expect(process.env["0SEC_KERNEL_QEMU_WIDEN_SYMBOL"]).toBeUndefined();
     expect(outcome.kasanSplat).toBe(true);
     expect(outcome.signature).toBe("kasan-uaf");
   });
@@ -520,7 +520,7 @@ describe("ExpRace real-IPI widener gadgets", () => {
     expect(c).toContain("__k < 500");
     // carries the headers its C needs (GNU affinity macros).
     expect(g.headers).toContain("#define _GNU_SOURCE");
-    expect(g.proverEnv().PWNKIT_RACE_WIDEN_RESCHED_BOUNCES).toBe("500");
+    expect(g.proverEnv()["0SEC_RACE_WIDEN_RESCHED_BOUNCES"]).toBe("500");
   });
 
   it("tlb_shootdown_ipi renders an mprotect() TLB IPI and needs NO config gate", () => {
@@ -549,13 +549,13 @@ describe("ExpRace real-IPI widener gadgets", () => {
     expect(c).toContain("timerfd_create");
     expect(c).toContain("epoll_ctl");
     expect(c).toContain("__i < 12345");
-    expect(g.proverEnv().PWNKIT_RACE_WIDEN_WAITQUEUE_ENTRIES).toBe("12345");
+    expect(g.proverEnv()["0SEC_RACE_WIDEN_WAITQUEUE_ENTRIES"]).toBe("12345");
   });
 
   it("retry_until_splat carries only env budget (loop lives in the harness)", () => {
     const g = retryUntilSplatGadget({ retries: 5000, seconds: 25 });
-    expect(g.proverEnv().PWNKIT_RACE_RETRIES).toBe("5000");
-    expect(g.proverEnv().PWNKIT_RACE_SECONDS).toBe("25");
+    expect(g.proverEnv()["0SEC_RACE_RETRIES"]).toBe("5000");
+    expect(g.proverEnv()["0SEC_RACE_SECONDS"]).toBe("25");
     // no real C beyond a comment marker.
     expect(g.renderSetup()).toContain("harness wraps the race");
   });

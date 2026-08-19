@@ -12,7 +12,7 @@ import type {
   ScanConfig,
   ReviewProfile,
   ReviewAnchor,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import { reviewAgentPrompt } from "./analysis-prompts.js";
 import { runAnalysisAgent } from "./agent-runner.js";
@@ -65,7 +65,7 @@ function resolveRepo(
   }
 
   // Clone the repo
-  const tempDir = join(tmpdir(), `pwnkit-review-${randomUUID().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `0sec-review-${randomUUID().slice(0, 8)}`);
   mkdirSync(tempDir, { recursive: true });
 
   emit({
@@ -326,7 +326,7 @@ async function runReviewAgent(
 ): Promise<{ findings: Finding[]; usage?: { inputTokens: number; outputTokens: number }; estimatedCostUsd?: number }> {
   const profile = config.profile ?? "default";
 
-  // Pre-scan attack surface enumeration for kernel reviews (pwnkit#471).
+  // Pre-scan attack surface enumeration for kernel reviews (0sec#471).
   let attackSurfaceContext: string | undefined;
   if (profile === "linux-kernel") {
     try {
@@ -345,7 +345,7 @@ async function runReviewAgent(
     } catch {
       // Non-fatal; the review agent can still run without this context.
     }
-    // Cross-subsystem data-flow context (pwnkit#469). Computed in the seed
+    // Cross-subsystem data-flow context (0sec#469). Computed in the seed
     // block and threaded in here so it rides the same kernel prompt-context
     // channel as the attack-surface block.
     if (crossSubsystemContext) {
@@ -448,7 +448,7 @@ function appendPromptBlock(prompt: string, block: string): string {
  * 2. Run semgrep with security rules
  * 3. AI agent performs deep source code review
  * 4. Generate report with severity and PoC suggestions
- * 5. Persist to pwnkit DB
+ * 5. Persist to 0sec DB
  */
 export async function sourceReview(
   opts: SourceReviewOptions,
@@ -461,7 +461,7 @@ export async function sourceReview(
   const { repoPath, cloned, tempDir } = resolveRepo(config.repo, emit);
 
   // Initialize DB and create scan record
-  const db = await (async () => { try { const { pwnkitDB } = await import("@pwnkit/db"); return new pwnkitDB(config.dbPath); } catch { return null as any; } })() as any;
+  const db = await (async () => { try { const { osecDB } = await import("@0sec/db"); return new osecDB(config.dbPath); } catch { return null as any; } })() as any;
   const scanConfig: ScanConfig = {
     target: `repo:${config.repo}`,
     depth: config.depth,
@@ -472,7 +472,7 @@ export async function sourceReview(
   const scanId = db?.createScan(scanConfig) ?? "no-db";
 
   try {
-    // Step 2: static scanner scan — scoped to subsystem when set (pwnkit#466)
+    // Step 2: static scanner scan — scoped to subsystem when set (0sec#466)
     const subsystemPaths =
       (config.profile ?? "default") === "linux-kernel" && config.subsystem
         ? config.subsystem.split(",").map((s) => s.trim()).filter(Boolean).map((s) => join(repoPath, s))
@@ -481,7 +481,7 @@ export async function sourceReview(
 
     // Step 2b: foxguard variant-hunt (linux-kernel profile only)
     let foxguardFindings: Finding[] = [];
-    // Cross-subsystem data-flow prompt block (pwnkit#469); populated below for
+    // Cross-subsystem data-flow prompt block (0sec#469); populated below for
     // the linux-kernel profile and threaded into the review agent prompt.
     let crossSubsystemContext: string | undefined;
     if ((config.profile ?? "default") === "linux-kernel") {
@@ -538,7 +538,7 @@ export async function sourceReview(
         });
       }
 
-      // Step 2d: cross-subsystem data-flow seed (pwnkit#469). Copy Fail and its
+      // Step 2d: cross-subsystem data-flow seed (0sec#469). Copy Fail and its
       // siblings live on subsystem boundaries — no single function holds the
       // bug. Map where this tree's code crosses subsystem boundaries (crypto →
       // splice → mm → crypto, etc.) and feed the agent the "trace data across
@@ -567,7 +567,7 @@ export async function sourceReview(
         });
       }
 
-      // Step 2e: auto-anchor from recent fix commits (pwnkit#469 / Naptime
+      // Step 2e: auto-anchor from recent fix commits (0sec#469 / Naptime
       // variant framing). When the operator did not supply anchors, derive a
       // bounded set of variant anchors from the most recent security/`Fixes:`
       // commits in the tree so the review auto-populates variant-anchored mode

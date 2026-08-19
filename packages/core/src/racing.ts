@@ -12,13 +12,13 @@
 
 import { randomUUID } from "node:crypto";
 import type { NativeRuntime } from "./runtime/types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { runNativeAgentLoop } from "./agent/native-loop.js";
 import type { NativeAgentState } from "./agent/native-loop.js";
 import { getToolsForRole, TOOL_DEFINITIONS } from "./agent/tools.js";
 import { shellPentestPrompt, attackPrompt } from "./agent/prompts.js";
 import type { ToolDefinition } from "./agent/types.js";
-import type { pwnkitDB } from "@pwnkit/db";
+import type { osecDB } from "@0sec/db";
 
 // ── Types ──
 
@@ -212,7 +212,7 @@ Goal: Extract the flag (FLAG{...}) with minimal turns using focused, decisive at
 export async function raceStrategies(
   config: RaceConfig,
   runtime: NativeRuntime,
-  db: pwnkitDB | null,
+  db: osecDB | null,
 ): Promise<RaceResult> {
   const { strategies, maxConcurrency, target, scanId } = config;
   const allResults: StrategyResult[] = [];
@@ -436,7 +436,7 @@ export function raceWithDefaults(
   target: string,
   scanId: string,
   runtime: NativeRuntime,
-  db: pwnkitDB | null,
+  db: osecDB | null,
   opts?: {
     maxConcurrency?: number;
     repoPath?: string;

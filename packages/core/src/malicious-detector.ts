@@ -2,7 +2,7 @@
  * Malicious-package detector — deterministic oracles for npm supply-chain
  * threats (typosquats, hijacked packages, install-script payloads).
  *
- * The 2026-04-06 ceiling analysis identified that pwnkit's npm-bench
+ * The 2026-04-06 ceiling analysis identified that 0sec's npm-bench
  * malicious-detection rate was structurally stuck at 8% (vs 62.5% on
  * known-CVE packages) because the LLM audit prompt asked only for
  * traditional vulnerability classes (prototype pollution, ReDoS,
@@ -30,7 +30,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Finding, SupplyChainAttribution } from "@pwnkit/shared";
+import type { Finding, SupplyChainAttribution } from "@0sec/shared";
 
 // ────────────────────────────────────────────────────────────────────
 // Top-N npm package list for typosquat detection
@@ -320,7 +320,7 @@ export interface InstallScriptInspection {
 /**
  * Inspect package.json + referenced install scripts for malicious patterns.
  *
- * Why this exists: pwnkit's audit pipeline runs `npm install --ignore-scripts`
+ * Why this exists: 0sec's audit pipeline runs `npm install --ignore-scripts`
  * (the right sandboxing choice), so install-time payloads never execute. But
  * the source code IS on disk after install, and ~60% of historical malicious
  * npm packages put their payload in `preinstall.js` / `postinstall.js`. This
@@ -609,7 +609,7 @@ export interface TransitiveScanResult {
  * from. Dedups by (name@version) so a diamond dependency is audited once, and
  * is budget-bounded so a pathological tree can't blow up the audit.
  *
- * Why this exists: pwnkit historically source-audited only the ROOT package,
+ * Why this exists: 0sec historically source-audited only the ROOT package,
  * so a malicious transitive dependency (the event-stream pattern) sailed
  * through. This walks the actual resolved tree and applies the same
  * typosquat / known-compromise / install-script oracles to each dep.

@@ -7,7 +7,7 @@ import {
   type MemoryScope,
   type TriageMemory,
 } from "./memories.js";
-import type { AttackCategory, Finding } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@0sec/shared";
 
 // ── In-memory fake DB handle ──
 

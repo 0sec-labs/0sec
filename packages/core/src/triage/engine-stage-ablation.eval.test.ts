@@ -13,7 +13,7 @@
  * instead of printing a number. Run: `vitest run engine-stage-ablation.eval`.
  */
 import { describe, it, expect } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 import {
   reachabilityGate,
@@ -31,7 +31,7 @@ import {
   type ExploitabilityVerdict,
 } from "./exploitability-upgrade.js";
 import type { KernelPrimitive, UpgradeClass } from "./kernel-primitive.js";
-import type { CrashReport, Severity } from "@pwnkit/shared";
+import type { CrashReport, Severity } from "@0sec/shared";
 
 // ── Finding fixture builder (mirrors auto-triage.test.ts) ──────────────
 function kf(over: Partial<Finding> & { title?: string; analysis?: string } = {}): Finding {

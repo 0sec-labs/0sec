@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Finding, PocStep } from "@pwnkit/shared";
+import type { Finding, PocStep } from "@0sec/shared";
 import type { PocStepResult } from "./poc-runtime.js";
 import { redactSensitiveHeaders } from "./template.js";
 

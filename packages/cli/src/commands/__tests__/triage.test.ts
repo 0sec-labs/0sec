@@ -1,5 +1,5 @@
 /**
- * Coverage seed for `pwnkit-cli`'s `triage` command — the Semgrep-style
+ * Coverage seed for `0sec-cli`'s `triage` command — the Semgrep-style
  * false-positive memory surface. Operators run this to (a) hand-craft an
  * FP memory from an existing finding, (b) list and filter memories,
  * (c) remove a stale one, and (d) `mark-fp` a finding which both flips
@@ -7,13 +7,13 @@
  *
  * Strategy: mock the two boundaries triage.ts touches inside its actions —
  *
- *   1. `@pwnkit/db`'s `pwnkitDB` (avoid opening real WASM SQLite — memory
+ *   1. `@0sec/db`'s `osecDB` (avoid opening real WASM SQLite — memory
  *      `project_db_wasm`).
- *   2. `@pwnkit/core`'s `MemoryStore` (avoid the second WASM open path
+ *   2. `@0sec/core`'s `MemoryStore` (avoid the second WASM open path
  *      `MemoryStore.db()` takes under the hood).
  *
  * Both modules are dynamically imported inside triage.ts (`await import(
- * "@pwnkit/db")`, `await import("@pwnkit/core")`), so vitest's hoisted
+ * "@0sec/db")`, `await import("@0sec/core")`), so vitest's hoisted
  * `vi.mock` covers both static and dynamic resolution.
  *
  * What's covered (15 tests):
@@ -101,8 +101,8 @@ const dbState: {
   closed: false,
 };
 
-vi.mock("@pwnkit/db", () => {
-  class FakePwnkitDB {
+vi.mock("@0sec/db", () => {
+  class FakeOsecDB {
     constructor(dbPath?: string) {
       dbState.ctorArgs.push(dbPath);
       dbState.closed = false;
@@ -126,10 +126,10 @@ vi.mock("@pwnkit/db", () => {
       dbState.closed = true;
     }
   }
-  return { pwnkitDB: FakePwnkitDB };
+  return { osecDB: FakeOsecDB };
 });
 
-// ── MemoryStore mock (lives in @pwnkit/core) ────────────────────────────────
+// ── MemoryStore mock (lives in @0sec/core) ────────────────────────────────
 
 interface FakeMemory {
   id: string;
@@ -201,7 +201,7 @@ class FakeMemoryStore {
   }
 }
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   MemoryStore: FakeMemoryStore,
 }));
 
@@ -258,7 +258,7 @@ async function runCli(argv: string[]): Promise<unknown> {
   });
   registerTriageCommand(program);
   try {
-    await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+    await program.parseAsync(["node", "0sec-cli", ...argv]);
     return undefined;
   } catch (err) {
     return err;
@@ -574,7 +574,7 @@ describe("triage mark-fp", () => {
     expect(reason).toBe("sanitised by central template");
   });
 
-  it("--db-path is threaded into pwnkitDB AND MemoryStore constructors", async () => {
+  it("--db-path is threaded into osecDB AND MemoryStore constructors", async () => {
     dbState.rows = [makeRow({ id: "f1234567abcd0000" })];
 
     await runCli([
@@ -589,8 +589,8 @@ describe("triage mark-fp", () => {
 
     expect(process.exitCode).toBe(0);
 
-    // pwnkitDB constructed at least twice: once by loadFinding(), once by
-    // the explicit `new pwnkitDB(opts.dbPath)` in runMarkFp. Every ctorArg
+    // osecDB constructed at least twice: once by loadFinding(), once by
+    // the explicit `new osecDB(opts.dbPath)` in runMarkFp. Every ctorArg
     // must be the threaded path.
     expect(dbState.ctorArgs.length).toBeGreaterThanOrEqual(2);
     for (const arg of dbState.ctorArgs) {

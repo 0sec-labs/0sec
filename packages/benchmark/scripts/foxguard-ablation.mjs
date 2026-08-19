@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Foxguard ablation harness — pwnkit#254.
+ * Foxguard ablation harness — 0sec#254.
  *
  * Runs the same review slice under two static-analyzer profiles and
  * captures the metrics needed for the decision gate documented in
@@ -20,7 +20,7 @@
  *
  * Slices (all locally checked-out under `bench-targets/`):
  *
- *   1. self-scan — `pwnkit` repo itself (TS/JS-heavy)
+ *   1. self-scan — `0sec` repo itself (TS/JS-heavy)
  *   2. xbow-bb-wave — one wave of XBOW BB from
  *      `0ca/xbow-validation-benchmarks-patched` (PHP-heavy)
  *   3. npm-bench-wave — first 9 packages from npm-bench (JS taint focus)
@@ -30,7 +30,7 @@
  *   node packages/benchmark/scripts/foxguard-ablation.mjs \
  *     --slice self-scan \
  *     --xbow-path ../xbow-validation-benchmarks-patched \
- *     --npm-bench-cache /tmp/pwnkit-npm-bench-cache
+ *     --npm-bench-cache /tmp/0sec-npm-bench-cache
  *
  *   node packages/benchmark/scripts/foxguard-ablation.mjs --slice all
  *
@@ -80,7 +80,7 @@ const today = new Date().toISOString().slice(0, 10);
 
 const SLICES = {
   "self-scan": {
-    description: "pwnkit's own repo (TS/JS).",
+    description: "0sec's own repo (TS/JS).",
     target: repoRoot,
     targetType: "source-code",
   },
@@ -115,7 +115,7 @@ function selectSlices(sel) {
 function runOnce({ slice, staticAnalyzer, target }) {
   const env = {
     ...process.env,
-    PWNKIT_STATIC: staticAnalyzer,
+    "0SEC_STATIC": staticAnalyzer,
     // Ablation needs deterministic-ish output; suppress noisy metrics.
     SEMGREP_SEND_METRICS: "off",
   };
@@ -123,7 +123,7 @@ function runOnce({ slice, staticAnalyzer, target }) {
   const t0 = Date.now();
   if (dryRun) {
     console.log(
-      `[dry-run] PWNKIT_STATIC=${staticAnalyzer} pwnkit review ${target}`,
+      `[dry-run] 0SEC_STATIC=${staticAnalyzer} 0sec review ${target}`,
     );
     return {
       slice,
@@ -167,7 +167,7 @@ function runOnce({ slice, staticAnalyzer, target }) {
     return {
       slice,
       static: staticAnalyzer,
-      error: `pwnkit review exited ${proc.status}; no report at ${tmpReport}`,
+      error: `0sec review exited ${proc.status}; no report at ${tmpReport}`,
       wallTimeMs,
     };
   }
@@ -176,7 +176,7 @@ function runOnce({ slice, staticAnalyzer, target }) {
     return {
       slice,
       static: staticAnalyzer,
-      error: `pwnkit review produced no JSON report on stdout`,
+      error: `0sec review produced no JSON report on stdout`,
       wallTimeMs,
     };
   }
@@ -188,7 +188,7 @@ function runOnce({ slice, staticAnalyzer, target }) {
     return {
       slice,
       static: staticAnalyzer,
-      error: `failed to parse pwnkit review JSON at ${tmpReport}: ${err instanceof Error ? err.message : String(err)}`,
+      error: `failed to parse 0sec review JSON at ${tmpReport}: ${err instanceof Error ? err.message : String(err)}`,
       wallTimeMs,
       rawReportPath: tmpReport,
     };
@@ -271,7 +271,7 @@ function main() {
       {
         generatedAt: new Date().toISOString(),
         notes:
-          "Manual ablation: PWNKIT_STATIC=semgrep vs PWNKIT_STATIC=foxguard. " +
+          "Manual ablation: 0SEC_STATIC=semgrep vs 0SEC_STATIC=foxguard. " +
           "Validation gate: ≥semgrep on confirmed findings AND ≥2x faster " +
           "on the source-code slice. See docs/research/foxguard-ablation/.",
         rows,

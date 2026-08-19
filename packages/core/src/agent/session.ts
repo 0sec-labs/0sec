@@ -1,5 +1,5 @@
 /**
- * Stateful per-identity HTTP session engine (pwnkit#564).
+ * Stateful per-identity HTTP session engine (0sec#564).
  *
  * The HTTP tools (`http_request`, `crawl`, `submit_form`) were previously
  * stateless: each request carried only the one static credential and any
@@ -20,7 +20,7 @@
  * unchanged for single-credential scans.
  */
 
-import type { AuthConfig, NamedIdentity } from "@pwnkit/shared";
+import type { AuthConfig, NamedIdentity } from "@0sec/shared";
 import { buildAuthHeaders } from "./prompts.js";
 
 /** One stored cookie. We track domain + path coarsely for host-scoped matching. */
@@ -34,7 +34,7 @@ interface StoredCookie {
 /**
  * Minimal cookie jar — host-scoped, last-write-wins per (host, path, name).
  *
- * This is deliberately not a full RFC 6265 implementation: pwnkit only ever
+ * This is deliberately not a full RFC 6265 implementation: 0sec only ever
  * talks to a single in-scope target origin (enforced by `validateTargetUrl`),
  * so a flat per-host store keyed by cookie name is sufficient and predictable.
  * Attributes we don't model (Secure, SameSite, Max-Age expiry timers) are

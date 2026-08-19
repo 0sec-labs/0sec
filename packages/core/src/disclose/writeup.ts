@@ -3,7 +3,7 @@
  *
  * Turns a disclosed finding's `disclosure/<package>-<vector>-<date>.md`
  * (YAML frontmatter + markdown body) into a *sanitised* narrative draft
- * destined for `research/output/writeups/`. The draft reuses the pwnkit
+ * destined for `research/output/writeups/`. The draft reuses the 0sec
  * disclose template's section spine (Summary / PoC / Timeline / Remediation)
  * and runs every emitted body through the same {@link redactSensitiveHeaders}
  * pass the advisory renderer uses, plus a PII (email) sweep.

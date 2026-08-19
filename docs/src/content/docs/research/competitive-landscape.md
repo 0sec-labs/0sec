@@ -1,15 +1,15 @@
 ---
 title: Competitive Landscape
-description: Side-by-side comparison of pwnkit against other autonomous pentesting agents on the XBOW benchmark, with methodology caveats.
+description: Side-by-side comparison of 0sec against other autonomous pentesting agents on the XBOW benchmark, with methodology caveats.
 ---
 
-How pwnkit compares against other autonomous pentesting agents on the [XBOW validation suite](https://github.com/xbow-engineering/validation-benchmarks) (104 Docker CTF challenges). Numbers are each project's public self-reports — cross-project scores are protocol-sensitive and shouldn't be treated as a matched-conditions leaderboard. Current as of May 2026.
+How 0sec compares against other autonomous pentesting agents on the [XBOW validation suite](https://github.com/xbow-engineering/validation-benchmarks) (104 Docker CTF challenges). Numbers are each project's public self-reports — cross-project scores are protocol-sensitive and shouldn't be treated as a matched-conditions leaderboard. Current as of May 2026.
 
-> **pwnkit status (May 2026, wave 2 reframe):** the load-bearing black-box claim is the **gpt-5.4 model-specific cohort at 93/95 = 97.9%** — the stable, defensible per-model solve rate, undamaged by retention rotation. The retained artifact-backed aggregate (any model) is **103/104 = 99.0%** with white-box at **102/104 = 98.1%** (field-leading); only XBEN-030 is unsolved in any mode within the live retention window. The retained-aggregate black-box count (currently 81/104) is rotation-volatile because GitHub Actions retains a 90-day window of run artifacts; older "unknown"-model proofs age out as new gpt-5.4 sweeps occupy the window — the gpt-5.4 cohort number is the right surface for pure-black-box comparison. Cost: gpt-5.4 ≈ **$0.48 / run, $5.20 / flag** on XBOW. Older docs also preserve a historical mixed local+CI publication line of **90/104 black-box** and **95/104 aggregate**; see [Results](/benchmark/) for the exact distinction and challenge-set mismatch.
+> **0sec status (May 2026, wave 2 reframe):** the load-bearing black-box claim is the **gpt-5.4 model-specific cohort at 93/95 = 97.9%** — the stable, defensible per-model solve rate, undamaged by retention rotation. The retained artifact-backed aggregate (any model) is **103/104 = 99.0%** with white-box at **102/104 = 98.1%** (field-leading); only XBEN-030 is unsolved in any mode within the live retention window. The retained-aggregate black-box count (currently 81/104) is rotation-volatile because GitHub Actions retains a 90-day window of run artifacts; older "unknown"-model proofs age out as new gpt-5.4 sweeps occupy the window — the gpt-5.4 cohort number is the right surface for pure-black-box comparison. Cost: gpt-5.4 ≈ **$0.48 / run, $5.20 / flag** on XBOW. Older docs also preserve a historical mixed local+CI publication line of **90/104 black-box** and **95/104 aggregate**; see [Results](/benchmark/) for the exact distinction and challenge-set mismatch.
 >
 > **Cybench (May 2026):** first scored full 40-challenge run at **36/40 = 90.0%** single-config (Azure gpt-5.4), single-shot. BoxPwnr's published 40/40 = 100% is best-of-N across ~10 model+solver configs.
 
-For pwnkit's own score breakdown see [Results](/benchmark/); for the Shannon-specific gap analysis see [XBOW Analysis](/research/xbow-analysis/).
+For 0sec's own score breakdown see [Results](/benchmark/); for the Shannon-specific gap analysis see [XBOW Analysis](/research/xbow-analysis/).
 
 ## Competitor breakdown
 
@@ -28,7 +28,7 @@ Current XBOW leader by Francisco Oca (0ca). Modular framework with four componen
 
 Key techniques: context compaction triggers at 60% window fill (summarize and continue), loop/oscillation detection catches the agent repeating failed commands, and progress handoff between attempts preserves findings across retries. Cost tracking is built into the orchestrator. Supports Claude, GPT-5, DeepSeek, Grok-4, Gemini 3, and Kimi K2.5.
 
-Beyond XBOW, BoxPwnr has solved HTB 250/523 (47.8%), PortSwigger 163/270 (60.4%), Cybench 40/40 (100%), and picoCTF 373/509 (73.3%). The breadth of benchmark coverage across five platforms is unmatched. Notably, the same author created the patched XBOW fork that pwnkit uses for its benchmark environment.
+Beyond XBOW, BoxPwnr has solved HTB 250/523 (47.8%), PortSwigger 163/270 (60.4%), Cybench 40/40 (100%), and picoCTF 373/509 (73.3%). The breadth of benchmark coverage across five platforms is unmatched. Notably, the same author created the patched XBOW fork that 0sec uses for its benchmark environment.
 
 ### Shannon (96.15%)
 
@@ -50,23 +50,23 @@ Single-agent CLI using ADaPT (Adaptive Decomposition and Planning for Tasks) rec
 
 Academic 3-role system: coordinator, sandbox executor, and validator. The coordinator plans attack strategy, the sandbox runs exploits in isolation, and the validator checks whether output constitutes a real flag. Evidence-gated branching means the system only pursues exploitation paths backed by concrete evidence from prior steps -- no speculative tool calls. Runs on GPT-5 for $21.38 total across all 104 challenges ($0.21/challenge). Published as a research paper with full methodology.
 
-## pwnkit's differentiators
+## 0sec's differentiators
 
 ### Reachability gate matches Endor Labs' "Code API" moat (open-source)
 
-Endor Labs' disclosed ~95% false-positive elimination depends on a proprietary "Code API" reachability signal — they check whether a flagged sink is actually callable from an application entry point before they spend LLM tokens on it. pwnkit implements the same idea as a zero-dependency grep/pattern-based first pass in `packages/core/src/triage/reachability.ts`. This is the only open-source reachability gate for LLM pentest findings we are aware of. The [2026-04-11 single-feature ablation](/research/2026-04-11-ablation/) found reachability to be the best-performing moat layer on the stubborn-14 slice at $1.61 per flag (+3 flags vs default).
+Endor Labs' disclosed ~95% false-positive elimination depends on a proprietary "Code API" reachability signal — they check whether a flagged sink is actually callable from an application entry point before they spend LLM tokens on it. 0sec implements the same idea as a zero-dependency grep/pattern-based first pass in `packages/core/src/triage/reachability.ts`. This is the only open-source reachability gate for LLM pentest findings we are aware of. The [2026-04-11 single-feature ablation](/research/2026-04-11-ablation/) found reachability to be the best-performing moat layer on the stubborn-14 slice at $1.61 per flag (+3 flags vs default).
 
-### foxguard × pwnkit cross-validation (unique)
+### foxguard × 0sec cross-validation (unique)
 
-Endor Labs' triage accuracy comes from forcing neural + rules to agree. pwnkit has the open-source version: for every finding, run [foxguard](https://github.com/0sec-labs/foxguard) (Rust pattern scanner) against the same source tree and require agreement. Both fire → strong signal. Foxguard silent → likely false positive. Nobody else in the open-source pentest-agent space runs a second, independent scanner for cross-validation — this is unique to the pwnkit / foxguard / opensoar trinity.
+Endor Labs' triage accuracy comes from forcing neural + rules to agree. 0sec has the open-source version: for every finding, run [foxguard](https://github.com/0sec-labs/foxguard) (Rust pattern scanner) against the same source tree and require agreement. Both fire → strong signal. Foxguard silent → likely false positive. Nobody else in the open-source pentest-agent space runs a second, independent scanner for cross-validation — this is unique to the 0sec / foxguard / opensoar trinity.
 
 Implementation: `packages/core/src/triage/multi-modal.ts`.
 
 ### Artifact-backed XBOW aggregate at 103/104, with a per-model black-box cohort at 97.9%
 
-A single-config single-shot number and a best-of-N union over many configs answer different questions on the same benchmark and are not directly comparable; see [Methodology](/methodology/) for why pwnkit publishes both surfaces.
+A single-config single-shot number and a best-of-N union over many configs answer different questions on the same benchmark and are not directly comparable; see [Methodology](/methodology/) for why 0sec publishes both surfaces.
 
-BoxPwnr's headline 97.1% is a best-of-N aggregate across ~10 model+solver configurations (527 traces / 104 challenges ≈ 5 attempts each). Their **best single model (GLM-5 + `single_loop`) scores 81.7%**. pwnkit's retained artifact-backed aggregate is **103/104 = 99.0%** with only XBEN-030 unsolved in any mode within the live retention window. The load-bearing black-box surface is the **gpt-5.4 model-specific cohort at 93/95 = 97.9%** — a single-model single-shot solve rate, not a best-of-N aggregate. Cost: ~$0.48 per run, $5.20 per flag.
+BoxPwnr's headline 97.1% is a best-of-N aggregate across ~10 model+solver configurations (527 traces / 104 challenges ≈ 5 attempts each). Their **best single model (GLM-5 + `single_loop`) scores 81.7%**. 0sec's retained artifact-backed aggregate is **103/104 = 99.0%** with only XBEN-030 unsolved in any mode within the live retention window. The load-bearing black-box surface is the **gpt-5.4 model-specific cohort at 93/95 = 97.9%** — a single-model single-shot solve rate, not a best-of-N aggregate. Cost: ~$0.48 per run, $5.20 per flag.
 
 The retained-aggregate black-box count is rotation-volatile (currently 81/104) because the 90-day GitHub Actions artifact retention window rotates older "unknown"-model proofs out as new gpt-5.4 sweeps land. The gpt-5.4 cohort number is the stable claim; the historical mixed local+CI publication line preserves an older **95/104 aggregate** and **90/104 black-box** for continuity. The benchmark page is the canonical place where those distinctions are spelled out.
 
@@ -130,7 +130,7 @@ Ranked by expected impact and implementation complexity. Estimates based on chal
 
 **Reachability gate.** `packages/core/src/triage/reachability.ts` — suppresses findings whose sink is not reachable from an application entry point. The open-source version of Endor Labs' "Code API" moat.
 
-**foxguard multi-modal agreement.** `packages/core/src/triage/multi-modal.ts` — for every pwnkit finding, run foxguard against the same source tree and require agreement before auto-accepting. Endor Labs' rules-plus-neural architecture, open-source.
+**foxguard multi-modal agreement.** `packages/core/src/triage/multi-modal.ts` — for every 0sec finding, run foxguard against the same source tree and require agreement before auto-accepting. Endor Labs' rules-plus-neural architecture, open-source.
 
 **Consensus (self-consistency) verification.** `packages/core/src/triage/verify-pipeline.ts` — `runSelfConsistencyVerify` runs the structured verify pipeline N times in parallel, takes the majority vote, with early termination when a verdict locks up an unreachable lead.
 
@@ -148,7 +148,7 @@ Ranked by expected impact and implementation complexity. Estimates based on chal
 
 ## Key research papers
 
-| Paper | Reference | Key finding for pwnkit |
+| Paper | Reference | Key finding for 0sec |
 |-------|-----------|----------------------|
 | Meta-analysis of AI pentesting agents | arXiv:2602.17622 | Architecture matters less than tools + memory + search |
 | MAPTA | arXiv:2508.20816 | 3-role system with evidence-gated branching, 40 tool calls is the sweet spot, $0.21/challenge |
@@ -157,11 +157,11 @@ Ranked by expected impact and implementation complexity. Estimates based on chal
 | CurriculumPT | Published 2025 | Curriculum learning for penetration testing -- easy challenges first improves hard-challenge performance |
 | CHAP | NDSS 2026 | Challenge-aware heuristic attack planning, presented at top security venue |
 
-The meta-analysis (arXiv:2602.17622) is the most directly relevant. Its core claim -- that the combination of tool quality, memory persistence, and search breadth predicts performance better than agent count or model choice -- aligns with pwnkit's shell-first philosophy. The paper surveyed all major agents on the XBOW benchmark and found that single-agent systems with good tools consistently outperform multi-agent systems with mediocre tools.
+The meta-analysis (arXiv:2602.17622) is the most directly relevant. Its core claim -- that the combination of tool quality, memory persistence, and search breadth predicts performance better than agent count or model choice -- aligns with 0sec's shell-first philosophy. The paper surveyed all major agents on the XBOW benchmark and found that single-agent systems with good tools consistently outperform multi-agent systems with mediocre tools.
 
-MAPTA's evidence-gated branching is the clearest academic validation of "don't speculate, verify." Their system refuses to pursue an exploitation path unless prior steps produced concrete evidence. This is the principle behind pwnkit's early-stop mechanism: if you haven't found evidence of progress by turn 20, you're speculating.
+MAPTA's evidence-gated branching is the clearest academic validation of "don't speculate, verify." Their system refuses to pursue an exploitation path unless prior steps produced concrete evidence. This is the principle behind 0sec's early-stop mechanism: if you haven't found evidence of progress by turn 20, you're speculating.
 
-CHAP at NDSS 2026 introduces challenge-aware heuristic planning -- the agent classifies the challenge type before attacking and selects a heuristic attack plan. This is the academic version of pwnkit's planned dynamic playbooks feature.
+CHAP at NDSS 2026 introduces challenge-aware heuristic planning -- the agent classifies the challenge type before attacking and selects a heuristic attack plan. This is the academic version of 0sec's planned dynamic playbooks feature.
 
 ## What we've shipped
 

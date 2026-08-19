@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
-import type { KernelVariantHuntReport } from "@pwnkit/core";
+import type { KernelVariantHuntReport } from "@0sec/core";
 
 const runKernelVariantHuntMock = vi.fn<() => Promise<KernelVariantHuntReport>>();
 const mineSyzbotQueueMock = vi.fn();
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   runKernelVariantHunt: runKernelVariantHuntMock,
   defaultSyzbotFetcher: vi.fn(),
   mineSyzbotQueue: mineSyzbotQueueMock,
@@ -56,10 +56,10 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerKernelCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
-describe("pwnkit kernel variant-hunt", () => {
+describe("0sec kernel variant-hunt", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let previousExitCode: string | number | null | undefined;

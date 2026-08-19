@@ -1,9 +1,9 @@
 ---
 title: Agent Loop
-description: How pwnkit's autonomous agent loop works — system prompt, LLM calls, tool execution, budget-aware reflection, and debugging.
+description: How 0sec's autonomous agent loop works — system prompt, LLM calls, tool execution, budget-aware reflection, and debugging.
 ---
 
-pwnkit runs security assessments by putting an LLM in a loop with tools. There is no hard-coded playbook. The agent receives a system prompt describing the target and available tools, reasons about what to try, executes tools, reads the results, and decides what to do next. This page explains the loop in detail.
+0sec runs security assessments by putting an LLM in a loop with tools. There is no hard-coded playbook. The agent receives a system prompt describing the target and available tools, reasons about what to try, executes tools, reads the results, and decides what to do next. This page explains the loop in detail.
 
 ## Loop overview
 
@@ -53,7 +53,7 @@ Each iteration of this loop is one **turn**. The agent has a configurable turn b
 
 ### System prompt
 
-The system prompt is the single most important input. It tells the agent what it is, what tools it has, and how to approach the target. pwnkit assembles different prompts depending on the scan mode:
+The system prompt is the single most important input. It tells the agent what it is, what tools it has, and how to approach the target. 0sec assembles different prompts depending on the scan mode:
 
 - **`shellPentestPrompt`** (web targets) -- A concise prompt that gives the agent `bash`, `save_finding`, and `done`. It tells the agent to use curl, python3, and standard CLI tools to probe the target, find auth, test injection points, and extract flags. No structured HTTP tools -- just a shell.
 - **`discoveryPrompt`** / **`attackPrompt`** (LLM/AI targets) -- Role-specific prompts for probing AI endpoints, extracting system prompts, and testing jailbreaks.
@@ -129,7 +129,7 @@ The entire session took 5 turns. The agent recognized the credentials hint on th
 
 ### `--verbose` flag
 
-Run pwnkit with `--verbose` to see the full agent conversation. This prints:
+Run 0sec with `--verbose` to see the full agent conversation. This prints:
 
 - The system prompt sent to the LLM
 - Each tool call name and arguments
@@ -152,7 +152,7 @@ Common patterns to watch for:
 Every tool call, error, and stage transition is logged to SQLite via `db.logEvent`. You can query the event log for a scan to reconstruct exactly what happened:
 
 ```bash
-pwnkit history <scan-id> --events
+0sec history <scan-id> --events
 ```
 
 Session state is persisted every 2 turns, so interrupted scans can be resumed with `--resume <scan-id>`.

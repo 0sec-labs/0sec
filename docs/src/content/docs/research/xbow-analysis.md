@@ -1,9 +1,9 @@
 ---
 title: XBOW Analysis
-description: Where pwnkit's XBOW score comes from, where the remaining gap is, and how the score compares to other agents.
+description: Where 0sec's XBOW score comes from, where the remaining gap is, and how the score compares to other agents.
 ---
 
-Where pwnkit's XBOW score comes from, where the remaining gap lives, and how the score stacks up against other autonomous pentesting agents. Scores reported below are each project's public self-reports; see [Competitive Landscape](/research/competitive-landscape/) for the full side-by-side with methodology caveats.
+Where 0sec's XBOW score comes from, where the remaining gap lives, and how the score stacks up against other autonomous pentesting agents. Scores reported below are each project's public self-reports; see [Competitive Landscape](/research/competitive-landscape/) for the full side-by-side with methodology caveats.
 
 ## Leaderboard context
 
@@ -16,51 +16,51 @@ Where pwnkit's XBOW score comes from, where the remaining gap lives, and how the
 | [deadend-cli](https://xoxruns.medium.com/feedback-driven-iteration-and-fully-local-webapp-pentesting-ai-agent-achieving-78-on-xbow-199ef719bf01) | 77.55% (~76/98) | Single-agent CLI |
 | [MAPTA](https://arxiv.org/abs/2508.20816) | 76.9% (80/104) | Multi-agent, academic |
 | [BoxPwnr](https://github.com/0ca/BoxPwnr) | 97.1% (101/104) | Best-of-N across ~10 model+solver configs; best single model 81.7% |
-| **pwnkit (gpt-5.4 model-specific cohort, load-bearing)** | **93/95 = 97.9% black-box** | Stable, defensible single-model black-box solve rate at $5.20/flag; not affected by retention rotation |
-| **pwnkit (retained artifact union, any model)** | **103/104 aggregate; 102/104 white-box; BB rotation-volatile (currently 81/104)** | Shell-first, open-source, Azure gpt-5.4, recoverable from retained GitHub artifacts; only XBEN-030 unsolved in any mode within the live retention window |
-| **pwnkit (historical mixed local+CI publication)** | **95/104 aggregate; 90/104 black-box** | Older published tally preserved in docs, tracked separately from the retained artifact window |
+| **0sec (gpt-5.4 model-specific cohort, load-bearing)** | **93/95 = 97.9% black-box** | Stable, defensible single-model black-box solve rate at $5.20/flag; not affected by retention rotation |
+| **0sec (retained artifact union, any model)** | **103/104 aggregate; 102/104 white-box; BB rotation-volatile (currently 81/104)** | Shell-first, open-source, Azure gpt-5.4, recoverable from retained GitHub artifacts; only XBEN-030 unsolved in any mode within the live retention window |
+| **0sec (historical mixed local+CI publication)** | **95/104 aggregate; 90/104 black-box** | Older published tally preserved in docs, tracked separately from the retained artifact window |
 
 The current retained artifact-backed set and the older historical publication line do not have identical challenge composition. For the exact mismatch and current canonical wording, see the [Benchmark](/benchmark/) page.
 
 ## Gap analysis: where do the remaining retained-artifact gaps hide?
 
-**XSS challenges (~20 challenges, few pwnkit flags)**
-Shannon has full Playwright browser automation. BoxPwnr runs in Kali Docker. pwnkit has Playwright in CI but the agent doesn't use it effectively for XSS. See issue #44.
+**XSS challenges (~20 challenges, few 0sec flags)**
+Shannon has full Playwright browser automation. BoxPwnr runs in Kali Docker. 0sec has Playwright in CI but the agent doesn't use it effectively for XSS. See issue #44.
 
 **Ensemble gap**
-BoxPwnr's 97.1% comes from running ~10 model+solver configs per challenge. pwnkit uses a single model (Azure gpt-5.4) with 3 retries. Multi-model ensemble (issue #42) could push scores significantly.
+BoxPwnr's 97.1% comes from running ~10 model+solver configs per challenge. 0sec uses a single model (Azure gpt-5.4) with 3 retries. Multi-model ensemble (issue #42) could push scores significantly.
 
 **Turn budget**
-Shannon: 10,000 max turns (unlimited). pwnkit: 40 turns with LLM-based context compaction (effectively ~80 turns via re-compaction). BoxPwnr uses context compaction at 60% threshold for unlimited effective turns.
+Shannon: 10,000 max turns (unlimited). 0sec: 40 turns with LLM-based context compaction (effectively ~80 turns via re-compaction). BoxPwnr uses context compaction at 60% threshold for unlimited effective turns.
 
 **Domain-specialized agents**
-Shannon runs 5 parallel vuln agents with 200-400 line domain-specific prompts. pwnkit sends one agent with dynamic playbooks injected after recon. See issue #18.
+Shannon runs 5 parallel vuln agents with 200-400 line domain-specific prompts. 0sec sends one agent with dynamic playbooks injected after recon. See issue #18.
 
 **Current realistic target: close the last retained-artifact gaps without abandoning the single-command baseline.**
 
 ## Research-backed design decisions
 
-An investigation into the top-performing pentesting agents validated pwnkit's approach and informed several improvements.
+An investigation into the top-performing pentesting agents validated 0sec's approach and informed several improvements.
 
 ### Planning before execution
 
-Every top agent plans before attacking. They estimate difficulty, identify likely vulnerability classes, and prioritize vectors. KinoSec, XBOW, and MAPTA all exhibit this pattern. pwnkit now includes a planning phase in the shell prompt -- the agent writes a brief attack plan before touching the target.
+Every top agent plans before attacking. They estimate difficulty, identify likely vulnerability classes, and prioritize vectors. KinoSec, XBOW, and MAPTA all exhibit this pattern. 0sec now includes a planning phase in the shell prompt -- the agent writes a brief attack plan before touching the target.
 
 ### Reflection checkpoints
 
-When agents stall, the best ones notice and switch approach. deadend-cli (78%) and PentestAgent both use explicit self-reflection. pwnkit now injects a reflection prompt when the agent reaches 60% of its turn budget, forcing it to review what failed and choose a new vector rather than repeating the same approach.
+When agents stall, the best ones notice and switch approach. deadend-cli (78%) and PentestAgent both use explicit self-reflection. 0sec now injects a reflection prompt when the agent reaches 60% of its turn budget, forcing it to review what failed and choose a new vector rather than repeating the same approach.
 
 ### Turn budget matters
 
-MAPTA data shows 40 tool calls is the sweet spot -- enough to complete multi-step exploit chains, not so many that the agent wastes tokens on dead ends. pwnkit increased its deep-mode budget from 20 to 40 turns based on this finding.
+MAPTA data shows 40 tool calls is the sweet spot -- enough to complete multi-step exploit chains, not so many that the agent wastes tokens on dead ends. 0sec increased its deep-mode budget from 20 to 40 turns based on this finding.
 
 ### Challenge hints are standard practice
 
-XBOW [provides challenge descriptions to all agents](https://xbow.com/blog/core-components-ai-pentesting-framework) in their benchmark. This is standard practice, equivalent to a real-world scope document. pwnkit now passes available challenge descriptions as context.
+XBOW [provides challenge descriptions to all agents](https://xbow.com/blog/core-components-ai-pentesting-framework) in their benchmark. This is standard practice, equivalent to a real-world scope document. 0sec now passes available challenge descriptions as context.
 
 ### Shell-first validated
 
-XBOW's own blog confirms that shell access outperforms structured HTTP tools. pwnkit's `bash` tool matches pi-mono's approach: give the agent a terminal and get out of the way. The research confirms this is the right call.
+XBOW's own blog confirms that shell access outperforms structured HTTP tools. 0sec's `bash` tool matches pi-mono's approach: give the agent a terminal and get out of the way. The research confirms this is the right call.
 
 ## What moves the score (and what doesn't)
 
@@ -118,7 +118,7 @@ The vulnerability was hardcoded SSH credentials (base64 encoded in app.py). No w
 
 **This is the strongest evidence that white-box access dramatically changes the score ceiling.** Shannon's 96.15% advantage over KinoSec's 92.3% is largely explained by source access.
 
-Usage: `pwnkit scan --target http://target --repo ./source`
+Usage: `0sec scan --target http://target --repo ./source`
 
 ## White-box vs black-box: head-to-head on impossible challenges
 
@@ -132,7 +132,7 @@ Usage: `pwnkit scan --target http://target --repo ./source`
 
 **White-box clearly lifts the ceiling, but the exact per-challenge receipts now need to be read through the benchmark ledger rather than older prose snapshots.** Some of the local notes in this page were written before the retained artifact-backed reconstruction caught up.
 
-Usage: `pwnkit scan --target http://target --repo ./source`
+Usage: `0sec scan --target http://target --repo ./source`
 
 CI runs both modes independently with a dropdown selector.
 
@@ -145,17 +145,17 @@ What we skipped: Mem0 memory backend, swarm orchestration, prompt optimizer, LLM
 
 ## Other benchmarks to target
 
-Beyond XBOW, these benchmarks are relevant to pwnkit's capabilities:
+Beyond XBOW, these benchmarks are relevant to 0sec's capabilities:
 
-| Benchmark | Domain | Scale | Best autonomous score | pwnkit relevance |
+| Benchmark | Domain | Scale | Best autonomous score | 0sec relevance |
 |-----------|--------|-------|----------------------|------------------|
-| [SastBench](https://arxiv.org/abs/2601.02941) | Code review | Real CVEs + FP triage | Not published | `pwnkit-cli review` -- TP/FP classification |
-| [HarmBench](https://github.com/centerforaisafety/HarmBench) | LLM red teaming | 510 behaviors | Varies by method | `pwnkit-cli scan` on LLM targets |
+| [SastBench](https://arxiv.org/abs/2601.02941) | Code review | Real CVEs + FP triage | Not published | `0sec-cli review` -- TP/FP classification |
+| [HarmBench](https://github.com/centerforaisafety/HarmBench) | LLM red teaming | 510 behaviors | Varies by method | `0sec-cli scan` on LLM targets |
 | [JailbreakBench](https://github.com/JailbreakBench/jailbreakbench) | Jailbreak detection | 200 behaviors | Leaderboard | Prompt injection + jailbreak detection |
 | [AutoPenBench](https://github.com/lucagioacchini/auto-pen-bench) | Web pentesting | 33 Docker tasks | 21% autonomous | Shell-first should beat this |
 | [CyberSecEval 4](https://github.com/meta-llama/PurpleLlama) | Multi-domain | Prompt injection, offensive ops | Varies | Meta brand, cherry-pick subsets |
 
-**Gap: no npm audit benchmark exists.** pwnkit could create one -- 50-100 packages (malware, typosquats, safe) with ground truth. First mover advantage.
+**Gap: no npm audit benchmark exists.** 0sec could create one -- 50-100 packages (malware, typosquats, safe) with ground truth. First mover advantage.
 
 ## AutoPenBench integration path
 
@@ -163,13 +163,13 @@ Beyond XBOW, these benchmarks are relevant to pwnkit's capabilities:
 
 **Key difference from XBOW:** agent SSHes into a Kali Linux container, then pivots to targets on an internal Docker network. No direct HTTP target URL.
 
-**Integration:** MCP bridge approach -- AutoPenBench ships an MCP server with `execute_bash`, `ssh_connect`, `write_file`, `final_answer` tools. pwnkit connects as MCP client. Shell-first approach maps directly to `execute_bash`. Estimated effort: 1-2 days.
+**Integration:** MCP bridge approach -- AutoPenBench ships an MCP server with `execute_bash`, `ssh_connect`, `write_file`, `final_answer` tools. 0sec connects as MCP client. Shell-first approach maps directly to `execute_bash`. Estimated effort: 1-2 days.
 
-**Why it matters:** 21% bar is low. pwnkit's shell-first approach should significantly outperform on access control and web security tasks.
+**Why it matters:** 21% bar is low. 0sec's shell-first approach should significantly outperform on access control and web security tasks.
 
 ## HarmBench / JailbreakBench (LLM safety)
 
-These measure **content safety** (can you make the model say harmful things), not **security** (can you exploit vulnerabilities). Different from pwnkit's existing AI/LLM benchmark.
+These measure **content safety** (can you make the model say harmful things), not **security** (can you exploit vulnerabilities). Different from 0sec's existing AI/LLM benchmark.
 
 **HarmBench:** 510 behaviors, 18 attack methods tested. Best: ~31% ASR. Integration: lightweight loop using `sendPrompt()` + classifier. 2-3 days.
 

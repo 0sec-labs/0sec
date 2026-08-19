@@ -15,7 +15,7 @@
  * `sources[]` log so the caller can see which sources hit / missed /
  * rate-limited.
  *
- * Responses are cached on disk at `~/.pwnkit/cve-cache/<source>/<hash>.json`
+ * Responses are cached on disk at `~/.0sec/cve-cache/<source>/<hash>.json`
  * with a 24h TTL (override via `opts.cacheTtlMs`, or skip the cache with
  * `opts.cache: false`). The cache is keyed on `(source, query)` so an
  * NVD lookup for CVE-2024-1086 and a GitHub search for the same CVE
@@ -33,6 +33,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { homeStateDir } from "@0sec/shared";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -118,7 +119,7 @@ export type FetchLike = (
 }>;
 
 export interface FindCveArtifactsOptions {
-  /** Override the cache directory (default `~/.pwnkit/cve-cache`). */
+  /** Override the cache directory (default `~/.0sec/cve-cache`). */
   cacheDir?: string;
   /** Disable cache entirely (default true = cache on). */
   cache?: boolean;
@@ -170,7 +171,7 @@ export function normaliseCveId(input: string): string {
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function defaultCacheDir(): string {
-  return join(homedir(), ".pwnkit", "cve-cache");
+  return join(homeStateDir(), "cve-cache");
 }
 
 function cacheKey(source: string, query: string): string {
@@ -600,7 +601,7 @@ async function fetchGhsa(
   const url = `https://api.github.com/advisories?cve_id=${encodeURIComponent(cveId)}`;
   const headers: Record<string, string> = {
     accept: "application/vnd.github+json",
-    "user-agent": "pwnkit-cve-scraper",
+    "user-agent": "0sec-cve-scraper",
   };
   if (githubToken) headers.authorization = `Bearer ${githubToken}`;
   const result = await fetchJsonWithRetry<unknown>(url, {
@@ -1032,7 +1033,7 @@ async function fetchGithubPocSearch(
 ): Promise<PocCandidate[]> {
   const headers: Record<string, string> = {
     accept: "application/vnd.github+json",
-    "user-agent": "pwnkit-cve-scraper",
+    "user-agent": "0sec-cve-scraper",
   };
   if (githubToken) headers.authorization = `Bearer ${githubToken}`;
 

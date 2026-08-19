@@ -113,7 +113,7 @@ export class OpenRouterRuntime implements NativeRuntime {
       }
     } else {
       // Single model mode
-      const model = config.model ?? process.env.PWNKIT_MODEL ?? "anthropic/claude-sonnet-4.6";
+      const model = config.model ?? process.env["0SEC_MODEL"] ?? "anthropic/claude-sonnet-4.6";
       this.singleRuntime = this.createModelRuntime(model);
     }
   }
@@ -133,7 +133,7 @@ export class OpenRouterRuntime implements NativeRuntime {
     if (this.ensembleRuntimes.length > 0) {
       return this.ensembleRuntimes.map((e) => e.model);
     }
-    return [this.config.model ?? process.env.PWNKIT_MODEL ?? "anthropic/claude-sonnet-4.6"];
+    return [this.config.model ?? process.env["0SEC_MODEL"] ?? "anthropic/claude-sonnet-4.6"];
   }
 
   /** Whether this runtime is in ensemble mode. */

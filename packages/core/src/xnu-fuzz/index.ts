@@ -1,6 +1,6 @@
 /**
- * `xnu-fuzz` — pwnkit IOKit user-client fuzzer (dynamic sibling to `xnu-re`).
- * Public surface. Design: docs/pwnkit-iokit-fuzzer.md.
+ * `xnu-fuzz` — 0sec IOKit user-client fuzzer (dynamic sibling to `xnu-re`).
+ * Public surface. Design: docs/0sec-iokit-fuzzer.md.
  *
  * Pipeline: extract (reused xnu-re-extract.sh) → MODEL (§1, this module) →
  * GENERATE (§2, this module) → run in the macOS-VM lane (§3, this module) →

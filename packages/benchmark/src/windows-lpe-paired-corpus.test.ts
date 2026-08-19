@@ -37,8 +37,8 @@ function capabilityFixture(): {
   manifest.profile = "capability";
   manifest.cases = [];
   const documents: [WindowsLpeEvaluatorLabels, WindowsLpeEvaluatorLabels] = [
-    { schemaVersion: "pwnkit.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId, split: "development", inventorySha256: "0".repeat(64), salt: "Qx7Nv2Lp9Ds4Hj6Bf1Mt8Yc3Za0Ue5Gi7Ro2Wk9VnAs", labels: [] },
-    { schemaVersion: "pwnkit.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId, split: "holdout", inventorySha256: "0".repeat(64), salt: "Cv3Mn8Qz1Kp6Xs9Dc2Fh7Jt0Ry4Ua5We3Li8Go1NbEk", labels: [] },
+    { schemaVersion: "0sec.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId, split: "development", inventorySha256: "0".repeat(64), salt: "Qx7Nv2Lp9Ds4Hj6Bf1Mt8Yc3Za0Ue5Gi7Ro2Wk9VnAs", labels: [] },
+    { schemaVersion: "0sec.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId, split: "holdout", inventorySha256: "0".repeat(64), salt: "Cv3Mn8Qz1Kp6Xs9Dc2Fh7Jt0Ry4Ua5We3Li8Go1NbEk", labels: [] },
   ];
   for (let familyIndex = 0; familyIndex < 20; familyIndex += 1) {
     const split = familyIndex < 15 ? "development" : "holdout";
@@ -202,10 +202,10 @@ describe("Windows LPE paired corpus v2", () => {
   });
 
   it("rejects duplicate JSON keys in bounded file-loader inputs", () => {
-    const directory = mkdtempSync(resolve(tmpdir(), "pwnkit-paired-corpus-"));
+    const directory = mkdtempSync(resolve(tmpdir(), "0sec-paired-corpus-"));
     const path = resolve(directory, "duplicate.json");
     try {
-      writeFileSync(path, '{"schemaVersion":"pwnkit.windows-lpe-paired-corpus/v2","schemaVersion":"shadow"}');
+      writeFileSync(path, '{"schemaVersion":"0sec.windows-lpe-paired-corpus/v2","schemaVersion":"shadow"}');
       expect(() => loadWindowsLpePairedCorpus(path)).toThrow(/duplicate JSON key/);
     } finally {
       rmSync(directory, { recursive: true, force: true });

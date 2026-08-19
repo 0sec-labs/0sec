@@ -17,7 +17,7 @@
  * whole pass in try/catch so a post-process error can never fail the scan.
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { NativeRuntime } from "../runtime/types.js";
 import { semanticDedupe, rankIncremental, type DedupeItem } from "../triage/index.js";
 
@@ -25,7 +25,7 @@ export type { DedupeItem };
 
 /**
  * Minimal interface for loading prior-scan findings from the local DB.
- * Accepts any object shaped like the pwnkitDB subset so tests can fake it
+ * Accepts any object shaped like the osecDB subset so tests can fake it
  * without a real database.
  */
 export interface PriorScanLoader {
@@ -42,9 +42,9 @@ export interface PriorScanLoader {
 
 /** Options for the post-scan post-process pass. */
 export interface FindingPostProcessOptions {
-  /** Run the semantic dedupe pass (PWNKIT_FEATURE_SEMANTIC_DEDUPE). */
+  /** Run the semantic dedupe pass (0SEC_FEATURE_SEMANTIC_DEDUPE). */
   semanticDedupe?: boolean;
-  /** Run the incremental ranking pass (PWNKIT_FEATURE_INCREMENTAL_RANK). */
+  /** Run the incremental ranking pass (0SEC_FEATURE_INCREMENTAL_RANK). */
   incrementalRank?: boolean;
   /** Scan identifier used to build stable cluster ids. */
   scanId?: string;

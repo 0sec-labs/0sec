@@ -1,4 +1,4 @@
-/* Synthetic vulnerable library — pwnkit C/C++ review profile fixture.
+/* Synthetic vulnerable library — 0sec C/C++ review profile fixture.
  *
  * Deliberately vulnerable. The bug here is the same shape as the
  * 18-year-old integer-truncation flaw in the Provos / IronCurtain post:

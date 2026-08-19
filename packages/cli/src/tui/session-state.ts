@@ -2,7 +2,7 @@ import {
   appendStageAction,
   normalizeStageAction,
   normalizeStageEndDetail,
-} from "@pwnkit/core";
+} from "@0sec/core";
 import { buildShareUrl } from "../utils.js";
 
 export type SessionMode = "audit" | "review" | "scan";

@@ -59,7 +59,7 @@ function target(status: number): ProtocolHttpTarget {
 
 describe("ProtocolHttpResearchAdapter", () => {
   it("runs a non-kernel target through the shared research lifecycle and preserves oracle evidence", async () => {
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-research-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-research-"));
     roots.push(artifactRoot);
     const result = await runResearch(new ProtocolHttpResearchAdapter(), target(200), { artifactRoot, runId: "run-1" });
 
@@ -73,7 +73,7 @@ describe("ProtocolHttpResearchAdapter", () => {
   });
 
   it("records a deterministic refutation and emits no finding for a conformant target", async () => {
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-research-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-research-"));
     roots.push(artifactRoot);
     const result = await runResearch(new ProtocolHttpResearchAdapter(), target(405), { artifactRoot, runId: "run-2" });
 

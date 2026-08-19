@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Finding, ScanConfig } from "@pwnkit/shared";
+import type { Finding, ScanConfig } from "@0sec/shared";
 import type { NativeRuntime, NativeRuntimeResult, NativeMessage, NativeToolDef } from "./runtime/types.js";
 import { runNativeVerify } from "./agentic-scanner.js";
 

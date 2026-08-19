@@ -1,12 +1,12 @@
 /**
- * Schema test for .github/actions/pwnkit-scan/action.yml.
+ * Schema test for .github/actions/0sec-scan/action.yml.
  *
  * This guards against accidental yaml syntax breakage or a drift between the
  * documented input/output names and the action contract. Pure parse + shape
  * assertions — no runtime invocation.
  *
  * Companion smoke test:
- *   .github/actions/pwnkit-scan/__tests__/smoke.test.sh
+ *   .github/actions/0sec-scan/__tests__/smoke.test.sh
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const ACTION_YML = resolve(HERE, "../../../../.github/actions/pwnkit-scan/action.yml");
+const ACTION_YML = resolve(HERE, "../../../../.github/actions/0sec-scan/action.yml");
 
 interface ActionYml {
   name?: string;
@@ -32,7 +32,7 @@ function loadAction(): ActionYml {
   return parseYaml(raw) as ActionYml;
 }
 
-describe("github action: .github/actions/pwnkit-scan/action.yml", () => {
+describe("github action: .github/actions/0sec-scan/action.yml", () => {
   it("parses as valid YAML", () => {
     expect(() => loadAction()).not.toThrow();
   });
@@ -59,7 +59,7 @@ describe("github action: .github/actions/pwnkit-scan/action.yml", () => {
       profile: "web",
       "comment-on-pr": "true",
       "fail-on-confirmed": "true",
-      "pwnkit-version": "latest",
+      "0sec-version": "latest",
     };
     for (const [name, defaultValue] of Object.entries(expected)) {
       expect(inputs[name], `missing input '${name}'`).toBeDefined();

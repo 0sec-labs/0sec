@@ -37,7 +37,7 @@ export interface AuthConfigHeader {
 
 export type AuthConfig = AuthConfigBearer | AuthConfigCookie | AuthConfigBasic | AuthConfigHeader;
 
-// ── Multi-identity access-control testing (pwnkit#564) ──
+// ── Multi-identity access-control testing (0sec#564) ──
 
 /**
  * Privilege tier of a named identity, used for vertical-privilege-escalation
@@ -50,7 +50,7 @@ export type IdentityRole = "admin" | "user" | "anonymous" | (string & {});
 
 /**
  * One named identity for broken-access-control testing (BOLA/IDOR/BFLA,
- * pwnkit#564). Holds a human label, an optional privilege role, and the
+ * 0sec#564). Holds a human label, an optional privilege role, and the
  * credential the engine acts with when this identity is active. An identity
  * with no `auth` is treated as unauthenticated (anonymous) — exactly what you
  * want as the negative-control principal in an authz diff.
@@ -120,7 +120,7 @@ export interface ScanConfig {
   auth?: AuthConfig;
   /**
    * Named identities for multi-principal access-control testing (BOLA/IDOR/
-   * BFLA + horizontal/vertical privesc, pwnkit#564). When ≥2 entries are
+   * BFLA + horizontal/vertical privesc, 0sec#564). When ≥2 entries are
    * present the engine can act as identity A, capture an authorized response,
    * replay the same request as identity B / unauthenticated, and diff
    * status + body to flag broken object-/function-level authorization.
@@ -144,7 +144,7 @@ export interface ScanConfig {
    */
   costCeilingUsd?: number;
   /**
-   * Path to a JSON scope file (pwnkit#215). Format: `{ "in_scope": [...],
+   * Path to a JSON scope file (0sec#215). Format: `{ "in_scope": [...],
    * "out_of_scope": [...] }` with rules of the form `host`, `*.domain`,
    * or `cidr/prefix`. When set, every URL the agent touches is checked
    * against this policy and out-of-scope URLs return as
@@ -163,7 +163,7 @@ export interface ScanConfig {
    */
   rateLimit?: string;
   /**
-   * Generic-scanner-traffic suppression opt-out (pwnkit#217). Default
+   * Generic-scanner-traffic suppression opt-out (0sec#217). Default
    * `false`. When scope is loaded the agent refuses to spawn `sqlmap`,
    * `nikto`, `gobuster`, `dirb`, `wfuzz`, `ffuf`, and `nmap -sV` /
    * `nmap -A`. Setting this to `true` disables that gate (use only
@@ -172,21 +172,21 @@ export interface ScanConfig {
    */
   allowScanners?: boolean;
   /**
-   * Attribution headers from CLI (pwnkit#216). Each entry is `NAME=VALUE`.
+   * Attribution headers from CLI (0sec#216). Each entry is `NAME=VALUE`.
    * Lower precedence than env vars and the scope file's `attribution`
    * block. Headers are injected ONLY on in-scope outbound traffic so
    * attribution doesn't leak to non-engagement targets.
    */
   attributionHeaders?: string[];
   /**
-   * Attribution User-Agent token from CLI (pwnkit#216). When set (and not
+   * Attribution User-Agent token from CLI (0sec#216). When set (and not
    * overridden by env/scope file), the agent's User-Agent on in-scope
-   * traffic becomes `pwnkit/<ver> (engagement: <token>)`.
+   * traffic becomes `0sec/<ver> (engagement: <token>)`.
    */
   attributionUaToken?: string;
   /**
    * Tool-call dispatch protocol for the legacy text-based agent loop
-   * (pwnkit#232). `"json"` (default) keeps the `TOOL_CALL: <name> {...}`
+   * (0sec#232). `"json"` (default) keeps the `TOOL_CALL: <name> {...}`
    * format. `"xml"` switches to the `<command>` / `<flag>` / `<finding>` /
    * `<note>` protocol from `agent/xml-dispatch.ts` — survives malformed-
    * JSON output from cheap OpenRouter / Gemini / DeepSeek models. `"auto"`
@@ -197,7 +197,7 @@ export interface ScanConfig {
   dispatchMode?: "json" | "xml" | "auto";
   /**
    * http_audit mode (FROZEN CONTRACT). Set only when `mode === "http_audit"`.
-   * The CLI parses these from the PWNKIT_TARGET_* env vars; the core builds
+   * The CLI parses these from the 0SEC_TARGET_* env vars; the core builds
    * an in-memory ScopePolicy (host allowlist), path-prefix allowlist,
    * per-host RateLimiter, and a wall-clock kill switch from them, threaded
    * down through an EnforcementTracker into every fetch chokepoint and
@@ -219,15 +219,15 @@ export interface ScanConfig {
    * password-reset burst probe, the web-recon pre-pass routed through the
    * per-host rate limiter, no WAF-evasion ladder, full jitter on the token
    * bucket, and a reduced default per-host rps. Lower precedence than the scope
-   * file's `engagement` block and `PWNKIT_ENGAGEMENT_PROFILE`. See
-   * `scope/engagement-profile.ts` in `@pwnkit/core`.
+   * file's `engagement` block and `0SEC_ENGAGEMENT_PROFILE`. See
+   * `scope/engagement-profile.ts` in `@0sec/core`.
    */
   engagementProfile?: string;
   /**
    * Standalone opt-out for the adaptive WAF-evasion ladder, independent of the
    * engagement profile (`--no-waf-evasion` → `false`). Unset = enabled, which
    * is the historical default. Lower precedence than the scope file's
-   * `engagement.waf_evasion` and `PWNKIT_WAF_EVASION`.
+   * `engagement.waf_evasion` and `0SEC_WAF_EVASION`.
    */
   wafEvasion?: boolean;
 }
@@ -244,7 +244,7 @@ export type AttackCategory =
   | "output-manipulation"
   | "encoding-bypass"
   | "multi-turn"
-  // Source-code audit categories (pwnkit audit)
+  // Source-code audit categories (0sec audit)
   | "prototype-pollution"
   | "path-traversal"
   | "command-injection"
@@ -374,7 +374,7 @@ export interface FindingRemediation {
  * model trains on it: given the layerVerdicts a finding accumulates, can a
  * cheaper subset of layers reach the same final verdict?
  *
- * See pwnkit#112 for the design and pwnkit#113 for the dynamic-routing
+ * See 0sec#112 for the design and 0sec#113 for the dynamic-routing
  * model that consumes this telemetry.
  */
 export type TriageLayerName =
@@ -561,13 +561,13 @@ export interface Finding {
   workflowStatus?: FindingWorkflowStatus;
   workflowAssignee?: string | null;
   /**
-   * ISO-8601 timestamp of the last workflow-state transition (pwnkit#414).
+   * ISO-8601 timestamp of the last workflow-state transition (0sec#414).
    * Optional and additive — set by the DB writer on every save and threaded
    * back through the restore mapper so resume paths preserve audit ordering.
    */
   workflowUpdatedAt?: string | null;
   /**
-   * CVSS-like 0–100 score, populated during the "scored" stage (pwnkit#414).
+   * CVSS-like 0–100 score, populated during the "scored" stage (0sec#414).
    * Optional and additive. The shared `Finding` keeps it loosely typed
    * (numeric only) so it can be threaded through the persistence round-trip
    * without coupling shared to the scoring engine.
@@ -597,7 +597,7 @@ export interface Finding {
     knownMarker?: boolean;
   };
   /**
-   * Ordered proof-of-concept step graph (pwnkit#170). Optional and additive —
+   * Ordered proof-of-concept step graph (0sec#170). Optional and additive —
    * findings produced before this field existed leave it undefined, and every
    * renderer/exporter/sink must continue to work in that case. When populated,
    * downstream consumers (screenshot renderer, behavioural re-verify, advisory
@@ -605,23 +605,23 @@ export interface Finding {
    */
   pocSteps?: PocStep[];
   /**
-   * Machine-executable verification contract (pwnkit#193 / pwnkit-cloud#111).
+   * Machine-executable verification contract (0sec#193 / 0sec-cloud#111).
    * Optional and additive. When populated, cloud's canary watcher (and any
    * OSS caller) can re-evaluate whether the finding is still real against
    * a fresh checkout of the target repo. See {@link VerificationSpec}.
    */
   verificationSpec?: VerificationSpec;
   /**
-   * Prior PoC execution report (pwnkit#171 / pwnkit#414). Optional and
+   * Prior PoC execution report (0sec#171 / 0sec#414). Optional and
    * additive. Typed as `unknown` here because the concrete
-   * `PocExecutionReport` shape lives in `@pwnkit/core/disclose` and shared
+   * `PocExecutionReport` shape lives in `@0sec/core/disclose` and shared
    * must not import from core. Consumers that need the full shape
    * narrow it at the call site.
    */
   pocExecution?: unknown;
   /**
    * Last deterministic-replay verification result attached to this finding
-   * (pwnkit#193). Optional and additive — populated by the replay runner
+   * (0sec#193). Optional and additive — populated by the replay runner
    * (or by cloud after re-running the verifier) and consumed by the
    * disclosure / promotion gates. The shape is validated by
    * `VerificationResultSchema` in this same module; we type it as the
@@ -654,7 +654,7 @@ export interface Finding {
   dedupRefs?: string[];
   /**
    * Intra-scan semantic dedupe mapping (anchored incremental LLM clustering,
-   * `triage/semantic-dedupe.ts`, flag-gated `PWNKIT_FEATURE_SEMANTIC_DEDUPE`,
+   * `triage/semantic-dedupe.ts`, flag-gated `0SEC_FEATURE_SEMANTIC_DEDUPE`,
    * default OFF). Optional and additive — undefined unless the post-pass ran.
    * Canonical findings carry `isCanonical: true` and map to themselves;
    * duplicates carry the canonical's id, a stable `clusterId` (`scanId:canonicalId`),
@@ -674,7 +674,7 @@ export interface Finding {
   /**
    * Incremental rank assigned by the ranking post-pass
    * (`triage/incremental-rank.ts`, flag-gated
-   * `PWNKIT_FEATURE_INCREMENTAL_RANK`, default OFF). 1 = highest comparative
+   * `0SEC_FEATURE_INCREMENTAL_RANK`, default OFF). 1 = highest comparative
    * promise for a security researcher. Optional and additive — undefined
    * unless the post-pass ran; ranks are per-scan, not global.
    */
@@ -682,7 +682,7 @@ export interface Finding {
   /**
    * Public-advisory novelty verdict (issue #851). Optional and additive —
    * undefined until the publishability layer's novelty step runs (flag-gated
-   * via `PWNKIT_FEATURE_PUBLISHABILITY_GATE`, OSS ecosystems only). The
+   * via `0SEC_FEATURE_PUBLISHABILITY_GATE`, OSS ecosystems only). The
    * structured counterpart to the old text-over-notes heuristic the disclosure
    * cockpit used: `matches-CVE-…` / `matches-GHSA-…` mean a live OSV / GitHub
    * Advisory DB lookup found a published advisory covering this package+version
@@ -712,7 +712,7 @@ export interface Finding {
   /**
    * Inline (in-loop) validation verdict (issue #554). Optional and additive.
    * Set by the native attack loop's onFindingSaved hook when
-   * PWNKIT_FEATURE_INLINE_VALIDATION is on and a high/critical finding is saved:
+   * 0SEC_FEATURE_INLINE_VALIDATION is on and a high/critical finding is saved:
    * a fast deterministic oracle re-runs the PoC inline so the attack agent gets
    * a real-time ground-truth signal instead of burning turns on an unprovable
    * lead. `confirmed` means the oracle reproduced the exploit — downstream
@@ -736,7 +736,7 @@ export interface Finding {
    * stages (kernel-autonomy Phase 1). Optional and additive — undefined for
    * non-kernel findings and for kernel findings that never reached
    * weaponization. The canonical typed shape (`KernelExploitContext`) lives in
-   * `@pwnkit/core/kernel/exploit`; shared must not import from core (the
+   * `@0sec/core/kernel/exploit`; shared must not import from core (the
    * dependency only runs core → shared), so we mirror it here with a
    * structurally-identical lightweight interface. Core consumers can assign a
    * `KernelExploitContext` into this field and read it back without a cast
@@ -765,7 +765,7 @@ export interface Finding {
 }
 
 /**
- * Lightweight, dependency-free mirror of `@pwnkit/core`'s `KernelExploitContext`
+ * Lightweight, dependency-free mirror of `@0sec/core`'s `KernelExploitContext`
  * so the shared `Finding` can carry kernel-exploit state without importing from
  * core (which would invert the workspace dependency direction). Kept
  * structurally identical to the core type — when one changes, change both.
@@ -966,11 +966,11 @@ export interface Evidence {
   analysis?: string;
 }
 
-// ── PoC Step Graph (pwnkit#170) ──────────────────────────────────────────────
+// ── PoC Step Graph (0sec#170) ──────────────────────────────────────────────
 //
 // Today, `Finding.evidence` is three free-text strings. Everything downstream
 // that wants to *act* on the PoC — multi-frame screenshot rendering, behavioural
-// re-verification (pwnkit#171), advisory rendering, machine-checkable
+// re-verification (0sec#171), advisory rendering, machine-checkable
 // verification specs — has to re-parse that prose.
 //
 // `pocSteps` formalises the proof-of-concept as an ordered list of named
@@ -1047,7 +1047,7 @@ export interface PocStep {
   expect?: PocStepExpect;
 }
 
-// ── Verification Spec (pwnkit#193 / pwnkit-cloud#111) ───────────────────────
+// ── Verification Spec (0sec#193 / 0sec-cloud#111) ───────────────────────
 //
 // A `VerificationSpec` is a *machine-executable* contract attached to a
 // finding. It answers a single question: "is this finding still real?".
@@ -1113,7 +1113,7 @@ export type VerificationCodePredicate =
  * - `{ status: number }` — exact status code match.
  *
  * The runtime executor that consumes this is OUT OF SCOPE for the OSS
- * verifier in pwnkit#193 — code predicates only. The shape is recorded
+ * verifier in 0sec#193 — code predicates only. The shape is recorded
  * here so cloud's canary watcher can dispatch it later.
  */
 export interface VerificationBehaviorStep {
@@ -1239,7 +1239,7 @@ export interface ScanWarning {
 /**
  * Reason a scan terminated. Undefined / "completed" means the scan finished
  * normally. "cost_ceiling_exceeded" means the per-scan cost ceiling
- * (`PWNKIT_COST_CEILING_USD` / `--cost-ceiling`) was hit and the scan
+ * (`0SEC_COST_CEILING_USD` / `--cost-ceiling`) was hit and the scan
  * aborted with partial findings preserved.
  */
 export type ScanExitReason = "completed" | "cost_ceiling_exceeded";
@@ -1298,7 +1298,7 @@ export interface ScanReport {
 
 /**
  * Auditable record of the engagement hardening posture a scan ran under.
- * Built by `describeEngagementPosture` in `@pwnkit/core`
+ * Built by `describeEngagementPosture` in `@0sec/core`
  * (`scope/engagement-profile.ts`). snake_case keys match the
  * `enforcement_summary` contract; the values are the posture as APPLIED, not
  * as requested.
@@ -1326,8 +1326,8 @@ export interface EngagementPostureRecord {
 
 /**
  * Frozen `enforcement_summary` block emitted in http_audit reports. Mirrors
- * `EnforcementSummary` in `@pwnkit/core` (scope/enforcement.ts); duplicated
- * here (rather than imported) so `@pwnkit/shared` stays dependency-free of
+ * `EnforcementSummary` in `@0sec/core` (scope/enforcement.ts); duplicated
+ * here (rather than imported) so `@0sec/shared` stays dependency-free of
  * core. snake_case keys are part of the contract — do not rename.
  */
 export interface EnforcementSummary {
@@ -1350,7 +1350,7 @@ export interface ReportSummary {
   info: number;
 }
 
-// ── Package Audit (pwnkit audit) ──
+// ── Package Audit (0sec audit) ──
 
 export interface AuditConfig {
   package: string;
@@ -1464,7 +1464,7 @@ export interface AuditReport {
   sourceProvenance?: SourceProvenance;
 }
 
-// ── Source Code Review (pwnkit review) ──
+// ── Source Code Review (0sec review) ──
 
 /**
  * Review profile selects the prompt + harness strategy.
@@ -1475,7 +1475,7 @@ export interface AuditReport {
  * - `linux-kernel`: Linux kernel source review — syscall/ioctl/netlink
  *   surface, copy_from_user discipline, refcount races, skb cow/share
  *   violations (Dirty Frag class), TOCTOU on inode fields. Static-only;
- *   verification phase is pwnkit#271 (kernel oracle) and pwnkit#272
+ *   verification phase is 0sec#271 (kernel oracle) and 0sec#272
  *   (syzkaller harness scaffold).
  * - `cardano-onchain`: Cardano on-chain smart-contract review (Aiken /
  *   Plutus / Plutarch). EUTXO validator *logic* bugs — double satisfaction,
@@ -1607,7 +1607,7 @@ export interface ReviewConfig {
    * External candidate vulnerable spans to seed the agent's worklist before
    * static scanner prioritisation runs. Today the only first-class producer is
    * GemmaForge (`gemmaforge scan`, schema `gemmaforge.leads/v1`). The parser
-   * lives in `@pwnkit/core` (`seed-findings.ts`); it normalises any compliant
+   * lives in `@0sec/core` (`seed-findings.ts`); it normalises any compliant
    * ND-JSON into this shape. Empty array = no external seeds; the selected
    * static scanner remains the lead source.
    */

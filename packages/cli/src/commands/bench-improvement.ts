@@ -35,11 +35,11 @@ import {
   type ResearchExecutionEvidence,
   type ResearchTournamentRun,
   type TournamentResult,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 interface CandidateMetadata {
   id: string;
-  project: "pwnkit";
+  project: "0sec";
   calibrationEmptyFindings: boolean;
   change: { kind: string; knobs: Record<string, string | number | boolean> };
   budget: {
@@ -69,7 +69,7 @@ interface CiEvidence {
   checks?: Array<{ name: string; conclusion: "success" | "failure" | "cancelled" }>;
 }
 
-const REQUIRED_PWNKIT_CHECKS = [
+const REQUIRED_0SEC_CHECKS = [
   "build",
   "ecosystem-audit-smoke (cargo)",
   "ecosystem-audit-smoke (npm)",
@@ -276,7 +276,7 @@ export function parseCandidateMetadata(value: unknown): CandidateMetadata {
     throw new Error("candidate.id must be a lowercase filesystem-safe identifier");
   }
   const evaluation = record(raw.evaluation, "candidate.evaluation");
-  if (raw.project !== "pwnkit") throw new Error("candidate.project must be pwnkit");
+  if (raw.project !== "0sec") throw new Error("candidate.project must be 0sec");
   const budget = record(raw.budget, "candidate.budget");
   const change = raw.change && typeof raw.change === "object" && !Array.isArray(raw.change)
     ? raw.change as Record<string, unknown>
@@ -294,7 +294,7 @@ export function parseCandidateMetadata(value: unknown): CandidateMetadata {
   }
   return {
     id,
-    project: "pwnkit",
+    project: "0sec",
     calibrationEmptyFindings:
       change?.kind === "feature_flag" && knobs?.["calibration.empty_findings"] === true,
     change: { kind: text(change.kind, "candidate.change.kind"), knobs: parsedKnobs },
@@ -373,7 +373,7 @@ export function parseCiEvidence(value: unknown): CiEvidence {
     return { name, conclusion: check.conclusion as "success" | "failure" | "cancelled" };
   });
   const names = checks.map((check) => check.name);
-  if (JSON.stringify(names) !== JSON.stringify(REQUIRED_PWNKIT_CHECKS)) {
+  if (JSON.stringify(names) !== JSON.stringify(REQUIRED_0SEC_CHECKS)) {
     throw new Error("CI evidence does not contain the controller-required check set");
   }
   const passed = checks.every((check) => check.conclusion === "success");

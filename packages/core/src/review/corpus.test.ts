@@ -11,7 +11,7 @@ const FIXTURES = join(__dirname, "__fixtures__");
 describe("extractCorpus", () => {
   it("collects seeds from every conventional fixture location", async () => {
     const root = join(FIXTURES, "cpp-tier2-corpus");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-corpus-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-corpus-"));
     try {
       const seeds = await extractCorpus(root, { outputDir: outDir });
       const names = seeds.map((p) => basename(p)).sort();
@@ -24,8 +24,8 @@ describe("extractCorpus", () => {
   });
 
   it("returns an empty array gracefully when no conventional dirs exist", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pwnkit-corpus-empty-"));
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-corpus-out-"));
+    const root = await mkdtemp(join(tmpdir(), "0sec-corpus-empty-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-corpus-out-"));
     try {
       const seeds = await extractCorpus(root, { outputDir: outDir });
       expect(seeds).toEqual([]);
@@ -36,8 +36,8 @@ describe("extractCorpus", () => {
   });
 
   it("skips empty files (libFuzzer rejects them)", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pwnkit-corpus-empty-files-"));
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-corpus-out-"));
+    const root = await mkdtemp(join(tmpdir(), "0sec-corpus-empty-files-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-corpus-out-"));
     try {
       await mkdir(join(root, "corpus"), { recursive: true });
       await writeFile(join(root, "corpus", "empty.bin"), "");
@@ -51,8 +51,8 @@ describe("extractCorpus", () => {
   });
 
   it("honours a custom maxFileBytes ceiling", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pwnkit-corpus-big-"));
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-corpus-out-"));
+    const root = await mkdtemp(join(tmpdir(), "0sec-corpus-big-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-corpus-out-"));
     try {
       await mkdir(join(root, "corpus"), { recursive: true });
       await writeFile(join(root, "corpus", "small.bin"), Buffer.alloc(4, 1));
@@ -69,8 +69,8 @@ describe("extractCorpus", () => {
   });
 
   it("disambiguates identical basenames across multiple seed dirs", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pwnkit-corpus-dup-"));
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-corpus-out-"));
+    const root = await mkdtemp(join(tmpdir(), "0sec-corpus-dup-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-corpus-out-"));
     try {
       await mkdir(join(root, "corpus"), { recursive: true });
       await mkdir(join(root, "seeds"), { recursive: true });
@@ -87,8 +87,8 @@ describe("extractCorpus", () => {
   });
 
   it("honours a custom seedDirs override", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pwnkit-corpus-custom-"));
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-corpus-out-"));
+    const root = await mkdtemp(join(tmpdir(), "0sec-corpus-custom-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-corpus-out-"));
     try {
       await mkdir(join(root, "weird"), { recursive: true });
       await writeFile(join(root, "weird", "x.bin"), "AAAA");

@@ -26,7 +26,7 @@ describe("resolveEngagementProfile — default (profile off)", () => {
   });
 
   it("is unaffected by unrelated env vars", () => {
-    const p = resolveEngagementProfile({ env: { PWNKIT_FEATURE_WEB_RECON: "1" } });
+    const p = resolveEngagementProfile({ env: { "0SEC_FEATURE_WEB_RECON": "1" } });
     expect(p.active).toBe(false);
     expect(p.wafEvasionLadder).toBe(true);
     expect(p.rateLimitRps).toBe(STANDARD_RPS);
@@ -55,7 +55,7 @@ describe("resolveEngagementProfile — conservative (profile on)", () => {
 
   it("is selectable from env and from the scope file", () => {
     expect(
-      resolveEngagementProfile({ env: { PWNKIT_ENGAGEMENT_PROFILE: "conservative" } }).active,
+      resolveEngagementProfile({ env: { "0SEC_ENGAGEMENT_PROFILE": "conservative" } }).active,
     ).toBe(true);
     expect(
       resolveEngagementProfile({ scopeFileBlock: { profile: "conservative" } }).active,
@@ -73,7 +73,7 @@ describe("resolveEngagementProfile — precedence (scope file > env > CLI)", () 
   it("scope file wins over env and CLI", () => {
     const p = resolveEngagementProfile({
       scopeFileBlock: { profile: "conservative" },
-      env: { PWNKIT_ENGAGEMENT_PROFILE: "standard" },
+      env: { "0SEC_ENGAGEMENT_PROFILE": "standard" },
       cliProfile: "standard",
     });
     expect(p.profile).toBe("conservative");
@@ -82,7 +82,7 @@ describe("resolveEngagementProfile — precedence (scope file > env > CLI)", () 
 
   it("env wins over CLI", () => {
     const p = resolveEngagementProfile({
-      env: { PWNKIT_ENGAGEMENT_PROFILE: "conservative" },
+      env: { "0SEC_ENGAGEMENT_PROFILE": "conservative" },
       cliProfile: "standard",
     });
     expect(p.profile).toBe("conservative");
@@ -94,7 +94,7 @@ describe("resolveEngagementProfile — precedence (scope file > env > CLI)", () 
     // posture, an ad-hoc flag can't quietly turn the ladder back on.
     const p = resolveEngagementProfile({
       scopeFileBlock: { waf_evasion: false },
-      env: { PWNKIT_WAF_EVASION: "1" },
+      env: { "0SEC_WAF_EVASION": "1" },
       cliWafEvasion: true,
     });
     expect(p.wafEvasionLadder).toBe(false);
@@ -103,8 +103,8 @@ describe("resolveEngagementProfile — precedence (scope file > env > CLI)", () 
 });
 
 describe("WAF-evasion ladder — disableable independently of the profile", () => {
-  it("PWNKIT_WAF_EVASION=0 disables the ladder with no profile selected", () => {
-    const p = resolveEngagementProfile({ env: { PWNKIT_WAF_EVASION: "0" } });
+  it("0SEC_WAF_EVASION=0 disables the ladder with no profile selected", () => {
+    const p = resolveEngagementProfile({ env: { "0SEC_WAF_EVASION": "0" } });
     expect(p.profile).toBe("standard");
     expect(p.active).toBe(false);
     expect(p.wafEvasionLadder).toBe(false);
@@ -117,10 +117,10 @@ describe("WAF-evasion ladder — disableable independently of the profile", () =
 
   it("`false` is accepted as well as `0`", () => {
     expect(
-      resolveEngagementProfile({ env: { PWNKIT_WAF_EVASION: "false" } }).wafEvasionLadder,
+      resolveEngagementProfile({ env: { "0SEC_WAF_EVASION": "false" } }).wafEvasionLadder,
     ).toBe(false);
     expect(
-      resolveEngagementProfile({ env: { PWNKIT_WAF_EVASION: "FALSE" } }).wafEvasionLadder,
+      resolveEngagementProfile({ env: { "0SEC_WAF_EVASION": "FALSE" } }).wafEvasionLadder,
     ).toBe(false);
   });
 
@@ -142,7 +142,7 @@ describe("WAF-evasion ladder — disableable independently of the profile", () =
 
   it("isWafEvasionLadderEnabled defaults to true and honours a posture", () => {
     expect(isWafEvasionLadderEnabled(undefined, {})).toBe(true);
-    expect(isWafEvasionLadderEnabled(undefined, { PWNKIT_WAF_EVASION: "0" })).toBe(false);
+    expect(isWafEvasionLadderEnabled(undefined, { "0SEC_WAF_EVASION": "0" })).toBe(false);
     expect(
       isWafEvasionLadderEnabled(resolveEngagementProfile({ cliProfile: "conservative" })),
     ).toBe(false);
@@ -179,7 +179,7 @@ describe("per-field overrides", () => {
   });
 
   it("env can set the rate without selecting a profile", () => {
-    const p = resolveEngagementProfile({ env: { PWNKIT_ENGAGEMENT_RATE_RPS: "2" } });
+    const p = resolveEngagementProfile({ env: { "0SEC_ENGAGEMENT_RATE_RPS": "2" } });
     expect(p.rateLimitRps).toBe(2);
     expect(p.sources.rateLimitRps).toBe("env");
   });
@@ -211,16 +211,16 @@ describe("validation", () => {
       /Unknown engagement profile/,
     );
     expect(() =>
-      resolveEngagementProfile({ env: { PWNKIT_ENGAGEMENT_PROFILE: "stealth" } }),
+      resolveEngagementProfile({ env: { "0SEC_ENGAGEMENT_PROFILE": "stealth" } }),
     ).toThrow(/Unknown engagement profile/);
   });
 
   it("rejects a non-positive / non-numeric rate", () => {
     expect(() =>
-      resolveEngagementProfile({ env: { PWNKIT_ENGAGEMENT_RATE_RPS: "0" } }),
+      resolveEngagementProfile({ env: { "0SEC_ENGAGEMENT_RATE_RPS": "0" } }),
     ).toThrow(/positive number/);
     expect(() =>
-      resolveEngagementProfile({ env: { PWNKIT_ENGAGEMENT_RATE_RPS: "fast" } }),
+      resolveEngagementProfile({ env: { "0SEC_ENGAGEMENT_RATE_RPS": "fast" } }),
     ).toThrow(/positive number/);
     expect(() =>
       resolveEngagementProfile({ scopeFileBlock: { rate_limit_rps: -1 } }),
@@ -229,13 +229,13 @@ describe("validation", () => {
 
   it("rejects a negative jitter", () => {
     expect(() =>
-      resolveEngagementProfile({ env: { PWNKIT_ENGAGEMENT_JITTER_MS: "-5" } }),
+      resolveEngagementProfile({ env: { "0SEC_ENGAGEMENT_JITTER_MS": "-5" } }),
     ).toThrow(/non-negative/);
   });
 
   it("empty-string env values fall through instead of erroring", () => {
     const p = resolveEngagementProfile({
-      env: { PWNKIT_ENGAGEMENT_PROFILE: "", PWNKIT_ENGAGEMENT_RATE_RPS: "  " },
+      env: { "0SEC_ENGAGEMENT_PROFILE": "", "0SEC_ENGAGEMENT_RATE_RPS": "  " },
       cliProfile: "conservative",
     });
     expect(p.profile).toBe("conservative");
@@ -289,7 +289,7 @@ describe("describeEngagementPosture — the auditable record", () => {
   it("reflects the posture that was actually applied", () => {
     const posture = resolveEngagementProfile({
       scopeFileBlock: { profile: "conservative" },
-      env: { PWNKIT_WAF_EVASION: "1" },
+      env: { "0SEC_WAF_EVASION": "1" },
     });
     const record = describeEngagementPosture(posture, new Date("2026-07-28T10:00:00.000Z"));
     expect(record).toEqual({

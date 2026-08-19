@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { breakRecordToFinding } from "./llm-ipi-audit.js";
-import { installPackageBehavior, type BreakRecord } from "@pwnkit/llm-redteam";
+import { installPackageBehavior, type BreakRecord } from "@0sec/llm-redteam";
 
 describe("breakRecordToFinding", () => {
   const behavior = installPackageBehavior();

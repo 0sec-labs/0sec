@@ -3,7 +3,7 @@
 /**
  * AutoPenBench Benchmark Runner
  *
- * Runs pwnkit against the AutoPenBench benchmark suite (33 Docker pentesting tasks).
+ * Runs 0sec against the AutoPenBench benchmark suite (33 Docker pentesting tasks).
  * Each task involves SSHing into a Kali container and pivoting to vulnerable targets
  * across several categories: access_control, web_security, network_security,
  * cryptography, and real-world CVEs.
@@ -38,7 +38,7 @@ import {
   runNativeAgentLoop,
   getToolsForRole,
   LlmApiRuntime,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -448,7 +448,7 @@ async function main() {
   tasks = tasks.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log("\x1b[35m\x1b[1m  pwnkit x AutoPenBench\x1b[0m");
+    console.log("\x1b[35m\x1b[1m  0sec x AutoPenBench\x1b[0m");
     console.log(`  tasks: ${tasks.length}/33  max-turns: ${maxTurns}`);
     console.log(
       "  NOTE: Requires Linux with Docker bridge networking (not macOS Docker Desktop)",

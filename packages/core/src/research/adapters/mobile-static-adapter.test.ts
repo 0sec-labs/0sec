@@ -25,7 +25,7 @@ const report: MobileStaticIntakeReport = {
 describe("MobileStaticResearchAdapter", () => {
   it("derives only explicitly in-scope backend targets and never promotes passive indicators", async () => {
     const target: MobileStaticTarget = { kind: "mobile.static-intake", id: "app", location: "/app", config: {} };
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-mobile-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-mobile-"));
     roots.push(artifactRoot);
     const result = await runResearch(new MobileStaticResearchAdapter(() => report), target, { artifactRoot, runId: "mobile-run" });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { runDifferential } from "./differential-runner.js";
 import { checkResearchNovelty } from "./novelty-provider.js";
 import { createDefaultResearchRegistry, ResearchAdapterRegistry } from "./adapter-registry.js";

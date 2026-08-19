@@ -1,13 +1,13 @@
 ---
 title: "2026-05-08 Cost per Flag: A Missing Axis in Autonomous-Pentest Reporting"
-description: "Most autonomous-pentest agents publish a percentage. Few publish a dollar amount. The percentage answers whether the agent CAN find the bug; the cost answers whether you can afford to run it. Pwnkit publishes both — at $0.48 per scan run and $5.20 per flag on XBOW — and argues that $/flag is the most-disclosable, most-comparable cost axis the field has."
+description: "Most autonomous-pentest agents publish a percentage. Few publish a dollar amount. The percentage answers whether the agent CAN find the bug; the cost answers whether you can afford to run it. 0sec publishes both — at $0.48 per scan run and $5.20 per flag on XBOW — and argues that $/flag is the most-disclosable, most-comparable cost axis the field has."
 ---
 
 *Published 2026-05-08. Numbers come from the canonical [benchmark ledger](https://github.com/0sec-labs/0sec/blob/main/packages/benchmark/results/benchmark-ledger.json) and are recomputed on every CI consolidation run.*
 
 ## Lead
 
-Most autonomous-pentest agents publish a percentage. Few publish a dollar amount. The percentage answers "did the agent find the bug." The dollar answers "can you afford to run this on every pull request." Both matter; only one is widely shared. This post argues that the cost axis should not be optional, that `$/flag` is the right shape for it, and shows pwnkit's number on XBOW under the same methodology that drives the headline percentages.
+Most autonomous-pentest agents publish a percentage. Few publish a dollar amount. The percentage answers "did the agent find the bug." The dollar answers "can you afford to run this on every pull request." Both matter; only one is widely shared. This post argues that the cost axis should not be optional, that `$/flag` is the right shape for it, and shows 0sec's number on XBOW under the same methodology that drives the headline percentages.
 
 ## The cost-axis design space
 
@@ -23,7 +23,7 @@ There are four candidate cost denominators an evaluator can publish, and they ar
 
 `$/flag` is the most-disclosable, most-comparable axis because the flag is the only outcome the evaluator cannot massage. Single-config single-shot `$/flag` is a defensible reference number. Best-of-N `$/flag` is also a fine number — but the report has to disclose N, otherwise the reader has no way to convert it back into per-attempt economics.
 
-## Pwnkit's number
+## 0sec's number
 
 On the XBOW benchmark, single-config (Azure gpt-5.4), single-shot, with three retries per challenge ceiling-capped at $5.00:
 
@@ -45,7 +45,7 @@ That is the load-bearing claim from the [benchmark page](/benchmark/). It is com
 }
 ```
 
-The pipeline that produces this is straightforward: every scan run logs token counts (input, output, cached-input separately) into its result JSON. `packages/core/src/agent/cost.ts` applies provider-specific per-1M-token rates from a hard-coded pricing table (gpt-5.4 input $2.50/1M, output $10.00/1M; with comparable rows for the Anthropic, Google, DeepSeek, Meta, Mistral, and Z.AI models pwnkit also runs). `packages/benchmark/src/scripts/consolidate-xbow.ts` walks every retained `xbow-results-*` GitHub Actions artifact, groups results by model, and the ledger aggregates total spend, divides by attempt count for `$/run`, and divides by solve count for `$/flag`.
+The pipeline that produces this is straightforward: every scan run logs token counts (input, output, cached-input separately) into its result JSON. `packages/core/src/agent/cost.ts` applies provider-specific per-1M-token rates from a hard-coded pricing table (gpt-5.4 input $2.50/1M, output $10.00/1M; with comparable rows for the Anthropic, Google, DeepSeek, Meta, Mistral, and Z.AI models 0sec also runs). `packages/benchmark/src/scripts/consolidate-xbow.ts` walks every retained `xbow-results-*` GitHub Actions artifact, groups results by model, and the ledger aggregates total spend, divides by attempt count for `$/run`, and divides by solve count for `$/flag`.
 
 The consolidate script's per-model summary line on every CI consolidation run reads:
 
@@ -79,7 +79,7 @@ Cost numbers are missing from most autonomous-pentest reports, and the reasons a
 
 None of these are bad reasons. But they do not argue against publishing — they argue for disclosing the *methodology* alongside the number, so a reader can reason about what shifts when the substrate changes.
 
-## What pwnkit does that makes this work
+## What 0sec does that makes this work
 
 The cost number falls out of the benchmark pipeline because cost tracking is built into the agent runtime, not bolted on later.
 
@@ -103,7 +103,7 @@ A few honest gaps remain.
 
 If you publish autonomous-agent benchmark results without a dollar number, you have published half the result. The percentage tells me whether the agent *can* find the bug. The cost tells me whether I can afford to run it. Either number alone tells a partial story; together they describe a scanner that is or is not deployable.
 
-Pwnkit publishes both. The norm we want to see in the field is that everybody else does too — not because the percentages should be smaller, but because comparison without a cost denominator is comparison without a unit.
+0sec publishes both. The norm we want to see in the field is that everybody else does too — not because the percentages should be smaller, but because comparison without a cost denominator is comparison without a unit.
 
 ## Related
 

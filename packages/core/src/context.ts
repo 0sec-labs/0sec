@@ -4,7 +4,7 @@ import type {
   TargetInfo,
   Finding,
   AttackResult,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 
 export function createScanContext(config: ScanConfig): ScanContext {
   return {

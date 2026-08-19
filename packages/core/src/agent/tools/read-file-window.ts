@@ -56,7 +56,7 @@ export const READ_FILE_DEFAULT_MAX_LINES = 500;
  * spoofing this line buys an attacker nothing they cannot already do by
  * writing "ignore previous instructions" into the same file.
  */
-export const READ_FILE_NOTE_PREFIX = "[pwnkit:read_file]";
+export const READ_FILE_NOTE_PREFIX = "[0sec:read_file]";
 
 /** A resolved window over a file's lines, or a rejected request. */
 export type ReadFileWindow =

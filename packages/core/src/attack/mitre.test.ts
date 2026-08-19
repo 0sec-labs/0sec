@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import type { AttackCategory } from "@pwnkit/shared";
+import type { AttackCategory } from "@0sec/shared";
 import { techniquesForCategory, techniquesForEvent } from "./index.js";
 import type { AttackTechnique } from "./index.js";
 
 // Every member of the closed `AttackCategory` union. Kept literal rather than
-// derived so that widening the union in @pwnkit/shared without touching the
+// derived so that widening the union in @0sec/shared without touching the
 // ATT&CK map fails here as well as in mitre.ts.
 const ALL_CATEGORIES: AttackCategory[] = [
   "prompt-injection",

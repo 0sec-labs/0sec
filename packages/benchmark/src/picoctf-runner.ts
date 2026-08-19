@@ -3,7 +3,7 @@
 /**
  * picoCTF Benchmark Runner
  *
- * Runs pwnkit against a curated subset of picoCTF challenges. Challenges
+ * Runs 0sec against a curated subset of picoCTF challenges. Challenges
  * span web exploitation, cryptography, forensics, binary exploitation, and
  * reverse engineering.
  *
@@ -31,9 +31,9 @@
 import { readFileSync, existsSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agenticScan } from "@pwnkit/core";
+import { agenticScan } from "@0sec/core";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -196,7 +196,7 @@ async function runChallengeOnce(challenge: PicoChallenge): Promise<PicoResult> {
   const hint = buildHint(challenge);
 
   try {
-    const dbPath = join(tmpdir(), `pwnkit-picoctf-${challenge.id}-${Date.now()}.db`);
+    const dbPath = join(tmpdir(), `0sec-picoctf-${challenge.id}-${Date.now()}.db`);
     const report = await agenticScan({
       config: {
         target,
@@ -295,7 +295,7 @@ async function main() {
   challenges = challenges.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log("\x1b[36m\x1b[1m  pwnkit x picoCTF benchmark\x1b[0m");
+    console.log("\x1b[36m\x1b[1m  0sec x picoCTF benchmark\x1b[0m");
     console.log(`  challenges: ${challenges.length}  retries: ${retries}`);
     console.log("");
   }

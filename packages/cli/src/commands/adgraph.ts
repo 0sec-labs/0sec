@@ -12,7 +12,7 @@ import {
   type AdGraphAnalysis,
   type AdNode,
   type AdSeverity,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 const DEFAULT_TIMEOUT_MS = "120000";
 

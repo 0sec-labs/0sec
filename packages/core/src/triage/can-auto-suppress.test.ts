@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
+import type { AttackCategory, Finding, Severity } from "@0sec/shared";
 import {
   canAutoSuppress,
   canAutoSuppressDetailed,
@@ -133,7 +133,7 @@ describe("canAutoSuppress — boolean convenience form", () => {
 // low-severity, low-impact one.
 // ──────────────────────────────────────────────────────────────────────
 
-describe("guardrail integration — evidence_gate (PWNKIT_FEATURE_EVIDENCE_GATE)", () => {
+describe("guardrail integration — evidence_gate (0SEC_FEATURE_EVIDENCE_GATE)", () => {
   const idx = FEATURE_NAMES.indexOf("cross_evidence_completeness");
 
   function evidenceCompleteness(f: Finding): number {
@@ -179,7 +179,7 @@ describe("guardrail integration — evidence_gate (PWNKIT_FEATURE_EVIDENCE_GATE)
 // drop when that same finding is high-severity / high-impact.
 // ──────────────────────────────────────────────────────────────────────
 
-describe("guardrail integration — learned-router auto_reject (PWNKIT_FEATURE_LEARNED_ROUTER)", () => {
+describe("guardrail integration — learned-router auto_reject (0SEC_FEATURE_LEARNED_ROUTER)", () => {
   // Probe a small space of thin/empty-evidence shapes to find one the trained
   // model actually scores at p<=0.25 (auto_reject). We don't hard-code which
   // one — the exact threshold crossing depends on the model weights. We only
@@ -249,7 +249,7 @@ describe("guardrail integration — learned-router auto_reject (PWNKIT_FEATURE_L
 // high-severity finding.
 // ──────────────────────────────────────────────────────────────────────
 
-describe("guardrail integration — dynamic_triage Rule-3 (PWNKIT_FEATURE_DYNAMIC_TRIAGE)", () => {
+describe("guardrail integration — dynamic_triage Rule-3 (0SEC_FEATURE_DYNAMIC_TRIAGE)", () => {
   function fpMatcher(score: number, category: string): FpPatternMatcher {
     return { bestMatch: () => ({ score, category }) };
   }

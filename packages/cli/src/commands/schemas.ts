@@ -1,9 +1,9 @@
 /**
  * Runtime validation schemas for the two highest-risk `JSON.parse(...) as T`
- * sites in the CLI: `pwnkit verify --finding <path>` (external user-supplied
- * JSON) and `pwnkit disclose` (DB-stored `pocSteps` blob).
+ * sites in the CLI: `0sec verify --finding <path>` (external user-supplied
+ * JSON) and `0sec disclose` (DB-stored `pocSteps` blob).
  *
- * These schemas mirror the canonical TypeScript types in `@pwnkit/shared`
+ * These schemas mirror the canonical TypeScript types in `@0sec/shared`
  * (`Finding`, `PocStep`, and friends). They are intentionally permissive on
  * unknown top-level fields (`.passthrough()`) — the shared `Finding` type
  * grows over time and old fixtures should keep working — but strict on the
@@ -15,11 +15,11 @@
  */
 
 import { z } from "zod";
-import type { Finding, PocStep, ReportSummary } from "@pwnkit/shared";
+import type { Finding, PocStep, ReportSummary } from "@0sec/shared";
 
 // ── Enum mirrors ────────────────────────────────────────────────────────────
 //
-// These mirror the string-literal unions in `@pwnkit/shared`. We list them
+// These mirror the string-literal unions in `@0sec/shared`. We list them
 // explicitly (rather than e.g. deriving from a const tuple) so a drift between
 // the schema and the TypeScript type surfaces as a compile error here.
 
@@ -122,7 +122,7 @@ export const pocStepArraySchema = z.array(pocStepSchema);
 
 // ── Finding schema ──────────────────────────────────────────────────────────
 //
-// Mirrors `Finding` in `@pwnkit/shared`. We `.passthrough()` so undocumented
+// Mirrors `Finding` in `@0sec/shared`. We `.passthrough()` so undocumented
 // extras (e.g. cloud-side annotations, in-progress fields not yet landed in
 // the shared type) round-trip without rejection. We only enforce the fields
 // the rest of the codebase actually reads.
@@ -163,9 +163,9 @@ export const findingSchema = z
   })
   .passthrough();
 
-// ── ReportSummary schema (used by `pwnkit scan --replay`) ───────────────────
+// ── ReportSummary schema (used by `0sec scan --replay`) ───────────────────
 //
-// Mirrors `ReportSummary` in `@pwnkit/shared` — a flat object of seven
+// Mirrors `ReportSummary` in `@0sec/shared` — a flat object of seven
 // non-negative integer counters. The CLI reads this back from the
 // `scans.summary` DB column on `--replay`; an older schema version or a
 // corrupt row would otherwise crash the replay renderer (which does

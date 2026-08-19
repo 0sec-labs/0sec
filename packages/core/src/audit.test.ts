@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { AuditConfig } from "@pwnkit/shared";
+import type { AuditConfig } from "@0sec/shared";
 import {
   parseOsvAdvisories,
   queryOsvAdvisories,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { AttackCategory, Finding } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@0sec/shared";
 import type {
   NativeRuntime,
   NativeMessage,
@@ -416,7 +416,7 @@ describe("oracleForCategory", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────
-// oastConfirmedPayload (pwnkit#659 / 0cloud#1278) — the always-on
+// oastConfirmedPayload (0sec#659 / 0cloud#1278) — the always-on
 // OAST-confirmation event decision, independent of the FP-moat pov_gate.
 // ────────────────────────────────────────────────────────────────────
 
@@ -465,13 +465,13 @@ describe("oastConfirmedPayload", () => {
     expect(oastConfirmedPayload(makeFinding({ category: "ssrf" }), failed)).toBeNull();
   });
 
-  it("is independent of PWNKIT_FEATURE_POV_GATE (reads no feature flag)", () => {
-    const prev = process.env.PWNKIT_FEATURE_POV_GATE;
-    delete process.env.PWNKIT_FEATURE_POV_GATE; // pov_gate OFF (default)
+  it("is independent of 0SEC_FEATURE_POV_GATE (reads no feature flag)", () => {
+    const prev = process.env["0SEC_FEATURE_POV_GATE"];
+    delete process.env["0SEC_FEATURE_POV_GATE"]; // pov_gate OFF (default)
     const p = oastConfirmedPayload(makeFinding({ id: "f", category: "ssrf" }), verified);
     expect(p?.oracle).toBe("oast-callback"); // still emits
-    if (prev === undefined) delete process.env.PWNKIT_FEATURE_POV_GATE;
-    else process.env.PWNKIT_FEATURE_POV_GATE = prev;
+    if (prev === undefined) delete process.env["0SEC_FEATURE_POV_GATE"];
+    else process.env["0SEC_FEATURE_POV_GATE"] = prev;
   });
 });
 
@@ -541,7 +541,7 @@ describe("generatePov — oracle delegation (XSS / headless-browser)", () => {
     const mockedOracle = async (): Promise<OracleResult> => ({
       verified: true,
       confidence: 1.0,
-      evidence: "playwright dialog captured token=pwnkit_abc message=\"abc\"",
+      evidence: "playwright dialog captured token=osec_abc message=\"abc\"",
       reason: "",
     });
 

@@ -1,6 +1,6 @@
 /**
- * `pwnkit memsafety <source>` — the userspace / Rust memory-safety scan role
- * ("Monty-mode", docs/pwnkit-rust-memsafety-pipeline.md) exposed as a
+ * `0sec memsafety <source>` — the userspace / Rust memory-safety scan role
+ * ("Monty-mode", docs/0sec-rust-memsafety-pipeline.md) exposed as a
  * dispatchable CLI entrypoint.
  *
  * This is the standalone command the cloud `memsafety` scan_mode gate
@@ -30,8 +30,8 @@
 import type { Command } from "commander";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve, join, sep } from "node:path";
-import type { RuntimeMode } from "@pwnkit/shared";
-import type { MemSafetyTarget } from "@pwnkit/core";
+import type { RuntimeMode } from "@0sec/shared";
+import type { MemSafetyTarget } from "@0sec/core";
 
 type MemLanguage = MemSafetyTarget["language"];
 type MemBuildSystem = MemSafetyTarget["buildSystem"];
@@ -151,7 +151,7 @@ export interface MemSafetyOutcome {
  */
 export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafetyOutcome> {
   const { prepare, runMemSafetyScan, getCloudSinkConfig, postFinding } = await import(
-    "@pwnkit/core"
+    "@0sec/core"
   );
   const log = opts.log ?? (() => {});
 

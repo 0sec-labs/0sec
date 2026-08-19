@@ -3,16 +3,16 @@
 /**
  * Triage Training Data Collector
  *
- * Extracts (finding, ground_truth) pairs from pwnkit benchmark results.
+ * Extracts (finding, ground_truth) pairs from 0sec benchmark results.
  *
  * Sources:
  *   - XBOW results (ground truth = flag extraction)
  *   - Cybench results (ground truth = flag extraction)
  *   - npm-bench results (ground truth = package verdict: malicious/vulnerable/safe)
- *   - pwnkit SQLite DB (ground truth = blind verify status)
+ *   - 0sec SQLite DB (ground truth = blind verify status)
  *
  * For every sample we emit BOTH the raw text and the handcrafted
- * feature vector from `@pwnkit/core`'s `extractFeatures`. The feature vector
+ * feature vector from `@0sec/core`'s `extractFeatures`. The feature vector
  * was inspired by the VulnBERT hybrid architecture (handcrafted features
  * fused with neural embeddings) and makes the dataset drop-in compatible
  * with either a pure-text classifier or a hybrid model.
@@ -21,7 +21,7 @@
  *   { text, features, label, label_text, source, confidence }
  *
  * Usage:
- *   tsx src/triage-data-collector.ts --db <path-to-pwnkit.db>
+ *   tsx src/triage-data-collector.ts --db <path-to-0sec.db>
  *   tsx src/triage-data-collector.ts --results <xbow-latest.json>
  *   tsx src/triage-data-collector.ts --npm-bench <npm-bench-latest.json>
  *   tsx src/triage-data-collector.ts --scan-dir <dir-of-scan-dbs>
@@ -32,8 +32,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { extractFeatures, FEATURE_NAMES } from "@pwnkit/core";
-import type { Finding, LayerVerdict } from "@pwnkit/shared";
+import { extractFeatures, FEATURE_NAMES } from "@0sec/core";
+import type { Finding, LayerVerdict } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -78,11 +78,11 @@ export interface TriageSample {
   features: number[];
   /**
    * Per-layer triage telemetry, ordered by execution. Empty for findings
-   * collected from sources that predate pwnkit#112's instrumentation
+   * collected from sources that predate 0sec#112's instrumentation
    * (legacy XBOW/npm-bench JSONs, blind_verify rows from older scans).
    *
    * This is the supervision signal for the dynamic-routing model in
-   * pwnkit#113: given the layer outcomes a finding accumulates, can a
+   * 0sec#113: given the layer outcomes a finding accumulates, can a
    * cheaper subset of layers reach the same final verdict?
    */
   layer_verdicts: LayerVerdict[];
@@ -257,7 +257,7 @@ export function collectFromNpmBench(resultsPath: string): TriageSample[] {
   return samples;
 }
 
-// ── Collect from pwnkit SQLite DB ──
+// ── Collect from 0sec SQLite DB ──
 
 function collectFromDb(dbPath: string): TriageSample[] {
   const resolved = resolveInputPath(dbPath);
@@ -275,7 +275,7 @@ function collectFromDb(dbPath: string): TriageSample[] {
 
   try {
     // Get all scans with their findings. layerVerdicts is a JSON-stringified
-    // array (pwnkit#112) — may be NULL on rows that predate the migration.
+    // array (0sec#112) — may be NULL on rows that predate the migration.
     const scans = db.prepare(`
       SELECT s.id as scan_id, s.target, s.mode,
              f.id as finding_id, f.title, f.description, f.severity,

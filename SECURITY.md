@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report vulnerabilities in pwnkit to **security@0sec.ai**. Do not open a public
+Report vulnerabilities in 0sec to **security@0sec.ai**. Do not open a public
 issue for a suspected security flaw.
 
 Include:
@@ -17,7 +17,7 @@ third-party systems without authorization.
 
 ## Supported versions
 
-Security fixes are made against the latest tagged pwnkit release. If you build
+Security fixes are made against the latest tagged 0sec release. If you build
 from source, include the commit hash in your report.
 
 ## Disclosure

@@ -2,25 +2,25 @@
  * Hunt-lane event types and parsing helpers.
  *
  * The Hunt lane on /live subscribes to a separate SSE feed that emits one
- * `pwnkit.events/v1` record per `data:` frame. Two upstream shapes are
- * accepted, both normalised into {@link PwnkitHuntEvent} for the renderer:
+ * `0sec.events/v1` record per `data:` frame. Two upstream shapes are
+ * accepted, both normalised into {@link osecHuntEvent} for the renderer:
  *
- *   1. Native `pwnkit.events/v1` JSON — what `scripts/serve-events.mjs`
- *      produces when tailing a pwnkit event log (`PWNKIT_EVENT_*` lines).
- *   2. Raw pwnkit eventBus payloads tagged with `{type, payload}` —
+ *   1. Native `0sec.events/v1` JSON — what `scripts/serve-events.mjs`
+ *      produces when tailing a 0sec event log (`0SEC_EVENT_*` lines).
+ *   2. Raw 0sec eventBus payloads tagged with `{type, payload}` —
  *      forwarded by future in-process WebSocket bridges. We translate
  *      these into the v1 shape on ingest.
  *
- * The schema is intentionally a subset of pwnkit's full eventBus
+ * The schema is intentionally a subset of 0sec's full eventBus
  * taxonomy — only the event types the Hunt lane actually renders are
  * surfaced. Unknown/irrelevant events are silently dropped by the parser
  * (see {@link parseHuntEvent}) so the upstream wire format can evolve
  * without breaking the dashboard.
  */
 
-export type PwnkitHuntEvent =
+export type osecHuntEvent =
   | {
-      schema: "pwnkit.events/v1";
+      schema: "0sec.events/v1";
       kind: "tool_use";
       ts: number;
       tool: string;
@@ -33,7 +33,7 @@ export type PwnkitHuntEvent =
       duration_ms?: number;
     }
   | {
-      schema: "pwnkit.events/v1";
+      schema: "0sec.events/v1";
       kind: "finding";
       ts: number;
       finding_id?: string;
@@ -45,7 +45,7 @@ export type PwnkitHuntEvent =
       line?: number;
     }
   | {
-      schema: "pwnkit.events/v1";
+      schema: "0sec.events/v1";
       kind: "stage";
       ts: number;
       stage: string;
@@ -55,7 +55,7 @@ export type PwnkitHuntEvent =
       duration_ms?: number;
     };
 
-export type HuntEventKind = PwnkitHuntEvent["kind"];
+export type HuntEventKind = osecHuntEvent["kind"];
 
 /**
  * Regex that matches a `path/with/slashes.ext:lineno` reference inside a
@@ -84,16 +84,16 @@ export function extractFileLine(text: string | undefined): { file: string; line:
 }
 
 /**
- * Parse one raw SSE `data:` payload into a {@link PwnkitHuntEvent}.
+ * Parse one raw SSE `data:` payload into a {@link osecHuntEvent}.
  * Returns `null` for malformed / irrelevant frames so the caller can
  * skip silently.
  *
  * Accepts:
- *   - `{"schema":"pwnkit.events/v1", "kind":"…", …}` — native v1 record.
+ *   - `{"schema":"0sec.events/v1", "kind":"…", …}` — native v1 record.
  *   - `{"type":"tool_call_started"|"finding_ingested"|…, "payload":{…}}`
  *     — raw eventBus shape, translated to v1 on the fly.
  */
-export function parseHuntEvent(raw: string): PwnkitHuntEvent | null {
+export function parseHuntEvent(raw: string): osecHuntEvent | null {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -104,7 +104,7 @@ export function parseHuntEvent(raw: string): PwnkitHuntEvent | null {
   const obj = data as Record<string, unknown>;
 
   // Native v1 shape — trust the schema marker and pass through.
-  if (obj.schema === "pwnkit.events/v1" && typeof obj.kind === "string") {
+  if (obj.schema === "0sec.events/v1" && typeof obj.kind === "string") {
     return normaliseV1(obj);
   }
 
@@ -116,7 +116,7 @@ export function parseHuntEvent(raw: string): PwnkitHuntEvent | null {
   return null;
 }
 
-function normaliseV1(obj: Record<string, unknown>): PwnkitHuntEvent | null {
+function normaliseV1(obj: Record<string, unknown>): osecHuntEvent | null {
   const kind = obj.kind as string;
   const ts = typeof obj.ts === "number" ? obj.ts : Date.now() / 1000;
 
@@ -124,7 +124,7 @@ function normaliseV1(obj: Record<string, unknown>): PwnkitHuntEvent | null {
     const argsPreview = typeof obj.args_preview === "string" ? obj.args_preview : undefined;
     const fileLine = extractFileLine(argsPreview);
     return {
-      schema: "pwnkit.events/v1",
+      schema: "0sec.events/v1",
       kind: "tool_use",
       ts,
       tool: typeof obj.tool === "string" ? obj.tool : "?",
@@ -139,7 +139,7 @@ function normaliseV1(obj: Record<string, unknown>): PwnkitHuntEvent | null {
 
   if (kind === "finding") {
     return {
-      schema: "pwnkit.events/v1",
+      schema: "0sec.events/v1",
       kind: "finding",
       ts,
       finding_id: typeof obj.finding_id === "string" ? obj.finding_id : undefined,
@@ -155,7 +155,7 @@ function normaliseV1(obj: Record<string, unknown>): PwnkitHuntEvent | null {
   if (kind === "stage") {
     const transition = obj.transition === "completed" ? "completed" : "started";
     return {
-      schema: "pwnkit.events/v1",
+      schema: "0sec.events/v1",
       kind: "stage",
       ts,
       stage: typeof obj.stage === "string" ? obj.stage : "stage",
@@ -171,10 +171,10 @@ function normaliseV1(obj: Record<string, unknown>): PwnkitHuntEvent | null {
 
 /**
  * Translate a raw eventBus emission into the v1 hunt shape. Mirrors the
- * mapping `scripts/serve-events.mjs` does for `PWNKIT_EVENT_*` lines so
+ * mapping `scripts/serve-events.mjs` does for `0SEC_EVENT_*` lines so
  * both transport paths land on the same renderer.
  */
-function translateRawEvent(type: string, payload: Record<string, unknown>): PwnkitHuntEvent | null {
+function translateRawEvent(type: string, payload: Record<string, unknown>): osecHuntEvent | null {
   const ts = typeof payload.ts === "number" ? payload.ts : Date.now() / 1000;
 
   if (type === "tool_call_started" || type === "tool_call_completed") {
@@ -187,7 +187,7 @@ function translateRawEvent(type: string, payload: Record<string, unknown>): Pwnk
           ? "error"
           : "ok";
     return {
-      schema: "pwnkit.events/v1",
+      schema: "0sec.events/v1",
       kind: "tool_use",
       ts,
       tool: typeof payload.tool === "string" ? payload.tool : "?",
@@ -202,7 +202,7 @@ function translateRawEvent(type: string, payload: Record<string, unknown>): Pwnk
 
   if (type === "finding_ingested") {
     return {
-      schema: "pwnkit.events/v1",
+      schema: "0sec.events/v1",
       kind: "finding",
       ts,
       finding_id: typeof payload.finding_id === "string" ? payload.finding_id : undefined,
@@ -217,7 +217,7 @@ function translateRawEvent(type: string, payload: Record<string, unknown>): Pwnk
 
   if (type === "step_started" || type === "step_completed") {
     return {
-      schema: "pwnkit.events/v1",
+      schema: "0sec.events/v1",
       kind: "stage",
       ts,
       stage: typeof payload.step === "string" ? payload.step : "stage",
@@ -228,7 +228,7 @@ function translateRawEvent(type: string, payload: Record<string, unknown>): Pwnk
 
   if (type === "agent_turn_started" || type === "agent_turn_completed") {
     return {
-      schema: "pwnkit.events/v1",
+      schema: "0sec.events/v1",
       kind: "stage",
       ts,
       stage: `turn ${typeof payload.turn === "number" ? payload.turn : "?"}`,

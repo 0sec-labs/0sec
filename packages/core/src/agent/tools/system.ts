@@ -1,5 +1,5 @@
 /**
- * System / execution tool definitions (pwnkit#611 — split out of the monolithic
+ * System / execution tool definitions (0sec#611 — split out of the monolithic
  * agent/tools.ts registry).
  *
  * Local execution, filesystem reads, interactive sessions, sub-agent
@@ -149,7 +149,7 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
 // this domain's definitions so a new tool adds its route here, not in a
 // shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
 // executor instance in agent/tools.ts (handler bodies stay private methods).

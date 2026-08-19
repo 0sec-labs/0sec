@@ -3,7 +3,7 @@
 /**
  * HackTheBox Starting Point Benchmark Runner
  *
- * Runs pwnkit against HackTheBox Starting Point machines (~25 introductory
+ * Runs 0sec against HackTheBox Starting Point machines (~25 introductory
  * boxes that BoxPwnr scores 100% on). These are VPN-connected targets that
  * require an active HTB lab connection.
  *
@@ -31,9 +31,9 @@ import { execSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agenticScan } from "@pwnkit/core";
+import { agenticScan } from "@0sec/core";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -306,7 +306,7 @@ async function runMachineOnce(machine: HtbMachine): Promise<HtbResult> {
   const target = `http://${ip}`;
 
   try {
-    const dbPath = join(tmpdir(), `pwnkit-htb-${machine.name.toLowerCase()}-${Date.now()}.db`);
+    const dbPath = join(tmpdir(), `0sec-htb-${machine.name.toLowerCase()}-${Date.now()}.db`);
     const report = await agenticScan({
       config: {
         target,
@@ -408,7 +408,7 @@ async function main() {
   machines = machines.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log("\x1b[36m\x1b[1m  pwnkit x HackTheBox Starting Point benchmark\x1b[0m");
+    console.log("\x1b[36m\x1b[1m  0sec x HackTheBox Starting Point benchmark\x1b[0m");
     console.log(`  machines: ${machines.length}  retries: ${retries}`);
     console.log("");
   }

@@ -1,15 +1,15 @@
 /**
- * Parser for external "seed" leads supplied to `pwnkit review --seed-findings`.
+ * Parser for external "seed" leads supplied to `0sec review --seed-findings`.
  *
  * GemmaForge is the current first-class producer (`gemmaforge scan`,
  * schema id `gemmaforge.leads/v1`). The parser is intentionally permissive
  * about on-wire field names so a v2 producer can ship without forcing a
- * pwnkit release.
+ * 0sec release.
  *
- * Closes pwnkit#368 once these are wired into the review agent's worklist.
+ * Closes 0sec#368 once these are wired into the review agent's worklist.
  */
 import { readFileSync } from "node:fs";
-import type { SeedFinding } from "@pwnkit/shared";
+import type { SeedFinding } from "@0sec/shared";
 
 export const GEMMAFORGE_LEADS_SCHEMA = "gemmaforge.leads/v1";
 

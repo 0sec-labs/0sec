@@ -4,9 +4,9 @@
  * is available, otherwise stays silent.
  *
  * Gated on:
- *   - PWNKIT_UPDATE_CHECK=1 explicitly set by the user
+ *   - 0SEC_UPDATE_CHECK=1 explicitly set by the user
  *   - stdout is a TTY (no log noise in CI / pipes)
- *   - CI / PWNKIT_NO_UPDATE_CHECK / PWNKIT_OFFLINE not set
+ *   - CI / 0SEC_NO_UPDATE_CHECK / 0SEC_OFFLINE not set
  *   - last successful check was > 24h ago (rate-limit GH API + avoid
  *     pestering users on every invocation)
  *
@@ -14,19 +14,20 @@
  * silently no-op — never blocks the actual command, never prints an
  * error. The whole feature is convenience, not correctness.
  *
- * Cache: `~/.pwnkit/last-update-check` is a tiny JSON file recording
+ * Cache: `~/.0sec/last-update-check` is a tiny JSON file recording
  * the last check timestamp + the latest version we saw. We update the
  * timestamp on every check (success or failure) so a transient outage
  * doesn't make us hammer the API.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { homeStateDir } from "@0sec/shared";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
 const REPO = "0sec-labs/0sec";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const CACHE_FILE = join(homedir(), ".pwnkit", "last-update-check");
+const CACHE_FILE = join(homeStateDir(), "last-update-check");
 const FETCH_TIMEOUT_MS = 4000;
 
 interface CheckCache {
@@ -41,10 +42,10 @@ export function shouldRunCheck(
   isTty = Boolean(process.stdout.isTTY),
 ): boolean {
   if (!isTty) return false;
-  if (env.PWNKIT_UPDATE_CHECK !== "1") return false;
+  if (env["0SEC_UPDATE_CHECK"] !== "1") return false;
   if (env.CI === "1" || env.CI === "true") return false;
-  if (env.PWNKIT_NO_UPDATE_CHECK === "1") return false;
-  if (env.PWNKIT_OFFLINE === "1") return false;
+  if (env["0SEC_NO_UPDATE_CHECK"] === "1") return false;
+  if (env["0SEC_OFFLINE"] === "1") return false;
   return true;
 }
 
@@ -60,7 +61,7 @@ function readCache(): CheckCache | null {
 
 function writeCache(cache: CheckCache): void {
   try {
-    mkdirSync(join(homedir(), ".pwnkit"), { recursive: true });
+    mkdirSync(homeStateDir(), { recursive: true });
     writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
   } catch {
     // Best-effort — if we can't write the cache, every run will re-check.
@@ -90,7 +91,7 @@ async function fetchLatestTag(): Promise<string | null> {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": `pwnkit-cli/update-check`,
+        "User-Agent": `0sec-cli/update-check`,
       },
       signal: ac.signal,
     });
@@ -109,8 +110,8 @@ function printNudge(currentVersion: string, latestVersion: string): void {
   const DIM = "\x1b[2m";
   const RESET = "\x1b[0m";
   process.stderr.write(
-    `${DIM}[pwnkit] update available: v${currentVersion} → ${ORANGE}${latestVersion}${RESET}${DIM}.` +
-      ` run \`pwnkit upgrade\` to update.${RESET}\n`,
+    `${DIM}[0sec] update available: v${currentVersion} → ${ORANGE}${latestVersion}${RESET}${DIM}.` +
+      ` run \`0sec upgrade\` to update.${RESET}\n`,
   );
 }
 

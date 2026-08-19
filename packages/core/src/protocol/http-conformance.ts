@@ -25,7 +25,7 @@
  * `agent/tools.ts` or `agentic-scanner.ts`.
  */
 import { randomUUID } from "node:crypto";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { NativeRuntime } from "../runtime/types.js";
 import {
   generateConformanceModel,

@@ -105,7 +105,7 @@ function main() {
     summarizeNpm(npm),
   ];
 
-  console.log("\x1b[31m\x1b[1m  pwnkit benchmark report\x1b[0m\n");
+  console.log("\x1b[31m\x1b[1m  0sec benchmark report\x1b[0m\n");
   for (const section of sections) {
     for (const entry of section) console.log(entry);
     console.log("");

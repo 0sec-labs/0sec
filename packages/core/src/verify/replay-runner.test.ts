@@ -1,5 +1,5 @@
 /**
- * pwnkit#193 — Deterministic replay runner tests.
+ * 0sec#193 — Deterministic replay runner tests.
  *
  * Covers:
  *   • LocalShellRunner: timeout enforcement, exit-code capture, excerpt
@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { VerificationResultSchema, type Finding, type PocStep } from "@pwnkit/shared";
+import { VerificationResultSchema, type Finding, type PocStep } from "@0sec/shared";
 import {
   LocalShellRunner,
   DockerRunner,
@@ -51,7 +51,7 @@ function makeFinding(steps: PocStep[]): Finding {
 describe("LocalShellRunner", () => {
   it("captures stdout and exit code for a successful command", async () => {
     const runner = new LocalShellRunner();
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-test-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-test-"));
     const step: PocStep = {
       id: "s1",
       kind: "exploit",
@@ -67,7 +67,7 @@ describe("LocalShellRunner", () => {
 
   it("captures non-zero exit codes faithfully", async () => {
     const runner = new LocalShellRunner();
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-test-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-test-"));
     const step: PocStep = {
       id: "s1",
       kind: "exploit",
@@ -80,7 +80,7 @@ describe("LocalShellRunner", () => {
 
   it("enforces the per-step wallclock timeout", async () => {
     const runner = new LocalShellRunner();
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-test-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-test-"));
     const step: PocStep = {
       id: "s1",
       kind: "exploit",
@@ -99,7 +99,7 @@ describe("LocalShellRunner", () => {
 
   it("isolates working directory to the supplied runDir", async () => {
     const runner = new LocalShellRunner();
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-test-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-test-"));
     const step: PocStep = {
       id: "s1",
       kind: "exploit",
@@ -116,7 +116,7 @@ describe("LocalShellRunner", () => {
 
   it("ignores absolute step.action.cwd and falls back to runDir", async () => {
     const runner = new LocalShellRunner();
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-test-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-test-"));
     const step: PocStep = {
       id: "s1",
       kind: "exploit",
@@ -130,7 +130,7 @@ describe("LocalShellRunner", () => {
 
   it("records non-shell step kinds with a launchError marker", async () => {
     const runner = new LocalShellRunner();
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-test-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-test-"));
     const step: PocStep = {
       id: "s1",
       kind: "exploit",
@@ -235,7 +235,7 @@ describe("assertion evaluation — pass + fail per kind", () => {
   });
 
   it("file_exists pass + fail", () => {
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-assert-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-assert-"));
     const target = join(runDir, "loot.txt");
     writeFileSync(target, "stolen");
     const passResult = {
@@ -286,7 +286,7 @@ describe("assertion evaluation — pass + fail per kind", () => {
   });
 
   it("evaluateAssertion handles file_exists relative to runDir", () => {
-    const runDir = mkdtempSync(join(tmpdir(), "pwnkit-runner-assert-"));
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-assert-"));
     writeFileSync(join(runDir, "marker"), "x");
     const pass = evaluateAssertion(
       { kind: "file_exists", target: "marker", expected: true },

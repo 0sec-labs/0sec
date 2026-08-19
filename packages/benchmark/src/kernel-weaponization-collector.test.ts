@@ -141,7 +141,7 @@ describe("collectSampleFromRun (orchestrator result jsonb)", () => {
 
 // ─── collectSampleFromRun — raw CLI JSON (flat, snake_case) ──────────
 
-describe("collectSampleFromRun (raw pwnkit exploit JSON)", () => {
+describe("collectSampleFromRun (raw 0sec exploit JSON)", () => {
   it("parses the flat CLI shape with per_step + exploit_context", () => {
     const cli = {
       finding_id: "cli-1",

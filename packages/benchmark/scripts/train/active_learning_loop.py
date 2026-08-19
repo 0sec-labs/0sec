@@ -84,7 +84,7 @@ from sklearn.utils.class_weight import compute_sample_weight
 HERE = Path(__file__).resolve().parent
 # scripts/train -> scripts -> benchmark
 BENCH_ROOT = HERE.parent.parent
-# benchmark -> packages -> pwnkit -> repo root
+# benchmark -> packages -> 0sec -> repo root
 REPO_ROOT = BENCH_ROOT.parent.parent.parent
 
 # The production router is a 45-feature binary:logistic XGBoost model.

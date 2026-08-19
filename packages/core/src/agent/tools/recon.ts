@@ -1,5 +1,5 @@
 /**
- * Recon / target-interaction tool definitions (pwnkit#611 — split out of the monolithic
+ * Recon / target-interaction tool definitions (0sec#611 — split out of the monolithic
  * agent/tools.ts registry).
  *
  * Probing, crawling, browser-driving and recon tools — the agent's primary
@@ -127,7 +127,7 @@ export const reconToolDefinitions: Record<string, ToolDefinition> = {
       },
       wpscan_api_token: {
         type: "string",
-        description: "Optional WPScan API token for fresh per-plugin/theme vulnerability lookup. Defaults to WPSCAN_API_TOKEN or PWNKIT_WPSCAN_API_TOKEN.",
+        description: "Optional WPScan API token for fresh per-plugin/theme vulnerability lookup. Defaults to WPSCAN_API_TOKEN or 0SEC_WPSCAN_API_TOKEN.",
       },
     },
   },
@@ -176,7 +176,7 @@ export const reconToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
 // this domain's definitions so a new tool adds its route here, not in a
 // shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
 // executor instance in agent/tools.ts (handler bodies stay private methods).

@@ -1,5 +1,5 @@
 /**
- * pwnkit#416 — verify-resume cluster fixes.
+ * 0sec#416 — verify-resume cluster fixes.
  *
  * Three sibling bugs in the verify phase of `unified-pipeline.ts`:
  *
@@ -26,7 +26,7 @@
  *
  * Strategy mirrors `unified-pipeline.dispatch.test.ts`: mock at the
  * module boundary so we never spin up real agents / runtimes / static
- * scanners, but keep a real `pwnkitDB` against a tmp file so the resume
+ * scanners, but keep a real `osecDB` against a tmp file so the resume
  * round-trip exercises the production persistence path.
  */
 
@@ -34,8 +34,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
-import { pwnkitDB } from "@pwnkit/db";
+import type { Finding } from "@0sec/shared";
+import { osecDB } from "@0sec/db";
 
 type PipelineEvent = {
   type: string;
@@ -58,9 +58,9 @@ const runFoxguardScanMock = vi.fn();
 vi.mock("./shared-analysis.js", () => ({
   runFoxguardScan: runFoxguardScanMock,
   runSemgrepScan: runSemgrepScanMock,
-  selectedStaticScanner: () => process.env.PWNKIT_STATIC === "semgrep" ? "semgrep" : "foxguard",
+  selectedStaticScanner: () => process.env["0SEC_STATIC"] === "semgrep" ? "semgrep" : "foxguard",
   runSelectedStaticScan: (...args: unknown[]) =>
-    process.env.PWNKIT_STATIC === "semgrep"
+    process.env["0SEC_STATIC"] === "semgrep"
       ? runSemgrepScanMock(...args)
       : runFoxguardScanMock(...args),
 }));
@@ -123,13 +123,13 @@ const { runPipeline } = await import("./unified-pipeline.js");
 const tempDirs: string[] = [];
 
 function freshTmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `pwnkit-verify-resume-${prefix}-`));
+  const dir = mkdtempSync(join(tmpdir(), `0sec-verify-resume-${prefix}-`));
   tempDirs.push(dir);
   return dir;
 }
 
 function freshDbPath(): string {
-  return join(freshTmpDir("db"), "pwnkit.db");
+  return join(freshTmpDir("db"), "0sec.db");
 }
 
 function fakeInstalledPackage(name: string, version: string) {
@@ -186,23 +186,23 @@ beforeEach(() => {
     providerLabel: "Anthropic",
   };
 
-  originalPerItemEnv = process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION;
-  process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION = "0";
+  originalPerItemEnv = process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"];
+  process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"] = "0";
 
-  originalStaticAnalyzer = process.env.PWNKIT_STATIC;
-  delete process.env.PWNKIT_STATIC;
+  originalStaticAnalyzer = process.env["0SEC_STATIC"];
+  delete process.env["0SEC_STATIC"];
 });
 
 afterEach(() => {
   if (originalPerItemEnv === undefined) {
-    delete process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION;
+    delete process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"];
   } else {
-    process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION = originalPerItemEnv;
+    process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"] = originalPerItemEnv;
   }
   if (originalStaticAnalyzer === undefined) {
-    delete process.env.PWNKIT_STATIC;
+    delete process.env["0SEC_STATIC"];
   } else {
-    process.env.PWNKIT_STATIC = originalStaticAnalyzer;
+    process.env["0SEC_STATIC"] = originalStaticAnalyzer;
   }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -243,7 +243,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
     // the verify wave, proving Bug A's saveFinding round-trip happened.
     // The pipeline doesn't bubble scanId out, so we enumerate via
     // listScans() and assert directly against the findings table.
-    const probe = new pwnkitDB(dbPath);
+    const probe = new osecDB(dbPath);
     const scans = probe.listScans();
     const scanId = scans[0]!.id;
     const persistedRows = probe.getFindings(scanId);
@@ -312,7 +312,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
       dbPath,
     });
 
-    const probe = new pwnkitDB(dbPath);
+    const probe = new osecDB(dbPath);
     const scanId = probe.listScans()[0]!.id;
     probe.close();
 
@@ -372,7 +372,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
       dbPath,
     });
 
-    const probe = new pwnkitDB(dbPath);
+    const probe = new osecDB(dbPath);
     const scanId = probe.listScans()[0]!.id;
     const initialRows = probe.getFindings(scanId);
     probe.close();
@@ -398,7 +398,7 @@ describe("runPipeline — verify resume (#416 Bug A + Bug B)", () => {
     });
 
     // Re-fetch from disk; verdicts should be unchanged after the resume.
-    const probe2 = new pwnkitDB(dbPath);
+    const probe2 = new osecDB(dbPath);
     const afterResumeRows = probe2.getFindings(scanId);
     probe2.close();
     expect(afterResumeRows).toHaveLength(2);

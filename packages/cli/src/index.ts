@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 
+// Must stay the first import: maps legacy PWNKIT_* env vars onto 0SEC_*
+// before any engine module reads them at import time.
+import "./env-legacy.js";
+
 import { Command } from "commander";
 import chalk from "chalk";
-import { VERSION } from "@pwnkit/shared";
-import { maybeSubscribeCloudEventSink } from "@pwnkit/core";
+import { VERSION } from "@0sec/shared";
+import { maybeSubscribeCloudEventSink } from "@0sec/core";
 import { maybeLoadCodexAuth } from "./codex-auth.js";
 
 // Local-dev convenience: if `codex login` has run (~/.codex/auth.json) and no
-// PWNKIT_CHATGPT_* token is in the env, plumb the codex tokens in so the engine
+// 0SEC_CHATGPT_* token is in the env, plumb the codex tokens in so the engine
 // resolves to the chatgpt-codex provider (highest priority) instead of falling
 // through to stale AZURE_OPENAI_API_KEY / OPENAI_API_KEY. No-op in the cloud
 // worker (it sets the tokens itself) and when a token is already present.
 maybeLoadCodexAuth();
 
 // Subscribe the cloud-event sink before any subcommand runs. Idempotent
-// + env-gated (PWNKIT_CLOUD_EVENTS=1): the sink writes one
-// `PWNKIT_EVENT_<TYPE>` line per emitted event to stdout, which the
-// pwnkit-cloud worker-controller's stdout streamer parses and POSTs to
+// + env-gated (0SEC_CLOUD_EVENTS=1): the sink writes one
+// `0SEC_EVENT_<TYPE>` line per emitted event to stdout, which the
+// 0sec-cloud worker-controller's stdout streamer parses and POSTs to
 // the orchestrator's /scans/:id/events endpoint. Without this call,
 // the sink module is dead code and the cloud's live-trace UI stays
 // dark for every scan.
@@ -76,14 +80,14 @@ import { enforceSourceDistFreshness } from "./source-freshness.js";
 enforceSourceDistFreshness({ entryUrl: import.meta.url });
 
 
-// Fire-and-forget update check. It only runs when PWNKIT_UPDATE_CHECK=1;
+// Fire-and-forget update check. It only runs when 0SEC_UPDATE_CHECK=1;
 // otherwise normal commands make no update request or cache write.
 void maybeNotifyUpdate(VERSION);
 
 const program = new Command();
 
 program
-  .name("pwnkit")
+  .name("0sec")
   .description("Open-source multi-model security research harness")
   .version(VERSION);
 
@@ -149,20 +153,20 @@ async function showInteractiveMenu(): Promise<void> {
   }
 
   console.log("");
-  console.log(`  ${chalk.bold("pwnkit")} ${chalk.dim(`v${VERSION}`)}`);
+  console.log(`  ${chalk.bold("0sec")} ${chalk.dim(`v${VERSION}`)}`);
   console.log("");
-  console.log(`  ${chalk.dim("From v0.9.0 onwards, pwnkit ships as a self-contained binary.")}`);
+  console.log(`  ${chalk.dim("From v0.9.0 onwards, 0sec ships as a self-contained binary.")}`);
   console.log(`  ${chalk.dim("The full TUI (mission control + live scan view) needs Bun's runtime.")}`);
   console.log("");
   console.log(`  ${chalk.bold("Install")} (single curl, no Node / Bun required):`);
   console.log(`    curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash`);
   console.log("");
   console.log(`  ${chalk.dim("Or via Bun:")}`);
-  console.log(`    bun add -g pwnkit-cli`);
+  console.log(`    bun add -g 0sec-cli`);
   console.log("");
   console.log(`  ${chalk.dim("After install, run:")}`);
-  console.log(`    pwnkit scan --target https://example.com`);
-  console.log(`    pwnkit --help`);
+  console.log(`    0sec scan --target https://example.com`);
+  console.log(`    0sec --help`);
   console.log("");
 }
 

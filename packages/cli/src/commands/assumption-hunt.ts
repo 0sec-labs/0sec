@@ -1,5 +1,5 @@
 /**
- * `pwnkit assumption-hunt <source-root>` — the SEEDLESS ASSUMPTION-MINING hunt.
+ * `0sec assumption-hunt <source-root>` — the SEEDLESS ASSUMPTION-MINING hunt.
  *
  * The fourth seedless discovery axis (alongside the invariant-model, interproc-
  * refcount, and concurrency-race stages). Unlike those — which ask "is THIS access
@@ -24,7 +24,7 @@
 
 import type { Command } from "commander";
 import { resolve } from "node:path";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 interface AssumptionHuntOpts {
   subsystem?: string;
@@ -66,7 +66,7 @@ function parseWitnessMode(raw: string | undefined): WitnessModeName | undefined 
 
 /** Run the seedless assumption-mining hunt and return a JSON-ready outcome. Exposed for testing. */
 export async function runAssumptionHuntCli(sourceRoot: string, opts: AssumptionHuntOpts): Promise<{ exitCode: number; result: unknown }> {
-  const { runAssumptionHunt, makeSkepticVerifier } = await import("@pwnkit/core");
+  const { runAssumptionHunt, makeSkepticVerifier } = await import("@0sec/core");
   const log = (m: string) => process.stderr.write(m + "\n");
   const runtime: RuntimeMode = (opts.runtime as RuntimeMode) ?? "api";
 
@@ -81,7 +81,7 @@ export async function runAssumptionHuntCli(sourceRoot: string, opts: AssumptionH
   }
   const modelPath = opts.modelPath
     ? resolve(opts.modelPath)
-    : resolve(root, `.pwnkit/assumption-models/${subsystem.replaceAll("/", "_")}.json`);
+    : resolve(root, `.0sec/assumption-models/${subsystem.replaceAll("/", "_")}.json`);
   const models = opts.models ? opts.models.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
 
   // Skip the (LLM) skeptic gate when --no-verify or --skip-hunt: candidate-gen only.
@@ -211,7 +211,7 @@ export function registerAssumptionHuntCommand(program: Command): void {
     .argument("<source-root>", "Local source tree the subsystem files live under (e.g. a kernel checkout)")
     .requiredOption("--files <a.c,b.c>", "Comma-separated subsystem source files, repo-relative to <source-root>")
     .option("--subsystem <label>", "Subsystem label for the stored model (e.g. net/unix)")
-    .option("--model-path <path>", "Where the durable assumption model JSON lives (default under <source-root>/.pwnkit)")
+    .option("--model-path <path>", "Where the durable assumption model JSON lives (default under <source-root>/.0sec)")
     .option("--remine", "Force a fresh LLM mine even if the stored model exists")
     .option("--skip-hunt", "Stop after the deterministic caller-scan (no LLM finder/skeptic gate)")
     .option("--no-verify", "Run the finder fan-out but skip the skeptic gate")
@@ -220,7 +220,7 @@ export function registerAssumptionHuntCommand(program: Command): void {
     .option("--no-wrapper-resolution", "Disable v1 establisher-wrapper resolution (reproduces the v0 direct-token scan — FP ablation)")
     .option("--no-finder-targeting", "Feed the finder the whole subsystem file instead of focused per-function excerpts")
     .option("--no-dual-view", "Disable the v2 dual-api/cross-phase enumerator (caller-scan only — the v1 behavior)")
-    .option("--dynamic-witness", "v3: route dual-view candidates to the KASAN synthesize→boot→witness oracle (bypasses the static skeptic). Needs a KASAN VM env (PWNKIT_KERNEL_QEMU_*).")
+    .option("--dynamic-witness", "v3: route dual-view candidates to the KASAN synthesize→boot→witness oracle (bypasses the static skeptic). Needs a KASAN VM env (0SEC_KERNEL_QEMU_*).")
     .option("--witness-rounds <N>", "Bounded PoC-repair rounds per dual-view candidate (default 3)")
     .option("--witness-candidates <N>", "Cap dual-view candidates run through the dynamic oracle (default 10)")
     .option("--witness-model <name>", "Model for PoC synthesis (default: runtime default)")

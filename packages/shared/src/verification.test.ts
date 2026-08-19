@@ -1,5 +1,5 @@
 /**
- * pwnkit#193 — `VerificationResultSchema` tests.
+ * 0sec#193 — `VerificationResultSchema` tests.
  *
  * Two contracts to lock in:
  *   1. A valid result round-trips: parse → re-stringify → parse again

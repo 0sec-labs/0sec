@@ -1,8 +1,8 @@
-// Authorized-engagement scanner profile (pwnkit#926).
+// Authorized-engagement scanner profile (0sec#926).
 //
 // The structured scanner wrappers (run_sqlmap/run_nmap/run_ffuf/run_nuclei,
-// pwnkit#555) are powerful but loud: they fingerprint themselves on the wire
-// and fan many requests internally. The stealthy default (pwnkit#217) is to
+// 0sec#555) are powerful but loud: they fingerprint themselves on the wire
+// and fan many requests internally. The stealthy default (0sec#217) is to
 // keep them OFF — `allowScanners` is unset, so the wrappers aren't even in the
 // tool set. That default is correct and MUST NOT change.
 //
@@ -43,11 +43,11 @@ import type { EnforcementTracker } from "../scope/enforcement.js";
 
 /** Inputs the gate inspects. A subset of `ToolContext`, narrowed for testability. */
 export interface ScannerEngagementContext {
-  /** pwnkit#217 opt-out / pwnkit#926 profile master switch. Default OFF. */
+  /** 0sec#217 opt-out / 0sec#926 profile master switch. Default OFF. */
   allowScanners?: boolean;
-  /** Engagement host allowlist (pwnkit#215). REQUIRED for the gate to pass. */
+  /** Engagement host allowlist (0sec#215). REQUIRED for the gate to pass. */
   scope?: ScopePolicy;
-  /** http_audit path allowlist + wall-clock kill switch (pwnkit#218). Optional. */
+  /** http_audit path allowlist + wall-clock kill switch (0sec#218). Optional. */
   enforcement?: EnforcementTracker;
 }
 
@@ -83,13 +83,13 @@ export function scannerEngagementGate(
   scopeUrl: string,
   ctx: ScannerEngagementContext,
 ): ScannerGateVerdict {
-  // Rail 1: master switch. Default OFF — the suppression default (pwnkit#217).
+  // Rail 1: master switch. Default OFF — the suppression default (0sec#217).
   if (ctx.allowScanners !== true) {
     return {
       allowed: false,
       reason:
         `${tool} is disabled: generic scanners are suppressed unless the engagement was ` +
-        `started with --allow-scanners (pwnkit#217). Use http_request/crawl for manual probing.`,
+        `started with --allow-scanners (0sec#217). Use http_request/crawl for manual probing.`,
       countsAsBlocked: false,
     };
   }

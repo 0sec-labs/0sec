@@ -16,9 +16,9 @@ import { detectPlaybooks, buildPlaybookInjection, PLAYBOOKS } from "./playbooks.
 import { getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
 
 const TOUCHED_ENV = [
-  "PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS",
-  "PWNKIT_FEATURE_AGENT_PLAN",
-  "PWNKIT_FEATURE_DRIFT_DETECTION",
+  "0SEC_FEATURE_DYNAMIC_PLAYBOOKS",
+  "0SEC_FEATURE_AGENT_PLAN",
+  "0SEC_FEATURE_DRIFT_DETECTION",
 ];
 
 afterEach(() => {
@@ -28,9 +28,9 @@ afterEach(() => {
 describe("feature-flag boundaries", () => {
   it("dynamicPlaybooks defaults OFF and honors a late env mutation", () => {
     expect(features.dynamicPlaybooks).toBe(false);
-    process.env.PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS = "1";
+    process.env["0SEC_FEATURE_DYNAMIC_PLAYBOOKS"] = "1";
     expect(features.dynamicPlaybooks).toBe(true);
-    process.env.PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS = "0";
+    process.env["0SEC_FEATURE_DYNAMIC_PLAYBOOKS"] = "0";
     expect(features.dynamicPlaybooks).toBe(false);
   });
 
@@ -41,24 +41,24 @@ describe("feature-flag boundaries", () => {
     // ships on — and shipping it on would silently invalidate every existing
     // benchmark baseline.
     expect(features.agentPlan).toBe(false);
-    process.env.PWNKIT_FEATURE_AGENT_PLAN = "1";
+    process.env["0SEC_FEATURE_AGENT_PLAN"] = "1";
     expect(features.agentPlan).toBe(true);
   });
 
   it("driftDetection defaults OFF and can be opted into", () => {
     expect(features.driftDetection).toBe(false);
-    process.env.PWNKIT_FEATURE_DRIFT_DETECTION = "1";
+    process.env["0SEC_FEATURE_DRIFT_DETECTION"] = "1";
     expect(features.driftDetection).toBe(true);
   });
 });
 
 describe("`plan` tool exposure follows the agentPlan flag", () => {
   it("is offered to the attack role when on and withheld when off", () => {
-    process.env.PWNKIT_FEATURE_AGENT_PLAN = "1";
+    process.env["0SEC_FEATURE_AGENT_PLAN"] = "1";
     const on = getToolsForRole("attack").map((t) => t.name);
     expect(on).toContain("plan");
 
-    process.env.PWNKIT_FEATURE_AGENT_PLAN = "0";
+    process.env["0SEC_FEATURE_AGENT_PLAN"] = "0";
     const off = getToolsForRole("attack").map((t) => t.name);
     expect(off).not.toContain("plan");
   });
@@ -67,11 +67,11 @@ describe("`plan` tool exposure follows the agentPlan flag", () => {
     // Regression guard matching the use_loot / JIT-skill gating: tools that
     // enumerate Object.keys(TOOL_DEFINITIONS) would otherwise leak `plan` into
     // roles regardless of the flag.
-    process.env.PWNKIT_FEATURE_AGENT_PLAN = "0";
+    process.env["0SEC_FEATURE_AGENT_PLAN"] = "0";
     for (const role of ["audit", "review"]) {
       expect(getToolsForRole(role).map((t) => t.name)).not.toContain("plan");
     }
-    process.env.PWNKIT_FEATURE_AGENT_PLAN = "1";
+    process.env["0SEC_FEATURE_AGENT_PLAN"] = "1";
     for (const role of ["audit", "review"]) {
       expect(getToolsForRole(role).map((t) => t.name)).toContain("plan");
     }

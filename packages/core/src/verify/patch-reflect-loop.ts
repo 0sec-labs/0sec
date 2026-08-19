@@ -37,7 +37,7 @@
  * defensible default (see its doc comment).
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   validatePatchRemovesCrash,
   type CandidatePatch,

@@ -6,8 +6,8 @@ import { join } from "node:path";
 
 const runIdentityAssessmentMock = vi.fn();
 
-vi.mock("@pwnkit/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@pwnkit/core")>();
+vi.mock("@0sec/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@0sec/core")>();
   return {
     ...actual,
     runIdentityAssessment: runIdentityAssessmentMock,
@@ -16,7 +16,7 @@ vi.mock("@pwnkit/core", async (importOriginal) => {
 
 const { registerIdentityCommand } = await import("../identity.js");
 
-const TOKEN_ENV = "PWNKIT_GRAPH_ACCESS_TOKEN";
+const TOKEN_ENV = "0SEC_GRAPH_ACCESS_TOKEN";
 const TENANT = "11111111-2222-3333-4444-555555555555";
 
 function captureIO() {
@@ -31,7 +31,7 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerIdentityCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
 function result(overrides: Record<string, unknown> = {}) {
@@ -84,7 +84,7 @@ function result(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("pwnkit identity", () => {
+describe("0sec identity", () => {
   let io: ReturnType<typeof captureIO>;
   let dir: string;
   const originalToken = process.env[TOKEN_ENV];

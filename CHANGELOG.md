@@ -1,13 +1,39 @@
 # Changelog
 
-All notable changes to pwnkit (the open-source CLI + agent harness) are tracked
+All notable changes to 0sec (the open-source CLI + agent harness) are tracked
 here. The history before v0.11.0 lives in the git log and on the GitHub
 Releases page; this file starts the human-readable summary from v0.11.0
-onwards.
+onwards. Entries before v0.13.0 predate the pwnkit → 0sec rename and keep the
+old product name as written.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and pwnkit adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-on the published `pwnkit-cli` npm package and the GitHub Release tag.
+and 0sec adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+on the published npm package and the GitHub Release tag.
+
+## [0.13.0] - 2026-08-19
+
+### Changed — pwnkit is now 0sec
+
+The engine and CLI are renamed from pwnkit to 0sec, matching the public
+repository (`0sec-labs/0sec`):
+
+- **npm package**: `0sec` (root bundle). The workspace CLI package is
+  `0sec-cli`; the binary shipped by both is **`0sec`**, with **`0`** as a
+  short shell alias (`0 scan ...`).
+- **Container image**: `ghcr.io/0sec-labs/0sec` (was `ghcr.io/0sec-labs/pwnkit`).
+- **Environment variables**: the public env contract moved from `PWNKIT_*` to
+  `0SEC_*` (e.g. `0SEC_MODEL`, `0SEC_CLOUD_TOKEN`). At CLI startup, any legacy
+  `PWNKIT_*` value is copied onto its `0SEC_*` equivalent when the new name is
+  unset, so existing deployments keep working; the new name always wins
+  (`packages/cli/src/env-legacy.ts`).
+  Note: POSIX shells reject digit-leading variable names, so `0SEC_*` vars
+  cannot be set or expanded in bash/sh directly — use `env 0SEC_FOO=... 0sec
+  ...`, or keep using the permanently supported `PWNKIT_*` names in shell
+  contexts. Docker `-e`, CI env blocks, and systemd units are unaffected.
+- **Workspace packages** moved from the `@pwnkit/*` scope to `@0sec/*`.
+- Internal canary/marker strings (`PWNKIT-CANARY:`, `PWNKIT-INITRAMFS-*`,
+  `PWNKIT-INJ-OK`) are wire protocol tokens between generated exploits and the
+  verifier; they are unchanged and not part of the public interface.
 
 ## [0.12.0] - 2026-07-17
 
