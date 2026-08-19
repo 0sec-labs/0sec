@@ -134,7 +134,7 @@ describe("availableRefuterCandidates", () => {
 
   it("lists one model per configured family, strongest-adversary first", () => {
     withProviders({ ANTHROPIC_API_KEY: "sk-ant-x", Z_AI_API_KEY: "z-x" });
-    expect(availableRefuterCandidates()).toEqual(["claude-sonnet-4-6", "glm-5.2"]);
+    expect(availableRefuterCandidates()).toEqual(["claude-sonnet-4-6", "glm-5.3"]);
   });
 
   it("honours the PWNKIT_HUNT_REFUTER_CANDIDATES override verbatim", () => {
@@ -317,14 +317,14 @@ describe("makeSkepticVerifier — cross-family wiring", () => {
     });
     const result = await verify(mkFinding("f1", "some finding"), { path: "a.c" });
 
-    expect(capturedModel).toBe("glm-5.2");
+    expect(capturedModel).toBe("glm-5.3");
     expect(result.confirmed).toBe(true);
     expect(result.decorrelation).toEqual({
       crossFamily: true,
       status: "enforced",
       finderFamily: "anthropic",
       refuterFamily: "z-ai",
-      refuterModel: "glm-5.2",
+      refuterModel: "glm-5.3",
     });
     expect(refuterFamily(result.decorrelation?.refuterModel)).not.toBe(refuterFamily("claude-opus-4-7"));
   });
@@ -337,7 +337,7 @@ describe("makeSkepticVerifier — cross-family wiring", () => {
       attempted.push(config.model);
       // The realistic failure: the key is present but the account cannot reach
       // that model id.
-      if (config.model === "glm-5.2") throw new Error("404 model not found: glm-5.2");
+      if (config.model === "glm-5.3") throw new Error("404 model not found: glm-5.3");
       return { findings: [mkFinding("survivor", "still real")] };
     });
 
@@ -351,7 +351,7 @@ describe("makeSkepticVerifier — cross-family wiring", () => {
     });
     const result = await verify(mkFinding("f1", "some finding"), { path: "a.c" });
 
-    expect(attempted).toEqual(["glm-5.2", "claude-opus-4-7"]);
+    expect(attempted).toEqual(["glm-5.3", "claude-opus-4-7"]);
     // The finding survives on the same-family refute rather than being dropped.
     expect(result.confirmed).toBe(true);
     expect(result.decorrelation?.crossFamily).toBe(false);

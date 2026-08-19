@@ -721,7 +721,7 @@ function getFallbackChain(): FallbackEntry[] {
 //     follow-up tool turns (verified 2026-06-17), so we simply drop them from
 //     parsed output instead of round-tripping them through the agent loop.
 const ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic";
-const ZAI_DEFAULT_MODEL = "glm-5.2";
+const ZAI_DEFAULT_MODEL = "glm-5.3";
 // Thinking token budget for GLM. 0 (or unset → default) disables thinking.
 // Must stay below the 8192 max_tokens the Anthropic body sends below.
 const ZAI_DEFAULT_THINKING_BUDGET = 2048;
@@ -1768,21 +1768,28 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   }
 
   /**
-   * Anthropic `thinking` body fragment.
-   *
-   * Real Anthropic Claude uses adaptive thinking, whose blocks must round-trip
-   * verbatim on the same model. z-ai/GLM requires its explicit budgeted
-   * variant. Kimi reasons natively and accepts neither field. The retained
-   * reasoning A/B turns Claude thinking off with the rest of the replay path;
-   * GLM retains its established behavior because it does not require echoing
-   * thinking blocks back.
+   * Anthropic `thinking` body fragment. Real Anthropic Claude uses adaptive
+   * thinking when retained reasoning is enabled. Z.ai GLM-5.3 requires
+   * enabled thinking plus reasoning_effort; earlier GLM models use a
+   * budget_tokens field. Kimi reasons natively and accepts neither field.
    */
   private anthropicThinkingField(): Record<string, unknown> {
     if (this.provider === "anthropic") {
       return features.retainedReasoning ? { thinking: { type: "adaptive" } } : {};
     }
     if (this.provider !== "z-ai") return {};
+
     const budget = zaiThinkingBudget();
+    if (this.model.startsWith("glm-5.3")) {
+      const reasoningEffort =
+        this.reasoningEffort ??
+        (budget <= 2048 ? "low" : budget <= 4096 ? "high" : "max");
+      return {
+        thinking: { type: "enabled" },
+        reasoning_effort: reasoningEffort,
+      };
+    }
+
     if (budget <= 0) return {};
     return { thinking: { type: "enabled", budget_tokens: budget } };
   }

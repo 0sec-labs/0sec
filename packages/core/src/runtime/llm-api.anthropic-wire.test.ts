@@ -130,37 +130,57 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
   // ── (b) z-ai thinking-budget fragment ──
 
   describe("anthropicThinkingField()", () => {
-    function runtimeForProvider(provider: string): LlmApiRuntime {
-      const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test-key" });
-      (rt as unknown as { provider: string }).provider = provider;
-      (rt as unknown as { apiKey: string }).apiKey = "test-key";
+    type TestableRuntime = LlmApiRuntime & {
+      provider: string;
+      apiKey: string;
+      anthropicThinkingField(): Record<string, unknown>;
+    };
+
+    function runtimeForProvider(provider: string, model = "glm-5.3"): TestableRuntime {
+      // Test-only access to private runtime state verifies the wire fragment.
+      const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test-key", model }) as unknown as TestableRuntime;
+      rt.provider = provider;
+      rt.apiKey = "test-key";
       return rt;
     }
 
-    it("enables extended thinking with the default budget for z-ai", () => {
+    it("maps the default legacy budget to GLM-5.3 low reasoning effort", () => {
       const rt = runtimeForProvider("z-ai");
-      expect((rt as any).anthropicThinkingField()).toEqual({
-        thinking: { type: "enabled", budget_tokens: 2048 },
+      expect(rt.anthropicThinkingField()).toEqual({
+        thinking: { type: "enabled" },
+        reasoning_effort: "low",
       });
     });
 
-    it("honors PWNKIT_ZAI_THINKING_BUDGET for z-ai", () => {
+    it("maps a larger legacy budget to GLM-5.3 high reasoning effort", () => {
       process.env.PWNKIT_ZAI_THINKING_BUDGET = "4096";
       const rt = runtimeForProvider("z-ai");
-      expect((rt as any).anthropicThinkingField()).toEqual({
+      expect(rt.anthropicThinkingField()).toEqual({
+        thinking: { type: "enabled" },
+        reasoning_effort: "high",
+      });
+    });
+
+    it("keeps GLM-5.3 thinking enabled when the legacy budget is 0", () => {
+      process.env.PWNKIT_ZAI_THINKING_BUDGET = "0";
+      const rt = runtimeForProvider("z-ai");
+      expect(rt.anthropicThinkingField()).toEqual({
+        thinking: { type: "enabled" },
+        reasoning_effort: "low",
+      });
+    });
+
+    it("keeps the Anthropic budget fragment for an explicit GLM-5.2 override", () => {
+      process.env.PWNKIT_ZAI_THINKING_BUDGET = "4096";
+      const rt = runtimeForProvider("z-ai", "glm-5.2");
+      expect(rt.anthropicThinkingField()).toEqual({
         thinking: { type: "enabled", budget_tokens: 4096 },
       });
     });
 
-    it("returns an empty fragment when the z-ai budget is 0", () => {
-      process.env.PWNKIT_ZAI_THINKING_BUDGET = "0";
-      const rt = runtimeForProvider("z-ai");
-      expect((rt as any).anthropicThinkingField()).toEqual({});
-    });
-
     it("returns an empty fragment for kimi (K3 reasons natively, no body param)", () => {
       const rt = runtimeForProvider("kimi");
-      expect((rt as any).anthropicThinkingField()).toEqual({});
+      expect(rt.anthropicThinkingField()).toEqual({});
     });
 
     it("enables adaptive thinking for real Anthropic while retained reasoning is on", () => {

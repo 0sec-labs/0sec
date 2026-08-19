@@ -37,6 +37,7 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   "mistral-large": { input: 2.00, output: 6.00 },
   "mistral-small": { input: 0.10, output: 0.30 },
   // Z.AI (open-weight, hosted) — see provos.org "Finding Zero-Days with Any Model" (Apr 2026)
+  "glm-5.3": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-5.2": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-5.1": { input: 1.40, output: 4.40, cachedInput: 0.26 },
   "glm-4.5": { input: 0.60, output: 2.20, cachedInput: 0.11 },
