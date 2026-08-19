@@ -1,0 +1,333 @@
+{
+  "timestamp": "2026-04-06T05:07:47.305Z",
+  "depth": "quick",
+  "runtime": "api",
+  "totalCases": 30,
+  "scoredCases": 30,
+  "infrastructureFailures": 0,
+  "validScore": true,
+  "accuracy": 0.5,
+  "detectionRate": 0.3,
+  "falsePositiveRate": 0.1,
+  "f1": 0.4444444444444444,
+  "totalDurationMs": 1682150,
+  "results": [
+    {
+      "pkg": "event-stream",
+      "verdict": "malicious",
+      "reason": "supply-chain attack — flatmap-stream dependency",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 57184,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "ua-parser-js",
+      "verdict": "malicious",
+      "reason": "compromised version shipped crypto-miner",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 55277,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "colors",
+      "verdict": "malicious",
+      "reason": "maintainer sabotaged with infinite loop (v1.4.1+)",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 52719,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "faker",
+      "verdict": "malicious",
+      "reason": "maintainer sabotaged, replaced with ENDGAME",
+      "findingsCount": 1,
+      "hasFindings": true,
+      "correct": true,
+      "durationMs": 35305,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "node-ipc",
+      "verdict": "malicious",
+      "reason": "protestware / peacenotwar geo-targeted wiper",
+      "findingsCount": 1,
+      "hasFindings": true,
+      "correct": true,
+      "durationMs": 67102,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "coa",
+      "verdict": "malicious",
+      "reason": "hijacked — malicious preinstall script",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 62267,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "rc",
+      "verdict": "malicious",
+      "reason": "hijacked — malicious preinstall script",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 36232,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "eslint-scope",
+      "verdict": "malicious",
+      "reason": "credential-theft via npm token exfiltration",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 67922,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "crossenv",
+      "verdict": "malicious",
+      "reason": "typosquat of cross-env — data exfiltration",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 13075,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "loadsh",
+      "verdict": "malicious",
+      "reason": "typosquat of lodash",
+      "findingsCount": 1,
+      "hasFindings": true,
+      "correct": true,
+      "durationMs": 67208,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "lodash@4.17.20",
+      "verdict": "vulnerable",
+      "reason": "prototype pollution CVE-2021-23337",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 61039,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "minimist@1.2.5",
+      "verdict": "vulnerable",
+      "reason": "prototype pollution CVE-2021-44906",
+      "findingsCount": 1,
+      "hasFindings": true,
+      "correct": true,
+      "durationMs": 47930,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "node-forge@0.9.0",
+      "verdict": "vulnerable",
+      "reason": "multiple CVEs in older forge",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 54304,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "express@4.17.1",
+      "verdict": "vulnerable",
+      "reason": "path traversal in serve-static dep",
+      "findingsCount": 3,
+      "hasFindings": true,
+      "correct": true,
+      "durationMs": 86224,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "axios@0.21.0",
+      "verdict": "vulnerable",
+      "reason": "SSRF CVE-2021-3749",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 58086,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "tar@4.4.12",
+      "verdict": "vulnerable",
+      "reason": "arbitrary file overwrite CVE-2021-32803",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 67411,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "glob-parent@5.1.0",
+      "verdict": "vulnerable",
+      "reason": "ReDoS CVE-2021-35065",
+      "findingsCount": 1,
+      "hasFindings": true,
+      "correct": true,
+      "durationMs": 49126,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "json5@2.2.1",
+      "verdict": "vulnerable",
+      "reason": "prototype pollution CVE-2022-46175",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 47097,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "qs@6.5.2",
+      "verdict": "vulnerable",
+      "reason": "prototype pollution CVE-2022-24999",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 47277,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "semver@7.3.7",
+      "verdict": "vulnerable",
+      "reason": "ReDoS CVE-2022-25883",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": false,
+      "durationMs": 57513,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "express@latest",
+      "verdict": "safe",
+      "reason": "widely-used, patched",
+      "findingsCount": 1,
+      "hasFindings": true,
+      "correct": false,
+      "durationMs": 59933,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "react@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 79551,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "typescript@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 48552,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "zod@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 56278,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "drizzle-orm@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 74915,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "vitest@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 76480,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "esbuild@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 34960,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "chalk@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 31779,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "commander@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 74306,
+      "infrastructureError": false
+    },
+    {
+      "pkg": "dotenv@latest",
+      "verdict": "safe",
+      "reason": "well-maintained, no known issues",
+      "findingsCount": 0,
+      "hasFindings": false,
+      "correct": true,
+      "durationMs": 55092,
+      "infrastructureError": false
+    }
+  ],
+  "verdictBreakdown": {
+    "malicious": {
+      "total": 10,
+      "correct": 3,
+      "rate": 0.3
+    },
+    "vulnerable": {
+      "total": 10,
+      "correct": 3,
+      "rate": 0.3
+    },
+    "safe": {
+      "total": 10,
+      "correct": 9,
+      "rate": 0.9
+    }
+  }
+}

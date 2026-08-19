@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily trigger for the 0sec recency flywheel
+Documentation=https://github.com/0sec-labs/pwnkit/blob/main/scripts/recency-flywheel/README.md
+
+[Timer]
+# Once a day, early morning bench-local. RandomizedDelay avoids colliding with
+# the other daily audits (syzbot-feed, zeroverse-kmsan) on the minute.
+OnCalendar=*-*-* 06:30:00
+RandomizedDelaySec=900
+# If the box was off / busy at the scheduled time, run as soon as it can.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -63,18 +63,16 @@ export function detectOutOfBandModuleLoad(
 ): OutOfBandModuleLoad {
   const allowed = new Set(targetModules.map(normalizeModuleName));
   const allowedList = [...allowed];
-  // `insmod <path.ko>`, a command-boundary `modprobe <name>`, or a raw
-  // `*_module` syscall identifier (including the `__NR_`/`SYS_`-prefixed forms
-  // used from C). A pathname such as `/sbin/modprobe` is not a command.
-  const re =
-    /\binsmod\b\s+["']?([\w./+-]+)["']?|(?:^|[;\n]|&&|\|\||\||[$#]\s+|\b(?:system|popen)\s*\(\s*["'])\s*modprobe\b\s+["']?([\w./+-]+)["']?|\b(?:__NR_|SYS_|sys_)?(finit_module|init_module)\b/g;
+  // `insmod <path.ko>` / `modprobe <name>` OR a raw `*_module` syscall identifier
+  // (including the `__NR_`/`SYS_`-prefixed forms used from C).
+  const re = /\b(insmod|modprobe)\b\s+["']?([\w./+-]+)["']?|\b(?:__NR_|SYS_|sys_)?(finit_module|init_module)\b/g;
   for (let m = re.exec(scanText); m; m = re.exec(scanText)) {
     if (m[3]) {
       // A module-loading syscall in the exploit text is always out-of-band.
       return { denied: true, method: m[3] as "finit_module" | "init_module", offendingModule: m[3], allowed: allowedList };
     }
-    const cmd = m[1] ? "insmod" : "modprobe";
-    const token = m[1] ?? m[2]!;
+    const cmd = m[1] as "insmod" | "modprobe";
+    const token = m[2]!;
     // `insmod` always names a `.ko` path — a bare word after it is prose, not a
     // load. `modprobe` names a bare module. This keeps prose from false-tripping.
     if (cmd === "insmod" && !/\.ko(\.(gz|xz|zst))?$/i.test(token) && !token.includes("/")) continue;

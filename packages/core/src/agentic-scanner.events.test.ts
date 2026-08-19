@@ -30,22 +30,12 @@ function tmpDbPath(): string {
   );
 }
 
-let activeScopePath: string | undefined;
-
-function tmpScopePath(): string {
-  return path.join(
-    os.tmpdir(),
-    `pwnkit-agentic-events-${Date.now()}-${Math.random().toString(36).slice(2)}.scope.json`,
-  );
-}
-
 function baseConfig(overrides: Partial<ScanConfig> = {}): ScanConfig {
   return {
     target: "https://target.example.invalid",
     depth: "quick",
     format: "json",
     runtime: "api",
-    ...(activeScopePath ? { scopeFile: activeScopePath } : {}),
     ...overrides,
   } as ScanConfig;
 }
@@ -66,8 +56,6 @@ describe("agenticScan: scan_completed emission", () => {
       },
     });
     dbPath = tmpDbPath();
-    activeScopePath = tmpScopePath();
-    fs.writeFileSync(activeScopePath, JSON.stringify({ in_scope: ["target.example.invalid"] }));
     originalCodexLiveTargets = process.env.PWNKIT_FEATURE_CODEX_LIVE_TARGETS;
     originalChatGptCodexRefreshToken = process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
     delete process.env.PWNKIT_FEATURE_CODEX_LIVE_TARGETS;
@@ -87,10 +75,6 @@ describe("agenticScan: scan_completed emission", () => {
     if (unsubscribe) unsubscribe();
     eventBus.clear();
     try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
-    if (activeScopePath) {
-      try { fs.unlinkSync(activeScopePath); } catch { /* ignore */ }
-      activeScopePath = undefined;
-    }
     if (originalCodexLiveTargets === undefined) {
       delete process.env.PWNKIT_FEATURE_CODEX_LIVE_TARGETS;
     } else {
@@ -229,8 +213,6 @@ describe("agenticScan: planner LLM error mid-scan", () => {
       },
     });
     dbPath = tmpDbPath();
-    activeScopePath = tmpScopePath();
-    fs.writeFileSync(activeScopePath, JSON.stringify({ in_scope: ["target.example.invalid"] }));
     // The native API runtime needs *some* key configured for diagnostics
     // to come back valid (otherwise `useNative=false` and the loop never
     // runs). The mock below intercepts every API call before any HTTP
@@ -249,10 +231,6 @@ describe("agenticScan: planner LLM error mid-scan", () => {
     if (unsubscribe) unsubscribe();
     eventBus.clear();
     try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
-    if (activeScopePath) {
-      try { fs.unlinkSync(activeScopePath); } catch { /* ignore */ }
-      activeScopePath = undefined;
-    }
     for (const k of ENV_KEYS_TO_STASH) {
       const v = stashedEnv[k];
       if (v === undefined) {

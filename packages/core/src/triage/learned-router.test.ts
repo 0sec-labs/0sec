@@ -67,7 +67,7 @@ describe("routeFinding — XGBoost model evaluation", () => {
     expect(result.tpProbability).toBeLessThanOrEqual(1);
   });
 
-  it("uses model scores when available and a safe fallback otherwise", () => {
+  it("scores a high-confidence finding higher than a low-confidence one", () => {
     const highConf = makeFinding({
       confidence: 0.95,
       description: "Confirmed SQL injection with stack trace.",
@@ -84,14 +84,6 @@ describe("routeFinding — XGBoost model evaluation", () => {
     });
     const highResult = routeFinding(highConf);
     const lowResult = routeFinding(lowConf);
-
-    if (highResult.reason === "model file not found, running full pipeline") {
-      expect(lowResult.reason).toBe(highResult.reason);
-      expect(highResult.tpProbability).toBe(0.5);
-      expect(lowResult.tpProbability).toBe(0.5);
-      return;
-    }
-
     expect(highResult.tpProbability).toBeGreaterThan(lowResult.tpProbability);
   });
 

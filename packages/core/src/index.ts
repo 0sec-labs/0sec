@@ -7,9 +7,7 @@ export type { ScopeJson, ScopeMatch, ScopeRule } from "./scope/scope.js";
 export {
   describeScopeGuards,
   isScopeRequired,
-  networkScopeRequiredRefusal,
   scopeRequiredRefusal,
-  targetRequiresScope,
   SCOPE_DEPENDENT_BASH_GUARDS,
   SCOPE_GUARDS_INERT_EVENT,
 } from "./scope/scope-guard.js";

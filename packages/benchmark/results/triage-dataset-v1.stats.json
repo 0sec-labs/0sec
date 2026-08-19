@@ -1,0 +1,109 @@
+{
+  "generatedAt": "2026-04-11T20:34:40.593Z",
+  "totalSamples": 969,
+  "labelBalance": {
+    "true_positive": 884,
+    "false_positive": 85,
+    "tp_fraction": 0.912
+  },
+  "perSource": {
+    "xbow:bb-moat-25": 14,
+    "xbow:bb-moat-only-25": 13,
+    "xbow:bb-moat-only-50": 27,
+    "xbow:bb-no-triage-25": 34,
+    "xbow:bb-none-25": 27,
+    "xbow:feat-cons": 5,
+    "xbow:feat-debate": 14,
+    "xbow:feat-egats": 9,
+    "xbow:feat-mem": 10,
+    "xbow:feat-multi": 15,
+    "xbow:feat-pov": 20,
+    "xbow:feat-reach": 10,
+    "xbow:wb-default-ref": 5,
+    "xbow:wb-moat": 25,
+    "xbow:wb-moat-only": 25,
+    "xbow:wb-no-triage": 67,
+    "xbow:wb-none": 67,
+    "npm:default": 114,
+    "npm:moat": 113,
+    "npm:moat-only": 117,
+    "npm:no-triage": 115,
+    "npm:none": 123
+  },
+  "byCategory": {
+    "security-misconfiguration": 110,
+    "information-disclosure": 186,
+    "xss": 66,
+    "ssrf": 28,
+    "code-injection": 28,
+    "command-injection": 18,
+    "sql-injection": 13,
+    "path-traversal": 40,
+    "unsafe-deserialization": 12,
+    "cors": 1,
+    "supply-chain": 105,
+    "known-vulnerable-package": 210,
+    "regex-dos": 52,
+    "prototype-pollution": 89,
+    "data-exfiltration": 2,
+    "output-manipulation": 9
+  },
+  "bySeverity": {
+    "high": 354,
+    "low": 194,
+    "critical": 137,
+    "info": 30,
+    "medium": 254
+  },
+  "byLabelSource": {
+    "flag_extraction": {
+      "tp": 324,
+      "fp": 63
+    },
+    "package_verdict": {
+      "tp": 560,
+      "fp": 22
+    }
+  },
+  "layerVerdictCoverage": {
+    "samplesWithVerdicts": 44,
+    "samplesWithoutVerdicts": 925,
+    "verdictsByLayer": {
+      "holding_it_wrong": 44,
+      "evidence_gate": 44,
+      "reachability": 44,
+      "multi_modal": 44,
+      "oracle": 44,
+      "pov_gate": 44
+    },
+    "note": "Rows without layerVerdicts predate pwnkit#112's instrumentation (commit 6f1a889, 2026-04-11). Next benchmark run will produce non-empty verdicts across the board — that's dataset v2."
+  },
+  "sources": {
+    "xbow_runs": [
+      "xbow:bb-moat-25",
+      "xbow:bb-moat-only-25",
+      "xbow:bb-moat-only-50",
+      "xbow:bb-no-triage-25",
+      "xbow:bb-none-25",
+      "xbow:feat-cons",
+      "xbow:feat-debate",
+      "xbow:feat-egats",
+      "xbow:feat-mem",
+      "xbow:feat-multi",
+      "xbow:feat-pov",
+      "xbow:feat-reach",
+      "xbow:wb-default-ref",
+      "xbow:wb-moat",
+      "xbow:wb-moat-only",
+      "xbow:wb-no-triage",
+      "xbow:wb-none"
+    ],
+    "npm_runs": [
+      "npm:default",
+      "npm:moat",
+      "npm:moat-only",
+      "npm:no-triage",
+      "npm:none"
+    ]
+  }
+}
