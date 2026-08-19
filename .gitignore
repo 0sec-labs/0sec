@@ -14,17 +14,3 @@ pnpm-publish-summary.json
 .astro/
 **/.astro/
 
-# Local-only planning and release material must never be committed.
-.internal/
-.local/
-marketing/
-POSITIONING.md
-www/
-dist-npm/
-
-# Locally built kernel VM artifacts.
-release-staging/*/bzImage
-release-staging/*/rootfs.img
-release-staging/*/kernel.config
-release-staging/*/pwnkit_vm_key
-release-staging/*/pwnkit_vm_key.pub

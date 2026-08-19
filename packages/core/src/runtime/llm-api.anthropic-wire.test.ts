@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { webPentestPrompt } from "../agent/prompts.js";
 import { LlmApiRuntime } from "./llm-api.js";
 import type { NativeMessage } from "./types.js";
 
@@ -125,42 +126,124 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
       expect(result.stopReason).toBe("tool_use");
       expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 25 });
     });
+    it("keeps every target credential shape out of the provider request", async () => {
+      process.env.KIMI_API_KEY = "kimi-test-key";
+      const rt = new LlmApiRuntime({ type: "api", timeout: 5000, model: "k3" });
+      const providerBodies: string[] = [];
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, opts: { body: string }) => {
+          providerBodies.push(opts.body);
+          return {
+            ok: true,
+            text: async () =>
+              JSON.stringify({
+                content: [{ type: "text", text: "done" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+          } as unknown as Response;
+        }),
+      );
+
+      const authCases = [
+        {
+          auth: { type: "bearer" as const, token: "provider-wire-bearer-canary" },
+          secrets: ["provider-wire-bearer-canary"],
+        },
+        {
+          auth: { type: "cookie" as const, value: "sid=provider-wire-cookie-canary" },
+          secrets: ["sid=provider-wire-cookie-canary"],
+        },
+        {
+          auth: {
+            type: "basic" as const,
+            username: "provider-wire-user-canary",
+            password: "provider-wire-password-canary",
+          },
+          secrets: ["provider-wire-user-canary", "provider-wire-password-canary"],
+        },
+        {
+          auth: {
+            type: "header" as const,
+            name: "X-Provider-Wire-Key",
+            value: "provider-wire-header-canary",
+          },
+          secrets: ["provider-wire-header-canary"],
+        },
+      ];
+
+      const messages: NativeMessage[] = [
+        { role: "user", content: [{ type: "text", text: "audit the authorized target" }] },
+      ];
+      for (const { auth, secrets } of authCases) {
+        await rt.executeNative(
+          webPentestPrompt("https://target.test", { auth }),
+          messages,
+          [],
+        );
+        const providerBody = providerBodies.at(-1)!;
+        expect(providerBody).toContain("Authenticated requests are configured");
+        for (const secret of secrets) expect(providerBody).not.toContain(secret);
+      }
+    });
   });
 
   // ── (b) z-ai thinking-budget fragment ──
 
   describe("anthropicThinkingField()", () => {
-    function runtimeForProvider(provider: string): LlmApiRuntime {
-      const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test-key" });
-      (rt as unknown as { provider: string }).provider = provider;
-      (rt as unknown as { apiKey: string }).apiKey = "test-key";
+    type TestableRuntime = LlmApiRuntime & {
+      provider: string;
+      apiKey: string;
+      anthropicThinkingField(): Record<string, unknown>;
+    };
+
+    function runtimeForProvider(provider: string, model = "glm-5.3"): TestableRuntime {
+      // Test-only access to private runtime state verifies the wire fragment.
+      const rt = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "test-key", model }) as unknown as TestableRuntime;
+      rt.provider = provider;
+      rt.apiKey = "test-key";
       return rt;
     }
 
-    it("enables extended thinking with the default budget for z-ai", () => {
+    it("maps the default legacy budget to GLM-5.3 low reasoning effort", () => {
       const rt = runtimeForProvider("z-ai");
-      expect((rt as any).anthropicThinkingField()).toEqual({
-        thinking: { type: "enabled", budget_tokens: 2048 },
+      expect(rt.anthropicThinkingField()).toEqual({
+        thinking: { type: "enabled" },
+        reasoning_effort: "low",
       });
     });
 
-    it("honors PWNKIT_ZAI_THINKING_BUDGET for z-ai", () => {
+    it("maps a larger legacy budget to GLM-5.3 high reasoning effort", () => {
       process.env.PWNKIT_ZAI_THINKING_BUDGET = "4096";
       const rt = runtimeForProvider("z-ai");
-      expect((rt as any).anthropicThinkingField()).toEqual({
+      expect(rt.anthropicThinkingField()).toEqual({
+        thinking: { type: "enabled" },
+        reasoning_effort: "high",
+      });
+    });
+
+    it("keeps GLM-5.3 thinking enabled when the legacy budget is 0", () => {
+      process.env.PWNKIT_ZAI_THINKING_BUDGET = "0";
+      const rt = runtimeForProvider("z-ai");
+      expect(rt.anthropicThinkingField()).toEqual({
+        thinking: { type: "enabled" },
+        reasoning_effort: "low",
+      });
+    });
+
+    it("keeps the Anthropic budget fragment for an explicit GLM-5.2 override", () => {
+      process.env.PWNKIT_ZAI_THINKING_BUDGET = "4096";
+      const rt = runtimeForProvider("z-ai", "glm-5.2");
+      expect(rt.anthropicThinkingField()).toEqual({
         thinking: { type: "enabled", budget_tokens: 4096 },
       });
     });
 
-    it("returns an empty fragment when the z-ai budget is 0", () => {
-      process.env.PWNKIT_ZAI_THINKING_BUDGET = "0";
-      const rt = runtimeForProvider("z-ai");
-      expect((rt as any).anthropicThinkingField()).toEqual({});
-    });
-
     it("returns an empty fragment for kimi (K3 reasons natively, no body param)", () => {
       const rt = runtimeForProvider("kimi");
-      expect((rt as any).anthropicThinkingField()).toEqual({});
+      expect(rt.anthropicThinkingField()).toEqual({});
     });
 
     it("enables adaptive thinking for real Anthropic while retained reasoning is on", () => {

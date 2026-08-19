@@ -1,11 +1,10 @@
 /**
  * Parser for external "seed" leads supplied to `pwnkit review --seed-findings`.
  *
- * Today the only first-class producer is GemmaForge (`gemmaforge scan`,
- * schema id `gemmaforge.leads/v1` — see
- * https://github.com/peaktwilight/gemmaforge/blob/main/docs/leads-schema.md).
- * The parser is intentionally permissive about the on-wire field names so
- * a v2 producer can ship without forcing a pwnkit release.
+ * GemmaForge is the current first-class producer (`gemmaforge scan`,
+ * schema id `gemmaforge.leads/v1`). The parser is intentionally permissive
+ * about on-wire field names so a v2 producer can ship without forcing a
+ * pwnkit release.
  *
  * Closes pwnkit#368 once these are wired into the review agent's worklist.
  */

@@ -425,11 +425,9 @@ CyberGym (UC Berkeley RDI — `sunblaze-ucb/cybergym`) is the field's
 C/C++ memory-safety benchmark. The committed receipts
 (`results/cybergym-v1.jsonl`, `results/cybergym-agent-v1.jsonl`) are
 real but **non-random** first-pulled subsets (n=6 / n=18) — defensible
-data points, NOT a benchmark-wide pass@1. The path to a citation-grade
-number is issue [#1029]: a **pre-registered, stratified** 150–200-task
-subset with the task-ID list + RNG seed committed **before** the run.
-
-[#1029]: https://github.com/0sec-labs/0sec/issues/1029
+data points, NOT a benchmark-wide pass@1. A citation-grade number requires a
+**pre-registered, stratified** 150–200-task subset with the task-ID list +
+RNG seed committed before the run.
 
 Pre-registration is the integrity contract — the order is fixed:
 

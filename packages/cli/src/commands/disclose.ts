@@ -332,6 +332,7 @@ async function disclose(findingId: string | undefined, opts: DiscloseOptions): P
           timeoutMs: targetTimeoutMs,
           rpsPerHost: reverifyRps,
           scopeAllowlist,
+          allowProcessActions: false,
         };
         try {
           behaviouralReport = await executePocSteps(finding, target);

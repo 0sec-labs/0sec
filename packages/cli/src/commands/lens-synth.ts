@@ -19,9 +19,9 @@
  *   }
  *
  * Defaults wire the REAL synthesis model (LlmApiRuntime, routed — no raw key) and
- * the REAL finder-backed probe (runHuntScan over each fixture). `--dry-run`
- * validates without writing. Autonomous nightly triggering is a FOLLOW-UP; this
- * command is the manual entry point.
+ * the REAL finder-backed probe (runHuntScan over each fixture). The command
+ * validates without writing by default; `--promote` is required to register a
+ * champion. Autonomous nightly triggering is a FOLLOW-UP.
  *
  * Exit codes: 0 = the loop ran (with or without a registration — a clean
  * no-registration run is a valid outcome); 3 = error (bad flags / unreadable or
@@ -89,7 +89,7 @@ export interface LensSynthCommandOptions {
   registry?: string;
   maxRegister?: number;
   model?: string;
-  dryRun?: boolean;
+  promote?: boolean;
 }
 
 export interface LensSynthCommandDeps {
@@ -103,8 +103,8 @@ export interface LensSynthCommandDeps {
 /**
  * Parse the miss-input and run the loop. Pure wrt IO except the miss-input read
  * and the registry write; the model + probe are injectable so this is testable
- * end-to-end without an LLM or a real finder. `--dry-run` caps registrations at
- * 0 (validate + report, never write).
+ * end-to-end without an LLM or a real finder. Registration is dry-run by
+ * default and requires an explicit promotion request.
  */
 export async function runLensSynthCommand(
   opts: LensSynthCommandOptions,
@@ -120,7 +120,7 @@ export async function runLensSynthCommand(
     probe,
     ...(opts.registry ? { registryPath: resolve(opts.registry) } : {}),
     maxRegistrations: opts.maxRegister ?? 1,
-    ...(opts.dryRun ? { dryRun: true } : {}),
+    dryRun: !opts.promote,
     log,
   });
 }
@@ -157,7 +157,7 @@ export function registerLensSynthCommand(program: Command): void {
     .option("--registry <path>", "appsec registry to append to (defaults to the bundled seed registry)")
     .option("--max-register <n>", "cap how many lenses this run may register", (v) => Number.parseInt(v, 10))
     .option("--model <id>", "synthesis model override")
-    .option("--dry-run", "validate + report without writing the registry", false)
+    .option("--promote", "register a validated champion in the selected registry", false)
     .option("--json", "print the full result as JSON", false)
     .action(async (opts) => {
       try {
@@ -167,12 +167,12 @@ export function registerLensSynthCommand(program: Command): void {
             ...(opts.registry ? { registry: String(opts.registry) } : {}),
             ...(Number.isInteger(opts.maxRegister) ? { maxRegister: Number(opts.maxRegister) } : {}),
             ...(opts.model ? { model: String(opts.model) } : {}),
-            dryRun: Boolean(opts.dryRun),
+            promote: Boolean(opts.promote),
           },
           { log: (m) => process.stderr.write(`${m}\n`) },
         );
         process.stdout.write(
-          opts.json ? `${JSON.stringify(result, null, 2)}\n` : `${formatLensSynthResult(result, Boolean(opts.dryRun))}\n`,
+          opts.json ? `${JSON.stringify(result, null, 2)}\n` : `${formatLensSynthResult(result, !opts.promote)}\n`,
         );
       } catch (err) {
         process.stderr.write(`lens-synth: ${err instanceof Error ? err.message : String(err)}\n`);

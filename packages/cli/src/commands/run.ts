@@ -548,11 +548,9 @@ export async function runUnified(opts: RunOptions): Promise<void> {
           subsystem: opts.subsystem,
           hypothesis: opts.hypothesis,
           conversation: opts.conversation,
-          // External seeds (e.g. `gemmaforge scan` leads) — the pipeline
-          // prepends them to the agent's worklist so they are surfaced
-          // first in the prompt. `seedOnly` skips semgrep entirely when
-          // the operator trusts the external producer enough to rely on
-          // it alone. Companion producer: peaktwilight/gemmaforge#23.
+          // External leads are prepended to the agent worklist. `seedOnly`
+          // skips static prioritisation when the operator explicitly trusts
+          // the configured producer.
           seedFindings: opts.seedFindings,
           seedOnly: opts.seedOnly,
           npmDynamicDiscovery: opts.npmDynamicDiscovery,
