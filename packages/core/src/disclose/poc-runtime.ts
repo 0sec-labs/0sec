@@ -66,6 +66,11 @@ export interface PocExecutionTarget {
    * Wildcards: `*.acme.com` matches subdomains but not `acme.com`.
    */
   scopeAllowlist?: string[];
+  /**
+   * Public CLI callers set this false. Shell and Docker proof steps then
+   * refuse before spawning anything on the operator host.
+   */
+  allowProcessActions?: boolean;
 }
 
 /** Per-step verdict returned to the caller. */
@@ -394,6 +399,17 @@ async function executeStep(
   target: PocExecutionTarget,
 ): Promise<PocStepResult> {
   const start = Date.now();
+  if (
+    target.allowProcessActions === false &&
+    (step.action.type === "shell" || step.action.type === "docker")
+  ) {
+    return {
+      stepId: step.id,
+      kind: "errored",
+      durationMs: Date.now() - start,
+      error: `PoC ${step.action.type} actions require an isolated execution environment`,
+    };
+  }
   try {
     switch (step.action.type) {
       case "shell":

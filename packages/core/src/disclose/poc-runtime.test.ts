@@ -793,6 +793,25 @@ describe("executePocSteps — scope allowlist enforcement", () => {
     expect(fetchCalls).toHaveLength(0);
   });
 
+  it("refuses shell and docker steps when the caller requires HTTP-only reverify", async () => {
+    const { spawnFn, calls } = makeFakeSpawn({ exitCode: 0 });
+    restore = setRuntimeDeps({ spawn: spawnFn });
+
+    for (const action of [
+      { type: "shell" as const, cmd: "echo should-not-run" },
+      { type: "docker" as const, image: "registry.acme.com/app:latest", args: [] },
+    ]) {
+      const report = await executePocSteps(
+        findingWith([{ id: `disabled-${action.type}`, kind: "verify", summary: "process disabled", action }]),
+        { allowProcessActions: false, scopeAllowlist: ["*.acme.com"] },
+      );
+      expect(report.steps[0].kind).toBe("errored");
+      expect(report.steps[0].error).toContain("require an isolated execution environment");
+    }
+
+    expect(calls).toHaveLength(0);
+  });
+
   it("allows shell step whose only URL token is in scope", async () => {
     const { spawnFn } = makeFakeSpawn({ exitCode: 0 });
     restore = setRuntimeDeps({ spawn: spawnFn });
