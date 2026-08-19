@@ -360,7 +360,7 @@ export function projectResearchExecutionEvidence(
   };
   let variantBinding: ResearchExecutionEvidence["variantBinding"];
   if (options.candidateChange && options.producer) {
-    if (options.producer.repository !== "0sec-labs/pwnkit") throw new Error("schema-v3 producer repository must be 0sec-labs/pwnkit");
+    if (options.producer.repository !== "0sec-labs/0sec") throw new Error("schema-v3 producer repository must be 0sec-labs/0sec");
     if (!/^[0-9a-f]{40}$/.test(options.producer.commitSha)) throw new Error("schema-v3 producer commit must be a full lowercase SHA");
     if (!/^sha256:[0-9a-f]{64}$/.test(options.producer.treeDigest)) throw new Error("schema-v3 producer tree digest is invalid");
     const descriptorPair = (run: ResearchTournamentRun) => ({

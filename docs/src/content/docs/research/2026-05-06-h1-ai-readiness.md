@@ -173,7 +173,7 @@ A consequence we did not expect when we started the audit: the rate-limiting eff
 
 The audit informed pwnkit's submission pipeline before we have submitted a single report.
 
-The disclose command — currently in review as [PR #206](https://github.com/0sec-labs/pwnkit/pull/206) — implements the conduct constraints the audit surfaced as hard gates rather than soft warnings:
+The disclose command — currently in review as [PR #206](https://github.com/0sec-labs/0sec/pull/206) — implements the conduct constraints the audit surfaced as hard gates rather than soft warnings:
 
 - **IPv6 scope-bypass fix** — the previous scope-allowlist accepted `::1` and rejected `127.0.0.1`, which is the wrong way around for HackerOne's loopback rule. Now both are normalised before allowlist check.
 - **PoC-step redaction** — every reproduction-step block is run through a redactor that strips secrets, in-scope tokens, and personal data before the report markdown is generated. This is the single most common cause of the "missing PoC / hallucinated PoC" CoC violations the May 2026 update calls out.
@@ -195,5 +195,5 @@ The leaderboard chase has been a useful forcing function for measuring raw capab
 - HackerOne API documentation — <https://docs.hackerone.com/en/articles/8475119-hackerone-api>
 - The New Stack on the curl programme closure — <https://thenewstack.io/curl-bug-bounty-flooded-by-ai-slop/>
 - BleepingComputer on AI-slop bug reports — <https://www.bleepingcomputer.com/news/security/curl-project-founder-snaps-over-ai-slop-bug-reports/>
-- pwnkit disclose command (PR #206) — <https://github.com/0sec-labs/pwnkit/pull/206>
+- pwnkit disclose command (PR #206) — <https://github.com/0sec-labs/0sec/pull/206>
 - Gold Standard Safe Harbor wording — <https://www.hackerone.com/security-compliance/gold-standard-safe-harbor>

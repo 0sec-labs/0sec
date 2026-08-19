@@ -153,7 +153,7 @@ describe("0research execution evidence projection", () => {
       ...options,
       candidateChange,
       producer: {
-        repository: "0sec-labs/pwnkit",
+        repository: "0sec-labs/0sec",
         commitSha: "a".repeat(40),
         treeDigest: `sha256:${"7".repeat(64)}`,
       },
@@ -172,7 +172,7 @@ describe("0research execution evidence projection", () => {
     const golden = contract.evidence;
     expect(evidence).toEqual(golden);
     expect(researchExecutionEvidenceDigest(evidence)).toBe(
-      "sha256:456cc709c2230bdf2035f529631dcdf0b62d181bda36fac0f5215824851d2e59",
+      "sha256:6033e4c64e6de8dc22842a7c695f04aab8cf63666545bf7d9bf83d538aac5fed",
     );
     expect(evidence.schemaVersion).toBe(3);
     expect(evidence.variantBinding).toEqual({
@@ -208,7 +208,7 @@ describe("0research execution evidence projection", () => {
     expect(() => projectResearchExecutionEvidence({
       ...drift,
       candidateChange: { kind: "prompt", knobs: { "source_audit.hypothesis": "Inspect parser state transitions." } },
-      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+      producer: { repository: "0sec-labs/0sec", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
     })).toThrow(/drift/);
 
     const hidden = inputs();
@@ -221,7 +221,7 @@ describe("0research execution evidence projection", () => {
     expect(() => projectResearchExecutionEvidence({
       ...hidden,
       candidateChange: { kind: "prompt", knobs: { "source_audit.hypothesis": "Inspect parser state transitions." } },
-      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+      producer: { repository: "0sec-labs/0sec", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
     })).toThrow(/not exactly/);
   });
 
@@ -233,7 +233,7 @@ describe("0research execution evidence projection", () => {
     expect(() => projectResearchExecutionEvidence({
       ...options,
       candidateChange: { kind: "feature_flag", knobs: { invented_flag: true } },
-      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+      producer: { repository: "0sec-labs/0sec", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
     })).toThrow(/unsupported/);
 
     const baseline = inputs();
@@ -243,7 +243,7 @@ describe("0research execution evidence projection", () => {
     expect(() => projectResearchExecutionEvidence({
       ...baseline,
       candidateChange: { kind: "feature_flag", knobs: { web_search: true } },
-      producer: { repository: "0sec-labs/pwnkit", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
+      producer: { repository: "0sec-labs/0sec", commitSha: "a".repeat(40), treeDigest: `sha256:${"7".repeat(64)}` },
     })).toThrow(/explicitly bind/);
   });
 

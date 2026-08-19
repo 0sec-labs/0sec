@@ -19,7 +19,7 @@
     "configArtifactRef": "artifact:evaluator-config.json"
   },
   "producer": {
-    "repository": "0sec-labs/pwnkit",
+    "repository": "0sec-labs/0sec",
     "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "treeDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
   },

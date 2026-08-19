@@ -11,7 +11,7 @@
  * scanner) can classify findings, and so the variant-hunt pipeline can attach
  * richer metadata to each candidate.
  *
- * See: https://github.com/0sec-labs/pwnkit/issues/470
+ * See: https://github.com/0sec-labs/0sec/issues/470
  */
 
 // ── Types ───────────────────────────────────────────────────────────────────

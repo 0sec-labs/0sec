@@ -197,7 +197,7 @@ function reconEcosystem(target: string | undefined): string {
 // the canonical case being `python3 -c 'requests.post(…)'`, where `requests`
 // has no default timeout and a hung remote can wedge the agent indefinitely.
 //
-// See https://github.com/0sec-labs/pwnkit/issues/181
+// See https://github.com/0sec-labs/0sec/issues/181
 
 const DEFAULT_BASH_WALLCLOCK_MS = 120_000;
 const BASH_GRACE_MS = 2_000;

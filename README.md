@@ -1,16 +1,18 @@
 <p align="center">
-  <img src="assets/pwnkit-icon.gif" alt="pwnkit" width="80" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/0sec-aperture-white.svg">
+    <img src="assets/0sec-aperture-ink.svg" alt="0sec" width="208">
+  </picture>
 </p>
-
-<h1 align="center">pwnkit</h1>
 
 <p align="center">
-  Open-source security research harness for authorized targets.
+  Open-source security research harness for authorized software.<br />
+  The technical project and CLI are currently named <code>pwnkit</code>.
 </p>
 
-pwnkit turns frontier AI models into autonomous security researchers. Give it an
-authorized codebase or target, and it investigates and validates vulnerabilities
-with reproducible evidence.
+0sec gives researchers and engineering teams a local harness for investigating
+authorized codebases and targets. It records verifier output so a finding can
+be distinguished from an unproven lead.
 
 ## What it does
 
@@ -48,8 +50,8 @@ pwnkit --help
 ### Source
 
 ```bash
-git clone https://github.com/0sec-labs/pwnkit.git
-cd pwnkit
+git clone https://github.com/0sec-labs/0sec.git
+cd 0sec
 corepack enable
 pnpm install --frozen-lockfile
 pnpm build

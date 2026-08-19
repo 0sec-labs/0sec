@@ -3,7 +3,7 @@ title: "Strix Agent: Technical Implementation Comparison"
 description: "Code-level comparison of the open-source Strix pentesting agent (Apache-2.0, github.com/usestrix/strix, v0.8.3) against pwnkit's own architecture. Covers agent loop, prompts, tools, planning, context compression, finding verification, isolation, telemetry, and CI. Closes pwnkit#404."
 ---
 
-Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, mapped against `0sec-labs/pwnkit@research/strix-comparison`. Every claim below is anchored to a `strix/<path>:<line>` or `pwnkit packages/<path>:<line>` reference; sections marked "not observed in public repo" are exactly that.
+Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, mapped against `0sec-labs/0sec@research/strix-comparison`. Every claim below is anchored to a `strix/<path>:<line>` or `pwnkit packages/<path>:<line>` reference; sections marked "not observed in public repo" are exactly that.
 
 ## 1. Executive summary
 
@@ -275,7 +275,7 @@ Strix references (all on `usestrix/strix@HEAD`, cloned 2026-05-23):
 - CI: `.github/workflows/build-release.yml`
 - Tests: `tests/` (totals from `wc -l`, no integration tests in `tests/agents/`)
 
-pwnkit references (all on `0sec-labs/pwnkit@research/strix-comparison`):
+pwnkit references (all on `0sec-labs/0sec@research/strix-comparison`):
 
 - Agent loop: `packages/core/src/agent/loop.ts:38-120`, `:350`
 - Native loop: `packages/core/src/agent/native-loop.ts` (1449 LOC)

@@ -43,6 +43,8 @@ test("public source export contains build inputs and excludes private material",
       "scripts/ci-runner-bootstrap.sh",
       ".github/workflows/main.yml",
       ".github/workflows/docker-publish.yml",
+      "assets/0sec-aperture-ink.svg",
+      "assets/0sec-aperture-white.svg",
     ]) {
       assert.equal(await exists(join(outputDir, required)), true, `${required} is missing`);
     }
@@ -77,7 +79,7 @@ test("public source export contains build inputs and excludes private material",
       "packages/benchmark/README.md",
     ]) {
       const text = await readFile(join(outputDir, sourcePath), "utf8");
-      assert.doesNotMatch(text, /peaktwilight|github\.com\/0sec-labs\/0sec/i, `${sourcePath} leaks private source references`);
+      assert.doesNotMatch(text, /peaktwilight|github\.com\/0sec-labs\/0cloud/i, `${sourcePath} leaks private source references`);
     }
 
     const publicGitignore = await readFile(join(outputDir, ".gitignore"), "utf8");

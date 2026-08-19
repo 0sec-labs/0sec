@@ -3,7 +3,7 @@ title: Dynamic Triage Routing — v0 Implementation
 description: Per-finding learned layer selection. v0 ships a rule-based router with a seam for a learned classifier; this page documents what shipped, the four decision rules, the routing-trace dataset shape, and the planned upgrade path.
 ---
 
-> **Status:** v0 (rule-based) shipped behind `PWNKIT_FEATURE_DYNAMIC_TRIAGE`. The learned classifier described in the [design doc](/research/dynamic-routing-design/) lands in a follow-up PR. Tracking: [pwnkit#113](https://github.com/0sec-labs/pwnkit/issues/113).
+> **Status:** v0 (rule-based) shipped behind `PWNKIT_FEATURE_DYNAMIC_TRIAGE`. The learned classifier described in the [design doc](/research/dynamic-routing-design/) lands in a follow-up PR. Tracking: [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113).
 
 ## What shipped in v0
 
@@ -40,7 +40,7 @@ AND finding.evidence.response matches a SQL-error regex
 THEN invoke the default static layer set MINUS `debate`
 ```
 
-Motivation: the [pwnkit#72 ablation](https://github.com/0sec-labs/pwnkit/issues/72#issuecomment-4229254355) showed `adversarial_debate` removes real findings on the high-confidence error-based SQLi slice. The oracle is deterministic, free, and sufficient on this shape — debate adds cost and removes signal.
+Motivation: the [pwnkit#72 ablation](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229254355) showed `adversarial_debate` removes real findings on the high-confidence error-based SQLi slice. The oracle is deterministic, free, and sufficient on this shape — debate adds cost and removes signal.
 
 ### Rule 2 — ambiguous logic bug → invoke `structured_verify` + `pov_gate`
 
@@ -125,7 +125,7 @@ At the end of every scan with `PWNKIT_FEATURE_DYNAMIC_TRIAGE=1`, the scanner wri
 }
 ```
 
-The 55-element `features` vector is the same vector the joint-paper dataset ([pwnkit#67](https://github.com/0sec-labs/pwnkit/issues/67)) trains on — extracted by `extractFeatures()` in `packages/core/src/triage/feature-extractor.ts`. The `ground_truth` field is left undefined for in-flight scans; the offline collector backfills it from flag extraction (XBOW / Cybench) or package verdict (npm-bench).
+The 55-element `features` vector is the same vector the joint-paper dataset ([pwnkit#67](https://github.com/0sec-labs/0sec/issues/67)) trains on — extracted by `extractFeatures()` in `packages/core/src/triage/feature-extractor.ts`. The `ground_truth` field is left undefined for in-flight scans; the offline collector backfills it from flag extraction (XBOW / Cybench) or package verdict (npm-bench).
 
 ## The planned learned-classifier upgrade
 
@@ -171,8 +171,8 @@ The existing static feature flags (`PWNKIT_FEATURE_HOLDING_IT_WRONG`, `PWNKIT_FE
 
 ## Related work
 
-- [pwnkit#113](https://github.com/0sec-labs/pwnkit/issues/113) — issue tracking this work
-- [pwnkit#112](https://github.com/0sec-labs/pwnkit/issues/112) — per-layer telemetry (prerequisite, already shipped)
-- [pwnkit#67](https://github.com/0sec-labs/pwnkit/issues/67) — joint paper plan
-- [pwnkit#72](https://github.com/0sec-labs/pwnkit/issues/72) — the ablation that motivated this
+- [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113) — issue tracking this work
+- [pwnkit#112](https://github.com/0sec-labs/0sec/issues/112) — per-layer telemetry (prerequisite, already shipped)
+- [pwnkit#67](https://github.com/0sec-labs/0sec/issues/67) — joint paper plan
+- [pwnkit#72](https://github.com/0sec-labs/0sec/issues/72) — the ablation that motivated this
 - [Dynamic Routing Design Doc](/research/dynamic-routing-design/) — full design discussion

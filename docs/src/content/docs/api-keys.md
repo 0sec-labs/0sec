@@ -60,7 +60,7 @@ export PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN="..."
 Add the key as a repository secret, then reference it in your workflow:
 
 ```yaml
-- uses: 0sec-labs/pwnkit@main
+- uses: 0sec-labs/0sec@main
   with:
     mode: review
     path: .

@@ -3,7 +3,7 @@ title: "2026-05-08 Cost per Flag: A Missing Axis in Autonomous-Pentest Reporting
 description: "Most autonomous-pentest agents publish a percentage. Few publish a dollar amount. The percentage answers whether the agent CAN find the bug; the cost answers whether you can afford to run it. Pwnkit publishes both — at $0.48 per scan run and $5.20 per flag on XBOW — and argues that $/flag is the most-disclosable, most-comparable cost axis the field has."
 ---
 
-*Published 2026-05-08. Numbers come from the canonical [benchmark ledger](https://github.com/0sec-labs/pwnkit/blob/main/packages/benchmark/results/benchmark-ledger.json) and are recomputed on every CI consolidation run.*
+*Published 2026-05-08. Numbers come from the canonical [benchmark ledger](https://github.com/0sec-labs/0sec/blob/main/packages/benchmark/results/benchmark-ledger.json) and are recomputed on every CI consolidation run.*
 
 ## Lead
 
@@ -31,7 +31,7 @@ On the XBOW benchmark, single-config (Azure gpt-5.4), single-shot, with three re
 >
 > Total spend across the 95 attempted challenges in the consolidation window: **$483.75**.
 
-That is the load-bearing claim from the [benchmark page](/benchmark/). It is computed from the canonical [`packages/benchmark/results/benchmark-ledger.json`](https://github.com/0sec-labs/pwnkit/blob/main/packages/benchmark/results/benchmark-ledger.json), specifically the `xbow.retainedArtifactBacked.perModel` section:
+That is the load-bearing claim from the [benchmark page](/benchmark/). It is computed from the canonical [`packages/benchmark/results/benchmark-ledger.json`](https://github.com/0sec-labs/0sec/blob/main/packages/benchmark/results/benchmark-ledger.json), specifically the `xbow.retainedArtifactBacked.perModel` section:
 
 ```json
 "gpt-5.4": {
@@ -87,7 +87,7 @@ The cost number falls out of the benchmark pipeline because cost tracking is bui
 - Per-model breakdown is computed by `packages/benchmark/src/scripts/consolidate-xbow.ts`, which walks the retained CI artifacts and groups results by the `model` field in each run. The ledger then derives `totalCostUsd`, `costPerRunUsd`, and `costPerFlagUsd` per cohort.
 - The [methodology page](/methodology/#why-flag-is-a-useful-comparison-axis-when-published) explains the axis in plain prose. This post is the long-form version.
 
-Roadmap-wise, [issue #231](https://github.com/0sec-labs/pwnkit/issues/231) tracks adding `cost_usd`, `cost_breakdown` (by provider/model), and `cost_per_flag` to the `scan_completed` event payload. Today, reconstructing per-PR cost requires reading the run JSON; once #231 lands, a CI step can emit the cost line directly from the event stream and a budget gate can short-circuit a scan that exceeds policy. The cost-aware-CI story is half-built; this is the half that finishes it.
+Roadmap-wise, [issue #231](https://github.com/0sec-labs/0sec/issues/231) tracks adding `cost_usd`, `cost_breakdown` (by provider/model), and `cost_per_flag` to the `scan_completed` event payload. Today, reconstructing per-PR cost requires reading the run JSON; once #231 lands, a CI step can emit the cost line directly from the event stream and a budget gate can short-circuit a scan that exceeds policy. The cost-aware-CI story is half-built; this is the half that finishes it.
 
 ## What is still missing
 

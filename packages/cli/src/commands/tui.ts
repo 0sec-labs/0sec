@@ -28,7 +28,7 @@ export function registerTuiCommand(program: Command): void {
       console.log(`  ${chalk.bold("pwnkit tui")} — operator mission control needs Bun.`);
       console.log("");
       console.log(`  ${chalk.dim("Install the standalone binary (Bun runtime baked in):")}`);
-      console.log(`    curl -fsSL https://raw.githubusercontent.com/0sec-labs/pwnkit/main/install.sh | bash`);
+      console.log(`    curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash`);
       console.log("");
       console.log(`  ${chalk.dim("Or via Bun directly:")}`);
       console.log(`    bun add -g pwnkit-cli  &&  pwnkit-cli tui`);

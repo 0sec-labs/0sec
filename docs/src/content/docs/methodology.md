@@ -32,7 +32,7 @@ The lesson: **a single XBOW solve is an anecdote, not a benchmark.**
 Single-shot results cannot be promoted to defaults. That is what the
 `--repeat N` harness ([issue #81]) exists to prevent.
 
-[issue #81]: # <!-- github.com/0sec-labs/pwnkit/issues/81 — repo archived -->
+[issue #81]: # <!-- github.com/0sec-labs/0sec/issues/81 — repo archived -->
 
 ## Three methodologies, one raw dataset
 
@@ -217,7 +217,7 @@ That is what the JSON schema in
 emits when you run with `--repeat > 1`, and it is what the CI workflow
 uploads as a build artifact on every scheduled run. The repo now also keeps
 an explicit benchmark ledger at
-[`packages/benchmark/results/benchmark-ledger.json`](https://github.com/0sec-labs/pwnkit/blob/main/packages/benchmark/results/benchmark-ledger.json)
+[`packages/benchmark/results/benchmark-ledger.json`](https://github.com/0sec-labs/0sec/blob/main/packages/benchmark/results/benchmark-ledger.json)
 to separate the **retained artifact-backed tally** from the older
 **historical mixed local+CI publication** line.
 

@@ -1,6 +1,6 @@
 [Unit]
 Description=0sec recency flywheel — daily kernel-LPE freshness-window hunt
-Documentation=https://github.com/0sec-labs/pwnkit/blob/main/scripts/recency-flywheel/README.md
+Documentation=https://github.com/0sec-labs/0sec/blob/main/scripts/recency-flywheel/README.md
 # Best-effort ordering; the hunt is a git+LLM job, not a network service.
 After=network-online.target
 Wants=network-online.target

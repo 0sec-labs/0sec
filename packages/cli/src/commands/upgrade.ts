@@ -3,7 +3,7 @@
  *
  * Convenience wrapper around the canonical install path:
  *
- *   curl -fsSL https://raw.githubusercontent.com/0sec-labs/pwnkit/main/install.sh | bash
+ *   curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
  *
  * When run from inside an installed pwnkit binary, this re-fetches the
  * matching binary for the host platform and writes it into
@@ -18,8 +18,8 @@ import type { Command } from "commander";
 import { spawn } from "node:child_process";
 import chalk from "chalk";
 
-const INSTALL_URL = "https://raw.githubusercontent.com/0sec-labs/pwnkit/main/install.sh";
-const RELEASES_URL = "https://github.com/0sec-labs/pwnkit/releases/latest";
+const INSTALL_URL = "https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh";
+const RELEASES_URL = "https://github.com/0sec-labs/0sec/releases/latest";
 
 interface UpgradeOptions {
   version?: string;

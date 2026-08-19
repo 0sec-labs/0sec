@@ -55,7 +55,7 @@ const { request } = require("node:https");
 const { createHash } = require("node:crypto");
 
 const VERSION = "__PWNKIT_VERSION__";
-const REPO = "0sec-labs/pwnkit";
+const REPO = "0sec-labs/0sec";
 const CHECKSUMS_FILENAME = "checksums.txt";
 
 const RESET = "\x1b[0m";

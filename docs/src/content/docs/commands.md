@@ -701,7 +701,7 @@ querying live advisory sources.
 
 pwnkit-cloud authentication — login, logout, and verify a scoped CLI token against the cloud `/health` endpoint.
 
-> **Scaffold notice (issue [#303](https://github.com/0sec-labs/pwnkit/issues/303)):** this command is the CLI half of cloud auth. The server-side mint endpoint that issues scoped tokens after the browser-based better-auth flow lives in pwnkit-cloud and is shipped in a separate PR. Until that lands, the browser flow (`pwnkit auth login` without `--token`) will time out. Use `pwnkit auth login --token <value>` to paste a token directly — this is the only working path for now.
+> **Scaffold notice (issue [#303](https://github.com/0sec-labs/0sec/issues/303)):** this command is the CLI half of cloud auth. The server-side mint endpoint that issues scoped tokens after the browser-based better-auth flow lives in pwnkit-cloud and is shipped in a separate PR. Until that lands, the browser flow (`pwnkit auth login` without `--token`) will time out. Use `pwnkit auth login --token <value>` to paste a token directly — this is the only working path for now.
 
 Credentials live at `~/.pwnkit/cloud.env` (chmod 600) with format:
 

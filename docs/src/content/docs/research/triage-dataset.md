@@ -14,7 +14,7 @@ The output is designed to be useful for two families of models:
   45-feature vector
 
 This is the data pipeline behind the paper-plan tracked in
-[issue #67](https://github.com/0sec-labs/pwnkit/issues/67).
+[issue #67](https://github.com/0sec-labs/0sec/issues/67).
 
 ## Inputs
 
