@@ -21,6 +21,14 @@ with reproducible evidence.
 - Supports local research workflows for source review, package audit, kernel
   intake, and benchmark evaluation.
 
+## Multi-model execution
+
+pwnkit supports API, local, and CLI runtime paths. Its OpenRouter ensemble runs
+selected models concurrently and selects a response with an explicit
+completion, tool-use, and content heuristic. The craft workflow can run
+`PWNKIT_ENSEMBLE_MODELS` trajectories in parallel and judge candidates before
+continuing.
+
 Use pwnkit only on systems and code you own or are explicitly authorized to
 test. It is not a substitute for a written testing scope.
 
