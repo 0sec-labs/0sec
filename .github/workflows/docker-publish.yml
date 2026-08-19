@@ -12,7 +12,6 @@ name: "PwnKit: Publish Docker image"
 #   - tag push (v*)                → SHA-tagged image AND a semver-tagged
 #                                    image (…/pwnkit:0.1.0) for controlled
 #                                    versioned releases.
-#   - workflow_dispatch            → manual rebuild (still tags :latest).
 #
 # Main publishes are chained from `PwnKit: Main` instead of running directly on
 # push, so a bad engine cannot refresh :latest before the CI suite has passed.
@@ -25,12 +24,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Override tag (optional, defaults to "latest")
-        required: false
-        default: latest
 
 permissions:
   contents: read
@@ -49,7 +42,8 @@ concurrency:
 
 jobs:
   build-and-push:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      github.event_name == 'push' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository)
     # Self-hosted X64 runner (same as worker-publish/dashboard-build) — far
     # faster than GitHub's 2-vCPU hosted runners and shares the buildx layer
     # cache with the other image builds. amd64-only (below) so no QEMU needed.
@@ -99,10 +93,6 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ github.event_name }}" in
-            workflow_dispatch)
-              echo "enabled=true" >> "$GITHUB_OUTPUT"
-              echo ":latest moves (operator dispatch)"
-              ;;
             push)
               # Branch push (fresh main tip) vs tag push (semver release —
               # a version tag must not move :latest).

@@ -91,6 +91,25 @@ test("public source export contains build inputs and excludes private material",
       /\bsecrets\./i,
       "untrusted public PRs must not receive repository secrets",
     );
+
+    const publishWorkflow = await readFile(join(outputDir, ".github/workflows/docker-publish.yml"), "utf8");
+    assert.doesNotMatch(
+      publishWorkflow,
+      /^\s*workflow_dispatch:/m,
+      "the package-writer must not be manually dispatchable on an arbitrary ref",
+    );
+    for (const requiredTrustPredicate of [
+      "github.event.workflow_run.conclusion == 'success'",
+      "github.event.workflow_run.event == 'push'",
+      "github.event.workflow_run.head_branch == 'main'",
+      "github.event.workflow_run.head_repository.full_name == github.repository",
+    ]) {
+      assert.match(
+        publishWorkflow,
+        new RegExp(requiredTrustPredicate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        `trusted publisher predicate missing: ${requiredTrustPredicate}`,
+      );
+    }
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
