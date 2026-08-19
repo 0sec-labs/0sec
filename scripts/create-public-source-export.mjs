@@ -54,11 +54,14 @@ const publicRoots = [
   "scripts/assert-sqlite-wasm.mjs",
   "scripts/bundle-cli.mjs",
   "scripts/npm-launcher",
+  "scripts/ci-runner-bootstrap.sh",
   "scripts/smoke-cli.sh",
   "test-targets",
   "tsconfig.base.json",
   "vitest.workspace-aliases.ts",
   ".github/workflows/public-pr.yml",
+  ".github/workflows/main.yml",
+  ".github/workflows/docker-publish.yml",
 ];
 
 const excludedPaths = [
@@ -70,7 +73,6 @@ const excludedPaths = [
   "research",
   "packages/benchmark/results",
   ".github/workflows/ci.yml",
-  ".github/workflows/docker-publish.yml",
   ".github/workflows/docker-kali-publish.yml",
 ];
 
