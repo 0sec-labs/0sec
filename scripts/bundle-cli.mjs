@@ -167,6 +167,7 @@ const publishPkg = {
   },
 };
 writeFileSync(`${outdir}/package.json`, JSON.stringify(publishPkg, null, 2) + "\n");
+copyFileSync("scripts/dist-package-lock.json", `${outdir}/package-lock.json`);
 copyFileSync("LICENSE", `${outdir}/LICENSE`);
 copyFileSync("README.md", `${outdir}/README.md`);
 

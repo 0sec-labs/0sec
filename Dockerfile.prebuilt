@@ -21,7 +21,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ENV NODE_ENV=production \
     PWNKIT_DOCKER=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH=/usr/local/bin:/usr/bin:/bin
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -52,18 +51,14 @@ WORKDIR /app
 COPY . /app/dist
 
 WORKDIR /app/dist
-RUN npm install --omit=dev --no-audit --no-fund
-
-RUN npm install -g playwright@1.48.0 \
-    && playwright install --with-deps chromium \
-    && rm -rf /var/lib/apt/lists/* /root/.npm
+RUN npm ci --omit=dev --ignore-scripts
 
 RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit-cli \
     && chmod +x /app/dist/pwnkit.js
 
 RUN mkdir -p /work \
-    && chown -R ubuntu:ubuntu /work /app/dist /ms-playwright \
-    && chmod -R a+rX /app/dist /ms-playwright
+    && chown -R ubuntu:ubuntu /work /app/dist \
+    && chmod -R a+rX /app/dist
 USER ubuntu
 WORKDIR /work
 
