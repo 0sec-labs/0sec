@@ -114,6 +114,7 @@ export const DEFAULT_REVIEW_MATCHERS: readonly ReviewMatcherSpec[] = [
       { source: "sk-[A-Za-z0-9]{20,}", flags: "", label: "OpenAI-style key" },
       { source: "AKIA[0-9A-Z]{16}", flags: "", label: "AWS access key id" },
       { source: "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----", flags: "", label: "private key material" },
+      { source: "<REDACTED_CREDENTIAL>", flags: "", label: "redacted credential placeholder" },
     ],
     examples: [
       'apiKey = "<REDACTED_CREDENTIAL>"',
