@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildAuthPromptBlock, shellPentestPrompt, webPentestAttackPrompt } from "./prompts.js";
+import {
+  blindVerifyPrompt,
+  buildAuthPromptBlock,
+  researchPrompt,
+  shellPentestPrompt,
+  sourceVerifyPrompt,
+  webPentestAttackPrompt,
+} from "./prompts.js";
 
 describe("shellPentestPrompt", () => {
   it("includes explicit browser-first XSS guidance when browser support exists", () => {
@@ -94,5 +101,20 @@ describe("webPentestAttackPrompt", () => {
     expect(prompt).not.toContain("extract FLAG");
     expect(prompt).not.toContain("cat /flag");
     expect(prompt).not.toContain("/flag.txt");
+  });
+});
+
+describe("scoped source prompts", () => {
+  it("uses only the scoped source-browsing tools", () => {
+    const research = researchPrompt("/scope", [], [], "npm:example@1.0.0");
+    const verify = sourceVerifyPrompt("/scope", []);
+    const blind = blindVerifyPrompt("src/index.ts", "input", "high", "/scope");
+
+    for (const prompt of [research, verify, blind]) {
+      expect(prompt).toContain("read_file");
+      expect(prompt).toContain("search_files");
+      expect(prompt).not.toContain("run_command");
+    }
+    expect(research).toContain("list_files");
   });
 });

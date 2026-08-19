@@ -202,6 +202,10 @@ export function getMaxTurns(
  */
 export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<AnalysisAgentResult> {
   const { role, scopePath, target, scanId, sessionId, config, db, emit, cliPrompt, agentSystemPrompt, cliSystemPrompt, directApiPrompt, purpose = "research" } = opts;
+  // The source tree is attacker-controlled. A CLI runtime owns its own command
+  // channel and bypasses ToolExecutor, so scoped audit/review work must use the
+  // API loop where every filesystem operation crosses the scoped tool boundary.
+  const scopedSourceAudit = scopePath.trim().length > 0;
 
   const templatePrefix = `cli-${role}`;
   const requestedRuntime = config.runtime as RuntimeType | "auto" | undefined;
@@ -259,12 +263,16 @@ export async function runAnalysisAgent(opts: AnalysisAgentOptions): Promise<Anal
     runtimeType = (config.runtime ?? "api") as RuntimeType;
   }
 
+  if (scopedSourceAudit && CLI_RUNTIME_TYPES.has(runtimeType)) {
+    runtimeType = "api";
+  }
+
   if (process.env.CI || process.env.PWNKIT_DEBUG) {
     process.stderr.write(`[pwnkit] agent-runner: type=${runtimeType}, available=[${[...available].join(",")}], directCodex=${useDirectChatGptCodex}\n`);
   }
 
   // ── Branch 1: CLI runtime fast path (claude/codex/etc.) ──
-  if (CLI_RUNTIME_TYPES.has(runtimeType) && available.has(runtimeType)) {
+  if (!scopedSourceAudit && CLI_RUNTIME_TYPES.has(runtimeType) && available.has(runtimeType)) {
     emit({
       type: "stage:start",
       stage: "attack",
