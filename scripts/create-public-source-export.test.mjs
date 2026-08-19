@@ -75,6 +75,13 @@ test("public source export contains build inputs and excludes private material",
       assert.doesNotMatch(text, /peaktwilight|github\.com\/0sec-labs\/0sec/i, `${sourcePath} leaks private source references`);
     }
 
+    const publicGitignore = await readFile(join(outputDir, ".gitignore"), "utf8");
+    assert.doesNotMatch(
+      publicGitignore,
+      /release-staging|marketing|positioning|dist-npm/i,
+      "public ignore rules must not preserve private release-planning paths",
+    );
+
     const publicPrWorkflow = await readFile(join(outputDir, ".github/workflows/public-pr.yml"), "utf8");
     assert.match(
       publicPrWorkflow,
