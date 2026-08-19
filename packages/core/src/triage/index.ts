@@ -235,6 +235,21 @@ export {
 } from "./impact-assessment.js";
 export type { AssessImpactOptions } from "./impact-assessment.js";
 export {
+  buildKernelPromotionEnvelope,
+  isConfirmed,
+  isHypothesisOnly,
+  hasValidValidation,
+} from "./kernel-promotion-envelope.js";
+export type {
+  KernelPromotionEnvelope,
+  KernelPromotionInputs,
+  KernelPromotionStatus,
+  KernelCandidateIdentity,
+  KernelSourceSinkContext,
+  KernelCleanControlReceipt,
+  SemanticValidationStatus,
+} from "./kernel-promotion-envelope.js";
+export {
   SEMANTIC_DEDUPE_BATCH_SIZE,
   buildDedupePrompt,
   validateDedupePayload,
