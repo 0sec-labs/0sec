@@ -17,6 +17,8 @@ interface IngestOpts {
   output: string;
   verify?: boolean;
   verbose?: boolean;
+  persist?: boolean;
+  dbPath?: string;
   syz?: string;
   reproducer?: string;
   kernelTree?: string;
@@ -83,6 +85,8 @@ export function registerIngestCommand(program: Command): void {
     .option("--cost-ceiling <usd>", "Hard USD cost ceiling for --review-subsystem")
     .addOption(new Option("--review-subsystem-fixture <path>").hideHelp())
     .option("-v, --verbose", "Verbose output")
+    .option("--persist", "Write ingested findings to the pwnkit findings DB (default: classify only)")
+    .option("--db-path <path>", "pwnkit database path for --persist (default: ~/.pwnkit/pwnkit.db)")
     .action(async (inputPath: string | undefined, opts: IngestOpts) => {
       try {
         const format = opts.format as IngestFormat;
@@ -259,6 +263,18 @@ export function registerIngestCommand(program: Command): void {
         if (findings.length === 0) {
           console.log(chalk.yellow("No crash reports found."));
           return;
+        }
+
+        if (opts.persist) {
+          // The command's contract is "import into pwnkit findings" — without
+          // this the classification was printed and discarded (found
+          // 2026-08-19: the kernelCTF fleet ingest cron produced zero DB rows).
+          const { pwnkitDB } = await import("@pwnkit/db");
+          const db = new pwnkitDB(opts.dbPath);
+          const scanId = db.createScan({ target: resolved, depth: "quick", format: "json", runtime: "api" });
+          for (const finding of findings) db.saveFinding(scanId, finding);
+          db.completeScan(scanId, { source: "ingest", findings: findings.length });
+          console.error(chalk.gray(`persisted ${findings.length} finding(s) → pwnkit db (scan ${scanId.slice(0, 8)})`));
         }
 
         console.log(
