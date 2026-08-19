@@ -28,7 +28,7 @@
  */
 
 import type { Command } from "commander";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve, join, sep } from "node:path";
 import type { RuntimeMode } from "@pwnkit/shared";
 import type { MemSafetyTarget } from "@pwnkit/core";
@@ -75,6 +75,32 @@ export function detectMemSafetyBuild(
   return null;
 }
 
+/**
+ * Resolve a caller-selected evidence root and prevent the prepared source
+ * cleanup from deleting retained proof. A relative root is allowed for local
+ * use but is normalized before the containment check.
+ */
+export function resolveArtifactDir(
+  value: string | undefined,
+  sourceRoot: string,
+): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  const artifactDir = resolve(raw);
+  const preparedRoot = realpathSync(sourceRoot);
+  mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+  const canonicalArtifactDir = realpathSync(artifactDir);
+  if (
+    canonicalArtifactDir === preparedRoot ||
+    canonicalArtifactDir.startsWith(`${preparedRoot}${sep}`)
+  ) {
+    throw new Error(
+      "--artifact-dir must resolve outside the prepared source tree",
+    );
+  }
+  return canonicalArtifactDir;
+}
+
 export interface RunMemSafetyOptions {
   /** Source tree to fuzz — a local path or a git URL (resolved via prepare). */
   target: string;
@@ -95,17 +121,21 @@ export interface RunMemSafetyOptions {
   runMiri?: boolean;
   /** Fuzz wall-clock budget in seconds (maps to libFuzzer -max_total_time). */
   fuzzTimeoutSec?: number;
+  /**
+   * Persist bounded crash evidence outside the prepared source tree. The
+   * runner writes only copied reproducers, sanitizer logs, and a manifest;
+   * it never retains the cloned target itself.
+   */
+  artifactDir?: string;
+  /**
+   * Aggregate byte ceiling for the retained proof directory. The engine
+   * reserves room for its manifest and never truncates a reproducer.
+   */
+  artifactMaxBytes?: number;
   runtime?: RuntimeMode;
   /** Clone timeout budget in ms, forwarded to prepare(). */
   timeoutMs?: number;
   log?: (msg: string) => void;
-  /**
-   * Optional persistent root for bounded crash evidence. The caller owns its
-   * lifecycle; pwnkit never archives the source checkout beneath it.
-   */
-  artifactDir?: string;
-  /** Total retained crash-evidence byte ceiling paired with `artifactDir`. */
-  artifactMaxBytes?: number;
 }
 
 export interface MemSafetyOutcome {
@@ -175,6 +205,8 @@ export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafety
       ...(opts.fuzzDir ? { fuzzDir: opts.fuzzDir } : {}),
     };
 
+    const artifactDir = resolveArtifactDir(opts.artifactDir, sourceRoot);
+
     // Capture the cloud-sink config; the stage does NO I/O (posts nothing), so
     // we post its findings ourselves — the same discovered-candidate path
     // deep-review uses. No-op when not in cloud mode (sinkCfg null).
@@ -185,7 +217,7 @@ export async function runMemSafety(opts: RunMemSafetyOptions): Promise<MemSafety
       fuzz: {
         ...(opts.runMiri != null ? { runMiri: opts.runMiri } : {}),
         ...(opts.fuzzTimeoutSec ? { timeoutSec: opts.fuzzTimeoutSec } : {}),
-        ...(opts.artifactDir ? { artifactDir: opts.artifactDir } : {}),
+        ...(artifactDir ? { artifactDir } : {}),
         ...(opts.artifactMaxBytes !== undefined
           ? { artifactMaxBytes: opts.artifactMaxBytes }
           : {}),
@@ -267,9 +299,9 @@ interface MemSafetyCliOpts {
   harness?: string;
   fuzzDir?: string;
   miri?: boolean;
-  fuzzTimeout?: string;
   artifactDir?: string;
   artifactMaxBytes?: string;
+  fuzzTimeout?: string;
   runtime?: string;
   format?: string;
   output?: string;
@@ -378,18 +410,15 @@ export function registerMemsafetyCommand(program: Command): void {
       "--build-system <sys>",
       "Force the build system: cargo | cmake | autotools | meson | make (else auto-detected)",
     )
+    .option("--artifact-dir <path>", "Persist bounded crash evidence outside the source tree")
+    .option(
+      "--artifact-max-bytes <bytes>",
+      "Aggregate byte ceiling for retained crash evidence (default 4194304)",
+    )
     .option("--harness <name>", "libFuzzer / cargo-fuzz harness target name")
     .option("--fuzz-dir <path>", "Non-standard cargo-fuzz directory (relative to source root)")
     .option("--miri", "Additionally run `cargo +nightly miri` for UB detection (Rust)", false)
     .option("--fuzz-timeout <sec>", "Fuzz wall-clock budget in seconds (default 60)")
-    .option(
-      "--artifact-dir <path>",
-      "Persist bounded crash evidence below this directory",
-    )
-    .option(
-      "--artifact-max-bytes <bytes>",
-      "Total retained crash-evidence byte ceiling (requires --artifact-dir)",
-    )
     .option("--format <fmt>", "Output format (json)", "json")
     .option("--output <path>", "Write the result JSON to this path instead of stdout")
     .option("--runtime <mode>", "Engine runtime (default api)")

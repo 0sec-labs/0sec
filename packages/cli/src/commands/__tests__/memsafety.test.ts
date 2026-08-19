@@ -1,10 +1,21 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { detectMemSafetyBuild, registerMemsafetyCommand } from "../memsafety.js";
+import {
+  detectMemSafetyBuild,
+  registerMemsafetyCommand,
+  resolveArtifactDir,
+} from "../memsafety.js";
 
 const core = vi.hoisted(() => ({
   getCloudSinkConfig: vi.fn(),
@@ -125,5 +136,37 @@ describe("registerMemsafetyCommand", () => {
       }),
     );
     expect(stdout).toHaveBeenCalled();
+  });
+});
+
+describe("resolveArtifactDir", () => {
+  it("rejects a symlinked artifact root that resolves into prepared source", () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-memsafety-artifact-"));
+    const sourceRoot = join(root, "source");
+    const outsideRoot = join(root, "outside");
+    const artifactLink = join(outsideRoot, "retained");
+    try {
+      mkdirSync(sourceRoot);
+      mkdirSync(outsideRoot);
+      symlinkSync(sourceRoot, artifactLink);
+
+      expect(() => resolveArtifactDir(artifactLink, sourceRoot)).toThrow(
+        /outside the prepared source tree/,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an ordinary external artifact root", () => {
+    const root = mkdtempSync(join(tmpdir(), "pwnkit-memsafety-artifact-"));
+    const sourceRoot = join(root, "source");
+    const artifactRoot = join(root, "artifacts");
+    try {
+      mkdirSync(sourceRoot);
+      expect(resolveArtifactDir(artifactRoot, sourceRoot)).toBe(realpathSync(artifactRoot));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
