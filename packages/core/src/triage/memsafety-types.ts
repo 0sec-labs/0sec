@@ -51,6 +51,12 @@ export interface CrashArtifact {
   rawOutput: string;
   /** Path to the reproducing input, when one was saved. */
   inputPath?: string;
+  /**
+   * Archive-relative location of the copied reproducer, when evidence
+   * retention was requested. Unlike inputPath this is safe to publish in a
+   * finding because it does not reveal the sandbox's filesystem layout.
+   */
+  artifactRef?: string;
   /** Symbolised stack frames, when available. */
   stack?: string[];
   primitive?: MemPrimitive;

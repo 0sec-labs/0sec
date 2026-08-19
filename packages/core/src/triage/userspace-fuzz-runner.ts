@@ -19,23 +19,28 @@
  * with an actionable install hint and return an empty-but-honest result
  * rather than fabricating a crash or a clean run.
  *
- * Side-effect discipline: the only writes happen under a per-run artifact
- * directory (an `mkdtemp` under `os.tmpdir()` unless an `artifactDir` is
- * supplied), mirroring the kernel runner. We never write into the target
- * source tree.
+ * Evidence copies are persisted under a per-run artifact directory (an
+ * `mkdtemp` under `os.tmpdir()` unless an `artifactDir` is supplied), mirroring
+ * the kernel runner. A fuzz tool may write its own transient input under the
+ * prepared source tree; only bounded regular-file copies survive cleanup.
  */
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-  copyFileSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
+  readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -48,6 +53,14 @@ import type {
   MemPrimitive,
   MemSafetyTarget,
 } from "./memsafety-types.js";
+
+const MEMSAFETY_ARTIFACT_SCHEMA = "pwnkit-memsafety-artifacts/v1";
+const MAX_RETAINED_CRASHES = 16;
+const MAX_RETAINED_REPRODUCER_BYTES = 1024 * 1024;
+const MAX_RETAINED_LOG_BYTES = 256 * 1024;
+const DEFAULT_RETAINED_ARTIFACT_BYTES = 4 * 1024 * 1024;
+const MIN_RETAINED_ARTIFACT_BYTES = 64 * 1024;
+const ARTIFACT_MANIFEST_RESERVE_BYTES = 64 * 1024;
 
 // ────────────────────────────────────────────────────────────────────
 // Options
@@ -79,19 +92,15 @@ export interface UserspaceFuzzOptions {
    */
   artifactDir?: string;
   /**
-   * Total byte ceiling for persisted crash evidence. Omitted retains the
-   * existing local-research behavior; the cloud CLI requires this whenever it
-   * supplies `artifactDir`.
+   * Aggregate byte ceiling for retained regular-file copies and the manifest.
+   * Omitted retains local-research behavior; callers should set a value below
+   * their archive transport cap so gzip/tar framing cannot exceed it.
    */
   artifactMaxBytes?: number;
   /** Custom logger; defaults to `console.log`. Matches the kernel runner. */
   logger?: (line: string) => void;
 }
 
-const MEMSAFETY_ARTIFACT_SCHEMA = "pwnkit-memsafety-artifact/v1";
-const MIN_ARTIFACT_BYTES = 64 * 1024;
-const MANIFEST_RESERVE_BYTES = 8 * 1024;
-const MAX_RETAINED_LOG_BYTES = 64 * 1024;
 
 // ────────────────────────────────────────────────────────────────────
 // Tooling detection (degrade-when-absent, like QEMU/kernel-build inputs)
@@ -396,12 +405,65 @@ function dedupeBySignature(crashes: CrashArtifact[]): CrashArtifact[] {
   return Array.from(seen.values());
 }
 
+function pathIsWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (
+    rel !== ".." &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
+}
+
+
+function resolveCargoFuzzDir(
+  sourceRoot: string,
+  fuzzDir: string | undefined,
+): string | undefined {
+  const raw = fuzzDir?.trim() || "fuzz";
+  if (isAbsolute(raw)) return undefined;
+  const candidate = resolve(sourceRoot, raw);
+  if (!pathIsWithin(sourceRoot, candidate)) return undefined;
+  try {
+    const canonical = realpathSync(candidate);
+    return canonical === candidate && pathIsWithin(sourceRoot, canonical)
+      ? canonical
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isCargoFuzzHarnessName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value);
+}
+
+function isStableSourceDirectory(sourceRoot: string, directory: string): boolean {
+  try {
+    const canonical = realpathSync(directory);
+    return canonical === directory && pathIsWithin(sourceRoot, canonical);
+  } catch {
+    return false;
+  }
+}
+
+function resolveArtifactRoot(
+  artifactDir: string | undefined,
+  sourceRoot: string,
+): string | undefined {
+  if (!artifactDir) return undefined;
+  mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+  const canonical = realpathSync(artifactDir);
+  if (pathIsWithin(sourceRoot, canonical)) {
+    throw new Error("artifactDir must resolve outside the prepared source tree");
+  }
+  return artifactDir;
+}
+
 function makeArtifactDir(artifactDir: string | undefined): {
   dir: string;
   ephemeral: boolean;
 } {
   if (artifactDir) {
-    mkdirSync(artifactDir, { recursive: true });
     return { dir: mkdtempSync(join(artifactDir, "pwnkit-uf-")), ephemeral: false };
   }
   return { dir: mkdtempSync(join(tmpdir(), "pwnkit-uf-")), ephemeral: true };
@@ -433,172 +495,255 @@ export async function runUserspaceFuzzLoop(
   opts: UserspaceFuzzOptions,
 ): Promise<FuzzLoopResult> {
   const log = opts.logger ?? ((line: string) => console.log(line));
+  const sourceRoot = resolve(opts.target.sourceRoot);
+  const canonicalSourceRoot = existsSync(sourceRoot)
+    ? realpathSync(sourceRoot)
+    : sourceRoot;
+  const runOpts: UserspaceFuzzOptions = {
+    ...opts,
+    target: { ...opts.target, sourceRoot: canonicalSourceRoot },
+  };
   const start = Date.now();
   const timeoutSec =
     opts.timeoutSec ??
     parseInt(process.env.PWNKIT_USERSPACE_FUZZ_TIMEOUT_SEC?.trim() || "60", 10);
   const timeoutMs = Math.max(1, timeoutSec) * 1000;
-
-  const { dir: workDir, ephemeral } = makeArtifactDir(opts.artifactDir);
+  const artifactDir = resolveArtifactRoot(opts.artifactDir, canonicalSourceRoot);
+  const artifactMaxBytes = artifactDir
+    ? resolveRetainedArtifactBytes(opts.artifactMaxBytes)
+    : null;
+  const { dir: workDir, ephemeral } = makeArtifactDir(artifactDir);
   const toolingMissing: string[] = [];
+  let retained = false;
 
   try {
     const result =
-      opts.target.language === "rust"
-        ? await runRustLoop(opts, {
-            workDir,
-            timeoutMs,
-            toolingMissing,
-            log,
-            start,
-          })
-        : await runCLoop(opts, { workDir, timeoutMs, toolingMissing, log, start });
-    if (!ephemeral && result.crashes.length > 0) {
-      retainMemsafetyArtifacts({
-        artifactDir: workDir,
-        crashes: result.crashes,
-        maxBytes: opts.artifactMaxBytes,
-        run: {
-          language: opts.target.language,
-          build_system: opts.target.buildSystem,
-          fuzz_dir: opts.target.fuzzDir ?? "fuzz",
-          harness: result.executedHarness ?? opts.target.harnessEntry ?? null,
-          iterations: result.iterations,
-          corpus_size: result.corpusSize,
-          duration_ms: result.durationMs,
-        },
-      });
+      runOpts.target.language === "rust"
+        ? await runRustLoop(runOpts, { workDir, timeoutMs, toolingMissing, log, start })
+        : await runCLoop(runOpts, { workDir, timeoutMs, toolingMissing, log, start });
+    if (!ephemeral && artifactMaxBytes !== null) {
+      retained = persistCapturedArtifacts(
+        result,
+        workDir,
+        canonicalSourceRoot,
+        artifactMaxBytes,
+        log,
+      );
     }
     return result;
   } finally {
-    if (ephemeral) rmSync(workDir, { recursive: true, force: true });
+    if (ephemeral || !retained) rmSync(workDir, { recursive: true, force: true });
   }
 }
 
-interface RetainMemsafetyArtifactsInput {
-  artifactDir: string;
-  crashes: CrashArtifact[];
-  maxBytes: number | undefined;
-  run: Record<string, string | number | null>;
-}
+type ArtifactFile = {
+  ref: string;
+  sha256: string;
+  sizeBytes: number;
+  truncated?: boolean;
+};
 
 /**
- * Retain only the bounded proof needed to re-run an observed crash. Source
- * checkouts and fuzz corpora stay outside this directory. A missing or
- * oversized input clears `CrashArtifact.inputPath`, so downstream PoV grading
- * cannot claim that a reproducer survived when it did not.
+ * Copy only the reproducible portion of a fuzz result into the caller-owned
+ * artifact root. The source tree is attacker-controlled, so symlinks and
+ * over-limit files are rejected instead of followed into an evidence archive.
+ * The aggregate source-byte budget leaves a fixed manifest reserve, ensuring
+ * every finished directory is safe to package below the controller transport
+ * ceiling.
  */
-function retainMemsafetyArtifacts(input: RetainMemsafetyArtifactsInput): void {
-  const maxBytes = requireArtifactLimit(input.maxBytes);
-  let availableBytes = maxBytes - MANIFEST_RESERVE_BYTES;
-  const records: Array<Record<string, unknown>> = [];
+function persistCapturedArtifacts(
+  result: FuzzLoopResult,
+  workDir: string,
+  sourceRoot: string,
+  maxBytes: number,
+  log: (line: string) => void,
+): boolean {
+  if (result.crashes.length === 0) return false;
 
-  for (const [index, crash] of input.crashes.entries()) {
-    const ordinal = String(index + 1).padStart(2, "0");
-    const record: Record<string, unknown> = {
-      signature: crash.signature,
-      kind: crash.kind,
-      primitive: crash.primitive ?? null,
-      stack: (crash.stack ?? []).slice(0, 10).map((frame) => frame.slice(0, 256)),
-    };
-    const logBytes = Buffer.from(crash.rawOutput ?? "", "utf8");
-    const retainedLogBytes = Math.min(
-      logBytes.byteLength,
-      MAX_RETAINED_LOG_BYTES,
-      availableBytes,
+  const runDir = basename(workDir);
+  const logsDir = join(workDir, "logs");
+  const reproducersDir = join(workDir, "reproducers");
+  mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+  mkdirSync(reproducersDir, { recursive: true, mode: 0o700 });
+  let remaining = maxBytes - ARTIFACT_MANIFEST_RESERVE_BYTES;
+
+  const crashes = result.crashes
+    .slice(0, MAX_RETAINED_CRASHES)
+    .map((crash, index) => {
+      const id = safeArtifactId(crash.signature, index);
+      let reproducer: ArtifactFile | null = null;
+      if (crash.inputPath && remaining > 0) {
+        const reproducerRef = `${runDir}/reproducers/${id}.input`;
+        reproducer = copyBoundedReproducer(
+          crash.inputPath,
+          join(reproducersDir, `${id}.input`),
+          reproducerRef,
+          sourceRoot,
+          Math.min(MAX_RETAINED_REPRODUCER_BYTES, remaining),
+        );
+        if (reproducer) {
+          remaining -= reproducer.sizeBytes;
+          crash.inputPath = join(reproducersDir, `${id}.input`);
+          crash.artifactRef = reproducer.ref;
+        } else {
+          log(
+            `[userspace-fuzz] did not retain reproducer for ${crash.signature} ` +
+              "(missing, non-regular, changed while read, or exceeds the remaining evidence budget)",
+          );
+        }
+      }
+
+      const logRef = `${runDir}/logs/${id}.log`;
+      const logFile = writeBoundedUtf8File(
+        join(logsDir, `${id}.log`),
+        crash.rawOutput,
+        Math.min(MAX_RETAINED_LOG_BYTES, remaining),
+      );
+      if (logFile) remaining -= logFile.sizeBytes;
+
+      return {
+        signature: crash.signature,
+        kind: crash.kind,
+        primitive: crash.primitive ?? null,
+        stack: boundedStack(crash.stack),
+        log: logFile ? { ...logFile, ref: logRef } : null,
+        reproducer,
+      };
+    });
+
+  if (result.crashes.length > MAX_RETAINED_CRASHES) {
+    log(
+      `[userspace-fuzz] retained the first ${MAX_RETAINED_CRASHES} of ` +
+        `${result.crashes.length} deduplicated crashes`,
     );
-    if (retainedLogBytes > 0) {
-      const relativePath = `logs/${ordinal}-${crash.kind}.txt`;
-      writeRetainedBytes(
-        input.artifactDir,
-        relativePath,
-        logBytes.subarray(0, retainedLogBytes),
-      );
-      record.log = relativePath;
-      if (retainedLogBytes < logBytes.byteLength) {
-        record.log_truncated = true;
-      }
-      availableBytes -= retainedLogBytes;
-    } else if (logBytes.byteLength > 0) {
-      record.log_omitted = "artifact budget exhausted";
-    }
-
-    if (crash.inputPath) {
-      const relativePath = `reproducers/${ordinal}-${crash.signature}.input`;
-      const copied = copyRetainedInput(
-        crash.inputPath,
-        input.artifactDir,
-        relativePath,
-        availableBytes,
-      );
-      if ("bytes" in copied) {
-        crash.inputPath = join(input.artifactDir, relativePath);
-        record.reproducer = relativePath;
-        availableBytes -= copied.bytes;
-      } else {
-        crash.inputPath = undefined;
-        record.reproducer_omitted = copied.reason;
-      }
-    }
-    records.push(record);
   }
 
   const manifest = Buffer.from(
-    JSON.stringify({
-      schema: MEMSAFETY_ARTIFACT_SCHEMA,
-      run: input.run,
-      crashes: records,
-    }) + "\n",
+    JSON.stringify(
+      {
+        schema: MEMSAFETY_ARTIFACT_SCHEMA,
+        crashes,
+      },
+      null,
+      2,
+    ) + "\n",
     "utf8",
   );
-  if (manifest.byteLength > MANIFEST_RESERVE_BYTES) {
-    throw new Error("memsafety artifact manifest exceeds its reserved budget");
+  if (manifest.byteLength > ARTIFACT_MANIFEST_RESERVE_BYTES) {
+    rmSync(logsDir, { recursive: true, force: true });
+    rmSync(reproducersDir, { recursive: true, force: true });
+    log(
+      "[userspace-fuzz] evidence manifest exceeded its bounded reserve; discarded this run's retained copies",
+    );
+    return false;
   }
-  writeFileSync(join(input.artifactDir, "manifest.json"), manifest);
+  writeFileSync(join(workDir, "manifest.json"), manifest, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  return true;
 }
 
-function copyRetainedInput(
-  sourcePath: string,
-  artifactDir: string,
-  relativePath: string,
-  availableBytes: number,
-): { bytes: number } | { reason: string } {
-  try {
-    const source = lstatSync(sourcePath);
-    if (!source.isFile()) {
-      return { reason: "source reproducer is not a regular file" };
-    }
-    if (source.size > availableBytes) {
-      return { reason: "source reproducer exceeds remaining artifact budget" };
-    }
-    const destination = join(artifactDir, relativePath);
-    mkdirSync(dirname(destination), { recursive: true });
-    copyFileSync(sourcePath, destination);
-    return { bytes: source.size };
-  } catch {
-    return { reason: "source reproducer was unavailable for retention" };
-  }
-}
-
-function writeRetainedBytes(
-  artifactDir: string,
-  relativePath: string,
-  contents: Uint8Array,
-): void {
-  const destination = join(artifactDir, relativePath);
-  mkdirSync(dirname(destination), { recursive: true });
-  writeFileSync(destination, contents);
-}
-
-function requireArtifactLimit(value: number | undefined): number {
-  const maxBytes = value ?? 8 * 1024 * 1024;
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < MIN_ARTIFACT_BYTES) {
+function resolveRetainedArtifactBytes(value: number | undefined): number {
+  const bytes = value ?? DEFAULT_RETAINED_ARTIFACT_BYTES;
+  if (
+    !Number.isSafeInteger(bytes) ||
+    bytes < MIN_RETAINED_ARTIFACT_BYTES
+  ) {
     throw new Error(
-      `memsafety artifact byte ceiling must be at least ${MIN_ARTIFACT_BYTES}`,
+      `artifactMaxBytes must be a safe integer of at least ${MIN_RETAINED_ARTIFACT_BYTES}`,
     );
   }
-  return maxBytes;
+  return bytes;
 }
+
+function safeArtifactId(signature: string, index: number): string {
+  if (/^[0-9a-f]{16}$/.test(signature)) return signature;
+  return createHash("sha256")
+    .update(`${index}\0${signature}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function boundedStack(stack: string[] | undefined): string[] {
+  return (stack ?? []).slice(0, 10).map((frame) => frame.slice(0, 1024));
+}
+
+function writeBoundedUtf8File(
+  path: string,
+  value: string,
+  limit: number,
+): Omit<ArtifactFile, "ref"> | null {
+  if (limit <= 0) return null;
+  const input = Buffer.from(value, "utf8");
+  const truncated = input.length > limit;
+  const bytes = truncated ? input.subarray(input.length - limit) : input;
+  writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
+  return {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sizeBytes: bytes.length,
+    ...(truncated ? { truncated: true } : {}),
+  };
+}
+
+function copyBoundedReproducer(
+  source: string,
+  destination: string,
+  ref: string,
+  sourceRoot: string,
+  limit: number,
+): ArtifactFile | null {
+  let fd: number | undefined;
+  try {
+    if (!isStableSourceDirectory(sourceRoot, dirname(source))) {
+      return null;
+    }
+    const listed = lstatSync(source);
+    if (
+      !listed.isFile() ||
+      listed.isSymbolicLink() ||
+      listed.size > limit
+    ) {
+      return null;
+    }
+    fd = openSync(source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const before = fstatSync(fd);
+    if (
+      !before.isFile() ||
+      before.dev !== listed.dev ||
+      before.ino !== listed.ino ||
+      before.size !== listed.size ||
+      before.mtimeMs !== listed.mtimeMs
+    ) {
+      return null;
+    }
+    const bytes = readFileSync(fd);
+    const after = fstatSync(fd);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      bytes.length !== before.size
+    ) {
+      return null;
+    }
+    if (!isStableSourceDirectory(sourceRoot, dirname(source))) {
+      return null;
+    }
+    writeFileSync(destination, bytes, { flag: "wx", mode: 0o600 });
+    return {
+      ref,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sizeBytes: bytes.length,
+    };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 
 interface LoopCtx {
   workDir: string;
@@ -682,11 +827,12 @@ async function runRustLoop(
 ): Promise<FuzzLoopResult> {
   const { target } = opts;
   const sourceRoot = resolve(target.sourceRoot);
-  const fuzzBase = target.fuzzDir ?? "fuzz";
+  const fuzzRoot = resolveCargoFuzzDir(sourceRoot, target.fuzzDir);
   const crashes: CrashArtifact[] = [];
   let iterations = 0;
   let harnessEntry = target.harnessEntry;
   let executedHarness: string | undefined;
+
 
   // cargo is the floor requirement for any Rust path.
   if (!(await cargoAvailable())) {
@@ -694,6 +840,13 @@ async function runRustLoop(
     ctx.log(`[userspace-fuzz] ${TOOLING_HINTS.cargo}`);
     return finish(crashes, iterations, sourceRoot, ctx, "fuzz");
   }
+
+  if (!fuzzRoot || (harnessEntry && !isCargoFuzzHarnessName(harnessEntry))) {
+    ctx.toolingMissing.push("cargo-fuzz-layout");
+    ctx.log("[userspace-fuzz] rejected unsafe cargo-fuzz directory or harness name");
+    return finish(crashes, iterations, sourceRoot, ctx, "fuzz");
+  }
+  const fuzzDir = relative(sourceRoot, fuzzRoot);
 
   // ── cargo-fuzz (libFuzzer) ─────────────────────────────────────────
   if (!(await cargoFuzzAvailable())) {
@@ -703,7 +856,7 @@ async function runRustLoop(
     if (!harnessEntry) {
       const discovery = await discoverCargoFuzzHarness(
         sourceRoot,
-        target.fuzzDir,
+        fuzzDir,
         ctx.timeoutMs,
       );
       if ("reason" in discovery) {
@@ -713,7 +866,13 @@ async function runRustLoop(
         );
       } else {
         harnessEntry = discovery.harnessEntry;
-        ctx.log(`[userspace-fuzz] auto-selected cargo-fuzz harness ${harnessEntry}`);
+        if (!isCargoFuzzHarnessName(harnessEntry)) {
+          ctx.toolingMissing.push("cargo-fuzz-harness");
+          ctx.log("[userspace-fuzz] cargo-fuzz reported an unsafe harness name");
+          harnessEntry = undefined;
+        } else {
+          ctx.log(`[userspace-fuzz] auto-selected cargo-fuzz harness ${harnessEntry}`);
+        }
       }
     }
 
@@ -721,7 +880,7 @@ async function runRustLoop(
       ctx.log(`[userspace-fuzz] cargo fuzz run ${harnessEntry} (<=${ctx.timeoutMs / 1000}s)`);
       const res = await runChild(
         "cargo",
-        cargoFuzzRunArgs(harnessEntry, target.fuzzDir, ctx.timeoutMs / 1000),
+        cargoFuzzRunArgs(harnessEntry, fuzzDir, ctx.timeoutMs / 1000),
         sourceRoot,
         ctx.timeoutMs + 30_000, // grace beyond libFuzzer's own budget
       );
@@ -730,7 +889,8 @@ async function runRustLoop(
       const crash = parseCrashOutput(res.output, {
         kind: res.timedOut ? "timeout" : undefined,
         inputPath: findLibfuzzerCrashInput(
-          join(sourceRoot, fuzzBase, "artifacts", harnessEntry),
+          join(fuzzRoot, "artifacts", harnessEntry),
+          sourceRoot,
         ),
       });
       if (crash) crashes.push(crash);
@@ -760,8 +920,8 @@ async function runRustLoop(
 
   // cargo-fuzz stores its corpus under <fuzzDir>/corpus/<target> (default `fuzz`).
   const corpusDir = harnessEntry
-    ? join(sourceRoot, fuzzBase, "corpus", harnessEntry)
-    : join(sourceRoot, fuzzBase, "corpus");
+    ? join(fuzzRoot, "corpus", harnessEntry)
+    : join(fuzzRoot, "corpus");
   const result = finishWithCorpus(crashes, iterations, corpusDir, ctx);
   if (executedHarness) result.executedHarness = executedHarness;
   return result;
@@ -815,7 +975,7 @@ async function runCLoop(
   });
   if (crash) {
     // libFuzzer writes the reproducing input as `crash-<sha1>` in cwd.
-    crash.inputPath = findLibfuzzerCrashInput(sourceRoot) ?? crash.inputPath;
+    crash.inputPath = findLibfuzzerCrashInput(sourceRoot, sourceRoot) ?? crash.inputPath;
     crashes.push(crash);
   }
 
@@ -823,12 +983,21 @@ async function runCLoop(
 }
 
 /** libFuzzer drops `crash-*` / `oom-*` / `timeout-*` reproducers in cwd. */
-function findLibfuzzerCrashInput(dir: string): string | undefined {
+function findLibfuzzerCrashInput(
+  dir: string,
+  sourceRoot: string,
+): string | undefined {
+  if (!isStableSourceDirectory(sourceRoot, dir)) return undefined;
   try {
     const hit = readdirSync(dir).find((name) =>
       /^(crash|oom|timeout|leak)-[0-9a-f]+$/i.test(name),
     );
-    return hit ? join(dir, hit) : undefined;
+    if (!hit || !isStableSourceDirectory(sourceRoot, dir)) return undefined;
+    const candidate = join(dir, hit);
+    const listed = lstatSync(candidate);
+    return listed.isFile() && !listed.isSymbolicLink()
+      ? candidate
+      : undefined;
   } catch {
     return undefined;
   }
