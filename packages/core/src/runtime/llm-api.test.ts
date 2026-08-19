@@ -41,6 +41,8 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.Z_AI_API_KEY;
     delete process.env.Z_AI_BASE_URL;
     delete process.env.PWNKIT_MODEL;
+    delete process.env.PWNKIT_SELECTED_PROVIDER;
+    delete process.env.PWNKIT_FORCE_PROVIDER;
     delete process.env.PWNKIT_REGION_OVERRIDE;
     delete process.env.PWNKIT_CHATGPT_ACCESS_TOKEN;
     delete process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
@@ -133,6 +135,25 @@ describe("LlmApiRuntime provider detection", () => {
 
     expect(rt.getConfigurationDiagnostics().provider).toBe("azure");
     expect(rt.resolvedModel()).toBe("future-foundry-deployment");
+  });
+
+  it("routes a cross-family refuter model past the primary provider pin", () => {
+    // Test fixtures, literal non-secret keys.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.AZURE_OPENAI_API_KEY = "azure-primary-key";
+    process.env.AZURE_OPENAI_BASE_URL = "https://azure.example/openai/v1";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.ANTHROPIC_API_KEY = "sk-ant-refuter-key";
+    process.env.PWNKIT_MODEL = "gpt-5.5";
+    process.env.PWNKIT_SELECTED_PROVIDER = "azure";
+
+    const rt = new LlmApiRuntime({
+      type: "api",
+      timeout: 5000,
+      model: "claude-sonnet-4-6",
+    });
+
+    expect(rt.getConfigurationDiagnostics().provider).toBe("anthropic");
   });
 
   it("selects Anthropic when ANTHROPIC_API_KEY is set", async () => {

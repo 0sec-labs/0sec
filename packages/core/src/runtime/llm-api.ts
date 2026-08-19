@@ -1235,11 +1235,20 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       "PWNKIT_SELECTED_PROVIDER conflicts with PWNKIT_FORCE_PROVIDER",
     );
   }
-  const pinnedProviderRaw = selectedProviderRaw ?? forcedProviderRaw;
+  // The worker pin chooses the primary scan provider. A hunt's refuter creates
+  // a runtime with a different explicit model; honoring the primary pin there
+  // would route that model through the wrong credential and defeat cross-family
+  // refutation. PWNKIT_FORCE_PROVIDER remains an unconditional benchmark guard.
+  const primaryModel = process.env.PWNKIT_MODEL?.trim();
+  const selectedProviderApplies =
+    !preferredModel || !primaryModel || preferredModel === primaryModel;
+  const pinnedProviderRaw =
+    forcedProviderRaw ??
+    (selectedProviderApplies ? selectedProviderRaw : undefined);
   if (pinnedProviderRaw) {
-    const source = selectedProviderRaw
-      ? "PWNKIT_SELECTED_PROVIDER"
-      : "PWNKIT_FORCE_PROVIDER";
+    const source = pinnedProviderRaw === forcedProviderRaw
+      ? "PWNKIT_FORCE_PROVIDER"
+      : "PWNKIT_SELECTED_PROVIDER";
     const supported: readonly ApiProvider[] = [
       "openrouter",
       "anthropic",
