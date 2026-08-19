@@ -1,24 +1,26 @@
 # Security Policy
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you discover a security vulnerability in pwnkit, please report it via email to **security@0sec.ai**.
+Report vulnerabilities in pwnkit to **security@0sec.ai**. Do not open a public
+issue for a suspected security flaw.
 
-Please include:
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
+Include:
 
-We will acknowledge your report within 48 hours and aim to release a fix within 7 days for critical issues.
+- a clear description of the issue;
+- reproducible steps or a minimal test case;
+- affected version or commit;
+- potential impact and any mitigations already attempted.
 
-## Supported Versions
+Do not include customer data, production credentials, or exploit material for
+third-party systems without authorization.
 
-| Version | Supported |
-|---------|-----------|
-| 0.1.x+  | Yes       |
+## Supported versions
 
-## Distribution
+Security fixes are made against the latest tagged pwnkit release. If you build
+from source, include the commit hash in your report.
 
-Public binary releases and the npm package have been retired. pwnkit
-is distributed via Docker images (`ghcr.io/0sec-labs/pwnkit`) and
-direct source access only. Contact **security@0sec.ai** for access.
+## Disclosure
+
+We coordinate fixes and disclosure with reporters where practical. Public
+advisories are published only after a fix or mitigation is available.
