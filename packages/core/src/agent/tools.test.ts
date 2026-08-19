@@ -1522,6 +1522,111 @@ describe("ToolExecutor", () => {
     expect(result.error).toContain("scoped local directory");
   });
 
+  // ── read_file windowed reads (executor-level integration) ──
+  //
+  // The pure windowing arithmetic is covered in tools/read-file-window.test.ts.
+  // These tests pin the parts that only exist at the executor seam: that the
+  // arguments actually reach the windower, that the extra output fields are on
+  // the ToolResult, that a rejected offset comes back as a failed ToolResult
+  // rather than a throw, and that scope enforcement still runs first.
+  describe("read_file windowed reads", () => {
+    let tmp: string;
+    let scopedExecutor: ToolExecutor;
+
+    // 1200 lines, each reading "line N", so a window is self-verifying.
+    const BIG_FILE = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    beforeEach(() => {
+      tmp = mkdtempSync(join(tmpdir(), "pwnkit-read-file-exec-"));
+      writeFileSync(join(tmp, "big.c"), BIG_FILE);
+      const scopedCtx: ToolContext = { ...ctx, scopePath: tmp };
+      scopedExecutor = new ToolExecutor(scopedCtx, null);
+    });
+
+    afterEach(() => {
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it("returns the first 500 lines when no offset is given (unchanged default)", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c" },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as {
+        content: string;
+        totalLines: number;
+        truncated: boolean;
+        startLine: number;
+        endLine: number;
+        nextOffset?: number;
+      };
+      expect(out.totalLines).toBe(1200);
+      expect(out.truncated).toBe(true);
+      expect(out.startLine).toBe(1);
+      expect(out.endLine).toBe(500);
+      expect(out.nextOffset).toBe(501);
+      expect(out.content.startsWith("line 1\nline 2\n")).toBe(true);
+    });
+
+    it("reads a window in the middle of the file", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 800, max_lines: 3 },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as { content: string; startLine: number; endLine: number };
+      expect(out.startLine).toBe(800);
+      expect(out.endLine).toBe(802);
+      expect(out.content.split("\n").slice(0, 3)).toEqual(["line 800", "line 801", "line 802"]);
+    });
+
+    it("signals truncation inside the returned text, with the next offset to use", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 800, max_lines: 3 },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as { content: string };
+      expect(out.content).toContain("[pwnkit:read_file] TRUNCATED");
+      expect(out.content).toContain("showed lines 800-802 of 1200");
+      expect(out.content).toContain("offset=803");
+    });
+
+    it("returns an empty window (not an error) for an offset past EOF", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 99999 },
+      });
+
+      expect(result.success).toBe(true);
+      const out = result.output as { content: string; totalLines: number; truncated: boolean };
+      expect(out.totalLines).toBe(1200);
+      expect(out.truncated).toBe(false);
+      expect(out.content).toContain("past the end of this file");
+    });
+
+    it("returns a failed ToolResult for a 0-based offset", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "big.c", offset: 0 },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("1-based");
+    });
+
+    it("enforces the scope guard before reading, regardless of offset", async () => {
+      const result = await scopedExecutor.execute({
+        name: "read_file",
+        arguments: { path: "../../../etc/passwd", offset: 1 },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("escapes the allowed scope");
   describe("scope symlink escapes", () => {
     let root: string;
     let secret: string;
