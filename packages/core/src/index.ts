@@ -1516,6 +1516,23 @@ export type {
   VerifyKernelFindingOptions,
 } from "./triage/kernel-vm-runner.js";
 
+// Kernel promotion envelope — pure evidence aggregator (no I/O, no mutation).
+export {
+  buildKernelPromotionEnvelope,
+  isConfirmed,
+  isHypothesisOnly,
+  hasValidValidation,
+} from "./triage/kernel-promotion-envelope.js";
+export type {
+  KernelPromotionEnvelope,
+  KernelPromotionInputs,
+  KernelPromotionStatus,
+  KernelCandidateIdentity,
+  KernelSourceSinkContext,
+  KernelCleanControlReceipt,
+  SemanticValidationStatus,
+} from "./triage/kernel-promotion-envelope.js";
+
 // KCSAN data-race triage (kernelCTF Pipeline #1, issue #1112).
 export { parseKcsanReport } from "./triage/kcsan-race.js";
 export type { KcsanRace, KcsanAccess } from "./triage/kcsan-race.js";
