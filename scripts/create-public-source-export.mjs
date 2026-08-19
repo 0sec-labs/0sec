@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { access, cp, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -80,29 +81,43 @@ const excludedPaths = [
   ".github/workflows/docker-kali-publish.yml",
 ];
 
-function slashPath(path) {
-  return path.split(sep).join("/");
+function isUnder(path, root) {
+  return path === root || path.startsWith(`${root}/`);
 }
 
-function isExcluded(sourcePath) {
-  const sourceRelative = slashPath(relative(repoRoot, sourcePath));
-  return excludedPaths.some(
-    (excluded) => sourceRelative === excluded || sourceRelative.startsWith(`${excluded}/`),
-  );
+function trackedPaths() {
+  try {
+    return execFileSync("git", ["-C", repoRoot, "ls-files", "-z"], { encoding: "utf8" })
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    fail("requires a Git checkout to construct a clean source export");
+  }
+}
+
+function isExcluded(sourceRelative) {
+  return excludedPaths.some((excluded) => isUnder(sourceRelative, excluded));
+}
+
+function isPublic(sourceRelative) {
+  return publicRoots.some((root) => isUnder(sourceRelative, root));
+}
+
+const tracked = trackedPaths();
+for (const root of publicRoots) {
+  if (!tracked.some((sourceRelative) => isUnder(sourceRelative, root))) {
+    fail(`required tracked source path is missing: ${root}`);
+  }
 }
 
 await mkdir(outputDir, { recursive: false });
 
-for (const root of publicRoots) {
-  const source = join(repoRoot, root);
-  if (!(await exists(source))) {
-    fail(`required source path is missing: ${root}`);
-  }
+for (const sourceRelative of tracked) {
+  if (!isPublic(sourceRelative) || isExcluded(sourceRelative)) continue;
 
-  await cp(source, join(outputDir, root), {
-    recursive: true,
-    filter: (sourcePath) => !isExcluded(sourcePath),
-  });
+  const destination = join(outputDir, sourceRelative);
+  await mkdir(dirname(destination), { recursive: true });
+  await cp(join(repoRoot, sourceRelative), destination, { dereference: false });
 }
 
 for (const excluded of excludedPaths) {

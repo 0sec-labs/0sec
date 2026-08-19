@@ -57,6 +57,11 @@ test("public source export contains build inputs and excludes private material",
       "packages/benchmark/results",
       ".github/workflows/ci.yml",
       ".github/workflows/docker-kali-publish.yml",
+      "node_modules",
+      "dist",
+      "packages/core/dist",
+      "packages/dashboard/dist",
+      "test-targets/dist",
     ]) {
       assert.equal(await exists(join(outputDir, forbidden)), false, `${forbidden} leaked`);
     }
