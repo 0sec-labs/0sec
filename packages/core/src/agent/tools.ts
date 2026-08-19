@@ -2192,7 +2192,8 @@ export class ToolExecutor {
     const cookies: string[] = [];
     headers.forEach((value, key) => {
       if (key.toLowerCase() === "set-cookie") {
-        cookies.push(value);
+        const name = value.split("=", 1)[0]?.trim();
+        cookies.push(name ? `${name}=<REDACTED-AUTH>` : "<REDACTED-SET-COOKIE>");
       }
     });
     return cookies;
@@ -2408,15 +2409,25 @@ export class ToolExecutor {
         const html = await res.text();
         const { links, forms, scripts } = this.parseHtml(html.slice(0, 500_000), normalizedUrl);
         const cookies = this.parseCookies(res.headers);
+        const responseHeaders = Object.fromEntries(res.headers.entries()) as Record<string, string>;
+        const sensitiveValues = [
+          ...authSecretValues(this.ctx.authConfig),
+          ...Object.values(crawlAuthHeaders),
+          ...sensitiveHeaderValues(responseHeaders),
+        ];
 
-        // Extract visible text content so the agent can read credentials, hints, etc.
-        const textContent = html
-          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 2000);
+        // Extract visible text content so the agent can inspect target data
+        // without receiving reflected authentication material.
+        const textContent = redactAuthValues(
+          html
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 2000),
+          sensitiveValues,
+        );
 
         results.push({ url: normalizedUrl, status: res.status, links, forms, scripts, cookies, textContent });
 
@@ -2521,15 +2532,23 @@ export class ToolExecutor {
       this.captureActiveCookies(res);
       clearTimeout(timer);
       const text = await res.text();
-
+      const sentHeaders = submitInit.headers as Record<string, string>;
+      const responseHeaders = Object.fromEntries(res.headers.entries()) as Record<string, string>;
+      const sensitiveValues = [
+        ...authSecretValues(this.ctx.authConfig),
+        ...Object.values(formAuthHeaders),
+        ...sensitiveHeaderValues(sentHeaders),
+        ...sensitiveHeaderValues(responseHeaders),
+      ];
+      const safeBody = redactAuthValues(text, sensitiveValues);
       const output = {
         status: res.status,
-        headers: Object.fromEntries(res.headers.entries()),
-        body: text.slice(0, 10_000),
+        headers: redactAuthHeaders(responseHeaders, sensitiveValues),
+        body: safeBody.slice(0, 10_000),
       };
 
       this.persistToolArtifact("submit_form", {
-        request: { url: fetchUrl, method, headers: submitInit.headers as Record<string, string>, fields },
+        request: { url: fetchUrl, method, headers: redactAuthHeaders(sentHeaders, sensitiveValues), fields },
         response: { status: output.status, body: output.body.slice(0, 5_000) },
       });
 

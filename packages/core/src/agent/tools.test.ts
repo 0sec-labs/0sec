@@ -1282,6 +1282,40 @@ describe("ToolExecutor", () => {
     }
   });
 
+  it("keeps reflected credentials out of form and crawl results", async () => {
+    const secret = "target-session-canary-do-not-leak";
+    ctx.authConfig = { type: "bearer", token: secret };
+    const authExecutor = new ToolExecutor(ctx, null);
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      `<html><body>echoed ${secret} and Bearer ${secret}</body></html>`,
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/html",
+          "set-cookie": `session=${secret}`,
+        },
+      },
+    )));
+
+    try {
+      const form = await authExecutor.execute({
+        name: "submit_form",
+        arguments: { url: "https://example.com/login", fields: { user: "test" } },
+      });
+      const crawl = await authExecutor.execute({
+        name: "crawl",
+        arguments: { url: "https://example.com/", depth: 1 },
+      });
+
+      expect(JSON.stringify(form.output)).not.toContain(secret);
+      expect(JSON.stringify(crawl.output)).not.toContain(secret);
+      expect(JSON.stringify(crawl.output)).toContain("<REDACTED-AUTH>");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("stamps the caller's correlationId onto the artifact (tool_calls join key)", async () => {
     const loggedEvents: any[] = [];
     const mockDb = {
