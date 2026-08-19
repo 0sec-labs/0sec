@@ -5,8 +5,14 @@
 # This is the publish path for environments where rebuilding the dashboard
 # bundle inside Docker is unstable. The bundle is still produced by
 # `pnpm build` before this image is built.
+#
+# Build context MUST be the verified ./dist directory (not the repo root):
+#   docker build -f Dockerfile.prebuilt -t pwnkit:prebuilt ./dist
+# This ensures the image receives only the pre-built bundle and its
+# externalized dependencies without weakening .dockerignore exclusions
+# (which exclude dist/ from the normal source-build Dockerfile context).
 
-FROM node:20-bookworm AS node-runtime
+FROM node:24-bookworm AS node-runtime
 
 FROM ubuntu:24.04 AS runtime
 
@@ -39,7 +45,11 @@ RUN if [ "$INSTALL_SECLISTS" = "1" ]; then \
 
 WORKDIR /app
 
-COPY dist /app/dist
+# Build context must be the verified ./dist directory (not the repo root).
+# This ensures the prebuilt image receives only the pre-built bundle and
+# its externalized dependencies, without weakening the source-build
+# .dockerignore that excludes dist/ from the normal Dockerfile context.
+COPY . /app/dist
 
 WORKDIR /app/dist
 RUN npm install --omit=dev --no-audit --no-fund

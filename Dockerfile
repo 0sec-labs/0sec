@@ -14,7 +14,7 @@
 #   AZUREHOUND_VERSION=vX  pin the AzureHound release (checksum-verified, see below)
 
 # ---------- Stage 1: builder ----------
-FROM node:20-bookworm AS builder
+FROM node:24-bookworm AS builder
 
 ENV PNPM_HOME=/root/.local/share/pnpm \
     PATH=/root/.local/share/pnpm:$PATH \
