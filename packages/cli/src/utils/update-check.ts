@@ -4,6 +4,7 @@
  * is available, otherwise stays silent.
  *
  * Gated on:
+ *   - PWNKIT_UPDATE_CHECK=1 explicitly set by the user
  *   - stdout is a TTY (no log noise in CI / pipes)
  *   - CI / PWNKIT_NO_UPDATE_CHECK / PWNKIT_OFFLINE not set
  *   - last successful check was > 24h ago (rate-limit GH API + avoid
@@ -35,11 +36,15 @@ interface CheckCache {
   latestVersion?: string;
 }
 
-function shouldRunCheck(): boolean {
-  if (!process.stdout.isTTY) return false;
-  if (process.env.CI === "1" || process.env.CI === "true") return false;
-  if (process.env.PWNKIT_NO_UPDATE_CHECK === "1") return false;
-  if (process.env.PWNKIT_OFFLINE === "1") return false;
+export function shouldRunCheck(
+  env: NodeJS.ProcessEnv = process.env,
+  isTty = Boolean(process.stdout.isTTY),
+): boolean {
+  if (!isTty) return false;
+  if (env.PWNKIT_UPDATE_CHECK !== "1") return false;
+  if (env.CI === "1" || env.CI === "true") return false;
+  if (env.PWNKIT_NO_UPDATE_CHECK === "1") return false;
+  if (env.PWNKIT_OFFLINE === "1") return false;
   return true;
 }
 
