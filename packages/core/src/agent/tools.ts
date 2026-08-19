@@ -141,6 +141,7 @@ import {
   executeIntelSearchTargetHistory,
 } from "./tools/intel.js";
 import { resolveScopedPath } from "./tools/scope-path.js";
+import { windowFileContent } from "./tools/read-file-window.js";
 
 // ── Tool registry (pwnkit#611) ──
 // The per-tool ToolDefinition objects now live in per-domain modules under
@@ -4633,22 +4634,26 @@ export class ToolExecutor {
     }
 
     const requestedPath = args.path as string;
-    // `max_lines` is honoured when the CALLER asks for it. There is no implicit
-    // 500-line head cap any more: a head-only line slice silently hid the end of
-    // every long file, and the shared tool-output policy already bounds size
-    // while keeping both ends.
-    const maxLines = typeof args.max_lines === "number" ? args.max_lines : undefined;
     const path = resolveScopedPath(this.ctx.scopePath, requestedPath);
-
-    const content = readFileSync(path, "utf-8");
-    const lines = content.split("\n");
-    const lineLimited = maxLines !== undefined && lines.length > maxLines;
-    const selected = lineLimited ? lines.slice(0, maxLines).join("\n") : content;
-    const output = formatTruncated(selected);
+    const raw = readFileSync(path, "utf-8");
+    const window = windowFileContent(raw, {
+      offset: args.offset,
+      maxLines: args.max_lines,
+    });
+    if (!window.ok) {
+      return { success: false, output: null, error: window.error };
+    }
 
     return {
       success: true,
-      output: { content: output, totalLines: lines.length, truncated: lineLimited || output !== selected },
+      output: {
+        content: window.content,
+        totalLines: window.totalLines,
+        truncated: window.truncated,
+        startLine: window.startLine,
+        endLine: window.endLine,
+        ...(window.nextOffset !== undefined ? { nextOffset: window.nextOffset } : {}),
+      },
     };
   }
 
