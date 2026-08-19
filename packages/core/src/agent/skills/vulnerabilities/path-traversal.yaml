@@ -1,0 +1,78 @@
+id: path-traversal
+name: "Path Traversal & Arbitrary File Write"
+description: "Untrusted path components escaping a base directory — on read (file disclosure) and especially on WRITE (zip-slip, archive extraction, download-to-path → RCE). Verified in cloudflare/wrangler and trustwallet WASM keystore."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+tags:
+  - path-traversal
+  - directory-traversal
+  - zip-slip
+  - arbitrary-file-write
+  - lfi
+  - archive-extraction
+triggers:
+  - "path.?travers|directory.?travers|zip.?slip"
+  - "\\.\\./|%2e%2e|\\.\\.\\\\"
+  - "path\\.join|path\\.resolve|os\\.path\\.join"
+  - "extract|unzip|untar|decompress|adm-zip|tar\\b"
+  - "writeFile|writeFileSync|createWriteStream|fs\\.write|open\\(.*['\"]w"
+  - "readFile|sendFile|res\\.download|createReadStream"
+  - "basename|normalize|sanitize.?path"
+  - "entry\\.name|filename|fileName|member"
+  - "__from-dash|init|template|scaffold"
+estimated_tokens: 850
+content: |
+  ## Path Traversal & Arbitrary File Write Methodology
+
+  Two flavors, very different impact:
+  - **Read traversal** → file disclosure (config, keys, `/etc/passwd`). Medium-ish.
+  - **Write traversal** → arbitrary file write → **RCE** (overwrite a startup
+    script, `.bashrc`, a `.js`/`.py` that gets required, an authorized_keys, a
+    cron). High/critical. *Prioritize write sinks.*
+
+  ### Phase 1: Find the path sinks
+  - **Read**: `sendFile`, `res.download`, `fs.readFile`/`createReadStream`,
+    template loaders, static file handlers keyed on a request param.
+  - **Write**: `fs.writeFile`/`createWriteStream`, `fs.mkdir`, archive extraction
+    (`adm-zip`, `tar`, `unzip`, `decompress`), download-to-path, scaffolders
+    (`init`/`template`/`--from-dash`), log/cache writers keyed on input.
+
+  ### Phase 2: The traversal vectors
+  - Classic `../../../etc/passwd`; encoded `%2e%2e%2f`, double-encoded `%252e`,
+    UTF-8 overlong; Windows `..\\` and mixed `..%5c`.
+  - **Absolute-path injection** — input is `/etc/cron.d/x` (no `../` needed) and
+    the sink does `path.join(base, input)` where an absolute `input` *replaces*
+    base (Node `path.join('/safe','/etc/x')` → `/safe/etc/x`, but
+    `path.resolve` with an absolute escapes entirely — know the difference).
+  - **Zip-slip** — an archive member named `../../x` written during extraction
+    without re-checking the resolved path stays under the target dir.
+  - **Symlink in archive** — a member that's a symlink to `/`, then a follow-up
+    member writes "through" it.
+
+  ### Phase 3: Defeat the guard
+  Common broken guards: `replace('../','')` (non-recursive → `....//`), checking
+  the raw input not the *resolved* path, `basename()` only on the last component,
+  decode-after-check. The correct guard is: resolve to an absolute path THEN
+  assert it `startsWith(baseDir + sep)`. If that's missing or done before
+  decoding, it's bypassable.
+
+  ### Phase 4: Confirm before save_finding
+  - Show the untrusted path component → sink (file:line), and that the resolved
+    path escapes the base. For write, name the file you'd overwrite and the RCE/
+    impact it yields.
+  - PoC: the exact traversal string + (sandbox) a write landing outside the base
+    dir, or a read returning out-of-tree content.
+
+  ### Anti-false-positive checklist
+  - Does the code resolve-then-check `startsWith(base)`? Is `entry.name`
+    re-validated against the resolved target during extraction?
+  - Is the path actually request-controlled vs a fixed server path?
+  Correct resolve+prefix check = NOT traversable. Don't save it.
+
+  ### Real wins from this engine
+  - cloudflare/wrangler `init --from-dash`: path traversal via a crafted
+    worker/script name → file write outside the project dir.
+  - trustwallet WASM KeyStore FileSystemStorage: path traversal in the storage
+    key.

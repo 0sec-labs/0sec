@@ -1,0 +1,36 @@
+name: "PwnKit: Public PR"
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwnkit-public-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install libFuzzer toolchain
+        run: sudo apt-get update && sudo apt-get install --yes clang
+      - name: Type-check
+        run: pnpm lint
+      - name: Build CLI
+        run: pnpm build
+      - name: Smoke CLI
+        run: node dist/pwnkit.js --help
+      - name: Run tests
+        run: pnpm test

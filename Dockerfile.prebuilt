@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+#
+# pwnkit-cli runtime image from a prebuilt ./dist bundle.
+#
+# This is the publish path for environments where rebuilding the dashboard
+# bundle inside Docker is unstable. The bundle is still produced by
+# `pnpm build` before this image is built.
+
+FROM node:20-bookworm AS node-runtime
+
+FROM ubuntu:24.04 AS runtime
+
+ARG INSTALL_SECLISTS=0
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV NODE_ENV=production \
+    PWNKIT_DOCKER=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PATH=/usr/local/bin:/usr/bin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl wget gnupg jq git unzip xz-utils \
+        ripgrep \
+        skopeo \
+        python3 python3-requests python3-bs4 \
+        sqlmap nmap nikto gobuster hydra john ffuf wfuzz \
+        whatweb wafw00f dirb \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+RUN if [ "$INSTALL_SECLISTS" = "1" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends seclists \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+WORKDIR /app
+
+COPY dist /app/dist
+
+WORKDIR /app/dist
+RUN npm install --omit=dev --no-audit --no-fund
+
+RUN npm install -g playwright@1.48.0 \
+    && playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
+
+RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit-cli \
+    && chmod +x /app/dist/pwnkit.js
+
+RUN mkdir -p /work \
+    && chown -R ubuntu:ubuntu /work /app/dist /ms-playwright \
+    && chmod -R a+rX /app/dist /ms-playwright
+USER ubuntu
+WORKDIR /work
+
+ENTRYPOINT ["node", "/app/dist/pwnkit.js"]
+CMD ["--help"]

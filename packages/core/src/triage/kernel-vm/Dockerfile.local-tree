@@ -1,0 +1,168 @@
+# pwnkit local Linux-tree kernel VM builder.
+#
+# Builds a KASAN/UBSAN kernel from a bind-mounted source tree at /src/linux,
+# then reuses the same rootfs/output contract as Dockerfile.
+
+FROM debian:bookworm-slim AS kernel-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc-x86-64-linux-gnu \
+    binutils-x86-64-linux-gnu \
+    libc6-dev-amd64-cross \
+    bc \
+    bison \
+    flex \
+    libelf-dev \
+    libssl-dev \
+    libncurses-dev \
+    rsync \
+    cpio \
+    kmod \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG KERNEL_MAKE_JOBS=4
+ENV KERNEL_MAKE_JOBS=${KERNEL_MAKE_JOBS}
+
+WORKDIR /build
+RUN mkdir -p /build/linux
+
+WORKDIR /build/linux
+ENV ARCH=x86_64
+ENV CROSS_COMPILE=x86_64-linux-gnu-
+
+FROM --platform=linux/amd64 debian:bookworm-slim AS rootfs-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    debootstrap \
+    e2fsprogs \
+    qemu-utils \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /rootfs \
+    && debootstrap --variant=minbase --include=\
+openssh-server,gcc,libc6-dev,make,kmod,procps,iproute2,iputils-ping,\
+net-tools,strace,util-linux,systemd-sysv \
+    bookworm /rootfs http://deb.debian.org/debian
+
+RUN chroot /rootfs bash -c '\
+    echo "root:root" | chpasswd && \
+    ssh-keygen -A && \
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends gdb isc-dhcp-client binutils && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    echo "pwnkit-kernel" > /etc/hostname \
+'
+
+RUN printf '%s\n' \
+    '#!/bin/sh' \
+    'mount -t proc proc /proc 2>/dev/null || true' \
+    'mount -t sysfs sysfs /sys 2>/dev/null || true' \
+    'mount -t devtmpfs devtmpfs /dev 2>/dev/null || true' \
+    'mount -t tmpfs tmpfs /run 2>/dev/null || true' \
+    'mount -t tmpfs tmpfs /tmp 2>/dev/null || true' \
+    'echo "PWNKIT_INIT_START" > /dev/kmsg 2>/dev/null || true' \
+    'mkdir -p /mnt/pwnkit' \
+    'if mount -t 9p -o trans=virtio,version=9p2000.L pwnkitshare /mnt/pwnkit 2>/tmp/pwnkit-mount.err; then' \
+    '  echo "PWNKIT_INIT_SHARE_MOUNTED" > /dev/kmsg 2>/dev/null || true' \
+    'else' \
+    '  err=$(tr "\n" " " </tmp/pwnkit-mount.err 2>/dev/null || true)' \
+    '  echo "PWNKIT_INIT_SHARE_MOUNT_FAILED:${err:-unknown}" > /dev/kmsg 2>/dev/null || true' \
+    'fi' \
+    'if [ -f /mnt/pwnkit/runner.sh ]; then' \
+    '  echo "PWNKIT_INIT_RUNNER_START" > /dev/kmsg 2>/dev/null || true' \
+    '  /bin/sh /mnt/pwnkit/runner.sh' \
+    '  status=$?' \
+    '  echo "PWNKIT_INIT_RUNNER_EXIT:${status}" > /dev/kmsg 2>/dev/null || true' \
+    '  sync' \
+    '  poweroff -f 2>/dev/null || halt -f 2>/dev/null || reboot -f 2>/dev/null || exit "$status"' \
+    'fi' \
+    'echo "PWNKIT_INIT_IDLE" > /dev/kmsg 2>/dev/null || true' \
+    'sleep infinity' \
+    > /rootfs/sbin/pwnkit-init \
+    && chmod 755 /rootfs/sbin/pwnkit-init
+
+RUN truncate -s 512M /rootfs.img \
+    && mkfs.ext4 -F -d /rootfs /rootfs.img
+
+FROM kernel-builder
+
+COPY --from=rootfs-builder /rootfs.img /artifacts/rootfs.img
+
+CMD ["sh", "-c", "\
+set -eu; \
+uid=${HOST_UID:-0}; gid=${HOST_GID:-0}; \
+rsync -a --delete --exclude .git /src/linux/ /build/linux/; \
+make x86_64_defconfig; \
+scripts/config \
+  --enable CONFIG_KASAN \
+  --set-str CONFIG_KASAN_MODE generic \
+  --enable CONFIG_KASAN_GENERIC \
+  --enable CONFIG_KASAN_INLINE \
+  --enable CONFIG_KASAN_STACK \
+  --enable CONFIG_KASAN_VMALLOC \
+  --enable CONFIG_UBSAN \
+  --enable CONFIG_UBSAN_BOUNDS \
+  --enable CONFIG_UBSAN_SHIFT \
+  --enable CONFIG_UBSAN_DIV_ZERO \
+  --enable CONFIG_UBSAN_BOOL \
+  --enable CONFIG_UBSAN_ENUM \
+  --enable CONFIG_UBSAN_ALIGNMENT \
+  --enable CONFIG_KCSAN \
+  --enable CONFIG_DEBUG_INFO \
+  --enable CONFIG_DEBUG_INFO_DWARF5 \
+  --enable CONFIG_DEBUG_KERNEL \
+  --enable CONFIG_PROVE_LOCKING \
+  --enable CONFIG_LOCK_STAT \
+  --enable CONFIG_DEBUG_ATOMIC_SLEEP \
+  --enable CONFIG_STACKTRACE \
+  --enable CONFIG_RCU_CPU_STALL_TIMEOUT \
+  --enable CONFIG_DETECT_HUNG_TASK \
+  --enable CONFIG_DEFAULT_HUNG_TASK_TIMEOUT \
+  --enable CONFIG_PANIC_ON_OOPS \
+  --enable CONFIG_VIRTIO \
+  --enable CONFIG_VIRTIO_PCI \
+  --enable CONFIG_VIRTIO_NET \
+  --enable CONFIG_VIRTIO_BLK \
+  --enable CONFIG_EXT4_FS \
+  --enable CONFIG_TMPFS \
+  --enable CONFIG_DEVTMPFS \
+  --enable CONFIG_DEVTMPFS_MOUNT \
+  --enable CONFIG_NET \
+  --enable CONFIG_INET \
+  --enable CONFIG_NFS_FS \
+  --enable CONFIG_NFSD \
+  --enable CONFIG_SUNRPC \
+  --enable CONFIG_BT \
+  --enable CONFIG_BT_HCIUART \
+  --enable CONFIG_CFG80211 \
+  --enable CONFIG_MAC80211 \
+  --enable CONFIG_SCTP_DEFAULT_COOKIE_HMAC_MD5 \
+  --enable CONFIG_IP_SCTP \
+  --enable CONFIG_9P_FS \
+  --enable CONFIG_NET_9P \
+  --enable CONFIG_NET_9P_VIRTIO \
+  --disable CONFIG_RANDOMIZE_BASE \
+  --set-val CONFIG_FRAME_WARN 2048; \
+if [ \"${CONFIG_PROFILE:-kasan}\" = kcsan ]; then \
+  echo 'applying KCSAN race-lane profile (KCSAN=y, PREEMPT=y, KASAN off)'; \
+  scripts/config \
+    --disable CONFIG_KASAN \
+    --disable CONFIG_KASAN_INLINE \
+    --enable CONFIG_KCSAN \
+    --enable CONFIG_KCSAN_EARLY_ENABLE \
+    --set-val CONFIG_KCSAN_REPORT_ONCE_IN_MS 0 \
+    --enable CONFIG_KCSAN_INTERRUPT_WATCHER \
+    --enable CONFIG_PREEMPT; \
+fi; \
+make olddefconfig; \
+make -j\"${KERNEL_MAKE_JOBS}\" bzImage; \
+install -o \"$uid\" -g \"$gid\" -m 0644 arch/x86/boot/bzImage /out/bzImage; \
+install -o \"$uid\" -g \"$gid\" -m 0644 .config /out/kernel.config; \
+install -o \"$uid\" -g \"$gid\" -m 0644 /artifacts/rootfs.img /out/rootfs.img; \
+echo 'local-tree kernel VM artifacts exported to /out/'; \
+ls -lh /out/; \
+"]

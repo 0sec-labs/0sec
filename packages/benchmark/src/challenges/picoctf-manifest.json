@@ -1,0 +1,515 @@
+{
+  "$comment": "Curated picoCTF challenge manifest for pwnkit benchmarking. Each entry must have a unique id, category, and either a live URL (web challenges) or file download URLs (offline challenges). Challenges are drawn from picoGym and recent competitions.",
+  "challenges": [
+    {
+      "id": "picogym-obedient-cat",
+      "name": "Obedient Cat",
+      "category": "General Skills",
+      "difficulty": "easy",
+      "points": 5,
+      "url": "https://mercury.picoctf.net/static/33f5a18e56a02790f9c2c1e1e5a07f32/flag",
+      "description": "This file has a flag in plain sight (ooh those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those those).",
+      "event": "picoGym"
+    },
+    {
+      "id": "picogym-mod26",
+      "name": "Mod 26",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 10,
+      "url": "https://play.picoctf.org/practice/challenge/144",
+      "description": "Cryptography can be easy, do you know what ROT13 is? cvpbPGS{arkg_gvzr_V'yy_gel_2_ebhaqf_bs_ebg13_jdJBFOXk}",
+      "event": "picoGym"
+    },
+    {
+      "id": "picogym-wave-a-flag",
+      "name": "Wave a flag",
+      "category": "General Skills",
+      "difficulty": "easy",
+      "points": 10,
+      "url": "https://mercury.picoctf.net/static/a14be2648c73e3cda5fc8490a2f476af/warm",
+      "files": ["https://mercury.picoctf.net/static/a14be2648c73e3cda5fc8490a2f476af/warm"],
+      "description": "Can you invoke help flags from a program from the command line?",
+      "event": "picoGym"
+    },
+    {
+      "id": "picogym-nice-netcat",
+      "name": "Nice netcat...",
+      "category": "General Skills",
+      "difficulty": "easy",
+      "points": 15,
+      "url": "https://play.picoctf.org/practice/challenge/156",
+      "description": "There is a nice program that you can talk to by using this command in a shell: nc mercury.picoctf.net 35652",
+      "event": "picoGym"
+    },
+    {
+      "id": "picogym-13",
+      "name": "13",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/62",
+      "description": "Cryptography can be easy, do you know what ROT13 is?",
+      "event": "picoGym"
+    },
+    {
+      "id": "picogym-caesar",
+      "name": "caesar",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/64",
+      "files": ["https://jupiter.challenges.picoctf.org/static/49f31c16c8d6e6146f86be6c7f7d0e0f/ciphertext"],
+      "description": "Decrypt this message.",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-dont-use-client-side",
+      "name": "dont-use-client-side",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://jupiter.challenges.picoctf.org/problem/17205/",
+      "description": "Can you break into this super secure portal?",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-logon",
+      "name": "logon",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://jupiter.challenges.picoctf.org/problem/44573/",
+      "description": "The factory is hiding things from all of its users. Can you login as the admin?",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-where-are-the-robots",
+      "name": "where are the robots",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://jupiter.challenges.picoctf.org/problem/56830/",
+      "description": "Can you find the robots? https://jupiter.challenges.picoctf.org/problem/56830/",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-client-side-again",
+      "name": "client-side-again",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 200,
+      "url": "https://jupiter.challenges.picoctf.org/problem/37886/",
+      "description": "Can you break into this super secure portal? I bet you can't!",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-picobrowser",
+      "name": "picobrowser",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 200,
+      "url": "https://jupiter.challenges.picoctf.org/problem/28921/",
+      "description": "This website can be rendered only by picobrowser, go and determine what is special about it.",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-irish-name-repo-1",
+      "name": "Irish-Name-Repo 1",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 300,
+      "url": "https://jupiter.challenges.picoctf.org/problem/39720/",
+      "description": "There is a website running at the given URL. Do you think you can log in?",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-irish-name-repo-2",
+      "name": "Irish-Name-Repo 2",
+      "category": "Web Exploitation",
+      "difficulty": "medium",
+      "points": 350,
+      "url": "https://jupiter.challenges.picoctf.org/problem/52849/",
+      "description": "There is a website running at the given URL. Someone has bypassed the login before, can you do it too?",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-irish-name-repo-3",
+      "name": "Irish-Name-Repo 3",
+      "category": "Web Exploitation",
+      "difficulty": "medium",
+      "points": 400,
+      "url": "https://jupiter.challenges.picoctf.org/problem/29132/",
+      "description": "There is a secure website running at the given URL. Try to see if you can login!",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-inspect-html",
+      "name": "Inspect HTML",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 10,
+      "url": "https://play.picoctf.org/practice/challenge/211",
+      "description": "Can you get the flag just by inspecting the website?",
+      "event": "picoGym"
+    },
+    {
+      "id": "picogym-login",
+      "name": "login",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/200",
+      "description": "My dog-sitter's website has a login page. See if you can find the password.",
+      "event": "picoCTF 2021"
+    },
+    {
+      "id": "picogym-caas",
+      "name": "caas",
+      "category": "Web Exploitation",
+      "difficulty": "medium",
+      "points": 150,
+      "url": "https://play.picoctf.org/practice/challenge/202",
+      "description": "Now presenting cowsay as a service.",
+      "event": "picoCTF 2021"
+    },
+    {
+      "id": "pico2022-sql-direct",
+      "name": "SQL Direct",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 200,
+      "url": "https://play.picoctf.org/practice/challenge/303",
+      "description": "Connect to this PostgreSQL server and find the flag!",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "pico2022-sqli-series-1",
+      "name": "SQLiLite",
+      "category": "Web Exploitation",
+      "difficulty": "medium",
+      "points": 300,
+      "url": "https://play.picoctf.org/practice/challenge/304",
+      "description": "Can you login to this website?",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-base64",
+      "name": "bases",
+      "category": "General Skills",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/67",
+      "description": "What does this bXkgc3VwZXIgc2VjcmV0IHZhbHVl mean?",
+      "event": "picoGym"
+    },
+    {
+      "id": "picogym-first-grep",
+      "name": "First Grep",
+      "category": "General Skills",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/85",
+      "files": ["https://jupiter.challenges.picoctf.org/static/515f19f3612bfd97cd3f0c0ba32bd864/file"],
+      "description": "Can you find the flag in file?",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-strings-it",
+      "name": "strings it",
+      "category": "General Skills",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/95",
+      "files": ["https://jupiter.challenges.picoctf.org/static/fae9ac5267cd6e44124e559b901df177/strings"],
+      "description": "Can you find the flag in file without running it?",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-what-lies-within",
+      "name": "What Lies Within",
+      "category": "Forensics",
+      "difficulty": "easy",
+      "points": 150,
+      "url": "https://play.picoctf.org/practice/challenge/74",
+      "files": ["https://jupiter.challenges.picoctf.org/static/011955b303f293d60c8116e6a4c5c84f/buildings.png"],
+      "description": "There is something in the building. Can you retrieve the flag?",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-information",
+      "name": "information",
+      "category": "Forensics",
+      "difficulty": "easy",
+      "points": 10,
+      "url": "https://play.picoctf.org/practice/challenge/186",
+      "files": ["https://mercury.picoctf.net/static/7cf6a33f90deeeac5c73407a1bdc99b6/cat.jpg"],
+      "description": "Files can always be changed in a secret way. Can you find the flag?",
+      "event": "picoCTF 2021"
+    },
+    {
+      "id": "picogym-matryoshka-doll",
+      "name": "Matryoshka doll",
+      "category": "Forensics",
+      "difficulty": "easy",
+      "points": 30,
+      "url": "https://play.picoctf.org/practice/challenge/129",
+      "files": ["https://mercury.picoctf.net/static/205adad23bf9d8303081d36aaab94c52/dolls.jpg"],
+      "description": "Matryoshka dolls are a set of wooden dolls of decreasing size placed one inside another. What's the flag?",
+      "event": "picoCTF 2021"
+    },
+    {
+      "id": "picogym-tunn3l-v1s10n",
+      "name": "tunn3l v1s10n",
+      "category": "Forensics",
+      "difficulty": "medium",
+      "points": 40,
+      "url": "https://play.picoctf.org/practice/challenge/112",
+      "files": ["https://mercury.picoctf.net/static/21c07c9dd20cd9f2459a0ae75d99af6e/tunn3l_v1s10n"],
+      "description": "We found this file. Recover the flag.",
+      "event": "picoCTF 2021"
+    },
+    {
+      "id": "picogym-glory-of-the-garden",
+      "name": "Glory of the Garden",
+      "category": "Forensics",
+      "difficulty": "easy",
+      "points": 50,
+      "url": "https://play.picoctf.org/practice/challenge/44",
+      "files": ["https://jupiter.challenges.picoctf.org/static/d0e1c5b1bac47e2dbafad24e12a22c1e/garden.jpg"],
+      "description": "This garden contains more than what meets the eye.",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-so-meta",
+      "name": "So Meta",
+      "category": "Forensics",
+      "difficulty": "easy",
+      "points": 150,
+      "url": "https://play.picoctf.org/practice/challenge/32",
+      "files": ["https://jupiter.challenges.picoctf.org/static/89b371a46702a31aa9931a2a2b12f8bf/pico_img.png"],
+      "description": "Find the flag in this picture.",
+      "event": "picoCTF 2019"
+    },
+    {
+      "id": "picogym-easy-peasy",
+      "name": "Easy Peasy",
+      "category": "Cryptography",
+      "difficulty": "medium",
+      "points": 40,
+      "url": "https://play.picoctf.org/practice/challenge/125",
+      "description": "A one-time pad is unbreakable, but can you manage to recover the flag? nc mercury.picoctf.net 36981",
+      "event": "picoCTF 2021"
+    },
+    {
+      "id": "picogym-new-caesar",
+      "name": "New Caesar",
+      "category": "Cryptography",
+      "difficulty": "medium",
+      "points": 60,
+      "url": "https://play.picoctf.org/practice/challenge/158",
+      "description": "We found a brand new type of encryption. Can you break the code?",
+      "event": "picoCTF 2021"
+    },
+    {
+      "id": "picogym-basic-mod1",
+      "name": "basic-mod1",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/253",
+      "description": "We found this weird message being passed around on the servers. Take each number mod 37 and map it to a character.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-basic-mod2",
+      "name": "basic-mod2",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/254",
+      "description": "A new modular challenge! Take each number, mod 41, and find the modular inverse.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-rail-fence",
+      "name": "rail-fence",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/289",
+      "description": "A type of transposition cipher is the rail fence cipher.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-substitution0",
+      "name": "substitution0",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/307",
+      "description": "A message has been encrypted using a simple substitution cipher.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-substitution1",
+      "name": "substitution1",
+      "category": "Cryptography",
+      "difficulty": "medium",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/308",
+      "description": "A second message has been encrypted using a substitution cipher.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-substitution2",
+      "name": "substitution2",
+      "category": "Cryptography",
+      "difficulty": "medium",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/309",
+      "description": "It seems that another encrypted message has been intercepted.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-transposition-trial",
+      "name": "transposition-trial",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/312",
+      "description": "Our data got corrupted on the way here. Luckily, nothing was lost.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-vigenere",
+      "name": "Vigenere",
+      "category": "Cryptography",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/316",
+      "description": "Can you decrypt this message?",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-file-types",
+      "name": "file-types",
+      "category": "Forensics",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/268",
+      "description": "This file was found among some files marked confidential but it doesn't have an extension.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-hideme",
+      "name": "hideme",
+      "category": "Forensics",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/350",
+      "description": "Every file gets a flag. The more the merrier.",
+      "event": "picoCTF 2023"
+    },
+    {
+      "id": "picogym-patchme-py",
+      "name": "patchme.py",
+      "category": "General Skills",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/287",
+      "description": "Can you get the flag? Run this Python program in the same directory as this encrypted flag.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-unpackme-py",
+      "name": "unpackme.py",
+      "category": "Reverse Engineering",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/314",
+      "description": "Can you get the flag? Reverse engineer this Python program.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-safe-opener",
+      "name": "Safe Opener",
+      "category": "Reverse Engineering",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/294",
+      "description": "Can you open this safe? I forgot the key to the safe.",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-gdb-baby-step-1",
+      "name": "GDB baby step 1",
+      "category": "Reverse Engineering",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/395",
+      "description": "Can you figure out what is in the eax register at the end of the main function?",
+      "event": "picoCTF 2023"
+    },
+    {
+      "id": "picogym-gdb-baby-step-2",
+      "name": "GDB baby step 2",
+      "category": "Reverse Engineering",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/396",
+      "description": "Can you figure out what is in the eax register at the end of the main function?",
+      "event": "picoCTF 2023"
+    },
+    {
+      "id": "pico2023-findme",
+      "name": "findme",
+      "category": "Web Exploitation",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/349",
+      "description": "Help me find the flag for this website.",
+      "event": "picoCTF 2023"
+    },
+    {
+      "id": "pico2023-more-sqli",
+      "name": "More SQLi",
+      "category": "Web Exploitation",
+      "difficulty": "medium",
+      "points": 200,
+      "url": "https://play.picoctf.org/practice/challenge/358",
+      "description": "Can you find the flag on this website?",
+      "event": "picoCTF 2023"
+    },
+    {
+      "id": "pico2023-java-code-analysis",
+      "name": "Java Code Analysis!?!",
+      "category": "Web Exploitation",
+      "difficulty": "hard",
+      "points": 300,
+      "url": "https://play.picoctf.org/practice/challenge/356",
+      "description": "BookShelf Pico, my Java application, is insecure. Can you hack it?",
+      "event": "picoCTF 2023"
+    },
+    {
+      "id": "picogym-buffer-overflow-0",
+      "name": "buffer overflow 0",
+      "category": "Binary Exploitation",
+      "difficulty": "easy",
+      "points": 100,
+      "url": "https://play.picoctf.org/practice/challenge/257",
+      "description": "Smash the stack. Let's start off simple, can you overflow the correct buffer?",
+      "event": "picoCTF 2022"
+    },
+    {
+      "id": "picogym-buffer-overflow-1",
+      "name": "buffer overflow 1",
+      "category": "Binary Exploitation",
+      "difficulty": "medium",
+      "points": 200,
+      "url": "https://play.picoctf.org/practice/challenge/258",
+      "description": "Control the return address. Can you redirect execution to the win function?",
+      "event": "picoCTF 2022"
+    }
+  ]
+}

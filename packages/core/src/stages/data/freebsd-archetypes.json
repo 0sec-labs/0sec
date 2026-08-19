@@ -1,0 +1,171 @@
+{
+  "provenance": "0sec-authored (NOT ported from 0verse — 0verse's archetypes.json is Linux-only, no FreeBSD registry exists). Grounded independently in public FreeBSD-SA advisories / CVEs, several confirmed by fetching the advisory text directly, 2026-07-05. IMPORTANT HONEST CAVEAT: unlike the Linux pack, this repo has NO FreeBSD build+boot+KASAN kernel-verify lane today — every 'kernel-verify' route entry below is a hypothesis that needs a human/skeptic read (or a future FreeBSD prover lane), not a proven-confirmable claim.",
+  "archetypes": [
+    {
+      "id": "CP-01",
+      "name": "copyout() of an uninitialized stack/heap struct -> kernel infoleak",
+      "cwe": "CWE-908 / CWE-200",
+      "subsystem": "kern/ (syscalls that copyout a fixed-size struct: setlogin/getlogin, get/swapcontext, ktrace, elf image activation)",
+      "pattern": "A struct or buffer is declared on the stack (or malloc'd without M_ZERO) and only some fields are written before the whole thing is copyout()'d to userland. Padding bytes, unwritten trailing fields, or a 'copy full size even though only N bytes are valid' shortcut leak adjacent kernel stack/heap contents to an unprivileged caller.",
+      "detection_signature": "Grep for `copyout(` (bare word — FreeBSD's copy-to-user primitive has no underscore, unlike Linux's copy_to_user) where the source argument is a local `struct`/`ucontext_t`/`sockaddr_storage` variable that was NOT preceded by `bzero(&var, sizeof(var))`, `explicit_bzero`, or a `M_ZERO`-flagged `malloc`/`mallocarray`. Real shape: a function declares `ucontext_t uc;`, writes a handful of fields, then `copyout(&uc, ..., UC_COPY_SIZE)`'s the whole struct; or a variable-length `sockaddr` is copied out at its FULL storage size (`sizeof(struct sockaddr_storage)`) instead of its actual `sa_len`.",
+      "grounding": [
+        "CVE-2014-8476 / FreeBSD-SA-14:25.setlogin (login name copied into an uninitialized stack buffer, then the whole buffer returned by getlogin(2))",
+        "CVE-2018-17155 (getcontext(2)/swapcontext(2): ucontext_t declared on the stack, only some fields written, then copyout()'d at UC_COPY_SIZE)",
+        "CVE-2025-0662 / FreeBSD-SA-25:04.ktrace (ktrace(2) copies the full sockaddr_storage even when the real sockaddr is shorter -> up to 14 uninitialized kernel heap bytes leaked; verified via advisory fetch)",
+        "CVE-2018-6924 / FreeBSD-SA-18:12 (ELF header parsing kernel memory disclosure to an unprivileged local user)"
+      ],
+      "confirmable": "Plausible by source inspection alone — absence of a bzero/M_ZERO call before the copyout is directly visible in the diff/function body. Still needs skeptic review to rule out an out-of-line initializer earlier in the call chain (e.g. a caller that already zeroed the struct) before treating a hit as confirmed; no dynamic oracle exists in this repo yet to prove the leaked bytes are non-zero/sensitive.",
+      "domain": "freebsd",
+      "uid": "freebsd/CP-01",
+      "engine_lens": null,
+      "route": "kernel-static"
+    },
+    {
+      "id": "CP-02",
+      "name": "copyin() double-fetch / TOCTOU on a user-controlled length or header field",
+      "cwe": "CWE-367 / CWE-787",
+      "subsystem": "kern/uipc_syscalls.c, kern/uipc_syscalls_compat*.c (sendmsg/recvmsg control-message and cmsg-header handling)",
+      "pattern": "A length or header field is fetched from userland once to validate it fits a kernel buffer (\"first loop\"), the kernel buffer is allocated based on that validated length, and then a SECOND copyin()/re-read of the same user memory (\"second loop\") trusts the field again — but a racing thread can mutate the user page between the two reads, so the second read sees a larger/different value than what was validated -> heap/stack overflow.",
+      "detection_signature": "Grep for `copyin(` (bare word) appearing more than once against the same user pointer within one function, especially near `cmsg_len` / `cmsghdr` fields: a first pass that sums/validates `cmsg_len` against `MLEN`/a buffer cap, followed by a second pass that does `copyin()` using a length re-derived from the (attacker-writable) user buffer instead of the already-validated value.",
+      "grounding": [
+        "CVE-2020-7460 (freebsd32_copyin_control(): TOCTOU between the length-validation loop and the copy loop over cmsg_len fields -> kernel heap overflow, 90%-reliable local root PoC per ZDI writeup; verified via ZDI blog)",
+        "CVE-2016-1887 (sendmsg(2) kernel heap overflow, same control-message handling area, precursor bug in the same code family)"
+      ],
+      "confirmable": "NO static oracle for the race window itself (this is a TOCTOU — reachability of the second, stale read depends on timing). The two-copyin() shape is grep-visible and worth flagging, but confirming exploitability needs either a kernel-verify build+boot lane (which does not yet exist for FreeBSD in this repo) or careful skeptic-only reasoning about whether the two fetches can genuinely observe different values.",
+      "domain": "freebsd",
+      "uid": "freebsd/CP-02",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "MA-01",
+      "name": "integer overflow in a mallocarray()/malloc(9) size derived from user-controlled count*size",
+      "cwe": "CWE-190 / CWE-787",
+      "subsystem": "kern/kern_malloc.c callers (ioctl/sysctl handlers that size a kernel buffer from a user-supplied count or length)",
+      "pattern": "An attacker-controlled count or size value (from an ioctl argument or sysctl input) is multiplied against an element size and passed straight to `malloc(9)` without an overflow check; the multiplication wraps, `malloc` returns a heap allocation far SMALLER than the code assumes, and a subsequent fixed-size or count-driven write runs off the end of the undersized buffer.",
+      "detection_signature": "Grep for `malloc(` / `mallocarray(` (bare words — no underscore, unlike Linux's kmalloc) where the size argument is a multiplication of two values, at least one of which traces back to an ioctl/sysctl input, with no preceding overflow-safe check (no `mallocarray()` in place of a raw `count * size`, no explicit `if (count > MAX)` cap). `mallocarray()` itself is the FIXED idiom (checks overflow internally) — its ABSENCE where `malloc(count * size, ...)` appears instead is the tell.",
+      "grounding": [
+        "CVE-2026-49416 / FreeBSD-SA-26:34.vt (vt(4) CONS_HISTORY ioctl: an attacker-supplied history size overflows the buffer-size calculation, producing a heap allocation smaller than expected; the subsequent buffer initialization then writes past the end of the undersized allocation — verified via advisory fetch)"
+      ],
+      "confirmable": "Plausible by source inspection — a raw `count * size` feeding `malloc()` with no cap is directly visible. Reaching the actual OOB write requires tracing the buffer's subsequent use, which is easy in-source but still benefits from a dynamic replay; no FreeBSD kernel-verify lane exists yet in this repo to do that replay.",
+      "domain": "freebsd",
+      "uid": "freebsd/MA-01",
+      "engine_lens": null,
+      "route": "kernel-static"
+    },
+    {
+      "id": "PRIV-01",
+      "name": "missing priv_check()/securelevel_gt() gate on a privileged ioctl or sysctl write",
+      "cwe": "CWE-862 / CWE-284",
+      "subsystem": "kern/kern_priv.c callers; any cdevsw d_ioctl or SYSCTL_PROC handler that mutates privileged state",
+      "pattern": "An ioctl or sysctl-write handler mutates privileged kernel/device state (console history size, debug/trace enable, a device configuration register) without first calling `priv_check(td, PRIV_*)` / `priv_check_cred()` / `securelevel_gt()`, OR the gate exists but is trivially bypassed by an insecure default sysctl (e.g. a `security.bsd.*` knob defaulting to permissive) — letting an unprivileged local user reach a root-only operation.",
+      "detection_signature": "Grep for `priv_check`, `priv_check_cred`, `securelevel_gt` (all real, underscored FreeBSD privilege APIs) — the tell is an ioctl/sysctl handler that reaches a sensitive write/state-change WITHOUT any of these three appearing on the path, or where the only gate is a `sysctl` default that ships insecure-by-default.",
+      "grounding": [
+        "CVE-2016-1886 (SETFKEY / genkbd_commonioctl(): the shared keyboard-driver ioctl handler was reachable by an unprivileged user because of a poor default sysctl, present since 1999)",
+        "CVE-2013-2171 / FreeBSD-SA-13:06.mmap (procfs `mem` node access gated only by the insecure-by-default `security.bsd.unprivileged_proc_debug` sysctl, allowing arbitrary-code-as-another-user)"
+      ],
+      "confirmable": "Plausible by source inspection — the absence of any priv_check()/securelevel_gt() call on the privileged path is directly visible in the function body. Still needs skeptic review to rule out a caller-side gate (e.g. the device node's own file permissions already restrict access) before treating a hit as a real privilege-escalation path.",
+      "domain": "freebsd",
+      "uid": "freebsd/PRIV-01",
+      "engine_lens": null,
+      "route": "kernel-static"
+    },
+    {
+      "id": "IOC-01",
+      "name": "d_ioctl_t handler OOB: caller-specified buffer size vs. a fixed-size struct copied into it",
+      "cwe": "CWE-787 / CWE-125",
+      "subsystem": "cdevsw / d_ioctl_t handlers (storage-controller and other char-device drivers)",
+      "pattern": "A `d_ioctl_t` handler allocates or references a buffer sized from a CALLER-SUPPLIED length field, but then copies in/out a FIXED-size header/struct into that buffer without checking the caller's length is at least that big -> heap OOB write when the caller under-specifies the buffer size relative to the fixed header.",
+      "detection_signature": "Grep for `d_ioctl_t` (the real, underscored cdevsw ioctl-handler typedef) alongside `copyout(`/`copyin(` (bare words) where the destination/source length used is a CONSTANT `sizeof(some_fixed_header)` rather than the caller-specified buffer-size field from the ioctl request struct.",
+      "grounding": [
+        "CVE-2022-23086 / FreeBSD-SA-22:06.ioctl (mpr(4)/mps(4)/mpt(4) *_CFG_PAGE ioctl handlers: allocated a buffer of the caller-specified size but copied a FIXED-size header into it, overflowing the buffer when the caller's size was smaller than the header — verified via advisory fetch)"
+      ],
+      "confirmable": "Plausible by source inspection — the size mismatch between the allocation and the copy is directly visible once both sites are found. Confirming actual heap corruption impact (vs. a harmless small overflow into padding) still benefits from a dynamic run; no FreeBSD kernel-verify lane exists yet in this repo.",
+      "domain": "freebsd",
+      "uid": "freebsd/IOC-01",
+      "engine_lens": null,
+      "route": "kernel-static"
+    },
+    {
+      "id": "UAF-01",
+      "name": "uma_zfree() / free(9) double-free or use-after-free on a racing ioctl/setsockopt path",
+      "cwe": "CWE-415 / CWE-416",
+      "subsystem": "net/bpf.c (bpf_setf race), netinet6/in6_pktinfo / ip6_setpktopt (missing setsockopt lock)",
+      "pattern": "Two threads/processes race a device ioctl or socket-option setter that reads a pointer to an owned object, then frees it: both racers copy the SAME pointer to their kernel stacks before either free happens, so both free it -> double-free; or a socket-option setter frees an option struct with no lock while another thread/read path still holds a reference to the now-freed struct -> UAF.",
+      "detection_signature": "Grep for `uma_zfree`, `bd_wfilter`, `bd_rfilter` (all real, underscored symbols) in bpf.c-style filter-install code: a copy-to-stack of the current filter pointer followed by `uma_zfree`/`free` with NO lock held across the read-then-free window. Same shape in socket-option setters: a pointer read (e.g. from `ip6_pktopts`) and a `free(9)` of the old value with no mutex around the compare-and-swap.",
+      "grounding": [
+        "BPF bd_wfilter/bd_rfilter concurrent bpf_setf() race -> double-free (documented in the PS4 5.05 jailbreak research by qwertyoruiopz; the underlying bpf(4) locking gap also exists in mainline FreeBSD, not just the PS4 fork — treat the exact current-mainline fix status as unverified until re-checked against bench:/root/freebsd-src)",
+        "CVE-2020-7457 (missing synchronization lock in the IPV6_2292PKTOPTIONS setsockopt handler allows racing ip6_setpktopt() access to a freed ip6_pktopts struct)"
+      ],
+      "confirmable": "NO static oracle — both are races (concurrency-dependent). A source hit here is a hypothesis only; proving it needs a build+boot+KASAN replay under concurrent syscalls, which does not exist yet as a FreeBSD lane in this repo (unlike Linux's bench kernel-verify path). Route this to human/skeptic-only review, not auto-confirmation.",
+      "domain": "freebsd",
+      "uid": "freebsd/UAF-01",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "REFCNT-01",
+      "name": "reference-count imbalance (missing fdrop()/fput()-equivalent) -> premature free -> UAF",
+      "cwe": "CWE-911 / CWE-416",
+      "subsystem": "kern/uipc_usrreq.c (UNIX-domain socket control-message file-descriptor passing)",
+      "pattern": "A file-descriptor reference is incremented (`fget()`-equivalent) on a success path but the matching decrement is missing on an ERROR or cleanup path (e.g. \"close the received fd because the receiver's buffer was too small\"); repeating the trigger overflows the `f_count` refcount field, wraps it to a small value, and a subsequent close/dup frees the underlying `struct file` while another descriptor still references it.",
+      "detection_signature": "Grep for `f_count`, `m_dispose_extcontrolm` (both real, underscored symbols from the actual advisory) — the tell is a cleanup path that calls `fdclose()`-style close logic on a received/duplicated fd WITHOUT a matching `fdrop()` to release the earlier `fget()`-style reference, so `f_count` is decremented once instead of twice.",
+      "grounding": [
+        "CVE-2019-5596 / FreeBSD-SA-19:02.fd (m_dispose_extcontrolm() lacks the fdrop() call after fdclose() when discarding over-limit received file descriptors from a UNIX-domain control message -> f_count reference-count overflow -> UAF on the freed struct file; verified via advisory fetch)"
+      ],
+      "confirmable": "The missing-decrement shape is visible by pairing every increment with its decrement along each path — doable by source inspection, but proving the counter actually wraps and the freed object is reachable from a second descriptor needs a dynamic replay. No FreeBSD kernel-verify lane exists yet in this repo; route to skeptic-only review.",
+      "domain": "freebsd",
+      "uid": "freebsd/REFCNT-01",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SYSCTL-01",
+      "name": "sysctl handler OOB read/write via mishandled req->newptr/req->oldptr length",
+      "cwe": "CWE-787 / CWE-125",
+      "subsystem": "kern/kern_sysctl.c callers (custom SYSCTL_PROC / SYSCTL_HANDLER_ARGS handlers)",
+      "pattern": "A custom sysctl handler (`SYSCTL_HANDLER_ARGS`) trusts `req->newlen` or an internal buffer size without checking it against the destination buffer before calling `sysctl_handle_opaque`/doing a manual copy, or writes MORE than `req->oldlen` bytes into `req->oldptr` on the read side -> heap/stack OOB read or write reachable by any local user who can query/set that sysctl node.",
+      "detection_signature": "Grep for `sysctl_handle_int`, `sysctl_handle_long`, `sysctl_handle_opaque`, `sysctl_handle_string` (all real, underscored FreeBSD sysctl(9) helper functions) — the tell is a handler that reads `req->newlen` or writes to `req->oldptr` with a length NOT clamped against the actual destination buffer size, especially in a handler that manually memcpy's instead of delegating to one of the `sysctl_handle_*` helpers.",
+      "grounding": [
+        "Pattern-grounded from the documented sysctl(9) SYSCTL_HANDLER_ARGS contract (req->newptr/req->oldptr/req->newlen/req->oldlen — a handler that doesn't respect these is a well-known FreeBSD driver-review class). NO specific historical FreeBSD-SA/CVE was found and verified in this research pass — marked honestly as an unverified-by-precedent archetype; corroborate with a specific advisory before citing this class externally or in a disclosure."
+      ],
+      "confirmable": "Plausible by source inspection — the length-check omission is visible in the handler body. Given no confirmed historical CVE was found for this exact class in this pass, treat any hit with EXTRA skepticism until either a matching precedent is found or the class is dynamically reproduced; no FreeBSD kernel-verify lane exists yet in this repo.",
+      "domain": "freebsd",
+      "uid": "freebsd/SYSCTL-01",
+      "engine_lens": null,
+      "route": "kernel-static"
+    },
+    {
+      "id": "MBUF-01",
+      "name": "mbuf-chain traversal with an unchecked/user-influenced length crossing an mbuf boundary",
+      "cwe": "CWE-125 / CWE-787",
+      "subsystem": "netinet6/ (ICMPv6/MLDv2 input path), sys/mbuf.h helpers",
+      "pattern": "A packet-parsing function computes an offset/length into an mbuf chain (e.g. an MLDv2 listener-query option) and reads/writes at that offset via `mtod()`/pointer arithmetic WITHOUT first calling `m_pullup()`/`m_pulldown()` to guarantee the needed bytes are contiguous in the current mbuf -> the read/write crosses into an adjacent mbuf's memory or past the chain's actual length when the packet is fragmented across mbuf boundaries in a way the parser didn't anticipate.",
+      "detection_signature": "Grep for `m_pullup`, `m_pulldown` (real, underscored mbuf-chain-linearization functions) — the tell is a parser that computes a length/offset from packet contents and dereferences it via `mtod()` WITHOUT a preceding `m_pullup()`/`m_pulldown()` call sized to that length, so a chain fragmented at an unexpected boundary is read/written out of bounds.",
+      "grounding": [
+        "CVE-2019-5608 / FreeBSD-SA-19:19.mldv2 (the ICMPv6 input path mishandles MLDv2 listener-query packets fragmented across mbufs, producing an OOB read/write that can panic the kernel)"
+      ],
+      "confirmable": "NO static oracle for whether a given packet shape actually straddles an mbuf boundary at runtime — reachability depends on how the mbuf chain was built (device driver, fragmentation), which is a runtime property. Needs a crafted-packet replay to confirm; no FreeBSD kernel-verify lane exists yet in this repo.",
+      "domain": "freebsd",
+      "uid": "freebsd/MBUF-01",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SBUF-01",
+      "name": "sbuf/ps_strings OOB read from an unhandled sbuf_len() sentinel (0 / -1)",
+      "cwe": "CWE-125 / CWE-200",
+      "subsystem": "kern/kern_proc.c (proc_getargv/proc_getenvv and other ps_strings/sbuf consumers)",
+      "pattern": "`proc_getargv()`-style helpers return an `sbuf` built from a target process's `ps_strings` region; callers that don't handle `sbuf_len()` returning 0 or -1 (a crafted/corrupt `ps_strings` in the target) can read past the sbuf's actual data when copying it out, or misinterpret the sentinel as a valid length -> kernel OOB read reachable by any local user who can inspect another process's argv (procstat/ps-style tools).",
+      "detection_signature": "Grep for `proc_getargv`, `ps_strings`, `sbuf_len` (all real, underscored FreeBSD symbols) — the tell is a consumer of `proc_getargv()`/`proc_getenvv()` that uses the returned sbuf's data/length WITHOUT checking `sbuf_len(sb) <= 0` first, or a crafted `ps_strings` structure in the target process that a reader trusts at face value.",
+      "grounding": [
+        "Documented FreeBSD kernel bug class: proc_getargv() can return an sbuf with sbuf_len() of 0 or -1 when a process's ps_strings is corrupted/crafted, which callers historically did not handle, allowing an OOB read via a crafted ps_string. NO specific CVE number was confirmed in this research pass — marked honestly; corroborate the exact advisory before citing this class externally."
+      ],
+      "confirmable": "Plausible by source inspection — the missing sbuf_len() sentinel check is visible in the consumer function. Given the CVE for this exact bug was not confirmed in this pass, treat any hit with extra skepticism until a precedent or dynamic reproduction confirms it; no FreeBSD kernel-verify lane exists yet in this repo.",
+      "domain": "freebsd",
+      "uid": "freebsd/SBUF-01",
+      "engine_lens": null,
+      "route": "kernel-static"
+    }
+  ]
+}

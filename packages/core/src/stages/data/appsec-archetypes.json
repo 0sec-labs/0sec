@@ -1,0 +1,102 @@
+{
+  "provenance": "0sec-authored appsec bug-class registry, 2026-07-21. Mirrors the SCHEMA of kernel-archetypes.json but is a SEPARATE, cross-language application-security pack (domain: appsec), NOT ported from 0verse (0verse's registry is Linux-kernel-only). Grounded in OWASP Top-10 / CWE and in the concrete misses these lenses were built to close: the Swiss engagement's gever OS-command-injection CRITICAL and the sibling-route authz / template-XSS / SSO-trust / resource-exhaustion classes the four generic finder lenses (memory-safety, input-validation, auth-logic, secrets-crypto) under-weighted. Unlike the kernel pack there is NO build/boot/sanitizer lane for these — every entry is route 'appsec-source-static': a grep/read hit is a hypothesis for the skeptic + multi-lens verify quorum, never an auto-confirmed finding. The load-bearing field for the finder surface is 'challenge_hint' (the cross-language, sink-shape-citing hunt angle), which the loader maps directly onto FinderLens.challengeHint; 'detection_signature' is the human/skeptic-facing grep evidence. 'engine_lens' is null for every entry (no pre-existing engine lens implements these — this registry IS their implementation).",
+  "archetypes": [
+    {
+      "id": "os-command-injection",
+      "name": "OS command injection via attacker-influenced process/shell exec",
+      "cwe": "CWE-78",
+      "domain": "appsec",
+      "subsystem": "process / shell execution (any runtime)",
+      "pattern": "Attacker-controlled data (a request param, header, filename, upload name, DB value, config field) is concatenated or interpolated into a command line, a shell string, or a process argument that is then handed to an OS command/shell interpreter. The sink executes with the app's privileges; even when the base command is fixed, an unescaped argument, a shell metacharacter (; | & $() ` > <), or argument-injection (a value beginning with -) subverts it. The tell is DATA (not developer-authored code) reaching an exec sink without an allow-list, tokenized argv, or a proven-safe escaper.",
+      "detection_signature": "Language-agnostic sink hunt. Node: child_process exec/execSync/spawn/spawnSync/execFile with a shell:true option or a string-built command, template literals inside exec(`...${x}...`). .NET: System.Diagnostics.Process.Start / ProcessStartInfo where FileName is cmd.exe/powershell/bash or Arguments is string-concatenated, UseShellExecute=true. Java: Runtime.getRuntime().exec(String), ProcessBuilder(command) built from concatenation, especially exec(\"sh\", \"-c\", cmd). Python: subprocess.run/Popen/call with shell=True, os.system, os.popen, commands.getoutput. PHP: system/exec/shell_exec/passthru/proc_open/backticks. Ruby: system/`backticks`/%x/Open3 with interpolation. Perl: system/open with a pipe. Trace the taint from the entry point to the argv/shell string; a fixed argv array with no shell and no attacker-controlled flag is safe.",
+      "challenge_hint": "Hunt OS COMMAND INJECTION only, ACROSS ALL LANGUAGES: attacker-influenced data reaching a process/shell exec sink. Look for — Node child_process exec/execSync/spawn(..., {shell:true})/execFile and backtick-built commands; .NET Process.Start / ProcessStartInfo.FileName=cmd.exe|powershell with a concatenated Arguments (or UseShellExecute=true); Java Runtime.exec(String) / ProcessBuilder built by string concatenation (esp. sh -c); Python subprocess(..., shell=True) / os.system / os.popen; PHP system/exec/shell_exec/passthru/proc_open/backticks; Ruby system/%x/backticks; any string-built shell command. Cite the exact sink (file:line) and the concrete taint path from the entry point (route param, header, filename, upload, config, DB value) to the command string or argv. A fixed argv array with NO shell and NO attacker-controlled leading-dash flag is safe — do not flag it. This is the class that missed the gever CRITICAL.",
+      "grounding": [
+        "CWE-78: Improper Neutralization of Special Elements used in an OS Command",
+        "OWASP Top 10 A03:2021 Injection",
+        "0sec Swiss engagement: gever OS-command-injection CRITICAL (missed by the generic input-validation lens)"
+      ],
+      "confirmable": "Source-static hypothesis. A grep/read hit needs the skeptic + multi-lens verify quorum to confirm the argument is genuinely attacker-reachable and not escaped/tokenized upstream; no build/exec lane proves it in this repo.",
+      "uid": "appsec/os-command-injection",
+      "engine_lens": null,
+      "route": "appsec-source-static"
+    },
+    {
+      "id": "method-authz-differential",
+      "name": "Method-level authorization differential (sibling route/handler missing its siblings' authz + IDOR-by-id)",
+      "cwe": "CWE-862",
+      "domain": "appsec",
+      "subsystem": "web routing / controllers / service layer (any framework)",
+      "pattern": "Two or more handlers act on the SAME resource, but one is missing the authorization guard its siblings carry: a controller action without the [Authorize]/policy/role attribute its neighbors have; a service-layer method that mutates or reads an object WITHOUT the ownership/tenant/scope check its Update/Delete siblings enforce; a route that trusts a caller-supplied id and fetches by id alone (IDOR) instead of scoping to the authenticated principal. The vulnerability is the DIFFERENCE between siblings, not the absence of auth everywhere — the guard exists and is proven necessary on one path and simply omitted on another.",
+      "detection_signature": "Compare sibling handlers on one resource. .NET: an action lacking [Authorize]/[Authorize(Policy=...)]/[Authorize(Roles=...)] present on peer actions in the same controller, or a controller relying on a global filter that a specific action opts out of with [AllowAnonymous]. Spring: a @GetMapping/@PostMapping without the @PreAuthorize/@Secured its siblings have, or a SecurityConfig antMatcher that omits one path. Express/Koa/Fastify: a route registered without the requireAuth/authorize middleware its siblings chain. Rails: a controller action skipped in before_action :authorize, or skip_before_action. Service layer (any language): an Update/Delete method that checks resource.ownerId == currentUser before mutating, next to a sibling (e.g. GetById, Export, a bulk op) that fetches/mutates by id with NO such check. Also flag repository calls keyed only by a request-supplied id with no tenant/owner predicate.",
+      "challenge_hint": "Hunt METHOD-LEVEL AUTHORIZATION DIFFERENTIALS and IDOR only. Find sibling routes/handlers/methods on the SAME resource where ONE lacks the guard its siblings carry: a controller action missing the [Authorize]/@PreAuthorize/policy/role attribute or requireAuth middleware its peers have; a service method that mutates/reads by id WITHOUT the ownership/tenant/scope check its Update/Delete siblings enforce; a repository/query keyed only on a caller-supplied id with no owner/tenant predicate (IDOR-by-id). The signal is the DIFFERENCE between siblings — prove the guard is present and necessary on one path and genuinely absent or mis-scoped on the reachable one, not merely that an auth keyword appears somewhere in the file. Cite both the guarded sibling and the unguarded reachable handler (file:line each).",
+      "grounding": [
+        "CWE-862: Missing Authorization",
+        "CWE-639: Authorization Bypass Through User-Controlled Key (IDOR)",
+        "OWASP Top 10 A01:2021 Broken Access Control"
+      ],
+      "confirmable": "Source-static hypothesis. The skeptic must confirm the sibling truly shares the resource, the guard is genuinely absent (not enforced by a global filter/middleware or an earlier check), and the unguarded path is reachable by a lower-privileged principal.",
+      "uid": "appsec/method-authz-differential",
+      "engine_lens": null,
+      "route": "appsec-source-static"
+    },
+    {
+      "id": "template-xss-ssti",
+      "name": "Template / HTML-render XSS and server-side template injection (SSTI)",
+      "cwe": "CWE-79",
+      "domain": "appsec",
+      "subsystem": "view / template rendering (client and server frameworks)",
+      "pattern": "User- or controller-supplied input reaches an HTML or template render context WITHOUT context-correct escaping — either interpolated into markup that the browser parses as HTML/JS (XSS), or concatenated into the TEMPLATE SOURCE itself so the engine evaluates attacker text as template code (SSTI, which can reach RCE). This is DATA crossing into a code/markup context, distinct from a template engine legitimately compiling a developer-authored template (that is by-design and NOT a finding).",
+      "detection_signature": "Client: Angular bypassSecurityTrustHtml/bypassSecurityTrustScript/bypassSecurityTrustResourceUrl and [innerHTML]=userValue; React dangerouslySetInnerHTML={{__html: userValue}}; Vue v-html=userValue; raw DOM innerHTML/outerHTML/insertAdjacentHTML/document.write with tainted data. Server-side templates: Handlebars triple-mustache {{{x}}} / Handlebars.SafeString(userInput); Velocity/Freemarker/Thymeleaf where user input is spliced into the template STRING (not the model) — e.g. new Template(userStr) or th:utext with tainted data; JSP <%= %> without <c:out>; Jinja2/Django render_template_string(userStr) / Template(userStr); ERB/Liquid built from user input; EJS/Pug/Mustache raw-output helpers fed tainted data; string concatenation building the template passed to a compile()/render() call. Trace user input to the render/interpolation sink and check for a context-correct escaper on the path.",
+      "challenge_hint": "Hunt TEMPLATE/HTML XSS and SERVER-SIDE TEMPLATE INJECTION (SSTI) only. Find user/controller input reaching an HTML or template render without context-correct escaping: Angular bypassSecurityTrustHtml/[innerHTML]; React dangerouslySetInnerHTML; Vue v-html; raw innerHTML/document.write; Handlebars {{{triple}}}/SafeString; Velocity/Freemarker/Thymeleaf(th:utext)/JSP(<%= %>)/Jinja2 render_template_string / Template(userStr) where DATA is spliced into the template SOURCE (SSTI → possible RCE); EJS/Pug/Mustache raw helpers fed tainted data. Trace the taint from entry point to the render sink and cite the missing/incorrect escaper (file:line). IMPORTANT: a template engine compiling a DEVELOPER-authored template is by-design — the finding is untrusted DATA reaching the markup/template-code context. Do NOT let the intended-use gate talk you out of hunting this class; hunt it and report the precondition explicitly.",
+      "grounding": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation (XSS)",
+        "CWE-1336: Improper Neutralization of Special Elements Used in a Template Engine (SSTI)",
+        "OWASP Top 10 A03:2021 Injection"
+      ],
+      "confirmable": "Source-static hypothesis. The skeptic must confirm the sink renders into a browser/template-code context, the escaper is absent or context-wrong, and the input is genuinely untrusted DATA rather than a developer-authored template (the intended-use gate distinguishes these).",
+      "uid": "appsec/template-xss-ssti",
+      "engine_lens": null,
+      "route": "appsec-source-static"
+    },
+    {
+      "id": "sso-trust",
+      "name": "SSO / identity-federation trust flaw (SAML / OIDC / JWT assertion validation)",
+      "cwe": "CWE-347",
+      "domain": "appsec",
+      "subsystem": "authentication / identity federation (SAML, OIDC, OAuth2, JWT)",
+      "pattern": "A relying party accepts a federated identity assertion without fully verifying its authenticity, integrity, or provenance: an unverified or forged SAML assertion/response signature, XML signature wrapping (XSW) where the signed element and the consumed element differ, the IdP↔RP allowlist (issuer / audience / entityID / redirect_uri) not enforced SERVER-SIDE, RelayState/redirect_uri reflected or validated with a loose prefix/substring match, or a JWT accepted with alg:none, an unverified signature, or algorithm-confusion (RS256 verified as HS256 with the public key as the HMAC secret). The trust boundary is the assertion — any gap lets an attacker mint or replay an identity.",
+      "detection_signature": "SAML: assertion consumed before/without signature validation, validateSignature disabled or wrapped in try/catch that continues, response parsed with an XML lib vulnerable to XSW, Assertion vs Response signature scope not pinned, audience/issuer/NotOnOrAfter/InResponseTo unchecked. OIDC/OAuth2: id_token accepted without verifying iss/aud/exp/nonce, redirect_uri matched by startsWith/contains instead of exact registered value, state/PKCE absent, IdP discovery/JWKS fetched over an attacker-influenceable URL. JWT: jwt.decode without verify, algorithms allowing 'none', a verify call that trusts the token's own alg header, or an HMAC verify keyed with a public key. Look for the MISSING or bypassable check on the assertion path, not just the presence of a SAML/OIDC library.",
+      "challenge_hint": "Hunt SSO / IDENTITY-FEDERATION TRUST flaws only (SAML, OIDC, OAuth2, JWT). Find where a relying party trusts a federated assertion without full server-side verification: unverified/forged SAML signature or signature-validation that continues on failure; XML signature wrapping (signed element ≠ consumed element); issuer/audience/entityID or redirect_uri allowlist NOT enforced server-side (or matched by startsWith/substring); RelayState/redirect_uri reflection; missing state/nonce/PKCE; JWT with alg:none, unverified signature, or RS256↔HS256 algorithm-confusion (public key used as HMAC secret). Prove the specific check on the assertion path is absent or bypassable and cite it (file:line) — the mere presence of a SAML/OIDC/JWT library is not the finding.",
+      "grounding": [
+        "CWE-347: Improper Verification of Cryptographic Signature",
+        "CWE-287: Improper Authentication",
+        "CWE-290: Authentication Bypass by Spoofing",
+        "OWASP Top 10 A07:2021 Identification and Authentication Failures"
+      ],
+      "confirmable": "Source-static hypothesis. The skeptic must confirm the assertion is consumed on a path where the specific verification (signature, issuer/audience, redirect_uri exact-match, JWT alg pinning) is genuinely missing or bypassable and reachable by an unauthenticated attacker.",
+      "uid": "appsec/sso-trust",
+      "engine_lens": null,
+      "route": "appsec-source-static"
+    },
+    {
+      "id": "resource-exhaustion-dos",
+      "name": "Resource-exhaustion / algorithmic DoS from attacker-controlled loop, sleep, or allocation",
+      "cwe": "CWE-400",
+      "domain": "appsec",
+      "subsystem": "request handling / parsing / scheduling (any runtime)",
+      "pattern": "An attacker-controlled value drives an unbounded loop, sleep/delay, allocation, decompression, fan-out, or backtracking, with no cap, timeout, or ratio check — letting a single cheap request consume disproportionate CPU, memory, threads, or time. Includes a header/param fed into a sleep (Retry-After → Thread.sleep), a decompression ratio / zip-bomb (inflate without a size/ratio limit), catastrophic-backtracking regex (ReDoS) on user input, an unbounded fan-out (N sub-requests from a user-supplied N), and mass-assignment / unbounded collection sizing driven by request data.",
+      "detection_signature": "A loop bound, sleep duration, allocation size, or recursion depth read from request data without a clamp: Thread.sleep/setTimeout/time.sleep/Task.Delay whose argument is a parsed header/param (e.g. Retry-After); GZIP/Zip/Inflater/gunzip/zlib reading into an unbounded buffer with no maxSize/ratio guard; new byte[n]/Array(n)/malloc(n)/list * n where n is attacker-supplied; regexes with nested quantifiers ((a+)+, (.*)*, (\\d+)+) matched against user input; a for/while whose iteration count is a request field; JSON/XML/YAML parsed with no depth/size limit; a paginated/batch endpoint taking a user-supplied count/limit with no server cap; ORM/mass-assignment binding an entire request body to a model. Trace the attacker-controlled magnitude to the unbounded consumer.",
+      "challenge_hint": "Hunt RESOURCE-EXHAUSTION / ALGORITHMIC DoS only: an attacker-controlled value driving an unbounded loop, sleep, allocation, decompression, fan-out, or regex backtracking with no cap/timeout/ratio. Look for — a header/param fed into Thread.sleep/setTimeout/time.sleep/Task.Delay (e.g. Retry-After → sleep); decompression without a size/ratio limit (zip-bomb, Inflater/gunzip/zlib into an unbounded buffer); ReDoS (nested quantifiers on user input); new byte[n]/Array(n)/malloc(n) with attacker-supplied n; a loop whose count is a request field; JSON/XML/YAML parsed with no depth/size limit; an endpoint honoring a user-supplied count/limit with no server cap; mass-assignment binding a whole request body. Cite the attacker-controlled magnitude and the unbounded consumer (file:line) and show there is no clamp on the path.",
+      "grounding": [
+        "CWE-400: Uncontrolled Resource Consumption",
+        "CWE-1333: Inefficient Regular Expression Complexity (ReDoS)",
+        "CWE-409: Improper Handling of Highly Compressed Data (Data Amplification / zip-bomb)",
+        "OWASP Top 10 A04:2021 Insecure Design / A05:2021 Security Misconfiguration"
+      ],
+      "confirmable": "Source-static hypothesis. The skeptic must confirm the magnitude is genuinely attacker-controlled, the consumer is genuinely unbounded on the reachable path, and the impact is disproportionate (a single request → outsized CPU/memory/time), not a trivially bounded operation.",
+      "uid": "appsec/resource-exhaustion-dos",
+      "engine_lens": null,
+      "route": "appsec-source-static"
+    }
+  ]
+}

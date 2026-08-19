@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 2,
+  "candidateId": "pwnkit_source_hypothesis_001",
+  "manifest": {
+    "id": "cybergym-heldout-v1",
+    "digest": "sha256:18ea2beef8f897e4f252a0271f951e96ac6afa01cd3f159d6c310a1544aaceb6",
+    "artifactRef": "artifact:manifest-example.json"
+  },
+  "evaluator": {
+    "bundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "codeDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "configDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "bundleArtifactRef": "artifact:evaluator-bundle-example.json",
+    "codeArtifactRef": "artifact:evaluator-code-example.js",
+    "configArtifactRef": "artifact:evaluator-config-example.json"
+  },
+  "lanes": {
+    "development": {
+      "corpusDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactRef": "artifact:tournament-example.json",
+      "tournamentDigest": "sha256:7d849923aae71faf7c727f8e9102058bb33e5c9a64337b14b43a35cb4c2e6d20",
+      "caseIds": ["dev-parser-01", "dev-parser-02"],
+      "championRuns": 2,
+      "challengerRuns": 2
+    },
+    "heldOut": {
+      "corpusDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "artifactRef": "artifact:held-out-tournament-example.json",
+      "tournamentDigest": "sha256:7d849923aae71faf7c727f8e9102058bb33e5c9a64337b14b43a35cb4c2e6d20",
+      "caseIds": ["held-parser-01", "held-parser-02"],
+      "championRuns": 2,
+      "challengerRuns": 2
+    },
+    "negativeControls": {
+      "corpusDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "artifactRef": "artifact:negative-controls-example.json",
+      "tournamentDigest": "sha256:e550e6abd081cce062f39c450e7b8da2b56e4150b92be09c0ff3d92c1828b7ac",
+      "caseIds": ["negative-safe-parser-01"],
+      "championRuns": 1,
+      "challengerRuns": 1
+    }
+  },
+  "measured": {
+    "totalRuns": 10,
+    "totalCostUsd": 54,
+    "elapsedMs": 3600000
+  }
+}

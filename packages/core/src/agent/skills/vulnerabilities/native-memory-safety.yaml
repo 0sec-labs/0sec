@@ -1,0 +1,93 @@
+id: native-memory-safety
+name: "Native (C/C++) Memory Safety"
+description: "Untrusted-length parsing, OOB read/write, integer overflow, and use-after-free in C/C++ and kernel code — the class behind our accepted kernel 0-days (UAF, stack-overflow) and bluez/bitlbee overflows. Targets the highest-value attack surface: parsers of attacker-controlled binary input."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+tags:
+  - memory-safety
+  - buffer-overflow
+  - out-of-bounds
+  - use-after-free
+  - integer-overflow
+  - c
+  - cpp
+  - kernel
+  - parser
+triggers:
+  - "buffer.?overflow|out.?of.?bounds|oob|use.?after.?free|uaf"
+  - "memcpy|memmove|strcpy|strcat|sprintf|alloca"
+  - "malloc|kmalloc|kzalloc|calloc|realloc|free\\(|kfree"
+  - "len|length|size|count|nmemb"
+  - "\\[.*\\]\\s*=|->\\w+\\[|stack.?buf|on.?stack"
+  - "recv|read\\(|parse|decode|deserialize|unmarshal"
+  - "socks|tlv|packet|header|record|frame|chunk"
+  - "skb|sk_buff|refcount|kref|put_device|netns"
+  - "\\.c\\b|\\.cc\\b|\\.cpp\\b|\\.h\\b"
+estimated_tokens: 1000
+content: |
+  ## Native (C/C++ / Kernel) Memory-Safety Methodology
+
+  This class produced our highest-value, externally-ACCEPTED findings (Linux
+  kernel UAF + stack-overflow 0-days, bluez/bitlbee overflows). The target is
+  always the same: **code that parses attacker-controlled binary input using a
+  length/count it doesn't fully trust-check.**
+
+  ### Phase 1: Find the untrusted-input parsers (highest-value surface)
+  Prioritize functions that read network/file/IPC data and walk it by a
+  length field:
+  - Protocol response/record parsers (SOCKS bound-address, TLV, ASN.1, packet
+    headers, snoop/pcap records, font/image chunk tables).
+  - `recv`/`read` loops that compute a `resp_len`/`record_len` from the FIRST
+    bytes and then read/copy that many more.
+  - Kernel: netlink/socket parsers, codec/driver ioctls, `skb` handling.
+
+  ### Phase 2: The bug patterns (what to actually check)
+  - **Trusting a length field**: `len = buf[4]; memcpy(dst, src, len)` where
+    `len` is attacker-controlled and `dst` is fixed-size → overflow. (bluez
+    btsnoop: *"trusts record length fields → stack buffer overflow."*)
+  - **Off-by-one / missing bound**: index `<=` instead of `<`, NUL terminator
+    not counted, `+1`/`-1` errors near a boundary.
+  - **Integer overflow → undersized alloc**: `malloc(count * size)` or
+    `len + hdr` wraps on a 32-bit/`size_t` boundary → small alloc, big write.
+    Check every arithmetic on an attacker-influenced length BEFORE the alloc.
+  - **Append/concat without remaining-space check**: `twitter_url_append()`
+    style — appends untrusted data into a buffer without checking space left
+    (bitlbee: heap buffer overflow via this).
+  - **Use-after-free** (kernel gold): an object freed on one path (error/
+    teardown/refcount-drop) then dereferenced on another — race in
+    init/cleanup, double `put`, freed `skb`/`dst` reused, `netns` teardown vs
+    in-flight work. Map the alloc → free → use triangle across call paths.
+
+  ### Phase 3: Validate the bound is actually missing
+  For a length-driven copy, find: where does the length come from, what bounds
+  it (a `min()`, a `if(len > sizeof buf) fail`, a growable buffer), and does the
+  check happen on the SAME value that's later used? Modern code often uses a
+  growable buffer (`Curl_bufq`, dynbuf) + re-checks `have >= need` — that is
+  SAFE even though it looks scary. Read the WHOLE function (if the file tool
+  truncates a large file, page through it — do not conclude from the first
+  screen).
+
+  ### Phase 4: Confirm before save_finding
+  - Show the source (untrusted length/data) → the unchecked copy/free/use, with
+    file:line, and why the surrounding checks don't cover the value.
+  - For UAF: the alloc site, the free site, the use site, and the path/race that
+    orders free-before-use.
+  - PoC: a crafted input (and, for kernel, a syzlang/C repro under the verify
+    sandbox) that triggers an ASAN/KASAN splat. A decoded sanitizer report is
+    the gold standard.
+
+  ### Anti-false-positive checklist
+  - Is the destination fixed-size, or a growable/exact-sized alloc?
+  - Is the length re-checked against remaining space on the value actually used?
+  - Is the "freed" object really reachable after free on a real path?
+  Bounded copy into a sized buffer with a correct check = NOT a finding. Curl's
+  `socks5_recv_resp1` is the textbook *safe* example (resp_len ≤ 262, growable
+  bufq, re-checked) — recognizing safe code is as important as finding bugs.
+
+  ### Real wins from this engine
+  - Linux kernel: ACCEPTED UAF and stack-overflow 0-days (the highest-value
+    output the engine has produced).
+  - bluez btsnoop: stack buffer overflow from trusting record length fields.
+  - bitlbee `twitter_url_append()`: heap buffer overflow via untrusted input.

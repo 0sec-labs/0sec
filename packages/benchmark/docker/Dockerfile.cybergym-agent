@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1.7
+#
+# Reproducible CyberGym agent image. The host passes only a generated task,
+# a write-only result directory, and root-owned short-lived model credentials.
+FROM node:24.5.0-bookworm
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV CI=1 \
+    NODE_ENV=production \
+    COREPACK_HOME=/opt/corepack \
+    HOME=/tmp \
+    PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash \
+      binutils \
+      build-essential \
+      ca-certificates \
+      clang \
+      cmake \
+      file \
+      gdb \
+      git \
+      make \
+      ninja-build \
+      pkg-config \
+      python3 \
+      tar \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+
+WORKDIR /opt/pwnkit
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY scripts ./scripts
+COPY assets ./assets
+COPY docs ./docs
+COPY packages ./packages
+COPY test-targets ./test-targets
+COPY LICENSE README.md ./
+
+RUN pnpm install --frozen-lockfile --prod=false && pnpm build
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin agent \
+    && useradd --create-home --uid 10002 --shell /usr/sbin/nologin candidate \
+    && mkdir -p /results /opt/corepack /run/cybergym \
+    && chown -R agent:agent /results /opt/corepack /run/cybergym
+
+# The trusted Node runner stays root solely to read the root-owned credential
+# file. Model-written Python is explicitly spawned as `candidate` (UID 10002).
+
+ENTRYPOINT ["pnpm", "--filter", "@pwnkit/benchmark", "cybergym"]

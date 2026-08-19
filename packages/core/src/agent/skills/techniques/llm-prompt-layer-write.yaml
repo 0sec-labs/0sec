@@ -1,0 +1,68 @@
+id: llm-prompt-layer-write
+name: "LLM Prompt-Layer Write (system-prompts-in-DB)"
+description: "With a DB foothold on an LLM app, detect system prompts / guardrails / model configs stored in the DB and model the WRITE impact (prompt poisoning, guardrail removal, output-channel exfil, model-config tamper). Verification-only — read and flag, no destructive writes."
+version: 1
+applicable_roles:
+  - attack
+tags:
+  - llm
+  - prompt-injection
+  - owasp-llm01
+  - owasp-llm06
+  - db-foothold
+  - persistent-injection
+triggers:
+  - "system[_\\s-]?prompt"
+  - "\\bguardrail"
+  - "prompt[_\\s-]?template"
+  - "model[_\\s-]?config"
+  - "safety[_\\s-]?settings"
+  - "\\bLLM\\b"
+  - "\\bchatbot\\b"
+  - "information_schema"
+  - "\\bSQLi\\b"
+estimated_tokens: 550
+content: |
+  ## LLM Prompt-Layer Write (system-prompts-in-DB — OWASP LLM01/LLM06)
+
+  You already hold a DB foothold (SQLi, leaked creds, exposed store, admin
+  write panel) on an LLM-backed app. The control layer — system prompt,
+  guardrails, tool/model config, RAG sources — often lives in DB rows. If those
+  are WRITABLE and re-read at inference, you get persistent, server-side prompt
+  injection on every response, invisible to users.
+
+  VERIFICATION-ONLY: read and flag. Do NOT perform destructive writes — prove
+  the write path (privilege + re-read) without mutating production prompt rows.
+
+  ### Step 1: Locate the prompt layer
+  - Name signals: system_prompt, prompt(s), prompt_template, instructions,
+    persona, assistant_config, agent_config, model_config, guardrail(s),
+    safety_settings, policy, llm_settings.
+  - Content signals: a long instruction-like text ("You are…", "Never reveal…"),
+    temperature / top_p / model-name fields beside a big text blob.
+  - Read-only introspection only: information_schema.columns, SHOW TABLES,
+    getCollectionNames(), SELECT … LIMIT 1. Sample one row to confirm shape.
+
+  ### Step 2: Confirm the WRITE path without writing
+  - Check privileges, don't mutate: SHOW GRANTS, has_table_privilege(...,'UPDATE'),
+    the app's own admin "edit prompt" endpoint.
+  - Confirm the app re-reads the row at inference (not baked into code/env):
+    the prompt text appears in a DB row AND in model behavior; an admin UI edits
+    it live; a settings table the worker queries per request.
+
+  ### Step 3: Classify the impact (no live tampering)
+  - prompt_poisoning — rewrite system prompt/persona → hijack every response.
+  - guardrail_removal — edit safety/refusal/policy or flip a moderation flag →
+    jailbreak-by-config.
+  - output_channel_exfil — instruct markdown-image/link exfil → silent data
+    exfiltration each turn (pairs with llm-insecure-output-handling).
+  - model_config_tamper — swap model, raise temperature, rewire tool config →
+    degraded safety / attacker-steered agency (pairs with llm-excessive-agency).
+
+  ### Step 4: Narrate + save
+  - Narrative: which row/column, impact class(es), blast radius (all users /
+    one tenant), persistence (survives restarts — it's in the DB), and the
+    writable + re-read proof.
+  - save_finding with the table/column, a read-only sample, the privilege/re-read
+    evidence, the impact classification, and the narrative. State explicitly that
+    NO destructive write was performed.

@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "paths": {
+      "@pwnkit/core": ["packages/core/src/index.ts"],
+      "@pwnkit/db": ["packages/db/src/index.ts"],
+      "@pwnkit/shared": ["packages/shared/src/index.ts"],
+      "@pwnkit/templates": ["packages/templates/src/index.ts"]
+    }
+  }
+}

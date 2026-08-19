@@ -1,0 +1,91 @@
+id: structural-sqli
+name: "Structural / JSON-Key SQL Injection"
+description: "SQL injection where the injectable surface is a JSON KEY / field name concatenated into SQL (ORDER BY, SELECT column, dynamic WHERE) — not a parameterised value. Driven by an error-message feedback loop that refines payloads over blind iterations."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+tags:
+  - sqli
+  - structural-sqli
+  - json-key
+  - blind-sqli
+  - order-by
+  - error-based
+  - database
+triggers:
+  - "ORDER\\s+BY"
+  - "GROUP\\s+BY"
+  - "Unknown column '[^']*' in"
+  - "column \"[^\"]*\" does not exist"
+  - "Invalid column name"
+  - "no such column"
+  - "sort(_?by|Field|_?field|_?order|_?column)"
+  - "order(_?by|Field|_?field|_?column|_?dir)"
+  - "\"(sort|order|column|field|groupBy|orderBy)\"\\s*:"
+  - "near \"[^\"]*\": syntax error"
+  - "unrecognized token"
+estimated_tokens: 700
+content: |
+  ## Structural / JSON-Key SQL Injection
+
+  Most SQLi tooling (ZAP, commercial DAST) fuzzes JSON **values**. Values are
+  usually parameterised, so they find nothing. The high-value miss is when the
+  backend concatenates a JSON **key / field name** into SQL — these are almost
+  never parameterised because you can't bind an identifier:
+
+  - `ORDER BY ${key}` / `GROUP BY ${key}` (sort/pagination params)
+  - `SELECT ${key} FROM ...` (caller-chosen projection / column allow-list bug)
+  - dynamic `WHERE ${key} = ?` filter builders
+  - `{"sort": "name", "dir": "asc"}` → `ORDER BY name asc`
+
+  This is the "structural" vector. The surface is the **key**, not the value.
+
+  ### Step 1: Find key-driven SQL surfaces
+  Look for request bodies / params whose KEYS or key-values name columns:
+  `sort`, `sort_by`, `sortField`, `order`, `order_by`, `orderBy`, `column`,
+  `field`, `group_by`, `select`, `columns[]`, `filter[<key>]`. GraphQL/JSON
+  APIs with arbitrary filter objects are prime. The tell in error output:
+  `Unknown column '...'`, `column "..." does not exist`, `Invalid column name`,
+  `no such column` — the server tried your key AS an identifier.
+
+  ### Step 2: Drive the blind error-iteration loop
+  This is blind (no reflected data), so confirm via a differential error loop —
+  exactly what the `structural-sqli` probe module automates:
+
+  1. **Break:** inject a key with a trailing quote: `name'`. A statement like
+     `SELECT name' FROM ...` is now unbalanced. A DB error confirms the key
+     reaches the parser.
+  2. **Fingerprint:** read the error to pin the dialect:
+     - MySQL/MariaDB: "You have an error in your SQL syntax", "Unknown column"
+     - PostgreSQL: "unterminated quoted string at or near", PSQLException
+     - MSSQL: "Unclosed quotation mark", "Incorrect syntax near"
+     - Oracle: `ORA-NNNNN`, "quoted string not properly terminated"
+     - SQLite: "unrecognized token", "no such column"
+  3. **Balance (refine):** re-close the quote and comment out the tail using the
+     DISCOVERED dialect's comment syntax — MySQL needs `-- ` (trailing space),
+     others accept `--`: `name'-- -`. If this now parses cleanly (no error)
+     while the bare `name'` errored, the key is being parsed as SQL → confirmed.
+  4. **Iterate:** if the balanced close still errors, the dialect guess or
+     close syntax was wrong — refine and retry within budget.
+
+  ### Step 3: Prove impact (minimal, verification-oriented)
+  Once structural injection is confirmed on a key:
+  - `ORDER BY` boolean oracle: `...,(CASE WHEN (1=1) THEN name ELSE id END)` —
+    flips row order on a true/false condition without quotes.
+  - Error-based extraction (MySQL): `ORDER BY extractvalue(1,concat(0x7e,version()))`.
+  - Postgres: `ORDER BY 1=cast(version() as int)` surfaces the version in the
+    cast error.
+  Extract the **minimum** non-sensitive proof (DB version, `current_user`, one
+  `information_schema` row). Do NOT dump data.
+
+  ### Step 4: Emit the finding with the iteration trail
+  Save the finding with the ordered probe trail (each payload key → response
+  verdict → dialect), the confirming differential (broken errored, balanced did
+  not), and the dialect. Assume false-positive until the differential holds.
+
+  ### Why scanners miss this
+  Identifier-position injection has no quote/value to fuzz and no reflected
+  output — value-oriented scanners skip it. The key insight: keys naming SQL
+  identifiers are concatenated, and the error-message loop turns a blind
+  identifier surface into a confirmable one.

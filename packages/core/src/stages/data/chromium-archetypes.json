@@ -1,0 +1,204 @@
+{
+  "provenance": "0sec-authored (NOT ported from 0verse — 0verse's archetypes.json is Linux-kernel-only, no browser registry exists). Grounded in public Chrome VRP writeups, Project Zero, v8CTF blogs, and CVE/NVD entries, several confirmed by fetching the writeup text directly, 2026-07-05. IMPORTANT HONEST CAVEAT: unlike the Linux kernel pack, this repo has NO Chromium build lane (no `out/Release` compile, no ASan/libFuzzer harness, no v8CTF live-instance submit path) today — every archetype below is SOURCE-STATIC ONLY: a grep/read hit is a hypothesis for human/skeptic review, never a proven-confirmable claim, and several entries below explicitly flag where the cited symbol name comes from a third-party writeup rather than an independently-verified read of chromium/v8 source (no local checkout existed at authoring time). Chromium/V8 C++ identifiers are PascalCase/camelCase, NOT snake_case like Linux/FreeBSD kernel C — see CHROMIUM_BARE_WORDS in archetype-catalog.ts; without it `symbolsFromDetectionSignature`'s underscore heuristic would yield zero candidates for nearly every entry here.",
+  "archetypes": [
+    {
+      "id": "V8-01",
+      "name": "TurboFan/Maglev speculative type confusion via an eliminated or unsound Map check",
+      "cwe": "CWE-843",
+      "subsystem": "v8/src/compiler (TurboFan), v8/src/maglev (Maglev) — JIT type feedback and redundancy elimination",
+      "pattern": "TurboFan/Maglev speculatively compiles JS assuming an object's Map (hidden class) and elements-kind stay unchanged for the rest of the compiled function, guarded by a CheckMap/CheckMaps node. A node that DOES mutate the Map or elements-kind (a transition, a species/prototype-triggered side effect, a call into user code) is mislabeled as side-effect-free, or its aliasing with an already-checked value is inferred unsoundly — so the compiler's redundancy-elimination pass removes the CheckMap that would have caught the runtime mismatch. Generated machine code then treats a value of one shape (e.g. a dictionary-mode object, a double-elements array) as if it still had the shape assumed at compile time, corrupting memory the moment the two disagree.",
+      "detection_signature": "Grep for `TurboFan`, `Maglev`, `CheckMap`, `TransitionElementsKind`, `InferMaps`, `JSCallReducer`, `KeyedStoreIC` (all real V8 compiler identifiers, PascalCase/camelCase — no underscores, needs CHROMIUM_BARE_WORDS). Real shape: a compiler-reducer function that infers/propagates a Map for a node without re-validating it after a node the reducer's side-effect model calls read-only (`kNoWrite`) but that actually installs a new Map (e.g. `Object.create`, an elements-kind transition, a keyed store's IC handler) — the tell is a `CheckMap`/`CheckMaps` node that a later pass proves 'redundant' against an earlier check separated by such a node.",
+      "grounding": [
+        "CVE-2025-2135 (V8CTF first-blood, zero-day found via fuzzing: TurboFan's InferMapsUnsafe() fails to handle aliasing across the newly-introduced TransitionElementsKindOrCheckMap node, confusing object-elements and double-elements arrays for arbitrary R/W within the V8 sandbox; verified via Zellic writeup https://www.zellic.io/blog/pwning-v8ctf/)",
+        "CVE-2018-17463 (V8's CreateObject operator was tagged Operator::kNoWrite instead of kNoProperties even though Object.create() forces a FastProperties->DictionaryProperties Map transition; TurboFan's redundancy pass then eliminated the subsequent CheckMap, letting compiled code treat a NameDictionary as a FixedArray — type confusion chained to addrOf/fakeObj via WebAssembly memory corruption; verified via jhalon.github.io writeup)",
+        "CVE-2023-3079 (type confusion in KeyedStoreIC::StoreElementHandler()'s fast-path handler selection — reported as an in-the-wild V8 0-day, exact handler-selection root cause per public gist analysis, no full Google RCA published at authoring time)"
+      ],
+      "confirmable": "Plausible by source inspection when the reducer/side-effect-model mismatch is directly visible (as in CVE-2018-17463's kNoWrite mislabel), but CONFIRMING that a given CheckMap elimination is unsound in general requires tracing the specific reducer's proof obligations and often a compiled-output diff — genuinely hard without a build. No V8-build/fuzz lane exists in this repo; treat every hit as a hypothesis for a human V8-compiler-literate reviewer, not an auto-confirmed finding.",
+      "domain": "chromium",
+      "uid": "chromium/V8-01",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "V8-02",
+      "name": "Maglev class-literal / prototype-chain compilation OOB",
+      "cwe": "CWE-787",
+      "subsystem": "v8/src/maglev (class heritage / FastNewObject compilation path)",
+      "pattern": "When Maglev compiles a class declaration with a parent class (`class B extends A`), it must walk the full prototype/constructor chain to size and lay out the resulting object and its property backing store. A miscount in that walk (e.g. an off-by-one in how many ancestor constructors' own-property slots get reserved, or a stale cached count reused across an inline cache) produces a JIT-compiled fast path that writes past the object it just allocated.",
+      "detection_signature": "Grep for `Maglev`, `BuildClassLiteral`, `ClassBoilerplate`, `FastNewObject` (PascalCase, no underscores — needs CHROMIUM_BARE_WORDS). Real shape: a Maglev builder function for class-literal compilation that computes an allocation size or property-slot count from a parent-class chain walk, where the size feeding the actual write does not match the size used for the allocation.",
+      "grounding": [
+        "CVE-2024-0517 (Chrome <120.0.6099.224: Maglev out-of-bounds write when compiling a class that has a parent class; publicly analyzed by Exodus Intelligence and multiple independent writeups, no single canonical Google RCA found in this pass)"
+      ],
+      "confirmable": "The size-mismatch shape is describable but confirming it requires reproducing Maglev's exact allocation-vs-write size computation for a given class shape — effectively requires reading (or stepping through) the Maglev builder itself. No build lane exists in this repo; route to a human V8-internals reviewer, do not auto-confirm from a grep hit alone.",
+      "domain": "chromium",
+      "uid": "chromium/V8-02",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "V8-03",
+      "name": "JSTypedArray/ArrayBuffer OOB via a callback- or getter-triggered backing-store change mid-builtin",
+      "cwe": "CWE-416 / CWE-125 / CWE-787",
+      "subsystem": "v8/src/builtins, v8/src/objects (JSTypedArray, ArrayBuffer, BackingStore) — any builtin that iterates a typed array/array-buffer view while user JS can run mid-iteration",
+      "pattern": "A builtin (Array.prototype method, TypedArray method, a DataView read/write, a species-constructor path) caches a TypedArray's/ArrayBuffer's length or backing-store pointer once at entry, then calls back into user JS during iteration (a getter, `valueOf`, `Symbol.species`, a comparator) that can shrink, detach, or resize (`ArrayBuffer.prototype.resize`/`transfer`) the underlying store. The builtin resumes iterating against the STALE cached length/pointer, reading or writing memory that either no longer belongs to the buffer or has moved (GC-relocated) — an OOB read/write or a use-after-free of the freed backing store.",
+      "detection_signature": "Grep for `JSTypedArray`, `BackingStore`, `ArrayBufferView`, `Detach` (PascalCase — needs CHROMIUM_BARE_WORDS; `byte_length` is the one snake_case exception, matched by the default heuristic). Real shape: a builtin/runtime function that reads `byte_length()`/`backing_store()`/`elements()` ONCE before a loop or before invoking a user-supplied callback (getter, valueOf, compare function, species constructor), then keeps using that cached value/pointer for the rest of the function without re-validating it after the callback returns.",
+      "grounding": [
+        "CVE-2016-1646 (V8 Slow_ArrayConcat: iterating a FAST_HOLEY_ELEMENTS array with a custom Object.defineProperty getter — the getter shrinks the array and forces a GC that moves the backing store; concat continues with the stale offset, producing an OOB read used to leak heap pointers and build a fake ArrayBuffer; verified via 4B5F5F4B/Exploits writeup)",
+        "Documented as a recurring V8 bug-class family in Project Zero's 'Trashing the Flow of Data' (googleprojectzero.blogspot.com/2019/05) and multiple *CTF oob-v8 writeups (faraz.faith, starctf 2019) — cited as pattern corroboration; no single additional Chromium CVE number was independently pinned to the literal `ArrayBuffer.prototype.transfer()`/detach-during-callback shape in this research pass, marked honestly."
+      ],
+      "confirmable": "The 'cache-then-callback-then-reuse' shape is grep-visible once the callback site is identified, but confirming actual OOB impact requires tracing whether the cached value is truly re-read afterward (many call sites correctly re-fetch it) — a real false-positive risk. No V8 execution/fuzz lane exists in this repo; treat as a hypothesis.",
+      "domain": "chromium",
+      "uid": "chromium/V8-03",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "V8-04",
+      "name": "V8 GC/handle-scope lifetime bug: a reachable object incorrectly collected, or a v8::Local escapes its HandleScope",
+      "cwe": "CWE-416",
+      "subsystem": "v8/src/handles (v8::Local, v8::HandleScope, v8::Persistent), v8/src/heap (garbage collector reachability analysis)",
+      "pattern": "Two related lifetime failure shapes: (1) a bug in the garbage collector's own reachability/marking logic causes it to collect an object that is still reachable from a live root, so any embedder or engine code still holding a reference (a v8::Local<>, an internal Handle<>) now points at freed/reused memory; (2) an embedder holds a v8::Local<> past the lifetime of the v8::HandleScope that created it (returning it directly instead of through an v8::EscapableHandleScope::Escape), or stores a raw v8::Local in a place that outlives the current callback frame — either way, a stale handle is dereferenced after V8 has moved on.",
+      "detection_signature": "Grep for `v8::`, `Handle<`, `Local<`, `HandleScope`, `EscapableHandleScope`, `Persistent<` (PascalCase/namespaced — needs CHROMIUM_BARE_WORDS). Real shape for (1): a GC marking-visitor change or write-barrier omission that lets a root-reachable object be swept anyway. Real shape for (2): an embedder/native (Blink/V8-API-consumer) function that returns or stashes a `v8::Local<T>` obtained inside a `v8::HandleScope` without routing it through an `EscapableHandleScope`, or that keeps a `v8::Local` alive across a call that can trigger GC.",
+      "grounding": [
+        "CVE-2021-37975 (in-the-wild V8 0-day: a logic bug in the garbage collector's implementation let reachable JS objects be collected anyway, producing an arbitrary-object UAF; verified via the GitHub Security Lab / Project Zero 0days-in-the-wild RCA)"
+      ],
+      "confirmable": "GC-reachability bugs (shape 1) are effectively unconfirmable by source-static reading alone — they require deep, bug-specific GC-algorithm reasoning that historically only Google's own engineers and a handful of external researchers have done per-bug. The escaped-handle shape (2) is more directly grep/read-confirmable (a `v8::Local` returned or stored without an EscapableHandleScope is visible in the function body), but still needs a human to confirm the value is actually used post-escape. No dynamic V8 oracle exists in this repo; every hit here is a hypothesis.",
+      "domain": "chromium",
+      "uid": "chromium/V8-04",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "BLINK-01",
+      "name": "Oilpan use-after-free via a raw C++ pointer to a GarbageCollected object",
+      "cwe": "CWE-416",
+      "subsystem": "third_party/blink/renderer/platform/heap (Oilpan) and any Blink class deriving from GarbageCollected<T>",
+      "pattern": "A class managed by Blink's Oilpan GC (derives from `GarbageCollected<T>`) is referenced from another on-heap object, a stack frame that outlives a single task, or a callback closure via a bare C++ raw pointer (`T*`) instead of `Member<T>`/`WeakMember<T>`/`Persistent<T>`. Oilpan's tracing GC only follows `Member`/`WeakMember`/`Persistent` edges to determine liveness — a raw pointer is INVISIBLE to the collector, so the referenced object can be collected out from under the pointer the moment nothing Oilpan-visible still holds it, and the next dereference is a use-after-free.",
+      "detection_signature": "Grep for `GarbageCollected`, `MakeGarbageCollected`, `Member<`, `WeakMember<`, `Persistent<` (PascalCase, no underscores — needs CHROMIUM_BARE_WORDS). Real shape: a class deriving from `GarbageCollected<T>` (or a member/field of one) stored as a raw `T*` in another Oilpan-managed class, a `base::RepeatingCallback`/`base::OnceCallback` closure, or any structure that can outlive the current GC-safepoint-free region, instead of being wrapped in `Member<T>` (strong on-heap reference) or `WeakMember<T>` (weak, nulled on collection).",
+      "grounding": [
+        "CVE-2026-13965 (Chrome 150.0.7871.47, fixed 2026-06-30: use-after-free in Chromium's Oilpan garbage collector reachable via a crafted HTML page; per Windows Forum advisory summary, exact raw-pointer-vs-Member root cause not independently re-derived from source in this pass)",
+        "Design-doc corroboration: Blink's own Oilpan documentation (chromium.googlesource.com BlinkGCAPIReference.md / cppgc README) states plainly that 'raw pointers to on-heap objects create an edge Oilpan cannot observe' and are disallowed except on the native stack — i.e. this is a documented, standing footgun class, not a one-off."
+      ],
+      "confirmable": "Plausible by source inspection — a raw `T*` field/variable holding a `GarbageCollected` type where `Member<>`/`WeakMember<>`/`Persistent<>` would be expected is directly visible once the class hierarchy is known. False-positive risk: a raw pointer confined entirely to the native C++ stack within a single non-reentrant function is Oilpan-legal (see the design doc) — a hit needs a human to check the pointer doesn't cross a safepoint or outlive its stack frame. No Blink build/ASan lane exists in this repo.",
+      "domain": "chromium",
+      "uid": "chromium/BLINK-01",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "BLINK-02",
+      "name": "Script-reentrancy use-after-free: a JS callout frees/detaches the object a C++ frame still holds",
+      "cwe": "CWE-416 / CWE-367",
+      "subsystem": "third_party/blink/renderer/core (event dispatch, promise/microtask callbacks, media/DOM attribute getters-setters that can run author JS)",
+      "pattern": "Blink C++ code holds a raw pointer/iterator into a DOM node, an observer list, or another on-heap structure, then calls out into author-controlled JavaScript (dispatching an event, resolving a promise, invoking a getter/setter defined via a JS Proxy or a custom element callback). The JS callback reenters Blink and — directly or via a chain of other callbacks — removes/detaches/frees the very object or list the C++ frame is still iterating or referencing, so control returns to C++ holding a dangling reference.",
+      "detection_signature": "Grep for `GetExecutionContext`, `ScriptState`, `MakeGarbageCollected` (needs CHROMIUM_BARE_WORDS) alongside a loop or held reference over an observer/listener list or DOM structure that a same-function call into script (event dispatch, a V8 callback invocation, a promise `Then()`) can mutate. Real shape: a `for` loop over an observer/child list that calls a listener/callback mid-iteration without having first snapshotted the list or re-validated its iterator afterward.",
+      "grounding": [
+        "Documented bug-class pattern from Blink's own engineering notes (platform-architecture-dev mailing list: 'invoking a callback might modify observers and invalidate the for loop's iterator') and multiple historical exploit-db/skylined.nl UAF writeups in Blink event/media code (e.g. PresentationAvailabilityState::UpdateAvailability, SpeechRecognitionController) — no single current (2024-2026) CVE number was independently pinned to this exact shape in this research pass; HONEST GAP flagged rather than a fabricated citation.",
+        "Cross-domain analog for the general 'callback reenters and mutates state the caller still references' shape: CVE-2016-1646 (V8 Slow_ArrayConcat, see chromium/V8-03) — same reentrancy root pattern, different subsystem."
+      ],
+      "confirmable": "Requires tracing every call-into-script site against every structure it can reach and mutate — high recall, low precision by grep alone (Blink calls into script constantly; most call sites are already hardened with snapshot-then-iterate or Member<>/WeakMember<> references). Treat any hit as a weak hypothesis requiring careful manual reachability analysis; no dynamic Blink oracle exists in this repo.",
+      "domain": "chromium",
+      "uid": "chromium/BLINK-02",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "BLINK-03",
+      "name": "Missing Trace() registration -> Oilpan under-traces a reachable field -> premature collection",
+      "cwe": "CWE-416",
+      "subsystem": "third_party/blink/renderer/platform/heap (Oilpan tracing contract: every GarbageCollected class must implement/extend Trace())",
+      "pattern": "A `GarbageCollected<T>` class holds one or more `Member<>`/`WeakMember<>` fields but its `Trace(Visitor*)` method fails to call `visitor->Trace(field)` for one of them (a new field added without updating Trace(), or a field forwarded through a base-class Trace() that was not itself updated). Oilpan's mark phase never visits that edge, so the referenced object looks unreachable and gets collected even though a live `Member<>` still points at it — the next access through that field is a use-after-free.",
+      "detection_signature": "Grep for `Trace(`, `GarbageCollectedMixin`, `MakeGarbageCollected` (needs CHROMIUM_BARE_WORDS). Real shape: a class with one or more `Member<T>`/`WeakMember<T>`/`HeapVector<Member<T>>` fields whose `Trace()` override does not visit every such field (cross-check the field list in the class body against the `visitor->Trace(...)` calls in its `Trace()` method, including any base class's `Trace()` it must chain to via `Base::Trace(visitor)`).",
+      "grounding": [
+        "Documented as one of Oilpan's canonical, named pitfalls in Blink's own 'Oilpan 101: Basics, Common Pitfalls' engineering slide deck (docs.google.com presentation referenced from chromium.googlesource.com Oilpan docs) — a standing, named footgun class rather than a single CVE-pinned bug. NO specific CVE number was found/verified for a concrete instance in this research pass; marked honestly as a documented-pattern archetype, not CVE-grounded."
+      ],
+      "confirmable": "Directly checkable by source inspection: enumerate a class's Member<>/WeakMember<> fields and diff against its Trace() body's visitor->Trace() calls — a purely mechanical, high-precision check once the class's full field list and Trace() override (including inherited chains) are both in view. The main risk is missing an inherited Trace() in a base class defined in a different file. No dynamic confirmation lane exists in this repo, but this archetype is closer to 'confirmable by careful reading' than most others here.",
+      "domain": "chromium",
+      "uid": "chromium/BLINK-03",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "MOJO-01",
+      "name": "Missing/insufficient bounds validation in generated Deserialize()/StructTraits::Read()",
+      "cwe": "CWE-787 / CWE-20",
+      "subsystem": "mojo/public/cpp/bindings (generated .mojom bindings: StructTraits<>::Read, ArrayDataView/StringDataView readers), any browser-process interface implementation that consumes renderer-supplied structs",
+      "pattern": "A `.mojom`-generated `StructTraits<MojomDataViewType, T>::Read()` (or a hand-written override of it) copies a size, count, or offset field out of the wire-format `DataView` and uses it to size a browser-side buffer or index into an existing one, without validating it against the actual received payload length or an application-level bound. Because the renderer process is untrusted (Mojo's own security model: 'validate all messages from a less-privileged process'), a compromised or malicious renderer can supply an oversized/negative/inconsistent field, and the browser-process deserializer writes out of bounds trusting it.",
+      "detection_signature": "Grep for `Deserialize`, `StructTraits`, `ArrayDataView`, `DataView` (PascalCase — needs CHROMIUM_BARE_WORDS). Real shape: a `Read()`/`Deserialize()` implementation that reads a length/count/index field from the incoming `DataView` and uses it directly in a `memcpy`, buffer allocation, or array index in the PRIVILEGED (browser/GPU) process, without a preceding range check against the view's actual `size()`/against an application-defined maximum.",
+      "grounding": [
+        "CVE-2024-9369 (Chrome <129.0.6668.89: insufficient data validation in Mojo — a renderer that has already compromised its own process can send a crafted message that triggers an out-of-bounds write in a higher-privileged process via Mojo message handling; per NVD/Rapid7/cve.news summaries, exact deserializer function not independently re-derived from source in this pass)"
+      ],
+      "confirmable": "Directly checkable by source inspection once the specific `Read()`/`Deserialize()` override is in view — the presence or absence of a range check against `size()` before use is visible in the function body. Confirming actual EXPLOITABLE impact (vs. a bounds-checked-elsewhere false positive, since Mojo's validation can also happen in generated pre-Read validation code, not just the Read() body itself) needs a careful read of the full validation chain, which the grep alone doesn't establish. No Mojo fuzz/build lane exists in this repo.",
+      "domain": "chromium",
+      "uid": "chromium/MOJO-01",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "MOJO-02",
+      "name": "Mojo handle/capability confusion — a handle scoped to one process/purpose is honored by another",
+      "cwe": "CWE-863 / CWE-284",
+      "subsystem": "mojo/core (platform handle transport, PlatformHandle/Transport broker), any privileged interface that accepts a caller-supplied handle",
+      "pattern": "Mojo's cross-process handle-passing machinery (the platform-handle broker/Transport layer on Windows in particular) delivers a handle intended for one process, scope, or capability level to a different one — a logic error at the boundary between Chrome's sandbox and OS handle semantics — letting a lower-privileged holder present a handle that the receiving (higher-privileged) side treats as if it came from a trusted broker, or letting a handle escape its intended sandbox/scope entirely.",
+      "detection_signature": "Grep for `mojo::`, `PendingRemote`, `PendingReceiver`, `Remote<`, `Receiver<` (PascalCase/namespaced — needs CHROMIUM_BARE_WORDS) alongside handle-acquisition/transport code, especially any path that accepts a serialized handle/transport descriptor from a less-trusted process and resolves it to a live OS handle without re-validating which process/scope it was actually issued for.",
+      "grounding": [
+        "CVE-2025-2783 (Windows Mojo sandbox-escape 0-day, exploited in-the-wild in 'Operation ForumTroll': an incorrect handle is provided under certain conditions at the intersection of Chrome's sandbox and Windows handle semantics, letting a compromised renderer pivot to code execution outside the sandbox; reported by Kaspersky's Boris Larin/Igor Kuznetsov, fixed in Chrome 134.0.6998.177; verified via Fidelis/SentinelOne/Armis advisory summaries)",
+        "CVE-2025-4609 (insufficient validation in the `Transport::Deserialize` function — a fake broker transport is used to acquire a handle that bypasses the intended security check, enabling privilege escalation/sandbox escape; per OX Security writeup — `Transport::Deserialize` symbol name as reported by that writeup, not independently re-derived from source in this pass)"
+      ],
+      "confirmable": "These are boundary/logic bugs at the OS-IPC layer (Windows broker semantics in both cited CVEs) — genuinely hard to confirm by source-static reading alone without deep platform-specific handle-lifecycle knowledge. Treat any static hit purely as 'this code touches the handle-transport trust boundary, worth a specialist's look', never as a confirmed finding. No Mojo/Windows-broker execution lane exists in this repo.",
+      "domain": "chromium",
+      "uid": "chromium/MOJO-02",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "MOJO-03",
+      "name": "Browser-side Mojo interface implementation trusts a renderer-supplied index/size without validation",
+      "cwe": "CWE-125 / CWE-787 / CWE-20",
+      "subsystem": "any browser-process class implementing a `.mojom` interface (a `Receiver<T>`-bound `T` implementation) whose methods take an index, offset, or size parameter from the renderer",
+      "pattern": "Distinct from MOJO-01 (which is about the GENERATED deserialization code): here the generated bindings correctly deserialize the message, but the hand-written interface IMPLEMENTATION method itself then uses a renderer-supplied integer parameter (an index into a browser-side array/vector, a byte count for a copy) directly, without an application-level bounds check — Mojo's own security doctrine ('every message from a less-privileged process is untrusted input') is violated not at the wire-format layer but at the interface's business logic layer.",
+      "detection_signature": "Grep for `Receiver<`, `Remote<`, `PendingRemote` (needs CHROMIUM_BARE_WORDS) on a class implementing a mojom interface, where a method parameter (index/offset/count) is used to index a `std::vector`/`base::span`/array or size a `memcpy`/copy operation without a preceding `< size()`-style range check.",
+      "grounding": [
+        "General doctrine grounding: chromium/src docs/security/mojo.md ('Mojo Style Guide' / security doc) states the standing rule that all Mojo messages from a less-privileged process must be treated as untrusted input and validated by the receiving implementation, not just by generated bindings.",
+        "CVE-2024-9369 as a second witness (see chromium/MOJO-01) — the same 'trust the renderer-supplied field' failure mode, whether it lands in generated Read()/Deserialize() code or in the hand-written interface method; this archetype is the interface-implementation-layer sibling of MOJO-01, intentionally kept separate because the grep-detectable code SHAPE differs (interface impl method body vs. generated StructTraits)."
+      ],
+      "confirmable": "Directly checkable by source inspection once the specific interface-implementation method is in view — presence/absence of a bounds check against the parameter before use is visible. Same false-positive risk as MOJO-01: validation may legitimately live one layer up (a caller-side check, or a mojom `[EnableIf]`/range annotation) that the grep alone won't see. No Mojo fuzz/build lane exists in this repo.",
+      "domain": "chromium",
+      "uid": "chromium/MOJO-03",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "BASE-01",
+      "name": "Unwrapped raw C++ pointer UAF — the exact bug class MiraclePtr/raw_ptr<> was built to mitigate",
+      "cwe": "CWE-416",
+      "subsystem": "base/memory (raw_ptr<>/MiraclePtr/BackupRefPtr, base::WeakPtr<>) and any Chromium C++ code that stores a bare `T*`/`T&` to a heap-allocated object across a potential free point instead of `raw_ptr<T>`/`base::WeakPtr<T>`",
+      "pattern": "A class or function stores a bare, unwrapped raw pointer (not `raw_ptr<T>`, not `base::WeakPtr<T>`) to a heap object across a region of code where that object can be freed by another path (a callback, a different sequence/task, an owner releasing it) — when `raw_ptr<T>`/BackupRefPtr is NOT in play, the freed memory is neither poisoned nor quarantined, and the dangling pointer is a live, silently exploitable use-after-free exactly like the ones MiraclePtr was deployed browser-wide specifically to suppress.",
+      "detection_signature": "Grep for `raw_ptr` (the one genuinely snake_case-shaped symbol here — matched by the DEFAULT heuristic, no bareWords needed) and `WeakPtr`/`CheckedNumeric` (needs CHROMIUM_BARE_WORDS) as CONTRAST signals: a field/variable holding a pointer to a ref-counted or singly-owned class, stored as bare `T*` where the surrounding class's OTHER pointer fields use `raw_ptr<T>`/`base::WeakPtr<T>` — an inconsistency within the same class is the strongest tell that a raw pointer was missed rather than deliberately chosen (see raw_ptr.md's documented exceptions: pointers confined to a single stack frame with no intervening free-able call are legitimately raw).",
+      "grounding": [
+        "Chromium's own `base/memory/raw_ptr.md` design document frames this directly: 'MiraclePtr is Chromium's response to its biggest security problem, a constant stream of exploitable (and exploited) Use-after-Free bugs' — i.e. the entire raw_ptr<>/BackupRefPtr system exists BECAUSE unwrapped-raw-pointer UAF was (and, wherever raw_ptr<> is still absent, remains) the dominant Chrome exploit primitive class. No single CVE is cited here by design — this archetype targets the general, still-live class of UAFs in code that has NOT yet been converted to raw_ptr<>/WeakPtr<>, which by definition includes any newly-written or not-yet-audited Chromium C++."
+      ],
+      "confirmable": "The raw-pointer-vs-raw_ptr<>/WeakPtr<> inconsistency is directly visible by source inspection once the class's full field list is in view. Confirming an ACTUAL free-then-use reachability (vs. a raw pointer that is provably safe, e.g. truly stack-scoped) requires tracing every path that can free the pointee against every path that dereferences the raw field — a real analysis burden, and BackupRefPtr's browser-wide deployment means MANY of Chromium's raw_ptr<T> fields already convert would-be-UAFs into safe no-ops elsewhere, so a hit here is only interesting where raw_ptr<> is ABSENT. No dynamic lane exists in this repo.",
+      "domain": "chromium",
+      "uid": "chromium/BASE-01",
+      "engine_lens": null,
+      "route": "source-static"
+    },
+    {
+      "id": "BASE-02",
+      "name": "Integer overflow in a size/count multiplication feeding an allocation, bypassing CheckedNumeric",
+      "cwe": "CWE-190 / CWE-787",
+      "subsystem": "base/numerics (base::CheckedNumeric<>, base::CheckMul/CheckAdd, base::saturated_cast) callers that size a heap allocation or a memcpy from renderer- or content-controlled counts",
+      "pattern": "A buffer size is computed as a raw `count * element_size` (or similar multiplication/addition of two attacker-influenced values) in plain machine arithmetic instead of via `base::CheckedNumeric<>`/`base::CheckMul()`/`base::CheckAdd()` (Chromium's own overflow-safe-arithmetic idiom, directly analogous to FreeBSD's `mallocarray()` — see freebsd/MA-01). The multiplication wraps, the resulting allocation is far smaller than the code assumes, and a subsequent count-driven or fixed-size write runs off the end of the undersized buffer.",
+      "detection_signature": "Grep for `CheckedNumeric` (needs CHROMIUM_BARE_WORDS) as the ABSENCE signal alongside a raw multiplication/addition feeding a `new[]`/`malloc`/`base::HeapArray`/similar allocation call whose size argument traces back to renderer- or network-controlled input, with no `CheckedNumeric<>`/`CheckMul`/`CheckAdd`/`saturated_cast` guarding it.",
+      "grounding": [
+        "Pattern-grounded from Chromium's own `base::CheckedNumeric<>` design intent (the documented overflow-safe-arithmetic idiom whose absence is the tell, exactly mirroring how `mallocarray()`'s absence is the tell for freebsd/MA-01) and the general, well-known class of integer-overflow-into-allocation bugs across browser codebases. NO specific current (2024-2026) Chromium `base::`-layer CVE was independently found and verified pinned to exactly this shape in this research pass — most integer-overflow CVEs found during this research landed in V8 (elements/backing-store sizing) or media/codec code rather than base:: itself; marked honestly rather than fabricating a citation."
+      ],
+      "confirmable": "The raw-multiplication-with-no-CheckedNumeric-guard shape is directly visible by source inspection. Given no confirmed historical CVE was found for exactly this base::-layer shape in this pass, treat any hit with EXTRA skepticism relative to the other archetypes here until either a matching precedent is found or the specific call site is manually traced to a real OOB write. No dynamic lane exists in this repo.",
+      "domain": "chromium",
+      "uid": "chromium/BASE-02",
+      "engine_lens": null,
+      "route": "source-static"
+    }
+  ]
+}
