@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# pwnkit-cli — pre-built distribution image
+# pwnkit — pre-built distribution image
 #
 # Multi-stage build:
 #   stage 1 (builder): node:20 + pnpm, builds the bundled CLI in /app/dist
@@ -8,8 +8,7 @@
 #
 # Usage:
 #   docker run --rm -e AZURE_OPENAI_API_KEY=$KEY \
-#     ghcr.io/peaktwilight/pwnkit:latest scan --target https://example.com
-#
+#     ghcr.io/0sec-labs/pwnkit:latest scan --target https://example.com --scope /work/scope.json
 # Build args:
 #   INSTALL_SECLISTS=1     include SecLists wordlists (~1GB extra, off by default)
 #   AZUREHOUND_VERSION=vX  pin the AzureHound release (checksum-verified, see below)
@@ -167,8 +166,8 @@ RUN npm install -g playwright@1.48.0 \
     && playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
-# Make the bundled CLI globally invocable as `pwnkit-cli` too
-RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit-cli \
+# Make the bundled CLI globally invocable as `pwnkit`.
+RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit \
     && chmod +x /app/dist/pwnkit.js
 
 # Drop privileges by reusing the default ubuntu user (uid 1000) shipped with
