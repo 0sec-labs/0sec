@@ -1,19 +1,15 @@
-// The audit pipeline runs `codex exec` with cwd inside a package tree it just
-// downloaded. Codex writes a trust entry for its cwd into the OPERATOR's
-// ~/.codex/config.toml, and trust gates project-local config, hooks, exec
-// policies and MCP servers — so the subprocess must get a throwaway CODEX_HOME.
-// These pin the wiring: set for a temp-dir scope, absent for a real checkout,
-// and gone from disk when the run ends.
+// Source audits operate on attacker-controlled code. They must never reach a
+// CLI runtime because its own project configuration, hooks, and trust mechanics
+// sit outside ToolExecutor's scope boundary. The native tool loop is the only
+// allowed path, so the operator's CODEX_HOME remains untouched.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const state = vi.hoisted(() => ({
-  configs: [] as Array<Record<string, unknown>>,
-  /** CODEX_HOME contents observed WHILE the subprocess was notionally running. */
-  seenDuringRun: undefined as { exists: boolean; config: string } | undefined,
+  cliConfigs: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("./runtime/registry.js", () => ({
@@ -24,25 +20,23 @@ vi.mock("./runtime/registry.js", () => ({
 vi.mock("./runtime/process.js", () => ({
   ProcessRuntime: class {
     constructor(config: Record<string, unknown>) {
-      state.configs.push(config);
-    }
-    async execute() {
-      const env = state.configs.at(-1)?.env as Record<string, string> | undefined;
-      const home = env?.CODEX_HOME;
-      if (home) {
-        state.seenDuringRun = {
-          exists: existsSync(home),
-          config: existsSync(join(home, "config.toml"))
-            ? readFileSync(join(home, "config.toml"), "utf8")
-            : "",
-        };
-      }
-      return { output: "No vulnerabilities found.", exitCode: 0, timedOut: false, durationMs: 1 };
+      state.cliConfigs.push(config);
     }
   },
 }));
 
+vi.mock("./agent/native-loop.js", () => ({
+  runNativeAgentLoop: vi.fn(),
+}));
+
+vi.mock("../events/bus.js", () => ({
+  eventBus: { emit: () => {}, on: () => () => {} },
+}));
+
+import { runNativeAgentLoop } from "./agent/native-loop.js";
 import { runAnalysisAgent } from "./agent-runner.js";
+
+const mockedLoop = vi.mocked(runNativeAgentLoop);
 
 const OPERATOR_CONFIG = [
   'model = "gpt-5.6-terra"',
@@ -67,51 +61,53 @@ function opts(scopePath: string): Parameters<typeof runAnalysisAgent>[0] {
   };
 }
 
-describe("runAnalysisAgent — CODEX_HOME isolation for downloaded code", () => {
+describe("runAnalysisAgent — source scope runtime boundary", () => {
   const dirs: string[] = [];
   let operatorHome: string;
 
   beforeEach(() => {
-    state.configs.length = 0;
-    state.seenDuringRun = undefined;
+    state.cliConfigs.length = 0;
     operatorHome = mkdtempSync(join(tmpdir(), "pwnkit-fake-codex-home-"));
     dirs.push(operatorHome);
     writeFileSync(join(operatorHome, "config.toml"), OPERATOR_CONFIG);
     vi.stubEnv("CODEX_HOME", operatorHome);
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-dummy");
+    mockedLoop.mockResolvedValue({
+      findings: [],
+      summary: "done",
+      turnCount: 1,
+      done: true,
+      messages: [],
+      totalUsage: { inputTokens: 0, outputTokens: 0 },
+      estimatedCostUsd: 0,
+      costCeilingExceeded: false,
+    } as never);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
-    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it("gives the subprocess its own trust-free CODEX_HOME when the scope is a temp tree", async () => {
+  it("never launches Codex against a downloaded source scope", async () => {
     const scope = mkdtempSync(join(tmpdir(), "pwnkit-audit-"));
     dirs.push(scope);
 
     await runAnalysisAgent(opts(scope));
 
-    const env = state.configs[0]!.env as Record<string, string>;
-    expect(env.CODEX_HOME).toBeDefined();
-    expect(env.CODEX_HOME).not.toBe(operatorHome);
-
-    // It existed and carried the operator's provider config MINUS any trust.
-    expect(state.seenDuringRun?.exists).toBe(true);
-    expect(state.seenDuringRun?.config).toContain('model = "gpt-5.6-terra"');
-    expect(state.seenDuringRun?.config).not.toContain("[projects.");
-    expect(state.seenDuringRun?.config).not.toContain("trust_level");
-
-    // …and it is gone once the run ends, taking any trust entry with it.
-    expect(existsSync(env.CODEX_HOME)).toBe(false);
-    // The operator's own config was never written to.
+    expect(state.cliConfigs).toEqual([]);
+    expect(mockedLoop).toHaveBeenCalledOnce();
+    expect(mockedLoop.mock.calls[0]?.[0].config).toMatchObject({ scopePath: scope });
     expect(readFileSync(join(operatorHome, "config.toml"), "utf8")).toBe(OPERATOR_CONFIG);
   });
 
-  it("leaves a real checkout alone — trusting your own repo is the point", async () => {
+  it("keeps the same boundary for an owned source checkout", async () => {
     await runAnalysisAgent(opts(process.cwd()));
 
-    const env = state.configs[0]!.env as Record<string, string> | undefined;
-    expect(env?.CODEX_HOME).toBeUndefined();
+    expect(state.cliConfigs).toEqual([]);
+    expect(mockedLoop).toHaveBeenCalledOnce();
+    expect(mockedLoop.mock.calls[0]?.[0].config).toMatchObject({ scopePath: process.cwd() });
+    expect(readFileSync(join(operatorHome, "config.toml"), "utf8")).toBe(OPERATOR_CONFIG);
   });
 });

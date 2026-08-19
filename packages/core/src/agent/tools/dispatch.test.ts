@@ -11,8 +11,7 @@ import type { ToolContext } from "../types.js";
 // `resolves to a real method` test below turns that into a compile-cheap,
 // fast unit failure instead.
 
-// Exact tool-name → handler-method routing as it existed in the original
-// `_dispatch` switch. Any drift here is a behavior change.
+// Exact tool-name → handler-method routing. Any drift here is a behavior change.
 const EXPECTED_ROUTING: Record<string, string> = {
   http_request: "httpRequest",
   send_prompt: "sendPromptTool",
@@ -22,6 +21,8 @@ const EXPECTED_ROUTING: Record<string, string> = {
   plan: "planTool",
   update_finding: "updateFinding",
   read_file: "readFile",
+  list_files: "listFiles",
+  search_files: "searchFiles",
   apply_patch: "applyPatch",
   run_command: "runCommand",
   update_target: "updateTarget",
