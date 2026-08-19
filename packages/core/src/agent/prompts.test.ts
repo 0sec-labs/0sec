@@ -116,5 +116,18 @@ describe("scoped source prompts", () => {
       expect(prompt).not.toContain("run_command");
     }
     expect(research).toContain("list_files");
+
+describe("shellPentestPrompt — OAST blind/out-of-band guidance", () => {
+  it("steers blind candidates through oast_register / oast_poll before timing fallback", () => {
+    const prompt = shellPentestPrompt("https://target.test");
+
+    expect(prompt).toContain("oast_register");
+    expect(prompt).toContain("oast_poll");
+    expect(prompt).toContain("oast_handle_id");
+    expect(prompt).toContain("token-matched callback");
+    expect(prompt).toContain("OOB RCE");
+    expect(prompt).toContain("OOB SQLi");
+    expect(prompt).toContain("XXE-OOB");
+    expect(prompt).toContain("JNDI/log4shell");
   });
 });
