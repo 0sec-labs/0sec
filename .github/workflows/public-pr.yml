@@ -33,4 +33,4 @@ jobs:
       - name: Smoke CLI
         run: node dist/pwnkit.js --help
       - name: Run tests
-        run: pnpm test
+        run: pnpm test:public
