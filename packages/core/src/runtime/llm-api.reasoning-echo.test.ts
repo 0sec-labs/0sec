@@ -110,6 +110,16 @@ describe("Responses reasoning echo-back", () => {
     ]);
   });
 
+  it("omits the sidecar for an empty Responses output array", async () => {
+    stubFetchCapturing([], [completedEvent([])]);
+
+    const result = await rt.executeNative("sys", [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ], []);
+
+    expect(result.providerRaw).toBeUndefined();
+  });
+
   it("survives the session persist/resume JSON round-trip", async () => {
     stubFetchCapturing([], [
       { type: "response.output_item.done", item: REASONING_ITEM },

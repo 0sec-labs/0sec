@@ -34,6 +34,25 @@ export type {
   PatchValidateOptions,
 } from "./patch-validate.js";
 export {
+  runPatchReflectLoop,
+  defaultReflect,
+  DEFAULT_MAX_ATTEMPTS,
+} from "./patch-reflect-loop.js";
+export type {
+  ReflectDecision,
+  PatchGenMode,
+  RegressionOutcome,
+  ReflectivePatchGenerator,
+  PriorAttemptSummary,
+  RegressionCheck,
+  PatchValidator,
+  ReflectFn,
+  PatchAttempt,
+  PatchReflectLoopStatus,
+  PatchReflectLoopResult,
+  PatchReflectLoopOptions,
+} from "./patch-reflect-loop.js";
+export {
   minimizeReproducer,
   splitProgram,
   ddmin,
