@@ -7,15 +7,26 @@ pwnkit is a general-purpose autonomous pentesting framework. It scans AI/LLM app
 
 ## Installation
 
-pwnkit is closed-source software. Public binary releases and the npm package have been retired.
+pwnkit is open-source software for authorized security research. Build it from
+source or run the public GHCR image. npm and standalone-binary releases are not
+published yet.
+
+### Source
 
 ```bash
-# Docker (recommended)
-docker run --rm -e OPENROUTER_API_KEY=$KEY \
-  ghcr.io/0sec-labs/pwnkit:latest scan --target https://example.com
+git clone https://github.com/0sec-labs/pwnkit.git
+cd pwnkit
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+node dist/pwnkit.js --help
 ```
 
-For direct access, contact **security@0sec.ai**.
+### Docker
+
+```bash
+docker run --rm ghcr.io/0sec-labs/pwnkit:latest --help
+```
 
 ## Set up an API key
 
@@ -39,10 +50,30 @@ See [API Keys](/api-keys/) for full details on supported providers.
 
 ## Your first scan
 
+Every live network target needs an engagement scope. The CLI refuses an
+unscoped live target before making a request.
+
+```bash
+cat > scope.json <<'EOF'
+{"in_scope":["your-app.com"]}
+EOF
+```
+
+The connected examples below assume `./scope.json` allows their target. With
+Docker, mount the file and pass its container path to `--scope`.
+
+```bash
+docker run --rm \
+  -v "$PWD/scope.json:/work/scope.json:ro" \
+  -e OPENROUTER_API_KEY \
+  ghcr.io/0sec-labs/pwnkit:latest scan \
+  --target https://your-app.com --scope /work/scope.json
+```
+
 ### Scan an LLM API
 
 ```bash
-pwnkit scan --target https://your-app.com/api/chat
+pwnkit scan --target https://your-app.com/api/chat --scope ./scope.json
 ```
 
 This discovers the attack surface, launches targeted attacks (prompt injection, jailbreaks, data exfiltration), verifies every finding, and generates a report — typically in under 5 minutes.
@@ -50,7 +81,7 @@ This discovers the attack surface, launches targeted attacks (prompt injection, 
 ### Scan a web application
 
 ```bash
-pwnkit scan --target https://your-app.com --mode web
+pwnkit scan --target https://your-app.com --mode web --scope ./scope.json
 ```
 
 Runs autonomous pentesting against a web application using a shell-first approach. The agent gets `bash` as its primary tool and uses curl, python3, bash pipelines, and standard pentesting utilities to probe for CORS misconfigurations, exposed files, SSRF, XSS, SQL injection, SSTI, and other traditional web vulnerabilities. See [Architecture](/architecture/) for why shell-first beats structured tools.
@@ -81,11 +112,11 @@ pwnkit review https://github.com/user/repo
 You can skip the subcommand entirely. pwnkit figures out what to do:
 
 ```bash
-pwnkit-cli express              # audits npm package
-pwnkit-cli ./my-repo            # reviews source code
-pwnkit-cli https://github.com/user/repo  # clones and reviews
-pwnkit-cli https://example.com/api/chat  # scans LLM API
-pwnkit-cli https://example.com --mode web  # pentests web app
+pwnkit-cli express                         # audits npm package
+pwnkit-cli ./my-repo                       # reviews source code
+pwnkit-cli https://github.com/user/repo    # clones and reviews
+pwnkit scan --target https://your-app.com/api/chat --scope ./scope.json
+pwnkit scan --target https://your-app.com --mode web --scope ./scope.json
 ```
 
 ## Scan depth
@@ -100,10 +131,10 @@ Control how thorough the scan is:
 
 ```bash
 # Quick scan for CI
-pwnkit scan --target https://api.example.com/chat --depth quick
+pwnkit scan --target https://api.example.com/chat --scope ./scope.json --depth quick
 
 # Deep audit before launch
-pwnkit scan --target https://api.example.com/chat --depth deep
+pwnkit scan --target https://api.example.com/chat --scope ./scope.json --depth deep
 ```
 
 ## Common scenarios
@@ -115,6 +146,7 @@ Point pwnkit at an OpenAPI 3.x or Swagger 2.0 document and it will pre-load ever
 ```bash
 pwnkit scan \
   --target https://api.example.com \
+  --scope ./scope.json \
   --api-spec ./openapi.yaml \
   --mode web
 ```
@@ -125,19 +157,19 @@ Use `--auth` to pass credentials. Four types are supported: `bearer`, `cookie`, 
 
 ```bash
 # Bearer token (OAuth / JWT)
-pwnkit scan --target https://app.example.com \
+pwnkit scan --target https://app.example.com --scope ./scope.json \
   --auth '{"type":"bearer","token":"eyJhbGciOi..."}'
 
 # Session cookie
-pwnkit scan --target https://app.example.com \
+pwnkit scan --target https://app.example.com --scope ./scope.json \
   --auth '{"type":"cookie","value":"session=abc123"}'
 
 # Custom header (API key)
-pwnkit scan --target https://api.example.com \
+pwnkit scan --target https://api.example.com --scope ./scope.json \
   --auth '{"type":"header","name":"X-API-Key","value":"sk_live_..."}'
 
 # Or load from a file to avoid leaking to shell history
-pwnkit scan --target https://app.example.com --auth ./auth.json
+pwnkit scan --target https://app.example.com --scope ./scope.json --auth ./auth.json
 ```
 
 ### Multi-model ensemble via OpenRouter
@@ -148,11 +180,11 @@ Set `OPENROUTER_API_KEY` and pass `--model` to mix models across runs. OpenRoute
 export OPENROUTER_API_KEY="sk-or-..."
 
 # Use Claude Sonnet for hard targets
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --model anthropic/claude-sonnet-4-5
 
 # Cheap and fast for CI
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --model deepseek/deepseek-chat --depth quick
 ```
 
@@ -161,7 +193,7 @@ pwnkit scan --target https://example.com --mode web \
 Spawn 5 attack agents in parallel and let the fastest one win. Great for hard targets where a linear attack plan gets stuck.
 
 ```bash
-pwnkit scan --target https://example.com --mode web --race
+pwnkit scan --target https://example.com --mode web --scope ./scope.json --race
 ```
 
 ### Kali Docker executor
@@ -170,7 +202,7 @@ Enable `PWNKIT_FEATURE_DOCKER_EXECUTOR=1` to run every bash command inside a con
 
 ```bash
 export PWNKIT_FEATURE_DOCKER_EXECUTOR=1
-pwnkit scan --target https://example.com --mode web --verbose
+pwnkit scan --target https://example.com --mode web --scope ./scope.json --verbose
 ```
 
 Advanced overrides:
@@ -197,7 +229,7 @@ Push every confirmed finding to a GitHub repo as a labelled issue with evidence 
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --export github:myorg/myrepo
 ```
 
@@ -205,17 +237,17 @@ pwnkit scan --target https://example.com --mode web \
 
 ```bash
 # HTML (auto-opens in browser)
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --depth deep \
   --format html
 
 # Markdown (printed to stdout; pipe to a file)
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --depth deep \
   --format md > example-pentest.md
 
 # PDF (auto-opens in your default viewer and saves to a temp file)
-pwnkit scan --target https://example.com --mode web \
+pwnkit scan --target https://example.com --mode web --scope ./scope.json \
   --depth deep \
   --format pdf
 ```
