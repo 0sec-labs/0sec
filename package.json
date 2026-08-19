@@ -1,0 +1,75 @@
+{
+  "name": "pwnkit-cli",
+  "type": "module",
+  "version": "0.12.0",
+  "description": "Fully autonomous agentic pentesting for web apps, AI/LLM apps, package ecosystems, and source code.",
+  "bin": {
+    "pwnkit-cli": "dist/pwnkit.js"
+  },
+  "files": [
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "package.json",
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm -r exec rm -f tsconfig.tsbuildinfo && pnpm --filter @pwnkit/shared build && pnpm --filter @pwnkit/db --filter @pwnkit/templates build && pnpm --filter '!@pwnkit/docs' -r build && pnpm run build:bundle",
+    "build:bundle": "node ./scripts/bundle-cli.mjs",
+    "build:docs": "pnpm --filter @pwnkit/docs build",
+    "dev": "pnpm -r --parallel dev",
+    "lint": "pnpm --filter '!@pwnkit/docs' -r exec tsc --noEmit",
+    "test": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter ./packages/cli test && pnpm --filter @pwnkit/benchmark test:windows-research && pnpm --filter @pwnkit/benchmark windows-lpe-corpus:contract && pnpm test:launcher && pnpm test:public-source-export",
+    "test:launcher": "node --test scripts/npm-launcher/launcher.test.mjs",
+    "test:public-source-export": "node --test scripts/create-public-source-export.test.mjs",
+    "export:public-source": "node scripts/create-public-source-export.mjs",
+    "bench": "pnpm --filter @pwnkit/benchmark bench",
+    "bench:quick": "pnpm --filter @pwnkit/benchmark bench:quick",
+    "consolidate-xbow": "pnpm --filter @pwnkit/benchmark consolidate-xbow",
+    "clean": "pnpm -r clean",
+    "vulnerable": "PORT=43100 pnpm --filter @pwnkit/test-targets vulnerable",
+    "safe": "PORT=43101 pnpm --filter @pwnkit/test-targets safe"
+  },
+  "keywords": [
+    "ai",
+    "application-security",
+    "mcp",
+    "owasp",
+    "security",
+    "red-team",
+    "llm",
+    "prompt-injection"
+  ],
+  "author": "0sec Labs",
+  "homepage": "https://0sec.ai",
+  "bugs": {
+    "url": "https://0sec.ai/contact"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/0sec-labs/pwnkit.git"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "dependencies": {
+    "@types/pdfkit": "^0.13.9",
+    "drizzle-orm": "^0.45.2",
+    "node-sqlite3-wasm": "^0.8.55",
+    "pdfkit": "^0.15.2",
+    "tree-sitter": "0.21.1",
+    "tree-sitter-c": "0.21.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "esbuild": "^0.28.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "^0.28.0"
+    }
+  }
+}

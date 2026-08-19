@@ -1,0 +1,46 @@
+{
+  "name": "pwnkit-cli",
+  "version": "0.12.0",
+  "description": "The leading open-source agentic AI pentest framework. Autonomously discover, exploit, and verify vulnerabilities in web apps, AI/LLM apps, npm packages, and source code.",
+  "type": "module",
+  "bin": {
+    "pwnkit-cli": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opentui/core": "0.1.99",
+    "@opentui/react": "0.1.99",
+    "@pwnkit/benchmark": "workspace:*",
+    "@pwnkit/core": "workspace:*",
+    "@pwnkit/db": "workspace:*",
+    "@pwnkit/shared": "workspace:*",
+    "@pwnkit/templates": "workspace:*",
+    "@pwnkit/test-targets": "workspace:*",
+    "cfonts": "^3.3.1",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "pdfkit": "^0.15.2",
+    "react": "^19.2.4",
+    "react-devtools-core": "^7.0.1",
+    "web-tree-sitter": "0.25.10",
+    "ws": "^8.20.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/pdfkit": "^0.13.9",
+    "@types/react": "^19.2.14",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9",
+    "yaml": "^2.4.0"
+  }
+}

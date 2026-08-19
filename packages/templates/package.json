@@ -1,0 +1,25 @@
+{
+  "name": "@pwnkit/templates",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "attacks",
+    "dist"
+  ],
+  "scripts": {
+    "gen": "node scripts/generate-embedded.mjs",
+    "prebuild": "node scripts/generate-embedded.mjs",
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@pwnkit/shared": "workspace:*",
+    "yaml": "^2.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

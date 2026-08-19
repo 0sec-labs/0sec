@@ -1,0 +1,64 @@
+=== IOSurfaceRootUserClient sMethods table A (63) — VAR means handler self-validates size ===
+sel  0 0xfffffe000abe9d28 scIn=1 stIn=VAR scOut=0 stOut=3176  IOExternalMethodArguments*) <== VAR-SIZE
+sel  1 0xfffffe000abe9f20 scIn=1 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel  2 0xfffffe000abe9f30 scIn=0 stIn=12 scOut=0 stOut=3176  IOExternalMethodArguments*)
+sel  3 0xfffffe000abe9f4c scIn=0 stIn=12 scOut=0 stOut=4  IOExternalMethodArguments*)
+sel  4 0xfffffe000abe9f68 scIn=1 stIn=0 scOut=0 stOut=3176  IOExternalMethodArguments*)
+sel  5 0xfffffe000abe9f7c scIn=2 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel  6 0xfffffe000abe9f90 scIn=0 stIn=32 scOut=0 stOut=3176  IOExternalMethodArguments*)
+sel  7 0xfffffe000abe9fa0 scIn=2 stIn=0 scOut=0 stOut=3176  IOExternalMethodArguments*)
+sel  8 0xfffffe000abe9fb8 scIn=1 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel  9 0xfffffe000abe9fec scIn=0 stIn=VAR scOut=0 stOut=4  IOExternalMethodArguments*) <== VAR-SIZE
+sel 10 0xfffffe000abea12c scIn=0 stIn=VAR scOut=0 stOut=VAR  IOExternalMethodArguments*) <== VAR-SIZE
+sel 11 0xfffffe000abea348 scIn=0 stIn=VAR scOut=0 stOut=4  IOExternalMethodArguments*) <== VAR-SIZE
+sel 12 0xfffffe000abea488 scIn=3 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 13 0xfffffe000abea4a0 scIn=0 stIn=0 scOut=0 stOut=40  IOExternalMethodArguments*)
+sel 14 0xfffffe000abea4e8 scIn=2 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 15 0xfffffe000abea4fc scIn=2 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 16 0xfffffe000abea510 scIn=1 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel 17 0xfffffe000abea558 scIn=0 stIn=24 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 18 0xfffffe000abea580 scIn=0 stIn=24 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 19 0xfffffe000abea598 scIn=0 stIn=VAR scOut=0 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 20 0xfffffe000abea614 scIn=2 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel 21 0xfffffe000abea660 scIn=4 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 22 0xfffffe000abea6e4 scIn=2 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 23 0xfffffe000abea700 scIn=1 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel 24 0xfffffe000abea748 scIn=0 stIn=VAR scOut=0 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 25 0xfffffe000abea880 scIn=1 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel 26 0xfffffe000abea8c8 scIn=0 stIn=VAR scOut=0 stOut=VAR  IOExternalMethodArguments*) <== VAR-SIZE
+sel 27 0xfffffe000abeaae0 scIn=0 stIn=160 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 28 0xfffffe000abeaaec scIn=1 stIn=0 scOut=0 stOut=160  IOExternalMethodArguments*)
+sel 29 0xfffffe000abeab08 scIn=2 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 30 0xfffffe000abeab18 scIn=1 stIn=0 scOut=0 stOut=VAR  IOExternalMethodArguments*) <== VAR-SIZE
+sel 31 0xfffffe000abeabd0 scIn=3 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 32 0xfffffe000abeabe8 scIn=0 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel 33 0xfffffe000abeac54 scIn=3 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 34 0xfffffe000abeac68 scIn=1 stIn=0 scOut=0 stOut=3176  IOExternalMethodArguments*)
+sel 35 0xfffffe000abeac7c scIn=2 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel 36 0xfffffe000abeacc8 scIn=1 stIn=0 scOut=2 stOut=0  IOExternalMethodArguments*)
+sel 37 0xfffffe000abead20 scIn=2 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 38 0xfffffe000abead34 scIn=1 stIn=0 scOut=4 stOut=0  IOExternalMethodArguments*)
+sel 39 0xfffffe000abead54 scIn=5 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 40 0xfffffe000abead6c scIn=0 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 41 0xfffffe000abead88 scIn=1 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 42 0xfffffe000abead98 scIn=4 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 43 0xfffffe000abeadb4 scIn=0 stIn=VAR scOut=0 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 44 0xfffffe000abeaeec scIn=1 stIn=0 scOut=0 stOut=VAR  IOExternalMethodArguments*) <== VAR-SIZE
+sel 45 0xfffffe000abeaf94 scIn=4 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 46 0xfffffe000abeafac scIn=0 stIn=28 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 47 0xfffffe000abeafe0 scIn=4 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 48 0xfffffe000abeb078 scIn=3 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 49 0xfffffe000abeb08c scIn=0 stIn=VAR scOut=2 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 50 0xfffffe000abeb1ec scIn=1 stIn=VAR scOut=0 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 51 0xfffffe000abeb32c scIn=1 stIn=VAR scOut=0 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 52 0xfffffe000abeb46c scIn=1 stIn=0 scOut=0 stOut=VAR  IOExternalMethodArguments*) <== VAR-SIZE
+sel 53 0xfffffe000abeb514 scIn=2 stIn=VAR scOut=0 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 54 0xfffffe000abeb548 scIn=2 stIn=0 scOut=2 stOut=VAR  IOExternalMethodArguments*) <== VAR-SIZE
+sel 55 0xfffffe000abeb584 scIn=1 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 56 0xfffffe000abeb5a8 scIn=1 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 57 0xfffffe000abeb5b8 scIn=0 stIn=VAR scOut=0 stOut=0  IOExternalMethodArguments*) <== VAR-SIZE
+sel 58 0xfffffe000abeb6f0 scIn=1 stIn=0 scOut=1 stOut=0  IOExternalMethodArguments*)
+sel 59 0xfffffe000abeb748 scIn=2 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 60 0xfffffe000abeb75c scIn=4 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)
+sel 61 0xfffffe000abeb77c scIn=5 stIn=0 scOut=3 stOut=0  IOExternalMethodArguments*)
+sel 62 0xfffffe000abeb7ec scIn=1 stIn=0 scOut=0 stOut=0  IOExternalMethodArguments*)

@@ -1,0 +1,611 @@
+{
+  "provenance": "0verse (bench:/root/0verse/src/zeroverse/data/archetypes.json), kernel-domain subset, ported 2026-07-05",
+  "archetypes": [
+    {
+      "id": "NF-01",
+      "name": "nf_tables set-element deferred-free UAF (GC / async destroy / commit race)",
+      "cwe": "CWE-416",
+      "subsystem": "net/netfilter (nf_tables)",
+      "pattern": "A set element / set backend (pipapo, rbtree, hash) is unlinked in one phase and freed by a deferred path (GC worker, call_rcu, transaction commit/abort) while another path still holds or re-walks the reference. Split unlink-vs-reclaim phases, GC-on-insert, or duplicate-element-pending-GC create a window where the freed element is reused.",
+      "detection_signature": "In a stripped nf_tables-related .ko the imported-symbol relocations survive insmod resolution: look for call_rcu / kfree_rcu / queue_delayed_work / nft_* set-ops callbacks alongside kfree of an object that is also reachable from an rcu/list walk. Decompiled shape: object unlinked from a list, then freed in a *different* function/workqueue callback than the one that still iterates it. Maps to 0verse lens L8 (deferred-free-uaf) + L12 (list-unlink). HARD in pure binary: requires cross-callback lifetime reasoning; emit as hypothesis, not a finding.",
+      "grounding": [
+        "CVE-2024-26808",
+        "CVE-2023-3390",
+        "CVE-2024-26925",
+        "nft_set_pipapo split-gc / nft_set_rbtree gc-on-insert fixes"
+      ],
+      "confirmable": "NO on bare binary (no live oracle for a deferred-free race). Confirmation belongs to the bench kernel-verify lane: build/boot the module under KASAN and replay the GC/commit sequence.",
+      "domain": "kernel",
+      "uid": "kernel/NF-01",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "NF-02",
+      "name": "nf_tables object/expr destroy-path UAF & error-path double-free",
+      "cwe": "CWE-416 / CWE-415",
+      "subsystem": "net/netfilter (nf_tables)",
+      "pattern": "Stateful object or expression (nft_tunnel, nft_ct timeout, nft_object, anonymous set bound in same transaction) is destroyed/freed on an error or abort path while another reference (binding, chain, transaction log) still points to it -> UAF, or it is freed twice across error + cleanup.",
+      "detection_signature": "Relocations to nf_tables core (nft_obj_*, nf_tables_*destroy, module_put) survive. Decompiled shape: an init/clone function with an error label that kfree/destroys an object that the caller also frees on failure; or a _destroy callback freeing an object that a sibling _deactivate already released. Maps to L5 (refcount-asymmetry) + L6 (error-path-doublefree). MEDIUM in binary when both free sites are in the same module and one error edge is clearly shared.",
+      "grounding": [
+        "CVE-2023-32233",
+        "CVE-2024-1086",
+        "nft_tunnel UAF-on-destroy",
+        "nft_ct timeout-object UAF"
+      ],
+      "confirmable": "NO on bare binary; double-free on a shared error edge is the most statically-plausible sub-case but still needs the kernel-verify lane to prove reachability.",
+      "domain": "kernel",
+      "uid": "kernel/NF-02",
+      "engine_lens": "seed:linux-ko:errpath-double-free",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "NF-03",
+      "name": "Netlink attribute parsing OOB / missing NLA length & range validation",
+      "cwe": "CWE-787 / CWE-125",
+      "subsystem": "net/netfilter, net/* (netlink config plane)",
+      "pattern": "Attacker-supplied netlink attribute length/index/range is trusted without policy bounds: nla_parse without a min/max policy, a user range with start>end, or an option/blob length that overruns a fixed table -> heap OOB read or write at config time.",
+      "detection_signature": "STRONG binary signal: relocations to nla_parse / nla_parse_nested / __nla_parse / nla_get_u32 / nla_memcpy / nla_put are preserved. Decompiled shape: value loaded via nla_get_*() then used directly as memcpy length / array index / loop bound with no preceding compare against a constant cap. Maps to L1 (user-len-copy) + L3 (selector-index). HIGH detectability even stripped, because the nla_* import names cannot be stripped (module loader resolves by name).",
+      "grounding": [
+        "CVE-2024-53141 (ipset missing range check)",
+        "CVE-2024-26642",
+        "geneve_opt length integer overflow",
+        "nft_set_pipapo lookup-table alloc overflow"
+      ],
+      "confirmable": "NO PoV on bare binary, but the bounds-missing shape is one of the most confirmable-by-inspection kernel patterns; verify in the kernel-verify lane with a crafted netlink message.",
+      "domain": "kernel",
+      "uid": "kernel/NF-03",
+      "engine_lens": "seed:linux-ko:netlink-oob",
+      "route": "kernel-static"
+    },
+    {
+      "id": "NF-04",
+      "name": "nf_tables register store/load type confusion & OOB register index",
+      "cwe": "CWE-843 / CWE-787",
+      "subsystem": "net/netfilter (nf_tables VM)",
+      "pattern": "nft expressions read/write a virtual register file (nft_regs). A missing nft_validate_register_store/load check, wrong register width, or unchecked dreg/sreg index lets an expression write past the register array or reinterpret a register's type -> OOB into adjacent kernel state during rule eval.",
+      "detection_signature": "Domain-specific lens L11 (register-machine index OOB). Relocations to nft_validate_register_* survive; ABSENCE of a validate call before a register write, or a register index not masked to NFT_REG_SIZE, is the tell. MEDIUM-HARD: needs recognizing the nft register ABI in the decompile; easier with nft symbol hints.",
+      "grounding": [
+        "CVE-2023-4015",
+        "CVE-2023-4147",
+        "CVE-2023-5717"
+      ],
+      "confirmable": "NO on bare binary; kernel-verify lane with a rule that triggers the bad register access.",
+      "domain": "kernel",
+      "uid": "kernel/NF-04",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "NF-05",
+      "name": "conntrack / ctnetlink dump & refcount-underflow UAF, namespace-vs-GC race",
+      "cwe": "CWE-416 / CWE-911",
+      "subsystem": "net/netfilter (conntrack, ipset)",
+      "pattern": "Dump or destroy of a conntrack/expectation/ipset object races a GC worker or netns teardown; a refcount is underflowed (put without get, or freed while a dump cursor holds it) -> UAF on a long-lived networking object.",
+      "detection_signature": "Relocations to refcount_dec_and_test / nf_ct_put / atomic_dec preserved. Shape: a dump callback that nf_ct_get()s but releases on an early-return error path twice, or a put not paired with a get. Maps to L5 (refcount-asymmetry) + L8. HARD statically (concurrency).",
+      "grounding": [
+        "ctnetlink_dump_exp_ct UAF",
+        "netfilter get_info() UAF",
+        "ipset list:set namespace-cleanup vs GC race"
+      ],
+      "confirmable": "NO; kernel-verify lane under netns churn + KASAN.",
+      "domain": "kernel",
+      "uid": "kernel/NF-05",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-01",
+      "name": "qdisc class refcount/UAF on graft/change/destroy error path",
+      "cwe": "CWE-416",
+      "subsystem": "net/sched (qdisc)",
+      "pattern": "A qdisc class (qfq, hfsc, drr, htb, cbs) is grafted/changed/deleted; an error or reset path frees or unlinks a class while the parent qdisc, an active filter, or a child qdisc still references it (e.g. child qdisc not reset before parent free). Classic refcount-on-error-path -> UAF.",
+      "detection_signature": "Relocations to qdisc_put / qdisc_destroy / qdisc_reset / tcf_block_put survive. Shape: a *_change/*_graft function whose error label calls qdisc_destroy on an object still linked into a class hash, or a *_destroy that frees children in wrong order. Maps to L5 + L12. MEDIUM: order-of-free bugs are partly visible in the decompile.",
+      "grounding": [
+        "CVE-2023-3611 (qfq)",
+        "CVE-2023-31436 (qfq)",
+        "CVE-2025-21700 (sch_cbs child qdisc reset)",
+        "CVE-2024-36972"
+      ],
+      "confirmable": "NO on bare binary; kernel-verify lane with tc class manipulation + KASAN.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-01",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-02",
+      "name": "tc classifier (cls_*) filter UAF on delete/replace",
+      "cwe": "CWE-416",
+      "subsystem": "net/sched (cls_u32, cls_route, cls_fw, cls_tcindex, cls_flower)",
+      "pattern": "Filter delete/replace frees a filter node or hashtable while a packet-path or another filter still references it; RCU grace handling or refcount on the filter is wrong -> UAF in classify path.",
+      "detection_signature": "Relocations to tcf_exts_*, call_rcu, kfree_rcu, tcf_unbind_filter preserved. Shape: filter freed in a delete callback while still on an rcu-protected list reachable from classify. Maps to L8 + L5. HARD (RCU lifetime).",
+      "grounding": [
+        "CVE-2023-4206/4207/4208 (cls_route/fw/u32)",
+        "CVE-2023-3776 / CVE-2023-3777",
+        "CVE-2024-1085"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-02",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-03",
+      "name": "qdisc enqueue recursion / list corruption / stack overflow",
+      "cwe": "CWE-674 / CWE-787",
+      "subsystem": "net/sched",
+      "pattern": "Mis-validated qdisc topology lets enqueue/dequeue recurse unboundedly or corrupt the gso/backlog list (e.g. act_mirred blockcast recursion bypass -> stack overflow; netem/peek re-entry).",
+      "detection_signature": "Shape: an enqueue path that re-invokes another qdisc's enqueue without a depth guard, or list_add/list_del on a packet list without lock. Maps to L12. HARD-MEDIUM.",
+      "grounding": [
+        "act_mirred blockcast recursion -> stack overflow",
+        "CVE-2025-21701/21702 (qdisc backlog)",
+        "netem"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-03",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-04",
+      "name": "qdisc/class dump uninitialized-field info leak (data-race or padding)",
+      "cwe": "CWE-200 / CWE-908",
+      "subsystem": "net/sched (dump_class_stats, dump_stats)",
+      "pattern": "*_dump_stats / *_dump_class_stats copies a stats struct to userspace via nla_put while fields are read without locking (data-race) or struct padding is uninitialized -> kernel pointer/heap-content leak.",
+      "detection_signature": "STRONG binary signal: relocations to nla_put / nla_put_64bit / memset preserved. Shape: a struct filled field-by-field then nla_put'd WITHOUT a preceding memset(0) of the whole struct, or read of shared counters without READ_ONCE. Maps to L7 (uninit-copy-to-user). MEDIUM detectability (missing memset before nla_put is visible).",
+      "grounding": [
+        "sch_cake/htb/hfsc/sfq/fq_codel/pie dump-stats data-race annotations (mass fix wave)"
+      ],
+      "confirmable": "NO PoV, but missing-memset-before-copy is statically inspectable; kernel-verify lane confirms leak content.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-04",
+      "engine_lens": "seed:linux-ko:uninit-infoleak",
+      "route": "kernel-static"
+    },
+    {
+      "id": "IOU-01",
+      "name": "io_uring registered buffer/file premature-free UAF",
+      "cwe": "CWE-416",
+      "subsystem": "io_uring",
+      "pattern": "A registered buffer, fixed file, or provided-buffer ring (pbuf_ring) is freed/unregistered while an in-flight request or mmap still references it; missing refcount or wrong unregister ordering -> page/object UAF.",
+      "detection_signature": "Relocations to io_* core, percpu_ref_*, fput, folio_put preserved. HARD: io_uring is in-tree core (not a discrete .ko), so this archetype is mostly relevant to source/dynamic; in a vendor kernel image the io_uring code is a large static blob. Maps to L5 + L8.",
+      "grounding": [
+        "CVE-2024-0582 (registered buffer leak -> page UAF -> Dirty Pipe-style write)",
+        "CVE-2023-2598",
+        "CVE-2022-2602"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/IOU-01",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "IOU-02",
+      "name": "io_uring async/task_work request reuse race",
+      "cwe": "CWE-416 / CWE-362",
+      "subsystem": "io_uring",
+      "pattern": "A request object is completed/freed and recycled while a concurrent task_work, poll, or cancel path still operates on it (req->task, req->file, linked SQE) -> UAF / type confusion across operations.",
+      "detection_signature": "HARD statically (concurrency, in-tree). Shape: req freed on one completion path while another path dereferences it. Maps to L9 (race) + L5.",
+      "grounding": [
+        "CVE-2024-41009",
+        "CVE-2023-21400",
+        "CVE-2026-23274 / CVE-2026-23351 (io_uring memory-safety, kernelCTF)"
+      ],
+      "confirmable": "NO; kernel-verify lane with stress + KASAN.",
+      "domain": "kernel",
+      "uid": "kernel/IOU-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "BPF-01",
+      "name": "eBPF verifier register-bounds / pruning miscalculation -> OOB R/W",
+      "cwe": "CWE-125 / CWE-787 / CWE-682",
+      "subsystem": "bpf (verifier)",
+      "pattern": "The verifier mis-tracks a register's value/bounds (ALU op, sign-extension, state pruning, or scalar/pointer confusion) so a program that PASSES verification performs an OOB load/store at runtime.",
+      "detection_signature": "VERY HARD in binary: the bug is in verifier *logic*, semantic, in-tree. Not a stripped-.ko pattern at all. Maps to L11 conceptually but realistically needs source + a verifier differential/fuzzer. Flag as out-of-scope for bare-binary detection.",
+      "grounding": [
+        "CVE-2023-2163 (incorrect pruning)",
+        "CVE-2022-23222",
+        "CVE-2021-3490"
+      ],
+      "confirmable": "NO; needs source + dynamic verifier testing.",
+      "domain": "kernel",
+      "uid": "kernel/BPF-01",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "BPF-02",
+      "name": "bpf map / ringbuf / helper refcount & value-copy bug",
+      "cwe": "CWE-416 / CWE-190",
+      "subsystem": "bpf (maps, helpers)",
+      "pattern": "A map element, ringbuf record, or helper-returned pointer is freed or sized wrong (off-by-one, refcount on map value across program exit) -> UAF or OOB on the map value object.",
+      "detection_signature": "HARD-MEDIUM, in-tree. Shape visible only if a discrete helper does kfree/refcount on a map value. Maps to L5.",
+      "grounding": [
+        "CVE-2024-41010",
+        "bpf ringbuf reservation bugs"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/BPF-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "SOCK-01",
+      "name": "socket connect/release lifetime race UAF (sk vs signal/close)",
+      "cwe": "CWE-416 / CWE-362",
+      "subsystem": "net (af_vsock, af_unix, af_* core)",
+      "pattern": "A socket struct (or sk_buff queued on it) is freed by close/release/signal-interrupted-connect while another syscall path still uses it; transport assignment or GC ordering is racy.",
+      "detection_signature": "Relocations to sock_put / __sk_destruct / skb_free / kfree_skb / lock_sock survive. HARD (concurrency). Shape: sk dereferenced after a lock_sock-released window, or transport freed on signal path. Maps to L9 + L5.",
+      "grounding": [
+        "CVE-2024-50264 (af_vsock connect-vs-signal UAF)",
+        "af_unix gc UAF family",
+        "CVE-2025-21756 (vsock)"
+      ],
+      "confirmable": "NO; kernel-verify lane. (bench has kernel-hack-drill-style harnesses for exactly this class.)",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-01",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SOCK-02",
+      "name": "sockmap / sk_psock / kcm recvmsg-sendmsg sk_buff sharing UAF",
+      "cwe": "CWE-416",
+      "subsystem": "net (sockmap, kcm, sk_msg, tls)",
+      "pattern": "An skb/sk_msg is shared between a psock backlog and the receive path; partial recv, MSG_PEEK, redirect, or unattach frees or re-queues the buffer while still referenced -> UAF.",
+      "detection_signature": "Relocations to sk_psock_*, skb_clone, kfree_skb, sk_msg_* survive. HARD (concurrency + queue lifetime). Shape: skb freed in one queue path while linked in another. Maps to L8 + L12.",
+      "grounding": [
+        "kcm_unattach() race (baseline on bench /root/linux-6.1)",
+        "sk_msg SOCKMAP UDP recvmsg UAF (n-day)",
+        "kcm_write_msgs UAF"
+      ],
+      "confirmable": "NO; kernel-verify lane. bench has the kcm baseline + skmsg-lpe harness already.",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-02",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SOCK-03",
+      "name": "setsockopt/getsockopt optlen OOB / sockptr copy confusion",
+      "cwe": "CWE-125 / CWE-787",
+      "subsystem": "net (per-protocol setsockopt/getsockopt)",
+      "pattern": "optlen from userspace is trusted: copy_from_sockptr of attacker length into a fixed buffer, or getsockopt writing more than the user buffer, or a signed/unsigned optlen confusion -> stack/heap OOB.",
+      "detection_signature": "STRONG: relocations to copy_from_sockptr / copy_to_sockptr / copy_from_user / put_user survive. Shape: copy sized by a user-provided optlen with no clamp to sizeof(local). Maps to L1. HIGH detectability.",
+      "grounding": [
+        "CVE-2024-26642 (nft)",
+        "various per-protocol setsockopt OOB",
+        "CVE-2023-... do_ip_vs_get_ctl integer overflow"
+      ],
+      "confirmable": "NO PoV, but bounded-copy-missing is statically inspectable; kernel-verify lane confirms.",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-03",
+      "engine_lens": "seed:linux-ko:copy-from-user",
+      "route": "kernel-static"
+    },
+    {
+      "id": "SOCK-04",
+      "name": "minor-protocol list/queue UAF & race (CAN bcm, n_gsm, tipc, nfc, bluetooth)",
+      "cwe": "CWE-416 / CWE-362",
+      "subsystem": "net (drivers/net, net/tipc, net/nfc, net/bluetooth, net/can)",
+      "pattern": "Less-audited protocols mismanage a per-socket list/timer/fragment-reassembly buffer on teardown or concurrent op -> UAF / double-free / OOB. These are reachable by unprivileged users and historically under-fuzzed.",
+      "detection_signature": "Relocations to del_timer / hrtimer_cancel / list_del / kfree_skb / call_rcu survive. Shape: timer or list entry freed but not removed, or reassembly buffer reused. Maps to L5/L8/L12. MEDIUM-HARD.",
+      "grounding": [
+        "tipc / nfc-llcp / nfc-digital / bluetooth fixes (0sec-disclosed, merged)",
+        "CAN bcm UAF family",
+        "n_gsm UAF"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-04",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "FS-01",
+      "name": "On-disk / image metadata parsing OOB (untrusted filesystem mount)",
+      "cwe": "CWE-125 / CWE-787 / CWE-190",
+      "subsystem": "fs (ext4, ntfs3, hfs/hfsplus, udf, f2fs, squashfs)",
+      "pattern": "A filesystem driver trusts on-disk length/offset/count fields when parsing superblock/inode/dirent metadata; a crafted image overruns a buffer or integer-overflows an allocation. Reachable via USB-stick/loopback mount or (in some distros) unprivileged automount.",
+      "detection_signature": "STRONG for the fs .ko: relocations to sb_bread / kmalloc / memcpy / le16_to_cpu / le32_to_cpu survive. Shape: a length read from buffer_head data via le*_to_cpu used as memcpy size / loop bound / kmalloc size without sanity bound. Maps to L1 + L2. HIGH detectability in a fs module.",
+      "grounding": [
+        "ntfs3 OOB family",
+        "hfs/hfsplus OOB (CVE-2025-... mount)",
+        "udf / f2fs image OOB",
+        "ext4 metadata OOB"
+      ],
+      "confirmable": "PARTIAL: a corpus of crafted images can be replayed in the kernel-verify lane (mount under KASAN) -- one of the more PoV-able kernel classes. Bare-binary stays hypothesis.",
+      "domain": "kernel",
+      "uid": "kernel/FS-01",
+      "engine_lens": "seed:linux-ko:copy-from-user",
+      "route": "kernel-static"
+    },
+    {
+      "id": "FS-02",
+      "name": "overlayfs / FUSE copy-up credential & permission confusion",
+      "cwe": "CWE-281 / CWE-862",
+      "subsystem": "fs (overlayfs, fuse)",
+      "pattern": "Copy-up or revalidation runs with the wrong cred (mounter vs caller), or a check is performed on the lower and use on the upper (TOCTOU), letting an unprivileged user gain access/setuid semantics they shouldn't.",
+      "detection_signature": "Relocations to override_creds / revert_creds / prepare_creds / inode_permission survive. Shape: an operation bracketed by override_creds(mounter_cred) that performs a user-influenced path op. Maps to L4 (missing/wrong cap-gate) + L9. MEDIUM.",
+      "grounding": [
+        "overlayfs copy-up cred bugs (CVE-2023-0386 family)",
+        "FUSE writeback / notify_inval races"
+      ],
+      "confirmable": "NO PoV on bare binary; kernel-verify lane with a layered mount.",
+      "domain": "kernel",
+      "uid": "kernel/FS-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "FS-03",
+      "name": "VFS/ioctl path TOCTOU & symlink/mount-point race",
+      "cwe": "CWE-367",
+      "subsystem": "fs (vfs, per-fs ioctl)",
+      "pattern": "A filesystem checks a path/inode property then acts on it after a window in which the attacker swaps a symlink/mount/file (double-fetch of a user path, or re-resolved dentry).",
+      "detection_signature": "HARD: races are not visible as a single decompiled shape. Look for a user-pointer read twice (double-fetch) -- copy_from_user of the same uaddr in a check and a use. Maps to L9. LOW-MEDIUM detectability (double-fetch is the only statically visible sub-case).",
+      "grounding": [
+        "various fs double-fetch CVEs",
+        "fscrypt / fsverity setup races"
+      ],
+      "confirmable": "NO; kernel-verify lane with a racing thread.",
+      "domain": "kernel",
+      "uid": "kernel/FS-03",
+      "engine_lens": "seed:linux-ko:double-fetch",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "MM-01",
+      "name": "pipe_buffer / page-cache uninitialized-flag write (Dirty Pipe family)",
+      "cwe": "CWE-665 / CWE-787",
+      "subsystem": "mm / fs (pipe, splice, page cache)",
+      "pattern": "A pipe_buffer's flags (PIPE_BUF_FLAG_CAN_MERGE) or a page-cache page state is left from a prior use, letting a splice/write merge into a read-only or shared page -> write to data the caller shouldn't write.",
+      "detection_signature": "HARD in binary (in-tree mm, subtle state init). Shape: a struct/flag field reused without reset before a merge/write decision. Maps to L7-adjacent (uninit-state). LOW detectability.",
+      "grounding": [
+        "CVE-2022-0847 (Dirty Pipe)",
+        "splice / page-cache write families"
+      ],
+      "confirmable": "NO; but the *exploitation* of an unrelated page-UAF INTO this primitive is a known recipe.",
+      "domain": "kernel",
+      "uid": "kernel/MM-01",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "MM-02",
+      "name": "COW / page-table / hugepage race write (Dirty COW / Dirty Pagetable)",
+      "cwe": "CWE-362 / CWE-787",
+      "subsystem": "mm (COW, THP, page tables)",
+      "pattern": "A race in copy-on-write fault handling or page-table teardown lets a write land in a shared/read-only page or lets a freed page be reused as a page-table -> arbitrary physical write.",
+      "detection_signature": "VERY HARD (core mm, concurrency). Out-of-scope for bare-binary; listed for completeness as an exploitation TARGET primitive.",
+      "grounding": [
+        "CVE-2016-5195 (Dirty COW)",
+        "Huge Dirty COW",
+        "Dirty Pagetable technique"
+      ],
+      "confirmable": "NO.",
+      "domain": "kernel",
+      "uid": "kernel/MM-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "MM-03",
+      "name": "uninitialized kernel allocation copied to user (heap/stack infoleak)",
+      "cwe": "CWE-908 / CWE-200",
+      "subsystem": "mm / drivers / net (any copy_to_user path)",
+      "pattern": "kmalloc (not __GFP_ZERO) or an on-stack struct with padding is partially filled then copied to userspace -> leak of prior heap contents / kernel pointers.",
+      "detection_signature": "STRONG generic signal: relocations to copy_to_user / put_user / nla_put paired with kmalloc (no kzalloc) and NO memset of the buffer. Shape: alloc -> set some fields -> copy_to_user(size==full struct). Maps to L7. HIGH detectability across ALL modules; the cheapest, most common find.",
+      "grounding": [
+        "countless driver/net infoleaks",
+        "struct padding leaks",
+        "compat ioctl leaks"
+      ],
+      "confirmable": "PARTIAL: the missing-zero shape is statically strong; kernel-verify lane confirms which bytes leak.",
+      "domain": "kernel",
+      "uid": "kernel/MM-03",
+      "engine_lens": "seed:linux-ko:uninit-infoleak",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-01",
+      "name": "ioctl dispatch: unchecked user selector index into handler/array",
+      "cwe": "CWE-129 / CWE-787",
+      "subsystem": "drivers/* (char, misc, GPU/DRM, media, platform)",
+      "pattern": "An ioctl cmd or a user-supplied index selects a handler from a function-pointer table or reads/writes an array element without bounding the index against the table size -> OOB call or OOB array access.",
+      "detection_signature": "STRONG and the SINGLE most binary-detectable kernel class: in a stripped .ko, an .unlocked_ioctl/.ioctl fop is a switch or a `table[arg]` indirect call. Relocations to copy_from_user (to read the arg struct) survive. Shape: value from user used as index/offset with no `cmp idx, CONST; ja` guard before an indexed load/indirect-call. Maps to L3 (ioctl-selector-index). HIGH detectability even fully stripped -- the fops struct and the indexed indirect call are visible.",
+      "grounding": [
+        "GPU/DRM ioctl index bugs (Mali/Adreno/NVIDIA)",
+        "media/v4l2 ioctl OOB",
+        "misc-driver command-table OOB"
+      ],
+      "confirmable": "PARTIAL: reachability is clear from the fops table; a PoV needs the device node + kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-01",
+      "engine_lens": "seed:linux-ko:selector-index",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-02",
+      "name": "ioctl/write copy_from_user with attacker-controlled length into fixed buffer",
+      "cwe": "CWE-120 / CWE-121 / CWE-787",
+      "subsystem": "drivers/* (and any read/write/ioctl fop)",
+      "pattern": "copy_from_user(dst, uptr, len) where len comes from the user (ioctl arg field, write() count, header length) and dst is a fixed-size stack or heap buffer with no clamp -> overflow.",
+      "detection_signature": "STRONG: relocations to copy_from_user / _copy_from_user / memdup_user / strncpy_from_user survive insmod. Shape: the 3rd arg to copy_from_user traces back to a user-loaded value, and dst is a fixed stack slot (sub rsp,N) or a fixed kmalloc(CONST). Absence of a `cmp len, CONST` clamp is the tell. Maps to L1 (user-len-copy). HIGH detectability stripped.",
+      "grounding": [
+        "driver write()/ioctl stack overflows (very common)",
+        "vendor blob copy_from_user overflows",
+        "CVE families across char drivers"
+      ],
+      "confirmable": "PARTIAL: shape is statically strong; PoV via device node in kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-02",
+      "engine_lens": "seed:linux-ko:copy-from-user",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-03",
+      "name": "allocation-size integer overflow (count * size) from user input",
+      "cwe": "CWE-190 -> CWE-787",
+      "subsystem": "drivers/* , net, fs",
+      "pattern": "kmalloc/kvmalloc/vmalloc/kcalloc size computed as a*b or a+b from user-controlled count and element size; the multiply overflows to a small allocation, then a loop writes `count` elements -> heap overflow. Includes missing use of array_size()/struct_size()/check_mul_overflow.",
+      "detection_signature": "STRONG: relocations to kmalloc / kvmalloc / vmalloc / kmalloc_array preserved. Shape: an `imul`/`shl`/`add` of two non-constant (user-traced) operands feeding the size arg of an allocator, WITHOUT a preceding overflow check (no call to __builtin_mul_overflow inline / no compare). Maps to L2 (alloc-size-arith). HIGH detectability -- the arithmetic-before-alloc pattern is visible in the decompile.",
+      "grounding": [
+        "geneve_opt length overflow",
+        "do_ip_vs_get_ctl overflow",
+        "nft_set_pipapo lookup-table alloc overflow",
+        "ntfs/hfs image count overflows"
+      ],
+      "confirmable": "PARTIAL: static shape strong; kernel-verify lane confirms the undersize+overflow.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-03",
+      "engine_lens": "seed:linux-ko:kmalloc-overflow",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-04",
+      "name": "missing capable()/ns_capable() gate on a privileged operation",
+      "cwe": "CWE-862 / CWE-280",
+      "subsystem": "drivers/* , net, fs, platform/sysfs",
+      "pattern": "A privileged ioctl/sysfs-store/debugfs/write handler (firmware load, register poke, DMA setup, mode switch) lacks a capable(CAP_SYS_ADMIN)/ns_capable/perm check, so an unprivileged user reaches a powerful primitive directly.",
+      "detection_signature": "STRONG and high-value: in the .ko, the PRESENCE of a powerful sink (writel/iowrite, dma_alloc, request_firmware, copy_*_user to phys) on a path that has NO relocation to capable / ns_capable / capable_wrt_inode is the signal. Maps to L4 (missing-cap-gate). HIGH detectability: 0verse can diff `paths-to-sink` against `paths-through-capable`. Absence-of-a-call is exactly what survives stripping (the capable import would be there if used).",
+      "grounding": [
+        "numerous vendor driver missing-permission CVEs",
+        "debugfs/sysfs world-writable register pokes",
+        "GPU/perf-counter ioctls"
+      ],
+      "confirmable": "PARTIAL: the missing-check is statically strong; exploit value depends on the sink.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-04",
+      "engine_lens": "seed:linux-ko:missing-capable",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-05",
+      "name": "shared-object refcount underflow across fd/mmap (Binder, DRM, dma-buf)",
+      "cwe": "CWE-416 / CWE-911",
+      "subsystem": "drivers/* (android binder, DRM/GEM, dma-buf, ION)",
+      "pattern": "An object shared between processes via fd/handle/mmap has a refcount that can be under-incremented or double-decremented (handle table races, mmap close vs ioctl) -> UAF on a long-lived, sprayable driver object.",
+      "detection_signature": "Relocations to kref_get/kref_put / refcount_inc/refcount_dec_and_test / dma_buf_put / drm_gem_object_put survive. Shape: a put without a matching get on some path, or a handle freed while mmapped. Maps to L5 (refcount-asymmetry). MEDIUM (some imbalance visible; races need dynamic).",
+      "grounding": [
+        "Android Binder refcount UAFs (repeated ITW exploitation)",
+        "DRM/GEM handle UAFs",
+        "dma-buf/ION lifetime bugs"
+      ],
+      "confirmable": "NO; kernel-verify lane (or device emulation).",
+      "domain": "kernel",
+      "uid": "kernel/DRV-05",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "DRV-06",
+      "name": "double-free / use-after-free on driver probe/error/cleanup path",
+      "cwe": "CWE-415 / CWE-416",
+      "subsystem": "drivers/* , net, fs",
+      "pattern": "An init/probe/reset routine frees a resource on an error label that the caller (or a later cleanup) also frees, or frees-then-uses; tangled goto-error ladders are the classic source.",
+      "detection_signature": "MEDIUM: relocations to kfree / kvfree / free_irq / dma_free preserved. Shape: the same pointer passed to kfree on two reachable paths, or kfree followed by a deref of the same register. Maps to L6 (error-path-doublefree). MEDIUM detectability -- intra-function double-free is one of the few UAFs statically visible.",
+      "grounding": [
+        "probe-error double-free CVE families",
+        "module init/exit double-free"
+      ],
+      "confirmable": "PARTIAL: intra-function double-free is statically inspectable; cross-function needs the lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-06",
+      "engine_lens": "seed:linux-ko:errpath-double-free",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "DRV-07",
+      "name": "TOCTOU double-fetch of user pointer in ioctl",
+      "cwe": "CWE-367",
+      "subsystem": "drivers/* (ioctl with nested user pointers)",
+      "pattern": "An ioctl reads a length/count from the user struct, validates it, then copies again from the SAME user address (or a sub-pointer) which the attacker changes in between -> validated-then-larger copy -> overflow.",
+      "detection_signature": "MEDIUM-STRONG (rare among races): two copy_from_user calls reading the same uaddr, with a bound-check on the first value but the copy sized by a re-fetched value. Relocations to copy_from_user/get_user survive; the DOUBLE read of one uaddr is the static tell. Maps to L9 + L1. The most statically-detectable race sub-class.",
+      "grounding": [
+        "compat_ioctl double-fetch CVEs",
+        "driver header-length re-read bugs"
+      ],
+      "confirmable": "NO PoV without a racing thread; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-07",
+      "engine_lens": "seed:linux-ko:double-fetch",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-08",
+      "name": "DMA / mmap region with insufficient bounds -> arbitrary phys/IO access",
+      "cwe": "CWE-787 / CWE-822",
+      "subsystem": "drivers/* (dma, iommu-less mmap, /dev/mem-like nodes)",
+      "pattern": "A driver maps device/DMA memory to userspace (mmap fop) or programs a DMA descriptor using a user-supplied offset/size without bounding it to the allocated region -> user gets read/write to arbitrary physical or adjacent kernel memory.",
+      "detection_signature": "Relocations to remap_pfn_range / dma_alloc_coherent / io_remap_pfn_range / vm_iomap_memory survive. Shape: an mmap fop where vma->vm_pgoff (user-controlled) feeds the pfn without a range clamp, or a DMA addr/len from user. Maps to L1/L3. MEDIUM-HIGH (mmap fop + remap_pfn_range with unclamped pgoff is a clear shape).",
+      "grounding": [
+        "GPU/camera/video DMA mmap CVEs",
+        "vendor driver remap_pfn_range pgoff bugs"
+      ],
+      "confirmable": "NO PoV on bare binary; kernel-verify lane with the device.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-08",
+      "engine_lens": "seed:linux-ko:mmap-pgoff",
+      "route": "kernel-static"
+    },
+    {
+      "id": "MISC-01",
+      "name": "keyring / key refcount UAF (request_key_auth, keyctl)",
+      "cwe": "CWE-416",
+      "subsystem": "security/keys",
+      "pattern": "A key or key_ref refcount is mishandled on an error/assoc path (request_key_auth UAF, key GC vs use) -> UAF on a key object reachable from an unprivileged keyctl call.",
+      "detection_signature": "Relocations to key_put / key_ref_put / refcount_dec survive. Shape: put-without-get or use-after-put on a key. Maps to L5 + L8. MEDIUM-HARD.",
+      "grounding": [
+        "request_key_auth UAF (contested, unpatched 6.12.93 per 0sec notes)",
+        "keyctl refcount CVEs"
+      ],
+      "confirmable": "NO; kernel-verify lane (bench has the keyctl harness).",
+      "domain": "kernel",
+      "uid": "kernel/MISC-01",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "MISC-02",
+      "name": "SysV IPC / msg_msg OOB or UAF (bug-bearing OR reclaim object)",
+      "cwe": "CWE-787 / CWE-416",
+      "subsystem": "ipc (msg, shm, sem)",
+      "pattern": "An IPC object (msg_msg segment list, shm) is mis-sized or freed early. Note dual role: msg_msg is BOTH a recurring bug location AND the universal heap-spray/reclaim object used to exploit other UAFs.",
+      "detection_signature": "Relocations to kmalloc/kfree in ipc paths; msg_msg segment loop with a user-controlled msgsz feeding alloc. Maps to L2/L5. MEDIUM. (For 0verse, the higher value is recognizing msg_msg as the EXPLOIT PRIMITIVE that confirms many other UAFs in the verify lane.)",
+      "grounding": [
+        "msg_msg OOB CVEs",
+        "msg_msg as exploitation primitive across most UAF writeups"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/MISC-02",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "MISC-03",
+      "name": "perf/ptrace/cred & namespace privilege confusion",
+      "cwe": "CWE-269 / CWE-863",
+      "subsystem": "kernel (cred, ptrace, user namespaces, perf)",
+      "pattern": "A privilege/capability check is performed against the wrong cred or namespace (init_user_ns vs current_user_ns), or a cred transition is mis-ordered, granting capabilities the caller shouldn't have. User-namespace reachability is what makes many of the above archetypes unprivileged.",
+      "detection_signature": "Relocations to ns_capable / capable / current_cred / make_kuid survive. Shape: capable() used where ns_capable(target_ns) is required, or a check against init_user_ns for a namespaced resource. Maps to L4. MEDIUM (requires knowing the right ns).",
+      "grounding": [
+        "user-namespace capability confusion CVEs",
+        "perf_event_open privilege bugs"
+      ],
+      "confirmable": "NO PoV on bare binary; semantic.",
+      "domain": "kernel",
+      "uid": "kernel/MISC-03",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    }
+  ]
+}

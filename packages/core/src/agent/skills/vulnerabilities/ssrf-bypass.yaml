@@ -1,0 +1,84 @@
+id: ssrf-bypass
+name: "SSRF & SSRF-Filter Bypass"
+description: "Server-side request forgery and, more importantly, bypasses of the SSRF guards apps already have — redirect-follow, DNS rebinding, parser confusion, and absolute-URL injection. Verified in openai-node (bearer-cred leak) and vercel/ai."
+version: 1
+applicable_roles:
+  - attack
+  - audit
+tags:
+  - ssrf
+  - request-forgery
+  - dns-rebinding
+  - redirect
+  - url-parsing
+  - metadata
+  - credential-leak
+triggers:
+  - "ssrf"
+  - "fetch\\(|axios|got\\(|request\\(|httpx|requests\\.get|urllib"
+  - "redirect"
+  - "follow.?redirect"
+  - "new URL\\(|URL\\.parse|urlparse"
+  - "allowlist|allow.?list|blocklist|deny.?list"
+  - "169\\.254\\.169\\.254|metadata"
+  - "localhost|127\\.0\\.0|0\\.0\\.0\\.0|::1"
+  - "private.?ip|is.?private|isPrivate"
+  - "webhook|callback.?url|image.?url|download.?url|proxy"
+  - "baseURL|base_url"
+estimated_tokens: 900
+content: |
+  ## SSRF & SSRF-Filter-Bypass Methodology
+
+  The high-value finding is rarely "the app fetches a user URL with no checks."
+  It's "the app HAS an SSRF guard and the guard is bypassable" — that's what
+  maintainers accept (and what we verified in openai-node + vercel/ai).
+
+  ### Phase 1: Find the outbound-fetch sinks + their guard
+  Locate where the server makes a request to a URL influenced by input:
+  webhooks, image/avatar fetch, link preview, import-from-URL, `baseURL`
+  override, OAuth/OIDC discovery, PDF/screenshot renderers. Then find the
+  guard: an allowlist, a `isPrivateIP()` check, a scheme filter, a host regex.
+
+  ### Phase 2: Bypass the guard (the actual bug)
+  - **TOCTOU via redirect** — guard validates the initial URL, then the client
+    *follows a redirect* to an internal target. (Check: is the redirect target
+    re-validated? `maxRedirects`/`follow` with no per-hop check = bypass.)
+  - **DNS rebinding / resolution gap** — guard resolves+checks the host, but the
+    HTTP client re-resolves at connect time → attacker flips the A record to
+    `169.254.169.254` between check and use. (vercel/ai shape: "DNS resolution
+    gap in private-IP protection.")
+  - **Absolute-URL injection** — a method that takes a *path* also accepts an
+    absolute URL, so a relative-looking input escapes the configured `baseURL`
+    to an attacker host — and the client sends its **Authorization/bearer
+    header** along (openai-node shape: client leaks creds to an attacker server).
+  - **Parser confusion** — `new URL()` vs the HTTP client disagree on host:
+    `http://allowed@evil/`, `http://evil#@allowed/`, `http://evil\@allowed`,
+    backslashes, fragments, embedded credentials, IPv6 brackets, decimal/octal/
+    hex IPs (`0x7f000001`, `2130706433`), trailing dots.
+  - **Scheme smuggling** — `file://`, `gopher://`, `dict://`, `http://[::]` when
+    only `https?` was assumed.
+
+  ### Phase 3: Impact — what makes it high/critical
+  - Reaches cloud metadata (`169.254.169.254` → IAM creds) or internal services.
+  - **Leaks the client's own credentials** (bearer/cookie) to the attacker host
+    — this is the openai-node finding and it's high-severity on its own.
+  - Internal port scan / blind SSRF with timing oracle.
+
+  ### Phase 4: Confirm before save_finding
+  - Show the guard code AND the exact bypass (the redirect/rebind/parse case),
+    file:line for both. "There's a fetch" is not a finding — the bypass is.
+  - Demonstrate the request leaving to an attacker-controlled host (or the creds
+    on it). A captured request to a canary host is the proof.
+
+  ### Anti-false-positive checklist
+  - Is the redirect target re-validated per hop? Is resolution pinned (resolve
+    once, connect to that IP)? Is the header stripped on cross-origin redirect?
+  - Is the URL actually attacker-controlled, or a fixed config value?
+  If the guard re-checks every hop and pins the resolved IP, it's NOT bypassable
+  — don't save it.
+
+  ### Real wins from this engine
+  - openai-node: client sends bearer credentials to an attacker-controlled host
+    via absolute-URL / public-method path injection.
+  - vercel/ai: download-URL SSRF protection bypassed via redirect + a DNS
+    resolution gap in the private-IP check.
