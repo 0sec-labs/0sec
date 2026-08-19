@@ -9,6 +9,7 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
+import { homeStateDir } from "@0sec/shared";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -93,7 +94,7 @@ export interface DumpModelOutputOpts {
   stage: "dedupe" | "rank";
   /** Zero-based attempt number within this batch call. */
   attempt: number;
-  /** Artifacts output directory. Defaults to `~/.pwnkit/artifacts/`. */
+  /** Artifacts output directory. Defaults to `~/.0sec/artifacts/`. */
   dir?: string;
   /** Optional scan identifier included in the filename and payload. */
   scanId?: string;
@@ -107,7 +108,7 @@ export interface DumpModelOutputOpts {
  * (permission error, read-only filesystem, etc.).
  */
 export function dumpModelOutput(opts: DumpModelOutputOpts): string | null {
-  const dir = opts.dir ?? join(homedir(), ".pwnkit", "artifacts");
+  const dir = opts.dir ?? join(homeStateDir(), "artifacts");
   const ts = Date.now();
   const scanPart = opts.scanId ? `-scan${opts.scanId}` : "";
   const filename = `${opts.stage}-${ts}-attempt${opts.attempt}${scanPart}.json`;

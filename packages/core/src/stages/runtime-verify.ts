@@ -1,5 +1,5 @@
 /**
- * Runtime verifier stage — pwnkit's stand-up-and-poke gate.
+ * Runtime verifier stage — 0sec's stand-up-and-poke gate.
  *
  * Runs a confirmed finding's PoC plan against a live, self-hosted target in
  * an E2B sandbox. Collects PASS/FAIL/ERROR + transcript as runtime evidence.
@@ -32,7 +32,7 @@
  */
 
 import { env } from "node:process";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

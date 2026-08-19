@@ -1,11 +1,11 @@
 // VERSION resolves to the root package.json "version" field via two paths:
 //
 //   1. Bundled mode (esbuild via scripts/bundle-cli.mjs): the bundler
-//      injects __PWNKIT_VERSION__ as a global define at build time, so
+//      injects __0SEC_VERSION__ as a global define at build time, so
 //      VERSION ends up as a string literal baked directly into the
-//      published pwnkit.js bundle. Zero runtime fs cost.
+//      published 0sec.js bundle. Zero runtime fs cost.
 //   2. Source / test mode (running tsx, vitest, or any unbundled flow):
-//      __PWNKIT_VERSION__ is undefined, so we fall back to a one-time
+//      __0SEC_VERSION__ is undefined, so we fall back to a one-time
 //      synchronous read of the root package.json relative to this file.
 //      The relative path (../../../package.json) is stable across both
 //      packages/shared/src/ and packages/shared/dist/.
@@ -18,12 +18,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-declare const __PWNKIT_VERSION__: string;
+declare const __0SEC_VERSION__: string;
 
 function loadVersion(): string {
   // Bundled path: esbuild inlines this branch into a string literal.
-  if (typeof __PWNKIT_VERSION__ !== "undefined") {
-    return __PWNKIT_VERSION__;
+  if (typeof __0SEC_VERSION__ !== "undefined") {
+    return __0SEC_VERSION__;
   }
   // Source / test path: read root package.json once at module load.
   try {

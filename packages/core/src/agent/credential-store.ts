@@ -1,9 +1,9 @@
 /**
- * PersistentCredentialStore (pwnkit#771, extends #687).
+ * PersistentCredentialStore (0sec#771, extends #687).
  *
  * The in-memory {@link LootLedger} (loot.ts) is single-scan: every foothold it
  * harvests evaporates when the scan ends. This store is the durable companion —
- * a thin, security-conscious bridge between a `LootLedger` and the `@pwnkit/db`
+ * a thin, security-conscious bridge between a `LootLedger` and the `@0sec/db`
  * `persistent_credentials` / `trust_graph_edges` tables. It lets footholds
  * harvested in one scan persist and be re-surfaced to a later scan against the
  * same target.
@@ -14,7 +14,7 @@
  * `valuePreview` for human/agent recognition. The full value stays in the
  * in-memory ledger for the lifetime of the scan and is discarded with it.
  *
- * This is a FIRST SLICE (pwnkit#771): the load/save APIs and the durable schema
+ * This is a FIRST SLICE (0sec#771): the load/save APIs and the durable schema
  * exist and are unit-tested, but the native agent loop is only stubbed to call
  * them (see native-loop.ts TODO). The loop wiring is deliberately not rewritten
  * here.
@@ -22,10 +22,10 @@
 
 import { createHash } from "node:crypto";
 import type {
-  pwnkitDB,
+  osecDB,
   PersistentCredentialRow,
   CredentialKindDB,
-} from "@pwnkit/db";
+} from "@0sec/db";
 import type { LootKind, LootItem } from "./loot.js";
 import { LootLedger } from "./loot.js";
 
@@ -66,12 +66,12 @@ export interface CredentialAttribution {
 }
 
 /**
- * Durable credential store backed by `@pwnkit/db`. Constructed with a live
- * `pwnkitDB`; all hashing/redaction happens here so the db layer never sees a
+ * Durable credential store backed by `@0sec/db`. Constructed with a live
+ * `osecDB`; all hashing/redaction happens here so the db layer never sees a
  * plaintext secret.
  */
 export class PersistentCredentialStore {
-  constructor(private readonly db: pwnkitDB) {}
+  constructor(private readonly db: osecDB) {}
 
   /**
    * Persist a single loot item. Returns the stored (secret-free) row. The

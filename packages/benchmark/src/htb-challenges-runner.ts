@@ -3,7 +3,7 @@
 /**
  * HackTheBox Challenges Benchmark Runner
  *
- * Runs pwnkit against HackTheBox Challenges (~818 challenges across 11
+ * Runs 0sec against HackTheBox Challenges (~818 challenges across 11
  * categories — BoxPwnr scores 39.6%). This is separate from Starting Point
  * machines: challenges are self-contained CTF problems, either static
  * (download a ZIP) or dynamic (spawn a Docker instance).
@@ -34,9 +34,9 @@ import { execSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agenticScan } from "@pwnkit/core";
+import { agenticScan } from "@0sec/core";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -253,7 +253,7 @@ function parseChallengeEntry(c: any): HtbChallenge {
  * Returns the path to the extracted directory.
  */
 async function downloadStaticChallenge(challenge: HtbChallenge): Promise<string> {
-  const workDir = join(tmpdir(), `pwnkit-htb-challenge-${challenge.id}-${Date.now()}`);
+  const workDir = join(tmpdir(), `0sec-htb-challenge-${challenge.id}-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
 
   const zipPath = join(workDir, "challenge.zip");
@@ -512,7 +512,7 @@ async function runChallengeOnce(challenge: HtbChallenge): Promise<HtbChallengeRe
       if (!jsonOutput) process.stdout.write(` ${host}:${port}\n`);
     }
 
-    const dbPath = join(tmpdir(), `pwnkit-htb-ch-${challenge.name.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.db`);
+    const dbPath = join(tmpdir(), `0sec-htb-ch-${challenge.name.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.db`);
     const report = await agenticScan({
       config: {
         target,
@@ -654,7 +654,7 @@ async function main() {
   challenges = challenges.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log("\x1b[36m\x1b[1m  pwnkit x HackTheBox Challenges benchmark\x1b[0m");
+    console.log("\x1b[36m\x1b[1m  0sec x HackTheBox Challenges benchmark\x1b[0m");
     console.log(`  challenges: ${challenges.length}  retries: ${retries}`);
     if (categoryFilter) console.log(`  category filter: ${categoryFilter.join(", ")}`);
     if (difficultyFilter) console.log(`  difficulty filter: ${difficultyFilter.join(", ")}`);

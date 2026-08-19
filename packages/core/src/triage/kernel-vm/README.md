@@ -1,4 +1,4 @@
-# pwnkit Kernel VM — KASAN-enabled crash reproducer
+# 0sec Kernel VM — KASAN-enabled crash reproducer
 
 Build recipe for the KASAN-enabled Linux kernel + root filesystem used by
 automated kernel crash validation.
@@ -10,18 +10,18 @@ automated kernel crash validation.
 ./build.sh ./out
 
 # Configure
-export PWNKIT_KERNEL_QEMU=1
-export PWNKIT_KERNEL_QEMU_KERNEL=./out/bzImage
-export PWNKIT_KERNEL_QEMU_DISK=./out/rootfs.img
+export 0SEC_KERNEL_QEMU=1
+export 0SEC_KERNEL_QEMU_KERNEL=./out/bzImage
+export 0SEC_KERNEL_QEMU_DISK=./out/rootfs.img
 
 # Run with verification
-pwnkit ingest --verify /path/to/crash-reports/
+0sec ingest --verify /path/to/crash-reports/
 
 # Run a standalone C reproducer through the same VM oracle
-pwnkit ingest --reproducer ./poc.c --kernel-tree ~/src/linux --config kasan --output json
+0sec ingest --reproducer ./poc.c --kernel-tree ~/src/linux --config kasan --output json
 
 # Raw .syz programs require syz-execprog in the guest image
-pwnkit ingest --syz ./program.syz --kernel-tree ~/src/linux --config kasan --output json
+0sec ingest --syz ./program.syz --kernel-tree ~/src/linux --config kasan --output json
 ```
 
 ## What's included
@@ -39,8 +39,8 @@ pwnkit ingest --syz ./program.syz --kernel-tree ~/src/linux --config kasan --out
 - Debian Bookworm minimal
 - GCC + binutils + libc-dev for reproducer compilation
 - gdb, strace for debugging
-- dedicated `/sbin/pwnkit-init` boot path that mounts the host 9p share and runs `/mnt/pwnkit/runner.sh`
-- OpenSSH + exported `pwnkit_vm_key` for manual debugging only. The verifier
+- dedicated `/sbin/0sec-init` boot path that mounts the host 9p share and runs `/mnt/0sec/runner.sh`
+- OpenSSH + exported `osec_vm_key` for manual debugging only. The verifier
   itself does not use SSH.
 
 The repository does not commit prebuilt images. Build them locally with
@@ -49,19 +49,19 @@ reference that builds and caches the same artifacts.
 
 ## Guest contract
 
-The pwnkit verifier boots QEMU with the kernel image, disk image, and a 9p host
+The 0sec verifier boots QEMU with the kernel image, disk image, and a 9p host
 share. A compatible guest must:
 
 - boot as x86_64 under `qemu-system-x86_64`
-- mount the 9p share tag `pwnkitshare` at `/mnt/pwnkit`
-- execute `/mnt/pwnkit/runner.sh`
+- mount the 9p share tag `osecshare` at `/mnt/0sec`
+- execute `/mnt/0sec/runner.sh`
 - provide `/usr/bin/gcc`, libc headers, and binutils
 - allow `dmesg` collection after the reproducer runs
 
 The default kernel command line is:
 
 ```text
-console=ttyS0 root=/dev/vda rw nokaslr panic=-1 init=/sbin/pwnkit-init
+console=ttyS0 root=/dev/vda rw nokaslr panic=-1 init=/sbin/0sec-init
 ```
 
 ## CI
@@ -74,14 +74,14 @@ syzbot crash/reproducer pair while uploading the VM logs and runner outputs as a
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PWNKIT_KERNEL_QEMU` | - | Set to `1` to enable |
-| `PWNKIT_KERNEL_QEMU_KERNEL` | - | Path to bzImage |
-| `PWNKIT_KERNEL_QEMU_DISK` | - | Path to rootfs.img |
-| `PWNKIT_KERNEL_QEMU_MEMORY_MB` | `2048` | VM memory |
-| `PWNKIT_KERNEL_QEMU_SMP` | `2` | CPU cores |
-| `PWNKIT_KERNEL_QEMU_TIMEOUT_SEC` | `60` | Reproducer timeout |
-| `PWNKIT_KERNEL_QEMU_BOOT_TIMEOUT_SEC` | `120` | Boot timeout |
-| `PWNKIT_KERNEL_QEMU_ACCEL` | - | QEMU accelerator (e.g. `kvm`) |
-| `PWNKIT_KERNEL_QEMU_SHARE_TAG` | `pwnkitshare` | 9p mount tag used by the guest boot script |
-| `PWNKIT_KERNEL_QEMU_ARTIFACT_DIR` | - | Preserve VM run artifacts (serial log, compile log, dmesg, runner outputs) instead of deleting the temp directory |
-| `PWNKIT_KERNEL_BUILD_CACHE` | `~/.cache/pwnkit/kernel-vm` | Cache directory for `--kernel-tree` VM builds |
+| `0SEC_KERNEL_QEMU` | - | Set to `1` to enable |
+| `0SEC_KERNEL_QEMU_KERNEL` | - | Path to bzImage |
+| `0SEC_KERNEL_QEMU_DISK` | - | Path to rootfs.img |
+| `0SEC_KERNEL_QEMU_MEMORY_MB` | `2048` | VM memory |
+| `0SEC_KERNEL_QEMU_SMP` | `2` | CPU cores |
+| `0SEC_KERNEL_QEMU_TIMEOUT_SEC` | `60` | Reproducer timeout |
+| `0SEC_KERNEL_QEMU_BOOT_TIMEOUT_SEC` | `120` | Boot timeout |
+| `0SEC_KERNEL_QEMU_ACCEL` | - | QEMU accelerator (e.g. `kvm`) |
+| `0SEC_KERNEL_QEMU_SHARE_TAG` | `osecshare` | 9p mount tag used by the guest boot script |
+| `0SEC_KERNEL_QEMU_ARTIFACT_DIR` | - | Preserve VM run artifacts (serial log, compile log, dmesg, runner outputs) instead of deleting the temp directory |
+| `0SEC_KERNEL_BUILD_CACHE` | `~/.cache/0sec/kernel-vm` | Cache directory for `--kernel-tree` VM builds |

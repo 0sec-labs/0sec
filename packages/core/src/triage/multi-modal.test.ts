@@ -7,7 +7,7 @@ import {
   computeAgreement,
   fuseTriageSignals,
 } from "./multi-modal.js";
-import type { AttackCategory, Finding } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@0sec/shared";
 
 function makeFinding(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -139,7 +139,7 @@ describe("computeAgreement", () => {
     expect(result.confidence).toBe(0.8);
   });
 
-  it("only_pwnkit when foxguard has no finding in the file", () => {
+  it("only_Osec when foxguard has no finding in the file", () => {
     const f = makeFinding();
     const fox = parseFoxguardSarif(
       makeSarif([
@@ -151,14 +151,14 @@ describe("computeAgreement", () => {
       ]),
     );
     const result = computeAgreement(f, fox);
-    expect(result.agreement).toBe("only_pwnkit");
+    expect(result.agreement).toBe("only_Osec");
     expect(result.confidence).toBe(0.4);
   });
 
-  it("only_pwnkit when foxguard scan is empty", () => {
+  it("only_Osec when foxguard scan is empty", () => {
     const f = makeFinding();
     const result = computeAgreement(f, []);
-    expect(result.agreement).toBe("only_pwnkit");
+    expect(result.agreement).toBe("only_Osec");
     expect(result.confidence).toBe(0.4);
   });
 });
@@ -180,7 +180,7 @@ describe("checkMultiModalAgreement", () => {
     expect(result.confidence).toBe(0.95);
   });
 
-  it("returns only_pwnkit@0.5 when foxguard binary is missing", async () => {
+  it("returns only_Osec@0.5 when foxguard binary is missing", async () => {
     const f = makeFinding();
     // Force missing binary by supplying a nonexistent path and no override.
     const result = await checkMultiModalAgreement(f, "/nonexistent", {
@@ -191,7 +191,7 @@ describe("checkMultiModalAgreement", () => {
     // real-run path. We can't deterministically prove the "missing" branch
     // without mocking `detectFoxguard`, so accept either outcome: missing OR
     // a bad-sourceDir reason.
-    expect(["only_pwnkit", "both_fire"]).toContain(result.agreement);
+    expect(["only_Osec", "both_fire"]).toContain(result.agreement);
     expect(result.confidence).toBeGreaterThanOrEqual(0);
     expect(result.confidence).toBeLessThanOrEqual(1);
   });
@@ -232,7 +232,7 @@ describe("fuseTriageSignals", () => {
   it("auto-rejects when foxguard disagrees and evidence is weak", () => {
     const r = fuseTriageSignals({
       multiModal: {
-        agreement: "only_pwnkit",
+        agreement: "only_Osec",
         confidence: 0.4,
         foxguardFindings: [],
         reasoning: "",
@@ -245,7 +245,7 @@ describe("fuseTriageSignals", () => {
   it("falls through to verify otherwise", () => {
     const r = fuseTriageSignals({
       multiModal: {
-        agreement: "only_pwnkit",
+        agreement: "only_Osec",
         confidence: 0.5,
         foxguardFindings: [],
         reasoning: "",

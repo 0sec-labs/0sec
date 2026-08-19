@@ -1,5 +1,5 @@
 // AUTO-GENERATED from the LiteLLM OSS pricing feed by scripts/sync-pricing.ts --write.
-// DO NOT EDIT BY HAND. Refresh: pnpm --filter @pwnkit/shared sync-pricing --write
+// DO NOT EDIT BY HAND. Refresh: pnpm --filter @0sec/shared sync-pricing --write
 // $ per 1M tokens. Models the feed lacks live in MANUAL_PRICING (src/pricing.ts).
 
 export const OSS_PRICING: Record<string, { input: number; output: number; cachedInput?: number }> = {

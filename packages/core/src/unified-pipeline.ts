@@ -16,9 +16,9 @@ import type {
   SeedFinding,
   SemgrepFinding,
   ScanConfig,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import type { InferSelectModel } from "drizzle-orm";
-import type * as dbSchema from "@pwnkit/db";
+import type * as dbSchema from "@0sec/db";
 import type { ScanListener } from "./scanner.js";
 import { runAnalysisAgent } from "./agent-runner.js";
 import { cloneGitRepo } from "./repo-clone.js";
@@ -72,14 +72,14 @@ import { eventBus, isCloudEventSinkActive } from "./events/bus.js";
  * burns the entire budget producing 0 tokens + 0 findings, then times out
  * silently. We'd rather fail fast with an actionable error telling the
  * operator to scope to a subsystem/path. Overridable via
- * `PWNKIT_REVIEW_MAX_FILES`. 5000 catches the kernel while leaving any normal
+ * `0SEC_REVIEW_MAX_FILES`. 5000 catches the kernel while leaving any normal
  * library / service repo (typically well under ~2k source files) untouched.
  */
 const REVIEW_MAX_FILES = 5000;
 
-/** Resolve the review file-count cap, honoring `PWNKIT_REVIEW_MAX_FILES`. */
+/** Resolve the review file-count cap, honoring `0SEC_REVIEW_MAX_FILES`. */
 function reviewMaxFiles(): number {
-  const raw = process.env.PWNKIT_REVIEW_MAX_FILES;
+  const raw = process.env["0SEC_REVIEW_MAX_FILES"];
   if (raw !== undefined) {
     const parsed = Number.parseInt(raw, 10);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
@@ -166,7 +166,7 @@ export interface PipelineOptions {
    * External candidate vulnerable spans (e.g. from `gemmaforge scan`) to seed
    * the review agent's worklist alongside — or instead of — semgrep. Each
    * record carries its own source tag, so provenance survives into the agent
-   * prompt and downstream reports. Closes pwnkit#368.
+   * prompt and downstream reports. Closes 0sec#368.
    */
   seedFindings?: SeedFinding[];
   /**
@@ -181,7 +181,7 @@ export interface PipelineOptions {
    * addition to the static review agent. Only effective for npm-ecosystem
    * targets (`--ecosystem npm` package-source reviews or `npm-package` audits).
    * Off by default (extra install + untrusted-exec cost); also enabled by the
-   * `PWNKIT_NPM_DYNAMIC_DISCOVERY` env toggle for cloud config. Confirmed leads
+   * `0SEC_NPM_DYNAMIC_DISCOVERY` env toggle for cloud config. Confirmed leads
    * join `findings` so they flow into the same verify → disclosure path.
    */
   npmDynamicDiscovery?: boolean;
@@ -212,7 +212,7 @@ export interface PipelineReport {
   warnings: Array<{ stage: string; message: string }>;
   /**
    * True when the run terminated early because the shared per-scan cost
-   * ceiling (`--cost-ceiling` / PWNKIT_COST_CEILING_USD) was reached —
+   * ceiling (`--cost-ceiling` / 0SEC_COST_CEILING_USD) was reached —
    * research tripped it or the verify wave was skipped/truncated on budget.
    * The CLI maps this to exit code 4 and the cloud lands the scan
    * `cost_exceeded` (never a clean pass). Absent on normal completions.
@@ -277,7 +277,7 @@ export function resolveSubsystemScope(
 
 function shouldEmitPipelineCloudEvents(): boolean {
   if (isCloudEventSinkActive()) return true;
-  const flag = process.env.PWNKIT_CLOUD_EVENTS;
+  const flag = process.env["0SEC_CLOUD_EVENTS"];
   return !!flag && flag !== "0" && flag.toLowerCase() !== "false";
 }
 
@@ -300,7 +300,7 @@ function shouldEmitPipelineCloudEvents(): boolean {
  * leads more attention. The mapping is deliberately conservative —
  * "critical" is reserved for findings the agent has actually confirmed.
  *
- * Closes pwnkit#368.
+ * Closes 0sec#368.
  */
 export function seedFindingsToSemgrepShape(seeds: SeedFinding[]): SemgrepFinding[] {
   return seeds.map((s) => {
@@ -558,7 +558,7 @@ function prepareSourceCode(target: string, emit: ScanListener): PrepareResult {
     };
   }
 
-  const tempDir = join(tmpdir(), `pwnkit-pipeline-${randomUUID().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `0sec-pipeline-${randomUUID().slice(0, 8)}`);
   mkdirSync(tempDir, { recursive: true });
 
   emit({ type: "stage:start", stage: "prepare", message: `Cloning ${target}...` });
@@ -692,7 +692,7 @@ function buildSummary(findings: Finding[], totalAttacks: number) {
  * the drizzle schema. We thread this through `restorePersistedFinding`
  * (rather than `any`) so the *next* column added to `schema.findings`
  * fails to compile in the rehydrator instead of being silently dropped
- * on resume. See pwnkit#414 / pwnkit#382 — historical regressions where
+ * on resume. See 0sec#414 / 0sec#382 — historical regressions where
  * `verificationSpec`, `pocSteps`, `layerVerdicts`, `pocExecution`, the
  * `workflow*` fields, and `score` were each added to the writer/schema
  * but never threaded back through the loader.
@@ -720,7 +720,7 @@ type RestorablePersistedFindingRow = Omit<
  * when the column is a non-empty string of valid JSON, the value itself
  * when it is already an object (sink-shim / test-double path), or
  * `undefined` otherwise. Malformed JSON is non-fatal: the finding still
- * restores, just without that field. See pwnkit#414.
+ * restores, just without that field. See 0sec#414.
  */
 function parseJsonColumn<T>(value: string | T | null | undefined): T | undefined {
   if (value == null) return undefined;
@@ -761,7 +761,7 @@ function parseSemanticDedupe(
  * inside `runPipeline`.
  */
 export function restorePersistedFinding(row: RestorablePersistedFindingRow): Finding {
-  // pwnkit#193 — `verificationSpec` is the deterministic re-check contract
+  // 0sec#193 — `verificationSpec` is the deterministic re-check contract
   // produced by the OSS engine and consumed by cloud's canary watcher.
   // It is persisted as JSON text and must be threaded through every
   // reload path; otherwise findings restored from storage silently lose
@@ -788,7 +788,7 @@ export function restorePersistedFinding(row: RestorablePersistedFindingRow): Fin
     }
   }
 
-  // pwnkit#414 — mirror the verificationSpec thread for every other
+  // 0sec#414 — mirror the verificationSpec thread for every other
   // JSON-text column the writer persists. Each defaults to `undefined`
   // when missing or malformed; the typed `RestorablePersistedFindingRow`
   // parameter ensures any new column added to the schema fails to
@@ -816,7 +816,7 @@ export function restorePersistedFinding(row: RestorablePersistedFindingRow): Fin
     fingerprint: row.fingerprint ?? undefined,
     triageStatus: row.triageStatus as Finding["triageStatus"],
     triageNote: row.triageNote ?? undefined,
-    // pwnkit#414 — workflow + score fields were persisted by saveFinding
+    // 0sec#414 — workflow + score fields were persisted by saveFinding
     // but silently dropped on resume. Thread the scalar columns directly.
     workflowStatus: (row.workflowStatus ?? undefined) as FindingWorkflowStatus | undefined,
     workflowAssignee: row.workflowAssignee ?? undefined,
@@ -863,7 +863,7 @@ function listChangedFiles(scopePath: string, diffBase: string): string[] {
  * `--runtime codex` is a special case: it can resolve through either the
  * local `codex` CLI binary (subscription path, source-analysis only) OR
  * through the direct ChatGPT Codex provider when one of
- * `PWNKIT_CHATGPT_ACCESS_TOKEN` / `PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN` is
+ * `0SEC_CHATGPT_ACCESS_TOKEN` / `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is
  * set. In the latter mode `LlmApiRuntime` reports `provider:
  * "chatgpt-codex"`, and the pipeline must route the codex request through
  * the API runtime instead of bailing with "Requested runtime 'codex' is
@@ -892,7 +892,7 @@ function selectVerificationRuntime(
   if (preferredRuntime && preferredRuntime !== "auto") {
     if (availableRuntimes.has(preferredRuntime)) return preferredRuntime;
     // Explicit `--runtime codex` with the direct ChatGPT Codex provider
-    // configured (PWNKIT_CHATGPT_*_TOKEN env). Route verification through
+    // configured (0SEC_CHATGPT_*_TOKEN env). Route verification through
     // the API runtime — agent-runner.ts will pick up the same env vars
     // and run the native tool_use loop against chatgpt.com.
     if (preferredRuntime === "codex" && hasDirectChatGptCodexProvider(apiDiagnostics)) {
@@ -1067,7 +1067,7 @@ export async function runPerFileResearch(
 
 /** Env-toggle counterpart of the `npmDynamicDiscovery` opt-in (cloud config). */
 function npmDynamicDiscoveryEnvEnabled(): boolean {
-  const v = (process.env.PWNKIT_NPM_DYNAMIC_DISCOVERY ?? "").trim().toLowerCase();
+  const v = (process.env["0SEC_NPM_DYNAMIC_DISCOVERY"] ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
@@ -1117,7 +1117,7 @@ export async function runNpmDynamicDiscoveryStage(args: {
 // ── Main entry point ──
 
 /**
- * Unified pipeline for all pwnkit scan types.
+ * Unified pipeline for all 0sec scan types.
  *
  * Pipeline:
  *   Phase 1: PREPARE   — detect target type, install/clone/resolve
@@ -1258,19 +1258,19 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   // Initialize DB (optional, best-effort)
   let db = await (async () => {
     try {
-      const { pwnkitDB, repairPwnkitDatabase } = await import("@pwnkit/db");
+      const { osecDB, repairOsecDatabase } = await import("@0sec/db");
       try {
-        return new pwnkitDB(opts.dbPath);
+        return new osecDB(opts.dbPath);
       } catch (error) {
         if (!isRepairableDbError(error)) throw error;
-        const repaired = repairPwnkitDatabase(opts.dbPath);
+        const repaired = repairOsecDatabase(opts.dbPath);
         warnings.push({
           stage: "prepare",
           message: repaired.backupPath
             ? `Recovered local scan database. Backup saved to ${repaired.backupPath}`
             : `Recovered local scan database at ${repaired.path}`,
         });
-        return new pwnkitDB(opts.dbPath);
+        return new osecDB(opts.dbPath);
       }
     } catch {
       return null as any;
@@ -1314,7 +1314,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   emit({ type: "stage:end", stage: "prepare", message: `Target ready: ${prepared.resolvedType}` });
 
   // Honor `--subsystem` for non-kernel source reviews by narrowing the review
-  // scope to the requested subtree (pwnkit). Without this the subsystem hint
+  // scope to the requested subtree (0sec). Without this the subsystem hint
   // was ignored outside the linux-kernel profile, so `--subsystem` on a large
   // monorepo (e.g. dotnet/runtime) left scopePath at the whole repo and the
   // oversized-review guard below rejected it every time.
@@ -1332,7 +1332,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     }
   }
 
-  // Oversized-review guard (pwnkit). A whole-repo `review` feeds the source
+  // Oversized-review guard (0sec). A whole-repo `review` feeds the source
   // tree to a single agent session under a fixed time budget; on a target the
   // size of the Linux kernel (~80k source files) the session exhausts the
   // budget with 0 tokens + 0 findings and times out silently. Count the scope
@@ -1381,7 +1381,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           `review cap — split the change or scope to a subsystem/path`
         : `review target too large: over ${cap} source files exceeds the ${cap} ` +
           `review cap — scope to a subsystem/path (e.g. a specific directory) or ` +
-          `use a smaller target (override with PWNKIT_REVIEW_MAX_FILES)`;
+          `use a smaller target (override with 0SEC_REVIEW_MAX_FILES)`;
       logPipelineEvent("prepare", "stage_error", { error: msg, fileCount, cap });
       emit({ type: "error", stage: "prepare", message: msg });
       throw new Error(msg);
@@ -1458,7 +1458,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     // External seeds (e.g. from `gemmaforge scan` via `--seed-findings`).
     // Prepended to semgrepFindings so the agent prompt lists them FIRST —
     // the agent treats top-of-list as highest priority. When `seedOnly` is
-    // also set we skip the static scan entirely. Closes pwnkit#368.
+    // also set we skip the static scan entirely. Closes 0sec#368.
     const externalSeedCount = opts.seedFindings?.length ?? 0;
     if (externalSeedCount > 0) {
       const seededAsSemgrep = seedFindingsToSemgrepShape(opts.seedFindings!);
@@ -1516,7 +1516,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       }
     }
 
-    // Static source scan. Foxguard is the default; PWNKIT_STATIC=semgrep
+    // Static source scan. Foxguard is the default; 0SEC_STATIC=semgrep
     // routes source and package-source leads through Semgrep while leaving
     // dependency advisory checks intact.
     if (
@@ -1540,7 +1540,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           prepared.resolvedType === "cargo-package" ||
           prepared.resolvedType === "oci-image";
 
-        // Subsystem-scoped static scanning (pwnkit#466). When --subsystem is
+        // Subsystem-scoped static scanning (0sec#466). When --subsystem is
         // set for a linux-kernel review, scope the static scanner to only the
         // specified subdirectory/directories. The full tree is still available
         // for cross-reference reads, but scanning the whole 30M-line tree
@@ -1565,7 +1565,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       }
     }
 
-    // Haskell fallback seed layer (pwnkit). Foxguard v0.10.0 emits built-in
+    // Haskell fallback seed layer (0sec). Foxguard v0.10.0 emits built-in
     // Cardano Haskell leads; keep this regex pass only for Semgrep/fallback
     // runs or older scanner output so cardano-haskell reviews never start from
     // an empty scanner list.
@@ -1596,7 +1596,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       }
     }
 
-    // Solidity/EVM fallback seed layer (pwnkit "0contract"). Semgrep's
+    // Solidity/EVM fallback seed layer (0sec "0contract"). Semgrep's
     // Solidity coverage is thin and Slither is not on PATH in the engine
     // image, so this regex pass gives the evm-onchain review concrete
     // candidate sinks (external calls, delegatecall, cross-chain handlers,
@@ -1716,8 +1716,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     const verificationRuntime = selectVerificationRuntime(opts.runtime, hasApiKey, availableRuntimes, apiDiagnostics);
 
     // Log pipeline decisions to stderr for CI visibility
-    if (process.env.CI || process.env.PWNKIT_DEBUG) {
-      process.stderr.write(`[pwnkit] Research: apiKey=${hasApiKey}, apiReason=${apiDiagnostics.reason ?? "ok"}, runtimes=[${[...availableRuntimes].join(",")}], config=${opts.runtime ?? "auto"}\n`);
+    if (process.env.CI || process.env["0SEC_DEBUG"]) {
+      process.stderr.write(`[0sec] Research: apiKey=${hasApiKey}, apiReason=${apiDiagnostics.reason ?? "ok"}, runtimes=[${[...availableRuntimes].join(",")}], config=${opts.runtime ?? "auto"}\n`);
     }
 
     if (!canUseAiRuntime) {
@@ -1811,7 +1811,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         emit({ type: "stage:start", stage: "research", message: `Review conversation loaded (${opts.conversation.length} chars)` });
       }
 
-      // Pre-scan attack surface enumeration for kernel reviews (pwnkit#471).
+      // Pre-scan attack surface enumeration for kernel reviews (0sec#471).
       let attackSurfaceCtx: string | undefined;
       if (opts.reviewProfile === "linux-kernel" && prepared.resolvedType === "source-code") {
         try {
@@ -2016,7 +2016,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       // URL / web-app targets — not supported yet in unified pipeline
       warnings.push({
         stage: "research",
-        message: `Target type "${prepared.resolvedType}" is not yet supported in the unified pipeline. Use 'pwnkit scan' for URL/web-app targets.`,
+        message: `Target type "${prepared.resolvedType}" is not yet supported in the unified pipeline. Use '0sec scan' for URL/web-app targets.`,
       });
       logPipelineEvent("research", "warning", {
         message: `Target type "${prepared.resolvedType}" is not yet supported in the unified pipeline.`,

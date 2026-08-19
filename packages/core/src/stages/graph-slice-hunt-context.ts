@@ -1,7 +1,7 @@
 /**
  * Graph-slice → hunt-pipeline adapter (`--graph-slice`).
  *
- * The THIN bridge that lets the seed-driven `pwnkit hunt` flow feed the finder a
+ * The THIN bridge that lets the seed-driven `0sec hunt` flow feed the finder a
  * real interprocedural reachability SLICE around the seed's fix site instead of
  * (only) flat file text. It is the exact structural sibling of
  * {@link ./invariant-hunt-context.ts} (the `--invariant` adapter): it derives a
@@ -91,13 +91,13 @@ export interface GraphSliceHuntContextInput {
   seedDiff: string;
   /**
    * Path to the pre-exported CPG graphson JSON. Default:
-   * `<sourceRoot>/.pwnkit/cpg/<subsystem-slug>.json` (produced by
+   * `<sourceRoot>/.0sec/cpg/<subsystem-slug>.json` (produced by
    * `scripts/provision-cpg.sh`). Absent → the stage degrades to flat-text.
    */
   cpgPath?: string;
   /**
    * Path to the pre-harvested ops map (Phase-1 indirect-call edges). Default:
-   * `<sourceRoot>/.pwnkit/cpg/<subsystem-slug>.ops.json`. Optional — absent just
+   * `<sourceRoot>/.0sec/cpg/<subsystem-slug>.ops.json`. Optional — absent just
    * means no ops-struct edges are synthesized.
    *
    * When BOTH `opsPath` and `opsHarvestSourceFiles` are set, the in-process
@@ -190,8 +190,8 @@ export function formatGraphSlicePromptBlock(
 function defaultCpgPaths(sourceRoot: string, subsystem: string): { cpg: string; ops: string } {
   const slug = subsystem.replaceAll("/", "__");
   return {
-    cpg: join(sourceRoot, ".pwnkit", "cpg", `${slug}.json`),
-    ops: join(sourceRoot, ".pwnkit", "cpg", `${slug}.ops.json`),
+    cpg: join(sourceRoot, ".0sec", "cpg", `${slug}.json`),
+    ops: join(sourceRoot, ".0sec", "cpg", `${slug}.ops.json`),
   };
 }
 

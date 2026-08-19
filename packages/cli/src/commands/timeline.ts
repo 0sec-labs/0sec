@@ -1,5 +1,5 @@
 /**
- * `pwnkit timeline <scanId>` — forensic timeline export.
+ * `0sec timeline <scanId>` — forensic timeline export.
  *
  * Every other command in the CLI is finding-centric: it answers "what did we
  * find?". This one answers "what did we DO, and when?" — the question a client
@@ -24,7 +24,7 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { atlasTechniquesForEvent, techniquesForEvent } from "@pwnkit/core";
+import { atlasTechniquesForEvent, techniquesForEvent } from "@0sec/core";
 import {
   formatTimeline,
   isTimelineFormat,
@@ -33,7 +33,7 @@ import {
   type TimelineExport,
 } from "../formatters/timeline.js";
 
-/** Row shape of `pipeline_events` as returned by `pwnkitDB.getEvents`. */
+/** Row shape of `pipeline_events` as returned by `osecDB.getEvents`. */
 export interface TimelineEventRow {
   id?: string;
   scanId?: string;
@@ -73,7 +73,7 @@ export function registerTimelineCommand(program: Command): void {
     .description(
       "Export a scan's immutable pipeline-event audit trail as a chronological, MITRE ATT&CK- and ATLAS-tagged forensic record — UTC ISO-8601 timestamps, per-event action summaries, ready to hand to a client SOC for detection cross-referencing.",
     )
-    .argument("<scanId>", "Scan id to export (see `pwnkit history`)")
+    .argument("<scanId>", "Scan id to export (see `0sec history`)")
     .option("--format <format>", `Output format: ${TIMELINE_FORMATS.join(", ")}`, "markdown")
     .option("--since <iso>", "Only include events at or after this timestamp (ISO-8601, e.g. 2026-07-28T09:00:00Z)")
     .option("--until <iso>", "Only include events at or before this timestamp (ISO-8601)")
@@ -113,15 +113,15 @@ export function registerTimelineCommand(program: Command): void {
         return;
       }
 
-      const { pwnkitDB } = await import("@pwnkit/db");
-      const db = new pwnkitDB(opts.dbPath);
+      const { osecDB } = await import("@0sec/db");
+      const db = new osecDB(opts.dbPath);
       let scan: { id: string; target?: string | null } | undefined;
       let rows: TimelineEventRow[];
       try {
         scan = db.getScan(id) as { id: string; target?: string | null } | undefined;
         if (!scan) {
           console.error(
-            chalk.red(`No scan '${id}' in the database. Run \`pwnkit history\` to list known scan ids.`),
+            chalk.red(`No scan '${id}' in the database. Run \`0sec history\` to list known scan ids.`),
           );
           process.exitCode = 2;
           return;

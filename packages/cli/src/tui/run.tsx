@@ -3,7 +3,7 @@ import { appendFileSync } from "node:fs";
 import React, { useEffect, useMemo, useState } from "react";
 import { createCliRenderer } from "@opentui/core";
 import { createRoot, useKeyboard } from "@opentui/react";
-import { VERSION, type FindingTriageStatus } from "@pwnkit/shared";
+import { VERSION, type FindingTriageStatus } from "@0sec/shared";
 import { getRuntimeAvailability } from "../utils.js";
 import {
   ACCENT,
@@ -96,7 +96,7 @@ const SCAN_MODE_OPTIONS: LaunchScanMode[] = ["auto", "web", "probe", "deep", "mc
 const ECOSYSTEM_OPTIONS: LaunchEcosystem[] = ["npm", "pypi", "cargo", "oci"];
 
 function appendTuiTrace(record: Record<string, unknown>): void {
-  const file = process.env.PWNKIT_TRACE_TUI_EVENTS;
+  const file = process.env["0SEC_TRACE_TUI_EVENTS"];
   if (!file) return;
   try {
     appendFileSync(file, `${JSON.stringify({ ts: new Date().toISOString(), ...record })}\n`, "utf8");
@@ -117,7 +117,7 @@ function serializeError(error: unknown): Record<string, unknown> {
 }
 
 function appendTuiCrash(record: Record<string, unknown>): void {
-  const file = process.env.PWNKIT_TRACE_TUI_EVENTS ?? "/tmp/pwnkit-tui-crashes.ndjson";
+  const file = process.env["0SEC_TRACE_TUI_EVENTS"] ?? "/tmp/0sec-tui-crashes.ndjson";
   try {
     appendFileSync(file, `${JSON.stringify({ ts: new Date().toISOString(), kind: "tui-crash", ...record })}\n`, "utf8");
   } catch {
@@ -172,7 +172,7 @@ class TuiErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
           <box flexDirection="column">
             <text fg={ERROR}>TUI crashed while rendering the current screen.</text>
             <text fg={MUTED}>{fitTuiText(this.state.error, 96)}</text>
-            <text fg={MUTED}>Trace file: {process.env.PWNKIT_TRACE_TUI_EVENTS ?? "/tmp/pwnkit-tui-crashes.ndjson"}</text>
+            <text fg={MUTED}>Trace file: {process.env["0SEC_TRACE_TUI_EVENTS"] ?? "/tmp/0sec-tui-crashes.ndjson"}</text>
           </box>
         </ShellFrame>
       );
@@ -698,16 +698,16 @@ function ComposeOverlay({ text }: { text: string }) {
 }
 
 const BRAND_WORD_FRAMES = [
-  "pwnkit",
-  "pwnkit",
+  "0sec",
+  "0sec",
   "pwnk1t",
-  "pwnkit",
+  "0sec",
   "pwnk!t",
-  "pwnkit",
+  "0sec",
   "pw_nit",
-  "pwnkit",
-  "pwnkit",
-  "pwnkit",
+  "0sec",
+  "0sec",
+  "0sec",
 ];
 
 function useAnimatedBrand(enabled: boolean) {
@@ -746,7 +746,7 @@ function BrandSignature({
   return (
     <box flexDirection="column" alignItems="flex-end">
       <box flexDirection="row">
-        <text fg={muted ? MUTED : PRIMARY}>{animated && !muted ? brand.word : "pwnkit"}</text>
+        <text fg={muted ? MUTED : PRIMARY}>{animated && !muted ? brand.word : "0sec"}</text>
         <text fg={MUTED}>{` v${VERSION}`}</text>
       </box>
       {subtitle ? <text fg={MUTED}>{fitTuiText(subtitle, 36)}</text> : null}
@@ -759,7 +759,7 @@ function BrandStamp({ animated = false }: { animated?: boolean }) {
 
   return (
     <box flexDirection="row">
-      <text fg={MUTED}>{animated ? brand.word : "pwnkit"}</text>
+      <text fg={MUTED}>{animated ? brand.word : "0sec"}</text>
       <text fg={MUTED}>{` v${VERSION}`}</text>
     </box>
   );
@@ -780,7 +780,7 @@ function HeaderBar({
     <box border borderColor={BORDER} backgroundColor={PANEL} paddingX={1} paddingY={0} marginBottom={1}>
       <box flexDirection="column" width="100%">
         <box flexDirection="row" justifyContent="space-between" width="100%">
-          <text fg={TEXT}>PWNKIT TUI CONSOLE</text>
+          <text fg={TEXT}>0SEC TUI CONSOLE</text>
           <text fg={PRIMARY}>{fitTuiText(view.toUpperCase(), 28)}</text>
         </box>
         <box flexDirection="row" justifyContent="space-between" width="100%">
@@ -1268,8 +1268,8 @@ function OpsScreen({ dbPath, refreshMs, onExit, shell }: { dbPath?: string; refr
     let alive = true;
     const refresh = async () => {
       try {
-        const { pwnkitDB } = await import("@pwnkit/db");
-        const db = new pwnkitDB(dbPath);
+        const { osecDB } = await import("@0sec/db");
+        const db = new osecDB(dbPath);
         try {
           const scans = db.listScans(12) as OpsSnapshot["scans"];
           const findings = db.listFindings({ limit: 12 }) as OpsSnapshot["findings"];
@@ -1405,7 +1405,7 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
   const nextStep = !state
     ? "Checking environment"
     : !state.nodeOk
-      ? "Upgrade to Node 20+ before running pwnkit."
+      ? "Upgrade to Node 20+ before running 0sec."
       : state.apiRuntime.configured && !state.apiRuntime.valid && state.apiRuntime.error
         ? "Repair the configured API runtime before scanning."
         : state.hasApiKey || state.availableRuntimes.length > 0
@@ -1437,9 +1437,9 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
             <text fg={TEXT}>{fitTuiText(nextStep, 68)}</text>
             {state?.hasApiKey || (state && state.availableRuntimes.length > 0) ? (
               <>
-                <text fg={MUTED}>pwnkit scan --target https://example.com --mode web</text>
-                <text fg={MUTED}>pwnkit review .</text>
-                <text fg={MUTED}>pwnkit audit express</text>
+                <text fg={MUTED}>0sec scan --target https://example.com --mode web</text>
+                <text fg={MUTED}>0sec review .</text>
+                <text fg={MUTED}>0sec audit express</text>
               </>
             ) : null}
             {state?.apiRuntime.error ? <text fg={ERROR}>{fitTuiText(state.apiRuntime.error, 68)}</text> : null}
@@ -1490,8 +1490,8 @@ function HistoryScreen({ dbPath, limit, onResolve, onExit, shell }: { dbPath?: s
     let alive = true;
     const load = async () => {
       try {
-        const { pwnkitDB } = await import("@pwnkit/db");
-        const db = new pwnkitDB(dbPath);
+        const { osecDB } = await import("@0sec/db");
+        const db = new osecDB(dbPath);
         try {
           const rows = db.listScans(limit) as HistoryScanRow[];
           if (!alive) return;
@@ -1598,8 +1598,8 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
     let alive = true;
     const load = async () => {
       try {
-        const { pwnkitDB } = await import("@pwnkit/db");
-        const db = new pwnkitDB(options.dbPath);
+        const { osecDB } = await import("@0sec/db");
+        const db = new osecDB(options.dbPath);
         try {
           const findings = db.listFindings({
             scanId: options.scan,
@@ -1692,8 +1692,8 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
     setNotice(`Updating ${selectedRow.fingerprint.slice(0, 10)} to ${triageStatus}...`);
 
     try {
-      const { pwnkitDB } = await import("@pwnkit/db");
-      const db = new pwnkitDB(options.dbPath);
+      const { osecDB } = await import("@0sec/db");
+      const db = new osecDB(options.dbPath);
       try {
         db.updateFindingTriageByFingerprint(selectedRow.fingerprint, triageStatus);
       } finally {
@@ -1835,8 +1835,8 @@ function ReplayScreen({ dbPath, scanId, onExit, shell }: { dbPath?: string; scan
     let alive = true;
     const load = async () => {
       try {
-        const { pwnkitDB } = await import("@pwnkit/db");
-        const db = new pwnkitDB(dbPath);
+        const { osecDB } = await import("@0sec/db");
+        const db = new osecDB(dbPath);
         try {
           let selected = scanId ? db.getScan(scanId) as ReplayScanRow | undefined : undefined;
           if (!selected && scanId) {
@@ -2426,19 +2426,19 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     });
 
     const { runUnified } = await import("../commands/run.js");
-    const previousStartupLogSetting = process.env.PWNKIT_SUPPRESS_PROVIDER_STARTUP_LOG;
-    const previousNativeTracePath = process.env.PWNKIT_TRACE_NATIVE_RESPONSES;
-    const previousTuiTracePath = process.env.PWNKIT_TRACE_TUI_EVENTS;
-    process.env.PWNKIT_SUPPRESS_PROVIDER_STARTUP_LOG = "1";
-    process.env.PWNKIT_TRACE_NATIVE_RESPONSES = `/tmp/pwnkit-native-responses-${Date.now()}.ndjson`;
-    process.env.PWNKIT_TRACE_TUI_EVENTS = `/tmp/pwnkit-tui-events-${Date.now()}.ndjson`;
+    const previousStartupLogSetting = process.env["0SEC_SUPPRESS_PROVIDER_STARTUP_LOG"];
+    const previousNativeTracePath = process.env["0SEC_TRACE_NATIVE_RESPONSES"];
+    const previousTuiTracePath = process.env["0SEC_TRACE_TUI_EVENTS"];
+    process.env["0SEC_SUPPRESS_PROVIDER_STARTUP_LOG"] = "1";
+    process.env["0SEC_TRACE_NATIVE_RESPONSES"] = `/tmp/0sec-native-responses-${Date.now()}.ndjson`;
+    process.env["0SEC_TRACE_TUI_EVENTS"] = `/tmp/0sec-tui-events-${Date.now()}.ndjson`;
     appendTuiTrace({
       kind: "session-start",
       target: selection.target,
       mode,
       runtime,
       depth,
-      nativeTrace: process.env.PWNKIT_TRACE_NATIVE_RESPONSES,
+      nativeTrace: process.env["0SEC_TRACE_NATIVE_RESPONSES"],
     });
     try {
       await runUnified({
@@ -2508,12 +2508,12 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
         }),
       });
     } finally {
-      if (previousStartupLogSetting === undefined) delete process.env.PWNKIT_SUPPRESS_PROVIDER_STARTUP_LOG;
-      else process.env.PWNKIT_SUPPRESS_PROVIDER_STARTUP_LOG = previousStartupLogSetting;
-      if (previousNativeTracePath === undefined) delete process.env.PWNKIT_TRACE_NATIVE_RESPONSES;
-      else process.env.PWNKIT_TRACE_NATIVE_RESPONSES = previousNativeTracePath;
-      if (previousTuiTracePath === undefined) delete process.env.PWNKIT_TRACE_TUI_EVENTS;
-      else process.env.PWNKIT_TRACE_TUI_EVENTS = previousTuiTracePath;
+      if (previousStartupLogSetting === undefined) delete process.env["0SEC_SUPPRESS_PROVIDER_STARTUP_LOG"];
+      else process.env["0SEC_SUPPRESS_PROVIDER_STARTUP_LOG"] = previousStartupLogSetting;
+      if (previousNativeTracePath === undefined) delete process.env["0SEC_TRACE_NATIVE_RESPONSES"];
+      else process.env["0SEC_TRACE_NATIVE_RESPONSES"] = previousNativeTracePath;
+      if (previousTuiTracePath === undefined) delete process.env["0SEC_TRACE_TUI_EVENTS"];
+      else process.env["0SEC_TRACE_TUI_EVENTS"] = previousTuiTracePath;
     }
   };
 

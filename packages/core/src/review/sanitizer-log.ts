@@ -1,4 +1,4 @@
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 export type SanitizerName = "asan" | "ubsan";
 export type SanitizerPrimitive = "read" | "write" | "both" | "unknown";

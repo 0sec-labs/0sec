@@ -15,7 +15,7 @@
  *
  *   1. A **widening-gadget library** — parameterized primitives, each of which
  *      emits a C setup snippet (spliced into the exploit) plus the prover env
- *      knobs it wants (`PWNKIT_RACE_*` / `PWNKIT_KERNEL_QEMU_WIDEN_*`).
+ *      knobs it wants (`0SEC_RACE_*` / `0SEC_KERNEL_QEMU_WIDEN_*`).
  *   2. An **LLM gadget-selector** (`selectRaceGadgets`) — given a race
  *      candidate it picks and parameterizes the gadgets most likely to widen
  *      THAT window, returning an ordered list to try. Routed through the
@@ -155,7 +155,7 @@ export const GADGET_KINDS: readonly GadgetKind[] = [
 /**
  * A parameterized widening primitive. `renderSetup()` emits the C that arms
  * the widening effect (spliced into the exploit before the racing section);
- * `proverEnv()` emits the `PWNKIT_RACE_*` / `PWNKIT_KERNEL_QEMU_WIDEN_*` knobs
+ * `proverEnv()` emits the `0SEC_RACE_*` / `0SEC_KERNEL_QEMU_WIDEN_*` knobs
  * the prover lane should carry for this gadget.
  */
 export interface RaceGadget {
@@ -213,7 +213,7 @@ export function timerfdInterruptGadget(params: { intervalNs?: number } = {}): Ra
       ].join("\n");
     },
     proverEnv() {
-      return { PWNKIT_RACE_WIDEN_TIMERFD_NS: String(intervalNs) };
+      return { "0SEC_RACE_WIDEN_TIMERFD_NS": String(intervalNs) };
     },
   };
 }
@@ -247,8 +247,8 @@ export function epollWaitqueueFloodGadget(params: { items?: number } = {}): Race
     },
     proverEnv() {
       return {
-        PWNKIT_RACE_WIDEN_EPOLL_ITEMS: String(items),
-        PWNKIT_RACE_FLOOD_THREADS: String(floodThreads),
+        "0SEC_RACE_WIDEN_EPOLL_ITEMS": String(items),
+        "0SEC_RACE_FLOOD_THREADS": String(floodThreads),
       };
     },
   };
@@ -282,10 +282,10 @@ export function cacheMissStallGadget(
     },
     proverEnv() {
       return {
-        PWNKIT_RACE_WIDEN_CACHE_KB: String(footprintKb),
-        PWNKIT_RACE_WIDEN_CACHE_STRIDE: String(strideBytes),
+        "0SEC_RACE_WIDEN_CACHE_KB": String(footprintKb),
+        "0SEC_RACE_WIDEN_CACHE_STRIDE": String(strideBytes),
         // Cache eviction is most effective when the racer is pinned same-CPU.
-        PWNKIT_RACE_SAME_CPU: "1",
+        "0SEC_RACE_SAME_CPU": "1",
       };
     },
   };
@@ -315,7 +315,7 @@ export function mutexSleepWidenGadget(params: { holdUs?: number } = {}): RaceGad
       ].join("\n");
     },
     proverEnv() {
-      return { PWNKIT_RACE_PARK_US: String(holdUs) };
+      return { "0SEC_RACE_PARK_US": String(holdUs) };
     },
   };
 }
@@ -345,7 +345,7 @@ export function futexHoldGadget(params: { holdUs?: number } = {}): RaceGadget {
       ].join("\n");
     },
     proverEnv() {
-      return { PWNKIT_RACE_WIDEN_FUTEX_US: String(holdUs) };
+      return { "0SEC_RACE_WIDEN_FUTEX_US": String(holdUs) };
     },
   };
 }
@@ -359,7 +359,7 @@ export function futexHoldGadget(params: { holdUs?: number } = {}): RaceGadget {
 // reschedule IPI (`sched_setaffinity`), a TLB-shootdown IPI (`mprotect`/
 // `munmap` on a shared mm), and `membarrier` expedited — plus calif's giant
 // wait-queue freeze and Bad Epoll's non-crashing retry loop. All userspace-only,
-// no debug gate. Each maps 1:1 to a `renderSetup()` C snippet + `PWNKIT_RACE_*`
+// no debug gate. Each maps 1:1 to a `renderSetup()` C snippet + `0SEC_RACE_*`
 // prover knob, and declares the `.config` symbol it needs (config-gated).
 
 /**
@@ -399,8 +399,8 @@ export function rescheduleIpiGadget(
     },
     proverEnv() {
       return {
-        PWNKIT_RACE_WIDEN_RESCHED_BOUNCES: String(bounces),
-        PWNKIT_RACE_SAME_CPU: "0",
+        "0SEC_RACE_WIDEN_RESCHED_BOUNCES": String(bounces),
+        "0SEC_RACE_SAME_CPU": "0",
       };
     },
   };
@@ -439,7 +439,7 @@ export function tlbShootdownIpiGadget(params: { flips?: number } = {}): RaceGadg
       ].join("\n");
     },
     proverEnv() {
-      return { PWNKIT_RACE_WIDEN_TLB_FLIPS: String(flips) };
+      return { "0SEC_RACE_WIDEN_TLB_FLIPS": String(flips) };
     },
   };
 }
@@ -475,7 +475,7 @@ export function membarrierIpiGadget(params: { count?: number } = {}): RaceGadget
       ].join("\n");
     },
     proverEnv() {
-      return { PWNKIT_RACE_WIDEN_MEMBARRIER: String(count) };
+      return { "0SEC_RACE_WIDEN_MEMBARRIER": String(count) };
     },
   };
 }
@@ -513,7 +513,7 @@ export function waitqueueFreezeGadget(params: { entries?: number } = {}): RaceGa
       ].join("\n");
     },
     proverEnv() {
-      return { PWNKIT_RACE_WIDEN_WAITQUEUE_ENTRIES: String(entries) };
+      return { "0SEC_RACE_WIDEN_WAITQUEUE_ENTRIES": String(entries) };
     },
   };
 }
@@ -524,7 +524,7 @@ export function waitqueueFreezeGadget(params: { entries?: number } = {}): RaceGa
  * fires, and NEVER let the harness itself panic/segfault (the kernel splat is
  * the only terminator). This gadget carries no C of its own — the retry loop
  * lives in the {@link renderRealIpiRaceHarness} template — it only sets the
- * `PWNKIT_RACE_*` budget knobs the harness reads.
+ * `0SEC_RACE_*` budget knobs the harness reads.
  */
 export function retryUntilSplatGadget(
   params: { retries?: number; seconds?: number } = {},
@@ -543,8 +543,8 @@ export function retryUntilSplatGadget(
     },
     proverEnv() {
       return {
-        PWNKIT_RACE_RETRIES: String(retries),
-        PWNKIT_RACE_SECONDS: String(seconds),
+        "0SEC_RACE_RETRIES": String(retries),
+        "0SEC_RACE_SECONDS": String(seconds),
       };
     },
   };
@@ -601,7 +601,7 @@ export function composeGadgetSetup(gadgets: RaceGadget[]): ComposedGadgets {
     gadgetNames.push(g.name);
   }
   const setupC = [
-    "/* ── pwnkit race-widening gadgets (composed) ─────────────────── */",
+    "/* ── 0sec race-widening gadgets (composed) ─────────────────── */",
     ...parts,
     "/* ── end race-widening gadgets ───────────────────────────────── */",
   ].join("\n");
@@ -939,7 +939,7 @@ export async function attemptWinRace(
 // ── Real on-box prover glue (kernel-vm-runner) ──────────────────────
 
 /** Marker in a base reproducer where gadget C is spliced (before the race). */
-export const GADGET_SETUP_MARKER = "// PWNKIT_RACE_GADGET_SETUP";
+export const GADGET_SETUP_MARKER = "// 0SEC_RACE_GADGET_SETUP";
 
 /**
  * Splice composed gadget C into a base reproducer. If the reproducer contains
@@ -959,13 +959,13 @@ export function spliceGadgetSetup(reproducer: string, setupC: string): string {
   return setupC + "\n" + reproducer;
 }
 
-/** Build the `PWNKIT_KERNEL_QEMU_WIDEN_*` env for an mdelay-kprobe widen. Pure. */
+/** Build the `0SEC_KERNEL_QEMU_WIDEN_*` env for an mdelay-kprobe widen. Pure. */
 export function buildWidenEnv(widen: WidenSpec | undefined, delayMs: number): Record<string, string> {
   if (!widen) return {};
   return {
-    PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL: widen.symbol,
-    PWNKIT_KERNEL_QEMU_WIDEN_OFFSET: `0x${widen.offset.toString(16)}`,
-    PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS: String(delayMs),
+    "0SEC_KERNEL_QEMU_WIDEN_SYMBOL": widen.symbol,
+    "0SEC_KERNEL_QEMU_WIDEN_OFFSET": `0x${widen.offset.toString(16)}`,
+    "0SEC_KERNEL_QEMU_WIDEN_DELAY_MS": String(delayMs),
   };
 }
 
@@ -999,8 +999,8 @@ export interface KernelVmRaceProverBase {
 
 /**
  * Wire the real on-box race-widening prover: per boot it splices the composed
- * gadget C into the base reproducer, sets the widen (`PWNKIT_KERNEL_QEMU_WIDEN_*`)
- * and gadget (`PWNKIT_RACE_*`) env, and runs `verifyKernelFinding` (build-cached
+ * gadget C into the base reproducer, sets the widen (`0SEC_KERNEL_QEMU_WIDEN_*`)
+ * and gadget (`0SEC_RACE_*`) env, and runs `verifyKernelFinding` (build-cached
  * kernel + QEMU boot). Maps a `reproduced` status to a KASAN-splat win.
  *
  * The env-splice-verify glue is fully unit-tested via the `verify` / `io`
@@ -1012,7 +1012,7 @@ export function makeKernelVmRaceProver(base: KernelVmRaceProverBase): RaceProver
   const io: NonNullable<KernelVmRaceProverBase["io"]> = base.io ?? {
     read: (p: string) => readFileSync(p, "utf-8"),
     write: (content: string, bootIndex: number) => {
-      const dir = mkdtempSync(join(tmpdir(), "pwnkit-race-"));
+      const dir = mkdtempSync(join(tmpdir(), "0sec-race-"));
       const out = join(dir, `repro-widened-boot${bootIndex}.c`);
       writeFileSync(out, content, "utf-8");
       return out;

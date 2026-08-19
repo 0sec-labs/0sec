@@ -8,7 +8,7 @@ fi
 
 ecosystem="$1"
 target="$2"
-cli="${3:-node dist/pwnkit.js}"
+cli="${3:-node dist/0sec.js}"
 read -r -a cli_arr <<< "$cli"
 
 extra_arg_a=""
@@ -27,7 +27,7 @@ esac
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-db_path="$tmpdir/pwnkit-smoke.db"
+db_path="$tmpdir/0sec-smoke.db"
 json_path="$tmpdir/result.json"
 log_path="$tmpdir/result.log"
 

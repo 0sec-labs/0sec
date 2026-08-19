@@ -1,7 +1,7 @@
 ---
 title: "We took the control-flow audit seriously — here are the 5 fixes"
 date: "2026-05-09"
-description: "A bear-blog post argued that agents need deterministic code at chokepoints, not 'MUST' prompts. We audited pwnkit's agent loop, found 5 places we were doing it wrong, and shipped fixes in 24 hours. Here's the diff."
+description: "A bear-blog post argued that agents need deterministic code at chokepoints, not 'MUST' prompts. We audited 0sec's agent loop, found 5 places we were doing it wrong, and shipped fixes in 24 hours. Here's the diff."
 ---
 
 *Published 2026-05-09. PRs #287–#291 land the fixes; closes [#280](https://github.com/0sec-labs/0sec/issues/280).*
@@ -141,7 +141,7 @@ for (const finding of findings) {
 
 `unified-pipeline.ts:915 runPerFileResearch` and `audit.ts:668 runPerFileAudit` mirror the shape for research and npm/PyPI/cargo/OCI audits — one agent session per source file, focused per-file system prompt, deterministic outer loop. The reference implementation already lived in the repo: `triage/pov-gate.ts buildPovSystemPrompt` was doing this years ago for evidence-judge agents. We just generalized the pattern.
 
-Feature-flagged via `PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION` (default on) — set to `0` if you need to revert to the shared-session shape for cost-bounded benchmarks. Default-on because per-item is the correct shape; the flag exists to let benchmark sweeps measure the delta.
+Feature-flagged via `0SEC_FEATURE_PER_ITEM_ORCHESTRATION` (default on) — set to `0` if you need to revert to the shared-session shape for cost-bounded benchmarks. Default-on because per-item is the correct shape; the flag exists to let benchmark sweeps measure the delta.
 
 ## The 11 patterns we didn't change
 
@@ -166,7 +166,7 @@ We closed [issue #284](https://github.com/0sec-labs/0sec/issues/284) on second-p
 
 ## What this is and isn't
 
-This is not a claim that pwnkit's agent loop is now deterministic-everywhere. The agent still has lots of LLM-driven steps — tactical action selection inside the attack stage, finding-content generation, exploit-payload construction, source-file comprehension. Those are search-space exploration and don't deterministically encode. Pwnkit's edge has always been hybrid: code-determined orchestration, LLM-determined tactics.
+This is not a claim that 0sec's agent loop is now deterministic-everywhere. The agent still has lots of LLM-driven steps — tactical action selection inside the attack stage, finding-content generation, exploit-payload construction, source-file comprehension. Those are search-space exploration and don't deterministically encode. 0sec's edge has always been hybrid: code-determined orchestration, LLM-determined tactics.
 
 What did change is that the chokepoints — the spots where one bad model output corrupts everything downstream of it — are now code-gated, not prompt-suggested. Empty PoCs can't be saved. Duplicate findings can't be saved. Fabricated `file:line` references can't be parsed. Unauthenticated curl can't reach in-scope targets when auth is configured. Verify and audit walk per-item instead of asking the model to walk N items inside one session.
 

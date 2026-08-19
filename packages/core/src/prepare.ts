@@ -101,7 +101,7 @@ function resolveRepo(
     return { repoPath: absPath, cloned: false };
   }
 
-  const tempDir = join(tmpdir(), `pwnkit-review-${randomUUID().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `0sec-review-${randomUUID().slice(0, 8)}`);
   mkdirSync(tempDir, { recursive: true });
 
   emit({

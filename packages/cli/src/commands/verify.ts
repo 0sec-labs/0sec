@@ -1,9 +1,9 @@
 /**
- * pwnkit#194 — `pwnkit verify` command.
+ * 0sec#194 — `0sec verify` command.
  *
  * Wraps `executePocSteps` (the deterministic-replay runtime introduced in
- * pwnkit#171, see `packages/core/src/disclose/poc-runtime.ts`) behind a
- * single CLI surface so cloud's worker-controller (pwnkit-cloud#193) can
+ * 0sec#171, see `packages/core/src/disclose/poc-runtime.ts`) behind a
+ * single CLI surface so cloud's worker-controller (0sec-cloud#193) can
  * shell out to the OSS engine instead of re-implementing replay logic
  * in-process.
  *
@@ -38,7 +38,7 @@ import {
   type PocExecutionTarget,
   type PocStepResult,
   type VerifyEvidenceKind,
-} from "@pwnkit/core";
+} from "@0sec/core";
 import type {
   EvidenceArtifact,
   Finding,
@@ -47,11 +47,11 @@ import type {
   VerificationCommand,
   VerificationResult as SharedVerificationResult,
   VerificationStatus as SharedVerificationStatus,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import {
   VERSION,
   VerificationResultSchema,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import { z } from "zod";
 import { findingSchema, formatZodError } from "./schemas.js";
 
@@ -95,7 +95,7 @@ export function statusFromVerdict(
   }
 }
 
-/** Map `VerificationStatus` → process exit code per pwnkit#194. */
+/** Map `VerificationStatus` → process exit code per 0sec#194. */
 export function exitCodeForStatus(status: VerificationStatus): number {
   switch (status) {
     case "reproduced":
@@ -235,7 +235,7 @@ function assertionForStep(
 
 /**
  * Whether a token-matched OAST out-of-band callback proved this finding
- * (pwnkit#659 / #1278). The deterministic replay this command runs cannot
+ * (0sec#659 / #1278). The deterministic replay this command runs cannot
  * re-fire an out-of-band callback — its `expect` predicates only see the
  * in-band request/response — so an OAST proof is scan-time PoV provenance
  * carried on the finding. We recognise it two ways:
@@ -261,11 +261,11 @@ export function findingOastConfirmed(finding: Finding): boolean {
 
 /**
  * Derive the additive evidence-provenance fields for a {@link VerificationResult}
- * from the finding (pwnkit#659 / #1278). Shared by every result builder so the
+ * from the finding (0sec#659 / #1278). Shared by every result builder so the
  * signal is stamped identically regardless of replay outcome.
  *
  * Contract, tuned to the 0cloud consumer (its verify writeback + #1302's
- * `mapPwnkitResult`):
+ * `mapOsecResult`):
  *   - `oast_confirmed: true` when an OAST callback proved the finding — the
  *     load-bearing flag that lets the cloud promote a blind-class proof even
  *     when the in-band replay left the status `not_reproduced` / `skipped`.
@@ -495,20 +495,20 @@ interface VerifyOpts {
   artifactDir?: string;
   format?: string;
   output?: string;
-  // ── kernel-finding mode (pwnkit#271 Tier 2) ──
+  // ── kernel-finding mode (0sec#271 Tier 2) ──
   kernelFinding?: string;
   kernelTree?: string;
   kernelConfig?: string;
   attempts?: string;
   wallClock?: string;
   /**
-   * pwnkit#193 — runner selection. `local` (default) uses the in-process
+   * 0sec#193 — runner selection. `local` (default) uses the in-process
    * shell runner; `docker` / `qemu` are sandbox-isolation stubs that
    * print a NotImplemented error JSON and exit non-zero so cloud-side
    * dispatchers can detect engine capability without parsing prose.
    */
   runner?: string;
-  /** pwnkit#193 — run directory for the deterministic-replay runner. */
+  /** 0sec#193 — run directory for the deterministic-replay runner. */
   out?: string;
 }
 
@@ -589,7 +589,7 @@ export interface VerifyOutcome {
  * Run the Tier 2 kernel-finding verifier (#271) and return a JSON-ready
  * result. Lives next to `runVerify` so the CLI surface stays in one file.
  *
- * Gated by `PWNKIT_KERNEL_VERIFY=1` so CI cost stays predictable — operators
+ * Gated by `0SEC_KERNEL_VERIFY=1` so CI cost stays predictable — operators
  * who want to run this opt in explicitly. The flag check is enforced at the
  * caller (`verifyAction` below), not here, so tests can call this directly.
  */
@@ -600,7 +600,7 @@ export async function runKernelFindingVerify(opts: {
   attempts?: number;
   wallClockMs?: number;
 }): Promise<{ exitCode: number; result: unknown }> {
-  const { verifyStaticKernelFinding, applyVerificationToFinding } = await import("@pwnkit/core");
+  const { verifyStaticKernelFinding, applyVerificationToFinding } = await import("@0sec/core");
 
   const rawFinding = readJson<unknown>(opts.findingPath, "finding");
   let finding;
@@ -613,7 +613,7 @@ export async function runKernelFindingVerify(opts: {
     throw err;
   }
 
-  const result = await verifyStaticKernelFinding(finding as unknown as import("@pwnkit/shared").Finding, {
+  const result = await verifyStaticKernelFinding(finding as unknown as import("@0sec/shared").Finding, {
     kernelTree: opts.kernelTree,
     kernelConfig: opts.kernelConfig,
     attempts: opts.attempts,
@@ -621,7 +621,7 @@ export async function runKernelFindingVerify(opts: {
   });
 
   const promotedFinding = applyVerificationToFinding(
-    finding as unknown as import("@pwnkit/shared").Finding,
+    finding as unknown as import("@0sec/shared").Finding,
     result,
   );
 
@@ -671,7 +671,7 @@ export async function runKernelFindingVerify(opts: {
  * execution completes (or errors out).
  */
 function allocateIsolatedWorkspace(): { cwd: string; cleanup: () => void } {
-  const cwd = mkdtempSync(join(tmpdir(), "pwnkit-verify-"));
+  const cwd = mkdtempSync(join(tmpdir(), "0sec-verify-"));
   return {
     cwd,
     cleanup: () => {
@@ -752,7 +752,7 @@ export async function runVerify(opts: {
     try {
       // Validated parse: the cast is now sound because zod has checked every
       // field the rest of the pipeline reads. Schema mirrors the canonical
-      // `Finding` type in `@pwnkit/shared` — see `./schemas.ts`.
+      // `Finding` type in `@0sec/shared` — see `./schemas.ts`.
       finding = findingSchema.parse(rawFinding) as Finding;
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -874,7 +874,7 @@ export async function runDeterministicReplayCli(args: {
         arch: process.arch,
         runner: args.runner,
       },
-      error_reason: `runner '${args.runner}' is not implemented yet; see pwnkit#193 sandbox-isolation follow-up`,
+      error_reason: `runner '${args.runner}' is not implemented yet; see 0sec#193 sandbox-isolation follow-up`,
       summary: `runner '${args.runner}' not implemented`,
     };
     return { result, exitCode: 4 };
@@ -920,10 +920,10 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
   // Kernel-finding (#271 Tier 2) mode is a separate pipeline from the
   // deterministic-replay verifier — handle it first and exit.
   if (opts.kernelFinding) {
-    if (process.env.PWNKIT_KERNEL_VERIFY !== "1") {
+    if (process.env["0SEC_KERNEL_VERIFY"] !== "1") {
       throw new Error(
-        "--kernel-finding requires PWNKIT_KERNEL_VERIFY=1 (CI cost gate, #271). " +
-          "Export PWNKIT_KERNEL_VERIFY=1 to opt in.",
+        "--kernel-finding requires 0SEC_KERNEL_VERIFY=1 (CI cost gate, #271). " +
+          "Export 0SEC_KERNEL_VERIFY=1 to opt in.",
       );
     }
     if (!opts.kernelTree) {
@@ -964,7 +964,7 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
     return;
   }
 
-  // pwnkit#193 deterministic-replay path: triggered by a positional
+  // 0sec#193 deterministic-replay path: triggered by a positional
   // <finding.json> argument or an explicit --runner flag.
   if (positionalFinding || opts.runner) {
     if (positionalFinding && opts.finding) {
@@ -975,7 +975,7 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
     const findingPath = positionalFinding ?? opts.finding;
     if (!findingPath) {
       throw new Error(
-        "missing finding path. Usage: pwnkit verify <finding.json> [--runner local|docker|qemu]",
+        "missing finding path. Usage: 0sec verify <finding.json> [--runner local|docker|qemu]",
       );
     }
     const runner = parseRunnerKind(opts.runner);
@@ -1057,15 +1057,15 @@ export function registerVerifyCommand(program: Command): void {
     )
     .argument(
       "[finding]",
-      "Path to a finding.json (pwnkit#193 deterministic-replay path). Equivalent to --finding when --runner is supplied.",
+      "Path to a finding.json (0sec#193 deterministic-replay path). Equivalent to --finding when --runner is supplied.",
     )
     .option(
       "--runner <kind>",
-      "pwnkit#193 replay runner: local|docker|qemu (default local; docker/qemu are NotImplemented stubs that exit 4).",
+      "0sec#193 replay runner: local|docker|qemu (default local; docker/qemu are NotImplemented stubs that exit 4).",
     )
     .option(
       "--out <dir>",
-      "pwnkit#193 run directory (artifacts go under <out>/artifacts/). Defaults to a fresh tmpdir.",
+      "0sec#193 run directory (artifacts go under <out>/artifacts/). Defaults to a fresh tmpdir.",
     )
     .option("--finding <path>", "Path to a finding.json (required for now).")
     .option(
@@ -1106,12 +1106,12 @@ export function registerVerifyCommand(program: Command): void {
       "--output <path>",
       "Write the verification_result JSON to this path instead of stdout.",
     )
-    // ── Kernel-finding (Tier 2, pwnkit#271) ──
+    // ── Kernel-finding (Tier 2, 0sec#271) ──
     .option(
       "--kernel-finding <path>",
       "Path to a kernel-review finding.json. Runs the Tier 2 agent loop to " +
         "produce a reproducer and promote the finding via the kernel oracle. " +
-        "Requires PWNKIT_KERNEL_VERIFY=1.",
+        "Requires 0SEC_KERNEL_VERIFY=1.",
     )
     .option(
       "--kernel-tree <path>",

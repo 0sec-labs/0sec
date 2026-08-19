@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   emitRoutingTrace,
   appendRoutingTraceRecord,

@@ -19,7 +19,7 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type {
   ResearchCandidate,
   ResearchContext,
@@ -143,7 +143,7 @@ interface ValidatedBundle {
 export type WindowsHyperVCandidate = ResearchCandidate<HyperVCandidatePayload>;
 
 export interface WindowsHyperVImportVerdict {
-  verdictSchema: "pwnkit.windows-hyperv-import-verdict/v1";
+  verdictSchema: "0sec.windows-hyperv-import-verdict/v1";
   executionOrigin: "external";
   producer: "0verse";
   schemaVersion: typeof EVIDENCE_SCHEMA;
@@ -385,10 +385,10 @@ function validateWorkerAcceptance(
     || !nonempty(acceptance.signature_ssh)) {
     throw new Error("worker acceptance authority binding mismatch");
   }
-  const allowedSigners = process.env.PWNKIT_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS;
-  if (!allowedSigners) throw new Error("PWNKIT_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS is required");
+  const allowedSigners = process.env["0SEC_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS"];
+  if (!allowedSigners) throw new Error("0SEC_HYPERV_ACCEPTANCE_ALLOWED_SIGNERS is required");
   const signerFile = regularFile(allowedSigners, "worker acceptance allowed signers");
-  const temporary = mkdtempSync(join(tmpdir(), "pwnkit-hyperv-signature-"));
+  const temporary = mkdtempSync(join(tmpdir(), "0sec-hyperv-signature-"));
   try {
     const signaturePath = join(temporary, "acceptance.sig");
     writeFileSync(signaturePath, acceptance.signature_ssh, { encoding: "utf8", flag: "wx" });
@@ -674,7 +674,7 @@ export class WindowsHyperVImportAdapter implements TargetResearchAdapter<
         });
         snapshots.unshift(receiptPath);
         const verdict: WindowsHyperVImportVerdict = {
-          verdictSchema: "pwnkit.windows-hyperv-import-verdict/v1",
+          verdictSchema: "0sec.windows-hyperv-import-verdict/v1",
           executionOrigin: "external",
           producer: "0verse",
           schemaVersion: EVIDENCE_SCHEMA,

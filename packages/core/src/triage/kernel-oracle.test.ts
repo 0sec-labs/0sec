@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 vi.mock("./kernel-vm-runner.js", () => ({
   runReproducerInKernelVm: vi.fn(),
@@ -15,7 +15,7 @@ describe("compileAndRunReproducer", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env.PWNKIT_KERNEL_QEMU;
+    delete process.env["0SEC_KERNEL_QEMU"];
     runVmMock.mockReset();
   });
 
@@ -29,12 +29,12 @@ describe("compileAndRunReproducer", () => {
     });
 
     expect(result.executed).toBe(false);
-    expect(result.output).toContain("PWNKIT_KERNEL_QEMU not set");
+    expect(result.output).toContain("0SEC_KERNEL_QEMU not set");
     expect(runVmMock).not.toHaveBeenCalled();
   });
 
   it("delegates to the kernel VM runner when enabled", async () => {
-    process.env.PWNKIT_KERNEL_QEMU = "1";
+    process.env["0SEC_KERNEL_QEMU"] = "1";
     runVmMock.mockResolvedValue({
       compiled: true,
       executed: true,
@@ -64,7 +64,7 @@ describe("verifyKernelCrash", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    process.env = { ...originalEnv, PWNKIT_KERNEL_QEMU: "1" };
+    process.env = { ...originalEnv, "0SEC_KERNEL_QEMU": "1" };
     runVmMock.mockReset();
   });
 
@@ -129,7 +129,7 @@ describe("verifyStandaloneKernelReproducer", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    process.env = { ...originalEnv, PWNKIT_KERNEL_QEMU: "1" };
+    process.env = { ...originalEnv, "0SEC_KERNEL_QEMU": "1" };
     runVmMock.mockReset();
   });
 
@@ -230,7 +230,7 @@ Call Trace:
 describe("verifyStandaloneKernelReproducer — KCSAN race lane", () => {
   const originalEnv = { ...process.env };
   beforeEach(() => {
-    process.env = { ...originalEnv, PWNKIT_KERNEL_QEMU: "1" };
+    process.env = { ...originalEnv, "0SEC_KERNEL_QEMU": "1" };
     runVmMock.mockReset();
   });
 

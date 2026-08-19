@@ -1,4 +1,4 @@
-// ── Programmatic scope ingestion (pwnkit#215) ──
+// ── Programmatic scope ingestion (0sec#215) ──
 //
 // Loads a JSON scope file ({ in_scope, out_of_scope }) and exposes a single
 // matcher used by every URL-touching code path in the agent (validateTargetUrl,
@@ -31,7 +31,7 @@ export interface ScopeJson {
   in_scope?: ScopeRule[];
   out_of_scope?: ScopeRule[];
   /**
-   * Optional attribution block (pwnkit#216). Format and semantics live in
+   * Optional attribution block (0sec#216). Format and semantics live in
    * `attribution.ts`; declared here so the JSON schema is co-located with
    * the rest of the scope file shape. Callers that don't care about
    * attribution (most of the codebase) can ignore this field.
@@ -60,7 +60,7 @@ export class ScopePolicy {
   private readonly outOfScope: ParsedRule[];
   /**
    * Original JSON the policy was constructed from. Exposed read-only so
-   * downstream features (pwnkit#216 attribution headers) can pull their
+   * downstream features (0sec#216 attribution headers) can pull their
    * own optional blocks out of the same file without re-reading it.
    */
   readonly raw: ScopeJson;
@@ -192,7 +192,7 @@ function parseRule(raw: unknown): ParsedRule {
   // because the spec deferred it and silently accepting "::/0" would be
   // a disaster.
   //
-  // Parsing is intentionally strict (pwnkit#218 review): destructuring a
+  // Parsing is intentionally strict (0sec#218 review): destructuring a
   // bare `rule.split("/")` plus `Number()` accepts "10.0.0.0/" as /0 and
   // silently drops extra segments in "10.0.0.0/8/anything". Both are
   // operator typos that would fail open to "match every IPv4". We reject

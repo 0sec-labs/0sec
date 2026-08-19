@@ -1,5 +1,5 @@
 import { agenticScan, type AgenticScanOptions } from "../../agentic-scanner.js";
-import type { ScanReport } from "@pwnkit/shared";
+import type { ScanReport } from "@0sec/shared";
 import type {
   ResearchCandidate,
   ResearchContext,

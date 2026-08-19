@@ -26,8 +26,8 @@ describe("validateFindingDraft", () => {
   let outside: string;
 
   beforeEach(() => {
-    workspace = mkdtempSync(join(tmpdir(), "pwnkit-validator-ws-"));
-    outside = mkdtempSync(join(tmpdir(), "pwnkit-validator-outside-"));
+    workspace = mkdtempSync(join(tmpdir(), "0sec-validator-ws-"));
+    outside = mkdtempSync(join(tmpdir(), "0sec-validator-outside-"));
     // Seed an in-workspace file so realpath() resolves cleanly.
     writeFileSync(join(workspace, "evidence.txt"), "ok");
     mkdirSync(join(workspace, "sub"));
@@ -300,7 +300,7 @@ describe("pathEscapeReason", () => {
   let root: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "pwnkit-path-guard-"));
+    root = mkdtempSync(join(tmpdir(), "0sec-path-guard-"));
   });
 
   afterEach(() => {
@@ -338,7 +338,7 @@ describe("save_finding validation integration", () => {
   let executor: ToolExecutor;
 
   beforeEach(() => {
-    workspace = mkdtempSync(join(tmpdir(), "pwnkit-save-finding-ws-"));
+    workspace = mkdtempSync(join(tmpdir(), "0sec-save-finding-ws-"));
     ctx = {
       target: "https://example.com",
       scanId: "test-scan-409",

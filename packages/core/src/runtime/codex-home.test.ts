@@ -2,7 +2,7 @@
  * Run-scoped CODEX_HOME for agent runs whose cwd is downloaded code.
  *
  * The regression these guard: the package-audit pipeline ran `codex exec` with
- * cwd inside `$TMPDIR/pwnkit-audit-<uuid>/node_modules/<pkg>`, and Codex wrote
+ * cwd inside `$TMPDIR/0sec-audit-<uuid>/node_modules/<pkg>`, and Codex wrote
  * a `[projects."…"] trust_level = "trusted"` entry per audited package into the
  * operator's own `~/.codex/config.toml`. Sixteen such entries were found on the
  * dev host. Trust gates project-local config, hooks, exec policies and MCP
@@ -28,7 +28,7 @@ const OPERATOR_CONFIG = [
   '[projects."/Users/peak"]',
   'trust_level = "trusted"',
   "",
-  '[projects."/private/var/folders/2b/T/pwnkit-audit-8103b3c8/node_modules/lodash"]',
+  '[projects."/private/var/folders/2b/T/0sec-audit-8103b3c8/node_modules/lodash"]',
   'trust_level = "trusted"',
   "",
   '[mcp_servers.hindsight]',
@@ -41,7 +41,7 @@ describe("stripProjectTrust", () => {
     const stripped = stripProjectTrust(OPERATOR_CONFIG);
     expect(stripped).not.toContain("[projects.");
     expect(stripped).not.toContain("trust_level");
-    expect(stripped).not.toContain("pwnkit-audit-8103b3c8");
+    expect(stripped).not.toContain("0sec-audit-8103b3c8");
     // Provider config, features and MCP servers survive intact.
     expect(stripped).toContain('[model_providers.azure]');
     expect(stripped).toContain('base_url = "https://example.openai.azure.com/openai/v1"');
@@ -83,7 +83,7 @@ describe("isEphemeralScope", () => {
   it("is true for an audit tree under the OS temp dir", () => {
     // Real-pathing matters on macOS: tmpdir() is /var/folders/… which is a
     // symlink into /private/var/folders/…, and the two never compare equal.
-    const tempDir = mkdtempSync(join(tmpdir(), "pwnkit-audit-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "0sec-audit-"));
     dirs.push(tempDir);
     const pkgDir = join(tempDir, "node_modules", "lodash");
     mkdirSync(pkgDir, { recursive: true });
@@ -95,7 +95,7 @@ describe("isEphemeralScope", () => {
   });
 
   it("fails closed on a path that does not exist", () => {
-    expect(isEphemeralScope(join(tmpdir(), "pwnkit-does-not-exist-xyz"))).toBe(false);
+    expect(isEphemeralScope(join(tmpdir(), "0sec-does-not-exist-xyz"))).toBe(false);
   });
 });
 
@@ -104,7 +104,7 @@ describe("createEphemeralCodexHome", () => {
   let operatorHome: string;
 
   beforeEach(() => {
-    operatorHome = mkdtempSync(join(tmpdir(), "pwnkit-fake-codex-home-"));
+    operatorHome = mkdtempSync(join(tmpdir(), "0sec-fake-codex-home-"));
     dirs.push(operatorHome);
     writeFileSync(join(operatorHome, "config.toml"), OPERATOR_CONFIG);
     vi.stubEnv("CODEX_HOME", operatorHome);
@@ -145,7 +145,7 @@ describe("createEphemeralCodexHome", () => {
     writeFileSync(
       join(home.path, "config.toml"),
       readFileSync(join(home.path, "config.toml"), "utf8")
-        + '\n[projects."/tmp/pwnkit-audit-deadbeef/node_modules/evil"]\ntrust_level = "trusted"\n',
+        + '\n[projects."/tmp/0sec-audit-deadbeef/node_modules/evil"]\ntrust_level = "trusted"\n',
     );
 
     home.dispose();

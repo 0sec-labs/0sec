@@ -3,7 +3,7 @@
  *
  * ## Why this module exists
  *
- * `finding.layerVerdicts` (pwnkit#112) is an append-only log that each triage
+ * `finding.layerVerdicts` (0sec#112) is an append-only log that each triage
  * layer writes to as it executes. It is the only per-finding record of what
  * the triage stack did. But until now it had **no reader outside the router's
  * own feature extractor** — nothing rendered it, nothing summarized it, and
@@ -62,7 +62,7 @@
  * A/B run becomes possible.
  */
 
-import type { Finding, LayerVerdict, TriageLayerName } from "@pwnkit/shared";
+import type { Finding, LayerVerdict, TriageLayerName } from "@0sec/shared";
 import { LAYER_REGISTRY, LAYER_REGISTRY_BY_ID } from "./router/layer-registry.js";
 
 /**
@@ -99,7 +99,7 @@ export const UNINSTRUMENTED_LAYERS: readonly TriageLayerName[] = [
 
 /**
  * The opt-in false-positive moat layers — the ones gated behind a
- * `PWNKIT_FEATURE_*` flag that is **off** in the shipped default, and which
+ * `0SEC_FEATURE_*` flag that is **off** in the shipped default, and which
  * `agent/features.ts` says must be explicitly enabled before any FP-moat A/B
  * claim can be made.
  *
@@ -124,7 +124,7 @@ export interface LayerProvenance {
   layer: TriageLayerName;
   /** Human-readable layer name from the registry. */
   name: string;
-  /** The `PWNKIT_FEATURE_*` env var that gates this layer, per the registry. */
+  /** The `0SEC_FEATURE_*` env var that gates this layer, per the registry. */
   envFlag: string;
   /** Whether the layer ran, stood down, or left no trace. */
   status: LayerExecutionStatus;

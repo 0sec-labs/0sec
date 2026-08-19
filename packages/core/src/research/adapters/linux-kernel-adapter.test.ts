@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { researchZeroCapProven, type Finding } from "@pwnkit/shared";
+import { researchZeroCapProven, type Finding } from "@0sec/shared";
 import { runResearch } from "../research-runner.js";
 import { LinuxKernelResearchAdapter, type LinuxKernelTarget } from "./linux-kernel-adapter.js";
 
@@ -11,7 +11,7 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 function setup(): { target: LinuxKernelTarget; artifactRoot: string } {
-  const root = mkdtempSync(join(tmpdir(), "pwnkit-linux-adapter-"));
+  const root = mkdtempSync(join(tmpdir(), "0sec-linux-adapter-"));
   roots.push(root);
   const kernelTree = join(root, "linux");
   mkdirSync(kernelTree);
@@ -33,8 +33,8 @@ function setup(): { target: LinuxKernelTarget; artifactRoot: string } {
   };
 }
 
-function runtimeReceipt(boot: number, reproducerSha256 = "b".repeat(64), observedKernelRelease = "6.12.95-pwnkit") {
-  return { schemaVersion: 2 as const, nonce: String(boot).padStart(32, "a"), reproducerSha256, expectedKernelRelease: "6.12.95-pwnkit", observedKernelRelease, bootId: `00000000-0000-4000-8000-${String(boot).padStart(12, "0")}`, kernelImageSha256: "e".repeat(64), kernelConfigSha256: "f".repeat(64), realUid: 65534, effectiveUid: 65534, savedUid: 65534, realGid: 65534, effectiveGid: 65534, savedGid: 65534, supplementaryGroups: [], inheritableCapabilities: "0000000000000000", permittedCapabilities: "0000000000000000", effectiveCapabilities: "0000000000000000", ambientCapabilities: "0000000000000000", secureBits: 0, userNamespaceMax: 0, initialUserNamespace: true, noNewPrivileges: true };
+function runtimeReceipt(boot: number, reproducerSha256 = "b".repeat(64), observedKernelRelease = "6.12.95-0sec") {
+  return { schemaVersion: 2 as const, nonce: String(boot).padStart(32, "a"), reproducerSha256, expectedKernelRelease: "6.12.95-0sec", observedKernelRelease, bootId: `00000000-0000-4000-8000-${String(boot).padStart(12, "0")}`, kernelImageSha256: "e".repeat(64), kernelConfigSha256: "f".repeat(64), realUid: 65534, effectiveUid: 65534, savedUid: 65534, realGid: 65534, effectiveGid: 65534, savedGid: 65534, supplementaryGroups: [], inheritableCapabilities: "0000000000000000", permittedCapabilities: "0000000000000000", effectiveCapabilities: "0000000000000000", ambientCapabilities: "0000000000000000", secureBits: 0, userNamespaceMax: 0, initialUserNamespace: true, noNewPrivileges: true };
 }
 
 function serializeReceipt(r: ReturnType<typeof runtimeReceipt>): string {
@@ -162,7 +162,7 @@ describe("LinuxKernelResearchAdapter", () => {
 
   it("fails zero-cap closed for consistently mismatched runtime releases", async () => {
     const { target, artifactRoot } = setup(); target.config.verify.executionIdentity = { uid: 65534, gid: 65534 };
-    const verifier = vi.fn(async (opts) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true, bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const, executionIdentity: { uid: 65534, gid: 65534 }, ...materializeEvidence(opts.dmesgOutPath!, opts.reproducerPath!, "6.12.93-pwnkit") }));
+    const verifier = vi.fn(async (opts) => ({ status: "reproduced" as const, signature: "kasan-uaf", dmesg_path: opts.dmesgOutPath!, build_cache_hit: true, bootHits: 2, bootTotal: 2, nbootStable: true, bootStatuses: ["reproduced", "reproduced"] as const, executionIdentity: { uid: 65534, gid: 65534 }, ...materializeEvidence(opts.dmesgOutPath!, opts.reproducerPath!, "6.12.93-0sec") }));
     const result = await runResearch(new LinuxKernelResearchAdapter(verifier), target, { artifactRoot, runId: "linux-release-mismatch" });
     expect(result.envelopes[0]?.executionContext).toMatchObject({ privilege: "privileged", basis: "runtime-attested" });
     expect(researchZeroCapProven(result.envelopes[0]!)).toBe(false);

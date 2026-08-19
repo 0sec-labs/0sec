@@ -27,8 +27,8 @@
 import type {
   VerificationResult,
   ResearchNoveltyReceipt,
-} from "@pwnkit/shared";
-import { normalizeResearchNovelty } from "@pwnkit/shared";
+} from "@0sec/shared";
+import { normalizeResearchNovelty } from "@0sec/shared";
 import type {
   RankSinkReachabilityResult,
   SinkLocation,

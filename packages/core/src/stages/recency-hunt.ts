@@ -60,7 +60,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Finding, RuntimeMode } from "@pwnkit/shared";
+import type { Finding, RuntimeMode } from "@0sec/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import {
   resolveContainedSourcePath,
@@ -549,7 +549,7 @@ export interface RecencySurvivor {
    */
   witness?: WitnessEvidence;
   /**
-   * A bug-spec + trigger-seed shaped for `pwnkit exploit --autoclimb` and the
+   * A bug-spec + trigger-seed shaped for `0sec exploit --autoclimb` and the
    * disclosure stager. Staged only — nothing is auto-sent (operator-gated).
    */
   bugSpec: {
@@ -858,7 +858,7 @@ function shapeSurvivor(
       description: finding.title,
       analysis,
       nextSteps: [
-        `pwnkit exploit --autoclimb --source <tree> --target ${rec.file} (weaponize this ${detector} lead)`,
+        `0sec exploit --autoclimb --source <tree> --target ${rec.file} (weaponize this ${detector} lead)`,
         `Verify unpriv reachability of ${rec.file}:${line} in ${functionName}() before any disclosure`,
         `Confirm the bug is NOT already patched later in the same recency window (novelty gate)`,
         `If weaponized: stage via the disclosure stager — operator-gated, do NOT auto-send`,
@@ -1044,7 +1044,7 @@ function shapeWitnessSurvivor(rec: RecencyFileRecord, w: WitnessResult): Recency
       nextSteps: [
         `Reproduce: the witnessing PoC is attached (survivor.witness.repro) — re-run in the KASAN VM to confirm the ${sig} on struct ${c.object}`,
         `Confirm novelty: is this cross-phase bug already patched later in the same recency window? (novelty gate)`,
-        `Weaponize from the witnessing PoC: pwnkit exploit --autoclimb --source <tree> --target ${rec.file}`,
+        `Weaponize from the witnessing PoC: 0sec exploit --autoclimb --source <tree> --target ${rec.file}`,
         `If weaponized: stage via the disclosure stager — operator-gated, do NOT auto-send`,
       ],
     },

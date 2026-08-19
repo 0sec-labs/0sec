@@ -1,6 +1,6 @@
 # Skill self-improvement loop (`/refine`)
 
-A dry-run-first `/refine` flywheel for pwnkit's JIT methodology **skills** — the
+A dry-run-first `/refine` flywheel for 0sec's JIT methodology **skills** — the
 skill-side sibling of `active_learning_loop.py` (which does the same for the
 triage router). It scores each skill by the **verified** outcomes of the
 findings produced while it was active, flags under-performers as refinement
@@ -106,7 +106,7 @@ python3 skill_refine_loop.py --dataset results/skill-trajectories.jsonl \
 ```
 
 The load-check needs the core build. If `check_skill.mjs` reports the build is
-missing, run `pnpm --filter @pwnkit/core build` (or pass `--core-dist <dir>`).
+missing, run `pnpm --filter @0sec/core build` (or pass `--core-dist <dir>`).
 
 ## Tests
 

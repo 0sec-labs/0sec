@@ -16,7 +16,7 @@
  *   - No-brief fallback: attemptsPerCandidate>1 with no `brief` skips the
  *     judge (no bug-class/pattern to score against) and keeps the first
  *     `judgeTopK` attempts in order.
- *   - Flywheel wiring (PWNKIT_HUNT_FLYWHEEL=1, hunt-flywheel.ts): with
+ *   - Flywheel wiring (0SEC_HUNT_FLYWHEEL=1, hunt-flywheel.ts): with
  *     judgeTopK == group size (nothing dropped), priming reorders which
  *     finding `verify` is called on FIRST, but the resulting `confirmed` SET
  *     is byte-identical to the flag-off run — the primes-never-confirms
@@ -25,7 +25,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { HuntMemory } from "./hunt-flywheel.js";
 import { ScanCostLedger } from "../agent/cost-ledger.js";
 
@@ -521,7 +521,7 @@ describe("runHuntScan — finder-fanout resilience (HUNT_FINDER_TIMEOUT_MS / HUN
   });
 });
 
-describe("runHuntScan — memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1)", () => {
+describe("runHuntScan — memory-flywheel priming (0SEC_HUNT_FLYWHEEL=1)", () => {
   it("reorders which finding verify sees first, but leaves the confirmed SET identical to the flag-off run", async () => {
     const brief = {
       bugClass: "nf_tables set-element deferred-free UAF (CWE-416)",
@@ -571,9 +571,9 @@ describe("runHuntScan — memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1)", () 
       judgeCandidates,
     };
 
-    const prevFlag = process.env.PWNKIT_HUNT_FLYWHEEL;
+    const prevFlag = process.env["0SEC_HUNT_FLYWHEEL"];
     try {
-      delete process.env.PWNKIT_HUNT_FLYWHEEL;
+      delete process.env["0SEC_HUNT_FLYWHEEL"];
       call = 0;
       const coldOrder: string[] = [];
       const cold = await runHuntScan({ ...baseOpts, verify: mkVerify(coldOrder) });
@@ -591,7 +591,7 @@ describe("runHuntScan — memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1)", () 
         },
         brief,
       );
-      process.env.PWNKIT_HUNT_FLYWHEEL = "1";
+      process.env["0SEC_HUNT_FLYWHEEL"] = "1";
       call = 0;
       const primedOrder: string[] = [];
       const primed = await runHuntScan({ ...baseOpts, huntMemory: memory, verify: mkVerify(primedOrder) });
@@ -606,13 +606,13 @@ describe("runHuntScan — memory-flywheel priming (PWNKIT_HUNT_FLYWHEEL=1)", () 
       expect([...cold.confirmed.map((f) => f.id)].sort()).toEqual(["f-0", "f-1"]);
       expect([...primed.confirmed.map((f) => f.id)].sort()).toEqual(["f-0", "f-1"]);
     } finally {
-      if (prevFlag === undefined) delete process.env.PWNKIT_HUNT_FLYWHEEL;
-      else process.env.PWNKIT_HUNT_FLYWHEEL = prevFlag;
+      if (prevFlag === undefined) delete process.env["0SEC_HUNT_FLYWHEEL"];
+      else process.env["0SEC_HUNT_FLYWHEEL"] = prevFlag;
     }
   });
 });
 
-describe("runHuntScan — exploitable-geometry rank (PWNKIT_HUNT_GEOMETRY_RANK / opts.geometryRank)", () => {
+describe("runHuntScan — exploitable-geometry rank (0SEC_HUNT_GEOMETRY_RANK / opts.geometryRank)", () => {
   // Three findings surfaced at one site (no brief → judge is skipped, so the
   // pre-geometry order is plain attempt order): a pure read-OOB DoS, a neutral
   // logic bug, and — last — a weaponizable qdisc UAF (type-confusion +
@@ -1138,13 +1138,13 @@ describe("AimdState — adaptive finder concurrency", () => {
   });
 });
 
-describe("runHuntScan — AIMD adaptive concurrency (PWNKIT_HUNT_AIMD)", () => {
+describe("runHuntScan — AIMD adaptive concurrency (0SEC_HUNT_AIMD)", () => {
   const origEnv = { ...process.env };
   const noopVerify = async () => ({ confirmed: true, reason: "test" });
 
   beforeEach(() => {
     agenticScanMock.mockReset();
-    for (const k of ["PWNKIT_HUNT_AIMD", "PWNKIT_HUNT_AIMD_RECOVERY_WINDOW"]) {
+    for (const k of ["0SEC_HUNT_AIMD", "0SEC_HUNT_AIMD_RECOVERY_WINDOW"]) {
       if (!(k in origEnv)) delete process.env[k];
     }
   });

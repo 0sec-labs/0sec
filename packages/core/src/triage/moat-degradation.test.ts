@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { checkMultiModalAgreement, fuseTriageSignals } from "./multi-modal.js";
 import { checkReachability } from "./reachability.js";
 
@@ -39,7 +39,7 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
   } as Finding;
 }
 
-const MISSING_DIR = "/nonexistent-path-for-pwnkit-degradation-test";
+const MISSING_DIR = "/nonexistent-path-for-0sec-degradation-test";
 
 describe("multi-modal agreement degrades safely without its dependencies", () => {
   it("returns a neutral verdict when the source tree does not exist", async () => {
@@ -47,7 +47,7 @@ describe("multi-modal agreement degrades safely without its dependencies", () =>
       foxguardPath: "/bin/true",
     });
 
-    expect(result.agreement).toBe("only_pwnkit");
+    expect(result.agreement).toBe("only_Osec");
     expect(result.confidence).toBe(0.5);
     expect(result.foxguardFindings).toHaveLength(0);
   });
@@ -58,7 +58,7 @@ describe("multi-modal agreement degrades safely without its dependencies", () =>
       runner: () => Promise.reject(new Error("ENOENT: foxguard not installed")),
     });
 
-    expect(result.agreement).toBe("only_pwnkit");
+    expect(result.agreement).toBe("only_Osec");
     expect(result.confidence).toBe(0.5);
     expect(result.reasoning).toContain("foxguard");
   });
@@ -97,7 +97,7 @@ describe("reachability gate degrades safely without a readable source tree", () 
     const { mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const empty = mkdtempSync(join(tmpdir(), "pwnkit-reach-empty-"));
+    const empty = mkdtempSync(join(tmpdir(), "0sec-reach-empty-"));
 
     const result = await checkReachability(makeFinding(), empty);
 

@@ -34,7 +34,7 @@
  * downgraded to `needs_verify` + human review, never silently dropped.
  */
 
-import type { Finding, PublishabilityDecision } from "@pwnkit/shared";
+import type { Finding, PublishabilityDecision } from "@0sec/shared";
 
 // ────────────────────────────────────────────────────────────────────
 // Types

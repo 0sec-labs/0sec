@@ -1,11 +1,11 @@
 /**
- * `pwnkit hunt` — novel-bug variant hunt CLI (the `runHuntScan` engine stage).
+ * `0sec hunt` — novel-bug variant hunt CLI (the `runHuntScan` engine stage).
  *
  * Turns a proven fix into a tree-wide hunt for the SAME bug class at OTHER
  * sites: seed diff → `generateVariantCandidates` (LLM bug-class + grep'd
  * candidate sites) → `runHuntScan` (parallel finders → adversarial skeptic
- * gate). The discovery sibling of `pwnkit exploit` (weaponize) and
- * `pwnkit scan` (single-target). Engine-driven; this command is the surface.
+ * gate). The discovery sibling of `0sec exploit` (weaponize) and
+ * `0sec scan` (single-target). Engine-driven; this command is the surface.
  *
  * `--invariant` (Engine A) layers the seed-touched subsystem's stored invariant
  * model on top: before candidate generation it builds (or loads) the model and
@@ -18,7 +18,7 @@
  * fixed?) is a downstream gate. Treat `confirmed` as "worth verifying", and
  * verify the real sink + upstream-fix status before any disclosure.
  *
- * Exit codes (mirroring `pwnkit exploit`/`verify` so dispatchers branch on code):
+ * Exit codes (mirroring `0sec exploit`/`verify` so dispatchers branch on code):
  *   0 → ≥1 finding survived the skeptic gate (leads to verify)
  *   1 → ran, no finding survived the gate
  *   2 → skipped (no candidate sites generated from the seed)
@@ -28,9 +28,9 @@
 import type { Command } from "commander";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Finding, RuntimeMode } from "@pwnkit/shared";
-import type { ImpactCeiling } from "@pwnkit/core";
-import { stampDeploymentContext } from "@pwnkit/core";
+import type { Finding, RuntimeMode } from "@0sec/shared";
+import type { ImpactCeiling } from "@0sec/core";
+import { stampDeploymentContext } from "@0sec/core";
 
 /**
  * #1051 — map a gated hunt LEAD onto the cloud-sink finding shape as a
@@ -199,7 +199,7 @@ export async function runHunt(opts: {
    * Fail-open — no CPG / no scope degrades to the flat-text finder.
    */
   graphSlice?: boolean;
-  /** Explicit CPG graphson JSON path (overrides the `.pwnkit/cpg/<subsystem>.json` convention). */
+  /** Explicit CPG graphson JSON path (overrides the `.0sec/cpg/<subsystem>.json` convention). */
   cpgPath?: string;
   /**
    * Optional comma-separated repo-relative C source files whose static
@@ -242,7 +242,7 @@ export async function runHunt(opts: {
     prepare,
     getCloudSinkConfig,
     postFinding,
-  } = await import("@pwnkit/core");
+  } = await import("@0sec/core");
   const log = opts.log ?? (() => {});
   const runtime: RuntimeMode = opts.runtime ?? "api";
   const seedDiff = readFileSync(resolve(opts.seedPath), "utf8");
@@ -258,23 +258,23 @@ export async function runHunt(opts: {
     if (e.message) log(`[hunt:source] ${e.message}`);
   });
   const sourceRoot = resolve(prepared.resolvedTarget);
-  const noveltyRoot = opts.novelty?.rootDir ?? process.env.PWNKIT_LORE_MIRROR_ROOT ?? "/root/lore-mirror";
-  const noveltyLists = opts.novelty?.lists ?? (process.env.PWNKIT_LORE_LISTS ?? "linux-media").split(",").map((s) => s.trim()).filter(Boolean);
+  const noveltyRoot = opts.novelty?.rootDir ?? process.env["0SEC_LORE_MIRROR_ROOT"] ?? "/root/lore-mirror";
+  const noveltyLists = opts.novelty?.lists ?? (process.env["0SEC_LORE_LISTS"] ?? "linux-media").split(",").map((s) => s.trim()).filter(Boolean);
   const noveltyRecentEpochs = opts.novelty?.recentEpochs ?? 1;
   const noveltyWarnings: string[] = [];
 
   // #1051 — capture the cloud-sink config BEFORE suppressing the env below.
-  // In cloud mode (PWNKIT_CLOUD_SINK + scan id set) the inner finder/skeptic
+  // In cloud mode (0SEC_CLOUD_SINK + scan id set) the inner finder/skeptic
   // agenticScan passes would auto-POST their RAW, pre-gate findings (status
   // 'confirmed') straight to the orchestrator — flooding the scan with
   // unverified, mislabeled findings. We instead post ONLY the gated leads
   // ourselves (as honest 'discovered' candidates) after the gate.
-  // getCloudSinkConfig() reads PWNKIT_CLOUD_SINK at call time, so clearing it
+  // getCloudSinkConfig() reads 0SEC_CLOUD_SINK at call time, so clearing it
   // for the duration of the finder runs disables that inner auto-post; the env
   // is restored in the finally and the captured config is used for our own post.
   const sinkCfg = getCloudSinkConfig();
-  const savedCloudSink = process.env.PWNKIT_CLOUD_SINK;
-  if (sinkCfg) delete process.env.PWNKIT_CLOUD_SINK;
+  const savedCloudSink = process.env["0SEC_CLOUD_SINK"];
+  if (sinkCfg) delete process.env["0SEC_CLOUD_SINK"];
 
   try {
     let noveltyMirrors: Awaited<ReturnType<typeof localMirrors>> = [];
@@ -582,7 +582,7 @@ export async function runHunt(opts: {
       },
     };
   } finally {
-    if (savedCloudSink !== undefined) process.env.PWNKIT_CLOUD_SINK = savedCloudSink;
+    if (savedCloudSink !== undefined) process.env["0SEC_CLOUD_SINK"] = savedCloudSink;
     prepared.cleanup();
   }
 }
@@ -661,8 +661,8 @@ export function registerHuntCommand(program: Command): void {
     .option("--reachable-prefer", "Sort kernelCTF-reachable candidates first, without dropping any (default: HUNT_REACHABLE_PREFER env)")
     .option("--no-verify", "Skip the skeptic gate (emit all raw findings — triage only, never disclosure)")
     .option("--novelty", "Require lore.kernel.org duplicate suppression; abort before discovery when evidence is unavailable")
-    .option("--novelty-root <path>", "Lore mirror root (default: PWNKIT_LORE_MIRROR_ROOT or /root/lore-mirror)")
-    .option("--novelty-lists <a,b>", "Comma-separated lore lists to search (default: PWNKIT_LORE_LISTS or linux-media)")
+    .option("--novelty-root <path>", "Lore mirror root (default: 0SEC_LORE_MIRROR_ROOT or /root/lore-mirror)")
+    .option("--novelty-lists <a,b>", "Comma-separated lore lists to search (default: 0SEC_LORE_LISTS or linux-media)")
     .option("--novelty-recent-epochs <N>", "Newest public-inbox epochs to sync per list when --novelty-sync is set (default 1)")
     .option("--novelty-sync", "Clone/fetch lore mirrors before running the novelty gate")
     .option("--novelty-model <model>", "Optional model override for the lore duplicate judge")
@@ -670,7 +670,7 @@ export function registerHuntCommand(program: Command): void {
     .option("--methodology", "Use the kernel-LPE methodology preset: lifecycle/provenance lenses, best-of-4, top-2 skeptic gate, reachable-first")
     .option("--invariant", "Engine A: build (or load) the seed-touched subsystem's stored invariant model and inject its rules + deterministic violation hypotheses into every finder prompt")
     .option("--graph-slice", "Load the seed-touched subsystem's pre-exported Joern CPG and inject a compact interprocedural reachability slice around the fix site into every finder prompt (needs scripts/provision-cpg.sh; fail-open to flat-text)")
-    .option("--cpg <path>", "Explicit CPG graphson JSON path for --graph-slice (default: <source>/.pwnkit/cpg/<subsystem>.json)")
+    .option("--cpg <path>", "Explicit CPG graphson JSON path for --graph-slice (default: <source>/.0sec/cpg/<subsystem>.json)")
     .option(
       "--ops-harvest <paths>",
       "[--graph-slice] Comma-separated repo-relative C files to harvest static ops-struct initializers from; overrides a precomputed .ops.json",

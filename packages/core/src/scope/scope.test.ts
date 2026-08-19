@@ -153,7 +153,7 @@ describe("ScopePolicy — invalid input", () => {
     expect(() => ScopePolicy.fromJson({ in_scope: ["10.0.0.0/64"] })).toThrow();
   });
 
-  // pwnkit#218 review: a bare trailing slash used to fail open as /0.
+  // 0sec#218 review: a bare trailing slash used to fail open as /0.
   // These cases lock in the strict-parse behaviour so a future refactor
   // can't accidentally re-introduce the silent allow-all.
   it("rejects a CIDR with an empty prefix (must not silently become /0)", () => {
@@ -176,7 +176,7 @@ describe("ScopePolicy — invalid input", () => {
 
 describe("loadScope — JSON file ingestion", () => {
   it("round-trips a JSON file from disk", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-scope-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-scope-"));
     const path = join(dir, "scope.json");
     writeFileSync(
       path,
@@ -192,7 +192,7 @@ describe("loadScope — JSON file ingestion", () => {
   });
 
   it("throws on malformed JSON", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-scope-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-scope-"));
     const path = join(dir, "bad.json");
     writeFileSync(path, "{not valid");
     expect(() => loadScope(path)).toThrow(/not valid JSON/);

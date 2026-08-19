@@ -36,7 +36,7 @@ subset_file="${1:?usage: run-cybergym-subset.sh <subset-file> <host-corpus-path>
 host_corpus="${2:?usage: run-cybergym-subset.sh <subset-file> <host-corpus-path>}"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-: "${PWNKIT_ROOT:=$(cd -- "${script_dir}/../../.." && pwd)}"
+: "${0SEC_ROOT:=$(cd -- "${script_dir}/../../.." && pwd)}"
 : "${CYBERGYM_ROOT:=/srv/cybergym}"
 : "${CYBERGYM_MODEL:?set CYBERGYM_MODEL to the model under test}"
 : "${CYBERGYM_MAX_STEPS:=60}"

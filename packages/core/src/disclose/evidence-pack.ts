@@ -24,7 +24,7 @@
  * published by this module — the operator gates that (`disclosure/AGENTS.md`).
  */
 
-import type { Finding, PocStep } from "@pwnkit/shared";
+import type { Finding, PocStep } from "@0sec/shared";
 import { redactSensitiveHeaders } from "./template.js";
 import { evidenceKindForFinding } from "../triage/verify-verdict.js";
 import {
@@ -66,7 +66,7 @@ export interface EvidencePackOptions {
    * Permit assembling a draft for a finding that did NOT reproduce a PoC
    * (`evidenceKind !== "reproduced-poc"`). Off by default: notifying a vendor
    * about an unreproduced finding is the canonical low-signal/CoC trip-wire
-   * (`pwnkit/AGENTS.md` HackerOne bright lines). The draft is still DRAFT-only.
+   * (`0sec/AGENTS.md` HackerOne bright lines). The draft is still DRAFT-only.
    */
   allowUnreproduced?: boolean;
   /**
@@ -234,7 +234,7 @@ export function renderVendorNotificationMarkdown(
   out.push(
     "> **DRAFT — NOT SENT.** Auto-assembled vendor-notification draft. " +
       "An operator must review, fill in any `to be filled in` fields, and send " +
-      "it manually. Nothing here is transmitted to a vendor by pwnkit. " +
+      "it manually. Nothing here is transmitted to a vendor by 0sec. " +
       "Embargo rules in `disclosure/AGENTS.md` apply.",
     "",
   );

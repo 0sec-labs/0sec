@@ -1,4 +1,4 @@
-import type { AttackTemplate } from "@pwnkit/shared";
+import type { AttackTemplate } from "@0sec/shared";
 
 /**
  * Build a prompt for deep scan mode — Claude Code analyzes the target

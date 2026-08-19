@@ -21,15 +21,15 @@ describe("run-cybergym-task.sh", () => {
     roots.push(root);
     const bin = join(root, "bin");
     const cybergymRoot = join(root, "cybergym");
-    const pwnkitRoot = join(root, "pwnkit");
+    const osecRoot = join(root, "0sec");
     const auth = join(root, "auth.json");
     const pythonCalls = join(root, "python-calls.txt");
     mkdirSync(bin);
     mkdirSync(cybergymRoot);
-    mkdirSync(join(pwnkitRoot, "packages", "benchmark", "scripts"), { recursive: true });
+    mkdirSync(join(osecRoot, "packages", "benchmark", "scripts"), { recursive: true });
     writeFileSync(auth, "{}");
-    writeFileSync(join(pwnkitRoot, "packages", "benchmark", "scripts", "cybergym-oracle-bridge.py"), "");
-    writeFileSync(join(pwnkitRoot, "packages", "benchmark", "scripts", "run-cybergym-container.sh"), "");
+    writeFileSync(join(osecRoot, "packages", "benchmark", "scripts", "cybergym-oracle-bridge.py"), "");
+    writeFileSync(join(osecRoot, "packages", "benchmark", "scripts", "run-cybergym-container.sh"), "");
 
     const fakePython = join(bin, "cybergym-python");
     executable(fakePython, `#!/usr/bin/env bash
@@ -47,7 +47,7 @@ exit 99
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
-        PWNKIT_ROOT: pwnkitRoot,
+        "0SEC_ROOT": osecRoot,
         CYBERGYM_ROOT: cybergymRoot,
         CYBERGYM_PYTHON: fakePython,
         CYBERGYM_AUTH_FILE: auth,
@@ -65,17 +65,17 @@ exit 99
     roots.push(root);
     const bin = join(root, "bin");
     const cybergymRoot = join(root, "cybergym");
-    const pwnkitRoot = join(root, "pwnkit");
+    const osecRoot = join(root, "0sec");
     const auth = join(root, "auth.json");
     const dockerCalls = join(root, "docker-calls.txt");
     const containerCalls = join(root, "container-calls.txt");
     mkdirSync(bin);
     mkdirSync(cybergymRoot);
-    mkdirSync(join(pwnkitRoot, "packages", "benchmark", "scripts"), { recursive: true });
+    mkdirSync(join(osecRoot, "packages", "benchmark", "scripts"), { recursive: true });
     writeFileSync(auth, "{}");
-    writeFileSync(join(pwnkitRoot, "packages", "benchmark", "scripts", "cybergym-oracle-bridge.py"), "");
+    writeFileSync(join(osecRoot, "packages", "benchmark", "scripts", "cybergym-oracle-bridge.py"), "");
     executable(
-      join(pwnkitRoot, "packages", "benchmark", "scripts", "run-cybergym-container.sh"),
+      join(osecRoot, "packages", "benchmark", "scripts", "run-cybergym-container.sh"),
       `#!/usr/bin/env bash
 printf '%s\n' "$*" >> "${containerCalls}"
 `,
@@ -129,7 +129,7 @@ cp "\${args[$((n - 2))]}" "\${args[$((n - 1))]}"
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
-        PWNKIT_ROOT: pwnkitRoot,
+        "0SEC_ROOT": osecRoot,
         CYBERGYM_ROOT: cybergymRoot,
         CYBERGYM_PYTHON: fakePython,
         CYBERGYM_AUTH_FILE: auth,

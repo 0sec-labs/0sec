@@ -12,13 +12,13 @@
  *   - The tree terminates when a FLAG is found, all branches die, or
  *     max depth is reached
  *
- * This is a generalisation of pwnkit's existing early-stop mechanism:
+ * This is a generalisation of 0sec's existing early-stop mechanism:
  * early-stop gates a single linear run, while EGATS gates every branch.
  */
 
 import { randomUUID } from "node:crypto";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "../runtime/types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { runNativeAgentLoop } from "./native-loop.js";
 import { getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
 import { shellPentestPrompt, specialistSection, VULN_CLASS_LABELS } from "./prompts.js";
@@ -26,7 +26,7 @@ import type { VulnClass } from "./prompts.js";
 import { skillIdForVulnClass } from "./skills/index.js";
 import { features } from "./features.js";
 import type { ToolDefinition } from "./types.js";
-import type { pwnkitDB } from "@pwnkit/db";
+import type { osecDB } from "@0sec/db";
 
 // ── Types ──
 
@@ -441,7 +441,7 @@ async function exploreNode(
   node: AttackNode,
   config: EGATSConfig,
   runtime: NativeRuntime,
-  db: pwnkitDB | null,
+  db: osecDB | null,
   tools: ToolDefinition[],
   onEvent?: (eventType: string, payload: Record<string, unknown>) => void,
 ): Promise<void> {
@@ -578,7 +578,7 @@ function collectOutputBlob(messages: NativeMessage[]): string {
 export async function runEGATS(
   config: EGATSConfig,
   runtime: NativeRuntime,
-  db: pwnkitDB | null = null,
+  db: osecDB | null = null,
   onEvent?: (eventType: string, payload: Record<string, unknown>) => void,
 ): Promise<AttackTreeResult> {
   const beamWidth = config.beamWidth ?? 3;
@@ -748,7 +748,7 @@ export function runEGATSWithDefaults(
   target: string,
   scanId: string,
   runtime: NativeRuntime,
-  db: pwnkitDB | null,
+  db: osecDB | null,
   opts?: {
     rootHypothesis?: string;
     repoPath?: string;

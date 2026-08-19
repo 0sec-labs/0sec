@@ -10,7 +10,7 @@
 import { existsSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PatchGapCandidate } from "@pwnkit/core";
+import type { PatchGapCandidate } from "@0sec/core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

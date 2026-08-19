@@ -17,7 +17,7 @@ export default defineConfig({
     starlight({
       title: "0sec",
       description:
-        "Open-source security research harness for authorized targets. The technical project and CLI are named pwnkit.",
+        "Open-source security research harness for authorized targets. The technical project and CLI are named 0sec.",
       logo: {
         src: "./src/assets/0sec-aperture-white.svg",
         alt: "0sec",

@@ -1,5 +1,5 @@
 /**
- * Vulnerability intelligence tool definitions (pwnkit#611 — split out of the monolithic
+ * Vulnerability intelligence tool definitions (0sec#611 — split out of the monolithic
  * agent/tools.ts registry).
  *
  * Live vulnerability-intelligence lookups (advisories, CVEs, similar bugs,
@@ -7,7 +7,7 @@
  *
  * The ./tools/index.ts barrel merges every per-domain definition map into the
  * canonical `TOOL_DEFINITIONS` registry. The runtime handler BODIES live here
- * too (pwnkit#1284) as free functions over the shared `ToolContext`; the
+ * too (0sec#1284) as free functions over the shared `ToolContext`; the
  * `ToolExecutor` class in agent/tools.ts keeps same-named thin delegates so the
  * dispatch table (tools/dispatch.ts) still resolves each tool to a method.
  */
@@ -93,11 +93,11 @@ export const intelToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
 // this domain's definitions so a new tool adds its route here, not in a
 // shared dispatch switch. Assembled by ./dispatch.ts; resolved off the
 // executor instance in agent/tools.ts (the methods now delegate to the
-// free-function handlers below — pwnkit#1284).
+// free-function handlers below — 0sec#1284).
 export const intelDispatch: Record<string, string> = {
   intel_search_advisories: "intelSearchAdvisories",
   intel_lookup_cve: "intelLookupCve",
@@ -106,7 +106,7 @@ export const intelDispatch: Record<string, string> = {
   intel_search_target_history: "intelSearchTargetHistory",
 };
 
-// ── Runtime handlers (pwnkit#1284) ──
+// ── Runtime handlers (0sec#1284) ──
 // Extracted verbatim from the ToolExecutor private methods of the same name.
 // Only `intel_search_target_history` needs executor state (the scope path), so
 // it takes the `ToolContext`; the rest are pure over their args.

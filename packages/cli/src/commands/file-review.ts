@@ -1,4 +1,4 @@
-// `pwnkit file-review` — the deepsec-pattern whole-repo review harness:
+// `0sec file-review` — the deepsec-pattern whole-repo review harness:
 // free regex scan → coverage gate → batched AI investigation with refusal
 // audit + field repair → optional static revalidation, with global cost and
 // duration caps that stop at a resumable checkpoint (exit code 3).
@@ -8,8 +8,8 @@
 
 import type { Command } from "commander";
 import { resolve } from "node:path";
-import { createRuntime, runFileReviewPipeline } from "@pwnkit/core";
-import type { Runtime, ReviewInvoker } from "@pwnkit/core";
+import { createRuntime, runFileReviewPipeline } from "@0sec/core";
+import type { Runtime, ReviewInvoker } from "@0sec/core";
 
 interface FileReviewOpts {
   projectId?: string;
@@ -66,7 +66,7 @@ export function registerFileReviewCommand(program: Command): void {
         "checkpoint — re-run the same command to continue.",
     )
     .option("--project-id <id>", "Project id (defaults to the target basename)")
-    .option("--data-dir <path>", "Record store directory (default <target>/.pwnkit-review)")
+    .option("--data-dir <path>", "Record store directory (default <target>/.0sec-review)")
     .option("--runtime <mode>", "Engine runtime: api|claude|codex|gemini|ollama (default api)")
     .option("--model <model>", "Model for the investigation/revalidation agents")
     .option("--timeout <ms>", "Per-invocation timeout in milliseconds", "600000")

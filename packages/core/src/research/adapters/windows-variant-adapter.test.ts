@@ -50,7 +50,7 @@ function setup(): {
   result: Record<string, unknown>;
   root: string;
 } {
-  const root = mkdtempSync(join(tmpdir(), "pwnkit-windows-variant-"));
+  const root = mkdtempSync(join(tmpdir(), "0sec-windows-variant-"));
   roots.push(root);
   const manifest = join(root, "campaign.json");
   writeFileSync(manifest, '{"schema_version":"0verse.windows-variant-campaign/v1"}\n');

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * pwnkit-cli npm launcher.
+ * 0sec-cli npm launcher.
  *
  * The npm package is a launcher that downloads the right standalone binary
  * for the host platform on first run, caches it, and re-execs every
@@ -9,22 +9,22 @@
  * though npm itself runs under Node.
  *
  * The build script (`scripts/build-npm-shim.mjs`) substitutes
- * `__PWNKIT_VERSION__` with the published version at build time, so this
+ * `__0SEC_VERSION__` with the published version at build time, so this
  * launcher always pulls the binary that matches its own npm version.
  *
  * Cache layout:
- *   ~/.pwnkit/cache/v<version>/pwnkit         (executable)
- *   ~/.pwnkit/cache/v<version>/pwnkit.exe     (Windows)
+ *   ~/.0sec/cache/v<version>/0sec         (executable)
+ *   ~/.0sec/cache/v<version>/0sec.exe     (Windows)
  *
  * Env knobs:
- *   PWNKIT_BINARY                 — explicit path to a binary; bypasses
+ *   0SEC_BINARY                 — explicit path to a binary; bypasses
  *                                   the cache + download entirely.
  *                                   Used by tests and operators who
  *                                   build from source.
- *   PWNKIT_NO_DOWNLOAD=1          — never download; if the binary isn't
+ *   0SEC_NO_DOWNLOAD=1          — never download; if the binary isn't
  *                                   cached, print the install.sh fallback
  *                                   URL and exit 1.
- *   PWNKIT_DOWNLOAD_TIMEOUT_MS    — per-attempt timeout for the GH
+ *   0SEC_DOWNLOAD_TIMEOUT_MS    — per-attempt timeout for the GH
  *                                   release download (default: 120000).
  *
  * Supply-chain integrity (added 2026-05-16):
@@ -54,7 +54,7 @@ const { spawn } = require("node:child_process");
 const { request } = require("node:https");
 const { createHash } = require("node:crypto");
 
-const VERSION = "__PWNKIT_VERSION__";
+const VERSION = "__0SEC_VERSION__";
 const REPO = "0sec-labs/0sec";
 const CHECKSUMS_FILENAME = "checksums.txt";
 
@@ -65,22 +65,22 @@ const ORANGE = "\x1b[38;2;250;178;131m";
 const RED = "\x1b[31m";
 
 function err(msg) {
-  process.stderr.write(`${RED}[pwnkit]${RESET} ${msg}\n`);
+  process.stderr.write(`${RED}[0sec]${RESET} ${msg}\n`);
 }
 
 function detectAsset() {
   const platform = process.platform;
   const arch = process.arch;
 
-  if (platform === "darwin" && arch === "arm64") return "pwnkit-darwin-arm64";
-  if (platform === "linux" && arch === "x64") return "pwnkit-linux-x64";
-  if (platform === "linux" && arch === "arm64") return "pwnkit-linux-arm64";
-  if (platform === "win32" && arch === "x64") return "pwnkit-windows-x64.exe";
+  if (platform === "darwin" && arch === "arm64") return "0sec-darwin-arm64";
+  if (platform === "linux" && arch === "x64") return "0sec-linux-x64";
+  if (platform === "linux" && arch === "arm64") return "0sec-linux-arm64";
+  if (platform === "win32" && arch === "x64") return "0sec-windows-x64.exe";
   return null;
 }
 
 function cachePath(asset) {
-  return join(homedir(), ".pwnkit", "cache", `v${VERSION}`, asset);
+  return join(homedir(), ".0sec", "cache", `v${VERSION}`, asset);
 }
 
 function downloadUrl(asset) {
@@ -236,7 +236,7 @@ function printInstallFallback(asset) {
 
 async function ensureBinary() {
   // Operator override — used by tests + source builds.
-  const explicit = process.env.PWNKIT_BINARY;
+  const explicit = process.env["0SEC_BINARY"];
   if (explicit && existsSync(explicit)) return explicit;
 
   const asset = detectAsset();
@@ -251,7 +251,7 @@ async function ensureBinary() {
   const cached = cachePath(asset);
   if (existsSync(cached)) return cached;
 
-  if (process.env.PWNKIT_NO_DOWNLOAD === "1") {
+  if (process.env["0SEC_NO_DOWNLOAD"] === "1") {
     printInstallFallback(asset);
     process.exit(1);
   }
@@ -259,14 +259,14 @@ async function ensureBinary() {
   // Lazy first-run UX: tell the user we're fetching ~75-130 MB so they
   // don't think the CLI is hung.
   const url = downloadUrl(asset);
-  process.stderr.write(`${DIM}[pwnkit] first-run setup — downloading ${asset} (${url})${RESET}\n`);
+  process.stderr.write(`${DIM}[0sec] first-run setup — downloading ${asset} (${url})${RESET}\n`);
 
   const cacheDir = dirname(cached);
   mkdirSync(cacheDir, { recursive: true });
-  const tmpFile = join(tmpdir(), `pwnkit-${process.pid}-${Date.now()}-${asset}`);
+  const tmpFile = join(tmpdir(), `0sec-${process.pid}-${Date.now()}-${asset}`);
 
   try {
-    const timeoutMs = Number(process.env.PWNKIT_DOWNLOAD_TIMEOUT_MS ?? 120000);
+    const timeoutMs = Number(process.env["0SEC_DOWNLOAD_TIMEOUT_MS"] ?? 120000);
 
     // 1) Fetch the SHA-256 manifest BEFORE the binary. If the release
     //    is missing its manifest (e.g. an old pre-0.11.x tag) we abort
@@ -309,7 +309,7 @@ async function ensureBinary() {
     // 4) Only now mark executable + publish into the cache atomically.
     chmodSync(tmpFile, 0o755);
     renameSync(tmpFile, cached);
-    process.stderr.write(`${DIM}[pwnkit] cached at ${cached} (sha-256 verified)${RESET}\n`);
+    process.stderr.write(`${DIM}[0sec] cached at ${cached} (sha-256 verified)${RESET}\n`);
     return cached;
   } catch (e) {
     try { unlinkSync(tmpFile); } catch { /* ignore */ }

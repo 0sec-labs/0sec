@@ -1,9 +1,9 @@
 import { defineConfig } from "vitest/config";
-import { pwnkitWorkspaceAliases } from "../../vitest.workspace-aliases.ts";
+import { osecWorkspaceAliases } from "../../vitest.workspace-aliases.ts";
 
 export default defineConfig({
   resolve: {
-    alias: pwnkitWorkspaceAliases,
+    alias: osecWorkspaceAliases,
   },
   test: {
     // Root-level runner modules (honest-eval.ts, exploit-runner.ts) live beside

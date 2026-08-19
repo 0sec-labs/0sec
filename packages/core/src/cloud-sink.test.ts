@@ -13,11 +13,11 @@ import {
 import type { ReconAsset } from "./recon/recon.js";
 
 const ENV_KEYS = [
-  "PWNKIT_CLOUD_SINK",
-  "PWNKIT_CLOUD_SCAN_ID",
-  "PWNKIT_CLOUD_TOKEN",
-  "PWNKIT_CLOUD_ORG_ID",
-  "PWNKIT_FEATURE_CLOUD_SINK",
+  "0SEC_CLOUD_SINK",
+  "0SEC_CLOUD_SCAN_ID",
+  "0SEC_CLOUD_TOKEN",
+  "0SEC_CLOUD_ORG_ID",
+  "0SEC_FEATURE_CLOUD_SINK",
 ];
 
 describe("cloud-sink", () => {
@@ -43,14 +43,14 @@ describe("cloud-sink", () => {
   });
 
   it("getCloudSinkConfig returns null when only the URL is set", () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
     expect(getCloudSinkConfig()).toBeNull();
   });
 
   it("getCloudSinkConfig returns config when URL + scan id are set", () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-123";
-    process.env.PWNKIT_CLOUD_TOKEN = "tok-abc";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-123";
+    process.env["0SEC_CLOUD_TOKEN"] = "tok-abc";
     expect(getCloudSinkConfig()).toEqual({
       sinkUrl: "https://api.example.com",
       scanId: "scan-123",
@@ -66,9 +66,9 @@ describe("cloud-sink", () => {
   });
 
   it("postFinding POSTs to /scans/<id>/findings with correct headers + body", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com/";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-123";
-    process.env.PWNKIT_CLOUD_TOKEN = "tok-abc";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com/";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-123";
+    process.env["0SEC_CLOUD_TOKEN"] = "tok-abc";
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -95,7 +95,7 @@ describe("cloud-sink", () => {
     expect(url).toBe("https://api.example.com/scans/scan-123/findings");
     expect(init.method).toBe("POST");
     expect(init.headers["Content-Type"]).toBe("application/json");
-    expect(init.headers["X-Pwnkit-Scan-Id"]).toBe("scan-123");
+    expect(init.headers["X-0sec-Scan-Id"]).toBe("scan-123");
     expect(init.headers["x-cloud-sink-version"]).toBe("1");
     expect(init.headers["Authorization"]).toBe("Bearer tok-abc");
     // The wire payload is the NORMALIZED finding, not the raw input.
@@ -116,9 +116,9 @@ describe("cloud-sink", () => {
   });
 
   it("normalizes and transports research evidence envelopes", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-research";
-    process.env.PWNKIT_CLOUD_TOKEN = "tok";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-research";
+    process.env["0SEC_CLOUD_TOKEN"] = "tok";
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const receipt = {
@@ -138,9 +138,9 @@ describe("cloud-sink", () => {
   });
 
   it("normalizes save_finding source fields into a review annotation", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-review";
-    process.env.PWNKIT_CLOUD_TOKEN = "tok";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-review";
+    process.env["0SEC_CLOUD_TOKEN"] = "tok";
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -169,9 +169,9 @@ describe("cloud-sink", () => {
   });
 
   it("still POSTs the finding when its review annotation is dropped as non-repo-relative", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-review-drop";
-    process.env.PWNKIT_CLOUD_TOKEN = "tok";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-review-drop";
+    process.env["0SEC_CLOUD_TOKEN"] = "tok";
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -199,8 +199,8 @@ describe("cloud-sink", () => {
   });
 
   it("postFinalReport POSTs the final report flag", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-456";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-456";
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -223,8 +223,8 @@ describe("cloud-sink", () => {
   });
 
   it("does NOT throw when sink returns 5xx — local scan continues", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-789";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-789";
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
@@ -241,8 +241,8 @@ describe("cloud-sink", () => {
   });
 
   it("does NOT throw when fetch itself rejects (network error)", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-net";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-net";
 
     const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -253,8 +253,8 @@ describe("cloud-sink", () => {
   });
 
   it("postFinding drops malformed findings without throwing or calling fetch", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-drop";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-drop";
 
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -270,8 +270,8 @@ describe("cloud-sink", () => {
   });
 
   it("postFinding normalizes raw LLM tool-call args (snake_case) before posting", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-llm";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-llm";
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -308,12 +308,12 @@ describe("cloud-sink", () => {
     expect(typeof body.finding.timestamp).toBe("number");
   });
 
-  it("respects PWNKIT_FEATURE_CLOUD_SINK=0 even when URL is set", async () => {
+  it("respects 0SEC_FEATURE_CLOUD_SINK=0 even when URL is set", async () => {
     // Note: features.ts is evaluated at module load, so we have to import a
     // fresh copy to observe the flag change.
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-disabled";
-    process.env.PWNKIT_FEATURE_CLOUD_SINK = "0";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-disabled";
+    process.env["0SEC_FEATURE_CLOUD_SINK"] = "0";
 
     vi.resetModules();
     const mod = await import("./cloud-sink.js");
@@ -621,7 +621,7 @@ describe("normalizeFinding", () => {
   });
 });
 
-// ── discovered-asset push (pwnkit#768 / #761) ──
+// ── discovered-asset push (0sec#768 / #761) ──
 describe("cloud-sink assets", () => {
   const originalFetch = globalThis.fetch;
   const savedEnv: Record<string, string | undefined> = {};
@@ -738,10 +738,10 @@ describe("cloud-sink assets", () => {
   });
 
   it("postAsset POSTs to /assets with the bearer + org header and the asset body", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com/";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-123";
-    process.env.PWNKIT_CLOUD_TOKEN = "tok-abc";
-    process.env.PWNKIT_CLOUD_ORG_ID = "org_ABCDEFGHIJKLMNOP";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com/";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-123";
+    process.env["0SEC_CLOUD_TOKEN"] = "tok-abc";
+    process.env["0SEC_CLOUD_ORG_ID"] = "org_ABCDEFGHIJKLMNOP";
 
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, text: async () => "" });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -760,13 +760,13 @@ describe("cloud-sink assets", () => {
     expect(init.method).toBe("POST");
     expect(init.headers["Authorization"]).toBe("Bearer tok-abc");
     // Org scope is forwarded for the non-scan-id-pathed asset write.
-    expect(init.headers["X-Pwnkit-Org-Id"]).toBe("org_ABCDEFGHIJKLMNOP");
+    expect(init.headers["X-0sec-Org-Id"]).toBe("org_ABCDEFGHIJKLMNOP");
     expect(JSON.parse(init.body)).toEqual(asset);
   });
 
   it("postAsset swallows a 5xx — an asset-push failure never aborts the scan", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-1";
 
     const fetchMock = vi
       .fn()
@@ -780,8 +780,8 @@ describe("cloud-sink assets", () => {
   });
 
   it("postAsset swallows a thrown network error (fetch rejects)", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-1";
 
     const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -792,8 +792,8 @@ describe("cloud-sink assets", () => {
   });
 
   it("postAssets posts every asset and never throws when one push fails", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-1";
 
     let call = 0;
     const fetchMock = vi.fn().mockImplementation(async () => {
@@ -814,8 +814,8 @@ describe("cloud-sink assets", () => {
   });
 
   it("postAssets is a no-op for an empty list", async () => {
-    process.env.PWNKIT_CLOUD_SINK = "https://api.example.com";
-    process.env.PWNKIT_CLOUD_SCAN_ID = "scan-1";
+    process.env["0SEC_CLOUD_SINK"] = "https://api.example.com";
+    process.env["0SEC_CLOUD_SCAN_ID"] = "scan-1";
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     await postAssets([]);

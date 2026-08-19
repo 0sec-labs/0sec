@@ -62,7 +62,7 @@ function testExportCliArgv(cliPath: string): string[] {
 
 describe("runCliPathTraversalReplayFixture", () => {
   it("reproduces the vulnerable Paperclip-style export traversal", async () => {
-    const cliRoot = mkdtempSync(join(tmpdir(), "pwnkit-fixture-cli-"));
+    const cliRoot = mkdtempSync(join(tmpdir(), "0sec-fixture-cli-"));
     try {
       const cliPath = writeTestExportCli(cliRoot);
       const result = await runCliPathTraversalReplayFixture({
@@ -92,7 +92,7 @@ describe("runCliPathTraversalReplayFixture", () => {
   });
 
   it("returns not_reproduced when the fixture CLI rejects traversal", async () => {
-    const cliRoot = mkdtempSync(join(tmpdir(), "pwnkit-fixture-cli-"));
+    const cliRoot = mkdtempSync(join(tmpdir(), "0sec-fixture-cli-"));
     try {
       const cliPath = writeTestExportCli(cliRoot);
       const result = await runCliPathTraversalReplayFixture({
@@ -112,8 +112,8 @@ describe("runCliPathTraversalReplayFixture", () => {
   });
 
   it("retains the sandbox and artifact refs when requested", async () => {
-    const sandbox = mkdtempSync(join(tmpdir(), "pwnkit-fixture-retain-"));
-    const cliRoot = mkdtempSync(join(tmpdir(), "pwnkit-fixture-cli-"));
+    const sandbox = mkdtempSync(join(tmpdir(), "0sec-fixture-retain-"));
+    const cliRoot = mkdtempSync(join(tmpdir(), "0sec-fixture-cli-"));
     try {
       const cliPath = writeTestExportCli(cliRoot);
       const result = await runCliPathTraversalReplayFixture({
@@ -139,7 +139,7 @@ describe("runCliPathTraversalReplayFixture", () => {
   });
 
   it("returns artifact refs on setup errors when artifact retention is requested", async () => {
-    const sandbox = mkdtempSync(join(tmpdir(), "pwnkit-fixture-error-"));
+    const sandbox = mkdtempSync(join(tmpdir(), "0sec-fixture-error-"));
     try {
       writeFileSync(join(sandbox, "export"), "not a directory", "utf8");
 
@@ -162,8 +162,8 @@ describe("runCliPathTraversalReplayFixture", () => {
   });
 
   it("preserves command output when post-command artifact writes fail", async () => {
-    const sandbox = mkdtempSync(join(tmpdir(), "pwnkit-fixture-postcmd-error-"));
-    const cliRoot = mkdtempSync(join(tmpdir(), "pwnkit-fixture-cli-"));
+    const sandbox = mkdtempSync(join(tmpdir(), "0sec-fixture-postcmd-error-"));
+    const cliRoot = mkdtempSync(join(tmpdir(), "0sec-fixture-cli-"));
     try {
       mkdirSync(join(sandbox, "stdout.log"));
       const cliPath = writeTestExportCli(cliRoot);

@@ -42,7 +42,7 @@ const STAGE_TAG: Record<string, (s: string) => string> = {
 };
 
 function tagFor(stage?: string): string {
-  if (!stage) return chalk.gray("[pwnkit]");
+  if (!stage) return chalk.gray("[0sec]");
   const colour = STAGE_TAG[stage] ?? chalk.gray;
   return colour(`[${stage}]`);
 }
@@ -60,7 +60,7 @@ function severityColour(sev: string): (s: string) => string {
 export function renderScanStream(opts: RenderScanStreamOptions): StreamSession {
   const { version, target, depth, mode } = opts;
   console.log("");
-  console.log(`  ${chalk.bold("pwnkit")} ${chalk.dim(`v${version}`)}`);
+  console.log(`  ${chalk.bold("0sec")} ${chalk.dim(`v${version}`)}`);
   console.log(`    ${chalk.dim(`${mode}ing target ${target} · depth ${depth}`)}`);
   console.log("");
 
@@ -88,8 +88,8 @@ export function renderScanStream(opts: RenderScanStreamOptions): StreamSession {
         if (event.message) console.log(`${tag} ${event.message}`);
         return;
       case "thinking":
-        // High-volume; only print if explicitly opted in via PWNKIT_VERBOSE.
-        if (process.env.PWNKIT_VERBOSE && event.message) {
+        // High-volume; only print if explicitly opted in via 0SEC_VERBOSE.
+        if (process.env["0SEC_VERBOSE"] && event.message) {
           console.log(`${chalk.gray("  …")} ${chalk.dim(event.message.slice(0, 200))}`);
         }
         return;

@@ -4,8 +4,8 @@ import type {
   AttackTemplate,
   AttackResult,
   AttackOutcome,
-} from "@pwnkit/shared";
-import { DEPTH_CONFIG } from "@pwnkit/shared";
+} from "@0sec/shared";
+import { DEPTH_CONFIG } from "@0sec/shared";
 import type { Runtime, NativeRuntime, RuntimeContext, RuntimeType } from "../runtime/types.js";
 import { buildDeepScanPrompt, buildMcpAuditPrompt } from "../prompts.js";
 import { webPentestPrompt } from "../agent/prompts.js";

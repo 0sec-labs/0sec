@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { Command } from "commander";
 import chalk from "chalk";
-import type { ScanDepth, OutputFormat, RuntimeMode, SeedFinding } from "@pwnkit/shared";
+import type { ScanDepth, OutputFormat, RuntimeMode, SeedFinding } from "@0sec/shared";
 import { runUnified } from "./run.js";
 import { runHarnessTier2 } from "./review-harness-tier2.js";
 import { runHarnessTier3 } from "./review-harness-tier3.js";
@@ -78,7 +78,7 @@ export function registerReviewCommand(program: Command): void {
     )
     .option(
       "--ecosystem <ecosystem>",
-      "Review the SOURCE of a published package instead of a repo: npm, pypi, cargo, or oci. When set, <repo> is the package NAME — pwnkit installs it and reviews its extracted source. Omit for a local path or git URL.",
+      "Review the SOURCE of a published package instead of a repo: npm, pypi, cargo, or oci. When set, <repo> is the package NAME — 0sec installs it and reviews its extracted source. Omit for a local path or git URL.",
     )
     .option(
       "--package-version <version>",
@@ -87,7 +87,7 @@ export function registerReviewCommand(program: Command): void {
     .option(
       "--seed-findings <path>",
       'Path to ND-JSON leads from an external producer. "-" reads stdin. ' +
-        "Schema: gemmaforge.leads/v1. Tracked: pwnkit#368.",
+        "Schema: gemmaforge.leads/v1. Tracked: 0sec#368.",
     )
     .option(
       "--seed-only",
@@ -96,7 +96,7 @@ export function registerReviewCommand(program: Command): void {
     )
     .option(
       "--emit <target>",
-      "Emit target. Default unset → existing terminal/json/etc. `pr` → emit each reproduced finding as a GitHub PR with repro + suggested patch (pwnkit#377). Unverified findings roll up into `hypotheses.md`.",
+      "Emit target. Default unset → existing terminal/json/etc. `pr` → emit each reproduced finding as a GitHub PR with repro + suggested patch (0sec#377). Unverified findings roll up into `hypotheses.md`.",
     )
     .option("--base <branch>", "Base branch for `--emit pr` (default: main)")
     .option("--dry-run", "For `--emit pr`: print git/gh commands instead of running them. Auto-enabled if `gh auth status` fails.", false)
@@ -125,15 +125,15 @@ export function registerReviewCommand(program: Command): void {
     )
     .option(
       "--harness-out <dir>",
-      "Tier-2 only: output directory for the emitted harness + linker fragment. Defaults to <repo>/.pwnkit-out/tier2.",
+      "Tier-2 only: output directory for the emitted harness + linker fragment. Defaults to <repo>/.0sec-out/tier2.",
     )
     .option(
       "--harness-qemu-kernel <path>",
-      "Tier-3 only: pre-built kernel image. Defaults to PWNKIT_KERNEL_QEMU_KERNEL.",
+      "Tier-3 only: pre-built kernel image. Defaults to 0SEC_KERNEL_QEMU_KERNEL.",
     )
     .option(
       "--harness-qemu-disk <path>",
-      "Tier-3 only: pre-built rootfs image. Defaults to PWNKIT_KERNEL_QEMU_DISK.",
+      "Tier-3 only: pre-built rootfs image. Defaults to 0SEC_KERNEL_QEMU_DISK.",
     )
     .option(
       "--harness-wall-clock-ms <ms>",
@@ -160,14 +160,14 @@ export function registerReviewCommand(program: Command): void {
       "Also run the npm dynamic-discovery detector sweep (SSPP fuzz / validation read-stability / SSRF parser-diff) over the package in a disposable sandbox. Only effective with --ecosystem npm. Confirmed leads flow into the same verify → disclosure path.",
       false,
     )
-    .option("--resume <run-id>", "Resume a previous run from its journal on disk (pwnkit#374)")
+    .option("--resume <run-id>", "Resume a previous run from its journal on disk (0sec#374)")
     .option("--branch-from <entry-index>", "Branch the journal at the given entry index before resuming (requires --resume).")
     .option("--verbose", "Show detailed output", false)
     .option("--timeout <ms>", "AI agent timeout in milliseconds", "600000")
     .action(async (repo: string, opts: Record<string, string | boolean>, command: Command) => {
       let costCeilingUsd: number | undefined;
       const ceilingSource =
-        (opts.costCeiling as string | undefined) ?? process.env.PWNKIT_COST_CEILING_USD;
+        (opts.costCeiling as string | undefined) ?? process.env["0SEC_COST_CEILING_USD"];
       if (ceilingSource !== undefined && ceilingSource !== "") {
         const parsed = Number(ceilingSource);
         if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -187,7 +187,7 @@ export function registerReviewCommand(program: Command): void {
       let seedFindings: SeedFinding[] | undefined;
       const seedPath = opts.seedFindings as string | undefined;
       if (seedPath) {
-        const { readSeedFindings } = await import("@pwnkit/core");
+        const { readSeedFindings } = await import("@0sec/core");
         seedFindings = readSeedFindings(seedPath);
         console.log(
           chalk.cyan(
@@ -201,7 +201,7 @@ export function registerReviewCommand(program: Command): void {
 
       const harnessTier = normalizeHarnessTier(opts.harnessTier as string | undefined);
       if (harnessTier === 2) {
-        // Tier-2 short-circuits the agent pipeline: pwnkit just emits
+        // Tier-2 short-circuits the agent pipeline: 0sec just emits
         // the harness artifacts and exits. The compile+run steps are
         // either driven by the calling agent or escalated to Tier-3.
         await runHarnessTier2({

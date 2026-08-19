@@ -17,7 +17,7 @@ import type {
 import type {
   VerificationResult,
   ResearchNoveltyReceipt,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

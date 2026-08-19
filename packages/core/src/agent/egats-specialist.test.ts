@@ -90,7 +90,7 @@ describe("classifyHypothesis", () => {
 // ── EGATS specialist routing (end-to-end through exploreNode) ──
 
 describe("EGATS specialist routing", () => {
-  const FLAG = "PWNKIT_FEATURE_SPECIALIST_ROUTING";
+  const FLAG = "0SEC_FEATURE_SPECIALIST_ROUTING";
   let prev: string | undefined;
 
   beforeEach(() => {

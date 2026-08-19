@@ -1,15 +1,15 @@
 /**
  * Hunt memory flywheel — a preseeded 5-layer cognitive memory that PRIMES
- * pwnkit's kernel hunt (`runHuntScan`). Ports 0verse's PoV-dataset flywheel
+ * 0sec's kernel hunt (`runHuntScan`). Ports 0verse's PoV-dataset flywheel
  * (bench:`/root/0verse/src/zeroverse/flywheel.py`, "#43 (M7 Bet B)") into
- * pwnkit, reusing what's already here instead of re-inventing it:
+ * 0sec, reusing what's already here instead of re-inventing it:
  *
  *   - PRINCIPLE / SEMANTIC / PROCEDURAL are preseeded from the 34-entry kernel
  *     archetype registry (`archetype-catalog.ts`'s `loadKernelArchetypes()`) —
  *     the concepts, sink associations, and confirmation procedures.
  *   - EPISODIC / ANALOGICAL are preseeded from the hunt-variant corpus
- *     (`@pwnkit/benchmark`'s `hunt-variant-v1.jsonl`, read by PATH here — core
- *     must not depend on `@pwnkit/benchmark`, the wrong dependency direction)
+ *     (`@0sec/benchmark`'s `hunt-variant-v1.jsonl`, read by PATH here — core
+ *     must not depend on `@0sec/benchmark`, the wrong dependency direction)
  *     — past finder findings + their skeptic verdicts, and cross-site links
  *     when the same bug class recurred across candidates.
  *
@@ -17,7 +17,7 @@
  * an earlier "consolidate an empty store at run time" design extracts nothing
  * (0verse's own lesson, kept verbatim in the module header there).
  *
- * Three operations, all opt-in (`PWNKIT_HUNT_FLYWHEEL=1`, default OFF):
+ * Three operations, all opt-in (`0SEC_HUNT_FLYWHEEL=1`, default OFF):
  *
  *   1. `recall(brief)` — the most-similar past concepts/procedures/findings,
  *      by a bug-class/CWE + sink-symbol token join key (`classTokens`),
@@ -42,7 +42,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { loadKernelArchetypes, symbolsFromDetectionSignature } from "./archetype-catalog.js";
 import type { HuntBrief, HuntFindingRecord } from "./hunt-scan.js";
 import type { LensCandidate } from "./lens-synthesis/types.js";
@@ -51,7 +51,7 @@ import type { LensCandidate } from "./lens-synthesis/types.js";
 
 /** Default OFF — mirrors 0verse's `ZEROVERSE_FLYWHEEL=1` / `archetypeSweepEnabled()`'s discipline. */
 export function huntFlywheelEnabled(): boolean {
-  return !["", "0", "false", "no"].includes((process.env.PWNKIT_HUNT_FLYWHEEL ?? "").toLowerCase());
+  return !["", "0", "false", "no"].includes((process.env["0SEC_HUNT_FLYWHEEL"] ?? "").toLowerCase());
 }
 
 // ── Layers ───────────────────────────────────────────────────────────────────
@@ -254,8 +254,8 @@ export function primedOrderKey(judgeScore: number, priming: HuntPriming, finding
 }
 
 // ── Corpus row shape (hunt-variant-v1.jsonl) ────────────────────────────────
-// Read by path, not import: `@pwnkit/core` must not depend on
-// `@pwnkit/benchmark` (hunt-corpus.ts there depends on `@pwnkit/core`, not the
+// Read by path, not import: `@0sec/core` must not depend on
+// `@0sec/benchmark` (hunt-corpus.ts there depends on `@0sec/core`, not the
 // other way around). This is a minimal structural subset of `HuntSample`.
 
 export interface HuntCorpusRow {
@@ -508,7 +508,7 @@ export class HuntMemory {
 
   /**
    * Capture: fold one hunt-run finding record back into EPISODIC. Reuses
-   * `HuntFindingRecord` — the same shape `@pwnkit/benchmark`'s
+   * `HuntFindingRecord` — the same shape `@0sec/benchmark`'s
    * `hunt-corpus.ts` persists — so this stores labels + pointers only (never
    * raw bytes beyond what the `Finding` itself already carries). Next
    * construction's `loadCorpus` reads it back: the loop closes across runs.

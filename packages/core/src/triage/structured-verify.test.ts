@@ -7,7 +7,7 @@ import {
   type VerifyFn,
   type VerifyResult,
 } from "./structured-verify.js";
-import type { AttackCategory, Finding } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@0sec/shared";
 import type { NativeRuntime } from "../runtime/types.js";
 
 function makeFinding(): Finding {

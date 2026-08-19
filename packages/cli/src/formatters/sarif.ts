@@ -1,5 +1,5 @@
-import type { PocStep, ScanReport, Finding, Severity } from "@pwnkit/shared";
-import { VERSION } from "@pwnkit/shared";
+import type { PocStep, ScanReport, Finding, Severity } from "@0sec/shared";
+import { VERSION } from "@0sec/shared";
 
 interface SarifResult {
   ruleId: string;
@@ -170,7 +170,7 @@ export function formatSarif(report: ScanReport): string {
       {
         tool: {
           driver: {
-            name: "pwnkit",
+            name: "0sec",
             version: VERSION,
             informationUri: "https://github.com/0sec-labs/0sec",
             rules: Array.from(rulesMap.values()),

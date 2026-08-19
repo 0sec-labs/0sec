@@ -1,5 +1,5 @@
 /**
- * Cold-start whole-subsystem invariant modeling — pwnkit's THIRD discovery axis
+ * Cold-start whole-subsystem invariant modeling — 0sec's THIRD discovery axis
  * (the SEEDLESS one). Variant-hunt needs a fix diff to chase; invariant-candidates
  * (its sibling) fuses model-build and violation-hunt into ONE LLM turn, so the
  * "where's the bug" step is still the model guessing. This axis SPLITS those two
@@ -45,7 +45,7 @@
 
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import { findViolationsDataflow } from "./c-dataflow.js";
 import {
   composeGate,

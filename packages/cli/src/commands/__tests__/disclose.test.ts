@@ -1,13 +1,13 @@
 /**
- * Coverage seed for `pwnkit-cli`'s `disclose` command. This is the H1
- * disclosure pipeline — the place where pwnkit drafts advisories from
+ * Coverage seed for `0sec-cli`'s `disclose` command. This is the H1
+ * disclosure pipeline — the place where 0sec drafts advisories from
  * findings, runs the filing-state gate (decideFilingState), and writes
  * the bundle (INDEX.md + advisories + _dropped/). The CLI side had zero
  * tests prior to this seed; a bug here ships bad advisories to external
  * programs.
  *
- * Strategy: mock the `@pwnkit/core` boundary (renderers, canary, poc-runtime,
- * bundle helpers) AND the `@pwnkit/db` boundary (so we never open SQLite),
+ * Strategy: mock the `@0sec/core` boundary (renderers, canary, poc-runtime,
+ * bundle helpers) AND the `@0sec/db` boundary (so we never open SQLite),
  * register the command on a fresh Commander program, and `parseAsync` the
  * argv the operator would type. We assert on:
  *
@@ -36,11 +36,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── Module-level mocks ──────────────────────────────────────────────────────
 //
-// `disclose.ts` does `await import("@pwnkit/db")` inside the action — vitest
+// `disclose.ts` does `await import("@0sec/db")` inside the action — vitest
 // hoists `vi.mock` so the dynamic import also resolves to our stub.
 
 interface FakeFindingRow {
@@ -70,8 +70,8 @@ const dbState: {
   saveCalls: Array<{ id: string; report: unknown }>;
 } = { rows: [], closed: false, saveCalls: [] };
 
-vi.mock("@pwnkit/db", () => {
-  class FakePwnkitDB {
+vi.mock("@0sec/db", () => {
+  class FakeOsecDB {
     constructor(_dbPath?: string) {
       dbState.closed = false;
     }
@@ -85,7 +85,7 @@ vi.mock("@pwnkit/db", () => {
       dbState.closed = true;
     }
   }
-  return { pwnkitDB: FakePwnkitDB };
+  return { osecDB: FakeOsecDB };
 });
 
 // ── Core mocks ──────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ class FakeEmptyPocError extends Error {
   }
 }
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   renderAdvisoryMarkdown: renderAdvisoryMarkdownMock,
   renderExploitScreenshot: renderExploitScreenshotMock,
   isFreezeAvailable: isFreezeAvailableMock,
@@ -161,7 +161,7 @@ async function runCli(argv: string[]): Promise<void> {
   });
   registerDiscloseCommand(program);
   try {
-    await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+    await program.parseAsync(["node", "0sec-cli", ...argv]);
   } catch {
     // Commander throws on usage error; the action throws on validation
     // failures (which then surfaces as an unhandled rejection in
@@ -611,7 +611,7 @@ describe("disclose — multi-scan guardrail", () => {
     await runCli([
       "disclose",
       "--output-dir",
-      "/tmp/pwnkit-disclose-multi",
+      "/tmp/0sec-disclose-multi",
       "--dry-run",
     ]);
     // Both rows reach the renderer when the multi-scan guard is satisfied.

@@ -80,7 +80,7 @@ describe("buildClaudePromptFromLastUser", () => {
       },
     ];
     const prompt = buildClaudePromptFromLastUser(messages);
-    expect(prompt).toContain("[pwnkit:tool_results]");
+    expect(prompt).toContain("[0sec:tool_results]");
     expect(prompt).toContain('"tool_use_id": "tu_1"');
     expect(prompt).toContain('"content": "200 OK"');
   });
@@ -105,7 +105,7 @@ describe("buildClaudePromptFromLastUser", () => {
       },
     ];
     const prompt = buildClaudePromptFromLastUser(messages);
-    expect(prompt).toContain("[pwnkit:tool_results]");
+    expect(prompt).toContain("[0sec:tool_results]");
     expect(prompt).toContain('"is_error": true');
     expect(prompt).toContain("Now what?");
   });
@@ -204,7 +204,7 @@ describe("CliNativeRuntime — claude subscription mode", () => {
 
     const rt = new CliNativeRuntime({ type: "claude", timeout: 5000 });
     const result = await rt.executeNative(
-      "you are pwnkit attack agent",
+      "you are 0sec attack agent",
       [{ role: "user", content: [{ type: "text", text: "scan https://x" }] }],
       [],
     );
@@ -220,7 +220,7 @@ describe("CliNativeRuntime — claude subscription mode", () => {
     // Turn 1 SHOULD pass the system prompt
     const sysIdx = args.indexOf("--system-prompt");
     expect(sysIdx).toBeGreaterThan(-1);
-    expect(args[sysIdx + 1]).toBe("you are pwnkit attack agent");
+    expect(args[sysIdx + 1]).toBe("you are 0sec attack agent");
 
     // Result blocks
     expect(result.stopReason).toBe("tool_use");
@@ -325,7 +325,7 @@ describe("CliNativeRuntime — claude subscription mode", () => {
     const pIdx = args2.indexOf("-p");
     expect(pIdx).toBeGreaterThan(-1);
     const promptArg = args2[pIdx + 1] as string;
-    expect(promptArg).toContain("[pwnkit:tool_results]");
+    expect(promptArg).toContain("[0sec:tool_results]");
     expect(promptArg).toContain('"tool_use_id": "tu_a"');
     expect(promptArg).toContain('"content": "{\\"status\\":200}"');
 

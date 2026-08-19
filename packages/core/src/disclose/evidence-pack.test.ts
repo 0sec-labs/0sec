@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Finding, PocStep, LayerVerdict } from "@pwnkit/shared";
+import type { Finding, PocStep, LayerVerdict } from "@0sec/shared";
 import {
   assembleEvidencePack,
   renderVendorNotificationMarkdown,

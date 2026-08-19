@@ -2,7 +2,7 @@
  * Hunt candidate LLM judge — best-of-N disambiguation for `runHuntScan`.
  *
  * Mirrors the CyberGym best-of-N judge (`judgeCyberGymCandidatesWithLlm` in
- * `@pwnkit/benchmark`'s cybergym-runner.ts): when a (candidate, model) pair
+ * `@0sec/benchmark`'s cybergym-runner.ts): when a (candidate, model) pair
  * produced more than one attempt, an LLM judge scores each finding against the
  * hunt brief's bug class/pattern so only the strongest survives to the
  * (expensive) skeptic+prover gate — keeping skeptic call-count flat while the
@@ -11,7 +11,7 @@
  * other native LLM judge in this stage directory.
  */
 
-import type { Finding, RuntimeMode } from "@pwnkit/shared";
+import type { Finding, RuntimeMode } from "@0sec/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import type { HuntBrief } from "./hunt-scan.js";
 

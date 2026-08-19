@@ -18,8 +18,8 @@ import {
   type WindowsLpePairedCorpusManifest,
 } from "./windows-lpe-paired-corpus.js";
 
-export const WINDOWS_LPE_AGENT_PROJECTION_SCHEMA = "pwnkit.windows-lpe-agent-projection/v1" as const;
-export const WINDOWS_LPE_HANDLE_RESOLVER_SCHEMA = "pwnkit.windows-lpe-handle-resolver/v1" as const;
+export const WINDOWS_LPE_AGENT_PROJECTION_SCHEMA = "0sec.windows-lpe-agent-projection/v1" as const;
+export const WINDOWS_LPE_HANDLE_RESOLVER_SCHEMA = "0sec.windows-lpe-handle-resolver/v1" as const;
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const OPAQUE = /^[A-Za-z0-9_-]{43}$/;
@@ -379,7 +379,7 @@ export async function resolveWindowsLpeOpaqueHandle(args: {
   const now = (args.now ?? Date.now)();
   if (!Number.isFinite(now) || now >= Date.parse(expiresAt)) throw new Error("verified opaque execution authority has expired");
   const replayKey = createHash("sha256").update([
-    "pwnkit.windows-lpe-opaque-consume/v1", authorityId, bundle.projectionSha256, bundle.resolverSha256, handle, runNonce,
+    "0sec.windows-lpe-opaque-consume/v1", authorityId, bundle.projectionSha256, bundle.resolverSha256, handle, runNonce,
   ].join("\u0000")).digest("hex");
   let consumed: boolean;
   try {

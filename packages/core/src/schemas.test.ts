@@ -1,5 +1,5 @@
 /**
- * Tests for the runtime validation schemas in `@pwnkit/core` that guard
+ * Tests for the runtime validation schemas in `@0sec/core` that guard
  * the two highest-risk `JSON.parse(...) as T` sites in core:
  *
  *   - `mcpRpcEnvelopeSchema` — `mcp.ts` parses an external HTTP/RPC response

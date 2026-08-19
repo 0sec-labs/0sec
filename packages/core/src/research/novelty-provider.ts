@@ -1,4 +1,4 @@
-import type { Finding, ResearchNoveltyReceipt } from "@pwnkit/shared";
+import type { Finding, ResearchNoveltyReceipt } from "@0sec/shared";
 
 export interface NoveltySourceResult {
   source: string;

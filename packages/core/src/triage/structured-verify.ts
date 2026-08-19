@@ -1,5 +1,5 @@
 /**
- * Structured multi-step verification pipeline for pwnkit findings.
+ * Structured multi-step verification pipeline for 0sec findings.
  *
  * Inspired by GitHub Security Lab's taskflow-agent approach, this decomposes
  * the single-shot "blind verify" into 4 focused subtasks, each with domain-specific
@@ -13,7 +13,7 @@
  *   4. Exploit Confirmation — independently reproduce with only PoC + target path.
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type {
   NativeRuntime,
   NativeMessage,
@@ -91,7 +91,7 @@ function mapCategory(finding: Finding): VulnCategory | undefined {
   const map: Record<string, VulnCategory> = {
     "sql-injection": "sqli",
     xss: "xss",
-    "code-injection": "ssti", // SSTI is a subclass of code injection in pwnkit's taxonomy
+    "code-injection": "ssti", // SSTI is a subclass of code injection in 0sec's taxonomy
     "command-injection": "command_injection",
     ssrf: "ssrf",
     "unsafe-deserialization": "deserialization",
@@ -212,7 +212,7 @@ const CATEGORY_ADDENDUMS: Record<VulnCategory, CategoryAddendum> = {
 - Check if redirects are followed (open redirect chaining).`,
     payload_validation: `SSRF payload checks:
 - Does the server make a request to the attacker-controlled or internal URL?
-- For blind SSRF: register an OAST handle with the \`oast_register\` tool, inject its http_url/dns_host as the SSRF target, then \`oast_poll\` — a token-matched DNS/HTTP callback is concrete proof (pwnkit#659). Fall back to an external collaborator (Burp, webhook.site) only if OAST is not deployed.
+- For blind SSRF: register an OAST handle with the \`oast_register\` tool, inject its http_url/dns_host as the SSRF target, then \`oast_poll\` — a token-matched DNS/HTTP callback is concrete proof (0sec#659). Fall back to an external collaborator (Burp, webhook.site) only if OAST is not deployed.
 - For internal SSRF: does the response contain internal service data (169.254.169.254, localhost)?
 - Check that the response is from the internal service, not an error page or WAF block.
 - DNS resolution must happen server-side, not client-side.`,

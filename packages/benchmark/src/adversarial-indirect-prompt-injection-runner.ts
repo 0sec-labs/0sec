@@ -3,8 +3,8 @@
 import express from "express";
 import type { Server } from "http";
 import type { AddressInfo } from "net";
-import { runMcpSecurityChecks } from "@pwnkit/core";
-import type { ScanContext } from "@pwnkit/shared";
+import { runMcpSecurityChecks } from "@0sec/core";
+import type { ScanContext } from "@0sec/shared";
 import {
   ADVERSARIAL_INDIRECT_PROMPT_INJECTION_CASES,
   adversarialIndirectPromptInjectionCaseIds,
@@ -289,7 +289,7 @@ async function main() {
     return;
   }
 
-  console.log("\n\x1b[31m\x1b[1m  pwnkit indirect prompt-injection evals\x1b[0m\n");
+  console.log("\n\x1b[31m\x1b[1m  0sec indirect prompt-injection evals\x1b[0m\n");
   for (const result of report.results) {
     const icon = result.passed ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
     console.log(

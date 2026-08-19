@@ -1,13 +1,13 @@
 /**
  * Dynamic Triage Router — v0 rule-based, with a seam for a learned
- * classifier landing in a follow-up PR (pwnkit#113 phase 2).
+ * classifier landing in a follow-up PR (0sec#113 phase 2).
  *
  * The router decides **per finding** which subset of the triage
  * layers to invoke. v0 ships explicit decision rules encoded from the
- * pwnkit#72 (2026-04-11) per-profile ablation comment; a later PR will
+ * 0sec#72 (2026-04-11) per-profile ablation comment; a later PR will
  * swap in a learned classifier (XGBoost or VulnBERT-style hybrid head)
- * trained on the per-layer telemetry shipped in pwnkit#112 and the
- * triage dataset described in pwnkit#67.
+ * trained on the per-layer telemetry shipped in 0sec#112 and the
+ * triage dataset described in 0sec#67.
  *
  * The dispatch site (`agentic-scanner.ts`) treats the router as a
  * black-box `RouterModel`. To swap in a learned model later, ship a
@@ -23,10 +23,10 @@
  *   The threshold is conservative on purpose; promote it down only after
  *   measured A/B testing on the npm-bench slice.
  *
- * See pwnkit#113 design doc, pwnkit#72 ablation, pwnkit#67 paper plan.
+ * See 0sec#113 design doc, 0sec#72 ablation, 0sec#67 paper plan.
  */
 
-import type { Finding, LayerVerdict } from "@pwnkit/shared";
+import type { Finding, LayerVerdict } from "@0sec/shared";
 import {
   DEFAULT_STATIC_LAYER_SET,
   FREE_LAYER_SET,
@@ -161,7 +161,7 @@ function hasErrorBasedSqlSignal(finding: Finding): boolean {
 }
 
 /**
- * The v0 rule-based router. Encodes the four rules from the pwnkit#113
+ * The v0 rule-based router. Encodes the four rules from the 0sec#113
  * issue body, in priority order:
  *
  *   1. High-confidence SQLi with error-based signal → invoke the
@@ -299,7 +299,7 @@ export function decideLayers(
 /**
  * One row of the routing dataset. Emitted to `routing-trace.jsonl` under
  * the scan's journal sidecar dir at the end of each scan. The learned
- * router (phase 2 of pwnkit#113) trains on the (features, decided_layers,
+ * router (phase 2 of 0sec#113) trains on the (features, decided_layers,
  * actual_verdict_per_layer, ground_truth) tuple.
  *
  * Schema is intentionally close to `LayerVerdict[]` so the offline

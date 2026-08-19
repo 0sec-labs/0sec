@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { HuntCandidate } from "../stages/hunt-scan.js";
 import {
   makeHuntProveStage,

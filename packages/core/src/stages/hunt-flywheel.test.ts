@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   HuntMemory,
   classTokens,
@@ -37,18 +37,18 @@ function mkFinding(id: string, title: string, analysis: string): Finding {
 }
 
 describe("huntFlywheelEnabled", () => {
-  it("is OFF by default and ON only for a truthy PWNKIT_HUNT_FLYWHEEL", () => {
-    const prev = process.env.PWNKIT_HUNT_FLYWHEEL;
+  it("is OFF by default and ON only for a truthy 0SEC_HUNT_FLYWHEEL", () => {
+    const prev = process.env["0SEC_HUNT_FLYWHEEL"];
     try {
-      delete process.env.PWNKIT_HUNT_FLYWHEEL;
+      delete process.env["0SEC_HUNT_FLYWHEEL"];
       expect(huntFlywheelEnabled()).toBe(false);
-      process.env.PWNKIT_HUNT_FLYWHEEL = "0";
+      process.env["0SEC_HUNT_FLYWHEEL"] = "0";
       expect(huntFlywheelEnabled()).toBe(false);
-      process.env.PWNKIT_HUNT_FLYWHEEL = "1";
+      process.env["0SEC_HUNT_FLYWHEEL"] = "1";
       expect(huntFlywheelEnabled()).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_HUNT_FLYWHEEL;
-      else process.env.PWNKIT_HUNT_FLYWHEEL = prev;
+      if (prev === undefined) delete process.env["0SEC_HUNT_FLYWHEEL"];
+      else process.env["0SEC_HUNT_FLYWHEEL"] = prev;
     }
   });
 });

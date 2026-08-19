@@ -3,16 +3,16 @@ title: White-box Mode
 description: Give the agent read access to source code alongside the running target for deeper vulnerability discovery.
 ---
 
-White-box mode gives pwnkit's attack agent access to the application source code in addition to the running target. Instead of probing the application purely over HTTP, the agent can read source files, trace data flows, and identify vulnerabilities that are invisible from the outside -- hardcoded credentials, server-side logic flaws, unsafe deserialization buried in helper modules, and authentication bypasses hidden behind layers of middleware.
+White-box mode gives 0sec's attack agent access to the application source code in addition to the running target. Instead of probing the application purely over HTTP, the agent can read source files, trace data flows, and identify vulnerabilities that are invisible from the outside -- hardcoded credentials, server-side logic flaws, unsafe deserialization buried in helper modules, and authentication bypasses hidden behind layers of middleware.
 
-This is the same general approach used by top white-box benchmark agents such as Shannon. The benchmark page is the canonical place for exact score comparisons because pwnkit's retained artifact-backed tally and older historical publication line are tracked separately there.
+This is the same general approach used by top white-box benchmark agents such as Shannon. The benchmark page is the canonical place for exact score comparisons because 0sec's retained artifact-backed tally and older historical publication line are tracked separately there.
 
 ## How to use it
 
 Pass the `--repo` flag alongside your target:
 
 ```bash
-pwnkit scan --target http://localhost:8080 --repo ./my-app
+0sec scan --target http://localhost:8080 --repo ./my-app
 ```
 
 The `--repo` path should point to the root of the application source code -- the same code running behind the target URL. This can be a local checkout, a cloned repository, or a mounted volume in CI.
@@ -52,7 +52,7 @@ White-box mode fundamentally changes what the agent can find. Certain vulnerabil
 
 ## Benchmark results
 
-White-box mode has repeatedly lifted pwnkit's ceiling on XBOW-style challenges whose exploit path is much clearer in source than over HTTP. The exact current tally lives on the [Benchmark](/benchmark/) page; the table below is a qualitative head-to-head example set, not the canonical scoreboard.
+White-box mode has repeatedly lifted 0sec's ceiling on XBOW-style challenges whose exploit path is much clearer in source than over HTTP. The exact current tally lives on the [Benchmark](/benchmark/) page; the table below is a qualitative head-to-head example set, not the canonical scoreboard.
 
 | Challenge | Black-box (all models) | White-box (gpt-5.4 + source) |
 |-----------|----------------------|------------------------------|

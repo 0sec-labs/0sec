@@ -76,7 +76,7 @@
       "oracle": 44,
       "pov_gate": 44
     },
-    "note": "Rows without layerVerdicts predate pwnkit#112's instrumentation (commit 6f1a889, 2026-04-11). Next benchmark run will produce non-empty verdicts across the board — that's dataset v2."
+    "note": "Rows without layerVerdicts predate 0sec#112's instrumentation (commit 6f1a889, 2026-04-11). Next benchmark run will produce non-empty verdicts across the board — that's dataset v2."
   },
   "sources": {
     "xbow_runs": [

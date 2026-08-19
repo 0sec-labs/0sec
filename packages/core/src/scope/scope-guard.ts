@@ -1,5 +1,5 @@
 /**
- * Scope-guard visibility (pwnkit#133).
+ * Scope-guard visibility (0sec#133).
  *
  * A family of egress guards in `agent/tools.ts` is nested inside
  * `if (this.ctx.scope) { … }`. `ctx.scope` is `undefined` whenever no
@@ -26,7 +26,7 @@
  *   3. `ToolExecutor.shellExec()` records egress destinations when a local
  *      mode intentionally runs without a scope.
  *
- * `PWNKIT_REQUIRE_SCOPE` remains available to make every mode fail closed.
+ * `0SEC_REQUIRE_SCOPE` remains available to make every mode fail closed.
  *
  * @see https://github.com/0sec-labs/0sec/issues/133
  */
@@ -52,7 +52,7 @@ export const SCOPE_DEPENDENT_BASH_GUARDS = [
 export interface ScopeGuardStatus {
   /** True when a `ScopePolicy` is configured, i.e. the guards above run. */
   active: boolean;
-  /** True when `PWNKIT_REQUIRE_SCOPE` opts this run into fail-closed. */
+  /** True when `0SEC_REQUIRE_SCOPE` opts this run into fail-closed. */
   required: boolean;
   /** Guard identifiers that are inert. Empty when `active`. */
   inertGuards: readonly string[];
@@ -64,17 +64,17 @@ export interface ScopeGuardStatus {
 export const SCOPE_GUARDS_INERT_EVENT = "scope_guards_inert";
 
 /**
- * Opt-in strictness switch. `PWNKIT_REQUIRE_SCOPE=1` turns the missing-scope
+ * Opt-in strictness switch. `0SEC_REQUIRE_SCOPE=1` turns the missing-scope
  * warning into a hard refusal, at scan boot and at the `bash` tool.
  *
  * Env-var rather than a threaded `ScanConfig` field on purpose: the cloud
  * worker-controller builds its argv from a fixed table and injects
- * configuration through `PWNKIT_*` env vars, so an env knob is the only way
+ * configuration through `0SEC_*` env vars, so an env knob is the only way
  * the managed service can turn strictness on without an engine release. The
  * CLI flag `--require-scope` sets this variable.
  */
 export function isScopeRequired(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.PWNKIT_REQUIRE_SCOPE?.trim().toLowerCase();
+  const raw = env["0SEC_REQUIRE_SCOPE"]?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
@@ -118,19 +118,19 @@ export function describeScopeGuards(
       `so ${SCOPE_DEPENDENT_BASH_GUARDS.length} bash egress guards are INERT for this run: ` +
       `${SCOPE_DEPENDENT_BASH_GUARDS.join(", ")}. ` +
       "bash commands can reach any host the sandbox can reach. Pass --scope <file> to enable " +
-      "them, or PWNKIT_REQUIRE_SCOPE=1 (pwnkit scan --require-scope) to refuse unscoped runs.",
+      "them, or 0SEC_REQUIRE_SCOPE=1 (0sec scan --require-scope) to refuse unscoped runs.",
   };
 }
 
 /**
  * The refusal message used at both enforcement sites when
- * `PWNKIT_REQUIRE_SCOPE` is set and no scope is configured.
+ * `0SEC_REQUIRE_SCOPE` is set and no scope is configured.
  */
 export function scopeRequiredRefusal(site: string): string {
   return (
-    `${site} refused: PWNKIT_REQUIRE_SCOPE is set but no engagement scope is configured. ` +
+    `${site} refused: 0SEC_REQUIRE_SCOPE is set but no engagement scope is configured. ` +
     "The bash egress guards (out-of-scope URL refusal, http_audit path allowlist, " +
     "generic-scanner suppression, auth-header injection) only run with a ScopePolicy. " +
-    "Pass --scope <file>, or unset PWNKIT_REQUIRE_SCOPE to run in fail-loud mode."
+    "Pass --scope <file>, or unset 0SEC_REQUIRE_SCOPE to run in fail-loud mode."
   );
 }

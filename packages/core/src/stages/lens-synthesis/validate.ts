@@ -24,7 +24,7 @@
 
 import { statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import {
   aggregateScorecard,
   pickChampion,

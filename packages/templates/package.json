@@ -1,5 +1,5 @@
 {
-  "name": "@pwnkit/templates",
+  "name": "@0sec/templates",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@pwnkit/shared": "workspace:*",
+    "@0sec/shared": "workspace:*",
     "yaml": "^2.4.0"
   },
   "devDependencies": {

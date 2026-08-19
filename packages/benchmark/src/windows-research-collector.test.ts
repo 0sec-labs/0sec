@@ -26,7 +26,7 @@ function sha256(path: string): string {
 function importVerdict(): string {
   const path = join(root, "import-verdict.json");
   writeFileSync(path, JSON.stringify({
-    verdictSchema: "pwnkit.windows-hyperv-import-verdict/v1",
+    verdictSchema: "0sec.windows-hyperv-import-verdict/v1",
     executionOrigin: "external",
     producer: "0verse",
     schemaVersion: "0verse.hyperv-evidence/v1",
@@ -46,14 +46,14 @@ function importVerdict(): string {
 }
 
 beforeEach(() => {
-  process.env.PWNKIT_WINDOWS_LABEL_SEAL_KEY = labelSealKey;
+  process.env["0SEC_WINDOWS_LABEL_SEAL_KEY"] = labelSealKey;
   root = mkdtempSync(join(tmpdir(), "windows-research-ledger-"));
   receiptPath = join(root, "receipt.json");
   writeFileSync(receiptPath, "{}\n");
 });
 
 afterEach(() => {
-  delete process.env.PWNKIT_WINDOWS_LABEL_SEAL_KEY;
+  delete process.env["0SEC_WINDOWS_LABEL_SEAL_KEY"];
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -61,7 +61,7 @@ function attempt(
   updates: Partial<WindowsResearchAttemptInput> = {},
 ): WindowsResearchAttemptInput {
   const result: WindowsResearchAttemptInput = {
-    schemaVersion: "pwnkit.windows-research-attempt/v1",
+    schemaVersion: "0sec.windows-research-attempt/v1",
     mode: "contract",
     campaignId: "windows-contract-v1",
     caseId: "positive-1",
@@ -76,7 +76,7 @@ function attempt(
     },
     repoShas: {
       zeroverse: "a".repeat(40),
-      pwnkit: "b".repeat(40),
+      "0sec": "b".repeat(40),
       zeroCloud: "c".repeat(40),
     },
     windowsBuildLabEx: "28020.1.amd64fre.rs_prerelease",
@@ -99,7 +99,7 @@ function attempt(
       cleanControls: 2,
       confirmations: 2,
       crashSignature: "bugcheck-133:fixture",
-      pwnkitImportPassed: true,
+      osecImportPassed: true,
     },
     telemetry: {
       startedAt: "2026-07-13T00:00:00.000Z",
@@ -170,7 +170,7 @@ describe("Windows research all-attempts ledger", () => {
         targetTrials: 0,
         cleanControls: 0,
         confirmations: 0,
-        pwnkitImportPassed: false,
+        osecImportPassed: false,
       },
     }));
     expect(row.claimEligible).toBe(false);
@@ -187,7 +187,7 @@ describe("Windows research all-attempts ledger", () => {
         targetTrials: 0,
         cleanControls: 0,
         confirmations: 0,
-        pwnkitImportPassed: false,
+        osecImportPassed: false,
       },
     }))).toThrow(/does not bind/);
   });
@@ -200,7 +200,7 @@ describe("Windows research all-attempts ledger", () => {
         targetTrials: 0,
         cleanControls: 0,
         confirmations: 0,
-        pwnkitImportPassed: false,
+        osecImportPassed: false,
       },
       discovery: { ...attempt().discovery, candidateEmitted: false },
     }));
@@ -219,7 +219,7 @@ describe("Windows research all-attempts ledger", () => {
         targetTrials: 2,
         cleanControls: 2,
         confirmations: 0,
-        pwnkitImportPassed: false,
+        osecImportPassed: false,
       },
     }));
     const summary = summarizeWindowsResearch([miss, hit, falsePositive]);
@@ -241,7 +241,7 @@ describe("Windows research all-attempts ledger", () => {
         targetTrials: 0,
         cleanControls: 0,
         confirmations: 0,
-        pwnkitImportPassed: false,
+        osecImportPassed: false,
         rejectionReason: "scope stale",
       },
       safety: {

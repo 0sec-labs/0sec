@@ -4,7 +4,7 @@ import express from "express";
 import type { Server } from "http";
 import type { AddressInfo } from "net";
 import { getAllChallenges, type Challenge } from "./challenges/index.js";
-import { scan, agenticScan } from "@pwnkit/core";
+import { scan, agenticScan } from "@0sec/core";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -150,7 +150,7 @@ async function runBenchmark(): Promise<BenchmarkReport> {
     flagExtractionRate: flagsFound / challenges.length,
     totalDurationMs: Date.now() - startTime,
     ...(useAgentic
-      ? { retainedReasoning: process.env.PWNKIT_FEATURE_RETAINED_REASONING !== "0" }
+      ? { retainedReasoning: process.env["0SEC_FEATURE_RETAINED_REASONING"] !== "0" }
       : {}),
     totalInputTokens,
     totalOutputTokens,
@@ -182,7 +182,7 @@ async function runChallenge(challenge: Challenge, port: number): Promise<Challen
 
     if (useAgentic) {
       // Full agentic pipeline with AI analysis
-      const dbPath = join(tmpdir(), `pwnkit-bench-${challenge.id}-${Date.now()}.db`);
+      const dbPath = join(tmpdir(), `0sec-bench-${challenge.id}-${Date.now()}.db`);
       report = await agenticScan({
         config: {
           target,
@@ -258,7 +258,7 @@ async function runChallenge(challenge: Challenge, port: number): Promise<Challen
 
 async function main() {
   if (!jsonOutput) {
-    console.log("\x1b[31m\x1b[1m  pwnkit benchmark\x1b[0m");
+    console.log("\x1b[31m\x1b[1m  0sec benchmark\x1b[0m");
     console.log(`  mode: ${useAgentic ? "agentic" : "baseline"}  runtime: ${useAgentic ? runtimeArg : "none"}  depth: ${depth}  challenges: ${getAllChallenges().length}`);
   }
 

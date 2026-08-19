@@ -14,7 +14,7 @@
  */
 
 import { randomUUID, createServer } from "./oracle-runtime.js";
-import type { AttackCategory, Finding } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@0sec/shared";
 
 // ────────────────────────────────────────────────────────────────────
 // Types
@@ -346,7 +346,7 @@ export async function verifyReflectedXss(
   if (!victim)
     return notVerifiable("no injectable parameter found in finding evidence");
 
-  const token = `pwnkit_${randomUUID().replace(/-/g, "")}`;
+  const token = `osec_${randomUUID().replace(/-/g, "")}`;
   const payload = `<script>alert('${token}')</script>`;
 
   // ── Content-reflection backup signal ───────────────────────

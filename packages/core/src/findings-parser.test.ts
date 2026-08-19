@@ -17,7 +17,7 @@ describe("validateFileRef", () => {
   let scope: string;
 
   beforeEach(() => {
-    scope = mkdtempSync(join(tmpdir(), "pwnkit-parser-test-"));
+    scope = mkdtempSync(join(tmpdir(), "0sec-parser-test-"));
     writeFileSync(join(scope, "package.json"), "{}");
     mkdirSync(join(scope, "src"));
     writeFileSync(join(scope, "src", "index.ts"), "// 1\n// 2\n// 3\n// 4\n// real file");
@@ -85,7 +85,7 @@ describe("parseFindingsFromCliOutput — structured blocks with scopePath", () =
   let scope: string;
 
   beforeEach(() => {
-    scope = mkdtempSync(join(tmpdir(), "pwnkit-parser-test-"));
+    scope = mkdtempSync(join(tmpdir(), "0sec-parser-test-"));
     writeFileSync(join(scope, "package.json"), "{}");
     mkdirSync(join(scope, "src"));
     writeFileSync(join(scope, "src", "index.ts"), "// real file");
@@ -313,7 +313,7 @@ severity: high
 category: other
 description: The decoder reads past the allocated packet.
 file: src/decoder.c:1
-harness: /tmp/pwnkit-harness/decoder/harness.c
+harness: /tmp/0sec-harness/decoder/harness.c
 sanitizer_log: ==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x6020000000fb at pc 0x401000 bp 0x7fff sp 0x7fff
 READ of size 1 at 0x6020000000fb thread T0
     #0 0x401000 in decode src/decoder.c:1:3
@@ -336,7 +336,7 @@ describe("parseFindingsFromCliOutput — JSON output with scopePath", () => {
   let scope: string;
 
   beforeEach(() => {
-    scope = mkdtempSync(join(tmpdir(), "pwnkit-parser-test-"));
+    scope = mkdtempSync(join(tmpdir(), "0sec-parser-test-"));
     writeFileSync(join(scope, "package.json"), "{}");
   });
 

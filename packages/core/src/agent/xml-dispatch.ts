@@ -1,5 +1,5 @@
 /**
- * XML-tag dispatch fallback for cheap-model resilience (pwnkit#232).
+ * XML-tag dispatch fallback for cheap-model resilience (0sec#232).
  *
  * Cheap OpenRouter models (DeepSeek, Gemini-flash, etc.) routinely emit
  * malformed JSON tool calls under load — strings break, brackets stay
@@ -48,7 +48,7 @@ export function resolveDispatchMode(
   if (mode === "xml" || mode === "json") return mode;
   // env override wins over auto; respected here so callers don't have
   // to re-implement it at every entry point.
-  const env = process.env.PWNKIT_DISPATCH;
+  const env = process.env["0SEC_DISPATCH"];
   if (env === "xml" || env === "json") return env;
   if (!modelHint) return "json";
   const m = modelHint.toLowerCase();
@@ -299,7 +299,7 @@ export function buildXmlDispatchPrompt(opts: {
 }): string {
   const { role, target, scanId } = opts;
   return [
-    `You are a ${role} agent for pwnkit, an AI red-teaming toolkit.`,
+    `You are a ${role} agent for 0sec, an AI red-teaming toolkit.`,
     `Target: ${target}`,
     `Scan ID: ${scanId}`,
     "Authorization: The operator has confirmed this target is owned by them or explicitly authorized for this assessment.",

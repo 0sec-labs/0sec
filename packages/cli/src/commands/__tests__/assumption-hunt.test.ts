@@ -1,5 +1,5 @@
 /**
- * CLI flag-parsing tests for `pwnkit assumption-hunt` — focused on the race-capable
+ * CLI flag-parsing tests for `0sec assumption-hunt` — focused on the race-capable
  * witness knobs (`--witness-mode` / `--witness-race-threads` / `--witness-race-iters`).
  * The engine (`runAssumptionHunt`) is MOCKED, so these assert ONLY that the CLI parses
  * the flags and threads the right `dynamicWitness` config into the engine — not that a
@@ -13,7 +13,7 @@ const { runAssumptionHuntMock, makeSkepticVerifierMock } = vi.hoisted(() => ({
   makeSkepticVerifierMock: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   runAssumptionHunt: runAssumptionHuntMock,
   makeSkepticVerifier: makeSkepticVerifierMock,
 }));

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pwnkit.windows-lpe-paired-corpus/v2",
+  "schemaVersion": "0sec.windows-lpe-paired-corpus/v2",
   "corpusId": "windows-lpe-paired-contract-v2",
   "profile": "contract",
   "createdAt": "2026-07-14T00:00:00.000Z",

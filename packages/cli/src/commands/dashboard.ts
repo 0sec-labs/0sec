@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { URL } from "node:url";
 import type { Command } from "commander";
 import chalk from "chalk";
-import type { FindingTriageStatus } from "@pwnkit/shared";
-import { readToolCallNames } from "@pwnkit/core";
+import type { FindingTriageStatus } from "@0sec/shared";
+import { readToolCallNames } from "@0sec/core";
 
 type DashboardOptions = {
   dbPath?: string;
@@ -185,7 +185,7 @@ function sendFile(res: ServerResponse, filePath: string, controlToken?: string):
   if (controlToken && ext === ".html") {
     content = content.toString().replace(
       "</head>",
-      `<meta name="pwnkit-control-token" content="${controlToken}"></head>`,
+      `<meta name="0sec-control-token" content="${controlToken}"></head>`,
     );
   }
   res.end(content);
@@ -884,10 +884,10 @@ function isLiveLocalPid(pid: number | null | undefined): boolean {
 }
 
 function stopDaemonWorkers(
-  PwnkitDb: typeof import("@pwnkit/db").pwnkitDB,
+  osecDb: typeof import("@0sec/db").osecDB,
   dbPath: string | undefined,
 ): number {
-  const db = new PwnkitDb(dbPath);
+  const db = new osecDb(dbPath);
 
   try {
     const workers = db.listWorkers(100) as DBWorkerRow[];
@@ -1016,7 +1016,7 @@ async function handleApiRequest(
   dbPath: string | undefined,
   controlToken: string,
 ): Promise<boolean> {
-  const { pwnkitDB } = await import("@pwnkit/db");
+  const { osecDB } = await import("@0sec/db");
   const controlPath = parseControlPath(pathname);
 
   if (controlPath) {
@@ -1028,7 +1028,7 @@ async function handleApiRequest(
     // Require a per-session token on all state-changing control endpoints.
     // The token is injected into the dashboard HTML at serve time and sent
     // back as a header, preventing CSRF and cross-origin abuse.
-    const provided = req.headers["x-pwnkit-control-token"];
+    const provided = req.headers["x-0sec-control-token"];
     if (provided !== controlToken) {
       json(res, 403, { error: "Invalid or missing control token" });
       return true;
@@ -1046,7 +1046,7 @@ async function handleApiRequest(
     }
 
     if (controlPath.action === "prune-stopped-workers") {
-      const db = new pwnkitDB(dbPath);
+      const db = new osecDB(dbPath);
       try {
         const deleted = db.deleteWorkersByStatus("stopped");
         json(res, 200, { ok: true, deleted });
@@ -1058,7 +1058,7 @@ async function handleApiRequest(
 
     if (controlPath.action === "start-daemon") {
       const body = (await readJson(req)) as { label?: string; pollIntervalMs?: number };
-      const db = new pwnkitDB(dbPath);
+      const db = new osecDB(dbPath);
       try {
         const activeWorkers = (db.listWorkers(100) as DBWorkerRow[]).filter((worker) =>
           worker.status !== "stopped" && Date.now() - Date.parse(worker.heartbeatAt) < 20_000,
@@ -1081,7 +1081,7 @@ async function handleApiRequest(
     }
 
     if (controlPath.action === "stop-daemon") {
-      const stopped = stopDaemonWorkers(pwnkitDB, dbPath);
+      const stopped = stopDaemonWorkers(osecDB, dbPath);
       json(res, 200, { ok: true, stopped });
       return true;
     }
@@ -1105,7 +1105,7 @@ async function handleApiRequest(
       }
 
       if (body.ensureDaemon) {
-        const db = new pwnkitDB(dbPath);
+        const db = new osecDB(dbPath);
         try {
           const activeWorkers = (db.listWorkers(100) as DBWorkerRow[]).filter((worker) =>
             worker.status !== "stopped" && Date.now() - Date.parse(worker.heartbeatAt) < 20_000,
@@ -1134,7 +1134,7 @@ async function handleApiRequest(
     }
 
     if (controlPath.action === "reset-database") {
-      const { resetPwnkitDatabase } = await import("@pwnkit/db");
+      const { resetOsecDatabase } = await import("@0sec/db");
       const { seedVerificationWorkbench } = await import("./db.js");
       const body = (await readJson(req)) as { seed?: string };
       const seed = typeof body.seed === "string" ? body.seed.trim().toLowerCase() : "verification";
@@ -1144,7 +1144,7 @@ async function handleApiRequest(
         return true;
       }
 
-      const activeWorkerDb = new pwnkitDB(dbPath);
+      const activeWorkerDb = new osecDB(dbPath);
       try {
         const hasActiveWorker = (activeWorkerDb.listWorkers(100) as DBWorkerRow[]).some((worker) =>
           ["idle", "claiming", "running", "sleeping"].includes(worker.status)
@@ -1159,8 +1159,8 @@ async function handleApiRequest(
         activeWorkerDb.close();
       }
 
-      const path = resetPwnkitDatabase(dbPath);
-      const resetDb = new pwnkitDB(dbPath);
+      const path = resetOsecDatabase(dbPath);
+      const resetDb = new osecDB(dbPath);
       try {
         const seeded = seed === "verification"
           ? seedVerificationWorkbench(resetDb)
@@ -1174,7 +1174,7 @@ async function handleApiRequest(
   }
 
   if (pathname === "/api/dashboard") {
-      const db = new pwnkitDB(dbPath);
+      const db = new osecDB(dbPath);
       try {
         const scans = db.listScans(100) as DBScanRow[];
         const findings = db.listFindings({ limit: 5000 }) as DBFindingRow[];
@@ -1222,7 +1222,7 @@ async function handleApiRequest(
   }
 
   if (pathname === "/api/scans") {
-    const db = new pwnkitDB(dbPath);
+    const db = new osecDB(dbPath);
     try {
       const scans = db.listScans(100) as DBScanRow[];
       json(res, 200, { scans: scans.map(summarizeScan) });
@@ -1236,7 +1236,7 @@ async function handleApiRequest(
     const url = new URL(req.url ?? pathname, "http://localhost");
     const rawLimit = Number(url.searchParams.get("limit") ?? "20");
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 20;
-    const db = new pwnkitDB(dbPath);
+    const db = new osecDB(dbPath);
     try {
       const events = (db.listRecentEvents(limit) as Array<{
         id: string;
@@ -1279,7 +1279,7 @@ async function handleApiRequest(
 
   const scanPath = parseScanPath(pathname);
   if (scanPath) {
-    const db = new pwnkitDB(dbPath);
+    const db = new osecDB(dbPath);
     try {
       const scan = db.getScan(scanPath.scanId) as DBScanRow | undefined;
       if (!scan) {
@@ -1324,7 +1324,7 @@ async function handleApiRequest(
 
   const familyPath = parseFindingFamilyPath(pathname);
   if (familyPath) {
-    const db = new pwnkitDB(dbPath);
+    const db = new osecDB(dbPath);
     try {
       if (req.method === "POST" && familyPath.action === "triage") {
         const body = (await readJson(req)) as { triageStatus?: string; triageNote?: string };
@@ -1491,7 +1491,7 @@ export function registerDashboardCommand(program: Command): void {
 
       server.listen(port, host, () => {
         const url = `http://${host}:${port}`;
-        console.log(chalk.red.bold("  \u25C6 pwnkit") + chalk.gray(" dashboard"));
+        console.log(chalk.red.bold("  \u25C6 0sec") + chalk.gray(" dashboard"));
         console.log(chalk.gray(`  ${url}`));
         console.log(chalk.gray("  Ctrl+C to stop"));
         if (opts.open !== false) openBrowser(url);

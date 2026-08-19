@@ -1,5 +1,5 @@
 /**
- * Scoped-path resolution shared by the extracted tool handlers (pwnkit#1284).
+ * Scoped-path resolution shared by the extracted tool handlers (0sec#1284).
  *
  * Pulled out of agent/tools.ts verbatim so per-domain handler modules (starting
  * with intel.ts) can enforce the same scope-escape guard as the still-in-class

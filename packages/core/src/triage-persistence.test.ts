@@ -3,15 +3,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { pwnkitDB } from "@pwnkit/db";
-import type { Finding, PocStep, ScanConfig } from "@pwnkit/shared";
+import { osecDB } from "@0sec/db";
+import type { Finding, PocStep, ScanConfig } from "@0sec/shared";
 
 const tempDirs: string[] = [];
 
-function makeDb(): { db: pwnkitDB; scanId: string } {
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-triage-persist-"));
+function makeDb(): { db: osecDB; scanId: string } {
+  const dir = mkdtempSync(join(tmpdir(), "0sec-triage-persist-"));
   tempDirs.push(dir);
-  const db = new pwnkitDB(join(dir, "pwnkit.db"));
+  const db = new osecDB(join(dir, "0sec.db"));
   const scanConfig: ScanConfig = {
     target: "http://example.test",
     depth: "default",
@@ -74,7 +74,7 @@ describe("triage persistence", () => {
     }
   });
 
-  // pwnkit#170 — PoC step graph DB round-trip.
+  // 0sec#170 — PoC step graph DB round-trip.
   //
   // Findings can carry an optional `pocSteps` field. The DB persists it as a
   // JSON-stringified blob in a new `pocSteps` text column. Round-trip must be

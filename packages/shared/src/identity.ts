@@ -1,7 +1,7 @@
 import type { AuthConfig, NamedIdentity, IdentityRole } from "./types.js";
 
 /**
- * Multi-identity access-control testing helpers (pwnkit#564).
+ * Multi-identity access-control testing helpers (0sec#564).
  *
  * The engine reasons over a list of `NamedIdentity`, but the public config
  * surface still accepts the legacy singular `auth`. `resolveIdentities` is the

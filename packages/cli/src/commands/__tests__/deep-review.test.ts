@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
-import type { FinderLens, VerifyLens } from "@pwnkit/core";
+import type { Finding } from "@0sec/shared";
+import type { FinderLens, VerifyLens } from "@0sec/core";
 
-// ── Pure helpers (no @pwnkit/core load needed) ───────────────────────────────
+// ── Pure helpers (no @0sec/core load needed) ───────────────────────────────
 import {
   selectProfileLenses,
   enumerateDeepReviewCandidates,
@@ -346,7 +346,7 @@ describe("selectCandidatesModuleSpread — spread the budget across subsystems",
   });
 });
 
-// ── runDeepReview wiring (with @pwnkit/core mocked, mirrors hunt.test.ts) ─────
+// ── runDeepReview wiring (with @0sec/core mocked, mirrors hunt.test.ts) ─────
 
 const {
   runHuntScanMock,
@@ -379,7 +379,7 @@ const {
   };
 });
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   runHuntScan: runHuntScanMock,
   makeMultiLensVerifier: makeMultiLensVerifierMock,
   prepare: prepareMock,
@@ -665,27 +665,27 @@ describe("runDeepReview — seedless lens-driven review", () => {
     expect(opts.attemptsPerCandidate).toBe(3);
   });
 
-  it("honors PWNKIT_DEEP_REVIEW_ATTEMPTS as the default attempt count", async () => {
-    const prev = process.env.PWNKIT_DEEP_REVIEW_ATTEMPTS;
-    process.env.PWNKIT_DEEP_REVIEW_ATTEMPTS = "2";
+  it("honors 0SEC_DEEP_REVIEW_ATTEMPTS as the default attempt count", async () => {
+    const prev = process.env["0SEC_DEEP_REVIEW_ATTEMPTS"];
+    process.env["0SEC_DEEP_REVIEW_ATTEMPTS"] = "2";
     try {
       await runDeepReview({ target: "/repo", profile: "evm-onchain" });
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_DEEP_REVIEW_ATTEMPTS;
-      else process.env.PWNKIT_DEEP_REVIEW_ATTEMPTS = prev;
+      if (prev === undefined) delete process.env["0SEC_DEEP_REVIEW_ATTEMPTS"];
+      else process.env["0SEC_DEEP_REVIEW_ATTEMPTS"] = prev;
     }
     const opts = runHuntScanMock.mock.calls[0]![0];
     expect(opts.attemptsPerCandidate).toBe(2);
   });
 
-  it("honors PWNKIT_DEEP_REVIEW_MODELS as the default finder model set", async () => {
-    const prev = process.env.PWNKIT_DEEP_REVIEW_MODELS;
-    process.env.PWNKIT_DEEP_REVIEW_MODELS = "model-a, model-b";
+  it("honors 0SEC_DEEP_REVIEW_MODELS as the default finder model set", async () => {
+    const prev = process.env["0SEC_DEEP_REVIEW_MODELS"];
+    process.env["0SEC_DEEP_REVIEW_MODELS"] = "model-a, model-b";
     try {
       await runDeepReview({ target: "/repo", profile: "evm-onchain" });
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_DEEP_REVIEW_MODELS;
-      else process.env.PWNKIT_DEEP_REVIEW_MODELS = prev;
+      if (prev === undefined) delete process.env["0SEC_DEEP_REVIEW_MODELS"];
+      else process.env["0SEC_DEEP_REVIEW_MODELS"] = prev;
     }
     const opts = runHuntScanMock.mock.calls[0]![0];
     expect(opts.models).toEqual(["model-a", "model-b"]);
@@ -694,29 +694,29 @@ describe("runDeepReview — seedless lens-driven review", () => {
   });
 
   it("an explicit --models opt overrides the env default", async () => {
-    const prev = process.env.PWNKIT_DEEP_REVIEW_MODELS;
-    process.env.PWNKIT_DEEP_REVIEW_MODELS = "env-model";
+    const prev = process.env["0SEC_DEEP_REVIEW_MODELS"];
+    process.env["0SEC_DEEP_REVIEW_MODELS"] = "env-model";
     try {
       await runDeepReview({ target: "/repo", profile: "evm-onchain", models: ["flag-model"] });
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_DEEP_REVIEW_MODELS;
-      else process.env.PWNKIT_DEEP_REVIEW_MODELS = prev;
+      if (prev === undefined) delete process.env["0SEC_DEEP_REVIEW_MODELS"];
+      else process.env["0SEC_DEEP_REVIEW_MODELS"] = prev;
     }
     const opts = runHuntScanMock.mock.calls[0]![0];
     expect(opts.models).toEqual(["flag-model"]);
   });
 
-  it("honors PWNKIT_DEEP_REVIEW_MAX_CANDIDATES as the default candidate cap", async () => {
+  it("honors 0SEC_DEEP_REVIEW_MAX_CANDIDATES as the default candidate cap", async () => {
     const many = Array.from({ length: 30 }, (_, i) => `/repo/src/f${String(i).padStart(2, "0")}.sol`);
     collectScopeFilesMock.mockReturnValue(many);
     countScopeFilesUpToMock.mockReturnValue(30);
-    const prev = process.env.PWNKIT_DEEP_REVIEW_MAX_CANDIDATES;
-    process.env.PWNKIT_DEEP_REVIEW_MAX_CANDIDATES = "5";
+    const prev = process.env["0SEC_DEEP_REVIEW_MAX_CANDIDATES"];
+    process.env["0SEC_DEEP_REVIEW_MAX_CANDIDATES"] = "5";
     try {
       await runDeepReview({ target: "/repo", profile: "evm-onchain" });
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_DEEP_REVIEW_MAX_CANDIDATES;
-      else process.env.PWNKIT_DEEP_REVIEW_MAX_CANDIDATES = prev;
+      if (prev === undefined) delete process.env["0SEC_DEEP_REVIEW_MAX_CANDIDATES"];
+      else process.env["0SEC_DEEP_REVIEW_MAX_CANDIDATES"] = prev;
     }
     const opts = runHuntScanMock.mock.calls[0]![0];
     expect(opts.candidates).toHaveLength(5);
@@ -795,17 +795,17 @@ describe("runDeepReview — seedless lens-driven review", () => {
 });
 
 // ── B6: Threat-model planner — pure function tests ───────────────────────────
-// These bypass the @pwnkit/core mock by importing directly from the source file.
+// These bypass the @0sec/core mock by importing directly from the source file.
 
-import type * as PwnkitCore from "@pwnkit/core";
+import type * as osecCore from "@0sec/core";
 
-// Bypass the @pwnkit/core mock above via importActual (a direct relative
+// Bypass the @0sec/core mock above via importActual (a direct relative
 // source import would escape the cli tsconfig rootDir and fail the build).
 const {
   parseThreatLaneJson,
   matchesLane: tlMatchesLane,
   allocateCandidatesAcrossLanes: tlAllocateCandidatesAcrossLanes,
-} = await vi.importActual<typeof PwnkitCore>("@pwnkit/core");
+} = await vi.importActual<typeof osecCore>("@0sec/core");
 
 describe("parseThreatLaneJson — threat-model JSON parser", () => {
   it("parses a valid JSON array of lanes", () => {

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { MemSafetyScanResult } from "../../stages/memsafety-scan.js";
 import { runResearch } from "../research-runner.js";
 import { UserspaceMemSafetyResearchAdapter, type UserspaceMemSafetyTarget } from "./userspace-memsafety-adapter.js";
@@ -66,7 +66,7 @@ describe("UserspaceMemSafetyResearchAdapter", () => {
   it("promotes only a sanitizer-confirmed crash and binds artifacts to the shared run directory", async () => {
     const scan = vi.fn(async () => result(true));
     const adapter = new UserspaceMemSafetyResearchAdapter(scan);
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-userspace-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-userspace-"));
     roots.push(artifactRoot);
     const out = await runResearch(adapter, target(), { artifactRoot, runId: "run-userspace" });
 
@@ -80,7 +80,7 @@ describe("UserspaceMemSafetyResearchAdapter", () => {
   });
 
   it("keeps an unproven crash inconclusive and emits no shared finding", async () => {
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-userspace-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-userspace-"));
     roots.push(artifactRoot);
     const out = await runResearch(new UserspaceMemSafetyResearchAdapter(async () => result(false)), target(), {
       artifactRoot,
@@ -95,7 +95,7 @@ describe("UserspaceMemSafetyResearchAdapter", () => {
     const noHarness = target();
     noHarness.config.target = { language: "c", sourceRoot: "/src/libfoo", buildSystem: "make" };
     noHarness.config.fuzz = {};
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-userspace-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-userspace-"));
     roots.push(artifactRoot);
     const out = await runResearch(new UserspaceMemSafetyResearchAdapter(scan), noHarness, { artifactRoot, runId: "run-none" });
 

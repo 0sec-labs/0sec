@@ -1,10 +1,11 @@
 {
-  "name": "pwnkit-cli",
-  "version": "0.12.0",
+  "name": "0sec-cli",
+  "version": "0.13.0",
   "description": "The leading open-source agentic AI pentest framework. Autonomously discover, exploit, and verify vulnerabilities in web apps, AI/LLM apps, npm packages, and source code.",
   "type": "module",
   "bin": {
-    "pwnkit-cli": "dist/index.js"
+    "0sec": "dist/index.js",
+    "0": "dist/index.js"
   },
   "files": [
     "dist"
@@ -20,12 +21,12 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentui/core": "0.5.4",
     "@opentui/react": "0.5.4",
-    "@pwnkit/benchmark": "workspace:*",
-    "@pwnkit/core": "workspace:*",
-    "@pwnkit/db": "workspace:*",
-    "@pwnkit/shared": "workspace:*",
-    "@pwnkit/templates": "workspace:*",
-    "@pwnkit/test-targets": "workspace:*",
+    "@0sec/benchmark": "workspace:*",
+    "@0sec/core": "workspace:*",
+    "@0sec/db": "workspace:*",
+    "@0sec/shared": "workspace:*",
+    "@0sec/templates": "workspace:*",
+    "@0sec/test-targets": "workspace:*",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "pdfkit": "^0.15.2",

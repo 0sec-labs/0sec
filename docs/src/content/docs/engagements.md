@@ -1,9 +1,9 @@
 ---
 title: Authorized Engagements
-description: Running pwnkit inside a client engagement — conservative posture, forensic timelines, and ATT&CK/ATLAS-mapped evidence.
+description: Running 0sec inside a client engagement — conservative posture, forensic timelines, and ATT&CK/ATLAS-mapped evidence.
 ---
 
-pwnkit is built for **authorized, announced testing**. Its safety rails exist to
+0sec is built for **authorized, announced testing**. Its safety rails exist to
 make traffic identifiable rather than to hide it: attribution headers,
 per-engagement tokens, declared-scope enforcement, request counters. That is the
 opposite design goal from adversary emulation, and it is deliberate.
@@ -14,7 +14,7 @@ client's security team can act on.
 
 ## Engagement profile
 
-By default pwnkit runs at 5 requests/second per host, without jitter, and
+By default 0sec runs at 5 requests/second per host, without jitter, and
 escalates automatically when it detects a WAF block. That is appropriate for
 your own infrastructure. It is not appropriate for a monitored production estate
 where you have agreed to keep noise down.
@@ -22,7 +22,7 @@ where you have agreed to keep noise down.
 `--engagement-profile conservative` applies a single auditable posture:
 
 ```bash
-pwnkit scan --target https://app.example.com --mode web \
+0sec scan --target https://app.example.com --mode web \
   --scope ./engagement-scope.json \
   --engagement-profile conservative
 ```
@@ -54,9 +54,9 @@ the minimum, so a profile can only ever make a scan quieter.
 The WAF-evasion ladder can also be disabled independently:
 
 ```bash
-pwnkit scan --target https://app.example.com --no-waf-evasion
+0sec scan --target https://app.example.com --no-waf-evasion
 # or
-PWNKIT_WAF_EVASION=0 pwnkit scan --target https://app.example.com
+0SEC_WAF_EVASION=0 0sec scan --target https://app.example.com
 ```
 
 Disabling the ladder does not disable *detection* of a WAF block — the block is
@@ -64,8 +64,8 @@ still detected and reported. Only the automatic escalation into
 encoding-mutated payload variants stops, since that is the behaviour that turns
 a WAF block into a SOC incident.
 
-Environment variables: `PWNKIT_ENGAGEMENT_PROFILE`, `PWNKIT_WAF_EVASION`,
-`PWNKIT_ENGAGEMENT_RATE_RPS`, `PWNKIT_ENGAGEMENT_JITTER_MS`. A scope file may
+Environment variables: `0SEC_ENGAGEMENT_PROFILE`, `0SEC_WAF_EVASION`,
+`0SEC_ENGAGEMENT_RATE_RPS`, `0SEC_ENGAGEMENT_JITTER_MS`. A scope file may
 carry an `engagement` block with the same fields.
 
 ### The posture record
@@ -73,7 +73,7 @@ carry an `engagement` block with the same fields.
 When a profile is active the report carries an `engagementPosture` record and
 the run emits an `engagement_posture_applied` event. The record states the
 posture **as applied**, not as requested — so a scope file asking for
-`conservative` with `PWNKIT_WAF_EVASION=1` in the environment correctly reports
+`conservative` with `0SEC_WAF_EVASION=1` in the environment correctly reports
 the ladder as enabled, and attributes that to the environment.
 
 That distinction is the point: the record is evidence of how the scan actually
@@ -84,15 +84,15 @@ Reports from runs without a profile are unchanged.
 ## Forensic timeline
 
 A client's security team needs a chronological record of what you did and when,
-to cross-reference against their own detections. `pwnkit timeline` produces it
+to cross-reference against their own detections. `0sec timeline` produces it
 from the immutable pipeline-event audit trail:
 
 ```bash
-pwnkit timeline <scanId>                     # markdown, for a report appendix
-pwnkit timeline <scanId> --format json       # machine-readable
-pwnkit timeline <scanId> --format csv        # for a spreadsheet or SIEM import
-pwnkit timeline <scanId> --attack-only       # drop pipeline lifecycle noise
-pwnkit timeline <scanId> --since 2026-09-15T09:00:00Z --until 2026-09-15T17:00:00Z
+0sec timeline <scanId>                     # markdown, for a report appendix
+0sec timeline <scanId> --format json       # machine-readable
+0sec timeline <scanId> --format csv        # for a spreadsheet or SIEM import
+0sec timeline <scanId> --attack-only       # drop pipeline lifecycle noise
+0sec timeline <scanId> --since 2026-09-15T09:00:00Z --until 2026-09-15T17:00:00Z
 ```
 
 Every row carries a **UTC ISO-8601** timestamp, the stage, event type, agent
@@ -135,14 +135,14 @@ client deliverable.
 
 :::note
 The current published ATT&CK Enterprise matrix renamed tactic **TA0005 "Defense
-Evasion" to "Stealth"**, and **T1211** to "Exploitation for Stealth". pwnkit uses
+Evasion" to "Stealth"**, and **T1211** to "Exploitation for Stealth". 0sec uses
 the current names. If a client's tooling is pinned to an older ATT&CK release,
 remap at the presentation layer.
 :::
 
 ## Identity and token analysis
 
-`pwnkit identity` assesses an Entra ID tenant read-only — 27 posture checks
+`0sec identity` assesses an Entra ID tenant read-only — 27 posture checks
 across privileged roles, conditional access, app registrations, service
 principals and federation. Read-only is structural: every Graph request
 hard-codes `GET`, and there is no method parameter in the client.
@@ -177,7 +177,7 @@ collects, authenticates, nor touches a network.
 
 ### Active Directory
 
-`pwnkit adgraph --input <path>` computes attack paths from a BloodHound CE /
+`0sec adgraph --input <path>` computes attack paths from a BloodHound CE /
 SharpHound JSON export. Coverage includes paths to Domain Admin, kerberoastable
 principals, unconstrained delegation, DCSync rights, ACL abuse chains, and the
 ADCS escalation set (ESC1, ESC3–ESC7, ESC9, ESC10, ESC13). Roughly 60 edge kinds
@@ -185,16 +185,16 @@ each carry a written abuse technique.
 
 ### Entra ID
 
-`pwnkit entragraph --input <path>` does the equivalent over an AzureHound
+`0sec entragraph --input <path>` does the equivalent over an AzureHound
 export: paths to Global Administrator, service-principal escalation via added
 secrets, consent-grant escalation through high-impact Graph permissions,
 owner-chain abuse, and guest escalation.
 
 ```bash
-pwnkit entragraph --input ./azurehound-export/
-pwnkit entragraph --input ./azurehound-export/ --json
-pwnkit entragraph --input ./export --owned <objectId>,<objectId>   # start from known-compromised principals
-pwnkit entragraph --input ./export --max-depth 4
+0sec entragraph --input ./azurehound-export/
+0sec entragraph --input ./azurehound-export/ --json
+0sec entragraph --input ./export --owned <objectId>,<objectId>   # start from known-compromised principals
+0sec entragraph --input ./export --max-depth 4
 ```
 
 :::caution
@@ -205,11 +205,11 @@ finding is not the same as the absence of a path, and a client report must not
 conflate them.
 
 AzureHound exports also carry no conditional-access policies, federation
-configuration, or PIM eligibility schedules. Run `pwnkit identity` against a live
+configuration, or PIM eligibility schedules. Run `0sec identity` against a live
 tenant for the posture checks that read those.
 :::
 
-## What pwnkit does not do
+## What 0sec does not do
 
 Stated plainly, because scoping an engagement on a wrong assumption is
 expensive:
@@ -228,7 +228,7 @@ Post-exploitation belongs to human operators.
 ## Data residency
 
 For engagements that require target-derived data to stay inside a defined
-perimeter, pwnkit routes all model traffic through a single configurable
+perimeter, 0sec routes all model traffic through a single configurable
 endpoint. Azure OpenAI is supported with no code change:
 
 ```bash
@@ -247,6 +247,6 @@ Two caveats worth stating in a contract rather than discovering later:
    OSV, package registries, Microsoft Graph, and OAST. Air-gapping those is a
    separate exercise.
 2. Pin `--runtime api`. The `claude`, `codex` and `gemini` runtimes shell out to
-   third-party binaries whose egress pwnkit does not control.
+   third-party binaries whose egress 0sec does not control.
 
 See [API Keys](/api-keys/) for the full provider matrix.

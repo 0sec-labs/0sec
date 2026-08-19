@@ -1,4 +1,4 @@
-// Recon mode — surface enumeration for a domain/org (pwnkit#769, #924).
+// Recon mode — surface enumeration for a domain/org (0sec#769, #924).
 //
 // Given a domain, probe a set of well-known OpenAPI/Swagger paths and MCP
 // endpoints, extract API endpoints from any spec found, enumerate subdomains
@@ -71,7 +71,7 @@ export interface ReconOptions {
    */
   fetchImpl?: typeof fetch;
   /**
-   * Active subdomain brute-force config (pwnkit#924). OFF by default: omit it
+   * Active subdomain brute-force config (0sec#924). OFF by default: omit it
    * (or leave `enabled` unset/false) and recon stays purely passive. When
    * enabled, the resolving hosts merge into the subdomain asset stream and
    * dedupe against the passive (CT+DNS) results. Every candidate is gated by
@@ -196,7 +196,7 @@ async function parseSpecBody(body: string): Promise<ApiSpecSummary | undefined> 
   const { writeFileSync, rmSync, mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-recon-"));
+  const dir = mkdtempSync(join(tmpdir(), "0sec-recon-"));
   // .json vs .yaml only affects nothing in parseApiSpec (it sniffs content),
   // but a stable extension keeps the temp path predictable.
   const file = join(dir, "spec.json");
@@ -309,7 +309,7 @@ function hostToAsset(host: DiscoveredHost): ReconAsset {
 }
 
 /**
- * Passive subdomain enumeration (pwnkit#769, wired to `./subdomains.ts`).
+ * Passive subdomain enumeration (0sec#769, wired to `./subdomains.ts`).
  *
  * Delegates to the CT-log + DNS enumerator and maps each discovered host onto
  * a `subdomain` ReconAsset. The CT/DNS layer is passive (no brute-force) and
@@ -367,7 +367,7 @@ export async function runRecon(domain: string, options: ReconOptions = {}): Prom
   const passiveHosts = await enumerateSubdomains(domain, subdomainHooks);
   collected.push(...passiveHosts);
 
-  // Active subdomain brute-force (pwnkit#924). OFF unless the caller opted in
+  // Active subdomain brute-force (0sec#924). OFF unless the caller opted in
   // AND supplied an authorized scope policy — `enumerateSubdomainsActive`
   // enforces both rails internally and returns [] otherwise, so an
   // unauthorized/unconfigured run never issues a DNS query. Seed permutations

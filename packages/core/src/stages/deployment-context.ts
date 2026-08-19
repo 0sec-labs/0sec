@@ -12,7 +12,7 @@
  * on conflict.
  */
 
-import type { Finding, DeploymentContext, Severity } from "@pwnkit/shared";
+import type { Finding, DeploymentContext, Severity } from "@0sec/shared";
 
 // ── Path patterns ────────────────────────────────────────────────────────────
 

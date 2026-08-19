@@ -2,7 +2,7 @@ import {
   expandHomePath,
   isExistingLocalTargetPath,
   isExplicitLocalTargetPath,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 function isExistingLocalPath(target: string): boolean {
   return isExistingLocalTargetPath(target);

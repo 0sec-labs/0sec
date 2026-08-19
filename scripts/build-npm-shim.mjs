@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 /**
  * Build the npm-launcher package — replaces the previous full-bundle
- * `pwnkit-cli` that npm-published from `dist/` (and the v0.9.0 dead-end
+ * `0sec-cli` that npm-published from `dist/` (and the v0.9.0 dead-end
  * shim before it).
  *
  * From v0.10.0 onwards, the npm package is a smart launcher: on first
  * run it downloads the standalone binary from the matching GitHub
- * Release for the host platform, caches it under `~/.pwnkit/cache/`,
+ * Release for the host platform, caches it under `~/.0sec/cache/`,
  * and re-execs the user's args against it. Subsequent runs are an
  * instant exec from cache.
  *
- *   npx pwnkit-cli scan --target https://example.com
+ *   npx 0sec-cli scan --target https://example.com
  *   ↓
- *   downloads pwnkit-darwin-arm64 (one-time, ~75 MB), caches, re-execs
+ *   downloads 0sec-darwin-arm64 (one-time, ~75 MB), caches, re-execs
  *   ↓
  *   full OpenTUI experience as if installed via curl install.sh | bash
  *
@@ -48,15 +48,15 @@ const LAUNCHER_TEMPLATE = readFileSync(
   join(__dirname, "npm-launcher", "launcher.cjs"),
   "utf8",
 );
-const LAUNCHER = LAUNCHER_TEMPLATE.replace(/__PWNKIT_VERSION__/g, VERSION);
-writeFileSync(join(OUT, "bin", "pwnkit-cli.cjs"), LAUNCHER, { mode: 0o755 });
+const LAUNCHER = LAUNCHER_TEMPLATE.replace(/__0SEC_VERSION__/g, VERSION);
+writeFileSync(join(OUT, "bin", "0sec-cli.cjs"), LAUNCHER, { mode: 0o755 });
 
 // ── package.json ────────────────────────────────────────────────────────────
 const pkg = {
-  name: "pwnkit-cli",
+  name: "0sec-cli",
   version: VERSION,
-  description: "pwnkit-cli npm launcher — downloads and runs the standalone binary on first invocation.",
-  bin: { "pwnkit-cli": "bin/pwnkit-cli.cjs" },
+  description: "0sec-cli npm launcher — downloads and runs the standalone binary on first invocation.",
+  bin: { "0sec-cli": "bin/0sec-cli.cjs" },
   files: ["bin", "README.md", "LICENSE"],
   homepage: "https://github.com/0sec-labs/0sec",
   repository: { type: "git", url: "git+https://github.com/0sec-labs/0sec.git" },
@@ -69,20 +69,20 @@ const pkg = {
 writeFileSync(join(OUT, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
 
 // ── README ──────────────────────────────────────────────────────────────────
-const README = `# pwnkit-cli (npm launcher)
+const README = `# 0sec-cli (npm launcher)
 
-This package is a thin launcher for **pwnkit**, an autonomous AI pentesting
-framework. From v0.10.0 onwards \`pwnkit-cli\` ships as a tiny launcher
+This package is a thin launcher for **0sec**, an autonomous AI pentesting
+framework. From v0.10.0 onwards \`0sec-cli\` ships as a tiny launcher
 that downloads the standalone binary on first run, caches it under
-\`~/.pwnkit/cache/v<version>/\`, and re-execs the user's arguments against
+\`~/.0sec/cache/v<version>/\`, and re-execs the user's arguments against
 it. Subsequent runs are an instant exec from the cache.
 
 \`\`\`
-$ npx pwnkit-cli scan --target https://example.com
-[pwnkit] first-run setup — downloading pwnkit-darwin-arm64 (~75 MB)…
-[pwnkit] cached at /Users/you/.pwnkit/cache/v0.10.0/pwnkit-darwin-arm64
+$ npx 0sec-cli scan --target https://example.com
+[0sec] first-run setup — downloading 0sec-darwin-arm64 (~75 MB)…
+[0sec] cached at /Users/you/.0sec/cache/v0.10.0/0sec-darwin-arm64
 
-  pwnkit v0.10.0
+  0sec v0.10.0
     scanning target https://example.com
 …
 \`\`\`
@@ -95,11 +95,11 @@ control + live scan view works even when invoked under Node via npx.
 The launcher works through any of these:
 
 \`\`\`bash
-npx pwnkit-cli scan --target https://example.com    # one-shot, no install
-bunx pwnkit-cli scan --target https://example.com   # same, faster cold start
+npx 0sec-cli scan --target https://example.com    # one-shot, no install
+bunx 0sec-cli scan --target https://example.com   # same, faster cold start
 
-npm i -g pwnkit-cli   &&  pwnkit-cli scan ...       # global install
-bun add -g pwnkit-cli &&  pwnkit-cli scan ...       # global install via bun
+npm i -g 0sec-cli   &&  0sec-cli scan ...       # global install
+bun add -g 0sec-cli &&  0sec-cli scan ...       # global install via bun
 \`\`\`
 
 If you'd rather skip the launcher entirely and install the binary
@@ -109,17 +109,17 @@ directly (zero Node, zero Bun, zero \`node_modules\`), run:
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
 \`\`\`
 
-That drops a single binary into \`~/.pwnkit/bin/\`.
+That drops a single binary into \`~/.0sec/bin/\`.
 
 ## Supported platforms
 
 The launcher picks the right binary at runtime from the v\`<version>\`
 GitHub Release:
 
-- \`pwnkit-darwin-arm64\` — Apple Silicon
-- \`pwnkit-linux-x64\`
-- \`pwnkit-linux-arm64\`
-- \`pwnkit-windows-x64.exe\`
+- \`0sec-darwin-arm64\` — Apple Silicon
+- \`0sec-linux-x64\`
+- \`0sec-linux-arm64\`
+- \`0sec-windows-x64.exe\`
 
 Intel Mac (\`darwin-x64\`) is intentionally not shipped — Apple stopped
 selling them in 2022 and our self-hosted macos-13 pool is unreliable.
@@ -127,9 +127,9 @@ Install Bun and compile from source (\`scripts/bun-compile.sh\`) on those.
 
 ## Env knobs
 
-- \`PWNKIT_BINARY\` — explicit path to a binary; bypasses cache + download
-- \`PWNKIT_NO_DOWNLOAD=1\` — never download; print install.sh URL and exit 1
-- \`PWNKIT_DOWNLOAD_TIMEOUT_MS\` — per-attempt download timeout (default 120000)
+- \`0SEC_BINARY\` — explicit path to a binary; bypasses cache + download
+- \`0SEC_NO_DOWNLOAD=1\` — never download; print install.sh URL and exit 1
+- \`0SEC_DOWNLOAD_TIMEOUT_MS\` — per-attempt download timeout (default 120000)
 
 ## Source
 

@@ -24,7 +24,7 @@
  * summaries lives in `../commands/timeline.ts`.
  */
 
-import type { AtlasTechnique, AttackTechnique } from "@pwnkit/core";
+import type { AtlasTechnique, AttackTechnique } from "@0sec/core";
 
 export type TimelineFormat = "json" | "csv" | "markdown";
 

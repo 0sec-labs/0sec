@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1.7
 #
-# pwnkit-cli runtime image from a prebuilt ./dist bundle.
+# 0sec-cli runtime image from a prebuilt ./dist bundle.
 #
 # This is the publish path for environments where rebuilding the dashboard
 # bundle inside Docker is unstable. The bundle is still produced by
 # `pnpm build` before this image is built.
 #
 # Build context MUST be the verified ./dist directory (not the repo root):
-#   docker build -f Dockerfile.prebuilt -t pwnkit:prebuilt ./dist
+#   docker build -f Dockerfile.prebuilt -t 0sec:prebuilt ./dist
 # This ensures the image receives only the pre-built bundle and its
 # externalized dependencies without weakening .dockerignore exclusions
 # (which exclude dist/ from the normal source-build Dockerfile context).
@@ -20,7 +20,7 @@ ARG INSTALL_SECLISTS=0
 ARG DEBIAN_FRONTEND=noninteractive
 
 ENV NODE_ENV=production \
-    PWNKIT_DOCKER=1 \
+    0SEC_DOCKER=1 \
     PATH=/usr/local/bin:/usr/bin:/bin
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,8 +53,9 @@ COPY . /app/dist
 WORKDIR /app/dist
 RUN npm ci --omit=dev --ignore-scripts
 
-RUN ln -s /app/dist/pwnkit.js /usr/local/bin/pwnkit-cli \
-    && chmod +x /app/dist/pwnkit.js
+RUN ln -s /app/dist/0sec.js /usr/local/bin/0sec \
+    && ln -s /app/dist/0sec.js /usr/local/bin/0 \
+    && chmod +x /app/dist/0sec.js
 
 RUN mkdir -p /work \
     && chown -R ubuntu:ubuntu /work /app/dist \
@@ -62,5 +63,5 @@ RUN mkdir -p /work \
 USER ubuntu
 WORKDIR /work
 
-ENTRYPOINT ["node", "/app/dist/pwnkit.js"]
+ENTRYPOINT ["node", "/app/dist/0sec.js"]
 CMD ["--help"]

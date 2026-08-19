@@ -5,7 +5,7 @@ import type {
   ResearchNoveltyReceipt,
   ResearchPromotionGrade,
   ResearchReportingPolicy,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 
 export type ResearchStage =
   | "discover"

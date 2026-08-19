@@ -33,7 +33,7 @@
  * 0cloud copy + both parity fixtures.
  */
 
-import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
+import type { AttackCategory, Finding, Severity } from "@0sec/shared";
 
 /**
  * Severities that always get at least one verification pass and may never be
@@ -54,7 +54,7 @@ const PROTECTED_SEVERITIES: ReadonlySet<Severity> = new Set<Severity>([
  * pivot (SSRF), arbitrary file access (path traversal), or memory/kernel
  * corruption is protected here.
  *
- * Derived from the `AttackCategory` union in `@pwnkit/shared`. Kept as a typed
+ * Derived from the `AttackCategory` union in `@0sec/shared`. Kept as a typed
  * set so adding a new high-impact category to `AttackCategory` surfaces here at
  * review time rather than silently defaulting to "suppressible".
  */

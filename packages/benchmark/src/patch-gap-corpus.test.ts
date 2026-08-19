@@ -9,7 +9,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { PatchGapCandidate } from "@pwnkit/core";
+import type { PatchGapCandidate } from "@0sec/core";
 import {
   appendPatchGapCorpus,
   patchGapSampleToJsonl,

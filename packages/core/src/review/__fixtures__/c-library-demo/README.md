@@ -1,4 +1,4 @@
-# c-library-demo — pwnkit C/C++ review profile fixture
+# c-library-demo — 0sec C/C++ review profile fixture
 
 Synthetic, deliberately vulnerable single-file C library used by the
 C/C++ review profile tests and end-to-end demos.

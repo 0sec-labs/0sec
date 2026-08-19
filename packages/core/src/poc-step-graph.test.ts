@@ -1,5 +1,5 @@
 /**
- * pwnkit#170 — formalise Finding.evidence into a PoC step graph.
+ * 0sec#170 — formalise Finding.evidence into a PoC step graph.
  *
  * Coverage:
  *   1. Type narrowing on PocStepAction / PocStepExpect discriminated unions.
@@ -15,7 +15,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { describe, it, expect } from "vitest";
-import type { Finding, PocStep, PocStepAction, PocStepExpect } from "@pwnkit/shared";
+import type { Finding, PocStep, PocStepAction, PocStepExpect } from "@0sec/shared";
 import { parsePocStepsArg } from "./agent/tools.js";
 import { normalizeFinding } from "./cloud-sink.js";
 
@@ -69,7 +69,7 @@ function makePocSteps(): PocStep[] {
   ];
 }
 
-describe("PocStep types (pwnkit#170)", () => {
+describe("PocStep types (0sec#170)", () => {
   it("narrows action.type to the right variant fields", () => {
     const shell: PocStepAction = { type: "shell", cmd: "ls", cwd: "/tmp" };
     const http: PocStepAction = { type: "http", method: "GET", url: "http://x" };
@@ -103,7 +103,7 @@ describe("PocStep types (pwnkit#170)", () => {
   });
 });
 
-describe("Finding.pocSteps backward compatibility (pwnkit#170)", () => {
+describe("Finding.pocSteps backward compatibility (0sec#170)", () => {
   it("a Finding without pocSteps is still a valid Finding", () => {
     // This is intentionally the legacy shape: prose evidence only, no step
     // graph. Every renderer / sink / DB writer must keep working in this
@@ -181,7 +181,7 @@ describe("Finding.pocSteps backward compatibility (pwnkit#170)", () => {
   });
 });
 
-describe("parsePocStepsArg (agent tool wire shape, pwnkit#170)", () => {
+describe("parsePocStepsArg (agent tool wire shape, 0sec#170)", () => {
   it("returns null for nullish / empty / non-string non-array input", () => {
     expect(parsePocStepsArg(null)).toBeNull();
     expect(parsePocStepsArg(undefined)).toBeNull();
@@ -270,7 +270,7 @@ describe("parsePocStepsArg (agent tool wire shape, pwnkit#170)", () => {
   });
 });
 
-describe("cloud-sink normalizeFinding pass-through of pocSteps (pwnkit#170)", () => {
+describe("cloud-sink normalizeFinding pass-through of pocSteps (0sec#170)", () => {
   it("passes a structured pocSteps array through unchanged", () => {
     const steps = makePocSteps();
     const out = normalizeFinding({

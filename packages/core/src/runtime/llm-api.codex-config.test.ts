@@ -16,7 +16,7 @@ import { LlmApiRuntime } from "./llm-api.js";
 
 /** Point HOME at a throwaway dir holding just this config.toml. */
 function withCodexConfig(toml: string): string {
-  const home = mkdtempSync(join(tmpdir(), "pwnkit-codex-config-"));
+  const home = mkdtempSync(join(tmpdir(), "0sec-codex-config-"));
   mkdirSync(join(home, ".codex"));
   writeFileSync(join(home, ".codex", "config.toml"), toml);
   return home;
@@ -50,10 +50,10 @@ describe("model_reasoning_effort scoping in ~/.codex/config.toml", () => {
   beforeEach(() => {
     // Azure must win provider detection, and nothing may pre-empt the file.
     for (const key of [
-      "PWNKIT_REASONING_EFFORT",
-      "PWNKIT_MODEL",
-      "PWNKIT_CHATGPT_ACCESS_TOKEN",
-      "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN",
+      "0SEC_REASONING_EFFORT",
+      "0SEC_MODEL",
+      "0SEC_CHATGPT_ACCESS_TOKEN",
+      "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN",
       "ANTHROPIC_API_KEY",
       "Z_AI_API_KEY",
       "KIMI_API_KEY",
@@ -70,7 +70,7 @@ describe("model_reasoning_effort scoping in ~/.codex/config.toml", () => {
       vi.stubEnv(key, undefined);
     }
     vi.stubEnv("AZURE_OPENAI_API_KEY", "azure-test-key");
-    vi.stubEnv("PWNKIT_SKIP_PROVIDER_BANNER", "1");
+    vi.stubEnv("0SEC_SKIP_PROVIDER_BANNER", "1");
   });
 
   afterEach(() => {

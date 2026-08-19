@@ -2,7 +2,7 @@
  * artifact-scraper tests. Same pattern as wp-fingerprint.test.ts:
  * a route-table mock fetch substituted via `opts.fetchImpl`, an
  * injected clock for cache-TTL deterministic tests, and a temp
- * cache dir per test so the operator's real `~/.pwnkit` is never
+ * cache dir per test so the operator's real `~/.0sec` is never
  * touched.
  *
  * No real network is hit — every URL the scraper would resolve is
@@ -81,7 +81,7 @@ function buildMockFetch(routes: Record<string, Route>): MockFetchTracker {
 }
 
 function tmpCacheDir(): string {
-  return mkdtempSync(join(tmpdir(), "pwnkit-cve-cache-"));
+  return mkdtempSync(join(tmpdir(), "0sec-cve-cache-"));
 }
 
 const NVD_URL_PREFIX = "https://services.nvd.nist.gov/rest/json/cves/2.0";

@@ -1,4 +1,4 @@
-// JavaScript artifact scanning — gap E (pwnkit web recon).
+// JavaScript artifact scanning — gap E (0sec web recon).
 //
 // For a web target, this module does two things against already-enumerated
 // JS bundles (the chunk URLs you get from stack fingerprinting):

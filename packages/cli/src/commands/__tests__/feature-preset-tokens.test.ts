@@ -4,16 +4,16 @@
  * `scan.ts` recognises preset tokens from a local literal so it does not have
  * to import core just to parse `--features`. That duplication is safe only if
  * both sides agree, and the failure mode if they don't is silent: an
- * unrecognised token becomes a meaningless `PWNKIT_FEATURE_*` var and enables
+ * unrecognised token becomes a meaningless `0SEC_FEATURE_*` var and enables
  * nothing, while the run still succeeds and reports findings. This test makes
  * that divergence loud.
  *
- * Deliberately does NOT mock `@pwnkit/core` — the point is to check the CLI
+ * Deliberately does NOT mock `@0sec/core` — the point is to check the CLI
  * against the real resolver.
  */
 
 import { describe, it, expect } from "vitest";
-import { resolveFeaturePreset, FEATURE_PRESETS } from "@pwnkit/core";
+import { resolveFeaturePreset, FEATURE_PRESETS } from "@0sec/core";
 import { PRESET_TOKENS } from "../scan.js";
 
 describe("CLI preset tokens match core's resolver", () => {

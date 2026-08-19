@@ -15,18 +15,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { TaskLedger } from "./task-ledger.js";
 
-const ORIGINAL_JIT_SKILLS_ENV = process.env.PWNKIT_FEATURE_JIT_SKILLS;
-const ORIGINAL_LOOT_LEDGER_ENV = process.env.PWNKIT_FEATURE_LOOT_LEDGER;
-const ORIGINAL_CLOUD_SURFACE_ENV = process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
+const ORIGINAL_JIT_SKILLS_ENV = process.env["0SEC_FEATURE_JIT_SKILLS"];
+const ORIGINAL_LOOT_LEDGER_ENV = process.env["0SEC_FEATURE_LOOT_LEDGER"];
+const ORIGINAL_CLOUD_SURFACE_ENV = process.env["0SEC_FEATURE_CLOUD_SURFACE"];
 
 afterEach(() => {
-  if (ORIGINAL_JIT_SKILLS_ENV === undefined) delete process.env.PWNKIT_FEATURE_JIT_SKILLS;
-  else process.env.PWNKIT_FEATURE_JIT_SKILLS = ORIGINAL_JIT_SKILLS_ENV;
-  if (ORIGINAL_LOOT_LEDGER_ENV === undefined) delete process.env.PWNKIT_FEATURE_LOOT_LEDGER;
-  else process.env.PWNKIT_FEATURE_LOOT_LEDGER = ORIGINAL_LOOT_LEDGER_ENV;
-  // pwnkit#925: cloud-surface defaults OFF; reset so tests that pin it ON don't leak.
-  if (ORIGINAL_CLOUD_SURFACE_ENV === undefined) delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
-  else process.env.PWNKIT_FEATURE_CLOUD_SURFACE = ORIGINAL_CLOUD_SURFACE_ENV;
+  if (ORIGINAL_JIT_SKILLS_ENV === undefined) delete process.env["0SEC_FEATURE_JIT_SKILLS"];
+  else process.env["0SEC_FEATURE_JIT_SKILLS"] = ORIGINAL_JIT_SKILLS_ENV;
+  if (ORIGINAL_LOOT_LEDGER_ENV === undefined) delete process.env["0SEC_FEATURE_LOOT_LEDGER"];
+  else process.env["0SEC_FEATURE_LOOT_LEDGER"] = ORIGINAL_LOOT_LEDGER_ENV;
+  // 0sec#925: cloud-surface defaults OFF; reset so tests that pin it ON don't leak.
+  if (ORIGINAL_CLOUD_SURFACE_ENV === undefined) delete process.env["0SEC_FEATURE_CLOUD_SURFACE"];
+  else process.env["0SEC_FEATURE_CLOUD_SURFACE"] = ORIGINAL_CLOUD_SURFACE_ENV;
 });
 
 // ── Tool Registry ──
@@ -70,7 +70,7 @@ describe("getToolsForRole", () => {
   });
 
   it("gives attack agent network tools", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
     const tools = getToolsForRole("attack");
     const names = tools.map((t) => t.name);
     expect(names).toContain("http_request");
@@ -83,7 +83,7 @@ describe("getToolsForRole", () => {
   });
 
   it("adds JIT skill tools only when enabled", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "1";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "1";
     const names = getToolsForRole("attack").map((t) => t.name);
     expect(names).toContain("list_skills");
     expect(names).toContain("load_skill");
@@ -106,15 +106,15 @@ describe("getToolsForRole", () => {
   });
 
   it("audit role gets all enabled tools", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
     // Pin the loot flag ON so the count is deterministic regardless of ambient
-    // env: use_loot (pwnkit#567) is then in the enabled set, leaving exactly
+    // env: use_loot (0sec#567) is then in the enabled set, leaving exactly
     // the two JIT-skill tools gated out below.
-    process.env.PWNKIT_FEATURE_LOOT_LEDGER = "1";
-    // Pin the cloud-surface flag ON too (pwnkit#925): the cloud tools are then
+    process.env["0SEC_FEATURE_LOOT_LEDGER"] = "1";
+    // Pin the cloud-surface flag ON too (0sec#925): the cloud tools are then
     // in the enabled set, so they cancel out of both sides of the count below
     // and the assertion stays deterministic regardless of ambient env.
-    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    process.env["0SEC_FEATURE_CLOUD_SURFACE"] = "1";
     const tools = getToolsForRole("audit");
     const names = tools.map((t) => t.name);
     expect(names).not.toContain("list_skills");
@@ -150,17 +150,17 @@ describe("getToolsForRole", () => {
   });
 
   it("audit role includes skill tools when JIT skills are enabled", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "1";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "1";
     const names = getToolsForRole("audit").map((t) => t.name);
     expect(names).toContain("list_skills");
     expect(names).toContain("load_skill");
   });
 
-  // ── Engagement-gated scanner wrappers (pwnkit#555) ──
+  // ── Engagement-gated scanner wrappers (0sec#555) ──
   // allowScanners=false (default) MUST keep all four wrappers out of EVERY
-  // role's tool set — no regression of the pwnkit#217 stealthy default.
+  // role's tool set — no regression of the 0sec#217 stealthy default.
   it("omits scanner wrappers from all roles when allowScanners is unset", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
     for (const role of ["discovery", "attack", "verify", "audit", "review"]) {
       const names = getToolsForRole(role, { hasScope: true }).map((t) => t.name);
       for (const scanner of SCANNER_TOOL_NAMES) {
@@ -170,7 +170,7 @@ describe("getToolsForRole", () => {
   });
 
   it("exposes scanner wrappers for network roles when allowScanners is true", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
     for (const role of ["discovery", "attack"]) {
       const names = getToolsForRole(role, { allowScanners: true }).map((t) => t.name);
       expect(names).toContain("run_sqlmap");
@@ -181,7 +181,7 @@ describe("getToolsForRole", () => {
   });
 
   it("includes scanner wrappers in the audit/review everything-set only with allowScanners", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
     const off = getToolsForRole("audit").map((t) => t.name);
     expect(off).not.toContain("run_sqlmap");
     const on = getToolsForRole("audit", { allowScanners: true }).map((t) => t.name);
@@ -189,10 +189,10 @@ describe("getToolsForRole", () => {
     expect(on).toContain("run_nuclei");
   });
 
-  // ── Cloud-surface tools (pwnkit#925) — default OFF, opt-in ──
+  // ── Cloud-surface tools (0sec#925) — default OFF, opt-in ──
   it("omits cloud-surface tools from every role when the flag is unset (default OFF)", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
-    delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE; // exercise the default
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
+    delete process.env["0SEC_FEATURE_CLOUD_SURFACE"]; // exercise the default
     for (const role of ["discovery", "attack", "verify", "audit", "review"]) {
       const names = getToolsForRole(role, { hasScope: true }).map((t) => t.name);
       expect(names).not.toContain("cloud_s3_probe");
@@ -201,8 +201,8 @@ describe("getToolsForRole", () => {
   });
 
   it("exposes cloud-surface tools for network roles only when the flag is on", () => {
-    process.env.PWNKIT_FEATURE_JIT_SKILLS = "0";
-    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    process.env["0SEC_FEATURE_JIT_SKILLS"] = "0";
+    process.env["0SEC_FEATURE_CLOUD_SURFACE"] = "1";
     for (const role of ["discovery", "attack"]) {
       const names = getToolsForRole(role).map((t) => t.name);
       expect(names).toContain("cloud_s3_probe");
@@ -211,11 +211,11 @@ describe("getToolsForRole", () => {
   });
 });
 
-// ── Cloud-surface handlers (pwnkit#925) — enablement + deny-by-default scope ──
+// ── Cloud-surface handlers (0sec#925) — enablement + deny-by-default scope ──
 // These exercise ONLY the gate paths (flag-off, no-scope, out-of-scope), which
 // short-circuit BEFORE any network call — so no live cloud traffic occurs.
 
-describe("ToolExecutor cloud-surface gating (pwnkit#925)", () => {
+describe("ToolExecutor cloud-surface gating (0sec#925)", () => {
   const baseCtx = (scope?: unknown): ToolContext =>
     ({
       target: "https://target.test",
@@ -227,15 +227,15 @@ describe("ToolExecutor cloud-surface gating (pwnkit#925)", () => {
     }) as ToolContext;
 
   it("cloud_s3_probe refuses when the feature flag is OFF (default)", async () => {
-    delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
+    delete process.env["0SEC_FEATURE_CLOUD_SURFACE"];
     const exec = new ToolExecutor(baseCtx(), null);
     const r = await exec.execute({ name: "cloud_s3_probe", arguments: { buckets: ["acme-x"] } });
     expect(r.success).toBe(false);
-    expect(r.error).toMatch(/disabled.*PWNKIT_FEATURE_CLOUD_SURFACE/i);
+    expect(r.error).toMatch(/disabled.*0SEC_FEATURE_CLOUD_SURFACE/i);
   });
 
   it("cloud_s3_probe skips ALL buckets (no-op) when no scope is configured, even with the flag ON", async () => {
-    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    process.env["0SEC_FEATURE_CLOUD_SURFACE"] = "1";
     const exec = new ToolExecutor(baseCtx(/* no scope */), null);
     const r = await exec.execute({ name: "cloud_s3_probe", arguments: { buckets: ["acme-x", "acme-y"] } });
     expect(r.success).toBe(true);
@@ -246,7 +246,7 @@ describe("ToolExecutor cloud-surface gating (pwnkit#925)", () => {
   });
 
   it("cloud_s3_probe skips out-of-scope buckets when a scope is configured", async () => {
-    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    process.env["0SEC_FEATURE_CLOUD_SURFACE"] = "1";
     const { ScopePolicy } = await import("../scope/scope.js");
     // Scope authorizes only the app host, NOT the S3 endpoint → bucket skipped.
     const scope = ScopePolicy.fromJson({ in_scope: ["target.test"] });
@@ -259,18 +259,18 @@ describe("ToolExecutor cloud-surface gating (pwnkit#925)", () => {
   });
 
   it("cloud_validate_credentials refuses when the feature flag is OFF (default)", async () => {
-    delete process.env.PWNKIT_FEATURE_CLOUD_SURFACE;
+    delete process.env["0SEC_FEATURE_CLOUD_SURFACE"];
     const exec = new ToolExecutor(baseCtx(), null);
     const r = await exec.execute({
       name: "cloud_validate_credentials",
       arguments: { access_key_id: "AKIA", secret_access_key: "s" },
     });
     expect(r.success).toBe(false);
-    expect(r.error).toMatch(/disabled.*PWNKIT_FEATURE_CLOUD_SURFACE/i);
+    expect(r.error).toMatch(/disabled.*0SEC_FEATURE_CLOUD_SURFACE/i);
   });
 
   it("cloud_validate_credentials refuses (deny-by-default) when no scope is configured", async () => {
-    process.env.PWNKIT_FEATURE_CLOUD_SURFACE = "1";
+    process.env["0SEC_FEATURE_CLOUD_SURFACE"] = "1";
     const exec = new ToolExecutor(baseCtx(/* no scope */), null);
     const r = await exec.execute({
       name: "cloud_validate_credentials",
@@ -336,7 +336,7 @@ describe("ToolExecutor", () => {
   });
 
   it("rejects direct execution calls from a scoped source audit", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-scoped-audit-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-scoped-audit-"));
     try {
       const scopedAudit = new ToolExecutor({ ...ctx, role: "audit", scopePath: root }, null);
       for (const name of ["bash", "run_command", "apply_patch", "spawn_agent"]) {
@@ -373,7 +373,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding records a workspace-contained 0review annotation", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
       ctx.scopePath = root;
@@ -404,7 +404,7 @@ describe("ToolExecutor", () => {
   });
 
   it("marks an exact cited source range with an in-tree maintainer marker", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-known-marker-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-known-marker-"));
     try {
       writeFileSync(join(root, "parser.ts"), "// HACK: temporary compatibility path\nparse(input);\n");
       ctx.scopePath = root;
@@ -430,7 +430,7 @@ describe("ToolExecutor", () => {
   });
 
   it("does not mark a citation because a marker appears outside its exact range", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-known-marker-range-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-known-marker-range-"));
     try {
       writeFileSync(join(root, "parser.ts"), "// TODO: unrelated cleanup\nparse(input);\n");
       ctx.scopePath = root;
@@ -459,7 +459,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding rejects an annotation path outside the workspace", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       ctx.scopePath = root;
       const result = await executor.execute({
@@ -484,7 +484,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding rejects a backslash annotation path (cloud schema would 400 it)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
       ctx.scopePath = root;
@@ -510,7 +510,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding keeps but downgrades a finding whose source_path does not exist", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       ctx.scopePath = root;
       const result = await executor.execute({
@@ -542,7 +542,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding keeps but downgrades a finding whose start line is out of range", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "unsafe(input)\n"); // 1 line
       ctx.scopePath = root;
@@ -572,7 +572,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding downgrades on an out-of-range end line but keeps an in-range one", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "// 1\n// 2\n// 3\n// 4\n// 5\n");
       ctx.scopePath = root;
@@ -624,7 +624,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding accepts a directory source_path conservatively (no line check)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       mkdirSync(join(root, "src"));
       ctx.scopePath = root;
@@ -656,7 +656,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding drops an oversized suggestion instead of rejecting or truncating", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
       ctx.scopePath = root;
@@ -689,7 +689,7 @@ describe("ToolExecutor", () => {
   });
 
   it("save_finding drops fenced or unified-diff suggestions but keeps the location", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "unsafe(input)\n");
       ctx.scopePath = root;
@@ -704,7 +704,7 @@ describe("ToolExecutor", () => {
             severity: "high",
             category: "missing-validation",
             description: "test",
-            // Distinct evidence prefixes keep the fuzzy dedup (pwnkit#281)
+            // Distinct evidence prefixes keep the fuzzy dedup (0sec#281)
             // from merging the two iterations — this test is about the
             // suggestion gate, not dedup.
             evidence_request: `test-${i}`,
@@ -729,7 +729,7 @@ describe("ToolExecutor", () => {
     // Dual-path parity: a fabricated location must produce the same outcome
     // whether the finding arrives via the save_finding tool or via CLI
     // output parsing (findings-parser.validateFileRef).
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-0review-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-0review-"));
     try {
       writeFileSync(join(root, "parser.ts"), "unsafe(input)\n"); // 1 line
       ctx.scopePath = root;
@@ -791,7 +791,7 @@ describe("ToolExecutor", () => {
     }
   });
 
-  // ── save_finding pocSteps emission (pwnkit#179) ──
+  // ── save_finding pocSteps emission (0sec#179) ──
 
   it("save_finding populates pocSteps from prose when agent didn't supply them", async () => {
     await executor.execute({
@@ -870,7 +870,7 @@ describe("ToolExecutor", () => {
 
   // ── save_finding confidence emission ──
   // Closes the cloud-side gap where every `findings.confidence` row was NULL
-  // because pwnkit-cli never emitted a value. See agent/finding-confidence.ts
+  // because 0sec-cli never emitted a value. See agent/finding-confidence.ts
   // for the hybrid heuristic.
 
   it("save_finding stamps confidence onto the finding when the agent reports one", async () => {
@@ -951,7 +951,7 @@ describe("ToolExecutor", () => {
     expect(ctx.findings[0].confidence).toBeUndefined();
   });
 
-  // ── save_finding empty-PoC gate (pwnkit#283) ──
+  // ── save_finding empty-PoC gate (0sec#283) ──
   // Disclose already refuses empty PoCs at render time; we pull the gate
   // upstream so the agent sees its own bad finding rejected and can retry
   // with real evidence rather than burning turns on findings that disclose
@@ -1409,7 +1409,7 @@ describe("ToolExecutor", () => {
     const BIG_FILE = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join("\n");
 
     beforeEach(() => {
-      tmp = mkdtempSync(join(tmpdir(), "pwnkit-read-file-exec-"));
+      tmp = mkdtempSync(join(tmpdir(), "0sec-read-file-exec-"));
       writeFileSync(join(tmp, "big.c"), BIG_FILE);
       scopedExecutor = new ToolExecutor({ ...ctx, scopePath: tmp }, null);
     });
@@ -1462,7 +1462,7 @@ describe("ToolExecutor", () => {
 
       expect(result.success).toBe(true);
       const out = result.output as { content: string };
-      expect(out.content).toContain("[pwnkit:read_file] TRUNCATED");
+      expect(out.content).toContain("[0sec:read_file] TRUNCATED");
       expect(out.content).toContain("showed lines 800-802 of 1200");
       expect(out.content).toContain("offset=803");
     });
@@ -1528,7 +1528,7 @@ describe("ToolExecutor", () => {
     let scopedExecutor: ToolExecutor;
 
     beforeEach(() => {
-      const parent = mkdtempSync(join(tmpdir(), "pwnkit-scope-symlink-"));
+      const parent = mkdtempSync(join(tmpdir(), "0sec-scope-symlink-"));
       root = join(parent, "audit");
       secret = join(parent, "operator-secret.txt");
       mkdirSync(root);
@@ -1608,14 +1608,14 @@ describe("ToolExecutor", () => {
     });
   });
 
-  // ── apply_patch — pwnkit#230 (executor-level integration) ──
+  // ── apply_patch — 0sec#230 (executor-level integration) ──
 
   describe("apply_patch", () => {
     let tmp: string;
     let scopedExecutor: ToolExecutor;
 
     beforeEach(() => {
-      tmp = mkdtempSync(join(tmpdir(), "pwnkit-apply-patch-exec-"));
+      tmp = mkdtempSync(join(tmpdir(), "0sec-apply-patch-exec-"));
       const scopedCtx: ToolContext = { ...ctx, scopePath: tmp };
       scopedExecutor = new ToolExecutor(scopedCtx, null);
     });
@@ -1703,7 +1703,7 @@ describe("ToolExecutor", () => {
     beforeEach(() => {
       const scopedCtx: ToolContext = {
         ...ctx,
-        scopePath: "/tmp/pwnkit-test-scope",
+        scopePath: "/tmp/0sec-test-scope",
       };
       scopedExecutor = new ToolExecutor(scopedCtx, null);
     });
@@ -1830,16 +1830,16 @@ describe("ToolExecutor", () => {
   // must reap the process group and return an `is_error`-shaped result.
 
   describe("bash wallclock ceiling", () => {
-    const ORIGINAL_TIMEOUT_MS = process.env.PWNKIT_BASH_TIMEOUT_MS;
+    const ORIGINAL_TIMEOUT_MS = process.env["0SEC_BASH_TIMEOUT_MS"];
 
     beforeEach(() => {
       // 1.5s ceiling so the test runs fast.
-      process.env.PWNKIT_BASH_TIMEOUT_MS = "1500";
+      process.env["0SEC_BASH_TIMEOUT_MS"] = "1500";
     });
 
     afterEach(() => {
-      if (ORIGINAL_TIMEOUT_MS === undefined) delete process.env.PWNKIT_BASH_TIMEOUT_MS;
-      else process.env.PWNKIT_BASH_TIMEOUT_MS = ORIGINAL_TIMEOUT_MS;
+      if (ORIGINAL_TIMEOUT_MS === undefined) delete process.env["0SEC_BASH_TIMEOUT_MS"];
+      else process.env["0SEC_BASH_TIMEOUT_MS"] = ORIGINAL_TIMEOUT_MS;
     });
 
     it("kills a hanging subprocess and returns a timeout error", async () => {
@@ -1855,7 +1855,7 @@ describe("ToolExecutor", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/bash tool timed out after \d+s/);
-      expect(result.error).toContain("PWNKIT_BASH_TIMEOUT_MS=1500");
+      expect(result.error).toContain("0SEC_BASH_TIMEOUT_MS=1500");
       // Ceiling 1.5s + 2s SIGKILL grace + slack — must be much less than
       // the requested 30s sleep, proving the subprocess was actually reaped.
       expect(elapsed).toBeLessThan(8_000);
@@ -2005,7 +2005,7 @@ describe("splitOnTopLevelPipes", () => {
   });
 });
 
-// ── Auth injection in shellExec (pwnkit#282) ────────────────────────
+// ── Auth injection in shellExec (0sec#282) ────────────────────────
 //
 // `shellExec` historically only EXPOSED `$AUTH_HEADER` / `$AUTH_VALUE`
 // / `$AUTH_CURL_FLAG` env vars and trusted the agent to interpolate
@@ -2015,7 +2015,7 @@ describe("splitOnTopLevelPipes", () => {
 // exec, so unauth-by-omission is no longer possible against in-scope
 // hosts. These tests pin the rewrite surface and the no-leak invariants.
 
-describe("injectAuthIntoBashCommand (pwnkit#282)", () => {
+describe("injectAuthIntoBashCommand (0sec#282)", () => {
   it("rewrites a bare curl invocation with $AUTH_CURL_FLAG when URL is in-scope", async () => {
     const { injectAuthIntoBashCommand } = await import("./tools.js");
     const { ScopePolicy } = await import("../scope/scope.js");
@@ -2169,9 +2169,9 @@ describe("injectAuthIntoBashCommand (pwnkit#282)", () => {
   });
 });
 
-// ── ToolExecutor.shellExec auth-injection wiring (pwnkit#282) ───────
+// ── ToolExecutor.shellExec auth-injection wiring (0sec#282) ───────
 
-describe("ToolExecutor — shellExec auth injection (pwnkit#282)", () => {
+describe("ToolExecutor — shellExec auth injection (0sec#282)", () => {
   it("does NOT touch the command when authConfig is unset", async () => {
     const ctx: ToolContext = {
       target: "https://target.test",
@@ -2214,7 +2214,7 @@ describe("ToolExecutor — shellExec auth injection (pwnkit#282)", () => {
   });
 });
 
-// ── Programmatic scope integration (pwnkit#215) ─────────────────────
+// ── Programmatic scope integration (0sec#215) ─────────────────────
 //
 // The DoD requires that out-of-scope URLs return as `ToolResult.error`
 // at every chokepoint. These tests pin that behaviour at the surface
@@ -2224,7 +2224,7 @@ describe("ToolExecutor — shellExec auth injection (pwnkit#282)", () => {
 // so we use a target whose origin matches the URL we're testing and
 // check that scope is the layer doing the rejecting.
 
-describe("ToolExecutor — scope enforcement (pwnkit#215)", () => {
+describe("ToolExecutor — scope enforcement (0sec#215)", () => {
   it("http_request returns ToolResult.error when target host is out of scope", async () => {
     const { ScopePolicy } = await import("../scope/scope.js");
     const scope = ScopePolicy.fromJson({ in_scope: ["api.example.com"] });
@@ -2246,7 +2246,7 @@ describe("ToolExecutor — scope enforcement (pwnkit#215)", () => {
   });
 
   it("http_request succeeds when both target and URL are in scope", async () => {
-    // pwnkit#218 review: stub `fetch` so this test exercises only the
+    // 0sec#218 review: stub `fetch` so this test exercises only the
     // scope gate — the previous version relied on real DNS/network
     // behaviour for `api.example.com` and could sit on http_request's
     // 30s timeout before failing. The stub returns a minimal
@@ -2362,22 +2362,22 @@ describe("ToolExecutor — scope enforcement (pwnkit#215)", () => {
   });
 });
 
-// pwnkit#133. The guards above all live inside `if (this.ctx.scope)`, and
+// 0sec#133. The guards above all live inside `if (this.ctx.scope)`, and
 // `ctx.scope` is undefined on every local run without `--scope` and on every
 // cloud scan mode except http_audit. That is not going to change (fail-closed
 // by default would break every shipping mode), so the requirement is that the
 // absence is never SILENT: an unscoped bash command that reaches the network
 // must leave a `scope_guards_inert` record in the scan event log, and
-// PWNKIT_REQUIRE_SCOPE=1 must turn it into a refusal.
+// 0SEC_REQUIRE_SCOPE=1 must turn it into a refusal.
 //
 // These tests fail if someone deletes the signal.
 
-describe("ToolExecutor — unscoped bash egress is visible (pwnkit#133)", () => {
-  const ORIGINAL_REQUIRE_SCOPE = process.env.PWNKIT_REQUIRE_SCOPE;
+describe("ToolExecutor — unscoped bash egress is visible (0sec#133)", () => {
+  const ORIGINAL_REQUIRE_SCOPE = process.env["0SEC_REQUIRE_SCOPE"];
 
   afterEach(() => {
-    if (ORIGINAL_REQUIRE_SCOPE === undefined) delete process.env.PWNKIT_REQUIRE_SCOPE;
-    else process.env.PWNKIT_REQUIRE_SCOPE = ORIGINAL_REQUIRE_SCOPE;
+    if (ORIGINAL_REQUIRE_SCOPE === undefined) delete process.env["0SEC_REQUIRE_SCOPE"];
+    else process.env["0SEC_REQUIRE_SCOPE"] = ORIGINAL_REQUIRE_SCOPE;
   });
 
   function unscopedCtx(): ToolContext {
@@ -2448,8 +2448,8 @@ describe("ToolExecutor — unscoped bash egress is visible (pwnkit#133)", () => 
     ).toBeUndefined();
   });
 
-  it("refuses outright under PWNKIT_REQUIRE_SCOPE=1", async () => {
-    process.env.PWNKIT_REQUIRE_SCOPE = "1";
+  it("refuses outright under 0SEC_REQUIRE_SCOPE=1", async () => {
+    process.env["0SEC_REQUIRE_SCOPE"] = "1";
     const ex = new ToolExecutor(unscopedCtx(), null);
 
     const result = await ex.execute({
@@ -2458,12 +2458,12 @@ describe("ToolExecutor — unscoped bash egress is visible (pwnkit#133)", () => 
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/PWNKIT_REQUIRE_SCOPE/);
+    expect(result.error).toMatch(/0SEC_REQUIRE_SCOPE/);
     expect(result.error).toMatch(/no engagement scope is configured/);
   });
 
-  it("PWNKIT_REQUIRE_SCOPE=1 does not affect a scan that HAS a scope", async () => {
-    process.env.PWNKIT_REQUIRE_SCOPE = "1";
+  it("0SEC_REQUIRE_SCOPE=1 does not affect a scan that HAS a scope", async () => {
+    process.env["0SEC_REQUIRE_SCOPE"] = "1";
     const { ScopePolicy } = await import("../scope/scope.js");
     const ex = new ToolExecutor(
       { ...unscopedCtx(), scope: ScopePolicy.fromJson({ in_scope: ["*.example.com"] }) },
@@ -2475,7 +2475,7 @@ describe("ToolExecutor — unscoped bash egress is visible (pwnkit#133)", () => 
   });
 });
 
-// pwnkit#217. Generic-scanner-traffic suppression. When scope is loaded
+// 0sec#217. Generic-scanner-traffic suppression. When scope is loaded
 // the agent must refuse `sqlmap`, `nikto`, `gobuster`, `dirb`, `wfuzz`,
 // `ffuf`, and the noisy nmap modes (`-sV`, `-A`). The unit tests for
 // the detector live in `scope/scanner-binaries.test.ts`; these tests
@@ -2484,7 +2484,7 @@ describe("ToolExecutor — unscoped bash egress is visible (pwnkit#133)", () => 
 // in as `ctx.allowScanners`) actually overrides, and that pass-through
 // is preserved when scope is absent.
 
-describe("ToolExecutor — scanner suppression (pwnkit#217)", () => {
+describe("ToolExecutor — scanner suppression (0sec#217)", () => {
   async function makeCtx(opts: { withScope: boolean; allowScanners?: boolean }) {
     const { ScopePolicy } = await import("../scope/scope.js");
     const scope = opts.withScope
@@ -2617,7 +2617,7 @@ describe("ToolExecutor — scanner suppression (pwnkit#217)", () => {
   });
 });
 
-// ── Structured scanner wrappers at the executor surface (pwnkit#555) ──
+// ── Structured scanner wrappers at the executor surface (0sec#555) ──
 //
 // The argv-builder / parser unit tests live in `scanner-tools.test.ts`. These
 // pin the gating + scope/argument wiring at the ToolExecutor boundary: the
@@ -2625,7 +2625,7 @@ describe("ToolExecutor — scanner suppression (pwnkit#217)", () => {
 // validate required arguments — all BEFORE any binary is spawned, so they run
 // without sqlmap/nmap/ffuf/nuclei installed.
 
-describe("ToolExecutor — structured scanner wrappers (pwnkit#555)", () => {
+describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
   async function makeCtx(opts: { allowScanners?: boolean }) {
     const { ScopePolicy } = await import("../scope/scope.js");
     const ctx: ToolContext = {
@@ -2656,7 +2656,7 @@ describe("ToolExecutor — structured scanner wrappers (pwnkit#555)", () => {
     });
   }
 
-  it("run_sqlmap refuses (deny-by-default) when allowScanners=true but NO scope is configured (pwnkit#926)", async () => {
+  it("run_sqlmap refuses (deny-by-default) when allowScanners=true but NO scope is configured (0sec#926)", async () => {
     const ctx: ToolContext = {
       target: "https://api.example.com",
       scanId: `test-noscope-${Math.random().toString(36).slice(2)}`,
@@ -2727,7 +2727,7 @@ describe("ToolExecutor — structured scanner wrappers (pwnkit#555)", () => {
   });
 });
 
-// ── Attribution-header injection at the executor surface (pwnkit#216) ──
+// ── Attribution-header injection at the executor surface (0sec#216) ──
 //
 // The unit tests in attribution.test.ts cover the helper directly. These
 // integration tests pin that http_request actually attaches the configured
@@ -2735,7 +2735,7 @@ describe("ToolExecutor — structured scanner wrappers (pwnkit#555)", () => {
 // ToolContext. We mock global `fetch` so we can inspect the RequestInit
 // the executor passes into it without actually hitting the network.
 
-describe("ToolExecutor — attribution-header injection (pwnkit#216)", () => {
+describe("ToolExecutor — attribution-header injection (0sec#216)", () => {
   it("http_request attaches configured attribution headers on in-scope traffic", async () => {
     const { ScopePolicy } = await import("../scope/scope.js");
     const scope = ScopePolicy.fromJson({ in_scope: ["api.example.com"] });
@@ -2850,7 +2850,7 @@ describe("ToolExecutor — attribution-header injection (pwnkit#216)", () => {
   });
 });
 
-describe("ToolExecutor — crawl redirect handling (pwnkit#238)", () => {
+describe("ToolExecutor — crawl redirect handling (0sec#238)", () => {
   it("does NOT leak attribution headers across an out-of-scope redirect", async () => {
     const { ScopePolicy } = await import("../scope/scope.js");
     const scope = ScopePolicy.fromJson({
@@ -2990,7 +2990,7 @@ describe("ToolExecutor — crawl redirect handling (pwnkit#238)", () => {
   });
 
   it("non-redirect 200 path is unaffected by manual-redirect handling", async () => {
-    // Sanity check: the manual-redirect plumbing (pwnkit#238) must not
+    // Sanity check: the manual-redirect plumbing (0sec#238) must not
     // change behaviour on the happy path. A plain 200 should be processed
     // exactly as before — single fetch, body parsed, attribution sent on
     // the (only) request.
@@ -3147,7 +3147,7 @@ describe("evaluateDoneCoverageGate", () => {
     expect(decision.pass).toBe(true);
   });
 
-  it("honors PWNKIT_AUDIT_MIN_COVERAGE_FILES env override", () => {
+  it("honors 0SEC_AUDIT_MIN_COVERAGE_FILES env override", () => {
     // Loosen the threshold to 1 — single source file should now pass.
     const decision = evaluateDoneCoverageGate(
       {
@@ -3156,12 +3156,12 @@ describe("evaluateDoneCoverageGate", () => {
         elapsedMs: 5_000,
         priorRejections: 0,
       },
-      { PWNKIT_AUDIT_MIN_COVERAGE_FILES: "1" } as NodeJS.ProcessEnv,
+      { "0SEC_AUDIT_MIN_COVERAGE_FILES": "1" } as NodeJS.ProcessEnv,
     );
     expect(decision.pass).toBe(true);
   });
 
-  it("disables the gate when PWNKIT_AUDIT_DONE_GATE=0", () => {
+  it("disables the gate when 0SEC_AUDIT_DONE_GATE=0", () => {
     const decision = evaluateDoneCoverageGate(
       {
         sourceFilesRead: 0,
@@ -3169,7 +3169,7 @@ describe("evaluateDoneCoverageGate", () => {
         elapsedMs: 1_000,
         priorRejections: 0,
       },
-      { PWNKIT_AUDIT_DONE_GATE: "0" } as NodeJS.ProcessEnv,
+      { "0SEC_AUDIT_DONE_GATE": "0" } as NodeJS.ProcessEnv,
     );
     expect(decision.pass).toBe(true);
   });
@@ -3429,7 +3429,7 @@ describe("ToolExecutor — http_audit enforcement (FROZEN CONTRACT)", () => {
     expect(ctx.enforcement!.summarize().requests_out_of_scope_blocked).toBe(0);
   });
 
-  // ── pwnkit#568: close the bash rate-limiter bypass ──
+  // ── 0sec#568: close the bash rate-limiter bypass ──
   // Bash curl/wget previously bypassed both the per-host RateLimiter and the
   // enforcement counters entirely. These pin that bash-issued HTTP is now
   // paced (acquire) and counted (noteInScope) BEFORE exec.
@@ -3480,8 +3480,8 @@ describe("ToolExecutor — http_audit enforcement (FROZEN CONTRACT)", () => {
   });
 });
 
-// ── pwnkit#568: WAF detection + adaptive evasion (http_request) ──
-describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () => {
+// ── 0sec#568: WAF detection + adaptive evasion (http_request) ──
+describe("ToolExecutor — WAF detection + adaptive evasion (0sec#568)", () => {
   function wafCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     return {
       target: "https://api.example.com",
@@ -3577,7 +3577,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () =>
   // ── Ladder opt-out (engagement hardening) ──
   // Escalating a WAF block into encoded/mutated retries is what turns a routine
   // block into a SOC incident. The ladder must be disableable — via a posture
-  // OR standalone via PWNKIT_WAF_EVASION=0 — while detection keeps working.
+  // OR standalone via 0SEC_WAF_EVASION=0 — while detection keeps working.
   it("does NOT run the evasion ladder under a conservative engagement posture", async () => {
     const ctx = wafCtx({ engagement: resolveEngagementProfile({ cliProfile: "conservative" }) });
     const fetchStub = vi.fn(async () => ({
@@ -3614,7 +3614,7 @@ describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () =>
     }
   });
 
-  it("honours the standalone PWNKIT_WAF_EVASION=0 opt-out with no posture wired", async () => {
+  it("honours the standalone 0SEC_WAF_EVASION=0 opt-out with no posture wired", async () => {
     const ctx = wafCtx();
     const fetchStub = vi.fn(async () => ({
       status: 403,
@@ -3622,8 +3622,8 @@ describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () =>
       text: async () => "Attention Required! | Cloudflare",
     } as unknown as Response));
     vi.stubGlobal("fetch", fetchStub);
-    const prev = process.env.PWNKIT_WAF_EVASION;
-    process.env.PWNKIT_WAF_EVASION = "0";
+    const prev = process.env["0SEC_WAF_EVASION"];
+    process.env["0SEC_WAF_EVASION"] = "0";
     try {
       const ex = new ToolExecutor(ctx, null);
       const result = await ex.execute({
@@ -3636,8 +3636,8 @@ describe("ToolExecutor — WAF detection + adaptive evasion (pwnkit#568)", () =>
       expect(fetchStub).toHaveBeenCalledTimes(1);
       expect((result.output as Record<string, any>).waf.evasion.enabled).toBe(false);
     } finally {
-      if (prev === undefined) delete process.env.PWNKIT_WAF_EVASION;
-      else process.env.PWNKIT_WAF_EVASION = prev;
+      if (prev === undefined) delete process.env["0SEC_WAF_EVASION"];
+      else process.env["0SEC_WAF_EVASION"] = prev;
       vi.unstubAllGlobals();
     }
   });
@@ -3682,14 +3682,14 @@ function ScopePolicyFromHosts(hosts: string[]) {
   return HttpAuditScopePolicy.fromJson({ in_scope: hosts });
 }
 
-// ── Credential hygiene in the child env (pwnkit#134) ────────────────────────
+// ── Credential hygiene in the child env (0sec#134) ────────────────────────
 //
 // `sanitizedEnv()` strips a name denylist from the env handed to `bash` and to
 // the scanner subprocesses. Two things need pinning:
 //
-//   1. The PWNKIT_* credentials the worker-controller injects per scan are
+//   1. The 0SEC_* credentials the worker-controller injects per scan are
 //      actually filtered. Before #134 the denylist named only
-//      PWNKIT_CLOUD_TOKEN, so the Codex refresh token and the git tokens
+//      0SEC_CLOUD_TOKEN, so the Codex refresh token and the git tokens
 //      reached the agent shell in plain `env` output.
 //   2. AUTH_HEADER / AUTH_VALUE / AUTH_CURL_FLAG SURVIVE. They are merged in
 //      deliberately by `buildAuthEnvVars()` and are how the agent
@@ -3700,18 +3700,18 @@ function ScopePolicyFromHosts(hosts: string[]) {
 // `process.env` and /proc/<ppid>/environ is same-uid readable. These tests pin
 // the stopgap's contract, they do not assert containment.
 
-describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () => {
+describe("sanitizedEnv — child-process credential filtering (0sec#134)", () => {
   const INJECTED_CREDENTIALS = [
-    "PWNKIT_CLOUD_TOKEN",
-    "PWNKIT_CHATGPT_ACCESS_TOKEN",
-    "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN",
-    "PWNKIT_GITHUB_TOKEN",
-    "PWNKIT_GITLAB_TOKEN",
-    "PWNKIT_TARGET_AUTH_JSON",
-    "PWNKIT_GRAPH_ACCESS_TOKEN",
+    "0SEC_CLOUD_TOKEN",
+    "0SEC_CHATGPT_ACCESS_TOKEN",
+    "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN",
+    "0SEC_GITHUB_TOKEN",
+    "0SEC_GITLAB_TOKEN",
+    "0SEC_TARGET_AUTH_JSON",
+    "0SEC_GRAPH_ACCESS_TOKEN",
   ];
 
-  it("filters every PWNKIT_* credential the scan runner injects", () => {
+  it("filters every 0SEC_* credential the scan runner injects", () => {
     const source: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
     for (const name of INJECTED_CREDENTIALS) source[name] = `secret-${name}`;
 
@@ -3761,21 +3761,21 @@ describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () 
     expect(out.TARGET).toBe("https://target.test");
   });
 
-  it("does not filter non-credential PWNKIT_* config (feature flags, budgets)", () => {
+  it("does not filter non-credential 0SEC_* config (feature flags, budgets)", () => {
     const out = sanitizedEnv({
-      PWNKIT_FEATURE_JIT_SKILLS: "1",
-      PWNKIT_BASH_TIMEOUT_MS: "60000",
-      PWNKIT_CLOUD_SCAN_ID: "scan-1",
+      "0SEC_FEATURE_JIT_SKILLS": "1",
+      "0SEC_BASH_TIMEOUT_MS": "60000",
+      "0SEC_CLOUD_SCAN_ID": "scan-1",
     });
-    expect(out.PWNKIT_FEATURE_JIT_SKILLS).toBe("1");
-    expect(out.PWNKIT_BASH_TIMEOUT_MS).toBe("60000");
-    expect(out.PWNKIT_CLOUD_SCAN_ID).toBe("scan-1");
+    expect(out["0SEC_FEATURE_JIT_SKILLS"]).toBe("1");
+    expect(out["0SEC_BASH_TIMEOUT_MS"]).toBe("60000");
+    expect(out["0SEC_CLOUD_SCAN_ID"]).toBe("scan-1");
   });
 
   it("end-to-end: the bash child cannot read the injected credentials, but CAN read $AUTH_VALUE", async () => {
     const saved = {
-      refresh: process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN,
-      gh: process.env.PWNKIT_GITHUB_TOKEN,
+      refresh: process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"],
+      gh: process.env["0SEC_GITHUB_TOKEN"],
     };
     // Composed rather than written as literals. A literal here trips
     // foxguard's js/no-hardcoded-secret — correct by pattern, wrong by
@@ -3783,8 +3783,8 @@ describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () 
     // they leak into the child env. Keep them distinctive and keep them
     // out of the scanner's way.
     const canary = (kind: string) => `canary-${kind}-must-not-leak`;
-    process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = canary("refresh");
-    process.env.PWNKIT_GITHUB_TOKEN = canary("github");
+    process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"] = canary("refresh");
+    process.env["0SEC_GITHUB_TOKEN"] = canary("github");
     try {
       const ctx: ToolContext = {
         target: "https://target.test",
@@ -3799,7 +3799,9 @@ describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () 
         name: "bash",
         arguments: {
           command:
-            'echo "refresh=[${PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN}] gh=[${PWNKIT_GITHUB_TOKEN}] auth=[${AUTH_VALUE}]"',
+            // printenv, not $VAR expansion: POSIX shells reject digit-leading
+            // variable names like 0SEC_* in ${...} (bad substitution).
+            'echo "refresh=[$(printenv 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN)] gh=[$(printenv 0SEC_GITHUB_TOKEN)] auth=[${AUTH_VALUE}]"',
         },
       });
       expect(result.success).toBe(true);
@@ -3812,10 +3814,10 @@ describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () 
       // that makes the denylist safe to extend.
       expect(out).toContain("auth=[Bearer target-token]");
     } finally {
-      if (saved.refresh === undefined) delete process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
-      else process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN = saved.refresh;
-      if (saved.gh === undefined) delete process.env.PWNKIT_GITHUB_TOKEN;
-      else process.env.PWNKIT_GITHUB_TOKEN = saved.gh;
+      if (saved.refresh === undefined) delete process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
+      else process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"] = saved.refresh;
+      if (saved.gh === undefined) delete process.env["0SEC_GITHUB_TOKEN"];
+      else process.env["0SEC_GITHUB_TOKEN"] = saved.gh;
     }
   });
 
@@ -3823,7 +3825,7 @@ describe("sanitizedEnv — child-process credential filtering (pwnkit#134)", () 
     const envName = "Z_AI_API_KEY";
     const previous = process.env[envName];
     const canary = "canary-zai-must-not-leak";
-    const scopePath = mkdtempSync(join(tmpdir(), "pwnkit-credential-pipeline-"));
+    const scopePath = mkdtempSync(join(tmpdir(), "0sec-credential-pipeline-"));
     process.env[envName] = canary;
     try {
       const ex = new ToolExecutor(

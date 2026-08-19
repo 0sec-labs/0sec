@@ -99,9 +99,9 @@ describe("appsecArchetypeToFinderLens / loadAppsecFinderLenses", () => {
   });
 });
 
-describe("loadAppsecFinderLenses — runtime lens injection (PWNKIT_RUNTIME_LENSES)", () => {
-  const FLAG = "PWNKIT_RUNTIME_LENSES_ENABLED";
-  const ENV = "PWNKIT_RUNTIME_LENSES";
+describe("loadAppsecFinderLenses — runtime lens injection (0SEC_RUNTIME_LENSES)", () => {
+  const FLAG = "0SEC_RUNTIME_LENSES_ENABLED";
+  const ENV = "0SEC_RUNTIME_LENSES";
 
   /** A full, well-formed on-disk (snake_case) runtime archetype for `id`. */
   const rawRuntimeArchetype = (id: string) => ({

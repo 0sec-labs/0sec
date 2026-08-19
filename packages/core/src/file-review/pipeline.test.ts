@@ -7,7 +7,7 @@ import type { ReviewInvocation, ReviewInvoker } from "./types.js";
 
 // A fake target repo with one or more injectable files.
 function makeTarget(files: readonly string[] = ["app.ts"]): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-pipe-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-pipe-"));
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   for (const fileName of files) {
     fs.writeFileSync(
@@ -116,7 +116,7 @@ function scriptedInvoker(): ReviewInvoker {
 describe("runFileReviewPipeline", () => {
   it("runs scan → process → revalidate end to end with exit code 1", async () => {
     const root = makeTarget();
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const result = await runFileReviewPipeline({
       rootPath: root,
       dataDir,
@@ -136,7 +136,7 @@ describe("runFileReviewPipeline", () => {
   it("blocks paid processing when an explicit inventory coverage gate fails", async () => {
     const root = makeTarget();
     fs.writeFileSync(path.join(root, "src", "clean.ts"), "export const clean = true;\n");
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const labels: string[] = [];
     const invoker: ReviewInvoker = async (_prompt, label) => {
       labels.push(label);
@@ -166,7 +166,7 @@ describe("runFileReviewPipeline", () => {
 
   it("counts inventory spend against the whole-run cost cap", async () => {
     const root = makeTarget();
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
 
     const result = await runFileReviewPipeline({
       rootPath: root,
@@ -183,7 +183,7 @@ describe("runFileReviewPipeline", () => {
 
   it("returns exit code 3 when revalidation exhausts the remaining run budget", async () => {
     const root = makeTarget();
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const result = await runFileReviewPipeline({
       rootPath: root,
       dataDir,
@@ -202,7 +202,7 @@ describe("runFileReviewPipeline", () => {
 
   it("returns exit code 3 at a cost limit and resumes cleanly", async () => {
     const root = makeTarget(["app.ts", "other.ts"]);
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     // The first batch completes; the cost cap blocks the next one.
     const limited = await runFileReviewPipeline({
       rootPath: root,
@@ -228,9 +228,9 @@ describe("runFileReviewPipeline", () => {
   });
 
   it("is clean (exit 0) when the repo has no candidates", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-clean-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-clean-"));
     fs.writeFileSync(path.join(root, "README.ts"), "export const x = 1;\n");
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-data-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-data-"));
     const result = await runFileReviewPipeline({
       rootPath: root,
       dataDir,

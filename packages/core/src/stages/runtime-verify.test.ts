@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { makeRuntimeVerifier } from "./runtime-verify.js";
 
 const E2B_KEY_BACKUP = process.env.E2B_API_KEY;

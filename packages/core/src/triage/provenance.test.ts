@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import type { Finding, LayerVerdict, TriageLayerName } from "@pwnkit/shared";
+import type { Finding, LayerVerdict, TriageLayerName } from "@0sec/shared";
 import {
   summarizeTriageProvenance,
   formatTriageProvenance,
@@ -84,7 +84,7 @@ describe("summarizeTriageProvenance — status derivation", () => {
       makeFinding({
         layerVerdicts: [
           verdict("reachability", "skip", {
-            reason: "PWNKIT_FEATURE_REACHABILITY_GATE=0",
+            reason: "0SEC_FEATURE_REACHABILITY_GATE=0",
           }),
         ],
       }),
@@ -92,7 +92,7 @@ describe("summarizeTriageProvenance — status derivation", () => {
 
     const layer = provenance.layers.find((l) => l.layer === "reachability");
     expect(layer?.status).toBe("skipped");
-    expect(layer?.reason).toBe("PWNKIT_FEATURE_REACHABILITY_GATE=0");
+    expect(layer?.reason).toBe("0SEC_FEATURE_REACHABILITY_GATE=0");
   });
 
   /** A layer that skipped once and later ran counts as executed. */
@@ -231,9 +231,9 @@ describe("summarizeTriageProvenance — reads the record, not the environment", 
    * finding produced by a scan that ran without them.
    */
   it("does not report a layer as executed just because its flag is on now", () => {
-    process.env.PWNKIT_FEATURE_POV_GATE = "1";
-    process.env.PWNKIT_FEATURE_REACHABILITY_GATE = "1";
-    process.env.PWNKIT_FEATURE_MULTIMODAL = "1";
+    process.env["0SEC_FEATURE_POV_GATE"] = "1";
+    process.env["0SEC_FEATURE_REACHABILITY_GATE"] = "1";
+    process.env["0SEC_FEATURE_MULTIMODAL"] = "1";
 
     const provenance = summarizeTriageProvenance(
       makeFinding({ layerVerdicts: [verdict("holding_it_wrong", "pass")] }),

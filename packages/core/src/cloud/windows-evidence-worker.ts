@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { VERSION } from "@pwnkit/shared";
+import { VERSION } from "@0sec/shared";
 
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -253,7 +253,7 @@ export class WindowsEvidenceWorkerClient {
     return {
       Authorization: `Bearer ${this.uploadGrant}`,
       Accept: "application/json",
-      "User-Agent": `pwnkit-cli/${VERSION}`,
+      "User-Agent": `0sec-cli/${VERSION}`,
       ...extra,
     };
   }

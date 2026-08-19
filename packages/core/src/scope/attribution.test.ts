@@ -6,11 +6,11 @@ import {
   formatUserAgent,
 } from "./attribution.js";
 import { ScopePolicy } from "./scope.js";
-import { VERSION } from "@pwnkit/shared";
+import { VERSION } from "@0sec/shared";
 
 // ── resolveAttribution ──
 
-describe("resolveAttribution — config sources & precedence (pwnkit#216)", () => {
+describe("resolveAttribution — config sources & precedence (0sec#216)", () => {
   it("returns undefined when no source contributes anything", () => {
     expect(resolveAttribution()).toBeUndefined();
     expect(resolveAttribution({ env: {} })).toBeUndefined();
@@ -39,31 +39,31 @@ describe("resolveAttribution — config sources & precedence (pwnkit#216)", () =
     expect(cfg?.headers).toEqual({ "X-Good": "ok" });
   });
 
-  it("loads env headers from PWNKIT_ATTRIBUTION_HEADERS JSON", () => {
+  it("loads env headers from 0SEC_ATTRIBUTION_HEADERS JSON", () => {
     const cfg = resolveAttribution({
-      env: { PWNKIT_ATTRIBUTION_HEADERS: '{"X-Pentest":"env-engagement"}' },
+      env: { "0SEC_ATTRIBUTION_HEADERS": '{"X-Pentest":"env-engagement"}' },
     });
     expect(cfg?.headers["X-Pentest"]).toBe("env-engagement");
   });
 
-  it("throws on malformed PWNKIT_ATTRIBUTION_HEADERS JSON", () => {
+  it("throws on malformed 0SEC_ATTRIBUTION_HEADERS JSON", () => {
     expect(() =>
-      resolveAttribution({ env: { PWNKIT_ATTRIBUTION_HEADERS: "{not json" } }),
-    ).toThrow(/PWNKIT_ATTRIBUTION_HEADERS/);
+      resolveAttribution({ env: { "0SEC_ATTRIBUTION_HEADERS": "{not json" } }),
+    ).toThrow(/0SEC_ATTRIBUTION_HEADERS/);
   });
 
   it("throws when env headers is not an object of strings", () => {
     expect(() =>
-      resolveAttribution({ env: { PWNKIT_ATTRIBUTION_HEADERS: '["array"]' } }),
+      resolveAttribution({ env: { "0SEC_ATTRIBUTION_HEADERS": '["array"]' } }),
     ).toThrow();
     expect(() =>
-      resolveAttribution({ env: { PWNKIT_ATTRIBUTION_HEADERS: '{"X-Bad":42}' } }),
+      resolveAttribution({ env: { "0SEC_ATTRIBUTION_HEADERS": '{"X-Bad":42}' } }),
     ).toThrow();
   });
 
-  it("loads UA token from env PWNKIT_ATTRIBUTION_UA_TOKEN", () => {
+  it("loads UA token from env 0SEC_ATTRIBUTION_UA_TOKEN", () => {
     const cfg = resolveAttribution({
-      env: { PWNKIT_ATTRIBUTION_UA_TOKEN: "env-eng-42" },
+      env: { "0SEC_ATTRIBUTION_UA_TOKEN": "env-eng-42" },
     });
     expect(cfg?.userAgentToken).toBe("env-eng-42");
   });
@@ -71,7 +71,7 @@ describe("resolveAttribution — config sources & precedence (pwnkit#216)", () =
   it("scope file beats env beats CLI on the same header name", () => {
     const cfg = resolveAttribution({
       scopeFileBlock: { headers: { "X-Pentest": "from-file" } },
-      env: { PWNKIT_ATTRIBUTION_HEADERS: '{"X-Pentest":"from-env"}' },
+      env: { "0SEC_ATTRIBUTION_HEADERS": '{"X-Pentest":"from-env"}' },
       cliHeaders: ["X-Pentest=from-cli"],
     });
     expect(cfg?.headers["X-Pentest"]).toBe("from-file");
@@ -79,7 +79,7 @@ describe("resolveAttribution — config sources & precedence (pwnkit#216)", () =
 
   it("env beats CLI on the same header name when no scope file value", () => {
     const cfg = resolveAttribution({
-      env: { PWNKIT_ATTRIBUTION_HEADERS: '{"X-Pentest":"from-env"}' },
+      env: { "0SEC_ATTRIBUTION_HEADERS": '{"X-Pentest":"from-env"}' },
       cliHeaders: ["X-Pentest=from-cli"],
     });
     expect(cfg?.headers["X-Pentest"]).toBe("from-env");
@@ -88,10 +88,10 @@ describe("resolveAttribution — config sources & precedence (pwnkit#216)", () =
   it("merges across sources for distinct keys", () => {
     const cfg = resolveAttribution({
       scopeFileBlock: { headers: { "X-Pentest": "file-pin" } },
-      env: { PWNKIT_ATTRIBUTION_HEADERS: '{"X-Engagement-ID":"env-42"}' },
+      env: { "0SEC_ATTRIBUTION_HEADERS": '{"X-Engagement-ID":"env-42"}' },
       cliHeaders: ["X-Researcher=brian"],
     });
-    // Names are canonicalized to title-case (pwnkit#239), so "X-Engagement-ID"
+    // Names are canonicalized to title-case (0sec#239), so "X-Engagement-ID"
     // becomes "X-Engagement-Id" in the merged dict.
     expect(cfg?.headers).toEqual({
       "X-Pentest": "file-pin",
@@ -103,13 +103,13 @@ describe("resolveAttribution — config sources & precedence (pwnkit#216)", () =
   it("UA token follows the same precedence (file > env > CLI)", () => {
     const cfg1 = resolveAttribution({
       scopeFileBlock: { user_agent_token: "file-ua" },
-      env: { PWNKIT_ATTRIBUTION_UA_TOKEN: "env-ua" },
+      env: { "0SEC_ATTRIBUTION_UA_TOKEN": "env-ua" },
       cliUaToken: "cli-ua",
     });
     expect(cfg1?.userAgentToken).toBe("file-ua");
 
     const cfg2 = resolveAttribution({
-      env: { PWNKIT_ATTRIBUTION_UA_TOKEN: "env-ua" },
+      env: { "0SEC_ATTRIBUTION_UA_TOKEN": "env-ua" },
       cliUaToken: "cli-ua",
     });
     expect(cfg2?.userAgentToken).toBe("env-ua");
@@ -121,17 +121,17 @@ describe("resolveAttribution — config sources & precedence (pwnkit#216)", () =
   it("ignores blank UA token strings (treats them as not-set)", () => {
     const cfg = resolveAttribution({
       scopeFileBlock: { user_agent_token: "   " },
-      env: { PWNKIT_ATTRIBUTION_UA_TOKEN: "real-token" },
+      env: { "0SEC_ATTRIBUTION_UA_TOKEN": "real-token" },
     });
     expect(cfg?.userAgentToken).toBe("real-token");
   });
 
-  // ── canonical-case dedup (pwnkit#239) ──
+  // ── canonical-case dedup (0sec#239) ──
 
   it("dedupes header names that differ only in case across sources", () => {
     const cfg = resolveAttribution({
       scopeFileBlock: { headers: { "X-Pentest": "from-file" } },
-      env: { PWNKIT_ATTRIBUTION_HEADERS: '{"x-pentest":"from-env"}' },
+      env: { "0SEC_ATTRIBUTION_HEADERS": '{"x-pentest":"from-env"}' },
       cliHeaders: ["X-PENTEST=from-cli"],
     });
     expect(Object.keys(cfg!.headers)).toHaveLength(1);
@@ -230,19 +230,19 @@ describe("applyAttribution — header injection", () => {
       scope,
     );
     const headers = (out as RequestInit).headers as Record<string, string>;
-    expect(headers["User-Agent"]).toBe(`pwnkit/${VERSION} (engagement: engagement-123)`);
+    expect(headers["User-Agent"]).toBe(`0sec/${VERSION} (engagement: engagement-123)`);
   });
 
   it("preserves caller-supplied User-Agent (caller wins)", () => {
     const scope = ScopePolicy.fromJson({ in_scope: ["api.example.com"] });
     const out = applyAttribution(
       "https://api.example.com/",
-      { headers: { "User-Agent": "pwnkit-crawler/1.0" } },
+      { headers: { "User-Agent": "0sec-crawler/1.0" } },
       attribution,
       scope,
     );
     const headers = (out as RequestInit).headers as Record<string, string>;
-    expect(headers["User-Agent"]).toBe("pwnkit-crawler/1.0");
+    expect(headers["User-Agent"]).toBe("0sec-crawler/1.0");
   });
 
   it("caller-supplied attribution-shaped headers win over the resolved config", () => {
@@ -292,7 +292,7 @@ describe("applyAttribution — header injection", () => {
       undefined,
     );
     const headers = (out as RequestInit).headers as Record<string, string>;
-    expect(headers["User-Agent"]).toBe(`pwnkit/${VERSION} (engagement: engagement-only)`);
+    expect(headers["User-Agent"]).toBe(`0sec/${VERSION} (engagement: engagement-only)`);
     expect(Object.keys(headers).filter((k) => k.toLowerCase() !== "user-agent")).toHaveLength(0);
   });
 });
@@ -347,7 +347,7 @@ describe("extractAttributionFromScopeJson — scope file ingestion", () => {
 // ── formatUserAgent ──
 
 describe("formatUserAgent", () => {
-  it("formats as `pwnkit/<ver> (engagement: <token>)`", () => {
-    expect(formatUserAgent("eng-1")).toBe(`pwnkit/${VERSION} (engagement: eng-1)`);
+  it("formats as `0sec/<ver> (engagement: <token>)`", () => {
+    expect(formatUserAgent("eng-1")).toBe(`0sec/${VERSION} (engagement: eng-1)`);
   });
 });

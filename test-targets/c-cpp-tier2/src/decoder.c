@@ -9,12 +9,12 @@
  * shorter buffer.
  */
 
-#include "../include/pwnkit_tier2.h"
+#include "../include/osec_tier2.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-int pwnkit_tier2_decoder_run(const uint8_t *payload, size_t payload_size,
+int osec_tier2_decoder_run(const uint8_t *payload, size_t payload_size,
                              uint8_t **out, size_t *out_size) {
   if (payload == NULL || out == NULL || out_size == NULL) return -1;
   if (payload_size < 8) return -1;

@@ -1,5 +1,5 @@
 /**
- * Userspace / Rust crash-to-primitive classification (pwnkit#698, Track C).
+ * Userspace / Rust crash-to-primitive classification (0sec#698, Track C).
  *
  * The userspace analogue of `kernel-primitive.ts`. An ASan/UBSan/MSan report, a
  * Miri UB diagnostic, a Rust panic or a bare segfault proves a *bug* fired — but

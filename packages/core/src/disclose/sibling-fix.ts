@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, join, extname } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { extractFileRefs, type FileRef } from "./canary.js";
 
 export interface SiblingFixCandidate {

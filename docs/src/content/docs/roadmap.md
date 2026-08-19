@@ -1,6 +1,6 @@
 ---
 title: Roadmap
-description: Where pwnkit is going next. Opinionated, prioritised by leverage, dated by what already shipped.
+description: Where 0sec is going next. Opinionated, prioritised by leverage, dated by what already shipped.
 ---
 
 This roadmap is opinionated. It prioritises product leverage over surface-area creep, and it stays honest about what has actually shipped vs what is still being scoped.
@@ -15,7 +15,7 @@ What has changed is that the trust layer is now real. The retained artifact-back
 
 ## May 2026 strategy addendum
 
-FoxGuard is now the default static lead source and the explicit stepping stone away from Semgrep. The product direction is not "delete Semgrep immediately" or "rewrite pwnkit in Rust." The direction is:
+FoxGuard is now the default static lead source and the explicit stepping stone away from Semgrep. The product direction is not "delete Semgrep immediately" or "rewrite 0sec in Rust." The direction is:
 
 1. keep the TypeScript control plane for agent orchestration, provider integration, CLI/cloud contracts, benchmark loops, and fast policy iteration
 2. move deterministic engines into Rust behind stable JSON/SARIF contracts
@@ -86,11 +86,11 @@ This is a small, falsifiable change. If it lands XBEN-079 it almost certainly ca
 
 - the repo already persists `agent_sessions` and `pipeline_events`
 - long-running agentic workflows are expensive to restart
-- this is what makes pwnkit feel like infrastructure instead of a disposable CLI run
+- this is what makes 0sec feel like infrastructure instead of a disposable CLI run
 
 **Deliverables:**
 
-- `pwnkit-cli resume <scan-id>`
+- `0sec-cli resume <scan-id>`
 - stage-level checkpointing
 - partial-result recovery after crash or timeout
 - resume-safe report generation
@@ -216,7 +216,7 @@ Things that sound flashy but should stay below the line for now:
 
 ## Product Direction
 
-The best version of pwnkit is:
+The best version of 0sec is:
 
 - a sharp local CLI for one-off deep work
 - a reliable CI primitive for PRs and repos

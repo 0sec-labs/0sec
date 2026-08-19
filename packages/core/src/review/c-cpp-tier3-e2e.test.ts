@@ -1,6 +1,6 @@
 /**
  * End-to-end Tier-3 test against the synthetic `test-targets/c-cpp-tier2`
- * library. Gated behind `PWNKIT_KERNEL_QEMU=1` because it requires a
+ * library. Gated behind `0SEC_KERNEL_QEMU=1` because it requires a
  * real kernel + rootfs and an actual QEMU binary on PATH.
  *
  * What this asserts:
@@ -23,26 +23,26 @@ import {
   runTier3Validation,
   promoteFindingsWithTier3Result,
 } from "./c-cpp-tier3.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // __dirname = packages/core/src/review → walk up to repo root.
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 const TARGET = join(REPO_ROOT, "test-targets", "c-cpp-tier2");
 
-const QEMU_E2E = process.env.PWNKIT_KERNEL_QEMU === "1";
+const QEMU_E2E = process.env["0SEC_KERNEL_QEMU"] === "1";
 
 describe.skipIf(!QEMU_E2E)("Tier-3 E2E (real QEMU)", () => {
   it("validates the synthetic integer-truncation crash through Tier-2 → Tier-3", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier3-e2e-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier3-e2e-"));
     try {
       const seeds = await extractCorpus(TARGET, { outputDir: join(outDir, "corpus") });
       const artifact = await buildTier2Harness({
         suspectFunction: {
-          header: "pwnkit_tier2.h",
-          functionName: "pwnkit_tier2_decode",
+          header: "osec_tier2.h",
+          functionName: "osec_tier2_decode",
           declaration:
-            "int pwnkit_tier2_decode(const uint8_t *data, size_t size, uint8_t **out, size_t *out_size);",
+            "int osec_tier2_decode(const uint8_t *data, size_t size, uint8_t **out, size_t *out_size);",
           inputShape: "bytesAndLenOut",
         },
         sourceRoot: TARGET,

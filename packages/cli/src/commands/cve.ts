@@ -1,21 +1,21 @@
-// `pwnkit cve` — CVE workflows.
+// `0sec cve` — CVE workflows.
 //
 // Two subcommands live on the same parent command, one per slice of
 // issue #272 v0:
 //
-//   - `pwnkit cve find <cve-id>`  — issue #272 v0 part 1. Operator-facing
+//   - `0sec cve find <cve-id>`  — issue #272 v0 part 1. Operator-facing
 //     half of the artifact scraper. Queries a curated set of public
 //     catalogues (NVD, GHSA, OSV, distro trackers, GitHub search),
 //     merges the results, and emits either machine-readable JSON or a
 //     pretty table.
 //
-//   - `pwnkit cve adapt <cve-id>` — issue #272 v0 part 2. Wraps the
+//   - `0sec cve adapt <cve-id>` — issue #272 v0 part 2. Wraps the
 //     core `adaptAndVerify` pipeline so an operator can run the
 //     discover → confirm → port → reproduce loop end-to-end against a
 //     target kernel tree without writing TypeScript.
 //
 // The two subcommands share nothing at runtime today; they're grouped
-// under the same parent so the user-facing surface (`pwnkit cve …`)
+// under the same parent so the user-facing surface (`0sec cve …`)
 // stays coherent.
 //
 // Exit codes:
@@ -41,14 +41,14 @@ import {
   findCveArtifacts,
   normaliseCveId,
   adaptAndVerify,
-} from "@pwnkit/core";
+} from "@0sec/core";
 import type {
   ScrapedCveArtifacts,
   AdaptationResult,
   AdaptationStatus,
   CveArtifactProvider,
   CveArtifacts,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 // ── `cve find` (scraper) ────────────────────────────────────────────
 
@@ -219,7 +219,7 @@ export function registerCveCommand(program: Command): void {
     .description("Find public PoC + write-up artifacts for a CVE id")
     .argument("<cve-id>", "CVE identifier, e.g. CVE-2024-1086")
     .option("--format <fmt>", `Output format: ${VALID_FORMATS.join(" | ")}`, "json")
-    .option("--cache-dir <path>", "Override cache directory (default ~/.pwnkit/cve-cache)")
+    .option("--cache-dir <path>", "Override cache directory (default ~/.0sec/cve-cache)")
     .option("--no-cache", "Bypass on-disk cache and re-fetch every source")
     .option("--timeout <ms>", "Per-source timeout in milliseconds", "10000")
     .option("--retries <n>", "Retry count per source on 5xx", "2")

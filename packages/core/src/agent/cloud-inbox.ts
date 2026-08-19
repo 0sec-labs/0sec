@@ -1,4 +1,4 @@
-// pwnkit/packages/core/src/agent/cloud-inbox.ts
+// 0sec/packages/core/src/agent/cloud-inbox.ts
 //
 // #978 — cloud control-channel drain (ADR-060). The agent loop already injects
 // "pending user messages" into the conversation each turn via the synchronous
@@ -31,7 +31,7 @@ export function startCloudInboxPoller(
   let stopped = false;
 
   const headers: Record<string, string> = {
-    "X-Pwnkit-Scan-Id": config.scanId,
+    "X-0sec-Scan-Id": config.scanId,
   };
   if (config.token) headers["Authorization"] = `Bearer ${config.token}`;
   const url = `${config.sinkUrl.replace(/\/+$/, "")}/scans/${encodeURIComponent(
@@ -84,7 +84,7 @@ export function startCloudInboxPoller(
 }
 
 /**
- * Start the inbox poller iff we're running under a cloud sink (PWNKIT_CLOUD_SINK
+ * Start the inbox poller iff we're running under a cloud sink (0SEC_CLOUD_SINK
  * + scan id set). Returns null in local-only mode — callers fall back to their
  * own getPendingUserMessages (TUI) or none.
  */

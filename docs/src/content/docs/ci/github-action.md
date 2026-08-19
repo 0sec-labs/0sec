@@ -1,9 +1,9 @@
 ---
 title: GitHub Action — PR scans
-description: Diff-scoped agentic security scanning for pull requests with the pwnkit composite action.
+description: Diff-scoped agentic security scanning for pull requests with the 0sec composite action.
 ---
 
-The `pwnkit-scan` composite action runs a diff-scoped security review on every
+The `0sec-scan` composite action runs a diff-scoped security review on every
 PR. Confirmed findings are posted as inline review comments anchored to the
 changed lines; unconfirmed hypotheses are rolled up into a single summary
 comment so the PR isn't spammed.
@@ -11,8 +11,8 @@ comment so the PR isn't spammed.
 ## Quick start
 
 ```yaml
-# .github/workflows/pwnkit.yml
-name: pwnkit
+# .github/workflows/0sec.yml
+name: 0sec
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -22,13 +22,13 @@ permissions:
   pull-requests: write
 
 jobs:
-  pwnkit:
+  0sec:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
+      - uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
         with:
           mode: pr
           profile: web
@@ -46,7 +46,7 @@ That's it. Open a PR; the action will scan the changed files and comment.
 | `profile` | `web` | Review profile: `web`, `linux-kernel`, or `c-cpp`. |
 | `comment-on-pr` | `true` | Post confirmed findings as inline review comments and hypotheses as a rolled-up summary. |
 | `fail-on-confirmed` | `true` | Exit non-zero (failing the job) when one or more confirmed findings are produced. |
-| `pwnkit-version` | `latest` | `pwnkit-cli` version installed via `npm install --global`. Pin for reproducible runs. |
+| `0sec-version` | `latest` | `0sec-cli` version installed via `npm install --global`. Pin for reproducible runs. |
 | `github-token` | `${{ github.token }}` | Token used for comment posting. |
 | `working-directory` | `${{ github.workspace }}` | Repository root to scan. |
 
@@ -56,7 +56,7 @@ That's it. Open a PR; the action will scan the changed files and comment.
 |------|-------------|
 | `findings-confirmed` | Count of confirmed findings. |
 | `findings-hypothesis` | Count of hypothesis-only findings. |
-| `results-file` | Absolute path to `pwnkit-results.json`. Also uploaded as an artifact named `pwnkit-results`. |
+| `results-file` | Absolute path to `0sec-results.json`. Also uploaded as an artifact named `0sec-results`. |
 
 ## How diff-scoping works
 
@@ -77,11 +77,11 @@ computed at all, the action degrades to `mode: full`.
 
 ## Gating merges
 
-Set `fail-on-confirmed: true` (the default) to block merges when pwnkit
+Set `fail-on-confirmed: true` (the default) to block merges when 0sec
 reports a confirmed finding:
 
 ```yaml
-- uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
+- uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
   with:
     mode: pr
     fail-on-confirmed: true
@@ -91,7 +91,7 @@ Hypothesis-only findings never fail the job; they only inform reviewers.
 
 ## Provider credentials
 
-`pwnkit-cli` runs against an LLM provider. Wire one of the supported providers
+`0sec-cli` runs against an LLM provider. Wire one of the supported providers
 via repository secrets and pass them through as `env:` on the action step:
 
 - `ANTHROPIC_API_KEY`
@@ -111,23 +111,23 @@ See [API Keys](/api-keys/) for the full matrix.
 
 ## Pinning versions
 
-For reproducible scans pin the `pwnkit-cli` version:
+For reproducible scans pin the `0sec-cli` version:
 
 ```yaml
-- uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
+- uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
   with:
-    pwnkit-version: "0.7.0"
+    0sec-version: "0.7.0"
 ```
 
 ## Outputs in downstream steps
 
 ```yaml
-- id: pwnkit
-  uses: 0sec-labs/0sec/.github/actions/pwnkit-scan@v1
+- id: 0sec
+  uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
   with:
     mode: pr
     fail-on-confirmed: false
-- run: echo "Found ${{ steps.pwnkit.outputs.findings-confirmed }} confirmed, ${{ steps.pwnkit.outputs.findings-hypothesis }} hypothesis"
+- run: echo "Found ${{ steps.0sec.outputs.findings-confirmed }} confirmed, ${{ steps.0sec.outputs.findings-hypothesis }} hypothesis"
 ```
 
 ## Self-hosted runners
@@ -140,4 +140,4 @@ self-hosted runners.
 
 - [White-Box Mode](/white-box-mode/) — what the source review actually does.
 - [API Keys](/api-keys/) — provider configuration.
-- The action source: [`.github/actions/pwnkit-scan/`](https://github.com/0sec-labs/0sec/tree/main/.github/actions/pwnkit-scan)
+- The action source: [`.github/actions/0sec-scan/`](https://github.com/0sec-labs/0sec/tree/main/.github/actions/0sec-scan)

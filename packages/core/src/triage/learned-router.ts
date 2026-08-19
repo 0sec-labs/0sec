@@ -9,14 +9,14 @@
  * triage-dataset-v2.jsonl (1514 rows). 5-fold CV F1=0.962, precision=0.960,
  * recall=0.963. Replaces the v1 model (100 trees, F1=0.944).
  *
- * Feature flag: PWNKIT_FEATURE_LEARNED_ROUTER (default OFF).
- * See pwnkit#113 for the design doc.
+ * Feature flag: 0SEC_FEATURE_LEARNED_ROUTER (default OFF).
+ * See 0sec#113 for the design doc.
  */
 
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Finding, TriageLayerName } from "@pwnkit/shared";
+import type { Finding, TriageLayerName } from "@0sec/shared";
 import { extractFeatures, FEATURE_NAMES } from "./feature-extractor.js";
 
 // ────────────────────────────────────────────────────────────────────

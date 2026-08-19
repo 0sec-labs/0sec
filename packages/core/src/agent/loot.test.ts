@@ -240,26 +240,26 @@ describe("ToolExecutor use_loot", () => {
 // ── getToolsForRole gating ──────────────────────────────────────────────────
 
 describe("getToolsForRole loot gating", () => {
-  const ORIGINAL = process.env.PWNKIT_FEATURE_LOOT_LEDGER;
+  const ORIGINAL = process.env["0SEC_FEATURE_LOOT_LEDGER"];
   afterEach(() => {
-    if (ORIGINAL === undefined) delete process.env.PWNKIT_FEATURE_LOOT_LEDGER;
-    else process.env.PWNKIT_FEATURE_LOOT_LEDGER = ORIGINAL;
+    if (ORIGINAL === undefined) delete process.env["0SEC_FEATURE_LOOT_LEDGER"];
+    else process.env["0SEC_FEATURE_LOOT_LEDGER"] = ORIGINAL;
   });
 
   it("exposes use_loot to the attack role when the flag is on", () => {
-    delete process.env.PWNKIT_FEATURE_LOOT_LEDGER; // default ON
+    delete process.env["0SEC_FEATURE_LOOT_LEDGER"]; // default ON
     const names = getToolsForRole("attack").map((t) => t.name);
     expect(names).toContain("use_loot");
   });
 
   it("hides use_loot when the flag is off", () => {
-    process.env.PWNKIT_FEATURE_LOOT_LEDGER = "0";
+    process.env["0SEC_FEATURE_LOOT_LEDGER"] = "0";
     expect(getToolsForRole("attack").map((t) => t.name)).not.toContain("use_loot");
     expect(getToolsForRole("audit").map((t) => t.name)).not.toContain("use_loot");
   });
 });
 
-// ── Full-loop chaining acceptance (pwnkit#567) ──────────────────────────────
+// ── Full-loop chaining acceptance (0sec#567) ──────────────────────────────
 //
 // Deterministic stand-in for the issue's acceptance fixture: step 1 leaks a
 // credential, step 2 needs it. We script the agent (mock runtime) to (1) save a
@@ -288,14 +288,14 @@ function createMockRuntime(responses: NativeRuntimeResult[]): NativeRuntime {
 }
 
 describe("native loop loot chaining (acceptance)", () => {
-  const ORIGINAL = process.env.PWNKIT_FEATURE_LOOT_LEDGER;
+  const ORIGINAL = process.env["0SEC_FEATURE_LOOT_LEDGER"];
   afterEach(() => {
-    if (ORIGINAL === undefined) delete process.env.PWNKIT_FEATURE_LOOT_LEDGER;
-    else process.env.PWNKIT_FEATURE_LOOT_LEDGER = ORIGINAL;
+    if (ORIGINAL === undefined) delete process.env["0SEC_FEATURE_LOOT_LEDGER"];
+    else process.env["0SEC_FEATURE_LOOT_LEDGER"] = ORIGINAL;
   });
 
   it("leaks a credential in step 1, reuses it via use_loot in step 2", async () => {
-    delete process.env.PWNKIT_FEATURE_LOOT_LEDGER; // default ON
+    delete process.env["0SEC_FEATURE_LOOT_LEDGER"]; // default ON
     // Synthetic fixture value (not a real credential) — named neutrally so the
     // hardcoded-secret scanner doesn't flag the test as committing a password.
     const plantedValue = "Ch41nMe_v2_99";

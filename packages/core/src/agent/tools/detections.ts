@@ -1,5 +1,5 @@
 /**
- * Detection tool definitions (pwnkit #774 / #775) — exposes the
+ * Detection tool definitions (0sec #774 / #775) — exposes the
  * structural-SQLi and prompt-layer detection engines as first-class agent
  * tools so the live loop can invoke them, not just the JIT skill methodology.
  *
@@ -68,7 +68,7 @@ export const detectionToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614).
+// Tool-name → ToolExecutor handler-method name (0sec#614).
 export const detectionDispatch: Record<string, string> = {
   structural_sqli_probe: "structuralSqliProbe",
   prompt_layer_probe: "promptLayerProbe",

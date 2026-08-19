@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { extractFileRefs, verifyAgainstRef, formatPatchStatusSection } from "./canary.js";
 
 function baseFinding(overrides: Partial<Finding> = {}): Finding {
@@ -60,7 +60,7 @@ describe("verifyAgainstRef (filesystem)", () => {
   let repoPath: string;
 
   beforeAll(() => {
-    repoPath = mkdtempSync(join(tmpdir(), "pwnkit-canary-"));
+    repoPath = mkdtempSync(join(tmpdir(), "0sec-canary-"));
     mkdirSync(join(repoPath, "server/src/routes"), { recursive: true });
     // Large enough that line 221 is valid (so the finding's cited adapters.ts:221
     // still resolves — we're not testing line-out-of-range here).
@@ -119,10 +119,10 @@ describe("verifyAgainstRef (git-backed)", () => {
   let repoPath: string;
 
   beforeAll(() => {
-    repoPath = mkdtempSync(join(tmpdir(), "pwnkit-canary-git-"));
+    repoPath = mkdtempSync(join(tmpdir(), "0sec-canary-git-"));
     execFileSync("git", ["init", "-q"], { cwd: repoPath });
-    execFileSync("git", ["config", "user.email", "test@pwnkit.test"], { cwd: repoPath });
-    execFileSync("git", ["config", "user.name", "pwnkit-test"], { cwd: repoPath });
+    execFileSync("git", ["config", "user.email", "test@0sec.test"], { cwd: repoPath });
+    execFileSync("git", ["config", "user.name", "0sec-test"], { cwd: repoPath });
     mkdirSync(join(repoPath, "src"), { recursive: true });
     writeFileSync(join(repoPath, "src/vulnerable.ts"), "line1\nline2\nline3\n");
     execFileSync("git", ["add", "."], { cwd: repoPath });

@@ -9,10 +9,10 @@ const DEFAULT_CLI = "packages/cli/dist/index.js";
 
 function parseArgs(argv) {
   const args = {
-    corpus: process.env.PWNKIT_KERNEL_BATCH_CORPUS || DEFAULT_CORPUS,
-    outDir: process.env.PWNKIT_KERNEL_BATCH_OUT_DIR || DEFAULT_OUT_DIR,
-    cli: process.env.PWNKIT_KERNEL_BATCH_CLI || DEFAULT_CLI,
-    limit: process.env.PWNKIT_KERNEL_BATCH_LIMIT || "",
+    corpus: process.env["0SEC_KERNEL_BATCH_CORPUS"] || DEFAULT_CORPUS,
+    outDir: process.env["0SEC_KERNEL_BATCH_OUT_DIR"] || DEFAULT_OUT_DIR,
+    cli: process.env["0SEC_KERNEL_BATCH_CLI"] || DEFAULT_CLI,
+    limit: process.env["0SEC_KERNEL_BATCH_LIMIT"] || "",
     dryRun: false,
   };
 
@@ -49,7 +49,7 @@ function printHelp() {
 Options:
   --corpus <path>   Corpus JSON path. Default: ${DEFAULT_CORPUS}
   --out-dir <path>  Result artifact directory. Default: ${DEFAULT_OUT_DIR}
-  --cli <path>      Built pwnkit CLI entrypoint. Default: ${DEFAULT_CLI}
+  --cli <path>      Built 0sec CLI entrypoint. Default: ${DEFAULT_CLI}
   --limit <n>       Run at most n cases from the corpus.
   --dry-run         Validate corpus and write skipped case summaries without QEMU.
 `);
@@ -173,7 +173,7 @@ function extractJsonArray(raw) {
   }
 
   const detail = lastError instanceof Error ? ` Last parse error: ${lastError.message}.` : "";
-  throw new Error(`pwnkit ingest output did not contain a parseable JSON array.${detail} Raw output: ${raw.slice(0, 1000)}`);
+  throw new Error(`0sec ingest output did not contain a parseable JSON array.${detail} Raw output: ${raw.slice(0, 1000)}`);
 }
 
 function classifyResults(results) {
@@ -274,8 +274,8 @@ async function runCase(testCase, args, rootDir) {
 
     const env = {
       ...process.env,
-      PWNKIT_KERNEL_QEMU: "1",
-      PWNKIT_KERNEL_QEMU_ARTIFACT_DIR: artifactDir,
+      "0SEC_KERNEL_QEMU": "1",
+      "0SEC_KERNEL_QEMU_ARTIFACT_DIR": artifactDir,
     };
     const ingest = await runNode(
       [args.cli, "ingest", inputDir, "--verify", "-o", "json"],
@@ -284,7 +284,7 @@ async function runCase(testCase, args, rootDir) {
     await writeFile(rawPath, `${ingest.stdout}${ingest.stderr ? `\n--- stderr ---\n${ingest.stderr}` : ""}`, "utf8");
 
     if (ingest.code !== 0) {
-      throw new Error(`pwnkit ingest exited ${ingest.code}`);
+      throw new Error(`0sec ingest exited ${ingest.code}`);
     }
 
     const results = extractJsonArray(ingest.stdout);

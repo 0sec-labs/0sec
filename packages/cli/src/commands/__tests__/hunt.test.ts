@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,7 +45,7 @@ const {
   };
 });
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   generateVariantCandidates: generateVariantCandidatesMock,
   runHuntScan: runHuntScanMock,
   makeSkepticVerifier: makeSkepticVerifierMock,
@@ -210,7 +210,7 @@ describe("runHunt — novelty gate wiring", () => {
   let seedPath: string;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-hunt-test-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "0sec-hunt-test-"));
     seedPath = join(tmpRoot, "seed.patch");
     writeFileSync(seedPath, "diff --git a/foo.c b/foo.c\n", "utf8");
 
@@ -421,8 +421,8 @@ describe("runHunt — novelty gate wiring", () => {
     const cleanup = vi.fn();
     prepareMock.mockResolvedValueOnce({
       targetType: "source-code",
-      resolvedTarget: "/tmp/pwnkit-review/repo",
-      repoPath: "/tmp/pwnkit-review/repo",
+      resolvedTarget: "/tmp/0sec-review/repo",
+      repoPath: "/tmp/0sec-review/repo",
       cleanup,
     });
 
@@ -439,7 +439,7 @@ describe("runHunt — novelty gate wiring", () => {
       expect.any(Function),
     );
     expect(generateVariantCandidatesMock).toHaveBeenCalledWith(expect.objectContaining({
-      sourceRoot: "/tmp/pwnkit-review/repo",
+      sourceRoot: "/tmp/0sec-review/repo",
     }));
     expect(cleanup).toHaveBeenCalledOnce();
   });
@@ -448,7 +448,7 @@ describe("runHunt — novelty gate wiring", () => {
     buildInvariantHuntContextMock.mockResolvedValueOnce({
       subsystem: "net/unix",
       subsystemFiles: ["net/unix/af_unix.c"],
-      modelPath: `${tmpRoot}/.pwnkit/invariant-models/net__unix.json`,
+      modelPath: `${tmpRoot}/.0sec/invariant-models/net__unix.json`,
       modelLoaded: true,
       model: { objects: [{ object: "struct unix_sock" }] },
       violations: [{ kind: "unlocked-field-access" }],
@@ -500,7 +500,7 @@ describe("runHunt — novelty gate wiring", () => {
   it("injects the graph-slice prompt block into the finder brief when --graph-slice is set", async () => {
     buildGraphSliceHuntContextMock.mockReturnValueOnce({
       subsystem: "net/unix",
-      cpgPath: `${tmpRoot}/.pwnkit/cpg/net__unix.json`,
+      cpgPath: `${tmpRoot}/.0sec/cpg/net__unix.json`,
       targetFunctions: ["unix_attach_fds"],
       resolvedTargets: 1,
       opsEdges: 2,
@@ -614,7 +614,7 @@ describe("runHunt — PROVE stage (--exploitability) dispatch", () => {
   let seedPath: string;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-hunt-prove-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "0sec-hunt-prove-"));
     seedPath = join(tmpRoot, "seed.patch");
     writeFileSync(seedPath, "diff --git a/foo.c b/foo.c\n", "utf8");
 

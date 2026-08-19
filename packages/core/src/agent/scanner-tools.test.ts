@@ -294,7 +294,7 @@ describe("summarizeScannerResult", () => {
 
 // ── process runner: wallclock ceiling + partial output, never hangs ──────────
 
-describe("runScannerProcess — binary allowlist (pwnkit#555 / foxguard)", () => {
+describe("runScannerProcess — binary allowlist (0sec#555 / foxguard)", () => {
   it("refuses a non-allowlisted binary fail-closed (no spawn)", async () => {
     const outcome = await runScannerProcess(
       "definitely-not-a-real-binary-xyz",

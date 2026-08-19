@@ -1,5 +1,5 @@
 {
-  "name": "@pwnkit/db",
+  "name": "@0sec/db",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -15,7 +15,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@pwnkit/shared": "workspace:*",
+    "@0sec/shared": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "node-sqlite3-wasm": "^0.8.55"
   },

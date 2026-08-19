@@ -205,7 +205,7 @@ Return a single JSON array (or parseable markdown-fenced JSON block). Every file
         "items": {
           "type": "object",
           "properties": {
-            "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"], "description": "pwnkit severity scale" },
+            "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"], "description": "0sec severity scale" },
             "vulnSlug": { "type": "string", "description": "Vulnerability category slug; use other-<topic> when none fits" },
             "title": { "type": "string", "description": "Short human-readable title for the finding" },
             "description": { "type": "string", "description": "Detailed explanation with code evidence and data-flow trace" },

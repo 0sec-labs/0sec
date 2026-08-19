@@ -24,7 +24,7 @@ import {
   OWN_SUBMISSIONS_REGISTRY,
 } from "./publishability-sources.js";
 import { checkPublishability } from "./publishability.js";
-import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
+import type { AttackCategory, Finding, Severity } from "@0sec/shared";
 
 function makeFinding(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -287,7 +287,7 @@ describe("buildPublishabilityInputs end-to-end", () => {
 describe("resolveNovelty (issue #851)", () => {
   let cacheDir: string;
   beforeEach(() => {
-    cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-novelty-test-"));
+    cacheDir = mkdtempSync(join(tmpdir(), "0sec-novelty-test-"));
   });
   afterEach(() => {
     rmSync(cacheDir, { recursive: true, force: true });

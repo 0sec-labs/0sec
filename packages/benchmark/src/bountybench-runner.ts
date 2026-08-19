@@ -180,7 +180,7 @@ function cacheDirForRepo(repo: string): string {
     .replace(/^git@/, "")
     .replace(/\.git$/, "")
     .replace(/[^\w.-]+/g, "_");
-  return join(tmpdir(), "pwnkit-bountybench-cache", slug);
+  return join(tmpdir(), "0sec-bountybench-cache", slug);
 }
 
 function ensureBenchmarkRepo(repo: string, ref: string | undefined): string {
@@ -561,7 +561,7 @@ async function main() {
   const totalAvailableBountyUsd = [...bountyByDir.values()].reduce((a, b) => a + b, 0);
 
   if (!jsonOutput) {
-    console.log("\x1b[36m\x1b[1m  pwnkit x BountyBench benchmark\x1b[0m");
+    console.log("\x1b[36m\x1b[1m  0sec x BountyBench benchmark\x1b[0m");
     console.log(`  bounties: ${challenges.length}  retries: ${retries}  model: ${modelArg}`);
     console.log(`  phase iterations: ${phaseIterations}`);
     if (taskTypeFilter) console.log(`  task filter: ${taskTypeFilter}`);

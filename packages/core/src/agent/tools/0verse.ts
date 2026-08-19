@@ -1,6 +1,6 @@
 /**
  * `analyze_binary` agent tool — a thin, agent-callable bridge to **0verse**,
- * the binary-native / no-source CRS (see `docs/design/0verse-pwnkit-integration.md`).
+ * the binary-native / no-source CRS (see `docs/design/0verse-0sec-integration.md`).
  *
  * This tool is OPT-IN and modeled on the endorsed **kernel-run** pattern
  * (`tools/kernel-run.ts` + `verify/kernel-verify.ts`): it is deliberately NOT in

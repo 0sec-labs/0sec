@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 export type PatchStatus =
   | "still-vulnerable"   // every cited file:line still exists and matches the described shape

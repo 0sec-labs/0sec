@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pwnkit.windows-lpe-corpus/v1",
+  "schemaVersion": "0sec.windows-lpe-corpus/v1",
   "corpusId": "windows-lpe-contract-v1",
   "createdAt": "2026-07-14T00:00:00.000Z",
   "cases": [

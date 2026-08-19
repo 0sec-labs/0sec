@@ -7,7 +7,7 @@ import {
   type CandidatePatch,
   type PatchGenerator,
 } from "./patch-validate.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { ReproducerResult } from "../triage/kernel-oracle.js";
 
 function reproducedFinding(overrides: Partial<Finding> = {}): Finding {
@@ -40,9 +40,9 @@ describe("validatePatchRemovesCrash (AIxCC T7 patch-as-oracle)", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env.PWNKIT_KERNEL_QEMU_KERNEL;
-    delete process.env.PWNKIT_KERNEL_QEMU_DISK;
-    delete process.env.PWNKIT_KERNEL_QEMU_CONFIG;
+    delete process.env["0SEC_KERNEL_QEMU_KERNEL"];
+    delete process.env["0SEC_KERNEL_QEMU_DISK"];
+    delete process.env["0SEC_KERNEL_QEMU_CONFIG"];
   });
   afterEach(() => {
     process.env = { ...originalEnv };
@@ -50,13 +50,13 @@ describe("validatePatchRemovesCrash (AIxCC T7 patch-as-oracle)", () => {
   });
 
   function makeTree(): string {
-    const tree = mkdtempSync(join(tmpdir(), "pwnkit-patch-tree-"));
+    const tree = mkdtempSync(join(tmpdir(), "0sec-patch-tree-"));
     writeFileSync(join(tree, "Makefile"), "VERSION = 6\nPATCHLEVEL = 8\n");
     return tree;
   }
 
   function makeReproducer(name = "poc.c"): string {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-patch-repro-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-patch-repro-"));
     const repro = join(dir, name);
     writeFileSync(repro, "int main(void){return 0;}\n");
     return repro;
@@ -76,7 +76,7 @@ describe("validatePatchRemovesCrash (AIxCC T7 patch-as-oracle)", () => {
 
   it("confirms root cause when the patched build no longer trips KASAN", async () => {
     const tree = makeTree();
-    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-patch-cache-"));
+    const cacheDir = mkdtempSync(join(tmpdir(), "0sec-patch-cache-"));
     const applier = vi.fn();
     const reverter = vi.fn();
 
@@ -113,7 +113,7 @@ describe("validatePatchRemovesCrash (AIxCC T7 patch-as-oracle)", () => {
 
   it("reports not_root_cause when KASAN still fires under the patched build", async () => {
     const tree = makeTree();
-    const cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-patch-cache-"));
+    const cacheDir = mkdtempSync(join(tmpdir(), "0sec-patch-cache-"));
     const reverter = vi.fn();
 
     const result = await validatePatchRemovesCrash({

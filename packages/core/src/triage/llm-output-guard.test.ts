@@ -166,7 +166,7 @@ describe("shouldSkipRetry", () => {
 // ── dumpModelOutput ──
 
 describe("dumpModelOutput", () => {
-  const testDir = join(tmpdir(), `pwnkit-guard-test-${randomUUID()}`);
+  const testDir = join(tmpdir(), `0sec-guard-test-${randomUUID()}`);
 
   beforeEach(() => {
     // Ensure clean state before each test

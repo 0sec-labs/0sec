@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Finding, TargetInfo, AuthConfig, AttackCategory, Severity } from "@pwnkit/shared";
+import type { Finding, TargetInfo, AuthConfig, AttackCategory, Severity } from "@0sec/shared";
 import { LlmApiRuntime } from "./runtime/llm-api.js";
 import { runNativeAgentLoop } from "./agent/native-loop.js";
 import type { NativeAgentState } from "./agent/native-loop.js";

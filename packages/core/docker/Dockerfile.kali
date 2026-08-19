@@ -1,15 +1,15 @@
 # syntax=docker/dockerfile:1.7
 #
-# pwnkit-kali — Pre-built Kali Linux image for benchmark / Docker executor mode.
+# 0sec-kali — Pre-built Kali Linux image for benchmark / Docker executor mode.
 #
 # Contains a full pentesting toolset so the Docker executor can start
 # immediately without pulling packages at runtime.
 #
 # Build:
-#   docker build -f packages/core/docker/Dockerfile.kali -t ghcr.io/0sec-labs/pwnkit-kali:latest .
+#   docker build -f packages/core/docker/Dockerfile.kali -t ghcr.io/0sec-labs/0sec-kali:latest .
 #
 # Run (manual):
-#   docker run --rm -it ghcr.io/0sec-labs/pwnkit-kali:latest bash
+#   docker run --rm -it ghcr.io/0sec-labs/0sec-kali:latest bash
 
 FROM kalilinux/kali-rolling
 

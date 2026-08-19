@@ -45,7 +45,7 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       // here and defaults — if absent — to the env var or a documented value
       // so a bare `--runtime ollama` still gives a usable error.
       return new OllamaRuntime({
-        model: config.model ?? process.env.PWNKIT_OLLAMA_MODEL ?? "gemma4:27b",
+        model: config.model ?? process.env["0SEC_OLLAMA_MODEL"] ?? "gemma4:27b",
         timeout: config.timeout,
         host: process.env.OLLAMA_HOST,
       });

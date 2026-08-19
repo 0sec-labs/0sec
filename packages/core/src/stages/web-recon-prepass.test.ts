@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ScanConfig } from "@pwnkit/shared";
+import type { ScanConfig } from "@0sec/shared";
 
 // Mock the DNS-backed modules so the pre-pass stays off the wire. The HTTP-
 // driven modules (baseline web checks, fingerprint, js-artifacts, framework

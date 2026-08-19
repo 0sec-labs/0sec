@@ -81,7 +81,7 @@ identity, replays the SAME request as another identity, and diffs the result.
 
 ### Step 1: Identify Injection Points
 - Use curl to fetch every page with forms or URL parameters
-- Look for reflected output: inject a unique canary string (e.g. "pwnkit123xss") and check if it appears unescaped in the response HTML
+- Look for reflected output: inject a unique canary string (e.g. "osec123xss") and check if it appears unescaped in the response HTML
 - Check Content-Type headers — XSS only works when response is text/html
 - Note which characters are reflected vs stripped: < > " ' / \` ( ) = on
 
@@ -177,7 +177,7 @@ When the target's input filter strips letters or digits (alphanumerics) but stil
 - NoSQL injection: username[$ne]=x&password[$ne]=x
 - Check for CORS misconfig allowing credential theft
 - Try parameter pollution: add role=admin, is_admin=true to registration/profile update
-- **HTTP method tampering on Apache \`<Limit>\` blocks (XBEN-054 vector):** if the target uses HTTP basic auth or returns 401/403 on a GET, also try \`curl -X BOGUS https://target/\` (or any non-standard HTTP verb such as FAKEMETHOD or PWNKIT). Apache \`<Limit GET POST>\` directives only restrict the listed methods, so any other verb bypasses the auth check entirely and the page renders as if authenticated. Always probe at least one bogus method before giving up on a basic-auth wall.`,
+- **HTTP method tampering on Apache \`<Limit>\` blocks (XBEN-054 vector):** if the target uses HTTP basic auth or returns 401/403 on a GET, also try \`curl -X BOGUS https://target/\` (or any non-standard HTTP verb such as FAKEMETHOD or 0SEC). Apache \`<Limit GET POST>\` directives only restrict the listed methods, so any other verb bypasses the auth check entirely and the page renders as if authenticated. Always probe at least one bogus method before giving up on a basic-auth wall.`,
 
   blind_exploitation: `## Blind Exploitation Playbook
 
@@ -758,7 +758,7 @@ Python interpreter / sandbox such as Pydantic Monty). The bug class is memory
 corruption reachable from attacker-controlled scripting: use-after-free,
 double-free, type confusion, OOB, and **GC-root gaps**. This is discovery +
 classification, NOT autonomous exploit synthesis (see
-docs/pwnkit-rust-memsafety-pipeline.md).
+docs/0sec-rust-memsafety-pipeline.md).
 
 ### HARD CONSTRAINTS — bounty rules (never violate)
 1. **Never open a PR or change code** in the target or any of its dependencies.
@@ -891,7 +891,7 @@ const INDICATORS: VulnIndicator[] = [
     ],
   },
   {
-    // Multi-identity access-control surface (pwnkit#564). Distinct from `idor`:
+    // Multi-identity access-control surface (0sec#564). Distinct from `idor`:
     // these patterns point at object/function references that should be tested
     // with the access_control_probe tool across identities, plus the authz
     // signals (admin endpoints, role params, allow/deny status codes).
@@ -1220,7 +1220,7 @@ const INDICATORS: VulnIndicator[] = [
     ],
   },
   {
-    // AI prompt-layer write target (pwnkit#775). Fires when a DB foothold
+    // AI prompt-layer write target (0sec#775). Fires when a DB foothold
     // coincides with LLM-app + prompt-store signals: the system prompt /
     // guardrails / model config live in a writable DB row. Distinct from
     // rag_poisoning (writable retrieval docs) — this is the *control* layer.
@@ -1249,7 +1249,7 @@ const INDICATORS: VulnIndicator[] = [
     ],
   },
   {
-    // Rust / userspace memory-safety + sandbox-escape (pwnkit#696, Monty-mode).
+    // Rust / userspace memory-safety + sandbox-escape (0sec#696, Monty-mode).
     // Fires on Rust unsafe / FFI surface, memory-corruption signals (sanitizer
     // and miri output, GC-root / refcount language), and the language-runtime
     // sandbox context the round-1 UAF lived in.
@@ -1329,7 +1329,7 @@ export function buildPlaybookInjection(types: string[]): string {
   ].join("\n");
 }
 
-// ── AI prompt-layer write impact classification (pwnkit#775) ──
+// ── AI prompt-layer write impact classification (0sec#775) ──
 //
 // First slice of the "system-prompts-in-DB write target" playbook. Pure,
 // verification-only detection + impact classification on a discovered DB asset.

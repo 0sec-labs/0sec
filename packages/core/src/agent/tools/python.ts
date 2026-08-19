@@ -44,7 +44,7 @@ export const pythonToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-// Tool-name → ToolExecutor handler-method name (pwnkit#614). Co-located with
+// Tool-name → ToolExecutor handler-method name (0sec#614). Co-located with
 // this domain's definition so a new tool adds its route here, not in a shared
 // dispatch switch. Assembled by ./dispatch.ts; resolved off the executor
 // instance in agent/tools.ts (the handler body stays a private method).

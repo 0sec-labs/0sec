@@ -165,10 +165,10 @@ describe("renderRaceHarness / race-poc-synth", () => {
     expect(src).toContain("sched_setaffinity");
     expect(src).toContain("pin_to_cpu(2)");
     expect(src).toContain("pin_to_cpu(3)");
-    // The PWNKIT_RACE_* widen knobs are wired.
-    expect(src).toContain("PWNKIT_RACE_ITERS");
-    expect(src).toContain("PWNKIT_RACE_WIDEN");
-    expect(src).toContain("PWNKIT_RACE_SPIN");
+    // The 0SEC_RACE_* widen knobs are wired.
+    expect(src).toContain("0SEC_RACE_ITERS");
+    expect(src).toContain("0SEC_RACE_WIDEN");
+    expect(src).toContain("0SEC_RACE_SPIN");
     // The candidate's syscalls appear as TODO stubs (codegen is a follow-up).
     expect(src).toContain("sendmsg(SCM_RIGHTS)");
     expect(src).toContain("close(fd)");

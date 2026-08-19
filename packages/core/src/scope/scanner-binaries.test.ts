@@ -4,7 +4,7 @@ import {
   SCANNER_BINARY_BLACKLIST,
 } from "./scanner-binaries.js";
 
-// pwnkit#217. The detector is the leaf — `shellExec` consumes its
+// 0sec#217. The detector is the leaf — `shellExec` consumes its
 // output. These tests pin the contract: which invocations match,
 // which don't, and that the well-known evasion shapes (path prefix,
 // quoting, env-var prefix, pipeline tail) all fail to bypass.
@@ -162,9 +162,9 @@ describe("detectScannerBinary — error message quality", () => {
     expect(hit!.reason).toContain("--allow-scanners");
   });
 
-  it("cites pwnkit#217 in the reason string", () => {
+  it("cites 0sec#217 in the reason string", () => {
     const hit = detectScannerBinary("nikto -h https://example.com");
-    expect(hit!.reason).toContain("pwnkit#217");
+    expect(hit!.reason).toContain("0sec#217");
   });
 
   it("nmap reason names the specific flag combination", () => {

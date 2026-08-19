@@ -1,6 +1,6 @@
-// Credentials supplied to the pwnkit process must not reach agent-controlled
+// Credentials supplied to the 0sec process must not reach agent-controlled
 // child processes. This is defense in depth only: credentials retained by the
-// parent process are a separate process-isolation problem (pwnkit#134).
+// parent process are a separate process-isolation problem (0sec#134).
 const SENSITIVE_ENV_PATTERNS = [
   "OPENROUTER_API",
   "ANTHROPIC_API",
@@ -21,19 +21,19 @@ const SENSITIVE_ENV_PATTERNS = [
   "Z_AI_API",
   "KIMI_API",
   "WPSCAN_API_TOKEN",
-  "PWNKIT_WPSCAN_API_TOKEN",
+  "0SEC_WPSCAN_API_TOKEN",
   "GITHUB_TOKEN",
   "GITLAB_TOKEN",
   "GH_TOKEN",
   "GL_TOKEN",
   // Per-dispatch secrets injected by 0cloud's worker-controller.
-  "PWNKIT_CLOUD_TOKEN",
-  "PWNKIT_CHATGPT_ACCESS_TOKEN",
-  "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN",
-  "PWNKIT_GITHUB_TOKEN",
-  "PWNKIT_GITLAB_TOKEN",
-  "PWNKIT_TARGET_AUTH_JSON",
-  "PWNKIT_GRAPH_ACCESS_TOKEN",
+  "0SEC_CLOUD_TOKEN",
+  "0SEC_CHATGPT_ACCESS_TOKEN",
+  "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN",
+  "0SEC_GITHUB_TOKEN",
+  "0SEC_GITLAB_TOKEN",
+  "0SEC_TARGET_AUTH_JSON",
+  "0SEC_GRAPH_ACCESS_TOKEN",
 ] as const;
 
 /**
@@ -85,9 +85,9 @@ const CHILD_ENV_ALLOWLIST = [
   "AUTH_VALUE",
   "AUTH_CURL_FLAG",
   // Existing child-runtime configuration contract; each name is non-secret.
-  "PWNKIT_FEATURE_JIT_SKILLS",
-  "PWNKIT_BASH_TIMEOUT_MS",
-  "PWNKIT_CLOUD_SCAN_ID",
+  "0SEC_FEATURE_JIT_SKILLS",
+  "0SEC_BASH_TIMEOUT_MS",
+  "0SEC_CLOUD_SCAN_ID",
 ] as const;
 
 /**

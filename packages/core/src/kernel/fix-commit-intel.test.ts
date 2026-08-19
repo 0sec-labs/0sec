@@ -27,7 +27,7 @@ describe("kernel/fix-commit-intel", () => {
   const FN = "tipc_aead_decrypt";
 
   beforeAll(() => {
-    repo = mkdtempSync(join(tmpdir(), "pwnkit-fixintel-"));
+    repo = mkdtempSync(join(tmpdir(), "0sec-fixintel-"));
     git(repo, ["init", "-q"]);
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test"]);
@@ -73,7 +73,7 @@ describe("kernel/fix-commit-intel", () => {
 
   it("recognises a real git work tree and rejects a non-git dir", () => {
     expect(isKernelGitTree(repo)).toBe(true);
-    const notGit = mkdtempSync(join(tmpdir(), "pwnkit-notgit-"));
+    const notGit = mkdtempSync(join(tmpdir(), "0sec-notgit-"));
     try {
       expect(isKernelGitTree(notGit)).toBe(false);
     } finally {
@@ -114,7 +114,7 @@ describe("kernel/fix-commit-intel", () => {
   });
 
   it("fails soft on a non-git tree (never gates a finding out)", () => {
-    const notGit = mkdtempSync(join(tmpdir(), "pwnkit-soft-"));
+    const notGit = mkdtempSync(join(tmpdir(), "0sec-soft-"));
     try {
       const res = checkAlreadyFixed({
         tree: notGit,

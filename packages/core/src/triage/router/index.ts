@@ -1,7 +1,7 @@
 /**
  * Dynamic Triage Router — public exports.
  *
- * See `router.ts` for the design and pwnkit#113 for the issue.
+ * See `router.ts` for the design and 0sec#113 for the issue.
  */
 
 export {

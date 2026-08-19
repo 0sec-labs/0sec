@@ -1,21 +1,21 @@
 /**
- * Multi-Modal Agreement — foxguard × pwnkit cross-validation.
+ * Multi-Modal Agreement — foxguard × 0sec cross-validation.
  *
  * Endor Labs achieves ~95% false-positive elimination by running BOTH a neural
  * classifier AND pattern-based rules, then requiring agreement before
- * auto-triaging. pwnkit (AI agent) + foxguard (Rust pattern scanner) is exactly
+ * auto-triaging. 0sec (AI agent) + foxguard (Rust pattern scanner) is exactly
  * the same pattern: combine agentic discovery with deterministic scanner
  * agreement before auto-triage.
  *
- * For every finding pwnkit discovers, we also run foxguard against the same
+ * For every finding 0sec discovers, we also run foxguard against the same
  * source tree. If foxguard has a rule that fires on the same file (and ideally
  * the same category) → strong signal the finding is real. If foxguard scanned
  * the file but found nothing → likely false positive.
  *
- * pwnkit detects; foxguard cross-checks.
+ * 0sec detects; foxguard cross-checks.
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readFileSync } from "node:fs";
@@ -37,13 +37,13 @@ const execFileAsync = promisify(execFile);
 
 export type Agreement =
   | "both_fire"
-  | "only_pwnkit"
+  | "only_Osec"
   | "only_foxguard"
   | "neither";
 
 export interface MultiModalResult {
   agreement: Agreement;
-  /** 0-1 confidence that the pwnkit finding represents a real vulnerability. */
+  /** 0-1 confidence that the 0sec finding represents a real vulnerability. */
   confidence: number;
   /** Foxguard findings (parsed from SARIF) that matched the same file. */
   foxguardFindings: FoxguardFinding[];
@@ -84,7 +84,7 @@ export async function detectFoxguard(): Promise<string | null> {
 // ────────────────────────────────────────────────────────────────────
 
 /**
- * Pull any file-ish tokens out of a pwnkit Finding. Findings don't carry a
+ * Pull any file-ish tokens out of a 0sec Finding. Findings don't carry a
  * structured file/line field today, so we scan title/description/analysis for
  * anything that looks like a source path.
  */
@@ -119,24 +119,24 @@ export function computeAgreement(
   finding: Finding,
   foxguardFindings: FoxguardFinding[],
 ): MultiModalResult {
-  const pwnkitFiles = extractFilesFromFinding(finding);
-  const pwnkitBasenames = new Set(pwnkitFiles.map(basenameOf));
+  const osecFiles = extractFilesFromFinding(finding);
+  const osecBasenames = new Set(osecFiles.map(basenameOf));
 
   // Match by basename (most portable across cwd / sandbox layouts).
   const matchedByFile = foxguardFindings.filter((f) =>
-    pwnkitBasenames.has(basenameOf(f.file)),
+    osecBasenames.has(basenameOf(f.file)),
   );
 
   if (matchedByFile.length === 0) {
-    // Foxguard scanned but had no finding in pwnkit's file. Weak FP signal.
+    // Foxguard scanned but had no finding in 0sec's file. Weak FP signal.
     return {
-      agreement: "only_pwnkit",
+      agreement: "only_Osec",
       confidence: 0.4,
       foxguardFindings: [],
       reasoning:
-        pwnkitFiles.length === 0
-          ? "pwnkit finding has no extractable file path; foxguard has no matching rule"
-          : `foxguard scanned but reported no finding in ${Array.from(pwnkitBasenames).join(", ")}`,
+        osecFiles.length === 0
+          ? "0sec finding has no extractable file path; foxguard has no matching rule"
+          : `foxguard scanned but reported no finding in ${Array.from(osecBasenames).join(", ")}`,
     };
   }
 
@@ -158,7 +158,7 @@ export function computeAgreement(
     agreement: "both_fire",
     confidence: 0.8,
     foxguardFindings: matchedByFile,
-    reasoning: `foxguard fired on ${matchedByFile[0]!.file} (rule ${matchedByFile[0]!.ruleId}) but category differs from pwnkit's ${finding.category}`,
+    reasoning: `foxguard fired on ${matchedByFile[0]!.file} (rule ${matchedByFile[0]!.ruleId}) but category differs from 0sec's ${finding.category}`,
   };
 }
 
@@ -194,7 +194,7 @@ export async function checkMultiModalAgreement(
   const foxguardPath = options.foxguardPath ?? (await detectFoxguard());
   if (!foxguardPath) {
     return {
-      agreement: "only_pwnkit",
+      agreement: "only_Osec",
       confidence: 0.5,
       foxguardFindings: [],
       reasoning: "foxguard not installed",
@@ -203,7 +203,7 @@ export async function checkMultiModalAgreement(
 
   if (!existsSync(sourceDir)) {
     return {
-      agreement: "only_pwnkit",
+      agreement: "only_Osec",
       confidence: 0.5,
       foxguardFindings: [],
       reasoning: `sourceDir does not exist: ${sourceDir}`,
@@ -234,7 +234,7 @@ export async function checkMultiModalAgreement(
     // foxguard often exits non-zero when it has findings; try to read the SARIF anyway.
     if (!existsSync(outPath)) {
       return {
-        agreement: "only_pwnkit",
+        agreement: "only_Osec",
         confidence: 0.5,
         foxguardFindings: [],
         reasoning: `foxguard failed to run: ${(err as Error).message}`,
@@ -247,7 +247,7 @@ export async function checkMultiModalAgreement(
     sarifText = readFileSync(outPath, "utf8");
   } catch {
     return {
-      agreement: "only_pwnkit",
+      agreement: "only_Osec",
       confidence: 0.5,
       foxguardFindings: [],
       reasoning: "foxguard produced no SARIF output",
@@ -299,7 +299,7 @@ export function fuseTriageSignals(signals: FusedTriageSignals): FusedTriageResul
     };
   }
 
-  const agreement = multiModal?.agreement ?? "only_pwnkit";
+  const agreement = multiModal?.agreement ?? "only_Osec";
   const mmConf = multiModal?.confidence ?? 0.5;
 
   // All signals agree it's real → auto-accept
@@ -321,7 +321,7 @@ export function fuseTriageSignals(signals: FusedTriageSignals): FusedTriageResul
   }
 
   // All signals disagree it's real → auto-reject
-  if (agreement === "only_pwnkit" && mmConf <= 0.4 && evidenceCompleteness <= 0.4) {
+  if (agreement === "only_Osec" && mmConf <= 0.4 && evidenceCompleteness <= 0.4) {
     return {
       decision: "auto_reject",
       confidence: 0.8,

@@ -1,6 +1,6 @@
 ---
 title: Benchmark methodology
-description: How pwnkit measures itself on XBOW — what "percent solved" actually means, why a single solve is not a benchmark, and why methodology disclosure is the moat.
+description: How 0sec measures itself on XBOW — what "percent solved" actually means, why a single solve is not a benchmark, and why methodology disclosure is the moat.
 ---
 
 If you read enough pentesting-agent press releases you will notice that
@@ -11,12 +11,12 @@ fork), the model, the turn cap, the feature stack, the retry protocol,
 Change any one of those and the number moves several points.
 
 This page documents the three methodologies you can apply to the same
-raw data, why pwnkit defaults to the harshest one internally, and why
+raw data, why 0sec defaults to the harshest one internally, and why
 we publish the rest of the substrate alongside it.
 
 ## A worked example: XBEN-061
 
-On 2026-04-06 a pwnkit v1 sweep solved XBEN-061 in 8 turns with a
+On 2026-04-06 a 0sec v1 sweep solved XBEN-061 in 8 turns with a
 `handoff,no-hiw,no-evidence` feature combo. We promoted that solve to
 a "winning configuration" recommendation, shipped it in a blog post,
 and pinned it on the public roadmap as the lean-scaffolding default.
@@ -72,7 +72,7 @@ found the flag in any of the N runs.
   so nobody is cheating — they are just reporting the number that
   makes them look best.
 
-### 3. Per-attempt success rate with Wilson CI (what pwnkit measures internally)
+### 3. Per-attempt success rate with Wilson CI (what 0sec measures internally)
 
 Run each challenge **N times**. Report **passes / N** as the per-attempt
 success rate, along with a 95% Wilson score confidence interval.
@@ -86,7 +86,7 @@ success rate, along with a 95% Wilson score confidence interval.
 - **The problem:** the headline number drops. A lot. "We get 30% of
   XBOW per attempt, confidence interval wide" does not fit on a
   billboard the way "96% solved" does.
-- **Who uses it:** this is the number the pwnkit team uses internally
+- **Who uses it:** this is the number the 0sec team uses internally
   to decide whether a feature combo ships. It is the only number that
   answers "would this work next Tuesday against a customer's real
   app?"
@@ -147,13 +147,13 @@ A single-config 80% and an aggregate 97% are not comparable; they answer
 different questions on the same benchmark. Treating them as if they
 were is the trap.
 
-### Why pwnkit reports two numbers on the same benchmark
+### Why 0sec reports two numbers on the same benchmark
 
-For XBOW, pwnkit publishes both:
+For XBOW, 0sec publishes both:
 
 - A **per-model cohort** number: 93/95 = 97.9% on the gpt-5.4 cohort —
   the single-config single-shot solve rate for the model we currently
-  run in CI. This is the number that answers "how does pwnkit perform
+  run in CI. This is the number that answers "how does 0sec perform
   next Tuesday on this exact model."
 - A **retained artifact-backed aggregate** number: 103/104 = 99.0% — the
   union of every flag that has been independently re-verified from a
@@ -185,15 +185,15 @@ pentest agent because:
   97% has a worse `$/flag`, and that fact only shows up when cost is
   reported.
 
-pwnkit publishes `$/flag` (currently $5.20/flag at $0.48/run on the
+0sec publishes `$/flag` (currently $5.20/flag at $0.48/run on the
 gpt-5.4 XBOW cohort) on the [benchmark page](/benchmark/) alongside the
 solve-rate numbers, and treats it as a first-class comparison axis. We
 encourage other evaluators to do the same; benchmark numbers without a
 cost denominator are difficult to compare across stacks.
 
-## What pwnkit publishes
+## What 0sec publishes
 
-pwnkit publishes the **per-attempt success rate** with its 95% Wilson
+0sec publishes the **per-attempt success rate** with its 95% Wilson
 CI for every feature-combo evaluation. We also publish the substrate
 you need to reproduce the number.
 
@@ -204,7 +204,7 @@ Specifically, every XBOW result we quote comes with:
 - **Model**: exact model ID and provider (Azure `gpt-4o-2024-08-06`,
   Anthropic `claude-sonnet-4.6`, etc.)
 - **Turn cap**: the maximum number of tool calls per attempt
-- **Feature stack**: the full set of `PWNKIT_FEATURE_*` flags in effect
+- **Feature stack**: the full set of `0SEC_FEATURE_*` flags in effect
   (`handoff`, `no-hiw`, `no-evidence`, etc.)
 - **Retry protocol**: best-of-K vs. repeat-N, and the value of K or N
 - **Per-attempt success rate**: `passes / attempts` as a float
@@ -232,7 +232,7 @@ everybody knows single-shot numbers are noisy — but because the
 headline number is the product and nobody wants to bring a sharper
 knife to a marketing fight.
 
-pwnkit's bet is that eventually the people who actually buy pentesting
+0sec's bet is that eventually the people who actually buy pentesting
 tools start asking the hard questions, and the lab whose readme
 already has the answers wins. The n=10 harness exists so that when
 someone asks "did that number hold up under repeated evaluation," we
@@ -245,7 +245,7 @@ one later.
 ## How to run the harness yourself
 
 ```sh
-pnpm --filter @pwnkit/benchmark xbow \
+pnpm --filter @0sec/benchmark xbow \
   --agentic \
   --only XBEN-010,XBEN-051,XBEN-061,XBEN-066,XBEN-080,XBEN-084,XBEN-099,XBEN-104 \
   --repeat 10 \

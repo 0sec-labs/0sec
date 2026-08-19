@@ -166,17 +166,17 @@ function makeCtx(): ToolContext {
 }
 
 describe("ToolExecutor.done — anti-honeypot integration", () => {
-  const originalEnv = process.env.PWNKIT_FEATURE_DECOY_DETECTION;
+  const originalEnv = process.env["0SEC_FEATURE_DECOY_DETECTION"];
 
   beforeEach(() => {
-    delete process.env.PWNKIT_FEATURE_DECOY_DETECTION;
+    delete process.env["0SEC_FEATURE_DECOY_DETECTION"];
   });
 
   afterEach(() => {
     if (originalEnv === undefined) {
-      delete process.env.PWNKIT_FEATURE_DECOY_DETECTION;
+      delete process.env["0SEC_FEATURE_DECOY_DETECTION"];
     } else {
-      process.env.PWNKIT_FEATURE_DECOY_DETECTION = originalEnv;
+      process.env["0SEC_FEATURE_DECOY_DETECTION"] = originalEnv;
     }
   });
 
@@ -227,8 +227,8 @@ describe("ToolExecutor.done — anti-honeypot integration", () => {
     expect(result.success).toBe(true);
   });
 
-  it("passes the decoy through when PWNKIT_FEATURE_DECOY_DETECTION=0", async () => {
-    process.env.PWNKIT_FEATURE_DECOY_DETECTION = "0";
+  it("passes the decoy through when 0SEC_FEATURE_DECOY_DETECTION=0", async () => {
+    process.env["0SEC_FEATURE_DECOY_DETECTION"] = "0";
     const exec = new ToolExecutor(makeCtx());
     const result = await exec.execute({
       name: "done",

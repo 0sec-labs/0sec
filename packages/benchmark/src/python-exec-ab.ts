@@ -166,13 +166,13 @@ function runXbowCell(label: PythonExecAbCell["label"], pythonExec: boolean, xbow
   const repoRoot = join(__dirname, "../../..");
   const result = spawnSync(
     "pnpm",
-    ["--filter", "@pwnkit/benchmark", "xbow", ...xbowArgs],
+    ["--filter", "@0sec/benchmark", "xbow", ...xbowArgs],
     {
       cwd: repoRoot,
       encoding: "utf8",
       env: {
         ...process.env,
-        PWNKIT_FEATURE_PYTHON_EXEC: pythonExec ? "1" : "0",
+        "0SEC_FEATURE_PYTHON_EXEC": pythonExec ? "1" : "0",
       },
     },
   );
@@ -220,7 +220,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log("pwnkit python_exec A/B");
+  console.log("0sec python_exec A/B");
   console.log(`runner: xbow ${xbowArgs.join(" ")}`);
   console.log("");
   console.log(`baseline:    ${baseline.passed}/${baseline.challenges} pass, ${baseline.flags}/${baseline.challenges} flags, ${baseline.totalAttackTurns} turns, ${baseline.totalTokens} tokens, $${baseline.totalEstimatedCostUsd.toFixed(2)}`);

@@ -231,7 +231,7 @@ function trackModelResult(
 }
 
 for (const run of runs) {
-  const downloadDir = mkdtempSync(join(tmpdir(), "pwnkit-xbow-consolidate-"));
+  const downloadDir = mkdtempSync(join(tmpdir(), "0sec-xbow-consolidate-"));
   const artifacts = artifactsByRunId.get(run.databaseId) ?? [];
   if (artifacts.length === 0) {
     skippedRuns.push({ runId: run.databaseId, reason: "no xbow-results artifact found" });

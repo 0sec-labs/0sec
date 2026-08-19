@@ -17,7 +17,7 @@ import type {
   LayerVerdict,
   Evidence,
   VerificationResult,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import {
   assembleReproducibilityManifest,
   renderReproducibilityManifest,
@@ -28,7 +28,7 @@ import {
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 const FIXED_TIMESTAMP = "2026-08-02T12:00:00.000Z";
-const FIXED_TOOL_VERSION = "pwnkit/0.1.0";
+const FIXED_TOOL_VERSION = "0sec/0.1.0";
 
 function layerVerdicts(overrides: Partial<LayerVerdict>[] = []): LayerVerdict[] {
   return [
@@ -111,7 +111,7 @@ function verificationResult(
     status: "reproduced",
     mode: "deterministic_replay",
     finding_id: "f-verify-001",
-    engine_version: "pwnkit/0.1.0",
+    engine_version: "0sec/0.1.0",
     started_at: FIXED_TIMESTAMP,
     completed_at: FIXED_TIMESTAMP,
     duration_ms: 1,
@@ -492,7 +492,7 @@ describe("assembleReproducibilityManifest", () => {
         oast_confirmed: false,
         mode: "deterministic_replay",
         finding_id: "f-001",
-        engine_version: "pwnkit/0.1.0",
+        engine_version: "0sec/0.1.0",
         started_at: "2026-08-02T11:00:00.000Z",
         completed_at: "2026-08-02T11:00:05.000Z?client_secret=sk-xxx",
         duration_ms: 1,
@@ -521,7 +521,7 @@ describe("assembleReproducibilityManifest", () => {
   it("redacts externally controlled tool-version and timestamp strings", () => {
     const manifest = assembleReproducibilityManifest(verifiedFinding(), {
       timestamp: "2026-08-02T12:00:00.000Z?token=injected",
-      toolVersion: "pwnkit/0.1.0?password=pass123",
+      toolVersion: "0sec/0.1.0?password=pass123",
       targetIdentifier: TARGET_IDENTIFIER,
     });
     expect(manifest.generatedAt).not.toContain("injected");

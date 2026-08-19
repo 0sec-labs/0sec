@@ -33,7 +33,7 @@ import type {
   ImpactAssessment,
   ReachabilityTier,
   Weaponizability,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import type { NativeRuntime } from "../runtime/types.js";
 
 // ────────────────────────────────────────────────────────────────────

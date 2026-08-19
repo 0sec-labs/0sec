@@ -4,21 +4,21 @@
  *
  * This module is a no-op unless the user opts in via environment variables:
  *
- *   PWNKIT_CLOUD_SINK     — base URL of the remote API (e.g. https://api.example.com)
- *   PWNKIT_CLOUD_SCAN_ID  — scan correlation id (sent in X-Pwnkit-Scan-Id header
+ *   0SEC_CLOUD_SINK     — base URL of the remote API (e.g. https://api.example.com)
+ *   0SEC_CLOUD_SCAN_ID  — scan correlation id (sent in X-0sec-Scan-Id header
  *                           AND used in the URL path)
- *   PWNKIT_CLOUD_TOKEN    — bearer token (sent as Authorization header)
+ *   0SEC_CLOUD_TOKEN    — bearer token (sent as Authorization header)
  *
- * When PWNKIT_CLOUD_SINK is unset, behavior is identical to today's local-only
+ * When 0SEC_CLOUD_SINK is unset, behavior is identical to today's local-only
  * runs. When set, every saved finding and the final scan report are POSTed to:
  *
- *   ${PWNKIT_CLOUD_SINK}/scans/${PWNKIT_CLOUD_SCAN_ID}/findings
+ *   ${0SEC_CLOUD_SINK}/scans/${0SEC_CLOUD_SCAN_ID}/findings
  *
  * The integration is intentionally fire-and-forget: any error returned by the
  * remote endpoint is logged to stderr but does NOT abort the scan. Local
  * output is unchanged either way.
  *
- * The behavior can be force-disabled with PWNKIT_FEATURE_CLOUD_SINK=0 even when
+ * The behavior can be force-disabled with 0SEC_FEATURE_CLOUD_SINK=0 even when
  * the URL env var is set, mirroring the existing feature-flag pattern in
  * `agent/features.ts`.
  */
@@ -60,44 +60,44 @@ const VALID_SEVERITIES: ReadonlySet<CloudSinkSeverity> = new Set([
 export interface CloudSinkConfig {
   /** Base URL of the remote sink, e.g. https://api.example.com */
   sinkUrl: string;
-  /** Scan correlation id used in the URL path AND the X-Pwnkit-Scan-Id header */
+  /** Scan correlation id used in the URL path AND the X-0sec-Scan-Id header */
   scanId: string;
   /** Optional bearer token sent as Authorization header */
   token?: string;
   /**
-   * Optional owning-org id. Forwarded as `X-Pwnkit-Org-Id` on requests that
+   * Optional owning-org id. Forwarded as `X-0sec-Org-Id` on requests that
    * are NOT scan-id-pathed (the discovered-asset push) so the orchestrator
    * resolves the same tenant the scan runs under. The findings path derives
    * org server-side from the scan-id in the URL, so it does NOT need this; the
    * `/assets` route has no scan-id, hence the explicit header. When unset, the
    * orchestrator falls back to the operator org (the bearer token's tenant),
-   * which is correct for single-tenant Phase-1 operation. See pwnkit#768.
+   * which is correct for single-tenant Phase-1 operation. See 0sec#768.
    */
   orgId?: string;
 }
 
 /**
  * Read sink configuration from the environment. Returns null when the feature
- * flag is disabled or when PWNKIT_CLOUD_SINK is unset (the no-op case).
+ * flag is disabled or when 0SEC_CLOUD_SINK is unset (the no-op case).
  */
 export function getCloudSinkConfig(): CloudSinkConfig | null {
   if (!features.cloudSink) return null;
 
-  const sinkUrl = process.env.PWNKIT_CLOUD_SINK?.trim();
+  const sinkUrl = process.env["0SEC_CLOUD_SINK"]?.trim();
   if (!sinkUrl) return null;
 
-  const scanId = process.env.PWNKIT_CLOUD_SCAN_ID?.trim();
+  const scanId = process.env["0SEC_CLOUD_SCAN_ID"]?.trim();
   if (!scanId) return null;
 
-  const token = process.env.PWNKIT_CLOUD_TOKEN?.trim() || undefined;
-  const orgId = process.env.PWNKIT_CLOUD_ORG_ID?.trim() || undefined;
+  const token = process.env["0SEC_CLOUD_TOKEN"]?.trim() || undefined;
+  const orgId = process.env["0SEC_CLOUD_ORG_ID"]?.trim() || undefined;
   return { sinkUrl, scanId, token, orgId };
 }
 
 function buildHeaders(config: CloudSinkConfig): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-Pwnkit-Scan-Id": config.scanId,
+    "X-0sec-Scan-Id": config.scanId,
     "x-cloud-sink-version": "1",
   };
   if (config.token) headers["Authorization"] = `Bearer ${config.token}`;
@@ -106,7 +106,7 @@ function buildHeaders(config: CloudSinkConfig): Record<string, string> {
   // header, then the operator-org fallback — so forwarding it lands assets in
   // the same tenant as the scan when an org id is configured. Harmless on the
   // findings path (that route ignores it and derives org from the scan-id).
-  if (config.orgId) headers["X-Pwnkit-Org-Id"] = config.orgId;
+  if (config.orgId) headers["X-0sec-Org-Id"] = config.orgId;
   return headers;
 }
 
@@ -127,12 +127,12 @@ async function postJson(
       // abort the scan.
       const text = await res.text().catch(() => "");
       process.stderr.write(
-        `[pwnkit cloud-sink] ${kind} POST ${url} returned ${res.status}: ${text.slice(0, 200)}\n`,
+        `[0sec cloud-sink] ${kind} POST ${url} returned ${res.status}: ${text.slice(0, 200)}\n`,
       );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[pwnkit cloud-sink] ${kind} POST ${url} failed: ${msg}\n`);
+    process.stderr.write(`[0sec cloud-sink] ${kind} POST ${url} failed: ${msg}\n`);
   }
 }
 
@@ -250,7 +250,7 @@ export class CloudSinkNormalizeError extends Error {
 /**
  * Normalize an arbitrary finding-shaped value (an OSS internal `Finding`, a
  * raw LLM `save_finding` tool-call argument object, or something in between)
- * into the strict `CloudSinkFinding` shape the pwnkit-cloud orchestrator's
+ * into the strict `CloudSinkFinding` shape the 0sec-cloud orchestrator's
  * zod schema validates.
  *
  * This is the chokepoint that keeps OSS → cloud wire traffic schema-clean.
@@ -320,14 +320,14 @@ export function normalizeFinding(rawFinding: unknown): CloudSinkFinding {
   );
   if (reviewAnnotation) normalized.reviewAnnotation = reviewAnnotation;
 
-  // pwnkit#170 — pass-through optional PoC step graph. We accept already-
+  // 0sec#170 — pass-through optional PoC step graph. We accept already-
   // structured arrays (the in-process OSS Finding case) and JSON-encoded
   // strings (the LLM tool-call case). Anything malformed is dropped — a bad
   // step graph must never block a finding from reaching cloud.
   const pocSteps = normalizePocSteps(raw.pocSteps ?? raw.poc_steps);
   if (pocSteps && pocSteps.length > 0) normalized.pocSteps = pocSteps;
 
-  // pwnkit#193 — pass-through optional VerificationSpec. Same wire-shape
+  // 0sec#193 — pass-through optional VerificationSpec. Same wire-shape
   // tolerance as pocSteps (object OR JSON string OR null). Anything
   // malformed is dropped silently; the spec is decoration on the finding,
   // never a reason to drop the finding itself.
@@ -371,7 +371,7 @@ export function normalizeFinding(rawFinding: unknown): CloudSinkFinding {
  * shape unchanged when the input is already array-shaped, parses a JSON-
  * encoded string into one, and yields null for any other shape. This is
  * deliberately permissive: the OSS sink is a wire-format chokepoint, not a
- * schema validator — see PocStep in @pwnkit/shared for the canonical shape.
+ * schema validator — see PocStep in @0sec/shared for the canonical shape.
  */
 function normalizePocSteps(v: unknown): unknown[] | null {
   if (v == null || v === "") return null;
@@ -431,12 +431,12 @@ function normalizeReviewAnnotation(
 
 /**
  * Pass-through normaliser for the optional `verificationSpec` field
- * (pwnkit#193). Returns the object shape unchanged when input is already an
+ * (0sec#193). Returns the object shape unchanged when input is already an
  * object, parses a JSON-encoded string into one, and yields null otherwise.
  *
  * Mirrors `normalizePocSteps` in being deliberately permissive: the OSS
  * sink is a wire-format chokepoint, not a schema validator. The canonical
- * shape lives in `@pwnkit/shared/types.ts` (`VerificationSpec`).
+ * shape lives in `@0sec/shared/types.ts` (`VerificationSpec`).
  */
 function normalizeVerificationSpec(v: unknown): Record<string, unknown> | null {
   if (v == null || v === "") return null;
@@ -475,7 +475,7 @@ export async function postFinding(
     normalized = normalizeFinding(finding);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[pwnkit cloud-sink] dropping malformed finding: ${msg}\n`);
+    process.stderr.write(`[0sec cloud-sink] dropping malformed finding: ${msg}\n`);
     return;
   }
   const url = `${config.sinkUrl.replace(/\/+$/, "")}/scans/${encodeURIComponent(config.scanId)}/findings`;
@@ -495,7 +495,7 @@ export async function postFinalReport(
   await postJson(url, { report, final: true }, config, "report");
 }
 
-// ── Discovered-asset push (pwnkit#768 / #761) ──
+// ── Discovered-asset push (0sec#768 / #761) ──
 //
 // Recon (recon.ts), js-recon (js-recon.ts), and cloud-surface (cloud-surface.ts)
 // each produce a structured inventory the dashboard's Recon view + attack graph

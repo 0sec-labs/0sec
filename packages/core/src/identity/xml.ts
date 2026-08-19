@@ -1,6 +1,6 @@
 // Minimal XML reader for SAML structural analysis.
 //
-// Hand-rolled on purpose: `@pwnkit/core` has no XML dependency, and pulling one
+// Hand-rolled on purpose: `@0sec/core` has no XML dependency, and pulling one
 // in for a handful of structural checks would add a parser — and its attack
 // surface — to every consumer of this package. This one is deliberately narrow:
 // it handles exactly the subset SAML uses, has NO entity expansion, NO DTD

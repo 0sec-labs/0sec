@@ -9,7 +9,7 @@
  * the ToolExecutor (agent/tools.ts) as a thin delegate to `executeStartScan`,
  * keeping the logic out of the 4000-line tools.ts god-module (CLAUDE.md rule).
  *
- * Cloud-only: no-op error in local mode (no PWNKIT_CLOUD_SINK). Budget +
+ * Cloud-only: no-op error in local mode (no 0SEC_CLOUD_SINK). Budget +
  * fan-out caps are enforced server-side (a 409 = cap hit; 429 = budget).
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -86,7 +86,7 @@ export async function executeStartScan(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-Pwnkit-Scan-Id": cfg.scanId,
+    "X-0sec-Scan-Id": cfg.scanId,
   };
   if (cfg.token) headers["Authorization"] = `Bearer ${cfg.token}`;
   const url = `${cfg.sinkUrl.replace(/\/+$/, "")}/scans`;

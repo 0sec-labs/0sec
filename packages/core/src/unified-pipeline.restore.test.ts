@@ -1,5 +1,5 @@
 /**
- * pwnkit#193 — `restorePersistedFinding` round-trip for `verificationSpec`.
+ * 0sec#193 — `restorePersistedFinding` round-trip for `verificationSpec`.
  *
  * CodeRabbit flagged that `Finding.verificationSpec` is part of the shared
  * model but the unified-pipeline reload path was dropping it on restore.
@@ -14,23 +14,23 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { pwnkitDB } from "@pwnkit/db";
+import { osecDB } from "@0sec/db";
 import type {
   Finding,
   LayerVerdict,
   PocStep,
   ScanConfig,
   VerificationSpec,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import { restorePersistedFinding } from "./unified-pipeline.js";
 
 const tempDirs: string[] = [];
 type PersistedFindingRestoreRow = Parameters<typeof restorePersistedFinding>[0];
 
-function makeDb(): { db: pwnkitDB; scanId: string } {
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-restore-vspec-"));
+function makeDb(): { db: osecDB; scanId: string } {
+  const dir = mkdtempSync(join(tmpdir(), "0sec-restore-vspec-"));
   tempDirs.push(dir);
-  const db = new pwnkitDB(join(dir, "pwnkit.db"));
+  const db = new osecDB(join(dir, "0sec.db"));
   const scanConfig: ScanConfig = {
     target: "http://example.test",
     depth: "default",
@@ -114,7 +114,7 @@ function makePersistedRow(
   };
 }
 
-describe("restorePersistedFinding (pwnkit#193 — verificationSpec round-trip)", () => {
+describe("restorePersistedFinding (0sec#193 — verificationSpec round-trip)", () => {
   afterEach(() => {
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
@@ -188,7 +188,7 @@ describe("restorePersistedFinding (pwnkit#193 — verificationSpec round-trip)",
   });
 });
 
-// pwnkit#414 — six additional persisted columns were being silently dropped
+// 0sec#414 — six additional persisted columns were being silently dropped
 // on resume (pocSteps, layerVerdicts, pocExecution, workflowStatus,
 // workflowAssignee, score). These tests pin the round-trip so the next
 // regression fails loudly.
@@ -238,7 +238,7 @@ function makePocExecution() {
   };
 }
 
-describe("restorePersistedFinding (pwnkit#414 — six-field round-trip)", () => {
+describe("restorePersistedFinding (0sec#414 — six-field round-trip)", () => {
   afterEach(() => {
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });

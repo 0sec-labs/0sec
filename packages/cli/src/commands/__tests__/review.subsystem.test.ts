@@ -1,5 +1,5 @@
 /**
- * `pwnkit review --subsystem` flag tests (pwnkit#466).
+ * `0sec review --subsystem` flag tests (0sec#466).
  *
  * Validates that the `--subsystem` flag is threaded through to `runUnified`
  * and that validation logic works correctly.
@@ -22,10 +22,10 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerReviewCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
-describe("pwnkit review --subsystem", () => {
+describe("0sec review --subsystem", () => {
   beforeEach(() => {
     runUnifiedMock.mockClear();
     runUnifiedMock.mockResolvedValue(undefined);

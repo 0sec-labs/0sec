@@ -37,7 +37,7 @@ describe("detectBuildSystem", () => {
   });
 
   it("falls back to autotools for unknown trees", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-unknown-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-unknown-"));
     try {
       expect(await detectBuildSystem(outDir, "auto")).toBe("autotools");
     } finally {
@@ -87,7 +87,7 @@ describe("discoverObjectSubset", () => {
 describe("buildTier2Harness", () => {
   it("emits harness.c, linker script, and Makefile fragment for an autotools tree", async () => {
     const root = join(FIXTURES, "cpp-tier2-autotools");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-emit-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-emit-"));
     try {
       const artifact = await buildTier2Harness({
         suspectFunction: {
@@ -112,7 +112,7 @@ describe("buildTier2Harness", () => {
       // Round-trip: the function name has to appear in the harness body.
       expect(harness).toMatch(/widget_decode\(data, size, &out, &out_size\)/);
       expect(harness).toContain("LLVMFuzzerTestOneInput");
-      expect(harness).toContain("// pwnkit Tier-2");
+      expect(harness).toContain("// 0sec Tier-2");
 
       // Compile command should reference the discovered sibling and
       // enable both sanitizers + libFuzzer.
@@ -130,7 +130,7 @@ describe("buildTier2Harness", () => {
 
       // Makefile fragment should be non-empty and call out the sanitizers.
       const mk = await readFile(artifact.makefile_fragment_path, "utf8");
-      expect(mk).toMatch(/PWNKIT_TIER2_HARNESS/);
+      expect(mk).toMatch(/0SEC_TIER2_HARNESS/);
       expect(mk).toContain(artifact.compile_command);
       expect(mk).toMatch(/Sanitizers: asan, ubsan/);
 
@@ -143,7 +143,7 @@ describe("buildTier2Harness", () => {
 
   it("auto-detects the build system when 'auto' is passed", async () => {
     const root = join(FIXTURES, "cpp-tier2-cmake");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-auto-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-auto-"));
     try {
       const artifact = await buildTier2Harness({
         suspectFunction: {
@@ -164,7 +164,7 @@ describe("buildTier2Harness", () => {
 
   it("locates the suspect source file automatically when not provided", async () => {
     const root = join(FIXTURES, "cpp-tier2-meson");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-locate-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-locate-"));
     try {
       const artifact = await buildTier2Harness({
         suspectFunction: {
@@ -188,7 +188,7 @@ describe("buildTier2Harness", () => {
 
   it("includes corpus seed arguments in the run command when provided", async () => {
     const root = join(FIXTURES, "cpp-tier2-autotools");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-corpus-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-corpus-"));
     try {
       const artifact = await buildTier2Harness({
         suspectFunction: {
@@ -212,7 +212,7 @@ describe("buildTier2Harness", () => {
 
   it("respects msan when explicitly requested", async () => {
     const root = join(FIXTURES, "cpp-tier2-autotools");
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-msan-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-msan-"));
     try {
       const artifact = await buildTier2Harness({
         suspectFunction: {

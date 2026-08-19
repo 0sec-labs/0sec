@@ -1,5 +1,5 @@
 {
-  "$comment": "Curated picoCTF challenge manifest for pwnkit benchmarking. Each entry must have a unique id, category, and either a live URL (web challenges) or file download URLs (offline challenges). Challenges are drawn from picoGym and recent competitions.",
+  "$comment": "Curated picoCTF challenge manifest for 0sec benchmarking. Each entry must have a unique id, category, and either a live URL (web challenges) or file download URLs (offline challenges). Challenges are drawn from picoGym and recent competitions.",
   "challenges": [
     {
       "id": "picogym-obedient-cat",

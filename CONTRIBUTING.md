@@ -1,6 +1,6 @@
-# Contributing to pwnkit
+# Contributing to 0sec
 
-Thanks for helping improve pwnkit.
+Thanks for helping improve 0sec.
 
 ## Before you start
 
@@ -19,11 +19,11 @@ pnpm install --frozen-lockfile
 pnpm build
 ```
 
-The bundled CLI is `dist/pwnkit.js`:
+The bundled CLI is `dist/0sec.js`:
 
 ```bash
-node dist/pwnkit.js --version
-node dist/pwnkit.js doctor
+node dist/0sec.js --version
+node dist/0sec.js doctor
 ```
 
 ## Checks
@@ -41,7 +41,7 @@ For test-target work, start the local fixtures in separate terminals:
 ```bash
 pnpm vulnerable
 pnpm safe
-pnpm --filter @pwnkit/test-targets test
+pnpm --filter @0sec/test-targets test
 ```
 
 ## Attack templates

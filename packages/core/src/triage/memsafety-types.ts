@@ -1,6 +1,6 @@
 /**
  * Shared contract for the userspace / Rust memory-safety pipeline
- * ("Monty-mode"). See docs/pwnkit-rust-memsafety-pipeline.md.
+ * ("Monty-mode"). See docs/0sec-rust-memsafety-pipeline.md.
  *
  * Track B owns this file; Tracks A and C import from it.
  */

@@ -24,7 +24,7 @@ if (!installRoot) {
 }
 
 // Resolve node-sqlite3-wasm from the install root (it's an externalized runtime
-// dep of pwnkit-cli, so it lives under <installRoot>/node_modules).
+// dep of 0sec-cli, so it lives under <installRoot>/node_modules).
 const require = createRequire(join(installRoot, "package.json"));
 const { Database } = require("node-sqlite3-wasm");
 

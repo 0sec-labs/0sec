@@ -189,9 +189,9 @@ writeFileSync(join(outDir, "substrate.sha"), `${substrateRepo}@${substrateSha}\n
 const bb = ledger.counts.blackBox, agg = ledger.counts.aggregate;
 const headModel = Object.keys(ledger.perModel)[0] ?? "unknown";
 
-writeFileSync(join(outDir, "README.md"), `# pwnkit — XBOW benchmark receipts
+writeFileSync(join(outDir, "README.md"), `# 0sec — XBOW benchmark receipts
 
-Auditable per-challenge receipts for [pwnkit](https://0sec.ai)'s runs against the
+Auditable per-challenge receipts for [0sec](https://0sec.ai)'s runs against the
 [XBOW validation benchmarks](https://github.com/${substrateRepo}), pinned to a single
 commit so the substrate is fixed and publicly clonable.
 
@@ -217,7 +217,7 @@ ${publicTier ? `
 
 writeFileSync(join(outDir, "VERIFY.md"), `# How to audit these receipts
 
-pwnkit's engine is closed-source, so we do **not** claim you can reproduce these runs
+0sec's engine is closed-source, so we do **not** claim you can reproduce these runs
 from scratch. Instead every solve is **auditable**: the receipt is the agent's real,
 turn-by-turn interaction with the live challenge, ending in the flag it pulled out of
 the target's own responses.

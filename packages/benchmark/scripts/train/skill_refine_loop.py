@@ -5,7 +5,7 @@ Skill self-improvement loop — a `/refine` flywheel for JIT skills.
 This is the skill-side sibling of `active_learning_loop.py`. That loop closes
 the feedback cycle for the triage *router* (operator labels -> retrain ->
 A/B-gated promote). This loop closes the same cycle for the ONLY other already-
-versioned, hot-loaded-from-disk surface pwnkit has: the JIT methodology skills
+versioned, hot-loaded-from-disk surface 0sec has: the JIT methodology skills
 (`packages/core/src/agent/skills/{frameworks,vulnerabilities,techniques}/*.yaml`,
 loaded by `loadSkillRegistry()`; each has an integer `version`).
 
@@ -578,7 +578,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--core-dist",
         type=Path,
-        help="Path to @pwnkit/core build (for the load-check). Defaults to sibling.",
+        help="Path to @0sec/core build (for the load-check). Defaults to sibling.",
     )
     ap.add_argument(
         "--check-skill",

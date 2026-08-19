@@ -1,10 +1,10 @@
 // GENERATED FILE — do not edit.
-// Regenerate with: pnpm --filter @pwnkit/templates gen
+// Regenerate with: pnpm --filter @0sec/templates gen
 //
 // Inlines every YAML under packages/templates/attacks/ as a typed
 // const so the loader works without filesystem access. Needed for
 // binary distribution (bun build --compile's /$bunfs has no YAMLs).
-import type { AttackTemplate } from "@pwnkit/shared";
+import type { AttackTemplate } from "@0sec/shared";
 
 export const EMBEDDED_TEMPLATES: AttackTemplate[] = [
   {

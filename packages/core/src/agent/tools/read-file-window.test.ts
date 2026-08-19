@@ -10,7 +10,7 @@ function numberedFile(lineCount: number): string {
   return Array.from({ length: lineCount }, (_, i) => `line ${i + 1}`).join("\n");
 }
 
-/** The content minus any appended `[pwnkit:read_file]` status lines. */
+/** The content minus any appended `[0sec:read_file]` status lines. */
 function bodyLines(content: string): string[] {
   return content.split("\n").filter((l) => !l.startsWith(READ_FILE_NOTE_PREFIX));
 }

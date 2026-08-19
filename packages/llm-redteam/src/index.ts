@@ -1,4 +1,4 @@
-/** @pwnkit/llm-redteam — offensive LLM/agent indirect-prompt-injection engine. */
+/** @0sec/llm-redteam — offensive LLM/agent indirect-prompt-injection engine. */
 export * from "./types.js";
 export * from "./strategies/index.js";
 export * from "./judge.js";

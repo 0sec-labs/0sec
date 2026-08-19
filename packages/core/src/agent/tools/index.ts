@@ -1,5 +1,5 @@
 /**
- * Tool registry barrel (pwnkit#611).
+ * Tool registry barrel (0sec#611).
  *
  * Assembles the canonical `TOOL_DEFINITIONS` map from the per-domain
  * definition modules. Splitting the old 600-line object literal into

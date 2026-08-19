@@ -1,4 +1,4 @@
-# kernel-uaf-driver — pwnkit linux-kernel review profile fixture
+# kernel-uaf-driver — 0sec linux-kernel review profile fixture
 
 Synthetic, deliberately vulnerable Linux char-device driver used by the
 `linux-kernel` review profile tests.

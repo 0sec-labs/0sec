@@ -7,8 +7,8 @@ import type {
   PocStep,
   Severity,
   TriageLayerName,
-} from "@pwnkit/shared";
-import { loadTemplates } from "@pwnkit/templates";
+} from "@0sec/shared";
+import { loadTemplates } from "@0sec/templates";
 import { createRuntime } from "./runtime/index.js";
 import { LlmApiRuntime } from "./runtime/llm-api.js";
 import type { ApiRuntimeDiagnostics } from "./runtime/llm-api.js";
@@ -31,8 +31,8 @@ import {
   shellPentestPrompt,
   buildAccessControlPromptBlock,
 } from "./agent/prompts.js";
-import { resolveIdentities } from "@pwnkit/shared";
-import type { RuntimeMode } from "@pwnkit/shared";
+import { resolveIdentities } from "@0sec/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import { features } from "./agent/features.js";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "./runtime/types.js";
@@ -125,14 +125,14 @@ import { applyFindingPostProcess, loadPriorScanAnchors, type DedupeItem } from "
  * Default 5 rps when the operator did not pass `--rate-limit`. The
  * issue body is explicit on this: the primitive should default
  * conservative even without an explicit operator flag, so an
- * unconfigured `pwnkit scan` can't accidentally hammer a target.
+ * unconfigured `0sec scan` can't accidentally hammer a target.
  */
 const RATE_LIMITER_CACHE = new WeakMap<ScanConfig, RateLimiter>();
 function getOrCreateRateLimiter(config: ScanConfig): RateLimiter {
   let rl = RATE_LIMITER_CACHE.get(config);
   if (!rl) {
     // In http_audit mode the per-host rps comes from the env-bridge
-    // (PWNKIT_TARGET_RATE_LIMIT_RPS, default 5) rather than the --rate-limit
+    // (0SEC_TARGET_RATE_LIMIT_RPS, default 5) rather than the --rate-limit
     // flag; the flag form isn't part of the worker contract. Otherwise we
     // honour the parsed --rate-limit spec with the usual 5 rps default.
     const modeFallbackRps = config.mode === "http_audit"
@@ -239,7 +239,7 @@ function attachEnforcementSummary(report: ScanReport, config: ScanConfig): void 
 /**
  * Count distinct `FLAG{...}` matches across a finding set. Used by
  * `emitScanCompleted` to derive `cost_per_flag` for the
- * `scan_completed` event (pwnkit#231).
+ * `scan_completed` event (0sec#231).
  *
  * Mirrors the regex in `agent/flag-validator.ts` (`FLAG_WRAPPER_RE`)
  * so anything the validator would accept counts here. Walks
@@ -293,7 +293,7 @@ export interface AgenticScanOptions {
    */
   emitTerminalEvent?: boolean;
   /**
-   * Userspace / Rust memory-safety scan role ("Monty-mode", pwnkit#700). When
+   * Userspace / Rust memory-safety scan role ("Monty-mode", 0sec#700). When
    * set, the scan dispatches to the focused `runMemSafetyScan` stage
    * (audit-playbook → closed fuzz loop → crash triage) and returns early,
    * BEFORE any of the live-target / DB / runtime machinery below runs. The
@@ -489,7 +489,7 @@ async function normalizeScanConfig(config: ScanConfig): Promise<ScanConfig> {
  * Sessions are saved so interrupted scans can be resumed.
  */
 /**
- * Memory-safety scan dispatch ("Monty-mode", pwnkit#700). Adapts the focused
+ * Memory-safety scan dispatch ("Monty-mode", 0sec#700). Adapts the focused
  * `runMemSafetyScan` stage result into the unified `ScanReport` the rest of the
  * product consumes. Lives here only as the thin bridge between the scan entry
  * point and the stage module; all real orchestration is in
@@ -580,7 +580,7 @@ async function runCraftScanStage(
       : {}),
   };
 
-  // Ensemble craft opt-in (OFF by default): when PWNKIT_ENSEMBLE_MODELS lists
+  // Ensemble craft opt-in (OFF by default): when 0SEC_ENSEMBLE_MODELS lists
   // more than one model, run N parallel craft trajectories across those models
   // and LLM-judge them down to one PoC. Unset / single model → the single-model
   // craft path below, byte-for-byte unchanged. `runEnsembleCraft` returns a
@@ -707,7 +707,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
   const getPendingUserMessages =
     optsGetPendingUserMessages ?? cloudInbox?.drain;
 
-  // Memory-safety scan role ("Monty-mode", pwnkit#700). This is the minimal
+  // Memory-safety scan role ("Monty-mode", 0sec#700). This is the minimal
   // dispatch seam for the userspace/Rust pipeline: when a `memSafetyTarget` is
   // supplied we delegate to the focused `runMemSafetyScan` stage and return,
   // before the DB / runtime / live-target machinery below. Keeping the actual
@@ -728,7 +728,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
   const config = await normalizeScanConfig(opts.config);
 
-  // Programmatic scope ingestion (pwnkit#215). Load once at the top and
+  // Programmatic scope ingestion (0sec#215). Load once at the top and
   // pass the parsed `ScopePolicy` to every agent config below. The CLI
   // is responsible for catching ENOENT / parse errors before this point;
   // here we just propagate. Pre-validate the configured target so an
@@ -739,7 +739,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     scope = loadScope(config.scopeFile);
     // Seed the per-scan cache so every downstream helper reuses this
     // exact policy instance instead of re-reading the JSON file. See
-    // `resolveScopeForConfig` for the TOCTOU rationale (pwnkit#218
+    // `resolveScopeForConfig` for the TOCTOU rationale (0sec#218
     // review).
     scopePolicyCache.set(config, scope);
     const verdict = scope.match(config.target);
@@ -761,11 +761,11 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     throw new Error(scopeRequiredRefusal("scan"));
   }
 
-  // Attribution-header config (pwnkit#216). Resolved by every per-stage
+  // Attribution-header config (0sec#216). Resolved by every per-stage
   // helper below via `buildAttributionForConfig(config)` — see that
   // function for the actual three-source merge. We pre-flight here so a
   // malformed `attribution` block in the scope file or a malformed
-  // `PWNKIT_ATTRIBUTION_HEADERS` env var fails the scan loudly at boot
+  // `0SEC_ATTRIBUTION_HEADERS` env var fails the scan loudly at boot
   // instead of crashing inside the discovery agent's first fetch.
   buildAttributionForConfig(config);
 
@@ -778,12 +778,12 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
   const db = await (async () => {
     try {
-      const { pwnkitDB } = await import("@pwnkit/db");
-      return new pwnkitDB(dbPath);
+      const { osecDB } = await import("@0sec/db");
+      return new osecDB(dbPath);
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `pwnkit: failed to initialize the local database (@pwnkit/db). ` +
+        `0sec: failed to initialize the local database (@0sec/db). ` +
         `Agentic scans require SQLite persistence. Underlying error: ${cause}`,
       );
     }
@@ -805,7 +805,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     emit({ type: "stage:start", stage: "discovery", message: "Resuming scan..." });
   }
 
-  // Record the inert-guard fact in the scan's OWN event log (pwnkit#133), not
+  // Record the inert-guard fact in the scan's OWN event log (0sec#133), not
   // just on stdout: cloud scans have no console to read, and the whole point
   // of the issue is that a reviewer must be able to answer "did the bash
   // egress guards run on this scan?" after the fact. Paired with the operator-
@@ -1022,7 +1022,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
   // still tells the operator how much work happened. Tracked here in
   // the scanner (the producer) so the cloud doesn't re-derive these
   // from raw scan_events on every page load — see
-  // pwnkit-cloud/services/dashboard/src/routes/_authed/$orgSlug/scans/index.tsx.
+  // 0sec-cloud/services/dashboard/src/routes/_authed/$orgSlug/scans/index.tsx.
   let toolCallsTotal = 0;
   let lastDoneSummary = "";
   const unsubscribeMetrics = eventBus.subscribe({
@@ -1095,7 +1095,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         lastDoneSummary ||
         undefined;
 
-      // ── Cost surfacing (pwnkit#231) ──
+      // ── Cost surfacing (0sec#231) ──
       // Aggregate per-(provider, model) so a multi-model run (Haiku
       // discovery + Opus attack) emits one entry per model with split
       // input/output/cache costs. The cloud relay / consolidator can
@@ -1198,7 +1198,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       emit({ type: "stage:start", stage: "attack", message: "Running IPI campaign..." });
       const { findings } = await runLlmIpiAudit({
         baseUrl: config.target,
-        apiKey: config.apiKey ?? process.env.PWNKIT_LLM_TARGET_KEY ?? "",
+        apiKey: config.apiKey ?? process.env["0SEC_LLM_TARGET_KEY"] ?? "",
         models: config.model ? [config.model] : ["default"],
         maxAttempts: config.depth === "deep" ? 50 : 20,
       });
@@ -1338,7 +1338,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         "Codex CLI live target scanning is not supported. " +
         "The MCP-backed Codex wrapper was removed because it adds a target-interaction bottleneck. " +
         "For live target scans with Codex, run `codex login`, set " +
-        "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN from ~/.codex/auth.json, and retry `pwnkit scan --runtime codex`; " +
+        "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN from ~/.codex/auth.json, and retry `0sec scan --runtime codex`; " +
         "otherwise use runtime=api or runtime=claude.",
       );
     }
@@ -1359,7 +1359,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     });
 
     // Deterministic web-recon pre-pass — runs ONCE here on the common path so it
-    // applies to BOTH native and legacy discovery. The cloud worker invokes pwnkit
+    // applies to BOTH native and legacy discovery. The cloud worker invokes 0sec
     // with `--runtime codex`, which resolves to the legacy discovery loop; a hook
     // wired only into runNativeDiscovery never fires there (the reason the pre-pass
     // produced nothing in cloud scans). Never breaks the scan; emits findings
@@ -1827,8 +1827,8 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         ...(repository ? { repository } : {}),
       });
     }
-    // ── Dynamic per-finding triage routing (pwnkit#113) ──
-    // When `PWNKIT_FEATURE_DYNAMIC_TRIAGE=1`, a per-finding decision says
+    // ── Dynamic per-finding triage routing (0sec#113) ──
+    // When `0SEC_FEATURE_DYNAMIC_TRIAGE=1`, a per-finding decision says
     // which layers to skip. The decision is recorded in this map so we
     // can (a) gate layer execution below and (b) emit `routing-trace.jsonl`
     // at scan teardown for offline learned-router training.
@@ -1837,7 +1837,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // Always run isHoldingItWrong + extractFeatures for telemetry, but
       // only enforce the rejection when the feature flags are enabled.
       // Both default ON to preserve existing v0.6.0 behavior; setting
-      // PWNKIT_FEATURE_HOLDING_IT_WRONG=0 / PWNKIT_FEATURE_EVIDENCE_GATE=0
+      // 0SEC_FEATURE_HOLDING_IT_WRONG=0 / 0SEC_FEATURE_EVIDENCE_GATE=0
       // turns the gates off so we can A/B test what they actually cost.
       const hiwStartedAt = Date.now();
       const hiw = isHoldingItWrong(finding);
@@ -1846,7 +1846,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         evidenceCompletenessIdx >= 0 ? featureVector[evidenceCompletenessIdx] ?? 0 : 0;
 
       // Layer telemetry: holding-it-wrong always runs (just may not enforce).
-      // pwnkit#112 — feeds the dynamic routing model in #113.
+      // 0sec#112 — feeds the dynamic routing model in #113.
       //
       // The blocklist drop is a heuristic, so it routes through the one
       // disclosure predicate: a disclosure-grade finding is held for
@@ -1873,7 +1873,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           layer: "holding_it_wrong",
           verdict: hiw.isHoldingItWrong ? "skip" : "pass",
           reason: hiw.isHoldingItWrong
-            ? `would have rejected (${hiw.reason}) but PWNKIT_FEATURE_HOLDING_IT_WRONG=0`
+            ? `would have rejected (${hiw.reason}) but 0SEC_FEATURE_HOLDING_IT_WRONG=0`
             : "no holding-it-wrong pattern matched",
           startedAt: hiwStartedAt,
         });
@@ -2003,12 +2003,12 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         verdict: evidenceGateRejects ? "skip" : "pass",
         confidence: evidenceCompleteness,
         reason: evidenceGateRejects
-          ? `would have rejected (completeness=${evidenceCompleteness.toFixed(2)}) but PWNKIT_FEATURE_EVIDENCE_GATE=0`
+          ? `would have rejected (completeness=${evidenceCompleteness.toFixed(2)}) but 0SEC_FEATURE_EVIDENCE_GATE=0`
           : `evidence_completeness=${evidenceCompleteness.toFixed(2)} > 0.5`,
         startedAt: evidenceGateStartedAt,
       });
 
-      // ── Learned router (pwnkit#113) ──
+      // ── Learned router (0sec#113) ──
       // When enabled, the XGBoost model decides per-finding whether to
       // auto-accept, auto-reject, or run a subset of layers. This runs
       // AFTER the two free always-on filters (holding-it-wrong +
@@ -2091,8 +2091,8 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         // still control which layers run for now).
       }
 
-      // ── Dynamic per-finding triage routing (pwnkit#113) ──
-      // Gated behind PWNKIT_FEATURE_DYNAMIC_TRIAGE (default OFF). When
+      // ── Dynamic per-finding triage routing (0sec#113) ──
+      // Gated behind 0SEC_FEATURE_DYNAMIC_TRIAGE (default OFF). When
       // enabled, the router decides per-finding which subset of the
       // 11 triage layers to invoke. Layers NOT in `layers_to_invoke`
       // are short-circuited in the per-layer branches below. The
@@ -2175,7 +2175,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       };
 
       // ── Reachability gate ("Endor Labs moat") ──
-      // Opt-in via PWNKIT_FEATURE_REACHABILITY_GATE. Only runs in white-box
+      // Opt-in via 0SEC_FEATURE_REACHABILITY_GATE. Only runs in white-box
       // mode when we have source code. For each finding, check whether the
       // vulnerable sink is actually reachable from an application entry
       // point (HTTP handler, CLI main, route file). Dead code and test-only
@@ -2355,13 +2355,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           verdict: "skip",
           reason: features.reachabilityGate
             ? "no repoPath available (black-box mode)"
-            : "PWNKIT_FEATURE_REACHABILITY_GATE=0",
+            : "0SEC_FEATURE_REACHABILITY_GATE=0",
           startedAt: Date.now(),
         });
       }
 
       // ── Multi-modal agreement (foxguard cross-validation) ──
-      // Opt-in via PWNKIT_FEATURE_MULTIMODAL. Only runs when we have source
+      // Opt-in via 0SEC_FEATURE_MULTIMODAL. Only runs when we have source
       // code (white-box mode). Cross-checks every finding against the
       // foxguard Rust pattern scanner — if both agents agree, the finding is
       // almost certainly real; if foxguard disagrees and the evidence is
@@ -2504,13 +2504,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           verdict: "skip",
           reason: features.multiModalAgreement
             ? "no repoPath available (black-box mode)"
-            : "PWNKIT_FEATURE_MULTIMODAL=0",
+            : "0SEC_FEATURE_MULTIMODAL=0",
           startedAt: Date.now(),
         });
       }
 
       // ── Publishability / in-scope gate (issue #537 / #539) ──
-      // Opt-in via PWNKIT_FEATURE_PUBLISHABILITY_GATE (default OFF). Decides
+      // Opt-in via 0SEC_FEATURE_PUBLISHABILITY_GATE (default OFF). Decides
       // disclosure-worthiness so we stop filing by-design / duplicate /
       // dead-code / already-fixed findings. The layer itself only *computes* a
       // verdict; any SUPPRESSION decision (by_design / duplicate / fixed /
@@ -2657,7 +2657,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           verdict: "skip",
           reason: features.publishabilityGate
             ? "skipped by dynamic_router"
-            : "PWNKIT_FEATURE_PUBLISHABILITY_GATE=0",
+            : "0SEC_FEATURE_PUBLISHABILITY_GATE=0",
           startedAt: Date.now(),
         });
       }
@@ -2726,7 +2726,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           finding.confidence = 1.0;
           finding.triageStatus = "accepted";
           finding.triageNote = `oracle_verified: ${oracle.evidence}`;
-          // pwnkit#659 / 0cloud#1278 — when this deterministic pass came from the
+          // 0sec#659 / 0cloud#1278 — when this deterministic pass came from the
           // OAST-callback oracle (SSRF / OOB-RCE / OOB-SQLi), emit an ALWAYS-ON
           // `oast_confirmed` bus event so cloudEventSink relays it to
           // scan_events. Unlike `pov_oracle` (below, gated behind the default-off
@@ -2842,10 +2842,10 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
             timestamp: Date.now(),
           });
           // Mirror onto the typed EventBus (#570). `db.logEvent` only writes
-          // pwnkit's LOCAL sqlite, which the cloud worker never relays — so
+          // 0sec's LOCAL sqlite, which the cloud worker never relays — so
           // without this the per-finding "deterministic vs heuristic" badge
           // never reaches the dashboard. cloudEventSink serializes this to a
-          // `PWNKIT_EVENT_POV_ORACLE` line → worker → orchestrator
+          // `0SEC_EVENT_POV_ORACLE` line → worker → orchestrator
           // `scan_events`, keyed by findingId, exactly like
           // untrusted_input_sanitized (#558).
           eventBus.emit("pov_oracle", {
@@ -2946,7 +2946,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
           layer: "pov_gate",
           verdict: "skip",
           reason: !features.povGate
-            ? "PWNKIT_FEATURE_POV_GATE=0"
+            ? "0SEC_FEATURE_POV_GATE=0"
             : !(nativeApiAvailable || cliNativeRuntime)
               ? "no native runtime available"
               : "already accepted by upstream layer",
@@ -2963,7 +2963,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       // execution path — no new infra). On reproduce, synthesize runnable
       // pocSteps so the verify runner picks it up; on no-repro, flag
       // `poc:none` so 0cloud routes it to manual / inconclusive — never a
-      // silent skip. Default OFF (PWNKIT_FEATURE_POC_GEN_STATIC), A/B-able via
+      // silent skip. Default OFF (0SEC_FEATURE_POC_GEN_STATIC), A/B-able via
       // the #656 harness.
       if (
         features.pocGenStatic
@@ -3043,7 +3043,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         pushLayerVerdict(finding, {
           layer: "poc_gen",
           verdict: "skip",
-          reason: "PWNKIT_FEATURE_POC_GEN_STATIC=0",
+          reason: "0SEC_FEATURE_POC_GEN_STATIC=0",
           startedAt: Date.now(),
         });
       }
@@ -3232,7 +3232,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     }
 
     // ── Stage 4: Report ──
-    // Extracted to `agentic/stages/report.ts` (pwnkit#1285) — the terminal
+    // Extracted to `agentic/stages/report.ts` (0sec#1285) — the terminal
     // stage assembles the report, persists completion, emits the routing
     // trace + webhook, and fires `scan_completed`. `emitScanCompleted` and
     // `attachEnforcementSummary` stay owned here (they close over the bus /
@@ -3331,7 +3331,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
 export interface AgentOutput {
   findings: Finding[];
-  targetInfo: Partial<import("@pwnkit/shared").TargetInfo>;
+  targetInfo: Partial<import("@0sec/shared").TargetInfo>;
   summary: string;
   turnCount: number;
   estimatedCostUsd: number;
@@ -3339,7 +3339,7 @@ export interface AgentOutput {
    * Raw token-usage tally from the loop state. Surfaced separately
    * from `estimatedCostUsd` so the `scan_completed` event payload
    * can build per-(provider, model) cost splits via `splitCost()`
-   * (pwnkit#231) instead of just emitting a fused dollar total.
+   * (0sec#231) instead of just emitting a fused dollar total.
    * Optional for back-compat with legacy CLI runtimes that don't
    * report tokens.
    */
@@ -3365,7 +3365,7 @@ export interface AgentOutput {
 // ── Native (Claude API) stage runners ──
 
 /**
- * Per-scan cache of parsed scope policies (pwnkit#218 review). The first
+ * Per-scan cache of parsed scope policies (0sec#218 review). The first
  * helper that needs a policy parses the JSON file once; every subsequent
  * helper for the same `ScanConfig` reuses the same `ScopePolicy`
  * instance.
@@ -3404,7 +3404,7 @@ function resolveScopeForConfig(config: ScanConfig): ScopePolicy | undefined {
 }
 
 /**
- * Resolve the attribution config (pwnkit#216) from a ScanConfig. Called
+ * Resolve the attribution config (0sec#216) from a ScanConfig. Called
  * inline at every helper-function call site that constructs an
  * `AgentConfig`/`NativeAgentConfig`. Reuses the cached `ScopePolicy`
  * via `resolveScopeForConfig` so the scope file isn't reparsed.
@@ -3433,7 +3433,7 @@ async function runNativeDiscovery(
   // additions are the env-driven scope/path/rate/kill enforcement layered on
   // via the EnforcementTracker. So it is "web" for every prompt/tool decision.
   const isWeb = config.mode === "web" || config.mode === "http_audit";
-  // Multi-identity access-control testing (pwnkit#564): reconcile legacy
+  // Multi-identity access-control testing (0sec#564): reconcile legacy
   // `auth` with `identities` and surface the access_control_probe guidance.
   const identities = resolveIdentities(config);
   const basePrompt = isWeb
@@ -3515,7 +3515,7 @@ async function runNativeAttack(
   db: any,
   config: ScanConfig,
   scanId: string,
-  targetInfo: Partial<import("@pwnkit/shared").TargetInfo>,
+  targetInfo: Partial<import("@0sec/shared").TargetInfo>,
   categories: string[],
   maxTurns: number,
   emit: ScanListener,
@@ -3550,7 +3550,7 @@ async function runNativeAttack(
   // prompt. Defends against expensive thrash on CVE-tagged challenges
   // like XBEN-030 / XBEN-034 where the agent had source access but no
   // concrete leads and burned $6+ producing 0 findings.
-  // Gated behind PWNKIT_FEATURE_PRE_RECON_CVE (default ON in white-box).
+  // Gated behind 0SEC_FEATURE_PRE_RECON_CVE (default ON in white-box).
   let preReconBlock = "";
   if (hasSource && config.repoPath && features.preReconCve) {
     try {
@@ -3965,7 +3965,7 @@ function formatProgressHandoff(progress: AttemptProgress): string {
 }
 
 /** Format targetInfo from the discovery stage into a human-readable summary for the web attack prompt. */
-function formatWebDiscoveryInfo(targetInfo: Partial<import("@pwnkit/shared").TargetInfo>): string {
+function formatWebDiscoveryInfo(targetInfo: Partial<import("@0sec/shared").TargetInfo>): string {
   const parts: string[] = [];
   if (targetInfo.type) parts.push(`Type: ${targetInfo.type}`);
   if (targetInfo.model) parts.push(`Server/Framework: ${targetInfo.model}`);
@@ -4128,7 +4128,7 @@ async function runLegacyAttack(
   db: any,
   config: ScanConfig,
   scanId: string,
-  targetInfo: Partial<import("@pwnkit/shared").TargetInfo>,
+  targetInfo: Partial<import("@0sec/shared").TargetInfo>,
   categories: string[],
   maxTurns: number,
   emit: ScanListener,

@@ -3,7 +3,7 @@
  * pipeline (see invariant-candidates.ts). An {@link InvariantCandidate} names a
  * lock/refcount/state invariant, the *unprivileged* syscall pair that races it,
  * and the primitive the race yields; this turns that into a runnable 2-thread C
- * harness pinned to two CPUs, with the race window widened via `PWNKIT_RACE_*`
+ * harness pinned to two CPUs, with the race window widened via `0SEC_RACE_*`
  * env knobs so a narrow window is actually hit on a real box.
  *
  * SCOPE (deliberately thin — issue #1113): this ships the INTERFACE + a working
@@ -56,9 +56,9 @@ function cComment(s: string): string {
 
 /**
  * Render a compile-ready 2-thread race harness. Thread A/B are pinned to
- * `cpus[0]`/`cpus[1]`; each spins `PWNKIT_RACE_ITERS` times (default 100000),
- * and when `PWNKIT_RACE_WIDEN=1` a short pre-syscall busy-spin (length
- * `PWNKIT_RACE_SPIN`, default 64) nudges the two threads' entry closer together
+ * `cpus[0]`/`cpus[1]`; each spins `0SEC_RACE_ITERS` times (default 100000),
+ * and when `0SEC_RACE_WIDEN=1` a short pre-syscall busy-spin (length
+ * `0SEC_RACE_SPIN`, default 64) nudges the two threads' entry closer together
  * to widen the window. The syscall bodies themselves are TODO stubs.
  */
 export function renderRaceHarness(req: RacePocRequest): string {
@@ -71,7 +71,7 @@ export function renderRaceHarness(req: RacePocRequest): string {
   return `${includes.join("\n")}
 
 /*
- * Auto-generated race-PoC scaffold (pwnkit invariant-checker, issue #1113).
+ * Auto-generated race-PoC scaffold (0sec invariant-checker, issue #1113).
  *
  * Invariant under test : ${cComment(c.invariant)}
  * Racing syscall pair  : A=${cComment(c.racingSyscallPair.A)}  B=${cComment(c.racingSyscallPair.B)}
@@ -79,25 +79,25 @@ export function renderRaceHarness(req: RacePocRequest): string {
  * Hypothesized primitive: ${cComment(c.hypothesizedPrimitive)}
  *
  * Widen the race window with:
- *   PWNKIT_RACE_ITERS=<n>   iterations per thread            (default 100000)
- *   PWNKIT_RACE_WIDEN=1     enable the pre-syscall busy-spin (default off)
- *   PWNKIT_RACE_SPIN=<n>    busy-spin length when widening   (default 64)
+ *   0SEC_RACE_ITERS=<n>   iterations per thread            (default 100000)
+ *   0SEC_RACE_WIDEN=1     enable the pre-syscall busy-spin (default off)
+ *   0SEC_RACE_SPIN=<n>    busy-spin length when widening   (default 64)
  */
 
 static long race_iters(void) {
-  const char *e = getenv("PWNKIT_RACE_ITERS");
+  const char *e = getenv("0SEC_RACE_ITERS");
   long n = e ? atol(e) : 100000;
   return n > 0 ? n : 100000;
 }
 
 static long race_spin(void) {
-  const char *e = getenv("PWNKIT_RACE_SPIN");
+  const char *e = getenv("0SEC_RACE_SPIN");
   long n = e ? atol(e) : 64;
   return n > 0 ? n : 64;
 }
 
 static int race_widen(void) {
-  const char *e = getenv("PWNKIT_RACE_WIDEN");
+  const char *e = getenv("0SEC_RACE_WIDEN");
   return e && e[0] == '1';
 }
 

@@ -5,8 +5,8 @@ import { closeSync, constants as fsConstants, fstatSync, openSync, readSync } fr
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const WINDOWS_LPE_PAIRED_CORPUS_SCHEMA = "pwnkit.windows-lpe-paired-corpus/v2" as const;
-export const WINDOWS_LPE_EVALUATOR_LABELS_SCHEMA = "pwnkit.windows-lpe-evaluator-labels/v2" as const;
+export const WINDOWS_LPE_PAIRED_CORPUS_SCHEMA = "0sec.windows-lpe-paired-corpus/v2" as const;
+export const WINDOWS_LPE_EVALUATOR_LABELS_SCHEMA = "0sec.windows-lpe-evaluator-labels/v2" as const;
 
 export type WindowsLpePairedCorpusSplit = "development" | "holdout";
 export type WindowsLpeGroundTruth = "positive" | "negative";

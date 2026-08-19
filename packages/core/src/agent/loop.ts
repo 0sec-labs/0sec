@@ -8,9 +8,9 @@ import type {
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { WafDetector } from "../scope/waf-detect.js";
 import type { ToolContext } from "./types.js";
-import type { pwnkitDB } from "@pwnkit/db";
+import type { osecDB } from "@0sec/db";
 import type { Runtime } from "../runtime/types.js";
-import type { Finding, TargetInfo } from "@pwnkit/shared";
+import type { Finding, TargetInfo } from "@0sec/shared";
 import {
   resolveDispatchMode,
   parseXmlDispatch,
@@ -35,7 +35,7 @@ import {
 export interface AgentLoopOptions {
   config: AgentConfig;
   runtime: Runtime;
-  db: pwnkitDB | null;
+  db: osecDB | null;
   onTurn?: (turn: number, message: AgentMessage) => void;
   /** Called only after a new finding has passed save_finding validation. */
   onFindingSaved?: (finding: Finding) => void | Promise<void>;
@@ -74,7 +74,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
     session: config.session,
     scope: config.scope,
     rateLimiter: config.rateLimiter,
-    // WAF detection + adaptive evasion (pwnkit#568). Auto-enabled for
+    // WAF detection + adaptive evasion (0sec#568). Auto-enabled for
     // authorized engagements (scope/enforcement set) unless explicitly
     // disabled with `wafDetector: null`.
     wafDetector:
@@ -96,7 +96,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
     tools.some((tool) => tool.name === "list_skills") &&
     tools.some((tool) => tool.name === "load_skill");
   const sessionId = config.sessionId ?? randomUUID();
-  // pwnkit#232: pick JSON or XML dispatch protocol. JSON is the legacy
+  // 0sec#232: pick JSON or XML dispatch protocol. JSON is the legacy
   // path; XML is the cheap-model fallback (DeepSeek / Gemini / OpenRouter
   // routinely emit malformed JSON tool calls under load). The runtime
   // model identifier (when known) feeds the auto-detector.
@@ -132,7 +132,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
   // Build the initial user message with tool descriptions
   let initialPrompt: string;
   if (dispatchMode === "xml") {
-    // pwnkit#232: XML dispatch ships a deliberately narrower action
+    // 0sec#232: XML dispatch ships a deliberately narrower action
     // surface (bash / save_finding / done / note). The full tool catalog
     // would just confuse cheap models — BoxPwnr's whole point is that
     // narrowing wins.
@@ -153,7 +153,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
       .join("\n\n");
 
     initialPrompt = [
-      `You are a ${config.role} agent for pwnkit, an AI red-teaming toolkit.`,
+      `You are a ${config.role} agent for 0sec, an AI red-teaming toolkit.`,
       `Target: ${config.target}`,
       `Scan ID: ${config.scanId}`,
       "Authorization: The operator has confirmed this target is owned by them or explicitly authorized for this assessment.",
@@ -199,11 +199,11 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
   // CI heartbeat: one stderr line per turn so a CI log of a hung scan
   // tells us at which turn / on which tool we stopped making progress.
   // Gated on CI / explicit opt-in so local TUI runs stay quiet.
-  const heartbeatEnabled = !!(process.env.CI || process.env.PWNKIT_HEARTBEAT || process.env.PWNKIT_DEBUG);
+  const heartbeatEnabled = !!(process.env.CI || process.env["0SEC_HEARTBEAT"] || process.env["0SEC_DEBUG"]);
   const loopStartedAt = Date.now();
   let lastToolName: string | null = null;
 
-  // Two-stage budget warnings (Strix-inspired, pwnkit#408). Same
+  // Two-stage budget warnings (Strix-inspired, 0sec#408). Same
   // closure-state pattern as native-loop.ts so unit tests share the
   // computeBudgetWarningTurns helper.
   const budgetThresholds = computeBudgetWarningTurns(config.maxTurns);
@@ -221,7 +221,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentState> 
     if (heartbeatEnabled) {
       const elapsed = ((Date.now() - loopStartedAt) / 1000).toFixed(1);
       process.stderr.write(
-        `[pwnkit:hb] t=${elapsed}s role=${config.role} turn=${state.turnCount}/${config.maxTurns} runtime=${runtime.type} last_tool=${lastToolName ?? "-"}\n`,
+        `[0sec:hb] t=${elapsed}s role=${config.role} turn=${state.turnCount}/${config.maxTurns} runtime=${runtime.type} last_tool=${lastToolName ?? "-"}\n`,
       );
     }
 
@@ -522,7 +522,7 @@ function serializeConversation(messages: AgentMessage[]): string {
 }
 
 function persistSession(
-  db: pwnkitDB,
+  db: osecDB,
   state: AgentState,
   config: AgentConfig,
   sessionId: string,

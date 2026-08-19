@@ -11,7 +11,7 @@
 //   - DKIM  (TXT `<sel>._domainkey.…`) — presence of a signing key under a
 //                               handful of common selectors.
 //
-// Grading is intentionally conservative and maps onto pwnkit finding
+// Grading is intentionally conservative and maps onto 0sec finding
 // severities. Missing SPF or DMARC is the bigger spoofing exposure (MEDIUM);
 // a present-but-weak policy (SPF `~all` softfail, DMARC `p=none`/`p=quarantine`)
 // is a LOW hardening note; SPF `-all` + DMARC `p=reject` earns no finding.
@@ -23,7 +23,7 @@
 // No LLM. Network is injected (`resolveTxt`) so the grader is unit-testable
 // without touching DNS.
 
-/** Finding severity, matching the rest of the pwnkit finding pipeline. */
+/** Finding severity, matching the rest of the 0sec finding pipeline. */
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 /** The `all` mechanism qualifier at the tail of an SPF record. */

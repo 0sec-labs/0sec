@@ -1,4 +1,4 @@
-// Rate-limit / anti-automation probe for sensitive endpoints (pwnkit gap H).
+// Rate-limit / anti-automation probe for sensitive endpoints (0sec gap H).
 //
 // Goal: tell whether a sensitive endpoint (login, password-reset, OTP, etc.)
 // enforces throttling. The motivating pilot: 20 rapid POSTs to a

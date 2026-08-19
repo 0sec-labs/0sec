@@ -121,12 +121,12 @@ function inputs() {
 }
 
 describe("0research execution evidence projection", () => {
-  it("matches the exact canonical digest independently computed by 0brain", () => {
+  it("matches the exact canonical digest independently computed by 0brain (re-pinned 2026-08-19 for the pwnkit → 0sec candidateId rename)", () => {
     const fixture = JSON.parse(
       readFileSync(new URL("./improvement-execution-evidence.fixture.json", import.meta.url), "utf8"),
     ) as ResearchExecutionEvidence;
     expect(researchExecutionEvidenceDigest(fixture)).toBe(
-      "sha256:01f5053276ccb475eecd4b36d02ada8b1c1ae4d2b6278a63339322c51446c9fd",
+      "sha256:3aefd68fb65588cc9bc27653c6739289fa075a6aaa99da2115228d23470eb864",
     );
   });
 
@@ -167,7 +167,7 @@ describe("0research execution evidence projection", () => {
       evidence: ResearchExecutionEvidence;
     };
     expect(Object.keys(contract).sort()).toEqual(["contract", "evidence", "promotable", "schemaVersion"]);
-    expect(contract.contract).toBe("pwnkit-0brain-execution-evidence-v3-synthetic-golden-v1");
+    expect(contract.contract).toBe("0sec-0brain-execution-evidence-v3-synthetic-golden-v1");
     expect(contract.promotable).toBe(false);
     const golden = contract.evidence;
     expect(evidence).toEqual(golden);

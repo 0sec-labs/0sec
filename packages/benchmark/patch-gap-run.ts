@@ -24,7 +24,7 @@
  * is a broken git worktree on bench (parent repo deleted, every `git -C ...`
  * call there fails) — to `/root/linux-6.12-git`, a full-history clone.
  */
-import { loadVulnsFeedFromDir, scanForPatchGapCandidates } from "@pwnkit/core";
+import { loadVulnsFeedFromDir, scanForPatchGapCandidates } from "@0sec/core";
 import { appendPatchGapCorpus, resolvePatchGapCorpusPath } from "./src/patch-gap-corpus.js";
 
 const RUN = process.env.PATCH_GAP_RUN === "1";

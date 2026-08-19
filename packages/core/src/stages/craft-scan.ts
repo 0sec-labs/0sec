@@ -36,9 +36,9 @@ import {
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
-import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
-import type { RuntimeMode } from "@pwnkit/shared";
-import { estimateCost } from "@pwnkit/shared";
+import type { AttackCategory, Finding, Severity } from "@0sec/shared";
+import type { RuntimeMode } from "@0sec/shared";
+import { estimateCost } from "@0sec/shared";
 import {
   LlmApiRuntime,
   LOOP_SERVER_COMPACTION_TOKENS,
@@ -230,7 +230,7 @@ export interface CraftScanResult {
    * NOTIONAL API-equivalent cost in USD (what these tokens WOULD cost on a
    * pay-per-token API). Our actual marginal spend is ~$0 on the Codex
    * subscription — this quantifies the free-compute advantage. Computed from
-   * the canonical per-model price table in @pwnkit/shared (`estimateCost`), the
+   * the canonical per-model price table in @0sec/shared (`estimateCost`), the
    * single source of truth for pricing across the engine.
    */
   estimatedCostUsd: number;
@@ -459,7 +459,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     ? Math.min(30_000, Math.floor(requestedGeneratorTimeoutMs))
     : 30_000;
   const runGenerator = (python: string): { ok: true; out: string } | { ok: false; err: string } => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-craft-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-craft-"));
     const gen = join(dir, "generator.py");
     const out = join(dir, "poc");
     const sandbox = opts.generatorUid === undefined

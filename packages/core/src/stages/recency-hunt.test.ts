@@ -18,7 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   isReachablePath,
   lifetimeTokenSignal,
@@ -351,7 +351,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
       severity: "high",
       bugSpec: {
         file: "net/nfc/llcp_commands.c", functionName: "fn", line, bugClass: `${detector}-bug`,
-        description: `${detector} lead`, analysis: "a", nextSteps: ["pwnkit exploit --autoclimb"],
+        description: `${detector} lead`, analysis: "a", nextSteps: ["0sec exploit --autoclimb"],
       },
     } as const;
   }
@@ -460,7 +460,7 @@ describe("runRecencyHunt (funnel, injected git/classify/hunt)", () => {
       bugSpec: {
         file: "net/nfc/llcp_commands.c", functionName: "entryB", line: 0,
         bugClass: "dual-view ownership-exclusive (kasan-uaf)", description: "witnessed",
-        analysis: "a", nextSteps: ["pwnkit exploit --autoclimb"],
+        analysis: "a", nextSteps: ["0sec exploit --autoclimb"],
       },
     };
   }

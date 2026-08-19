@@ -1,5 +1,5 @@
 /**
- * Tier 2 of pwnkit#271 — agent-driven verification of static kernel-review
+ * Tier 2 of 0sec#271 — agent-driven verification of static kernel-review
  * findings.
  *
  * The flow:
@@ -26,13 +26,13 @@
  *     preserved, error message attached
  *
  * The CLI surface lives in `packages/cli/src/commands/verify.ts` and is
- * gated behind `PWNKIT_KERNEL_VERIFY=1` so CI cost stays predictable.
+ * gated behind `0SEC_KERNEL_VERIFY=1` so CI cost stays predictable.
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type {
   NativeMessage,
   NativeContentBlock,
@@ -303,7 +303,7 @@ export async function defaultKernelVerifyRunner(
   input: KernelVerifyRunnerInput,
   options?: { cacheDir?: string },
 ): Promise<KernelVerifyOracleResult> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "pwnkit-kvfy-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "0sec-kvfy-"));
   const reproName = input.programLang === "syz" ? "repro.syz" : "repro.c";
   const reproPath = join(tmpDir, reproName);
   writeFileSync(reproPath, input.program, "utf8");
@@ -1121,7 +1121,7 @@ async function defaultAgentInvoker(
 }
 
 /**
- * Convert a pwnkit ToolDefinition to the `NativeToolDef` shape the runtime
+ * Convert a 0sec ToolDefinition to the `NativeToolDef` shape the runtime
  * expects. Mirrors `toNativeToolDef` in `agent/native-loop.ts` but kept local
  * so this module can stand alone.
  */

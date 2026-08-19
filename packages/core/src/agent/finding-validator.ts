@@ -1,10 +1,10 @@
 /**
- * Structural validation at the report-creation boundary (pwnkit#409).
+ * Structural validation at the report-creation boundary (0sec#409).
  *
  * Background — Strix's `tools/reporting/reporting_actions.py:201-339` rejects
  * malformed vulnerability reports at the agent boundary BEFORE they enter the
  * pipeline: CVE/CWE shape-check, CVSS vector validation, evidence path
- * traversal guard. pwnkit used to trust the LLM's structured output: a
+ * traversal guard. 0sec used to trust the LLM's structured output: a
  * hallucinated `CVE-9999-FAKE` or an evidence path of `/etc/passwd` would land
  * in the finding store unchallenged and propagate downstream into disclosure,
  * the dashboard, and (worst) cloud-side dedup keys.
@@ -19,11 +19,11 @@
  * in the upstream prompt.
  *
  * Out of scope (separate issues):
- *   - LLM-based semantic dedup (Strix does this; pwnkit#281 covers the
+ *   - LLM-based semantic dedup (Strix does this; 0sec#281 covers the
  *     structural dedup we actually need)
  *   - Changing the `Finding` schema (we read draft fields here, the schema
  *     stays put)
- *   - Auto-fix PR generation (shipped per closed pwnkit#377)
+ *   - Auto-fix PR generation (shipped per closed 0sec#377)
  */
 
 import { existsSync, lstatSync, realpathSync } from "node:fs";

@@ -5,7 +5,7 @@
  * `triage/feature-extractor.ts`. The router consumes the same 45-feature
  * (well, 55 — 45 web + 10 kernel — but the issue and the paper refer to
  * it as "the 45-feature vector") handcrafted vector that the joint paper
- * (pwnkit#67) and the trained classifier (pwnkit#113) both train on.
+ * (0sec#67) and the trained classifier (0sec#113) both train on.
  *
  * We deliberately DO NOT redesign or extend that vector inside the router
  * — it's the contract with the joint paper. Instead this module adds a
@@ -14,10 +14,10 @@
  * classifier ignores. Those scalars live alongside the vector, not
  * inside it.
  *
- * See pwnkit#113 §"What the router sees".
+ * See 0sec#113 §"What the router sees".
  */
 
-import type { Finding, LayerVerdict } from "@pwnkit/shared";
+import type { Finding, LayerVerdict } from "@0sec/shared";
 import { extractFeatures, FEATURE_NAMES } from "../feature-extractor.js";
 
 // Re-export the existing handcrafted feature contract verbatim so callers

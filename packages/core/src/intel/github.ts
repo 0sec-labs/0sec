@@ -146,7 +146,7 @@ function githubHeaders(extra: Record<string, string> | undefined): Record<string
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "pwnkit-intel/0.1",
+    "User-Agent": "0sec-intel/0.1",
     ...(extra ?? {}),
   };
   const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;

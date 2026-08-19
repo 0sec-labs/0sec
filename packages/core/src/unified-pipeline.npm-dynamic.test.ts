@@ -6,7 +6,7 @@ import {
 import type { NpmPackageRunner } from "./stages/npm-detectors/sandbox-probe.js";
 import type { DetectorRunOutcome } from "./stages/npm-detectors/base.js";
 
-const ENV_KEY = "PWNKIT_NPM_DYNAMIC_DISCOVERY";
+const ENV_KEY = "0SEC_NPM_DYNAMIC_DISCOVERY";
 
 afterEach(() => {
   delete process.env[ENV_KEY];
@@ -47,7 +47,7 @@ describe("shouldRunNpmDynamicDiscovery (opt-in gate)", () => {
     ).toBe(false);
   });
 
-  it("honors the PWNKIT_NPM_DYNAMIC_DISCOVERY env toggle (cloud config)", () => {
+  it("honors the 0SEC_NPM_DYNAMIC_DISCOVERY env toggle (cloud config)", () => {
     expect(shouldRunNpmDynamicDiscovery({}, npmPrepared)).toBe(false);
     process.env[ENV_KEY] = "1";
     expect(shouldRunNpmDynamicDiscovery({}, npmPrepared)).toBe(true);

@@ -31,10 +31,10 @@
  * shape a future generator would emit is the one this loader consumes today.
  *
  * RUNTIME injection: {@link loadAppsecFinderLenses} can additionally union in
- * lenses supplied at scan time via the `PWNKIT_RUNTIME_LENSES` env var (a JSON
+ * lenses supplied at scan time via the `0SEC_RUNTIME_LENSES` env var (a JSON
  * array of the SAME snake_case archetype objects the baked file holds). This
  * lets the cloud's self-improving lens loop apply freshly synthesized lenses
- * WITHOUT an engine rebuild. It is gated behind `PWNKIT_RUNTIME_LENSES_ENABLED`
+ * WITHOUT an engine rebuild. It is gated behind `0SEC_RUNTIME_LENSES_ENABLED`
  * (default OFF — unset behaves byte-identically to today) and is fail-closed:
  * malformed JSON or a bad entry is warned-and-skipped, never thrown. Baked
  * (authored/validated) lenses always win an id collision — a runtime blob can
@@ -170,9 +170,9 @@ export function appsecArchetypeToFinderLens(a: AppsecArchetype): FinderLens {
 // ── Runtime lens injection (flag-gated, fail-closed) ─────────────────────────
 
 /** Env flag gating runtime lens injection. Unset / empty / 0 / false / no → OFF. */
-const RUNTIME_LENSES_FLAG = "PWNKIT_RUNTIME_LENSES_ENABLED";
+const RUNTIME_LENSES_FLAG = "0SEC_RUNTIME_LENSES_ENABLED";
 /** Env var carrying the runtime lens JSON blob (array of RawAppsecArchetype). */
-const RUNTIME_LENSES_ENV = "PWNKIT_RUNTIME_LENSES";
+const RUNTIME_LENSES_ENV = "0SEC_RUNTIME_LENSES";
 
 /** True only when the operator has explicitly enabled runtime lens injection. */
 function runtimeLensesEnabled(): boolean {
@@ -212,7 +212,7 @@ function isRawAppsecArchetype(x: unknown): x is RawAppsecArchetype {
 }
 
 /**
- * Read the flag-gated `PWNKIT_RUNTIME_LENSES` blob and map it to
+ * Read the flag-gated `0SEC_RUNTIME_LENSES` blob and map it to
  * {@link FinderLens}[] using the SAME validation + mapping the baked loader
  * uses. Fail-closed at every step: flag OFF, missing env, non-array JSON, or a
  * parse error each yield `[]`; a single malformed entry is warned-and-skipped
@@ -249,7 +249,7 @@ function loadRuntimeAppsecLenses(): FinderLens[] {
  * cross-language appsec coverage alongside the generic lenses.
  *
  * Baked lenses ({@link loadAppsecArchetypes}, pure + cached) load first, then —
- * only when `PWNKIT_RUNTIME_LENSES_ENABLED` is on — runtime lenses union in,
+ * only when `0SEC_RUNTIME_LENSES_ENABLED` is on — runtime lenses union in,
  * deduped by lens id with BAKED WINNING every collision (a runtime blob can add
  * new ids but never shadow an authored/validated lens). With the flag off this
  * is byte-identical to `loadAppsecArchetypes().map(appsecArchetypeToFinderLens)`.

@@ -22,7 +22,7 @@ import type {
   NativeContentBlock,
   NativeToolDef,
 } from "../runtime/types.js";
-import type { Finding, AttackCategory } from "@pwnkit/shared";
+import type { Finding, AttackCategory } from "@0sec/shared";
 import { verifyOracleByCategory, type OracleResult } from "./oracles.js";
 import type { OastConfirmedPayload } from "../events/bus.js";
 import type { VerifyVerdict } from "./verify-verdict.js";
@@ -103,7 +103,7 @@ export function oracleForCategory(category: AttackCategory): PovOracle {
 }
 
 /**
- * Build the always-on OAST-confirmation event payload (pwnkit#659 / 0cloud#1278)
+ * Build the always-on OAST-confirmation event payload (0sec#659 / 0cloud#1278)
  * for a finding whose deterministic `oracle` triage layer just ran — or `null`
  * when this is not an OAST-oracle confirmation.
  *
@@ -892,7 +892,7 @@ async function adjudicateWithOracle(
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Memory-safety PoV verdict (pwnkit#698, Track C)
+// Memory-safety PoV verdict (0sec#698, Track C)
 //
 // The userspace / Rust analogue of the web PoV verdict above. Where the web
 // path proves exploitation by capturing category-specific output, the

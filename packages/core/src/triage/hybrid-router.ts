@@ -1,7 +1,7 @@
 /**
  * Hybrid Triage Router — XGBoost prefiltering + LLM deep analysis
  *
- * Paper-novel contribution for pwnkit#113: combines sub-millisecond
+ * Paper-novel contribution for 0sec#113: combines sub-millisecond
  * XGBoost inference with targeted LLM review for uncertain cases.
  *
  * Flow:
@@ -16,7 +16,7 @@
  * full pipeline ~ $0.05 per finding (6 layers with tool use).
  */
 
-import type { Finding, TriageLayerName } from "@pwnkit/shared";
+import type { Finding, TriageLayerName } from "@0sec/shared";
 import type {
   NativeRuntime,
   NativeContentBlock,

@@ -159,7 +159,7 @@ export class GraphClient {
     this.pageDelayMs = opts.pageDelayMs ?? DEFAULT_PAGE_DELAY_MS;
     this.maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
     this.sleep = opts.sleep ?? defaultSleep;
-    this.userAgent = opts.userAgent ?? "pwnkit-identity";
+    this.userAgent = opts.userAgent ?? "0sec-identity";
   }
 
   /** GET a v1.0-relative path (`/users`) and return the parsed body. */

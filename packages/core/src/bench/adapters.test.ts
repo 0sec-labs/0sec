@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AuditReport } from "@pwnkit/shared";
+import type { AuditReport } from "@0sec/shared";
 import { auditReportToBenchResult, createDockerWebProvisioner } from "./adapters.js";
 import type { BenchCase } from "./manifest.js";
 

@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { CookieJar, SessionEngine } from "./session.js";
-import type { NamedIdentity } from "@pwnkit/shared";
+import type { NamedIdentity } from "@0sec/shared";
 
 const URL_A = "https://target.example.com/api/users/1";
 const URL_SAME_HOST = "https://target.example.com/admin";
 
-describe("CookieJar (pwnkit#564)", () => {
+describe("CookieJar (0sec#564)", () => {
   it("captures Set-Cookie and re-injects it as a Cookie header for the same host", () => {
     const jar = new CookieJar();
     jar.ingest(["session=abc123; Path=/; HttpOnly"], URL_A);
@@ -66,7 +66,7 @@ describe("CookieJar (pwnkit#564)", () => {
   });
 });
 
-describe("SessionEngine (pwnkit#564)", () => {
+describe("SessionEngine (0sec#564)", () => {
   const identities: NamedIdentity[] = [
     { label: "admin", role: "admin", auth: { type: "bearer", token: "admin-tok" } },
     { label: "alice", role: "user", auth: { type: "cookie", value: "static=alice" } },

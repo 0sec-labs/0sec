@@ -41,7 +41,7 @@
 // with the ATLAS technique named in a comment. Do not paper over the gap by
 // borrowing a loosely-related Enterprise id.
 
-import type { AttackCategory } from "@pwnkit/shared";
+import type { AttackCategory } from "@0sec/shared";
 
 export interface AttackTechnique {
   id: string;
@@ -191,7 +191,7 @@ function chain(primaryId: TechniqueId, ...secondaryIds: TechniqueId[]): AttackTe
 // ── Finding category → technique ──────────────────────────────────────────
 //
 // Exhaustive over `AttackCategory` on purpose: adding a category to
-// @pwnkit/shared without deciding its ATT&CK mapping is a type error here.
+// @0sec/shared without deciding its ATT&CK mapping is a type error here.
 
 const CATEGORY_MAP: Record<AttackCategory, AttackTechnique[]> = {
   // ── LLM / agent ──
@@ -241,7 +241,7 @@ const CATEGORY_MAP: Record<AttackCategory, AttackTechnique[]> = {
   "crypto-misuse": chain("T1552.001", "T1550.001"),
 
   // ── Memory corruption / binary ──
-  // pwnkit reaches these through kernel and binary targets, where the payoff is
+  // 0sec reaches these through kernel and binary targets, where the payoff is
   // local privilege escalation and the fallback is a crash.
   "heap-overflow": chain("T1068", "T1499.004", "T1203"),
   "out-of-bounds-write": chain("T1068", "T1499.004"),
@@ -365,7 +365,7 @@ const EVENT_MAP: Record<string, AttackTechnique[]> = {
   scan_resumed: chain("T1595", "T1595.002"),
   stage_start: chain("T1595"),
 
-  // Fallback when the tool name is unknown or absent. Every pwnkit tool call
+  // Fallback when the tool name is unknown or absent. Every 0sec tool call
   // happens inside an authorised active-scanning engagement, so the parent
   // technique holds even when the specific tool does not resolve.
   tool_calls: chain("T1595"),

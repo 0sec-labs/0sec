@@ -5,7 +5,7 @@ import { closeSync, constants as fsConstants, fstatSync, openSync, readFileSync 
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const WINDOWS_LPE_CORPUS_SCHEMA = "pwnkit.windows-lpe-corpus/v1" as const;
+export const WINDOWS_LPE_CORPUS_SCHEMA = "0sec.windows-lpe-corpus/v1" as const;
 
 export type WindowsLpeCorpusKind = "synthetic-positive" | "negative-control" | "public-patched";
 export type WindowsLpeCorpusSplit = "development" | "holdout";

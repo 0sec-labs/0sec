@@ -9,7 +9,7 @@ import type { DetectorRunOutcome } from "./base.js";
 import { runNpmDynamicDiscovery } from "../npm-dynamic-discovery.js";
 import type { NpmPackageRunner } from "./sandbox-probe.js";
 import type { PackageRef } from "./types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 /** A confirmed, novel SSPP outcome — the JSON the in-sandbox harness emits. */
 function novelSsppOutcome(): DetectorRunOutcome {

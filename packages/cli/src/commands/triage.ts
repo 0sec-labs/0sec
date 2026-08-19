@@ -48,20 +48,20 @@ function resolveFindingByPrefix(rows: FindingRow[], id: string): FindingRow | un
 }
 
 /**
- * Convert a DB finding row (from @pwnkit/db listFindings) into the shared
- * Finding shape that @pwnkit/core's MemoryStore expects. The evidence fields
+ * Convert a DB finding row (from @0sec/db listFindings) into the shared
+ * Finding shape that @0sec/core's MemoryStore expects. The evidence fields
  * are folded into the nested `evidence` object and defaults are applied to
  * optional properties.
  */
-function rowToFinding(row: FindingRow): import("@pwnkit/shared").Finding {
+function rowToFinding(row: FindingRow): import("@0sec/shared").Finding {
   return {
     id: row.id,
     templateId: "",
     title: row.title,
     description: row.description,
-    severity: row.severity as import("@pwnkit/shared").Severity,
-    category: row.category as import("@pwnkit/shared").AttackCategory,
-    status: row.status as import("@pwnkit/shared").FindingStatus,
+    severity: row.severity as import("@0sec/shared").Severity,
+    category: row.category as import("@0sec/shared").AttackCategory,
+    status: row.status as import("@0sec/shared").FindingStatus,
     evidence: {
       request: row.evidenceRequest,
       response: row.evidenceResponse,
@@ -73,13 +73,13 @@ function rowToFinding(row: FindingRow): import("@pwnkit/shared").Finding {
 }
 
 async function openStore(dbPath?: string) {
-  const { MemoryStore } = await import("@pwnkit/core");
+  const { MemoryStore } = await import("@0sec/core");
   return new MemoryStore(dbPath);
 }
 
 async function loadFinding(dbPath: string | undefined, findingId: string): Promise<FindingRow> {
-  const { pwnkitDB } = await import("@pwnkit/db");
-  const db = new pwnkitDB(dbPath);
+  const { osecDB } = await import("@0sec/db");
+  const db = new osecDB(dbPath);
   try {
     const rows = db.listFindings({ limit: 5000 }) as FindingRow[];
     const row = resolveFindingByPrefix(rows, findingId);
@@ -125,7 +125,7 @@ async function runMemoryList(opts: TriageMemoryListOptions): Promise<void> {
       return;
     }
     console.log("");
-    console.log(chalk.red.bold("  ◆ pwnkit") + chalk.gray(` triage memories (${filtered.length})`));
+    console.log(chalk.red.bold("  ◆ 0sec") + chalk.gray(` triage memories (${filtered.length})`));
     console.log("");
     for (const m of filtered) {
       const scopeLabel =
@@ -163,8 +163,8 @@ async function runMarkFp(findingId: string, opts: TriageMarkFpOptions): Promise<
   const row = await loadFinding(opts.dbPath, findingId);
   const finding = rowToFinding(row);
 
-  const { pwnkitDB } = await import("@pwnkit/db");
-  const db = new pwnkitDB(opts.dbPath);
+  const { osecDB } = await import("@0sec/db");
+  const db = new osecDB(opts.dbPath);
   try {
     db.updateFindingTriage(row.id, "suppressed", opts.reason);
   } finally {

@@ -1,7 +1,7 @@
 /**
  * #928 — coordinated-disclosure status tracking (engine-side model + helpers).
  *
- * pwnkit already *gates* findings (`triage/verify-verdict.ts` →
+ * 0sec already *gates* findings (`triage/verify-verdict.ts` →
  * `isDisclosureWorthy`) and *renders* artifacts (`template.ts` advisory,
  * `writeup.ts` research draft). What it lacked is a model of the disclosure
  * PROCESS — the status timeline a confirmed finding walks once an operator

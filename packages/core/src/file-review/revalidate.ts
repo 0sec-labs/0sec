@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { ReviewStore, newRunId } from "./store.js";
 import type { ReviewFileRecord, ReviewFinding, ReviewRevalidation } from "./types.js";
 import { ReviewLimitError, type ReviewInvoker, type ReviewInvocation } from "./types.js";
-import type { Severity } from "@pwnkit/shared";
+import type { Severity } from "@0sec/shared";
 import { estimateCost } from "../agent/cost.js";
 import { expectedFindingsForBatch, parseRevalidateVerdicts, reconcileVerdicts } from "./reconcile.js";
 import type { ExpectedFinding, RevalidateVerdictInput, MatchedPair } from "./reconcile.js";

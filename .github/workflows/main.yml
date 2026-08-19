@@ -1,4 +1,4 @@
-name: "PwnKit: Main"
+name: "0sec: Main"
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pwnkit-main-${{ github.ref }}
+  group: 0sec-main-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -29,15 +29,15 @@ jobs:
       - name: Type-check
         run: pnpm lint
       - name: Smoke CLI
-        run: node dist/pwnkit.js --help
+        run: node dist/0sec.js --help
       - name: Run tests
         run: pnpm test:public
         env:
-          PWNKIT_CHATGPT_ACCESS_TOKEN: ""
-          PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: ""
-          PWNKIT_CHATGPT_ACCOUNT_ID: ""
-          PWNKIT_CHATGPT_AUTH_FILE: "/tmp/pwnkit-ci-no-auth.json"
-          PWNKIT_CODEX_AUTH_JSON_PATH: "/tmp/pwnkit-ci-no-auth.json"
+          0SEC_CHATGPT_ACCESS_TOKEN: ""
+          0SEC_CHATGPT_OAUTH_REFRESH_TOKEN: ""
+          0SEC_CHATGPT_ACCOUNT_ID: ""
+          0SEC_CHATGPT_AUTH_FILE: "/tmp/0sec-ci-no-auth.json"
+          0SEC_CODEX_AUTH_JSON_PATH: "/tmp/0sec-ci-no-auth.json"
           OPENAI_API_KEY: ""
           OPENROUTER_API_KEY: ""
           ANTHROPIC_API_KEY: ""

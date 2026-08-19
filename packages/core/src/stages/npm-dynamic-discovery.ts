@@ -20,7 +20,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Finding, Severity } from "@pwnkit/shared";
+import type { Finding, Severity } from "@0sec/shared";
 import type { AdvisoryLookup } from "./npm-detectors/dedup.js";
 import { runDetectorOnPackage, type DetectorLead, type DetectorRunOutcome, type DiscoveryGuards } from "./npm-detectors/base.js";
 import { getDetectorById, resolveDetectors, type AnyDetector } from "./npm-detectors/registry.js";

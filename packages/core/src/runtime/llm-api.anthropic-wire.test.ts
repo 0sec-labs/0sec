@@ -31,12 +31,12 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
     delete process.env.KIMI_BASE_URL;
     delete process.env.Z_AI_API_KEY;
     delete process.env.Z_AI_BASE_URL;
-    delete process.env.PWNKIT_MODEL;
-    delete process.env.PWNKIT_ZAI_THINKING_BUDGET;
-    delete process.env.PWNKIT_CHATGPT_ACCESS_TOKEN;
-    delete process.env.PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN;
-    process.env.PWNKIT_CHATGPT_AUTH_FILE = "/tmp/pwnkit-anthropic-wire-test-no-auth.json";
-    process.env.PWNKIT_SKIP_PROVIDER_BANNER = "1";
+    delete process.env["0SEC_MODEL"];
+    delete process.env["0SEC_ZAI_THINKING_BUDGET"];
+    delete process.env["0SEC_CHATGPT_ACCESS_TOKEN"];
+    delete process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"];
+    process.env["0SEC_CHATGPT_AUTH_FILE"] = "/tmp/0sec-anthropic-wire-test-no-auth.json";
+    process.env["0SEC_SKIP_PROVIDER_BANNER"] = "1";
   });
 
   afterEach(() => {
@@ -216,7 +216,7 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
     });
 
     it("maps a larger legacy budget to GLM-5.3 high reasoning effort", () => {
-      process.env.PWNKIT_ZAI_THINKING_BUDGET = "4096";
+      process.env["0SEC_ZAI_THINKING_BUDGET"] = "4096";
       const rt = runtimeForProvider("z-ai");
       expect(rt.anthropicThinkingField()).toEqual({
         thinking: { type: "enabled" },
@@ -225,7 +225,7 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
     });
 
     it("keeps GLM-5.3 thinking enabled when the legacy budget is 0", () => {
-      process.env.PWNKIT_ZAI_THINKING_BUDGET = "0";
+      process.env["0SEC_ZAI_THINKING_BUDGET"] = "0";
       const rt = runtimeForProvider("z-ai");
       expect(rt.anthropicThinkingField()).toEqual({
         thinking: { type: "enabled" },
@@ -234,7 +234,7 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
     });
 
     it("keeps the Anthropic budget fragment for an explicit GLM-5.2 override", () => {
-      process.env.PWNKIT_ZAI_THINKING_BUDGET = "4096";
+      process.env["0SEC_ZAI_THINKING_BUDGET"] = "4096";
       const rt = runtimeForProvider("z-ai", "glm-5.2");
       expect(rt.anthropicThinkingField()).toEqual({
         thinking: { type: "enabled", budget_tokens: 4096 },
@@ -257,8 +257,8 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
     });
 
     it("turns Claude adaptive thinking off for a retained-reasoning A/B run", () => {
-      const previous = process.env.PWNKIT_FEATURE_RETAINED_REASONING;
-      process.env.PWNKIT_FEATURE_RETAINED_REASONING = "0";
+      const previous = process.env["0SEC_FEATURE_RETAINED_REASONING"];
+      process.env["0SEC_FEATURE_RETAINED_REASONING"] = "0";
       try {
         // Private helper observed through a narrow test-only shape.
         const rt = runtimeForProvider("anthropic") as unknown as {
@@ -266,8 +266,8 @@ describe("Anthropic Messages wire routing and retained thinking", () => {
         };
         expect(rt.anthropicThinkingField()).toEqual({});
       } finally {
-        if (previous === undefined) delete process.env.PWNKIT_FEATURE_RETAINED_REASONING;
-        else process.env.PWNKIT_FEATURE_RETAINED_REASONING = previous;
+        if (previous === undefined) delete process.env["0SEC_FEATURE_RETAINED_REASONING"];
+        else process.env["0SEC_FEATURE_RETAINED_REASONING"] = previous;
       }
     });
   });

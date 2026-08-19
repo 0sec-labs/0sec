@@ -6,7 +6,7 @@ import {
   handoffToVerifyInput,
 } from "./patch-to-poc.js";
 import type { NativeRuntime } from "../runtime/types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 /**
  * A fixture upstream fix commit in `git show` shape: a use-after-free fix in

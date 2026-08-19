@@ -1,4 +1,4 @@
-import type { SemgrepFinding, Finding } from "@pwnkit/shared";
+import type { SemgrepFinding, Finding } from "@0sec/shared";
 
 /**
  * Prompt for the Apple XNU (macOS/iOS) kernel source-review profile.

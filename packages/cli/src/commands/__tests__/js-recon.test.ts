@@ -6,8 +6,8 @@ import { join } from "node:path";
 
 const runJsReconMock = vi.fn();
 
-vi.mock("@pwnkit/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@pwnkit/core")>();
+vi.mock("@0sec/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@0sec/core")>();
   return {
     ...actual,
     runJsRecon: runJsReconMock,
@@ -28,10 +28,10 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerJsReconCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
-describe("pwnkit js-recon", () => {
+describe("0sec js-recon", () => {
   let io: ReturnType<typeof captureIO>;
   let dir: string;
   let scopePath: string;

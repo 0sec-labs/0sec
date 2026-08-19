@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── Public Types ──
 
@@ -41,7 +41,7 @@ export interface TriageMemory {
 }
 
 /**
- * Minimal subset of the @pwnkit/db interface used by MemoryStore. Declared
+ * Minimal subset of the @0sec/db interface used by MemoryStore. Declared
  * structurally so tests can inject an in-memory fake without pulling in the
  * real better-sqlite3 binding.
  */
@@ -154,10 +154,10 @@ export function inferPackage(target: string): string {
 // ── MemoryStore ──
 
 /**
- * Persistent store of triage memories, backed by the pwnkit SQLite database.
+ * Persistent store of triage memories, backed by the 0sec SQLite database.
  *
  * MemoryStore accepts either a concrete DB path (it will lazily open
- * `@pwnkit/db`'s `pwnkitDB` the first time a method is called) or a custom
+ * `@0sec/db`'s `osecDB` the first time a method is called) or a custom
  * `MemoryDbHandle` for dependency injection in tests.
  */
 export class MemoryStore {
@@ -181,8 +181,8 @@ export class MemoryStore {
 
   private async db(): Promise<MemoryDbHandle> {
     if (this.dbHandle) return this.dbHandle;
-    const mod = await import("@pwnkit/db");
-    const instance = new mod.pwnkitDB(this.dbPath);
+    const mod = await import("@0sec/db");
+    const instance = new mod.osecDB(this.dbPath);
     this.dbHandle = instance as unknown as MemoryDbHandle;
     return this.dbHandle;
   }

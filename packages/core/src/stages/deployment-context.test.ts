@@ -11,7 +11,7 @@ import {
   applyDeploymentContextCap,
   hasTrustBoundaryBypass,
 } from "./deployment-context.js";
-import type { Finding, DeploymentContext, Severity } from "@pwnkit/shared";
+import type { Finding, DeploymentContext, Severity } from "@0sec/shared";
 
 // ── Classification table ────────────────────────────────────────────────────
 

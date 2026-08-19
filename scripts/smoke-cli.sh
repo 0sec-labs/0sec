@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# smoke-cli.sh — runtime-agnostic install-smoke for pwnkit-cli.
+# smoke-cli.sh — runtime-agnostic install-smoke for 0sec-cli.
 #
 # Used by .github/workflows/ci.yml to guard against regressions in the
 # subcommands that are most likely to silently break: the DB layer (history),
 # the MCP stdio server, and the source-review pipeline.
 #
 # Call this with a single argument: the full command string that invokes
-# pwnkit-cli. Examples:
-#   scripts/smoke-cli.sh "node /tmp/smoke/node_modules/pwnkit-cli/pwnkit.js"
-#   scripts/smoke-cli.sh "bun run /tmp/smoke/node_modules/pwnkit-cli/pwnkit.js"
-#   scripts/smoke-cli.sh "docker run --rm pwnkit-ci-smoke"
+# 0sec-cli. Examples:
+#   scripts/smoke-cli.sh "node /tmp/smoke/node_modules/0sec-cli/0sec.js"
+#   scripts/smoke-cli.sh "bun run /tmp/smoke/node_modules/0sec-cli/0sec.js"
+#   scripts/smoke-cli.sh "docker run --rm 0sec-ci-smoke"
 #
 # The script exits non-zero on the first failing subtest and prints which
 # subcommand tripped.
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-  echo "usage: $0 '<command to invoke pwnkit-cli>'" >&2
+  echo "usage: $0 '<command to invoke 0sec-cli>'" >&2
   exit 2
 fi
 
@@ -57,10 +57,10 @@ grep -q "review" "$TMP/help.out" || fail "--help did not list review subcommand"
 # Proves runtime detection boots and doesn't crash on a bare environment.
 say "doctor"
 $CLI doctor > "$TMP/doctor.out" 2>&1 || fail "doctor exited non-zero"
-grep -q "pwnkit doctor" "$TMP/doctor.out" || fail "doctor did not produce the expected banner"
+grep -q "0sec doctor" "$TMP/doctor.out" || fail "doctor did not produce the expected banner"
 
 # ── 3. history (DB smoke) ──────────────────────────────────────────────────
-# Proves the entire SQLite stack boots end-to-end: pwnkitDB ctor, WAL
+# Proves the entire SQLite stack boots end-to-end: osecDB ctor, WAL
 # auto-migration, schema tables + indexes, drizzle session wiring, and
 # listScans() query. This is the regression guard for the 0.7.0 → 0.7.1
 # native-bindings → WASM swap and the 0.7.4 WAL header migration.
@@ -82,13 +82,13 @@ fi
 # with a valid JSON-RPC 2.0 reply. Bounded by `timeout` in case the server
 # hangs (we don't want this to stall CI forever).
 say "mcp-server initialize"
-INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"pwnkit-ci-smoke","version":"0.0.0"}}}'
+INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"0sec-ci-smoke","version":"0.0.0"}}}'
 # The mcp-server boots the full CLI + stdio transport + DB before it can
 # answer `initialize`; under CI load that can exceed a fixed 10s window, which
 # made this subtest the #1 flake source (and, because the image publish gates
 # on CI=success, it randomly blocked publishes). Retry the handshake up to 3
 # times with a generous per-attempt window before declaring it broken.
-MCP_SMOKE_TIMEOUT_SECONDS="${PWNKIT_MCP_SMOKE_TIMEOUT_SECONDS:-30}"
+MCP_SMOKE_TIMEOUT_SECONDS="${0SEC_MCP_SMOKE_TIMEOUT_SECONDS:-30}"
 : > "$TMP/mcp.out"
 for attempt in 1 2 3; do
   # A timed-out server can still be unwinding its SQLite/WAL handles when the

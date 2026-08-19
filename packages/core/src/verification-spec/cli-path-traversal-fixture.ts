@@ -56,7 +56,7 @@ export interface CliPathTraversalFixtureOptions {
   /** Keep the sandbox, fixture script, and stdout/stderr files after running. */
   retainArtifacts?: boolean;
   /**
-   * Sandbox root. When omitted, a fresh pwnkit-verify-* directory is created
+   * Sandbox root. When omitted, a fresh 0sec-verify-* directory is created
    * under os.tmpdir(). Passing an explicit directory implies artifact
    * retention so a caller-chosen path is never deleted by surprise.
    */
@@ -183,7 +183,7 @@ async function startMaliciousExportServer(): Promise<{
     paperclipExtensionPath: null,
     warnings: [],
     files: {
-      "../escaped-marker": "pwnkit deterministic verification\n",
+      "../escaped-marker": "0sec deterministic verification\n",
       "README.md": "normal export content\n",
     },
   };
@@ -354,7 +354,7 @@ function summaryFor(status: ReplayStatus): string {
 }
 
 /**
- * Run the deterministic CLI path traversal replay from pwnkit#195.
+ * Run the deterministic CLI path traversal replay from 0sec#195.
  *
  * The fixture starts a malicious local API server and runs the caller-supplied
  * CLI command against a sandboxed export directory. The harness itself never
@@ -370,7 +370,7 @@ export async function runCliPathTraversalReplayFixture(
   const retainArtifacts = options.retainArtifacts || Boolean(options.artifactDir);
   const sandboxRoot = options.artifactDir
     ? resolve(options.artifactDir)
-    : await mkdtemp(join(tmpdir(), "pwnkit-verify-"));
+    : await mkdtemp(join(tmpdir(), "0sec-verify-"));
   const exportDir = join(sandboxRoot, "export");
   const harnessDir = join(sandboxRoot, "harness");
   const harnessRef = join(harnessDir, "harness.json");

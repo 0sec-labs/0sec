@@ -23,7 +23,7 @@ function fixedNow(): Date {
 }
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-journal-rehydrate-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "0sec-journal-rehydrate-"));
   id = 0;
 });
 

@@ -33,7 +33,7 @@
  *     (`LlmApiRuntime`), never raw keys.
  */
 
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import { LlmApiRuntime } from "../runtime/llm-api.js";
 import {
   runCraftScan,
@@ -266,7 +266,7 @@ export function sanitizerOutputFromCraftResult(result: CraftScanResult): string 
 }
 
 /**
- * Parse a comma-separated model list (e.g. `PWNKIT_ENSEMBLE_MODELS` /
+ * Parse a comma-separated model list (e.g. `0SEC_ENSEMBLE_MODELS` /
  * `CYBERGYM_BESTOFN_MODELS`). Trims, drops empties. Returns [] for
  * unset/blank input → the caller falls back to single-model craft.
  */
@@ -278,9 +278,9 @@ export function parseEnsembleModels(raw: string | undefined): string[] {
     .filter((m) => m.length > 0);
 }
 
-/** The engine-wide ensemble opt-in: `PWNKIT_ENSEMBLE_MODELS` (comma-separated). */
+/** The engine-wide ensemble opt-in: `0SEC_ENSEMBLE_MODELS` (comma-separated). */
 export function resolveEnsembleModels(): string[] {
-  return parseEnsembleModels(process.env.PWNKIT_ENSEMBLE_MODELS);
+  return parseEnsembleModels(process.env["0SEC_ENSEMBLE_MODELS"]);
 }
 
 const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);

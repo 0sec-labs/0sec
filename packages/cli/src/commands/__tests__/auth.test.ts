@@ -1,5 +1,5 @@
 /**
- * `pwnkit auth` CLI smoke tests. Pattern-matches h1.test.ts: we drive
+ * `0sec auth` CLI smoke tests. Pattern-matches h1.test.ts: we drive
  * the action functions directly (exported from auth.ts) so we can pass
  * test seams for fetch / sleep / homeDir / openBrowser without having to
  * thread them through Commander. The argv → exit code shape is covered
@@ -25,13 +25,13 @@ interface CapturedIO {
 }
 
 function freshHome(): string {
-  return mkdtempSync(join(tmpdir(), "pwnkit-cloud-cli-"));
+  return mkdtempSync(join(tmpdir(), "0sec-cloud-cli-"));
 }
 
 function seedHomeWithCreds(home: string, host: string = HOST, token: string = SECRET): string {
-  mkdirSync(join(home, ".pwnkit"), { recursive: true, mode: 0o700 });
-  const path = join(home, ".pwnkit", "cloud.env");
-  writeFileSync(path, `PWNKIT_CLOUD_HOST=${host}\nPWNKIT_CLOUD_TOKEN=${token}\n`, { mode: 0o600 });
+  mkdirSync(join(home, ".0sec"), { recursive: true, mode: 0o700 });
+  const path = join(home, ".0sec", "cloud.env");
+  writeFileSync(path, `0SEC_CLOUD_HOST=${host}\n0SEC_CLOUD_TOKEN=${token}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
   return path;
 }
@@ -66,7 +66,7 @@ function captureIO(): CapturedIO & { restore: () => void } {
   };
 }
 
-describe("pwnkit auth login", () => {
+describe("0sec auth login", () => {
   let home: string;
   let originalEnvHost: string | undefined;
   let originalEnvTok: string | undefined;
@@ -74,17 +74,17 @@ describe("pwnkit auth login", () => {
 
   beforeEach(() => {
     home = freshHome();
-    originalEnvHost = process.env.PWNKIT_CLOUD_HOST;
-    originalEnvTok = process.env.PWNKIT_CLOUD_TOKEN;
-    delete process.env.PWNKIT_CLOUD_HOST;
-    delete process.env.PWNKIT_CLOUD_TOKEN;
+    originalEnvHost = process.env["0SEC_CLOUD_HOST"];
+    originalEnvTok = process.env["0SEC_CLOUD_TOKEN"];
+    delete process.env["0SEC_CLOUD_HOST"];
+    delete process.env["0SEC_CLOUD_TOKEN"];
     process.exitCode = undefined;
     io = captureIO();
   });
 
   afterEach(() => {
-    if (originalEnvHost !== undefined) process.env.PWNKIT_CLOUD_HOST = originalEnvHost;
-    if (originalEnvTok !== undefined) process.env.PWNKIT_CLOUD_TOKEN = originalEnvTok;
+    if (originalEnvHost !== undefined) process.env["0SEC_CLOUD_HOST"] = originalEnvHost;
+    if (originalEnvTok !== undefined) process.env["0SEC_CLOUD_TOKEN"] = originalEnvTok;
     process.exitCode = undefined;
     io.restore();
   });
@@ -92,11 +92,11 @@ describe("pwnkit auth login", () => {
   it("--token escape-hatch persists creds and exits 0", async () => {
     await runLogin({ host: HOST, token: SECRET, homeDir: home });
     expect(process.exitCode).toBe(0);
-    const path = join(home, ".pwnkit", "cloud.env");
+    const path = join(home, ".0sec", "cloud.env");
     expect(existsSync(path)).toBe(true);
     const body = readFileSync(path, "utf-8");
-    expect(body).toContain(`PWNKIT_CLOUD_HOST=${HOST}`);
-    expect(body).toContain(`PWNKIT_CLOUD_TOKEN=${SECRET}`);
+    expect(body).toContain(`0SEC_CLOUD_HOST=${HOST}`);
+    expect(body).toContain(`0SEC_CLOUD_TOKEN=${SECRET}`);
     expect((statSync(path).mode & 0o777).toString(8)).toBe("600");
     expect(io.stdout.join("\n")).toContain(`Logged in (host=${HOST})`);
   });
@@ -138,8 +138,8 @@ describe("pwnkit auth login", () => {
     expect(openCalls.length).toBe(1);
     expect(openCalls[0]).toMatch(/\/cli-auth\?session=/);
     expect(polls).toBe(3);
-    const path = join(home, ".pwnkit", "cloud.env");
-    expect(readFileSync(path, "utf-8")).toContain(`PWNKIT_CLOUD_TOKEN=${SECRET}`);
+    const path = join(home, ".0sec", "cloud.env");
+    expect(readFileSync(path, "utf-8")).toContain(`0SEC_CLOUD_TOKEN=${SECRET}`);
   });
 
   it("browser flow times out cleanly when server never responds 200", async () => {
@@ -161,7 +161,7 @@ describe("pwnkit auth login", () => {
     expect(polls).toBe(3);
     expect(io.stderr.join("\n")).toMatch(/timed out/);
     expect(io.stderr.join("\n")).toMatch(/--token/);
-    expect(existsSync(join(home, ".pwnkit", "cloud.env"))).toBe(false);
+    expect(existsSync(join(home, ".0sec", "cloud.env"))).toBe(false);
   });
 
   it("browser flow rejects a 200 body that has no token field", async () => {
@@ -186,7 +186,7 @@ describe("pwnkit auth login", () => {
   });
 });
 
-describe("pwnkit auth logout", () => {
+describe("0sec auth logout", () => {
   let home: string;
   let io: ReturnType<typeof captureIO>;
 
@@ -201,7 +201,7 @@ describe("pwnkit auth logout", () => {
     io.restore();
   });
 
-  it("deletes ~/.pwnkit/cloud.env and prints 'Logged out'", () => {
+  it("deletes ~/.0sec/cloud.env and prints 'Logged out'", () => {
     const path = seedHomeWithCreds(home);
     expect(existsSync(path)).toBe(true);
     runLogout({ homeDir: home });
@@ -217,7 +217,7 @@ describe("pwnkit auth logout", () => {
   });
 });
 
-describe("pwnkit auth status", () => {
+describe("0sec auth status", () => {
   let home: string;
   let originalHome: string | undefined;
   let originalEnvHost: string | undefined;
@@ -227,11 +227,11 @@ describe("pwnkit auth status", () => {
   beforeEach(() => {
     home = freshHome();
     originalHome = process.env.HOME;
-    originalEnvHost = process.env.PWNKIT_CLOUD_HOST;
-    originalEnvTok = process.env.PWNKIT_CLOUD_TOKEN;
+    originalEnvHost = process.env["0SEC_CLOUD_HOST"];
+    originalEnvTok = process.env["0SEC_CLOUD_TOKEN"];
     process.env.HOME = home;
-    delete process.env.PWNKIT_CLOUD_HOST;
-    delete process.env.PWNKIT_CLOUD_TOKEN;
+    delete process.env["0SEC_CLOUD_HOST"];
+    delete process.env["0SEC_CLOUD_TOKEN"];
     process.exitCode = undefined;
     io = captureIO();
   });
@@ -239,8 +239,8 @@ describe("pwnkit auth status", () => {
   afterEach(() => {
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
-    if (originalEnvHost !== undefined) process.env.PWNKIT_CLOUD_HOST = originalEnvHost;
-    if (originalEnvTok !== undefined) process.env.PWNKIT_CLOUD_TOKEN = originalEnvTok;
+    if (originalEnvHost !== undefined) process.env["0SEC_CLOUD_HOST"] = originalEnvHost;
+    if (originalEnvTok !== undefined) process.env["0SEC_CLOUD_TOKEN"] = originalEnvTok;
     process.exitCode = undefined;
     io.restore();
   });
@@ -258,7 +258,7 @@ describe("pwnkit auth status", () => {
     // No cloud.env in this home.
     await runStatus({});
     expect(process.exitCode).toBe(2);
-    expect(io.stderr.join("\n")).toMatch(/pwnkit auth login/);
+    expect(io.stderr.join("\n")).toMatch(/0sec auth login/);
   });
 
   it("exit 2 on 401, stderr does NOT contain token", async () => {
@@ -282,7 +282,7 @@ describe("pwnkit auth status", () => {
   });
 });
 
-describe("pwnkit auth — command registration", () => {
+describe("0sec auth — command registration", () => {
   it("registers login / logout / status under `auth`", () => {
     const program = new Command();
     program.exitOverride();

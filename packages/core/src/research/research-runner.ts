@@ -13,8 +13,8 @@ import type {
   ResearchTarget,
   TargetResearchAdapter,
 } from "./target-research-adapter.js";
-import type { ResearchEvidenceEnvelope } from "@pwnkit/shared";
-import type { Finding } from "@pwnkit/shared";
+import type { ResearchEvidenceEnvelope } from "@0sec/shared";
+import type { Finding } from "@0sec/shared";
 import { checkResearchNovelty, type ResearchNoveltyProvider } from "./novelty-provider.js";
 
 export interface RunResearchOptions<T = unknown> {
@@ -70,7 +70,7 @@ export async function runResearch<
   }
   const runId = opts.runId ?? randomUUID();
   const startedAt = new Date().toISOString();
-  const artifactDir = join(opts.artifactRoot ?? ".pwnkit-research", runId);
+  const artifactDir = join(opts.artifactRoot ?? ".0sec-research", runId);
   mkdirSync(artifactDir, { recursive: true });
   const ctx: ResearchContext = {
     runId,

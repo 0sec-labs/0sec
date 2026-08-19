@@ -1,5 +1,5 @@
 {
-  "name": "@pwnkit/core",
+  "name": "@0sec/core",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -15,10 +15,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@pwnkit/db": "workspace:*",
-    "@pwnkit/llm-redteam": "workspace:*",
-    "@pwnkit/shared": "workspace:*",
-    "@pwnkit/templates": "workspace:*",
+    "@0sec/db": "workspace:*",
+    "@0sec/llm-redteam": "workspace:*",
+    "@0sec/shared": "workspace:*",
+    "@0sec/templates": "workspace:*",
     "tree-sitter": "0.21.1",
     "tree-sitter-c": "0.21.4",
     "yaml": "^2.4.0",
