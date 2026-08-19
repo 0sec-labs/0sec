@@ -113,6 +113,31 @@ a captured hash — then turn that access into a higher-severity finding. Call t
 truncate long ones) before you replay it in a request. The best findings come
 from combining footholds, not from single isolated probes.`;
 
+// Typed TODO ledger guidance. Appended to the attack-oriented system prompts,
+// flag-gated, mirroring LOOT_LEDGER_INSTRUCTION above. The ledger itself is
+// maintained by the `plan` tool and re-injected each turn by the agent loop;
+// this primes the agent to open with a plan rather than to start probing
+// immediately, which is the behaviour the tool exists to produce. Wording
+// leans on the one property the agent can verify for itself — the plan block
+// keeps reappearing — because a tool the model does not believe in is a tool
+// the model does not call.
+const PLAN_LEDGER_INSTRUCTION = `
+
+## Your plan
+
+Before your first probe, call \`plan\` with action='add' and put one task per
+line in \`title\` to lay out how you intend to approach this target. Then
+action='start' the task you are doing first.
+
+Keep it current as you work: \`complete\` a task the moment it is finished,
+\`drop\` it when you have ruled the approach out, \`add\` new tasks as leads
+appear, and \`start\` the one you are on so exactly one task is ever active. The
+plan is re-shown to you every turn, which makes it the one piece of state that
+survives your context being compacted — everything else in this conversation
+can be summarized away, so anything you want to still know in thirty turns
+belongs on the plan. An out-of-date plan is worse than no plan: if you are
+working on something that is not on the list, put it on the list first.`;
+
 // ---------------------------------------------------------------------------
 // Shared attack-technique sections  (#422)
 // ---------------------------------------------------------------------------
@@ -324,7 +349,7 @@ Only save findings where:
 1. The sink is reachable through a realistic, unintended attack path
 2. The attacker's input comes from a network-ingestion point (HTTP request body/query/header, file upload, user-supplied URL)
 3. The impact involves privilege escalation, data exfiltration, or lateral movement — not self-DoS
-4. The package's own documentation doesn't already warn about this usage${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}`;
+4. The package's own documentation doesn't already warn about this usage${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.agentPlan ? PLAN_LEDGER_INSTRUCTION : ""}`;
 }
 
 export function webPentestPrompt(target: string, opts?: { hasBrowser?: boolean; auth?: AuthConfig }): string {
@@ -394,7 +419,7 @@ ${IDOR_SECTION}
 - Be thorough: test every input field and parameter you discover
 - Do NOT report missing security headers as critical/high — they are typically medium/low
 
-When done testing all categories, call the done tool with a summary of findings.${browserSection}${buildAuthPromptBlock(opts?.auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}`;
+When done testing all categories, call the done tool with a summary of findings.${browserSection}${buildAuthPromptBlock(opts?.auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.agentPlan ? PLAN_LEDGER_INSTRUCTION : ""}`;
 }
 
 export function webPentestDiscoveryPrompt(target: string, auth?: AuthConfig): string {
@@ -533,7 +558,7 @@ When you find a vulnerability:
 10. Do NOT give up after one failed payload — try ALL variations.
 11. Call done with a summary when you have exhausted the realistic audit surface.
 
-If the target uses MongoDB-style 24-char hex IDs (ObjectIds) and you suspect an IDOR vulnerability, the \`mongo_objectid\` tool can forge IDs with arbitrary timestamp + counter. The 'first user' has counter 0 — copy the 5-byte machine ID from any observed ObjectId.${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}`;
+If the target uses MongoDB-style 24-char hex IDs (ObjectIds) and you suspect an IDOR vulnerability, the \`mongo_objectid\` tool can forge IDs with arbitrary timestamp + counter. The 'first user' has counter 0 — copy the 5-byte machine ID from any observed ObjectId.${buildAuthPromptBlock(auth)}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.agentPlan ? PLAN_LEDGER_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}`;
 }
 
 export function verifyPrompt(target: string, findings: Finding[], auth?: AuthConfig): string {
@@ -968,7 +993,7 @@ observed in real scans and will fail the engagement if you fall into them:
 - **Repeat-payload trap**: If you've already sent a specific payload to a
   specific endpoint and it failed, do not send the same payload again
   later "to double-check". Mutate it or move on.
-${scriptSection}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}
+${scriptSection}${featureFlags.externalMemory ? EXTERNAL_MEMORY_INSTRUCTION : ""}${featureFlags.lootLedger ? LOOT_LEDGER_INSTRUCTION : ""}${featureFlags.agentPlan ? PLAN_LEDGER_INSTRUCTION : ""}${featureFlags.jitSkills ? SKILL_TOOL_HINT : ""}
 ## Rules
 - Read ALL response headers and cookies after every request
 - Log in FIRST if there is a login form

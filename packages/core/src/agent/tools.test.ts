@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { TaskLedger } from "./task-ledger.js";
 
 const ORIGINAL_JIT_SKILLS_ENV = process.env.PWNKIT_FEATURE_JIT_SKILLS;
 const ORIGINAL_LOOT_LEDGER_ENV = process.env.PWNKIT_FEATURE_LOOT_LEDGER;
@@ -275,6 +276,43 @@ describe("ToolExecutor", () => {
       targetInfo: {},
     };
     executor = new ToolExecutor(ctx, null);
+  });
+
+  it("routes plan mutations through the task ledger with the current turn", async () => {
+    const plan = new TaskLedger();
+    ctx.plan = plan;
+    ctx.currentTurn = 7;
+
+    const added = await executor.execute({
+      name: "plan",
+      arguments: { action: "add", title: "Map the authenticated API surface" },
+    });
+
+    expect(added.success).toBe(true);
+    expect(added.output).toMatchObject({
+      total: 1,
+      open: [{ id: "task-1", status: "pending" }],
+    });
+    expect(plan.get("task-1")).toMatchObject({ createdTurn: 7, updatedTurn: 7 });
+
+    const started = await executor.execute({
+      name: "plan",
+      arguments: { action: "start", id: "task-1" },
+    });
+    expect(started.success).toBe(true);
+    expect(plan.get("task-1")).toMatchObject({ status: "active", updatedTurn: 7 });
+  });
+
+  it("explains that plan tracking is unavailable when no ledger is configured", async () => {
+    const result = await executor.execute({
+      name: "plan",
+      arguments: { action: "list" },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      output: { enabled: false },
+    });
   });
 
   // ── save_finding ──
