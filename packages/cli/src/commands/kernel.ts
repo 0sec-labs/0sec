@@ -1,5 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
+import { readFileSync, writeFileSync } from "node:fs";
+import { generateSyzChoiceWeights, syzChoiceWeightsFromPlan } from "@0sec/core";
 import type { KernelVariantHuntReport } from "@0sec/core";
 import type { ScanReport, Severity } from "@0sec/shared";
 import { formatSarif } from "../formatters/sarif.js";
@@ -23,6 +25,16 @@ interface SyzbotMineOpts {
   limit: string;
   details: string;
   detailDelay: string;
+}
+
+interface WeightsOpts {
+  target: string;
+  crashSummary?: string;
+  fromFile?: string;
+  model?: string;
+  maxEntries: string;
+  dryRun?: boolean;
+  out?: string;
 }
 
 function parsePositiveInt(value: string, name: string, max: number): number {
@@ -151,6 +163,44 @@ export function registerKernelCommand(program: Command): void {
           log: (message) => console.error(message),
         });
         console.log(JSON.stringify({ ...result, huntCandidates: toHuntCandidates(result) }, null, 2));
+      } catch (err) {
+        console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
+        process.exitCode = 1;
+      }
+    });
+
+  kernel
+    .command("weights")
+    .description("Generate an LLM-derived syzkaller choice_weights.json for a kernelCTF target")
+    .requiredOption("--target <version>", "Target kernel version, e.g. 6.12.101")
+    .option("--crash-summary <path>", "File with recent crash descriptions to inform weighting")
+    .option("--from-file <path>", "Validate/normalize a raw model JSON plan instead of calling the API")
+    .option("--model <model>", "Override model (default: env/auto-detected)")
+    .option("--max-entries <n>", "Maximum weighted syscalls", "48")
+    .option("--dry-run", "Print the weights file instead of writing")
+    .option("-o, --out <path>", "Output path for choice_weights.json")
+    .action(async (opts: WeightsOpts) => {
+      try {
+        const crashSummary = opts.crashSummary ? readFileSync(opts.crashSummary, "utf8") : undefined;
+        const result = opts.fromFile
+          ? syzChoiceWeightsFromPlan(readFileSync(opts.fromFile, "utf8"), {
+              target: opts.target,
+              crashSummary,
+              maxEntries: parsePositiveInt(opts.maxEntries, "--max-entries", 128),
+            })
+          : await generateSyzChoiceWeights({
+              target: opts.target,
+              crashSummary,
+              model: opts.model,
+              maxEntries: parsePositiveInt(opts.maxEntries, "--max-entries", 128),
+              log: (message) => console.error(message),
+            });
+        if (opts.dryRun || !opts.out) {
+          console.log(JSON.stringify(result.file, null, 2));
+        } else {
+          writeFileSync(opts.out, JSON.stringify(result.file, null, 2) + "\n");
+          console.error(chalk.green(`wrote ${opts.out} (${result.file.allowed_names.length} entries, provider=${result.file.provenance.provider})`));
+        }
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
         process.exitCode = 1;

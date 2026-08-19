@@ -1313,6 +1313,13 @@ export {
   toHuntCandidates,
   defaultSyzbotFetcher,
   mineSyzbotQueue,
+  generateSyzChoiceWeights,
+  syzChoiceWeightsFromPlan,
+} from "./kernel/index.js";
+export type {
+  SyzChoiceWeightsOptions,
+  SyzChoiceWeightsFile,
+  SyzChoiceWeightsResult,
 } from "./kernel/index.js";
 export type {
   SyzbotFetcher,
