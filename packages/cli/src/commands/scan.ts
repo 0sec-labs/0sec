@@ -3,7 +3,6 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import { z } from "zod";
 import type { ScanDepth, OutputFormat, RuntimeMode, ScanMode, AuthConfig } from "@pwnkit/shared";
-import { networkScopeRequiredRefusal, targetRequiresScope } from "@pwnkit/core";
 import { renderReplay } from "../formatters/replay.js";
 import { runUnified } from "./run.js";
 import { reportSummarySchema, formatZodError } from "./schemas.js";
@@ -409,13 +408,6 @@ export function registerScanCommand(program: Command): void {
           console.error(chalk.red(err instanceof Error ? err.message : String(err)));
           process.exit(2);
         }
-      }
-
-      const hasNetworkScope = Boolean(scopeFile) || Boolean(httpAudit?.allowedHosts.length);
-      if (targetRequiresScope(targetStr) && !hasNetworkScope) {
-        console.error(chalk.red(networkScopeRequiredRefusal(targetStr)));
-        process.exit(2);
-        return;
       }
 
       // Pre-validate attribution config (pwnkit#216). Same rationale as

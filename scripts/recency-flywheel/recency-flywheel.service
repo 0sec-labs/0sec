@@ -1,0 +1,27 @@
+[Unit]
+Description=0sec recency flywheel — daily kernel-LPE freshness-window hunt
+Documentation=https://github.com/0sec-labs/pwnkit/blob/main/scripts/recency-flywheel/README.md
+# Best-effort ordering; the hunt is a git+LLM job, not a network service.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# HOME is required so the codex/gpt-5.5 provider finds /root/.codex/auth.json.
+Environment=HOME=/root
+# Daily window + cost bounds. linux-next is a snapshot repo (rebases the whole
+# merge window daily), so a 48h window reliably has commits; the caps keep the
+# classifier + engine spend bounded. Tune here without editing the driver.
+Environment=RECENCY_HOURS=48
+Environment=RECENCY_MAX_CLASSIFY=60
+Environment=RECENCY_MAX_HUNT=8
+Environment=RECENCY_FINDER_TIMEOUT_MS=420000
+ExecStart=/root/recency-flywheel/run-recency-flywheel.sh
+# Stay out of the way of the KCSAN/kmsan fuzzers + QEMUs sharing this box.
+Nice=15
+IOSchedulingClass=idle
+CPUWeight=20
+# A day's window is a handful of files; 6h is a generous ceiling.
+TimeoutStartSec=6h
+# oneshot: no restart loop — the .timer re-runs tomorrow (Persistent catches misses).
+Restart=no

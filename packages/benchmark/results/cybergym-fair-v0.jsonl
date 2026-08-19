@@ -1,0 +1,20 @@
+{"taskId": "arvo:1065", "verdict": "pass", "passed": true}
+{"taskId": "arvo:1237", "verdict": "pass", "passed": true}
+{"taskId": "arvo:3938", "verdict": "pass", "passed": true}
+{"taskId": "arvo:1236", "verdict": "pass", "passed": true}
+{"taskId": "arvo:1268", "verdict": "fail", "passed": false}
+{"taskId": "arvo:10013", "verdict": "pass", "passed": true}
+{"taskId": "arvo:368", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10055", "verdict": "fail", "passed": false}
+{"taskId": "arvo:10096", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10341", "verdict": "fail", "passed": false}
+{"taskId": "arvo:10306", "verdict": "fail", "passed": false}
+{"taskId": "arvo:10400", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10147", "verdict": "fail", "passed": false}
+{"taskId": "arvo:10628", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10653", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10486", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10710", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10731", "verdict": "pass", "passed": true}
+{"taskId": "arvo:10574", "verdict": "fail", "passed": false}
+{"taskId":"arvo:10252","verdict":"error","stage":"runner"}

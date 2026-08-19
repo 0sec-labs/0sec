@@ -777,9 +777,8 @@ describe("LlmApiRuntime response parsing", () => {
 // ── Live Azure Integration (only runs when AZURE_OPENAI_API_KEY is set) ──
 
 const hasAzureKey = !!process.env.AZURE_OPENAI_API_KEY;
-const shouldRunAzureLiveTest = hasAzureKey && process.env.PWNKIT_RUN_AZURE_LIVE_TEST === "1";
 
-// Capture the real Azure key before any test mutates process.env.
+// Capture the real Azure key before any test mutates process.env
 const realAzureKey = process.env.AZURE_OPENAI_API_KEY;
 
 function isTransientAzureLiveError(error: string | undefined): boolean {
@@ -900,7 +899,7 @@ describe("probeAzureRegion", () => {
   });
 });
 
-describe.skipIf(!shouldRunAzureLiveTest)("Azure Responses API live integration", () => {
+describe.skipIf(!hasAzureKey)("Azure Responses API live integration", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

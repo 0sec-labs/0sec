@@ -1,0 +1,50 @@
+{
+  "status": "measured",
+  "date": "2026-08-02",
+  "subject": "PWNKIT_FEATURE_RETAINED_REASONING",
+  "arms": {
+    "treatment": "default-on opaque Responses reasoning-item echo-back",
+    "control": "PWNKIT_FEATURE_RETAINED_REASONING=0; identical runtime reconstructs prior assistant turn instead"
+  },
+  "target": {
+    "id": "multi-turn-escalation",
+    "category": "multi-turn",
+    "difficulty": 3,
+    "runtime": "api",
+    "depth": "quick"
+  },
+  "method": {
+    "runsPerArm": 3,
+    "order": ["control-1", "treatment-1", "control-2", "treatment-2", "control-3", "treatment-3"],
+    "qualityMetric": "passed and flagFound",
+    "costMetrics": ["inputTokens", "outputTokens", "estimatedCostUsd", "durationMs"]
+  },
+  "control": [
+    {"run": 1, "passed": true, "flagFound": true, "findingsCount": 2, "attackTurns": 8, "inputTokens": 54192, "outputTokens": 3010, "estimatedCostUsd": 0.207726, "durationMs": 185271},
+    {"run": 2, "passed": true, "flagFound": true, "findingsCount": 1, "attackTurns": 9, "inputTokens": 71767, "outputTokens": 2529, "estimatedCostUsd": 0.253236, "durationMs": 212432},
+    {"run": 3, "passed": true, "flagFound": true, "findingsCount": 3, "attackTurns": 8, "inputTokens": 62706, "outputTokens": 2888, "estimatedCostUsd": 0.231438, "durationMs": 193298}
+  ],
+  "treatment": [
+    {"run": 1, "passed": true, "flagFound": true, "findingsCount": 2, "attackTurns": 9, "inputTokens": 69145, "outputTokens": 2528, "estimatedCostUsd": 0.245355, "durationMs": 214477},
+    {"run": 2, "passed": true, "flagFound": true, "findingsCount": 2, "attackTurns": 6, "inputTokens": 38331, "outputTokens": 1601, "estimatedCostUsd": 0.139008, "durationMs": 196423},
+    {"run": 3, "passed": true, "flagFound": true, "findingsCount": 2, "attackTurns": 8, "inputTokens": 51694, "outputTokens": 2460, "estimatedCostUsd": 0.191982, "durationMs": 195197}
+  ],
+  "median": {
+    "control": {"inputTokens": 62706, "outputTokens": 2888, "estimatedCostUsd": 0.231438, "durationMs": 193298},
+    "treatment": {"inputTokens": 51694, "outputTokens": 2460, "estimatedCostUsd": 0.191982, "durationMs": 196423},
+    "treatmentVsControlPercent": {"inputTokens": -17.56, "outputTokens": -14.82, "estimatedCostUsd": -17.04, "durationMs": 1.62}
+  },
+  "result": {
+    "quality": "3/3 passed and flagFound in each arm",
+    "interpretation": "On this one local multi-turn target, treatment had lower median input, output, and estimated cost. It did not improve the binary quality metric.",
+    "notEstablished": [
+      "Generalization beyond this target, model configuration, or three runs per arm",
+      "A causal quality improvement",
+      "The effect of server-side compaction, which was not independently toggled"
+    ]
+  },
+  "caveats": [
+    "The benchmark target emitted body-parser syntax errors in control-1 and treatment-1; both runs completed successfully. Treat cost and duration as valid recorded outcomes, but do not present these six runs as a clean reliability benchmark.",
+    "The target and model are stochastic. Results are reported as medians and ranges must be re-measured on a larger, version-pinned suite before making product or public claims."
+  ]
+}

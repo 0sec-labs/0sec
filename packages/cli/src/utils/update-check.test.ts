@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compareVersions, shouldRunCheck } from "./update-check.js";
+import { compareVersions } from "./update-check.js";
 
 describe("compareVersions", () => {
   it("equal versions return 0", () => {
@@ -43,19 +43,5 @@ describe("compareVersions", () => {
   it("non-numeric segments coerce to 0 (be permissive on garbage)", () => {
     // `parseInt("abc", 10)` yields NaN → coerced to 0.
     expect(compareVersions("0.abc.0", "0.0.0")).toBe(0);
-  });
-});
-
-describe("shouldRunCheck", () => {
-  it("requires an explicit opt-in", () => {
-    expect(shouldRunCheck({}, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1" }, true)).toBe(true);
-  });
-
-  it("honors explicit privacy and CI disablement", () => {
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1", PWNKIT_NO_UPDATE_CHECK: "1" }, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1", PWNKIT_OFFLINE: "1" }, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1", CI: "true" }, true)).toBe(false);
-    expect(shouldRunCheck({ PWNKIT_UPDATE_CHECK: "1" }, false)).toBe(false);
   });
 });

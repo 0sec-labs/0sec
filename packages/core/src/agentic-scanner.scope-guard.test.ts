@@ -1,8 +1,20 @@
 /**
- * Scope admission for the public engine.
+ * Dispatch-level scope-guard visibility (pwnkit#133).
  *
- * Live network targets must fail before scan initialization without a scope.
- * Explicitly local modes retain the existing opt-in global strictness switch.
+ * `ctx.scope` is undefined on every local run without `--scope` and on every
+ * cloud scan mode except `http_audit` — the worker-controller dispatcher emits
+ * no `--scope` at all. That silently disables the bash egress guards nested in
+ * `if (this.ctx.scope)` in `agent/tools.ts`.
+ *
+ * We deliberately do NOT fail closed by default (it would break every scan
+ * mode we ship today). What we DO require is that the absence is impossible to
+ * miss: `agenticScan` must emit an operator-facing warning AND write a
+ * `scope_guards_inert` event to the scan's own event log at boot. These tests
+ * fail if either signal is removed.
+ *
+ * The scans below are driven onto the early `runtime: "codex"` rejection path
+ * — the cheapest way to reach the boot sequence without an LLM provider. The
+ * scope-guard block runs before that throw.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
@@ -62,23 +74,41 @@ describe("agenticScan — scope-guard visibility (pwnkit#133)", () => {
     ).rejects.toThrow();
   }
 
-  it("refuses an unscoped live target before scan initialization", async () => {
-    await expect(
-      agenticScan({ config: baseConfig(), dbPath, onEvent: (e) => { events.push(e); } }),
-    ).rejects.toThrow(/live network target .* requires an engagement scope/);
+  it("warns the operator that the bash egress guards are inert", async () => {
+    await runUnscopedScan();
 
-    expect(events).toEqual([]);
-    expect(fs.existsSync(dbPath)).toBe(false);
+    const warning = events.find((e) => /No engagement scope is configured/.test(e.message));
+    expect(warning).toBeDefined();
+    expect(warning!.message).toMatch(/INERT/);
+    // The remediation has to be in the message or the warning is untriageable.
+    expect(warning!.message).toMatch(/--scope/);
+    expect(warning!.message).toMatch(/PWNKIT_REQUIRE_SCOPE/);
   });
 
-  it("keeps the global strictness switch for unscoped local modes", async () => {
+  it("writes a queryable scope_guards_inert event into the scan's event log", async () => {
+    await runUnscopedScan();
+
+    // Cloud scans have no console. The DB event is the durable half of the
+    // signal — without it "did the guards run on scan X?" is unanswerable.
+    const { pwnkitDB } = await import("@pwnkit/db");
+    const db = new pwnkitDB(dbPath);
+    const scans = db.listScans();
+    expect(scans.length).toBeGreaterThan(0);
+    const logged = db.getEvents(scans[0]!.id);
+    const inert = logged.find((e: { eventType: string }) => e.eventType === "scope_guards_inert");
+    expect(inert).toBeDefined();
+    // `payload` round-trips through the DB as JSON.
+    const raw = (inert as { payload: unknown }).payload;
+    const payload = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown>;
+    expect(Array.isArray(payload.inert_guards)).toBe(true);
+    expect((payload.inert_guards as string[]).length).toBeGreaterThan(0);
+    expect(payload.inert_guards).toContain("bash_out_of_scope_url_refusal");
+  });
+
+  it("refuses to start at all under PWNKIT_REQUIRE_SCOPE=1", async () => {
     process.env.PWNKIT_REQUIRE_SCOPE = "1";
     await expect(
-      agenticScan({
-        config: baseConfig({ target: "lodash" }),
-        dbPath,
-        onEvent: (e) => { events.push(e); },
-      }),
+      agenticScan({ config: baseConfig(), dbPath, onEvent: (e) => { events.push(e); } }),
     ).rejects.toThrow(/PWNKIT_REQUIRE_SCOPE is set but no engagement scope is configured/);
   });
 

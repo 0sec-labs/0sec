@@ -17,18 +17,17 @@
  * said the guards had not run, so a reviewer reading the guard block
  * reasonably concluded bash traffic was checked.
  *
- * This module is the small, shared vocabulary for scope enforcement. It is
- * consumed at three sites:
+ * This module is the small, shared vocabulary for that fact. It does not
+ * enforce anything on its own; it is consumed at two sites:
  *
- *   1. `agenticScan()` refuses a live network target before it initializes a
- *      database, model, tool, subprocess, or network client when no scope is
- *      configured.
- *   2. `agenticScan()` emits a structured `scope_guards_inert` event for
- *      unscoped local modes.
- *   3. `ToolExecutor.shellExec()` records egress destinations when a local
- *      mode intentionally runs without a scope.
+ *   1. `agenticScan()` — one structured `scope_guards_inert` event in the scan
+ *      event log plus a human-readable warning on the event stream, at boot.
+ *   2. `ToolExecutor.shellExec()` — a per-call `bash` artifact recording the
+ *      egress destinations of a command that ran with the guards inert.
  *
- * `PWNKIT_REQUIRE_SCOPE` remains available to make every mode fail closed.
+ * Strictness is opt-in via `PWNKIT_REQUIRE_SCOPE` (surfaced as
+ * `pwnkit scan --require-scope`). The rationale for fail-loud-by-default
+ * rather than fail-closed-by-default is at the `agenticScan` call site.
  *
  * @see https://github.com/0sec-labs/pwnkit/issues/133
  */
@@ -78,24 +77,6 @@ export const SCOPE_GUARDS_INERT_EVENT = "scope_guards_inert";
 export function isScopeRequired(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.PWNKIT_REQUIRE_SCOPE?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-}
-
-/** True when this target can cause live network execution. */
-export function targetRequiresScope(target: string): boolean {
-  try {
-    const protocol = new URL(target).protocol;
-    return protocol === "http:" || protocol === "https:" || protocol === "mcp:";
-  } catch {
-    return false;
-  }
-}
-
-/** Refusal used for an unscoped live network target. */
-export function networkScopeRequiredRefusal(target: string): string {
-  return (
-    `scan refused: live network target '${target}' requires an engagement scope. ` +
-    "Pass --scope <file> or use http_audit with an operator-provided host policy."
-  );
 }
 
 /**

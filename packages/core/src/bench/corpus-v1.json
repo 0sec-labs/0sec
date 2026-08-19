@@ -1,0 +1,403 @@
+{
+  "id": "0sec-bench-corpus-v1",
+  "version": 1,
+  "_comment": "LABELED, UNCONTAMINATED REGRESSION CORPUS v1 (pwnkit#657). Ground truth the #656 A/B tournament + CI gate measures against. REFERENCES ONLY — no exploit material. A source-audit case is a PUBLIC registry coordinate (package@version) the engine installs at run time; a kernel case is a reproducerRef resolved OUTSIDE the repo. Positives are sourced from our own confirmed disclosures (disclosure/*.md); sinkMarkers are literal file/symbol substrings drawn from those writeups, used for DETERMINISTIC marker-based grading (never LLM-judged). Known-negatives are (a) real triage false-positive controls — findings the maintainer rejected as by-design / unreachable / superseded / refuted, where a 'verified' verdict is itself a false positive — and (b) PUBLIC fixed-CVE packages pinned at a PATCHED version: re-reporting the historical class there is a false positive. EMBARGO: references pending-disclosure findings; do not publish externally without operator approval (disclosure/AGENTS.md rules apply). Provenance + full label table: docs/operations/bench-corpus-v1.md.",
+  "cases": [
+    {
+      "id": "src-sequelize-set-sqli",
+      "name": "sequelize Sequelize.prototype.set SQLi via unescaped names/values",
+      "target": { "kind": "source-audit", "package": "sequelize", "version": "6.37.8", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "sql-injection", "sinkMarkers": ["Sequelize.prototype.set", "quoteIdentifier", "sequelize.set"] },
+      "ci": true,
+      "tags": ["npm", "sqli", "disclosure"]
+    },
+    {
+      "id": "src-sequelize-fn-cast-json-sqli",
+      "name": "sequelize SQLi via fn(), cast(), json() APIs",
+      "target": { "kind": "source-audit", "package": "sequelize", "version": "6.37.8", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "sql-injection", "sinkMarkers": ["ALLOWED_CAST_TYPES", "sequelize.fn", "sequelize.cast", "sequelize.json"] },
+      "tags": ["npm", "sqli", "disclosure"]
+    },
+    {
+      "id": "src-sequelize-pg-startup-sqli",
+      "name": "sequelize PostgreSQL connection-startup SQLi via dialectOptions",
+      "target": { "kind": "source-audit", "package": "sequelize", "version": "6.37.8", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "sql-injection", "sinkMarkers": ["clientMinMessages", "SET client_min_messages TO", "dialectOptions"] },
+      "tags": ["npm", "sqli", "disclosure"]
+    },
+    {
+      "id": "src-eta-renderstring-ssti-rce",
+      "name": "eta SSTI to RCE via constructor chain in renderString",
+      "target": { "kind": "source-audit", "package": "eta", "version": "4.5.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["renderString", "renderStringAsync", "new Function", "constructor"] },
+      "ci": true,
+      "tags": ["npm", "ssti-rce", "disclosure"]
+    },
+    {
+      "id": "src-nunjucks-ssti-rce",
+      "name": "nunjucks SSTI to RCE via constructor chain in renderString()",
+      "target": { "kind": "source-audit", "package": "nunjucks", "version": "3.2.4", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["memberLookup", "renderString", "new Template", "constructor"] },
+      "tags": ["npm", "ssti-rce", "disclosure"]
+    },
+    {
+      "id": "src-expr-eval-tojsfunction-sandbox-escape",
+      "name": "expr-eval toJSFunction sandbox escape to RCE via global-scope leak",
+      "target": { "kind": "source-audit", "package": "expr-eval", "version": "2.0.2", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["toJSFunction", "new Function"] },
+      "tags": ["npm", "sandbox-escape", "disclosure"]
+    },
+    {
+      "id": "src-mathjs-sandbox-escape-chain-import",
+      "name": "mathjs sandbox escape via Chain.import from expression context",
+      "target": { "kind": "source-audit", "package": "mathjs", "version": "15.1.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["Chain.import", "Chain.fromJSON", "math.import", "math.evaluate"] },
+      "tags": ["npm", "sandbox-escape", "disclosure"]
+    },
+    {
+      "id": "src-jsonpath-plus-vm-sandbox-escape",
+      "name": "jsonpath-plus VM sandbox escape via eval:'native'",
+      "target": { "kind": "source-audit", "package": "jsonpath-plus", "version": "10.4.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["vm.Script", "constructor.constructor", "process.binding", "eval"] },
+      "tags": ["npm", "rce", "disclosure"]
+    },
+    {
+      "id": "src-vm2-sandbox-escape-vm-builtin",
+      "name": "vm2 sandbox escape via vm builtin module in NodeVM",
+      "target": { "kind": "source-audit", "package": "vm2", "version": "3.10.5", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["runInThisContext", "NodeVM", "runInNewContext"] },
+      "tags": ["npm", "rce", "disclosure"]
+    },
+    {
+      "id": "src-pug-compileclient-name-toctou-rce",
+      "name": "pug compileClient() name option TOCTOU RCE (CVE-2024-36361 bypass)",
+      "target": { "kind": "source-audit", "package": "pug", "version": "3.0.3", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["compileClientWithDependenciesTracked", "options.name", "isIdentifier"] },
+      "tags": ["npm", "rce", "disclosure"]
+    },
+    {
+      "id": "src-dd-trace-esbuild-banner-code-injection",
+      "name": "dd-trace datadog-esbuild banner code injection via unescaped git remote URL",
+      "target": { "kind": "source-audit", "package": "dd-trace", "version": "5.26.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["datadog-esbuild", "remote.origin.url", "repositoryURL", "DD_GIT_REPOSITORY_URL"] },
+      "tags": ["npm", "code-injection", "disclosure"]
+    },
+    {
+      "id": "src-justeattakeaway-eslint-plugin-rce",
+      "name": "@justeattakeaway/eslint-plugin-snacks-pie-migration RCE via execSync command injection",
+      "target": { "kind": "source-audit", "package": "@justeattakeaway/eslint-plugin-snacks-pie-migration", "version": "0.7.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "command-injection", "sinkMarkers": ["git-utils", "execSync", "isFileNew", "git cat-file"] },
+      "tags": ["npm", "command-injection", "disclosure"]
+    },
+    {
+      "id": "src-express-session-constructor-proto-pollution",
+      "name": "express-session Session constructor prototype pollution from store data",
+      "target": { "kind": "source-audit", "package": "express-session", "version": "1.19.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["createSession", "new Session", "__proto__"] },
+      "tags": ["npm", "prototype-pollution", "disclosure"]
+    },
+    {
+      "id": "src-joi-object-rename-proto-pollution",
+      "name": "joi object.rename Template destination sets __proto__",
+      "target": { "kind": "source-audit", "package": "joi", "version": "18.1.2", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["rename", "__proto__", "Joi.expression"] },
+      "tags": ["npm", "prototype-pollution", "disclosure"]
+    },
+    {
+      "id": "src-jsonwebtoken-proto-pollution-gadget",
+      "name": "jsonwebtoken verify() prototype-pollution gadget bypasses expiry/algorithm checks",
+      "target": { "kind": "source-audit", "package": "jsonwebtoken", "version": "9.0.3", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["Object.assign", "ignoreExpiration", "ignoreNotBefore", "clockTimestamp"] },
+      "tags": ["npm", "prototype-pollution", "disclosure"]
+    },
+    {
+      "id": "src-jsonwebtoken-audience-regex-redos",
+      "name": "jsonwebtoken verify() audience regex ReDoS",
+      "target": { "kind": "source-audit", "package": "jsonwebtoken", "version": "9.0.3", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "regex-dos", "sinkMarkers": ["options.audience", "payload.aud", ".test("] },
+      "tags": ["npm", "redos", "disclosure"]
+    },
+    {
+      "id": "src-jsonata-tomillis-redos",
+      "name": "jsonata ReDoS in $toMillis ISO-8601 validation regex",
+      "target": { "kind": "source-audit", "package": "jsonata", "version": "2.1.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "regex-dos", "sinkMarkers": ["toMillis", "(-[01]", "(-[0-3]"] },
+      "tags": ["npm", "redos", "disclosure"]
+    },
+    {
+      "id": "src-extract-zip-symlink-chain-traversal",
+      "name": "extract-zip symlink-chain write outside opts.dir",
+      "target": { "kind": "source-audit", "package": "extract-zip", "version": "2.0.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "path-traversal", "sinkMarkers": ["opts.dir", "symlink"] },
+      "tags": ["npm", "zip-slip", "disclosure"]
+    },
+    {
+      "id": "src-unzipper-prefix-check-sibling-escape",
+      "name": "unzipper zip-slip sibling escape via raw string-prefix containment check",
+      "target": { "kind": "source-audit", "package": "unzipper", "version": "0.12.3", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "path-traversal", "sinkMarkers": ["extractPath.indexOf", "Open.directory", "extract.js"] },
+      "tags": ["npm", "zip-slip", "disclosure"]
+    },
+    {
+      "id": "src-ollama-image-path-auto-read",
+      "name": "ollama local file disclosure via image path auto-read",
+      "target": { "kind": "source-audit", "package": "ollama", "version": "0.5.11", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "path-traversal", "sinkMarkers": ["encodeImage", "existsSync", "readFile", "resolve(image)"] },
+      "tags": ["npm", "file-read", "disclosure"]
+    },
+    {
+      "id": "src-wrangler-deploy-symlink-following",
+      "name": "wrangler (@cloudflare/workers-sdk) deploy symlink following via stat() instead of lstat()",
+      "target": { "kind": "source-audit", "package": "wrangler", "version": "4.20.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "path-traversal", "sinkMarkers": ["statSync", "lstatSync", "stat(", "lstat("] },
+      "tags": ["npm", "symlink-following", "disclosure"]
+    },
+    {
+      "id": "src-next-auth-forwarded-host",
+      "name": "next-auth unvalidated forwarded host in trusted-host modes",
+      "target": { "kind": "source-audit", "package": "next-auth", "version": "4.24.13", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "security-misconfiguration", "sinkMarkers": ["detectOrigin", "createActionURL", "x-forwarded-host", "TRUST_HOST"] },
+      "tags": ["npm", "host-header-injection", "disclosure"]
+    },
+    {
+      "id": "src-mysql2-url-option-override",
+      "name": "mysql2 URL option override + packet-parsing robustness issues",
+      "target": { "kind": "source-audit", "package": "mysql2", "version": "3.19.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "missing-validation", "sinkMarkers": ["parseUrl", "readNullTerminatedString", "multipleStatements"] },
+      "tags": ["npm", "missing-validation", "disclosure"]
+    },
+    {
+      "id": "src-jsonpath-plus-safe-mode-mutation",
+      "name": "jsonpath-plus data mutation via filter expressions in safe mode",
+      "target": { "kind": "source-audit", "package": "jsonpath-plus", "version": "10.4.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["evalCallExpression", "splice", "reverse", "sort"] },
+      "tags": ["npm", "data-integrity", "disclosure"]
+    },
+    {
+      "id": "src-adm-zip-zip64-corruption",
+      "name": "adm-zip broken readUInt64LE corrupts Zip64 parsing",
+      "target": { "kind": "source-audit", "package": "adm-zip", "version": "0.5.16", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["readUInt64LE", "zipEntry", "readBigUInt64LE"] },
+      "tags": ["npm", "data-corruption", "disclosure"]
+    },
+    {
+      "id": "src-adm-zip-zipbomb-dos",
+      "name": "adm-zip zip-bomb DoS via unchecked uncompressed size allocation",
+      "target": { "kind": "source-audit", "package": "adm-zip", "version": "0.5.16", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["Buffer.alloc", "uncompressedSize", "getData"] },
+      "tags": ["npm", "dos", "disclosure"]
+    },
+    {
+      "id": "src-js-yaml-stack-overflow-dos",
+      "name": "js-yaml stack-overflow DoS via deeply nested structures",
+      "target": { "kind": "source-audit", "package": "js-yaml", "version": "4.1.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["composeNode"] },
+      "tags": ["npm", "dos", "disclosure"]
+    },
+    {
+      "id": "src-jsonata-untrusted-expression-dos",
+      "name": "jsonata CPU/memory exhaustion via untrusted expressions",
+      "target": { "kind": "source-audit", "package": "jsonata", "version": "2.1.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["evaluate", "sequence", "[1..5000]"] },
+      "tags": ["npm", "dos", "disclosure"]
+    },
+    {
+      "id": "src-mysql2-binlog-statusvars-dos",
+      "name": "mysql2 binlog QueryEvent status-vars parser DoS (RangeError)",
+      "target": { "kind": "source-audit", "package": "mysql2", "version": "3.19.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["binlog_query_statusvars", "parseStatusVars", "RangeError"] },
+      "tags": ["npm", "dos", "disclosure"]
+    },
+    {
+      "id": "src-protobufjs-skiptype-stack-overflow",
+      "name": "protobufjs skipType unbounded recursion stack overflow DoS",
+      "target": { "kind": "source-audit", "package": "protobufjs", "version": "8.0.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["skipType", "Reader.prototype.skipType"] },
+      "tags": ["npm", "dos", "disclosure"]
+    },
+    {
+      "id": "src-yaml-quadratic-map-dos",
+      "name": "yaml O(n^2) CPU exhaustion via large maps with unique keys",
+      "target": { "kind": "source-audit", "package": "yaml", "version": "2.8.2", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["mapIncludes", "uniqueKeys", "items.some"] },
+      "tags": ["npm", "dos", "disclosure"]
+    },
+
+    {
+      "id": "kernel-bluetooth-cig-uaf",
+      "name": "Linux kernel UAF in hci_le_create_cis_sync() (Bluetooth CIG/CIS)",
+      "target": { "kind": "kernel", "reproducerRef": "corpus://kernel/bluetooth-cig-uaf", "ecosystem": "linux-kernel" },
+      "objective": { "type": "kasan-hit", "signature": "use-after-free" },
+      "tags": ["kernel", "uaf", "disclosure"]
+    },
+    {
+      "id": "kernel-nfc-digital-sensf-overflow",
+      "name": "Linux kernel stack buffer overflow in NFC digital sensf_res memcpy",
+      "target": { "kind": "kernel", "reproducerRef": "corpus://kernel/nfc-digital-sensf-overflow", "ecosystem": "linux-kernel" },
+      "objective": { "type": "kasan-hit", "signature": "stack-out-of-bounds" },
+      "tags": ["kernel", "stack-overflow", "disclosure"]
+    },
+    {
+      "id": "kernel-nfc-llcp-tlv-underflow",
+      "name": "Linux kernel NFC LLCP TLV parser integer underflow + OOB reads",
+      "target": { "kind": "kernel", "reproducerRef": "corpus://kernel/nfc-llcp-tlv-underflow", "ecosystem": "linux-kernel" },
+      "objective": { "type": "kasan-hit", "signature": "out-of-bounds" },
+      "tags": ["kernel", "oob", "disclosure"]
+    },
+    {
+      "id": "kernel-skb-zerocopy-fragnesia",
+      "name": "Linux kernel SKBFL_SHARED_FRAG flag loss in skb_zerocopy() (Fragnesia variant)",
+      "target": { "kind": "kernel", "reproducerRef": "corpus://kernel/skb-zerocopy-fragnesia", "ecosystem": "linux-kernel" },
+      "objective": { "type": "kasan-hit" },
+      "tags": ["kernel", "memory-corruption", "disclosure"]
+    },
+    {
+      "id": "kernel-mac802154-no-cow",
+      "name": "Linux kernel mac802154 llsec in-place AEAD decrypt on cloned skb without COW guard",
+      "target": { "kind": "kernel", "reproducerRef": "corpus://kernel/mac802154-no-cow", "ecosystem": "linux-kernel" },
+      "objective": { "type": "kasan-hit" },
+      "tags": ["kernel", "memory-corruption", "disclosure"]
+    },
+
+    {
+      "id": "neg-bydesign-webpack-cli-proto-pollution",
+      "name": "[FP control] webpack cli.processArguments proto-pollution — rejected by maintainer (developer-authored config, not attacker input)",
+      "target": { "kind": "source-audit", "package": "webpack", "version": "5.107.2", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["getObjectAndProperty", "setValue", "processArguments", "__proto__"] },
+      "knownNegative": true,
+      "ci": true,
+      "tags": ["npm", "known-negative", "by-design", "disclosure-fp"]
+    },
+    {
+      "id": "neg-unreachable-node-forge-proto-pollution",
+      "name": "[FP control] node-forge form.serialize proto-pollution — unreachable dead code (forge.form unexported)",
+      "target": { "kind": "source-audit", "package": "node-forge", "version": "1.3.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["serialize", "_addField", "__proto__"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "unreachable", "disclosure-fp"]
+    },
+    {
+      "id": "neg-superseded-formidable-traversal",
+      "name": "[FP control] formidable createDirsFromUploads traversal — superseded duplicate of GHSA-3pj2-wmw4-qpcx",
+      "target": { "kind": "source-audit", "package": "formidable", "version": "3.5.4", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "path-traversal", "sinkMarkers": ["_joinDirectoryName", "createDirsFromUploads", "uploadDir"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "superseded", "disclosure-fp"]
+    },
+    {
+      "id": "neg-patched-lodash-proto-pollution",
+      "name": "[FP control] lodash @4.17.21 — proto-pollution (CVE-2019-10744) patched since 4.17.12",
+      "target": { "kind": "source-audit", "package": "lodash", "version": "4.17.21", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["defaultsDeep", "mergeWith", "zipObjectDeep", "setWith", "baseSet"] },
+      "knownNegative": true,
+      "ci": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-minimist-proto-pollution",
+      "name": "[FP control] minimist @1.2.8 — proto-pollution (CVE-2021-44906) patched since 1.2.6",
+      "target": { "kind": "source-audit", "package": "minimist", "version": "1.2.8", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["setKey", "__proto__", "constructor"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-json5-proto-pollution",
+      "name": "[FP control] json5 @2.2.3 — proto-pollution (CVE-2022-46175) patched since 2.2.2",
+      "target": { "kind": "source-audit", "package": "json5", "version": "2.2.3", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["internalize", "reviver", "__proto__"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-y18n-proto-pollution",
+      "name": "[FP control] y18n @5.0.8 — proto-pollution (CVE-2020-7774) patched since 5.0.5",
+      "target": { "kind": "source-audit", "package": "y18n", "version": "5.0.8", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["__proto__", "setLocale", "update"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-async-proto-pollution",
+      "name": "[FP control] async @3.2.6 — proto-pollution (CVE-2021-43138) patched since 3.2.2",
+      "target": { "kind": "source-audit", "package": "async", "version": "3.2.6", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["autoInject", "mapValuesLimit", "__proto__"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-qs-proto-pollution",
+      "name": "[FP control] qs @6.11.0 — proto-pollution (CVE-2022-24999) patched since 6.10.3/6.5.3",
+      "target": { "kind": "source-audit", "package": "qs", "version": "6.11.0", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "prototype-pollution", "sinkMarkers": ["parseObject", "__proto__", "allowPrototypes"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-handlebars-ssti",
+      "name": "[FP control] handlebars @4.7.8 — SSTI/RCE (CVE-2019-20920) patched since 4.7.7",
+      "target": { "kind": "source-audit", "package": "handlebars", "version": "4.7.8", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["compile", "registerHelper", "lookupProperty"] },
+      "knownNegative": true,
+      "ci": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-ejs-rce",
+      "name": "[FP control] ejs @3.1.10 — RCE via options (CVE-2022-29078) patched since 3.1.7",
+      "target": { "kind": "source-audit", "package": "ejs", "version": "3.1.10", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "code-injection", "sinkMarkers": ["outputFunctionName", "escapeFunction", "new Function"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-tar-traversal",
+      "name": "[FP control] tar @6.2.1 — path traversal / symlink (CVE-2021-37701) patched since 6.1.2",
+      "target": { "kind": "source-audit", "package": "tar", "version": "6.2.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "path-traversal", "sinkMarkers": ["stripAbsolutePath", "preservePaths", "Unpack"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-semver-redos",
+      "name": "[FP control] semver @7.6.3 — ReDoS in range parsing (CVE-2022-25883) patched since 7.5.2",
+      "target": { "kind": "source-audit", "package": "semver", "version": "7.6.3", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "regex-dos", "sinkMarkers": ["parseRange", "new Range", "safeRe"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-ansi-regex-redos",
+      "name": "[FP control] ansi-regex @5.0.1 — ReDoS (CVE-2021-3807) patched in 5.0.1",
+      "target": { "kind": "source-audit", "package": "ansi-regex", "version": "5.0.1", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "regex-dos", "sinkMarkers": ["ansiRegex", "pattern"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-glob-parent-redos",
+      "name": "[FP control] glob-parent @5.1.2 — ReDoS (CVE-2020-28469) patched in 5.1.2",
+      "target": { "kind": "source-audit", "package": "glob-parent", "version": "5.1.2", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "regex-dos", "sinkMarkers": ["globParent", "enclosure", "isglob"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+    {
+      "id": "neg-patched-decode-uri-component-dos",
+      "name": "[FP control] decode-uri-component @0.2.2 — DoS (CVE-2022-38900) patched in 0.2.1",
+      "target": { "kind": "source-audit", "package": "decode-uri-component", "version": "0.2.2", "ecosystem": "npm" },
+      "objective": { "type": "finding-match", "vulnClass": "other", "sinkMarkers": ["decodeURIComponent", "tokenize", "singleMatcher"] },
+      "knownNegative": true,
+      "tags": ["npm", "known-negative", "patched-cve"]
+    },
+
+    {
+      "id": "kernel-neg-algif-skcipher-refuted",
+      "name": "[FP control] Linux kernel algif_skcipher splice page-cache corruption — refuted (no crash on 7.0.0-15)",
+      "target": { "kind": "kernel", "reproducerRef": "corpus://kernel/algif-skcipher-pagecache-corruption", "ecosystem": "linux-kernel" },
+      "objective": { "type": "kasan-hit" },
+      "knownNegative": true,
+      "tags": ["kernel", "known-negative", "refuted", "disclosure-fp"]
+    }
+  ]
+}

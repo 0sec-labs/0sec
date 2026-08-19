@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Guard: warn if staged files look like cross-worktree pollution.
+# When parallel agents edit files in worktrees synced by Syncthing,
+# foreign edits can leak into the wrong working tree.
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [[ -z "$BRANCH" || "$BRANCH" == "HEAD" ]]; then exit 0; fi
+
+MERGE_BASE=$(git merge-base main HEAD 2>/dev/null || git merge-base origin/main HEAD 2>/dev/null)
+if [[ -z "$MERGE_BASE" ]]; then exit 0; fi
+
+BRANCH_FILES=$(git diff --name-only "$MERGE_BASE"...HEAD 2>/dev/null)
+STAGED_FILES=$(git diff --cached --name-only 2>/dev/null)
+WARNED=0
+
+for f in $STAGED_FILES; do
+  if [[ -n "$BRANCH_FILES" ]] && ! echo "$BRANCH_FILES" | grep -qxF "$f"; then
+    if [[ $WARNED -eq 0 ]]; then
+      echo "⚠ Cross-worktree pollution check:"
+      WARNED=1
+    fi
+    echo "  $f is staged but not previously modified on branch $BRANCH"
+  fi
+done
+
+if [[ $WARNED -eq 1 ]]; then
+  echo "Review these files before committing. They may be from another branch."
+fi
+# Warn only, don't block — set exit 1 above to hard-block
+exit 0

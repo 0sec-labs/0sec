@@ -1,0 +1,15 @@
+{
+  "test_size": 200,
+  "label_source": "flag_extraction (ground truth)",
+  "xgboost": {
+    "f1": 0.9942857142857143,
+    "errors": 2
+  },
+  "gpt54": {
+    "f1": 0.9147727272727273,
+    "precision": 0.9147727272727273,
+    "recall": 0.9147727272727273,
+    "errors": 30,
+    "avg_latency_ms": 2388.636111021042
+  }
+}

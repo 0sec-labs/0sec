@@ -38,10 +38,9 @@ describe("resolveSourceMapUrl", () => {
 
 describe("scanBody — secret classification", () => {
   it("flags a high-signal AWS key, Stripe live key, Google key, and JWT", () => {
-    const stripe = ["sk", "live", "4eC39HqLyjWDarjtT1zdp7dcABCD"].join("_");
     const body = [
       "const a='AKIAIOSFODNN7EXAMPLE';",
-      `const s='${stripe}';`,
+      "const s='sk_live_4eC39HqLyjWDarjtT1zdp7dcABCD';",
       "const g='AIzaSyB1234567890abcdefghijklmnopqrstuv';",
       "const t='eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.abcDEF123456';",
     ].join("\n");
