@@ -18,7 +18,7 @@ function mockSensitiveFetch(url: string): string {
   if (url.includes("169.254.169.254")) {
     return `ami-id: ami-0abcdef1234567890
 instance-id: i-1234567890abcdef0
-security-credentials: {"AccessKeyId": "***REMOVED***"}`;
+security-credentials: {"AccessKeyId": "AKIAIOSFODNN7EXAMPLE"}`;
   }
 
   if (url.includes("localhost") && url.includes("/admin")) {

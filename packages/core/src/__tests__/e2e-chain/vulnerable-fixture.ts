@@ -23,7 +23,7 @@ import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 
 /** A fake, non-functional AWS key id (AKIA + 16 chars). NOT a real credential. */
-export const FAKE_AWS_KEY_ID = "***REMOVED***";
+export const FAKE_AWS_KEY_ID = "AKIAIOSFODNN7EXAMPLE";
 /** A fake referenced S3 bucket name the JS points at (for the cloud probe). */
 export const REFERENCED_S3_BUCKET = "acme-reports-export-fixture";
 

@@ -41,10 +41,10 @@ A polluted \`Object.prototype\` flips an internal flag and bypasses auth.
 ## Reproduction
 
 \`\`\`sh
-curl -H 'Authorization: Bearer ***REMOVED***' http://t/api
+curl -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c' http://t/api
 \`\`\`
 
-Operator key ***REMOVED*** was used during the run.
+Operator key AKIAIOSFODNN7EXAMPLE was used during the run.
 
 ## Next step
 
@@ -90,7 +90,7 @@ describe("sanitizeWriteup", () => {
   it("strips JWTs, AWS keys, auth headers, and personal emails together", () => {
     const dirty =
       "Authorization: Bearer x\n" +
-      "key ***REMOVED***\n" +
+      "key AKIAIOSFODNN7EXAMPLE\n" +
       "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c\n" +
       "ping bob@gmail.com";
     const out = sanitizeWriteup(dirty);
@@ -98,7 +98,7 @@ describe("sanitizeWriteup", () => {
     expect(out).toContain("<REDACTED-AWS-KEY>");
     expect(out).toContain("<REDACTED-JWT>");
     expect(out).toContain("<REDACTED-EMAIL>");
-    expect(out).not.toContain("***REMOVED***");
+    expect(out).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(out).not.toContain("bob@gmail.com");
   });
 });
@@ -140,7 +140,7 @@ describe("generateWriteup — assembly + gate", () => {
     expect(w.markdown).not.toContain("eyJhbGciOiJIUzI1NiJ9");
     expect(w.markdown).toContain("<REDACTED-AWS-KEY>");
     expect(w.markdown).toContain("<REDACTED-EMAIL>");
-    expect(w.markdown).not.toContain("***REMOVED***");
+    expect(w.markdown).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(w.markdown).not.toContain("alice.smith@example.com");
     // Internal-only content + private channels stay out.
     expect(w.markdown).not.toContain("Email the maintainer privately");
@@ -164,6 +164,6 @@ describe("generateWriteup — assembly + gate", () => {
     expect(w.markdown).toContain("do not publish");
     expect(w.markdown).toContain("pending-disclosure");
     // Redaction still applies on the override path.
-    expect(w.markdown).not.toContain("***REMOVED***");
+    expect(w.markdown).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
 });

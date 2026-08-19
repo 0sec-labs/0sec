@@ -21,7 +21,7 @@ function pocSteps(): PocStep[] {
         type: "http",
         method: "GET",
         url: "/api/foo?url=http://169.254.169.254/",
-        headers: { Authorization: "Bearer ***REMOVED***" },
+        headers: { Authorization: "Bearer sk-supersecret-token-value" },
       },
     },
   ];
@@ -37,7 +37,7 @@ function reproducedFinding(overrides: Partial<Finding> = {}): Finding {
     category: "ssrf",
     status: "verified",
     evidence: {
-      request: "GET /api/foo?url=http://169.254.169.254/ HTTP/1.1\nAuthorization: Bearer ***REMOVED***",
+      request: "GET /api/foo?url=http://169.254.169.254/ HTTP/1.1\nAuthorization: Bearer sk-supersecret-token-value",
       response: '{"status":"reachable"}',
       analysis: "Full SSRF.",
     },

@@ -71,7 +71,7 @@ describe("runJsRecon — endpoint discovery feeds surface_sweep shape", () => {
 
 describe("runJsRecon — secret detection + redaction", () => {
   it("detects an embedded AWS key and NEVER returns the raw value", async () => {
-    const rawKey = "***REMOVED***";
+    const rawKey = "AKIAIOSFODNN7EXAMPLE";
     const res = await runJsRecon({
       scriptUrls: ["https://app.example.com/app.js"],
       scope: inScope(),
@@ -94,7 +94,7 @@ describe("runJsRecon — secret detection + redaction", () => {
   it("ports foxguard patterns: GitLab, npm, private key, generic api_key", async () => {
     const body = [
       `glpat-abcdefghijklmnopqrstuvwx`,
-      `***REMOVED***`,
+      `npm_abcdefghijklmnopqrstuvwxyz0123456789`,
       `-----BEGIN OPENSSH PRIVATE KEY-----`,
       `const config = { api_key: "sk_test_1234567890abcdef" };`,
     ].join("\n");

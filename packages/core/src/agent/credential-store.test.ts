@@ -88,7 +88,7 @@ describe("cross-scan persistence (issue #771 acceptance)", () => {
     // the durable store.
     const ledgerA = new LootLedger();
     ledgerA.harvest(
-      "login response: password=hunter2 and api_key=***REMOVED***",
+      "login response: password=hunter2 and api_key=AKIAIOSFODNN7EXAMPLE",
       "http_request",
       1,
     );

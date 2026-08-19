@@ -61,15 +61,15 @@ describe("redactedArgsPreview — redaction", () => {
 
   it("masks a bearer token embedded in a bash command", () => {
     const out = redactedArgsPreview({
-      command: `curl -H "Authorization: Bearer ***REMOVED***" https://target.example/x`,
+      command: `curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9" https://target.example/x`,
     });
     expect(out).not.toContain("eyJhbGciOiJIUzI1NiJ9");
     expect(out).toContain("https://target.example/x");
   });
 
   it("masks an AWS access key anywhere in the args", () => {
-    const out = redactedArgsPreview({ command: "export AWS_KEY=***REMOVED*** && aws s3 ls" });
-    expect(out).not.toContain("***REMOVED***");
+    const out = redactedArgsPreview({ command: "export AWS_KEY=AKIAIOSFODNN7EXAMPLE && aws s3 ls" });
+    expect(out).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(out).toContain("<REDACTED-AWS-KEY>");
   });
 

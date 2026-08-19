@@ -12,7 +12,7 @@ import type { Finding } from "@pwnkit/shared";
 
 describe("redactSensitiveHeaders — auth headers", () => {
   it("masks Authorization header values", () => {
-    const out = redactSensitiveHeaders("Authorization: Bearer ***REMOVED***");
+    const out = redactSensitiveHeaders("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9");
     expect(out).toBe("Authorization: <REDACTED-Authorization>");
   });
 
@@ -57,7 +57,7 @@ describe("redactSensitiveHeaders — auth headers", () => {
 
 describe("redactSensitiveHeaders — AWS access keys", () => {
   it("masks AWS access key id (AKIA + 16 uppercase alphanumerics)", () => {
-    const out = redactSensitiveHeaders("export AWS_KEY=***REMOVED*** rest");
+    const out = redactSensitiveHeaders("export AWS_KEY=AKIAIOSFODNN7EXAMPLE rest");
     expect(out).toBe("export AWS_KEY=<REDACTED-AWS-KEY> rest");
   });
 
@@ -118,7 +118,7 @@ function findingWithEvidence(req: string, res: string): Finding {
 describe("renderAdvisoryMarkdown — applies redaction to evidence", () => {
   it("replaces Authorization values in the rendered Request block", () => {
     const finding = findingWithEvidence(
-      "GET /api/foo HTTP/1.1\nAuthorization: Bearer ***REMOVED***",
+      "GET /api/foo HTTP/1.1\nAuthorization: Bearer secret-bearer-token-1234",
       "200 OK",
     );
     const { markdown } = renderAdvisoryMarkdown(finding);
@@ -202,7 +202,7 @@ describe("renderAdvisoryMarkdown — applies redaction to pocSteps", () => {
         summary: "auth then call",
         action: {
           type: "shell",
-          cmd: "curl -H \"Authorization: Bearer ***REMOVED***\" https://acme.com/x",
+          cmd: "curl -H \"Authorization: Bearer real-bearer-token-xyz\" https://acme.com/x",
         },
       },
     ]);
