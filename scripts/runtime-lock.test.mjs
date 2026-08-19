@@ -23,6 +23,8 @@ test("dist runtime lock matches the generated package identity", () => {
   assert.equal(lock.packages[""].dependencies["@opentui/core"], cliPackage.dependencies["@opentui/core"]);
   assert.equal(lock.packages[""].dependencies["@opentui/react"], cliPackage.dependencies["@opentui/react"]);
   assert.equal(lock.packages[""].dependencies.react, cliPackage.dependencies.react);
+  assert.equal(cliPackage.dependencies.cfonts, undefined);
+  assert.equal(lock.packages[""].dependencies.cfonts, undefined);
 });
 
 test("bundle generator copies the immutable runtime lock", () => {
@@ -35,6 +37,7 @@ test("bundle generator copies the immutable runtime lock", () => {
     /"@opentui\/core": cliPkg\.dependencies\["@opentui\/core"\]/,
   );
   assert.match(read("scripts/bundle-cli.mjs"), /"react",\s*"react\/\*"/);
+  assert.doesNotMatch(read("scripts/bundle-cli.mjs"), /\bcfonts\b/);
 });
 
 for (const dockerfile of ["Dockerfile", "Dockerfile.prebuilt"]) {

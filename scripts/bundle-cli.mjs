@@ -71,7 +71,6 @@ await build({
     "node-sqlite3-wasm",
     "drizzle-orm",
     "drizzle-orm/*",
-    "cfonts",
     "playwright",
     "playwright-core",
     // tree-sitter and its C grammar load native .node bindings relative to
@@ -163,7 +162,6 @@ const publishPkg = {
   // runtime we actually support (root is the source of truth: >=24.0.0).
   engines: rootPkg.engines,
   dependencies: {
-    "cfonts": "^3.3.1",
     "drizzle-orm": rootPkg.dependencies["drizzle-orm"],
     "node-sqlite3-wasm": rootPkg.dependencies["node-sqlite3-wasm"],
     "tree-sitter": rootPkg.dependencies["tree-sitter"],
