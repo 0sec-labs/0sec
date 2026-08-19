@@ -173,6 +173,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=pwnkit
           cache-to: type=gha,mode=max,scope=pwnkit
+          no-cache: ${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Re-authenticate to GHCR before retry
         if: steps.build.outcome == 'failure'
@@ -195,6 +196,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=pwnkit
           cache-to: type=gha,mode=max,scope=pwnkit
+          no-cache: true
 
       # Buildx can refresh the registry session used for the push. Re-login
       # before the daemon performs the independent digest pull below.
