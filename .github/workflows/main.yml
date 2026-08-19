@@ -24,8 +24,6 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install libFuzzer toolchain
-        run: sudo apt-get update && sudo apt-get install --yes clang
       - name: Build CLI
         run: pnpm build
       - name: Type-check

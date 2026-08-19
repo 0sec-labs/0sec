@@ -351,7 +351,7 @@ function execFileResult(
   return new Promise((resolveResult) => {
     execFile(command, args, (error, stdout, stderr) => {
       resolveResult({
-        code: typeof error?.code === "number" ? error.code : 0,
+        code: typeof error?.code === "number" ? error.code : error ? 1 : 0,
         stdout,
         stderr,
       });
