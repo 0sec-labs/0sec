@@ -35,18 +35,22 @@ pnpm build
 node dist/pwnkit.js --help
 ```
 
-Set one supported provider credential before a connected scan. For example:
+Set one supported provider credential and create an engagement scope before a
+connected scan:
 
 ```bash
 export OPENAI_API_KEY=...
-node dist/pwnkit.js scan --target https://example.com
+cat > scope.json <<'EOF'
+{ "in_scope": ["example.com"] }
+EOF
+node dist/pwnkit.js scan --target https://example.com --scope ./scope.json
 ```
 
 ## Common commands
 
 ```bash
-# Scan an authorized web target
-node dist/pwnkit.js scan --target https://example.com --mode web
+# Scan an authorized web target with an engagement scope
+node dist/pwnkit.js scan --target https://example.com --mode web --scope ./scope.json
 
 # Review a local codebase
 node dist/pwnkit.js review ./my-app
@@ -58,9 +62,8 @@ node dist/pwnkit.js audit lodash
 node dist/pwnkit.js --help
 ```
 
-Some commands require additional local tooling or an explicit scope file. Run
-`doctor` before a new environment and read each command's help before a
-connected scan.
+Live network targets require `--scope <file>`. Run `doctor` before a new
+environment and read each command's help before a connected scan.
 
 ## Development
 
