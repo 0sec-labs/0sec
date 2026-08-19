@@ -34,9 +34,12 @@ continuing.
 Use pwnkit only on systems and code you own or are explicitly authorized to
 test. It is not a substitute for a written testing scope.
 
-## Install
+## Install from source
 
 ### Source
+
+`pwnkit` is not published to npm yet. Do not run `npx pwnkit` or install an
+unverified package with that name.
 
 ```bash
 git clone https://github.com/0sec-labs/0sec.git
@@ -79,16 +82,13 @@ environment and read each command's help before a connected scan.
 
 ## MCP integration
 
-pwnkit ships an MCP server over stdio:
+After building from source, run the bundled MCP server over stdio:
 
 ```bash
 node dist/pwnkit.js mcp-server
 ```
 
-Run that command from a built source checkout in an MCP-capable agent or editor.
-Herdr does not currently ship a built-in pwnkit integration target, so it should
-launch pwnkit through this MCP boundary or a managed terminal pane until a
-native Herdr adapter lands.
+Use that command from an MCP-capable agent or editor.
 
 ## Development
 
@@ -115,5 +115,6 @@ Report vulnerabilities in pwnkit through
 
 ## License
 
-[MIT OR Apache-2.0](LICENSE). See [LICENSE-MIT](LICENSE-MIT) for the MIT
-terms. Copyright 2026 0sec Labs.
+pwnkit is dual-licensed under MIT OR Apache-2.0, at your option. See
+[LICENSE](LICENSE) for the Apache-2.0 terms and [LICENSE-MIT](LICENSE-MIT) for
+the MIT terms. Copyright 2026 0sec Labs.

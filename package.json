@@ -45,9 +45,9 @@
     "prompt-injection"
   ],
   "author": "0sec Labs",
-  "homepage": "https://0sec.ai",
+  "homepage": "https://0.security",
   "bugs": {
-    "url": "https://0sec.ai/contact"
+    "url": "https://0.security/contact"
   },
   "repository": {
     "type": "git",
