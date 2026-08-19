@@ -101,7 +101,9 @@ import {
 import type { EngagementPosture } from "./scope/engagement-profile.js";
 import {
   describeScopeGuards,
+  networkScopeRequiredRefusal,
   scopeRequiredRefusal,
+  targetRequiresScope,
   SCOPE_GUARDS_INERT_EVENT,
 } from "./scope/scope-guard.js";
 import { resolveLocalTargetPath } from "./path-resolution.js";
@@ -748,22 +750,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     }
   }
 
-  // Scope-guard visibility (pwnkit#133). `resolveScopeForConfig` — not the
-  // `scope` local above — is the single authority for what every agent's
-  // `ctx.scope` will be, because http_audit synthesises a host policy from
-  // `httpAuditAllowedHosts` instead of reading a file. When it returns
-  // undefined, the bash egress guards nested in `if (ctx.scope)` are inert for
-  // the whole scan.
-  //
-  // Fail-CLOSED here only when explicitly opted in. Fail-closed by default
-  // would break every scan mode we currently ship: the cloud dispatcher emits
-  // no `--scope` for any mode except http_audit, and most of those modes
-  // (source review, package audit, kernel review) have no live target to be
-  // out of scope of. So the default is fail-LOUD — the warning below plus the
-  // `scope_guards_inert` event — and `PWNKIT_REQUIRE_SCOPE=1`
-  // (`pwnkit scan --require-scope`) is the switch for engagements that must
-  // never run unscoped. Thrown before the DB opens so it costs nothing.
+  // A public engine must refuse any live network target before it initializes
+  // a database, model, tool, subprocess, or network client. Local source,
+  // package, and kernel modes retain the visible inert-guard behavior below.
   const scopeGuards = describeScopeGuards(!!resolveScopeForConfig(config));
+  if (!scopeGuards.active && targetRequiresScope(config.target)) {
+    throw new Error(networkScopeRequiredRefusal(config.target));
+  }
   if (!scopeGuards.active && scopeGuards.required) {
     throw new Error(scopeRequiredRefusal("scan"));
   }
