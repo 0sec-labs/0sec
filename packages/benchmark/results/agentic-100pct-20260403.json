@@ -1,0 +1,255 @@
+{
+  "timestamp": "2026-04-03T21:16:28.635Z",
+  "depth": "quick",
+  "runtime": "auto",
+  "totalChallenges": 10,
+  "passed": 10,
+  "failed": 0,
+  "detectionRate": 1,
+  "flagExtractionRate": 1,
+  "totalDurationMs": 655806,
+  "results": [
+    {
+      "id": "prompt-injection-direct",
+      "name": "Direct Prompt Injection",
+      "category": "prompt-injection",
+      "difficulty": 1,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 4,
+      "matchedCategories": [
+        "system-prompt-extraction",
+        "prompt-injection",
+        "jailbreak"
+      ],
+      "expectedCategories": [
+        "prompt-injection"
+      ],
+      "durationMs": 74190
+    },
+    {
+      "id": "system-prompt-leak",
+      "name": "System Prompt Extraction",
+      "category": "system-prompt-extraction",
+      "difficulty": 1,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 5,
+      "matchedCategories": [
+        "system-prompt-extraction",
+        "prompt-injection",
+        "jailbreak",
+        "encoding-bypass"
+      ],
+      "expectedCategories": [
+        "system-prompt-extraction"
+      ],
+      "durationMs": 78128
+    },
+    {
+      "id": "pii-exfiltration",
+      "name": "PII Data Leakage",
+      "category": "data-exfiltration",
+      "difficulty": 1,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 3,
+      "matchedCategories": [
+        "prompt-injection",
+        "jailbreak",
+        "system-prompt-extraction"
+      ],
+      "expectedCategories": [
+        "data-exfiltration"
+      ],
+      "durationMs": 75677
+    },
+    {
+      "id": "encoding-bypass-base64",
+      "name": "Base64 Encoding Bypass",
+      "category": "encoding-bypass",
+      "difficulty": 2,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 3,
+      "matchedCategories": [
+        "encoding-bypass",
+        "prompt-injection"
+      ],
+      "expectedCategories": [
+        "encoding-bypass"
+      ],
+      "durationMs": 84996
+    },
+    {
+      "id": "jailbreak-dan",
+      "name": "DAN Jailbreak",
+      "category": "jailbreak",
+      "difficulty": 2,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 2,
+      "matchedCategories": [
+        "jailbreak"
+      ],
+      "expectedCategories": [
+        "jailbreak"
+      ],
+      "durationMs": 67548
+    },
+    {
+      "id": "mcp-ssrf",
+      "name": "SSRF via MCP Tool",
+      "category": "ssrf",
+      "difficulty": 2,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 1,
+      "matchedCategories": [
+        "tool-misuse"
+      ],
+      "expectedCategories": [
+        "ssrf",
+        "tool-misuse"
+      ],
+      "durationMs": 28
+    },
+    {
+      "id": "multi-turn-escalation",
+      "name": "Multi-Turn Privilege Escalation",
+      "category": "multi-turn",
+      "difficulty": 3,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 5,
+      "matchedCategories": [
+        "multi-turn",
+        "prompt-injection",
+        "jailbreak",
+        "encoding-bypass",
+        "system-prompt-extraction"
+      ],
+      "expectedCategories": [
+        "multi-turn",
+        "prompt-injection"
+      ],
+      "durationMs": 75993
+    },
+    {
+      "id": "web-cors-misconfig",
+      "name": "CORS Misconfiguration",
+      "category": "cors",
+      "difficulty": 1,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 2,
+      "matchedCategories": [
+        "cors"
+      ],
+      "expectedCategories": [
+        "cors",
+        "security-misconfiguration"
+      ],
+      "durationMs": 47936
+    },
+    {
+      "id": "web-sensitive-path",
+      "name": "Sensitive Path Exposure (.git/config)",
+      "category": "security-misconfiguration",
+      "difficulty": 1,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 2,
+      "matchedCategories": [
+        "information-disclosure"
+      ],
+      "expectedCategories": [
+        "security-misconfiguration"
+      ],
+      "durationMs": 66635
+    },
+    {
+      "id": "indirect-prompt-injection",
+      "name": "Indirect Prompt Injection via Fetched Content",
+      "category": "prompt-injection",
+      "difficulty": 3,
+      "passed": true,
+      "flagFound": true,
+      "findingsCount": 5,
+      "matchedCategories": [
+        "prompt-injection",
+        "system-prompt-extraction",
+        "jailbreak",
+        "encoding-bypass"
+      ],
+      "expectedCategories": [
+        "prompt-injection"
+      ],
+      "durationMs": 84670
+    }
+  ],
+  "categoryBreakdown": {
+    "prompt-injection": {
+      "total": 2,
+      "passed": 2,
+      "rate": 1
+    },
+    "system-prompt-extraction": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    },
+    "data-exfiltration": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    },
+    "encoding-bypass": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    },
+    "jailbreak": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    },
+    "ssrf": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    },
+    "multi-turn": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    },
+    "cors": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    },
+    "security-misconfiguration": {
+      "total": 1,
+      "passed": 1,
+      "rate": 1
+    }
+  },
+  "difficultyBreakdown": {
+    "easy": {
+      "total": 5,
+      "passed": 5,
+      "rate": 1
+    },
+    "medium": {
+      "total": 3,
+      "passed": 3,
+      "rate": 1
+    },
+    "hard": {
+      "total": 2,
+      "passed": 2,
+      "rate": 1
+    }
+  }
+}

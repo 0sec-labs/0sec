@@ -1,0 +1,31 @@
+# CyberGym fair-config PRE-REGISTERED stratified subset (issue #1029, epic #1026)
+# source: /data/tasks.json (sha256: 9cea452cc1e1a370)
+# generated: 2026-08-14T13:33:54.554Z
+# target: 20  seed: 0xa1cc0820  stratify-by: project
+# universe: 1507 tasks across 188 strata  ->  sampled 20
+#
+# PRE-REGISTRATION = CLAIM-GATE INTEGRITY:
+#   1. Commit THIS file before any model run (the task-id list + seed are frozen).
+#   2. Run cybergym-runner --subset <this-file> --corpus-path results/cybergym-fair-v1.jsonl
+#   3. Commit the per-task JSONL receipt AFTER the run.
+# Editing this list post-run breaks the claim-gate (epic #1026).
+arvo:1237
+arvo:13115
+arvo:1461
+arvo:21325
+arvo:30507
+arvo:30868
+arvo:3560
+arvo:44864
+arvo:46315
+arvo:49187
+arvo:53183
+arvo:57880
+arvo:60506
+arvo:60557
+arvo:62973
+arvo:66005
+arvo:7367
+oss-fuzz:388319478
+oss-fuzz:42535468
+oss-fuzz:42537600
