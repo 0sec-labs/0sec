@@ -1,5 +1,5 @@
 /**
- * Coverage seed for `pwnkit-cli`'s `orchestrate` command — the autonomous
+ * Coverage seed for `0sec-cli`'s `orchestrate` command — the autonomous
  * worker that pulls runnable WorkItems from the case graph, claims them,
  * dispatches the right agent loop (attack / verify / triage / family-aware),
  * and reconciles outcomes back into the DB. This file is the entry point
@@ -10,13 +10,13 @@
  * Strategy: mock the two heavy boundaries at the module level so we never
  *
  *   1. open WASM SQLite (memory: project_db_wasm — anything that calls
- *      `new pwnkitDB(...)` must be intercepted), or
+ *      `new osecDB(...)` must be intercepted), or
  *   2. spawn a real agent loop (agenticScan / runAgentLoop / createRuntime).
  *
- * The chatty FakePwnkitDB records every method invocation in a shared
+ * The chatty FakeOsecDB records every method invocation in a shared
  * `dbState.calls` log so we can assert on the call *sequence* the action
  * walks (claim → reopen → log_event → execute → upsertWorkItem(done) →
- * completeScan), which is the actual contract pwnkit-cloud's worker-
+ * completeScan), which is the actual contract 0sec-cloud's worker-
  * controller depends on. Per-test we mutate `dbState.workItems`,
  * `dbState.cases`, `dbState.scans`, and `dbState.findings` to plant
  * runnable / dependent / blocked fixtures.
@@ -63,7 +63,7 @@
  *     • `--watch` polls at `pollInterval` and re-queries findRunnable.
  *     • `--limit 0` is clamped up to 1 (Math.max).
  *     • `--poll-interval 100` is clamped up to 1000 (Math.max).
- *     • `--db-path` is threaded into every pwnkitDB constructor.
+ *     • `--db-path` is threaded into every osecDB constructor.
  *
  * Out of scope (refactor required — noted in PR body):
  *   • The action is monolithic — `findRunnableCandidates`,
@@ -90,11 +90,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
-import type { WorkItemRecord, WorkerRecord } from "@pwnkit/shared";
+import type { WorkItemRecord, WorkerRecord } from "@0sec/shared";
 
 // ── Module-level mocks ──────────────────────────────────────────────────────
 //
-// orchestrate.ts imports pwnkitDB statically and constructs it 5+ times
+// orchestrate.ts imports osecDB statically and constructs it 5+ times
 // per action invocation. We replace the whole module so no constructor
 // path touches the WASM shim.
 
@@ -161,7 +161,7 @@ const dbState: DbState = {
   scanStatusOverride: new Map(),
 };
 
-class FakePwnkitDB {
+class FakeOsecDB {
   constructor(dbPath?: string) {
     dbState.ctorArgs.push(dbPath);
   }
@@ -250,9 +250,9 @@ class FakePwnkitDB {
   }
 }
 
-vi.mock("@pwnkit/db", () => ({ pwnkitDB: FakePwnkitDB }));
+vi.mock("@0sec/db", () => ({ osecDB: FakeOsecDB }));
 
-// @pwnkit/core: agenticScan, runAgentLoop, createRuntime, LlmApiRuntime,
+// @0sec/core: agenticScan, runAgentLoop, createRuntime, LlmApiRuntime,
 // getToolsForRole. We intercept each so no real LLM call ever fires.
 
 const agenticScanMock = vi.fn();
@@ -264,7 +264,7 @@ class FakeLlmApiRuntime {
   constructor(public opts: unknown) {}
 }
 
-vi.mock("@pwnkit/core", () => ({
+vi.mock("@0sec/core", () => ({
   agenticScan: agenticScanMock,
   runAgentLoop: runAgentLoopMock,
   createRuntime: createRuntimeMock,
@@ -292,7 +292,7 @@ async function runCli(argv: string[]): Promise<unknown> {
   });
   registerOrchestrateCommand(program);
   try {
-    await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+    await program.parseAsync(["node", "0sec-cli", ...argv]);
     return undefined;
   } catch (err) {
     return err;
@@ -898,7 +898,7 @@ describe("orchestrate action — watch mode + argument plumbing", () => {
     expect(callsByMethod("claimWorkItem")).toHaveLength(1);
   });
 
-  it("--db-path is threaded into every pwnkitDB constructor invocation", async () => {
+  it("--db-path is threaded into every osecDB constructor invocation", async () => {
     // Empty queue keeps it short; we just assert the dbPath plumbing.
     await runCli(["orchestrate", "--db-path", "/tmp/p.db"]);
     expect(dbState.ctorArgs.length).toBeGreaterThan(0);

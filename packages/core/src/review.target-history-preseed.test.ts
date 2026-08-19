@@ -62,7 +62,7 @@ const history: IntelTargetHistory = {
 };
 
 afterEach(() => {
-  delete process.env.PWNKIT_FEATURE_TARGET_HISTORY_PRESEED;
+  delete process.env["0SEC_FEATURE_TARGET_HISTORY_PRESEED"];
 });
 
 describe("target-history preseed", () => {
@@ -97,7 +97,7 @@ describe("target-history preseed", () => {
   });
 
   it("skips lookup when the feature flag is disabled", async () => {
-    process.env.PWNKIT_FEATURE_TARGET_HISTORY_PRESEED = "0";
+    process.env["0SEC_FEATURE_TARGET_HISTORY_PRESEED"] = "0";
     const events: ScanEvent[] = [];
     const search = vi.fn(async () => history);
 

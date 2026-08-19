@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import type { Runtime, RuntimeConfig, RuntimeContext, RuntimeResult, RuntimeType } from "./types.js";
 import { eventBus, isCloudEventSinkActive } from "../events/bus.js";
 
-// Dim the subprocess output so it's visually distinct from pwnkit's own output
+// Dim the subprocess output so it's visually distinct from 0sec's own output
 const dim = (text: string) => `\x1b[2m${text}\x1b[0m`;
 
 function formatToolDetail(input: unknown): string {
@@ -58,7 +58,7 @@ function resolveCliEntrypoint(): string {
   return resolve(process.argv[1] ?? join(process.cwd(), "dist", "index.js"));
 }
 
-function buildPwnkitMcpCommandArgs(context: RuntimeContext): string[] {
+function buildOsecMcpCommandArgs(context: RuntimeContext): string[] {
   const cliEntrypoint = resolveCliEntrypoint();
   const args = [
     cliEntrypoint,
@@ -105,9 +105,9 @@ function safeJsonStringify(v: unknown): string {
 function buildClaudeMcpConfig(context: RuntimeContext): string {
   return JSON.stringify({
     mcpServers: {
-      pwnkit: {
+      "0sec": {
         command: process.execPath,
-        args: buildPwnkitMcpCommandArgs(context),
+        args: buildOsecMcpCommandArgs(context),
       },
     },
   });
@@ -133,14 +133,14 @@ export class ProcessRuntime implements Runtime {
     // Per-execution observability state for the Codex CLI JSON stream. Tracks
     // the 1-indexed turn number we emit `agent_turn_*` events under, plus the
     // tool-call indices we emit `tool_call_*` events under. Codex's `--json`
-    // stream uses its own `sequence_number` for stream ordering — pwnkit's
+    // stream uses its own `sequence_number` for stream ordering — 0sec's
     // event types use a simpler turn-and-tool-call counter that matches what
     // the api-runtime path emits, so the dashboard's live-trace renderer
     // doesn't need to special-case codex events.
     const scanId = context?.scanId;
     // Fire the cloud stream-event relay whenever (a) we're driving a
     // codex subprocess AND (b) something is listening — that is, the
-    // cloud sink has been subscribed via PWNKIT_CLOUD_EVENTS=1. The
+    // cloud sink has been subscribed via 0SEC_CLOUD_EVENTS=1. The
     // earlier `Boolean(scanId)` guard skipped audit-mode CLI runs
     // because `runAnalysisAgent` didn't pass scanId in its execute
     // context; the runner still subscribes events via the cloud sink,
@@ -184,7 +184,7 @@ export class ProcessRuntime implements Runtime {
     };
 
     // Closure over the per-execution counters above. Each codex JSON event
-    // becomes 0..N pwnkit cloud-bus events. See the comment above the call
+    // becomes 0..N 0sec cloud-bus events. See the comment above the call
     // site in the stdout handler for what this exists for.
     const emitCodexCloudEvents = (event: Record<string, unknown>): void => {
       // Stream dedup — see seenSequenceNumbers definition above.
@@ -267,7 +267,7 @@ export class ProcessRuntime implements Runtime {
             // result + status=success|error. Pair them via toolCallSeq so
             // we can synthesise duration_ms on completion. The fully-
             // qualified name we surface to the dashboard is
-            // `<server>__<tool>` (e.g. `pwnkit__http_request`) so the
+            // `<server>__<tool>` (e.g. `osec__http_request`) so the
             // live-trace UI can show which MCP server backed the call.
             toolCallSeq += 1;
             toolCallStartedAt.set(toolCallSeq, Date.now());
@@ -439,18 +439,18 @@ export class ProcessRuntime implements Runtime {
                 }
               }
 
-              // ── Pwnkit cloud-trace bridge (codex only) ──
+              // ── 0sec cloud-trace bridge (codex only) ──
               // Codex emits structured turn/tool/reasoning events on its
               // `--json` stream which we'd otherwise discard — translating
-              // each one into a `PWNKIT_EVENT_*` line on our stdout fills
+              // each one into a `0SEC_EVENT_*` line on our stdout fills
               // the dashboard's live-trace UI for the duration of Codex
               // source-analysis workflows.
               //
               // Guarded on `emitScanEvents` so non-codex runtimes and
-              // non-cloud codex usage (e.g. local CLI `pwnkit scan
+              // non-cloud codex usage (e.g. local CLI `0sec scan
               // --runtime codex`) don't pay the bus serialisation cost.
               // `eventBus.emit` is a no-op when the cloud sink is not
-              // subscribed (`PWNKIT_CLOUD_EVENTS` unset) so this is safe
+              // subscribed (`0SEC_CLOUD_EVENTS` unset) so this is safe
               // to call unconditionally inside the guard.
               if (emitScanEvents) emitCodexCloudEvents(event);
             } catch {
@@ -468,7 +468,7 @@ export class ProcessRuntime implements Runtime {
         // tool approval, kill it with a helpful error instead of looping
         if (/permission|approve|allow.*tool/i.test(stderr) && stderr.length > 500) {
           proc.kill("SIGTERM");
-          stderr += "\n[pwnkit] Subprocess killed: MCP tools require interactive approval. Use --runtime api instead.";
+          stderr += "\n[0sec] Subprocess killed: MCP tools require interactive approval. Use --runtime api instead.";
         }
       });
 
@@ -512,7 +512,7 @@ export class ProcessRuntime implements Runtime {
     // OS page-cache on /usr/local/bin/<runtime>, so the first exec pays
     // for the binary load + dynamic linker + the runtime's own startup,
     // which can exceed 5s for an ~80 MB Rust binary. Empirically observed
-    // (2026-05-13 pwnkit-cloud rollout): same lodash audit dispatched
+    // (2026-05-13 0sec-cloud rollout): same lodash audit dispatched
     // back-to-back where one sandbox succeeded and the next failed with
     // "Runtime 'codex' not available. Is codex installed?", correlating
     // with sandbox cold/warm state, not codex install state. After this
@@ -578,7 +578,7 @@ export class ProcessRuntime implements Runtime {
         }
         if (this.config.outputSchema) {
           // Codex needs schema as a file — write to temp
-          const schemaPath = join(tmpdir(), `pwnkit-schema-${Date.now()}.json`);
+          const schemaPath = join(tmpdir(), `0sec-schema-${Date.now()}.json`);
           writeFileSync(schemaPath, JSON.stringify(this.config.outputSchema));
           args.push("--output-schema", schemaPath);
         }
@@ -600,22 +600,22 @@ export class ProcessRuntime implements Runtime {
     };
 
     if (context?.target) {
-      env.PWNKIT_TARGET = context.target;
+      env["0SEC_TARGET"] = context.target;
     }
     if (context?.findings) {
-      env.PWNKIT_FINDINGS = context.findings;
+      env["0SEC_FINDINGS"] = context.findings;
     }
     if (context?.templateId) {
-      env.PWNKIT_TEMPLATE_ID = context.templateId;
+      env["0SEC_TEMPLATE_ID"] = context.templateId;
     }
     if (context?.mcp?.auth) {
-      env.PWNKIT_MCP_AUTH_JSON = JSON.stringify(context.mcp.auth);
+      env["0SEC_MCP_AUTH_JSON"] = JSON.stringify(context.mcp.auth);
     }
     if (context?.mcp?.attributionHeaders) {
-      env.PWNKIT_MCP_ATTRIBUTION_HEADERS_JSON = JSON.stringify(context.mcp.attributionHeaders);
+      env["0SEC_MCP_ATTRIBUTION_HEADERS_JSON"] = JSON.stringify(context.mcp.attributionHeaders);
     }
     if (context?.mcp?.attributionUaToken) {
-      env.PWNKIT_MCP_ATTRIBUTION_UA_TOKEN = context.mcp.attributionUaToken;
+      env["0SEC_MCP_ATTRIBUTION_UA_TOKEN"] = context.mcp.attributionUaToken;
     }
 
     return env;

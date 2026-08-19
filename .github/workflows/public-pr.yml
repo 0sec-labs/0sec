@@ -1,4 +1,4 @@
-name: "PwnKit: Public PR"
+name: "0sec: Public PR"
 
 # Fork code is intentionally not checked out or executed here. GitHub runs
 # pull_request_target from protected main, so a fork cannot weaken this policy
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pwnkit-public-pr-${{ github.event.pull_request.number }}
+  group: 0sec-public-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:

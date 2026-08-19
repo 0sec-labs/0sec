@@ -1,13 +1,13 @@
-// pwnkit-cloud credential resolver.
+// 0sec-cloud credential resolver.
 //
 // Resolution order (first match wins):
-//   1. Environment: PWNKIT_CLOUD_HOST + PWNKIT_CLOUD_TOKEN
-//   2. ~/.pwnkit/cloud.env (line-by-line `KEY=VALUE`, no `dotenv` dep)
+//   1. Environment: 0SEC_CLOUD_HOST + 0SEC_CLOUD_TOKEN
+//   2. ~/.0sec/cloud.env (line-by-line `KEY=VALUE`, no `dotenv` dep)
 //
-// PWNKIT_CLOUD_HOST is optional — if absent, we fall back to the
-// canonical production host. PWNKIT_CLOUD_TOKEN is required.
+// 0SEC_CLOUD_HOST is optional — if absent, we fall back to the
+// canonical production host. 0SEC_CLOUD_TOKEN is required.
 //
-// `~/.pwnkit/cloud.env` MUST be chmod 600. We warn (stderr) when it isn't,
+// `~/.0sec/cloud.env` MUST be chmod 600. We warn (stderr) when it isn't,
 // but we don't refuse to load — same trade-off as the H1 credential
 // loader (see packages/core/src/h1/credentials.ts).
 //
@@ -21,10 +21,11 @@
 // messages. `CloudAuthMissingError` carries no secret material.
 
 import { readFileSync, statSync } from "node:fs";
+import { homeStateDir } from "@0sec/shared";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** Canonical production host. Override via PWNKIT_CLOUD_HOST or cloud.env. */
+/** Canonical production host. Override via 0SEC_CLOUD_HOST or cloud.env. */
 export const DEFAULT_CLOUD_HOST = "https://cloud.0sec.ai";
 
 export interface CloudCredentials {
@@ -66,18 +67,17 @@ export interface LoadCloudCredentialsOptions {
 
 export function loadCloudCredentials(opts: LoadCloudCredentialsOptions = {}): CloudCredentials {
   const env = opts.env ?? process.env;
-  const home = opts.homeDir ?? homedir();
   const warn = opts.warn ?? ((m: string) => process.stderr.write(`${m}\n`));
 
   // 1. Env wins.
-  const envTok = env.PWNKIT_CLOUD_TOKEN?.trim();
+  const envTok = env["0SEC_CLOUD_TOKEN"]?.trim();
   if (envTok) {
-    const envHost = normaliseHost(env.PWNKIT_CLOUD_HOST?.trim() ?? DEFAULT_CLOUD_HOST);
+    const envHost = normaliseHost(env["0SEC_CLOUD_HOST"]?.trim() ?? DEFAULT_CLOUD_HOST);
     return { host: envHost, token: envTok, source: "env" };
   }
 
-  // 2. ~/.pwnkit/cloud.env fallback.
-  const path = join(home, ".pwnkit", "cloud.env");
+  // 2. ~/.0sec/cloud.env fallback.
+  const path = join(homeStateDir(opts.homeDir), "cloud.env");
   let raw: string;
   try {
     raw = readFileSync(path, "utf-8");
@@ -85,8 +85,8 @@ export function loadCloudCredentials(opts: LoadCloudCredentialsOptions = {}): Cl
     const code = (err as { code?: string }).code;
     if (code === "ENOENT") {
       throw new CloudAuthMissingError(
-        `pwnkit-cloud credentials not found. Run \`pwnkit auth login\` or set PWNKIT_CLOUD_TOKEN in env, ` +
-          `or create ${path} (chmod 600) with PWNKIT_CLOUD_TOKEN=… (optionally PWNKIT_CLOUD_HOST=…).`,
+        `0sec-cloud credentials not found. Run \`0sec auth login\` or set 0SEC_CLOUD_TOKEN in env, ` +
+          `or create ${path} (chmod 600) with 0SEC_CLOUD_TOKEN=… (optionally 0SEC_CLOUD_HOST=…).`,
       );
     }
     throw err;
@@ -98,7 +98,7 @@ export function loadCloudCredentials(opts: LoadCloudCredentialsOptions = {}): Cl
     const mode = st.mode & 0o777;
     if (mode !== 0o600) {
       warn(
-        `[pwnkit cloud] WARNING: ${path} mode is ${mode.toString(8).padStart(3, "0")} (expected 600). ` +
+        `[0sec cloud] WARNING: ${path} mode is ${mode.toString(8).padStart(3, "0")} (expected 600). ` +
           `Run: chmod 600 ${path}`,
       );
     }
@@ -107,13 +107,13 @@ export function loadCloudCredentials(opts: LoadCloudCredentialsOptions = {}): Cl
   }
 
   const parsed = parseEnvFile(raw);
-  const fileTok = parsed.PWNKIT_CLOUD_TOKEN?.trim();
+  const fileTok = parsed["0SEC_CLOUD_TOKEN"]?.trim();
   if (!fileTok) {
     throw new CloudAuthMissingError(
-      `pwnkit-cloud credentials in ${path} are incomplete: PWNKIT_CLOUD_TOKEN is required.`,
+      `0sec-cloud credentials in ${path} are incomplete: 0SEC_CLOUD_TOKEN is required.`,
     );
   }
-  const fileHost = normaliseHost(parsed.PWNKIT_CLOUD_HOST?.trim() ?? DEFAULT_CLOUD_HOST);
+  const fileHost = normaliseHost(parsed["0SEC_CLOUD_HOST"]?.trim() ?? DEFAULT_CLOUD_HOST);
   return { host: fileHost, token: fileTok, source: "file" };
 }
 
@@ -126,7 +126,7 @@ function normaliseHost(host: string): string {
   let h = host;
   if (!/^https?:\/\//.test(h)) {
     throw new CloudAuthMissingError(
-      `PWNKIT_CLOUD_HOST must be an http(s) URL (got ${JSON.stringify(host)}).`,
+      `0SEC_CLOUD_HOST must be an http(s) URL (got ${JSON.stringify(host)}).`,
     );
   }
   while (h.endsWith("/")) h = h.slice(0, -1);
@@ -155,7 +155,7 @@ function parseEnvFile(raw: string): Record<string, string> {
     }
     const key = trimmed.slice(0, eq).trim();
     const value = trimmed.slice(eq + 1).trim();
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) {
+    if (!/^[A-Z0-9_]+$/.test(key)) {
       throw new CloudAuthMissingError(
         `Malformed cloud.env at line ${i + 1}: invalid key ${JSON.stringify(key)}`,
       );

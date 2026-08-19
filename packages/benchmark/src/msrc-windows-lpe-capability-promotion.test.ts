@@ -114,7 +114,7 @@ function buildCapability() {
   const boundInventories = inventories();
   const lock = buildMsrcWindowsLpeTrancheLock(boundInventories);
   const manifest: WindowsLpePairedCorpusManifest = {
-    schemaVersion: "pwnkit.windows-lpe-paired-corpus/v2",
+    schemaVersion: "0sec.windows-lpe-paired-corpus/v2",
     corpusId: "msrc-contract-capability",
     profile: "capability",
     createdAt: SEALED_AT,
@@ -124,11 +124,11 @@ function buildCapability() {
   };
   const labels: [WindowsLpeEvaluatorLabels, WindowsLpeEvaluatorLabels] = [
     {
-      schemaVersion: "pwnkit.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId,
+      schemaVersion: "0sec.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId,
       split: "development", inventorySha256: "0".repeat(64), salt: "Qx7Nv2Lp9Ds4Hj6Bf1Mt8Yc3Za0Ue5Gi7Ro2Wk9VnAs", labels: [],
     },
     {
-      schemaVersion: "pwnkit.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId,
+      schemaVersion: "0sec.windows-lpe-evaluator-labels/v2", corpusId: manifest.corpusId,
       split: "holdout", inventorySha256: "0".repeat(64), salt: "Cv3Mn8Qz1Kp6Xs9Dc2Fh7Jt0Ry4Ua5We3Li8Go1NbEk", labels: [],
     },
   ];

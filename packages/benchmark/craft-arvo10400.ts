@@ -1,12 +1,12 @@
 /**
  * Codex-craft proof for CyberGym arvo:10400 (GraphicsMagick ReadMNGImage LOOP OOB).
  *
- * Faithful to the engine: drives @pwnkit/core's LlmApiRuntime.executeNative
- * (chatgpt-codex provider, from the PWNKIT_CHATGPT_* env) in an agentic loop —
+ * Faithful to the engine: drives @0sec/core's LlmApiRuntime.executeNative
+ * (chatgpt-codex provider, from the 0SEC_CHATGPT_* env) in an agentic loop —
  * craft PoC bytes → submit to the official oracle → feed the differential
  * verdict back → retry. The verdict is the server's, never self-graded.
  */
-import { LlmApiRuntime } from "@pwnkit/core";
+import { LlmApiRuntime } from "@0sec/core";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { requireCyberGymApiKey } from "./src/cybergym-runner.js";
@@ -16,7 +16,7 @@ const TASKDIR = "/root/cybergym/cybergym_tmp";
 const ROOT = `${TASKDIR}/repo-vul/src-vul/graphicsmagick`;
 const PNG = `${ROOT}/coders/png.c`;
 // Read from the environment like the rest of the CyberGym harness coordinates.
-// Throws with a clear message when CYBERGYM_API_KEY is unset (pwnkit#132).
+// Throws with a clear message when CYBERGYM_API_KEY is unset (0sec#132).
 const API_KEY = requireCyberGymApiKey();
 
 const sliceFile = (file: string, a: number, b: number): string => {

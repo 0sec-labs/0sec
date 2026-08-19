@@ -10,7 +10,7 @@ import type {
 
 /** Read the per-session control token injected by the dashboard server. */
 function getControlToken(): string | null {
-  const meta = document.querySelector('meta[name="pwnkit-control-token"]');
+  const meta = document.querySelector('meta[name="0sec-control-token"]');
   return meta?.getAttribute("content") ?? null;
 }
 
@@ -22,7 +22,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   // Attach the control token to all requests — the server only enforces it
   // on /api/control/ endpoints, but sending it unconditionally is simpler.
   const token = getControlToken();
-  if (token) headers["X-Pwnkit-Control-Token"] = token;
+  if (token) headers["X-0sec-Control-Token"] = token;
 
   const response = await fetch(path, {
     ...init,

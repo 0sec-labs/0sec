@@ -4,7 +4,7 @@
  * `hunt-run.ts` seeds ONE bug class per invocation (a human/LLM names a bug
  * class, greps for variant sites, `runHuntScan`s that one plan). This module
  * runs `runHuntScan` once PER archetype plan produced by
- * `planArchetypeSweep` (`@pwnkit/core`'s archetype-catalog), so one invocation
+ * `planArchetypeSweep` (`@0sec/core`'s archetype-catalog), so one invocation
  * sweeps many bug classes over the same source tree.
  *
  * Split out from the root-level `hunt-sweep-run.ts` script (which has no test
@@ -22,9 +22,9 @@
 
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import type { ArchetypeSweepPlan, HuntCandidate, HuntVerifier } from "@pwnkit/core";
-import { runHuntScan } from "@pwnkit/core";
-import type { Finding, RuntimeMode } from "@pwnkit/shared";
+import type { ArchetypeSweepPlan, HuntCandidate, HuntVerifier } from "@0sec/core";
+import { runHuntScan } from "@0sec/core";
+import type { Finding, RuntimeMode } from "@0sec/shared";
 import { appendToCorpus } from "./hunt-corpus.js";
 
 // ── File-size guard ─────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ export interface ArchetypeSweepRunOptions {
    * Why this helps: every archetype plan run through `runHuntScan` without
    * an explicit model falls through to the shared env-priority provider
    * (today: the single ChatGPT/Codex subscription token — see
-   * `pwnkit/packages/core/src/runtime/llm-api.ts`'s `detectProvider()`
+   * `0sec/packages/core/src/runtime/llm-api.ts`'s `detectProvider()`
    * env-priority chain). A multi-archetype sweep fans MANY archetype plans'
    * candidate pools through that ONE account/token, which is the measured
    * bench bottleneck (single shared token, ~90% timeouts/429s under
@@ -175,7 +175,7 @@ export interface ArchetypeSweepRunResult {
 
 /**
  * Run `runHuntScan` once per archetype plan, aggregating results. An empty
- * `plans` list is a clean no-op (e.g. the sweep gate `PWNKIT_ARCHETYPE_SWEEP`
+ * `plans` list is a clean no-op (e.g. the sweep gate `0SEC_ARCHETYPE_SWEEP`
  * was off, or nothing matched the filter) — not an error.
  */
 export async function runArchetypeSweep(opts: ArchetypeSweepRunOptions): Promise<ArchetypeSweepRunResult> {

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Command } from "commander";
 import chalk from "chalk";
-import { pwnkitDB, repairPwnkitDatabase, resetPwnkitDatabase } from "@pwnkit/db";
-import type { AgentVerdict, Finding, ScanConfig, WorkItemKind, WorkItemStatus } from "@pwnkit/shared";
+import { osecDB, repairOsecDatabase, resetOsecDatabase } from "@0sec/db";
+import type { AgentVerdict, Finding, ScanConfig, WorkItemKind, WorkItemStatus } from "@0sec/shared";
 
 type DbResetOptions = {
   dbPath?: string;
@@ -44,7 +44,7 @@ function minutesAgo(minutes: number): number {
 }
 
 function logSeedFamilyActivity(
-  db: pwnkitDB,
+  db: osecDB,
   family: SeedFamily,
   caseId: string,
 ): void {
@@ -120,7 +120,7 @@ function logSeedFamilyActivity(
   }
 }
 
-export function seedVerificationWorkbench(db: pwnkitDB): {
+export function seedVerificationWorkbench(db: osecDB): {
   scans: number;
   families: number;
   workers: number;
@@ -612,15 +612,15 @@ export function seedVerificationWorkbench(db: pwnkitDB): {
 export function registerDbCommand(program: Command): void {
   const db = program
     .command("db")
-    .description("Manage the local pwnkit database");
+    .description("Manage the local 0sec database");
 
   db
     .command("repair")
     .description("Back up a malformed local SQLite database and recreate a clean one")
     .option("--db-path <path>", "Path to SQLite database")
     .action((opts: DbRepairOptions) => {
-      const repaired = repairPwnkitDatabase(opts.dbPath);
-      console.log(chalk.green.bold("  ◆ pwnkit") + chalk.gray(" db repair"));
+      const repaired = repairOsecDatabase(opts.dbPath);
+      console.log(chalk.green.bold("  ◆ 0sec") + chalk.gray(" db repair"));
       console.log(chalk.gray(`  ${repaired.path}`));
       if (repaired.backupPath) {
         console.log(chalk.gray(`  backup: ${repaired.backupPath}`));
@@ -638,15 +638,15 @@ export function registerDbCommand(program: Command): void {
         throw new Error(`Unsupported seed preset: ${seed}`);
       }
 
-      const path = resetPwnkitDatabase(opts.dbPath);
-      const db = new pwnkitDB(opts.dbPath);
+      const path = resetOsecDatabase(opts.dbPath);
+      const db = new osecDB(opts.dbPath);
 
       try {
         const seeded = seed === "verification"
           ? seedVerificationWorkbench(db)
           : { scans: 0, families: 0, workers: 0 };
 
-        console.log(chalk.red.bold("  ◆ pwnkit") + chalk.gray(" db reset"));
+        console.log(chalk.red.bold("  ◆ 0sec") + chalk.gray(" db reset"));
         console.log(chalk.gray(`  ${path}`));
         console.log(chalk.gray(`  seed: ${seed}`));
         console.log(chalk.gray(`  scans: ${seeded.scans} · families: ${seeded.families} · workers: ${seeded.workers}`));

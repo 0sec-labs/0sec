@@ -1,16 +1,16 @@
 ---
-title: pwnkit cloud
-description: How the managed pwnkit cloud layer relates to the OSS agent and docs site.
+title: 0sec cloud
+description: How the managed 0sec cloud layer relates to the OSS agent and docs site.
 ---
 
-`pwnkit cloud` is the managed recurring-run surface built on top of the
-public `pwnkit` engine.
+`0sec cloud` is the managed recurring-run surface built on top of the
+public `0sec` engine.
 
 The split is intentional:
 
-- `pwnkit` is the OSS execution wedge: CLI, benchmarks, verification
+- `0sec` is the OSS execution wedge: CLI, benchmarks, verification
   pipeline, and the public docs in this repo.
-- `pwnkit cloud` is the managed layer: recurring scans, authenticated
+- `0sec cloud` is the managed layer: recurring scans, authenticated
   targets, operator review, artifact bundles, and orchestration around
   the same engine.
 

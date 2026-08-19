@@ -3,8 +3,8 @@ import chalk from "chalk";
 import { renderReplay } from "../formatters/replay.js";
 
 export async function replayScan(opts: { dbPath?: string; scan?: string }): Promise<void> {
-  const { pwnkitDB } = await import("@pwnkit/db");
-  const db = new pwnkitDB(opts.dbPath);
+  const { osecDB } = await import("@0sec/db");
+  const db = new osecDB(opts.dbPath);
   const requestedScan = opts.scan;
 
   let scanRecord;
@@ -41,9 +41,9 @@ export async function replayScan(opts: { dbPath?: string; scan?: string }): Prom
     templateId: f.templateId,
     title: f.title,
     description: f.description,
-    severity: f.severity as import("@pwnkit/shared").Severity,
-    category: f.category as import("@pwnkit/shared").AttackCategory,
-    status: f.status as import("@pwnkit/shared").FindingStatus,
+    severity: f.severity as import("@0sec/shared").Severity,
+    category: f.category as import("@0sec/shared").AttackCategory,
+    status: f.status as import("@0sec/shared").FindingStatus,
     evidence: {
       request: f.evidenceRequest,
       response: f.evidenceResponse,
@@ -55,7 +55,7 @@ export async function replayScan(opts: { dbPath?: string; scan?: string }): Prom
   const targetInfo = target
     ? {
         url: target.url,
-        type: target.type as import("@pwnkit/shared").TargetInfo["type"],
+        type: target.type as import("@0sec/shared").TargetInfo["type"],
         systemPrompt: target.systemPrompt ?? undefined,
         detectedFeatures: target.detectedFeatures
           ? JSON.parse(target.detectedFeatures)

@@ -3,7 +3,7 @@
 /**
  * PortSwigger Web Security Academy Benchmark Runner
  *
- * Runs pwnkit against PortSwigger's 270 Web Security Academy labs.
+ * Runs 0sec against PortSwigger's 270 Web Security Academy labs.
  * Each lab is an ephemeral web app that auto-detects when solved.
  * BoxPwnr scores 60.4% (163/270) on this benchmark.
  *
@@ -28,9 +28,9 @@
 import { readFileSync, existsSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agenticScan } from "@pwnkit/core";
+import { agenticScan } from "@0sec/core";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import {
   buildWidgetRequest,
   extractLaunchHref,
@@ -600,7 +600,7 @@ async function runLabOnce(lab: PortSwiggerLab): Promise<LabResult> {
   const hint = buildHint(lab, labUrl);
 
   try {
-    const dbPath = join(tmpdir(), `pwnkit-ps-${lab.id.slice(0, 40)}-${Date.now()}.db`);
+    const dbPath = join(tmpdir(), `0sec-ps-${lab.id.slice(0, 40)}-${Date.now()}.db`);
     const report = await agenticScan({
       config: {
         target: labUrl,
@@ -700,7 +700,7 @@ async function main() {
   labs = labs.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log("\x1b[36m\x1b[1m  pwnkit x PortSwigger Web Security Academy benchmark\x1b[0m");
+    console.log("\x1b[36m\x1b[1m  0sec x PortSwigger Web Security Academy benchmark\x1b[0m");
     console.log(`  labs: ${labs.length}  retries: ${retries}  timeout: ${labTimeout / 1000}s`);
     console.log("");
   }

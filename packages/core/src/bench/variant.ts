@@ -1,5 +1,5 @@
 /**
- * Bench variant descriptor + default variant→scan factory (pwnkit#656).
+ * Bench variant descriptor + default variant→scan factory (0sec#656).
  *
  * A *variant* is one configuration of the engine under test — a model, a
  * runtime, a scan depth, prompt overrides, feature flags. The A/B tournament
@@ -14,7 +14,7 @@
  * and is the "batteries included" path, exactly like adapters.ts.
  */
 
-import type { RuntimeMode, ScanDepth } from "@pwnkit/shared";
+import type { RuntimeMode, ScanDepth } from "@0sec/shared";
 import type { BenchScan } from "./runner.js";
 import {
   createAgenticScanAdapter,
@@ -120,7 +120,7 @@ function featureEnvironmentName(name: string): string {
   if (!/^[a-z0-9_]+$/.test(name)) {
     throw new Error(`invalid feature flag "${name}"; use lowercase CLI/env-style names`);
   }
-  return `PWNKIT_FEATURE_${name.toUpperCase()}`;
+  return `0SEC_FEATURE_${name.toUpperCase()}`;
 }
 
 // Feature flags use process.env throughout the engine. Serialize scoped

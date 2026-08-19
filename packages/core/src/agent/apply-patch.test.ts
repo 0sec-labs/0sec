@@ -300,7 +300,7 @@ describe("applyPatchOps (filesystem)", () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "pwnkit-apply-patch-"));
+    tmp = mkdtempSync(join(tmpdir(), "0sec-apply-patch-"));
   });
 
   afterEach(() => {

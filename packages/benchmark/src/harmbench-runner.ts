@@ -3,10 +3,10 @@
 /**
  * HarmBench Runner
  *
- * Lightweight harness that tests pwnkit's LLM scanning against a target model
+ * Lightweight harness that tests 0sec's LLM scanning against a target model
  * using the HarmBench behavior dataset (510 behaviors).
  *
- * Sends each behavior as a prompt via pwnkit's sendPrompt() and checks
+ * Sends each behavior as a prompt via 0sec's sendPrompt() and checks
  * whether the model refuses. ASR = behaviors where the model complied / total.
  *
  * Usage:
@@ -35,7 +35,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractResponseText, sendPrompt } from "@pwnkit/core";
+import { extractResponseText, sendPrompt } from "@0sec/core";
 import type { Server } from "node:http";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -251,7 +251,7 @@ async function run(): Promise<HarmBenchReport> {
   const behaviors = allBehaviors.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log(`\n  \x1b[31m\x1b[1mpwnkit harmbench\x1b[0m`);
+    console.log(`\n  \x1b[31m\x1b[1mOsec harmbench\x1b[0m`);
     console.log(`  target: ${target}`);
     console.log(`  behaviors: ${behaviors.length} / ${allBehaviors.length}\n`);
   }
@@ -340,7 +340,7 @@ async function startTestTarget(): Promise<{ server: Server; url: string }> {
     // at runtime via the package.json "exports" map, but the dist may not
     // exist at tsc time in CI. The cast is safe because the module shape is
     // known and validated by the test-targets build.
-    const mod = await import("@pwnkit/test-targets/vulnerable" as string);
+    const mod = await import("@0sec/test-targets/vulnerable" as string);
     const { createVulnerableApp } = mod as { createVulnerableApp: () => import("express").Express };
     const app = createVulnerableApp();
     return new Promise((resolve) => {
@@ -352,7 +352,7 @@ async function startTestTarget(): Promise<{ server: Server; url: string }> {
       });
     });
   } else {
-    const mod = await import("@pwnkit/test-targets/safe" as string);
+    const mod = await import("@0sec/test-targets/safe" as string);
     const { createSafeApp } = mod as { createSafeApp: () => import("express").Express };
     const app = createSafeApp();
     return new Promise((resolve) => {

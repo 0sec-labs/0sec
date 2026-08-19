@@ -75,7 +75,7 @@ describe("adaptAndVerify", () => {
   let cacheRoot: string;
 
   beforeEach(() => {
-    cacheRoot = mkdtempSync(join(tmpdir(), "pwnkit-adapt-test-"));
+    cacheRoot = mkdtempSync(join(tmpdir(), "0sec-adapt-test-"));
   });
 
   it("returns confirmed on first-try reproduction", async () => {

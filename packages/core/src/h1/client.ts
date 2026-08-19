@@ -16,10 +16,10 @@
 //     emitted back to the caller. Errors include status + path + URL,
 //     never headers, never the body if it might contain echoes of the
 //     token (which the H1 API doesn't currently do but we still avoid).
-//   - `User-Agent` includes `pwnkit-cli/<version>` so H1 ops can identify
+//   - `User-Agent` includes `0sec-cli/<version>` so H1 ops can identify
 //     us if traffic looks anomalous.
 
-import { VERSION } from "@pwnkit/shared";
+import { VERSION } from "@0sec/shared";
 import type { H1Collection } from "./types.js";
 
 const BASE_URL = "https://api.hackerone.com";
@@ -185,7 +185,7 @@ export class H1Client {
     return {
       Authorization: `Basic ${basic}`,
       Accept: "application/json",
-      "User-Agent": `pwnkit-cli/${VERSION}`,
+      "User-Agent": `0sec-cli/${VERSION}`,
     };
   }
 

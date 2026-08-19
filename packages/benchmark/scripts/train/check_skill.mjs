@@ -5,7 +5,7 @@
  *
  * The skill-refine loop (`skill_refine_loop.py --promote`) shells out to this
  * before it is ever allowed to write a YAML into the skills tree. We reuse
- * `loadSkillRegistry()` from @pwnkit/core (skills/index.ts) — the same code the
+ * `loadSkillRegistry()` from @0sec/core (skills/index.ts) — the same code the
  * agent uses to hot-load skills from disk — by pointing it at a temp directory
  * containing only the candidate file. If the candidate is malformed (missing
  * fields, non-integer version, bad regex trigger, duplicate id, ...) the loader
@@ -61,7 +61,7 @@ if (!existsSync(indexPath)) {
   fail(
     2,
     `core build not found at ${indexPath}\n` +
-      `Run: pnpm --filter @pwnkit/core build  (or pass --core-dist <dir>)`,
+      `Run: pnpm --filter @0sec/core build  (or pass --core-dist <dir>)`,
   );
 }
 
@@ -72,7 +72,7 @@ if (typeof mod.loadSkillRegistry !== "function") {
 
 // Isolate the candidate in a temp dir so the loader validates ONLY it and we
 // don't collide with real skill IDs (duplicate-id check would false-fail).
-const staging = mkdtempSync(join(tmpdir(), "pwnkit-skill-check-"));
+const staging = mkdtempSync(join(tmpdir(), "0sec-skill-check-"));
 try {
   copyFileSync(yamlPath, join(staging, basename(yamlPath)));
   mod.clearSkillRegistry?.();

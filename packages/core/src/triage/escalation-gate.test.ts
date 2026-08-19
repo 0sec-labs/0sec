@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CrashReport } from "@pwnkit/shared";
+import type { CrashReport } from "@0sec/shared";
 import type {
   NativeRuntime,
   NativeRuntimeResult,

@@ -64,7 +64,7 @@ describe("isExplicitLocalTargetPath", () => {
 
 describe("isExistingLocalTargetPath", () => {
   it("only accepts existing directories", () => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-path-resolution-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "0sec-path-resolution-"));
     mkdirSync(join(tmpRoot, "project"));
     writeFileSync(join(tmpRoot, "README.md"), "hello", "utf8");
 

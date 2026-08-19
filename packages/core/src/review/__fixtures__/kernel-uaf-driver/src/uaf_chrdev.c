@@ -1,4 +1,4 @@
-/* Synthetic vulnerable Linux kernel char-device — pwnkit linux-kernel
+/* Synthetic vulnerable Linux kernel char-device — 0sec linux-kernel
  * review profile fixture.
  *
  * Deliberately vulnerable. The bug is a use-after-free across the
@@ -93,4 +93,4 @@ static void __exit uaf_exit(void) {
 module_init(uaf_init);
 module_exit(uaf_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("pwnkit synthetic UAF char-device fixture");
+MODULE_DESCRIPTION("0sec synthetic UAF char-device fixture");

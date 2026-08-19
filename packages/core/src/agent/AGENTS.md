@@ -2,7 +2,7 @@
 
 # agent/ — engine agent loops & tools
 
-Area context for `pwnkit/packages/core/src/agent/`: the native agent loop
+Area context for `0sec/packages/core/src/agent/`: the native agent loop
 (`native-loop.ts`), the tool surface (`tools.ts`, `tools/`), and the
 specialist loops that drive the engine. See the repo-root `AGENTS.md` for
 team/workflow norms and `services/AGENTS.md` for engineering principles.

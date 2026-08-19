@@ -2,7 +2,7 @@
  * Hybrid confidence signal for findings.
  *
  * Background — the cloud-side `findings.confidence` column (numeric(4,3),
- * range 0.000–1.000) was 100% NULL because pwnkit-cli never emitted a
+ * range 0.000–1.000) was 100% NULL because 0sec-cli never emitted a
  * confidence value on findings: the OSS `Finding` type carried the field
  * but the `save_finding` agent tool didn't accept it, the JSON / structured
  * findings parser hard-coded `confidence: undefined`, and the
@@ -38,7 +38,7 @@
  * `agentic-scanner.ts` where reachability/multi-modal layers already cap
  * confidence around 0.7 and the oracle layer hard-sets 1.0.
  */
-import type { PocStep } from "@pwnkit/shared";
+import type { PocStep } from "@0sec/shared";
 
 /**
  * The PoC step kinds whose `expect` predicates the behavioural re-verify

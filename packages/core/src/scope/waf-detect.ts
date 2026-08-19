@@ -1,8 +1,8 @@
 /**
- * pwnkit#568 — WAF detection + adaptive evasion for authorized engagements.
+ * 0sec#568 — WAF detection + adaptive evasion for authorized engagements.
  *
  * Real authorized engagements run against WAF'd production. Without WAF
- * awareness pwnkit silently produces FALSE NEGATIVES: a probe comes back
+ * awareness 0sec silently produces FALSE NEGATIVES: a probe comes back
  * 403/406 from a CDN edge rule and the agent treats it as "not vulnerable"
  * instead of "blocked, try a different shape". This module gives the fetch
  * chokepoints two new capabilities:

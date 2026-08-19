@@ -1,5 +1,5 @@
 /**
- * Invariant-checker candidate generation — pwnkit's kernelCTF Pipeline #2.
+ * Invariant-checker candidate generation — 0sec's kernelCTF Pipeline #2.
  *
  * A sibling of `generateVariantCandidates` (variant-candidates.ts). Variant hunt
  * chases a KNOWN fix's bug class to OTHER call-sites; this hunts a DIFFERENT
@@ -30,7 +30,7 @@
 
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import type { HuntBrief, HuntCandidate } from "./hunt-scan.js";
 import { extractInvariantSpec } from "./invariant-spec-builder.js";
 

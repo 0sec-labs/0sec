@@ -13,7 +13,7 @@
 //
 // The reducer mirrors the cloud worker-controller's
 // `parseEventLines` consumer in spirit (both turn the same
-// PWNKIT_EVENT_* wire shape into structured snapshots), but they
+// 0SEC_EVENT_* wire shape into structured snapshots), but they
 // don't share a representation because the cloud persists every
 // event and the CLI panel only ever shows the latest.
 

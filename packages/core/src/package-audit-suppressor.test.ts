@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Finding, Severity, AttackCategory } from "@pwnkit/shared";
+import type { Finding, Severity, AttackCategory } from "@0sec/shared";
 import { postProcessPackageAuditFindings } from "./package-audit-suppressor.js";
 
 function makeFinding(

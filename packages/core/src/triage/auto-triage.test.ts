@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   alreadyFixedInTarget,
   knownDupe,

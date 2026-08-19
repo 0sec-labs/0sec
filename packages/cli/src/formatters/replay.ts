@@ -5,7 +5,7 @@ import type {
   AttackResult,
   TargetInfo,
   Severity,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 
 // ── Types ──
 
@@ -320,7 +320,7 @@ function buildReplayLines(data: ReplayData): ReplayLine[] {
     text: boxRow(
       chalk.white(`Completed in ${duration}`) +
         chalk.dim(" \u2192 ") +
-        chalk.gray("./pwnkit-report.json")
+        chalk.gray("./0sec-report.json")
     ),
     delay: MED,
   });
@@ -338,7 +338,7 @@ export async function renderReplay(data: ReplayData): Promise<void> {
   // Banner
   process.stdout.write("\n");
   process.stdout.write(
-    chalk.red.bold("  \u25c6 pwnkit") +
+    chalk.red.bold("  \u25c6 0sec") +
       chalk.gray(" attack replay") +
       "\n"
   );

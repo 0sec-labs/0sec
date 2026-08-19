@@ -21,7 +21,7 @@
 // finalists converged on the same fix — separate the reasoning from the
 // encoding and hand the encoding to a cached, deterministic serializer
 // (ATLANTIS's LibFDP, MIT; Theori RoboDuck's Input Encoder). This module is
-// that serializer for the pwnkit engine.
+// that serializer for the 0sec engine.
 //
 // The agent describes the values it wants the harness to *decode*, in call
 // order; `encodeFdp` emits the exact bytes FDP will decode back into those

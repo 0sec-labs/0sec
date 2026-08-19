@@ -3,6 +3,7 @@ import {
   createDrizzleFromShim,
   type ShimmedDatabase,
 } from "./wasm-shim.js";
+import { homeStateDir } from "@0sec/shared";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ import type {
   FindingTriageStatus,
   WorkItemRecord,
   WorkerRecord,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import * as schema from "./schema.js";
 import {
   findingStatuses,
@@ -39,15 +40,15 @@ import {
   type FindingWorkflowStatusDB,
 } from "./schema.js";
 
-const DEFAULT_DB_DIR = join(homedir(), ".pwnkit");
-const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, "pwnkit.db");
+const DEFAULT_DB_DIR = homeStateDir();
+const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, "0sec.db");
 
-export function resolvePwnkitDbPath(dbPath?: string): string {
+export function resolveOsecDbPath(dbPath?: string): string {
   return dbPath ?? DEFAULT_DB_PATH;
 }
 
-export function resetPwnkitDatabase(dbPath?: string): string {
-  const path = resolvePwnkitDbPath(dbPath);
+export function resetOsecDatabase(dbPath?: string): string {
+  const path = resolveOsecDbPath(dbPath);
 
   if (!dbPath) {
     mkdirSync(DEFAULT_DB_DIR, { recursive: true });
@@ -63,8 +64,8 @@ export function resetPwnkitDatabase(dbPath?: string): string {
   return path;
 }
 
-export function repairPwnkitDatabase(dbPath?: string): { path: string; backupPath?: string } {
-  const path = resolvePwnkitDbPath(dbPath);
+export function repairOsecDatabase(dbPath?: string): { path: string; backupPath?: string } {
+  const path = resolveOsecDbPath(dbPath);
 
   if (!dbPath) {
     mkdirSync(DEFAULT_DB_DIR, { recursive: true });
@@ -72,9 +73,9 @@ export function repairPwnkitDatabase(dbPath?: string): { path: string; backupPat
 
   clearStaleLockIfAny(path);
   const backupPath = backupCorruptDatabase(path) ?? undefined;
-  resetPwnkitDatabase(path);
+  resetOsecDatabase(path);
 
-  const db = new pwnkitDB(path);
+  const db = new osecDB(path);
   db.close();
 
   return { path, backupPath };
@@ -121,7 +122,7 @@ function ensureDatabaseHealthy(sqlite: ShimmedDatabase): void {
 /**
  * Migrate a pre-0.7.1 WAL-mode SQLite file in-place to legacy rollback mode.
  *
- * Why this exists: pwnkit versions <0.7.1 used better-sqlite3 and set the
+ * Why this exists: 0sec versions <0.7.1 used better-sqlite3 and set the
  * database to WAL mode (`PRAGMA journal_mode = WAL`). WAL mode writes a
  * `2` to bytes 18 (file format write version) and 19 (read version) of
  * the SQLite file header. The WASM-backed engine we switched to in 0.7.1
@@ -204,7 +205,7 @@ function migrateWalHeaderIfNeeded(path: string): void {
   if (hadWalData) {
     // eslint-disable-next-line no-console -- user-facing one-time notice
     console.warn(
-      `[pwnkit] Migrated ${path} from WAL mode to rollback mode for WASM engine compatibility. ` +
+      `[0sec] Migrated ${path} from WAL mode to rollback mode for WASM engine compatibility. ` +
         `A non-empty WAL sidecar was present and has been removed; any uncommitted transactions ` +
         `from a prior crashed run were discarded.`,
     );
@@ -226,7 +227,7 @@ function migrateWalHeaderIfNeeded(path: string): void {
  * that for free.
  *
  * Heuristic: if the lock directory's mtime is older than 10 seconds, we
- * assume the holder is dead. Legitimate pwnkit operations acquire and
+ * assume the holder is dead. Legitimate 0sec operations acquire and
  * release the lock many times per second (SQLite locks are per-query,
  * not per-connection), so a 10-second-old lock that nobody has touched
  * is overwhelmingly likely to be a crash corpse. In the rare case where
@@ -256,7 +257,7 @@ function clearStaleLockIfAny(path: string): void {
     rmSync(lockPath, { recursive: true, force: true });
     // eslint-disable-next-line no-console -- user-facing one-time notice
     console.warn(
-      `[pwnkit] Removed stale database lock at ${lockPath} ` +
+      `[0sec] Removed stale database lock at ${lockPath} ` +
         `(age ${Math.floor(ageMs / 1000)}s — previous holder likely crashed).`,
     );
   } catch {
@@ -265,7 +266,7 @@ function clearStaleLockIfAny(path: string): void {
   }
 }
 
-// ── Persistent credential store + trust graph (pwnkit#771) ──
+// ── Persistent credential store + trust graph (0sec#771) ──
 
 /** A stored persistent-credential row. NEVER carries the plaintext secret. */
 export interface PersistentCredentialRow {
@@ -286,7 +287,7 @@ export interface PersistentCredentialRow {
 }
 
 /**
- * Input to {@link pwnkitDB.upsertPersistentCredential}. The caller is
+ * Input to {@link osecDB.upsertPersistentCredential}. The caller is
  * responsible for hashing the secret — `valueHash` + `valuePreview` are the
  * only representations of the value that reach the DB. Plaintext must never be
  * passed here.
@@ -336,12 +337,12 @@ export interface TrustGraphEdgeInput {
   note?: string | null;
 }
 
-export class pwnkitDB {
+export class osecDB {
   private sqlite!: ShimmedDatabase;
   private db!: ReturnType<typeof createDrizzleFromShim<typeof schema>>;
 
   constructor(dbPath?: string) {
-    const path = resolvePwnkitDbPath(dbPath);
+    const path = resolveOsecDbPath(dbPath);
     if (!dbPath) {
       mkdirSync(DEFAULT_DB_DIR, { recursive: true });
     }
@@ -371,8 +372,8 @@ export class pwnkitDB {
       // eslint-disable-next-line no-console -- user-facing repair notice
       console.warn(
         backupPath
-          ? `[pwnkit] Recovered malformed database at ${path}. Backup saved to ${backupPath}.`
-          : `[pwnkit] Recovered malformed database state at ${path} by recreating a fresh database.`,
+          ? `[0sec] Recovered malformed database at ${path}. Backup saved to ${backupPath}.`
+          : `[0sec] Recovered malformed database state at ${path} by recreating a fresh database.`,
       );
     }
   }
@@ -380,7 +381,7 @@ export class pwnkitDB {
   private initializeDatabase(path: string): void {
     this.sqlite = createShimmedDatabase(path);
     // WAL is intentionally omitted: node-sqlite3-wasm's VFS does not support
-    // it, and pwnkit's single-writer CLI workload does not benefit from it.
+    // it, and 0sec's single-writer CLI workload does not benefit from it.
     this.sqlite.pragma("foreign_keys = ON");
     ensureDatabaseHealthy(this.sqlite);
     this.db = createDrizzleFromShim(this.sqlite, { schema });
@@ -392,7 +393,7 @@ export class pwnkitDB {
   }
 
   /**
-   * Upgrade databases created by older pwnkit versions.
+   * Upgrade databases created by older 0sec versions.
    *
    * SCHEMA_TABLES_SQL (above) now contains every table and every column from
    * the drizzle schema, so fresh installs need no patching. This method only
@@ -444,20 +445,20 @@ export class pwnkitDB {
     if (!colNames.has("workflowUpdatedAt")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN workflowUpdatedAt TEXT");
     }
-    // pwnkit#112 — per-layer triage telemetry. JSON-stringified LayerVerdict[].
+    // 0sec#112 — per-layer triage telemetry. JSON-stringified LayerVerdict[].
     if (!colNames.has("layerVerdicts")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN layerVerdicts TEXT");
     }
-    // pwnkit#170 — proof-of-concept step graph. JSON-stringified PocStep[].
+    // 0sec#170 — proof-of-concept step graph. JSON-stringified PocStep[].
     if (!colNames.has("pocSteps")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN pocSteps TEXT");
     }
-    // pwnkit#193 — machine-executable verification contract. JSON-stringified
+    // 0sec#193 — machine-executable verification contract. JSON-stringified
     // VerificationSpec. Optional/additive: legacy findings keep working.
     if (!colNames.has("verificationSpec")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN verificationSpec TEXT");
     }
-    // pwnkit#171 — captured PoC execution report. JSON-stringified
+    // 0sec#171 — captured PoC execution report. JSON-stringified
     // PocExecutionReport written by `disclose --target-url …` when the
     // behavioural re-verify runtime ran the step graph against a live
     // target. Optional/additive.
@@ -1190,14 +1191,14 @@ export class pwnkitDB {
       finding.layerVerdicts && finding.layerVerdicts.length > 0
         ? JSON.stringify(finding.layerVerdicts)
         : null;
-    // pwnkit#170 — persist the optional PoC step graph. NULL when the agent
+    // 0sec#170 — persist the optional PoC step graph. NULL when the agent
     // only produced prose evidence; JSON-stringified PocStep[] otherwise. The
     // field is additive: existing readers that ignore it keep working.
     const pocStepsJson =
       finding.pocSteps && finding.pocSteps.length > 0
         ? JSON.stringify(finding.pocSteps)
         : null;
-    // pwnkit#193 — persist the optional VerificationSpec. NULL when the
+    // 0sec#193 — persist the optional VerificationSpec. NULL when the
     // finding has no machine-executable re-check contract. Stored as
     // JSON text; cloud's canary watcher reads it back via
     // restorePersistedFinding to re-evaluate findings on each upstream
@@ -2000,7 +2001,7 @@ export class pwnkitDB {
     return result.changes;
   }
 
-  // ── Persistent credential store (pwnkit#771) ──
+  // ── Persistent credential store (0sec#771) ──
 
   /**
    * Upsert a discovered foothold keyed by (credentialKind, valueHash). First
@@ -2091,7 +2092,7 @@ export class pwnkitDB {
       .all(...params) as PersistentCredentialRow[];
   }
 
-  // ── Trust graph edges (pwnkit#771) ──
+  // ── Trust graph edges (0sec#771) ──
 
   /**
    * Upsert a directed trust edge keyed by

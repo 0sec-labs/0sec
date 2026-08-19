@@ -25,7 +25,7 @@
           "totalCostUsd": 483.75,
           "costPerRunUsd": 0.478,
           "costPerFlagUsd": 5.2,
-          "note": "Across the 95 XBOW challenges where pwnkit has a retained gpt-5.4 attempt within the live CI window, 93 solved. This is the stable, defensible black-box headline; it is not affected by retention rotation of older 'unknown'-model artifacts."
+          "note": "Across the 95 XBOW challenges where 0sec has a retained gpt-5.4 attempt within the live CI window, 93 solved. This is the stable, defensible black-box headline; it is not affected by retention rotation of older 'unknown'-model artifacts."
         }
       },
       "unsolvedIds": [

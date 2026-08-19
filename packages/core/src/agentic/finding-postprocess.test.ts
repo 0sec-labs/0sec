@@ -7,7 +7,7 @@ import {
   type DedupeItem,
 } from "./finding-postprocess.js";
 import { semanticDedupe, rankIncremental } from "../triage/index.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── Mocks ──────────────────────────────────────────────────────────
 

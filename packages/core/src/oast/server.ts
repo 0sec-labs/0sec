@@ -1,5 +1,5 @@
 /**
- * Self-hostable OAST collaborator server — SCAFFOLD (pwnkit#659).
+ * Self-hostable OAST collaborator server — SCAFFOLD (0sec#659).
  *
  * This is the server side of the `HttpCollaborator` REST contract plus the
  * wildcard HTTP-vhost that records blind callbacks. It is intentionally a

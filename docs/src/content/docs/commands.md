@@ -1,9 +1,9 @@
 ---
 title: Commands
-description: Complete reference for all pwnkit CLI commands.
+description: Complete reference for all 0sec CLI commands.
 ---
 
-All commands are available via `pwnkit <command>`. You can also skip the subcommand and let auto-detect figure it out (see [Getting Started](/getting-started/)).
+All commands are available via `0sec <command>`. You can also skip the subcommand and let auto-detect figure it out (see [Getting Started](/getting-started/)).
 
 ## scan
 
@@ -15,36 +15,36 @@ do not need a network-target scope.
 
 ```bash
 # Scan an LLM API
-pwnkit scan --target https://api.example.com/chat --scope ./scope.json
+0sec scan --target https://api.example.com/chat --scope ./scope.json
 
 # Scan a traditional web app
-pwnkit scan --target https://example.com --mode web --scope ./scope.json
+0sec scan --target https://example.com --mode web --scope ./scope.json
 
 # Deep scan with Claude Code CLI
-pwnkit scan --target https://api.example.com/chat --scope ./scope.json --depth deep --runtime claude
+0sec scan --target https://api.example.com/chat --scope ./scope.json --depth deep --runtime claude
 
 # Authenticated scan using a bearer token
-pwnkit scan --target https://api.example.com --scope ./scope.json \
+0sec scan --target https://api.example.com --scope ./scope.json \
   --auth '{"type":"bearer","token":"eyJhbGciOi..."}'
 
 # Scan an API with an OpenAPI spec pre-loaded
-pwnkit scan --target https://api.example.com --scope ./scope.json --api-spec ./openapi.yaml
+0sec scan --target https://api.example.com --scope ./scope.json --api-spec ./openapi.yaml
 
 # Run 5 attack strategies in parallel — first to succeed wins
-pwnkit scan --target https://example.com --mode web --scope ./scope.json --race
+0sec scan --target https://example.com --mode web --scope ./scope.json --race
 
 # Evidence-Gated Attack Tree Search (EGATS)
-pwnkit scan --target https://example.com --mode web --scope ./scope.json --egats
+0sec scan --target https://example.com --mode web --scope ./scope.json --egats
 
 # Abort cleanly if the scan exceeds a USD ceiling
-pwnkit scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
+0sec scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
 
 # Export findings to GitHub Issues
-pwnkit scan --target https://example.com --mode web --scope ./scope.json \
+0sec scan --target https://example.com --mode web --scope ./scope.json \
   --export github:myorg/myrepo
 
 # Generate an HTML report (auto-opens in browser)
-pwnkit scan --target https://example.com --mode web --scope ./scope.json \
+0sec scan --target https://example.com --mode web --scope ./scope.json \
   --format html
 ```
 
@@ -67,7 +67,7 @@ pwnkit scan --target https://example.com --mode web --scope ./scope.json \
 | `--race` | Best-of-N: run 5 attack strategies in parallel, first-to-succeed wins | `false` |
 | `--egats` | Evidence-Gated Attack Tree Search (beam search over hypothesis tree) | `false` |
 | `--cost-ceiling <usd>` | Hard USD ceiling; aborts cleanly with partial findings preserved if exceeded | (none) |
-| `--db-path <path>` | Path to SQLite database | `~/.pwnkit/pwnkit.db` |
+| `--db-path <path>` | Path to SQLite database | `~/.0sec/0sec.db` |
 | `--verbose` | Show animated attack replay and detailed agent reasoning | `false` |
 | `--replay` | Replay the last scan's results without re-running | `false` |
 
@@ -94,15 +94,15 @@ The `--auth` flag accepts either an inline JSON string or a path to a JSON file.
 
 ### `--api-spec` — OpenAPI / Swagger import
 
-Point `--api-spec` at an OpenAPI 3.x or Swagger 2.0 document (JSON or YAML). pwnkit will parse the spec, extract all endpoints with their parameter schemas and auth requirements, and seed the recon phase with that knowledge so the agent starts pentesting with full endpoint awareness instead of having to crawl.
+Point `--api-spec` at an OpenAPI 3.x or Swagger 2.0 document (JSON or YAML). 0sec will parse the spec, extract all endpoints with their parameter schemas and auth requirements, and seed the recon phase with that knowledge so the agent starts pentesting with full endpoint awareness instead of having to crawl.
 
 ```bash
-pwnkit scan --target https://api.example.com --scope ./scope.json --api-spec ./openapi.yaml
+0sec scan --target https://api.example.com --scope ./scope.json --api-spec ./openapi.yaml
 ```
 
 ### `--race` — best-of-N strategy racing
 
-With `--race`, pwnkit spawns 5 attack strategies in parallel against the same target. The first agent to confirm a finding wins; the others are terminated. Ideal for hard targets where a single linear attack plan gets stuck.
+With `--race`, 0sec spawns 5 attack strategies in parallel against the same target. The first agent to confirm a finding wins; the others are terminated. Ideal for hard targets where a single linear attack plan gets stuck.
 
 ### `--egats` — Evidence-Gated Attack Tree Search
 
@@ -113,16 +113,16 @@ EGATS performs a beam search over a tree of attack hypotheses, pruning branches 
 Set a hard per-scan USD ceiling:
 
 ```bash
-pwnkit scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
+0sec scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
 ```
 
-If cumulative estimated spend exceeds the ceiling, pwnkit:
+If cumulative estimated spend exceeds the ceiling, 0sec:
 
 - preserves findings collected so far
 - exits with status code `4`
 - emits `exit_reason: "cost_ceiling_exceeded"` in the machine-readable result line
 
-The CLI flag overrides `PWNKIT_COST_CEILING_USD`.
+The CLI flag overrides `0SEC_COST_CEILING_USD`.
 
 ### `--export github:owner/repo`
 
@@ -133,12 +133,12 @@ Pushes every confirmed finding to a GitHub repo as an issue, with severity label
 Install and security-audit a package with static analysis and AI review.
 
 ```bash
-pwnkit audit express --version 4.18.2
-pwnkit audit requests --ecosystem pypi
-pwnkit audit serde --ecosystem cargo
-pwnkit audit alpine:3.20 --ecosystem oci
-pwnkit audit react --depth deep --runtime claude
-pwnkit audit left-pad --format html
+0sec audit express --version 4.18.2
+0sec audit requests --ecosystem pypi
+0sec audit serde --ecosystem cargo
+0sec audit alpine:3.20 --ecosystem oci
+0sec audit react --depth deep --runtime claude
+0sec audit left-pad --format html
 ```
 
 The package is installed in a sandbox, scanned with the selected static scanner, checked against dependency advisories, and then reviewed by an AI agent that traces data flow and looks for supply-chain vulnerabilities.
@@ -157,7 +157,7 @@ The package is installed in a sandbox, scanned with the selected static scanner,
 | `--api-key <key>` | API key for the LLM provider | (from env) |
 | `--model <model>` | Specific LLM model to use | provider default |
 | `--cost-ceiling <usd>` | Hard USD ceiling; aborts cleanly with partial findings preserved if exceeded | (none) |
-| `--db-path <path>` | Path to SQLite database | `~/.pwnkit/pwnkit.db` |
+| `--db-path <path>` | Path to SQLite database | `~/.0sec/0sec.db` |
 | `--verbose` | Detailed agent output | `false` |
 
 ## review
@@ -166,22 +166,22 @@ Deep source code security review of a local repo or GitHub URL.
 
 ```bash
 # Review a local directory
-pwnkit review ./my-ai-app
+0sec review ./my-ai-app
 
 # Review a GitHub repo (cloned automatically)
-pwnkit review https://github.com/user/repo
+0sec review https://github.com/user/repo
 
 # Diff-aware review against a base branch
-pwnkit review ./my-repo --diff-base origin/main --changed-only
+0sec review ./my-repo --diff-base origin/main --changed-only
 
 # Profile a userspace C/C++ library for memory-safety + integer bugs
-pwnkit review --target c-library ./libfoo
+0sec review --target c-library ./libfoo
 
 # Equivalent backward-compatible profile form
-pwnkit review ./libfoo --profile c-library
+0sec review ./libfoo --profile c-library
 
 # Profile a Linux kernel source tree for kernel-aware static review
-pwnkit review --target linux-kernel ./linux
+0sec review --target linux-kernel ./linux
 ```
 
 **Key flags:**
@@ -200,7 +200,7 @@ pwnkit review --target linux-kernel ./linux
 | `--api-key <key>` | API key for LLM provider | (from env) |
 | `--model <model>` | Specific LLM model to use | provider default |
 | `--cost-ceiling <usd>` | Hard USD ceiling; aborts cleanly with partial findings preserved if exceeded | (none) |
-| `--db-path <path>` | Path to SQLite database | `~/.pwnkit/pwnkit.db` |
+| `--db-path <path>` | Path to SQLite database | `~/.0sec/0sec.db` |
 | `--verbose` | Detailed agent output | `false` |
 
 ### Review profiles
@@ -219,17 +219,17 @@ Run foxguard-backed kernel advisory variant hunting against a Linux source tree.
 
 ```bash
 # Scan a kernel tree with a foxguard rule family
-pwnkit kernel variant-hunt \
+0sec kernel variant-hunt \
   --tree ./linux \
   --advisory dirty-frag.md \
   --rules ./foxguard/rules/kernel/dirty-frag-class \
   --output json
 
-# Render an existing foxguard SARIF file as pwnkit findings
-pwnkit kernel variant-hunt --tree ./linux --sarif-input ./foxguard.sarif
+# Render an existing foxguard SARIF file as 0sec findings
+0sec kernel variant-hunt --tree ./linux --sarif-input ./foxguard.sarif
 ```
 
-This command is orchestration only: foxguard owns the structural rules, and pwnkit maps SARIF hits into normal `Finding` objects with kernel subsystem labels, confidence, evidence text, and SARIF/JSON/terminal output. A hit is a variant-hunt candidate, not a confirmed crash; use kernel triage, Coccinelle/CodeQL, fuzzing, or `pwnkit ingest --verify` when crash evidence exists.
+This command is orchestration only: foxguard owns the structural rules, and 0sec maps SARIF hits into normal `Finding` objects with kernel subsystem labels, confidence, evidence text, and SARIF/JSON/terminal output. A hit is a variant-hunt candidate, not a confirmed crash; use kernel triage, Coccinelle/CodeQL, fuzzing, or `0sec ingest --verify` when crash evidence exists.
 
 **Key flags:**
 
@@ -249,10 +249,10 @@ This command is orchestration only: foxguard owns the structural rules, and pwnk
 Mine and adversarially rerank syzbot's abandoned queue:
 
 ```bash
-pwnkit kernel syzbot-mine --subsystems net,xfrm,crypto,vsock,nfc --limit 30 --details 15 --detail-delay 750
+0sec kernel syzbot-mine --subsystems net,xfrm,crypto,vsock,nfc --limit 30 --details 15 --detail-delay 750
 ```
 
-`--details` bounds the detail/reproducer enrichment pass. pwnkit records the
+`--details` bounds the detail/reproducer enrichment pass. 0sec records the
 requested sandbox and harness setup. It also inspects the syz program for
 mounts, TUN/qdisc/XFRM administration, synthetic devices, BPF setup, and
 call-level fault injection before reranking privileged, one-shot, stale, and
@@ -273,22 +273,22 @@ Import kernel crash reports and optionally verify them against attached reproduc
 
 ```bash
 # Parse one crash report into findings
-pwnkit ingest ./crashes/report.log
+0sec ingest ./crashes/report.log
 
 # Parse a directory of syzbot-style reports and reproducers
-pwnkit ingest ./crashes --output json
+0sec ingest ./crashes --output json
 
 # Validate reports against attached reproducers
-pwnkit ingest ./crashes --verify --output json
+0sec ingest ./crashes --verify --output json
 
 # Run a standalone C reproducer through the kernel VM oracle
-pwnkit ingest --reproducer ./poc.c --kernel-tree ~/src/linux --config kasan --output json
+0sec ingest --reproducer ./poc.c --kernel-tree ~/src/linux --config kasan --output json
 
 # Run a raw syzkaller program when the guest image provides syz-execprog
-pwnkit ingest --syz ./program.syz --kernel-tree ~/src/linux --config kasan --output json
+0sec ingest --syz ./program.syz --kernel-tree ~/src/linux --config kasan --output json
 
 # Pivot each known-subsystem crash into source review for sibling bugs
-pwnkit ingest ./crashes --review-subsystem --tree ~/src/linux --output json
+0sec ingest ./crashes --review-subsystem --tree ~/src/linux --output json
 ```
 
 For directory ingest, reproducers are attached by matching filename prefix:
@@ -305,7 +305,7 @@ When `--verify` is enabled, the command returns a richer result object per crash
 
 Without a configured kernel VM, verification falls back to static consistency and reproducer analysis only.
 
-When `--reproducer` or `--syz` is used, `ingest` skips crash-report parsing and runs that program directly through the kernel VM oracle. `--kernel-tree` resolves a KASAN VM build/cache entry; if `PWNKIT_KERNEL_QEMU_KERNEL` and `PWNKIT_KERNEL_QEMU_DISK` already point at built artifacts, those are reused as the fastest cache hit.
+When `--reproducer` or `--syz` is used, `ingest` skips crash-report parsing and runs that program directly through the kernel VM oracle. `--kernel-tree` resolves a KASAN VM build/cache entry; if `0SEC_KERNEL_QEMU_KERNEL` and `0SEC_KERNEL_QEMU_DISK` already point at built artifacts, those are reused as the fastest cache hit.
 
 When `--review-subsystem` is enabled, ingest keeps the original crash finding and appends review-derived sibling findings. Each sibling finding carries `relatedFindingId` pointing back to the crash finding that triggered the source hunt. Crashes with `unknown` subsystem, or subsystems that do not resolve under `--tree`, are reported in the JSON `skipped` list.
 
@@ -321,7 +321,7 @@ When `--review-subsystem` is enabled, ingest keeps the original crash finding an
 | `--syz <path>` | Run a standalone syzkaller `.syz` program through the kernel VM oracle | (none) |
 | `--kernel-tree <path>` | Linux source tree for kernel VM build/cache resolution | (none) |
 | `--config <profile>` | Kernel VM config profile for `--kernel-tree`; currently `kasan` | `kasan` |
-| `--kernel-cache-dir <path>` | Override kernel VM build cache directory | `~/.cache/pwnkit/kernel-vm` |
+| `--kernel-cache-dir <path>` | Override kernel VM build cache directory | `~/.cache/0sec/kernel-vm` |
 | `--force-kernel-build` | Rebuild kernel VM artifacts even if a cache entry exists | `false` |
 | `--review-subsystem` | Run linux-kernel source review against each crash subsystem | `false` |
 | `--tree <path>` | Linux source tree required by `--review-subsystem` | (none) |
@@ -332,9 +332,9 @@ When `--review-subsystem` is enabled, ingest keeps the original crash finding an
 
 ### Real kernel VM verification
 
-Set `PWNKIT_KERNEL_QEMU=1` to enable VM-backed execution. The runner expects a bootable guest image with:
+Set `0SEC_KERNEL_QEMU=1` to enable VM-backed execution. The runner expects a bootable guest image with:
 
-- a boot path that mounts the `pwnkitshare` 9p share and executes `/mnt/pwnkit/runner.sh`
+- a boot path that mounts the `osecshare` 9p share and executes `/mnt/0sec/runner.sh`
 - a working C toolchain (`gcc`)
 - a linker toolchain (`ld`, provided by `binutils`)
 - permission to read kernel logs via `dmesg`
@@ -345,41 +345,41 @@ steps, see [Kernel VM Verification](/kernel-vm/).
 Required environment variables:
 
 ```bash
-export PWNKIT_KERNEL_QEMU=1
-export PWNKIT_KERNEL_QEMU_KERNEL=/path/to/bzImage
-export PWNKIT_KERNEL_QEMU_DISK=/path/to/rootfs.img
+export 0SEC_KERNEL_QEMU=1
+export 0SEC_KERNEL_QEMU_KERNEL=/path/to/bzImage
+export 0SEC_KERNEL_QEMU_DISK=/path/to/rootfs.img
 ```
 
 Useful optional variables:
 
 ```bash
-export PWNKIT_KERNEL_QEMU_APPEND='console=ttyS0 root=/dev/vda rw nokaslr panic=-1 init=/sbin/pwnkit-init'
-export PWNKIT_KERNEL_QEMU_BOOT_TIMEOUT_SEC=120
-export PWNKIT_KERNEL_QEMU_TIMEOUT_SEC=60
-export PWNKIT_KERNEL_QEMU_ACCEL=kvm
-export PWNKIT_KERNEL_QEMU_SHARE_TAG=pwnkitshare
-export PWNKIT_KERNEL_QEMU_ARTIFACT_DIR=/tmp/pwnkit-kvm-runs
+export 0SEC_KERNEL_QEMU_APPEND='console=ttyS0 root=/dev/vda rw nokaslr panic=-1 init=/sbin/0sec-init'
+export 0SEC_KERNEL_QEMU_BOOT_TIMEOUT_SEC=120
+export 0SEC_KERNEL_QEMU_TIMEOUT_SEC=60
+export 0SEC_KERNEL_QEMU_ACCEL=kvm
+export 0SEC_KERNEL_QEMU_SHARE_TAG=osecshare
+export 0SEC_KERNEL_QEMU_ARTIFACT_DIR=/tmp/0sec-kvm-runs
 ```
 
-If the VM is not configured, pwnkit does **not** claim a reproduced crash; it reports static-only verification with capped confidence.
+If the VM is not configured, 0sec does **not** claim a reproduced crash; it reports static-only verification with capped confidence.
 
 ## triage
 
-Triage findings and manage learned false-positive memories. Every time you mark a finding as a false positive, pwnkit stores a pattern that future verify passes will consult — think Semgrep's `nosemgrep` but learned automatically.
+Triage findings and manage learned false-positive memories. Every time you mark a finding as a false positive, 0sec stores a pattern that future verify passes will consult — think Semgrep's `nosemgrep` but learned automatically.
 
 ```bash
 # Create a memory from an existing finding
-pwnkit-cli triage memory add --finding NF-001 --reason "test fixture, not reachable in prod"
+0sec-cli triage memory add --finding NF-001 --reason "test fixture, not reachable in prod"
 
 # List all memories
-pwnkit-cli triage memory list
-pwnkit-cli triage memory list --scope target --category xss
+0sec-cli triage memory list
+0sec-cli triage memory list --scope target --category xss
 
 # Delete a memory
-pwnkit-cli triage memory remove <memory-id>
+0sec-cli triage memory remove <memory-id>
 
 # Mark a finding as FP and auto-create a memory
-pwnkit-cli triage mark-fp NF-042 --reason "known sandbox echo endpoint"
+0sec-cli triage mark-fp NF-042 --reason "known sandbox echo endpoint"
 ```
 
 **`triage memory add`**
@@ -410,14 +410,14 @@ pwnkit-cli triage mark-fp NF-042 --reason "known sandbox echo endpoint"
 | `--scope <scope>` | Memory scope | `target` |
 | `--scope-value <v>` | Scope identifier | (inferred) |
 
-Enable memory injection into the verify pipeline with `PWNKIT_FEATURE_TRIAGE_MEMORIES=1` (see [Configuration](/configuration/#feature-flags)).
+Enable memory injection into the verify pipeline with `0SEC_FEATURE_TRIAGE_MEMORIES=1` (see [Configuration](/configuration/#feature-flags)).
 
 ## resume
 
 Resume a persisted review or audit scan by its scan ID.
 
 ```bash
-pwnkit resume <scan-id>
+0sec resume <scan-id>
 ```
 
 Useful when a long-running deep scan was interrupted or when you want to continue where a previous run left off.
@@ -427,8 +427,8 @@ Useful when a long-running deep scan was interrupted or when you want to continu
 Open the local verification workbench for board-based triage, evidence review, and scan provenance.
 
 ```bash
-pwnkit dashboard
-pwnkit dashboard --port 48123
+0sec dashboard
+0sec dashboard --port 48123
 ```
 
 The dashboard provides a Kanban-style board for triaging findings, reviewing evidence, and tracking active scans. It runs entirely locally.
@@ -440,15 +440,15 @@ The dashboard provides a Kanban-style board for triaging findings, reviewing evi
 | `--port <port>` | Port to bind | `48123` |
 | `--host <host>` | Host to bind | `127.0.0.1` |
 | `--no-open` | Do not auto-open a browser | (opens by default) |
-| `--db-path <path>` | Path to SQLite database | `~/.pwnkit/pwnkit.db` |
+| `--db-path <path>` | Path to SQLite database | `~/.0sec/0sec.db` |
 
 ## history
 
 Browse past scans with status, depth, findings count, and duration.
 
 ```bash
-pwnkit history
-pwnkit history --limit 20
+0sec history
+0sec history --limit 20
 ```
 
 | Flag | Description | Default |
@@ -462,11 +462,11 @@ technique-mapped forensic record. Built for handing to a client's security team
 to cross-reference against their own detections.
 
 ```bash
-pwnkit timeline <scanId>
-pwnkit timeline <scanId> --format json
-pwnkit timeline <scanId> --format csv
-pwnkit timeline <scanId> --attack-only
-pwnkit timeline <scanId> --since 2026-09-15T09:00:00Z --until 2026-09-15T17:00:00Z
+0sec timeline <scanId>
+0sec timeline <scanId> --format json
+0sec timeline <scanId> --format csv
+0sec timeline <scanId> --attack-only
+0sec timeline <scanId> --since 2026-09-15T09:00:00Z --until 2026-09-15T17:00:00Z
 ```
 
 | Flag | Description | Default |
@@ -489,9 +489,9 @@ federation, and token analysis. Every Graph request is hard-coded `GET`.
 
 ```bash
 # Access token comes from the environment, never a command-line argument
-export PWNKIT_ENTRA_ACCESS_TOKEN=...
-pwnkit identity --tenant <tenant-guid>
-pwnkit identity --tenant <tenant-guid> --json
+export 0SEC_ENTRA_ACCESS_TOKEN=...
+0sec identity --tenant <tenant-guid>
+0sec identity --tenant <tenant-guid> --json
 ```
 
 ## adgraph
@@ -500,9 +500,9 @@ Offline Active Directory attack-path analysis over a BloodHound CE / SharpHound
 JSON export. Never collects, never authenticates, never touches the network.
 
 ```bash
-pwnkit adgraph --input ./bloodhound-export/
-pwnkit adgraph --input ./export.json --json
-pwnkit adgraph --input ./export --domain corp.example.com
+0sec adgraph --input ./bloodhound-export/
+0sec adgraph --input ./export.json --json
+0sec adgraph --input ./export --domain corp.example.com
 ```
 
 | Flag | Description | Default |
@@ -522,10 +522,10 @@ The Entra ID equivalent — offline attack-path analysis over an AzureHound
 export. Same discipline: files only, no network, no authentication.
 
 ```bash
-pwnkit entragraph --input ./azurehound-export/
-pwnkit entragraph --input ./export --json
-pwnkit entragraph --input ./export --owned <objectId>,<objectId>
-pwnkit entragraph --input ./export --max-depth 4
+0sec entragraph --input ./azurehound-export/
+0sec entragraph --input ./export --json
+0sec entragraph --input ./export --owned <objectId>,<objectId>
+0sec entragraph --input ./export --max-depth 4
 ```
 
 | Flag | Description | Default |
@@ -549,21 +549,21 @@ Query, filter, and inspect verified findings across all scans. Findings are pers
 
 ```bash
 # List all findings
-pwnkit findings list
+0sec findings list
 
 # Filter by severity
-pwnkit findings list --severity critical
+0sec findings list --severity critical
 
 # Filter by category and status
-pwnkit findings list --category prompt-injection --status confirmed
+0sec findings list --category prompt-injection --status confirmed
 
 # Inspect a specific finding with full evidence
-pwnkit findings show NF-001
+0sec findings show NF-001
 
 # Triage findings
-pwnkit findings accept <finding-id> --note "confirmed and tracked"
-pwnkit findings suppress <finding-id> --note "known test fixture"
-pwnkit findings reopen <finding-id>
+0sec findings accept <finding-id> --note "confirmed and tracked"
+0sec findings suppress <finding-id> --note "known test fixture"
+0sec findings reopen <finding-id>
 ```
 
 **Finding lifecycle:** `discovered` -> `verified` -> `confirmed` -> `scored` -> `reported` (or `false-positive` if verification fails).
@@ -587,14 +587,14 @@ schema.
 
 ```bash
 # Replay PoC steps from a finding JSON
-pwnkit verify --finding finding.json
+0sec verify --finding finding.json
 
 # Run the deterministic CLI path traversal fixture against the CLI under test
-pwnkit verify --fixture cli-path-traversal \
+0sec verify --fixture cli-path-traversal \
   --fixture-command '["paperclip","company","export","--api","{{apiUrl}}","--output","{{exportDir}}"]'
 
 # Keep the sandbox, harness metadata, and stdout/stderr logs
-pwnkit verify --fixture cli-path-traversal \
+0sec verify --fixture cli-path-traversal \
   --fixture-command '["paperclip","company","export","--api","{{apiUrl}}","--output","{{exportDir}}"]' \
   --retain-artifacts
 ```
@@ -618,26 +618,26 @@ the selected export root while staying inside the sandbox.
 
 ## h1
 
-Read-only HackerOne hacker-API helpers — verify credentials, browse programs, and export a program's scope into the pwnkit scope-file format.
+Read-only HackerOne hacker-API helpers — verify credentials, browse programs, and export a program's scope into the 0sec scope-file format.
 
-Credentials live at `~/.pwnkit/h1.env` (or `~/.pwnkit/h1/<identifier>.env`) with format `H1_IDENTIFIER=<token-name>` and `H1_TOKEN=<44-char-value>`. The token is used as the password and the identifier as the username over HTTP Basic auth; nothing is ever written to logs.
+Credentials live at `~/.0sec/h1.env` (or `~/.0sec/h1/<identifier>.env`) with format `H1_IDENTIFIER=<token-name>` and `H1_TOKEN=<44-char-value>`. The token is used as the password and the identifier as the username over HTTP Basic auth; nothing is ever written to logs.
 
 ```bash
 # Verify credentials
-pwnkit h1 auth
+0sec h1 auth
 
 # List visible programs (bounty-paying only)
-pwnkit h1 programs list --bounty --limit 50
+0sec h1 programs list --bounty --limit 50
 
 # List public-mode VDP programs as JSON
-pwnkit h1 programs list --vdp --state public_mode --json
+0sec h1 programs list --vdp --state public_mode --json
 
 # Show one program with scope summary
-pwnkit h1 programs show flutteruki
+0sec h1 programs show flutteruki
 
-# Export structured_scopes to ~/.pwnkit/scopes/<handle>.json
-# (consumed by `pwnkit scan --scope <path>`)
-pwnkit h1 scope dump flutteruki
+# Export structured_scopes to ~/.0sec/scopes/<handle>.json
+# (consumed by `0sec scan --scope <path>`)
+0sec h1 scope dump flutteruki
 ```
 
 **Subcommands:**
@@ -647,7 +647,7 @@ pwnkit h1 scope dump flutteruki
 | `auth` | Verify HackerOne API credentials against `/v1/hackers/payments/balance` |
 | `programs list` | List visible programs. Flags: `--bounty`, `--vdp` (mutually exclusive), `--state <s>`, `--limit <n>` (max 1000), `--json` |
 | `programs show <handle>` | Show a single program's details with a structured-scope summary |
-| `scope dump <handle>` | Write the program's `structured_scopes` to `~/.pwnkit/scopes/<handle>.json` (override with `--out`); non-network asset types and malformed identifiers are dropped with a warning |
+| `scope dump <handle>` | Write the program's `structured_scopes` to `~/.0sec/scopes/<handle>.json` (override with `--out`); non-network asset types and malformed identifiers are dropped with a warning |
 
 **Exit codes:** `0` ok · `1` user/data error · `2` auth failure (missing creds or HTTP 401) · `3` rate-limit / network error.
 
@@ -658,22 +658,22 @@ variant-hunt context.
 
 ```bash
 # Build a package intel dossier with risk summary, advisories, prior-vuln playbooks, variants, and graph
-pwnkit intel dossier formidable --ecosystem npm --package-version 3.5.2 --json
+0sec intel dossier formidable --ecosystem npm --package-version 3.5.2 --json
 
 # Search package advisories through OSV/GitHub, enriched with NVD/CISA KEV
-pwnkit intel search formidable --ecosystem npm --package-version 3.5.2
+0sec intel search formidable --ecosystem npm --package-version 3.5.2
 
 # Look up a CVE with NVD + CISA KEV context
-pwnkit intel cve CVE-2024-1086
+0sec intel cve CVE-2024-1086
 
 # Find related CVEs/advisories for variant-hunt context
-pwnkit intel similar --cwe CWE-22 --keywords "zip slip,path traversal" --json
+0sec intel similar --cwe CWE-22 --keywords "zip slip,path traversal" --json
 
 # Search CVEs/GHSAs already reported against the same target/project
-pwnkit intel target-history --repository expressjs/express --ecosystem npm --package express --json
+0sec intel target-history --repository expressjs/express --ecosystem npm --package express --json
 
 # Infer target-history hints from a local source checkout
-pwnkit intel target-history --repo-path ./my-project --json
+0sec intel target-history --repo-path ./my-project --json
 ```
 
 Audit and review agents also get `intel_build_dossier`,
@@ -699,31 +699,31 @@ querying live advisory sources.
 
 ## auth
 
-pwnkit-cloud authentication — login, logout, and verify a scoped CLI token against the cloud `/health` endpoint.
+0sec-cloud authentication — login, logout, and verify a scoped CLI token against the cloud `/health` endpoint.
 
-> **Scaffold notice (issue [#303](https://github.com/0sec-labs/0sec/issues/303)):** this command is the CLI half of cloud auth. The server-side mint endpoint that issues scoped tokens after the browser-based better-auth flow lives in pwnkit-cloud and is shipped in a separate PR. Until that lands, the browser flow (`pwnkit auth login` without `--token`) will time out. Use `pwnkit auth login --token <value>` to paste a token directly — this is the only working path for now.
+> **Scaffold notice (issue [#303](https://github.com/0sec-labs/0sec/issues/303)):** this command is the CLI half of cloud auth. The server-side mint endpoint that issues scoped tokens after the browser-based better-auth flow lives in 0sec-cloud and is shipped in a separate PR. Until that lands, the browser flow (`0sec auth login` without `--token`) will time out. Use `0sec auth login --token <value>` to paste a token directly — this is the only working path for now.
 
-Credentials live at `~/.pwnkit/cloud.env` (chmod 600) with format:
+Credentials live at `~/.0sec/cloud.env` (chmod 600) with format:
 
 ```
-PWNKIT_CLOUD_HOST=https://cloud.0sec.ai
-PWNKIT_CLOUD_TOKEN=<scoped-cli-token>
+0SEC_CLOUD_HOST=https://cloud.0sec.ai
+0SEC_CLOUD_TOKEN=<scoped-cli-token>
 ```
 
-`PWNKIT_CLOUD_HOST` is optional and defaults to `https://cloud.0sec.ai`. Both keys may also be set as environment variables (`PWNKIT_CLOUD_HOST` / `PWNKIT_CLOUD_TOKEN`), which take precedence over the file.
+`0SEC_CLOUD_HOST` is optional and defaults to `https://cloud.0sec.ai`. Both keys may also be set as environment variables (`0SEC_CLOUD_HOST` / `0SEC_CLOUD_TOKEN`), which take precedence over the file.
 
 ```bash
 # Paste a token directly (the only path that works today)
-pwnkit auth login --token <value>
+0sec auth login --token <value>
 
 # Browser flow (will time out until #303 server-side ships)
-pwnkit auth login --host https://cloud.0sec.ai
+0sec auth login --host https://cloud.0sec.ai
 
 # Verify the configured token against /health
-pwnkit auth status
+0sec auth status
 
-# Delete ~/.pwnkit/cloud.env
-pwnkit auth logout
+# Delete ~/.0sec/cloud.env
+0sec auth logout
 ```
 
 **Subcommands:**
@@ -731,27 +731,27 @@ pwnkit auth logout
 | Subcommand | Description |
 |------------|-------------|
 | `login` | Open a browser at `<host>/cli-auth?session=…` and poll for a minted token. Flags: `--host <url>`, `--token <value>` (escape hatch — skips the browser). |
-| `logout` | Delete `~/.pwnkit/cloud.env`. Returns 0 even if no file was present. |
+| `logout` | Delete `~/.0sec/cloud.env`. Returns 0 even if no file was present. |
 | `status` | Load credentials and `GET <host>/health` to verify the token is accepted. |
 
 **Exit codes:** `0` ok · `1` user/data error · `2` auth failure (missing creds or HTTP 401/403) · `3` network error / login timeout.
 
 ## XBOW benchmark runner
 
-The XBOW benchmark runner lives in `packages/benchmark` and is invoked with `pnpm --filter @pwnkit/benchmark xbow`. It runs pwnkit against the 104 XBOW validation challenges and reports pass/fail with evidence.
+The XBOW benchmark runner lives in `packages/benchmark` and is invoked with `pnpm --filter @0sec/benchmark xbow`. It runs 0sec against the 104 XBOW validation challenges and reports pass/fail with evidence.
 
 ```bash
 # Run the whole benchmark
-pnpm --filter @pwnkit/benchmark xbow
+pnpm --filter @0sec/benchmark xbow
 
 # Run a specific subset of challenges
-pnpm --filter @pwnkit/benchmark xbow --only XBEN-010,XBEN-051,XBEN-066
+pnpm --filter @0sec/benchmark xbow --only XBEN-010,XBEN-051,XBEN-066
 
 # Skip the first 20 challenges (useful for resuming)
-pnpm --filter @pwnkit/benchmark xbow --start 20
+pnpm --filter @0sec/benchmark xbow --start 20
 
 # Include full finding objects in results JSON (for offline analysis)
-pnpm --filter @pwnkit/benchmark xbow --save-findings
+pnpm --filter @0sec/benchmark xbow --save-findings
 ```
 
 | Flag | Description | Default |

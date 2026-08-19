@@ -1,4 +1,4 @@
-// pwnkit-cloud HTTP client. Bearer-auth, JSON, scaffolding.
+// 0sec-cloud HTTP client. Bearer-auth, JSON, scaffolding.
 //
 // Scope (this PR):
 //   - One method: `pingHealth()` — hits `GET /health` to verify that the
@@ -19,10 +19,10 @@
 //   - The Authorization header value is built from the token but never
 //     emitted back to the caller. Errors include status + path + host,
 //     never headers or the token itself.
-//   - `User-Agent` includes `pwnkit-cli/<version>` so server-side ops can
+//   - `User-Agent` includes `0sec-cli/<version>` so server-side ops can
 //     identify CLI traffic if it looks anomalous.
 
-import { VERSION } from "@pwnkit/shared";
+import { VERSION } from "@0sec/shared";
 
 export class CloudError extends Error {
   constructor(
@@ -38,14 +38,14 @@ export class CloudError extends Error {
 /** 401 — token rejected. Distinct from CloudAuthMissingError, which means no token was configured. */
 export class CloudUnauthorizedError extends CloudError {
   constructor(path: string) {
-    super(`pwnkit-cloud auth rejected (HTTP 401) on ${path}. Run \`pwnkit auth login\` to refresh.`, 401, path);
+    super(`0sec-cloud auth rejected (HTTP 401) on ${path}. Run \`0sec auth login\` to refresh.`, 401, path);
     this.name = "CloudUnauthorizedError";
   }
 }
 export class CloudForbiddenError extends CloudError {
   constructor(path: string) {
     super(
-      `pwnkit-cloud forbidden (HTTP 403) on ${path}. Token lacks scope for this resource.`,
+      `0sec-cloud forbidden (HTTP 403) on ${path}. Token lacks scope for this resource.`,
       403,
       path,
     );
@@ -54,7 +54,7 @@ export class CloudForbiddenError extends CloudError {
 }
 export class CloudNetworkError extends CloudError {
   constructor(message: string, path: string) {
-    super(`pwnkit-cloud network error on ${path}: ${message}`, undefined, path);
+    super(`0sec-cloud network error on ${path}: ${message}`, undefined, path);
     this.name = "CloudNetworkError";
   }
 }
@@ -129,7 +129,7 @@ export class CloudClient {
     if (res.status === 401) throw new CloudUnauthorizedError(path);
     if (res.status === 403) throw new CloudForbiddenError(path);
     throw new CloudError(
-      `pwnkit-cloud request failed (HTTP ${res.status}) on ${path}.`,
+      `0sec-cloud request failed (HTTP ${res.status}) on ${path}.`,
       res.status,
       path,
     );
@@ -141,7 +141,7 @@ export class CloudClient {
     return {
       Authorization: `Bearer ${this.token}`,
       Accept: "application/json",
-      "User-Agent": `pwnkit-cli/${VERSION}`,
+      "User-Agent": `0sec-cli/${VERSION}`,
     };
   }
 

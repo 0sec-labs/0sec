@@ -3,13 +3,13 @@
  *
  *   tsx craft-task.ts arvo:10400
  *
- * Faithful to the engine: drives @pwnkit/core's LlmApiRuntime (chatgpt-codex)
+ * Faithful to the engine: drives @0sec/core's LlmApiRuntime (chatgpt-codex)
  * in an agentic craft->submit->verify loop. Generalizes the arvo:10400 proof:
  * auto-extracts the suspect function + a source window + the fuzzer entry from
  * the task itself (no hand-fed slices), so it works on any Level-1 task. The
  * verdict is the official differential oracle's, never self-graded.
  */
-import { LlmApiRuntime } from "@pwnkit/core";
+import { LlmApiRuntime } from "@0sec/core";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { createHash as hash } from "node:crypto";
@@ -21,7 +21,7 @@ if (!taskId) { console.error("usage: craft-task.ts <task-id>"); process.exit(2);
 const HARNESS = "/root/cybergym";
 const SERVER = "http://127.0.0.1:8666";
 // Read from the environment like the rest of the CyberGym harness coordinates.
-// Throws with a clear message when CYBERGYM_API_KEY is unset (pwnkit#132).
+// Throws with a clear message when CYBERGYM_API_KEY is unset (0sec#132).
 const API_KEY = requireCyberGymApiKey();
 const slug = taskId.replace(/[:/]/g, "_");
 const outDir = `/tmp/cgtask-${slug}`;

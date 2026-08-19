@@ -5,7 +5,7 @@ description: Research synthesis — ML-based finding triage to maximize accuracy
 
 ## Problem
 
-pwnkit's agent produces findings (potential vulnerabilities). Some are real, some are false positives. Currently a "blind verify agent" (full LLM call) re-tests each finding independently. This works but is a single-shot binary judgment. We want to maximize accuracy — catch every real vulnerability while eliminating false positives.
+0sec's agent produces findings (potential vulnerabilities). Some are real, some are false positives. Currently a "blind verify agent" (full LLM call) re-tests each finding independently. This works but is a single-shot binary judgment. We want to maximize accuracy — catch every real vulnerability while eliminating false positives.
 
 > **Status (April 2026):** Every layer of the design below has shipped. See the [FP Reduction Moat](/research/fp-reduction-moat/) page for the full stack and the expected FP reduction from each technique.
 
@@ -51,11 +51,11 @@ VulnBERT (Guanni Qu, Pebblebed Ventures) predicts vulnerability-introducing comm
 
 - **D2A (IBM)** — static analyzer findings labeled as true/false positive via differential analysis. Closest to our use case. [github.com/IBM/D2A](https://github.com/IBM/D2A)
 - **BigVul** — 188K labeled C/C++ functions from CVEs
-- **pwnkit's own data** — XBOW benchmark runs with flag extraction as ground truth
+- **0sec's own data** — XBOW benchmark runs with flag extraction as ground truth
 
 ## Our Approach: Hybrid Triage Model
 
-Inspired by VulnBERT's hybrid architecture and GitHub Security Lab's structured triage pipelines. **All layers below now ship.** File paths identify the exact module in the pwnkit monorepo.
+Inspired by VulnBERT's hybrid architecture and GitHub Security Lab's structured triage pipelines. **All layers below now ship.** File paths identify the exact module in the 0sec monorepo.
 
 ### Layer 1: Feature Extraction (45 handcrafted features) — SHIPPED
 
@@ -126,7 +126,7 @@ A blocklist-driven filter that rejects findings where the "vulnerability" is sim
 
 ### Layer 1.75: Reachability Gate ("Endor Labs moat") — SHIPPED
 
-For every finding, check whether the vulnerable sink is actually reachable from an application entry point (HTTP handler, CLI main, user-facing API). Dead code and test-only paths are not exploitable. Endor Labs' 95% FP elimination rate depends on their proprietary "Code API" for this signal; pwnkit implements it open-source.
+For every finding, check whether the vulnerable sink is actually reachable from an application entry point (HTTP handler, CLI main, user-facing API). Dead code and test-only paths are not exploitable. Endor Labs' 95% FP elimination rate depends on their proprietary "Code API" for this signal; 0sec implements it open-source.
 
 **Implementation:** `packages/core/src/triage/reachability.ts` — zero-dependency grep/pattern-based first pass. Conservative: when uncertain it returns `reachable: true` with low confidence so the rest of the pipeline still runs. Public API: `checkReachability(finding, repoPath)` returning a `ReachabilityResult`.
 
@@ -136,11 +136,11 @@ Deterministic, category-specific exploit oracles: SQLi, reflected XSS, SSRF, RCE
 
 **Implementation:** `packages/core/src/triage/oracles.ts` plus the dispatcher `verifyOracleByCategory(finding, target)`. Oracles bypass the LLM entirely on the happy path; the LLM verify pipeline is the fallback.
 
-### Layer 1.95: Multi-Modal Agreement (foxguard × pwnkit) — SHIPPED
+### Layer 1.95: Multi-Modal Agreement (foxguard × 0sec) — SHIPPED
 
-Cross-validate every pwnkit finding against [foxguard](https://github.com/0sec-labs/foxguard), the Rust pattern scanner. If foxguard fires on the same file (and ideally the same category) → strong signal the finding is real. If foxguard scanned the file but was silent → likely false positive. This is the open-source mirror of Endor Labs' "neural + rules must agree" architecture.
+Cross-validate every 0sec finding against [foxguard](https://github.com/0sec-labs/foxguard), the Rust pattern scanner. If foxguard fires on the same file (and ideally the same category) → strong signal the finding is real. If foxguard scanned the file but was silent → likely false positive. This is the open-source mirror of Endor Labs' "neural + rules must agree" architecture.
 
-**Implementation:** `packages/core/src/triage/multi-modal.ts` — `checkMultiModalAgreement`, `fuseTriageSignals`, `parseFoxguardSarif`, `detectFoxguard`. **Unique to pwnkit: no other open-source agent runs a second, independent scanner for cross-validation.**
+**Implementation:** `packages/core/src/triage/multi-modal.ts` — `checkMultiModalAgreement`, `fuseTriageSignals`, `parseFoxguardSarif`, `detectFoxguard`. **Unique to 0sec: no other open-source agent runs a second, independent scanner for cross-validation.**
 
 ### Layer 2: Neural Classification (CodeBERT)
 
@@ -172,25 +172,25 @@ Each step uses domain-specific prompts with category-specific addendums (SQLi, X
 
 Because LLM sampling is non-deterministic, any single run of the structured verify pipeline may produce a false positive or false negative. We run the pipeline N times (default 5) in parallel and take the majority vote, with early termination as soon as a verdict locks up an unreachable lead.
 
-**Implementation:** `runSelfConsistencyVerify(finding, target, runtime, opts)` and `tallyConsensus(runs)` in `verify-pipeline.ts`. Feature flag: `PWNKIT_FEATURE_CONSENSUS_VERIFY`.
+**Implementation:** `runSelfConsistencyVerify(finding, target, runtime, opts)` and `tallyConsensus(runs)` in `verify-pipeline.ts`. Feature flag: `0SEC_FEATURE_CONSENSUS_VERIFY`.
 
 ### Layer 4.75: PoV (Proof-of-Vulnerability) Gate — SHIPPED
 
 Empirical ground truth from "All You Need Is A Fuzzing Brain" (arXiv:2509.07225): if the agent cannot build a working PoC in N turns, the finding is almost certainly a false positive. A narrowly-scoped mini agent loop runs with a minimal `bash` + `http_request` tool set and must produce a concrete executable exploit whose response contains category-specific proof. No PoV → severity downgrade to `info`, `triageNote = "no_pov"`.
 
-**Implementation:** `packages/core/src/triage/pov-gate.ts` — `generatePov` and `judgePovEvidence`. Feature flag: `PWNKIT_FEATURE_POV_GATE`.
+**Implementation:** `packages/core/src/triage/pov-gate.ts` — `generatePov` and `judgePovEvidence`. Feature flag: `0SEC_FEATURE_POV_GATE`.
 
 ### Layer 5: Triage Memories (Semgrep-style) — SHIPPED
 
 Per-target persistent FP context that learns from human triage decisions. When a user marks a finding as a false positive and gives a reason, the reason is stored as a `TriageMemory` scoped to `global`, `package`, or `target`. On future scans, memories are injected as few-shot examples into the verify prompt; a sufficiently strong match auto-rejects the finding without spending a verification call.
 
-**Implementation:** `packages/core/src/triage/memories.ts` — `MemoryStore`, `scoreMemory`, `inferPackage`. Feature flag: `PWNKIT_FEATURE_TRIAGE_MEMORIES`.
+**Implementation:** `packages/core/src/triage/memories.ts` — `MemoryStore`, `scoreMemory`, `inferPackage`. Feature flag: `0SEC_FEATURE_TRIAGE_MEMORIES`.
 
 ### Layer 6: Adversarial Debate — SHIPPED
 
 Prosecutor vs. defender agents debate each finding with fresh contexts, and a skeptical judge picks the winner. Based on Anthropic's debate paper (arXiv:2402.06782). The point is error decorrelation: single-pass verify shares priors with the discovery agent, whereas explicitly opposing debaters have uncorrelated error modes.
 
-**Implementation:** `packages/core/src/triage/adversarial.ts`. Feature flag: `PWNKIT_FEATURE_DEBATE`.
+**Implementation:** `packages/core/src/triage/adversarial.ts`. Feature flag: `0SEC_FEATURE_DEBATE`.
 
 ### Training Data Pipeline
 
@@ -201,7 +201,7 @@ Prosecutor vs. defender agents debate each finding with fresh contexts, and a sk
 
 ### Target Performance
 
-> **Update 2026-04-11 — the aspirational table below was contradicted by measurement.** The 21-run ablation posted on [pwnkit#72](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229956469) and documented on the [FP Reduction Moat](/research/fp-reduction-moat/) page shows the real effect is mode- and slice-dependent, not a monotonic 50% → under 5% progression. See that page for the measured numbers across XBOW white-box, XBOW black-box, and npm-bench.
+> **Update 2026-04-11 — the aspirational table below was contradicted by measurement.** The 21-run ablation posted on [0sec#72](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229956469) and documented on the [FP Reduction Moat](/research/fp-reduction-moat/) page shows the real effect is mode- and slice-dependent, not a monotonic 50% → under 5% progression. See that page for the measured numbers across XBOW white-box, XBOW black-box, and npm-bench.
 
 The stack was *designed* so each layer strips out a fraction of the false positives that survived the previous layer. The aspirational table below was derived from published reference numbers for SAST systems (Endor Labs, Semgrep Assistant) evaluated on differentially-labeled static findings — a different problem from agent-generated findings on exploitation benchmarks. It is preserved here only as design intent:
 
@@ -212,7 +212,7 @@ The stack was *designed* so each layer strips out a fraction of the false positi
 | Latency | <1ms | ~100ms | ~20s (parallel) | ~30s |
 | Cost | $0 | $0 | ~$0.05/finding | ~$0.10/finding |
 
-The actual measured effect on pwnkit (2026-04-11 ablation, gpt-5.4):
+The actual measured effect on 0sec (2026-04-11 ablation, gpt-5.4):
 - XBOW white-box @ limit=50: `moat` profile cuts findings 63% (67 → 25) at the cost of 2 flags (44 → 41) and 1.6× $/flag vs `no-triage`. Recall stays at ~82%.
 - XBOW black-box @ limit=25: `moat` strictly dominates `none` — more flags (19 vs 18), 52% fewer findings (14 vs 27), cheaper per flag ($0.53 vs $0.76).
 - npm-bench (81 packages): 100% TPR across every profile. `default` and `moat` are F1-identical (0.956). The moat layers add zero FPR reduction on top of default; the FPR increase from `none` (0.11) to `default` (0.19) comes entirely from the stable features (early-stop, script templates, progress handoff), not from the moat layers.
@@ -252,4 +252,4 @@ The honest end-to-end story is *not* "50% → under 5% FPR." It is "depending on
 
 ## Collaboration
 
-Met Guanni Qu (Pebblebed Ventures) in Zurich, April 2026. Her VulnBERT pipeline (data collection, feature engineering, hybrid model training) maps directly to pwnkit's finding triage problem. Potential joint work on adapting the approach from kernel commits to web pentesting findings.
+Met Guanni Qu (Pebblebed Ventures) in Zurich, April 2026. Her VulnBERT pipeline (data collection, feature engineering, hybrid model training) maps directly to 0sec's finding triage problem. Potential joint work on adapting the approach from kernel commits to web pentesting findings.

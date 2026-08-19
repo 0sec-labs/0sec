@@ -1,5 +1,5 @@
 /**
- * `kernel_run` agent tool (pwnkit#271 Tier 2).
+ * `kernel_run` agent tool (0sec#271 Tier 2).
  *
  * This tool is OPT-IN: it is not in the global `TOOL_DEFINITIONS` table nor
  * returned by `getToolsForRole`. It is only made available to the constrained
@@ -25,7 +25,7 @@
 
 import { z } from "zod";
 import type { ToolDefinition } from "../types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { KernelVerifyOracleResult, KernelVerifyRunner } from "../../verify/kernel-verify-types.js";
 
 /**

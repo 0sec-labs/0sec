@@ -50,7 +50,7 @@ await build({
   entryPoints: ["packages/cli/src/index.ts"],
   outdir,
   outExtension: { ".js": ".js" },
-  entryNames: "pwnkit",
+  entryNames: "0sec",
   chunkNames: "chunks/[name]-[hash]",
   bundle: true,
   format: "esm",
@@ -61,7 +61,7 @@ await build({
   // never call it.
   splitting: true,
   banner: {
-    js: '#!/usr/bin/env node\nimport { createRequire as __pwnkitCreateRequire } from "node:module";\nconst require = __pwnkitCreateRequire(import.meta.url);',
+    js: '#!/usr/bin/env node\nimport { createRequire as __0secCreateRequire } from "node:module";\nconst require = __0secCreateRequire(import.meta.url);',
   },
   external: [
     // node-sqlite3-wasm ships a .wasm sidecar that is resolved relative to
@@ -75,7 +75,7 @@ await build({
     "playwright-core",
     // tree-sitter and its C grammar load native .node bindings relative to
     // their installed package directories. Bundling their CommonJS loaders
-    // into an ESM chunk removes __dirname and breaks even `pwnkit --help`.
+    // into an ESM chunk removes __dirname and breaks even `0sec --help`.
     // Keep both packages intact and declare them in the published tarball.
     "tree-sitter",
     "tree-sitter-c",
@@ -97,8 +97,8 @@ await build({
     // bundled constants.ts picks it up without a runtime fs read. The
     // unbundled source/test path falls back to a one-time fs read of
     // the same root package.json.
-    __PWNKIT_VERSION__: JSON.stringify(PKG_VERSION),
-    __PWNKIT_BUILD_COMMIT__: JSON.stringify(BUILD_COMMIT),
+    __0SEC_VERSION__: JSON.stringify(PKG_VERSION),
+    __0SEC_BUILD_COMMIT__: JSON.stringify(BUILD_COMMIT),
   },
   plugins: [stubPlugin],
 });
@@ -110,7 +110,7 @@ cpSync("packages/dashboard/dist", `${outdir}/dashboard`, { recursive: true });
 // `new URL("./<file>", import.meta.url)`. The package build co-locates them
 // (`cp src/bench/*.json dist/bench/`), but esbuild splits that module into
 // `dist/chunks/`, so the JSON must sit next to the chunk too — otherwise
-// `pwnkit bench run` (the nightly regression gate) fails with
+// `0sec bench run` (the nightly regression gate) fails with
 // `ENOENT dist/chunks/corpus-v1.json`. Keep in sync with the files paths.ts reads.
 for (const benchFile of ["corpus-v1.json", "example-manifest.json"]) {
   const source = `packages/core/src/bench/${benchFile}`;
@@ -126,7 +126,7 @@ for (const benchFile of ["corpus-v1.json", "example-manifest.json"]) {
 // splits those modules into `dist/chunks/`, so `import.meta.url` points at the
 // chunk and the loader reads `dist/chunks/data/<file>.json`. The appsec loader
 // runs at MODULE-EVAL (deep-review's `defaultFinderLenses` const → every command
-// incl. `pwnkit --help`), so a missing copy is a hard boot crash, not a lazy
+// incl. `0sec --help`), so a missing copy is a hard boot crash, not a lazy
 // failure — mirror the bench-corpus copy above into the chunk-relative `data/`
 // dir. Keep in sync with the files those loaders read (whole *.json glob, same
 // as the core build's copy step).
@@ -137,7 +137,7 @@ for (const dataFile of readdirSync(stagesDataSrc).filter((f) => f.endsWith(".jso
 }
 
 // Fix double shebang
-const bundlePath = `${outdir}/pwnkit.js`;
+const bundlePath = `${outdir}/0sec.js`;
 const bundle = readFileSync(bundlePath, "utf8").replace(
   "#!/usr/bin/env node\n#!/usr/bin/env node\n",
   "#!/usr/bin/env node\n"
@@ -150,8 +150,8 @@ const publishPkg = {
   version: rootPkg.version,
   type: "module",
   description: rootPkg.description,
-  bin: { pwnkit: "./pwnkit.js" },
-  files: ["pwnkit.js", "chunks", "attacks", "dashboard"],
+  bin: { "0sec": "./0sec.js", "0": "./0sec.js" },
+  files: ["0sec.js", "chunks", "attacks", "dashboard"],
   keywords: rootPkg.keywords,
   author: rootPkg.author,
   homepage: rootPkg.homepage,
@@ -176,4 +176,4 @@ copyFileSync("scripts/dist-package-lock.json", `${outdir}/package-lock.json`);
 copyFileSync("LICENSE", `${outdir}/LICENSE`);
 copyFileSync("README.md", `${outdir}/README.md`);
 
-console.log(`Bundled pwnkit v${rootPkg.version} → ${outdir}/`);
+console.log(`Bundled 0sec v${rootPkg.version} → ${outdir}/`);

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getEvalCategories } from "./eval-runner.js";
 import type { NativeAgentState } from "./agent/native-loop.js";
 import type { NativeMessage } from "./runtime/types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 /** Minimal NativeAgentState — the breadth-probe judges only read findings + messages. */
 function stateOf(messages: NativeMessage[], findings: Finding[] = []): NativeAgentState {

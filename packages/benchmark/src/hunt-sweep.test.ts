@@ -16,12 +16,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ArchetypeSweepPlan, HuntScanResult } from "@pwnkit/core";
-import type { Finding } from "@pwnkit/shared";
+import type { ArchetypeSweepPlan, HuntScanResult } from "@0sec/core";
+import type { Finding } from "@0sec/shared";
 
 const runHuntScanMock = vi.fn();
-vi.mock("@pwnkit/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@pwnkit/core")>();
+vi.mock("@0sec/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@0sec/core")>();
   return { ...actual, runHuntScan: (...args: unknown[]) => runHuntScanMock(...args) };
 });
 

@@ -1,5 +1,5 @@
 /**
- * Loot / foothold ledger for opportunistic exploit chaining (pwnkit#567).
+ * Loot / foothold ledger for opportunistic exploit chaining (0sec#567).
  *
  * Background — discovered secrets and footholds (credentials, tokens, cookies,
  * hashes, endpoints, sensitive paths) used to reach the attack agent only as
@@ -308,7 +308,7 @@ export class LootLedger {
   }
 
   /**
-   * Harvest from a saved finding's evidence (pwnkit#567 — "populated by
+   * Harvest from a saved finding's evidence (0sec#567 — "populated by
    * save_finding"). Pulls from the request / response / analysis / description
    * blobs and labels the source so the injected block reads sensibly.
    */

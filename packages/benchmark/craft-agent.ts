@@ -3,13 +3,13 @@
  *
  *   tsx craft-agent.ts arvo:10400
  *
- * Faithful agentic loop on @pwnkit/core's LlmApiRuntime (chatgpt-codex). Codex
+ * Faithful agentic loop on @0sec/core's LlmApiRuntime (chatgpt-codex). Codex
  * gets read-only repo tools (list_dir, read_file, grep) + submit_poc, and
  * explores the task's source itself — no hand-fed slices. submit_poc runs the
  * model's python generator, submits to the OFFICIAL oracle, and returns the
  * differential verdict; the loop ends on a confirmed pass. Never self-graded.
  */
-import { LlmApiRuntime } from "@pwnkit/core";
+import { LlmApiRuntime } from "@0sec/core";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
@@ -21,7 +21,7 @@ if (!taskId) { console.error("usage: craft-agent.ts <task-id>"); process.exit(2)
 const HARNESS = "/root/cybergym";
 const SERVER = "http://127.0.0.1:8666";
 // Read from the environment like the rest of the CyberGym harness coordinates.
-// Throws with a clear message when CYBERGYM_API_KEY is unset (pwnkit#132).
+// Throws with a clear message when CYBERGYM_API_KEY is unset (0sec#132).
 const API_KEY = requireCyberGymApiKey();
 const slug = taskId.replace(/[:/]/g, "_");
 const outDir = `/tmp/cgtask-${slug}`;

@@ -20,7 +20,7 @@ export interface ResearchNegativeControlSnapshot {
   inconclusiveRate: number;
 }
 
-/** Portable result consumed by 0brain without coupling pwnkit to the monorepo. */
+/** Portable result consumed by 0brain without coupling 0sec to the monorepo. */
 export interface ResearchImprovementResult {
   schemaVersion: 1;
   candidateId: string;
@@ -122,7 +122,7 @@ function negativeControlSnapshot(scorecard: BenchScorecard): ResearchNegativeCon
 }
 
 /**
- * Project three sealed pwnkit tournaments into 0brain's improvement result.
+ * Project three sealed 0sec tournaments into 0brain's improvement result.
  * Capability and precision remain separate: false-positive gates come from
  * the negative-control tournament, never from the held-out capability corpus.
  */

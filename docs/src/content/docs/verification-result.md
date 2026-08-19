@@ -79,10 +79,10 @@ Each command record captures the real command that the verifier executed:
     "--api",
     "http://127.0.0.1:50345",
     "--output",
-    "/tmp/pwnkit-verify-a1b2/export"
+    "/tmp/0sec-verify-a1b2/export"
   ],
   "exit_code": 0,
-  "stdout_excerpt": "wrote /tmp/pwnkit-verify-a1b2/escaped-marker\n",
+  "stdout_excerpt": "wrote /tmp/0sec-verify-a1b2/escaped-marker\n",
   "stderr_excerpt": ""
 }
 ```
@@ -132,7 +132,7 @@ sandboxed export directory, and runs the real CLI argv supplied through
 `--fixture-command`.
 
 ```bash
-pwnkit verify --fixture cli-path-traversal \
+0sec verify --fixture cli-path-traversal \
   --fixture-command '["paperclip","company","export","--api","{{apiUrl}}","--output","{{exportDir}}"]' \
   --retain-artifacts
 ```
@@ -156,10 +156,10 @@ Example result:
         "--api",
         "http://127.0.0.1:50345",
         "--output",
-        "/tmp/pwnkit-verify-a1b2/export"
+        "/tmp/0sec-verify-a1b2/export"
       ],
       "exit_code": 0,
-      "stdout_excerpt": "wrote /tmp/pwnkit-verify-a1b2/escaped-marker\n",
+      "stdout_excerpt": "wrote /tmp/0sec-verify-a1b2/escaped-marker\n",
       "stderr_excerpt": ""
     }
   ],
@@ -167,25 +167,25 @@ Example result:
     {
       "kind": "filesystem_exists",
       "passed": true,
-      "detail": "escaped marker exists at /tmp/pwnkit-verify-a1b2/escaped-marker"
+      "detail": "escaped marker exists at /tmp/0sec-verify-a1b2/escaped-marker"
     },
     {
       "kind": "path_outside_export_root",
       "passed": true,
-      "detail": "escaped marker realpath /tmp/pwnkit-verify-a1b2/escaped-marker is outside export root /tmp/pwnkit-verify-a1b2/export"
+      "detail": "escaped marker realpath /tmp/0sec-verify-a1b2/escaped-marker is outside export root /tmp/0sec-verify-a1b2/export"
     },
     {
       "kind": "path_inside_sandbox",
       "passed": true,
-      "detail": "escaped marker stayed inside sandbox /tmp/pwnkit-verify-a1b2"
+      "detail": "escaped marker stayed inside sandbox /tmp/0sec-verify-a1b2"
     }
   ],
   "artifacts": {
-    "sandbox_ref": "/tmp/pwnkit-verify-a1b2",
-    "harness_ref": "/tmp/pwnkit-verify-a1b2/harness/harness.json",
-    "stdout_ref": "/tmp/pwnkit-verify-a1b2/stdout.log",
-    "stderr_ref": "/tmp/pwnkit-verify-a1b2/stderr.log",
-    "export_ref": "/tmp/pwnkit-verify-a1b2/export"
+    "sandbox_ref": "/tmp/0sec-verify-a1b2",
+    "harness_ref": "/tmp/0sec-verify-a1b2/harness/harness.json",
+    "stdout_ref": "/tmp/0sec-verify-a1b2/stdout.log",
+    "stderr_ref": "/tmp/0sec-verify-a1b2/stderr.log",
+    "export_ref": "/tmp/0sec-verify-a1b2/export"
   },
   "summary": "CLI path traversal replay wrote a marker outside the selected export directory inside the sandbox.",
   "error_reason": null

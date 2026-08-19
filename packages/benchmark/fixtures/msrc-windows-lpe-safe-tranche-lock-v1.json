@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pwnkit.msrc-windows-lpe-tranche-lock/v1",
+  "schemaVersion": "0sec.msrc-windows-lpe-tranche-lock/v1",
   "profile": "staging",
   "product": { "productId": "12390", "name": "Windows 11 Version 24H2 for x64-based Systems", "architecture": "x64", "currentBuildNumber": "26100" },
   "sourceDocuments": [

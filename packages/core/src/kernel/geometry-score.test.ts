@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 import { rankByGeometry, scoreGeometry } from "./geometry-score.js";
 

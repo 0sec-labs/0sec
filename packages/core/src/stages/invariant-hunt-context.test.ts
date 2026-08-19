@@ -221,7 +221,7 @@ describe("buildInvariantHuntContext", () => {
     expect(ctx!.promptBlock).toContain("net/unix/af_unix.c:");
 
     // Model artifact at the derived default path, under the tree it models.
-    const expectedPath = join(root, ".pwnkit", "invariant-models", "net__unix.json");
+    const expectedPath = join(root, ".0sec", "invariant-models", "net__unix.json");
     expect(ctx!.modelPath).toBe(expectedPath);
     expect(existsSync(expectedPath)).toBe(true);
 
@@ -252,7 +252,7 @@ describe("buildInvariantHuntContext", () => {
     const root = makeSourceRoot();
     const outside = mkdtempSync(join(tmpdir(), "invctx-outside-"));
     const outsideFile = join(outside, "secret.c");
-    const sentinel = "PWNKIT_OUTSIDE_TREE_SENTINEL_7f57a4";
+    const sentinel = "0SEC_OUTSIDE_TREE_SENTINEL_7f57a4";
     writeFileSync(outsideFile, `/* ${sentinel} */\nint secret;\n`, "utf8");
     const traversal = relative(root, outsideFile).replaceAll("\\", "/");
     expect(traversal).toMatch(/^\.\.\//);
@@ -282,7 +282,7 @@ describe("buildInvariantHuntContext", () => {
     const root = makeSourceRoot();
     const outside = mkdtempSync(join(tmpdir(), "invctx-symlink-file-"));
     const outsideFile = join(outside, "secret.c");
-    const sentinel = "PWNKIT_SYMLINK_ESCAPE_SENTINEL_d18c38";
+    const sentinel = "0SEC_SYMLINK_ESCAPE_SENTINEL_d18c38";
     writeFileSync(outsideFile, `/* ${sentinel} */\nint secret;\n`, "utf8");
     symlinkSync(outsideFile, join(root, "net", "unix", "leak.c"), "file");
 

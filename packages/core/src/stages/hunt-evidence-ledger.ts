@@ -12,7 +12,7 @@
  * back to the parent and that is the entire channel.
  *
  * The learned-negatives loop (hunt-negatives.ts) is the closest thing to shared
- * memory, and it is strictly END-OF-RUN: `@pwnkit/benchmark`'s `appendToCorpus`
+ * memory, and it is strictly END-OF-RUN: `@0sec/benchmark`'s `appendToCorpus`
  * writes `HuntFindingRecord[]` after `runHuntScan` has already returned, and
  * `loadKnownNegativesFromEnv()` reads that corpus ONCE, when the skeptic
  * verifier is constructed. So when worker A refutes a shape at minute 2 of a

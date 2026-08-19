@@ -1,5 +1,5 @@
 /** E2E smoke for runHuntScan: fan-out finder + skeptic gate on a tiny C target. */
-import { runHuntScan, makeSkepticVerifier } from "@pwnkit/core";
+import { runHuntScan, makeSkepticVerifier } from "@0sec/core";
 
 const ROOT = "/tmp/hunt-smoke/src";
 const res = await runHuntScan({

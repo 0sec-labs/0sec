@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding, PocStep } from "@pwnkit/shared";
+import type { Finding, PocStep } from "@0sec/shared";
 import { composeExploitSession, composeStepSession, renderExploitScreenshot, isFreezeAvailable } from "./screenshots.js";
 import type { PocStepResult } from "./poc-runtime.js";
 import { renderAdvisoryMarkdown } from "./template.js";
@@ -56,7 +56,7 @@ describe("composeExploitSession", () => {
 
 describe("isFreezeAvailable", () => {
   it("returns boolean for a missing binary without throwing", () => {
-    const result = isFreezeAvailable("this-binary-definitely-does-not-exist-pwnkit-test");
+    const result = isFreezeAvailable("this-binary-definitely-does-not-exist-0sec-test");
     expect(typeof result).toBe("boolean");
     expect(result).toBe(false);
   });
@@ -64,13 +64,13 @@ describe("isFreezeAvailable", () => {
 
 describe("renderExploitScreenshot", () => {
   it("returns null when available=false and still writes no files", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-shot-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-shot-"));
     const result = renderExploitScreenshot(baseFinding(), { outputDir, available: false });
     expect(result).toBeNull();
   });
 
   it("writes a session file and a stub output file when a fake binary is provided", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-shot-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-shot-"));
     // Stub freeze: just `touch` the file at the -o position.
     const stubBinary = join(outputDir, "fake-freeze");
     writeFileSync(stubBinary, `#!/usr/bin/env bash
@@ -99,7 +99,7 @@ done
   });
 
   it("returns null when the rendering binary exits nonzero", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-shot-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-shot-"));
     const stubBinary = join(outputDir, "broken-freeze");
     writeFileSync(stubBinary, "#!/usr/bin/env bash\nexit 1\n");
     chmodSync(stubBinary, 0o755);
@@ -112,7 +112,7 @@ done
   });
 
   it("produces a relativePath when markdownDir is passed", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-shot-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-shot-"));
     const markdownDir = outputDir;
     const imagesDir = join(outputDir, "images");
     const stubBinary = join(outputDir, "fake-freeze-rel");
@@ -235,7 +235,7 @@ describe("composeStepSession", () => {
 
 describe("renderExploitScreenshot multi-frame (#168 / #170)", () => {
   it("returns one frame per pocStep in order, each with a unique stepId / frame index", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-mframe-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-mframe-"));
     const stubBinary = freezeStub(outputDir);
     const frames = renderExploitScreenshot(baseFinding(), {
       outputDir,
@@ -251,7 +251,7 @@ describe("renderExploitScreenshot multi-frame (#168 / #170)", () => {
   });
 
   it("returns an empty array (not null) when pocSteps is provided but empty", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-mframe-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-mframe-"));
     const stubBinary = freezeStub(outputDir);
     const result = renderExploitScreenshot(baseFinding(), {
       outputDir,
@@ -263,7 +263,7 @@ describe("renderExploitScreenshot multi-frame (#168 / #170)", () => {
   });
 
   it("returns an empty array when freeze is unavailable (multi-frame branch never returns null)", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-mframe-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-mframe-"));
     const result = renderExploitScreenshot(baseFinding(), {
       outputDir,
       available: false,
@@ -273,7 +273,7 @@ describe("renderExploitScreenshot multi-frame (#168 / #170)", () => {
   });
 
   it("threads stepResults into the corresponding frame's session text", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-mframe-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-mframe-"));
     const stubBinary = freezeStub(outputDir);
     const stepResults: Record<string, PocStepResult> = {
       "exploit-1": {
@@ -298,7 +298,7 @@ describe("renderExploitScreenshot multi-frame (#168 / #170)", () => {
   });
 
   it("falls back to single-frame return shape when pocSteps is omitted (backward compat)", () => {
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-mframe-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-mframe-"));
     const stubBinary = freezeStub(outputDir);
     const result = renderExploitScreenshot(baseFinding(), {
       outputDir,

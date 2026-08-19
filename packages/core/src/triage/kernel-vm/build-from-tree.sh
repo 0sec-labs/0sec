@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build pwnkit kernel VM artifacts from a local Linux source tree.
+# Build 0sec kernel VM artifacts from a local Linux source tree.
 #
 # Usage:
 #   build-from-tree.sh <kernel-tree> <out-dir> [kasan|kcsan]
@@ -27,8 +27,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "${OUT_DIR}"
 
 docker build \
-  --build-arg "KERNEL_MAKE_JOBS=${PWNKIT_KERNEL_VM_MAKE_JOBS:-4}" \
-  -t pwnkit-kernel-builder-local \
+  --build-arg "KERNEL_MAKE_JOBS=${0SEC_KERNEL_VM_MAKE_JOBS:-4}" \
+  -t 0sec-kernel-builder-local \
   -f "${SCRIPT_DIR}/Dockerfile.local-tree" \
   "${SCRIPT_DIR}"
 
@@ -39,4 +39,4 @@ docker run --rm \
   -e CONFIG_PROFILE="${CONFIG_PROFILE}" \
   -v "${KERNEL_TREE}:/src/linux:ro" \
   -v "${OUT_DIR}:/out" \
-  pwnkit-kernel-builder-local
+  0sec-kernel-builder-local

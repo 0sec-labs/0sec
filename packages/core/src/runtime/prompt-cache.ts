@@ -124,7 +124,7 @@ interface BlockBearingMessage {
  * to accept — let alone act on — `cache_control`. An unknown field on a
  * compatible-but-not-identical endpoint is a request-rejection risk on the hot
  * path of every scan, so they are opt-in via
- * `PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS` rather than assumed. Every other
+ * `0SEC_PROMPT_CACHE_EXTRA_PROVIDERS` rather than assumed. Every other
  * provider (`openai`, `azure`, `openrouter`, `chatgpt-codex`) speaks a
  * different wire entirely and is structurally excluded: their request bodies
  * are built in separate branches that never call into this module.
@@ -146,13 +146,13 @@ export function providerSupportsPromptCache(provider: string): boolean {
 }
 
 /**
- * Parse `PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS` (comma-separated provider ids).
+ * Parse `0SEC_PROMPT_CACHE_EXTRA_PROVIDERS` (comma-separated provider ids).
  * Read per call rather than cached at import so the CLI `--features`-style
  * late env mutation is honoured, matching the getter convention in
  * `agent/features.ts`.
  */
 function readExtraCacheProviders(): ReadonlySet<string> {
-  const raw = process.env.PWNKIT_PROMPT_CACHE_EXTRA_PROVIDERS;
+  const raw = process.env["0SEC_PROMPT_CACHE_EXTRA_PROVIDERS"];
   if (!raw) return new Set();
   return new Set(
     raw

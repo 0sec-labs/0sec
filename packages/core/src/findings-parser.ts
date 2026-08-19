@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import type { Finding, Severity } from "@pwnkit/shared";
+import type { Finding, Severity } from "@0sec/shared";
 import { derivePocStepsFromEvidence } from "./poc-steps.js";
 import { parseSanitizerLog, renderSanitizerVerdict } from "./review/sanitizer-log.js";
 

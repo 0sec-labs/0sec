@@ -1,7 +1,7 @@
 /**
- * Cloud-surface tool definitions (pwnkit#925, part of #923 CodeWall parity).
+ * Cloud-surface tool definitions (0sec#925, part of #923 CodeWall parity).
  *
- * Live AWS cloud testing — the BCG-post angle pwnkit was blind to. Three tools,
+ * Live AWS cloud testing — the BCG-post angle 0sec was blind to. Three tools,
  * all READ/VERIFY-ONLY:
  *   - cloud_s3_probe          — public-bucket / ACL testing + orphaned-bucket
  *                               takeover detection (NoSuchBucket → re-creatable).
@@ -11,7 +11,7 @@
  *
  * Pure `ToolDefinition` metadata; the runtime handlers live on the
  * `ToolExecutor` class in agent/tools.ts and are routed by `cloudDispatch`.
- * Feature-gated behind PWNKIT_FEATURE_CLOUD_SURFACE (default OFF) AND
+ * Feature-gated behind 0SEC_FEATURE_CLOUD_SURFACE (default OFF) AND
  * engagement-scope gated, deny-by-default (#924 parity): cloud probing is recon
  * against the target org, so it only runs for an authorized engagement scope.
  *
@@ -69,7 +69,7 @@ export const cloudToolDefinitions: Record<string, ToolDefinition> = {
   },
 };
 
-/** Tool-name → ToolExecutor handler-method name (pwnkit#614). */
+/** Tool-name → ToolExecutor handler-method name (0sec#614). */
 export const cloudDispatch: Record<string, string> = {
   cloud_s3_probe: "cloudS3Probe",
   cloud_validate_credentials: "cloudValidateCredentials",

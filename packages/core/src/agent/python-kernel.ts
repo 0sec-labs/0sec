@@ -87,7 +87,7 @@ _stdin = sys.stdin.buffer
 # 'class SSLSocket(socket)' at import time) but raises on instantiation, and
 # socket.create_connection raises directly. Together this makes raw sockets,
 # urllib, requests, and http.client all fail closed.
-if os.environ.get("PWNKIT_KERNEL_BLOCK_NET") == "1":
+if os.environ.get("0SEC_KERNEL_BLOCK_NET") == "1":
     import socket as _socket
     _NET_MSG = "networking is disabled in this compute-only kernel (engagement active)"
     _RealSocket = _socket.socket
@@ -356,7 +356,7 @@ export class PythonKernelManager {
     return spawn("python3", ["-u", "-c", REPL_SERVER], {
       env: {
         ...process.env,
-        PWNKIT_KERNEL_BLOCK_NET: this.blockNetworking ? "1" : "0",
+        "0SEC_KERNEL_BLOCK_NET": this.blockNetworking ? "1" : "0",
       },
       stdio: ["pipe", "pipe", "pipe"],
     });

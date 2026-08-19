@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generate one official CyberGym task on the host, scope a one-use oracle
-# capability to it, and execute the pwnkit agent in the isolated container.
+# capability to it, and execute the 0sec agent in the isolated container.
 set -euo pipefail
 
 if (($# < 1)); then
@@ -12,15 +12,15 @@ task_id="$1"
 shift
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-: "${PWNKIT_ROOT:=$(cd -- "${script_dir}/../../.." && pwd)}"
+: "${0SEC_ROOT:=$(cd -- "${script_dir}/../../.." && pwd)}"
 : "${CYBERGYM_ROOT:=/srv/cybergym}"
 : "${CYBERGYM_PYTHON:=${CYBERGYM_ROOT}/venv/bin/python}"
 : "${CYBERGYM_DIFFICULTY:=level1}"
 : "${CYBERGYM_BRIDGE_CAPABILITIES:=${CYBERGYM_ROOT}/bridge/capabilities.json}"
 : "${CYBERGYM_AUTH_FILE:=${HOME}/.codex/auth.json}"
 
-bridge_script="${PWNKIT_ROOT}/packages/benchmark/scripts/cybergym-oracle-bridge.py"
-container_script="${PWNKIT_ROOT}/packages/benchmark/scripts/run-cybergym-container.sh"
+bridge_script="${0SEC_ROOT}/packages/benchmark/scripts/cybergym-oracle-bridge.py"
+container_script="${0SEC_ROOT}/packages/benchmark/scripts/run-cybergym-container.sh"
 for path in "${CYBERGYM_PYTHON}" "${bridge_script}" "${container_script}" "${CYBERGYM_AUTH_FILE}"; do
   [[ -e "${path}" ]] || { printf 'missing required path: %s\n' "${path}" >&2; exit 2; }
 done

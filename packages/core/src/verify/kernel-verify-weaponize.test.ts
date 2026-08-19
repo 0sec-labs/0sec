@@ -13,7 +13,7 @@ import {
   type KernelVerifyAgentInvoker,
 } from "./kernel-verify.js";
 import type { KernelVerifyRunner } from "./kernel-verify-types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { NativeContentBlock } from "../runtime/types.js";
 import type { ReproducerResult, CrashReport } from "../triage/kernel-oracle.js";
 
@@ -82,7 +82,7 @@ function confirmInvoker(): KernelVerifyAgentInvoker {
 /** Stub weaponization VM runner: scaffold compiles+runs, ATTEMPTED marker only. */
 function attemptedOnlyVmRunner() {
   return async (report: CrashReport): Promise<ReproducerResult> => {
-    const m = (report.reproducer ?? "").match(/#define PWNKIT_CANARY "([^"]+)"/);
+    const m = (report.reproducer ?? "").match(/#define OSEC_CANARY "([^"]+)"/);
     const canary = m?.[1] ?? "";
     return {
       compiled: true,

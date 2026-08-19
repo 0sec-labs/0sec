@@ -14,7 +14,7 @@ import {
 import type { ReviewFileRecord, ReviewFinding } from "./types.js";
 
 function tmpStore(): { store: ReviewStore; dir: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pwnkit-fr-store-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "0sec-fr-store-"));
   return { store: new ReviewStore({ dataDir: dir }), dir };
 }
 

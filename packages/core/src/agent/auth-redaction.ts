@@ -1,4 +1,4 @@
-import type { AuthConfig } from "@pwnkit/shared";
+import type { AuthConfig } from "@0sec/shared";
 
 const REDACTED_AUTH_VALUE = "<REDACTED-AUTH>";
 

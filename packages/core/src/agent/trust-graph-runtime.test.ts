@@ -1,5 +1,5 @@
 /**
- * Tests for the opt-in trust-graph loop wiring (pwnkit#771).
+ * Tests for the opt-in trust-graph loop wiring (0sec#771).
  *
  * Two layers:
  *   1. TrustGraphSession unit tests — the pure cross-target reuse / persist /

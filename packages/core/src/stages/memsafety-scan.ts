@@ -2,8 +2,8 @@
  * Userspace / Rust memory-safety scan stage ("Monty-mode" integration spine).
  *
  * This is the focused module the integration spine in
- * `docs/pwnkit-rust-memsafety-pipeline.md` calls for: it chains the three
- * tracks that already exist in `@pwnkit/core` into a single, side-effect-light
+ * `docs/0sec-rust-memsafety-pipeline.md` calls for: it chains the three
+ * tracks that already exist in `@0sec/core` into a single, side-effect-light
  * flow, *without* growing the `agentic-scanner.ts` god-module.
  *
  *   Track A (audit/playbook)  →  Track B (closed fuzz loop)  →  Track C (triage)
@@ -34,7 +34,7 @@ import type {
   AttackCategory,
   Finding,
   Severity,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import { buildPlaybookInjection } from "../agent/playbooks.js";
 import {
   runUserspaceFuzzLoop,

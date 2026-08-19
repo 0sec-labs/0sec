@@ -15,18 +15,18 @@ import type {
 //
 // `runNativeAgentLoop` calls `loadJournal({ runId: config.scanId })` with no
 // rootDir override, so the journal it reads resolves to
-// `~/.pwnkit/runs/<scanId>/journal.jsonl`. We point HOME at a temp dir for the
+// `~/.0sec/runs/<scanId>/journal.jsonl`. We point HOME at a temp dir for the
 // duration of each test so the loop reads OUR journal, not the real one, and
 // nothing leaks between tests.
 
-const REHYDRATE_ENV = "PWNKIT_FEATURE_JOURNAL_REHYDRATE";
+const REHYDRATE_ENV = "0SEC_FEATURE_JOURNAL_REHYDRATE";
 
 let tmpHome: string;
 let savedHome: string | undefined;
 let savedRehydrate: string | undefined;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), "pwnkit-seed-home-"));
+  tmpHome = mkdtempSync(join(tmpdir(), "0sec-seed-home-"));
   savedHome = process.env.HOME;
   savedRehydrate = process.env[REHYDRATE_ENV];
   process.env.HOME = tmpHome;
@@ -46,7 +46,7 @@ afterEach(() => {
 function journalRoot(): string {
   // Sanity: HOME really is our temp dir for this test.
   expect(homedir()).toBe(tmpHome);
-  return join(tmpHome, ".pwnkit", "runs");
+  return join(tmpHome, ".0sec", "runs");
 }
 
 /**
@@ -106,7 +106,7 @@ describe("native-loop journal-rehydrate seeding (#494 slice 2)", () => {
     expect(first).toHaveLength(1);
     expect(first[0].role).toBe("user");
     const text = (first[0].content[0] as { text: string }).text;
-    expect(text).toContain("You are a discovery agent for pwnkit");
+    expect(text).toContain("You are a discovery agent for 0sec");
     expect(text).toContain("Scan ID: scan-off-fresh");
     // No journal section leaked in.
     expect(text).not.toContain("Execution journal");
@@ -119,7 +119,7 @@ describe("native-loop journal-rehydrate seeding (#494 slice 2)", () => {
     await runNativeAgentLoop({ config: baseConfig("scan-off-with-journal"), runtime, db: null });
 
     const text = (seenMessages[0][0].content[0] as { text: string }).text;
-    expect(text).toContain("You are a discovery agent for pwnkit");
+    expect(text).toContain("You are a discovery agent for 0sec");
     expect(text).not.toContain("Execution journal");
     expect(text).not.toContain("Exposed admin");
   });
@@ -157,7 +157,7 @@ describe("native-loop journal-rehydrate seeding (#494 slice 2)", () => {
     expect(text).toContain("200 OK admin panel");
     expect(text).toContain("Exposed admin");
     // It must NOT also push the fresh initial prompt.
-    expect(text).not.toContain("You are a discovery agent for pwnkit");
+    expect(text).not.toContain("You are a discovery agent for 0sec");
 
     // turnCount continues from the journal's highest tool-step turn (2).
     expect(state.turnCount).toBeGreaterThanOrEqual(2);
@@ -183,7 +183,7 @@ describe("native-loop journal-rehydrate seeding (#494 slice 2)", () => {
     });
 
     const text = (seenMessages[0][0].content[0] as { text: string }).text;
-    expect(text).toContain("You are a discovery agent for pwnkit");
+    expect(text).toContain("You are a discovery agent for 0sec");
     expect(text).not.toContain("Execution journal");
 
     // Missing journal is the fresh-run case, not a corruption — no fallback event.
@@ -214,7 +214,7 @@ describe("native-loop journal-rehydrate seeding (#494 slice 2)", () => {
     // The loop did not crash and fell back to the fresh initial prompt.
     expect(state.done).toBe(true);
     const text = (seenMessages[0][0].content[0] as { text: string }).text;
-    expect(text).toContain("You are a discovery agent for pwnkit");
+    expect(text).toContain("You are a discovery agent for 0sec");
     expect(text).not.toContain("Execution journal");
 
     // The fallback was logged.
@@ -235,7 +235,7 @@ describe("native-loop journal-rehydrate seeding (#494 slice 2)", () => {
     await runNativeAgentLoop({ config: baseConfig("scan-on-empty"), runtime, db: null, onEvent });
 
     const text = (seenMessages[0][0].content[0] as { text: string }).text;
-    expect(text).toContain("You are a discovery agent for pwnkit");
+    expect(text).toContain("You are a discovery agent for 0sec");
     const types = onEvent.mock.calls.map((c) => c[0]);
     expect(types).not.toContain("journal_rehydrate_fallback");
     expect(types).not.toContain("journal_rehydrated");

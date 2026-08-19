@@ -8,9 +8,13 @@ import { ToolExecutor } from "../../packages/core/src/agent/tools.js";
 
 const thisDir = fileURLToPath(new URL(".", import.meta.url));
 const cliPath = join(thisDir, "../../packages/cli/src/index.ts");
-const tsxPath = join(thisDir, "../node_modules/.bin/tsx");
+// Invoke tsx's cli.mjs with node directly. The node_modules/.bin/tsx shim is a
+// /bin/sh script, and on dash-based systems /bin/sh strips environment
+// variables whose names are not shell identifiers — which includes the
+// digit-leading 0SEC_* contract this suite exercises.
+const tsxCliPath = join(thisDir, "../node_modules/tsx/dist/cli.mjs");
 const tsconfigPath = join(thisDir, "../tsconfig.cli-e2e.json");
-const testDbPath = join(tmpdir(), `pwnkit-cli-test-${Date.now()}.db`);
+const testDbPath = join(tmpdir(), `0sec-cli-test-${Date.now()}.db`);
 
 const projectRoot = join(thisDir, "../..");
 
@@ -23,12 +27,12 @@ const noApiEnv = {
   Z_AI_API_KEY: "",
   QWEN_API_KEY: "",
   KIMI_API_KEY: "",
-  PWNKIT_CHATGPT_ACCESS_TOKEN: "",
-  PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN: "",
-  PWNKIT_CHATGPT_ACCOUNT_ID: "",
-  PWNKIT_CODEX_AUTH_JSON_PATH: join(tmpdir(), "pwnkit-cli-test-no-codex-auth.json"),
-  PWNKIT_CHATGPT_AUTH_FILE: join(tmpdir(), "pwnkit-cli-test-no-codex-auth.json"),
-  PWNKIT_SKIP_PROVIDER_BANNER: "1",
+  "0SEC_CHATGPT_ACCESS_TOKEN": "",
+  "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN": "",
+  "0SEC_CHATGPT_ACCOUNT_ID": "",
+  "0SEC_CODEX_AUTH_JSON_PATH": join(tmpdir(), "0sec-cli-test-no-codex-auth.json"),
+  "0SEC_CHATGPT_AUTH_FILE": join(tmpdir(), "0sec-cli-test-no-codex-auth.json"),
+  "0SEC_SKIP_PROVIDER_BANNER": "1",
 };
 
 const run = (args: string[], timeout = 30_000, extraEnv: Record<string, string | undefined> = {}) => {
@@ -42,7 +46,7 @@ const run = (args: string[], timeout = 30_000, extraEnv: Record<string, string |
     if (k.startsWith("pnpm_") || k === "PNPM_PACKAGE_NAME") continue;
     if (v !== undefined) cleanEnv[k] = v;
   }
-  return spawnSync(tsxPath, ["--tsconfig", tsconfigPath, cliPath, ...args], {
+  return spawnSync(process.execPath, [tsxCliPath, "--tsconfig", tsconfigPath, cliPath, ...args], {
     cwd: projectRoot,
     encoding: "utf-8",
     timeout,
@@ -54,7 +58,7 @@ describe("CLI E2E", () => {
   it("--help shows all commands", () => {
     const result = run(["--help"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("pwnkit");
+    expect(result.stdout).toContain("0sec");
     for (const cmd of ["scan", "audit", "review", "history", "findings", "replay", "doctor"]) {
       expect(result.stdout).toContain(cmd);
     }
@@ -123,7 +127,7 @@ describe("CLI E2E", () => {
   });
 
   it("history works (empty or with data)", () => {
-    const result = run(["history", "--db-path", "/tmp/pwnkit-test-empty.db"]);
+    const result = run(["history", "--db-path", "/tmp/0sec-test-empty.db"]);
     expect([0, 1]).toContain(result.status);
   });
 
@@ -152,14 +156,14 @@ describe("CLI E2E", () => {
       60_000,
       {
         ...noApiEnv,
-        PWNKIT_EMIT_RESULT_LINE: "1",
+        "0SEC_EMIT_RESULT_LINE": "1",
       },
     );
     const output = result.stdout + result.stderr;
     expect(result.status).toBe(0);
-    const line = output.split("\n").find((entry) => entry.startsWith("PWNKIT_RESULT="));
+    const line = output.split("\n").find((entry) => entry.startsWith("0SEC_RESULT="));
     expect(line).toBeTruthy();
-    const parsed = JSON.parse(line!.slice("PWNKIT_RESULT=".length));
+    const parsed = JSON.parse(line!.slice("0SEC_RESULT=".length));
     expect(parsed.ok).toBe(true);
     expect(parsed.exitCode).toBe(0);
     expect(parsed.targetType).toBe("npm-package");

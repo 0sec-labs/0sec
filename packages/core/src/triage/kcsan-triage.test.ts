@@ -70,9 +70,9 @@ describe("kcsanRaceToFinding", () => {
 describe("raceWidenEnv", () => {
   it("maps the racing PC (side A = first printed access block) to the kernel-vm-runner widen env", () => {
     const env = raceWidenEnv(race(), 50, 0x60);
-    expect(env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL).toBe("crypto_larval_kill");
-    expect(env.PWNKIT_KERNEL_QEMU_WIDEN_OFFSET).toBe("0x60");
-    expect(env.PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS).toBe("50");
+    expect(env["0SEC_KERNEL_QEMU_WIDEN_SYMBOL"]).toBe("crypto_larval_kill");
+    expect(env["0SEC_KERNEL_QEMU_WIDEN_OFFSET"]).toBe("0x60");
+    expect(env["0SEC_KERNEL_QEMU_WIDEN_DELAY_MS"]).toBe("50");
   });
 });
 
@@ -92,13 +92,13 @@ describe("makeRaceWidenProver", () => {
   });
 
   it("confirms when the widened race becomes a KASAN splat, and sets/restores widen env", async () => {
-    const before = process.env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL;
+    const before = process.env["0SEC_KERNEL_QEMU_WIDEN_SYMBOL"];
     let seenSymbol: string | undefined;
     const prover = makeRaceWidenProver(race(), {
       reproducer: "int main(){return 0;}",
       widenDelayMs: 50,
       vmRunner: async (report) => {
-        seenSymbol = process.env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL;
+        seenSymbol = process.env["0SEC_KERNEL_QEMU_WIDEN_SYMBOL"];
         expect(report.crashType).toBe("kcsan-data-race");
         expect(report.reproducerLanguage).toBe("c");
         return reproResult({ dmesg: KASAN_DMESG });
@@ -110,7 +110,7 @@ describe("makeRaceWidenProver", () => {
     // Env was set for the runner (widen at side A's PC = first printed block)...
     expect(seenSymbol).toBe("crypto_larval_kill");
     // ...and restored afterwards.
-    expect(process.env.PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL).toBe(before);
+    expect(process.env["0SEC_KERNEL_QEMU_WIDEN_SYMBOL"]).toBe(before);
   });
 
   it("does not confirm a benign race (widened run, no splat)", async () => {
@@ -128,7 +128,7 @@ describe("makeRaceWidenProver", () => {
     const prover = makeRaceWidenProver(race(), {
       reproducer: "int main(){return 0;}",
       vmRunner: async () => {
-        seenDelay = process.env.PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS;
+        seenDelay = process.env["0SEC_KERNEL_QEMU_WIDEN_DELAY_MS"];
         return reproResult({ dmesg: KASAN_DMESG });
       },
     });

@@ -42,7 +42,7 @@ function target(): XnuIokitTarget {
 describe("XnuIokitResearchAdapter", () => {
   it("prioritizes variable selectors, generates deterministic programs, and refuses fake verification", async () => {
     const lane = { preflight: vi.fn(() => ({ ok: false, reason: "VM disabled" })), runShard: vi.fn() };
-    const artifactRoot = mkdtempSync(join(tmpdir(), "pwnkit-xnu-"));
+    const artifactRoot = mkdtempSync(join(tmpdir(), "0sec-xnu-"));
     roots.push(artifactRoot);
     const result = await runResearch(new XnuIokitResearchAdapter(() => lane), target(), { artifactRoot, runId: "xnu-run" });
 

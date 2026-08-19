@@ -1,6 +1,6 @@
 ---
 title: Enterprise readiness
-description: SSO, BYOK, deployment options, data residency, audit, SLA, and compliance posture for pwnkit and 0sec cloud. Honest status per capability — no overclaimed certifications.
+description: SSO, BYOK, deployment options, data residency, audit, SLA, and compliance posture for 0sec and 0sec cloud. Honest status per capability — no overclaimed certifications.
 sidebar:
   order: 9
 # OWNER_TBD — assign a human owner before merge. This page is the single source
@@ -11,7 +11,7 @@ owner: OWNER_TBD
 
 > **This page is the single source of truth for enterprise capability claims. Sales materials reference it; do not duplicate facts elsewhere.** When something ships or its target date moves, update the badge here first; everything downstream (deck, RFP responses, security questionnaires) should link back here rather than restate.
 
-pwnkit is the open-source agentic pentest engine. **0sec cloud** is the managed layer on top — recurring scans, multi-tenant triage, evidence bundles. This page covers enterprise readiness for both surfaces.
+0sec is the open-source agentic pentest engine. **0sec cloud** is the managed layer on top — recurring scans, multi-tenant triage, evidence bundles. This page covers enterprise readiness for both surfaces.
 
 We use three status badges. They are intentionally precise so a procurement reviewer can map each row to evidence:
 
@@ -31,7 +31,7 @@ We deliberately do **not** claim SOC 2 Type II or ISO 27001 certification until 
 | GitHub OAuth (for OSS / individual users) | **Shipped** | Default sign-in for `cloud.0sec.ai`. Not appropriate for enterprise tenants — use SAML when available. |
 | MFA enforcement at the org level | **Planned (Q4 2026)** | Today, MFA is delegated to the identity provider once SSO lands. |
 | Role-based access control (org / member / read-only) | **Shipped** | Multi-tenant org model with membership roles is live in the dashboard schema (`app_organizations`, `app_memberships`). |
-| CLI auth via browser device flow | **Shipped** | `pwnkit auth login` mints scoped tokens into `cli_tokens`; revocable from the dashboard. |
+| CLI auth via browser device flow | **Shipped** | `0sec auth login` mints scoped tokens into `cli_tokens`; revocable from the dashboard. |
 | Per-user audit log of auth events | **In progress (target Q3 2026)** | The `app_admin_audit` table exists; the user-facing export view is the gap. |
 
 ## Models / BYOK
@@ -41,12 +41,12 @@ You bring your own LLM provider credentials. The OSS engine never proxies your k
 | Provider | Status | Notes |
 |---|---|---|
 | Anthropic (Claude) | **Shipped** | `ANTHROPIC_API_KEY`. Preferred provider for deep-reasoning scan stages. |
-| OpenAI / ChatGPT Codex subscription | **Shipped** | `OPENAI_API_KEY` or `PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN`. |
+| OpenAI / ChatGPT Codex subscription | **Shipped** | `OPENAI_API_KEY` or `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`. |
 | Google (Gemini CLI) | **Shipped** | Via the `gemini` runtime; spawns the official Gemini CLI with your auth. |
 | Azure OpenAI (regional, including EU regions) | **Shipped** | `AZURE_OPENAI_API_KEY` + base URL. The right path for buyers who need EU-region inference under an existing Microsoft tenant. |
 | OpenRouter (multi-model gateway) | **Shipped** | `OPENROUTER_API_KEY`. Convenient for OSS users; enterprise buyers should prefer a direct provider for audit clarity. |
 | Local / air-gapped models via Ollama | **Shipped** | `--runtime ollama`, `OLLAMA_HOST` (default `http://localhost:11434`). Native function-calling and streaming. Use case: on-prem deployments where outbound LLM calls are forbidden. Note that non-model enrichment paths (package registries, OSV, OAST) still egress unless separately air-gapped. |
-| OSS engine works with zero cloud-side keys | **Shipped** | Run `pwnkit` locally with only your provider key set; nothing reaches 0sec infrastructure. This is the air-gap-friendly baseline. |
+| OSS engine works with zero cloud-side keys | **Shipped** | Run `0sec` locally with only your provider key set; nothing reaches 0sec infrastructure. This is the air-gap-friendly baseline. |
 
 See [API Keys](/api-keys/) for the full provider matrix and priority order, and [Configuration](/configuration/) for runtime selection.
 
@@ -58,15 +58,15 @@ Three options, ordered from least to most customer-controlled. Pick based on you
 |---|---|---|---|---|---|
 | **SaaS (default)** | **Shipped** | E2B sandbox per scan, orchestrated from `cloud.0sec.ai` (Hetzner HEL1, single dedicated box). | 0sec-managed Postgres on the orchestrator host. | Customer-supplied via per-org secret. | Scan inputs, findings, audit log, billing usage. |
 | **VPC peering / dedicated tenant** | **Planned (2026)** | Same engine, but the worker pool runs in a dedicated subnet peered to the customer's VPC. | Findings DB co-located with the dedicated tenant. | Customer-supplied. | Same as SaaS, scoped to that tenant. |
-| **Fully self-hosted on-prem (Docker / k3s)** | **Shipped (OSS engine)** / **In progress (target Q4 2026 for managed orchestration)** | Customer's own infrastructure. The engine is the public `ghcr.io/0sec-labs/pwnkit:latest` image — the same binary every OSS user runs. | Entirely inside the customer environment. | Customer-supplied; never leaves their env. | Nothing, unless the customer opts into telemetry. The cloud-sink env vars (`PWNKIT_CLOUD_SINK`, `PWNKIT_CLOUD_TOKEN`) are opt-in and off by default in self-hosted mode. |
+| **Fully self-hosted on-prem (Docker / k3s)** | **Shipped (OSS engine)** / **In progress (target Q4 2026 for managed orchestration)** | Customer's own infrastructure. The engine is the public `ghcr.io/0sec-labs/0sec:latest` image — the same binary every OSS user runs. | Entirely inside the customer environment. | Customer-supplied; never leaves their env. | Nothing, unless the customer opts into telemetry. The cloud-sink env vars (`0SEC_CLOUD_SINK`, `0SEC_CLOUD_TOKEN`) are opt-in and off by default in self-hosted mode. |
 
-**One engine, three control planes.** Every option runs the same `ghcr.io/0sec-labs/pwnkit` image. There is no premium fork. The cloud product's value is orchestration, multi-tenant triage, the dataset feedback loop, and integrations — not a gated agent. See [Architecture](/architecture/) and [Cloud](/cloud/) for the engine / control-plane split.
+**One engine, three control planes.** Every option runs the same `ghcr.io/0sec-labs/0sec` image. There is no premium fork. The cloud product's value is orchestration, multi-tenant triage, the dataset feedback loop, and integrations — not a gated agent. See [Architecture](/architecture/) and [Cloud](/cloud/) for the engine / control-plane split.
 
 ### Data flow at a glance
 
-**SaaS path:** customer dashboard → orchestrator (Hono) → worker controller → E2B sandbox running the pwnkit image → findings stream back into Postgres → triage UI. Customer LLM key is injected into the sandbox env, used for the duration of the scan, and discarded with the sandbox.
+**SaaS path:** customer dashboard → orchestrator (Hono) → worker controller → E2B sandbox running the 0sec image → findings stream back into Postgres → triage UI. Customer LLM key is injected into the sandbox env, used for the duration of the scan, and discarded with the sandbox.
 
-**Self-hosted path:** customer's CI or operator runs the pwnkit Docker image directly. Findings stay in the customer's chosen store (local SQLite by default, optional Postgres for shared triage). No outbound calls to 0sec infrastructure unless cloud-sink is explicitly enabled.
+**Self-hosted path:** customer's CI or operator runs the 0sec Docker image directly. Findings stay in the customer's chosen store (local SQLite by default, optional Postgres for shared triage). No outbound calls to 0sec infrastructure unless cloud-sink is explicitly enabled.
 
 ## Data
 
@@ -114,17 +114,17 @@ Uptime is measured at the orchestrator + dashboard ingress; worker-pool availabi
 
 ## Compliance
 
-This section maps pwnkit's posture against the frameworks our EU and Swiss buyers actually cite in RFPs. We do not claim certification where none exists; the table is about *alignment* — what we do today that supports the customer's own compliance obligations.
+This section maps 0sec's posture against the frameworks our EU and Swiss buyers actually cite in RFPs. We do not claim certification where none exists; the table is about *alignment* — what we do today that supports the customer's own compliance obligations.
 
 | Framework | Status | What it means for the customer |
 |---|---|---|
 | **GDPR** | **Shipped (DPA + SCCs available)** | Pre-signed Data Processing Addendum with EU SCCs. EU-region default. No cross-border transfer of customer data outside the DPA's scope. |
 | **Swiss nFADP** | **Shipped (DPA available)** | Pre-signed DPA aligned with the revised Swiss Federal Act on Data Protection (in force since Sept 2023). EU adequacy decision applies. |
-| **DORA (EU Digital Operational Resilience Act)** | **In progress** | DORA is in force as of 17 Jan 2025 and requires threat-led pentests on a 3-year cycle plus annual scenario tests. pwnkit positions as continuous between-test validation, not a replacement for TLPT engagements. We map each scan to the relevant DORA article on request; a formal DORA-aligned reporting template is in flight (target Q4 2026). |
+| **DORA (EU Digital Operational Resilience Act)** | **In progress** | DORA is in force as of 17 Jan 2025 and requires threat-led pentests on a 3-year cycle plus annual scenario tests. 0sec positions as continuous between-test validation, not a replacement for TLPT engagements. We map each scan to the relevant DORA article on request; a formal DORA-aligned reporting template is in flight (target Q4 2026). |
 | **FINMA Circ. 2023/1 + TIBER-CH** | **In progress** | Aligned with the FINMA 24h / 72h incident notification cadence and TIBER-CH's continuous-testing expectation. We do not replace a CREST-approved manual provider; we compress the cycle between engagements. |
 | **ISO 27001** | **Planned (2027)** | Targeted certification. Not currently held; we will not claim it before attestation. |
 | **SOC 2 (Type I → Type II)** | **Planned (2027)** | See [Audit](#audit) above. |
-| **EU AI Act (high-risk system obligations)** | **In progress** | Internal mapping is underway; relevant because pwnkit is an autonomous AI system, even though it operates on the security-tooling side rather than as a high-risk application. We track the GPAI obligations as they phase in through 2026-2027. |
+| **EU AI Act (high-risk system obligations)** | **In progress** | Internal mapping is underway; relevant because 0sec is an autonomous AI system, even though it operates on the security-tooling side rather than as a high-risk application. We track the GPAI obligations as they phase in through 2026-2027. |
 | **OWASP ASVS / OWASP Top 10 coverage** | **Shipped** | Documented in the [Methodology](/methodology/) page; the agent's web-mode coverage maps to ASVS L1 and L2 controls. |
 
 For an EU/Swiss regulated buyer, the practical compliance answer is: **EU-region deployment, pre-signed GDPR + nFADP DPAs, self-hosted available for the strictest bucket, and an honest readout on SOC 2 / ISO timing.** That stack has cleared procurement in tier-1 Swiss enterprise diligence under NDA.
@@ -142,7 +142,7 @@ The status badges above depend on a small number of load-bearing items. We surfa
 
 For enterprise procurement, security questionnaires, DPA signing, and pilot scoping: **enterprise@0sec.ai**.
 
-For engine support or vulnerability disclosure against pwnkit or 0sec cloud itself, email **security@0sec.ai**.
+For engine support or vulnerability disclosure against 0sec or 0sec cloud itself, email **security@0sec.ai**.
 
 ---
 

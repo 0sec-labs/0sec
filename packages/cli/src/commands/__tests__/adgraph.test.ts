@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// No mocks: the ingest + analysis path is the real @pwnkit/core code, driven
+// No mocks: the ingest + analysis path is the real @0sec/core code, driven
 // through real BloodHound-shaped fixtures on disk.
 import { registerAdGraphCommand } from "../adgraph.js";
 
@@ -58,10 +58,10 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerAdGraphCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
-describe("pwnkit adgraph", () => {
+describe("0sec adgraph", () => {
   let io: ReturnType<typeof captureIO>;
   let dir: string;
   let singleFile: string;

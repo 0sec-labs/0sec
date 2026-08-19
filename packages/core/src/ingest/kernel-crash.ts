@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
-import type { Finding, AttackCategory, CrashReport, CrashType } from "@pwnkit/shared";
-import type { Severity } from "@pwnkit/shared";
+import type { Finding, AttackCategory, CrashReport, CrashType } from "@0sec/shared";
+import type { Severity } from "@0sec/shared";
 import {
   classifyKernelPrimitive,
   exploitabilityAdjustedSeverity,

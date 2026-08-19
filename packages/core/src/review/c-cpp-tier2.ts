@@ -1,5 +1,5 @@
 /**
- * pwnkit Tier-2 multi-component C/C++ harness builder.
+ * 0sec Tier-2 multi-component C/C++ harness builder.
  *
  * Tier-1 (see `c-cpp-profile.ts`) wraps a single suspect function in a
  * standalone libFuzzer harness. That confirms a primitive is reachable
@@ -485,7 +485,7 @@ function decorateHarnessForTier2(
   },
 ): string {
   const banner = [
-    "// pwnkit Tier-2 multi-component harness — generated, do not edit.",
+    "// 0sec Tier-2 multi-component harness — generated, do not edit.",
     "//",
     `// Build system detected: ${context.buildSystem}`,
     `// Sanitizers: ${context.sanitizers.join(", ")}`,
@@ -519,7 +519,7 @@ function renderLinkerShellScript(args: {
   sanitizers: Sanitizer[];
 }): string {
   return `#!/usr/bin/env bash
-# pwnkit Tier-2 linker helper — generated.
+# 0sec Tier-2 linker helper — generated.
 #
 # Sanitizers: ${args.sanitizers.join(", ")}
 # Output binary: ${args.harnessBinary}
@@ -531,8 +531,8 @@ set -euo pipefail
 
 ${args.compileCommand}
 
-echo "[pwnkit tier-2] harness built: ${args.harnessBinary}"
-echo "[pwnkit tier-2] to run:  ${args.runCommand}"
+echo "[0sec tier-2] harness built: ${args.harnessBinary}"
+echo "[0sec tier-2] to run:  ${args.runCommand}"
 `;
 }
 
@@ -550,18 +550,18 @@ function renderMakefileFragment(args: {
   const deps = [args.harnessPath, ...args.linkedObjects]
     .map((p) => p.replace(/ /g, "\\ "))
     .join(" \\\n  ");
-  return `# pwnkit Tier-2 harness Makefile fragment — generated.
+  return `# 0sec Tier-2 harness Makefile fragment — generated.
 # Sanitizers: ${args.sanitizers.join(", ")}
 
-PWNKIT_TIER2_HARNESS := ${args.harnessBinary}
-PWNKIT_TIER2_DEPS := \\
+0SEC_TIER2_HARNESS := ${args.harnessBinary}
+0SEC_TIER2_DEPS := \\
   ${deps}
 
-$(PWNKIT_TIER2_HARNESS): $(PWNKIT_TIER2_DEPS)
+$(0SEC_TIER2_HARNESS): $(0SEC_TIER2_DEPS)
 \t${args.compileCommand}
 
-.PHONY: pwnkit-tier2-run
-pwnkit-tier2-run: $(PWNKIT_TIER2_HARNESS)
+.PHONY: 0sec-tier2-run
+0sec-tier2-run: $(0SEC_TIER2_HARNESS)
 \t${args.runCommand}
 `;
 }

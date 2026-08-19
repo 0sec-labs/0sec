@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import type { Command } from "commander";
 import chalk from "chalk";
-import { agenticScan, createRuntime, LlmApiRuntime, runAgentLoop, getToolsForRole } from "@pwnkit/core";
-import { pwnkitDB } from "@pwnkit/db";
-import type { Finding, RuntimeMode, ScanDepth, ScanMode, WorkItemKind, WorkItemRecord, WorkerRecord, WorkerStatus } from "@pwnkit/shared";
+import { agenticScan, createRuntime, LlmApiRuntime, runAgentLoop, getToolsForRole } from "@0sec/core";
+import { osecDB } from "@0sec/db";
+import type { Finding, RuntimeMode, ScanDepth, ScanMode, WorkItemKind, WorkItemRecord, WorkerRecord, WorkerStatus } from "@0sec/shared";
 
 type OrchestrateOptions = {
   dbPath?: string;
@@ -187,7 +187,7 @@ function touchWorker(
   dbPath: string | undefined,
   worker: Omit<WorkerRecord, "startedAt" | "updatedAt" | "heartbeatAt">,
 ): void {
-  const db = new pwnkitDB(dbPath);
+  const db = new osecDB(dbPath);
   try {
     db.upsertWorker(worker);
   } finally {
@@ -200,7 +200,7 @@ function stopSupersededWorkers(
   label: string,
   workerId: string,
 ): number {
-  const db = new pwnkitDB(dbPath);
+  const db = new osecDB(dbPath);
   try {
     return db.stopWorkersByLabel(label, workerId);
   } finally {
@@ -209,7 +209,7 @@ function stopSupersededWorkers(
 }
 
 export function recoverStaleWorkers(dbPath: string | undefined, staleAfterMs = 30_000): number {
-  const db = new pwnkitDB(dbPath);
+  const db = new osecDB(dbPath);
 
   try {
     const workers = db.listWorkers(100) as WorkerRecord[];
@@ -258,7 +258,7 @@ function findRunnableCandidates(
   dbPath: string | undefined,
   limit: number,
 ): RunnableCandidate[] {
-  const db = new pwnkitDB(dbPath);
+  const db = new osecDB(dbPath);
 
   try {
     const allWorkItems = db.listWorkItems({ limit: 5000 }) as WorkItemRecord[];
@@ -346,7 +346,7 @@ function reconcileCandidateOutcome(
   candidate: RunnableCandidate,
   result: { ok: true } | { ok: false; message: string },
 ): void {
-  const db = new pwnkitDB(dbPath);
+  const db = new osecDB(dbPath);
 
   try {
     const current = (db.listWorkItems({ caseId: candidate.item.caseId, limit: 5000 }) as WorkItemRecord[])
@@ -421,7 +421,7 @@ function claimCandidate(
   label: string,
   candidate: RunnableCandidate,
 ): boolean {
-  const db = new pwnkitDB(dbPath);
+  const db = new osecDB(dbPath);
 
   try {
     const claimed = db.claimWorkItem(candidate.item.id, workerId, {
@@ -511,7 +511,7 @@ function familyAttackPrompt(
   fingerprint: string,
   latest: Finding,
 ): string {
-  return `You are pwnkit's family execution agent.
+  return `You are 0sec's family execution agent.
 
 Target: ${target}
 Finding family fingerprint: ${fingerprint}
@@ -544,7 +544,7 @@ function familyVerifyPrompt(target: string, findings: Finding[]): string {
     )
     .join("\n\n");
 
-  return `You are pwnkit's blind family verification agent.
+  return `You are 0sec's blind family verification agent.
 
 Target: ${target}
 
@@ -569,7 +569,7 @@ async function runFamilyCandidate(
     return { ok: false, message: "Family candidate is missing a fingerprint." };
   }
 
-  const db = new pwnkitDB(opts.dbPath);
+  const db = new osecDB(opts.dbPath);
 
   try {
     const rows = db.getRelatedFindings(fingerprint) as FamilyFindingRow[];
@@ -734,7 +734,7 @@ export function registerOrchestrateCommand(program: Command): void {
         }
       }, Math.min(pollInterval, 5_000));
 
-      console.log(chalk.red.bold("◆ pwnkit") + chalk.gray(opts.watch ? ` daemon ${label} online` : ` worker ${label} starting`));
+      console.log(chalk.red.bold("◆ 0sec") + chalk.gray(opts.watch ? ` daemon ${label} online` : ` worker ${label} starting`));
 
       try {
         do {

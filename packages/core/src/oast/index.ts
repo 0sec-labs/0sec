@@ -1,5 +1,5 @@
 /**
- * OAST (out-of-band application security testing) barrel (pwnkit#659).
+ * OAST (out-of-band application security testing) barrel (0sec#659).
  *
  * A hosted interaction collaborator + correlation oracle for confirming
  * blind/out-of-band bugs (blind SSRF/XSS, OOB RCE/SQLi, XXE-OOB, JNDI). See

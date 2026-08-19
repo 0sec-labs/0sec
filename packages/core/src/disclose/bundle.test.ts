@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Finding, PocStep } from "@pwnkit/shared";
+import type { Finding, PocStep } from "@0sec/shared";
 import {
   decideFilingState,
   assembleBundleIndex,
@@ -472,7 +472,7 @@ describe("bundle assembly end-to-end", () => {
     //  - renderExploitScreenshot returns a shot
     //  - decideFilingState returns 'keep' (no inputs to flip it)
     const finding = baseFinding();
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-bundle-1-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-bundle-1-"));
     const stub = freezeStub(outputDir);
     const shot = renderExploitScreenshot(finding, { outputDir, binary: stub, available: true });
     expect(shot).not.toBeNull();
@@ -538,7 +538,7 @@ describe("bundle assembly end-to-end", () => {
 
   it("multi-frame screenshot when pocSteps present → one PNG per step in the bundle", () => {
     const finding = baseFinding({ pocSteps: makePocSteps() });
-    const outputDir = mkdtempSync(join(tmpdir(), "pwnkit-bundle-mframe-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "0sec-bundle-mframe-"));
     const stub = freezeStub(outputDir);
     const frames = renderExploitScreenshot(finding, {
       outputDir,
@@ -555,7 +555,7 @@ describe("bundle assembly end-to-end", () => {
 
   it("sibling-fix populated from #172 when finding cites a correct sibling", () => {
     // Build a tiny repo with a "correct gate" sibling file.
-    const repoPath = mkdtempSync(join(tmpdir(), "pwnkit-bundle-sibfix-"));
+    const repoPath = mkdtempSync(join(tmpdir(), "0sec-bundle-sibfix-"));
     mkdirSync(join(repoPath, "src"), { recursive: true });
     writeFileSync(join(repoPath, "src/sibling.ts"), `export function adminGuard(req: Req) {\n  if (!req.user) throw new Error('unauth');\n  if (req.user.role !== 'admin') throw new Error('forbidden');\n  return req.user;\n}\n`);
     const finding = baseFinding({

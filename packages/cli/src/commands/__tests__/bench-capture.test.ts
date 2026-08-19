@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { BenchManifest, TournamentResult } from "@pwnkit/core";
+import type { BenchManifest, TournamentResult } from "@0sec/core";
 
 import { canonicalJson, writeCanonicalJsonAtomic } from "../bench-improvement.js";
 import { measureOperation, selectRunManifest, validateCaptureDestination } from "../bench.js";
@@ -76,7 +76,7 @@ describe("sealed bench tournament capture", () => {
   });
 
   it("creates one canonical pair artifact and refuses replacement", () => {
-    const root = mkdtempSync(join(tmpdir(), "pwnkit-bench-capture-"));
+    const root = mkdtempSync(join(tmpdir(), "0sec-bench-capture-"));
     roots.push(root);
     const output = join(root, "nested", "tournament.json");
     const tournament = {

@@ -3,11 +3,11 @@ title: Dynamic Triage Routing — v0 Implementation
 description: Per-finding learned layer selection. v0 ships a rule-based router with a seam for a learned classifier; this page documents what shipped, the four decision rules, the routing-trace dataset shape, and the planned upgrade path.
 ---
 
-> **Status:** v0 (rule-based) shipped behind `PWNKIT_FEATURE_DYNAMIC_TRIAGE`. The learned classifier described in the [design doc](/research/dynamic-routing-design/) lands in a follow-up PR. Tracking: [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113).
+> **Status:** v0 (rule-based) shipped behind `0SEC_FEATURE_DYNAMIC_TRIAGE`. The learned classifier described in the [design doc](/research/dynamic-routing-design/) lands in a follow-up PR. Tracking: [0sec#113](https://github.com/0sec-labs/0sec/issues/113).
 
 ## What shipped in v0
 
-A new module at `packages/core/src/triage/router/` that, for every finding, decides which subset of the 11 triage layers should run. The decision is gated behind the feature flag `PWNKIT_FEATURE_DYNAMIC_TRIAGE`; default OFF preserves the existing static-layer behavior verbatim.
+A new module at `packages/core/src/triage/router/` that, for every finding, decides which subset of the 11 triage layers should run. The decision is gated behind the feature flag `0SEC_FEATURE_DYNAMIC_TRIAGE`; default OFF preserves the existing static-layer behavior verbatim.
 
 The router is structured around a small interface that lets a learned classifier swap in later without touching the dispatch site:
 
@@ -40,7 +40,7 @@ AND finding.evidence.response matches a SQL-error regex
 THEN invoke the default static layer set MINUS `debate`
 ```
 
-Motivation: the [pwnkit#72 ablation](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229254355) showed `adversarial_debate` removes real findings on the high-confidence error-based SQLi slice. The oracle is deterministic, free, and sufficient on this shape — debate adds cost and removes signal.
+Motivation: the [0sec#72 ablation](https://github.com/0sec-labs/0sec/issues/72#issuecomment-4229254355) showed `adversarial_debate` removes real findings on the high-confidence error-based SQLi slice. The oracle is deterministic, free, and sufficient on this shape — debate adds cost and removes signal.
 
 ### Rule 2 — ambiguous logic bug → invoke `structured_verify` + `pov_gate`
 
@@ -81,7 +81,7 @@ The router falls through to today's static behavior. Any finding that doesn't ma
 
 ## The routing-trace dataset
 
-At the end of every scan with `PWNKIT_FEATURE_DYNAMIC_TRIAGE=1`, the scanner writes one JSONL record per finding to `<journal-sidecar-dir>/routing-trace.jsonl`. This is the dataset the phase-2 learned router trains on.
+At the end of every scan with `0SEC_FEATURE_DYNAMIC_TRIAGE=1`, the scanner writes one JSONL record per finding to `<journal-sidecar-dir>/routing-trace.jsonl`. This is the dataset the phase-2 learned router trains on.
 
 **Record shape (one example):**
 
@@ -125,11 +125,11 @@ At the end of every scan with `PWNKIT_FEATURE_DYNAMIC_TRIAGE=1`, the scanner wri
 }
 ```
 
-The 55-element `features` vector is the same vector the joint-paper dataset ([pwnkit#67](https://github.com/0sec-labs/0sec/issues/67)) trains on — extracted by `extractFeatures()` in `packages/core/src/triage/feature-extractor.ts`. The `ground_truth` field is left undefined for in-flight scans; the offline collector backfills it from flag extraction (XBOW / Cybench) or package verdict (npm-bench).
+The 55-element `features` vector is the same vector the joint-paper dataset ([0sec#67](https://github.com/0sec-labs/0sec/issues/67)) trains on — extracted by `extractFeatures()` in `packages/core/src/triage/feature-extractor.ts`. The `ground_truth` field is left undefined for in-flight scans; the offline collector backfills it from flag extraction (XBOW / Cybench) or package verdict (npm-bench).
 
 ## The planned learned-classifier upgrade
 
-Phase 2 of pwnkit#113 (separate PR) replaces `RuleBasedRouter` with `XGBoostRouter`:
+Phase 2 of 0sec#113 (separate PR) replaces `RuleBasedRouter` with `XGBoostRouter`:
 
 1. Train an XGBoost multi-label classifier on `(features, decided_layers, ground_truth)` tuples accumulated by the v0 trace emitter.
 2. The target is "which subset of layers would have produced the same final verdict at minimum total cost". This is the cost-saved-per-recall-lost objective from the design doc.
@@ -137,7 +137,7 @@ Phase 2 of pwnkit#113 (separate PR) replaces `RuleBasedRouter` with `XGBoostRout
 4. The learned model lands as `class XGBoostRouter implements RouterModel`. Switching from `RuleBasedRouter` to `XGBoostRouter` requires a single line at module load:
 
 ```ts
-import { setRouterModel } from "@pwnkit/core";
+import { setRouterModel } from "@0sec/core";
 import { XGBoostRouter } from "./xgboost-router.js";
 setRouterModel(new XGBoostRouter(loadModelFromDisk()));
 ```
@@ -160,19 +160,19 @@ Plan: collect routing traces from the next ~10 benchmark dispatches (xbow-bench 
 ## How to enable
 
 ```bash
-PWNKIT_FEATURE_DYNAMIC_TRIAGE=1 pwnkit scan ./your-target
+0SEC_FEATURE_DYNAMIC_TRIAGE=1 0sec scan ./your-target
 ```
 
 The routing decision for every finding is recorded in:
 - the SQLite event log (`stage:verify event_type:dynamic_triage_routing`), and
-- `~/.pwnkit/runs/<scan-id>/routing-trace.jsonl` at scan teardown.
+- `~/.0sec/runs/<scan-id>/routing-trace.jsonl` at scan teardown.
 
-The existing static feature flags (`PWNKIT_FEATURE_HOLDING_IT_WRONG`, `PWNKIT_FEATURE_POV_GATE`, etc.) still gate whether a layer **can** run; the router decides which of the available layers actually runs per finding. The router can never invoke a layer the operator explicitly disabled via the env var.
+The existing static feature flags (`0SEC_FEATURE_HOLDING_IT_WRONG`, `0SEC_FEATURE_POV_GATE`, etc.) still gate whether a layer **can** run; the router decides which of the available layers actually runs per finding. The router can never invoke a layer the operator explicitly disabled via the env var.
 
 ## Related work
 
-- [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113) — issue tracking this work
-- [pwnkit#112](https://github.com/0sec-labs/0sec/issues/112) — per-layer telemetry (prerequisite, already shipped)
-- [pwnkit#67](https://github.com/0sec-labs/0sec/issues/67) — joint paper plan
-- [pwnkit#72](https://github.com/0sec-labs/0sec/issues/72) — the ablation that motivated this
+- [0sec#113](https://github.com/0sec-labs/0sec/issues/113) — issue tracking this work
+- [0sec#112](https://github.com/0sec-labs/0sec/issues/112) — per-layer telemetry (prerequisite, already shipped)
+- [0sec#67](https://github.com/0sec-labs/0sec/issues/67) — joint paper plan
+- [0sec#72](https://github.com/0sec-labs/0sec/issues/72) — the ablation that motivated this
 - [Dynamic Routing Design Doc](/research/dynamic-routing-design/) — full design discussion

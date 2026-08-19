@@ -1,4 +1,4 @@
-import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
+import type { AttackCategory, Finding, Severity } from "@0sec/shared";
 
 export interface CvssSuggestion {
   vector: string;

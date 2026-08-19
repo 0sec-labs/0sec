@@ -17,7 +17,7 @@
  * back and serializes them so the data stops being thrown away.
  *
  * Source shape (one per chain run) — the parsed `verification_runs.result` jsonb,
- * or the raw `pwnkit exploit` JSON. Both carry the same fields; this collector
+ * or the raw `0sec exploit` JSON. Both carry the same fields; this collector
  * tolerates either by reading defensively (snake_case from the CLI JSON,
  * camelCase from the orchestrator summary).
  *
@@ -160,7 +160,7 @@ export function normalizeStep(raw: unknown): WeaponizationStepRow {
 /**
  * Extract a corpus sample from a single chain-run object. Accepts either the
  * parsed `verification_runs.result` jsonb (weaponization summary nested under
- * `result.weaponization`) or the raw `pwnkit exploit` CLI JSON (flat
+ * `result.weaponization`) or the raw `0sec exploit` CLI JSON (flat
  * `highest_rung` / `per_step` / `exploit_context`). Returns `undefined` when the
  * object carries no recognizable weaponization outcome.
  */

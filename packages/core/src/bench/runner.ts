@@ -1,7 +1,7 @@
 /**
- * Bench runner — runs pwnkit end-to-end against a manifest at a configurable
+ * Bench runner — runs 0sec end-to-end against a manifest at a configurable
  * pass@k and token/turn budget, then hands each attempt's scan result to an
- * oracle for a per-case verdict (pwnkit#556).
+ * oracle for a per-case verdict (0sec#556).
  *
  * Everything that touches the outside world is injectable so the harness is
  * deterministically unit-testable with a mocked LLM / fixed seeds:

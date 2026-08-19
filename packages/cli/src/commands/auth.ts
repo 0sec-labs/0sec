@@ -1,24 +1,24 @@
-// `pwnkit auth` — pwnkit-cloud authentication (CLI half of #303).
+// `0sec auth` — 0sec-cloud authentication (CLI half of #303).
 //
 // Subcommands:
 //   - login        opens a browser at <host>/cli-auth?session=… and polls
 //                  for the mint endpoint to drop a scoped token in
-//   - logout       deletes ~/.pwnkit/cloud.env
+//   - logout       deletes ~/.0sec/cloud.env
 //   - status       loads creds, hits CloudClient.pingHealth(), reports
 //
 // SCAFFOLD NOTICE
 // ───────────────
 // The server-side mint endpoint (better-auth → scoped CLI token) does
-// NOT exist yet — it ships as a separate pwnkit-cloud PR. Until then:
-//   - `pwnkit auth login` (browser flow) will time out after 5 minutes
+// NOT exist yet — it ships as a separate 0sec-cloud PR. Until then:
+//   - `0sec auth login` (browser flow) will time out after 5 minutes
 //     because no server-side endpoint is writing the token to the
 //     polled session URL.
-//   - `pwnkit auth login --token <value>` is the actual usable path:
+//   - `0sec auth login --token <value>` is the actual usable path:
 //     paste a token you generated some other way (manual server insert,
-//     env handoff, etc.) and the CLI persists it to ~/.pwnkit/cloud.env.
-//   - `pwnkit auth status` works against any reachable cloud host that
+//     env handoff, etc.) and the CLI persists it to ~/.0sec/cloud.env.
+//   - `0sec auth status` works against any reachable cloud host that
 //     answers GET /health with a 2xx and `{status: "ok"}`-shaped body.
-//   - `pwnkit auth logout` works fully (it's just `unlinkSync`).
+//   - `0sec auth logout` works fully (it's just `unlinkSync`).
 //
 // DIVERGENCE FROM h1.ts
 // ──────────────────────
@@ -26,13 +26,14 @@
 // on the H1 site, so there's no `login` flow there at all — the loader
 // just reads what the operator put in h1.env. Cloud uses Bearer auth
 // with a scoped token minted by the server after a browser-based
-// better-auth flow, so `pwnkit auth login` is the one extra surface.
+// better-auth flow, so `0sec auth login` is the one extra surface.
 //
-// SECURITY: the token is never printed. `pwnkit auth status` echoes the
+// SECURITY: the token is never printed. `0sec auth status` echoes the
 // host on success; on auth failure we surface the status code + path,
 // never the token or the Authorization header.
 
 import { spawn } from "node:child_process";
+import { homeStateDir } from "@0sec/shared";
 import { mkdirSync, writeFileSync, chmodSync, unlinkSync, existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -48,7 +49,7 @@ import {
   CloudNetworkError,
   CloudError,
   DEFAULT_CLOUD_HOST,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 const EXIT_OK = 0;
 const EXIT_USER_ERROR = 1;
@@ -84,30 +85,30 @@ interface StatusOptions {
 export function registerAuthCommand(program: Command): void {
   const auth = program
     .command("auth")
-    .description("pwnkit-cloud authentication (scaffold; see `pwnkit auth login --help`)");
+    .description("0sec-cloud authentication (scaffold; see `0sec auth login --help`)");
 
-  // ── pwnkit auth login ──
+  // ── 0sec auth login ──
   auth
     .command("login")
-    .description("Log in to pwnkit-cloud (opens browser; --token to paste directly)")
+    .description("Log in to 0sec-cloud (opens browser; --token to paste directly)")
     .option("--host <url>", `Cloud host (default ${DEFAULT_CLOUD_HOST})`)
     .option("--token <value>", "Skip the browser flow and persist this token directly")
     .action(async (opts: { host?: string; token?: string }) => {
       await runLogin(opts);
     });
 
-  // ── pwnkit auth logout ──
+  // ── 0sec auth logout ──
   auth
     .command("logout")
-    .description("Delete ~/.pwnkit/cloud.env")
+    .description("Delete ~/.0sec/cloud.env")
     .action(() => {
       runLogout({});
     });
 
-  // ── pwnkit auth status ──
+  // ── 0sec auth status ──
   auth
     .command("status")
-    .description("Verify pwnkit-cloud credentials against /health")
+    .description("Verify 0sec-cloud credentials against /health")
     .action(async () => {
       await runStatus({});
     });
@@ -119,7 +120,7 @@ export function registerAuthCommand(program: Command): void {
 
 export async function runLogin(opts: LoginOptions): Promise<void> {
   // Validate --host even when --token is also passed; persisting an
-  // invalid host now would just cause `pwnkit auth status` to fail
+  // invalid host now would just cause `0sec auth status` to fail
   // later with a less actionable error.
   let host: string;
   if (opts.host) {
@@ -158,7 +159,7 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
   console.log(chalk.dim(`  ${loginUrl}`));
   console.log("");
   console.log(chalk.yellow("Note: server-side mint endpoint is not yet implemented (#303)."));
-  console.log(chalk.yellow("      For now, use: pwnkit auth login --token <value>"));
+  console.log(chalk.yellow("      For now, use: 0sec auth login --token <value>"));
   console.log("");
 
   const opener = opts.openBrowser ?? defaultOpenBrowser;
@@ -219,7 +220,7 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
   console.error(
     chalk.red(
       `Login timed out after ${Math.round((attempts * intervalMs) / 1000)}s. ` +
-        `Use \`pwnkit auth login --token <value>\` until the server-side mint endpoint ships (#303).`,
+        `Use \`0sec auth login --token <value>\` until the server-side mint endpoint ships (#303).`,
     ),
   );
   process.exitCode = EXIT_NET;
@@ -227,19 +228,19 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
 
 export function runLogout(opts: LogoutOptions): void {
   const home = opts.homeDir ?? homedir();
-  const pwnkitPath = join(home, ".pwnkit", "cloud.env");
+  const osecPath = join(homeStateDir(opts.homeDir), "cloud.env");
   const cloudCredsPath = join(home, ".0cloud", "credentials.json");
   let deletedAny = false;
 
-  // Delete pwnkit credential file
+  // Delete 0sec credential file
   try {
-    unlinkSync(pwnkitPath);
+    unlinkSync(osecPath);
     deletedAny = true;
   } catch (err: unknown) {
     const code = (err as { code?: string }).code;
     if (code !== "ENOENT") {
       console.error(
-        chalk.red(`Could not delete ${pwnkitPath}: ${err instanceof Error ? err.message : String(err)}`),
+        chalk.red(`Could not delete ${osecPath}: ${err instanceof Error ? err.message : String(err)}`),
       );
       process.exitCode = EXIT_USER_ERROR;
       return;
@@ -336,14 +337,14 @@ function normaliseHostArg(host: string | undefined): string | null {
 
 function persistCredentials(host: string, token: string, homeDirOverride?: string): void {
   const home = homeDirOverride ?? homedir();
-  const dir = join(home, ".pwnkit");
+  const dir = homeStateDir(homeDirOverride);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, "cloud.env");
   const body =
-    `# pwnkit-cloud credentials. Managed by \`pwnkit auth\`.\n` +
+    `# 0sec-cloud credentials. Managed by \`0sec auth\`.\n` +
     `# DO NOT commit this file or share its contents.\n` +
-    `PWNKIT_CLOUD_HOST=${host}\n` +
-    `PWNKIT_CLOUD_TOKEN=${token}\n`;
+    `0SEC_CLOUD_HOST=${host}\n` +
+    `0SEC_CLOUD_TOKEN=${token}\n`;
   writeFileSync(path, body, { mode: 0o600 });
   // writeFileSync's `mode` is honoured on create but POSIX semantics
   // mean an existing file keeps its old perms — so re-chmod explicitly.
@@ -357,12 +358,12 @@ function persistCredentials(host: string, token: string, homeDirOverride?: strin
   }
 
   // Write 0cloud-compatible credential file for unified auth.
-  // Best-effort: don't fail the pwnkit login if this secondary write fails.
+  // Best-effort: don't fail the 0sec login if this secondary write fails.
   try {
     const cloudDir = join(home, ".0cloud");
     mkdirSync(cloudDir, { recursive: true });
     const cloudCredsPath = join(cloudDir, "credentials.json");
-    // pwnkit only knows the dashboard host (cloud.0sec.ai); the 0cloud
+    // 0sec only knows the dashboard host (cloud.0sec.ai); the 0cloud
     // orchestrator API lives under /api on it. `api.0sec.ai` has no DNS
     // (#508), so derive the API base as `${host}/api` for 0cloud's
     // endpoint. orgId stays empty — 0cloud resolves org from its own
@@ -385,7 +386,7 @@ function persistCredentials(host: string, token: string, homeDirOverride?: strin
     writeFileSync(cloudCredsPath, cloudCreds, { mode: 0o600 });
     chmodSync(cloudCredsPath, 0o600);
   } catch {
-    // Silently ignore — the primary pwnkit credential write succeeded.
+    // Silently ignore — the primary 0sec credential write succeeded.
   }
 }
 
@@ -419,7 +420,7 @@ function extractToken(body: unknown): string | null {
  *
  * JUDGMENT CALL: we avoided the `opener` package even though it's ~30
  * LoC because (a) MIT, (b) zero transitive deps, and (c) we already
- * have a working no-dep implementation in `pwnkit doctor`-style code
+ * have a working no-dep implementation in `0sec doctor`-style code
  * elsewhere. Adding a dep for a 12-line function loses on the
  * dependency-cost calculus.
  */

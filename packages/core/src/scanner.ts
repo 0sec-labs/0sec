@@ -1,5 +1,5 @@
-import type { ScanConfig, ScanContext, ScanReport, PipelineStage } from "@pwnkit/shared";
-import { loadTemplates } from "@pwnkit/templates";
+import type { ScanConfig, ScanContext, ScanReport, PipelineStage } from "@0sec/shared";
+import { loadTemplates } from "@0sec/templates";
 import { createScanContext, finalize } from "./context.js";
 import { createRuntime } from "./runtime/index.js";
 import type { Runtime, RuntimeType } from "./runtime/index.js";
@@ -21,16 +21,16 @@ function isRepairableDbError(error: unknown): boolean {
 async function getDB(dbPath?: string) {
   if (!_db) {
     try {
-      const { pwnkitDB, repairPwnkitDatabase } = await import("@pwnkit/db");
+      const { osecDB, repairOsecDatabase } = await import("@0sec/db");
       try {
-        _db = new pwnkitDB(dbPath);
+        _db = new osecDB(dbPath);
       } catch (error) {
         if (!isRepairableDbError(error)) throw error;
-        const repaired = repairPwnkitDatabase(dbPath);
+        const repaired = repairOsecDatabase(dbPath);
         process.stderr.write(
-          `[pwnkit] Recovered local scan database${repaired.backupPath ? ` (backup: ${repaired.backupPath})` : ""}.\n`,
+          `[0sec] Recovered local scan database${repaired.backupPath ? ` (backup: ${repaired.backupPath})` : ""}.\n`,
         );
-        _db = new pwnkitDB(dbPath);
+        _db = new osecDB(dbPath);
       }
     } catch (e) {
       console.error('Warning: database unavailable — scan results will not be persisted');

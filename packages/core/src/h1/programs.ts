@@ -2,7 +2,7 @@
 //
 // Functions stay free-standing rather than methods on the client: tests
 // already inject `fetchImpl` at the client level, and keeping these as
-// plain functions matches the rest of the pwnkit core (compare
+// plain functions matches the rest of the 0sec core (compare
 // `runStaticAnalysis`, `parseApiSpec`, etc.).
 
 import type { H1Client } from "./client.js";

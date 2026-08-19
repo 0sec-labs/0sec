@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import type { AttackTemplate, ScanDepth } from "@pwnkit/shared";
+import type { AttackTemplate, ScanDepth } from "@0sec/shared";
 import { EMBEDDED_TEMPLATES } from "./embedded.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));

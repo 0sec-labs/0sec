@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertNoDuplicateWindowsLpeJsonKeys } from "./windows-lpe-paired-corpus.js";
 
-export const MSRC_WINDOWS_LPE_INVENTORY_SCHEMA = "pwnkit.msrc-windows-lpe-inventory/v1" as const;
+export const MSRC_WINDOWS_LPE_INVENTORY_SCHEMA = "0sec.msrc-windows-lpe-inventory/v1" as const;
 const MSRC_API_ORIGIN = "https://api.msrc.microsoft.com";
 const MSRC_ADVISORY_ORIGIN = "https://msrc.microsoft.com";
 const RELEASE = /^[0-9]{4}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$/;
@@ -117,7 +117,7 @@ interface MsrcSourceDocument {
   revisionNumber: string;
 }
 
-export const MSRC_WINDOWS_LPE_TRANCHE_LOCK_SCHEMA = "pwnkit.msrc-windows-lpe-tranche-lock/v1" as const;
+export const MSRC_WINDOWS_LPE_TRANCHE_LOCK_SCHEMA = "0sec.msrc-windows-lpe-tranche-lock/v1" as const;
 
 export interface MsrcWindowsLpeTrancheLock {
   schemaVersion: typeof MSRC_WINDOWS_LPE_TRANCHE_LOCK_SCHEMA;

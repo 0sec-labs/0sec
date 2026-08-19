@@ -1,6 +1,6 @@
 ---
 title: Triage Dataset
-description: How pwnkit turns benchmark runs and verified findings into labeled JSONL for triage-model training.
+description: How 0sec turns benchmark runs and verified findings into labeled JSONL for triage-model training.
 ---
 
 `packages/benchmark/src/triage-data-collector.ts` converts benchmark artifacts
@@ -10,7 +10,7 @@ true-positive / false-positive classifiers.
 The output is designed to be useful for two families of models:
 
 - pure text classifiers over finding title / description / request / response
-- hybrid models that fuse text embeddings with pwnkit's handcrafted
+- hybrid models that fuse text embeddings with 0sec's handcrafted
   45-feature vector
 
 This is the data pipeline behind the paper-plan tracked in
@@ -24,7 +24,7 @@ The collector supports four input surfaces:
 |------|------|---------------------|
 | XBOW / Cybench-style results JSON | `--results <file>` | Flag extraction |
 | npm-bench results JSON | `--npm-bench <file>` | Package verdict |
-| pwnkit SQLite DB | `--db <file>` | Blind verify status |
+| 0sec SQLite DB | `--db <file>` | Blind verify status |
 | Directory of scan DBs | `--scan-dir <dir>` | Blind verify status |
 
 If you run the collector with no explicit `--results` or `--npm-bench`
@@ -39,7 +39,7 @@ files by filename:
 Run against a specific benchmark artifact:
 
 ```bash
-pnpm --filter @pwnkit/benchmark exec tsx src/triage-data-collector.ts \
+pnpm --filter @0sec/benchmark exec tsx src/triage-data-collector.ts \
   --npm-bench packages/benchmark/results/npm-bench-latest.json \
   --output packages/benchmark/results/triage-dataset.jsonl
 ```
@@ -47,17 +47,17 @@ pnpm --filter @pwnkit/benchmark exec tsx src/triage-data-collector.ts \
 Combine npm-bench with local verified findings from the SQLite DB:
 
 ```bash
-pnpm --filter @pwnkit/benchmark exec tsx src/triage-data-collector.ts \
+pnpm --filter @0sec/benchmark exec tsx src/triage-data-collector.ts \
   --npm-bench packages/benchmark/results/npm-bench-latest.json \
-  --db ~/.pwnkit/pwnkit.db \
+  --db ~/.0sec/0sec.db \
   --output packages/benchmark/results/triage-dataset-mixed.jsonl
 ```
 
 Pull labels from a whole directory of scan databases:
 
 ```bash
-pnpm --filter @pwnkit/benchmark exec tsx src/triage-data-collector.ts \
-  --scan-dir ./.pwnkit/scans \
+pnpm --filter @0sec/benchmark exec tsx src/triage-data-collector.ts \
+  --scan-dir ./.0sec/scans \
   --output packages/benchmark/results/triage-dataset-from-db.jsonl
 ```
 

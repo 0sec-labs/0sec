@@ -1,22 +1,22 @@
-name: "PwnKit: Publish Docker image"
+name: "0sec: Publish Docker image"
 
-# Build + push the pwnkit engine image to ghcr.io/<owner>/pwnkit.
+# Build + push the 0sec engine image to ghcr.io/<owner>/0sec.
 #
 # Trigger model — mirrors dashboard-build.yml / services-publish.yml so
 # merged engine work doesn't drift out of production (see #522):
 #
-#   - successful PwnKit: Main on main → SHA-tagged image + :main + refreshed
+#   - successful 0sec: Main on main → SHA-tagged image + :main + refreshed
 #                                       :latest. This is the rolling-main path
 #                                       the worker-controller pins by default
-#                                       (PWNKIT_IMAGE=…/pwnkit:latest).
+#                                       (0SEC_IMAGE=…/0sec:latest).
 #
-# Main publishes are chained from `PwnKit: Main` instead of running directly on
+# Main publishes are chained from `0sec: Main` instead of running directly on
 # push, so a bad engine cannot refresh :latest before the CI suite has passed.
 # The publisher has no direct tag or manual trigger. Every credentialed build
 # starts only after trusted main CI succeeds.
 on:
   workflow_run:
-    workflows: ["PwnKit: Main"]
+    workflows: ["0sec: Main"]
     types: [completed]
     branches: [main]
 
@@ -32,7 +32,7 @@ permissions:
 #   - out-of-order CI completions raced each other to GHCR. Queued
 #     builds complete in order instead of cancelling mid-flight.
 concurrency:
-  group: pwnkit-docker-publish-${{ github.ref }}
+  group: 0sec-docker-publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -73,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          echo "name=ghcr.io/${OWNER}/pwnkit" >> "$GITHUB_OUTPUT"
+          echo "name=ghcr.io/${OWNER}/0sec" >> "$GITHUB_OUTPUT"
 
       # :latest only moves when this build IS the current main tip.
       # workflow_run publishes check out the TRIGGERING CI run's head_sha;
@@ -137,8 +137,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=pwnkit
-          cache-to: type=gha,mode=max,scope=pwnkit
+          cache-from: type=gha,scope=0sec
+          cache-to: type=gha,mode=max,scope=0sec
           no-cache: ${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Re-authenticate to GHCR before retry
@@ -160,8 +160,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=pwnkit
-          cache-to: type=gha,mode=max,scope=pwnkit
+          cache-from: type=gha,scope=0sec
+          cache-to: type=gha,mode=max,scope=0sec
           no-cache: true
 
       # Buildx can refresh the registry session used for the push. Re-login
@@ -193,7 +193,7 @@ jobs:
           # reordered by a tag-plan change, and it is exactly the reference the
           # release manifest pins — so this now smoke-tests the artifact we
           # actually promote.
-          IMAGE="ghcr.io/${{ github.repository_owner }}/pwnkit@${{ steps.build.outputs.digest }}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/0sec@${{ steps.build.outputs.digest }}"
           echo "Smoke-testing $IMAGE"
           docker pull "$IMAGE"
           # Exec every tool as the non-root `ubuntu` user the image drops to.

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pwnkit.windows-lpe-evaluator-labels/v2",
+  "schemaVersion": "0sec.windows-lpe-evaluator-labels/v2",
   "corpusId": "windows-lpe-paired-contract-v2",
   "split": "development",
   "inventorySha256": "a4083166a4d025e639b5ac7e81df6351a3d671e3440a1672b01004ef3733ce5c",

@@ -48,7 +48,7 @@ describe("lookupVersionCves", () => {
   let cacheDir: string;
 
   beforeEach(() => {
-    cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-version-cve-test-"));
+    cacheDir = mkdtempSync(join(tmpdir(), "0sec-version-cve-test-"));
   });
 
   afterEach(() => {

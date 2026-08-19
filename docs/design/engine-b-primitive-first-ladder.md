@@ -227,7 +227,7 @@ primitive `snd_rawmidi_runtime @ kmalloc-192 +0x18`, reclaimed by `msgsnd-2ndseg
 ## Wiring path (post-prototype, not in this branch)
 
 1. Back `RungPlanner` with the unified LLM service (`@0cloud/llm callLlm` /
-   `pwnkit chatgpt-codex` — never raw keys) behind the same injectable seam.
+   `0sec chatgpt-codex` — never raw keys) behind the same injectable seam.
 2. Back `ConfirmRungDeps.nbootStable` with a `verifyAcrossBoots` adapter and
    `detectSignature` with the shipped `detectKernelSignature`.
 3. Have `enumerateGoalPrimitives` call `selectSprayPlans` + `introspect` +

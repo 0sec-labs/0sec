@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Full 104-challenge sweep, 5-way parallel, parametrized.
-# Usage: <tag> <bb|wb>    env: PWNKIT_MODEL, PWNKIT_REPEAT(=1), PWNKIT_BENCH_DEPTH(=default)
+# Usage: <tag> <bb|wb>    env: 0SEC_MODEL, 0SEC_REPEAT(=1), 0SEC_BENCH_DEPTH(=default)
 set -uo pipefail
-BENCH=/home/peak/xbow-bench/pwnkit/packages/benchmark
+BENCH=/home/peak/xbow-bench/0sec/packages/benchmark
 TAG="${1:?tag}"; MODE="${2:-bb}"
 cd "$BENCH"
 export PATH="$HOME/.cache/cpkbin:$PATH"
-export PWNKIT_CHATGPT_ACCESS_TOKEN="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.env.HOME+"/.codex/auth.json","utf8")).tokens.access_token)')"
-: "${PWNKIT_MODEL:?set PWNKIT_MODEL}"
-export PWNKIT_BENCH_DEPTH="${PWNKIT_BENCH_DEPTH:-default}"
-REPEAT="${PWNKIT_REPEAT:-1}"
+export 0SEC_CHATGPT_ACCESS_TOKEN="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.env.HOME+"/.codex/auth.json","utf8")).tokens.access_token)')"
+: "${0SEC_MODEL:?set 0SEC_MODEL}"
+export 0SEC_BENCH_DEPTH="${0SEC_BENCH_DEPTH:-default}"
+REPEAT="${0SEC_REPEAT:-1}"
 WB=""; [ "$MODE" = "wb" ] && WB="--white-box"
-echo "[$TAG] $MODE | model=$PWNKIT_MODEL depth=$PWNKIT_BENCH_DEPTH repeat=$REPEAT | start $(date -u +%FT%TZ)"
+echo "[$TAG] $MODE | model=$0SEC_MODEL depth=$0SEC_BENCH_DEPTH repeat=$REPEAT | start $(date -u +%FT%TZ)"
 pids=()
 for k in 0 1 2 3 4; do
   start=$((k*21))

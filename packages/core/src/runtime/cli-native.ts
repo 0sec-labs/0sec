@@ -39,10 +39,10 @@ import type {
  * ## Known tradeoffs (called out in the bounty discussion)
  *
  * - **Dual context windows.** Claude Code manages its own context
- *   internally; pwnkit's native loop also manages context (compaction,
+ *   internally; 0sec's native loop also manages context (compaction,
  *   message history). Both are running, side-by-side, on the same
  *   conversation. This is acceptable: Claude Code's own compaction
- *   prevents the subprocess from blowing up, and pwnkit's native-loop
+ *   prevents the subprocess from blowing up, and 0sec's native-loop
  *   features (loop detection, early-stop, playbook injection) still
  *   fire on top of whatever Claude Code returns.
  * - **Token usage opacity.** stream-json reports the same token counts
@@ -348,7 +348,7 @@ export function buildClaudePromptFromLastUser(messages: NativeMessage[]): string
   const parts: string[] = [];
   if (toolResults.length > 0) {
     parts.push(
-      `[pwnkit:tool_results]\n${JSON.stringify(toolResults, null, 2)}`,
+      `[0sec:tool_results]\n${JSON.stringify(toolResults, null, 2)}`,
     );
   }
   if (textParts.length > 0) {

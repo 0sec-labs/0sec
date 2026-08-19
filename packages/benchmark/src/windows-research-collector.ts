@@ -7,8 +7,8 @@ import { pathToFileURL } from "node:url";
 import { loadWindowsLpeCorpus } from "./windows-lpe-corpus.js";
 import { wilsonIntervalTuple } from "./wilson.js";
 
-export const WINDOWS_ATTEMPT_SCHEMA = "pwnkit.windows-research-attempt/v1" as const;
-export const WINDOWS_LEDGER_SCHEMA = "pwnkit.windows-research-ledger/v1" as const;
+export const WINDOWS_ATTEMPT_SCHEMA = "0sec.windows-research-attempt/v1" as const;
+export const WINDOWS_LEDGER_SCHEMA = "0sec.windows-research-ledger/v1" as const;
 
 export type GroundTruth = "positive" | "negative" | "unknown";
 export type ProofStatus =
@@ -26,7 +26,7 @@ export interface WindowsResearchAttemptInput {
   attempt: number;
   groundTruth: GroundTruth;
   label: { source: string; sha256: string; sealedAt: string; keyId: string; signature: string };
-  repoShas: { zeroverse: string; pwnkit: string; zeroCloud: string };
+  repoShas: { zeroverse: string; "0sec": string; zeroCloud: string };
   windowsBuildLabEx: string;
   campaignManifestSha256: string;
   /** Optional benchmark manifest. Bound cases are never novelty/bounty claim eligible. */
@@ -50,7 +50,7 @@ export interface WindowsResearchAttemptInput {
     cleanControls: number;
     confirmations: number;
     crashSignature?: string;
-    pwnkitImportPassed: boolean;
+    osecImportPassed: boolean;
     rejectionReason?: string;
   };
   telemetry: {
@@ -103,7 +103,7 @@ interface RateMetric {
 }
 
 export interface WindowsResearchSummary {
-  schemaVersion: "pwnkit.windows-research-summary/v1";
+  schemaVersion: "0sec.windows-research-summary/v1";
   rows: number;
   claimEligibleRows: number;
   singleAttempt: {
@@ -137,7 +137,7 @@ export interface WindowsResearchSummary {
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_SHA = /^[a-f0-9]{40}$/;
-const IMPORT_VERDICT_SCHEMA = "pwnkit.windows-hyperv-import-verdict/v1";
+const IMPORT_VERDICT_SCHEMA = "0sec.windows-hyperv-import-verdict/v1";
 const FORBIDDEN_KEYS = new Set([
   "trigger_argv",
   "control_argv",
@@ -225,13 +225,13 @@ function validateInputShape(value: unknown): asserts value is WindowsResearchAtt
     "corpusManifestPath", "receiptPath", "importVerdictPath", "artifactPaths", "discovery", "proof", "telemetry", "safety",
   ]);
   const label = exact(top.label, "label", ["source", "sha256", "sealedAt", "keyId", "signature"]);
-  const repoShas = exact(top.repoShas, "repoShas", ["zeroverse", "pwnkit", "zeroCloud"]);
+  const repoShas = exact(top.repoShas, "repoShas", ["zeroverse", "0sec", "zeroCloud"]);
   exact(top.discovery, "discovery", [
     "candidateEmitted", "candidateId", "model", "runtime", "agentRole", "agentCount", "durationMs",
   ]);
   exact(top.proof, "proof", [
     "status", "targetTrials", "cleanControls", "confirmations", "crashSignature",
-    "pwnkitImportPassed", "rejectionReason",
+    "osecImportPassed", "rejectionReason",
   ]);
   exact(top.telemetry, "telemetry", [
     "startedAt", "completedAt", "proveDurationMs", "importDurationMs", "totalDurationMs",
@@ -267,7 +267,7 @@ function validateInputShape(value: unknown): asserts value is WindowsResearchAtt
   const proof = record(top.proof, "proof");
   const safety = record(top.safety, "safety");
   for (const key of ["candidateEmitted"] as const) if (typeof discovery[key] !== "boolean") throw new Error(`discovery.${key} must be boolean`);
-  for (const key of ["pwnkitImportPassed"] as const) if (typeof proof[key] !== "boolean") throw new Error(`proof.${key} must be boolean`);
+  for (const key of ["osecImportPassed"] as const) if (typeof proof[key] !== "boolean") throw new Error(`proof.${key} must be boolean`);
   for (const key of ["scopeFresh", "authorizedProgram", "workerBuildBound", "triggerAllowlisted", "controlFirst", "cleanControls", "sidecarsRevalidated", "artifactsRetained", "preExecutionGatePassed", "executed", "weaponization", "autoDisclosure"] as const) {
     if (typeof safety[key] !== "boolean") throw new Error(`safety.${key} must be boolean`);
   }
@@ -305,7 +305,7 @@ function parseImportVerdict(path: string): ImportVerdict {
     || typeof row.campaignId !== "string" || typeof row.buildLabEx !== "string"
     || !Number.isSafeInteger(row.confirmations) || !Number.isSafeInteger(row.cleanControls)
     || !Number.isSafeInteger(row.distinctDumpArtifacts)) {
-    throw new Error("invalid pwnkit Hyper-V import verdict");
+    throw new Error("invalid 0sec Hyper-V import verdict");
   }
   return row as unknown as ImportVerdict;
 }
@@ -360,9 +360,9 @@ function stableJson(value: unknown): string {
 }
 
 function verifyLiveLabelSeal(input: WindowsResearchAttemptInput): void {
-  const key = process.env.PWNKIT_WINDOWS_LABEL_SEAL_KEY;
+  const key = process.env["0SEC_WINDOWS_LABEL_SEAL_KEY"];
   if (!key || Buffer.byteLength(key) < 32) {
-    throw new Error("live attempts require PWNKIT_WINDOWS_LABEL_SEAL_KEY with at least 32 bytes");
+    throw new Error("live attempts require 0SEC_WINDOWS_LABEL_SEAL_KEY with at least 32 bytes");
   }
   if (!input.label.keyId.trim() || !SHA256.test(input.label.signature)) {
     throw new Error("live label seal metadata is invalid");
@@ -443,7 +443,7 @@ export function collectWindowsResearchAttempt(
   if (input.safety.weaponization || input.safety.autoDisclosure) {
     throw new Error("benchmark ledger forbids weaponization and automatic disclosure");
   }
-  if (input.proof.status === "reproduced" && (!input.proof.pwnkitImportPassed
+  if (input.proof.status === "reproduced" && (!input.proof.osecImportPassed
     || input.proof.confirmations < 2 || input.proof.cleanControls < 2)) {
     throw new Error("reproduced outcome did not clear proof/import thresholds");
   }
@@ -495,7 +495,7 @@ export function collectWindowsResearchAttempt(
     || importVerdict.confirmations !== input.proof.confirmations
     || importVerdict.cleanControls !== input.proof.cleanControls
     || importVerdict.distinctDumpArtifacts < input.proof.confirmations)) {
-    throw new Error("live proof fields are not bound to the pwnkit import verdict and receipt");
+    throw new Error("live proof fields are not bound to the 0sec import verdict and receipt");
   }
   const artifactPaths = [...new Set([
     ...(input.artifactPaths ?? []),
@@ -628,7 +628,7 @@ export function summarizeWindowsResearch(
   const failedPre = claimRows.filter((row) => !row.safety.preExecutionGatePassed);
   const gatePasses = claimRows.filter((row) => row.safety.preExecutionGatePassed).length;
   return {
-    schemaVersion: "pwnkit.windows-research-summary/v1",
+    schemaVersion: "0sec.windows-research-summary/v1",
     rows: rows.length,
     claimEligibleRows: rows.filter((row) => row.claimEligible).length,
     singleAttempt: view(claimRows),

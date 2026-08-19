@@ -14,7 +14,7 @@
  * classifier is deliberately narrow to keep the signal trustworthy.
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── Marker patterns ────────────────────────────────────────────────────────
 

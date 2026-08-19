@@ -1,6 +1,6 @@
 ---
 title: Shell-First Rationale
-description: Why pwnkit uses bash instead of structured tools, with A/B test data from the XBOW benchmark.
+description: Why 0sec uses bash instead of structured tools, with A/B test data from the XBOW benchmark.
 ---
 
 Most AI security tools give agents structured tools with typed parameters -- `crawl(url)`, `submit_form(url, fields)`, `http_request(url, method, body)`. The agent must learn the tool API, choose the right tool, and compose multi-step operations across separate tool calls.
@@ -21,7 +21,7 @@ Then we gave the agent a single tool: `bash`. Run any bash command. The agent wr
 
 **Full toolkit.** The agent can run sqlmap, write Python exploit scripts, use jq, chain pipes -- anything a real pentester would do.
 
-## The pwnkit tool set
+## The 0sec tool set
 
 | Tool | Purpose | When to use |
 |------|---------|-------------|

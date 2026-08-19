@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { AttackCategory, Finding } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@0sec/shared";
 
 import { checkReachability, extractSinkLocation } from "./reachability.js";
 
@@ -26,7 +26,7 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "pwnkit-reach-"));
+  root = mkdtempSync(join(tmpdir(), "0sec-reach-"));
 });
 
 afterEach(() => {

@@ -13,15 +13,15 @@ import {
   resolveEngagementProfile,
   extractEngagementFromScopeJson,
   describeEngagementPosture,
-} from "@pwnkit/core";
+} from "@0sec/core";
 import type {
   EngagementPosture,
   EngagementProfileInputs,
   HostRateConfig,
   RateLimiterConfig,
-} from "@pwnkit/core";
-import { pwnkitDB } from "@pwnkit/db";
-import type { AuthConfig } from "@pwnkit/shared";
+} from "@0sec/core";
+import { osecDB } from "@0sec/db";
+import type { AuthConfig } from "@0sec/shared";
 import { z } from "zod";
 
 type McpServerOptions = {
@@ -76,13 +76,13 @@ function parseJsonEnv<T>(name: string): T | undefined {
 }
 
 function parseAuthEnv(): AuthConfig | undefined {
-  const auth = parseJsonEnv<Partial<AuthConfig>>("PWNKIT_MCP_AUTH_JSON");
+  const auth = parseJsonEnv<Partial<AuthConfig>>("0SEC_MCP_AUTH_JSON");
   if (!auth) return undefined;
 
   const requireString = (key: string): string => {
     const value = (auth as Record<string, unknown>)[key];
     if (typeof value !== "string" || value.trim().length === 0) {
-      throw new Error(`PWNKIT_MCP_AUTH_JSON ${auth.type ?? "auth"} auth requires non-empty string field '${key}'.`);
+      throw new Error(`0SEC_MCP_AUTH_JSON ${auth.type ?? "auth"} auth requires non-empty string field '${key}'.`);
     }
     return value;
   };
@@ -104,7 +104,7 @@ function parseAuthEnv(): AuthConfig | undefined {
       requireString("value");
       break;
     default:
-      throw new Error("PWNKIT_MCP_AUTH_JSON has an invalid auth type.");
+      throw new Error("0SEC_MCP_AUTH_JSON has an invalid auth type.");
   }
 
   return auth as AuthConfig;
@@ -190,8 +190,8 @@ function withToolTimeout(
 /**
  * Resolve the engagement hardening posture, or exit 2 on malformed config.
  *
- * Same contract as the `pwnkit scan` pre-flight: a typo'd
- * `--engagement-profile`, a bad `PWNKIT_ENGAGEMENT_RATE_RPS`, or a malformed
+ * Same contract as the `0sec scan` pre-flight: a typo'd
+ * `--engagement-profile`, a bad `0SEC_ENGAGEMENT_RATE_RPS`, or a malformed
  * scope-file `engagement` block is an operator error that must surface at boot
  * — not after the server has already served a session at default noise levels.
  * Exit code 2 matches `scan` so callers can treat "bad posture config" the same
@@ -252,21 +252,21 @@ function clampRateLimitToPosture(
 export function registerMcpServerCommand(program: Command): void {
   program
     .command("mcp-server")
-    .description("Run pwnkit's MCP stdio server for live target interaction tools")
+    .description("Run 0sec's MCP stdio server for live target interaction tools")
     .requiredOption("--target <target>", "Target URL for this MCP session")
     .requiredOption("--scan-id <scanId>", "Scan ID to associate persisted findings and target updates with")
     .option("--db-path <path>", "Path to SQLite database")
     .option("--timeout <ms>", "Default tool timeout in milliseconds", "30000")
-    .option("--scope <path>", "Path to a pwnkit scope JSON file. Out-of-scope URLs are refused by every target tool.")
+    .option("--scope <path>", "Path to a 0sec scope JSON file. Out-of-scope URLs are refused by every target tool.")
     .option("--rate-limit <spec>", "Per-host request rate-limit spec. Defaults to 5 rps when unset. An active --engagement-profile caps this: the effective rate is the minimum of the two, so the profile can only lower it.")
     .option("--allow-scanners", "Disable generic-scanner suppression for scoped engagements.", false)
     .option(
       "--engagement-profile <name>",
-      "Engagement hardening posture for authorized enterprise work. 'standard' (default) is the existing behaviour. 'conservative' applies the quiet posture to this MCP session: no adaptive WAF-evasion ladder, full jitter on the per-host token bucket, and a 1 rps/host ceiling. The profile can only ever make the session quieter — the effective rate is the minimum of the profile and --rate-limit. The applied posture is recorded as an `engagement_posture_applied` event on the scan so it can be handed to the client as evidence. Lower precedence than the scope file's `engagement` block and PWNKIT_ENGAGEMENT_PROFILE.",
+      "Engagement hardening posture for authorized enterprise work. 'standard' (default) is the existing behaviour. 'conservative' applies the quiet posture to this MCP session: no adaptive WAF-evasion ladder, full jitter on the per-host token bucket, and a 1 rps/host ceiling. The profile can only ever make the session quieter — the effective rate is the minimum of the profile and --rate-limit. The applied posture is recorded as an `engagement_posture_applied` event on the scan so it can be handed to the client as evidence. Lower precedence than the scope file's `engagement` block and 0SEC_ENGAGEMENT_PROFILE.",
     )
     .option(
       "--no-waf-evasion",
-      "Disable the adaptive WAF-evasion ladder (default: on). When a response classifies as blocked, the engine normally retries with encoding/casing/whitespace-mutated payload variants, which escalates a routine WAF block into a SOC incident. Detection and reporting of the block are unaffected. Independent of --engagement-profile; env form: PWNKIT_WAF_EVASION=0.",
+      "Disable the adaptive WAF-evasion ladder (default: on). When a response classifies as blocked, the engine normally retries with encoding/casing/whitespace-mutated payload variants, which escalates a routine WAF block into a SOC incident. Detection and reporting of the block are unaffected. Independent of --engagement-profile; env form: 0SEC_WAF_EVASION=0.",
     )
     .action(async (opts: McpServerOptions) => {
       const timeoutMs = Math.max(1_000, parseInt(opts.timeout ?? "30000", 10));
@@ -282,7 +282,7 @@ export function registerMcpServerCommand(program: Command): void {
       // Engagement hardening posture (`scope/engagement-profile.ts`). Resolved
       // BEFORE the DB is opened, matching the scope-rejection ordering above:
       // a config error must fail without leaving a DB handle behind. Same
-      // scope-file > env > CLI precedence and same exit code as `pwnkit scan`.
+      // scope-file > env > CLI precedence and same exit code as `0sec scan`.
       //
       // `--no-waf-evasion` sets opts.wafEvasion to false; commander leaves it
       // `true` when the flag is absent, which we map back to "unset" so the
@@ -295,15 +295,15 @@ export function registerMcpServerCommand(program: Command): void {
         cliWafEvasion,
       });
 
-      const db = new pwnkitDB(opts.dbPath);
+      const db = new osecDB(opts.dbPath);
 
       const attributionHeaders =
-        parseJsonEnv<string[]>("PWNKIT_MCP_ATTRIBUTION_HEADERS_JSON");
+        parseJsonEnv<string[]>("0SEC_MCP_ATTRIBUTION_HEADERS_JSON");
       const attribution = resolveAttribution({
         scopeFileBlock: scope ? extractAttributionFromScopeJson(scope.raw) : undefined,
         env: process.env,
         cliHeaders: attributionHeaders,
-        cliUaToken: process.env.PWNKIT_MCP_ATTRIBUTION_UA_TOKEN,
+        cliUaToken: process.env["0SEC_MCP_ATTRIBUTION_UA_TOKEN"],
       });
       const rateLimitConfig = clampRateLimitToPosture(
         parseRateLimitFlag(opts.rateLimit ?? "", MCP_DEFAULT_RPS),
@@ -366,7 +366,7 @@ export function registerMcpServerCommand(program: Command): void {
       );
 
       const server = new McpServer(
-        { name: "pwnkit-mcp", version: "0.1.0" },
+        { name: "0sec-mcp", version: "0.1.0" },
         { capabilities: { logging: {} } },
       );
 
@@ -406,9 +406,9 @@ export function registerMcpServerCommand(program: Command): void {
 
       try {
         await server.connect(transport);
-        console.error(`pwnkit MCP server running for ${target} (scan ${scanId})`);
+        console.error(`0sec MCP server running for ${target} (scan ${scanId})`);
       } catch (error) {
-        console.error("Fatal error in pwnkit MCP server:", error);
+        console.error("Fatal error in 0sec MCP server:", error);
         await executor.cleanup();
         db.close();
         process.exit(1);

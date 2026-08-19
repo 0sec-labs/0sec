@@ -1,5 +1,5 @@
 {
-  "name": "@pwnkit/test-targets",
+  "name": "@0sec/test-targets",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "./vulnerable": "./dist/vulnerable-server.js",
     "./safe": "./dist/safe-server.js"
   },
-  "description": "Intentionally vulnerable and safe LLM endpoints for testing pwnkit",
+  "description": "Intentionally vulnerable and safe LLM endpoints for testing 0sec",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "vulnerable": "tsx src/vulnerable-server.ts",

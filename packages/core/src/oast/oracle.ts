@@ -1,5 +1,5 @@
 /**
- * OAST oracle — correlation-token matching for out-of-band verdicts (pwnkit#659).
+ * OAST oracle — correlation-token matching for out-of-band verdicts (0sec#659).
  *
  * This is the core testable logic of the feature and carries NO I/O. Given a
  * handle's correlation token (and optionally a per-candidate nonce) plus the

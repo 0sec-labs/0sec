@@ -1,6 +1,6 @@
 /**
- * `pwnkit xnu-fuzz` — the IOKit user-client fuzzer mode (dynamic sibling to the
- * static `xnu-re` review profile). Design: docs/pwnkit-iokit-fuzzer.md.
+ * `0sec xnu-fuzz` — the IOKit user-client fuzzer mode (dynamic sibling to the
+ * static `xnu-re` review profile). Design: docs/0sec-iokit-fuzzer.md.
  *
  * Subcommands (the buildable MVP loop — model + generate locally; the VM run
  * lane is built but must run on a beefier Apple-Silicon Mac, see harness):
@@ -9,7 +9,7 @@
  *   gen        — §2: target-model.json → gate-passing + structure-aware inputs
  *   harness-plan — §3: print what a single macOS-VM shard run needs to actually run
  *
- * This command is GLUE: all logic lives in `@pwnkit/core` `xnu-fuzz/`.
+ * This command is GLUE: all logic lives in `@0sec/core` `xnu-fuzz/`.
  */
 
 import type { Command } from "commander";
@@ -22,7 +22,7 @@ import {
   type TargetModel,
   type UserClientModel,
   planSingleShardRun,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 interface EnumerateOpts {
   kext: string;

@@ -3,7 +3,7 @@
  *
  * The Responses API streams `response.output_text.delta` events at roughly
  * one fragment per BPE token (≈ 50–100 events/sec on a fast model). Forwarding
- * each one as its own `PWNKIT_EVENT_DELTA` line on stdout would:
+ * each one as its own `0SEC_EVENT_DELTA` line on stdout would:
  *
  *   - Spam the cloud worker-controller's stdout parser at line-noise rates
  *     (the parser does a JSON.parse per line — quadratic worst-case if

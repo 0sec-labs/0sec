@@ -1,6 +1,6 @@
 /**
  * End-to-end Tier-2 builder test against the synthetic
- * `test-targets/c-cpp-tier2/` library. Verifies the artifacts pwnkit
+ * `test-targets/c-cpp-tier2/` library. Verifies the artifacts 0sec
  * promises in its README — harness, linker script, Makefile fragment —
  * are all produced and contain the expected hooks.
  */
@@ -22,7 +22,7 @@ const TARGET = join(REPO_ROOT, "test-targets", "c-cpp-tier2");
 describe("Tier-2 E2E against test-targets/c-cpp-tier2", () => {
   it("emits a complete artifact bundle for the synthetic library", async () => {
     expect(existsSync(TARGET)).toBe(true);
-    const outDir = await mkdtemp(join(tmpdir(), "pwnkit-tier2-e2e-"));
+    const outDir = await mkdtemp(join(tmpdir(), "0sec-tier2-e2e-"));
     const corpusOut = join(outDir, "corpus-staged");
     try {
       const seeds = await extractCorpus(TARGET, { outputDir: corpusOut });
@@ -30,10 +30,10 @@ describe("Tier-2 E2E against test-targets/c-cpp-tier2", () => {
 
       const artifact = await buildTier2Harness({
         suspectFunction: {
-          header: "pwnkit_tier2.h",
-          functionName: "pwnkit_tier2_decode",
+          header: "osec_tier2.h",
+          functionName: "osec_tier2_decode",
           declaration:
-            "int pwnkit_tier2_decode(const uint8_t *data, size_t size, uint8_t **out, size_t *out_size);",
+            "int osec_tier2_decode(const uint8_t *data, size_t size, uint8_t **out, size_t *out_size);",
           inputShape: "bytesAndLenOut",
         },
         sourceRoot: TARGET,
@@ -47,7 +47,7 @@ describe("Tier-2 E2E against test-targets/c-cpp-tier2", () => {
       expect(existsSync(artifact.harness_path)).toBe(true);
       const harnessSrc = await readFile(artifact.harness_path, "utf8");
       expect(harnessSrc).toMatch(
-        /pwnkit_tier2_decode\(data, size, &out, &out_size\)/,
+        /osec_tier2_decode\(data, size, &out, &out_size\)/,
       );
 
       // Linker fragment present, non-empty, contains sanitizer flags.
@@ -60,7 +60,7 @@ describe("Tier-2 E2E against test-targets/c-cpp-tier2", () => {
       expect(existsSync(artifact.makefile_fragment_path)).toBe(true);
       const mkSrc = await readFile(artifact.makefile_fragment_path, "utf8");
       expect(mkSrc.length).toBeGreaterThan(0);
-      expect(mkSrc).toMatch(/PWNKIT_TIER2_HARNESS/);
+      expect(mkSrc).toMatch(/0SEC_TIER2_HARNESS/);
 
       // Discovered objects: api.c (entry point), frame.c, decoder.c.
       const linked = artifact.linked_objects.map((p) => p.replace(TARGET, ""));

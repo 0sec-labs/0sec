@@ -16,7 +16,7 @@ import {
   type CloudScopeMatcher,
 } from "./cloud-surface.js";
 
-// pwnkit#925 — every test mocks the fetch layer. NO live cloud calls.
+// 0sec#925 — every test mocks the fetch layer. NO live cloud calls.
 
 // A scripted fetch: maps a url-substring → {status, body}. Records calls.
 function mockFetch(routes: Array<{ match: string; status: number; body: string }>): {

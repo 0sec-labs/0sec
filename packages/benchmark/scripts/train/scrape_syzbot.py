@@ -21,7 +21,7 @@ try:
     import requests
 
     def _get(url: str, timeout: int = 30) -> str:
-        resp = requests.get(url, timeout=timeout, headers={"User-Agent": "pwnkit-scraper/0.1"})
+        resp = requests.get(url, timeout=timeout, headers={"User-Agent": "0sec-scraper/0.1"})
         resp.raise_for_status()
         return resp.text
 
@@ -29,7 +29,7 @@ except ImportError:
     import urllib.request
 
     def _get(url: str, timeout: int = 30) -> str:
-        req = urllib.request.Request(url, headers={"User-Agent": "pwnkit-scraper/0.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "0sec-scraper/0.1"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace")
 

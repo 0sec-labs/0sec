@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   runPerFileAudit,
   buildDirectApiAuditPromptForFile,
@@ -54,7 +54,7 @@ function baseOpts(overrides: Partial<PerFileAuditOptions> & { pkg: InstalledPack
 describe("runPerFileAudit — per-file audit loop (#285)", () => {
   let tempDir: string;
   beforeAll(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "pwnkit-audit-loop-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "0sec-audit-loop-test-"));
     // Make 8 source files so the test can drive an 8-file audit
     for (let i = 1; i <= 8; i++) {
       writeFileSync(join(tempDir, `src${i}.js`), `module.exports = function(x) { return x; };\n`);
@@ -201,7 +201,7 @@ describe("runPerFileAudit — per-file audit loop (#285)", () => {
 describe("buildDirectApiAuditPromptForFile — single-file dump prompt (#285)", () => {
   let tempDir: string;
   beforeAll(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "pwnkit-audit-prompt-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "0sec-audit-prompt-test-"));
     writeFileSync(join(tempDir, "vulnerable.js"), "eval(req.query.code);\n");
     writeFileSync(join(tempDir, "safe.js"), "const x = 1;\n");
   });

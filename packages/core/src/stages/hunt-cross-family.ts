@@ -47,7 +47,7 @@
  * beside it and are applied by the wiring layer in hunt-scan.ts.
  */
 
-import { modelProvider } from "@pwnkit/shared";
+import { modelProvider } from "@0sec/shared";
 
 /**
  * Default ON (issue #661). This deliberately breaks from
@@ -56,11 +56,11 @@ import { modelProvider } from "@pwnkit/shared";
  * this only changes WHO refutes a finding that is going through the gate
  * regardless. It adds no extra LLM call — the refute pass runs either way — and
  * every failure mode degrades to the pre-existing same-family behaviour (see the
- * module header). Set `PWNKIT_HUNT_CROSS_FAMILY=0` to pin the old correlated
+ * module header). Set `0SEC_HUNT_CROSS_FAMILY=0` to pin the old correlated
  * behaviour for an ablation.
  */
 export function crossFamilyRefuteEnabled(): boolean {
-  const raw = process.env.PWNKIT_HUNT_CROSS_FAMILY;
+  const raw = process.env["0SEC_HUNT_CROSS_FAMILY"];
   // Unset → ON. Explicitly empty/0/false/no → OFF (matches the `env()` helper
   // convention in agent/features.ts, where an unset var takes the default).
   if (raw === undefined) return true;
@@ -88,7 +88,7 @@ export function refuterFamily(model?: string): string {
  * `refuterCandidates`. Values mirror the per-provider defaults in
  * `runtime/llm-api.ts` (DEFAULT_ANTHROPIC_MODEL / CODEX_DEFAULT_MODEL /
  * ZAI_DEFAULT_MODEL / KIMI_DEFAULT_MODEL); they are duplicated rather than
- * imported so this module keeps its `@pwnkit/shared`-only dependency and stays
+ * imported so this module keeps its `@0sec/shared`-only dependency and stays
  * trivially unit-testable. `envKeys` are the auth vars `providerForModel`
  * (llm-api.ts) actually checks before it will route a model to that provider —
  * listing a family whose auth is absent would produce a refuter that cannot be
@@ -102,17 +102,17 @@ export function refuterFamily(model?: string): string {
  *     cannot be routed today no matter which key is set.
  *   - openrouter — a meta-router; the key alone does not say which family you
  *     get. Operators who want it can name explicit `openrouter/<vendor>/<model>`
- *     ids via PWNKIT_HUNT_REFUTER_CANDIDATES, which {@link refuterFamily}
+ *     ids via 0SEC_HUNT_REFUTER_CANDIDATES, which {@link refuterFamily}
  *     classifies correctly.
  *   - AZURE_OPENAI_API_KEY — same family as OpenAI (so it buys no
  *     decorrelation against a GPT finder), and Azure addresses models by
  *     account-specific DEPLOYMENT name, which we cannot guess. Operators with
  *     an Azure-only OpenAI path should name their deployment explicitly via
- *     PWNKIT_HUNT_REFUTER_CANDIDATES.
+ *     0SEC_HUNT_REFUTER_CANDIDATES.
  */
 const REFUTER_ROSTER: ReadonlyArray<{ model: string; envKeys: readonly string[] }> = [
   { model: "claude-sonnet-4-6", envKeys: ["ANTHROPIC_API_KEY"] },
-  { model: "gpt-5.5", envKeys: ["PWNKIT_CHATGPT_ACCESS_TOKEN", "PWNKIT_CHATGPT_OAUTH_REFRESH_TOKEN", "OPENAI_API_KEY"] },
+  { model: "gpt-5.5", envKeys: ["0SEC_CHATGPT_ACCESS_TOKEN", "0SEC_CHATGPT_OAUTH_REFRESH_TOKEN", "OPENAI_API_KEY"] },
   { model: "glm-5.3", envKeys: ["Z_AI_API_KEY"] },
   { model: "k3", envKeys: ["KIMI_API_KEY"] },
   { model: "qwen3.8-max", envKeys: ["QWEN_API_KEY"] },
@@ -130,13 +130,13 @@ const REFUTER_ROSTER: ReadonlyArray<{ model: string; envKeys: readonly string[] 
  * deployment yields a roster of one family, which is the finder's own, so the
  * selector passthroughs and behaviour is byte-identical to before.
  *
- * `PWNKIT_HUNT_REFUTER_CANDIDATES` (comma-separated model ids) overrides the
+ * `0SEC_HUNT_REFUTER_CANDIDATES` (comma-separated model ids) overrides the
  * roster entirely, for operators who know which model ids their accounts can
  * actually reach. An override is taken verbatim — no auth filtering, because we
  * cannot know which key backs an arbitrary id.
  */
 export function availableRefuterCandidates(): string[] {
-  const override = process.env.PWNKIT_HUNT_REFUTER_CANDIDATES;
+  const override = process.env["0SEC_HUNT_REFUTER_CANDIDATES"];
   if (override && override.trim()) {
     return override.split(",").map((m) => m.trim()).filter(Boolean);
   }

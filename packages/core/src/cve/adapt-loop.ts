@@ -109,7 +109,7 @@ export interface AdaptAndVerifyOptions {
   runner?: VerifyKernelFinding;
   /** Adaptation agent. Tests inject a canned-diff stub. */
   agent?: AdaptationAgent;
-  /** Journal writer factory; defaults to file-backed under `~/.pwnkit/runs`. */
+  /** Journal writer factory; defaults to file-backed under `~/.0sec/runs`. */
   journalFactory?: (runId: string) => JournalWriter;
   /** Override `Date.now()` for deterministic budget tracking in tests. */
   clock?: () => number;

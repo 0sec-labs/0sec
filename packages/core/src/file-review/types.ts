@@ -1,16 +1,16 @@
 // Shared type contract for the file-review harness — the deepsec-pattern
-// review pipeline (0sec docs/operations/deepsec-vs-pwnkit-study-2026-08-13):
+// review pipeline (0sec docs/operations/deepsec-vs-0sec-study-2026-08-13):
 // one record per source file, directory-grouped batches, lock-based claiming,
 // append-only analysis history, coverage gate, static revalidation with
 // alias reconciliation, refusal audit, reinvestigate waves, cost/duration
 // caps with resumable exit codes.
 //
 // This file is the contract every file-review module builds on. Types only —
-// no behavior. Severities stay pwnkit-lowercase (shared Severity), NOT
+// no behavior. Severities stay 0sec-lowercase (shared Severity), NOT
 // deepsec's uppercase enum; deepsec's vuln-slug taxonomy is kept because the
 // prompt layer's per-slug notes reference it.
 
-import type { Severity } from "@pwnkit/shared";
+import type { Severity } from "@0sec/shared";
 
 // ── Surface inventory ──────────────────────────────────────────────────────
 
@@ -75,7 +75,7 @@ export interface ReviewCandidateMatch {
 
 // ── Findings ───────────────────────────────────────────────────────────────
 
-/** The structured finding one investigation emits (pwnkit severities). */
+/** The structured finding one investigation emits (0sec severities). */
 export interface ReviewFinding {
   severity: Severity;
   /** Matcher slug, or `other-<topic>` when no matcher fits. */

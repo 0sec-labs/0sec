@@ -3,9 +3,9 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-declare const __PWNKIT_BUILD_COMMIT__: string;
+declare const __0SEC_BUILD_COMMIT__: string;
 
-const BYPASS_ENV = "PWNKIT_ALLOW_STALE_SOURCE_DIST";
+const BYPASS_ENV = "0SEC_ALLOW_STALE_SOURCE_DIST";
 
 type GitExec = (cwd: string, args: string[]) => string;
 
@@ -29,8 +29,8 @@ export interface SourceDistFreshnessResult {
 }
 
 function currentBuildCommit(): string | undefined {
-  if (typeof __PWNKIT_BUILD_COMMIT__ !== "undefined") {
-    return __PWNKIT_BUILD_COMMIT__;
+  if (typeof __0SEC_BUILD_COMMIT__ !== "undefined") {
+    return __0SEC_BUILD_COMMIT__;
   }
   return undefined;
 }
@@ -73,7 +73,7 @@ export function checkSourceDistFreshness(
     opts.entryPath ??
     (opts.entryUrl ? fileURLToPath(opts.entryUrl) : fileURLToPath(import.meta.url));
   const realBundlePath = realpathSync(bundlePath);
-  if (basename(realBundlePath) !== "pwnkit.js" || basename(dirname(realBundlePath)) !== "dist") {
+  if (basename(realBundlePath) !== "0sec.js" || basename(dirname(realBundlePath)) !== "dist") {
     return { checked: false, stale: false, reason: "not-root-dist-bundle", bundlePath: realBundlePath };
   }
 
@@ -108,9 +108,9 @@ export function checkSourceDistFreshness(
   }
 
   const message = [
-    "pwnkit source checkout bundle is stale.",
-    `dist/pwnkit.js was built from ${buildCommit.slice(0, 12)}, but checkout HEAD is ${headCommit.slice(0, 12)}.`,
-    `Run \`pnpm run build\` from ${repoRoot} before invoking dist/pwnkit.js.`,
+    "0sec source checkout bundle is stale.",
+    `dist/0sec.js was built from ${buildCommit.slice(0, 12)}, but checkout HEAD is ${headCommit.slice(0, 12)}.`,
+    `Run \`pnpm run build\` from ${repoRoot} before invoking dist/0sec.js.`,
     `Set ${BYPASS_ENV}=1 only if you intentionally want to run the stale bundle.`,
   ].join(" ");
 

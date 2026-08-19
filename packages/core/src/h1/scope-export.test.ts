@@ -103,7 +103,7 @@ describe("toScopeJson — supported asset types", () => {
 
 describe("toScopeFile — round-trip into ScopePolicy", () => {
   it("writes a JSON that loadScope() parses without error", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-h1-scope-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-h1-scope-"));
     const result = toScopeFile(
       program("flutteruki"),
       [
@@ -114,7 +114,7 @@ describe("toScopeFile — round-trip into ScopePolicy", () => {
       { homeDir: dir },
     );
 
-    expect(result.path).toBe(join(dir, ".pwnkit", "scopes", "flutteruki.json"));
+    expect(result.path).toBe(join(dir, ".0sec", "scopes", "flutteruki.json"));
     expect(result.dropped).toEqual([]);
 
     // Mode 0o600 enforced.
@@ -140,7 +140,7 @@ describe("toScopeFile — round-trip into ScopePolicy", () => {
   });
 
   it("the on-disk JSON is human-readable (pretty-printed)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pwnkit-h1-scope-"));
+    const dir = mkdtempSync(join(tmpdir(), "0sec-h1-scope-"));
     const result = toScopeFile(program("p"), [scope("URL", "api.example.com")], {
       homeDir: dir,
     });

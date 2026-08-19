@@ -1,4 +1,4 @@
-// PR-shaped finding output (pwnkit#377).
+// PR-shaped finding output (0sec#377).
 export {
   emitFindingsAsPRs,
   isReproduced,

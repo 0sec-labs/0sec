@@ -1,5 +1,5 @@
 // Convert a HackerOne `structured_scopes` payload into the venue-neutral
-// `ScopeJson` shape that `pwnkit scan --scope <path>` consumes.
+// `ScopeJson` shape that `0sec scan --scope <path>` consumes.
 //
 // The consumer schema (see `packages/core/src/scope/scope.ts`) is:
 //
@@ -30,6 +30,7 @@
 // downstream review notices it.
 
 import { mkdirSync, writeFileSync } from "node:fs";
+import { homeStateDir } from "@0sec/shared";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { isIP } from "node:net";
@@ -37,11 +38,11 @@ import type { ScopeJson } from "../scope/scope.js";
 import type { H1Program, H1Scope } from "./types.js";
 
 export interface ToScopeFileOptions {
-  /** Override the default `~/.pwnkit/scopes/<handle>.json` path. */
+  /** Override the default `~/.0sec/scopes/<handle>.json` path. */
   outPath?: string;
   /**
    * Override the home directory base. Tests use this to write scope files
-   * into a tmpdir without touching the operator's real `~/.pwnkit`.
+   * into a tmpdir without touching the operator's real `~/.0sec`.
    */
   homeDir?: string;
 }
@@ -92,7 +93,7 @@ export function toScopeJson(program: H1Program, scopes: H1Scope[]): {
   const json: ScopeJson = {
     in_scope: [...inScope].sort(),
     out_of_scope: [...outOfScope].sort(),
-    // Per pwnkit#216: the consumer-side scope file may carry an
+    // Per 0sec#216: the consumer-side scope file may carry an
     // `attribution` block. We don't synthesise one here — the operator
     // sets that explicitly on the engagement, not the venue. But we
     // leave the field absent so the matcher loads cleanly and the
@@ -115,7 +116,7 @@ export function toScopeJson(program: H1Program, scopes: H1Scope[]): {
 }
 
 /**
- * Render + write to `~/.pwnkit/scopes/<handle>.json` with mode 0o600.
+ * Render + write to `~/.0sec/scopes/<handle>.json` with mode 0o600.
  * Returns the final path so the CLI can echo it.
  */
 export function toScopeFile(
@@ -125,8 +126,7 @@ export function toScopeFile(
 ): ScopeExportResult {
   const { json, dropped } = toScopeJson(program, scopes);
   const handle = program.attributes.handle;
-  const home = opts.homeDir ?? homedir();
-  const path = opts.outPath ?? join(home, ".pwnkit", "scopes", `${handle}.json`);
+    const path = opts.outPath ?? join(homeStateDir(opts.homeDir), "scopes", `${handle}.json`);
 
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify(json, null, 2) + "\n", { mode: 0o600 });

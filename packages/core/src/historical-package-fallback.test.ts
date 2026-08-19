@@ -8,7 +8,7 @@ import { scanForMaliciousPatterns } from "./malicious-detector.js";
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-historical-fixture-"));
+  const dir = mkdtempSync(join(tmpdir(), "0sec-historical-fixture-"));
   tempDirs.push(dir);
   return dir;
 }

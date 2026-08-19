@@ -1,7 +1,7 @@
 /**
  * Bench scorecard — aggregates per-case verdicts into a scan-level,
  * third-party-defensible capability/FP number, and a CI regression gate
- * (pwnkit#556).
+ * (0sec#556).
  *
  * This is the missing piece the issue calls out: we already have strong
  * per-finding oracles, but nothing that rolls a target/corpus up to a single
@@ -18,7 +18,7 @@ import type { RunSuiteResult, BenchCaseResult } from "./runner.js";
 // ── Wilson score interval (inlined) ───────────────────────────────────
 //
 // `packages/benchmark/wilson.ts` already implements this, but that package
-// DEPENDS on @pwnkit/core, so core can't import it back without a cycle.
+// DEPENDS on @0sec/core, so core can't import it back without a cycle.
 // The math is tiny and stable; we inline the 95% form here.
 
 const Z_95 = 1.959963984540054;
@@ -43,7 +43,7 @@ export function wilson95(passes: number, attempts: number): [number, number] {
 //
 // This shape is a contract: the CI gate, the marketing/compliance claim
 // surface, and sibling regression harnesses (e.g. specialist-routing,
-// pwnkit#557) all read it. Add fields additively; do not rename or remove.
+// 0sec#557) all read it. Add fields additively; do not rename or remove.
 
 export interface BenchScorecard {
   schemaVersion: 1;

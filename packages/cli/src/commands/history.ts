@@ -21,8 +21,8 @@ export function registerHistoryCommand(program: Command): void {
         return;
       }
 
-      const { pwnkitDB } = await import("@pwnkit/db");
-      const db = new pwnkitDB(opts.dbPath);
+      const { osecDB } = await import("@0sec/db");
+      const db = new osecDB(opts.dbPath);
       const scans = db.listScans(limit);
       db.close();
 
@@ -32,7 +32,7 @@ export function registerHistoryCommand(program: Command): void {
       }
 
       console.log("");
-      console.log(chalk.red.bold("  \u25C6 pwnkit") + chalk.gray(" scan history"));
+      console.log(chalk.red.bold("  \u25C6 0sec") + chalk.gray(" scan history"));
       console.log("");
 
       for (const s of scans) {

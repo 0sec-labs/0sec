@@ -1,5 +1,5 @@
 {
-  "name": "@pwnkit/shared",
+  "name": "@0sec/shared",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",

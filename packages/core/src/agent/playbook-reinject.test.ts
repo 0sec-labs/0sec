@@ -65,18 +65,18 @@ function createRuntime(perTurnInputTokens: number): NativeRuntime {
 }
 
 afterEach(() => {
-  delete process.env.PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS;
-  delete process.env.PWNKIT_FEATURE_PRESERVE_CRITICAL_MESSAGES;
+  delete process.env["0SEC_FEATURE_DYNAMIC_PLAYBOOKS"];
+  delete process.env["0SEC_FEATURE_PRESERVE_CRITICAL_MESSAGES"];
 });
 
 describe("dynamic playbook injection survives compaction", () => {
   it("injects once, then restores the block after a real compaction erases it", async () => {
-    process.env.PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS = "1";
+    process.env["0SEC_FEATURE_DYNAMIC_PLAYBOOKS"] = "1";
     // Playbook text is full of "password" / "admin" / "token", so the #229
     // verbatim-preservation path would fold it into the compaction summary and
     // mask the very defect under test. Disable it so the block is genuinely
     // lost — that is the case the restore exists for.
-    process.env.PWNKIT_FEATURE_PRESERVE_CRITICAL_MESSAGES = "0";
+    process.env["0SEC_FEATURE_PRESERVE_CRITICAL_MESSAGES"] = "0";
 
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
 
@@ -116,7 +116,7 @@ describe("dynamic playbook injection survives compaction", () => {
   }, 120_000);
 
   it("does not re-inject while the block is still in the window", async () => {
-    process.env.PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS = "1";
+    process.env["0SEC_FEATURE_DYNAMIC_PLAYBOOKS"] = "1";
 
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
 

@@ -1,6 +1,6 @@
 /**
  * Feature flags for A/B testing agent improvements.
- * Set via environment variables: PWNKIT_FEATURE_<NAME>=0 to disable.
+ * Set via environment variables: 0SEC_FEATURE_<NAME>=0 to disable.
  *
  * NOTE on defaults:
  *   - "stable" features (early stop, loop detection, context compaction,
@@ -18,12 +18,12 @@
  * The "explicit enablement" noted above now has one documented form, so an
  * A/B run does not depend on reconstructing the flag set by reading source:
  *
- *   PWNKIT_FEATURE_PRESET=fp-moat pwnkit scan …
- *   pwnkit scan --features fp-moat …
+ *   0SEC_FEATURE_PRESET=fp-moat 0sec scan …
+ *   0sec scan --features fp-moat …
  *
  * The preset's membership lives in `agent/feature-presets.ts` and is pinned by
  * test. Applying it never overwrites a flag that is already set, so
- * `PWNKIT_FEATURE_POV_GATE=0` alongside the preset gives you a clean
+ * `0SEC_FEATURE_POV_GATE=0` alongside the preset gives you a clean
  * single-layer ablation.
  *
  * Enabling layers is only half of a defensible claim; the other half is being
@@ -40,37 +40,37 @@ import { FEATURE_PRESETS, resolveFeaturePreset } from "./feature-presets.js";
 
 export const features = {
   /** Early-stop at 50% budget if no findings, retry with different strategy */
-  get earlyStopRetry(): boolean { return env("PWNKIT_FEATURE_EARLY_STOP", true); },
+  get earlyStopRetry(): boolean { return env("0SEC_FEATURE_EARLY_STOP", true); },
   /** Detect A-A-A and A-B-A-B loop patterns, inject warning */
-  get loopDetection(): boolean { return env("PWNKIT_FEATURE_LOOP_DETECTION", true); },
+  get loopDetection(): boolean { return env("0SEC_FEATURE_LOOP_DETECTION", true); },
   /** Compress middle messages when context exceeds 30k tokens */
-  get contextCompaction(): boolean { return env("PWNKIT_FEATURE_CONTEXT_COMPACTION", true); },
+  get contextCompaction(): boolean { return env("0SEC_FEATURE_CONTEXT_COMPACTION", true); },
   /**
    * Re-send the opaque, model-bound Responses output item array on the next
    * turn. Default ON; set to 0 only for matched retained-reasoning A/B runs.
    */
-  get retainedReasoning(): boolean { return env("PWNKIT_FEATURE_RETAINED_REASONING", true); },
+  get retainedReasoning(): boolean { return env("0SEC_FEATURE_RETAINED_REASONING", true); },
   /** Exploit script templates in shell prompt (blind SQLi, SSTI, auth chain) */
-  get scriptTemplates(): boolean { return env("PWNKIT_FEATURE_SCRIPT_TEMPLATES", true); },
+  get scriptTemplates(): boolean { return env("0SEC_FEATURE_SCRIPT_TEMPLATES", true); },
   /** Dynamic vulnerability playbooks injected after recon phase */
-  get dynamicPlaybooks(): boolean { return env("PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS", false); },
+  get dynamicPlaybooks(): boolean { return env("0SEC_FEATURE_DYNAMIC_PLAYBOOKS", false); },
   /** Agent writes plan/creds to disk, injected at reflection checkpoints */
-  get externalMemory(): boolean { return env("PWNKIT_FEATURE_EXTERNAL_MEMORY", false); },
+  get externalMemory(): boolean { return env("0SEC_FEATURE_EXTERNAL_MEMORY", false); },
   /** Inject prior attempt findings when retrying (LLM-summarized progress handoff) */
-  get progressHandoff(): boolean { return env("PWNKIT_FEATURE_PROGRESS_HANDOFF", true); },
+  get progressHandoff(): boolean { return env("0SEC_FEATURE_PROGRESS_HANDOFF", true); },
   /** Allow the agent to search the web for CVE details, docs, and technique references */
-  get webSearch(): boolean { return env("PWNKIT_FEATURE_WEB_SEARCH", false); },
+  get webSearch(): boolean { return env("0SEC_FEATURE_WEB_SEARCH", false); },
   /** Interactive PTY sessions for exploits requiring interactivity (reverse shells, DB clients, SSH) */
-  get ptySession(): boolean { return env("PWNKIT_FEATURE_PTY_SESSION", false); },
+  get ptySession(): boolean { return env("0SEC_FEATURE_PTY_SESSION", false); },
   /**
    * Persistent, COMPUTE-ONLY Python REPL (`python_exec`, Phase-0). A framed
    * python3 kernel keeps state across calls for payload/parse/crypto/encode
    * work; networking is blocked at the socket source whenever an engagement is
-   * active. Default OFF — opt in via PWNKIT_FEATURE_PYTHON_EXEC=1. Getter so
+   * active. Default OFF — opt in via 0SEC_FEATURE_PYTHON_EXEC=1. Getter so
    * the CLI `--features` flag (set after this module is imported) is honored at
    * tool-dispatch time.
    */
-  get pythonExec(): boolean { return env("PWNKIT_FEATURE_PYTHON_EXEC", false); },
+  get pythonExec(): boolean { return env("0SEC_FEATURE_PYTHON_EXEC", false); },
   /**
    * EGATS specialist routing (#557, HPTSA-inspired). When ON, an EGATS branch
    * whose hypothesis names a concrete vuln class (SQLi/XSS/SSRF/SSTI/IDOR/
@@ -86,17 +86,17 @@ export const features = {
    * benchmark harness. Implemented as a getter so the CLI `--features` flag
    * (which sets the env var inside the command action, AFTER this module has
    * been imported) is honored at routing time. Enable via
-   * PWNKIT_FEATURE_SPECIALIST_ROUTING=1.
+   * 0SEC_FEATURE_SPECIALIST_ROUTING=1.
    */
   get specialistRouting(): boolean {
-    return env("PWNKIT_FEATURE_SPECIALIST_ROUTING", false);
+    return env("0SEC_FEATURE_SPECIALIST_ROUTING", false);
   },
   /** Self-consistency voting: run the structured verify pipeline N times and take the majority vote */
-  get selfConsistencyVerify(): boolean { return env("PWNKIT_FEATURE_CONSENSUS_VERIFY", false); },
+  get selfConsistencyVerify(): boolean { return env("0SEC_FEATURE_CONSENSUS_VERIFY", false); },
   /** Multi-modal agreement: cross-validate findings against foxguard (Rust pattern scanner) */
-  get multiModalAgreement(): boolean { return env("PWNKIT_FEATURE_MULTIMODAL", false); },
+  get multiModalAgreement(): boolean { return env("0SEC_FEATURE_MULTIMODAL", false); },
   /** Reachability gate: suppress findings whose sink is not reachable from an application entry point */
-  get reachabilityGate(): boolean { return env("PWNKIT_FEATURE_REACHABILITY_GATE", false); },
+  get reachabilityGate(): boolean { return env("0SEC_FEATURE_REACHABILITY_GATE", false); },
   /**
    * Publishability / in-scope gate (issue #537 / #539). Decides
    * disclosure-worthiness per finding: SECURITY.md threat-model exclusion
@@ -107,28 +107,28 @@ export const features = {
    *
    * Default OFF: this gate can suppress reproducible findings, so it must be
    * explicitly opted into before any A/B claim. Disable/enable via
-   * PWNKIT_FEATURE_PUBLISHABILITY_GATE.
+   * 0SEC_FEATURE_PUBLISHABILITY_GATE.
    */
-  get publishabilityGate(): boolean { return env("PWNKIT_FEATURE_PUBLISHABILITY_GATE", false); },
+  get publishabilityGate(): boolean { return env("0SEC_FEATURE_PUBLISHABILITY_GATE", false); },
   /** PoV gate: require a working, executable PoC per finding or downgrade to info */
-  get povGate(): boolean { return env("PWNKIT_FEATURE_POV_GATE", false); },
+  get povGate(): boolean { return env("0SEC_FEATURE_POV_GATE", false); },
   /**
    * Intra-scan semantic dedupe post-pass (anchored incremental LLM
    * clustering over the final finding set, `triage/semantic-dedupe.ts`).
    * Marks duplicates with a canonical mapping + cluster reason instead of
    * dropping them. Default OFF: it spends an LLM call per ≤50-finding batch
    * after the scan, so it must be explicitly opted into before any A/B
-   * claim. Toggle via PWNKIT_FEATURE_SEMANTIC_DEDUPE.
+   * claim. Toggle via 0SEC_FEATURE_SEMANTIC_DEDUPE.
    */
-  get semanticDedupe(): boolean { return env("PWNKIT_FEATURE_SEMANTIC_DEDUPE", false); },
+  get semanticDedupe(): boolean { return env("0SEC_FEATURE_SEMANTIC_DEDUPE", false); },
   /**
    * Incremental finding ranking post-pass (decimal-insertion between ranked
    * anchors, `triage/incremental-rank.ts`). Orders the report by comparative
    * promise (exploitability × impact × evidence strength). Default OFF: it
    * spends an LLM call per ≤50-finding batch; opt in before any A/B claim.
-   * Toggle via PWNKIT_FEATURE_INCREMENTAL_RANK.
+   * Toggle via 0SEC_FEATURE_INCREMENTAL_RANK.
    */
-  get incrementalRank(): boolean { return env("PWNKIT_FEATURE_INCREMENTAL_RANK", false); },
+  get incrementalRank(): boolean { return env("0SEC_FEATURE_INCREMENTAL_RANK", false); },
   /**
    * Static-finding PoC generation (#666 / EPIC #674 Part A). For findings that
    * ship with NO executable PoC (`pocSteps` empty — the static / code-analysis
@@ -141,9 +141,9 @@ export const features = {
    *
    * Default OFF: it spends LLM + execution budget per static finding and must
    * be explicitly opted into before any A/B claim (A/B-able via the #656
-   * harness). Toggle via PWNKIT_FEATURE_POC_GEN_STATIC.
+   * harness). Toggle via 0SEC_FEATURE_POC_GEN_STATIC.
    */
-  get pocGenStatic(): boolean { return env("PWNKIT_FEATURE_POC_GEN_STATIC", false); },
+  get pocGenStatic(): boolean { return env("0SEC_FEATURE_POC_GEN_STATIC", false); },
   /**
    * Inline validation / validate-on-save (#554). When ON, the native attack
    * loop runs a fast deterministic category oracle the moment a high/critical
@@ -160,10 +160,10 @@ export const features = {
    * cost_per_flag claim. Implemented as a getter so the CLI `--features` flag
    * (which sets the env var inside the command action, AFTER this module is
    * imported) is honored at loop time. Enable via
-   * PWNKIT_FEATURE_INLINE_VALIDATION=1.
+   * 0SEC_FEATURE_INLINE_VALIDATION=1.
    */
   get inlineValidation(): boolean {
-    return env("PWNKIT_FEATURE_INLINE_VALIDATION", false);
+    return env("0SEC_FEATURE_INLINE_VALIDATION", false);
   },
   /**
    * WordPress plugin/theme fingerprinter + OSV CVE lookup.
@@ -178,7 +178,7 @@ export const features = {
    * still honored at tool-dispatch time.
    */
   get wpFingerprint(): boolean {
-    return env("PWNKIT_FEATURE_WP_FINGERPRINT", true);
+    return env("0SEC_FEATURE_WP_FINGERPRINT", true);
   },
 
   /**
@@ -189,24 +189,24 @@ export const features = {
    *
    * Default ON — this is a pure-computation utility with no network or
    * filesystem side effects, so there's no reason to gate it off. Disable
-   * via PWNKIT_FEATURE_MONGO_OBJECTID_FORGE=0 or `--no-mongo-objectid-forge`
+   * via 0SEC_FEATURE_MONGO_OBJECTID_FORGE=0 or `--no-mongo-objectid-forge`
    * for ablation. Implemented as a getter so the CLI `--features` flag
    * (which sets the env var inside the command action, AFTER this module
    * has been imported) is still honored at tool-dispatch time. Matches
    * the wpFingerprint pattern above. See packages/core/src/agent/objectid-forge.ts.
    */
   get mongoObjectIdForge(): boolean {
-    return env("PWNKIT_FEATURE_MONGO_OBJECTID_FORGE", true);
+    return env("0SEC_FEATURE_MONGO_OBJECTID_FORGE", true);
   },
 
   /**
-   * Live cloud-surface testing (pwnkit#925). Exposes `cloud_s3_probe` and
+   * Live cloud-surface testing (0sec#925). Exposes `cloud_s3_probe` and
    * `cloud_validate_credentials` to the attack agent so it can test S3 buckets
    * for public access + orphaned-bucket takeover and safely validate harvested
    * AWS credentials (read-only). All probes are anonymous or read/verify-only —
    * no writes, no data exfiltration beyond minimal proof.
    *
-   * Default OFF (opt-in via PWNKIT_FEATURE_CLOUD_SURFACE=1). Probing a target
+   * Default OFF (opt-in via 0SEC_FEATURE_CLOUD_SURFACE=1). Probing a target
    * org's bucket-name space or validating its harvested credentials is recon
    * AGAINST THAT ORG, so it is deny-by-default at two layers: this enablement
    * flag, AND an engagement-scope check in the tool handlers (a configured
@@ -217,7 +217,7 @@ export const features = {
    * mongoObjectIdForge pattern above. See packages/core/src/agent/cloud-surface.ts.
    */
   get cloudSurface(): boolean {
-    return env("PWNKIT_FEATURE_CLOUD_SURFACE", false);
+    return env("0SEC_FEATURE_CLOUD_SURFACE", false);
   },
 
   /**
@@ -226,11 +226,11 @@ export const features = {
    * that run independently and report up the scan tree — the recursive
    * sub-agent orchestration. Default OFF: fan-out multiplies scans/cost, so it
    * stays opt-in even though the orchestrator enforces budget + a tree-level
-   * cap (max children/depth). Enable with PWNKIT_FEATURE_AGENT_FANOUT=1.
+   * cap (max children/depth). Enable with 0SEC_FEATURE_AGENT_FANOUT=1.
    * Getter so the CLI `--features` flag is honored at dispatch time.
    */
   get agentFanout(): boolean {
-    return env("PWNKIT_FEATURE_AGENT_FANOUT", false);
+    return env("0SEC_FEATURE_AGENT_FANOUT", false);
   },
 
   /**
@@ -242,7 +242,7 @@ export const features = {
    *
    * Default ON because legitimate flags pass the shape check trivially
    * and the false-positive rate on real flags should be near zero. Turn
-   * off via `PWNKIT_FEATURE_DECOY_DETECTION=0` or the CLI flag
+   * off via `0SEC_FEATURE_DECOY_DETECTION=0` or the CLI flag
    * `--no-decoy-detection` for ablation/testing.
    *
    * Implemented as a getter so the CLI flag (which flips the env var
@@ -252,7 +252,7 @@ export const features = {
    * packages/core/src/agent/flag-validator.ts.
    */
   get decoyDetection(): boolean {
-    return env("PWNKIT_FEATURE_DECOY_DETECTION", true);
+    return env("0SEC_FEATURE_DECOY_DETECTION", true);
   },
 
   // ── Always-on triage filters (default ON, ablatable for A/B testing) ──
@@ -263,12 +263,12 @@ export const features = {
    * sink names and rejects findings that look like "the function did its job".
    *
    * Default ON because that's the existing v0.6.0 behavior. Can be disabled
-   * via PWNKIT_FEATURE_HOLDING_IT_WRONG=0 to test whether this filter is
+   * via 0SEC_FEATURE_HOLDING_IT_WRONG=0 to test whether this filter is
    * suppressing real signal — the ceiling-analysis from 2026-04-06 identified
    * this as the strongest candidate for the unexplained XBOW finding-density
    * collapse from 14 → 4 between `features=none` and `features=all`.
    */
-  get holdingItWrong(): boolean { return env("PWNKIT_FEATURE_HOLDING_IT_WRONG", true); },
+  get holdingItWrong(): boolean { return env("0SEC_FEATURE_HOLDING_IT_WRONG", true); },
 
   /**
    * `evidence_completeness <= 0.5` reject (`packages/core/src/agentic-scanner.ts:591`).
@@ -276,9 +276,9 @@ export const features = {
    * gather enough cross-source evidence (request + response + analysis + ...).
    *
    * Default ON because that's the existing v0.6.0 behavior. Can be disabled
-   * via PWNKIT_FEATURE_EVIDENCE_GATE=0 for ablation.
+   * via 0SEC_FEATURE_EVIDENCE_GATE=0 for ablation.
    */
-  get evidenceGate(): boolean { return env("PWNKIT_FEATURE_EVIDENCE_GATE", true); },
+  get evidenceGate(): boolean { return env("0SEC_FEATURE_EVIDENCE_GATE", true); },
 
   /**
    * Learned per-finding triage router (`packages/core/src/triage/learned-router.ts`).
@@ -289,16 +289,16 @@ export const features = {
    * the scan's slice type (xbow-wb, xbow-bb, npm).
    *
    * Default OFF until the router is validated via A/B testing on xbow-bench
-   * and npm-bench. See pwnkit#113 for the design doc.
+   * and npm-bench. See 0sec#113 for the design doc.
    */
-  get learnedRouter(): boolean { return env("PWNKIT_FEATURE_LEARNED_ROUTER", false); },
+  get learnedRouter(): boolean { return env("0SEC_FEATURE_LEARNED_ROUTER", false); },
 
   /**
    * Dynamic per-finding triage routing (`packages/core/src/triage/router/`).
    * When enabled, every finding is sent through a `RouterModel` that
    * decides which subset of the 11 triage layers to invoke for that
    * specific finding. v0 ships an explicit-rule router encoded from the
-   * pwnkit#72 per-profile ablation; a learned classifier replaces the
+   * 0sec#72 per-profile ablation; a learned classifier replaces the
    * rules in a follow-up PR without touching the dispatch site.
    *
    * Distinct from `learnedRouter` above: `learnedRouter` is the XGBoost
@@ -307,23 +307,23 @@ export const features = {
    * the dispatch router gates which layers run AFTER the TP/FP score
    * model has spoken.
    *
-   * Default OFF — opt in via PWNKIT_FEATURE_DYNAMIC_TRIAGE=1. See
-   * pwnkit#113 for the design doc and pwnkit#67 for the joint paper plan.
+   * Default OFF — opt in via 0SEC_FEATURE_DYNAMIC_TRIAGE=1. See
+   * 0sec#113 for the design doc and 0sec#67 for the joint paper plan.
    */
-  get dynamicTriageRouting(): boolean { return env("PWNKIT_FEATURE_DYNAMIC_TRIAGE", false); },
+  get dynamicTriageRouting(): boolean { return env("0SEC_FEATURE_DYNAMIC_TRIAGE", false); },
 
   /**
    * Opt-in cloud-sink webhook integration (`packages/core/src/cloud-sink.ts`).
-   * When enabled AND the user has set PWNKIT_CLOUD_SINK + PWNKIT_CLOUD_SCAN_ID,
+   * When enabled AND the user has set 0SEC_CLOUD_SINK + 0SEC_CLOUD_SCAN_ID,
    * every finding and the final scan report are POSTed to the configured
    * remote endpoint in real time.
    *
    * Default ON so the env-var trio is sufficient to enable streaming, but the
    * flag exists so operators can force-disable the integration in environments
    * where outbound HTTP from the scanner is not desired (e.g. air-gapped CI).
-   * Disable via PWNKIT_FEATURE_CLOUD_SINK=0.
+   * Disable via 0SEC_FEATURE_CLOUD_SINK=0.
    */
-  get cloudSink(): boolean { return env("PWNKIT_FEATURE_CLOUD_SINK", true); },
+  get cloudSink(): boolean { return env("0SEC_FEATURE_CLOUD_SINK", true); },
 
   /**
    * Pre-recon CVE check (`packages/core/src/pre-recon-cve.ts`).
@@ -334,9 +334,9 @@ export const features = {
    * where the agent has source access but no concrete leads.
    *
    * Default ON in white-box mode (no-op in black-box). Disable via
-   * PWNKIT_FEATURE_PRE_RECON_CVE=0 for ablation.
+   * 0SEC_FEATURE_PRE_RECON_CVE=0 for ablation.
    */
-  get preReconCve(): boolean { return env("PWNKIT_FEATURE_PRE_RECON_CVE", true); },
+  get preReconCve(): boolean { return env("0SEC_FEATURE_PRE_RECON_CVE", true); },
 
   /**
    * Deterministic web-recon pre-pass (`packages/core/src/stages/web-recon-prepass.ts`).
@@ -347,26 +347,26 @@ export const features = {
    * checks. It EMITS findings directly for what it can prove and injects a
    * "pursue these leads" block into the system prompt for what it can only hint.
    *
-   * Default ON (no-op in non-web modes). Gated behind PWNKIT_FEATURE_WEB_RECON
+   * Default ON (no-op in non-web modes). Gated behind 0SEC_FEATURE_WEB_RECON
    * so it can be disabled for ablation or offline runs. Implemented as a getter
    * so the CLI `--features` flag (which sets the env var inside the command
    * action, AFTER this module has been imported) is honored at stage time.
    */
   get webRecon(): boolean {
-    return env("PWNKIT_FEATURE_WEB_RECON", true);
+    return env("0SEC_FEATURE_WEB_RECON", true);
   },
 
   /**
    * Best-effort target-history preflight for source review. When a local repo
-   * path is known, pwnkit infers repository/package/product hints, queries live
+   * path is known, 0sec infers repository/package/product hints, queries live
    * prior-vulnerability intel, and injects a compact audit-graph summary into
    * the review prompt before the agent starts.
    *
    * Default ON for white-box/source-review modes. Disable via
-   * PWNKIT_FEATURE_TARGET_HISTORY_PRESEED=0 for offline or ablation runs.
+   * 0SEC_FEATURE_TARGET_HISTORY_PRESEED=0 for offline or ablation runs.
    */
   get targetHistoryPreseed(): boolean {
-    return env("PWNKIT_FEATURE_TARGET_HISTORY_PRESEED", true);
+    return env("0SEC_FEATURE_TARGET_HISTORY_PRESEED", true);
   },
 
   /**
@@ -382,15 +382,15 @@ export const features = {
    * (a handful of extra messages preserved verbatim in the user
    * compaction-summary block) is small. BoxPwnr-inspired: see
    * `src/boxpwnr/solvers/single_loop_compactation.py` in 0ca/BoxPwnr,
-   * and pwnkit#229 for the design discussion.
+   * and 0sec#229 for the design discussion.
    *
    * Implemented as a getter so the CLI `--features` flag — which sets
    * the env var inside the command action AFTER this module is imported
    * — is still honored at compaction time. Disable via
-   * PWNKIT_FEATURE_PRESERVE_CRITICAL_MESSAGES=0 for ablation.
+   * 0SEC_FEATURE_PRESERVE_CRITICAL_MESSAGES=0 for ablation.
    */
   get preserveCriticalMessages(): boolean {
-    return env("PWNKIT_FEATURE_PRESERVE_CRITICAL_MESSAGES", true);
+    return env("0SEC_FEATURE_PRESERVE_CRITICAL_MESSAGES", true);
   },
 
   /**
@@ -407,14 +407,14 @@ export const features = {
    * single short user-message injection at two specific turn boundaries,
    * and the win on long benchmarks (clean handoff instead of stray
    * exploration on the last turn) is well-documented in Strix's
-   * implementation. Disable via PWNKIT_FEATURE_BUDGET_WARNINGS=0 for
+   * implementation. Disable via 0SEC_FEATURE_BUDGET_WARNINGS=0 for
    * ablation. Implemented as a getter so the CLI `--features` flag —
    * which sets the env var inside the command action AFTER this module
    * is imported — is still honored at injection time (matches the
    * wpFingerprint / preserveCriticalMessages pattern).
    */
   get budgetWarnings(): boolean {
-    return env("PWNKIT_FEATURE_BUDGET_WARNINGS", true);
+    return env("0SEC_FEATURE_BUDGET_WARNINGS", true);
   },
 
   /**
@@ -429,14 +429,14 @@ export const features = {
    * Trade-off: total token spend grows roughly N × per-file budget instead
    * of capped at a single session's budget. For a 50-file package, that
    * could be a 5-10× cost increase on research. Disable via
-   * `PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION=0` to revert to the shared-session
+   * `0SEC_FEATURE_PER_ITEM_ORCHESTRATION=0` to revert to the shared-session
    * behavior — useful for cost-bounded benchmarks.
    *
    * Implemented as a getter so the env var is honored at orchestration time
    * (matches the wpFingerprint / mongoObjectIdForge pattern).
    */
   get perItemOrchestration(): boolean {
-    return env("PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION", true);
+    return env("0SEC_FEATURE_PER_ITEM_ORCHESTRATION", true);
   },
 
   /**
@@ -452,7 +452,7 @@ export const features = {
    * imported — is still honored at tool-dispatch time.
    */
   get jitSkills(): boolean {
-    return env("PWNKIT_FEATURE_JIT_SKILLS", false);
+    return env("0SEC_FEATURE_JIT_SKILLS", false);
   },
 
   /**
@@ -460,7 +460,7 @@ export const features = {
    *
    * When ON, the live agent loop ALSO writes append-only journal entries
    * (`tool_call`, `tool_result`, `finding`, `done`) to
-   * `~/.pwnkit/runs/<scanId>/journal.jsonl` as it runs — a durable,
+   * `~/.0sec/runs/<scanId>/journal.jsonl` as it runs — a durable,
    * replayable trace alongside the existing in-memory conversation window.
    * This is strictly additive: the loop continues to drive off its own
    * conversation state, the journal is write-only here, and a failed
@@ -473,11 +473,11 @@ export const features = {
    * moat-ablation harness before any A/B claim. Implemented as a getter so
    * the CLI `--features` flag (which sets the env var inside the command
    * action, AFTER this module has been imported) is honored at loop time.
-   * Enable via PWNKIT_FEATURE_EXECUTION_JOURNAL=1 or `--features
+   * Enable via 0SEC_FEATURE_EXECUTION_JOURNAL=1 or `--features
    * execution-journal`.
    */
   get executionJournal(): boolean {
-    return env("PWNKIT_FEATURE_EXECUTION_JOURNAL", false);
+    return env("0SEC_FEATURE_EXECUTION_JOURNAL", false);
   },
 
   /**
@@ -494,7 +494,7 @@ export const features = {
    * Independent of `executionJournal` (the shadow-WRITE flag) on purpose so
    * the moat-ablation harness can toggle write and route separately for a
    * clean A/B. Rehydrate is a READER, though, so it only does anything when
-   * a journal was written for the run — it reads `~/.pwnkit/runs/<scanId>/
+   * a journal was written for the run — it reads `~/.0sec/runs/<scanId>/
    * journal.jsonl` regardless of how it got there (shadow mode this slice,
    * or specialists in a later slice). When the journal is missing, empty, or
    * corrupt the loop falls back to the existing DB-blob / fresh-prompt
@@ -507,11 +507,11 @@ export const features = {
    * must be explicitly opted into before any A/B claim. Implemented as a
    * getter so the CLI `--features` flag (which sets the env var inside the
    * command action, AFTER this module has been imported) is honored at loop
-   * time. Enable via PWNKIT_FEATURE_JOURNAL_REHYDRATE=1 or `--features
+   * time. Enable via 0SEC_FEATURE_JOURNAL_REHYDRATE=1 or `--features
    * journal-rehydrate`.
    */
   get journalRehydrate(): boolean {
-    return env("PWNKIT_FEATURE_JOURNAL_REHYDRATE", false);
+    return env("0SEC_FEATURE_JOURNAL_REHYDRATE", false);
   },
 
   /**
@@ -532,14 +532,14 @@ export const features = {
    * tool), matches the `preserveCriticalMessages` rationale — recovering a
    * credential in turn 12 that's needed in turn 38 is a large win on long-tail
    * challenges — and the cost (a short, size-capped block per turn) is small.
-   * Disable via PWNKIT_FEATURE_LOOT_LEDGER=0 or `--no-loot-ledger` for
+   * Disable via 0SEC_FEATURE_LOOT_LEDGER=0 or `--no-loot-ledger` for
    * ablation. Implemented as a getter so the CLI `--features` flag (which sets
    * the env var inside the command action, AFTER this module has been
    * imported) is honored at tool-dispatch / injection time — matches the
    * wpFingerprint / preserveCriticalMessages pattern.
    */
   get lootLedger(): boolean {
-    return env("PWNKIT_FEATURE_LOOT_LEDGER", true);
+    return env("0SEC_FEATURE_LOOT_LEDGER", true);
   },
 
   /**
@@ -559,13 +559,13 @@ export const features = {
    * failure mode of an unused tool is a few hundred wasted schema tokens
    * rather than wrong behavior. Note for whoever publishes benchmark numbers
    * next: this DOES change the default tool list, so re-baseline before
-   * quoting a figure across this change. Disable via PWNKIT_FEATURE_AGENT_PLAN=0
+   * quoting a figure across this change. Disable via 0SEC_FEATURE_AGENT_PLAN=0
    * or `--features no-agent-plan` for ablation. Getter so the CLI `--features`
    * flag (which sets the env var AFTER this module is imported) is honored at
    * tool-dispatch time.
    */
   get agentPlan(): boolean {
-    return env("PWNKIT_FEATURE_AGENT_PLAN", false);
+    return env("0SEC_FEATURE_AGENT_PLAN", false);
   },
 
   /**
@@ -589,10 +589,10 @@ export const features = {
    * to a newly-discovered lead is lexically indistinguishable from a derail.
    * Repo convention is explicit that behavior-steering features stay opt-in
    * until A/B'd, and this is squarely one. Enable via
-   * PWNKIT_FEATURE_DRIFT_DETECTION=1 or `--features drift-detection`.
+   * 0SEC_FEATURE_DRIFT_DETECTION=1 or `--features drift-detection`.
    */
   get driftDetection(): boolean {
-    return env("PWNKIT_FEATURE_DRIFT_DETECTION", false);
+    return env("0SEC_FEATURE_DRIFT_DETECTION", false);
   },
 
   /**
@@ -605,12 +605,12 @@ export const features = {
    * evidence and feeds the loot ledger.
    *
    * Default OFF — the tools are inert without a deployed collaborator. Enable
-   * with PWNKIT_FEATURE_OAST=1 AND point PWNKIT_OAST_URL at the self-hosted
+   * with 0SEC_FEATURE_OAST=1 AND point 0SEC_OAST_URL at the self-hosted
    * collaborator server (see packages/core/src/oast/server.ts). Getter (not a
    * const) so the CLI `--features` flag is honored at tool-dispatch time.
    */
   get oastCollaborator(): boolean {
-    return env("PWNKIT_FEATURE_OAST", false);
+    return env("0SEC_FEATURE_OAST", false);
   },
 
   /**
@@ -634,21 +634,21 @@ export const features = {
    * never see an Anthropic-shaped field regardless of this flag (see
    * `providerSupportsPromptCache`).
    *
-   * Disable via PWNKIT_FEATURE_PROMPT_CACHE=0 — worth doing only to isolate a
+   * Disable via 0SEC_FEATURE_PROMPT_CACHE=0 — worth doing only to isolate a
    * suspected provider-side caching bug, or to measure the uncached baseline.
    * Implemented as a getter so a late env mutation (CLI `--features`, which
    * runs after this module is imported) is honoured at request-build time.
    */
   get promptCache(): boolean {
-    return env("PWNKIT_FEATURE_PROMPT_CACHE", true);
+    return env("0SEC_FEATURE_PROMPT_CACHE", true);
   },
 };
 
 /**
- * Resolve a flag's effective default, letting `PWNKIT_FEATURE_PRESET` raise it.
+ * Resolve a flag's effective default, letting `0SEC_FEATURE_PRESET` raise it.
  *
  * Consulted only when the flag's own env var is unset, so an explicit
- * `PWNKIT_FEATURE_POV_GATE=0` still beats `PWNKIT_FEATURE_PRESET=fp-moat` —
+ * `0SEC_FEATURE_POV_GATE=0` still beats `0SEC_FEATURE_PRESET=fp-moat` —
  * that precedence is what makes single-layer ablation possible (see
  * `feature-presets.ts`).
  *
@@ -658,7 +658,7 @@ export const features = {
  * one variable and know the whole engine honours it.
  */
 function presetRaisesDefault(key: string): boolean {
-  const raw = process.env.PWNKIT_FEATURE_PRESET;
+  const raw = process.env["0SEC_FEATURE_PRESET"];
   if (!raw) return false;
   const preset = resolveFeaturePreset(raw);
   if (!preset) return false;

@@ -1,4 +1,4 @@
-import type { SemgrepFinding, NpmAuditFinding } from "@pwnkit/shared";
+import type { SemgrepFinding, NpmAuditFinding } from "@0sec/shared";
 import type { ScanListener } from "./scanner.js";
 import type { PrepareResult } from "./prepare.js";
 import { runSelectedStaticScan } from "./shared-analysis.js";

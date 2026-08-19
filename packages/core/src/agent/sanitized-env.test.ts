@@ -21,8 +21,8 @@ describe("allowlistedChildEnv", () => {
   });
 
   it("merges caller extras", () => {
-    const env = allowlistedChildEnv({ PWNKIT_TARGET: "https://t.example" }, { PATH: "/bin" });
-    expect(env.PWNKIT_TARGET).toBe("https://t.example");
+    const env = allowlistedChildEnv({ "0SEC_TARGET": "https://t.example" }, { PATH: "/bin" });
+    expect(env["0SEC_TARGET"]).toBe("https://t.example");
     expect(env.PATH).toBe("/bin");
   });
 
@@ -35,10 +35,10 @@ describe("allowlistedChildEnv", () => {
     const env = sanitizedEnv({
       PATH: "/bin",
       ANTHROPIC_API_KEY: "sk-ant-x",
-      PWNKIT_CLOUD_TOKEN: "tok",
+      "0SEC_CLOUD_TOKEN": "tok",
     });
     expect(env.PATH).toBe("/bin");
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(env.PWNKIT_CLOUD_TOKEN).toBeUndefined();
+    expect(env["0SEC_CLOUD_TOKEN"]).toBeUndefined();
   });
 });

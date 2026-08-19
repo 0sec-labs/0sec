@@ -12,10 +12,10 @@ describe("getMaxTurns defaults", () => {
   const origEnv = { ...process.env };
 
   beforeEach(() => {
-    delete process.env.PWNKIT_MAX_TURNS;
-    delete process.env.PWNKIT_MAX_TURNS_VERIFY;
-    delete process.env.PWNKIT_MAX_TURNS_AUDIT;
-    delete process.env.PWNKIT_MAX_TURNS_REVIEW;
+    delete process.env["0SEC_MAX_TURNS"];
+    delete process.env["0SEC_MAX_TURNS_VERIFY"];
+    delete process.env["0SEC_MAX_TURNS_AUDIT"];
+    delete process.env["0SEC_MAX_TURNS_REVIEW"];
   });
 
   afterEach(() => {
@@ -78,32 +78,32 @@ describe("getMaxTurns env overrides", () => {
   const origEnv = { ...process.env };
 
   beforeEach(() => {
-    delete process.env.PWNKIT_MAX_TURNS;
-    delete process.env.PWNKIT_MAX_TURNS_VERIFY;
-    delete process.env.PWNKIT_MAX_TURNS_AUDIT;
-    delete process.env.PWNKIT_MAX_TURNS_REVIEW;
+    delete process.env["0SEC_MAX_TURNS"];
+    delete process.env["0SEC_MAX_TURNS_VERIFY"];
+    delete process.env["0SEC_MAX_TURNS_AUDIT"];
+    delete process.env["0SEC_MAX_TURNS_REVIEW"];
   });
 
   afterEach(() => {
     Object.assign(process.env, origEnv);
   });
 
-  it("PWNKIT_MAX_TURNS overrides every role, depth, and branch", () => {
-    process.env.PWNKIT_MAX_TURNS = "7";
+  it("0SEC_MAX_TURNS overrides every role, depth, and branch", () => {
+    process.env["0SEC_MAX_TURNS"] = "7";
     expect(getMaxTurns("audit", "deep", "native")).toBe(7);
     expect(getMaxTurns("review", "quick", "legacy")).toBe(7);
     expect(getMaxTurns("review", "default", "native", "verify")).toBe(7);
   });
 
-  it("PWNKIT_MAX_TURNS_VERIFY scopes to verify runs only", () => {
-    process.env.PWNKIT_MAX_TURNS_VERIFY = "33";
+  it("0SEC_MAX_TURNS_VERIFY scopes to verify runs only", () => {
+    process.env["0SEC_MAX_TURNS_VERIFY"] = "33";
     expect(getMaxTurns("review", "deep", "native", "verify")).toBe(33);
     expect(getMaxTurns("review", "deep", "native", "research")).toBe(150);
   });
 
-  it("PWNKIT_MAX_TURNS_AUDIT and _REVIEW scope to their role", () => {
-    process.env.PWNKIT_MAX_TURNS_AUDIT = "11";
-    process.env.PWNKIT_MAX_TURNS_REVIEW = "22";
+  it("0SEC_MAX_TURNS_AUDIT and _REVIEW scope to their role", () => {
+    process.env["0SEC_MAX_TURNS_AUDIT"] = "11";
+    process.env["0SEC_MAX_TURNS_REVIEW"] = "22";
     expect(getMaxTurns("audit", "deep", "native")).toBe(11);
     expect(getMaxTurns("review", "deep", "native")).toBe(22);
     // Verify has its own scope and is untouched by the role overrides.
@@ -111,9 +111,9 @@ describe("getMaxTurns env overrides", () => {
   });
 
   it("the specific override wins over the global one", () => {
-    process.env.PWNKIT_MAX_TURNS = "5";
-    process.env.PWNKIT_MAX_TURNS_VERIFY = "50";
-    process.env.PWNKIT_MAX_TURNS_REVIEW = "60";
+    process.env["0SEC_MAX_TURNS"] = "5";
+    process.env["0SEC_MAX_TURNS_VERIFY"] = "50";
+    process.env["0SEC_MAX_TURNS_REVIEW"] = "60";
     expect(getMaxTurns("review", "deep", "native", "verify")).toBe(50);
     expect(getMaxTurns("review", "deep", "native")).toBe(60);
     // Audit has no specific override set, so it falls through to the global.
@@ -124,13 +124,13 @@ describe("getMaxTurns env overrides", () => {
     // A typo'd sweep parameter must fall back to the tuned default, not pin the
     // agent to a single turn.
     for (const bad of ["0", "-4", "abc", "", "  ", "3.5", "NaN"]) {
-      process.env.PWNKIT_MAX_TURNS_VERIFY = bad;
+      process.env["0SEC_MAX_TURNS_VERIFY"] = bad;
       expect(getMaxTurns("review", "default", "native", "verify")).toBe(20);
     }
   });
 
   it("allows raising budgets well past the defaults for sweeps", () => {
-    process.env.PWNKIT_MAX_TURNS_REVIEW = "400";
+    process.env["0SEC_MAX_TURNS_REVIEW"] = "400";
     expect(getMaxTurns("review", "deep", "native")).toBe(400);
   });
 });

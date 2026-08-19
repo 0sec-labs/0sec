@@ -1,5 +1,5 @@
 /**
- * pwnkit#168 — disclosure bundle assembly.
+ * 0sec#168 — disclosure bundle assembly.
  *
  * Pure helpers that turn a list of {@link Finding}s plus optional
  * canary / behavioural verdicts into the bundle layout the operator's
@@ -22,7 +22,7 @@
  * The CLI calls fs.writeFileSync. Tests stay deterministic and offline.
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import type { PatchStatus, ReverifyResult } from "./canary.js";
 import type { PocExecutionReport, PocOverallVerdict } from "./poc-runtime.js";
 import { redactSensitiveHeaders } from "./template.js";
@@ -294,7 +294,7 @@ export function assembleBundleIndex(
     "## Before filing each advisory",
     "",
     "1. Re-read the draft — the PoC and Patch Status sections are auto-populated from the scan but you should sanity-check against the current upstream HEAD.",
-    "2. Verify the CVSS vector suggested by pwnkit is still appropriate for your deployment model.",
+    "2. Verify the CVSS vector suggested by 0sec is still appropriate for your deployment model.",
     "3. Attach or replace screenshots in the PoC section as needed.",
     "4. File at https://github.com/<owner>/<repo>/security/advisories/new",
     "",

@@ -1,5 +1,5 @@
 /**
- * Trust-graph loop wiring (pwnkit#771, connects #786 + #780).
+ * Trust-graph loop wiring (0sec#771, connects #786 + #780).
  *
  * This is the OPT-IN bridge that connects the durable
  * {@link PersistentCredentialStore} (credential-store.ts, #786) and the

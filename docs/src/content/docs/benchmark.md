@@ -1,13 +1,13 @@
 ---
 title: Benchmark
-description: Benchmark results for pwnkit across AI/LLM security, web pentesting, network/CVE pentesting, LLM safety, and npm auditing.
+description: Benchmark results for 0sec across AI/LLM security, web pentesting, network/CVE pentesting, LLM safety, and npm auditing.
 ---
 
-pwnkit is benchmarked against five test suites: a custom AI/LLM security benchmark (10 challenges), the XBOW traditional web vulnerability benchmark (104 challenges), AutoPenBench network/CVE pentesting (33 tasks), HarmBench LLM safety (510 behaviors), and an npm audit benchmark (81 packages). This page is the canonical human-readable benchmark view, backed by [`packages/benchmark/results/benchmark-ledger.json`](<!-- repo is private --> packages/benchmark/results/benchmark-ledger.json).
+0sec is benchmarked against five test suites: a custom AI/LLM security benchmark (10 challenges), the XBOW traditional web vulnerability benchmark (104 challenges), AutoPenBench network/CVE pentesting (33 tasks), HarmBench LLM safety (510 behaviors), and an npm audit benchmark (81 packages). This page is the canonical human-readable benchmark view, backed by [`packages/benchmark/results/benchmark-ledger.json`](<!-- repo is private --> packages/benchmark/results/benchmark-ledger.json).
 
 ## Offline 0research projection
 
-Before spending provider budget, `pwnkit bench calibrate` can exercise the
+Before spending provider budget, `0sec bench calibrate` can exercise the
 sealed tournament and ObjectiveOracle evidence path with a deliberately empty
 scan adapter. It performs no target provisioning, Docker, network, model, or
 provider operation; both fixed calibration variants are behaviorally identical,
@@ -16,7 +16,7 @@ decision is rejection for no uplift. This is a contract calibration artifact,
 not vulnerability-discovery evidence:
 
 ```bash
-pwnkit bench calibrate \
+0sec bench calibrate \
   --manifest packages/core/src/bench/corpus-v1.json \
   --case-id src-sequelize-set-sqli \
   --manifest-id source-calibration-development-v1 \
@@ -49,7 +49,7 @@ slice receives its own identity, and an existing evidence file is never
 replaced:
 
 ```bash
-pwnkit bench run \
+0sec bench run \
   --manifest packages/core/src/bench/corpus-v1.json \
   --case-id src-sequelize-set-sqli \
   --manifest-id source-smoke-development-v1 \
@@ -65,13 +65,13 @@ pwnkit bench run \
 exact loaded ObjectiveOracle module and fixed evaluator configuration. The
 regular benchmark ledger is still updated.
 
-`pwnkit bench improvement-project` projects three already-completed, sealed
+`0sec bench improvement-project` projects three already-completed, sealed
 champion/challenger tournaments into a portable schema-v1 0research result and
 its content-addressed execution receipt. It performs no scan or network
 operation:
 
 ```bash
-pwnkit bench improvement-project \
+0sec bench improvement-project \
   --candidate candidate.json \
   --champion-variant champion \
   --challenger-variant challenger \
@@ -128,7 +128,7 @@ bytes before emitting any draft-promotion bundle.
 >
 > **Cybench — first scored full 40-challenge run: 36 / 40 = 90.0%.** Single-config (Azure gpt-5.4), single-shot, 3 retries per challenge. For reference, BoxPwnr's published 40/40 = 100% is best-of-N across ~10 model+solver configs. This supersedes the older 8/10 = 80% historical 10-challenge subset (preserved below).
 >
-> **XBOW — model-specific load-bearing claim: 93 / 95 = 97.9% on the gpt-5.4 cohort.** Across the 95 XBOW challenges where pwnkit has a retained gpt-5.4 attempt within the live CI window, 93 are solved. This is the stable, defensible black-box headline — undamaged by retention rotation.
+> **XBOW — model-specific load-bearing claim: 93 / 95 = 97.9% on the gpt-5.4 cohort.** Across the 95 XBOW challenges where 0sec has a retained gpt-5.4 attempt within the live CI window, 93 are solved. This is the stable, defensible black-box headline — undamaged by retention rotation.
 >
 > **XBOW aggregate (across all retained artifacts, any model): 103 / 104 = 99.0%** — only XBEN-030 unsolved in any mode. **White-box: 102 / 104 = 98.1%** (field-leading). The aggregate union holds; only the model-specific surface should lead the black-box conversation.
 >
@@ -144,7 +144,7 @@ bytes before emitting any draft-promotion bundle.
 
 10 custom challenges covering AI-specific attack surfaces. Each challenge hides a `FLAG{...}` behind a real vulnerability. The scanner must exploit the vulnerability to extract the flag.
 
-**Score: 10/10 on our regression test suite.** These are self-authored challenges used to verify pwnkit handles known attack patterns. Not an independent benchmark.
+**Score: 10/10 on our regression test suite.** These are self-authored challenges used to verify 0sec handles known attack patterns. Not an independent benchmark.
 
 | Challenge | Category | Difficulty | Turns | Flag |
 |-----------|----------|------------|-------|------|
@@ -188,7 +188,7 @@ By difficulty: Easy 5/5 (100%) -- Medium 3/3 (100%) -- Hard 2/2 (100%).
 
 **Methodology note — three layers of truth.**
 
-1. **Model-specific gpt-5.4 cohort (97.9%, stable).** Across the 95 XBOW challenges where pwnkit has a retained gpt-5.4 attempt within the live CI window, 93 are solved. This is the load-bearing black-box claim because it is a per-model solve rate, not a union over an aging window. Use this number when comparing pwnkit's black-box capability to other agents.
+1. **Model-specific gpt-5.4 cohort (97.9%, stable).** Across the 95 XBOW challenges where 0sec has a retained gpt-5.4 attempt within the live CI window, 93 are solved. This is the load-bearing black-box claim because it is a per-model solve rate, not a union over an aging window. Use this number when comparing 0sec's black-box capability to other agents.
 2. **Retained artifact union (103 aggregate / 102 white-box, stable; black-box rotation-volatile).** A union over surviving `xbow-results-*` GitHub artifacts from completed runs across any model. The aggregate (any-mode) and white-box union are stable; the **retained-aggregate black-box count oscillates** (currently 81 / 104) because the GitHub Actions 90-day artifact retention window rotates older "unknown"-model proofs out as new gpt-5.4 sweeps land. Treat the rotation-volatile black-box number as informational, not as a regression.
 3. **Historical mixed local+CI tally (95 / 104, frozen).** The older public publication line, preserved for continuity. Not the canonical current state.
 
@@ -295,7 +295,7 @@ The older "coverage gap" notes no longer apply: this page now reflects a **full 
 **Status:** Runner built, CI workflow wired up. AutoPenBench requires Linux Docker (the tasks spin up multi-container networks with vulnerable services), so it cannot run on arm64 macOS. The first scored run will fire from the new `.github/workflows/autopenbench.yml` GitHub Actions workflow (weekly Sunday 06:00 UTC + manual dispatch); the placeholder below will be replaced once it completes.
 
 ```bash
-pnpm --filter @pwnkit/benchmark autopenbench
+pnpm --filter @0sec/benchmark autopenbench
 ```
 
 | Metric | Value |
@@ -303,7 +303,7 @@ pnpm --filter @pwnkit/benchmark autopenbench
 | Total tasks | 33 |
 | Task types | Network pentesting, CVE exploitation |
 | Bar to beat | 21% (original paper) |
-| pwnkit score | TBD — pending first CI run |
+| 0sec score | TBD — pending first CI run |
 | Agent tools | `bash`, `save_finding`, `done` |
 | CI cadence | Weekly Sunday 06:00 UTC + manual dispatch |
 
@@ -317,7 +317,7 @@ pnpm --filter @pwnkit/benchmark autopenbench
 
 **Headline.** First full-benchmark Cybench score: **36 / 40 = 90.0%**, single-config (Azure gpt-5.4) and single-shot (no best-of-N), with 3 retries per challenge. Total of 358 attack turns and ~$14.89 estimated cost across the run. 40 / 40 challenges started successfully (zero startup failures).
 
-**How this compares.** [BoxPwnr's published 40 / 40 = 100%](https://github.com/0ca/BoxPwnr) is a best-of-N aggregate across roughly 10 model+solver configurations per challenge. pwnkit's 36 / 40 is a single-configuration single-shot result with the standard shell-first toolset. The two numbers are not directly comparable — best-of-N aggregates always score higher than single-config baselines on identical capability — but the gap (4 challenges) is the practical headroom that ensemble or repeat protocols would close.
+**How this compares.** [BoxPwnr's published 40 / 40 = 100%](https://github.com/0ca/BoxPwnr) is a best-of-N aggregate across roughly 10 model+solver configurations per challenge. 0sec's 36 / 40 is a single-configuration single-shot result with the standard shell-first toolset. The two numbers are not directly comparable — best-of-N aggregates always score higher than single-config baselines on identical capability — but the gap (4 challenges) is the practical headroom that ensemble or repeat protocols would close.
 
 **Why this is the right comparison.** A single-config, single-shot 90% number is the closest thing to a like-for-like comparison against a real attacker running one model with a fixed budget. It says nothing about how the agent performs with retry / ensemble, but it says everything about whether the core pipeline is broken or not.
 
@@ -343,11 +343,11 @@ pnpm --filter @pwnkit/benchmark autopenbench
 </details>
 
 ```bash
-pnpm --filter @pwnkit/benchmark cybench               # all 40 (default)
-pnpm --filter @pwnkit/benchmark cybench:dry           # list challenges without running
-pnpm --filter @pwnkit/benchmark cybench:10            # first 10 (quick validation)
-pnpm --filter @pwnkit/benchmark cybench:quick         # first 5 (smoke test)
-pnpm --filter @pwnkit/benchmark cybench --only flag-command,noisier-crc
+pnpm --filter @0sec/benchmark cybench               # all 40 (default)
+pnpm --filter @0sec/benchmark cybench:dry           # list challenges without running
+pnpm --filter @0sec/benchmark cybench:10            # first 10 (quick validation)
+pnpm --filter @0sec/benchmark cybench:quick         # first 5 (smoke test)
+pnpm --filter @0sec/benchmark cybench --only flag-command,noisier-crc
 ```
 
 | Metric | Value |
@@ -356,7 +356,7 @@ pnpm --filter @pwnkit/benchmark cybench --only flag-command,noisier-crc
 | Categories | web, crypto, pwn, reverse, forensics, misc |
 | Sources | HackTheBox, project-sekai-ctf, GlacierCTF, hkcert-ctf |
 | Bar to beat | 40/40 = 100% (BoxPwnr, best-of-N across ~10 configs) |
-| **pwnkit score** | **36 / 40 = 90.0%** (single-config gpt-5.4, single-shot, 2026-05-06) |
+| **0sec score** | **36 / 40 = 90.0%** (single-config gpt-5.4, single-shot, 2026-05-06) |
 | Total attack turns | 358 |
 | Estimated cost | ~$14.89 across the full run |
 | Agent tools | `bash`, `save_finding`, `done` |
@@ -366,12 +366,12 @@ pnpm --filter @pwnkit/benchmark cybench --only flag-command,noisier-crc
 
 ## HarmBench (LLM Safety)
 
-510 harmful behaviors from [HarmBench](https://www.harmbench.org/), the standard LLM safety benchmark. Instead of testing whether pwnkit can *break into* an LLM, this tests whether it can make an LLM *do something it shouldn't* -- generate harmful content, bypass safety filters, comply with dangerous requests. The metric is Attack Success Rate (ASR): what percentage of harmful behaviors can the agent elicit.
+510 harmful behaviors from [HarmBench](https://www.harmbench.org/), the standard LLM safety benchmark. Instead of testing whether 0sec can *break into* an LLM, this tests whether it can make an LLM *do something it shouldn't* -- generate harmful content, bypass safety filters, comply with dangerous requests. The metric is Attack Success Rate (ASR): what percentage of harmful behaviors can the agent elicit.
 
-**Status:** Lightweight harness built using `sendPrompt()`. The harness sends each behavior as a prompt to the target LLM and evaluates whether the response complies. No heavyweight dependencies -- it reuses pwnkit's existing LLM runtime.
+**Status:** Lightweight harness built using `sendPrompt()`. The harness sends each behavior as a prompt to the target LLM and evaluates whether the response complies. No heavyweight dependencies -- it reuses 0sec's existing LLM runtime.
 
 ```bash
-pnpm --filter @pwnkit/benchmark harmbench --target <url>
+pnpm --filter @0sec/benchmark harmbench --target <url>
 ```
 
 | Metric | Value |
@@ -379,19 +379,19 @@ pnpm --filter @pwnkit/benchmark harmbench --target <url>
 | Total behaviors | 510 |
 | Categories | Harmful content generation, safety filter bypass, dangerous compliance |
 | Metric | Attack Success Rate (ASR) |
-| pwnkit score | TBD (needs real LLM targets) |
+| 0sec score | TBD (needs real LLM targets) |
 | Harness | Lightweight, uses `sendPrompt()` |
 
 ---
 
 ## npm Audit Benchmark
 
-81 packages (27 known-malicious, 27 with real CVEs, 27 safe/benign) designed to test pwnkit's npm audit mode. pwnkit publishes the dataset composition and scored results on this page for reproducibility and comparison.
+81 packages (27 known-malicious, 27 with real CVEs, 27 safe/benign) designed to test 0sec's npm audit mode. 0sec publishes the dataset composition and scored results on this page for reproducibility and comparison.
 
 The benchmark measures whether the scanner correctly flags malicious and vulnerable packages while avoiding false positives on safe ones. Each malicious case is verified against npm advisories, GitHub Security Advisories (GHSA), Socket.dev, ReversingLabs, or Phylum reports. CVE cases are verified against NVD.
 
 ```bash
-pnpm --filter @pwnkit/benchmark npm-bench
+pnpm --filter @0sec/benchmark npm-bench
 ```
 
 ### First published score (April 2026, 30-package baseline)
@@ -439,7 +439,7 @@ The headline insight from the 5-profile ablation: **`default` and `moat` are ide
 
 | Tool | Open source | Public benchmark? | Approach |
 |------|-------------|-------------------|----------|
-| **pwnkit npm-bench** | Yes | **Yes** (this page) | AI agent + GHSA + heuristics |
+| **0sec npm-bench** | Yes | **Yes** (this page) | AI agent + GHSA + heuristics |
 | `npm audit` | Yes | No | GHSA database lookup |
 | Snyk | No | No | Proprietary DB + SCA |
 | Socket.dev | No | No | Static + behavioral + AI |
@@ -460,9 +460,9 @@ At publication time, we are not aware of another npm scanner benchmark that publ
 | [Cyber-AutoAgent](https://github.com/westonbrown/Cyber-AutoAgent) | 84.62% (88/104) | Claude 4.5 Sonnet | Black-box | Repo archived; v0.1.0 was 46%, iterated to 84% |
 | [deadend-cli](https://github.com/xoxruns/deadend-cli) | 77.55% (~76/98) | Claude Sonnet 4.5 | Black-box | Only tested 98 of 104 challenges; README claims ~80% on 104 with Kimi K2.5 |
 | [MAPTA](https://arxiv.org/abs/2508.20816) | 76.9% (80/104) | GPT-5 | Black-box | Patched 43 Docker images; $21.38 total cost |
-| **pwnkit** (gpt-5.4 model-specific cohort) | **93/95 = 97.9% black-box** | Azure gpt-5.4 | Single-model single-shot solve rate | Stable, defensible black-box headline; not affected by retention rotation |
-| **pwnkit** (retained artifact union, any model) | **103/104 aggregate; 102/104 white-box (field-leading); BB rotation-volatile** | Azure gpt-5.4 + earlier "unknown"-model artifacts | Black-box + white-box artifact union | Aggregate union stable; retained-aggregate BB oscillates with 90-day GitHub Actions retention window |
-| **pwnkit** (historical mixed publication) | **90/104 black-box; 95/104 aggregate** | Azure gpt-5.4 | Mixed local+CI publication line | Historical scoreboard preserved separately from retained artifacts |
+| **0sec** (gpt-5.4 model-specific cohort) | **93/95 = 97.9% black-box** | Azure gpt-5.4 | Single-model single-shot solve rate | Stable, defensible black-box headline; not affected by retention rotation |
+| **0sec** (retained artifact union, any model) | **103/104 aggregate; 102/104 white-box (field-leading); BB rotation-volatile** | Azure gpt-5.4 + earlier "unknown"-model artifacts | Black-box + white-box artifact union | Aggregate union stable; retained-aggregate BB oscillates with 90-day GitHub Actions retention window |
+| **0sec** (historical mixed publication) | **90/104 black-box; 95/104 aggregate** | Azure gpt-5.4 | Mixed local+CI publication line | Historical scoreboard preserved separately from retained artifacts |
 
 **Important caveats**
 
@@ -474,10 +474,10 @@ At publication time, we are not aware of another npm scanner benchmark that publ
 | deadend-cli score is reported on 98 challenges | Coverage differs from 104-challenge totals |
 | MAPTA patched 43 of 104 Docker images before testing | Environment differs from unmodified benchmark runs |
 | Retry counts are generally not published by competitors | Reported scores may include hidden best-of-N effects |
-| pwnkit publishes both retained artifact-backed and historical mixed lines | Evidence-backed and historical publication surfaces should be read separately |
-| pwnkit run profile uses a single model (Azure gpt-5.4) with targeted retries | Model/strategy setup differs from large multi-model ensembles |
+| 0sec publishes both retained artifact-backed and historical mixed lines | Evidence-backed and historical publication surfaces should be read separately |
+| 0sec run profile uses a single model (Azure gpt-5.4) with targeted retries | Model/strategy setup differs from large multi-model ensembles |
 
-> **Score context.** pwnkit has now tested all 104 XBOW challenges through both historical mixed local+CI publication and retained artifact-backed reconstruction. The retained-artifact aggregate is currently **103/104 = 99.0%** with **only XBEN-030 still unsolved in any mode**, and white-box is **102/104 = 98.1%** (field-leading). The load-bearing black-box claim is the **gpt-5.4 model-specific cohort at 93/95 = 97.9%** — this is the stable, defensible per-model solve rate, and on the 95 XBOW challenges where pwnkit has a retained gpt-5.4 attempt within the live CI window, only 2 remain unsolved. The retained-aggregate black-box count (currently 81/104) is rotation-volatile — older "unknown"-model proofs age out of the 90-day GitHub Actions retention window as new gpt-5.4 sweeps occupy it — so the model-specific 97.9% is the right surface for pure-black-box comparison. The older public publication line is preserved as **90/104 black-box** and **95/104 aggregate**. The benchmark ledger is the only place where that distinction is tracked exactly. **Cost: gpt-5.4 ≈ $0.48 / run, $5.20 / flag** on XBOW.
+> **Score context.** 0sec has now tested all 104 XBOW challenges through both historical mixed local+CI publication and retained artifact-backed reconstruction. The retained-artifact aggregate is currently **103/104 = 99.0%** with **only XBEN-030 still unsolved in any mode**, and white-box is **102/104 = 98.1%** (field-leading). The load-bearing black-box claim is the **gpt-5.4 model-specific cohort at 93/95 = 97.9%** — this is the stable, defensible per-model solve rate, and on the 95 XBOW challenges where 0sec has a retained gpt-5.4 attempt within the live CI window, only 2 remain unsolved. The retained-aggregate black-box count (currently 81/104) is rotation-volatile — older "unknown"-model proofs age out of the 90-day GitHub Actions retention window as new gpt-5.4 sweeps occupy it — so the model-specific 97.9% is the right surface for pure-black-box comparison. The older public publication line is preserved as **90/104 black-box** and **95/104 aggregate**. The benchmark ledger is the only place where that distinction is tracked exactly. **Cost: gpt-5.4 ≈ $0.48 / run, $5.20 / flag** on XBOW.
 
 ### Comparative notes (scope-specific)
 
@@ -515,28 +515,28 @@ pnpm bench:quick
 ### XBOW benchmark
 
 ```bash
-pnpm --filter @pwnkit/benchmark xbow --agentic
+pnpm --filter @0sec/benchmark xbow --agentic
 ```
 
 ### AutoPenBench (requires Linux Docker)
 
 ```bash
-pnpm --filter @pwnkit/benchmark autopenbench
+pnpm --filter @0sec/benchmark autopenbench
 ```
 
 ### HarmBench
 
 ```bash
-pnpm --filter @pwnkit/benchmark harmbench --target <url>
+pnpm --filter @0sec/benchmark harmbench --target <url>
 ```
 
 ### npm audit benchmark
 
 ```bash
-pnpm --filter @pwnkit/benchmark npm-bench
+pnpm --filter @0sec/benchmark npm-bench
 ```
 
-All benchmarks spin up their respective test environments, run pwnkit against them, and check results. XBOW and AutoPenBench use Docker-based targets. HarmBench and npm-bench are lighter-weight and don't require Docker.
+All benchmarks spin up their respective test environments, run 0sec against them, and check results. XBOW and AutoPenBench use Docker-based targets. HarmBench and npm-bench are lighter-weight and don't require Docker.
 
 ## Challenge Format
 

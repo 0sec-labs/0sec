@@ -400,7 +400,7 @@ export function buildReanchorMessage(streak: number, planText: string): string {
     ? `Your open plan is: ${planText.slice(0, 400)}`
     : "You have no open plan tasks recorded.";
   return [
-    `[pwnkit drift check] Your last ${streak} turns have no apparent connection to your objective or your open plan.`,
+    `[0sec drift check] Your last ${streak} turns have no apparent connection to your objective or your open plan.`,
     planLine,
     "Stop and answer, in one line, before your next tool call: which open task does this work serve?",
     "- If it serves an open task, say which one and continue.",

@@ -1,6 +1,6 @@
 /**
  * Bench oracle — turns a scan's emitted evidence into a per-case verdict
- * (pwnkit#556).
+ * (0sec#556).
  *
  * The verdict vocabulary is deliberately identical to the cloud verify
  * runners (`services/worker-controller/src/runners/verify-e2b.ts` →
@@ -94,7 +94,7 @@ export interface BenchTargetProvenance {
 
 /**
  * Minimal structural view of a scan result the oracle needs. A real
- * `@pwnkit/shared` `ScanReport` is assignable to this; tests can also hand
+ * `@0sec/shared` `ScanReport` is assignable to this; tests can also hand
  * a hand-built object. `error` set ⇒ the scan failed ⇒ inconclusive.
  */
 export interface BenchScanResult {

@@ -1,11 +1,11 @@
 ---
 title: Blind Verification
-description: How pwnkit independently re-exploits every finding to kill false positives.
+description: How 0sec independently re-exploits every finding to kill false positives.
 ---
 
-Most security scanners report what they find. pwnkit kills what it cannot prove.
+Most security scanners report what they find. 0sec kills what it cannot prove.
 
-Every finding that survives the attack stage enters blind verification -- a second agent independently attempts to reproduce the vulnerability with zero access to the original reasoning. If it cannot reproduce it, the finding is killed. This is the single biggest difference between pwnkit's output and the noise that other tools produce.
+Every finding that survives the attack stage enters blind verification -- a second agent independently attempts to reproduce the vulnerability with zero access to the original reasoning. If it cannot reproduce it, the finding is killed. This is the single biggest difference between 0sec's output and the noise that other tools produce.
 
 ## What blind verification is
 
@@ -46,7 +46,7 @@ discovered -> FALSE_POSITIVE (killed)   -> excluded from report
 
 ### Agentic verification (with API key)
 
-When an API key is available, pwnkit spins up a full verification agent with its own tool set. The verify agent gets:
+When an API key is available, 0sec spins up a full verification agent with its own tool set. The verify agent gets:
 
 - `send_prompt` -- to re-send payloads to the target
 - `bash` -- to run reproduction scripts
@@ -57,7 +57,7 @@ The verification system prompt (`buildVerifyAgentPrompt`) constructs a task list
 
 The turn budget scales with finding count: `max(10, findingCount * 4)` turns. A scan with 3 findings gets 12 turns for verification. This gives the agent enough room to retry with variants without burning tokens on dead ends.
 
-After the agent completes, pwnkit records a formal verdict for each finding in the database:
+After the agent completes, 0sec records a formal verdict for each finding in the database:
 
 ```typescript
 {
@@ -73,7 +73,7 @@ Confirmed findings have their status set to `confirmed`. Unverified findings are
 
 ### Heuristic fallback (no API key)
 
-When no API key is available, pwnkit falls back to a statistical heuristic. Instead of an agent re-exploiting the finding, it checks whether multiple payloads from the same attack template triggered a vulnerable response.
+When no API key is available, 0sec falls back to a statistical heuristic. Instead of an agent re-exploiting the finding, it checks whether multiple payloads from the same attack template triggered a vulnerable response.
 
 - If 2+ payloads from the same template succeeded: confirmed (convergent evidence)
 - If only 1 payload succeeded: killed (could be noise)
@@ -102,11 +102,11 @@ In practice, blind verification kills 30-60% of raw findings from the attack sta
 
 Most security scanning tools operate on a find-and-report model. They run checks, collect results, and present everything they found. The operator is responsible for triaging false positives.
 
-pwnkit inverts this. The default state of a finding is "not real until proven otherwise." The verification stage is not optional post-processing -- it is a required pipeline stage that every finding must survive.
+0sec inverts this. The default state of a finding is "not real until proven otherwise." The verification stage is not optional post-processing -- it is a required pipeline stage that every finding must survive.
 
 | Approach | What happens to a finding |
 |----------|--------------------------|
 | Traditional scanner | Found -> Reported -> Human triages |
-| pwnkit | Found -> Blind re-exploitation -> Confirmed or killed -> Only confirmed reported |
+| 0sec | Found -> Blind re-exploitation -> Confirmed or killed -> Only confirmed reported |
 
 The cost is time. Verification adds another agent loop, which means more API calls and more latency. A scan that finds 5 vulnerabilities will spend an additional 15-20 turns verifying them. The tradeoff is worth it: operators get a report where every finding has been independently reproduced, not a list of maybes to sort through.

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import type { Finding, RuntimeMode } from "@pwnkit/shared";
+import type { Finding, RuntimeMode } from "@0sec/shared";
 import type { ScanListener } from "../scanner.js";
 import { runAnalysisAgent, type AnalysisAgentResult } from "../agent-runner.js";
 import { runSelectedStaticScan } from "../shared-analysis.js";

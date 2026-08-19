@@ -1,9 +1,9 @@
 ---
 title: TypeScript/Rust Boundary
-description: Why pwnkit should keep TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
+description: Why 0sec should keep TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
 ---
 
-pwnkit should not be rewritten wholesale from TypeScript to Rust right now.
+0sec should not be rewritten wholesale from TypeScript to Rust right now.
 
 The stronger architecture is a hybrid boundary:
 
@@ -14,13 +14,13 @@ Rust can be a differentiator. A rewrite is not a differentiator by itself.
 
 ## Decision
 
-Keep pwnkit's control plane in TypeScript while treating FoxGuard as the first Rust engine in a larger engine boundary.
+Keep 0sec's control plane in TypeScript while treating FoxGuard as the first Rust engine in a larger engine boundary.
 
-The next milestone is not "port pwnkit to Rust." It is "make FoxGuard's default static-lead role measurable enough that Semgrep can stay as an explicit compatibility path instead of the primary source scanner."
+The next milestone is not "port 0sec to Rust." It is "make FoxGuard's default static-lead role measurable enough that Semgrep can stay as an explicit compatibility path instead of the primary source scanner."
 
 ## Why TypeScript stays in the control plane
 
-pwnkit's current moat is not raw scanner speed. It is the agent control flow around evidence:
+0sec's current moat is not raw scanner speed. It is the agent control flow around evidence:
 
 - provider routing and model quirks
 - shell-first execution
@@ -36,7 +36,7 @@ A Rust rewrite would spend a lot of effort rebuilding the least differentiated l
 
 ## Why Rust should grow
 
-Rust is valuable where pwnkit needs to be fast, deterministic, memory-safe, and easy to trust locally:
+Rust is valuable where 0sec needs to be fast, deterministic, memory-safe, and easy to trust locally:
 
 - static lead generation
 - AST and manifest parsing
@@ -47,7 +47,7 @@ Rust is valuable where pwnkit needs to be fast, deterministic, memory-safe, and 
 - large-repo indexing
 - kernel and variant-hunting bridges
 
-FoxGuard is the stepping stone. It proves that Rust can own independent static signal while pwnkit keeps the orchestration layer flexible.
+FoxGuard is the stepping stone. It proves that Rust can own independent static signal while 0sec keeps the orchestration layer flexible.
 
 ## Boundary rules
 
@@ -83,16 +83,16 @@ Until then, a full rewrite is premature.
 
 ## Near-term plan
 
-1. Keep pwnkit's agent and pipeline orchestration in TypeScript.
-2. Keep FoxGuard as the default static lead generator while preserving `PWNKIT_STATIC=semgrep` for comparison and compatibility.
+1. Keep 0sec's agent and pipeline orchestration in TypeScript.
+2. Keep FoxGuard as the default static lead generator while preserving `0SEC_STATIC=semgrep` for comparison and compatibility.
 3. Require ablation evidence before removing Semgrep from any additional runtime path.
 4. Add Rust engines only behind stable JSON/SARIF contracts.
-5. Consider a `pwnkit-engine` or `pwnkit-runner` binary after the engine contracts stabilize.
+5. Consider a `0sec-engine` or `0sec-runner` binary after the engine contracts stabilize.
 
 ## Product framing
 
 The buyer-facing differentiator is not "written in Rust." It is:
 
-> pwnkit combines an autonomous pentest agent with auditable, deterministic local engines.
+> 0sec combines an autonomous pentest agent with auditable, deterministic local engines.
 
 That is stronger than either a pure TypeScript agent or a pure Rust scanner.

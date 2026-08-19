@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # xnu-re-extract.sh — kernelcache -> kext -> decompiled pseudo-C, for the
-# pwnkit `xnu-re` review profile (closed Apple kext review).
+# 0sec `xnu-re` review profile (closed Apple kext review).
 #
 # The open XNU source tree is hardened; the high-value LPE surface lives in
 # the CLOSED kexts (AppleAVE, AGX/IOGPU, APFS, ...) that ship only as binaries

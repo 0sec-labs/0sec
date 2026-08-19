@@ -24,9 +24,9 @@
  *                               multi-week build surface (see the design doc's
  *                               phased plan P1+).
  *
- * DEFAULT-SAFE: with `PWNKIT_EVM_VERIFY` unset (the default), `runEvmVerify` is a
+ * DEFAULT-SAFE: with `0SEC_EVM_VERIFY` unset (the default), `runEvmVerify` is a
  * no-op that returns `{ status: "skipped", ran: false }` — nothing spawns, no
- * RPC is touched. `pwnkit review` on an EVM repo is harmless on a box with no
+ * RPC is touched. `0sec review` on an EVM repo is harmless on a box with no
  * foundry toolchain, matching the kernel verify-path gating.
  */
 
@@ -36,22 +36,22 @@ import { createHash } from "node:crypto";
 
 /**
  * Master opt-in gate. Default OFF — mirrors `archetypeSweepEnabled()` /
- * `PWNKIT_ARCHETYPE_SWEEP`. When OFF, `planEvmVerify` still plans (returns the
+ * `0SEC_ARCHETYPE_SWEEP`. When OFF, `planEvmVerify` still plans (returns the
  * invocation + a warning) but never executes, and `runEvmVerify` no-ops.
  */
 export function evmVerifyEnabled(): boolean {
-  return !["", "0", "false", "no"].includes((process.env.PWNKIT_EVM_VERIFY ?? "").toLowerCase());
+  return !["", "0", "false", "no"].includes((process.env["0SEC_EVM_VERIFY"] ?? "").toLowerCase());
 }
 
-/** The archive-node fork RPC URL (`PWNKIT_EVM_FORK_RPC`), or undefined when unset. */
+/** The archive-node fork RPC URL (`0SEC_EVM_FORK_RPC`), or undefined when unset. */
 export function evmForkRpc(explicit?: string): string | undefined {
-  const v = explicit ?? process.env.PWNKIT_EVM_FORK_RPC?.trim();
+  const v = explicit ?? process.env["0SEC_EVM_FORK_RPC"]?.trim();
   return v && v.length > 0 ? v : undefined;
 }
 
-/** Resolved `forge` binary (path override via `PWNKIT_EVM_FORGE_BIN`, else `forge`). */
+/** Resolved `forge` binary (path override via `0SEC_EVM_FORGE_BIN`, else `forge`). */
 export function forgeBin(): string {
-  const v = process.env.PWNKIT_EVM_FORGE_BIN?.trim();
+  const v = process.env["0SEC_EVM_FORGE_BIN"]?.trim();
   return v && v.length > 0 ? v : "forge";
 }
 
@@ -75,7 +75,7 @@ export type ForgeTestStatus = "pass" | "fail" | "skip";
 
 /** One test result extracted from `forge test --json`. */
 export interface ForgeTestOutcome {
-  /** Suite key, e.g. "test/PwnkitExploit.t.sol:PwnkitExploit". */
+  /** Suite key, e.g. "test/osecExploit.t.sol:osecExploit". */
   suite: string;
   /** Test function name, e.g. "testExploit" (parens stripped). */
   name: string;
@@ -125,13 +125,13 @@ export interface EvmVerifyRequest {
    * Written into the throwaway project's `test/` dir by `runEvmVerify`.
    */
   testSource: string;
-  /** Test file basename (default "PwnkitExploit.t.sol"). */
+  /** Test file basename (default "osecExploit.t.sol"). */
   testFile?: string;
   /** Optional contract filter (`--match-contract`). */
   testContract?: string;
   /** Optional single-test filter (`--match-test`). */
   testFn?: string;
-  /** Fork RPC override; falls back to `PWNKIT_EVM_FORK_RPC`. */
+  /** Fork RPC override; falls back to `0SEC_EVM_FORK_RPC`. */
   forkUrl?: string;
   /**
    * Pinned fork block. REQUIRED for a reproducible proof — an unpinned fork
@@ -183,7 +183,7 @@ export interface EvmVerifyResult {
 }
 
 const DEFAULT_WALL_CLOCK_MS = 5 * 60 * 1000;
-const DEFAULT_TEST_FILE = "PwnkitExploit.t.sol";
+const DEFAULT_TEST_FILE = "osecExploit.t.sol";
 
 // ── parseForgeOutput — the pure oracle-input parser (REAL, unit-tested) ───────
 
@@ -407,12 +407,12 @@ export function planEvmVerify(req: EvmVerifyRequest): { plan?: EvmVerifyPlan; wa
   const warnings: string[] = [];
   const enabled = req.force || evmVerifyEnabled();
   if (!enabled) {
-    warnings.push("evm verify disabled (set PWNKIT_EVM_VERIFY=1 to enable, or pass force:true)");
+    warnings.push("evm verify disabled (set 0SEC_EVM_VERIFY=1 to enable, or pass force:true)");
   }
 
   const forkUrl = evmForkRpc(req.forkUrl);
   if (!forkUrl) {
-    warnings.push("no fork RPC (set PWNKIT_EVM_FORK_RPC or pass forkUrl) — cannot fork; plan omitted");
+    warnings.push("no fork RPC (set 0SEC_EVM_FORK_RPC or pass forkUrl) — cannot fork; plan omitted");
     return { warnings };
   }
   if (req.forkBlock === undefined) {
@@ -478,7 +478,7 @@ export async function runEvmVerify(req: EvmVerifyRequest): Promise<EvmVerifyResu
       ran: false,
       outcomes: [],
       ...(plan ? { plan, cacheKey: plan.cacheKey } : {}),
-      reason: "PWNKIT_EVM_VERIFY not set — harness is a default-safe no-op",
+      reason: "0SEC_EVM_VERIFY not set — harness is a default-safe no-op",
       warnings,
     };
   }

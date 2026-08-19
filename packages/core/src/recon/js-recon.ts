@@ -1,4 +1,4 @@
-// JS-driven endpoint + secret discovery (pwnkit#927).
+// JS-driven endpoint + secret discovery (0sec#927).
 //
 // The CodeWall "hardcoded credentials in a public JavaScript file" move: fetch
 // the JS a live site serves, then mine each bundle for (a) endpoint/route

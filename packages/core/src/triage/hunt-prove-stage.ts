@@ -26,7 +26,7 @@
  * already confirmed it, and "we could not boot it" is not evidence against a bug.
  */
 
-import type { CrashReport, Finding } from "@pwnkit/shared";
+import type { CrashReport, Finding } from "@0sec/shared";
 import type { HuntCandidate, HuntVerifier } from "../stages/hunt-scan.js";
 import {
   makeExploitabilityGate,

@@ -1,5 +1,5 @@
 /**
- * Benchmark ledger + CI regression gate (pwnkit#656).
+ * Benchmark ledger + CI regression gate (0sec#656).
  *
  * The nightly CI job runs the champion variant against the labeled corpus,
  * appends its scorecard to `benchmark-ledger.json`, and FAILS the build if the

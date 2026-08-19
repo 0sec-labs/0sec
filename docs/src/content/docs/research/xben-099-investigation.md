@@ -1,22 +1,22 @@
 ---
 title: "XBEN-099 root cause investigation"
-description: "Why XBEN-099 fails for pwnkit on the patched fork, what Shannon does differently, and the proposed fix."
+description: "Why XBEN-099 fails for 0sec on the patched fork, what Shannon does differently, and the proposed fix."
 ---
 
 ## Summary
 
 XBEN-099-24 (Get the first) is a Node.js + MongoDB IDOR challenge whose
-upstream `Dockerfile` and `app/` source build cleanly. The failure pwnkit
+upstream `Dockerfile` and `app/` source build cleanly. The failure 0sec
 sees in CI (`error: "Docker start failed or port not found"` after ~90s)
 is **not** a build problem and **not** Docker rot. It is a `docker compose
 up --wait` race: the upstream `docker-compose.yml` declares
 `depends_on: mongodb { condition: service_healthy }` with a Mongo
-healthcheck that runs on a 30s interval, while pwnkit's xbow-runner caps
+healthcheck that runs on a 30s interval, while 0sec's xbow-runner caps
 `docker compose up -d --wait` at a hard 60s. On any host where Mongo's
 first healthcheck does not pass before t=60s the whole stack is torn down
-and pwnkit records a startup failure. Shannon's fork sidesteps this by
+and 0sec records a startup failure. Shannon's fork sidesteps this by
 removing the health-gated dependency entirely and pinning the published
-port. The cleanest pwnkit-side fix is to (a) raise the `--wait` timeout
+port. The cleanest 0sec-side fix is to (a) raise the `--wait` timeout
 for XBOW startup or (b) ship a one-line patch that drops
 `condition: service_healthy` from this single compose file. We now have a
 verbatim local reproducer for this issue and recommend filing it
@@ -40,10 +40,10 @@ upstream.
   `/profile/<that-id>`, and the route returns the flag.
 - **Win condition:** the static flag baked in via `--build-arg FLAG=...`
   (the patched fork's `.env` ships `flag{6a7c27ff-899b-4f2c-8ad7-5410a81c199b}`
-  but pwnkit/`common.mk` overrides it with the SHA-256 of the benchmark
+  but 0sec/`common.mk` overrides it with the SHA-256 of the benchmark
   name).
 
-The challenge is solvable in well under pwnkit's normal turn budget once
+The challenge is solvable in well under 0sec's normal turn budget once
 the container is actually reachable. Reachability is the entire problem.
 
 ## Build + start results
@@ -109,11 +109,11 @@ of `depends_on: mongodb { condition: service_healthy }`.
 On a real linux/amd64 GHA runner the AVX path is fine — but the second,
 more important factor still bites: the mongo healthcheck has
 `interval: 30s`, so the *first* healthcheck doesn't fire until t=30s, the
-*second* at t=60s, and pwnkit's `startChallenge()` aborts at exactly 60s.
+*second* at t=60s, and 0sec's `startChallenge()` aborts at exactly 60s.
 There is essentially one chance for mongo to be ready, and a cold pull +
 `mongod` boot routinely doesn't make it.
 
-## Pwnkit's failure mode
+## 0sec's failure mode
 
 `packages/benchmark/src/xbow-runner.ts:301-369` runs:
 
@@ -148,7 +148,7 @@ That is exactly what the recent CI artifacts show. From
 }
 ```
 
-Note: `buildFailures: 0`. The image builds cleanly every run. Pwnkit
+Note: `buildFailures: 0`. The image builds cleanly every run. 0sec
 classifies this as a `startupFailure`, not a build rot. The top-level
 benchmark doc (`docs/.../benchmark.md`) currently labels XBEN-099 as
 "persistent docker-startup infrastructure failure across every config" —
@@ -192,7 +192,7 @@ that **make this challenge actually start** are:
    its own MongoDB connect retry inside `mongoose.connect()` handles the
    race. The app's own curl-based healthcheck (which is broken anyway,
    see Open Questions) becomes the only thing `--wait` blocks on.
-2. **Fixed published port `3000:3000`.** `docker compose ps` and pwnkit's
+2. **Fixed published port `3000:3000`.** `docker compose ps` and 0sec's
    port-discovery loop reliably see a `PublishedPort` instead of a
    randomly assigned ephemeral port that may take an extra moment to
    appear in `compose ps --format json`.
@@ -213,7 +213,7 @@ runtime hazard in place.
 Two complementary actions, both small. Either alone is enough to
 unblock XBEN-099 in CI; doing both is cheap and defensive.
 
-1. **Pwnkit-local override (fastest).** Drop a single
+1. **0sec-local override (fastest).** Drop a single
    `docker-compose.override.yml` next to XBEN-099 (or, more cleanly, a
    tiny patch step inside `xbow-runner` that strips
    `condition: service_healthy` from any compose file before running it).
@@ -228,7 +228,7 @@ unblock XBEN-099 in CI; doing both is cheap and defensive.
    real (independent) bug worth reporting. The patched fork inherits
    both, so a single upstream fix benefits everyone downstream.
 
-Recommended ordering: ship the pwnkit-local override now (closes #79),
+Recommended ordering: ship the 0sec-local override now (closes #79),
 file the upstream issue for visibility, optionally PR the same change
 back to `0ca/xbow-validation-benchmarks-patched` so other downstream
 consumers benefit.
@@ -240,17 +240,17 @@ consumers benefit.
   Dockerfile (`FROM node:21` then plain `npm install`) never installs
   curl. So even if mongo becomes healthy, `--wait` would still spin on
   the app healthcheck until either compose's per-service start_period
-  eventually marks it unhealthy or pwnkit's 60s timeout fires first. We
+  eventually marks it unhealthy or 0sec's 60s timeout fires first. We
   did not measure which path actually wins on a real GHA runner. A
   belt-and-braces fix would also strip the `app` healthcheck or replace
   it with a `wget`/`node -e` probe, since neither is in the base image.
 - **GHA runner cold-pull cost.** We did not time how long
-  `mongo:latest` actually takes to pull + boot on the pwnkit GHA runners.
+  `mongo:latest` actually takes to pull + boot on the 0sec GHA runners.
   If it's >60s in practice, even removing the health-gated dep won't
   help; we'd still need to raise the runner-side timeout.
 - **Shannon's `appdb` rename.** Renaming the database in the connection
   string is a cosmetic change, but it could in principle affect any
-  future agent prompt that names the database. Pwnkit's benchmark prompt
+  future agent prompt that names the database. 0sec's benchmark prompt
   is generic, so this shouldn't matter — confirmed by inspection of the
   challenge metadata, but worth re-checking if a prompt template ever
   starts grepping for the literal `getthefirst`.

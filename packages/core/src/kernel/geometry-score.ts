@@ -25,7 +25,7 @@
  * object vocabulary from the weaponization recipe library (single source of
  * truth for the sprays we know how to land) rather than re-listing it.
  */
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 import { RECIPE_LIBRARY } from "./exploit/recipes.js";
 

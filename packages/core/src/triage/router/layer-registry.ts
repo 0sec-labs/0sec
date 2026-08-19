@@ -7,14 +7,14 @@
  *
  * Cost factors are relative, not absolute USD: 0 = pure regex/grep (no LLM,
  * no network), 1 = full LLM-driven verify with tool use. The numbers come
- * from the per-layer telemetry shipped in pwnkit#112 and the per-layer
- * ablation in pwnkit#72's 2026-04-11 comment. They will be replaced by
+ * from the per-layer telemetry shipped in 0sec#112 and the per-layer
+ * ablation in 0sec#72's 2026-04-11 comment. They will be replaced by
  * measured medians once #112's telemetry has accumulated enough samples.
  *
- * See pwnkit#113 for the design doc, pwnkit#67 for the joint-paper plan.
+ * See 0sec#113 for the design doc, 0sec#67 for the joint-paper plan.
  */
 
-import type { TriageLayerName } from "@pwnkit/shared";
+import type { TriageLayerName } from "@0sec/shared";
 
 export type LayerId = TriageLayerName;
 
@@ -24,7 +24,7 @@ export interface LayerRegistryEntry {
   /** Human-readable name (used in router reasoning strings). */
   name: string;
   /**
-   * The PWNKIT_FEATURE_* env var that toggles this layer today. When the
+   * The 0SEC_FEATURE_* env var that toggles this layer today. When the
    * router decides to skip a layer it does NOT mutate the env var; the
    * skip is per-finding, not per-scan. The env var remains the operator-
    * facing escape hatch.
@@ -68,7 +68,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "holding_it_wrong",
     name: "Holding-It-Wrong Regex Blocklist",
-    env_flag: "PWNKIT_FEATURE_HOLDING_IT_WRONG",
+    env_flag: "0SEC_FEATURE_HOLDING_IT_WRONG",
     cost_factor: 0.0,
     description:
       "Pure-regex blocklist that rejects findings whose evidence reads as 'the function did its job' (e.g. successful logout, normal 404).",
@@ -76,7 +76,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "evidence_gate",
     name: "Evidence Completeness Gate",
-    env_flag: "PWNKIT_FEATURE_EVIDENCE_GATE",
+    env_flag: "0SEC_FEATURE_EVIDENCE_GATE",
     cost_factor: 0.1,
     description:
       "Drops findings whose extracted feature vector reports evidence_completeness <= 0.5 (no request + response + analysis triad).",
@@ -84,7 +84,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "reachability",
     name: "Reachability Gate",
-    env_flag: "PWNKIT_FEATURE_REACHABILITY_GATE",
+    env_flag: "0SEC_FEATURE_REACHABILITY_GATE",
     cost_factor: 0.2,
     description:
       "Static-analysis check that the vulnerable sink is reachable from an application entry point. White-box only.",
@@ -100,7 +100,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "multi_modal",
     name: "Multi-Modal Agreement (Foxguard)",
-    env_flag: "PWNKIT_FEATURE_MULTIMODAL",
+    env_flag: "0SEC_FEATURE_MULTIMODAL",
     cost_factor: 0.3,
     description:
       "Cross-checks every finding against the foxguard Rust pattern scanner. Agreement boosts confidence; disagreement gates the verify pipeline.",
@@ -108,7 +108,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "publishability",
     name: "Publishability / In-Scope Gate",
-    env_flag: "PWNKIT_FEATURE_PUBLISHABILITY_GATE",
+    env_flag: "0SEC_FEATURE_PUBLISHABILITY_GATE",
     cost_factor: 0.3,
     description:
       "Decides disclosure-worthiness (issue #539): SECURITY.md threat-model exclusion (by_design), global advisory dedup (duplicate) with the fix-bypass exception (advisory exists but reproduces on latest → fix_bypass), latest-version (fixed), and public-API reachability (unreachable). Never auto-drops high-severity/high-impact findings — routes them to needs_verify via canAutoSuppress.",
@@ -116,7 +116,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "structured_verify",
     name: "Structured 4-Step Verify",
-    env_flag: "PWNKIT_FEATURE_CONSENSUS_VERIFY",
+    env_flag: "0SEC_FEATURE_CONSENSUS_VERIFY",
     cost_factor: 0.4,
     description:
       "Single-shot LLM verification with a fixed 4-step rubric (reproduce, classify, impact, severity). Used for ambiguous mid-confidence findings.",
@@ -124,7 +124,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "pov_gate",
     name: "Proof-of-Vulnerability Gate",
-    env_flag: "PWNKIT_FEATURE_POV_GATE",
+    env_flag: "0SEC_FEATURE_POV_GATE",
     cost_factor: 0.55,
     description:
       "Agentic loop (up to N turns) that tries to build a working PoC. No PoC → downgrade to info. Empirical FP discriminator per arXiv:2509.07225.",
@@ -132,7 +132,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "poc_gen",
     name: "Static-Finding PoC Generation (#666)",
-    env_flag: "PWNKIT_FEATURE_POC_GEN_STATIC",
+    env_flag: "0SEC_FEATURE_POC_GEN_STATIC",
     cost_factor: 0.55,
     description:
       "For static / no-PoC findings only: agentic loop that builds + runs a PoC, synthesizing runnable pocSteps on reproduce so the verify runner stops skipping them. No repro → flag poc:none for manual review, never silent-skip.",
@@ -140,7 +140,7 @@ export const LAYER_REGISTRY: readonly LayerRegistryEntry[] = [
   {
     id: "consensus",
     name: "Self-Consistency Voting",
-    env_flag: "PWNKIT_FEATURE_CONSENSUS_VERIFY",
+    env_flag: "0SEC_FEATURE_CONSENSUS_VERIFY",
     cost_factor: 0.6,
     description:
       "Runs the structured verify pipeline N times with sampling and takes the majority vote. Reduces single-call variance at N× the cost.",
@@ -171,7 +171,7 @@ export const LAYER_REGISTRY_BY_ID: Readonly<Record<LayerId, LayerRegistryEntry>>
 
 /**
  * The default static layer set used today by `agentic-scanner.ts`. When
- * `PWNKIT_FEATURE_DYNAMIC_TRIAGE` is unset, the router returns this set
+ * `0SEC_FEATURE_DYNAMIC_TRIAGE` is unset, the router returns this set
  * verbatim so behavior is unchanged.
  *
  * Order matches `agentic-scanner.ts`'s dispatch order: free filters first,

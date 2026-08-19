@@ -1,10 +1,10 @@
 ---
 title: Finding Triage
-description: The multi-layer triage pipeline that sits between pwnkit's research and verify agents — and what the 2026-04-11 ablation actually measured it doing.
+description: The multi-layer triage pipeline that sits between 0sec's research and verify agents — and what the 2026-04-11 ablation actually measured it doing.
 ---
 
 Autonomous pentesters are only as valuable as their false-positive rate.
-pwnkit ships a triage pipeline between the research agent and the blind
+0sec ships a triage pipeline between the research agent and the blind
 verify agent. Every finding walks through a stack of independent
 filters, each of which can kill, downgrade, or boost it. Most filters are
 deterministic, zero-cost, and run before any LLM verification token is
@@ -17,7 +17,7 @@ spent.
 > no-triage baseline on XBOW black-box, is a Pareto tradeoff on XBOW
 > white-box (costs 2 flags at limit=50 for 63% fewer findings), and is
 > a no-op on npm-bench. Layer 11 (EGATS) is the one broken layer and
-> is opt-in only — see pwnkit#116.
+> is opt-in only — see 0sec#116.
 
 ## Pipeline overview
 
@@ -123,7 +123,7 @@ Call `verifyOracleByCategory(finding, target)` to dispatch by category.
 ## 4. Reachability gate
 
 **Module:** `triage/reachability.ts`
-**Flag:** `PWNKIT_FEATURE_REACHABILITY_GATE=1`
+**Flag:** `0SEC_FEATURE_REACHABILITY_GATE=1`
 
 When a source tree is available, walks imports, route mounts, and
 framework entry points to check whether the vulnerable sink is
@@ -136,33 +136,33 @@ conservative: when it cannot make a confident call it returns
 `reachable: true` with low confidence so later stages still get a
 chance. A tree-sitter-based interprocedural upgrade is planned.
 
-## 5. Multi-modal agreement (foxguard × pwnkit)
+## 5. Multi-modal agreement (foxguard × 0sec)
 
 **Module:** `triage/multi-modal.ts`
-**Flag:** `PWNKIT_FEATURE_MULTIMODAL=1`
+**Flag:** `0SEC_FEATURE_MULTIMODAL=1`
 
 When both a source tree and the [foxguard](https://github.com/0sec-labs/foxguard)
-binary are available, pwnkit runs foxguard against the same code and
+binary are available, 0sec runs foxguard against the same code and
 cross-checks every finding against foxguard's SARIF output.
 
 - **Both scanners fire on the same file / category** → auto-accepted
   with high confidence.
-- **Only pwnkit fires, foxguard scanned the file cleanly** →
+- **Only 0sec fires, foxguard scanned the file cleanly** →
   down-weighted or auto-rejected.
 - **foxguard didn't scan the file** → no signal either way.
 
 ```bash
-export PWNKIT_FEATURE_MULTIMODAL=1
-pwnkit scan --target https://example.com --repo ./source
+export 0SEC_FEATURE_MULTIMODAL=1
+0sec scan --target https://example.com --repo ./source
 ```
 
-This is the opensoar-hq trinity validation pattern: pwnkit detects,
+This is the opensoar-hq trinity validation pattern: 0sec detects,
 foxguard cross-checks, opensoar responds.
 
 ## 6. PoV generation gate
 
 **Module:** `triage/pov-gate.ts`
-**Flag:** `PWNKIT_FEATURE_POV_GATE=1`
+**Flag:** `0SEC_FEATURE_POV_GATE=1`
 
 Backed by the empirical ground truth from *All You Need Is A Fuzzing
 Brain* (arXiv:2509.07225): if an agent can't build a working PoC in N
@@ -197,7 +197,7 @@ Any step failure marks the finding as a false positive.
 
 ## 8. Self-consistency voting
 
-**Flag:** `PWNKIT_FEATURE_CONSENSUS_VERIFY=1`
+**Flag:** `0SEC_FEATURE_CONSENSUS_VERIFY=1`
 
 Runs the structured verify pipeline N times (different sampling seeds)
 and takes the majority vote. Trades tokens for confidence — useful on
@@ -206,8 +206,8 @@ ambiguous findings where a single verify pass is noisy.
 ## 9. Assistant memories
 
 **Module:** `triage/memories.ts`
-**CLI:** `pwnkit-cli triage ...`
-**Flag:** `PWNKIT_FEATURE_TRIAGE_MEMORIES=1`
+**CLI:** `0sec-cli triage ...`
+**Flag:** `0SEC_FEATURE_TRIAGE_MEMORIES=1`
 
 Semgrep-style per-target persistent FP context that learns from human
 triage decisions. When a user marks a finding as a false positive (and
@@ -227,24 +227,24 @@ Relevance is currently a lightweight token-overlap heuristic; an
 embedding-backed ranker can replace `scoreMemory` without touching the
 public API.
 
-### `pwnkit-cli triage` commands
+### `0sec-cli triage` commands
 
 ```bash
 # Mark a finding as a false positive and remember why
-pwnkit-cli triage mark-fp <finding-id> --reason "test fixture, not prod"
+0sec-cli triage mark-fp <finding-id> --reason "test fixture, not prod"
 
 # Add a standalone memory (without a backing finding)
-pwnkit-cli triage memory add --finding <id> --reason "sink is harmless helper" \
+0sec-cli triage memory add --finding <id> --reason "sink is harmless helper" \
   --scope package --scope-value my-pkg
 
 # List memories
-pwnkit-cli triage memory list --scope target
+0sec-cli triage memory list --scope target
 ```
 
 ## 10. Adversarial debate
 
 **Module:** `triage/adversarial.ts`
-**Flag:** `PWNKIT_FEATURE_DEBATE=1`
+**Flag:** `0SEC_FEATURE_DEBATE=1`
 
 Two fresh-context agents argue opposing positions — a prosecutor makes the
 case that the finding is real, a defender makes the case that it is a
@@ -261,7 +261,7 @@ misses.
 
 ## 11. EGATS — Evidence-Gated Attack Tree Search
 
-**Flag:** `--egats` or `PWNKIT_FEATURE_EGATS=1`
+**Flag:** `--egats` or `0SEC_FEATURE_EGATS=1`
 
 Beam-search over an explicit hypothesis tree. The agent proposes attack
 branches, each with required evidence, and only expands branches where
@@ -276,22 +276,22 @@ a known lead.
 
 | Env var | Default | Stage |
 |---------|---------|-------|
-| `PWNKIT_FEATURE_HOLDING_IT_WRONG` | **on** | 1 |
-| `PWNKIT_FEATURE_EVIDENCE_GATE` | **on** | 2 |
-| `PWNKIT_FEATURE_REACHABILITY_GATE` | off | 4 |
-| `PWNKIT_FEATURE_MULTIMODAL` | off | 5 |
-| `PWNKIT_FEATURE_POV_GATE` | off | 6 |
-| `PWNKIT_FEATURE_PUBLISHABILITY_GATE` | off | 6 |
-| `PWNKIT_FEATURE_POC_GEN_STATIC` | off | 6 |
-| `PWNKIT_FEATURE_CONSENSUS_VERIFY` | off | 8 |
-| `PWNKIT_FEATURE_LEARNED_ROUTER` | off | router |
-| `PWNKIT_FEATURE_DYNAMIC_TRIAGE` | off | router |
+| `0SEC_FEATURE_HOLDING_IT_WRONG` | **on** | 1 |
+| `0SEC_FEATURE_EVIDENCE_GATE` | **on** | 2 |
+| `0SEC_FEATURE_REACHABILITY_GATE` | off | 4 |
+| `0SEC_FEATURE_MULTIMODAL` | off | 5 |
+| `0SEC_FEATURE_POV_GATE` | off | 6 |
+| `0SEC_FEATURE_PUBLISHABILITY_GATE` | off | 6 |
+| `0SEC_FEATURE_POC_GEN_STATIC` | off | 6 |
+| `0SEC_FEATURE_CONSENSUS_VERIFY` | off | 8 |
+| `0SEC_FEATURE_LEARNED_ROUTER` | off | router |
+| `0SEC_FEATURE_DYNAMIC_TRIAGE` | off | router |
 
-`PWNKIT_FEATURE_TRIAGE_MEMORIES`, `PWNKIT_FEATURE_DEBATE`, and
-`PWNKIT_FEATURE_EGATS` appeared in earlier versions of this table but no
+`0SEC_FEATURE_TRIAGE_MEMORIES`, `0SEC_FEATURE_DEBATE`, and
+`0SEC_FEATURE_EGATS` appeared in earlier versions of this table but no
 longer exist in the codebase — `egats` was removed from the default
 aliases after the ablation measured it regressing the hardest slice
-([pwnkit#116](https://github.com/0sec-labs/0sec/issues/116)). Sections
+([0sec#116](https://github.com/0sec-labs/0sec/issues/116)). Sections
 9-11 above describe layers that are no longer separately toggleable.
 
 See [Features](/features/) for the complete env-var inventory.
@@ -312,12 +312,12 @@ means setting six variables and getting all six right. `fp-moat` is a
 preset that names the set:
 
 ```bash
-pwnkit scan --features fp-moat --target https://example.com
+0sec scan --features fp-moat --target https://example.com
 # or, for CI where the command line is templated:
-PWNKIT_FEATURE_PRESET=fp-moat pwnkit scan --target https://example.com
+0SEC_FEATURE_PRESET=fp-moat 0sec scan --target https://example.com
 ```
 
-It expands to `PWNKIT_FEATURE_REACHABILITY_GATE`, `_MULTIMODAL`,
+It expands to `0SEC_FEATURE_REACHABILITY_GATE`, `_MULTIMODAL`,
 `_PUBLISHABILITY_GATE`, `_POV_GATE`, `_POC_GEN_STATIC`, and
 `_CONSENSUS_VERIFY`. The membership lives in
 `packages/core/src/agent/feature-presets.ts` and is pinned by test.
@@ -326,11 +326,11 @@ A flag you set yourself always wins, so you can ablate one layer out of
 an otherwise-full moat:
 
 ```bash
-PWNKIT_FEATURE_POV_GATE=0 pwnkit scan --features fp-moat …
+0SEC_FEATURE_POV_GATE=0 0sec scan --features fp-moat …
 ```
 
-The preset deliberately leaves out `PWNKIT_FEATURE_LEARNED_ROUTER` and
-`PWNKIT_FEATURE_DYNAMIC_TRIAGE`. Those decide which layers to *skip* per
+The preset deliberately leaves out `0SEC_FEATURE_LEARNED_ROUTER` and
+`0SEC_FEATURE_DYNAMIC_TRIAGE`. Those decide which layers to *skip* per
 finding, so enabling them alongside the moat would let the router
 suppress the layers you are trying to measure.
 
@@ -341,7 +341,7 @@ a verdict on the finding as it executes, and `findings show` renders that
 record:
 
 ```bash
-pwnkit findings show <id>
+0sec findings show <id>
 ```
 
 ```
@@ -350,7 +350,7 @@ pwnkit findings show <id>
   Layers: 3 executed, 5 skipped, 3 unrecorded | 412ms | $0.0000
     + holding_it_wrong   executed(pass) — no holding-it-wrong pattern matched
     + evidence_gate      executed(pass) — evidence_completeness=0.83 > 0.5
-    - reachability       skipped(skip) — PWNKIT_FEATURE_REACHABILITY_GATE=0
+    - reachability       skipped(skip) — 0SEC_FEATURE_REACHABILITY_GATE=0
     …
 ```
 

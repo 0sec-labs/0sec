@@ -9,7 +9,7 @@ import type {
   Finding,
   ScanConfig,
   Severity,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import { auditAgentPrompt } from "./analysis-prompts.js";
 import { runAnalysisAgent } from "./agent-runner.js";
@@ -839,7 +839,7 @@ export async function runSupplyChainScan(
  * 2. Run static scanner with security rules
  * 3. AI agent analyzes static scanner findings + hunts for additional vulns
  * 4. Generate report with severity and PoC suggestions
- * 5. Persist to pwnkit DB
+ * 5. Persist to 0sec DB
  */
 export async function packageAudit(
   opts: PackageAuditOptions,
@@ -853,7 +853,7 @@ export async function packageAudit(
   const pkg = installPackageForEcosystem(ecosystem, config.package, config.version, emit);
 
   // Initialize DB and create scan record
-  const db = await (async () => { try { const { pwnkitDB } = await import("@pwnkit/db"); return new pwnkitDB(config.dbPath); } catch { return null as any; } })() as any;
+  const db = await (async () => { try { const { osecDB } = await import("@0sec/db"); return new osecDB(config.dbPath); } catch { return null as any; } })() as any;
   const scanConfig: ScanConfig = {
     target: `${pkg.ecosystem}:${pkg.name}@${pkg.version}`,
     depth: config.depth,

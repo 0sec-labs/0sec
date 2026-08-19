@@ -1,5 +1,5 @@
 /**
- * `pwnkit review --npm-dynamic` flag wiring. Mocks `runUnified` so the action
+ * `0sec review --npm-dynamic` flag wiring. Mocks `runUnified` so the action
  * never runs; asserts the opt-in dynamic-discovery flag is off by default and
  * forwarded as `npmDynamicDiscovery: true` when set.
  */
@@ -21,10 +21,10 @@ async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerReviewCommand(program);
-  await program.parseAsync(["node", "pwnkit-cli", ...argv]);
+  await program.parseAsync(["node", "0sec-cli", ...argv]);
 }
 
-describe("pwnkit review --npm-dynamic", () => {
+describe("0sec review --npm-dynamic", () => {
   beforeEach(() => {
     runUnifiedMock.mockClear();
     runUnifiedMock.mockResolvedValue(undefined);

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
-import type { OutputFormat, RuntimeMode, ScanDepth, ScanMode } from "@pwnkit/shared";
-import { pwnkitDB } from "@pwnkit/db";
+import type { OutputFormat, RuntimeMode, ScanDepth, ScanMode } from "@0sec/shared";
+import { osecDB } from "@0sec/db";
 import { runUnified } from "./run.js";
 
 function parseScanTarget(target: string): {
@@ -87,9 +87,9 @@ export function registerResumeCommand(program: Command): void {
     .option("--model <model>", "LLM model to use")
     .option("--branch-from <entry-index>", "Branch the journal at the given entry index before resuming. Copies entries 0..N into a new run and resumes from there.")
     .action(async (scanId: string, opts: Record<string, string | boolean>) => {
-      let scan: ReturnType<pwnkitDB["getScan"]> | null = null;
+      let scan: ReturnType<osecDB["getScan"]> | null = null;
       try {
-        const db = new pwnkitDB(opts.dbPath as string | undefined);
+        const db = new osecDB(opts.dbPath as string | undefined);
         scan =
           db.getScan(scanId) ??
           (() => {

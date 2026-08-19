@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import type { SemgrepFinding } from "@pwnkit/shared";
+import type { SemgrepFinding } from "@0sec/shared";
 import type { RuntimeType } from "./runtime/index.js";
 import type { ScanListener } from "./scanner.js";
 
@@ -170,7 +170,7 @@ export interface StaticScannerOptions {
 }
 
 export function selectedStaticScanner(): "foxguard" | "semgrep" {
-  return process.env.PWNKIT_STATIC === "semgrep" ? "semgrep" : "foxguard";
+  return process.env["0SEC_STATIC"] === "semgrep" ? "semgrep" : "foxguard";
 }
 
 /**
@@ -208,7 +208,7 @@ interface FoxguardJsonFinding {
 
 /**
  * Run foxguard as a sibling source analyzer and translate its JSON output
- * into pwnkit's `SemgrepFinding` shape so the existing review pipeline can
+ * into 0sec's `SemgrepFinding` shape so the existing review pipeline can
  * consume either scanner without changing prompt/report contracts.
  *
  * Behaviour:
@@ -290,7 +290,7 @@ export function runFoxguardScan(
       // back to semgrep silently so the pipeline keeps moving.
       const message = err instanceof Error ? err.message : String(err);
       logger(
-        `[pwnkit] foxguard unavailable (${message}); falling back to semgrep. ` +
+        `[0sec] foxguard unavailable (${message}); falling back to semgrep. ` +
           `Pin in use: foxguard@${foxguardTag}.`,
       );
       const fallbackFindings = fallback(targetPath, emit, {
@@ -333,7 +333,7 @@ export function runSelectedStaticScan(
  *   - `line` / `end_line` → `startLine` / `endLine` (end_line defaults
  *                          to startLine when missing — Foxguard omits
  *                          it for some single-line patterns)
- *   - `severity`          → `severity` (already in pwnkit's 4-tier
+ *   - `severity`          → `severity` (already in 0sec's 4-tier
  *                          vocabulary; we normalize via
  *                          `mapFoxguardSeverity` so unexpected values
  *                          land on `info` instead of leaking through)

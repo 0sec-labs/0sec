@@ -1,21 +1,21 @@
-# pwnkit kernel crash validator — KASAN-enabled kernel builder
+# 0sec kernel crash validator — KASAN-enabled kernel builder
 #
 # Builds a minimal Linux kernel with KASAN + UBSAN enabled, plus a
 # Debian root filesystem that boots into a shared-workdir reproducer runner.
 #
 # Usage:
-#   docker build -t pwnkit-kernel-builder -f Dockerfile .
-#   docker run --rm -v $(pwd)/out:/out pwnkit-kernel-builder
+#   docker build -t 0sec-kernel-builder -f Dockerfile .
+#   docker run --rm -v $(pwd)/out:/out 0sec-kernel-builder
 #
 # Outputs in /out:
 #   bzImage       — KASAN-enabled kernel
-#   rootfs.img    — ext4 root filesystem (512MB) with GCC/binutils + pwnkit-init
+#   rootfs.img    — ext4 root filesystem (512MB) with GCC/binutils + 0sec-init
 #   kernel.config — .config used for the build
 #
 # The resulting artifacts work with the kernel-vm-runner.ts QEMU config:
-#   PWNKIT_KERNEL_QEMU=1
-#   PWNKIT_KERNEL_QEMU_KERNEL=/path/to/bzImage
-#   PWNKIT_KERNEL_QEMU_DISK=/path/to/rootfs.img
+#   0SEC_KERNEL_QEMU=1
+#   0SEC_KERNEL_QEMU_KERNEL=/path/to/bzImage
+#   0SEC_KERNEL_QEMU_DISK=/path/to/rootfs.img
 
 FROM debian:bookworm-slim AS kernel-builder
 
@@ -130,8 +130,8 @@ net-tools,strace,util-linux,systemd-sysv \
 RUN chroot /rootfs bash -c '\
     echo "root:root" | chpasswd && \
     mkdir -p /root/.ssh && \
-    ssh-keygen -t ed25519 -N "" -f /root/.ssh/pwnkit_vm_key && \
-    cat /root/.ssh/pwnkit_vm_key.pub >> /root/.ssh/authorized_keys && \
+    ssh-keygen -t ed25519 -N "" -f /root/.ssh/osec_vm_key && \
+    cat /root/.ssh/osec_vm_key.pub >> /root/.ssh/authorized_keys && \
     chmod 600 /root/.ssh/authorized_keys && \
     ssh-keygen -A && \
     echo "nameserver 8.8.8.8" > /etc/resolv.conf && \
@@ -141,8 +141,8 @@ RUN chroot /rootfs bash -c '\
     apt-get install -y --no-install-recommends gdb isc-dhcp-client binutils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
-    echo "pwnkit-kernel" > /etc/hostname && \
-    mkdir -p /root/pwnkit-kernel \
+    echo "0sec-kernel" > /etc/hostname && \
+    mkdir -p /root/0sec-kernel \
 '
 
 RUN printf '%s\n' \
@@ -152,26 +152,26 @@ RUN printf '%s\n' \
     'mount -t devtmpfs devtmpfs /dev 2>/dev/null || true' \
     'mount -t tmpfs tmpfs /run 2>/dev/null || true' \
     'mount -t tmpfs tmpfs /tmp 2>/dev/null || true' \
-    'echo "PWNKIT_INIT_START" > /dev/kmsg 2>/dev/null || true' \
-    'mkdir -p /mnt/pwnkit' \
-    'if mount -t 9p -o trans=virtio,version=9p2000.L pwnkitshare /mnt/pwnkit 2>/tmp/pwnkit-mount.err; then' \
-    '  echo "PWNKIT_INIT_SHARE_MOUNTED" > /dev/kmsg 2>/dev/null || true' \
+    'echo "0SEC_INIT_START" > /dev/kmsg 2>/dev/null || true' \
+    'mkdir -p /mnt/0sec' \
+    'if mount -t 9p -o trans=virtio,version=9p2000.L osecshare /mnt/0sec 2>/tmp/0sec-mount.err; then' \
+    '  echo "0SEC_INIT_SHARE_MOUNTED" > /dev/kmsg 2>/dev/null || true' \
     'else' \
-    '  err=$(tr "\n" " " </tmp/pwnkit-mount.err 2>/dev/null || true)' \
-    '  echo "PWNKIT_INIT_SHARE_MOUNT_FAILED:${err:-unknown}" > /dev/kmsg 2>/dev/null || true' \
+    '  err=$(tr "\n" " " </tmp/0sec-mount.err 2>/dev/null || true)' \
+    '  echo "0SEC_INIT_SHARE_MOUNT_FAILED:${err:-unknown}" > /dev/kmsg 2>/dev/null || true' \
     'fi' \
-    'if [ -f /mnt/pwnkit/runner.sh ]; then' \
-    '  echo "PWNKIT_INIT_RUNNER_START" > /dev/kmsg 2>/dev/null || true' \
-    '  /bin/sh /mnt/pwnkit/runner.sh' \
+    'if [ -f /mnt/0sec/runner.sh ]; then' \
+    '  echo "0SEC_INIT_RUNNER_START" > /dev/kmsg 2>/dev/null || true' \
+    '  /bin/sh /mnt/0sec/runner.sh' \
     '  status=$?' \
-    '  echo "PWNKIT_INIT_RUNNER_EXIT:${status}" > /dev/kmsg 2>/dev/null || true' \
+    '  echo "0SEC_INIT_RUNNER_EXIT:${status}" > /dev/kmsg 2>/dev/null || true' \
     '  sync' \
     '  poweroff -f 2>/dev/null || halt -f 2>/dev/null || reboot -f 2>/dev/null || exit "$status"' \
     'fi' \
-    'echo "PWNKIT_INIT_IDLE" > /dev/kmsg 2>/dev/null || true' \
+    'echo "0SEC_INIT_IDLE" > /dev/kmsg 2>/dev/null || true' \
     'sleep infinity' \
-    > /rootfs/sbin/pwnkit-init \
-    && chmod 755 /rootfs/sbin/pwnkit-init
+    > /rootfs/sbin/0sec-init \
+    && chmod 755 /rootfs/sbin/0sec-init
 
 # Create ext4 disk image without requiring loop-mount support inside Docker build
 RUN truncate -s 512M /rootfs.img \
@@ -183,8 +183,8 @@ FROM debian:bookworm-slim
 COPY --from=kernel-builder /build/linux/arch/x86/boot/bzImage /artifacts/bzImage
 COPY --from=kernel-builder /build/linux/.config /artifacts/kernel.config
 COPY --from=rootfs-builder /rootfs.img /artifacts/rootfs.img
-COPY --from=rootfs-builder /rootfs/root/.ssh/pwnkit_vm_key /artifacts/pwnkit_vm_key
-COPY --from=rootfs-builder /rootfs/root/.ssh/pwnkit_vm_key.pub /artifacts/pwnkit_vm_key.pub
+COPY --from=rootfs-builder /rootfs/root/.ssh/osec_vm_key /artifacts/osec_vm_key
+COPY --from=rootfs-builder /rootfs/root/.ssh/osec_vm_key.pub /artifacts/osec_vm_key.pub
 
 # Output script: copy artifacts to /out volume with host-friendly ownership.
 CMD ["sh", "-c", "\
@@ -193,8 +193,8 @@ uid=${HOST_UID:-0}; gid=${HOST_GID:-0}; \
 install -o \"$uid\" -g \"$gid\" -m 0644 /artifacts/bzImage /out/bzImage; \
 install -o \"$uid\" -g \"$gid\" -m 0644 /artifacts/kernel.config /out/kernel.config; \
 install -o \"$uid\" -g \"$gid\" -m 0644 /artifacts/rootfs.img /out/rootfs.img; \
-install -o \"$uid\" -g \"$gid\" -m 0600 /artifacts/pwnkit_vm_key /out/pwnkit_vm_key; \
-install -o \"$uid\" -g \"$gid\" -m 0644 /artifacts/pwnkit_vm_key.pub /out/pwnkit_vm_key.pub; \
+install -o \"$uid\" -g \"$gid\" -m 0600 /artifacts/osec_vm_key /out/osec_vm_key; \
+install -o \"$uid\" -g \"$gid\" -m 0644 /artifacts/osec_vm_key.pub /out/osec_vm_key.pub; \
 echo 'Kernel VM artifacts exported to /out/'; \
 ls -lh /out/ \
 "]

@@ -3,7 +3,7 @@ title: Agent Techniques Reference
 description: Evidence-based techniques for improving autonomous pentesting agents, with implementation details and expected impact.
 ---
 
-A catalog of every technique we have evaluated for improving pwnkit's autonomous pentesting agents. Each entry includes the source evidence, expected impact, implementation status, and enough detail to ship it.
+A catalog of every technique we have evaluated for improving 0sec's autonomous pentesting agents. Each entry includes the source evidence, expected impact, implementation status, and enough detail to ship it.
 
 ## Shipped Techniques
 
@@ -103,9 +103,9 @@ A catalog of every technique we have evaluated for improving pwnkit's autonomous
 
 **Source:** CurriculumPT; Cyber-AutoAgent's self-rewriting prompts (this is the simpler cousin).
 
-**Impact:** Measured on pwnkit's XBOW runs, the XSS playbook alone cracked previously impossible XBEN-011 and XBEN-018.
+**Impact:** Measured on 0sec's XBOW runs, the XSS playbook alone cracked previously impossible XBEN-011 and XBEN-018.
 
-**Implementation:** `packages/core/src/agent/playbooks.ts` — exports `PLAYBOOKS` (keyed by vuln type), `detectPlaybooks(toolResultTexts)` (pattern matcher, caps at 3 playbooks to avoid prompt bloat), and `buildPlaybookInjection(types)`. Feature flag: `PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS`.
+**Implementation:** `packages/core/src/agent/playbooks.ts` — exports `PLAYBOOKS` (keyed by vuln type), `detectPlaybooks(toolResultTexts)` (pattern matcher, caps at 3 playbooks to avoid prompt bloat), and `buildPlaybookInjection(types)`. Feature flag: `0SEC_FEATURE_DYNAMIC_PLAYBOOKS`.
 
 ---
 
@@ -115,9 +115,9 @@ A catalog of every technique we have evaluated for improving pwnkit's autonomous
 
 **Source:** MAPTA paper (arXiv:2508.20816); EGATS adapted from code-generation tree-search literature.
 
-**Impact:** Expected +5-9pp on targets with large attack surfaces. Generalises pwnkit's early-stop mechanism: early-stop gates a single linear run, EGATS gates every branch.
+**Impact:** Expected +5-9pp on targets with large attack surfaces. Generalises 0sec's early-stop mechanism: early-stop gates a single linear run, EGATS gates every branch.
 
-**Implementation:** `packages/core/src/agent/egats.ts` — `AttackNode`, `EGATSConfig`, `scoreEvidence`, `hasFlag`, `runEGATS`, `runEGATSWithDefaults`, `summariseTree`. Feature flag: `PWNKIT_FEATURE_EGATS`.
+**Implementation:** `packages/core/src/agent/egats.ts` — `AttackNode`, `EGATSConfig`, `scoreEvidence`, `hasFlag`, `runEGATS`, `runEGATSWithDefaults`, `summariseTree`. Feature flag: `0SEC_FEATURE_EGATS`.
 
 ---
 
@@ -141,7 +141,7 @@ A catalog of every technique we have evaluated for improving pwnkit's autonomous
 
 **Impact:** Observed conversion of roughly 20% of retries into successes.
 
-**Implementation:** Progress extraction lives in `packages/core/src/agent/native-loop.ts`; injection happens in `packages/core/src/agentic-scanner.ts` when building the retry prompt. Feature flag: `PWNKIT_FEATURE_PROGRESS_HANDOFF`.
+**Implementation:** Progress extraction lives in `packages/core/src/agent/native-loop.ts`; injection happens in `packages/core/src/agentic-scanner.ts` when building the retry prompt. Feature flag: `0SEC_FEATURE_PROGRESS_HANDOFF`.
 
 ---
 

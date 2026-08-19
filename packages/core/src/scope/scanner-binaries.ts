@@ -1,4 +1,4 @@
-// ── Scanner-binary blacklist (pwnkit#217) ──
+// ── Scanner-binary blacklist (0sec#217) ──
 //
 // Coordinated-disclosure venues (Bugcrowd, HackerOne, Intigriti, etc.)
 // commonly distinguish "custom tools" — which are allowed — from
@@ -9,10 +9,10 @@
 // dictionary, etc., are all instantly recognisable and explicitly
 // forbidden.
 //
-// pwnkit is a shell-first agent (not a scanner) by design. The agent
+// 0sec is a shell-first agent (not a scanner) by design. The agent
 // loop has access to bash via `shellExec`, and CI installs the standard
 // pentesting toolset (`xbow-bench.yml:118-128`) for niche cases — but
-// when scope is loaded (pwnkit#215), the agent is presumed to be
+// when scope is loaded (0sec#215), the agent is presumed to be
 // running against an attribution-bound, disclosed-engagement target.
 // The shell-first agent does not need sqlmap to find SQLi: it issues
 // manual probe requests through `httpRequest` and reads responses,
@@ -105,7 +105,7 @@ function detectInSegment(tokens: string[]): ScannerDetection | null {
   if (SCANNER_BINARIES.includes(headBase)) {
     return {
       binary: headBase,
-      reason: `'${headBase}' is a generic vulnerability scanner. Coordinated-disclosure scope policies typically forbid it (pwnkit#217). Use the agent's manual probe tools (http_request, crawl) instead, or pass --allow-scanners to override.`,
+      reason: `'${headBase}' is a generic vulnerability scanner. Coordinated-disclosure scope policies typically forbid it (0sec#217). Use the agent's manual probe tools (http_request, crawl) instead, or pass --allow-scanners to override.`,
     };
   }
 
@@ -116,7 +116,7 @@ function detectInSegment(tokens: string[]): ScannerDetection | null {
       if (NMAP_FORBIDDEN_FLAGS.has(tok)) {
         return {
           binary: `nmap ${tok}`,
-          reason: `'nmap ${tok}' performs service/OS fingerprinting and matches the generic-scanner traffic pattern that coordinated-disclosure scope policies forbid (pwnkit#217). Plain port scans are unaffected. Pass --allow-scanners to override.`,
+          reason: `'nmap ${tok}' performs service/OS fingerprinting and matches the generic-scanner traffic pattern that coordinated-disclosure scope policies forbid (0sec#217). Plain port scans are unaffected. Pass --allow-scanners to override.`,
         };
       }
     }
@@ -133,7 +133,7 @@ function detectInSegment(tokens: string[]): ScannerDetection | null {
         if (mod && SCANNER_BINARIES.includes(mod)) {
           return {
             binary: `python -m ${mod}`,
-            reason: `'python -m ${mod}' invokes the same generic scanner via its Python module entry point. Coordinated-disclosure scope policies typically forbid it (pwnkit#217). Pass --allow-scanners to override.`,
+            reason: `'python -m ${mod}' invokes the same generic scanner via its Python module entry point. Coordinated-disclosure scope policies typically forbid it (0sec#217). Pass --allow-scanners to override.`,
           };
         }
       }

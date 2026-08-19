@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   deriveSearchTerms,
   findingToQuery,
@@ -92,7 +92,7 @@ describe("findingToQuery", () => {
 
 describe("syncLoreMirror", () => {
   it("creates a missing mirror root before cloning", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "pwnkit-lore-sync-"));
+    const parent = mkdtempSync(join(tmpdir(), "0sec-lore-sync-"));
     const rootDir = join(parent, "nested", "mirrors");
     const git: GitRunner = async (args) => {
       if (args[0] === "ls-remote") {

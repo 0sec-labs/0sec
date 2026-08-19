@@ -1,5 +1,5 @@
 /**
- * `syscall_boundary_map` agent tool (pwnkit#468).
+ * `syscall_boundary_map` agent tool (0sec#468).
  *
  * Maps the userspace-reachable attack surface of a kernel source tree:
  * SYSCALL_DEFINE macros, ioctl handlers, netlink families, netfilter hooks,

@@ -211,7 +211,7 @@ function pickMetric(cve: NvdCve): NvdMetric | undefined {
 
 function nvdHeaders(extra: Record<string, string> | undefined): Record<string, string> {
   const headers: Record<string, string> = {
-    "User-Agent": "pwnkit-intel/0.1",
+    "User-Agent": "0sec-intel/0.1",
     ...(extra ?? {}),
   };
   if (process.env.NVD_API_KEY) headers.apiKey = process.env.NVD_API_KEY;

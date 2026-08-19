@@ -3,7 +3,7 @@
  * flow (issue #972).
  *
  * `runHttpConformanceCheck` takes an injectable {@link HttpSender}; tests pass a
- * deterministic stub, and the CLI (`pwnkit protocol-check`) passes the live
+ * deterministic stub, and the CLI (`0sec protocol-check`) passes the live
  * adapter built here so the driver+oracle path runs against a real target.
  *
  * Why a thin direct sender and NOT `ToolExecutor.httpRequest`:

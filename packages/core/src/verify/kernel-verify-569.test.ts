@@ -1,5 +1,5 @@
 /**
- * Integration tests for pwnkit#569 — primitive synthesis + reproducer
+ * Integration tests for 0sec#569 — primitive synthesis + reproducer
  * minimization wired into the kernel-verify loop and finding promotion.
  */
 import { describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import {
 } from "./kernel-verify.js";
 import { classifyKernelPrimitive } from "../triage/kernel-primitive.js";
 import type { KernelVerifyRunner } from "./kernel-verify-types.js";
-import type { Finding, CrashReport } from "@pwnkit/shared";
+import type { Finding, CrashReport } from "@0sec/shared";
 import type { NativeContentBlock } from "../runtime/types.js";
 
 function staticKernelFinding(overrides: Partial<Finding> = {}): Finding {

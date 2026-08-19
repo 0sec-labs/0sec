@@ -1,4 +1,4 @@
-import type { ScanConfig, ScanReport, Finding } from "@pwnkit/shared";
+import type { ScanConfig, ScanReport, Finding } from "@0sec/shared";
 import type { ScanListener } from "../../scanner.js";
 import type { AgentOutput } from "../../agentic-scanner.js";
 import { features } from "../../agent/features.js";
@@ -97,7 +97,7 @@ export async function runReportStage(
 
   db.completeScan(scanId, summary);
 
-  // ── Routing trace emission (pwnkit#113 dataset) ──
+  // ── Routing trace emission (0sec#113 dataset) ──
   // When dynamic triage routing was enabled, dump one record per
   // finding to `routing-trace.jsonl` under the journal sidecar dir
   // so the offline learned-router trainer can pick it up.
@@ -191,7 +191,7 @@ export async function runReportStage(
   // "completed". Without this, the cloud persists status='complete'
   // and shows the raw "Error: ..." string as the scan summary,
   // mislabeling a legitimate failure as a clean pass. See
-  // pwnkit-cloud scan 3abdf5b7-873d-449b-ab3f-e9a38f05a778 for the
+  // 0sec-cloud scan 3abdf5b7-873d-449b-ab3f-e9a38f05a778 for the
   // reproducer that motivated this branch.
   // Build per-(stage, model) usage records once — both planError and
   // happy paths consume the same shape. We pull from each

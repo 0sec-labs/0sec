@@ -1,10 +1,11 @@
 {
-  "name": "pwnkit",
+  "name": "0sec",
   "type": "module",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Open-source security research harness for authorized targets.",
   "bin": {
-    "pwnkit": "dist/pwnkit.js"
+    "0sec": "dist/0sec.js",
+    "0": "dist/0sec.js"
   },
   "files": [
     "LICENSE",
@@ -15,24 +16,24 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm -r exec rm -f tsconfig.tsbuildinfo && pnpm --filter @pwnkit/shared build && pnpm --filter @pwnkit/db --filter @pwnkit/templates build && pnpm --filter '!@pwnkit/docs' -r build && pnpm run build:bundle",
+    "build": "pnpm -r exec rm -f tsconfig.tsbuildinfo && pnpm --filter @0sec/shared build && pnpm --filter @0sec/db --filter @0sec/templates build && pnpm --filter '!@0sec/docs' -r build && pnpm run build:bundle",
     "build:bundle": "node ./scripts/bundle-cli.mjs",
-    "build:docs": "pnpm --filter @pwnkit/docs build",
+    "build:docs": "pnpm --filter @0sec/docs build",
     "dev": "pnpm -r --parallel dev",
-    "lint": "pnpm --filter '!@pwnkit/docs' -r exec tsc --noEmit",
+    "lint": "pnpm --filter '!@0sec/docs' -r exec tsc --noEmit",
     "test": "pnpm test:public",
-    "test:public": "pnpm --filter @pwnkit/core test && pnpm --filter @pwnkit/test-targets test && pnpm --filter pwnkit-cli exec vitest run src/commands/__tests__/scan.test.ts src/commands/__tests__/bench.test.ts src/utils/update-check.test.ts && pnpm test:docker-contract && pnpm test:runtime-lock && pnpm test:launcher && pnpm test:public-source-export",
+    "test:public": "pnpm --filter @0sec/core test && pnpm --filter @0sec/test-targets test && pnpm --filter 0sec-cli exec vitest run src/commands/__tests__/scan.test.ts src/commands/__tests__/bench.test.ts src/utils/update-check.test.ts && pnpm test:docker-contract && pnpm test:runtime-lock && pnpm test:launcher && pnpm test:public-source-export",
     "test:docker-contract": "node --test scripts/docker-contract.test.mjs",
     "test:runtime-lock": "node --test scripts/runtime-lock.test.mjs",
     "test:launcher": "node --test scripts/npm-launcher/launcher.test.mjs",
     "test:public-source-export": "node --test scripts/create-public-source-export.test.mjs",
     "export:public-source": "node scripts/create-public-source-export.mjs",
-    "bench": "pnpm --filter @pwnkit/benchmark bench",
-    "bench:quick": "pnpm --filter @pwnkit/benchmark bench:quick",
-    "consolidate-xbow": "pnpm --filter @pwnkit/benchmark consolidate-xbow",
+    "bench": "pnpm --filter @0sec/benchmark bench",
+    "bench:quick": "pnpm --filter @0sec/benchmark bench:quick",
+    "consolidate-xbow": "pnpm --filter @0sec/benchmark consolidate-xbow",
     "clean": "pnpm -r clean",
-    "vulnerable": "PORT=43100 pnpm --filter @pwnkit/test-targets vulnerable",
-    "safe": "PORT=43101 pnpm --filter @pwnkit/test-targets safe"
+    "vulnerable": "PORT=43100 pnpm --filter @0sec/test-targets vulnerable",
+    "safe": "PORT=43101 pnpm --filter @0sec/test-targets safe"
   },
   "keywords": [
     "ai",

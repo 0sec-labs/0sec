@@ -74,7 +74,7 @@ printf '%s\n' "$@" > "${chownCapture}"
         CYBERGYM_SERVER: "http://172.18.0.1:8666",
         CYBERGYM_ORACLE_BRIDGE: "http://172.18.0.1:8667",
         CYBERGYM_ORACLE_BRIDGE_TOKEN: "test-token",
-        PWNKIT_CYBERGYM_IMAGE: "test-agent:image",
+        "0SEC_CYBERGYM_IMAGE": "test-agent:image",
         CYBERGYM_CPG_PATH: cpg,
         CYBERGYM_PROVIDER_ENV: providerEnv,
         KIMI_API_KEY: "kimi-fixture-not-real",
@@ -155,16 +155,16 @@ exit 64
         CYBERGYM_SERVER: "http://172.18.0.1:8666",
         CYBERGYM_ORACLE_BRIDGE: "http://172.18.0.1:8667",
         CYBERGYM_ORACLE_BRIDGE_TOKEN: "test-token",
-        PWNKIT_CYBERGYM_IMAGE: "test-agent:image",
+        "0SEC_CYBERGYM_IMAGE": "test-agent:image",
         CYBERGYM_PROVIDER_ENV: providerEnv,
       },
     });
 
     expect(result.status, result.stderr).toBe(0);
     const args = readFileSync(capture, "utf8").trim().split("\n");
-    expect(args).toContain("PWNKIT_FORCE_PROVIDER=qwen");
+    expect(args).toContain("0SEC_FORCE_PROVIDER=qwen");
     expect(args).toContain("QWEN_API_KEY");
     expect(args.join("\n")).not.toContain("codex-auth.json");
-    expect(args).not.toContain("PWNKIT_CHATGPT_AUTH_FILE=/run/secrets/codex-auth.json");
+    expect(args).not.toContain("0SEC_CHATGPT_AUTH_FILE=/run/secrets/codex-auth.json");
   });
 });

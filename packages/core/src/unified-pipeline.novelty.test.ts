@@ -26,7 +26,7 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── Module-level mocks (hoisted) ────────────────────────────────────────────
 
@@ -66,7 +66,7 @@ vi.mock("./runtime/registry.js", () => ({
 // `features.publishabilityGate` is evaluated ONCE at module import (plain
 // property, not a getter), so setting the env var inside a test is too late.
 // Re-export the real features object but replace `publishabilityGate` with a
-// live getter so each test can flip PWNKIT_FEATURE_PUBLISHABILITY_GATE and have
+// live getter so each test can flip 0SEC_FEATURE_PUBLISHABILITY_GATE and have
 // the gate honor it at runtime — exactly the seam the CLI `--features` flag
 // relies on for the getter-backed flags.
 vi.mock("./agent/features.js", async () => {
@@ -76,7 +76,7 @@ vi.mock("./agent/features.js", async () => {
     features: new Proxy(actual.features, {
       get(target, prop, receiver) {
         if (prop === "publishabilityGate") {
-          const v = process.env.PWNKIT_FEATURE_PUBLISHABILITY_GATE;
+          const v = process.env["0SEC_FEATURE_PUBLISHABILITY_GATE"];
           return v !== undefined && v !== "0" && v !== "false";
         }
         return Reflect.get(target, prop, receiver);
@@ -107,13 +107,13 @@ const { runPipeline } = await import("./unified-pipeline.js");
 const tempDirs: string[] = [];
 
 function freshTmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `pwnkit-novelty-pipeline-${prefix}-`));
+  const dir = mkdtempSync(join(tmpdir(), `0sec-novelty-pipeline-${prefix}-`));
   tempDirs.push(dir);
   return dir;
 }
 
 function freshDbPath(): string {
-  return join(freshTmpDir("db"), "pwnkit.db");
+  return join(freshTmpDir("db"), "0sec.db");
 }
 
 function fakeInstalledPackage(
@@ -151,7 +151,7 @@ const OSV_HIT = {
       references: [
         { type: "ADVISORY", url: "https://github.com/advisories/GHSA-f82v-jwr5-mffw" },
       ],
-      affected: [{ package: { ecosystem: "npm", name: "pwnkit-novelty-851-fixture" } }],
+      affected: [{ package: { ecosystem: "npm", name: "0sec-novelty-851-fixture" } }],
     },
   ],
 };
@@ -175,7 +175,7 @@ function stubGlobalFetch(json: unknown): typeof fetch {
 
 // The unique fixture package name keeps the on-disk intel cache from colliding
 // with any real entry; clean up its cache file after each test.
-const FIXTURE_PKG = "pwnkit-novelty-851-fixture";
+const FIXTURE_PKG = "0sec-novelty-851-fixture";
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -205,28 +205,28 @@ beforeEach(() => {
   runAnalysisAgentMock.mockResolvedValueOnce({ findings: [fakeHeldFinding("a")] });
   runAnalysisAgentMock.mockResolvedValue({ findings: [] });
 
-  savedPerItem = process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION;
-  process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION = "0";
+  savedPerItem = process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"];
+  process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"] = "0";
   savedApiKey = process.env.ANTHROPIC_API_KEY;
-  savedFlag = process.env.PWNKIT_FEATURE_PUBLISHABILITY_GATE;
+  savedFlag = process.env["0SEC_FEATURE_PUBLISHABILITY_GATE"];
 
   savedFetch = globalThis.fetch;
 });
 
 afterEach(() => {
   globalThis.fetch = savedFetch;
-  if (savedPerItem === undefined) delete process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION;
-  else process.env.PWNKIT_FEATURE_PER_ITEM_ORCHESTRATION = savedPerItem;
+  if (savedPerItem === undefined) delete process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"];
+  else process.env["0SEC_FEATURE_PER_ITEM_ORCHESTRATION"] = savedPerItem;
   if (savedApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
   else process.env.ANTHROPIC_API_KEY = savedApiKey;
-  if (savedFlag === undefined) delete process.env.PWNKIT_FEATURE_PUBLISHABILITY_GATE;
-  else process.env.PWNKIT_FEATURE_PUBLISHABILITY_GATE = savedFlag;
+  if (savedFlag === undefined) delete process.env["0SEC_FEATURE_PUBLISHABILITY_GATE"];
+  else process.env["0SEC_FEATURE_PUBLISHABILITY_GATE"] = savedFlag;
 
   // Prune the fixture's intel-cache entry so a re-run never reads a stale OSV
   // body for the unique fixture package (digest = sha256 of the cache key).
   const key = JSON.stringify({ ecosystem: "npm", packageName: FIXTURE_PKG, version: "1.0.0" });
   const digest = createHash("sha256").update(key).digest("hex");
-  const cacheFile = join(homedir(), ".pwnkit", "intel-cache", "osv-query", `${digest}.json`);
+  const cacheFile = join(homedir(), ".0sec", "intel-cache", "osv-query", `${digest}.json`);
   if (existsSync(cacheFile)) rmSync(cacheFile, { force: true });
 
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -237,7 +237,7 @@ afterEach(() => {
 
 describe("runPipeline — novelty gate on OSS package scans (#851)", () => {
   it("stamps noveltyVerdict + advisoryMatches on a confirmed npm-package finding", async () => {
-    process.env.PWNKIT_FEATURE_PUBLISHABILITY_GATE = "1";
+    process.env["0SEC_FEATURE_PUBLISHABILITY_GATE"] = "1";
     globalThis.fetch = stubGlobalFetch(OSV_HIT);
     installPackageMock.mockReturnValue(fakeInstalledPackage("npm", FIXTURE_PKG, "1.0.0"));
 
@@ -263,7 +263,7 @@ describe("runPipeline — novelty gate on OSS package scans (#851)", () => {
   });
 
   it("leaves the verdict unset when the publishability gate flag is off", async () => {
-    delete process.env.PWNKIT_FEATURE_PUBLISHABILITY_GATE;
+    delete process.env["0SEC_FEATURE_PUBLISHABILITY_GATE"];
     // fetch would throw if the gate erroneously fired — proves no resolve ran.
     globalThis.fetch = (async () => {
       throw new Error("network must not be touched when the gate is off");
@@ -286,7 +286,7 @@ describe("runPipeline — novelty gate on OSS package scans (#851)", () => {
   });
 
   it("no-ops for an oci image (not an OSV ecosystem) — never queries the advisory DB", async () => {
-    process.env.PWNKIT_FEATURE_PUBLISHABILITY_GATE = "1";
+    process.env["0SEC_FEATURE_PUBLISHABILITY_GATE"] = "1";
     let fetched = false;
     globalThis.fetch = (async () => {
       fetched = true;

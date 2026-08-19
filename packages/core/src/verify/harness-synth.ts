@@ -1,5 +1,5 @@
 /**
- * Engine C — auto-harness-synthesis (pwnkit#1228, the field's choke point).
+ * Engine C — auto-harness-synthesis (0sec#1228, the field's choke point).
  *
  * The single unblocker for binary/Windows and deep kernel paths
  * (docs/operations/llm-lpe-innovation-plan.md, U3): "the choke point is

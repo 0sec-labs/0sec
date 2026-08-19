@@ -10,7 +10,7 @@ import {
 let tmpRoot: string;
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "pwnkit-kernel-variant-test-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "0sec-kernel-variant-test-"));
 });
 
 afterEach(() => {
@@ -45,7 +45,7 @@ function makeSarif(): string {
 }
 
 describe("foxguardFindingToKernelVariantFinding", () => {
-  it("maps dirty-frag foxguard hits into pwnkit findings with kernel provenance", () => {
+  it("maps dirty-frag foxguard hits into 0sec findings with kernel provenance", () => {
     const finding = foxguardFindingToKernelVariantFinding({
       finding: {
         ruleId: "kernel/dirty-frag-class/skb-inplace-aead-no-cow",
@@ -93,7 +93,7 @@ describe("foxguardFindingToKernelVariantFinding", () => {
 });
 
 describe("runKernelVariantHunt", () => {
-  it("uses pre-produced SARIF and returns pwnkit findings", async () => {
+  it("uses pre-produced SARIF and returns 0sec findings", async () => {
     const tree = join(tmpRoot, "linux");
     mkdirSync(tree);
     const sarifPath = join(tmpRoot, "foxguard.sarif");

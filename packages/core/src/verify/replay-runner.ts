@@ -1,11 +1,11 @@
 /**
- * pwnkit#193 — Deterministic replay runner skeleton.
+ * 0sec#193 — Deterministic replay runner skeleton.
  *
  * This file is the SHIPPING execution path for the local-shell variant of the
  * verifier plus the contracts for the docker/qemu sandbox variants. It
  * consumes a finding's `pocSteps`, sequentially executes each one, evaluates
  * the declared assertions, and emits a `VerificationResult` matching the
- * canonical schema in `@pwnkit/shared/verification`.
+ * canonical schema in `@0sec/shared/verification`.
  *
  * Design notes:
  *
@@ -49,7 +49,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
 import { arch as nodeArch, platform as nodePlatform } from "node:process";
-import type { Finding, PocStep, PocStepExpect } from "@pwnkit/shared";
+import type { Finding, PocStep, PocStepExpect } from "@0sec/shared";
 import {
   VERSION,
   type EvidenceArtifact,
@@ -57,7 +57,7 @@ import {
   type VerificationAssertion,
   type VerificationCommand,
   type VerificationResult,
-} from "@pwnkit/shared";
+} from "@0sec/shared";
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -175,7 +175,7 @@ export class LocalShellRunner implements ReplayRunner {
       try {
         child = spawn("/bin/sh", ["-c", cmd], {
           cwd: stepCwd,
-          env: { ...process.env, PWNKIT_VERIFY: "1" },
+          env: { ...process.env, "0SEC_VERIFY": "1" },
           stdio: ["ignore", "pipe", "pipe"],
           // On POSIX, isolate the shell and all descendants into a process
           // group so a timeout cannot leave a grandchild holding stdout open.
@@ -282,7 +282,7 @@ export class DockerRunner implements ReplayRunner {
   readonly kind: RunnerKind = "docker";
   async exec(_step: PocStep, _ctx: ReplayRunnerContext): Promise<StepResult> {
     throw new NotImplementedError(
-      "DockerRunner.exec is not implemented yet; see pwnkit#193 sandbox-isolation follow-up",
+      "DockerRunner.exec is not implemented yet; see 0sec#193 sandbox-isolation follow-up",
     );
   }
 }
@@ -291,7 +291,7 @@ export class QemuRunner implements ReplayRunner {
   readonly kind: RunnerKind = "qemu";
   async exec(_step: PocStep, _ctx: ReplayRunnerContext): Promise<StepResult> {
     throw new NotImplementedError(
-      "QemuRunner.exec is not implemented yet; see pwnkit#193 sandbox-isolation follow-up",
+      "QemuRunner.exec is not implemented yet; see 0sec#193 sandbox-isolation follow-up",
     );
   }
 }
@@ -569,7 +569,7 @@ export async function runDeterministicReplay(
   const stepTimeoutMs = opts.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
   const engineVersion = opts.engineVersion ?? VERSION;
   const runDir =
-    opts.runDir ?? mkdtempSync(join(tmpdir(), "pwnkit-replay-"));
+    opts.runDir ?? mkdtempSync(join(tmpdir(), "0sec-replay-"));
   mkdirSync(runDir, { recursive: true });
 
   const startedAt = new Date();

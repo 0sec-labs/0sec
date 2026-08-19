@@ -2,8 +2,8 @@ import { describe, expect, it, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Finding } from "@pwnkit/shared";
-import { pwnkitDB } from "./database.js";
+import type { Finding } from "@0sec/shared";
+import { osecDB } from "./database.js";
 
 function makeFinding(overrides?: Partial<Finding>): Finding {
   return {
@@ -19,8 +19,8 @@ function makeFinding(overrides?: Partial<Finding>): Finding {
   };
 }
 
-function withTempDb(fn: (db: pwnkitDB, cleanup: () => void) => void): void {
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-db-test-"));
+function withTempDb(fn: (db: osecDB, cleanup: () => void) => void): void {
+  const dir = mkdtempSync(join(tmpdir(), "0sec-db-test-"));
   const clean = () => {
     try {
       rmSync(dir, { recursive: true, force: true });
@@ -28,7 +28,7 @@ function withTempDb(fn: (db: pwnkitDB, cleanup: () => void) => void): void {
       // best-effort cleanup
     }
   };
-  const db = new pwnkitDB(join(dir, "test.db"));
+  const db = new osecDB(join(dir, "test.db"));
   try {
     fn(db, clean);
     clean();
@@ -38,7 +38,7 @@ function withTempDb(fn: (db: pwnkitDB, cleanup: () => void) => void): void {
   }
 }
 
-describe("pwnkitDB listScansByTarget", () => {
+describe("osecDB listScansByTarget", () => {
   it("returns scans for the matching target ordered desc(startedAt)", () => {
     withTempDb((db) => {
       const s1 = db.createScan({
@@ -111,7 +111,7 @@ describe("pwnkitDB listScansByTarget", () => {
   });
 });
 
-describe("pwnkitDB getScanFindings", () => {
+describe("osecDB getScanFindings", () => {
   it("returns findings for a given scan", () => {
     withTempDb((db) => {
       const scanId = db.createScan({

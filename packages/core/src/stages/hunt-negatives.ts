@@ -6,8 +6,8 @@
  * (a debug-gated driver "bug" that's dead code, an already-CVE'd path) was
  * refuted last run, this run's skeptic re-derives that from scratch every
  * time. This module derives a `known-negatives` set from the hunt-variant
- * corpus (`@pwnkit/benchmark`'s `hunt-variant-v1.jsonl`, read by PATH — core
- * must not depend on `@pwnkit/benchmark`) — rows where the skeptic+prover gate
+ * corpus (`@0sec/benchmark`'s `hunt-variant-v1.jsonl`, read by PATH — core
+ * must not depend on `@0sec/benchmark`) — rows where the skeptic+prover gate
  * already returned `skepticConfirmed === false` — and, when a new finding
  * matches one closely enough, attaches that prior reason as CONTEXT to the
  * skeptic's prompt.
@@ -26,7 +26,7 @@
  * two independently-drifting ones.
  */
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { findingTokens, jaccard, loadHuntCorpusRows, memoryTokens, type HuntCorpusRow } from "./hunt-flywheel.js";
 import {
   disprovenHuntClaims,
@@ -41,7 +41,7 @@ import {
  * to run anyway. It costs no extra LLM call, and it is INERT unless a caller
  * actually supplies a corpus of known negatives (`opts.negatives` /
  * {@link loadKnownNegativesFromEnv}), so the default-ON blast radius on a
- * deployment with no corpus is exactly zero. Set `PWNKIT_HUNT_NEGATIVES=0` to
+ * deployment with no corpus is exactly zero. Set `0SEC_HUNT_NEGATIVES=0` to
  * pin the old behaviour for an ablation.
  *
  * The residual risk is ANCHORING — a skeptic told "this shape was refuted
@@ -52,7 +52,7 @@ import {
  * dominate the prompt.
  */
 export function huntNegativesEnabled(): boolean {
-  const raw = process.env.PWNKIT_HUNT_NEGATIVES;
+  const raw = process.env["0SEC_HUNT_NEGATIVES"];
   // Unset → ON. Explicitly empty/0/false/no → OFF (matches the `env()` helper
   // convention in agent/features.ts, where an unset var takes the default).
   if (raw === undefined) return true;
@@ -114,11 +114,11 @@ export function loadKnownNegatives(corpusPath: string): KnownNegative[] {
  * The known-negatives set for the ambient run, or `[]` when no corpus is
  * configured.
  *
- * `HUNT_CORPUS_PATH` is the same env var `@pwnkit/benchmark`'s
+ * `HUNT_CORPUS_PATH` is the same env var `@0sec/benchmark`'s
  * `resolveHuntCorpusPath()` reads, so a bench sweep and a CLI hunt share one
  * corpus without core taking a dependency on the benchmark package (see this
  * module's header). There is deliberately NO fallback default path: the
- * package-relative default lives inside `@pwnkit/benchmark` and guessing at it
+ * package-relative default lives inside `@0sec/benchmark` and guessing at it
  * from here would silently feed a hunt refute-context it never asked for. Unset
  * env → empty set → the negatives feature is inert, which is exactly the
  * default-ON contract in {@link huntNegativesEnabled}.

@@ -1,5 +1,5 @@
 /**
- * Kernel bug-to-exploit primitive synthesis (pwnkit#569).
+ * Kernel bug-to-exploit primitive synthesis (0sec#569).
  *
  * A KASAN/UBSAN crash report proves a *bug* fired, but not what an attacker
  * can *do* with it. This module bridges that gap: from the parsed crash type,
@@ -22,8 +22,8 @@
  *     skeptical, assume-false discipline the rest of the kernel pipeline uses.
  */
 
-import type { CrashReport, CrashType, Severity } from "@pwnkit/shared";
-import { severityRank } from "@pwnkit/shared";
+import type { CrashReport, CrashType, Severity } from "@0sec/shared";
+import { severityRank } from "@0sec/shared";
 import type { WritePrimitiveProfile } from "../kernel/exploit/exploit-context.js";
 
 // ── Public types ──────────────────────────────────────────────────────────
@@ -625,7 +625,7 @@ export function sniffCrashType(dmesg: string): CrashType | undefined {
   return undefined;
 }
 
-// ── Exploitability danger ladder (PROVE stage — pwnkit#1119) ──────────────────
+// ── Exploitability danger ladder (PROVE stage — 0sec#1119) ──────────────────
 //
 // The crash→primitive classifier above answers "what CAN an attacker do" as a
 // *static guess* from one splat. The PROVE stage (exploitability-upgrade.ts)

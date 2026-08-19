@@ -1,6 +1,6 @@
 // HackerOne hacker-API integration. Read-only.
 //
-// Surface that other packages (CLI, eventually pwnkit-cloud) consume.
+// Surface that other packages (CLI, eventually 0sec-cloud) consume.
 // Tests import implementation files directly.
 
 export {

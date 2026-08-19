@@ -17,10 +17,10 @@ describe("fetchPoc", () => {
   let cacheDir: string;
 
   beforeEach(() => {
-    cacheDir = mkdtempSync(join(tmpdir(), "pwnkit-cve-cache-"));
+    cacheDir = mkdtempSync(join(tmpdir(), "0sec-cve-cache-"));
     process.env = { ...originalEnv };
     delete process.env.GITHUB_TOKEN;
-    delete process.env.PWNKIT_CVE_POC_CACHE;
+    delete process.env["0SEC_CVE_POC_CACHE"];
   });
 
   afterEach(() => {

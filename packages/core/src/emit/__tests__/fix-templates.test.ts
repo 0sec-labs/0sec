@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   createDefaultFixTemplateRegistry,
   hardCodedSecretTemplate,
@@ -96,7 +96,7 @@ describe("missingInputValidationTemplate", () => {
     expect(diff).not.toBeNull();
     const rendered = renderUnifiedDiff(diff!);
     expect(rendered).toContain('typeof userId !== "string"');
-    expect(rendered).toContain("pwnkit#377 starter guard");
+    expect(rendered).toContain("0sec#377 starter guard");
   });
 
   it("uses isinstance for python", () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pwnkitDB } from "@pwnkit/db";
+import { osecDB } from "@0sec/db";
 import { LootLedger } from "./loot.js";
 import {
   PersistentCredentialStore,
@@ -11,12 +11,12 @@ import {
 } from "./credential-store.js";
 
 let dir: string;
-let db: pwnkitDB;
+let db: osecDB;
 let store: PersistentCredentialStore;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "pwnkit-credstore-"));
-  db = new pwnkitDB(join(dir, "pwnkit.db"));
+  dir = mkdtempSync(join(tmpdir(), "0sec-credstore-"));
+  db = new osecDB(join(dir, "0sec.db"));
   store = new PersistentCredentialStore(db);
 });
 

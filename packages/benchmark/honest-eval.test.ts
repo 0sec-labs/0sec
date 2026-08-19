@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mintRootProofChallenge, type RootProofChallenge } from "@pwnkit/core";
+import { mintRootProofChallenge, type RootProofChallenge } from "@0sec/core";
 
 import { checkRootProof, decideHonestVerdict } from "./honest-eval.js";
 

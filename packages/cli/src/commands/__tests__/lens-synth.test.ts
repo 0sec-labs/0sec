@@ -1,5 +1,5 @@
 /**
- * `pwnkit lens-synth` command tests — the CLI runs the full loop end-to-end with
+ * `0sec lens-synth` command tests — the CLI runs the full loop end-to-end with
  * an injected fake model + fake probe (no LLM, no finder), proving the manual
  * entry point wires miss-capture → synthesize → validate → register, defaults
  * to no write, and validates the miss-input shape.
@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { LensProbe, LensSynthesisModel } from "@pwnkit/core";
+import type { LensProbe, LensSynthesisModel } from "@0sec/core";
 import { parseMissInputFile, runLensSynthCommand } from "../lens-synth.js";
 
 const GOOD_CONTENT = {

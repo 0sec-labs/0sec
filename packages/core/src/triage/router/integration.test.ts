@@ -1,6 +1,6 @@
 /**
  * Integration test: simulates the agentic-scanner integration site for
- * the dynamic triage router. Verifies that PWNKIT_FEATURE_DYNAMIC_TRIAGE
+ * the dynamic triage router. Verifies that 0SEC_FEATURE_DYNAMIC_TRIAGE
  * gates the behavior and that a 3-finding scan produces exactly 3 records
  * in `routing-trace.jsonl` with the right shape.
  */
@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   decideLayers,
   appendRoutingTraceRecord,
@@ -113,7 +113,7 @@ describe("Dynamic triage routing — integration with scanner dispatch site", ()
     }
   });
 
-  it("default (PWNKIT_FEATURE_DYNAMIC_TRIAGE unset) — decideLayers still computes a decision, but the scanner does not gate any layer", () => {
+  it("default (0SEC_FEATURE_DYNAMIC_TRIAGE unset) — decideLayers still computes a decision, but the scanner does not gate any layer", () => {
     // The scanner's behavior when the flag is OFF is "every layer runs as
     // before". We can't run the full scanner in unit test, but we can
     // verify the routing decision for a finding that would otherwise

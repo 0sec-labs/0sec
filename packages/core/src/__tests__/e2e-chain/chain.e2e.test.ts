@@ -1,6 +1,6 @@
 // End-to-end CodeWall-chain self-test against a LOCAL vulnerable fixture.
 //
-// Goal (pwnkit#923 family): prove the newly-added tools actually find planted
+// Goal (0sec#923 family): prove the newly-added tools actually find planted
 // vulns when CHAINED, exercising the DETERMINISTIC core of each tool directly
 // (no LLM loop) so the test is offline-capable and reproducible:
 //

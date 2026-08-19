@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { AttackCategory, Finding } from "@pwnkit/shared";
+import type { AttackCategory, Finding } from "@0sec/shared";
 
 import {
   analyzeInputControllability,
@@ -30,7 +30,7 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "pwnkit-ctrl-"));
+  root = mkdtempSync(join(tmpdir(), "0sec-ctrl-"));
 });
 
 afterEach(() => {

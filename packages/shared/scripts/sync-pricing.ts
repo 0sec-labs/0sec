@@ -9,8 +9,8 @@
  *              CURATED models it covers (EXACT key match only — no fuzzy aliasing,
  *              so generated data is always trustworthy). Nobody hand-types a rate.
  *
- * Run: `pnpm --filter @pwnkit/shared sync-pricing`         (check drift)
- *      `pnpm --filter @pwnkit/shared sync-pricing --write` (refresh the table)
+ * Run: `pnpm --filter @0sec/shared sync-pricing`         (check drift)
+ *      `pnpm --filter @0sec/shared sync-pricing --write` (refresh the table)
  *
  * Models the OSS feed does NOT cover (glm-*, llama-4-*, mistral-*, newest Claude)
  * stay in MANUAL_PRICING in src/pricing.ts — that residue is irreducible because
@@ -83,7 +83,7 @@ async function writeGenerated(oss: Record<string, LiteLlmEntry>): Promise<void> 
   const out = join(here, "..", "src", "pricing.oss.generated.ts");
   const banner =
     "// AUTO-GENERATED from the LiteLLM OSS pricing feed by scripts/sync-pricing.ts --write.\n" +
-    "// DO NOT EDIT BY HAND. Refresh: pnpm --filter @pwnkit/shared sync-pricing --write\n" +
+    "// DO NOT EDIT BY HAND. Refresh: pnpm --filter @0sec/shared sync-pricing --write\n" +
     "// $ per 1M tokens. Models the feed lacks live in MANUAL_PRICING (src/pricing.ts).\n";
   const body =
     `export const OSS_PRICING: Record<string, { input: number; output: number; cachedInput?: number }> = {\n` +

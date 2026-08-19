@@ -12,7 +12,7 @@ TIMEOUT="${INPUT_TIMEOUT:-300000}"
 PRIMARY_FORMAT="${INPUT_FORMAT:-json}"
 SEVERITY_THRESHOLD="${INPUT_SEVERITY_THRESHOLD:-high}"
 COUNT_THRESHOLD="${INPUT_THRESHOLD:-0}"
-REPORT_DIR="${INPUT_REPORT_DIR:-pwnkit-report}"
+REPORT_DIR="${INPUT_REPORT_DIR:-0sec-report}"
 
 case "$MODE" in
   review|audit|scan) ;;
@@ -75,7 +75,7 @@ fi
 mkdir -p "$REPORT_DIR"
 JSON_REPORT="$REPORT_DIR/report.json"
 SARIF_REPORT="$REPORT_DIR/report.sarif"
-STDERR_LOG="$REPORT_DIR/pwnkit.stderr.log"
+STDERR_LOG="$REPORT_DIR/0sec.stderr.log"
 
 COMMON_ARGS=(
   --depth "$DEPTH"
@@ -91,7 +91,7 @@ case "$MODE" in
       exit 1
     fi
     TARGET_LABEL="$PATH_INPUT"
-    COMMAND=(pwnkit-cli review "$PATH_INPUT" "${COMMON_ARGS[@]}")
+    COMMAND=(0sec-cli review "$PATH_INPUT" "${COMMON_ARGS[@]}")
     ;;
   audit)
     if [[ -z "$PACKAGE_INPUT" ]]; then
@@ -99,7 +99,7 @@ case "$MODE" in
       exit 1
     fi
     TARGET_LABEL="$PACKAGE_INPUT"
-    COMMAND=(pwnkit-cli audit "$PACKAGE_INPUT" "${COMMON_ARGS[@]}")
+    COMMAND=(0sec-cli audit "$PACKAGE_INPUT" "${COMMON_ARGS[@]}")
     ;;
   scan)
     if [[ -z "$TARGET_INPUT" ]]; then
@@ -107,7 +107,7 @@ case "$MODE" in
       exit 1
     fi
     TARGET_LABEL="$TARGET_INPUT"
-    COMMAND=(pwnkit-cli scan --target "$TARGET_INPUT" --mode "$SCAN_MODE" "${COMMON_ARGS[@]}")
+    COMMAND=(0sec-cli scan --target "$TARGET_INPUT" --mode "$SCAN_MODE" "${COMMON_ARGS[@]}")
     ;;
 esac
 
@@ -118,15 +118,15 @@ set -e
 
 if [[ ! -s "$JSON_REPORT" ]]; then
   cat "$STDERR_LOG" >&2 || true
-  echo "::error::pwnkit-cli did not produce a JSON report."
+  echo "::error::0sec-cli did not produce a JSON report."
   exit ${CLI_EXIT:-1}
 fi
 
 if [[ $CLI_EXIT -ne 0 ]]; then
-  echo "::warning::pwnkit-cli exited with code $CLI_EXIT but produced a report. Continuing so findings can be surfaced."
+  echo "::warning::0sec-cli exited with code $CLI_EXIT but produced a report. Continuing so findings can be surfaced."
 fi
 
-ACTION_ROOT="${PWNKIT_ACTION_ROOT:-${GITHUB_ACTION_PATH}}"
+ACTION_ROOT="${0SEC_ACTION_ROOT:-${GITHUB_ACTION_PATH}}"
 
 node "${ACTION_ROOT}/scripts/render-github-action-output.mjs" \
   "$JSON_REPORT" \

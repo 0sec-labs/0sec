@@ -1,7 +1,7 @@
 /**
  * `generateRaceSmellCandidates` — parsing the lock/sleep/lock smell off the
  * model tool call, filtering malformed tuples, mapping the `widenHint` onto the
- * `PWNKIT_KERNEL_QEMU_WIDEN_*` prover knobs, and the runHuntScan-plug mapping.
+ * `0SEC_KERNEL_QEMU_WIDEN_*` prover knobs, and the runHuntScan-plug mapping.
  *
  * Mock-at-module-boundary for `node:fs` (feed source without a real tree) and
  * `../runtime/llm-api.js` (no real LLM / no key needed) — mirrors
@@ -115,7 +115,7 @@ describe("generateRaceSmellCandidates", () => {
     }
   });
 
-  it("maps the widenHint onto the PWNKIT_KERNEL_QEMU_WIDEN_* prover knobs (model delay, then default)", async () => {
+  it("maps the widenHint onto the 0SEC_KERNEL_QEMU_WIDEN_* prover knobs (model delay, then default)", async () => {
     const plan = await generateRaceSmellCandidates({
       sourceRoot: "/src",
       subsystemFiles: ["crypto/af_alg.c", "fs/pipe.c"],
@@ -125,13 +125,13 @@ describe("generateRaceSmellCandidates", () => {
     expect(plan.widenEnvs).toHaveLength(2);
     // candidate 0 supplied suggestedDelayMs=800
     expect(plan.widenEnvs[0]).toEqual({
-      PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL: "af_alg_sendmsg",
-      PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS: "800",
+      "0SEC_KERNEL_QEMU_WIDEN_SYMBOL": "af_alg_sendmsg",
+      "0SEC_KERNEL_QEMU_WIDEN_DELAY_MS": "800",
     });
     // candidate 1 omitted it -> default 500
     expect(plan.widenEnvs[1]).toEqual({
-      PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL: "pipe_write",
-      PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS: "500",
+      "0SEC_KERNEL_QEMU_WIDEN_SYMBOL": "pipe_write",
+      "0SEC_KERNEL_QEMU_WIDEN_DELAY_MS": "500",
     });
   });
 
@@ -142,7 +142,7 @@ describe("generateRaceSmellCandidates", () => {
       runtime: "api",
       defaultWidenDelayMs: 1200,
     });
-    expect(plan.widenEnvs[1].PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS).toBe("1200");
+    expect(plan.widenEnvs[1]["0SEC_KERNEL_QEMU_WIDEN_DELAY_MS"]).toBe("1200");
   });
 
   it("maps candidates to runHuntScan sites (model site when known, else first file) with widen knobs in the hint", async () => {
@@ -207,10 +207,10 @@ describe("widenEnvFor", () => {
   };
   it("uses the suggested delay when positive", () => {
     const env = widenEnvFor({ ...base, widenHint: { injectSymbol: "fn", suggestedDelayMs: 250, rationale: "r" } }, 500);
-    expect(env).toEqual({ PWNKIT_KERNEL_QEMU_WIDEN_SYMBOL: "fn", PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS: "250" });
+    expect(env).toEqual({ "0SEC_KERNEL_QEMU_WIDEN_SYMBOL": "fn", "0SEC_KERNEL_QEMU_WIDEN_DELAY_MS": "250" });
   });
   it("falls back to the default when the suggested delay is missing or non-positive", () => {
-    expect(widenEnvFor({ ...base, widenHint: { injectSymbol: "fn", rationale: "r" } }, 500).PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS).toBe("500");
-    expect(widenEnvFor({ ...base, widenHint: { injectSymbol: "fn", suggestedDelayMs: 0, rationale: "r" } }, 700).PWNKIT_KERNEL_QEMU_WIDEN_DELAY_MS).toBe("700");
+    expect(widenEnvFor({ ...base, widenHint: { injectSymbol: "fn", rationale: "r" } }, 500)["0SEC_KERNEL_QEMU_WIDEN_DELAY_MS"]).toBe("500");
+    expect(widenEnvFor({ ...base, widenHint: { injectSymbol: "fn", suggestedDelayMs: 0, rationale: "r" } }, 700)["0SEC_KERNEL_QEMU_WIDEN_DELAY_MS"]).toBe("700");
   });
 });

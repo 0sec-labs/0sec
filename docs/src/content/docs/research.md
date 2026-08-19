@@ -1,6 +1,6 @@
 ---
 title: Research
-description: Why pwnkit uses a shell-first approach, what data backs our decisions, and experiments from building the pentesting agent.
+description: Why 0sec uses a shell-first approach, what data backs our decisions, and experiments from building the pentesting agent.
 ---
 
 This section is the single source of truth for "why we made these decisions and what data backs them up." Most experiments run against the [XBOW benchmark](https://github.com/xbow-engineering/validation-benchmarks) (104 Docker CTF challenges).
@@ -29,7 +29,7 @@ The full false-positive reduction stack, why the layers are ordered the way they
 
 ### [TypeScript/Rust Boundary](/research/typescript-rust-boundary/)
 
-Why pwnkit should keep TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
+Why 0sec should keep TypeScript for orchestration while moving deterministic engines such as FoxGuard into Rust behind stable contracts.
 
 ## Triage ML
 
@@ -65,7 +65,7 @@ The 21-profile triage ablation with batch-1 and batch-2 numbers, methodology not
 
 ### [XBEN-099 Investigation](/research/xben-099-investigation/)
 
-Root-cause investigation into why XBEN-099 fails for pwnkit on the patched fork, what Shannon does differently, and the proposed fix.
+Root-cause investigation into why XBEN-099 fails for 0sec on the patched fork, what Shannon does differently, and the proposed fix.
 
 ### [Unsolved Eight Investigation](/research/unsolved-eight-investigation/)
 
@@ -73,7 +73,7 @@ Source-level investigation into an earlier 8-challenge XBOW holdout set. Useful 
 
 ## The big picture
 
-pwnkit is not a template runner or static analyzer. It's an autonomous agent that thinks like a pentester. Pentesters use terminals, not GUIs with dropdowns.
+0sec is not a template runner or static analyzer. It's an autonomous agent that thinks like a pentester. Pentesters use terminals, not GUIs with dropdowns.
 
 The scanner should feel like giving a skilled pentester SSH access. One command. Full autonomy. Real findings with proof.
 

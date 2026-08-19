@@ -1,11 +1,11 @@
 ---
 title: FP Reduction Moat
-description: Measured behavior of pwnkit's 11-layer triage pipeline across benchmark slices, plus layer-by-layer implementation notes and references.
+description: Measured behavior of 0sec's 11-layer triage pipeline across benchmark slices, plus layer-by-layer implementation notes and references.
 ---
 
-> **Update 2026-04-12:** This page reflects the 21-profile ablation and follow-up reruns after EGATS was removed from default moat aliases. The measured effect remains slice-dependent: strong on XBOW black-box, a precision/recall trade on XBOW white-box, and variance-sensitive on npm-bench at current sample size. See the [2026-04-11 ablation results log](/research/2026-04-11-ablation/) for full tables and caveats, [pwnkit#72](https://github.com/0sec-labs/0sec/issues/72) for run tracking, and [pwnkit#116](https://github.com/0sec-labs/0sec/issues/116) for the EGATS profile change.
+> **Update 2026-04-12:** This page reflects the 21-profile ablation and follow-up reruns after EGATS was removed from default moat aliases. The measured effect remains slice-dependent: strong on XBOW black-box, a precision/recall trade on XBOW white-box, and variance-sensitive on npm-bench at current sample size. See the [2026-04-11 ablation results log](/research/2026-04-11-ablation/) for full tables and caveats, [0sec#72](https://github.com/0sec-labs/0sec/issues/72) for run tracking, and [0sec#116](https://github.com/0sec-labs/0sec/issues/116) for the EGATS profile change.
 
-pwnkit's triage pipeline is a stack of independent filters, each tuned for a different failure mode. Every layer is open-source, every layer is toggleable via feature flags, and each layer is represented in benchmarked profiles. This page documents measured outcomes, implementation details, and configuration surfaces.
+0sec's triage pipeline is a stack of independent filters, each tuned for a different failure mode. Every layer is open-source, every layer is toggleable via feature flags, and each layer is represented in benchmarked profiles. This page documents measured outcomes, implementation details, and configuration surfaces.
 
 > **Where to read next:** the [Finding Triage ML](/research/finding-triage-ml/) page is the design doc with the feature-list, datasets, and planned Layer-2 CodeBERT fine-tune. The [Triage Dataset](/research/triage-dataset/) and [Feature Extractor](/research/feature-extractor/) pages document the new data foundation directly. The [Architecture](/architecture/) page shows how the triage stage slots into the overall pipeline.
 
@@ -20,7 +20,7 @@ Every disclosed production triage system converges on the same shape: **rules + 
 | Snyk DeepCode AI | 84% MTTR reduction | Symbolic AI + multiple fine-tuned models in an ensemble. |
 | GitHub Security Lab taskflow-agent | ~30 real vulns surfaced (open-source reference) | GPT-4.1 with 7+ YAML subtasks per alert — the reference architecture for structured decomposition. |
 | VulnBERT (Guanni Qu, Pebblebed) | 92.2% recall / 1.2% FPR on kernel commits | Hybrid: CodeBERT + 51 handcrafted features fused via cross-attention. Ablation: features alone 76.8%/15.9%, CodeBERT alone 84.3%/4.2%, hybrid 92.2%/1.2%. |
-| pwnkit triage stack | Open-source and auditable by construction | Dataset pipeline + handcrafted features + reachability + oracles + structured verify + memories + debate, all visible in code and toggleable per layer. |
+| 0sec triage stack | Open-source and auditable by construction | Dataset pipeline + handcrafted features + reachability + oracles + structured verify + memories + debate, all visible in code and toggleable per layer. |
 
 ### Research papers we implemented directly
 
@@ -73,7 +73,7 @@ Note that `moat` and `moat-only` produce identical flag count and finding count.
 
 **Interpretation (batch 1).** `default` and `moat` are identical on this run. Batch-1 attribution suggested the FPR shift from `none` to `default` came from stable features. Follow-up reruns showed meaningful variance, so this attribution should be treated as provisional until repeated runs are available.
 
-Also worth noting: **100% TPR across every profile.** Every malicious package and every vulnerable package in the 81-package set is caught regardless of which triage layers are on. The earlier `npm-bench-latest.json` snapshot showing F1=0.444 was on a different 30-package slice and no longer reflects reality — see [pwnkit#111](https://github.com/0sec-labs/0sec/issues/111).
+Also worth noting: **100% TPR across every profile.** Every malicious package and every vulnerable package in the 81-package set is caught regardless of which triage layers are on. The earlier `npm-bench-latest.json` snapshot showing F1=0.444 was on a different 30-package slice and no longer reflects reality — see [0sec#111](https://github.com/0sec-labs/0sec/issues/111).
 
 ### Single-feature isolation on stubborn-14 (white-box)
 
@@ -94,19 +94,19 @@ To figure out which moat layer causes the flag losses in white-box, each one was
 
 `feat-reach` is the clear winner: +3 flags at $1.61 per flag, less than half the cost of the default baseline.
 
-`egats` has been flagged for disable-by-default in [pwnkit#116](https://github.com/0sec-labs/0sec/issues/116).
+`egats` has been flagged for disable-by-default in [0sec#116](https://github.com/0sec-labs/0sec/issues/116).
 
 ### Takeaways
 
-1. **No single static policy wins on all three slices.** The moat helps on black-box XBOW, costs 2 flags on white-box XBOW, and is a batch-1 no-op on npm-bench. A static feature-flag system applied at the scan level can't optimize all three simultaneously. This is the direct motivation for learned dynamic routing — see [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113).
+1. **No single static policy wins on all three slices.** The moat helps on black-box XBOW, costs 2 flags on white-box XBOW, and is a batch-1 no-op on npm-bench. A static feature-flag system applied at the scan level can't optimize all three simultaneously. This is the direct motivation for learned dynamic routing — see [0sec#113](https://github.com/0sec-labs/0sec/issues/113).
 2. **The attack agent baseline is strong without triage.** 86% on the first 50 XBOW white-box challenges with triage disabled, and 100% recall on npm-bench across profiles in this run.
 3. **`egats` is the regressing layer in this isolation run.** Keep disabled by default and opt-in for research.
 4. **npm-bench FPR attribution needs repeat runs.** Batch-1 results pointed at stable features; batch-2 reruns showed high variance at this sample size.
-5. **Per-layer telemetry is now on.** Every finding produced after 2026-04-11 carries a `layerVerdicts` array that logs which layer touched it and what it did. That's the supervision signal for the learned-routing model in [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113). See [pwnkit#112](https://github.com/0sec-labs/0sec/issues/112) for the instrumentation commit.
+5. **Per-layer telemetry is now on.** Every finding produced after 2026-04-11 carries a `layerVerdicts` array that logs which layer touched it and what it did. That's the supervision signal for the learned-routing model in [0sec#113](https://github.com/0sec-labs/0sec/issues/113). See [0sec#112](https://github.com/0sec-labs/0sec/issues/112) for the instrumentation commit.
 
 ## Data foundation
 
-Before the live runtime layers even matter, pwnkit now has a reproducible
+Before the live runtime layers even matter, 0sec now has a reproducible
 training-data pipeline:
 
 - [Triage Dataset](/research/triage-dataset/) — JSONL generation from XBOW,
@@ -154,7 +154,7 @@ flowchart TD
     style OUT fill:#10b981,stroke:#059669,color:#fff
 ```
 
-Each layer rejects or downgrades a fraction of the false positives that survived the previous layer. The numbers below are published figures for the reference technique — not a promise for any particular pwnkit scan — but they show the shape of the stack.
+Each layer rejects or downgrades a fraction of the false positives that survived the previous layer. The numbers below are published figures for the reference technique — not a promise for any particular 0sec scan — but they show the shape of the stack.
 
 | # | Layer | Module | Reference signal | Acts on |
 |---|-------|--------|-----------------------------------|---------|
@@ -203,7 +203,7 @@ Every part of the moat is inspectable:
 - the feature layer is in `packages/core/src/triage/feature-extractor.ts`
 - the runtime layers live under `packages/core/src/triage/`
 - the stack has dedicated tests
-- the LLM-backed layers are independently toggleable with `PWNKIT_FEATURE_*`
+- the LLM-backed layers are independently toggleable with `0SEC_FEATURE_*`
   flags
 
 This is materially different from commercial systems where the reachability
@@ -215,12 +215,12 @@ engine, feedback store, or model pipeline is invisible.
 
 See `packages/core/src/agent/features.ts`. Flags:
 
-- `PWNKIT_FEATURE_REACHABILITY_GATE`
-- `PWNKIT_FEATURE_MULTIMODAL`
-- `PWNKIT_FEATURE_POV_GATE`
-- `PWNKIT_FEATURE_CONSENSUS_VERIFY`
-- `PWNKIT_FEATURE_TRIAGE_MEMORIES`
-- `PWNKIT_FEATURE_DEBATE`
+- `0SEC_FEATURE_REACHABILITY_GATE`
+- `0SEC_FEATURE_MULTIMODAL`
+- `0SEC_FEATURE_POV_GATE`
+- `0SEC_FEATURE_CONSENSUS_VERIFY`
+- `0SEC_FEATURE_TRIAGE_MEMORIES`
+- `0SEC_FEATURE_DEBATE`
 
 This lets us A/B test each layer independently in CI against the XBOW benchmark and measure its marginal FP reduction.
 
@@ -241,9 +241,9 @@ paper-plan that uses it.
 
 Every layer errs toward **keeping** findings when it's not confident. Reachability returns `reachable: true` with low confidence when its grep-based first pass can't reach a verdict. Memories only auto-reject on strong matches above a tunable score threshold. Consensus defaults ties to `rejected` but the caller can opt out. The stack is designed so each layer adds precision without costing recall on the next.
 
-### foxguard × pwnkit cross-validation
+### foxguard × 0sec cross-validation
 
-A second scanner (`foxguard`) can be used for independent cross-validation. This provides a rules-based signal alongside pwnkit's agentic signal and supports disagreement-based triage workflows.
+A second scanner (`foxguard`) can be used for independent cross-validation. This provides a rules-based signal alongside 0sec's agentic signal and supports disagreement-based triage workflows.
 
 ### Zero proprietary dependencies
 
@@ -262,4 +262,4 @@ Everything here can run on a developer laptop, in CI, or in an air-gapped enviro
 - [Feature Extractor](/research/feature-extractor/) — the 45-feature reference and group-by-group rationale.
 - [Agent Techniques](/research/agent-techniques/) — attack-phase techniques (early-stop, playbooks, EGATS, racing, handoff).
 - [Architecture](/architecture/) — how the triage stage fits into the overall plan-discover-attack-verify-report pipeline.
-- [Competitive Landscape](/research/competitive-landscape/) — how pwnkit's stack compares to BoxPwnr, Shannon, KinoSec, and the academic agents.
+- [Competitive Landscape](/research/competitive-landscape/) — how 0sec's stack compares to BoxPwnr, Shannon, KinoSec, and the academic agents.

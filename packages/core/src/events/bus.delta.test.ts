@@ -2,7 +2,7 @@
  * Tests for the `delta` event variant on the pluggable event bus.
  *
  * The cloud relay's wire format for these events is
- *   `PWNKIT_EVENT_DELTA {…json…}`
+ *   `0SEC_EVENT_DELTA {…json…}`
  * which is just the standard cloudEventSink projection of the typed event.
  * These tests cover the bus mechanics — round-tripping a `delta` payload
  * through `eventBus.emit()` and through the `cloudEventSink` to stdout.
@@ -22,13 +22,13 @@ describe("eventBus.emit('delta', …)", () => {
   beforeEach(() => {
     eventBus.clear();
     _resetCloudSinkSubscriptionForTests();
-    delete process.env.PWNKIT_CLOUD_EVENTS;
+    delete process.env["0SEC_CLOUD_EVENTS"];
   });
 
   afterEach(() => {
     eventBus.clear();
     _resetCloudSinkSubscriptionForTests();
-    delete process.env.PWNKIT_CLOUD_EVENTS;
+    delete process.env["0SEC_CLOUD_EVENTS"];
   });
 
   it("fans a delta event out to every subscribed sink with the payload intact", () => {
@@ -61,7 +61,7 @@ describe("eventBus.emit('delta', …)", () => {
     expect(sink2[0]!.payload).toEqual(payload);
   });
 
-  it("cloudEventSink projects a delta event onto a single PWNKIT_EVENT_DELTA stdout line", () => {
+  it("cloudEventSink projects a delta event onto a single 0SEC_EVENT_DELTA stdout line", () => {
     const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
       const payload: DeltaPayload = {
@@ -75,8 +75,8 @@ describe("eventBus.emit('delta', …)", () => {
 
       expect(writeSpy).toHaveBeenCalledTimes(1);
       const line = String(writeSpy.mock.calls[0]![0]);
-      expect(line.startsWith("PWNKIT_EVENT_DELTA ")).toBe(true);
-      const json = JSON.parse(line.slice("PWNKIT_EVENT_DELTA ".length));
+      expect(line.startsWith("0SEC_EVENT_DELTA ")).toBe(true);
+      const json = JSON.parse(line.slice("0SEC_EVENT_DELTA ".length));
       expect(json).toEqual(payload);
       expect(line.endsWith("\n")).toBe(true);
     } finally {
@@ -86,7 +86,7 @@ describe("eventBus.emit('delta', …)", () => {
 
   it("isCloudEventSinkActive() reports the subscription state honestly", () => {
     expect(isCloudEventSinkActive()).toBe(false);
-    process.env.PWNKIT_CLOUD_EVENTS = "1";
+    process.env["0SEC_CLOUD_EVENTS"] = "1";
     maybeSubscribeCloudEventSink();
     expect(isCloudEventSinkActive()).toBe(true);
   });

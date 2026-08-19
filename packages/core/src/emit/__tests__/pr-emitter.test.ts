@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import {
   emitFindingsAsPRs,
   buildBranchName,
@@ -146,11 +146,11 @@ describe("isReproduced", () => {
 
 describe("buildBranchName", () => {
   it("sanitizes finding id to a safe ref", () => {
-    expect(buildBranchName(mkFinding("abc-123", "xss"))).toBe("pwnkit/finding-abc123");
+    expect(buildBranchName(mkFinding("abc-123", "xss"))).toBe("0sec/finding-abc123");
   });
   it("truncates long ids", () => {
     const f = mkFinding("0123456789abcdefghij", "xss");
-    expect(buildBranchName(f)).toBe("pwnkit/finding-0123456789ab");
+    expect(buildBranchName(f)).toBe("0sec/finding-0123456789ab");
   });
 });
 
@@ -169,7 +169,7 @@ describe("buildPrTitle / buildPrBody", () => {
     expect(body).toContain("## Summary");
     expect(body).toContain("## Severity reasoning");
     expect(body).toContain("CVSS:** 7.5 (CVSS:3.1/AV:N)");
-    expect(body).toContain(".pwnkit/findings/fnd1/");
+    expect(body).toContain(".0sec/findings/fnd1/");
     expect(body).toContain("`reproduced`");
     expect(body).toContain("Finding ID: `fnd-1`");
   });
@@ -264,11 +264,11 @@ describe("emitFindingsAsPRs", () => {
     expect(fs.files.get("/out/hypotheses.md")).toContain("Finding hyp1");
 
     // repro README + suggested patch landed for the secret finding
-    expect(fs.files.get("/repo/.pwnkit/findings/rep1/README.md")).toContain("Finding rep1");
-    expect(fs.files.get("/repo/.pwnkit/findings/rep1/suggested-fix.patch")).toContain("process.env.");
+    expect(fs.files.get("/repo/.0sec/findings/rep1/README.md")).toContain("Finding rep1");
+    expect(fs.files.get("/repo/.0sec/findings/rep1/suggested-fix.patch")).toContain("process.env.");
 
     // missing-validation finding got a guard patch
-    expect(fs.files.get("/repo/.pwnkit/findings/rep2/suggested-fix.patch")).toContain("starter guard");
+    expect(fs.files.get("/repo/.0sec/findings/rep2/suggested-fix.patch")).toContain("starter guard");
   });
 
   it("dry-run prints commands and does not invoke gh", async () => {
@@ -343,7 +343,7 @@ describe("emitFindingsAsPRs", () => {
 
     expect(fs.copies).toContainEqual({
       src: "/fixtures/sanitizer.log",
-      dest: "/repo/.pwnkit/findings/rep1/sanitizer.log",
+      dest: "/repo/.0sec/findings/rep1/sanitizer.log",
     });
   });
 
@@ -365,7 +365,7 @@ describe("emitFindingsAsPRs", () => {
       fsClient: fs.client,
     });
 
-    expect(fs.files.get("/repo/.pwnkit/findings/rep1/nothing.log.missing.txt")).toContain(
+    expect(fs.files.get("/repo/.0sec/findings/rep1/nothing.log.missing.txt")).toContain(
       "/nope/nothing.log",
     );
   });
@@ -417,7 +417,7 @@ describe("emitFindingsAsPRs", () => {
     // add, commit (for the fix-template patch).
     const argvs = git.calls.map((c) => c.argv.join(" "));
     expect(argvs[0]).toBe("checkout develop");
-    expect(argvs[1]).toMatch(/^checkout -b pwnkit\/finding-rep1$/);
-    expect(argvs.some((a) => a.startsWith("commit -m pwnkit(information-disclosure)"))).toBe(true);
+    expect(argvs[1]).toMatch(/^checkout -b 0sec\/finding-rep1$/);
+    expect(argvs.some((a) => a.startsWith("commit -m 0sec(information-disclosure)"))).toBe(true);
   });
 });

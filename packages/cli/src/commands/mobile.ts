@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import chalk from "chalk";
-import { loadScope, runMobileStaticIntake } from "@pwnkit/core";
+import { loadScope, runMobileStaticIntake } from "@0sec/core";
 
 const VALID_OUTPUT_FORMATS = ["terminal", "json"] as const;
 type MobileOutputFormat = (typeof VALID_OUTPUT_FORMATS)[number];
@@ -70,7 +70,7 @@ export function registerMobileCommand(program: Command): void {
     .command("intake")
     .description("Extract mobile metadata and endpoint indicators from a local APK/IPA extraction tree")
     .argument("<path>", "Local .apk/.aab/.ipa file or extracted app directory")
-    .option("--scope <path>", "pwnkit scope JSON for passive in/out-of-scope classification")
+    .option("--scope <path>", "0sec scope JSON for passive in/out-of-scope classification")
     .option("--max-file-bytes <n>", "Maximum text file size to inspect", "1048576")
     .option("-o, --output <format>", "Output format: terminal | json", "terminal")
     .action((targetPath: string, opts: MobileIntakeOpts) => {
@@ -105,7 +105,7 @@ export function registerMobileCommand(program: Command): void {
     .option("--out <dir>", "Output directory for decompiled sources")
     .option("--force", "Remove the output directory first when it already exists", false)
     .option("--intake", "Run passive endpoint/metadata intake after decompilation", false)
-    .option("--scope <path>", "pwnkit scope JSON for passive in/out-of-scope classification")
+    .option("--scope <path>", "0sec scope JSON for passive in/out-of-scope classification")
     .option("--max-file-bytes <n>", "Maximum text file size to inspect during --intake", "1048576")
     .option("-o, --output <format>", "Output format: terminal | json", "terminal")
     .action((apkInput: string, opts: MobileUnpackOpts) => {
@@ -174,7 +174,7 @@ function prepareApkInput(input: string): { path: string } {
     return { path: input };
   }
 
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-mobile-apk-"));
+  const dir = mkdtempSync(join(tmpdir(), "0sec-mobile-apk-"));
   const fileName = apkFileNameFromUrl(input);
   const outputPath = join(dir, fileName);
   execFileSync("curl", ["-L", "--fail", "--silent", "--show-error", "-o", outputPath, input], {

@@ -1,4 +1,4 @@
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { suggestCwesForCategory, formatCweSection } from "./cwe.js";
 import { suggestCvss } from "./cvss.js";
 import { formatPatchStatusSection, type ReverifyResult } from "./canary.js";
@@ -18,7 +18,7 @@ export interface AdvisoryContext {
   target?: string;
   targetRef?: string;
   commitHash?: string;
-  pwnkitVersion?: string;
+  osecVersion?: string;
   scanId?: string;
   screenshots?: AdvisoryScreenshot[];
   patchStatus?: ReverifyResult;
@@ -208,11 +208,11 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
   } else if (ctx.target) {
     affectedLine = `\`${ctx.target}\`${ctx.targetRef ? ` at \`${ctx.targetRef}\`` : ""}${ctx.commitHash ? ` (commit \`${ctx.commitHash.slice(0, 12)}\`)` : ""}`;
   } else {
-    affectedLine = "_Pass `--repo <path>` to `pwnkit-cli disclose` to auto-detect the affected version range from git tags._";
+    affectedLine = "_Pass `--repo <path>` to `0sec-cli disclose` to auto-detect the affected version range from git tags._";
   }
 
   const cvssSource = cvss.source === "finding"
-    ? "populated on the finding by pwnkit"
+    ? "populated on the finding by 0sec"
     : "heuristic from category + severity — override in the GHSA editor if the operator disagrees";
 
   const remediation = finding.remediation;
@@ -231,7 +231,7 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
   } else if (ctx.siblingFix) {
     const ref = `${ctx.siblingFix.fileRef.file}${ctx.siblingFix.fileRef.line ? `:${ctx.siblingFix.fileRef.line}` : ""}`;
     suggestedFixParts.push(
-      `**Correct pattern already present in the repo at \`${ref}\`** *(extracted by pwnkit):*\n\n\`\`\`${ctx.siblingFix.language}\n${ctx.siblingFix.snippet}\n\`\`\``,
+      `**Correct pattern already present in the repo at \`${ref}\`** *(extracted by 0sec):*\n\n\`\`\`${ctx.siblingFix.language}\n${ctx.siblingFix.snippet}\n\`\`\``,
     );
   }
   const suggestedFix = suggestedFixParts.length > 0
@@ -253,9 +253,9 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
   out.push("# Affected versions", "");
   out.push(affectedLine, "");
 
-  if (ctx.pwnkitVersion || ctx.scanId) {
+  if (ctx.osecVersion || ctx.scanId) {
     const bits: string[] = [];
-    if (ctx.pwnkitVersion) bits.push(`pwnkit \`${ctx.pwnkitVersion}\``);
+    if (ctx.osecVersion) bits.push(`0sec \`${ctx.osecVersion}\``);
     if (ctx.scanId) bits.push(`scan \`${ctx.scanId.slice(0, 8)}\``);
     // Honesty gate: only claim "code-verified" when BOTH the canary
     // patch-status check (#170) and the behavioural reverify (#171)
@@ -333,7 +333,7 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
   if (ctx.patchStatus) {
     out.push(formatPatchStatusSection(ctx.patchStatus), "");
   } else {
-    out.push("_Pass `--repo <path>` to `pwnkit-cli disclose` to auto-verify this against the target's current HEAD or a specific tag._", "");
+    out.push("_Pass `--repo <path>` to `0sec-cli disclose` to auto-verify this against the target's current HEAD or a specific tag._", "");
   }
   if (ctx.pocExecution) {
     const verdict = ctx.pocExecution.overallVerdict === "exploit_still_works"
@@ -347,7 +347,7 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
 
   out.push("## Credits", "");
   out.push(
-    "Discovered by **pwnkit**, 0sec's AI-assisted security engine ([0sec.ai](https://0sec.ai)).",
+    "Discovered by **0sec**, 0sec's AI-assisted security engine ([0sec.ai](https://0sec.ai)).",
     "",
     "Reporter: _(your github handle)_",
     "",

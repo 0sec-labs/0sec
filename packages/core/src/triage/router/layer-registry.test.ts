@@ -59,7 +59,7 @@ describe("LAYER_REGISTRY", () => {
     }
   });
 
-  it("contains the canonical layers referenced in pwnkit#112's LayerVerdict union", () => {
+  it("contains the canonical layers referenced in 0sec#112's LayerVerdict union", () => {
     const expected = [
       "holding_it_wrong",
       "evidence_gate",
@@ -83,7 +83,7 @@ describe("LAYER_REGISTRY", () => {
     expect(ids.indexOf("publishability")).toBeGreaterThan(ids.indexOf("multi_modal"));
     expect(ids.indexOf("publishability")).toBeLessThan(ids.indexOf("pov_gate"));
     const entry = LAYER_REGISTRY_BY_ID["publishability"];
-    expect(entry.env_flag).toBe("PWNKIT_FEATURE_PUBLISHABILITY_GATE");
+    expect(entry.env_flag).toBe("0SEC_FEATURE_PUBLISHABILITY_GATE");
     expect(entry.cost_factor).toBeCloseTo(0.3);
   });
 });

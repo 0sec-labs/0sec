@@ -1,5 +1,5 @@
 /**
- * Scan-level pass@k bench harness (pwnkit#556).
+ * Scan-level pass@k bench harness (0sec#556).
  *
  * Public surface:
  *   - manifest:  loader + zod schema for the (corpus-referencing) manifest.

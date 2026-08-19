@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ci-runner-bootstrap.sh — runner bootstrap + cache-integrity preflight for the
-# self-hosted PwnKit CI runners (#610). Run once per job, right after
+# self-hosted 0sec CI runners (#610). Run once per job, right after
 # actions/setup-node, in place of a bare `corepack enable`.
 #
 # It does three things, all learned the hard way (2026-05-30):

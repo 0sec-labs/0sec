@@ -1,6 +1,6 @@
 /**
  * graph-slice — the deterministic interprocedural slicer + its seed-diff adapter
- * (`pwnkit hunt --graph-slice`). Proven here against a SYNTHETIC graphson CPG
+ * (`0sec hunt --graph-slice`). Proven here against a SYNTHETIC graphson CPG
  * fixture shaped like the bench af_unix `scm_fp_list` proof
  * (bench:/root/graph-lpe/): a use/dispatch site in one file whose object is
  * ALLOCATED and FREED in cross-function, cross-FILE helpers.
@@ -347,7 +347,7 @@ describe("buildGraphSliceHuntContext", () => {
     const sourceRoot = mkdtempSync(join(tmpdir(), "graph-slice-"));
     dirs.push(sourceRoot);
     // pre-exported CPG at the conventional path
-    const cpgDir = join(sourceRoot, ".pwnkit", "cpg");
+    const cpgDir = join(sourceRoot, ".0sec", "cpg");
     mkdirSync(cpgDir, { recursive: true });
     writeFileSync(join(cpgDir, "net__unix.json"), JSON.stringify(buildFixtureGraphson()));
     // real source files so the renderer can surface path lines
@@ -400,7 +400,7 @@ describe("buildGraphSliceHuntContext", () => {
       "@@ -10,6 +10,7 @@ static int unix_attach_fds(struct scm_cookie *scm)",
       "+\t/* fix */",
     ].join("\n");
-    expect(existsSync(join(sourceRoot, ".pwnkit"))).toBe(false);
+    expect(existsSync(join(sourceRoot, ".0sec"))).toBe(false);
     expect(buildGraphSliceHuntContext({ sourceRoot, seedDiff })).toBeNull();
   });
 });

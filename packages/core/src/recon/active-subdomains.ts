@@ -1,4 +1,4 @@
-// Active subdomain enumeration (pwnkit#924).
+// Active subdomain enumeration (0sec#924).
 //
 // The passive enumerator (`./subdomains.ts`) only sees what Certificate
 // Transparency logs already published. This module adds the *active* leg:

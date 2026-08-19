@@ -1,6 +1,6 @@
 /**
  * Runtime validation schemas for `JSON.parse(...) as T` sites inside
- * `@pwnkit/core`. Mirrors the precedent set by `packages/cli/src/commands/
+ * `@0sec/core`. Mirrors the precedent set by `packages/cli/src/commands/
  * schemas.ts` (PR #300) but lives in core because the CLI depends on core,
  * not the other way around — we can't reach back into the CLI's schemas
  * file from here.
@@ -25,7 +25,7 @@
  */
 
 import { z } from "zod";
-import type { LayerVerdict } from "@pwnkit/shared";
+import type { LayerVerdict } from "@0sec/shared";
 
 // ── JSON-RPC envelope (used by mcp.ts) ──────────────────────────────────────
 //
@@ -56,7 +56,7 @@ export const mcpRpcEnvelopeSchema = z
 
 // ── LayerVerdict (used by agentic-scanner.ts) ───────────────────────────────
 //
-// Mirrors `LayerVerdict` in `@pwnkit/shared`. The verdict surface is
+// Mirrors `LayerVerdict` in `@0sec/shared`. The verdict surface is
 // append-only telemetry (#112): new layers and verdict kinds get added over
 // time, and old DB rows must keep round-tripping. So:
 //

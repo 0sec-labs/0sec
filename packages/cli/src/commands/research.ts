@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 function print(value: unknown): void {
   process.stdout.write(JSON.stringify(value, null, 2) + "\n");
@@ -20,9 +20,9 @@ export function registerResearchCommand(program: Command): void {
     .option("--profile <profile>", "Source review profile")
     .option("--depth <depth>", "quick, default, or deep", "default")
     .option("--runtime <runtime>", "auto, api, claude, codex, gemini, or ollama", "auto")
-    .option("--artifact-root <path>", "Research artifact root", ".pwnkit-research")
+    .option("--artifact-root <path>", "Research artifact root", ".0sec-research")
     .action(async (opts: { target: string; targetType?: string; profile?: string; depth: string; runtime: string; artifactRoot: string }) => {
-      const { UnifiedPipelineResearchAdapter, postFinding, runResearch } = await import("@pwnkit/core");
+      const { UnifiedPipelineResearchAdapter, postFinding, runResearch } = await import("@0sec/core");
       const allowedTypes = new Set(["url", "web-app", "source-code", "npm-package", "pypi-package", "cargo-package", "oci-image"]);
       if (opts.targetType && !allowedTypes.has(opts.targetType)) throw new Error(`unsupported --target-type ${opts.targetType}`);
       print(await runResearch(
@@ -49,9 +49,9 @@ export function registerResearchCommand(program: Command): void {
     .command("mobile")
     .description("Run passive mobile intake; indicators remain hypotheses and only scoped adapters may hand off targets")
     .requiredOption("--target <path>", "Extracted APK/IPA directory or metadata file")
-    .option("--artifact-root <path>", "Research artifact root", ".pwnkit-research")
+    .option("--artifact-root <path>", "Research artifact root", ".0sec-research")
     .action(async (opts: { target: string; artifactRoot: string }) => {
-      const { MobileStaticResearchAdapter, postFinding, runResearch } = await import("@pwnkit/core");
+      const { MobileStaticResearchAdapter, postFinding, runResearch } = await import("@0sec/core");
       const targetPath = resolve(opts.target);
       print(await runResearch(
         new MobileStaticResearchAdapter(),
@@ -62,12 +62,12 @@ export function registerResearchCommand(program: Command): void {
 
   research
     .command("linux-matrix")
-    .description("Import externally executed vulnerable-vs-patched boot logs; pwnkit validates and hashes them but does not execute boots")
+    .description("Import externally executed vulnerable-vs-patched boot logs; 0sec validates and hashes them but does not execute boots")
     .requiredOption("--matrix <path>", "Versioned external boot-matrix manifest JSON")
     .requiredOption("--finding <path>", "Existing Finding JSON to bind the proof to")
-    .option("--artifact-root <path>", "Research artifact root", ".pwnkit-research")
+    .option("--artifact-root <path>", "Research artifact root", ".0sec-research")
     .action(async (opts: { matrix: string; finding: string; artifactRoot: string }) => {
-      const { LinuxBootMatrixImportAdapter, postFinding, runResearch } = await import("@pwnkit/core");
+      const { LinuxBootMatrixImportAdapter, postFinding, runResearch } = await import("@0sec/core");
       const matrix = resolve(opts.matrix);
       const finding = JSON.parse(readFileSync(resolve(opts.finding), "utf8")) as Finding;
       const result = await runResearch(
@@ -88,9 +88,9 @@ export function registerResearchCommand(program: Command): void {
     .requiredOption("--expected-signature <literal>", "Literal crash signature that every counted boot must contain")
     .option("--boots <n>", "Fresh boots", "3")
     .option("--min-hits <n>", "Required reproducing boots", "2")
-    .option("--artifact-root <path>", "Research artifact root", ".pwnkit-research")
+    .option("--artifact-root <path>", "Research artifact root", ".0sec-research")
     .action(async (opts: { kernelTree: string; reproducer: string; finding: string; expectedSignature: string; boots: string; minHits: string; artifactRoot: string }) => {
-      const { LinuxKernelResearchAdapter, postFinding, runResearch } = await import("@pwnkit/core");
+      const { LinuxKernelResearchAdapter, postFinding, runResearch } = await import("@0sec/core");
       const kernelTree = resolve(opts.kernelTree);
       const reproducer = resolve(opts.reproducer);
       const finding = JSON.parse(readFileSync(resolve(opts.finding), "utf8")) as Finding;

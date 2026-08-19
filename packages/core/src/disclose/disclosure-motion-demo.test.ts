@@ -30,7 +30,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Finding, PocStep, LayerVerdict } from "@pwnkit/shared";
+import type { Finding, PocStep, LayerVerdict } from "@0sec/shared";
 
 import {
   createDisclosureRecord,
@@ -290,7 +290,7 @@ describe("coordinated-disclosure GTM motion (demo harness)", () => {
 
     // NOT-SENT / DRAFT banner is mandatory and load-bearing.
     expect(md).toContain("DRAFT — NOT SENT.");
-    expect(md).toContain("Nothing here is transmitted to a vendor by pwnkit.");
+    expect(md).toContain("Nothing here is transmitted to a vendor by 0sec.");
 
     // Redaction: no secret survives into the draft.
     expect(md).not.toContain(FAKE_JWT);

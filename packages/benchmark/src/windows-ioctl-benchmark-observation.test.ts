@@ -72,7 +72,7 @@ function contextFor(
 function observationFor(value: WindowsLpeOpaqueProjectionBundle): WindowsIoctlBenchmarkObservation {
   return {
     schemaVersion: WINDOWS_IOCTL_BENCHMARK_OBSERVATION_SCHEMA,
-    pwnkit: {
+    "osec": {
       corpusId: manifest.corpusId,
       corpusManifestSha256: "",
       projectionSha256: value.projectionSha256,
@@ -159,7 +159,7 @@ function validFixture(): {
   const value = bundle();
   const observation = observationFor(value);
   const context = contextFor(value, observation);
-  observation.pwnkit.corpusManifestSha256 = validateWindowsLpePairedCorpus(context.manifest).manifestSha256;
+  observation["osec"].corpusManifestSha256 = validateWindowsLpePairedCorpus(context.manifest).manifestSha256;
   return { bundle: value, context, observation };
 }
 
@@ -195,9 +195,9 @@ describe("Windows IOCTL benchmark observation", () => {
     validateWindowsIoctlBenchmarkObservation(observation, context);
     const agentJson = JSON.stringify(value.projection);
     for (const forbidden of [
-      observation.pwnkit.corpusManifestSha256,
-      observation.pwnkit.resolverSha256,
-      observation.pwnkit.inventorySha256,
+      observation["osec"].corpusManifestSha256,
+      observation["osec"].resolverSha256,
+      observation["osec"].inventorySha256,
       observation.zeroverse.evaluationSha256,
       "caseId", "family", "advisoryId", "groundTruth", "expectedCount", "controlCount",
     ]) {
@@ -214,12 +214,12 @@ describe("Windows IOCTL benchmark observation", () => {
       "corpusManifestSha256", "projectionSha256", "resolverSha256", "inventorySha256",
     ] as const) {
       const mutated = copy(observation);
-      mutated.pwnkit[field] = sha("0");
+      mutated["osec"][field] = sha("0");
       expect(() => validateWindowsIoctlBenchmarkObservation(mutated, context)).toThrow(/evaluator corpus/);
     }
 
     const wrongHandle = copy(observation);
-    wrongHandle.pwnkit.opaqueHandle = opaque(99);
+    wrongHandle["osec"].opaqueHandle = opaque(99);
     expect(() => validateWindowsIoctlBenchmarkObservation(wrongHandle, context)).toThrow(/evaluator corpus/);
 
     expect(() => validateWindowsIoctlBenchmarkObservation(observation, {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { homeStateDir } from "@0sec/shared";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,7 +15,7 @@ interface CacheEnvelope<T> {
 }
 
 export function defaultIntelCacheDir(): string {
-  return join(homedir(), ".pwnkit", "intel-cache");
+  return join(homeStateDir(), "intel-cache");
 }
 
 export class IntelCache {

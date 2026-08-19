@@ -3,7 +3,7 @@ import {
   detectKnownMarkers,
   analyzeFindingForKnownMarkers,
 } from "./known-marker.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 function baseFinding(overrides: Partial<Finding> = {}): Finding {
   return {

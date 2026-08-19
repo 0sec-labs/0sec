@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { z } from "zod";
-import type { AttackOutcome, AttackResult, Finding, ScanContext, TargetInfo } from "@pwnkit/shared";
+import type { AttackOutcome, AttackResult, Finding, ScanContext, TargetInfo } from "@0sec/shared";
 import { isMcpTarget } from "./http.js";
 import { mcpRpcEnvelopeSchema, formatZodError } from "./schemas.js";
 

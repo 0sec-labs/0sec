@@ -34,8 +34,8 @@
 //
 //   1. Scope file: an optional `engagement` block alongside `in_scope` /
 //      `out_of_scope`.
-//   2. Env: `PWNKIT_ENGAGEMENT_PROFILE`, `PWNKIT_WAF_EVASION`,
-//      `PWNKIT_ENGAGEMENT_RATE_RPS`, `PWNKIT_ENGAGEMENT_JITTER_MS`.
+//   2. Env: `0SEC_ENGAGEMENT_PROFILE`, `0SEC_WAF_EVASION`,
+//      `0SEC_ENGAGEMENT_RATE_RPS`, `0SEC_ENGAGEMENT_JITTER_MS`.
 //   3. CLI: `--engagement-profile <name>`, `--no-waf-evasion`.
 //
 // ── Default is UNCHANGED behaviour ──
@@ -45,10 +45,10 @@
 // evasion ladder on, no jitter, 5 rps/host. Everything here is opt-in.
 //
 // The one exception is `wafEvasionLadder`, which is independently disableable
-// (`--no-waf-evasion` / `PWNKIT_WAF_EVASION=0`) WITHOUT selecting a profile —
+// (`--no-waf-evasion` / `0SEC_WAF_EVASION=0`) WITHOUT selecting a profile —
 // that gap was worth closing on its own.
 
-import type { EngagementPostureRecord } from "@pwnkit/shared";
+import type { EngagementPostureRecord } from "@0sec/shared";
 
 /** Supported engagement profiles. */
 export type EngagementProfileName = "standard" | "conservative";
@@ -147,10 +147,10 @@ export interface EngagementProfileInputs {
   cliWafEvasion?: boolean;
 }
 
-const ENV_PROFILE_KEY = "PWNKIT_ENGAGEMENT_PROFILE";
-const ENV_WAF_EVASION_KEY = "PWNKIT_WAF_EVASION";
-const ENV_RATE_RPS_KEY = "PWNKIT_ENGAGEMENT_RATE_RPS";
-const ENV_JITTER_MS_KEY = "PWNKIT_ENGAGEMENT_JITTER_MS";
+const ENV_PROFILE_KEY = "0SEC_ENGAGEMENT_PROFILE";
+const ENV_WAF_EVASION_KEY = "0SEC_WAF_EVASION";
+const ENV_RATE_RPS_KEY = "0SEC_ENGAGEMENT_RATE_RPS";
+const ENV_JITTER_MS_KEY = "0SEC_ENGAGEMENT_JITTER_MS";
 
 /**
  * Validate a profile name. Throws on anything unknown so a typo
@@ -288,7 +288,7 @@ export function resolveEngagementProfile(
  *
  * Takes the already-resolved posture when the caller has one (the agent tool
  * context does). Falls back to resolving from `process.env` so the standalone
- * `PWNKIT_WAF_EVASION=0` opt-out still works for embedders and tests that never
+ * `0SEC_WAF_EVASION=0` opt-out still works for embedders and tests that never
  * built a posture. Default remains `true` — unchanged behaviour.
  */
 export function isWafEvasionLadderEnabled(

@@ -1,4 +1,4 @@
-// ── apply_patch — structured DSL for reliable file edits (pwnkit#230) ──
+// ── apply_patch — structured DSL for reliable file edits (0sec#230) ──
 //
 // Mirrors OpenAI Codex CLI's `apply_patch` envelope. The tool accepts a
 // single string in the "*** Begin Patch … *** End Patch" DSL and applies

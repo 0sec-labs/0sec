@@ -412,7 +412,7 @@ function toAdministrativeUnit(o: Record<string, unknown>): AdministrativeUnitRec
  * The result is deliberately partial where the export was partial: the posture
  * collections the 27 checks read (conditional access, federation, eligibility
  * schedules) are not part of an AzureHound run, so they come back empty with a
- * warning saying so. Run `pwnkit identity` against a live tenant for those.
+ * warning saying so. Run `0sec identity` against a live tenant for those.
  */
 export function ingestAzureHound(documents: readonly unknown[]): AzureHoundIngestResult {
   const warnings: string[] = [];
@@ -500,7 +500,7 @@ export function ingestAzureHound(documents: readonly unknown[]): AzureHoundInges
   }
 
   warnings.push(
-    "AzureHound exports do not include conditional-access policies, federation configuration, or PIM eligibility schedules — run `pwnkit identity` against a live tenant for the posture checks that read them",
+    "AzureHound exports do not include conditional-access policies, federation configuration, or PIM eligibility schedules — run `0sec identity` against a live tenant for the posture checks that read them",
   );
 
   const relationships: TenantRelationships | undefined = haveRelationships

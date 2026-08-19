@@ -14,7 +14,7 @@ import {
   validateCrashReportConsistency,
   matchCrashSignature,
 } from "../../triage/kernel-oracle.js";
-import type { CrashReport, Finding } from "@pwnkit/shared";
+import type { CrashReport, Finding } from "@0sec/shared";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

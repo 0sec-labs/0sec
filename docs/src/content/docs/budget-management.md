@@ -1,15 +1,15 @@
 ---
 title: Budget Management
-description: How pwnkit manages turn budgets, reflection checkpoints, and depth-based resource allocation across agent scans.
+description: How 0sec manages turn budgets, reflection checkpoints, and depth-based resource allocation across agent scans.
 ---
 
-Agentic security scanning is expensive. Every turn costs tokens, time, and API dollars. Spend too few turns and the agent misses real vulnerabilities. Spend too many and it loops on dead ends, burning budget without results. pwnkit's budget system balances thoroughness against efficiency using turn limits, graduated reflection checkpoints, and depth presets tuned to empirical data.
+Agentic security scanning is expensive. Every turn costs tokens, time, and API dollars. Spend too few turns and the agent misses real vulnerabilities. Spend too many and it loops on dead ends, burning budget without results. 0sec's budget system balances thoroughness against efficiency using turn limits, graduated reflection checkpoints, and depth presets tuned to empirical data.
 
 ## Turn budgets
 
 A "turn" is one round-trip with the LLM: the model receives context, produces a response (typically including a tool call), the tool executes, and the result feeds back into the next turn. A multi-step exploit chain -- login, extract a cookie, probe an authenticated endpoint, escalate privileges, exfiltrate data -- might consume 8-15 turns. A simple header check might take 2.
 
-pwnkit caps every agent run with a maximum turn count. When the agent reaches that limit, the loop terminates and all findings discovered so far are saved. The turn budget is the primary mechanism that prevents runaway scans.
+0sec caps every agent run with a maximum turn count. When the agent reaches that limit, the loop terminates and all findings discovered so far are saved. The turn budget is the primary mechanism that prevents runaway scans.
 
 The `--depth` flag maps directly to turn budgets for the attack stage:
 
@@ -27,11 +27,11 @@ The default budget of 40 turns is not arbitrary. It comes from MAPTA (Multi-Agen
 
 Beyond roughly 40 calls, returns diminish sharply. The agent has typically exhausted its best hypotheses and begins cycling through low-probability variants. The exceptions are complex challenges that require deep exploration across multiple vulnerability classes -- those benefit from the 100-turn deep budget, which gives the agent room to try fundamentally different strategies after the first few fail.
 
-pwnkit's own benchmark data confirms this pattern. Most successful exploits complete in 10-20 turns. Challenges that fail at 40 turns rarely succeed at 60 -- they need either a different model, source code access, or browser automation, not more turns of the same approach.
+0sec's own benchmark data confirms this pattern. Most successful exploits complete in 10-20 turns. Challenges that fail at 40 turns rarely succeed at 60 -- they need either a different model, source code access, or browser automation, not more turns of the same approach.
 
 ## Reflection checkpoints
 
-Raw turn limits prevent runaway costs, but they do not prevent a subtler problem: the agent spending 35 turns on a dead-end approach and only realizing too late that it should have pivoted. pwnkit addresses this with graduated reflection checkpoints, inspired by Cyber-AutoAgent's phased plan evaluation.
+Raw turn limits prevent runaway costs, but they do not prevent a subtler problem: the agent spending 35 turns on a dead-end approach and only realizing too late that it should have pivoted. 0sec addresses this with graduated reflection checkpoints, inspired by Cyber-AutoAgent's phased plan evaluation.
 
 At four points during a scan, the agent receives a budget-awareness prompt that forces it to reassess:
 

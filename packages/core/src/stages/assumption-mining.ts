@@ -1,5 +1,5 @@
 /**
- * ASSUMPTION-MINING — pwnkit's FOURTH seedless discovery axis, and the first one
+ * ASSUMPTION-MINING — 0sec's FOURTH seedless discovery axis, and the first one
  * that reasons like an auditor instead of pointing a fixed-shape checker at code.
  *
  * WHY THIS EXISTS (the gap the other three seedless stages structurally cannot
@@ -66,7 +66,7 @@ import { readFileSync } from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 import { buildCallGraph, type CallGraph, type FnDef } from "./interproc-refcount.js";
 import {
   composeGate,
@@ -81,7 +81,7 @@ import { extractInvariantSpec } from "./invariant-spec-builder.js";
 import { resolveContainedSourcePath } from "./subsystem-invariant-model.js";
 import { witnessDualViewContexts, type DynamicWitnessDeps, type WitnessDualViewResult } from "./dynamic-witness.js";
 import { scoreGeometry } from "../kernel/geometry-score.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── The stored assumption model (durable, versioned like InvariantModel) ────────
 
@@ -1943,7 +1943,7 @@ export async function runAssumptionHunt(input: AssumptionHuntInput): Promise<Ass
   // caller whose body we could not excerpt falls back to its per-file candidate.
   let candidates = plan.candidates;
   if (input.finderTargeting !== false) {
-    const excerptDir = input.excerptDir ?? join(tmpdir(), `pwnkit-assumption-excerpts-${process.pid}`);
+    const excerptDir = input.excerptDir ?? join(tmpdir(), `0sec-assumption-excerpts-${process.pid}`);
     const focused = buildFocusedCandidates(crossCheck.kept, allContexts, bodies, excerptDir);
     const missed = new Set(focused.missedCallers);
     const fallback = plan.candidates.filter((c) =>

@@ -1,5 +1,5 @@
 /*
- * xnu-fuzz in-guest opener (§3.2 of docs/pwnkit-iokit-fuzzer.md).
+ * xnu-fuzz in-guest opener (§3.2 of docs/0sec-iokit-fuzzer.md).
  *
  * The thin C harness that runs INSIDE the disposable macOS VM. The fuzzer brain
  * (enumeration model, generation, mutation, sequencing) stays on the host; this

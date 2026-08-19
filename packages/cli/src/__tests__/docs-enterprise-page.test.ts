@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 
 // Walk up from this test file to the repo root, then into the docs tree.
 // __dirname-style resolution via import.meta.url keeps the test independent of
-// the working directory `pnpm --filter @pwnkit/cli test` runs from.
+// the working directory `pnpm --filter @0sec/cli test` runs from.
 const here = new URL(".", import.meta.url).pathname;
 const REPO_ROOT = join(here, "..", "..", "..", "..");
 const ENTERPRISE_PAGE = join(

@@ -1,4 +1,4 @@
-// Endpoint / API-base extraction from JavaScript bodies (pwnkit#927).
+// Endpoint / API-base extraction from JavaScript bodies (0sec#927).
 //
 // `discover_api_surface` only finds routes declared in an OpenAPI/Swagger spec.
 // Most real SPAs ship their entire route table inside the JS bundle and never

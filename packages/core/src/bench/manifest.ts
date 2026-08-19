@@ -1,5 +1,5 @@
 /**
- * Bench manifest — scan-level pass@k corpus definition (pwnkit#556).
+ * Bench manifest — scan-level pass@k corpus definition (0sec#556).
  *
  * The bench harness turns our per-finding verification oracles into a
  * scan-level, third-party-defensible capability/FP number. A manifest is a

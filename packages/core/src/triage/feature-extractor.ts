@@ -9,7 +9,7 @@
  * they reach 92% recall / 1.2% FPR.
  */
 
-import type { AttackCategory, CrashType, Finding, Severity } from "@pwnkit/shared";
+import type { AttackCategory, CrashType, Finding, Severity } from "@0sec/shared";
 
 // ────────────────────────────────────────────────────────────────────
 // Feature name registry (55 features, ordered by group)

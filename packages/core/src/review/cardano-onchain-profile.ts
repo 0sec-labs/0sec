@@ -1,4 +1,4 @@
-import type { SemgrepFinding } from "@pwnkit/shared";
+import type { SemgrepFinding } from "@0sec/shared";
 import type { FinderLens, VerifyLens } from "../stages/hunt-scan.js";
 
 /**

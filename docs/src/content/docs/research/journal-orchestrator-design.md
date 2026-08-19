@@ -3,23 +3,23 @@ title: Append-only execution journal + Orchestrator — Design Doc
 description: The architectural refactor that separates "what to do next" (Orchestrator agent) from "what has been done" (durable on-disk journal). Motivated by Provos / IronCurtain (Apr 2026) and BoxPwnr (97.1% XBOW), both of which validated the same pattern independently.
 ---
 
-> **Status:** Design doc, open for review. Tracking issue [pwnkit#224](https://github.com/0sec-labs/0sec/issues/224). Nothing is implemented yet; this page describes what we're going to build, why, and how we'll know it worked.
+> **Status:** Design doc, open for review. Tracking issue [0sec#224](https://github.com/0sec-labs/0sec/issues/224). Nothing is implemented yet; this page describes what we're going to build, why, and how we'll know it worked.
 
 ## The problem in one paragraph
 
-pwnkit's agent loop in `packages/core/src/agent/native-loop.ts` carries every tool result, hypothesis, and partial finding in the conversation window until a turn-budget or cost-ceiling fires. When context fills up, a summarizer kicks in and lossy-compresses. This caps the size of investigation we can run, makes recovery from mid-run failures lossy, prevents clean resumption, and makes parallelization hard. Two independent groups have now validated the answer: a durable on-disk journal as source of truth, an Orchestrator agent that routes off the journal and never reads source code directly, and specialist agents that get a fresh context window each dispatch and rehydrate the slice of journal they need. [Provos / IronCurtain](https://www.provos.org/post/finding-zero-days-with-any-model/) (Apr 2026) replicates the 1998 OpenBSD SACK bug on Sonnet 4.6 + Opus 4.6 and finds an autonomous CVE-class issue on GLM 5.1 with this architecture. [BoxPwnr](https://github.com/0ca/boxpwnr) (0ca) reaches 97.1% on XBOW with the same architectural choices: context compaction, loop detection, progress handoff. The technique is settled. The question is what shape it takes inside pwnkit.
+0sec's agent loop in `packages/core/src/agent/native-loop.ts` carries every tool result, hypothesis, and partial finding in the conversation window until a turn-budget or cost-ceiling fires. When context fills up, a summarizer kicks in and lossy-compresses. This caps the size of investigation we can run, makes recovery from mid-run failures lossy, prevents clean resumption, and makes parallelization hard. Two independent groups have now validated the answer: a durable on-disk journal as source of truth, an Orchestrator agent that routes off the journal and never reads source code directly, and specialist agents that get a fresh context window each dispatch and rehydrate the slice of journal they need. [Provos / IronCurtain](https://www.provos.org/post/finding-zero-days-with-any-model/) (Apr 2026) replicates the 1998 OpenBSD SACK bug on Sonnet 4.6 + Opus 4.6 and finds an autonomous CVE-class issue on GLM 5.1 with this architecture. [BoxPwnr](https://github.com/0ca/boxpwnr) (0ca) reaches 97.1% on XBOW with the same architectural choices: context compaction, loop detection, progress handoff. The technique is settled. The question is what shape it takes inside 0sec.
 
 ## Design goals
 
 1. **Journal is the source of truth.** Every agent decision is reconstructible from the journal. If the runner crashes, a fresh process can rehydrate state and continue. If we want to A/B re-run a step with a different prompt, we replay the journal up to that point and branch. This is what unlocks resumable scans, durable replay, and parallel specialist dispatch.
 2. **Orchestrator never reads source code.** It sees a summarized journal view and decides which specialist agent to dispatch next. This is what keeps the strategic loop in a small, cacheable context window even when the investigation is large.
 3. **Specialists get fresh context windows.** A recon agent that just finished writes its observations to the journal and exits. The next specialist starts cold and reads only the journal slice it needs. No "summarizer eats the most important detail" failure mode.
-4. **Backwards-compatible.** The current loop keeps working. The journal-based loop ships behind `PWNKIT_FEATURE_JOURNAL_LOOP=1`, A/B tested against the existing loop on XBOW, promoted to default only after measured gains on all three slices (BB, WB, npm-bench).
+4. **Backwards-compatible.** The current loop keeps working. The journal-based loop ships behind `0SEC_FEATURE_JOURNAL_LOOP=1`, A/B tested against the existing loop on XBOW, promoted to default only after measured gains on all three slices (BB, WB, npm-bench).
 5. **No regression on XBOW BB.** Current state-of-record is 97/104 black-box (93.3%) on retained-artifact-backed runs. Any journal-based replacement must clear that bar on a 30-run pilot before the default flips.
 
 ## Journal schema
 
-Plain JSONL under `~/.pwnkit/runs/<run-id>/journal.jsonl`. Append-only, never rewritten in place. Large blobs (full HTTP responses, full file reads, semgrep raw output) are sidecarred to `~/.pwnkit/runs/<run-id>/artifacts/<entry-id>.{ext}` and the journal entry stores a reference + content hash. This keeps the journal grep-able and small enough to feed back into the Orchestrator's window.
+Plain JSONL under `~/.0sec/runs/<run-id>/journal.jsonl`. Append-only, never rewritten in place. Large blobs (full HTTP responses, full file reads, semgrep raw output) are sidecarred to `~/.0sec/runs/<run-id>/artifacts/<entry-id>.{ext}` and the journal entry stores a reference + content hash. This keeps the journal grep-able and small enough to feed back into the Orchestrator's window.
 
 Schema versioning: every entry has `schemaVersion: 1`. A migration helper (`packages/core/src/agent/journal/migrate.ts`) runs at load time to upgrade older entries to the current shape.
 
@@ -114,7 +114,7 @@ The specialist *does* see raw output for the entries in its slice. The Orchestra
 ## Resume semantics
 
 ```bash
-pwnkit scan --resume <run-id>
+0sec scan --resume <run-id>
 ```
 
 Replays the journal from disk, reconstructs in-memory state (open hypotheses, findings, current specialist if mid-dispatch), and continues from the last `handoff` entry. If a `dispatch` exists with no matching handoff, the resume kicks off the specialist again from scratch (specialists are idempotent on re-run by contract — they read the journal slice and append).
@@ -123,9 +123,9 @@ A `--branch` flag clones the journal up to a checkpoint and continues from there
 
 ## Backwards compatibility & rollout
 
-Phase 1 — `PWNKIT_FEATURE_JOURNAL_LOOP=0` (default). Existing `native-loop.ts` runs unchanged. New code lands but is gated.
+Phase 1 — `0SEC_FEATURE_JOURNAL_LOOP=0` (default). Existing `native-loop.ts` runs unchanged. New code lands but is gated.
 
-Phase 2 — `PWNKIT_FEATURE_JOURNAL_LOOP=1` shipped, default OFF. We run a 30-run XBOW BB pilot at `limit_runs=30`. Pass criteria: BB flag count within 1 of the current 97/104 record, $/flag within 20% of the current Sonnet 4.6 baseline, no regression on `disclose` advisory render rate.
+Phase 2 — `0SEC_FEATURE_JOURNAL_LOOP=1` shipped, default OFF. We run a 30-run XBOW BB pilot at `limit_runs=30`. Pass criteria: BB flag count within 1 of the current 97/104 record, $/flag within 20% of the current Sonnet 4.6 baseline, no regression on `disclose` advisory render rate.
 
 Phase 3 — promote to default ON for one workflow at a time, starting with `vuln-discovery` (a new workflow with no current baseline) before `web-pentest`.
 
@@ -143,7 +143,7 @@ Phase 4 — once stable, remove the legacy code path. Not before two consecutive
 
 **Risk: the journal grows unbounded on long investigations.** A 10M-token Provos-style run could write thousands of entries.
 
-*Mitigation:* the summary view is what the Orchestrator sees, not the journal. Specialists see slices. Long journals are fine on disk. We add a `pwnkit run gc <run-id>` that prunes superseded artifact blobs.
+*Mitigation:* the summary view is what the Orchestrator sees, not the journal. Specialists see slices. Long journals are fine on disk. We add a `0sec run gc <run-id>` that prunes superseded artifact blobs.
 
 **Risk: schema migrations break replay of old runs.** A future schema change could leave older journals unreadable.
 
@@ -158,6 +158,6 @@ Phase 4 — once stable, remove the legacy code path. Not before two consecutive
 
 ## Tracking
 
-- Tracking issue: [pwnkit#224](https://github.com/0sec-labs/0sec/issues/224)
+- Tracking issue: [0sec#224](https://github.com/0sec-labs/0sec/issues/224)
 - Companion issues: [#225 (YAML FSM workflows)](https://github.com/0sec-labs/0sec/issues/225), [#226 (C/C++ review profile)](https://github.com/0sec-labs/0sec/issues/226), [#227 (cost telemetry)](https://github.com/0sec-labs/0sec/issues/227)
 - Prior work referenced: [Provos — Finding Zero-Days with Any Model](https://www.provos.org/post/finding-zero-days-with-any-model/), [BoxPwnr](https://github.com/0ca/boxpwnr) (97.1% XBOW)

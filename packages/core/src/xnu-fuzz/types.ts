@@ -1,7 +1,7 @@
 /**
- * `xnu-fuzz` — shared types for the pwnkit IOKit user-client fuzzer.
+ * `xnu-fuzz` — shared types for the 0sec IOKit user-client fuzzer.
  *
- * Design: docs/pwnkit-iokit-fuzzer.md. This module is the DYNAMIC sibling to
+ * Design: docs/0sec-iokit-fuzzer.md. This module is the DYNAMIC sibling to
  * the static `xnu-re` review profile: it consumes the same kernelcache /
  * kext-extraction output and models, per user client, exactly what the
  * post-2022 `IOExternalMethodDispatch2022` marshalling gate will accept — so

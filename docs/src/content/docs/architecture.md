@@ -3,7 +3,7 @@ title: Architecture
 description: How the interactive scan pipeline and target-neutral research plane work.
 ---
 
-pwnkit has two complementary control loops. The interactive scan pipeline drives
+0sec has two complementary control loops. The interactive scan pipeline drives
 web, LLM, package, and source engagements. The shared research plane lets
 specialized engines use one evidence lifecycle without flattening their native
 harnesses and oracle results.
@@ -125,15 +125,15 @@ retroactively backfilled, so do not infer that every older finding already has o
 
 Custom kernel harnesses often require an initramfs, out-of-tree modules, or a
 race widener that the generic VM runner cannot safely reconstruct. Use
-`pwnkit research linux-matrix --matrix matrix.json --finding finding.json` to
+`0sec research linux-matrix --matrix matrix.json --finding finding.json` to
 import those externally executed boots. The versioned manifest binds build IDs,
 the literal crash and completion oracles, per-boot identity markers, thresholds,
-and vulnerable/patched log paths. pwnkit snapshots and hashes the manifest,
+and vulnerable/patched log paths. 0sec snapshots and hashes the manifest,
 every log, and its computed verdict. The envelope says `executionOrigin:
-external`; it never claims pwnkit executed the boots or that clean controls
+external`; it never claims 0sec executed the boots or that clean controls
 prove universal patch safety.
 
-The native `pwnkit research linux` path binds verification to a required
+The native `0sec research linux` path binds verification to a required
 literal crash oracle (`--expected-signature`). A different KASAN/oops/GPF is
 recorded but cannot satisfy the N-boot gate. Each attempted boot contributes a
 separate hashed dmesg artifact, so a 2-of-3 claim is backed by the complete
@@ -151,7 +151,7 @@ findings pass through triage and blind validation before reporting.
 ```mermaid
 flowchart TB
     subgraph Entry[Entry points]
-        CLI[pwnkit-cli]
+        CLI[0sec-cli]
         API[Node SDK / GitHub Action]
     end
 
@@ -230,7 +230,7 @@ The research agent's tool set depends on the target type:
 
 The agent adapts its strategy based on what it discovers -- if a naive prompt injection fails, it may try encoding bypasses, multi-turn escalation, or indirect injection. For web apps, it escalates from fingerprinting to active exploitation using real pentesting tools via shell. For source code, it traces data flows from user input to dangerous sinks.
 
-**Reflection checkpoints.** When the agent reaches 60% of its turn budget, pwnkit injects a reflection prompt forcing the agent to review what has been tried, what failed, and what alternative approaches remain. This is inspired by [deadend-cli](https://xoxruns.medium.com/feedback-driven-iteration-and-fully-local-webapp-pentesting-ai-agent-achieving-78-on-xbow-199ef719bf01) (78% on XBOW) and [PentestAgent](https://arxiv.org/abs/2508.20816)'s self-reflection mechanism. Without reflection, agents frequently stall on a single approach and exhaust their budget.
+**Reflection checkpoints.** When the agent reaches 60% of its turn budget, 0sec injects a reflection prompt forcing the agent to review what has been tried, what failed, and what alternative approaches remain. This is inspired by [deadend-cli](https://xoxruns.medium.com/feedback-driven-iteration-and-fully-local-webapp-pentesting-ai-agent-achieving-78-on-xbow-199ef719bf01) (78% on XBOW) and [PentestAgent](https://arxiv.org/abs/2508.20816)'s self-reflection mechanism. Without reflection, agents frequently stall on a single approach and exhaust their budget.
 
 **Turn budget.** [MAPTA](https://arxiv.org/abs/2508.20816) data shows 40 tool calls is the sweet spot for CTF-style challenges -- enough to complete multi-step exploit chains without wasting tokens on dead ends. Deep mode uses a budget of 40 turns (increased from the original 20).
 
@@ -238,7 +238,7 @@ The agent adapts its strategy based on what it discovers -- if a naive prompt in
 
 Between the research agent's raw findings and the final report, findings flow through a multi-layer triage pipeline. Each layer rejects, downgrades, or confirms findings based on independent signals. See the [FP Reduction Moat](/research/fp-reduction-moat/) page for the measured per-profile results from the 2026-04-11 ablation, the [2026-04-11 ablation results log](/research/2026-04-11-ablation/) for experiment context and raw artifacts, and the [Finding Triage ML](/research/finding-triage-ml/) design doc for the underlying research.
 
-> **Note on EGATS (layer 11):** The single-feature ablation on 2026-04-11 found that `egatsTreeSearch` is the one layer that regresses solve rate on hard challenges and costs ~10× the next-worst layer per flag. It has been removed from the `moat` and `moat-only` profile aliases in CI and is now opt-in only. See [pwnkit#116](https://github.com/0sec-labs/0sec/issues/116). The broader takeaway: the moat's effect is mode-dependent — strictly positive on XBOW black-box, a Pareto tradeoff on XBOW white-box, a no-op on npm-bench. A static scan-level policy can't optimize all three slices, which is the direct motivation for the learned-routing work in [pwnkit#113](https://github.com/0sec-labs/0sec/issues/113).
+> **Note on EGATS (layer 11):** The single-feature ablation on 2026-04-11 found that `egatsTreeSearch` is the one layer that regresses solve rate on hard challenges and costs ~10× the next-worst layer per flag. It has been removed from the `moat` and `moat-only` profile aliases in CI and is now opt-in only. See [0sec#116](https://github.com/0sec-labs/0sec/issues/116). The broader takeaway: the moat's effect is mode-dependent — strictly positive on XBOW black-box, a Pareto tradeoff on XBOW white-box, a no-op on npm-bench. A static scan-level policy can't optimize all three slices, which is the direct motivation for the learned-routing work in [0sec#113](https://github.com/0sec-labs/0sec/issues/113).
 
 ```mermaid
 flowchart TD
@@ -295,7 +295,7 @@ flowchart TD
 | Triage memories | `packages/core/src/triage/memories.ts` | Semgrep-style per-target FP memories. Injected as few-shot into the verify prompt; strong matches auto-reject without an LLM call. |
 | Adversarial debate | `packages/core/src/triage/adversarial.ts` | Prosecutor vs. defender vs. judge with fresh contexts, based on Anthropic's debate paper (arXiv:2402.06782). Uncorrelated error modes vs. single-pass verify. |
 
-Most layers are gated by feature flags (`PWNKIT_FEATURE_REACHABILITY_GATE`, `PWNKIT_FEATURE_MULTIMODAL`, `PWNKIT_FEATURE_CONSENSUS_VERIFY`, `PWNKIT_FEATURE_POV_GATE`, `PWNKIT_FEATURE_TRIAGE_MEMORIES`, `PWNKIT_FEATURE_DEBATE`) so they can be A/B tested independently. See `packages/core/src/agent/features.ts` for the full list.
+Most layers are gated by feature flags (`0SEC_FEATURE_REACHABILITY_GATE`, `0SEC_FEATURE_MULTIMODAL`, `0SEC_FEATURE_CONSENSUS_VERIFY`, `0SEC_FEATURE_POV_GATE`, `0SEC_FEATURE_TRIAGE_MEMORIES`, `0SEC_FEATURE_DEBATE`) so they can be A/B tested independently. See `packages/core/src/agent/features.ts` for the full list.
 
 ### 3. Verify agent (Blind validation)
 
@@ -339,7 +339,7 @@ The mode is auto-detected from the target when possible, or set explicitly with 
 
 ## Runtime adapters
 
-pwnkit decouples the scanning pipeline from the LLM backend through runtime adapters. Each adapter implements the same interface but connects to a different provider:
+0sec decouples the scanning pipeline from the LLM backend through runtime adapters. Each adapter implements the same interface but connects to a different provider:
 
 | Adapter | Backend | How it works |
 |---------|---------|-------------|
@@ -354,7 +354,7 @@ The `--runtime` flag selects which adapter to use. The `auto` runtime probes for
 
 ## MCP integration
 
-pwnkit integrates with the Model Context Protocol (MCP) in two ways:
+0sec integrates with the Model Context Protocol (MCP) in two ways:
 
 ### As an MCP client
 
@@ -379,7 +379,7 @@ The CLI runs scans and produces findings. The dashboard consumes those findings 
 
 ## Shell-first approach (web mode)
 
-For web application pentesting, pwnkit uses a shell-first approach. Instead of routing the agent through structured tools like `crawl_page`, `submit_form`, or `http_request`, the web mode gives the agent a minimal tool set:
+For web application pentesting, 0sec uses a shell-first approach. Instead of routing the agent through structured tools like `crawl_page`, `submit_form`, or `http_request`, the web mode gives the agent a minimal tool set:
 
 - `bash` — run any bash command (curl, sqlmap, python, nmap, etc.)
 - `save_finding` — record a confirmed vulnerability with PoC

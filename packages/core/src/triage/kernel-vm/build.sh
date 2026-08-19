@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build KASAN-enabled kernel + rootfs for pwnkit kernel crash validator
+# Build KASAN-enabled kernel + rootfs for 0sec kernel crash validator
 #
 # Usage: ./build.sh [output-dir]
 #
@@ -9,10 +9,10 @@
 #   kernel.config — kernel .config
 #
 # After building, configure the kernel VM runner:
-#   export PWNKIT_KERNEL_QEMU=1
-#   export PWNKIT_KERNEL_QEMU_KERNEL=/path/to/bzImage
-#   export PWNKIT_KERNEL_QEMU_DISK=/path/to/rootfs.img
-#   pwnkit ingest --verify <crash-reports-dir>
+#   export 0SEC_KERNEL_QEMU=1
+#   export 0SEC_KERNEL_QEMU_KERNEL=/path/to/bzImage
+#   export 0SEC_KERNEL_QEMU_DISK=/path/to/rootfs.img
+#   0sec ingest --verify <crash-reports-dir>
 #
 # NOTE: We use `docker buildx build` (not classic `docker build`) because the
 # Dockerfile pins individual stages with `FROM --platform=linux/amd64`. The
@@ -31,11 +31,11 @@ docker buildx version >/dev/null 2>&1 || {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="${1:-${SCRIPT_DIR}/out}"
-KERNEL_MAKE_JOBS="${PWNKIT_KERNEL_VM_MAKE_JOBS:-4}"
+KERNEL_MAKE_JOBS="${0SEC_KERNEL_VM_MAKE_JOBS:-4}"
 
 mkdir -p "${OUT_DIR}"
 
-echo "Building pwnkit kernel VM image..."
+echo "Building 0sec kernel VM image..."
 echo "  Dockerfile: ${SCRIPT_DIR}/Dockerfile"
 echo "  Output dir: ${OUT_DIR}"
 echo ""
@@ -46,7 +46,7 @@ docker buildx build \
   --load \
   --platform linux/amd64 \
   --build-arg "KERNEL_MAKE_JOBS=${KERNEL_MAKE_JOBS}" \
-  -t pwnkit-kernel-builder \
+  -t 0sec-kernel-builder \
   -f "${SCRIPT_DIR}/Dockerfile" \
   "${SCRIPT_DIR}"
 
@@ -55,15 +55,15 @@ docker run --rm \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
   -v "${OUT_DIR}:/out" \
-  pwnkit-kernel-builder
+  0sec-kernel-builder
 
 echo ""
 echo "Done. Kernel VM artifacts:"
-ls -lh "${OUT_DIR}"/bzImage "${OUT_DIR}"/rootfs.img "${OUT_DIR}"/kernel.config "${OUT_DIR}"/pwnkit_vm_key "${OUT_DIR}"/pwnkit_vm_key.pub 2>/dev/null
+ls -lh "${OUT_DIR}"/bzImage "${OUT_DIR}"/rootfs.img "${OUT_DIR}"/kernel.config "${OUT_DIR}"/osec_vm_key "${OUT_DIR}"/osec_vm_key.pub 2>/dev/null
 
 echo ""
-echo "To use with pwnkit:"
-echo "  export PWNKIT_KERNEL_QEMU=1"
-echo "  export PWNKIT_KERNEL_QEMU_KERNEL=${OUT_DIR}/bzImage"
-echo "  export PWNKIT_KERNEL_QEMU_DISK=${OUT_DIR}/rootfs.img"
-echo "  pwnkit ingest --verify <crash-reports-dir>"
+echo "To use with 0sec:"
+echo "  export 0SEC_KERNEL_QEMU=1"
+echo "  export 0SEC_KERNEL_QEMU_KERNEL=${OUT_DIR}/bzImage"
+echo "  export 0SEC_KERNEL_QEMU_DISK=${OUT_DIR}/rootfs.img"
+echo "  0sec ingest --verify <crash-reports-dir>"

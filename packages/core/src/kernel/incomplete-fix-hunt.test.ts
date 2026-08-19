@@ -50,7 +50,7 @@ describe("kernel/incomplete-fix-hunt", () => {
   let repo: string;
 
   beforeAll(() => {
-    repo = mkdtempSync(join(tmpdir(), "pwnkit-incfix-"));
+    repo = mkdtempSync(join(tmpdir(), "0sec-incfix-"));
     git(repo, ["init", "-q"]);
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test"]);
@@ -110,7 +110,7 @@ describe("kernel/incomplete-fix-hunt", () => {
   });
 
   it("fails soft on a non-git tree", () => {
-    const notGit = mkdtempSync(join(tmpdir(), "pwnkit-incfix-soft-"));
+    const notGit = mkdtempSync(join(tmpdir(), "0sec-incfix-soft-"));
     try {
       expect(huntIncompleteFixSiblings({ tree: notGit })).toEqual([]);
     } finally {
@@ -134,7 +134,7 @@ describe("kernel/incomplete-fix-hunt — bad-fix (fix-of-fix) ingest", () => {
   }
 
   beforeAll(() => {
-    repo = mkdtempSync(join(tmpdir(), "pwnkit-badfix-"));
+    repo = mkdtempSync(join(tmpdir(), "0sec-badfix-"));
     git(repo, ["init", "-q"]);
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test"]);
@@ -180,7 +180,7 @@ describe("kernel/incomplete-fix-hunt — bad-fix (fix-of-fix) ingest", () => {
   });
 
   it("fails soft on a non-git tree", () => {
-    const notGit = mkdtempSync(join(tmpdir(), "pwnkit-badfix-soft-"));
+    const notGit = mkdtempSync(join(tmpdir(), "0sec-badfix-soft-"));
     try {
       expect(findBadFixes({ tree: notGit })).toEqual([]);
     } finally {

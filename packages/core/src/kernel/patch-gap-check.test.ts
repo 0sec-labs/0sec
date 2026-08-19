@@ -17,7 +17,7 @@ describe("kernel/patch-gap-check: checkFixPresentInTarget against a real throwaw
   let backportedSha: string;
 
   beforeAll(() => {
-    target = mkdtempSync(join(tmpdir(), "pwnkit-patchgap-target-"));
+    target = mkdtempSync(join(tmpdir(), "0sec-patchgap-target-"));
     git(target, ["init", "-q"]);
     git(target, ["config", "user.email", "test@example.com"]);
     git(target, ["config", "user.name", "Test"]);
@@ -91,7 +91,7 @@ describe("kernel/patch-gap-check: checkFixPresentInTarget against a real throwaw
   });
 
   it("fails soft (present:false, never throws) on a non-git tree", () => {
-    const notGit = mkdtempSync(join(tmpdir(), "pwnkit-patchgap-notgit-"));
+    const notGit = mkdtempSync(join(tmpdir(), "0sec-patchgap-notgit-"));
     try {
       const entry: UpstreamFixEntry = {
         cve: "CVE-2026-00004",
@@ -164,7 +164,7 @@ describe("kernel/patch-gap-check: checkNotYetIntroduced (the 71%-false-positive 
     let laterSha: string; // exists as an object, but NOT an ancestor of HEAD
 
     beforeAll(() => {
-      target = mkdtempSync(join(tmpdir(), "pwnkit-notyetintro-target-"));
+      target = mkdtempSync(join(tmpdir(), "0sec-notyetintro-target-"));
       git(target, ["init", "-q"]);
       git(target, ["config", "user.email", "test@example.com"]);
       git(target, ["config", "user.name", "Test"]);

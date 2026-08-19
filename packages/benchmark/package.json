@@ -1,5 +1,5 @@
 {
-  "name": "@pwnkit/benchmark",
+  "name": "@0sec/benchmark",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -123,9 +123,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@pwnkit/core": "workspace:*",
-    "@pwnkit/shared": "workspace:*",
-    "@pwnkit/test-targets": "workspace:*",
+    "@0sec/core": "workspace:*",
+    "@0sec/shared": "workspace:*",
+    "@0sec/test-targets": "workspace:*",
     "express": "^4.22.1"
   },
   "devDependencies": {

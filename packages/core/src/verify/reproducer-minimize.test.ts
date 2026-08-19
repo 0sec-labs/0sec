@@ -7,7 +7,7 @@ import {
   type MinimizeOracle,
 } from "./reproducer-minimize.js";
 import type { KernelVerifyRunner } from "./kernel-verify-types.js";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // ── splitProgram ────────────────────────────────────────────────────────────
 

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 import { detectVersionRange, formatVersionRangeLine } from "./version-range.js";
 
 function baseFinding(overrides: Partial<Finding> = {}): Finding {
@@ -30,7 +30,7 @@ function baseFinding(overrides: Partial<Finding> = {}): Finding {
  * HEAD — file removed (matches v4.0)
  */
 function buildFourTagRepo(): string {
-  const repoPath = mkdtempSync(join(tmpdir(), "pwnkit-vr-"));
+  const repoPath = mkdtempSync(join(tmpdir(), "0sec-vr-"));
   execFileSync("git", ["init", "-q"], { cwd: repoPath });
   execFileSync("git", ["config", "user.email", "t@t"], { cwd: repoPath });
   execFileSync("git", ["config", "user.name", "t"], { cwd: repoPath });
@@ -94,7 +94,7 @@ describe("detectVersionRange", () => {
   });
 
   it("reports no-tags when the repo has no tags", () => {
-    const bare = mkdtempSync(join(tmpdir(), "pwnkit-vr-bare-"));
+    const bare = mkdtempSync(join(tmpdir(), "0sec-vr-bare-"));
     execFileSync("git", ["init", "-q"], { cwd: bare });
     execFileSync("git", ["config", "user.email", "t@t"], { cwd: bare });
     execFileSync("git", ["config", "user.name", "t"], { cwd: bare });

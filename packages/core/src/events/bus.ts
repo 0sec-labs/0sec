@@ -20,15 +20,15 @@
  *   3. Fail-soft. One buggy sink must never be able to abort a scan;
  *      exceptions thrown by a sink are caught and logged to stderr.
  *   4. Opt-in cloud relay. The `CloudEventSink` is OFF by default so
- *      local CLI runs are not spammed with `PWNKIT_EVENT_*` lines;
- *      enable via `PWNKIT_CLOUD_EVENTS=1` (checked at subscribe time).
+ *      local CLI runs are not spammed with `0SEC_EVENT_*` lines;
+ *      enable via `0SEC_CLOUD_EVENTS=1` (checked at subscribe time).
  *
  * Cloud wire format (matches the cloud worker-controller's
- * `parseEventLines` in `pwnkit-cloud/services/worker-controller/src/poller.ts`):
+ * `parseEventLines` in `0sec-cloud/services/worker-controller/src/poller.ts`):
  *
- *     PWNKIT_EVENT_<TYPE_UPPER> {"…json payload…"}
+ *     0SEC_EVENT_<TYPE_UPPER> {"…json payload…"}
  *
- * e.g. `PWNKIT_EVENT_STEP_STARTED {"step":"recon","n":1}`.
+ * e.g. `0SEC_EVENT_STEP_STARTED {"step":"recon","n":1}`.
  */
 import type { ScanEvent, ScanListener } from "../scanner.js";
 
@@ -40,7 +40,7 @@ import type { ScanEvent, ScanListener } from "../scanner.js";
 // enforce payload shapes at every call site.
 //
 // Canonical event types the cloud already understands (schema comment in
-// `pwnkit-cloud/services/dashboard/src/db/schema.ts:680`):
+// `0sec-cloud/services/dashboard/src/db/schema.ts:680`):
 //
 //   step_started, step_completed, finding_ingested, cost_update,
 //   scan_completed
@@ -248,7 +248,7 @@ export interface ReasoningSummaryPayload {
   summary: string;
 }
 
-// ── Skill events (pwnkit#458 — JIT skill A/B tracking) ────────────────────
+// ── Skill events (0sec#458 — JIT skill A/B tracking) ────────────────────
 
 export interface SkillLoadedPayload {
   skill_id: string;
@@ -316,7 +316,7 @@ export interface InlineValidationPayload {
  * decides which deterministic oracle (or the regex fallback) adjudicated a
  * finding — mirroring the existing `db.logEvent("pov_oracle")` trace.
  *
- * Why both: `db.logEvent` only writes pwnkit's LOCAL sqlite `pipeline_events`,
+ * Why both: `db.logEvent` only writes 0sec's LOCAL sqlite `pipeline_events`,
  * which the cloud worker never relays. Putting the same signal on the typed
  * bus lets `cloudEventSink` serialize it (→ worker → orchestrator
  * `scan_events`), so the dashboard can join it to the finding by `findingId`
@@ -347,13 +347,13 @@ export interface PovOraclePayload {
 }
 
 /**
- * Confirmed OAST out-of-band callback (pwnkit#659 / 0cloud#1278). Emitted by the
+ * Confirmed OAST out-of-band callback (0sec#659 / 0cloud#1278). Emitted by the
  * deterministic per-category `oracle` triage layer in `agentic-scanner.ts` when
  * the OAST-callback oracle (SSRF / OOB-RCE / OOB-SQLi …) reproduces a
  * token-matched callback.
  *
  * WHY A DEDICATED EVENT (not `pov_oracle`): the `pov_oracle` event only fires
- * inside the FP-moat `pov_gate` layer, which is `PWNKIT_FEATURE_POV_GATE`-gated
+ * inside the FP-moat `pov_gate` layer, which is `0SEC_FEATURE_POV_GATE`-gated
  * and default-OFF — so in the cloud it never reaches `scan_events` and the
  * blind-vuln→verify loop can't promote. The `oracle` layer is `(always on)`
  * (FREE_LAYER_SET), so this event fires on every scan that confirms an OAST
@@ -452,7 +452,7 @@ export interface PhaseCompletedPayload {
 }
 
 /** Discriminated union of all events flowing through the bus. */
-export type PwnkitEvent =
+export type osecEvent =
   | { type: "step_started"; payload: StepStartedPayload }
   | { type: "step_completed"; payload: StepCompletedPayload }
   | { type: "finding_ingested"; payload: FindingIngestedPayload }
@@ -476,11 +476,11 @@ export type PwnkitEvent =
   | { type: "phase_completed"; payload: PhaseCompletedPayload };
 
 /** Narrow the event type string to the known vocabulary. */
-export type EventType = PwnkitEvent["type"];
+export type EventType = osecEvent["type"];
 
 /** Payload for a given event type. */
 export type EventPayloadFor<T extends EventType> = Extract<
-  PwnkitEvent,
+  osecEvent,
   { type: T }
 >["payload"];
 
@@ -533,7 +533,7 @@ class EventBus {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         try {
-          process.stderr.write(`[pwnkit event-bus] sink threw on ${type}: ${msg}\n`);
+          process.stderr.write(`[0sec event-bus] sink threw on ${type}: ${msg}\n`);
         } catch {
           /* stderr gone — nothing more we can do */
         }
@@ -623,16 +623,16 @@ function mapToScanEvent(
  * Emits one line per event to stdout in the format the cloud
  * worker-controller expects:
  *
- *     PWNKIT_EVENT_<TYPE_UPPER> {"…json payload…"}
+ *     0SEC_EVENT_<TYPE_UPPER> {"…json payload…"}
  *
- * Default OFF. Opt-in by setting `PWNKIT_CLOUD_EVENTS=1` (or, equivalently,
+ * Default OFF. Opt-in by setting `0SEC_CLOUD_EVENTS=1` (or, equivalently,
  * by calling `subscribeCloudEventSink()` explicitly from the CLI entry
  * point when worker mode is selected). Local interactive runs keep a clean
  * stdout.
  */
 export const cloudEventSink: EventSink = {
   emit(type, payload) {
-    const prefix = `PWNKIT_EVENT_${type.toUpperCase()}`;
+    const prefix = `0SEC_EVENT_${type.toUpperCase()}`;
     let line: string;
     try {
       line = `${prefix} ${JSON.stringify(payload)}`;
@@ -641,7 +641,7 @@ export const cloudEventSink: EventSink = {
       line = `${prefix} {"_unserializable":true}`;
     }
     // Use process.stdout.write directly so we bypass any console.log
-    // formatting / buffering surprises. One PWNKIT_EVENT_ line per call.
+    // formatting / buffering surprises. One 0SEC_EVENT_ line per call.
     process.stdout.write(line + "\n");
   },
 };
@@ -654,7 +654,7 @@ export const cloudEventSink: EventSink = {
 let cloudSinkSubscribed = false;
 export function maybeSubscribeCloudEventSink(): void {
   if (cloudSinkSubscribed) return;
-  const flag = process.env.PWNKIT_CLOUD_EVENTS;
+  const flag = process.env["0SEC_CLOUD_EVENTS"];
   if (flag && flag !== "0" && flag.toLowerCase() !== "false") {
     eventBus.subscribe(cloudEventSink);
     cloudSinkSubscribed = true;
@@ -667,7 +667,7 @@ export function maybeSubscribeCloudEventSink(): void {
  * non-trivial work entirely when nobody's listening — keeps local CLI
  * runs free of per-token overhead.
  *
- * Note: this is a *liveness* probe, not a feature flag — `PWNKIT_CLOUD_EVENTS`
+ * Note: this is a *liveness* probe, not a feature flag — `0SEC_CLOUD_EVENTS`
  * still gates whether the sink subscribes at all, but once subscribed the
  * agent loop consults this predicate so adding/removing sinks at runtime
  * (tests, future SDK consumers) Just Works without touching the env var.

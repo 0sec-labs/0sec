@@ -1,9 +1,9 @@
 import { readFileSync, existsSync } from "node:fs";
 import type { Command } from "commander";
 import chalk from "chalk";
-import type { AuthConfig, OutputFormat } from "@pwnkit/shared";
-import { runEval, getEvalCategories } from "@pwnkit/core";
-import type { EvalScorecard, EvalCategoryResult, EvalVerdict } from "@pwnkit/core";
+import type { AuthConfig, OutputFormat } from "@0sec/shared";
+import { runEval, getEvalCategories } from "@0sec/core";
+import type { EvalScorecard, EvalCategoryResult, EvalVerdict } from "@0sec/core";
 
 /**
  * Parse the --auth flag value into an AuthConfig object.
@@ -55,7 +55,7 @@ function formatTerminalScorecard(scorecard: EvalScorecard): string {
   const lines: string[] = [];
 
   lines.push("");
-  lines.push(chalk.red.bold("  pwnkit adversarial eval"));
+  lines.push(chalk.red.bold("  0sec adversarial eval"));
   lines.push(chalk.dim(`  target: ${scorecard.target}`));
   lines.push(chalk.dim(`  duration: ${(scorecard.durationMs / 1000).toFixed(1)}s`));
   lines.push("");
@@ -177,7 +177,7 @@ export function registerEvalCommand(program: Command): void {
 
       if (!isJson) {
         console.log("");
-        console.log(chalk.red.bold("  pwnkit adversarial eval"));
+        console.log(chalk.red.bold("  0sec adversarial eval"));
         console.log(chalk.dim(`  target: ${opts.target}`));
         console.log(chalk.dim(`  categories: ${categoryFilter ? categoryFilter.join(", ") : "all"}`));
         console.log("");

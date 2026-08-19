@@ -1,11 +1,11 @@
-/* Synthetic vulnerable library — pwnkit C/C++ review profile fixture.
+/* Synthetic vulnerable library — 0sec C/C++ review profile fixture.
  *
  * This is a deliberate, contrived target used by review-profile tests
  * and demos. Do NOT use this code anywhere. The bugs are intentional.
  */
 
-#ifndef PWNKIT_DEMO_DECODER_H
-#define PWNKIT_DEMO_DECODER_H
+#ifndef OSEC_DEMO_DECODER_H
+#define OSEC_DEMO_DECODER_H
 
 #include <stddef.h>
 #include <stdint.h>

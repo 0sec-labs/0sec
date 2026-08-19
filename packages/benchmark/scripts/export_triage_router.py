@@ -17,7 +17,7 @@ Why a re-export (instead of shipping the raw xgboost dump):
     break runtime inference.
 
 Source model: results/triage-router-v1.json
-  - num_feature: 45  (matches @pwnkit/core feature-extractor indices 0-44
+  - num_feature: 45  (matches @0sec/core feature-extractor indices 0-44
     and the orchestrator's perFindingIngestSchema feature_vector[45])
   - objective:   binary:logistic  -> sigmoid(margin)
   - 100 trees, base_score 0.5 (logit-space base margin 0.0)
@@ -46,7 +46,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 BENCH_ROOT = HERE.parent  # packages/benchmark
-# packages/benchmark -> packages -> pwnkit -> repo root
+# packages/benchmark -> packages -> 0sec -> repo root
 REPO_ROOT = BENCH_ROOT.parent.parent.parent
 
 DEFAULT_MODEL = BENCH_ROOT / "results" / "triage-router-v1.json"

@@ -1,9 +1,9 @@
 ---
 title: Adversarial evals
-description: How pwnkit extends its pentest wedge into attack-driven adversarial evaluation for AI systems.
+description: How 0sec extends its pentest wedge into attack-driven adversarial evaluation for AI systems.
 ---
 
-`pwnkit` already behaves like an adversarial evaluator in practice.
+`0sec` already behaves like an adversarial evaluator in practice.
 It attacks systems, attempts exploitation, and only reports what it can support with evidence.
 
 This document makes that category explicit.
@@ -19,7 +19,7 @@ artifacts for:
 - indirect prompt injection through untrusted tool output
 
 Those harnesses are synthetic and deterministic on purpose. They give
-`pwnkit` a repeatable way to score whether the scanner catches realistic
+`0sec` a repeatable way to score whether the scanner catches realistic
 agent-control failures before we widen the surface further.
 
 ## Why this matters
@@ -37,7 +37,7 @@ The harder question is:
 
 > can this system be pushed into unsafe or unauthorized behavior under realistic pressure?
 
-That is where `pwnkit` has a structural advantage.
+That is where `0sec` has a structural advantage.
 
 ## Target classes
 
@@ -83,13 +83,13 @@ An adversarial eval report should also capture:
 - whether the failure is specific to agent/tool composition
 - whether the issue reflects authorization, tool-use, or instruction-hijack failure
 
-## Relationship to pwnkit cloud
+## Relationship to 0sec cloud
 
-`pwnkit` is the public execution wedge.
+`0sec` is the public execution wedge.
 
-`pwnkit cloud` is the managed orchestration and recurring-run surface.
+`0sec cloud` is the managed orchestration and recurring-run surface.
 
 The adversarial eval category should be legible on both:
 
-- locally and in CI through `pwnkit`
-- as a managed recurring product through `pwnkit cloud`
+- locally and in CI through `0sec`
+- as a managed recurring product through `0sec cloud`

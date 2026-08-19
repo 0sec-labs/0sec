@@ -3,10 +3,10 @@
   "compilerOptions": {
     "baseUrl": "..",
     "paths": {
-      "@pwnkit/core": ["packages/core/src/index.ts"],
-      "@pwnkit/db": ["packages/db/src/index.ts"],
-      "@pwnkit/shared": ["packages/shared/src/index.ts"],
-      "@pwnkit/templates": ["packages/templates/src/index.ts"]
+      "@0sec/core": ["packages/core/src/index.ts"],
+      "@0sec/db": ["packages/db/src/index.ts"],
+      "@0sec/shared": ["packages/shared/src/index.ts"],
+      "@0sec/templates": ["packages/templates/src/index.ts"]
     }
   }
 }

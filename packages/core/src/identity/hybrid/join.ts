@@ -543,7 +543,7 @@ function describeGaps(
         "None of the cloud objects carried onPremisesImmutableId, onPremisesSecurityIdentifier, or " +
           "onPremisesDistinguishedName. These attributes are not part of an AzureHound export and are dropped " +
           "by Microsoft Graph when the token lacks directory read scope — so the most likely explanation is " +
-          "that they were never collected. Re-collect with `pwnkit identity` against the tenant, or supply the " +
+          "that they were never collected. Re-collect with `0sec identity` against the tenant, or supply the " +
           "correspondence directly via `knownCorrespondences`.",
       );
     } else {

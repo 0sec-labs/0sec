@@ -1,7 +1,7 @@
 /**
- * pwnkit#171 — PoC execution runtime.
+ * 0sec#171 — PoC execution runtime.
  *
- * Given a {@link Finding} with a `pocSteps` graph (formalised in pwnkit#170)
+ * Given a {@link Finding} with a `pocSteps` graph (formalised in 0sec#170)
  * plus a {@link PocExecutionTarget} pointing at a live, operator-provisioned
  * instance, run each step in order and capture its observable effect:
  *
@@ -13,7 +13,7 @@
  * After each step the runtime evaluates the optional {@link PocStepExpect}
  * predicate from #170 and records the per-step verdict. The aggregate
  * verdict (`exploit_still_works` / `exploit_broken` / `could_not_run`) is
- * what the cloud's pre-file gate (pwnkit-cloud#109) uses to decide whether
+ * what the cloud's pre-file gate (0sec-cloud#109) uses to decide whether
  * a finding is still viable to disclose.
  *
  * Design notes:
@@ -32,7 +32,7 @@
 
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import type { Finding, PocStep, PocStepAction, PocStepExpect } from "@pwnkit/shared";
+import type { Finding, PocStep, PocStepAction, PocStepExpect } from "@0sec/shared";
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ export interface PocExecutionTarget {
   baseUrl?: string;
   /**
    * Pre-resolved auth context keyed by persona name. Steps can opt into a
-   * persona by setting an `X-Pwnkit-Persona: <name>` header on an http
+   * persona by setting an `X-0sec-Persona: <name>` header on an http
    * action; the runtime will then merge in that persona's cookies/headers
    * before sending and strip the marker header.
    */
@@ -113,7 +113,7 @@ export const MAX_CAPTURE_BYTES = 1024 * 1024;
 /** Default per-step timeout, 30 seconds. */
 export const DEFAULT_STEP_TIMEOUT_MS = 30_000;
 /** Header marker that selects a persona from `target.personas`. */
-const PERSONA_HEADER = "X-Pwnkit-Persona";
+const PERSONA_HEADER = "X-0sec-Persona";
 /** Marker appended when a captured stream is truncated. */
 const TRUNCATION_MARKER = "\n…[truncated at 1MiB]";
 

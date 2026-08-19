@@ -19,7 +19,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
-import type { Finding } from "@pwnkit/shared";
+import type { Finding } from "@0sec/shared";
 
 // Type-only import — erased at compile, so it adds no runtime dependency on the
 // (heavy) hunt-scan stage and creates no import cycle.

@@ -5,7 +5,7 @@
  * flattened to titles-only.
  *
  * Before this file, no hunt entry point (`hunt-run.ts`, `hunt-surface.ts`,
- * `pwnkit hunt`) wrote full finding bodies to disk — only `title`/`severity`
+ * `0sec hunt`) wrote full finding bodies to disk — only `title`/`severity`
  * (or in `hunt-run.ts`'s case, only titles) survived the run. `runHuntScan`
  * now returns `HuntScanResult.records: HuntFindingRecord[]` (candidate path,
  * model, attempt, the full finding incl. `evidence.request/response/analysis`,
@@ -18,8 +18,8 @@
 import { existsSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { HuntBrief, HuntFindingRecord } from "@pwnkit/core";
-import type { Finding } from "@pwnkit/shared";
+import type { HuntBrief, HuntFindingRecord } from "@0sec/core";
+import type { Finding } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

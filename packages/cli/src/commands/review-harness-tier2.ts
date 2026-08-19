@@ -1,5 +1,5 @@
 /**
- * `pwnkit review --harness-tier 2` glue.
+ * `0sec review --harness-tier 2` glue.
  *
  * Translates CLI flags into a Tier-2 harness build, extracts the
  * corpus, and prints a summary plus the compile + run commands the
@@ -25,7 +25,7 @@ const VALID_BUILD_SYSTEMS = new Set(["autotools", "cmake", "meson", "auto"]);
 const VALID_SANITIZERS = new Set(["asan", "ubsan", "msan"]);
 
 export async function runHarnessTier2(args: RunHarnessTier2Args): Promise<void> {
-  const { buildTier2Harness, extractCorpus } = await import("@pwnkit/core");
+  const { buildTier2Harness, extractCorpus } = await import("@0sec/core");
 
   const repoAbs = resolve(args.repo);
   if (!existsSync(repoAbs)) {
@@ -39,7 +39,7 @@ export async function runHarnessTier2(args: RunHarnessTier2Args): Promise<void> 
   }
 
   const sanitizers = parseSanitizers(args.sanitizers);
-  const outputDir = resolve(args.outputDir ?? join(repoAbs, ".pwnkit-out", "tier2"));
+  const outputDir = resolve(args.outputDir ?? join(repoAbs, ".0sec-out", "tier2"));
   const corpusDir = join(outputDir, "corpus");
 
   const functionName = args.functionName ?? deriveDefaultFunctionName(repoAbs);
@@ -99,7 +99,7 @@ export async function runHarnessTier2(args: RunHarnessTier2Args): Promise<void> 
   console.log(`  ${artifact.run_command}`);
   console.log(
     chalk.dim(
-      "\npwnkit does not compile or execute the harness. Run the compile + run commands manually, or escalate to Tier-3 (QEMU validation, tracked: pwnkit#226).",
+      "\nOsec does not compile or execute the harness. Run the compile + run commands manually, or escalate to Tier-3 (QEMU validation, tracked: 0sec#226).",
     ),
   );
 }

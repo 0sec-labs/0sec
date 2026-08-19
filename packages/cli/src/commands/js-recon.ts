@@ -6,7 +6,7 @@ import {
   ScopePolicy,
   type JsReconResult,
   type FetchTextResult,
-} from "@pwnkit/core";
+} from "@0sec/core";
 
 interface JsReconCliOptions {
   json?: boolean;

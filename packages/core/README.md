@@ -1,21 +1,21 @@
-# @pwnkit/core
+# @0sec/core
 
-Engine package for pwnkit: tool definitions, agent loop, playbooks, runtimes,
-audit pipeline, and triage filters. Consumed by `@pwnkit/cli`.
+Engine package for 0sec: tool definitions, agent loop, playbooks, runtimes,
+audit pipeline, and triage filters. Consumed by `@0sec/cli`.
 
 ## Feature flags
 
 Feature flags are declared in `src/agent/features.ts`. Each flag maps to a
-`PWNKIT_FEATURE_<NAME>` environment variable. The `@pwnkit/cli` `scan` command
+`0SEC_FEATURE_<NAME>` environment variable. The `@0sec/cli` `scan` command
 also accepts a `--features` flag that sets those env vars automatically:
 
 ```bash
-pnpm pwnkit scan --target https://example.com --features wp_fingerprint
-pnpm pwnkit scan --target https://example.com --features wp_fingerprint,web_search
+pnpm 0sec scan --target https://example.com --features wp_fingerprint
+pnpm 0sec scan --target https://example.com --features wp_fingerprint,web_search
 ```
 
 Any token passed to `--features` is upcased, non-alphanumeric chars are
-replaced with `_`, and the result is set as `PWNKIT_FEATURE_<TOKEN>=1`. For
+replaced with `_`, and the result is set as `0SEC_FEATURE_<TOKEN>=1`. For
 most flags the value is captured at module-import time — setting env vars in
 your shell is the most reliable approach. Flags that are declared as getters
 (e.g. `wpFingerprint`) re-read the env at access time and therefore honour
@@ -26,7 +26,7 @@ your shell is the most reliable approach. Flags that are declared as getters
 Playbooks live in `src/agent/playbooks.ts`. Each playbook is a string keyed by
 vulnerability type (`sqli`, `ssti`, `idor`, `xss`, `cve_exploitation`, …) plus
 a set of regex `INDICATORS` that pattern-match against recent tool-result text.
-When `PWNKIT_FEATURE_DYNAMIC_PLAYBOOKS=1`, the native agent loop matches
+When `0SEC_FEATURE_DYNAMIC_PLAYBOOKS=1`, the native agent loop matches
 indicators at ~30% of the turn budget and injects the top 3 matching playbooks
 as a user message.
 
@@ -56,7 +56,7 @@ Opt-in tool exposed behind the `wp_fingerprint` feature flag. Implemented in
 6. **Matches CVEs** using a built-in high-impact WordPress plugin vulnerability
    catalog, queries the no-key WPVulnerability API for current plugin/theme
    advisories, optionally queries WPScan's API when `WPSCAN_API_TOKEN` (or
-   `PWNKIT_WPSCAN_API_TOKEN`) is set, then optionally POSTs each `(slug, version)`
+   `0SEC_WPSCAN_API_TOKEN`) is set, then optionally POSTs each `(slug, version)`
    pair to `https://api.osv.dev/v1/query` for broader OSV coverage.
 7. **Returns structured findings** — a list of `(kind, slug, version, cves, exploit_hints)`
    tuples plus a human-readable summary the agent can act on.
@@ -64,7 +64,7 @@ Opt-in tool exposed behind the `wp_fingerprint` feature flag. Implemented in
 ### CLI usage
 
 ```bash
-pnpm pwnkit scan \
+pnpm 0sec scan \
   --target https://wordpress-target.example.com \
   --features wp_fingerprint
 ```
@@ -126,7 +126,7 @@ pnpm pwnkit scan \
 ### Tests
 
 ```bash
-pnpm --filter @pwnkit/core test -- wp-fingerprint
+pnpm --filter @0sec/core test -- wp-fingerprint
 ```
 
 The test suite (`src/agent/wp-fingerprint.test.ts`) mocks `fetch` with an
@@ -178,13 +178,13 @@ sometimes plant decoy flags in obvious locations to catch script kiddies."*
 
 ### Configuration
 
-- Env var: `PWNKIT_FEATURE_DECOY_DETECTION=0` to disable.
-- CLI flag: `pwnkit scan --no-decoy-detection <target>`.
+- Env var: `0SEC_FEATURE_DECOY_DETECTION=0` to disable.
+- CLI flag: `0sec scan --no-decoy-detection <target>`.
 
 ### Tests
 
 ```bash
-pnpm --filter @pwnkit/core test -- flag-validator
+pnpm --filter @0sec/core test -- flag-validator
 ```
 
 The test suite (`src/agent/flag-validator.test.ts`) covers the XBEN-079

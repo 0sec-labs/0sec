@@ -136,7 +136,7 @@ function validateCandidateVariantChange(
   challenger: ResearchVariantDescriptor,
 ): void {
   const keys = Object.keys(change.knobs).sort();
-  if (keys.length !== 1) throw new Error("pwnkit candidate changes must isolate exactly one knob");
+  if (keys.length !== 1) throw new Error("0sec candidate changes must isolate exactly one knob");
   const expected = structuredClone(champion);
   expected.id = challenger.id;
   const key = keys[0];

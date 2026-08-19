@@ -1,17 +1,17 @@
 ---
 title: "Strix Agent: Technical Implementation Comparison"
-description: "Code-level comparison of the open-source Strix pentesting agent (Apache-2.0, github.com/usestrix/strix, v0.8.3) against pwnkit's own architecture. Covers agent loop, prompts, tools, planning, context compression, finding verification, isolation, telemetry, and CI. Closes pwnkit#404."
+description: "Code-level comparison of the open-source Strix pentesting agent (Apache-2.0, github.com/usestrix/strix, v0.8.3) against 0sec's own architecture. Covers agent loop, prompts, tools, planning, context compression, finding verification, isolation, telemetry, and CI. Closes 0sec#404."
 ---
 
-Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, mapped against `0sec-labs/0sec@research/strix-comparison`. Every claim below is anchored to a `strix/<path>:<line>` or `pwnkit packages/<path>:<line>` reference; sections marked "not observed in public repo" are exactly that.
+Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, mapped against `0sec-labs/0sec@research/strix-comparison`. Every claim below is anchored to a `strix/<path>:<line>` or `0sec packages/<path>:<line>` reference; sections marked "not observed in public repo" are exactly that.
 
 ## 1. Executive summary
 
-1. **Strix has no programmatic verification layer.** "Validation" is just another agent role spawned via `create_agent` and bound by prompt to "prove it's real with PoC" — there is no separate replay runner, no oracle, no `signature_matched` style verdict. Compare to pwnkit's `verify/replay-runner.ts` (726 lines, structured `expect` predicates) and `verify/kernel-verify.ts` (690 lines, oracle-driven). This is the most surprising finding in the repo: a 25k-star agent ships zero out-of-band verification.
-2. **Strix's "Docker isolation" is a single shared container per scan, not per-agent.** Every sub-agent in a scan hits the same `strix-scan-<scan_id>` container over HTTP (`strix/runtime/docker_runtime.py:142`, `strix/agents/StrixAgent/system_prompt.jinja:233`). The system prompt literally tells the model: *"All agents run in the same shared Docker container for efficiency."* No gVisor, no microVM, no per-agent kernel. pwnkit's equivalent (`packages/core/src/agent/docker-executor.ts:1-50`) is the same shape — shared kernel — but pwnkit at least scopes one container per scan with cleanup; both projects rely on `docker run --rm` as the only boundary.
-3. **Tool calls are XML, parsed with regex.** Strix prompts the model to emit `<function=name><parameter=k>v</parameter></function>` and parses it by hand in `strix/llm/utils.py` (`parse_tool_invocations`, `fix_incomplete_tool_call`, `_truncate_to_first_function`). No JSON-schema tool calling, no provider-native tool API. pwnkit added an XML dispatch path for the same reason (cheap models emit malformed JSON — `packages/core/src/agent/xml-dispatch.ts`, `agent/loop.ts:59-66`) but keeps JSON tool-calling as the default. Strix has committed to string parsing as the only path.
+1. **Strix has no programmatic verification layer.** "Validation" is just another agent role spawned via `create_agent` and bound by prompt to "prove it's real with PoC" — there is no separate replay runner, no oracle, no `signature_matched` style verdict. Compare to 0sec's `verify/replay-runner.ts` (726 lines, structured `expect` predicates) and `verify/kernel-verify.ts` (690 lines, oracle-driven). This is the most surprising finding in the repo: a 25k-star agent ships zero out-of-band verification.
+2. **Strix's "Docker isolation" is a single shared container per scan, not per-agent.** Every sub-agent in a scan hits the same `strix-scan-<scan_id>` container over HTTP (`strix/runtime/docker_runtime.py:142`, `strix/agents/StrixAgent/system_prompt.jinja:233`). The system prompt literally tells the model: *"All agents run in the same shared Docker container for efficiency."* No gVisor, no microVM, no per-agent kernel. 0sec's equivalent (`packages/core/src/agent/docker-executor.ts:1-50`) is the same shape — shared kernel — but 0sec at least scopes one container per scan with cleanup; both projects rely on `docker run --rm` as the only boundary.
+3. **Tool calls are XML, parsed with regex.** Strix prompts the model to emit `<function=name><parameter=k>v</parameter></function>` and parses it by hand in `strix/llm/utils.py` (`parse_tool_invocations`, `fix_incomplete_tool_call`, `_truncate_to_first_function`). No JSON-schema tool calling, no provider-native tool API. 0sec added an XML dispatch path for the same reason (cheap models emit malformed JSON — `packages/core/src/agent/xml-dispatch.ts`, `agent/loop.ts:59-66`) but keeps JSON tool-calling as the default. Strix has committed to string parsing as the only path.
 4. **The system prompt is the architecture.** `strix/agents/StrixAgent/system_prompt.jinja` is 509 lines of behavioral law: refusal-avoidance, scope-locking, mandatory phase ordering, hard-coded vulnerability priority list, multi-agent workflow diagrams, agent-spawn rules. There is no planner module, no FSM, no orchestrator graph beyond what the LLM does after reading the prompt. The whole system is "one model + giant prompt + recursive `create_agent`."
-5. **No CI test suite for the agent loop.** `.github/workflows/build-release.yml` is the only workflow, and it builds the PyInstaller binary — no pytest run, no eval suite, no benchmark in CI. The `tests/` tree exists (~1.9k LOC pytest, mostly unit tests of tool registration and Docker runtime mocks) but nothing runs it on PR. pwnkit ships 30+ workflows including `journal-ablation.yml`, `npm-bench.yml`, `xbow` slices, and a paid eval gate.
+5. **No CI test suite for the agent loop.** `.github/workflows/build-release.yml` is the only workflow, and it builds the PyInstaller binary — no pytest run, no eval suite, no benchmark in CI. The `tests/` tree exists (~1.9k LOC pytest, mostly unit tests of tool registration and Docker runtime mocks) but nothing runs it on PR. 0sec ships 30+ workflows including `journal-ablation.yml`, `npm-bench.yml`, `xbow` slices, and a paid eval gate.
 
 ## 2. Strix architecture overview
 
@@ -26,7 +26,7 @@ Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, map
 5. `_execute_actions` → `process_tool_invocations` (`tools/executor.py:313-342`) executes every action in sequence, appends a `<tool_result>` XML observation to the conversation.
 6. `finish_scan` / `agent_finish` tools set `should_agent_finish = True` and exit the loop.
 
-`max_iterations = 300` is the default (`base_agent.py:50`), high relative to pwnkit's 40-turn shellPentest default. There is no early-stop, no oscillation detection, no reflection checkpoint — the only safety net is the budget warning at 85%.
+`max_iterations = 300` is the default (`base_agent.py:50`), high relative to 0sec's 40-turn shellPentest default. There is no early-stop, no oscillation detection, no reflection checkpoint — the only safety net is the budget warning at 85%.
 
 ### Planner / executor split
 
@@ -113,7 +113,7 @@ No formal planner. Decomposition is delegated entirely to the LLM via two mechan
 
 There is no machine-checkable representation of "what's been planned" — the prompt asserts `state.context["plan"]` should be populated but nothing in `state.py` reads it as a control signal. The `todo` tool (`tools/todo/todo_actions.py`, 568 LOC) is the closest thing to a tracked plan, but it's still LLM-managed text.
 
-Compare to pwnkit's `agent/journal/orchestrator.ts:30-42`, which has explicit prioritized routing rules (R1–R7) over a structured `OrchestratorBrief`, and `agent/journal/specialists.ts` which defines exactly four specialist roles with bounded scope slices and budgets.
+Compare to 0sec's `agent/journal/orchestrator.ts:30-42`, which has explicit prioritized routing rules (R1–R7) over a structured `OrchestratorBrief`, and `agent/journal/specialists.ts` which defines exactly four specialist roles with bounded scope slices and budgets.
 
 ## 6. Context management
 
@@ -125,15 +125,15 @@ Compare to pwnkit's `agent/journal/orchestrator.ts:30-42`, which has explicit pr
 - **Prompt** (`memory_compressor.py:15-43`): a "compress this for the next security agent" instruction that explicitly lists what to preserve (vulns, creds, tool outputs, dead ends).
 - **Image handling**: `_handle_images` keeps only the `max_images = 3` most recent images, rewriting older ones to placeholder text (`memory_compressor.py:134-149`).
 
-Critical gap vs pwnkit: **no journal**. Conversation state lives in `AgentState.messages` (`agents/state.py:33`), a plain in-memory `list[dict[str, Any]]`. There is no append-only fsync'd log, no replay capability, no resume-after-crash. The `Tracer` (`telemetry/tracer.py`, 860 LOC) does write JSONL to disk for observability — but that's a sink for UI rendering, not a source of truth the agent reads back. Compare:
+Critical gap vs 0sec: **no journal**. Conversation state lives in `AgentState.messages` (`agents/state.py:33`), a plain in-memory `list[dict[str, Any]]`. There is no append-only fsync'd log, no replay capability, no resume-after-crash. The `Tracer` (`telemetry/tracer.py`, 860 LOC) does write JSONL to disk for observability — but that's a sink for UI rendering, not a source of truth the agent reads back. Compare:
 
-- pwnkit `agent/journal/writer.ts:77-100, 90-95` — `loadJournal()` rehydrates from an fsync'd `journal.jsonl` plus sidecar artifacts directory, both sync-by-runId and async-by-path overloads.
-- pwnkit `agent/journal/orchestrator.ts:122-130` — `runOrchestrator` accepts `{ resume: true }` and picks up at the last fsynced entry.
+- 0sec `agent/journal/writer.ts:77-100, 90-95` — `loadJournal()` rehydrates from an fsync'd `journal.jsonl` plus sidecar artifacts directory, both sync-by-runId and async-by-path overloads.
+- 0sec `agent/journal/orchestrator.ts:122-130` — `runOrchestrator` accepts `{ resume: true }` and picks up at the last fsynced entry.
 - Strix `_initialize_sandbox_and_state` (`base_agent.py:331-366`) — no resume path; if the process dies, the scan dies.
 
 ## 7. Verification / oracle patterns
 
-This is the section where Strix's design philosophy diverges most sharply from pwnkit's.
+This is the section where Strix's design philosophy diverges most sharply from 0sec's.
 
 **Strix has no oracle.** A finding is "verified" when:
 
@@ -146,16 +146,16 @@ This is the section where Strix's design philosophy diverges most sharply from p
 
 The one programmatic check is LLM-based deduplication: `check_duplicate` (`llm/dedupe.py:142-213`) calls the same LLM with an XML-formatted system prompt asking "is this a duplicate?" and parses the `<dedupe_result>` block back. On error, it falls open (`not duplicate`) so the report saves. Confidence is whatever the dedup model reports as a float — no calibration, no floor.
 
-**pwnkit equivalents:**
+**0sec equivalents:**
 
-| Layer | pwnkit |
+| Layer | 0sec |
 |---|---|
 | Replay-time oracle | `packages/core/src/verify/replay-runner.ts:1-100` — `runDeterministicReplay`, `assertionFromStepExpect`, `evaluateAssertion`, structured `expect` predicates (`exit-zero`, `http-status`, `body-contains`, `body-matches`, `file-exists`). |
 | Confidence floors | `packages/core/src/agent/finding-confidence.ts:1-60` — hybrid: LLM self-report clamped UP by PoC-status floor (0.6 if pocSteps present, 0.8 if any verifiable `expect`). |
 | Kernel finding verification | `packages/core/src/verify/kernel-verify.ts:1-100` — constrained loop with a single allowlisted tool (`kernel_run`), oracle-driven promotion (`signature_matched → confirmed, confidence=1.0`), explicit budget, separate from the main agent loop. |
 | Flag validator | `packages/core/src/agent/flag-validator.ts` — for CTF-style flag oracles. |
 
-The split is: pwnkit treats verification as a **separate runtime concern** (not another LLM judging); Strix treats verification as **another LLM in a different prompt costume**.
+The split is: 0sec treats verification as a **separate runtime concern** (not another LLM judging); Strix treats verification as **another LLM in a different prompt costume**.
 
 ## 8. Test infrastructure
 
@@ -169,7 +169,7 @@ The split is: pwnkit treats verification as a **separate runtime concern** (not 
 
 CI: the only workflow is `.github/workflows/build-release.yml` — matrix-builds the PyInstaller bundle on macOS/Linux/Windows and uploads to a GitHub Release on `v*` tags. **`pytest` is never invoked in CI.** No coverage, no lint gate visible in CI (though `ruff`/`mypy`/`bandit` are in dev deps).
 
-Compare pwnkit `.github/workflows/`: 30+ workflows including `journal-ablation.yml`, `xbow-*`, `npm-bench.yml`, `htb-bench.yml`, `argus-bench.yml`, `release-smoke.yml`, `docker-kali-publish.yml`, `kernel-validator-batch.yml`.
+Compare 0sec `.github/workflows/`: 30+ workflows including `journal-ablation.yml`, `xbow-*`, `npm-bench.yml`, `htb-bench.yml`, `argus-bench.yml`, `release-smoke.yml`, `docker-kali-publish.yml`, `kernel-validator-batch.yml`.
 
 ## 9. Operational concerns
 
@@ -185,7 +185,7 @@ Confirmed from `strix/runtime/docker_runtime.py`:
 
 **Isolation boundary is the Linux kernel of the host.** This is the standard Docker shared-kernel model — fine for "don't pollute my filesystem," not fine for "I'm running untrusted RCE payloads against my workstation kernel." There is no gVisor, no Firecracker-like microVM, no Kata. The HN comment that Strix runs in "Docker containers" is literally true and is the only isolation layer.
 
-For comparison, pwnkit's `agent/docker-executor.ts` uses the same shared-kernel Docker model for shell-tool execution. Stronger isolation in pwnkit shows up only in the kernel-verify path, which delegates to a separate runner — and per the public-copy rule, that's described as "isolated kernel per scan" without implementation specifics.
+For comparison, 0sec's `agent/docker-executor.ts` uses the same shared-kernel Docker model for shell-tool execution. Stronger isolation in 0sec shows up only in the kernel-verify path, which delegates to a separate runner — and per the public-copy rule, that's described as "isolated kernel per scan" without implementation specifics.
 
 ### Retries
 
@@ -206,9 +206,9 @@ Two layers:
 
 A first-run anonymous-id file at `~/.strix/.seen` (`posthog.py:25-34`) seeds a `first_run: true` event on first scan.
 
-## 10. Per-section comparison vs pwnkit
+## 10. Per-section comparison vs 0sec
 
-| Concern | Strix | pwnkit |
+| Concern | Strix | 0sec |
 |---|---|---|
 | Agent loop entry | `strix/agents/base_agent.py:152` `agent_loop` (single `while True`, `max_iterations=300`) | `packages/core/src/agent/loop.ts:38` `runAgentLoop` (300 LOC, session-restore aware); plus `native-loop.ts:1449` for the legacy native path |
 | Loop dispatch | implicit (one agent class) | `packages/core/src/agent/loop-dispatch.ts` — feature-flag gate `journalLoop` (`agent/features.ts`) selects journal vs native |
@@ -219,7 +219,7 @@ A first-run anonymous-id file at `~/.strix/.seen` (`posthog.py:25-34`) seeds a `
 | Context compression | LLM-summarize chunks of 10 over 90% of 100k token cap (`llm/memory_compressor.py:215-226`) | journal summarizer with hard token cap and `OrchestratorWindowExceededError` (`journal/summarizer.ts:20`, `orchestrator.ts:104-112`) — fails loud, doesn't silently drop |
 | Persistence / resume | none (in-memory `state.messages`) | `journal/writer.ts:90-100` `loadJournal()` with fsync'd JSONL + sidecar artifacts; `orchestrator.ts:122-130` `resume: true` |
 | Verification | sub-agent role + `create_vulnerability_report` shape checks (`tools/reporting/reporting_actions.py:201`) | `verify/replay-runner.ts:1-100` deterministic replay with structured `expect` predicates; `verify/kernel-verify.ts:1-100` oracle-driven kernel verify; `agent/finding-confidence.ts:1-60` PoC-status confidence floors |
-| Deduplication | LLM-judge, XML parse, fail-open (`llm/dedupe.py:142-213`) | not directly equivalent; pwnkit uses confidence + finding-table dedupe upstream |
+| Deduplication | LLM-judge, XML parse, fail-open (`llm/dedupe.py:142-213`) | not directly equivalent; 0sec uses confidence + finding-table dedupe upstream |
 | Cost ceiling | observed only (`llm/llm.py:330`) | `PipelineOptions.costCeilingUsd` (`unified-pipeline.ts:62`) plumbed through to the agent runner |
 | Provider abstraction | LiteLLM only, single `LLM` class (`llm/llm.py:77`) | runtime registry (`packages/core/src/runtime/registry.ts`) with `LlmApiRuntime`, native, codex variants |
 | Isolation | one shared Docker container per scan; `cap_add=NET_ADMIN,NET_RAW` (`runtime/docker_runtime.py:175`) | shared-kernel Docker for shell tools (`agent/docker-executor.ts:1-50`); isolated kernel per scan for kernel-verify path |
@@ -233,25 +233,25 @@ Ordered by ROI. "Borrow" = clear win, ship it. "Verify empirically" = sounds goo
 
 ### Borrow
 
-1. **Inject a hard "approaching max iterations" warning at 85% and a "CRITICAL: 3 left" warning at the tail.** Strix `base_agent.py:186-211` injects a `user` message into the conversation when the iteration budget gets thin, telling the model to wrap up via the finish tool. pwnkit's `agent/loop.ts` currently just hits `maxTurns` and writes `state.summary = "Agent reached max turns…"` (`loop.ts:350`). A two-stage warning gives the model a chance to actually call `done` and persist a partial finding rather than getting cut off mid-thought. Low risk, single-PR.
+1. **Inject a hard "approaching max iterations" warning at 85% and a "CRITICAL: 3 left" warning at the tail.** Strix `base_agent.py:186-211` injects a `user` message into the conversation when the iteration budget gets thin, telling the model to wrap up via the finish tool. 0sec's `agent/loop.ts` currently just hits `maxTurns` and writes `state.summary = "Agent reached max turns…"` (`loop.ts:350`). A two-stage warning gives the model a chance to actually call `done` and persist a partial finding rather than getting cut off mid-thought. Low risk, single-PR.
 
-2. **The "skill" pattern as just-in-time prompt injection.** Strix's `load_skill` tool (`tools/load_skill/load_skill_actions.py`, with skills in `strix/skills/{vulnerabilities,frameworks,tooling,technologies,protocols}/*.md`) lets the model decide *at runtime* "I need the GraphQL playbook now" and re-renders the system prompt with that markdown appended (`llm/llm.py:143-158`). pwnkit's dynamic playbooks are injected once after recon (`packages/core/src/agent/playbooks.ts`); a tool-callable "load this skill" would let mid-run discoveries pull in narrower guidance without bloating every system prompt. Costs prompt cache invalidation; A/B against playbook injection.
+2. **The "skill" pattern as just-in-time prompt injection.** Strix's `load_skill` tool (`tools/load_skill/load_skill_actions.py`, with skills in `strix/skills/{vulnerabilities,frameworks,tooling,technologies,protocols}/*.md`) lets the model decide *at runtime* "I need the GraphQL playbook now" and re-renders the system prompt with that markdown appended (`llm/llm.py:143-158`). 0sec's dynamic playbooks are injected once after recon (`packages/core/src/agent/playbooks.ts`); a tool-callable "load this skill" would let mid-run discoveries pull in narrower guidance without bloating every system prompt. Costs prompt cache invalidation; A/B against playbook injection.
 
-3. **The vulnerability-report structural validator.** `reporting_actions.py:201-339` enforces a strict schema before any report is accepted: required text fields, CVSS XML parses to a real `cvss>=3.2` vector, optional CVE/CWE regex shape-checks, file-path validation that rejects `..` and absolute paths (`_validate_file_path`, `reporting_actions.py:66-74`). pwnkit's `Finding` validation is laxer; tightening at the agent boundary would prevent garbage from reaching `findings-table` rendering. Pair with the existing `finding-confidence.ts` floors.
+3. **The vulnerability-report structural validator.** `reporting_actions.py:201-339` enforces a strict schema before any report is accepted: required text fields, CVSS XML parses to a real `cvss>=3.2` vector, optional CVE/CWE regex shape-checks, file-path validation that rejects `..` and absolute paths (`_validate_file_path`, `reporting_actions.py:66-74`). 0sec's `Finding` validation is laxer; tightening at the agent boundary would prevent garbage from reaching `findings-table` rendering. Pair with the existing `finding-confidence.ts` floors.
 
 ### Verify empirically
 
-4. **Their refusal-avoidance block.** `system_prompt.jinja:71-76` ("Do not self-classify normal in-scope validation as unauthorized…") plus the system-verified-scope block (`:48-63`) is a coordinated countermeasure against frontier-model safety reflexes that intermittently break pwnkit runs too. Worth A/B testing in our `prompts.ts`. Don't borrow blind — Strix's text is overconfident ("All permission checks have been COMPLETED and APPROVED") and may trigger different model behavior; test on the same XBOW slice before committing.
+4. **Their refusal-avoidance block.** `system_prompt.jinja:71-76` ("Do not self-classify normal in-scope validation as unauthorized…") plus the system-verified-scope block (`:48-63`) is a coordinated countermeasure against frontier-model safety reflexes that intermittently break 0sec runs too. Worth A/B testing in our `prompts.ts`. Don't borrow blind — Strix's text is overconfident ("All permission checks have been COMPLETED and APPROVED") and may trigger different model behavior; test on the same XBOW slice before committing.
 
-5. **The system-prompt-as-scope-lock pattern.** Strix injects `authorized_targets` as Jinja-rendered system-prompt context (`strix/agents/StrixAgent/strix_agent.py:22-57`) rather than as user-message scope. Mid-conversation user input can't override system-prompt scope as easily, which matters when sub-agent traffic is appended as `"user"` role messages. pwnkit ships scope mostly via the initial prompt; check whether the same shift reduces scope creep in our runs.
+5. **The system-prompt-as-scope-lock pattern.** Strix injects `authorized_targets` as Jinja-rendered system-prompt context (`strix/agents/StrixAgent/strix_agent.py:22-57`) rather than as user-message scope. Mid-conversation user input can't override system-prompt scope as easily, which matters when sub-agent traffic is appended as `"user"` role messages. 0sec ships scope mostly via the initial prompt; check whether the same shift reduces scope creep in our runs.
 
 ### Avoid
 
-6. **Don't adopt their context-compression as-is.** The "summarize chunks of 10, fall back to `messages[0]` on failure" (`memory_compressor.py:131, 218-224`) silently drops work on transient LLM failures. pwnkit's `OrchestratorWindowExceededError` (`agent/journal/orchestrator.ts:104-112`) is better — fail loud and surface the bug. Don't soften that.
+6. **Don't adopt their context-compression as-is.** The "summarize chunks of 10, fall back to `messages[0]` on failure" (`memory_compressor.py:131, 218-224`) silently drops work on transient LLM failures. 0sec's `OrchestratorWindowExceededError` (`agent/journal/orchestrator.ts:104-112`) is better — fail loud and surface the bug. Don't soften that.
 
-7. **Don't adopt their threading-based sub-agent model.** Global module-level dicts (`_agent_graph`, `_agent_messages`, `_running_agents`, `_agent_instances`, `_agent_states` — `agents_graph_actions.py:11-30`) with one lock between them is a recipe for multi-scan races. pwnkit's per-run journal scoping is the correct shape; keep it.
+7. **Don't adopt their threading-based sub-agent model.** Global module-level dicts (`_agent_graph`, `_agent_messages`, `_running_agents`, `_agent_instances`, `_agent_states` — `agents_graph_actions.py:11-30`) with one lock between them is a recipe for multi-scan races. 0sec's per-run journal scoping is the correct shape; keep it.
 
-8. **Don't adopt their "validation is another LLM" approach.** This is the central disagreement. Their `create_vulnerability_report` accepts whatever PoC text the model emits — no replay, no oracle, no calibration. pwnkit's `verify/replay-runner.ts` + `finding-confidence.ts` + `verify/kernel-verify.ts` triangle is the moat. Hold the line.
+8. **Don't adopt their "validation is another LLM" approach.** This is the central disagreement. Their `create_vulnerability_report` accepts whatever PoC text the model emits — no replay, no oracle, no calibration. 0sec's `verify/replay-runner.ts` + `finding-confidence.ts` + `verify/kernel-verify.ts` triangle is the moat. Hold the line.
 
 ## 12. Sources / citations
 
@@ -275,7 +275,7 @@ Strix references (all on `usestrix/strix@HEAD`, cloned 2026-05-23):
 - CI: `.github/workflows/build-release.yml`
 - Tests: `tests/` (totals from `wc -l`, no integration tests in `tests/agents/`)
 
-pwnkit references (all on `0sec-labs/0sec@research/strix-comparison`):
+0sec references (all on `0sec-labs/0sec@research/strix-comparison`):
 
 - Agent loop: `packages/core/src/agent/loop.ts:38-120`, `:350`
 - Native loop: `packages/core/src/agent/native-loop.ts` (1449 LOC)

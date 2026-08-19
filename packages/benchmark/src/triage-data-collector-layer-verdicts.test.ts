@@ -1,5 +1,5 @@
 /**
- * Tests for the LayerVerdict pass-through (pwnkit#112).
+ * Tests for the LayerVerdict pass-through (0sec#112).
  *
  * The collector has to extract `layerVerdicts` from three different shapes:
  *   1. XBOW result JSON — finding objects may carry `layerVerdicts` inline
@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { LayerVerdict } from "@pwnkit/shared";
+import type { LayerVerdict } from "@0sec/shared";
 import {
   collectFromXbowResults,
   collectFromNpmBench,
@@ -53,7 +53,7 @@ const SAMPLE_VERDICTS: LayerVerdict[] = [
 ];
 
 function tmpFile(name: string, content: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "pwnkit-triage-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "0sec-triage-test-"));
   const path = join(dir, name);
   writeFileSync(path, content);
   return path;

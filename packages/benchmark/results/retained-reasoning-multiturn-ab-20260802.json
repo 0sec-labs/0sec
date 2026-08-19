@@ -1,10 +1,10 @@
 {
   "status": "measured",
   "date": "2026-08-02",
-  "subject": "PWNKIT_FEATURE_RETAINED_REASONING",
+  "subject": "0SEC_FEATURE_RETAINED_REASONING",
   "arms": {
     "treatment": "default-on opaque Responses reasoning-item echo-back",
-    "control": "PWNKIT_FEATURE_RETAINED_REASONING=0; identical runtime reconstructs prior assistant turn instead"
+    "control": "0SEC_FEATURE_RETAINED_REASONING=0; identical runtime reconstructs prior assistant turn instead"
   },
   "target": {
     "id": "multi-turn-escalation",

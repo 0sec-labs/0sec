@@ -3,7 +3,7 @@
 /**
  * HackBench Benchmark Runner
  *
- * Runs pwnkit against the HackBench benchmark suite (16 web vulnerability
+ * Runs 0sec against the HackBench benchmark suite (16 web vulnerability
  * challenges). Docker Compose based, self-hostable,
  * zero auth required. BoxPwnr scores 68.8% (11/16).
  *
@@ -32,9 +32,9 @@ import { execSync, spawnSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, statSync, appendFileSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agenticScan, scan } from "@pwnkit/core";
+import { agenticScan, scan } from "@0sec/core";
 import { tmpdir } from "node:os";
-import type { RuntimeMode } from "@pwnkit/shared";
+import type { RuntimeMode } from "@0sec/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -79,7 +79,7 @@ function ensureRepo(repo: string, ref: string | undefined): string {
     .replace(/^https?:\/\//, "")
     .replace(/\.git$/, "")
     .replace(/[^\w.-]+/g, "_");
-  const dest = join(tmpdir(), "pwnkit-hackbench-cache", slug);
+  const dest = join(tmpdir(), "0sec-hackbench-cache", slug);
 
   if (existsSync(dest) && (existsSync(join(dest, "web_exploitation")) || existsSync(join(dest, "challenges")) || existsSync(join(dest, "docker-compose.yml")))) {
     if (!jsonOutput) console.log(`  using cached HackBench repo at ${dest}`);
@@ -509,7 +509,7 @@ async function runChallengeOnce(challenge: HackBenchChallenge): Promise<HackBenc
   try {
     let report: any;
     if (useAgentic) {
-      const dbPath = join(tmpdir(), `pwnkit-hackbench-${challenge.id}-${Date.now()}.db`);
+      const dbPath = join(tmpdir(), `0sec-hackbench-${challenge.id}-${Date.now()}.db`);
       report = await agenticScan({
         config: {
           target,
@@ -618,7 +618,7 @@ async function main() {
   challenges = challenges.slice(0, limit);
 
   if (!jsonOutput) {
-    console.log("\x1b[35m\x1b[1m  pwnkit x HackBench benchmark\x1b[0m");
+    console.log("\x1b[35m\x1b[1m  0sec x HackBench benchmark\x1b[0m");
     console.log(`  mode: ${useAgentic ? "agentic" : "baseline"}  challenges: ${challenges.length}/16  retries: ${retries}`);
     console.log("");
   }

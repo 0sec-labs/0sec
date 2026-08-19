@@ -1,6 +1,6 @@
 /**
  * Bench tournament — A/B(/N) variant comparison on the #556 pass@k harness
- * (pwnkit#656).
+ * (0sec#656).
  *
  * Runs every variant over the SAME labeled corpus, aggregates each into a
  * scorecard, then computes pairwise deltas with a Wilson-95 non-overlap test

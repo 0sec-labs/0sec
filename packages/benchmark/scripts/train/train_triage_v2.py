@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pwnkit triage classifier training pipeline v2
+0sec triage classifier training pipeline v2
 
 Trains XGBoost + sklearn models on the labeled triage dataset.
 Handles class imbalance, threshold optimization, and exports
@@ -370,7 +370,7 @@ def evaluate_per_source(df: pd.DataFrame, probs: np.ndarray):
 # ── Main ──
 
 def main():
-    parser = argparse.ArgumentParser(description="Train pwnkit triage classifier v2")
+    parser = argparse.ArgumentParser(description="Train 0sec triage classifier v2")
     parser.add_argument(
         "--dataset",
         default="packages/benchmark/results/triage-dataset-v2.jsonl",

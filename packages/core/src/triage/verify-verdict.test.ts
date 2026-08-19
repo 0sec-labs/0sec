@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { isDisclosureWorthy, type VerifyVerdict } from "./verify-verdict.js";
-import type { AttackCategory, Finding, Severity } from "@pwnkit/shared";
+import type { AttackCategory, Finding, Severity } from "@0sec/shared";
 
 function makeFinding(overrides: Partial<Finding> = {}): Finding {
   return {
