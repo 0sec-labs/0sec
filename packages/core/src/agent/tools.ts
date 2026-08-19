@@ -41,6 +41,12 @@ import { isWafEvasionLadderEnabled } from "../scope/engagement-profile.js";
 import { applyAttribution, formatUserAgent } from "../scope/attribution.js";
 import { sendPrompt, extractResponseText } from "../http.js";
 import { buildAuthHeaders } from "./prompts.js";
+import {
+  authSecretValues,
+  redactAuthHeaders,
+  redactAuthValues,
+  sensitiveHeaderValues,
+} from "./auth-redaction.js";
 import { formatTruncated } from "./output-truncation.js";
 import {
   runStructuralSqliProbeAsync,
@@ -1999,24 +2005,33 @@ export class ToolExecutor {
       };
     }
 
+    const sensitiveValues = [
+      ...authSecretValues(this.ctx.authConfig),
+      ...Object.values(authHeaders),
+      ...sensitiveHeaderValues(chosen.sentHeaders),
+    ];
+    const responseHeaders = Object.fromEntries(chosen.res.headers.entries()) as Record<string, string>;
+    const safeResponseBody = redactAuthValues(chosen.body, sensitiveValues);
+    const safeRequestBody = body ? redactAuthValues(body, sensitiveValues) : undefined;
+    const safeSentHeaders = redactAuthHeaders(chosen.sentHeaders, sensitiveValues);
     const output: Record<string, unknown> = {
       status: chosen.res.status,
-      headers: Object.fromEntries(chosen.res.headers.entries()),
-      body: chosen.body.slice(0, 10_000), // cap response size
+      headers: redactAuthHeaders(responseHeaders, sensitiveValues),
+      body: safeResponseBody.slice(0, 10_000), // cap response size
     };
     if (wafInfo) output.waf = wafInfo;
 
-    // Persist as run artifact (record the headers actually sent so the
-    // operator can confirm attribution was attached on engagement-tagged
-    // traffic).
+    // Persist only redacted target authentication material. The model receives
+    // the same safe response above, so a target cannot reflect an operator's
+    // credentials into provider context or durable artifacts.
     this.persistToolArtifact("http_request", {
       request: {
         url,
         method,
-        headers: chosen.sentHeaders,
-        body: body?.slice(0, 2_000),
+        headers: safeSentHeaders,
+        body: safeRequestBody?.slice(0, 2_000),
       },
-      response: { status: chosen.res.status, body: chosen.body.slice(0, 5_000) },
+      response: { status: chosen.res.status, body: safeResponseBody.slice(0, 5_000) },
       ...(wafInfo ? { waf: wafInfo } : {}),
     });
 
