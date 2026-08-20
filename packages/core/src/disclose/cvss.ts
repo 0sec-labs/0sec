@@ -42,6 +42,7 @@ const IMPACT_BY_CATEGORY: Record<AttackCategory, { C: "N" | "L" | "H"; I: "N" | 
   "integer-overflow":        { C: "L", I: "L", A: "L", scope: "U" },
   "integer-truncation":      { C: "L", I: "L", A: "L", scope: "U" },
   "race-condition":          { C: "L", I: "L", A: "L", scope: "U" },
+  "denial-of-service":       { C: "N", I: "N", A: "H", scope: "U" },
   "toctou":                  { C: "L", I: "L", A: "L", scope: "U" },
   "type-confusion":          { C: "H", I: "H", A: "H", scope: "U" },
   "double-free":             { C: "H", I: "H", A: "H", scope: "U" },

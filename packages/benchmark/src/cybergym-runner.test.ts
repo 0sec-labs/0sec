@@ -429,7 +429,6 @@ describe("runTaskOnce (engine + oracle, both mocked)", () => {
       costCeilingExceeded: true,
     });
   });
-
   it("fails closed before an ensemble can bypass a declared cost ceiling", async () => {
     const task = parseTaskDir(makeTaskDir(), "arvo:10400");
     const savedBestOfN = process.env.CYBERGYM_BEST_OF_N;

@@ -142,6 +142,10 @@ const CWE_MAP: Record<AttackCategory, CweEntry[]> = {
     { id: "CWE-197", name: "Numeric Truncation Error", role: "primary" },
     { id: "CWE-681", name: "Incorrect Conversion between Numeric Types", role: "secondary" },
   ],
+  "denial-of-service": [
+    { id: "CWE-400", name: "Uncontrolled Resource Consumption", role: "primary" },
+    { id: "CWE-833", name: "Deadlock", role: "secondary" },
+  ],
   "race-condition": [
     { id: "CWE-362", name: "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')", role: "primary" },
     { id: "CWE-367", name: "Time-of-check Time-of-use (TOCTOU) Race Condition", role: "secondary" },

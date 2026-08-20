@@ -277,6 +277,8 @@ export type AttackCategory =
   | "double-free"
   | "format-string"
   | "uninitialized-memory"
+  // Availability-only kernel findings (soft lockups, hangs — no corruption)
+  | "denial-of-service"
   // Supply-chain / package categories (audit + malicious-detector)
   | "known-vulnerable-package"
   | "supply-chain"
@@ -1161,6 +1163,7 @@ export type CrashType =
   | "kernel-panic"       // Kernel panic
   | "general-protection" // general protection fault
   | "rcu-stall"          // RCU stall
+  | "soft-lockup"        // watchdog: BUG: soft lockup - CPU#N stuck
   | "lockdep"            // Lock dependency violation
   | "unknown";
 

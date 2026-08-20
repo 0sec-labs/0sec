@@ -28,9 +28,13 @@ const KERNEL_OOPS = /Oops:\s+(?:[^:\n]+:\s+)?([0-9a-fA-F]+)/;
 const KERNEL_BUG = /BUG:\s+(?!KASAN)(.+)/;
 const GP_FAULT = /general protection fault,?\s*(?:#?(\w+))?.*?:\s*([0-9a-fA-F]+)/;
 const RCU_STALL = /rcu:\s*(.*stall.*)/i;
+const SOFT_LOCKUP = /watchdog:\s*BUG:\s*soft lockup\s*-\s*CPU#\d+\s*stuck\s*for\s*(\d+)s/;
 const LOCKDEP = /(?:BUG|WARNING):\s*.*lock(?:dep|ing)/i;
 const KERNEL_WARNING = /WARNING:.*\bat\s+\S+\s+(\S+)\+0x[0-9a-fA-F]+\/0x[0-9a-fA-F]+/;
 const CALL_TRACE_START = /Call Trace:/;
+// Instrumentation/watchdog frames that head a soft-lockup trace but are not
+// the stuck code: coverage trampolines, stack dumpers, the watchdog itself.
+const LOCKUP_NOISE_FRAME = /^(__sanitizer_cov|dump_stack|watchdog|__watchdog|get_current|arch_safe_halt|default_idle|do_idle|cpu_startup_entry|start_secondary)/;
 const STACK_FRAME = /\[<([0-9a-fA-F]+)>\]\s*(\S+)/;
 const STACK_FRAME_ALT = /^\s*(\S+)\+0x[0-9a-fA-F]+\/0x[0-9a-fA-F]+/;
 const KERNEL_VERSION = /Linux version\s+([\d.]+[\w.-]*)/;
@@ -293,6 +297,19 @@ export function parseCrashReport(text: string): CrashReport {
   } else if (RCU_STALL.test(text)) {
     report.crashType = "rcu-stall";
     report.faultingFunction = report.callStack[0] || "unknown";
+  } else if (SOFT_LOCKUP.test(text)) {
+    report.crashType = "soft-lockup";
+    // Lockup reports carry the stuck function in kernel RIP line(s) right
+    // after the watchdog banner; inline chains expand innermost-first, so the
+    // LAST kernel RIP before the Call Trace is the outermost real function.
+    // (Later report sections may hold unrelated or userspace RIPs.)
+    const bannerAt = text.search(SOFT_LOCKUP);
+    const regionEnd = text.indexOf("Call Trace:", bannerAt);
+    const region = text.slice(bannerAt, regionEnd > bannerAt ? regionEnd : bannerAt + 2000);
+    const kernelRips = [...region.matchAll(/RIP: 0010:(\S+)/g)];
+    report.faultingFunction = kernelRips.length > 0
+      ? kernelRips[kernelRips.length - 1][1].replace(/\+0x.*$/, "")
+      : report.callStack.find((f) => !LOCKUP_NOISE_FRAME.test(f)) || "unknown";
   } else if (LOCKDEP.test(text)) {
     report.crashType = "lockdep";
     report.faultingFunction = report.callStack[0] || "unknown";
@@ -347,6 +364,7 @@ export function crashTypeToCategory(crashType: CrashType): AttackCategory {
     case "kernel-panic": return "null-pointer-deref";
     case "general-protection": return "null-pointer-deref";
     case "rcu-stall": return "race-condition";
+    case "soft-lockup": return "denial-of-service";
     case "lockdep": return "race-condition";
     case "unknown": return "null-pointer-deref";
   }
@@ -375,6 +393,7 @@ export function crashSeverity(report: CrashReport): Severity {
       sev = "medium";
       break;
     case "race-condition":
+    case "denial-of-service":
       sev = "low";
       break;
     default:

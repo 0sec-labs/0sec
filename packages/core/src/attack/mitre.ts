@@ -252,6 +252,7 @@ const CATEGORY_MAP: Record<AttackCategory, AttackTechnique[]> = {
   "integer-overflow": chain("T1068", "T1499.004"),
   "integer-truncation": chain("T1068", "T1499.004"),
   "race-condition": chain("T1068", "T1499.004"),
+  "denial-of-service": chain("T1499.004"),
   "toctou": chain("T1068", "T1499.004"),
   "format-string": chain("T1068", "T1499.004"),
   // Read-side primitives: an information leak that feeds an escalation chain,
