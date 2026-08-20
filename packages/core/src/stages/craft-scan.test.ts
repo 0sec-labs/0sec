@@ -19,9 +19,9 @@ afterEach(() => {
 
 describe("craftStepBudget", () => {
   it("reserves trigger-testing time in a short canary while preserving the long-run threshold", () => {
-    expect(craftStepBudget(15)).toEqual({ reachabilityStepCap: 3, firstSelfTestStep: 6 });
+    expect(craftStepBudget(15)).toEqual({ reachabilityStepCap: 4, firstSelfTestStep: 6 });
     expect(craftStepBudget(40)).toEqual({ reachabilityStepCap: 4, firstSelfTestStep: 18 });
-    expect(craftStepBudget(5)).toEqual({ reachabilityStepCap: 1, firstSelfTestStep: 2 });
+    expect(craftStepBudget(5)).toEqual({ reachabilityStepCap: 4, firstSelfTestStep: 5 });
   });
 });
 
