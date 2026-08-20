@@ -34,7 +34,7 @@ const KERNEL_WARNING = /WARNING:.*\bat\s+\S+\s+(\S+)\+0x[0-9a-fA-F]+\/0x[0-9a-fA
 const CALL_TRACE_START = /Call Trace:/;
 // Instrumentation/watchdog frames that head a soft-lockup trace but are not
 // the stuck code: coverage trampolines, stack dumpers, the watchdog itself.
-const LOCKUP_NOISE_FRAME = /^(__sanitizer_cov|dump_stack|watchdog|__watchdog|get_current|arch_safe_halt|default_idle|do_idle|cpu_startup_entry|start_secondary)/;
+const LOCKUP_NOISE_FRAME = /^(__sanitizer_cov|write_comp_data|dump_stack|watchdog|__watchdog|get_current|arch_safe_halt|default_idle|do_idle|cpu_startup_entry|start_secondary)/;
 const STACK_FRAME = /\[<([0-9a-fA-F]+)>\]\s*(\S+)/;
 const STACK_FRAME_ALT = /^\s*(\S+)\+0x[0-9a-fA-F]+\/0x[0-9a-fA-F]+/;
 const KERNEL_VERSION = /Linux version\s+([\d.]+[\w.-]*)/;
@@ -306,9 +306,14 @@ export function parseCrashReport(text: string): CrashReport {
     const bannerAt = text.search(SOFT_LOCKUP);
     const regionEnd = text.indexOf("Call Trace:", bannerAt);
     const region = text.slice(bannerAt, regionEnd > bannerAt ? regionEnd : bannerAt + 2000);
-    const kernelRips = [...region.matchAll(/RIP: 0010:(\S+)/g)];
+    // Filter instrumentation frames here too — in KCOV builds the stuck PC is
+    // often inside the coverage trampoline itself (__sanitizer_cov_trace_pc,
+    // write_comp_data), which is never the bug.
+    const kernelRips = [...region.matchAll(/RIP: 0010:(\S+)/g)]
+      .map((m) => m[1].replace(/\+0x.*$/, ""))
+      .filter((fn) => !LOCKUP_NOISE_FRAME.test(fn));
     report.faultingFunction = kernelRips.length > 0
-      ? kernelRips[kernelRips.length - 1][1].replace(/\+0x.*$/, "")
+      ? kernelRips[kernelRips.length - 1]
       : report.callStack.find((f) => !LOCKUP_NOISE_FRAME.test(f)) || "unknown";
   } else if (LOCKDEP.test(text)) {
     report.crashType = "lockdep";
