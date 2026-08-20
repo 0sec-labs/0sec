@@ -112,6 +112,17 @@ Current adapters:
 | XNU IOKit | Selector discovery, reachability hints, deterministic programs; panic promotion disabled | Partially connected, fail-closed |
 | Unified web/AI/source/package/on-chain pipeline | Native retained findings wrapped without rerunning the pipeline | Connected |
 
+### 0verse boundary
+
+`0verse` remains a separate Python evidence-producer repository, not an
+`@0sec/*` workspace package. Its Ghidra/angr/AFL++ extras, independent
+benchmark methodology, and PoV/notary contract have a different release and
+trust boundary from the TypeScript 0sec engine. 0sec consumes only explicit,
+versioned interfaces: the opt-in `0verse` binary/NDJSON tool contract and
+verified external evidence receipts. It does not vendor 0verse, schedule it as
+a generic scan worker, or promote its hypotheses without the matching proof
+gate.
+
 The shared differential runner can execute identical input against two versions,
 builds, configurations, or implementations. A failed side makes the comparison
 inconclusive, never divergent. Novelty providers are likewise pluggable by
@@ -372,10 +383,13 @@ The `--mode mcp` scan mode probes MCP servers for:
 
 The product is intentionally split into two surfaces:
 
-- **CLI** — the execution surface for local runs, CI, replay, and exports
-- **Dashboard** — the local verification workbench for triage, evidence review, and human sign-off
+- **0sec CLI** — the execution surface for local runs, CI, replay, and exports
+- **0cloud** — the managed control plane for scoped, multi-worker engagements
 
-The CLI runs scans and produces findings. The dashboard consumes those findings and provides a Kanban-style board for triage, evidence inspection, and disposition tracking. Both share the same local SQLite database.
+Every fresh local CLI run owns `~/.0sec/runs/<scan-id>/state.db`, its journal,
+and its report. The local dashboard can inspect a selected run via `--db-path`;
+it is not a shared worker database. Managed findings, verification state,
+budgets, and organization ownership live in 0cloud's Postgres store.
 
 ## Shell-first approach (web mode)
 

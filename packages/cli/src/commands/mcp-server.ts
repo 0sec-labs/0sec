@@ -20,7 +20,7 @@ import type {
   HostRateConfig,
   RateLimiterConfig,
 } from "@0sec/core";
-import { osecDB } from "@0sec/db";
+import { osecDB, resolveOsecRunStorage } from "@0sec/db";
 import type { AuthConfig } from "@0sec/shared";
 import { z } from "zod";
 
@@ -295,7 +295,12 @@ export function registerMcpServerCommand(program: Command): void {
         cliWafEvasion,
       });
 
-      const db = new osecDB(opts.dbPath);
+      const storage = resolveOsecRunStorage({
+        dbPath: opts.dbPath,
+        runId: scanId,
+        resume: true,
+      });
+      const db = new osecDB(storage.dbPath);
 
       const attributionHeaders =
         parseJsonEnv<string[]>("0SEC_MCP_ATTRIBUTION_HEADERS_JSON");

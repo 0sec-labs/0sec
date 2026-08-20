@@ -1,4 +1,5 @@
 import type { ScanConfig, ScanContext, ScanReport, PipelineStage } from "@0sec/shared";
+import type { osecDB } from "@0sec/db";
 import { loadTemplates } from "@0sec/templates";
 import { createScanContext, finalize } from "./context.js";
 import { createRuntime } from "./runtime/index.js";
@@ -10,36 +11,51 @@ import { runAttacks } from "./stages/attack.js";
 import { runVerification } from "./stages/blind-reexploit.js";
 import { generateReport } from "./stages/report.js";
 import { eventBus } from "./events/bus.js";
-// Lazy-load DB to avoid native module issues when DB isn't needed
-let _db: any = null;
 
 function isRepairableDbError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /database disk image is malformed|file is not a database|malformed|invalid page number|database main|btree|b-tree|database corrupt/i.test(message);
 }
+interface LocalRunDatabase {
+  db: osecDB | null;
+  runId: string;
+  writeReport: (report: ScanReport) => void;
+}
 
-async function getDB(dbPath?: string) {
-  if (!_db) {
+async function openRunDatabase(dbPath?: string): Promise<LocalRunDatabase> {
+  try {
+    // Dynamic import: this legacy API remains usable in runtimes where SQLite
+    // is intentionally unavailable, while normal scans still get isolated state.
+    const {
+      osecDB,
+      repairOsecDatabase,
+      resolveOsecRunStorage,
+      writeOsecRunReport,
+    } = await import("@0sec/db");
+    const storage = resolveOsecRunStorage({ dbPath });
     try {
-      const { osecDB, repairOsecDatabase } = await import("@0sec/db");
-      try {
-        _db = new osecDB(dbPath);
-      } catch (error) {
-        if (!isRepairableDbError(error)) throw error;
-        const repaired = repairOsecDatabase(dbPath);
-        process.stderr.write(
-          `[0sec] Recovered local scan database${repaired.backupPath ? ` (backup: ${repaired.backupPath})` : ""}.\n`,
-        );
-        _db = new osecDB(dbPath);
-      }
-    } catch (e) {
-      console.error('Warning: database unavailable — scan results will not be persisted');
-      console.error('Cause:', e);
-      // DB unavailable (native module issue) — continue without persistence
-      _db = null;
+      return {
+        db: new osecDB(storage.dbPath),
+        runId: storage.runId,
+        writeReport: (report) => writeOsecRunReport(storage, report),
+      };
+    } catch (error) {
+      if (!isRepairableDbError(error)) throw error;
+      const repaired = repairOsecDatabase(storage.dbPath);
+      process.stderr.write(
+        `[0sec] Recovered local scan database${repaired.backupPath ? ` (backup: ${repaired.backupPath})` : ""}.\n`,
+      );
+      return {
+        db: new osecDB(storage.dbPath),
+        runId: storage.runId,
+        writeReport: (report) => writeOsecRunReport(storage, report),
+      };
     }
+  } catch (error) {
+    console.error("Warning: database unavailable — scan results will not be persisted");
+    console.error("Cause:", error);
+    return { db: null, runId: "no-db", writeReport: () => {} };
   }
-  return _db;
 }
 
 export type ScanEventType =
@@ -79,9 +95,10 @@ export async function scan(
   };
   const ctx: ScanContext = createScanContext(config);
 
-  // Initialize DB for persistence (optional — graceful fallback if native module unavailable)
-  const db = await getDB(dbPath);
-  const scanId = db?.createScan(config) ?? "no-db";
+  // Each invocation opens its own run-scoped database; sharing a module-level
+  // handle made separate scans contend for the same mutable SQLite state.
+  const { db, runId, writeReport } = await openRunDatabase(dbPath);
+  const scanId = db?.createScan(config, runId) ?? runId;
   ctx.scanId = scanId;
 
   try {
@@ -229,13 +246,10 @@ export async function scan(
     duration_ms: reportResult.durationMs,
   });
 
+  writeReport(reportResult.data);
   return reportResult.data;
   } finally {
-    if (db) {
-      db.close();
-      // Reset the singleton so subsequent scans open a fresh connection
-      _db = null;
-    }
+    db?.close();
   }
 }
 

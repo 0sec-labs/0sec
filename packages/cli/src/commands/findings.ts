@@ -1,6 +1,12 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import type { Finding, FindingTriageStatus, LayerVerdict } from "@0sec/shared";
+import {
+  listOsecRunDatabasePaths,
+  osecDB,
+  resolveOsecDbPath,
+  resolveOsecRunStorage,
+} from "@0sec/db";
 
 type FindingsListOptions = {
   dbPath?: string;
@@ -75,13 +81,20 @@ function resolveFindingsOptions(opts: FindingsListOptions, command?: Command): F
  * declare it (see #324), so subcommand actions cannot rely on `opts.dbPath`
  * alone.
  */
-function resolveDbPath(opts: { dbPath?: string }, command?: Command): string | undefined {
+function resolveDbPath(
+  opts: { dbPath?: string; scan?: string },
+  command?: Command,
+): string | undefined {
   if (opts.dbPath) return opts.dbPath;
-  if (command?.parent && typeof command.parent.opts === "function") {
-    const parentOpts = command.parent.opts() as { dbPath?: string };
-    if (parentOpts.dbPath) return parentOpts.dbPath;
-  }
-  return undefined;
+  const parentOpts =
+    command?.parent && typeof command.parent.opts === "function"
+      ? command.parent.opts() as { dbPath?: string; scan?: string }
+      : undefined;
+  if (parentOpts?.dbPath) return parentOpts.dbPath;
+
+  const scanId = opts.scan ?? parentOpts?.scan;
+  if (!scanId) return undefined;
+  return resolveOsecRunStorage({ runId: scanId, resume: true }).dbPath;
 }
 
 function withFindingsListOptions(command: Command, options: { defaultLimit?: string } = {}): Command {
@@ -162,17 +175,32 @@ function groupFindings(rows: FindingRow[]): Array<{
 }
 
 async function renderFindingsList(opts: FindingsListOptions): Promise<void> {
-  const { osecDB } = await import("@0sec/db");
-  const db = new osecDB(opts.dbPath);
-  const rows = db.listFindings({
-    scanId: opts.scan,
-    severity: opts.severity,
-    category: opts.category,
-    status: opts.status,
-    triageStatus: opts.triage,
-    limit: opts.all ? parseInt(opts.limit ?? "50", 10) : 1000,
-  }) as FindingRow[];
-  db.close();
+  const selectedDbPath = resolveDbPath(opts);
+  const dbPaths = selectedDbPath
+    ? [selectedDbPath]
+    : listOsecRunDatabasePaths();
+  const legacyDbPath = resolveOsecDbPath();
+  if (!selectedDbPath && !dbPaths.includes(legacyDbPath)) {
+    dbPaths.push(legacyDbPath);
+  }
+
+  const rows = dbPaths
+    .flatMap((dbPath) => {
+      const db = new osecDB(dbPath);
+      try {
+        return db.listFindings({
+          scanId: opts.scan,
+          severity: opts.severity,
+          category: opts.category,
+          status: opts.status,
+          triageStatus: opts.triage,
+          limit: opts.all ? parseInt(opts.limit ?? "50", 10) : 1000,
+        }) as FindingRow[];
+      } finally {
+        db.close();
+      }
+    })
+    .sort((a, b) => b.timestamp - a.timestamp);
 
   if (rows.length === 0) {
     console.log(chalk.gray("No findings found."));
@@ -217,7 +245,6 @@ async function mutateTriage(
   triageNote: string | undefined,
   dbPath?: string,
 ): Promise<void> {
-  const { osecDB } = await import("@0sec/db");
   const db = new osecDB(dbPath);
   try {
     const rows = db.listFindings({ limit: 5000 }) as FindingRow[];
@@ -250,11 +277,12 @@ export function registerFindingsCommand(program: Command): void {
     .action(async (opts: FindingsListOptions, command: Command) => {
       const resolved = resolveFindingsOptions(opts, command);
       const limit = Number.parseInt(resolved.limit ?? "50", 10);
+      const selectedDbPath = resolveDbPath(resolved);
       const { isBunRuntime, canUseOpenTui } = await import("../tui/runtime.js");
-      if (isBunRuntime() && canUseOpenTui()) {
+      if (selectedDbPath && isBunRuntime() && canUseOpenTui()) {
         const { showOpenTuiFindings } = await import("../tui/run.js");
         await showOpenTuiFindings({
-          dbPath: resolved.dbPath,
+          dbPath: selectedDbPath,
           scan: resolved.scan,
           severity: resolved.severity,
           category: resolved.category,
@@ -276,11 +304,12 @@ export function registerFindingsCommand(program: Command): void {
   ).action(async (opts: FindingsListOptions, command: Command) => {
     const resolved = resolveFindingsOptions(opts, command);
     const limit = Number.parseInt(resolved.limit ?? "50", 10);
+    const selectedDbPath = resolveDbPath(resolved);
     const { isBunRuntime, canUseOpenTui } = await import("../tui/runtime.js");
-    if (isBunRuntime() && canUseOpenTui()) {
+    if (selectedDbPath && isBunRuntime() && canUseOpenTui()) {
       const { showOpenTuiFindings } = await import("../tui/run.js");
       await showOpenTuiFindings({
-        dbPath: resolved.dbPath,
+        dbPath: selectedDbPath,
         scan: resolved.scan,
         severity: resolved.severity,
         category: resolved.category,
@@ -301,7 +330,6 @@ export function registerFindingsCommand(program: Command): void {
     .argument("<id>", "Finding ID (full or prefix)")
     .option("--db-path <path>", "Path to SQLite database")
     .action(async (id: string, opts: { dbPath?: string }, command: Command) => {
-      const { osecDB } = await import("@0sec/db");
       const db = new osecDB(resolveDbPath(opts, command));
 
       try {

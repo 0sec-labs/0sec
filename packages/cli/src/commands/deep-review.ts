@@ -37,7 +37,7 @@
 import type { Command } from "commander";
 import { statSync } from "node:fs";
 import { resolve, join, sep, relative } from "node:path";
-import type { Finding, RuntimeMode } from "@0sec/shared";
+import type { Finding, RuntimeMode, ScanReport } from "@0sec/shared";
 import type { FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
 // The one non-type value import from the core barrel here: the appsec lens
 // registry loader. The barrel is already eagerly loaded at CLI boot
@@ -47,6 +47,11 @@ import type { FinderLens, ThreatLane, VerifyLens } from "@0sec/core";
 // and its tests) while sourcing the appsec lenses from the data-driven JSON.
 import { eventBus, loadAppsecFinderLenses, ScanCostLedger } from "@0sec/core";
 import { leadToCandidateFinding, type HuntOutcome } from "./hunt.js";
+import { resolveOsecRunStorage, writeOsecRunReport } from "@0sec/db";
+
+interface DeepReviewOutcome extends HuntOutcome {
+  report?: ScanReport;
+}
 
 /** Hard cap mirroring the review pipeline's 5000-source-file scope limit
  *  (see docs / 0cloud review constraints): a whole-monorepo target that
@@ -539,7 +544,9 @@ export interface RunDeepReviewOptions {
 }
 
 /** Run a seedless, lens-driven deep review and return a JSON-ready outcome. Exposed for testing. */
-export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOutcome> {
+export async function runDeepReview(
+  opts: RunDeepReviewOptions,
+): Promise<DeepReviewOutcome> {
   const {
     runHuntScan,
     makeMultiLensVerifier,
@@ -842,8 +849,39 @@ export async function runDeepReview(opts: RunDeepReviewOptions): Promise<HuntOut
       };
     }
 
+    const completedAt = new Date();
+    const candidateFindings: Finding[] = leads.map((lead) => ({
+      ...lead,
+      status: "discovered",
+    }));
+    const report: ScanReport = {
+      target: opts.target,
+      scanDepth: "deep",
+      startedAt: new Date(scanStartedAt).toISOString(),
+      completedAt: completedAt.toISOString(),
+      durationMs: completedAt.getTime() - scanStartedAt,
+      summary: {
+        totalAttacks: res.scanned,
+        totalFindings: candidateFindings.length,
+        critical: candidateFindings.filter((finding) => finding.severity === "critical").length,
+        high: candidateFindings.filter((finding) => finding.severity === "high").length,
+        medium: candidateFindings.filter((finding) => finding.severity === "medium").length,
+        low: candidateFindings.filter((finding) => finding.severity === "low").length,
+        info: candidateFindings.filter((finding) => finding.severity === "info").length,
+      },
+      findings: candidateFindings,
+      warnings: res.warnings.slice(0, 10).map((message) => ({
+        stage: "attack",
+        message,
+      })),
+      ...(res.costCeilingExceeded
+        ? { costCeilingExceeded: true, exitReason: "cost_ceiling_exceeded" }
+        : {}),
+    };
+
     return {
       exitCode: 0,
+      report,
       result: {
         mode: "deep_review",
         profile: matchedProfile,
@@ -944,6 +982,10 @@ async function deepReviewAction(target: string, opts: DeepReviewOpts): Promise<v
     timeoutMs: parsePositive("--timeout", opts.timeout, 600_000),
     log: (m) => process.stderr.write(m + "\n"),
   });
+  if (outcome.report) {
+    const storage = resolveOsecRunStorage();
+    writeOsecRunReport(storage, outcome.report);
+  }
 
   const json = JSON.stringify(outcome.result, null, 2);
   if (opts.output) writeFileSync(resolve(opts.output), json + "\n", "utf8");

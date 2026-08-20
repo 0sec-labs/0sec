@@ -13,6 +13,7 @@ import type {
   ReviewProfile,
   ReviewAnchor,
 } from "@0sec/shared";
+import type { osecDB } from "@0sec/db";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import { reviewAgentPrompt } from "./analysis-prompts.js";
 import { runAnalysisAgent } from "./agent-runner.js";
@@ -460,8 +461,30 @@ export async function sourceReview(
   // Step 1: Resolve repo
   const { repoPath, cloned, tempDir } = resolveRepo(config.repo, emit);
 
-  // Initialize DB and create scan record
-  const db = await (async () => { try { const { osecDB } = await import("@0sec/db"); return new osecDB(config.dbPath); } catch { return null as any; } })() as any;
+  // Dynamic import preserves the optional SQLite boundary for library callers.
+  const runState = await (async () => {
+    try {
+      const {
+        osecDB,
+        resolveOsecRunStorage,
+        writeOsecRunReport,
+      } = await import("@0sec/db");
+      const storage = resolveOsecRunStorage({ dbPath: config.dbPath });
+      return {
+        db: new osecDB(storage.dbPath),
+        storage,
+        writeReport: (
+          report: ReviewReport & {
+            usage?: { inputTokens: number; outputTokens: number };
+            estimatedCostUsd?: number;
+          },
+        ) => writeOsecRunReport(storage, report),
+      };
+    } catch {
+      return null;
+    }
+  })();
+  const db: osecDB | null = runState?.db ?? null;
   const scanConfig: ScanConfig = {
     target: `repo:${config.repo}`,
     depth: config.depth,
@@ -469,7 +492,8 @@ export async function sourceReview(
     runtime: config.runtime ?? "api",
     mode: "deep",
   };
-  const scanId = db?.createScan(scanConfig) ?? "no-db";
+  const scanId =
+    db?.createScan(scanConfig, runState?.storage.runId ?? "no-db") ?? "no-db";
 
   try {
     // Step 2: static scanner scan — scoped to subsystem when set (0sec#466)
@@ -654,7 +678,10 @@ export async function sourceReview(
       message: `Review complete: ${summary.totalFindings} findings (${summary.critical} critical, ${summary.high} high)`,
     });
 
-    return {
+    const report: ReviewReport & {
+      usage?: { inputTokens: number; outputTokens: number };
+      estimatedCostUsd?: number;
+    } = {
       repo: config.repo,
       startedAt: new Date(startTime).toISOString(),
       completedAt: new Date().toISOString(),
@@ -665,6 +692,8 @@ export async function sourceReview(
       usage: agentResult.usage,
       estimatedCostUsd: agentResult.estimatedCostUsd,
     };
+    runState?.writeReport(report);
+    return report;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     db?.failScan(scanId, msg);
