@@ -159,7 +159,12 @@ vi.mock("@0sec/db", () => {
       dbState.calls.push({ method: "close", args: [] });
     }
   }
-  return { osecDB: FakeOsecDB };
+  return {
+    osecDB: FakeOsecDB,
+    listOsecRunDatabasePaths: () => [],
+    resolveOsecDbPath: () => undefined,
+    resolveOsecRunStorage: () => ({ dbPath: undefined }),
+  };
 });
 
 // Force the OpenTUI fast-path off so the action always lands on

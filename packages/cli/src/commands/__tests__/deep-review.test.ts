@@ -493,6 +493,11 @@ describe("runDeepReview — seedless lens-driven review", () => {
       { path: "/repo/src/Vault.sol" },
     ]);
     expect(outcome.result).toMatchObject({ mode: "deep_review", profile: "evm-onchain", confirmed: 1 });
+    expect(outcome.report).toMatchObject({
+      target: "/repo",
+      summary: { totalAttacks: 8, totalFindings: 1 },
+      findings: [{ status: "discovered" }],
+    });
   });
 
   it("emits one parent terminal event and threads one ledger through the whole review", async () => {

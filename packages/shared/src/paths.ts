@@ -17,3 +17,14 @@ export function homeStateDir(home: string = homedir()): string {
   if (existsSync(current) || !existsSync(legacy)) return current;
   return legacy;
 }
+
+/**
+ * Private mutable state for one engine execution. Every fresh run owns this
+ * directory; only an explicit resume may reuse it.
+ */
+export function runStateDir(runId: string, home?: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(runId)) {
+    throw new Error(`Invalid 0sec run id ${JSON.stringify(runId)}.`);
+  }
+  return join(homeStateDir(home), "runs", runId);
+}

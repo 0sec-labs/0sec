@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import type { OutputFormat, RuntimeMode, ScanDepth, ScanMode } from "@0sec/shared";
-import { osecDB } from "@0sec/db";
+import { osecDB, resolveOsecRunStorage } from "@0sec/db";
 import { runUnified } from "./run.js";
 
 function parseScanTarget(target: string): {
@@ -87,24 +87,34 @@ export function registerResumeCommand(program: Command): void {
     .option("--model <model>", "LLM model to use")
     .option("--branch-from <entry-index>", "Branch the journal at the given entry index before resuming. Copies entries 0..N into a new run and resumes from there.")
     .action(async (scanId: string, opts: Record<string, string | boolean>) => {
-      let scan: ReturnType<osecDB["getScan"]> | null = null;
-      try {
-        const db = new osecDB(opts.dbPath as string | undefined);
-        scan =
-          db.getScan(scanId) ??
-          (() => {
+      const requestedDbPath =
+        typeof opts.dbPath === "string" ? opts.dbPath : undefined;
+      const storage = resolveOsecRunStorage({
+        dbPath: requestedDbPath,
+        runId: scanId,
+        resume: true,
+      });
+      const scan = (() => {
+        try {
+          const db = new osecDB(storage.dbPath);
+          try {
+            const exact = db.getScan(scanId);
+            if (exact) return exact;
+
             const matches = db.listScans(200).filter((entry) => entry.id.startsWith(scanId));
-            if (matches.length === 1) return matches[0];
+            if (matches.length === 1) return matches[0] ?? null;
             if (matches.length > 1) {
               throw new Error(`Scan prefix '${scanId}' is ambiguous.`);
             }
             return null;
-          })();
-        db.close();
-      } catch (err) {
-        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-        process.exit(2);
-      }
+          } finally {
+            db.close();
+          }
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(2);
+        }
+      })();
 
       if (!scan) {
         console.error(chalk.red(`Scan ${scanId} not found.`));
@@ -124,7 +134,7 @@ export function registerResumeCommand(program: Command): void {
       await runUnified({
         target: parsed.target,
         targetType: inferredTargetType,
-        resumeScanId: scanId,
+        resumeScanId: scan.id,
         branchFromEntry: branchFrom !== undefined ? parseInt(branchFrom, 10) : undefined,
         packageVersion: parsed.packageVersion,
         depth: scan.depth as ScanDepth,
@@ -133,7 +143,7 @@ export function registerResumeCommand(program: Command): void {
         mode: inferredMode,
         timeout: parseInt((opts.timeout as string | undefined) ?? "600000", 10),
         verbose: false,
-        dbPath: opts.dbPath as string | undefined,
+        dbPath: storage.dbPath,
         apiKey: opts.apiKey as string | undefined,
         model: opts.model as string | undefined,
       });

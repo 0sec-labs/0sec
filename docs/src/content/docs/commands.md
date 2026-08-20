@@ -545,7 +545,11 @@ result as a clean tenant. See [Authorized Engagements](/engagements/).
 
 ## findings
 
-Query, filter, and inspect verified findings across all scans. Findings are persisted in a local SQLite database.
+Query, filter, and inspect verified findings. Fresh scans keep local findings
+in `~/.0sec/runs/<scan-id>/state.db`; `0sec findings list` aggregates local
+run databases, while `--scan <scan-id>` or `--db-path <path>` selects one run
+for detailed inspection and triage. Managed findings are queried through the
+0cloud control plane, not this local store.
 
 ```bash
 # List all findings

@@ -216,7 +216,12 @@ class FakeOsecDB {
     dbInstances.push(this);
   }
 }
-vi.mock("@0sec/db", () => ({ osecDB: FakeOsecDB }));
+vi.mock("@0sec/db", () => ({
+  osecDB: FakeOsecDB,
+  resolveOsecRunStorage: (options: { dbPath?: string }) => ({
+    dbPath: options.dbPath,
+  }),
+}));
 
 // The MCP SDK: we replace McpServer with a recording shim. .connect
 // resolves immediately so the action returns; .registerTool just

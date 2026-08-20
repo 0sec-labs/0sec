@@ -6,8 +6,7 @@ import {
 import { homeStateDir } from "@0sec/shared";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import {
   closeSync,
   existsSync,
@@ -43,15 +42,20 @@ import {
 const DEFAULT_DB_DIR = homeStateDir();
 const DEFAULT_DB_PATH = join(DEFAULT_DB_DIR, "0sec.db");
 
+// Drizzle infers UUID-shaped text from Node's randomUUID default, while SQLite
+// itself permits existing legacy and orchestrator-provided string identifiers.
+type SQLiteScanId = `${string}-${string}-${string}-${string}-${string}`;
+
 export function resolveOsecDbPath(dbPath?: string): string {
-  return dbPath ?? DEFAULT_DB_PATH;
+  const configuredPath = process.env["0SEC_DB_PATH"]?.trim();
+  return dbPath ?? (configuredPath ? configuredPath : DEFAULT_DB_PATH);
 }
 
 export function resetOsecDatabase(dbPath?: string): string {
   const path = resolveOsecDbPath(dbPath);
 
-  if (!dbPath) {
-    mkdirSync(DEFAULT_DB_DIR, { recursive: true });
+  if (path !== ":memory:") {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   }
 
   for (const suffix of ["", "-wal", "-shm"]) {
@@ -67,8 +71,8 @@ export function resetOsecDatabase(dbPath?: string): string {
 export function repairOsecDatabase(dbPath?: string): { path: string; backupPath?: string } {
   const path = resolveOsecDbPath(dbPath);
 
-  if (!dbPath) {
-    mkdirSync(DEFAULT_DB_DIR, { recursive: true });
+  if (path !== ":memory:") {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   }
 
   clearStaleLockIfAny(path);
@@ -343,8 +347,8 @@ export class osecDB {
 
   constructor(dbPath?: string) {
     const path = resolveOsecDbPath(dbPath);
-    if (!dbPath) {
-      mkdirSync(DEFAULT_DB_DIR, { recursive: true });
+    if (path !== ":memory:") {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     }
     this.openWithRecovery(path);
   }
@@ -979,10 +983,12 @@ export class osecDB {
 
   // ── Scans ──
 
-  createScan(config: ScanConfig): string {
-    const id = randomUUID();
+  createScan(config: ScanConfig, id: string = randomUUID()): string {
+    // The database column is SQLite TEXT; this satisfies Drizzle's narrower
+    // compile-time inference without changing the persisted identifier.
+    const sqliteId = id as SQLiteScanId;
     this.db.insert(schema.scans).values({
-      id,
+      id: sqliteId,
       target: config.target,
       depth: config.depth,
       runtime: config.runtime ?? "api",

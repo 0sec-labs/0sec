@@ -10,6 +10,7 @@ import type {
   ScanConfig,
   Severity,
 } from "@0sec/shared";
+import type { osecDB } from "@0sec/db";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import { auditAgentPrompt } from "./analysis-prompts.js";
 import { runAnalysisAgent } from "./agent-runner.js";
@@ -852,8 +853,30 @@ export async function packageAudit(
   // Step 1: Install package
   const pkg = installPackageForEcosystem(ecosystem, config.package, config.version, emit);
 
-  // Initialize DB and create scan record
-  const db = await (async () => { try { const { osecDB } = await import("@0sec/db"); return new osecDB(config.dbPath); } catch { return null as any; } })() as any;
+  // Dynamic import preserves the optional SQLite boundary for library callers.
+  const runState = await (async () => {
+    try {
+      const {
+        osecDB,
+        resolveOsecRunStorage,
+        writeOsecRunReport,
+      } = await import("@0sec/db");
+      const storage = resolveOsecRunStorage({ dbPath: config.dbPath });
+      return {
+        db: new osecDB(storage.dbPath),
+        storage,
+        writeReport: (
+          report: AuditReport & {
+            usage?: { inputTokens: number; outputTokens: number };
+            estimatedCostUsd?: number;
+          },
+        ) => writeOsecRunReport(storage, report),
+      };
+    } catch {
+      return null;
+    }
+  })();
+  const db: osecDB | null = runState?.db ?? null;
   const scanConfig: ScanConfig = {
     target: `${pkg.ecosystem}:${pkg.name}@${pkg.version}`,
     depth: config.depth,
@@ -861,7 +884,8 @@ export async function packageAudit(
     runtime: config.runtime ?? "api",
     mode: "deep",
   };
-  const scanId = db?.createScan(scanConfig) ?? "no-db";
+  const scanId =
+    db?.createScan(scanConfig, runState?.storage.runId ?? "no-db") ?? "no-db";
 
   try {
     // Step 2: dependency audit + static scanner scan
@@ -1015,6 +1039,7 @@ export async function packageAudit(
       estimatedCostUsd: agentResult.estimatedCostUsd,
     };
 
+    runState?.writeReport(report);
     return report;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

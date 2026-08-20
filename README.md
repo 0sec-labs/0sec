@@ -78,6 +78,14 @@ node dist/0sec.js --help
 Live network targets require `--scope <file>`. Run `doctor` before a new
 environment and read each command's help before a connected scan.
 
+## Run storage
+
+Each fresh local execution owns `~/.0sec/runs/<run-id>/`: its SQLite state,
+execution journal, artifacts, and final report are never shared with another
+run. `0sec history` aggregates those run-local databases; `0sec resume <id>`
+reopens the matching run. In a managed engagement, 0cloud owns the canonical
+multi-worker scan and finding record while 0sec keeps only this run-local state.
+
 ## MCP integration
 
 After building from source, run the bundled MCP server over stdio:
@@ -115,6 +123,6 @@ Report vulnerabilities in 0sec through
 
 ## License
 
-pwnkit is dual-licensed under MIT OR Apache-2.0, at your option. See
+0sec is dual-licensed under MIT OR Apache-2.0, at your option. See
 [LICENSE](LICENSE) for the Apache-2.0 terms and [LICENSE-MIT](LICENSE-MIT) for
 the MIT terms. Copyright 2026 0sec Labs.

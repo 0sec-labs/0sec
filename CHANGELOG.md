@@ -10,6 +10,21 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and 0sec adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 on the published npm package and the GitHub Release tag.
 
+## [Unreleased]
+
+### Changed
+
+- Fresh `scan`, `audit`, `review`, legacy scanner, MCP, and persisted-ingest
+  executions now own `~/.0sec/runs/<run-id>/state.db` rather than contending
+  on one user-global SQLite file. `0sec history` and `0sec findings list`
+  aggregate run-local state; `0sec resume` resolves an unambiguous abbreviated
+  run id.
+- Managed workers bind the local run directory, database, and final report to
+  their 0cloud scan id. The worker controller retrieves that report after the
+  engine exits and posts it through the retrying, idempotent final-report path,
+  so transient per-finding webhook loss cannot silently erase the completed
+  scan's findings.
+
 ## [0.13.0] - 2026-08-19
 
 ### Changed — pwnkit is now 0sec
