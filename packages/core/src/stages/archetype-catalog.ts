@@ -46,6 +46,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import embeddedKernelArchetypes from "./data/kernel-archetypes.json" with { type: "json" };
+import embeddedFreebsdArchetypes from "./data/freebsd-archetypes.json" with { type: "json" };
+import embeddedChromiumArchetypes from "./data/chromium-archetypes.json" with { type: "json" };
 import type { HuntBrief, HuntCandidate } from "./hunt-scan.js";
 
 // ── Data shape ───────────────────────────────────────────────────────────────
@@ -115,6 +118,17 @@ function mapRawArchetypes(raw: RawArchetype[]): KernelArchetype[] {
     route: a.route as ArchetypeRoute,
   }));
 }
+type RawArchetypeCatalog = { archetypes: RawArchetype[] };
+
+function readArchetypeCatalog(path: string, embedded: RawArchetypeCatalog): RawArchetypeCatalog {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as RawArchetypeCatalog;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return embedded;
+  }
+}
+
 
 let _cache: KernelArchetype[] | null = null;
 
@@ -126,7 +140,7 @@ export function kernelArchetypesPath(): string {
 /** Load the 34 kernel-domain archetypes (cached; pure data — never executes anything). */
 export function loadKernelArchetypes(): KernelArchetype[] {
   if (_cache) return _cache;
-  const raw = JSON.parse(readFileSync(kernelArchetypesPath(), "utf8")) as { archetypes: RawArchetype[] };
+  const raw = readArchetypeCatalog(kernelArchetypesPath(), embeddedKernelArchetypes as RawArchetypeCatalog);
   _cache = mapRawArchetypes(raw.archetypes);
   return _cache;
 }
@@ -148,7 +162,7 @@ export function freebsdArchetypesPath(): string {
  */
 export function loadFreebsdArchetypes(): KernelArchetype[] {
   if (_freebsdCache) return _freebsdCache;
-  const raw = JSON.parse(readFileSync(freebsdArchetypesPath(), "utf8")) as { archetypes: RawArchetype[] };
+  const raw = readArchetypeCatalog(freebsdArchetypesPath(), embeddedFreebsdArchetypes as RawArchetypeCatalog);
   _freebsdCache = mapRawArchetypes(raw.archetypes);
   return _freebsdCache;
 }
@@ -172,7 +186,7 @@ export function chromiumArchetypesPath(): string {
  */
 export function loadChromiumArchetypes(): KernelArchetype[] {
   if (_chromiumCache) return _chromiumCache;
-  const raw = JSON.parse(readFileSync(chromiumArchetypesPath(), "utf8")) as { archetypes: RawArchetype[] };
+  const raw = readArchetypeCatalog(chromiumArchetypesPath(), embeddedChromiumArchetypes as RawArchetypeCatalog);
   _chromiumCache = mapRawArchetypes(raw.archetypes);
   return _chromiumCache;
 }

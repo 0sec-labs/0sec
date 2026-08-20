@@ -43,6 +43,7 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import embeddedAppsecArchetypes from "./data/appsec-archetypes.json" with { type: "json" };
 import type { FinderLens } from "./hunt-scan.js";
 
 // ── Data shape ───────────────────────────────────────────────────────────────
@@ -147,10 +148,19 @@ export function appsecArchetypesPath(): string {
   return fileURLToPath(new URL("./data/appsec-archetypes.json", import.meta.url));
 }
 
+function readAppsecArchetypes(): { archetypes: RawAppsecArchetype[] } {
+  try {
+    return JSON.parse(readFileSync(appsecArchetypesPath(), "utf8")) as { archetypes: RawAppsecArchetype[] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return embeddedAppsecArchetypes as { archetypes: RawAppsecArchetype[] };
+  }
+}
+
 /** Load the appsec-domain archetypes (cached; pure data — never executes anything). */
 export function loadAppsecArchetypes(): AppsecArchetype[] {
   if (_cache) return _cache;
-  const raw = JSON.parse(readFileSync(appsecArchetypesPath(), "utf8")) as { archetypes: RawAppsecArchetype[] };
+  const raw = readAppsecArchetypes();
   _cache = mapRawAppsecArchetypes(raw.archetypes);
   return _cache;
 }

@@ -120,7 +120,8 @@ describe("runCraftScan infrastructure faults", () => {
       target: { sourceRoot, description: "reachable parser overflow", language: "c", taskId: "fixture:1" },
       runtime: "api",
       model: "gpt-5.5",
-      maxSteps: 15,
+      // Stop after the two scripted provider turns; never fall through to a real provider.
+      maxSteps: 2,
       evaluatePoc: graded,
       testPoc: selfTest,
     };

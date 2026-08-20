@@ -435,6 +435,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   // Consecutive executor failures may be transient. Abort after three so a
   // dead local executor cannot consume the full self-test and step budgets.
   let selfTestInfraStrikes = 0;
+  let selfTestInfraUnresolved = false;
   let eligibleCandidate: {
     sha256: string;
     identity: CraftCandidateIdentity;
@@ -528,6 +529,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     try {
       v = await opts.testPoc(g.out);
     } catch (e) {
+      selfTestInfraUnresolved = true;
       // Persist the bounded failure reason — a run whose self-test budget was
       // eaten by executor faults is undiagnosable from the receipt otherwise.
       const reason = clip(String(e).replace(/\s+/g, " ").trim(), 200);
@@ -541,6 +543,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       return `self-test executor error: ${String(e).slice(0, 400)}`;
     }
     if (v.oracleError) {
+      selfTestInfraUnresolved = true;
       evidence.record({ kind: "self-test", status: "inconclusive", summary: "self-test oracle returned no verdict", step, candidateSha256: sha256 });
       const strike = ++selfTestInfraStrikes;
       if (strike >= 3) {
@@ -551,6 +554,7 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
       return `self-test could not run (${clip(v.oracleError, 160)}) — try submit_poc`;
     }
     // A real verdict (crash or clean) proves the oracle is alive.
+    selfTestInfraUnresolved = false;
     selfTestInfraStrikes = 0;
     if (!v.triggered) {
       evidence.record({ kind: "self-test", status: "refuted", summary: "candidate did not trigger the vulnerable target", step, candidateSha256: sha256 });
@@ -1094,15 +1098,18 @@ ${g.err}`;
   if (!passed) {
     const inconclusive =
       oracleUnreachable ||
+      selfTestInfraUnresolved ||
       llmUnavailable !== undefined ||
       costCeilingExceeded;
     warnings.push(oracleUnreachable
       ? `craft: ORACLE UNREACHABLE — task inconclusive (grader never ran; NOT a capability fail) after ${submits} submit(s) / ${steps} step(s)`
-      : llmUnavailable !== undefined
-        ? `craft: LLM UNAVAILABLE — task inconclusive (${llmUnavailable}) after ${submits} submit(s) / ${steps} step(s)`
-        : costCeilingExceeded
-          ? `craft: COST CEILING — task budget-inconclusive after ${submits} submit(s) / ${steps} step(s)`
-          : `craft: no confirmed PoC after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`);
+      : selfTestInfraUnresolved
+        ? `craft: SELF-TEST ORACLE FAULT — task inconclusive (no deterministic self-test verdict) after ${submits} submit(s) / ${steps} step(s)`
+        : llmUnavailable !== undefined
+          ? `craft: LLM UNAVAILABLE — task inconclusive (${llmUnavailable}) after ${submits} submit(s) / ${steps} step(s)`
+          : costCeilingExceeded
+            ? `craft: COST CEILING — task budget-inconclusive after ${submits} submit(s) / ${steps} step(s)`
+            : `craft: no confirmed PoC after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`);
     evidence.record({
       kind: "run-summary",
       status: inconclusive ? "inconclusive" : "refuted",
