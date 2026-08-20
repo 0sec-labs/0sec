@@ -38,16 +38,7 @@ LOCAL_HOSTS = frozenset(
         "localhost",
         "127.0.0.1",
         "::1",
-        "mac",
-        "mac-mini",
-        "peakbook",
-        "peakbuntu",
-        "fabian-mac",
-        "feza-macbook-air",
-        "vega",
-        "fuzzer",
-        "bench",
-        "sandbox",
+        "0.0.0.0",
     }
 )
 WORKER_PREFLIGHT = "/srv/0verse/bin/worker-preflight.sh"

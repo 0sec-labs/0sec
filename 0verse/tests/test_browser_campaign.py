@@ -165,11 +165,8 @@ def test_v3_requires_exact_build_contract_binding() -> None:
     [
         "localhost",
         "127.0.0.1",
-        "mac-mini",
-        "vega",
-        "fuzzer",
-        "bench",
-        "sandbox",
+        "::1",
+        "0.0.0.0",
     ],
 )
 def test_rejects_local_or_inappropriate_worker(worker: str) -> None:

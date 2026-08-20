@@ -928,18 +928,7 @@ fn is_identifier(value: &str, maximum: usize, extra: &[u8]) -> bool {
 }
 
 fn validate_worker(value: &str) -> Result<(), String> {
-    const DENIED: [&str; 10] = [
-        "localhost",
-        "127.0.0.1",
-        "0.0.0.0",
-        "mac",
-        "mac-mini",
-        "peakbook",
-        "peakbuntu",
-        "vega",
-        "fuzzer",
-        "bench",
-    ];
+    const DENIED: [&str; 4] = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
     if !is_identifier(value, 128, b"_.-")
         || DENIED
             .iter()

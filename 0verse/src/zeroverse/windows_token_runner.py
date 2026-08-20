@@ -46,14 +46,8 @@ _DENIED_WORKERS = frozenset(
     {
         "localhost",
         "127.0.0.1",
+        "::1",
         "0.0.0.0",
-        "mac",
-        "mac-mini",
-        "peakbook",
-        "peakbuntu",
-        "vega",
-        "fuzzer",
-        "bench",
     }
 )
 ELIGIBLE_WINDOWS_SANDBOXES = frozenset(

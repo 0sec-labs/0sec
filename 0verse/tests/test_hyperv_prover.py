@@ -165,7 +165,7 @@ def test_load_manifest_and_hash(tmp_path: Path) -> None:
         {"trigger_argv": ["/root/harness/send-oid", "bad\narg"]},
         {"control_argv": ["/root/harness/send-oid", "--case", "candidate"]},
         {"worker": "bad worker"},
-        {"worker": "bench"},
+        {"worker": "0.0.0.0"},
         {"worker": "worker-01.example.test", "guest_worker": "worker-01.example.test"},
         {"dump_path": "/tmp/MEMORY.DMP"},
         {"dump_path": "C:\\dumps\\..\\MEMORY.DMP"},
