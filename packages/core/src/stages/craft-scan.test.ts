@@ -108,7 +108,8 @@ describe("runCraftScan infrastructure faults", () => {
         stopReason: "tool_use",
         usage: { inputTokens: 1, outputTokens: 1 },
         durationMs: 1,
-      } as never);
+      } as never)
+      .mockResolvedValue({ error: new Error("test terminal") } as never);
 
     const graded = vi.fn();
     const selfTest = vi.fn(async () => ({

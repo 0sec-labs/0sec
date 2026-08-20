@@ -94,7 +94,7 @@ export async function generateSyzChoiceWeights(
   const planHash = createHash("sha256").update(SYSTEM_PROMPT + "\n" + userPrompt).digest("hex");
   const sourceHash = createHash("sha256").update(opts.crashSummary ?? opts.target).digest("hex");
   return {
-    file: buildWeightsFile(parsed, opts.target, planHash, sourceHash, opts.maxEntries ?? 48, "pwnkit/llm-api", opts.model),
+    file: buildWeightsFile(parsed, opts.target, planHash, sourceHash, opts.maxEntries ?? 48, "0sec/llm-api", opts.model),
     rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
   };
 }
@@ -112,7 +112,7 @@ export function syzChoiceWeightsFromPlan(
   const planHash = createHash("sha256").update(rawPlan).digest("hex");
   const sourceHash = createHash("sha256").update(opts.crashSummary ?? opts.target).digest("hex");
   return {
-    file: buildWeightsFile(parsed, opts.target, planHash, sourceHash, opts.maxEntries ?? 48, "pwnkit/external-plan"),
+    file: buildWeightsFile(parsed, opts.target, planHash, sourceHash, opts.maxEntries ?? 48, "0sec/external-plan"),
     rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
   };
 }

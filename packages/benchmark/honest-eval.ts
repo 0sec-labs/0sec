@@ -239,7 +239,7 @@ export function removeEgressFirewall(containerId: string, ip?: string): void {
  * over a file the agent writes, so `echo 'uid=0(root)' > root_proof.txt` passed,
  * and so did a loadable kernel module printing it from ring 0. It is now the
  * shared nonce-bound gate (`@0sec/core.verifyRootProof`): this run's
- * `PWNKIT-CANARY:<nonce>:ROOT` marker, a real uid=0 witness, an ordered
+ * `0SEC-CANARY:<nonce>:ROOT` marker, a real uid=0 witness, an ordered
  * `DROP:uid=<N≠0>` before it, and no out-of-band kernel module load in anything
  * the agent authored. Read that function's doc comment for what the scheme does
  * NOT defend against before treating `proven` as bug attribution.

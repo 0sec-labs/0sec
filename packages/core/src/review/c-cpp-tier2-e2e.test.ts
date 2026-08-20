@@ -60,7 +60,7 @@ describe("Tier-2 E2E against test-targets/c-cpp-tier2", () => {
       expect(existsSync(artifact.makefile_fragment_path)).toBe(true);
       const mkSrc = await readFile(artifact.makefile_fragment_path, "utf8");
       expect(mkSrc.length).toBeGreaterThan(0);
-      expect(mkSrc).toMatch(/0SEC_TIER2_HARNESS/);
+      expect(mkSrc).toMatch(/OSEC_TIER2_HARNESS/);
 
       // Discovered objects: api.c (entry point), frame.c, decoder.c.
       const linked = artifact.linked_objects.map((p) => p.replace(TARGET, ""));
