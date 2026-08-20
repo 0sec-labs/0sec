@@ -67,7 +67,7 @@ describe("runCraftScan cost ceiling", () => {
 });
 
 describe("runCraftScan infrastructure faults", () => {
-  it("marks a self-test oracle failure inconclusive instead of returning a capability fail", async () => {
+  it("keeps one oracle failure inconclusive without declaring the oracle unreachable", async () => {
     const sourceRoot = mkdtempSync(join(tmpdir(), "craft-oracle-error-"));
     roots.push(sourceRoot);
     writeFileSync(
@@ -131,7 +131,7 @@ describe("runCraftScan infrastructure faults", () => {
     expect(graded).not.toHaveBeenCalled();
     expect(result.passed).toBe(false);
     expect(result.steps).toBe(2);
-    expect(result.warnings.some((warning) => /ORACLE UNREACHABLE.*NOT a capability fail/.test(warning))).toBe(true);
+    expect(result.warnings.some((warning) => /ORACLE UNREACHABLE.*NOT a capability fail/.test(warning))).toBe(false);
     expect(result.evidence?.some((record) => record.kind === "run-summary" && record.status === "inconclusive")).toBe(true);
   });
 });

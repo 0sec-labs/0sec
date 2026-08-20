@@ -4753,13 +4753,6 @@ export class ToolExecutor {
     const requestedPath = args.path as string;
     const path = resolveScopedPath(this.ctx.scopePath, requestedPath);
     const raw = readFileSync(path, "utf-8");
-    const window = windowFileContent(raw, {
-      offset: args.offset,
-      maxLines: args.max_lines,
-    });
-    if (!window.ok) {
-      return { success: false, output: null, error: window.error };
-    }
 
     // Windowing + argument validation live in ./tools/read-file-window.ts so
     // the arithmetic is unit-testable without a ToolExecutor. `offset` is

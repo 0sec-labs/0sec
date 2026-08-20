@@ -117,6 +117,9 @@ describe("scoped source prompts", () => {
     }
     expect(research).toContain("list_files");
 
+  });
+});
+
 describe("shellPentestPrompt — OAST blind/out-of-band guidance", () => {
   it("steers blind candidates through oast_register / oast_poll before timing fallback", () => {
     const prompt = shellPentestPrompt("https://target.test");

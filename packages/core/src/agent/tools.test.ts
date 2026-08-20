@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, evaluateDoneCoverageGate, containsUnquotedShellChars, sanitizedEnv } from "./tools.js";
+import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, detectHttpEgressSegments, evaluateDoneCoverageGate, containsUnquotedShellChars, sanitizedEnv } from "./tools.js";
 import { parseFindingsFromCliOutput } from "../findings-parser.js";
 import type { ToolContext, ToolCall } from "./types.js";
 import {
@@ -14,6 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { TaskLedger } from "./task-ledger.js";
+import { PathPolicy, EnforcementTracker } from "../scope/enforcement.js";
+import { ScopePolicy as HttpAuditScopePolicy } from "../scope/scope.js";
+import { RateLimiter } from "../scope/rate-limit.js";
+import { WafDetector } from "../scope/waf-detect.js";
+import { resolveEngagementProfile } from "../scope/engagement-profile.js";
 
 const ORIGINAL_JIT_SKILLS_ENV = process.env["0SEC_FEATURE_JIT_SKILLS"];
 const ORIGINAL_LOOT_LEDGER_ENV = process.env["0SEC_FEATURE_LOOT_LEDGER"];
@@ -3403,12 +3408,6 @@ describe("ToolExecutor — `done` coverage gate integration (#audit-laziness)", 
 // Mirrors the scope-enforcement suite above but for the EnforcementTracker
 // path-prefix allowlist and the scope/blocked counters that feed
 // `enforcement_summary`. See `scope/enforcement.ts` and the FROZEN CONTRACT.
-import { detectHttpEgressSegments } from "./tools.js";
-import { PathPolicy, EnforcementTracker } from "../scope/enforcement.js";
-import { ScopePolicy as HttpAuditScopePolicy } from "../scope/scope.js";
-import { RateLimiter } from "../scope/rate-limit.js";
-import { WafDetector } from "../scope/waf-detect.js";
-import { resolveEngagementProfile } from "../scope/engagement-profile.js";
 
 describe("detectHttpEgressSegments", () => {
   it("detects curl / wget / httpie", () => {
