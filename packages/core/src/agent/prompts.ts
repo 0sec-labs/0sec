@@ -190,7 +190,8 @@ const XSS_SECTION = `### Cross-Site Scripting (XSS)
 const SSRF_SECTION = `### Server-Side Request Forgery (SSRF)
 - Test any URL/webhook/callback input fields
 - Try internal targets: http://127.0.0.1, http://localhost, http://169.254.169.254/latest/meta-data/
-- Try DNS rebinding and URL scheme tricks: file://, gopher://, dict://`;
+- Try DNS rebinding and URL scheme tricks: file://, gopher://, dict://
+- For BLIND SSRF (no visible response): call oast_register to mint a unique handle, inject its dns_host or http_url as the SSRF target, trigger the request, then call oast_poll — a token-matched callback is concrete evidence; do NOT treat a timing delta or source-crafted response as SSRF confirmation without an OAST callback`;
 
 const SSTI_SECTION = `### Server-Side Template Injection (SSTI)
 Try in every text input and URL parameter:
@@ -917,7 +918,9 @@ Actions: navigate, click, fill, evaluate, content, screenshot.
 
 ## Script Patterns
 
-For blind vulnerabilities (blind SQLi, blind SSRF, blind command injection), ALWAYS write a Python script with timing/out-of-band detection. Do NOT try payloads manually one by one — it wastes turns.
+For out-of-band classes (blind SSRF, blind XSS, OOB RCE, OOB SQLi, XXE-OOB, JNDI/log4shell): call oast_register to mint a unique interaction handle, inject its http_url (HTTP callback) or dns_host (DNS callback) into the candidate payload, trigger it, then call oast_poll. A token-matched callback is concrete evidence — pass its handle_id as oast_handle_id to save_finding. A missing callback does not prove the class is absent; it only means this attempt did not produce one. Fall back to timing/script-based detection only if OAST is unavailable (oast_register returns available=false).
+
+For blind SQLi (in-band timing): write a Python script with SLEEP/BENCHMARK-based timing detection.
 
 **Blind SQLi timing script:**
 \`\`\`

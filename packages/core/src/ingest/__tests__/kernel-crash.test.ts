@@ -896,3 +896,47 @@ Read of size 4 at addr ffff888099887766 by task test/100
     expect(result.mismatchedFields).toContain("faultingFunction");
   });
 });
+
+// Modeled on the real kernelCTF fleet report (wd-kernelctf-6.12.101,
+// 2026-08-19): watchdog banner, kernel RIP for the stuck function, then a
+// userspace RIP later in the dump that must NOT be picked.
+const SOFT_LOCKUP_UNIX = `
+watchdog: BUG: soft lockup - CPU#0 stuck for 26s! [syz.3.33265:95334]
+Modules linked in:
+CPU: 0 UID: 65534 PID: 95334 Comm: syz.3.33265 Not tainted 6.12.101 #3
+Hardware name: QEMU Ubuntu 24.04 PC v2 (i440FX + PIIX, arch_caps fix, 1996), BIOS 1.16.3-debian-1.16.3-2 04/01/2014
+RIP: 0010:__skb_datagram_iter+0x1cd/0x900 net/core/datagram.c:406
+Code: 00 00 00 00 e8 d0 90 de fb be 08 00 00 00 48 8d 7c 24 20 e8 c1 90 de fb
+RSP: 0018:ffff88810a897688 EFLAGS: 00000246
+Call Trace:
+ <TASK>
+ __sanitizer_cov_trace_pc+0x1a/0x60
+ unix_stream_read_actor+0x80/0xc0 net/unix/af_unix.c:2983
+ unix_stream_read_generic+0x8ec/0x2720 net/unix/af_unix.c:2918
+ unix_stream_recvmsg+0x197/0x1c0 net/unix/af_unix.c:3020
+ __x64_sys_recvmmsg+0x231/0x280 net/socket.c:3028
+ do_syscall_64+0x58/0x120 arch/x86/entry/common.c:78
+ entry_SYSCALL_64_after_hwframe+0x76/0x7e
+RIP: 0033:0x7d3836fa778d
+ </TASK>
+`;
+
+describe("soft lockup classification", () => {
+  it("classifies watchdog soft lockups as denial-of-service, not null-pointer-deref", () => {
+    const report = parseCrashReport(SOFT_LOCKUP_UNIX);
+    expect(report.crashType).toBe("soft-lockup");
+    expect(crashTypeToCategory(report.crashType)).toBe("denial-of-service");
+    expect(crashSeverity(report)).toBe("low");
+  });
+
+  it("names the stuck kernel function, not sanitizer or userspace frames", () => {
+    const report = parseCrashReport(SOFT_LOCKUP_UNIX);
+    expect(report.faultingFunction).toBe("__skb_datagram_iter");
+  });
+
+  it("falls back to the first non-instrumentation stack frame when no kernel RIP", () => {
+    const noRip = SOFT_LOCKUP_UNIX.replace(/RIP: 0010:.*\n/, "");
+    const report = parseCrashReport(noRip);
+    expect(report.faultingFunction).toBe("unix_stream_read_actor");
+  });
+});

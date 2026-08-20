@@ -193,6 +193,15 @@ export {
   defaultSyzbotFetcher,
   mineSyzbotQueue,
 } from "./syzbot-queue-mine.js";
+export {
+  generateSyzChoiceWeights,
+  syzChoiceWeightsFromPlan,
+} from "./syz-choice-weights.js";
+export type {
+  SyzChoiceWeightsOptions,
+  SyzChoiceWeightsFile,
+  SyzChoiceWeightsResult,
+} from "./syz-choice-weights.js";
 export type {
   SyzbotFetcher,
   SyzbotBucket,

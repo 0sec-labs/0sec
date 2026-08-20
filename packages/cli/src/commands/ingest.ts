@@ -2,6 +2,7 @@ import { Option, type Command } from "commander";
 import chalk from "chalk";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { osecDB } from "@0sec/db";
 import type { Finding, RuntimeMode, ScanReport, Severity } from "@0sec/shared";
 import type { KernelOracleResult, KernelVmArtifacts } from "@0sec/core";
 import { formatSarif } from "../formatters/sarif.js";
@@ -17,6 +18,8 @@ interface IngestOpts {
   output: string;
   verify?: boolean;
   verbose?: boolean;
+  persist?: boolean;
+  dbPath?: string;
   syz?: string;
   reproducer?: string;
   kernelTree?: string;
@@ -83,6 +86,8 @@ export function registerIngestCommand(program: Command): void {
     .option("--cost-ceiling <usd>", "Hard USD cost ceiling for --review-subsystem")
     .addOption(new Option("--review-subsystem-fixture <path>").hideHelp())
     .option("-v, --verbose", "Verbose output")
+    .option("--persist", "Write ingested findings to the pwnkit findings DB (default: classify only)")
+    .option("--db-path <path>", "pwnkit database path for --persist (default: ~/.pwnkit/pwnkit.db)")
     .action(async (inputPath: string | undefined, opts: IngestOpts) => {
       try {
         const format = opts.format as IngestFormat;
@@ -259,6 +264,17 @@ export function registerIngestCommand(program: Command): void {
         if (findings.length === 0) {
           console.log(chalk.yellow("No crash reports found."));
           return;
+        }
+
+        if (opts.persist) {
+          // The command's contract is "import into 0sec findings" — without
+          // this the classification was printed and discarded (found
+          // 2026-08-19: the kernelCTF fleet ingest cron produced zero DB rows).
+          const db = new osecDB(opts.dbPath);
+          const scanId = db.createScan({ target: resolved, depth: "quick", format: "json", runtime: "api" });
+          for (const finding of findings) db.saveFinding(scanId, finding);
+          db.completeScan(scanId, { source: "ingest", findings: findings.length });
+          console.error(chalk.gray(`persisted ${findings.length} finding(s) → 0sec db (scan ${scanId.slice(0, 8)})`));
         }
 
         console.log(

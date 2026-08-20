@@ -4753,6 +4753,11 @@ export class ToolExecutor {
     const requestedPath = args.path as string;
     const path = resolveScopedPath(this.ctx.scopePath, requestedPath);
     const raw = readFileSync(path, "utf-8");
+
+    // Windowing + argument validation live in ./tools/read-file-window.ts so
+    // the arithmetic is unit-testable without a ToolExecutor. `offset` is
+    // 1-based to line up with grep/rg/sed and the `file.c:247` citation format
+    // the finding schema expects.
     const window = windowFileContent(raw, {
       offset: args.offset,
       maxLines: args.max_lines,
@@ -4761,6 +4766,9 @@ export class ToolExecutor {
       return { success: false, output: null, error: window.error };
     }
 
+    // `content` / `totalLines` / `truncated` keep their pre-offset meaning so
+    // existing consumers and transcripts are unaffected; `startLine` /
+    // `endLine` / `nextOffset` are additive.
     return {
       success: true,
       output: {

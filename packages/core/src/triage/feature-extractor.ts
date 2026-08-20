@@ -572,6 +572,7 @@ const CRASH_TYPE_ORDINAL: Record<CrashType, number> = {
   lockdep: 1,
   "kasan-null": 2,
   "rcu-stall": 3,
+  "soft-lockup": 1,
   "kasan-oob": 4,
   "kasan-uaf": 5,
   "kasan-stack-oob": 6,
