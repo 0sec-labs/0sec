@@ -18,6 +18,7 @@ import type {
   ScanConfig,
 } from "@0sec/shared";
 import type { InferSelectModel } from "drizzle-orm";
+import type { osecDB } from "@0sec/db";
 import type * as dbSchema from "@0sec/db";
 import type { ScanListener } from "./scanner.js";
 import { runAnalysisAgent } from "./agent-runner.js";
@@ -101,6 +102,8 @@ export interface PipelineOptions {
   changedOnly?: boolean;
   onEvent?: (event: { type: string; stage?: string; message: string; data?: unknown }) => void;
   dbPath?: string;
+  /** Stable local execution id. Fresh runs allocate one; cloud runs use scan id. */
+  runId?: string;
   /**
    * Prior confirmed findings supplied to a new review. They are rendered as
    * untrusted evidence: investigate adjacent or variant paths, but do not
@@ -1134,6 +1137,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
   const warnings: Array<{ stage: string; message: string }> = [];
   let emittedScanCompleted = false;
 
+  if (opts.runId && opts.resumeScanId && opts.runId !== opts.resumeScanId) {
+    throw new Error("0sec pipeline runId must match resumeScanId when resuming.");
+  }
+
   const emitPipelineScanCompleted = (
     exitReason: "completed" | "failed" | "cost_exceeded",
     payload: Record<string, unknown> = {},
@@ -1255,27 +1262,47 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
     }
   };
 
-  // Initialize DB (optional, best-effort)
-  let db = await (async () => {
+  const runState = await (async () => {
     try {
-      const { osecDB, repairOsecDatabase } = await import("@0sec/db");
+      // Lazy loading preserves the engine's optional local-persistence seam:
+      // static consumers can still run without initializing the SQLite module.
+      const {
+        osecDB,
+        repairOsecDatabase,
+        resolveOsecRunStorage,
+        writeOsecRunReport,
+      } = await import("@0sec/db");
+      const storage = resolveOsecRunStorage({
+        dbPath: opts.dbPath,
+        runId: opts.resumeScanId ?? opts.runId,
+        resume: Boolean(opts.resumeScanId),
+      });
       try {
-        return new osecDB(opts.dbPath);
+        return {
+          db: new osecDB(storage.dbPath),
+          storage,
+          writeReport: (report: PipelineReport) => writeOsecRunReport(storage, report),
+        };
       } catch (error) {
         if (!isRepairableDbError(error)) throw error;
-        const repaired = repairOsecDatabase(opts.dbPath);
+        const repaired = repairOsecDatabase(storage.dbPath);
         warnings.push({
           stage: "prepare",
           message: repaired.backupPath
             ? `Recovered local scan database. Backup saved to ${repaired.backupPath}`
             : `Recovered local scan database at ${repaired.path}`,
         });
-        return new osecDB(opts.dbPath);
+        return {
+          db: new osecDB(storage.dbPath),
+          storage,
+          writeReport: (report: PipelineReport) => writeOsecRunReport(storage, report),
+        };
       }
     } catch {
-      return null as any;
+      return null;
     }
-  })() as any;
+  })();
+  let db: osecDB | null = runState?.db ?? null;
 
   const existingScan = opts.resumeScanId ? db?.getScan(opts.resumeScanId) : null;
   if (opts.resumeScanId && !existingScan) {
@@ -1415,7 +1442,12 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
           resumedAt: new Date().toISOString(),
         });
       } else {
-        persistedScanId = db.createScan(scanConfig);
+        const newScanId = runState?.storage.runId;
+        if (!newScanId) {
+          throw new Error("0sec run storage was unavailable before scan creation.");
+        }
+        persistedScanId = newScanId;
+        db.createScan(scanConfig, persistedScanId);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1423,7 +1455,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         stage: "prepare",
         message: `Local scan database unavailable; continuing without persistence: ${msg}`,
       });
-      db = null as any;
+      db = null;
     }
   }
   if (!persistedScanId) {
@@ -2485,6 +2517,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
       summary: `${confirmedFindings.length} finding(s), ${semgrepFindings.length + npmAuditFindings.length} automated lead(s)`,
     });
 
+    runState?.writeReport(report);
     return report;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

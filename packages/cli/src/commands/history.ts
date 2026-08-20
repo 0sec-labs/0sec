@@ -1,5 +1,11 @@
 import type { Command } from "commander";
+import { existsSync } from "node:fs";
 import chalk from "chalk";
+import {
+  listOsecRunDatabasePaths,
+  osecDB,
+  resolveOsecDbPath,
+} from "@0sec/db";
 
 type HistoryOptions = {
   dbPath?: string;
@@ -9,22 +15,38 @@ type HistoryOptions = {
 export function registerHistoryCommand(program: Command): void {
   program
     .command("history")
-    .description("Show past scan history from the SQLite database")
-    .option("--db-path <path>", "Path to SQLite database")
+    .description("Show past scan history from run-local SQLite databases")
+    .option("--db-path <path>", "Path to one SQLite database")
     .option("--limit <n>", "Number of scans to show", "10")
     .action(async (opts: HistoryOptions) => {
       const limit = Number.parseInt(opts.limit ?? "10", 10);
       const { isBunRuntime, canUseOpenTui } = await import("../tui/runtime.js");
-      if (isBunRuntime() && canUseOpenTui()) {
+      if (opts.dbPath && isBunRuntime() && canUseOpenTui()) {
         const { showOpenTuiHistory } = await import("../tui/run.js");
         await showOpenTuiHistory({ dbPath: opts.dbPath, limit });
         return;
       }
 
-      const { osecDB } = await import("@0sec/db");
-      const db = new osecDB(opts.dbPath);
-      const scans = db.listScans(limit);
-      db.close();
+
+      const dbPaths = opts.dbPath
+        ? [opts.dbPath]
+        : listOsecRunDatabasePaths();
+      const legacyDbPath = resolveOsecDbPath();
+      if (!opts.dbPath && existsSync(legacyDbPath) && !dbPaths.includes(legacyDbPath)) {
+        dbPaths.push(legacyDbPath);
+      }
+
+      const scans = dbPaths
+        .flatMap((dbPath) => {
+          const db = new osecDB(dbPath);
+          try {
+            return db.listScans(limit);
+          } finally {
+            db.close();
+          }
+        })
+        .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+        .slice(0, limit);
 
       if (scans.length === 0) {
         console.log(chalk.gray("No scan history found."));

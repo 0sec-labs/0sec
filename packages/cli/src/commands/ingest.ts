@@ -2,7 +2,11 @@ import { Option, type Command } from "commander";
 import chalk from "chalk";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { osecDB } from "@0sec/db";
+import {
+  osecDB,
+  resolveOsecRunStorage,
+  writeOsecRunReport,
+} from "@0sec/db";
 import type { Finding, RuntimeMode, ScanReport, Severity } from "@0sec/shared";
 import type { KernelOracleResult, KernelVmArtifacts } from "@0sec/core";
 import { formatSarif } from "../formatters/sarif.js";
@@ -86,8 +90,8 @@ export function registerIngestCommand(program: Command): void {
     .option("--cost-ceiling <usd>", "Hard USD cost ceiling for --review-subsystem")
     .addOption(new Option("--review-subsystem-fixture <path>").hideHelp())
     .option("-v, --verbose", "Verbose output")
-    .option("--persist", "Write ingested findings to the 0sec findings DB (default: classify only)")
-    .option("--db-path <path>", "0sec database path for --persist (default: ~/.0sec/0sec.db)")
+    .option("--persist", "Write ingested findings to an isolated 0sec run database (default: classify only)")
+    .option("--db-path <path>", "Explicit SQLite path for --persist (default: a new ~/.0sec/runs/<run-id>/state.db)")
     .action(async (inputPath: string | undefined, opts: IngestOpts) => {
       try {
         const format = opts.format as IngestFormat;
@@ -267,14 +271,42 @@ export function registerIngestCommand(program: Command): void {
         }
 
         if (opts.persist) {
-          // The command's contract is "import into 0sec findings" — without
-          // this the classification was printed and discarded (found
-          // 2026-08-19: the kernelCTF fleet ingest cron produced zero DB rows).
-          const db = new osecDB(opts.dbPath);
-          const scanId = db.createScan({ target: resolved, depth: "quick", format: "json", runtime: "api" });
+          // Crash imports are executions too: put their mutable SQLite state in
+          // one run directory instead of contending on the old global database.
+          const storage = resolveOsecRunStorage({ dbPath: opts.dbPath });
+          const db = new osecDB(storage.dbPath);
+          const startedAt = new Date().toISOString();
+          const scanId = db.createScan(
+            { target: resolved, depth: "quick", format: "json", runtime: "api" },
+            storage.runId,
+          );
           for (const finding of findings) db.saveFinding(scanId, finding);
-          db.completeScan(scanId, { source: "ingest", findings: findings.length });
-          console.error(chalk.gray(`persisted ${findings.length} finding(s) → 0sec db (scan ${scanId.slice(0, 8)})`));
+          const summary = {
+            totalAttacks: 0,
+            totalFindings: findings.length,
+            critical: findings.filter((finding) => finding.severity === "critical").length,
+            high: findings.filter((finding) => finding.severity === "high").length,
+            medium: findings.filter((finding) => finding.severity === "medium").length,
+            low: findings.filter((finding) => finding.severity === "low").length,
+            info: findings.filter((finding) => finding.severity === "info").length,
+          };
+          db.completeScan(scanId, summary);
+          writeOsecRunReport(storage, {
+            target: resolved,
+            scanDepth: "quick",
+            startedAt,
+            completedAt: new Date().toISOString(),
+            durationMs: 0,
+            summary,
+            findings,
+            warnings: [],
+          });
+          db.close();
+          console.error(
+            chalk.gray(
+              `persisted ${findings.length} finding(s) → 0sec run ${scanId.slice(0, 8)}`,
+            ),
+          );
         }
 
         console.log(

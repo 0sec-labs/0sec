@@ -1,5 +1,12 @@
 export { osecDB, repairOsecDatabase, resetOsecDatabase, resolveOsecDbPath } from "./database.js";
 export {
+  listOsecRunDatabasePaths,
+  resolveOsecRunStorage,
+  writeOsecRunReport,
+  type OsecRunStorage,
+  type ResolveOsecRunStorageOptions,
+} from "./run-storage.js";
+export {
   scans,
   targets,
   findings,

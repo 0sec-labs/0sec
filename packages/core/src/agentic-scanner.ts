@@ -280,6 +280,11 @@ function countFlagsInFindings(findings: Finding[]): number {
 export interface AgenticScanOptions {
   config: ScanConfig;
   dbPath?: string;
+  /**
+   * Stable execution identity. Cloud workers supply their orchestrator scan id;
+   * local callers may provide one to make run-local state resumable.
+   */
+  runId?: string;
   onEvent?: ScanListener;
   /** Poll for user-injected messages from the TUI at turn boundaries. */
   getPendingUserMessages?: () => string[];
@@ -691,8 +696,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     onEvent,
     getPendingUserMessages: optsGetPendingUserMessages,
     resumeScanId,
+    runId,
   } = opts;
   const emit = onEvent ?? (() => {});
+
+  if (runId && resumeScanId && runId !== resumeScanId) {
+    throw new Error("0sec scan runId must match resumeScanId when resuming.");
+  }
 
   // #978 (ADR-060) — cloud control channel. The agent loop injects "pending
   // user messages" each turn via getPendingUserMessages (originally the local
@@ -776,21 +786,42 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
   // the `standard` posture is a no-op — nothing changes unless opted in.
   const enteredPosture = resolveEngagementForConfig(config);
 
-  const db = await (async () => {
+  const runState = await (async () => {
     try {
-      const { osecDB } = await import("@0sec/db");
-      return new osecDB(dbPath);
+      // Dynamic import: bundled/optional runtimes must reach scope validation
+      // before loading SQLite's platform-specific engine.
+      const {
+        osecDB,
+        resolveOsecRunStorage,
+        writeOsecRunReport,
+      } = await import("@0sec/db");
+      const storage = resolveOsecRunStorage({
+        dbPath,
+        runId: resumeScanId ?? runId,
+        resume: Boolean(resumeScanId),
+      });
+      return {
+        db: new osecDB(storage.dbPath),
+        storage,
+        writeReport: (report: ScanReport) => writeOsecRunReport(storage, report),
+      };
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);
       throw new Error(
         `0sec: failed to initialize the local database (@0sec/db). ` +
-        `Agentic scans require SQLite persistence. Underlying error: ${cause}`,
+          `Agentic scans require SQLite persistence. Underlying error: ${cause}`,
       );
     }
   })();
+  const { db, storage, writeReport } = runState;
+  const effectiveDbPath = storage.dbPath;
 
-  // Resume or create new scan
-  const scanId = resumeScanId ?? db.createScan(config);
+  // Resume or create new scan. New scan ids are also run-directory ids, so
+  // SQLite, the execution journal, and the final report cannot cross-contaminate.
+  const scanId = resumeScanId ?? storage.runId;
+  if (!resumeScanId) {
+    db.createScan(config, scanId);
+  }
 
   if (resumeScanId) {
     const existing = db.getScan(resumeScanId);
@@ -1243,6 +1274,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         report.durationMs = dbScan.durationMs ?? 0;
       }
       emit({ type: "stage:end", stage: "report", message: `Report: ${summary.totalFindings} findings` });
+      writeReport(report);
       await postFinalReport(report);
       emitScanCompleted("completed", allFindings.length, { findingsForFlagCount: allFindings });
       return report;
@@ -1323,6 +1355,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
       emit({ type: "stage:end", stage: "report", message: `Report: ${summary.totalFindings} findings` });
       // Stream final report to the opt-in webhook sink (no-op when unset).
+      writeReport(report);
       await postFinalReport(report);
       // MCP fast-path doesn't invoke a metered LLM runtime — `cost_usd`
       // is intentionally omitted (no `stages`). Still surface flag count
@@ -1402,7 +1435,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
     const discoveryState = useNative
       ? await runNativeDiscovery(nativeRuntime, db, config, scanId, emit, apiSpecPromptText, getPendingUserMessages)
-      : await runLegacyDiscovery(legacyRuntime, db, config, scanId, emit, dbPath, apiSpecPromptText);
+      : await runLegacyDiscovery(legacyRuntime, db, config, scanId, emit, effectiveDbPath, apiSpecPromptText);
 
     // Merge the deterministic pre-pass findings into discovery output (once).
     if (reconFindings.length) {
@@ -1560,7 +1593,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     } else {
       attackState = useNative
         ? await runNativeAttack(nativeRuntime, db, config, scanId, discoveryState.targetInfo, categories, maxAttackTurns, emit, opts.challengeHint, apiSpecPromptText, getPendingUserMessages)
-        : await runLegacyAttack(legacyRuntime, db, config, scanId, discoveryState.targetInfo, categories, maxAttackTurns, emit, dbPath, apiSpecPromptText);
+        : await runLegacyAttack(legacyRuntime, db, config, scanId, discoveryState.targetInfo, categories, maxAttackTurns, emit, effectiveDbPath, apiSpecPromptText);
     }
 
     allFindings = [...attackState.findings];
@@ -1768,6 +1801,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         stage: "report",
         message: `kill_switch_triggered: aborted with ${allFindings.length} partial finding(s)`,
       });
+      writeReport(killReport);
       await postFinalReport(killReport);
       emitScanCompleted("completed", allFindings.length, {
         turnsUsed: (discoveryState?.turnCount ?? 0) + (attackState?.turnCount ?? 0),
@@ -3178,7 +3212,7 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       } else if (useNative) {
         await runNativeVerify(nativeRuntime, db, config, scanId, consensusFiltered, emit);
       } else {
-        await runLegacyVerify(legacyRuntime, db, config, scanId, consensusFiltered, emit, dbPath);
+        await runLegacyVerify(legacyRuntime, db, config, scanId, consensusFiltered, emit, effectiveDbPath);
       }
 
       // Merge verification results — DB is source of truth
@@ -3286,10 +3320,12 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       }
     }
 
-    return await runReportStage(
+    const report = await runReportStage(
       { allFindings, attackState, discoveryState, config, scanId, routingDecisions },
       { db, emit, emitScanCompleted, attachEnforcementSummary, attachEngagementPosture },
     );
+    writeReport(report);
+    return report;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const blockedSummary = msg.slice(0, 500);
