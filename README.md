@@ -136,6 +136,6 @@ Report vulnerabilities in 0sec through
 
 ## License
 
-pwnkit is dual-licensed under MIT OR Apache-2.0, at your option. See
+0sec is dual-licensed under MIT OR Apache-2.0, at your option. See
 [LICENSE](LICENSE) for the Apache-2.0 terms and [LICENSE-MIT](LICENSE-MIT) for
 the MIT terms. Copyright 2026 0sec Labs.

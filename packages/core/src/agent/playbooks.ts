@@ -633,7 +633,7 @@ Target is an LLM-backed app (chatbot, agent, assistant). Goal: make the model ig
 
 ### Indirect injection (the high-value variant)
 - If the app summarizes, browses, reads files, or answers over documents, plant the instruction in that *data* source, not the chat box. The model executes it when it ingests the content.
-- Confirm via a benign canary: get the model to emit a unique token (e.g. \`PWNKIT-INJ-OK\`) only an injected instruction would produce.
+- Confirm via a benign canary: get the model to emit a unique token (e.g. \`0SEC-INJ-OK\`) only an injected instruction would produce.
 
 ### Confirm and pivot
 - A successful injection is the entry point — pivot to the breadth playbooks: \`insecure_output_handling\` (does the output get rendered downstream?), \`excessive_agency\` (can you reach a tool call?), \`rag_poisoning\` (is there a writable retrieval surface?).

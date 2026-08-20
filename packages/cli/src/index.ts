@@ -1,8 +1,5 @@
 #!/usr/bin/env node
 
-// Must stay the first import: maps legacy PWNKIT_* env vars onto 0SEC_*
-// before any engine module reads them at import time.
-import "./env-legacy.js";
 
 import { Command } from "commander";
 import chalk from "chalk";

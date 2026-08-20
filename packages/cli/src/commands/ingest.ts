@@ -86,8 +86,8 @@ export function registerIngestCommand(program: Command): void {
     .option("--cost-ceiling <usd>", "Hard USD cost ceiling for --review-subsystem")
     .addOption(new Option("--review-subsystem-fixture <path>").hideHelp())
     .option("-v, --verbose", "Verbose output")
-    .option("--persist", "Write ingested findings to the pwnkit findings DB (default: classify only)")
-    .option("--db-path <path>", "pwnkit database path for --persist (default: ~/.pwnkit/pwnkit.db)")
+    .option("--persist", "Write ingested findings to the 0sec findings DB (default: classify only)")
+    .option("--db-path <path>", "0sec database path for --persist (default: ~/.0sec/0sec.db)")
     .action(async (inputPath: string | undefined, opts: IngestOpts) => {
       try {
         const format = opts.format as IngestFormat;
