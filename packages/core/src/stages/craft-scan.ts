@@ -295,17 +295,17 @@ function nextCraftCallUpperBoundUsd(
 }
 
 /**
- * Reserve enough of a bounded trajectory for test-and-refine work. The old
- * fixed threshold of 18 was correct only for long runs: a 15-step CyberGym
- * canary could spend almost its entire budget reading source before its first
- * candidate. Keep the long-run threshold stable while scaling short runs.
+ * Reserve enough of a bounded trajectory for test-and-refine work while
+ * retaining four source-evidence turns before the trigger stage. The
+ * first-self-test deadline scales for short runs; the reachability minimum is
+ * an evidence contract, not a time budget.
  */
 export function craftStepBudget(maxSteps: number): {
   reachabilityStepCap: number;
   firstSelfTestStep: number;
 } {
   const boundedSteps = Math.max(1, Math.floor(maxSteps));
-  const reachabilityStepCap = Math.min(4, Math.max(1, Math.floor(boundedSteps * 0.25)));
+  const reachabilityStepCap = 4;
   const firstSelfTestStep = Math.min(
     18,
     Math.max(reachabilityStepCap + 1, Math.floor(boundedSteps * 0.45)),
