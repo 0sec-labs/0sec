@@ -2,6 +2,7 @@ import { Option, type Command } from "commander";
 import chalk from "chalk";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { osecDB } from "@0sec/db";
 import type { Finding, RuntimeMode, ScanReport, Severity } from "@0sec/shared";
 import type { KernelOracleResult, KernelVmArtifacts } from "@0sec/core";
 import { formatSarif } from "../formatters/sarif.js";
@@ -266,15 +267,14 @@ export function registerIngestCommand(program: Command): void {
         }
 
         if (opts.persist) {
-          // The command's contract is "import into pwnkit findings" — without
+          // The command's contract is "import into 0sec findings" — without
           // this the classification was printed and discarded (found
           // 2026-08-19: the kernelCTF fleet ingest cron produced zero DB rows).
-          const { pwnkitDB } = await import("@pwnkit/db");
-          const db = new pwnkitDB(opts.dbPath);
+          const db = new osecDB(opts.dbPath);
           const scanId = db.createScan({ target: resolved, depth: "quick", format: "json", runtime: "api" });
           for (const finding of findings) db.saveFinding(scanId, finding);
           db.completeScan(scanId, { source: "ingest", findings: findings.length });
-          console.error(chalk.gray(`persisted ${findings.length} finding(s) → pwnkit db (scan ${scanId.slice(0, 8)})`));
+          console.error(chalk.gray(`persisted ${findings.length} finding(s) → 0sec db (scan ${scanId.slice(0, 8)})`));
         }
 
         console.log(
