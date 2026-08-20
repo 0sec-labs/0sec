@@ -3,6 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "dist",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "rootDir": "src"
   },
   "include": ["src"],

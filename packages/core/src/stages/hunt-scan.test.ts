@@ -83,6 +83,52 @@ describe("runHuntScan — best-of-N + judge gate", () => {
     expect(res.records.every((r) => r.skepticConfirmed === true)).toBe(true);
   });
 
+  it("runs the runtime verifier after every prior confirmation gate and skips it after a refutation", async () => {
+    agenticScanMock.mockReset();
+    agenticScanMock.mockResolvedValue({
+      findings: [mkFinding("f-runtime", "runtime candidate", "poc plan")],
+    });
+    const order: string[] = [];
+    const result = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }],
+      runtime: "api",
+      concurrency: 1,
+      verify: async () => {
+        order.push("skeptic-prover");
+        return { confirmed: true, reason: "reproduced" };
+      },
+      exploitability: async () => {
+        order.push("exploitability");
+        return { confirmed: true, reason: "impact checked" };
+      },
+      runtimeVerify: async () => {
+        order.push("runtime");
+        return { confirmed: true, reason: "sandbox replay passed" };
+      },
+    });
+    expect(order).toEqual(["skeptic-prover", "exploitability", "runtime"]);
+    expect(result.confirmed).toHaveLength(1);
+
+    order.length = 0;
+    const refuted = await runHuntScan({
+      sourceRoot: "/src",
+      candidates: [{ path: "/src/a.c" }],
+      runtime: "api",
+      concurrency: 1,
+      verify: async () => {
+        order.push("skeptic-prover");
+        return { confirmed: false, reason: "refuted" };
+      },
+      runtimeVerify: async () => {
+        order.push("runtime");
+        return { confirmed: true, reason: "must not run" };
+      },
+    });
+    expect(order).toEqual(["skeptic-prover"]);
+    expect(refuted.confirmed).toHaveLength(0);
+  });
+
   it("attemptsPerCandidate>1 judges the widened pool and only the top-judgeTopK reach verify", async () => {
     agenticScanMock.mockReset();
     let call = 0;

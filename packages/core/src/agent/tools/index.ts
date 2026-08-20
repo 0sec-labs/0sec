@@ -28,8 +28,15 @@ import {
 } from "./orchestrator.js";
 import { oastToolDefinitions, OAST_TOOL_NAMES } from "./oast.js";
 import { pythonToolDefinitions } from "./python.js";
+import { binaryToolDefinitions, BINARY_TOOL_NAMES } from "./binary.js";
 
-export { SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES, OAST_TOOL_NAMES };
+export {
+  SCANNER_TOOL_NAMES,
+  CLOUD_TOOL_NAMES,
+  ORCHESTRATOR_TOOL_NAMES,
+  OAST_TOOL_NAMES,
+  BINARY_TOOL_NAMES,
+};
 
 // Every per-domain definition map, merged. Key collisions are impossible —
 // each tool name is owned by exactly one domain module.
@@ -47,6 +54,7 @@ const DOMAIN_DEFINITIONS: Record<string, ToolDefinition> = {
   ...orchestratorToolDefinitions,
   ...oastToolDefinitions,
   ...pythonToolDefinitions,
+  ...binaryToolDefinitions,
 };
 
 // Canonical registry order. getToolsForRole("audit"/"review") enumerates
@@ -100,6 +108,7 @@ const TOOL_REGISTRY_ORDER = [
   "oast_register",
   "oast_poll",
   "python_exec",
+  "analyze_binary",
 ] as const;
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = Object.fromEntries(

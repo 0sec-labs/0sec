@@ -23,6 +23,7 @@
     "@opentui/react": "0.5.4",
     "@0sec/benchmark": "workspace:*",
     "@0sec/core": "workspace:*",
+    "@0sec/llm-redteam": "workspace:*",
     "@0sec/db": "workspace:*",
     "@0sec/shared": "workspace:*",
     "@0sec/templates": "workspace:*",

@@ -5,18 +5,11 @@
  *        -> Judge.evaluate() -> Verdict -> (break recorded | mutate & retry)
  */
 
+import type { AgentInjectionVector } from "@0sec/shared";
+
 /** The injection vector a behaviour rides in — i.e. which untrusted document the
- *  target ingests and which we control. */
-export type InjectionVector =
-  | "readme" // coding agent told to "set up" a repo
-  | "code-comment" // source/file comment
-  | "issue-or-pr" // GitHub issue / PR body
-  | "web-content" // fetched page / search result
-  | "tool-output" // result returned by a tool the agent called
-  | "support-doc" // customer report / ticket / config bundle
-  | "email" // message the agent reads
-  | "forum-post" // user-generated content under moderation
-  | "rules-file"; // .cursorrules / AGENTS.md / skill description
+ * target ingests and which we control. */
+export type InjectionVector = AgentInjectionVector;
 
 /** What we want the target to be coerced into doing, plus the literal artefact
  *  that proves success (used by the regex judge). */

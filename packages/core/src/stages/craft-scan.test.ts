@@ -123,6 +123,7 @@ describe("runCraftScan infrastructure faults", () => {
       model: "gpt-5.5",
       // Stop after the two scripted provider turns; never fall through to a real provider.
       maxSteps: 2,
+      maxTests: 1,
       evaluatePoc: graded,
       testPoc: selfTest,
     };

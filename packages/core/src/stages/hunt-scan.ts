@@ -227,6 +227,12 @@ export interface HuntScanOptions {
    */
   exploitability?: HuntVerifier;
   /**
+   * OPTIONAL terminal runtime verifier. It runs after the skeptic/prover and
+   * optional exploitability gate, so a runtime result can enrich evidence
+   * without ever promoting an unconfirmed finding on its own.
+   */
+  runtimeVerify?: HuntVerifier;
+  /**
    * OPTIONAL second-audit refinement (the "treat every crash as shallow" step).
    * Runs on each surfaced finding BEFORE the verify gate: deepen the candidate to
    * its root cause / a fix-bypass path, THEN verify the deepened candidate. Given
@@ -1568,6 +1574,14 @@ export async function runHuntScan(opts: HuntScanOptions): Promise<HuntScanResult
       log(`[hunt] PROVE stage wired as the terminal gate (refine → judge → verify → exploitability)`);
     } else {
       warnings.push("hunt: opts.exploitability set but opts.verify is absent — PROVE stage skipped (nothing confirmed to prove)");
+    }
+  }
+  if (opts.runtimeVerify) {
+    if (verify) {
+      verify = composeGate(verify, opts.runtimeVerify);
+      log("[hunt] runtime verifier wired as terminal gate");
+    } else {
+      warnings.push("hunt: opts.runtimeVerify set but opts.verify is absent — runtime verification skipped (nothing confirmed to verify)");
     }
   }
 

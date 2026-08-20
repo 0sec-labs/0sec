@@ -23,6 +23,7 @@ import { resolveEngagementProfile } from "../scope/engagement-profile.js";
 const ORIGINAL_JIT_SKILLS_ENV = process.env["0SEC_FEATURE_JIT_SKILLS"];
 const ORIGINAL_LOOT_LEDGER_ENV = process.env["0SEC_FEATURE_LOOT_LEDGER"];
 const ORIGINAL_CLOUD_SURFACE_ENV = process.env["0SEC_FEATURE_CLOUD_SURFACE"];
+const ORIGINAL_ZEROVERSE_ENV = process.env["0SEC_FEATURE_ZEROVERSE"];
 
 afterEach(() => {
   if (ORIGINAL_JIT_SKILLS_ENV === undefined) delete process.env["0SEC_FEATURE_JIT_SKILLS"];
@@ -32,6 +33,8 @@ afterEach(() => {
   // 0sec#925: cloud-surface defaults OFF; reset so tests that pin it ON don't leak.
   if (ORIGINAL_CLOUD_SURFACE_ENV === undefined) delete process.env["0SEC_FEATURE_CLOUD_SURFACE"];
   else process.env["0SEC_FEATURE_CLOUD_SURFACE"] = ORIGINAL_CLOUD_SURFACE_ENV;
+  if (ORIGINAL_ZEROVERSE_ENV === undefined) delete process.env["0SEC_FEATURE_ZEROVERSE"];
+  else process.env["0SEC_FEATURE_ZEROVERSE"] = ORIGINAL_ZEROVERSE_ENV;
 });
 
 // ── Tool Registry ──
@@ -41,7 +44,7 @@ describe("TOOL_DEFINITIONS", () => {
     const expected = [
       "http_request", "send_prompt", "save_finding", "query_findings",
       "update_finding", "read_file", "list_files", "search_files", "run_command", "update_target", "payload_lookup", "done",
-      "list_skills", "load_skill",
+      "list_skills", "load_skill", "analyze_binary",
     ];
     for (const name of expected) {
       expect(TOOL_DEFINITIONS[name]).toBeDefined();
@@ -101,6 +104,15 @@ describe("getToolsForRole", () => {
     expect(names).toContain("apply_patch");
     expect(names).toContain("run_command");
     expect(names).toContain("http_request");
+  });
+
+  it("exposes path-confined binary analysis only after explicit opt-in", () => {
+    delete process.env["0SEC_FEATURE_ZEROVERSE"];
+    expect(getToolsForRole("verify", { hasScope: true }).map((tool) => tool.name)).not.toContain("analyze_binary");
+
+    process.env["0SEC_FEATURE_ZEROVERSE"] = "1";
+    expect(getToolsForRole("verify", { hasScope: true }).map((tool) => tool.name)).toContain("analyze_binary");
+    expect(getToolsForRole("audit", { hasScope: true }).map((tool) => tool.name)).toContain("analyze_binary");
   });
 
   it("verify agent has no file tools without scope", () => {
@@ -349,6 +361,29 @@ describe("ToolExecutor", () => {
         expect(result.success).toBe(false);
         expect(result.error).toMatch(/not available in a scoped source audit/);
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the 0verse bridge opt-in and confines its binary path to the source scope", async () => {
+    process.env["0SEC_FEATURE_ZEROVERSE"] = "1";
+    const withoutScope = await executor.execute({
+      name: "analyze_binary",
+      arguments: { binary_path: "app" },
+    });
+    expect(withoutScope.success).toBe(false);
+    expect(withoutScope.error).toMatch(/requires a local scoped source root/);
+
+    const root = mkdtempSync(join(tmpdir(), "0sec-binary-scope-"));
+    try {
+      const scoped = new ToolExecutor({ ...ctx, role: "verify", scopePath: root }, null);
+      const escaped = await scoped.execute({
+        name: "analyze_binary",
+        arguments: { binary_path: "../outside" },
+      });
+      expect(escaped.success).toBe(false);
+      expect(escaped.error).toMatch(/Path escapes the allowed scope/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

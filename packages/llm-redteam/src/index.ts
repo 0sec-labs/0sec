@@ -8,3 +8,4 @@ export { mockTarget } from "./targets/mock.js";
 export type { MockModel, MockTargetOptions } from "./targets/mock.js";
 export { chatTarget } from "./targets/chat.js";
 export type { ChatTargetOptions } from "./targets/chat.js";
+export * from "./agent-assurance.js";
