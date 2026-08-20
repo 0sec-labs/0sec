@@ -8,8 +8,7 @@
 <h1 align="center">0sec</h1>
 
 <p align="center">
-  <strong>Open-source, evidence-first security research for authorized software.</strong><br>
-  Turn a source tree, application, package, or compiled artifact into reproducible security evidence.
+  <strong>Open-source, evidence-first security research for authorized software.</strong>
 </p>
 
 > **One harness. Two evidence engines.** `0sec` investigates source and live
@@ -20,9 +19,6 @@
 naming a plausible bug. It combines a 48-command CLI, an agent-driven research
 loop, a reproducible container toolchain, per-run evidence storage, MCP
 integration, and the public 0verse binary-analysis engine.
-
-Use 0sec only on systems and code you own or are explicitly authorized to test.
-It is not a substitute for a written testing scope.
 
 ## What ships
 
