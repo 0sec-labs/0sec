@@ -1542,7 +1542,7 @@ describe("ToolExecutor", () => {
     const BIG_FILE = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join("\n");
 
     beforeEach(() => {
-      tmp = mkdtempSync(join(tmpdir(), "pwnkit-read-file-exec-"));
+      tmp = mkdtempSync(join(tmpdir(), "0sec-read-file-exec-"));
       writeFileSync(join(tmp, "big.c"), BIG_FILE);
       const scopedCtx: ToolContext = { ...ctx, scopePath: tmp };
       scopedExecutor = new ToolExecutor(scopedCtx, null);
@@ -1596,7 +1596,7 @@ describe("ToolExecutor", () => {
 
       expect(result.success).toBe(true);
       const out = result.output as { content: string };
-      expect(out.content).toContain("[pwnkit:read_file] TRUNCATED");
+      expect(out.content).toContain("[0sec:read_file] TRUNCATED");
       expect(out.content).toContain("showed lines 800-802 of 1200");
       expect(out.content).toContain("offset=803");
     });
@@ -1632,6 +1632,9 @@ describe("ToolExecutor", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("escapes the allowed scope");
+    });
+  });
+
   describe("scope symlink escapes", () => {
     let root: string;
     let secret: string;
