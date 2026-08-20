@@ -1,0 +1,43 @@
+{
+ "insts": [
+  {
+   "id": 1,
+   "func": "SeedScan",
+   "addr": 4352,
+   "kind": "OTHER"
+  },
+  {
+   "id": 2,
+   "func": "ScanThenPurge",
+   "addr": 4608,
+   "kind": "OTHER"
+  },
+  {
+   "id": 3,
+   "func": "QuarantineMove",
+   "addr": 4864,
+   "kind": "OTHER"
+  },
+  {
+   "id": 4,
+   "func": "HardenedQuarantine",
+   "addr": 5120,
+   "kind": "OTHER"
+  },
+  {
+   "id": 5,
+   "func": "Unrelated",
+   "addr": 5376,
+   "kind": "OTHER"
+  }
+ ],
+ "meta": {
+  "decompiled_c": {
+   "SeedScan": "void SeedScan(wchar_t *path) { DWORD a = GetFileAttributesW(path); if (a & FILE_ATTRIBUTE_REPARSE_POINT) return; HANDLE h = CreateFileW(path, 1, 2, 0, 3, 0, 0); ReadFile(h, buf, 64, pn, 0); DeleteFileW(path); }",
+   "ScanThenPurge": "void ScanThenPurge(wchar_t *path) { HANDLE h = CreateFileW(path, 1, 2, 0, 3, 0, 0); ReadFile(h, buf, 64, pn, 0); DeleteFileW(path); }",
+   "QuarantineMove": "void QuarantineMove(wchar_t *found, wchar_t *store) { MoveFileExW(found, store, 2); }",
+   "HardenedQuarantine": "void HardenedQuarantine(wchar_t *found, wchar_t *store) { DWORD a = GetFileAttributesW(found); if (a & FILE_ATTRIBUTE_REPARSE_POINT) return; MoveFileExW(found, store, 2); }",
+   "Unrelated": "void Unrelated(unsigned value) { state = value; }"
+  }
+ }
+}

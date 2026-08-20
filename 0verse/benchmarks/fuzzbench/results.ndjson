@@ -1,0 +1,6 @@
+{"schema_version": "1.0", "target": "ungated", "lane": "0verse", "crash_found": true, "confirmed_pov": true, "time_to_crash_s": 0.76, "budget_s": 60, "execs": 453, "execs_per_sec": 0.0, "note": "confirmed 1 PoV(s)"}
+{"schema_version": "1.0", "target": "ungated", "lane": "baseline", "crash_found": true, "confirmed_pov": true, "time_to_crash_s": 0.52, "budget_s": 60, "execs": 568, "execs_per_sec": 0.0, "note": "confirmed 1 PoV(s)"}
+{"schema_version": "1.0", "target": "magic_gated", "lane": "0verse", "crash_found": true, "confirmed_pov": true, "time_to_crash_s": 0.78, "budget_s": 60, "execs": 7472, "execs_per_sec": 0.0, "note": "confirmed 1 PoV(s)"}
+{"schema_version": "1.0", "target": "magic_gated", "lane": "baseline", "crash_found": false, "confirmed_pov": false, "time_to_crash_s": null, "budget_s": 60, "execs": 2024675, "execs_per_sec": 0.0, "note": "no crash in 60s (instrumented)"}
+{"schema_version": "1.0", "target": "nested_gated", "lane": "0verse", "crash_found": true, "confirmed_pov": true, "time_to_crash_s": 0.77, "budget_s": 60, "execs": 3548, "execs_per_sec": 0.0, "note": "confirmed 1 PoV(s)"}
+{"schema_version": "1.0", "target": "nested_gated", "lane": "baseline", "crash_found": false, "confirmed_pov": false, "time_to_crash_s": null, "budget_s": 60, "execs": 1993118, "execs_per_sec": 0.0, "note": "no crash in 60s (instrumented)"}

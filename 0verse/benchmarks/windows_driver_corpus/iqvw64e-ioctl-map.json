@@ -1,0 +1,59 @@
+{
+  "schema_version": "0verse.driver-ioctl-map/v1",
+  "driver": "iqvw64e.sys",
+  "sha256": "4429f32db1cc70567919d7d47b844a91cf1329a6cd116f582305f3b7b60cd60b",
+  "source": "static decompile (r2 6.1.6) of the CAS artifact, M0 oracle bring-up; r2 virtual addresses include the PE image base 0x10000 and are normalized below to module-relative RVAs",
+  "device": {
+    "nt_path": "\\Device\\Nal",
+    "symlinks": ["\\??\\Nal", "\\DosDevices\\Nal"],
+    "win32_open_path": "\\\\.\\Nal",
+    "creation": "IoCreateDevice + IoCreateSymbolicLink, no SDDL (world-accessible; manifest pre-filter verdict)"
+  },
+  "ioctl_gate": {
+    "handler_rva": "0x1170 region (MJ14 dispatch tail; analysis VA 0x11170)",
+    "accepted_codes": {
+      "0x80862007": "sub-dispatcher RVA 0x13c0 (analysis fcn.000113c0; 59-case command switch on in[0x00])",
+      "0x8086200b": "RVA 0x1a60 (analysis fcn.00011a60)",
+      "0x8086200f": "RVA 0x1330 (analysis fcn.00011330)",
+      "0x80862013": "RVA 0x3fa0 (analysis fcn.00013fa0)"
+    },
+    "decode_0x80862007": {
+      "device_type": "0x8086 (vendor)",
+      "function": "0x801",
+      "access": "FILE_ANY_ACCESS (0)",
+      "method": "METHOD_NEITHER (3) — raw user pointer read AND written by the driver"
+    }
+  },
+  "sub_dispatch": {
+    "input_struct": "user buffer (Type3InputBuffer); qword[0x00] = command id 1..59; results written back into the SAME buffer (e.g. [0x10] = status dword)",
+    "switch": "jmp table at RVA 0x1400 (analysis VA 0x11400), dwords at RVA 0x1968",
+    "notable_cases": {
+      "1,2,3,7,8,9": "port I/O leaves at RVAs 0x1c20/0x1c30/0x1c40/0x1c50/0x1c60/0x1c85 (in/out dx) — class-5",
+      "25": "RVA 0x2ac0 (analysis fcn.00012ac0) — second MmMapIoSpace caller — class-1",
+      "55": "RVA 0x2520 (analysis fcn.00012520) — MmMapLockedPagesSpecifyCache caller — class-2",
+      "57": "NalMmapAddressEx at RVA 0x29c0 (analysis fcn.000129c0) — MmMapIoSpace arbitrary physical map — class-1 (CVE-2015-2291)",
+      "58": "RVA 0x2220 (analysis fcn.00012220) — NalUnmapAddressEx (companion unmap)"
+    }
+  },
+  "case_57_nalmmap": {
+    "input_layout": {
+      "0x00": "qword = 57",
+      "0x18": "qword out-slot: receives mapped VA (kernel VA when 0x30==0, else user VA)",
+      "0x20": "qword physical address (attacker-controlled)",
+      "0x28": "dword length (attacker-controlled; 0 rejected)",
+      "0x30": "qword map-to-user flag/dest (0 = return kernel VA)"
+    },
+    "primitive": "MmMapIoSpace(phys=in[0x20], len=dword in[0x28], MmNonCached) at RVA 0x2a14 (analysis VA 0x12a14); returned VA stored to in[0x18]",
+    "error_value": "in[0x10] = 0xc86a8004 on rejection"
+  },
+  "witness_points": {
+    "operands_bp": {"rva": "0x2a14", "capture": "rcx=physical address, rdx=length"},
+    "readback_bp": {"rva": "0x2a1a", "capture": "rax=mapped kernel VA; dq /p <phys> vs dq rax must match"}
+  },
+  "control_semantics": {
+    "cmd_out_of_range": "default case returns error, no MmMapIoSpace call, no bp hit",
+    "len_zero": "rejected with in[0x10]=0xc86a8004 before the MmMapIoSpace call, no bp hit"
+  },
+  "lane": "witness (class-1 physmap does not bugcheck deterministically); crash-lane positive control is myfault64.sys (Sysinternals NotMyFault, signed) under Verifier Special Pool",
+  "honest_note": "no attacker-length copy sink exists in this driver (no memcpy import, no rep-movs); CVE-2015-2291's memory-unsafe primitive IS the physmap, so the originally-planned crash-lane control on iqvw64e is replaced by the witness lane + a synthetic crash-lane control"
+}

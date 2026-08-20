@@ -1,0 +1,67 @@
+name: "0verse: Main"
+
+# 0verse is the binary-native research engine exported into this repository
+# under 0verse/ (ADR-094). Consistent with the public PR policy, contributor
+# code executes only after review: this workflow runs on pushes to main and on
+# same-repository pull requests, never on fork checkouts.
+
+on:
+  push:
+    branches: [main]
+    paths: ["0verse/**", ".github/workflows/0verse.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["0verse/**", ".github/workflows/0verse.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 0verse-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    # Same-repo PRs only. Fork checkouts are never executed; the public PR
+    # policy workflow (public-pr.yml) is the only fork-facing job.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: 0verse
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        run: pip install uv==0.11.2
+      - name: Sync locked development environment
+        run: uv sync --frozen --extra dev --python 3.11
+      - name: Ruff
+        run: uv run --frozen ruff check src tests
+      - name: Mypy (strict)
+        run: uv run --frozen mypy
+      - name: Pytest
+        run: |
+          mkdir -p test-results
+          uv run --frozen pytest -q -ra \
+            --junitxml=test-results/pytest.xml \
+            --basetemp="$RUNNER_TEMP/pytest-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+      - name: Build package artifacts
+        run: uv build --out-dir dist
+      - name: Smoke-test installed wheel
+        run: |
+          uv venv "$RUNNER_TEMP/package-smoke"
+          uv pip install \
+            --python "$RUNNER_TEMP/package-smoke/bin/python" \
+            --no-deps \
+            dist/*.whl
+          "$RUNNER_TEMP/package-smoke/bin/0verse" --help

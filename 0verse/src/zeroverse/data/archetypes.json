@@ -1,0 +1,1696 @@
+{
+  "schema": "0verse.archetypes/v1",
+  "provenance": "Consolidated from three validated 0sec seed-research catalogs (kernel/userland/firmware, 2023-2025 CVE-grounded). GENERALIZED PATTERNS ONLY — no specific exploit code. The kernel 'weaponization_note' field is intentionally excluded. 'grounding' lists public CVE/advisory identifiers as witnesses, not the pattern itself. See docs/SEEDS.md.",
+  "counts": {
+    "total": 90,
+    "implemented": 71,
+    "hypothesis_or_unmapped": 19
+  },
+  "archetypes": [
+    {
+      "id": "NF-01",
+      "name": "nf_tables set-element deferred-free UAF (GC / async destroy / commit race)",
+      "cwe": "CWE-416",
+      "subsystem": "net/netfilter (nf_tables)",
+      "pattern": "A set element / set backend (pipapo, rbtree, hash) is unlinked in one phase and freed by a deferred path (GC worker, call_rcu, transaction commit/abort) while another path still holds or re-walks the reference. Split unlink-vs-reclaim phases, GC-on-insert, or duplicate-element-pending-GC create a window where the freed element is reused.",
+      "detection_signature": "In a stripped nf_tables-related .ko the imported-symbol relocations survive insmod resolution: look for call_rcu / kfree_rcu / queue_delayed_work / nft_* set-ops callbacks alongside kfree of an object that is also reachable from an rcu/list walk. Decompiled shape: object unlinked from a list, then freed in a *different* function/workqueue callback than the one that still iterates it. Maps to 0verse lens L8 (deferred-free-uaf) + L12 (list-unlink). HARD in pure binary: requires cross-callback lifetime reasoning; emit as hypothesis, not a finding.",
+      "grounding": [
+        "CVE-2024-26808",
+        "CVE-2023-3390",
+        "CVE-2024-26925",
+        "nft_set_pipapo split-gc / nft_set_rbtree gc-on-insert fixes"
+      ],
+      "confirmable": "NO on bare binary (no live oracle for a deferred-free race). Confirmation belongs to the bench kernel-verify lane: build/boot the module under KASAN and replay the GC/commit sequence.",
+      "domain": "kernel",
+      "uid": "kernel/NF-01",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "NF-02",
+      "name": "nf_tables object/expr destroy-path UAF & error-path double-free",
+      "cwe": "CWE-416 / CWE-415",
+      "subsystem": "net/netfilter (nf_tables)",
+      "pattern": "Stateful object or expression (nft_tunnel, nft_ct timeout, nft_object, anonymous set bound in same transaction) is destroyed/freed on an error or abort path while another reference (binding, chain, transaction log) still points to it -> UAF, or it is freed twice across error + cleanup.",
+      "detection_signature": "Relocations to nf_tables core (nft_obj_*, nf_tables_*destroy, module_put) survive. Decompiled shape: an init/clone function with an error label that kfree/destroys an object that the caller also frees on failure; or a _destroy callback freeing an object that a sibling _deactivate already released. Maps to L5 (refcount-asymmetry) + L6 (error-path-doublefree). MEDIUM in binary when both free sites are in the same module and one error edge is clearly shared.",
+      "grounding": [
+        "CVE-2023-32233",
+        "CVE-2024-1086",
+        "nft_tunnel UAF-on-destroy",
+        "nft_ct timeout-object UAF"
+      ],
+      "confirmable": "NO on bare binary; double-free on a shared error edge is the most statically-plausible sub-case but still needs the kernel-verify lane to prove reachability.",
+      "domain": "kernel",
+      "uid": "kernel/NF-02",
+      "engine_lens": "seed:linux-ko:errpath-double-free",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "NF-03",
+      "name": "Netlink attribute parsing OOB / missing NLA length & range validation",
+      "cwe": "CWE-787 / CWE-125",
+      "subsystem": "net/netfilter, net/* (netlink config plane)",
+      "pattern": "Attacker-supplied netlink attribute length/index/range is trusted without policy bounds: nla_parse without a min/max policy, a user range with start>end, or an option/blob length that overruns a fixed table -> heap OOB read or write at config time.",
+      "detection_signature": "STRONG binary signal: relocations to nla_parse / nla_parse_nested / __nla_parse / nla_get_u32 / nla_memcpy / nla_put are preserved. Decompiled shape: value loaded via nla_get_*() then used directly as memcpy length / array index / loop bound with no preceding compare against a constant cap. Maps to L1 (user-len-copy) + L3 (selector-index). HIGH detectability even stripped, because the nla_* import names cannot be stripped (module loader resolves by name).",
+      "grounding": [
+        "CVE-2024-53141 (ipset missing range check)",
+        "CVE-2024-26642",
+        "geneve_opt length integer overflow",
+        "nft_set_pipapo lookup-table alloc overflow"
+      ],
+      "confirmable": "NO PoV on bare binary, but the bounds-missing shape is one of the most confirmable-by-inspection kernel patterns; verify in the kernel-verify lane with a crafted netlink message.",
+      "domain": "kernel",
+      "uid": "kernel/NF-03",
+      "engine_lens": "seed:linux-ko:netlink-oob",
+      "route": "kernel-static"
+    },
+    {
+      "id": "NF-04",
+      "name": "nf_tables register store/load type confusion & OOB register index",
+      "cwe": "CWE-843 / CWE-787",
+      "subsystem": "net/netfilter (nf_tables VM)",
+      "pattern": "nft expressions read/write a virtual register file (nft_regs). A missing nft_validate_register_store/load check, wrong register width, or unchecked dreg/sreg index lets an expression write past the register array or reinterpret a register's type -> OOB into adjacent kernel state during rule eval.",
+      "detection_signature": "Domain-specific lens L11 (register-machine index OOB). Relocations to nft_validate_register_* survive; ABSENCE of a validate call before a register write, or a register index not masked to NFT_REG_SIZE, is the tell. MEDIUM-HARD: needs recognizing the nft register ABI in the decompile; easier with nft symbol hints.",
+      "grounding": [
+        "CVE-2023-4015",
+        "CVE-2023-4147",
+        "CVE-2023-5717"
+      ],
+      "confirmable": "NO on bare binary; kernel-verify lane with a rule that triggers the bad register access.",
+      "domain": "kernel",
+      "uid": "kernel/NF-04",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "NF-05",
+      "name": "conntrack / ctnetlink dump & refcount-underflow UAF, namespace-vs-GC race",
+      "cwe": "CWE-416 / CWE-911",
+      "subsystem": "net/netfilter (conntrack, ipset)",
+      "pattern": "Dump or destroy of a conntrack/expectation/ipset object races a GC worker or netns teardown; a refcount is underflowed (put without get, or freed while a dump cursor holds it) -> UAF on a long-lived networking object.",
+      "detection_signature": "Relocations to refcount_dec_and_test / nf_ct_put / atomic_dec preserved. Shape: a dump callback that nf_ct_get()s but releases on an early-return error path twice, or a put not paired with a get. Maps to L5 (refcount-asymmetry) + L8. HARD statically (concurrency).",
+      "grounding": [
+        "ctnetlink_dump_exp_ct UAF",
+        "netfilter get_info() UAF",
+        "ipset list:set namespace-cleanup vs GC race"
+      ],
+      "confirmable": "NO; kernel-verify lane under netns churn + KASAN.",
+      "domain": "kernel",
+      "uid": "kernel/NF-05",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-01",
+      "name": "qdisc class refcount/UAF on graft/change/destroy error path",
+      "cwe": "CWE-416",
+      "subsystem": "net/sched (qdisc)",
+      "pattern": "A qdisc class (qfq, hfsc, drr, htb, cbs) is grafted/changed/deleted; an error or reset path frees or unlinks a class while the parent qdisc, an active filter, or a child qdisc still references it (e.g. child qdisc not reset before parent free). Classic refcount-on-error-path -> UAF.",
+      "detection_signature": "Relocations to qdisc_put / qdisc_destroy / qdisc_reset / tcf_block_put survive. Shape: a *_change/*_graft function whose error label calls qdisc_destroy on an object still linked into a class hash, or a *_destroy that frees children in wrong order. Maps to L5 + L12. MEDIUM: order-of-free bugs are partly visible in the decompile.",
+      "grounding": [
+        "CVE-2023-3611 (qfq)",
+        "CVE-2023-31436 (qfq)",
+        "CVE-2025-21700 (sch_cbs child qdisc reset)",
+        "CVE-2024-36972"
+      ],
+      "confirmable": "NO on bare binary; kernel-verify lane with tc class manipulation + KASAN.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-01",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-02",
+      "name": "tc classifier (cls_*) filter UAF on delete/replace",
+      "cwe": "CWE-416",
+      "subsystem": "net/sched (cls_u32, cls_route, cls_fw, cls_tcindex, cls_flower)",
+      "pattern": "Filter delete/replace frees a filter node or hashtable while a packet-path or another filter still references it; RCU grace handling or refcount on the filter is wrong -> UAF in classify path.",
+      "detection_signature": "Relocations to tcf_exts_*, call_rcu, kfree_rcu, tcf_unbind_filter preserved. Shape: filter freed in a delete callback while still on an rcu-protected list reachable from classify. Maps to L8 + L5. HARD (RCU lifetime).",
+      "grounding": [
+        "CVE-2023-4206/4207/4208 (cls_route/fw/u32)",
+        "CVE-2023-3776 / CVE-2023-3777",
+        "CVE-2024-1085"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-02",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-03",
+      "name": "qdisc enqueue recursion / list corruption / stack overflow",
+      "cwe": "CWE-674 / CWE-787",
+      "subsystem": "net/sched",
+      "pattern": "Mis-validated qdisc topology lets enqueue/dequeue recurse unboundedly or corrupt the gso/backlog list (e.g. act_mirred blockcast recursion bypass -> stack overflow; netem/peek re-entry).",
+      "detection_signature": "Shape: an enqueue path that re-invokes another qdisc's enqueue without a depth guard, or list_add/list_del on a packet list without lock. Maps to L12. HARD-MEDIUM.",
+      "grounding": [
+        "act_mirred blockcast recursion -> stack overflow",
+        "CVE-2025-21701/21702 (qdisc backlog)",
+        "netem"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-03",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SCH-04",
+      "name": "qdisc/class dump uninitialized-field info leak (data-race or padding)",
+      "cwe": "CWE-200 / CWE-908",
+      "subsystem": "net/sched (dump_class_stats, dump_stats)",
+      "pattern": "*_dump_stats / *_dump_class_stats copies a stats struct to userspace via nla_put while fields are read without locking (data-race) or struct padding is uninitialized -> kernel pointer/heap-content leak.",
+      "detection_signature": "STRONG binary signal: relocations to nla_put / nla_put_64bit / memset preserved. Shape: a struct filled field-by-field then nla_put'd WITHOUT a preceding memset(0) of the whole struct, or read of shared counters without READ_ONCE. Maps to L7 (uninit-copy-to-user). MEDIUM detectability (missing memset before nla_put is visible).",
+      "grounding": [
+        "sch_cake/htb/hfsc/sfq/fq_codel/pie dump-stats data-race annotations (mass fix wave)"
+      ],
+      "confirmable": "NO PoV, but missing-memset-before-copy is statically inspectable; kernel-verify lane confirms leak content.",
+      "domain": "kernel",
+      "uid": "kernel/SCH-04",
+      "engine_lens": "seed:linux-ko:uninit-infoleak",
+      "route": "kernel-static"
+    },
+    {
+      "id": "IOU-01",
+      "name": "io_uring registered buffer/file premature-free UAF",
+      "cwe": "CWE-416",
+      "subsystem": "io_uring",
+      "pattern": "A registered buffer, fixed file, or provided-buffer ring (pbuf_ring) is freed/unregistered while an in-flight request or mmap still references it; missing refcount or wrong unregister ordering -> page/object UAF.",
+      "detection_signature": "Relocations to io_* core, percpu_ref_*, fput, folio_put preserved. HARD: io_uring is in-tree core (not a discrete .ko), so this archetype is mostly relevant to source/dynamic; in a vendor kernel image the io_uring code is a large static blob. Maps to L5 + L8.",
+      "grounding": [
+        "CVE-2024-0582 (registered buffer leak -> page UAF -> Dirty Pipe-style write)",
+        "CVE-2023-2598",
+        "CVE-2022-2602"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/IOU-01",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "IOU-02",
+      "name": "io_uring async/task_work request reuse race",
+      "cwe": "CWE-416 / CWE-362",
+      "subsystem": "io_uring",
+      "pattern": "A request object is completed/freed and recycled while a concurrent task_work, poll, or cancel path still operates on it (req->task, req->file, linked SQE) -> UAF / type confusion across operations.",
+      "detection_signature": "HARD statically (concurrency, in-tree). Shape: req freed on one completion path while another path dereferences it. Maps to L9 (race) + L5.",
+      "grounding": [
+        "CVE-2024-41009",
+        "CVE-2023-21400",
+        "CVE-2026-23274 / CVE-2026-23351 (io_uring memory-safety, kernelCTF)"
+      ],
+      "confirmable": "NO; kernel-verify lane with stress + KASAN.",
+      "domain": "kernel",
+      "uid": "kernel/IOU-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "BPF-01",
+      "name": "eBPF verifier register-bounds / pruning miscalculation -> OOB R/W",
+      "cwe": "CWE-125 / CWE-787 / CWE-682",
+      "subsystem": "bpf (verifier)",
+      "pattern": "The verifier mis-tracks a register's value/bounds (ALU op, sign-extension, state pruning, or scalar/pointer confusion) so a program that PASSES verification performs an OOB load/store at runtime.",
+      "detection_signature": "VERY HARD in binary: the bug is in verifier *logic*, semantic, in-tree. Not a stripped-.ko pattern at all. Maps to L11 conceptually but realistically needs source + a verifier differential/fuzzer. Flag as out-of-scope for bare-binary detection.",
+      "grounding": [
+        "CVE-2023-2163 (incorrect pruning)",
+        "CVE-2022-23222",
+        "CVE-2021-3490"
+      ],
+      "confirmable": "NO; needs source + dynamic verifier testing.",
+      "domain": "kernel",
+      "uid": "kernel/BPF-01",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "BPF-02",
+      "name": "bpf map / ringbuf / helper refcount & value-copy bug",
+      "cwe": "CWE-416 / CWE-190",
+      "subsystem": "bpf (maps, helpers)",
+      "pattern": "A map element, ringbuf record, or helper-returned pointer is freed or sized wrong (off-by-one, refcount on map value across program exit) -> UAF or OOB on the map value object.",
+      "detection_signature": "HARD-MEDIUM, in-tree. Shape visible only if a discrete helper does kfree/refcount on a map value. Maps to L5.",
+      "grounding": [
+        "CVE-2024-41010",
+        "bpf ringbuf reservation bugs"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/BPF-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "SOCK-01",
+      "name": "socket connect/release lifetime race UAF (sk vs signal/close)",
+      "cwe": "CWE-416 / CWE-362",
+      "subsystem": "net (af_vsock, af_unix, af_* core)",
+      "pattern": "A socket struct (or sk_buff queued on it) is freed by close/release/signal-interrupted-connect while another syscall path still uses it; transport assignment or GC ordering is racy.",
+      "detection_signature": "Relocations to sock_put / __sk_destruct / skb_free / kfree_skb / lock_sock survive. HARD (concurrency). Shape: sk dereferenced after a lock_sock-released window, or transport freed on signal path. Maps to L9 + L5.",
+      "grounding": [
+        "CVE-2024-50264 (af_vsock connect-vs-signal UAF)",
+        "af_unix gc UAF family",
+        "CVE-2025-21756 (vsock)"
+      ],
+      "confirmable": "NO; kernel-verify lane. (bench has kernel-hack-drill-style harnesses for exactly this class.)",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-01",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SOCK-02",
+      "name": "sockmap / sk_psock / kcm recvmsg-sendmsg sk_buff sharing UAF",
+      "cwe": "CWE-416",
+      "subsystem": "net (sockmap, kcm, sk_msg, tls)",
+      "pattern": "An skb/sk_msg is shared between a psock backlog and the receive path; partial recv, MSG_PEEK, redirect, or unattach frees or re-queues the buffer while still referenced -> UAF.",
+      "detection_signature": "Relocations to sk_psock_*, skb_clone, kfree_skb, sk_msg_* survive. HARD (concurrency + queue lifetime). Shape: skb freed in one queue path while linked in another. Maps to L8 + L12.",
+      "grounding": [
+        "kcm_unattach() race (baseline on bench /root/linux-6.1)",
+        "sk_msg SOCKMAP UDP recvmsg UAF (n-day)",
+        "kcm_write_msgs UAF"
+      ],
+      "confirmable": "NO; kernel-verify lane. bench has the kcm baseline + skmsg-lpe harness already.",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-02",
+      "engine_lens": "seed:linux-ko:deferred-free-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "SOCK-03",
+      "name": "setsockopt/getsockopt optlen OOB / sockptr copy confusion",
+      "cwe": "CWE-125 / CWE-787",
+      "subsystem": "net (per-protocol setsockopt/getsockopt)",
+      "pattern": "optlen from userspace is trusted: copy_from_sockptr of attacker length into a fixed buffer, or getsockopt writing more than the user buffer, or a signed/unsigned optlen confusion -> stack/heap OOB.",
+      "detection_signature": "STRONG: relocations to copy_from_sockptr / copy_to_sockptr / copy_from_user / put_user survive. Shape: copy sized by a user-provided optlen with no clamp to sizeof(local). Maps to L1. HIGH detectability.",
+      "grounding": [
+        "CVE-2024-26642 (nft)",
+        "various per-protocol setsockopt OOB",
+        "CVE-2023-... do_ip_vs_get_ctl integer overflow"
+      ],
+      "confirmable": "NO PoV, but bounded-copy-missing is statically inspectable; kernel-verify lane confirms.",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-03",
+      "engine_lens": "seed:linux-ko:copy-from-user",
+      "route": "kernel-static"
+    },
+    {
+      "id": "SOCK-04",
+      "name": "minor-protocol list/queue UAF & race (CAN bcm, n_gsm, tipc, nfc, bluetooth)",
+      "cwe": "CWE-416 / CWE-362",
+      "subsystem": "net (drivers/net, net/tipc, net/nfc, net/bluetooth, net/can)",
+      "pattern": "Less-audited protocols mismanage a per-socket list/timer/fragment-reassembly buffer on teardown or concurrent op -> UAF / double-free / OOB. These are reachable by unprivileged users and historically under-fuzzed.",
+      "detection_signature": "Relocations to del_timer / hrtimer_cancel / list_del / kfree_skb / call_rcu survive. Shape: timer or list entry freed but not removed, or reassembly buffer reused. Maps to L5/L8/L12. MEDIUM-HARD.",
+      "grounding": [
+        "tipc / nfc-llcp / nfc-digital / bluetooth fixes (0sec-disclosed, merged)",
+        "CAN bcm UAF family",
+        "n_gsm UAF"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/SOCK-04",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "FS-01",
+      "name": "On-disk / image metadata parsing OOB (untrusted filesystem mount)",
+      "cwe": "CWE-125 / CWE-787 / CWE-190",
+      "subsystem": "fs (ext4, ntfs3, hfs/hfsplus, udf, f2fs, squashfs)",
+      "pattern": "A filesystem driver trusts on-disk length/offset/count fields when parsing superblock/inode/dirent metadata; a crafted image overruns a buffer or integer-overflows an allocation. Reachable via USB-stick/loopback mount or (in some distros) unprivileged automount.",
+      "detection_signature": "STRONG for the fs .ko: relocations to sb_bread / kmalloc / memcpy / le16_to_cpu / le32_to_cpu survive. Shape: a length read from buffer_head data via le*_to_cpu used as memcpy size / loop bound / kmalloc size without sanity bound. Maps to L1 + L2. HIGH detectability in a fs module.",
+      "grounding": [
+        "ntfs3 OOB family",
+        "hfs/hfsplus OOB (CVE-2025-... mount)",
+        "udf / f2fs image OOB",
+        "ext4 metadata OOB"
+      ],
+      "confirmable": "PARTIAL: a corpus of crafted images can be replayed in the kernel-verify lane (mount under KASAN) -- one of the more PoV-able kernel classes. Bare-binary stays hypothesis.",
+      "domain": "kernel",
+      "uid": "kernel/FS-01",
+      "engine_lens": "seed:linux-ko:copy-from-user",
+      "route": "kernel-static"
+    },
+    {
+      "id": "FS-02",
+      "name": "overlayfs / FUSE copy-up credential & permission confusion",
+      "cwe": "CWE-281 / CWE-862",
+      "subsystem": "fs (overlayfs, fuse)",
+      "pattern": "Copy-up or revalidation runs with the wrong cred (mounter vs caller), or a check is performed on the lower and use on the upper (TOCTOU), letting an unprivileged user gain access/setuid semantics they shouldn't.",
+      "detection_signature": "Relocations to override_creds / revert_creds / prepare_creds / inode_permission survive. Shape: an operation bracketed by override_creds(mounter_cred) that performs a user-influenced path op. Maps to L4 (missing/wrong cap-gate) + L9. MEDIUM.",
+      "grounding": [
+        "overlayfs copy-up cred bugs (CVE-2023-0386 family)",
+        "FUSE writeback / notify_inval races"
+      ],
+      "confirmable": "NO PoV on bare binary; kernel-verify lane with a layered mount.",
+      "domain": "kernel",
+      "uid": "kernel/FS-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "FS-03",
+      "name": "VFS/ioctl path TOCTOU & symlink/mount-point race",
+      "cwe": "CWE-367",
+      "subsystem": "fs (vfs, per-fs ioctl)",
+      "pattern": "A filesystem checks a path/inode property then acts on it after a window in which the attacker swaps a symlink/mount/file (double-fetch of a user path, or re-resolved dentry).",
+      "detection_signature": "HARD: races are not visible as a single decompiled shape. Look for a user-pointer read twice (double-fetch) -- copy_from_user of the same uaddr in a check and a use. Maps to L9. LOW-MEDIUM detectability (double-fetch is the only statically visible sub-case).",
+      "grounding": [
+        "various fs double-fetch CVEs",
+        "fscrypt / fsverity setup races"
+      ],
+      "confirmable": "NO; kernel-verify lane with a racing thread.",
+      "domain": "kernel",
+      "uid": "kernel/FS-03",
+      "engine_lens": "seed:linux-ko:double-fetch",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "MM-01",
+      "name": "pipe_buffer / page-cache uninitialized-flag write (Dirty Pipe family)",
+      "cwe": "CWE-665 / CWE-787",
+      "subsystem": "mm / fs (pipe, splice, page cache)",
+      "pattern": "A pipe_buffer's flags (PIPE_BUF_FLAG_CAN_MERGE) or a page-cache page state is left from a prior use, letting a splice/write merge into a read-only or shared page -> write to data the caller shouldn't write.",
+      "detection_signature": "HARD in binary (in-tree mm, subtle state init). Shape: a struct/flag field reused without reset before a merge/write decision. Maps to L7-adjacent (uninit-state). LOW detectability.",
+      "grounding": [
+        "CVE-2022-0847 (Dirty Pipe)",
+        "splice / page-cache write families"
+      ],
+      "confirmable": "NO; but the *exploitation* of an unrelated page-UAF INTO this primitive is a known recipe.",
+      "domain": "kernel",
+      "uid": "kernel/MM-01",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "MM-02",
+      "name": "COW / page-table / hugepage race write (Dirty COW / Dirty Pagetable)",
+      "cwe": "CWE-362 / CWE-787",
+      "subsystem": "mm (COW, THP, page tables)",
+      "pattern": "A race in copy-on-write fault handling or page-table teardown lets a write land in a shared/read-only page or lets a freed page be reused as a page-table -> arbitrary physical write.",
+      "detection_signature": "VERY HARD (core mm, concurrency). Out-of-scope for bare-binary; listed for completeness as an exploitation TARGET primitive.",
+      "grounding": [
+        "CVE-2016-5195 (Dirty COW)",
+        "Huge Dirty COW",
+        "Dirty Pagetable technique"
+      ],
+      "confirmable": "NO.",
+      "domain": "kernel",
+      "uid": "kernel/MM-02",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "MM-03",
+      "name": "uninitialized kernel allocation copied to user (heap/stack infoleak)",
+      "cwe": "CWE-908 / CWE-200",
+      "subsystem": "mm / drivers / net (any copy_to_user path)",
+      "pattern": "kmalloc (not __GFP_ZERO) or an on-stack struct with padding is partially filled then copied to userspace -> leak of prior heap contents / kernel pointers.",
+      "detection_signature": "STRONG generic signal: relocations to copy_to_user / put_user / nla_put paired with kmalloc (no kzalloc) and NO memset of the buffer. Shape: alloc -> set some fields -> copy_to_user(size==full struct). Maps to L7. HIGH detectability across ALL modules; the cheapest, most common find.",
+      "grounding": [
+        "countless driver/net infoleaks",
+        "struct padding leaks",
+        "compat ioctl leaks"
+      ],
+      "confirmable": "PARTIAL: the missing-zero shape is statically strong; kernel-verify lane confirms which bytes leak.",
+      "domain": "kernel",
+      "uid": "kernel/MM-03",
+      "engine_lens": "seed:linux-ko:uninit-infoleak",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-01",
+      "name": "ioctl dispatch: unchecked user selector index into handler/array",
+      "cwe": "CWE-129 / CWE-787",
+      "subsystem": "drivers/* (char, misc, GPU/DRM, media, platform)",
+      "pattern": "An ioctl cmd or a user-supplied index selects a handler from a function-pointer table or reads/writes an array element without bounding the index against the table size -> OOB call or OOB array access.",
+      "detection_signature": "STRONG and the SINGLE most binary-detectable kernel class: in a stripped .ko, an .unlocked_ioctl/.ioctl fop is a switch or a `table[arg]` indirect call. Relocations to copy_from_user (to read the arg struct) survive. Shape: value from user used as index/offset with no `cmp idx, CONST; ja` guard before an indexed load/indirect-call. Maps to L3 (ioctl-selector-index). HIGH detectability even fully stripped -- the fops struct and the indexed indirect call are visible.",
+      "grounding": [
+        "GPU/DRM ioctl index bugs (Mali/Adreno/NVIDIA)",
+        "media/v4l2 ioctl OOB",
+        "misc-driver command-table OOB"
+      ],
+      "confirmable": "PARTIAL: reachability is clear from the fops table; a PoV needs the device node + kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-01",
+      "engine_lens": "seed:linux-ko:selector-index",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-02",
+      "name": "ioctl/write copy_from_user with attacker-controlled length into fixed buffer",
+      "cwe": "CWE-120 / CWE-121 / CWE-787",
+      "subsystem": "drivers/* (and any read/write/ioctl fop)",
+      "pattern": "copy_from_user(dst, uptr, len) where len comes from the user (ioctl arg field, write() count, header length) and dst is a fixed-size stack or heap buffer with no clamp -> overflow.",
+      "detection_signature": "STRONG: relocations to copy_from_user / _copy_from_user / memdup_user / strncpy_from_user survive insmod. Shape: the 3rd arg to copy_from_user traces back to a user-loaded value, and dst is a fixed stack slot (sub rsp,N) or a fixed kmalloc(CONST). Absence of a `cmp len, CONST` clamp is the tell. Maps to L1 (user-len-copy). HIGH detectability stripped.",
+      "grounding": [
+        "driver write()/ioctl stack overflows (very common)",
+        "vendor blob copy_from_user overflows",
+        "CVE families across char drivers"
+      ],
+      "confirmable": "PARTIAL: shape is statically strong; PoV via device node in kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-02",
+      "engine_lens": "seed:linux-ko:copy-from-user",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-03",
+      "name": "allocation-size integer overflow (count * size) from user input",
+      "cwe": "CWE-190 -> CWE-787",
+      "subsystem": "drivers/* , net, fs",
+      "pattern": "kmalloc/kvmalloc/vmalloc/kcalloc size computed as a*b or a+b from user-controlled count and element size; the multiply overflows to a small allocation, then a loop writes `count` elements -> heap overflow. Includes missing use of array_size()/struct_size()/check_mul_overflow.",
+      "detection_signature": "STRONG: relocations to kmalloc / kvmalloc / vmalloc / kmalloc_array preserved. Shape: an `imul`/`shl`/`add` of two non-constant (user-traced) operands feeding the size arg of an allocator, WITHOUT a preceding overflow check (no call to __builtin_mul_overflow inline / no compare). Maps to L2 (alloc-size-arith). HIGH detectability -- the arithmetic-before-alloc pattern is visible in the decompile.",
+      "grounding": [
+        "geneve_opt length overflow",
+        "do_ip_vs_get_ctl overflow",
+        "nft_set_pipapo lookup-table alloc overflow",
+        "ntfs/hfs image count overflows"
+      ],
+      "confirmable": "PARTIAL: static shape strong; kernel-verify lane confirms the undersize+overflow.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-03",
+      "engine_lens": "seed:linux-ko:kmalloc-overflow",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-04",
+      "name": "missing capable()/ns_capable() gate on a privileged operation",
+      "cwe": "CWE-862 / CWE-280",
+      "subsystem": "drivers/* , net, fs, platform/sysfs",
+      "pattern": "A privileged ioctl/sysfs-store/debugfs/write handler (firmware load, register poke, DMA setup, mode switch) lacks a capable(CAP_SYS_ADMIN)/ns_capable/perm check, so an unprivileged user reaches a powerful primitive directly.",
+      "detection_signature": "STRONG and high-value: in the .ko, the PRESENCE of a powerful sink (writel/iowrite, dma_alloc, request_firmware, copy_*_user to phys) on a path that has NO relocation to capable / ns_capable / capable_wrt_inode is the signal. Maps to L4 (missing-cap-gate). HIGH detectability: 0verse can diff `paths-to-sink` against `paths-through-capable`. Absence-of-a-call is exactly what survives stripping (the capable import would be there if used).",
+      "grounding": [
+        "numerous vendor driver missing-permission CVEs",
+        "debugfs/sysfs world-writable register pokes",
+        "GPU/perf-counter ioctls"
+      ],
+      "confirmable": "PARTIAL: the missing-check is statically strong; exploit value depends on the sink.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-04",
+      "engine_lens": "seed:linux-ko:missing-capable",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-05",
+      "name": "shared-object refcount underflow across fd/mmap (Binder, DRM, dma-buf)",
+      "cwe": "CWE-416 / CWE-911",
+      "subsystem": "drivers/* (android binder, DRM/GEM, dma-buf, ION)",
+      "pattern": "An object shared between processes via fd/handle/mmap has a refcount that can be under-incremented or double-decremented (handle table races, mmap close vs ioctl) -> UAF on a long-lived, sprayable driver object.",
+      "detection_signature": "Relocations to kref_get/kref_put / refcount_inc/refcount_dec_and_test / dma_buf_put / drm_gem_object_put survive. Shape: a put without a matching get on some path, or a handle freed while mmapped. Maps to L5 (refcount-asymmetry). MEDIUM (some imbalance visible; races need dynamic).",
+      "grounding": [
+        "Android Binder refcount UAFs (repeated ITW exploitation)",
+        "DRM/GEM handle UAFs",
+        "dma-buf/ION lifetime bugs"
+      ],
+      "confirmable": "NO; kernel-verify lane (or device emulation).",
+      "domain": "kernel",
+      "uid": "kernel/DRV-05",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "DRV-06",
+      "name": "double-free / use-after-free on driver probe/error/cleanup path",
+      "cwe": "CWE-415 / CWE-416",
+      "subsystem": "drivers/* , net, fs",
+      "pattern": "An init/probe/reset routine frees a resource on an error label that the caller (or a later cleanup) also frees, or frees-then-uses; tangled goto-error ladders are the classic source.",
+      "detection_signature": "MEDIUM: relocations to kfree / kvfree / free_irq / dma_free preserved. Shape: the same pointer passed to kfree on two reachable paths, or kfree followed by a deref of the same register. Maps to L6 (error-path-doublefree). MEDIUM detectability -- intra-function double-free is one of the few UAFs statically visible.",
+      "grounding": [
+        "probe-error double-free CVE families",
+        "module init/exit double-free"
+      ],
+      "confirmable": "PARTIAL: intra-function double-free is statically inspectable; cross-function needs the lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-06",
+      "engine_lens": "seed:linux-ko:errpath-double-free",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "DRV-07",
+      "name": "TOCTOU double-fetch of user pointer in ioctl",
+      "cwe": "CWE-367",
+      "subsystem": "drivers/* (ioctl with nested user pointers)",
+      "pattern": "An ioctl reads a length/count from the user struct, validates it, then copies again from the SAME user address (or a sub-pointer) which the attacker changes in between -> validated-then-larger copy -> overflow.",
+      "detection_signature": "MEDIUM-STRONG (rare among races): two copy_from_user calls reading the same uaddr, with a bound-check on the first value but the copy sized by a re-fetched value. Relocations to copy_from_user/get_user survive; the DOUBLE read of one uaddr is the static tell. Maps to L9 + L1. The most statically-detectable race sub-class.",
+      "grounding": [
+        "compat_ioctl double-fetch CVEs",
+        "driver header-length re-read bugs"
+      ],
+      "confirmable": "NO PoV without a racing thread; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-07",
+      "engine_lens": "seed:linux-ko:double-fetch",
+      "route": "kernel-static"
+    },
+    {
+      "id": "DRV-08",
+      "name": "DMA / mmap region with insufficient bounds -> arbitrary phys/IO access",
+      "cwe": "CWE-787 / CWE-822",
+      "subsystem": "drivers/* (dma, iommu-less mmap, /dev/mem-like nodes)",
+      "pattern": "A driver maps device/DMA memory to userspace (mmap fop) or programs a DMA descriptor using a user-supplied offset/size without bounding it to the allocated region -> user gets read/write to arbitrary physical or adjacent kernel memory.",
+      "detection_signature": "Relocations to remap_pfn_range / dma_alloc_coherent / io_remap_pfn_range / vm_iomap_memory survive. Shape: an mmap fop where vma->vm_pgoff (user-controlled) feeds the pfn without a range clamp, or a DMA addr/len from user. Maps to L1/L3. MEDIUM-HIGH (mmap fop + remap_pfn_range with unclamped pgoff is a clear shape).",
+      "grounding": [
+        "GPU/camera/video DMA mmap CVEs",
+        "vendor driver remap_pfn_range pgoff bugs"
+      ],
+      "confirmable": "NO PoV on bare binary; kernel-verify lane with the device.",
+      "domain": "kernel",
+      "uid": "kernel/DRV-08",
+      "engine_lens": "seed:linux-ko:mmap-pgoff",
+      "route": "kernel-static"
+    },
+    {
+      "id": "MISC-01",
+      "name": "keyring / key refcount UAF (request_key_auth, keyctl)",
+      "cwe": "CWE-416",
+      "subsystem": "security/keys",
+      "pattern": "A key or key_ref refcount is mishandled on an error/assoc path (request_key_auth UAF, key GC vs use) -> UAF on a key object reachable from an unprivileged keyctl call.",
+      "detection_signature": "Relocations to key_put / key_ref_put / refcount_dec survive. Shape: put-without-get or use-after-put on a key. Maps to L5 + L8. MEDIUM-HARD.",
+      "grounding": [
+        "request_key_auth UAF (contested, unpatched 6.12.93 per 0sec notes)",
+        "keyctl refcount CVEs"
+      ],
+      "confirmable": "NO; kernel-verify lane (bench has the keyctl harness).",
+      "domain": "kernel",
+      "uid": "kernel/MISC-01",
+      "engine_lens": "seed:linux-ko:refcount-uaf",
+      "route": "kernel-verify"
+    },
+    {
+      "id": "MISC-02",
+      "name": "SysV IPC / msg_msg OOB or UAF (bug-bearing OR reclaim object)",
+      "cwe": "CWE-787 / CWE-416",
+      "subsystem": "ipc (msg, shm, sem)",
+      "pattern": "An IPC object (msg_msg segment list, shm) is mis-sized or freed early. Note dual role: msg_msg is BOTH a recurring bug location AND the universal heap-spray/reclaim object used to exploit other UAFs.",
+      "detection_signature": "Relocations to kmalloc/kfree in ipc paths; msg_msg segment loop with a user-controlled msgsz feeding alloc. Maps to L2/L5. MEDIUM. (For 0verse, the higher value is recognizing msg_msg as the EXPLOIT PRIMITIVE that confirms many other UAFs in the verify lane.)",
+      "grounding": [
+        "msg_msg OOB CVEs",
+        "msg_msg as exploitation primitive across most UAF writeups"
+      ],
+      "confirmable": "NO; kernel-verify lane.",
+      "domain": "kernel",
+      "uid": "kernel/MISC-02",
+      "engine_lens": null,
+      "route": "kernel-verify"
+    },
+    {
+      "id": "MISC-03",
+      "name": "perf/ptrace/cred & namespace privilege confusion",
+      "cwe": "CWE-269 / CWE-863",
+      "subsystem": "kernel (cred, ptrace, user namespaces, perf)",
+      "pattern": "A privilege/capability check is performed against the wrong cred or namespace (init_user_ns vs current_user_ns), or a cred transition is mis-ordered, granting capabilities the caller shouldn't have. User-namespace reachability is what makes many of the above archetypes unprivileged.",
+      "detection_signature": "Relocations to ns_capable / capable / current_cred / make_kuid survive. Shape: capable() used where ns_capable(target_ns) is required, or a check against init_user_ns for a namespaced resource. Maps to L4. MEDIUM (requires knowing the right ns).",
+      "grounding": [
+        "user-namespace capability confusion CVEs",
+        "perf_event_open privilege bugs"
+      ],
+      "confirmable": "NO PoV on bare binary; semantic.",
+      "domain": "kernel",
+      "uid": "kernel/MISC-03",
+      "engine_lens": null,
+      "route": "not-binary-detectable"
+    },
+    {
+      "id": "OF-01",
+      "name": "Header length field used as copy/read size without validation",
+      "cwe": "CWE-787/CWE-122",
+      "lens": "overflow",
+      "pattern": "A length/size/count field is read straight out of an attacker-controlled file or packet header, then passed as the size argument to memcpy/memmove/read/strncpy into a buffer whose capacity was decided independently (fixed or from a different field). No 'len <= cap' check sits between the parse and the copy.",
+      "detection_signature": "Sink import: memcpy/memmove/__memcpy_chk/read/fread/recv. Decompiled shape: a value loaded from the parse cursor (ptr+const, or a struct field at a fixed offset just after a magic/tag compare) flows as arg3 of memcpy with no min/clamp in the dominator path. Slice: backward taint from memcpy.size to a file/socket read; lens fires when the source is attacker-reachable AND no comparison node (jle/jbe against the destination's allocation size) dominates the call. SHARPENING (overflow lens): add the 'size-operand provenance' check — flag when memcpy.size traces to a load, not a compile-time constant or a value the allocator was sized from; treat a clamp only as valid if it bounds against the SAME symbol used for the dest allocation.",
+      "grounding": [
+        "CVE-2023-4863 (libwebp VP8L Huffman table OOB write)",
+        "CVE-2023-44488 (libvpx VP8 frame heap overflow)",
+        "CVE-2023-52356 (libtiff heap overflow)",
+        "CVE-2024-25048 (IBM MQ buffer overflow)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: craft input with a length field larger than the real payload / dest capacity; redzone page or guard between allocations catches the OOB write deterministically, CASR classifies as heap-buffer-overflow WRITE.",
+      "fp_trap": "A bounded copy where a clamp like 'if (len > cap) len = cap;' or 'min(len, remaining)' precedes the memcpy — suppress when a comparison against the dest's own size symbol dominates the sink. Also suppress when size is a struct sizeof() constant.",
+      "domain": "userland",
+      "uid": "userland/OF-01",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-02",
+      "name": "Decompressed/expanded size exceeds buffer sized from compressed/declared size",
+      "cwe": "CWE-787/CWE-122",
+      "lens": "overflow",
+      "pattern": "Output buffer is allocated from a declared/uncompressed-size field (or from the compressed length), but the actual decode loop writes until an end marker or run-length count, which can exceed the allocation. Classic in RLE/LZ/Huffman/predictor decoders and image upsamplers.",
+      "detection_signature": "Sink import: memcpy/memset in a loop, or byte-store in a decode loop with a writer cursor. Decompiled shape: alloc(N) where N is a header field; a loop store *dst++ = ... bounded by a separately-derived counter (run length, code length) not re-checked against dst_end. Slice: detect a store whose pointer is monotonically advanced in a loop with no 'dst < dst_end' guard tied to the allocation size. SHARPENING (overflow lens): add a loop-writer lens variant — track the write cursor vs allocation end across loop back-edges, not just single straight-line memcpy; flag decode loops where the bound counter is independent of the dst capacity.",
+      "grounding": [
+        "CVE-2023-4863 (libwebp lossless lookup tables written before validity check)",
+        "CVE-2016-3714-class ImageMagick decoders (generalized pattern)",
+        "CVE-2023-52355 (libtiff TIFFRGBAImage)",
+        "CVE-2024-20697 (Windows libarchive RCE via crafted archive)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: input whose declared size is small but whose decode stream expands past it (unbalanced Huffman / long RLE run). Guard page catches the loop write overrun.",
+      "fp_trap": "Decoders that re-clamp the writer each iteration ('if (dst >= dst_end) break;') or grow the buffer with realloc keyed to the writer position — suppress when a dst_end comparison gates the store in the loop body.",
+      "domain": "userland",
+      "uid": "userland/OF-02",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-03",
+      "name": "Stale/mis-set flag causes the long source (not the short one) to be copied",
+      "cwe": "CWE-787/CWE-122",
+      "lens": "overflow",
+      "pattern": "A control variable decides whether a SHORT canonical value (e.g. a resolved address, a truncated name) or the LONG raw input is copied into a fixed buffer. A logic/state bug leaves the flag wrong on a slow/partial path, so the long input is memcpy'd into the buffer sized for the short one.",
+      "detection_signature": "Sink import: memcpy/strcpy into a fixed/stack buffer. Decompiled shape: two assignments to the copy-source under different branches of a boolean that is itself set far away (across a state-machine step / I/O resumption). Slice: dataflow where memcpy.src can be either a bounded constant or an unbounded input depending on a flag whose definition does not dominate the use. SHARPENING (overflow lens): flag 'phi-source' memcpys where one incoming source is length-bounded and another is not, and the selecting predicate is set across a callback/resume boundary (harder for pure static tools — 0verse can just fuzz the state machine to flip it).",
+      "grounding": [
+        "CVE-2023-38545 (curl SOCKS5 long-hostname heap overflow via wrong local-resolve flag)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: drive the slow/partial-handshake path with an over-long input; the flag misfires and the over-length memcpy hits the redzone. Confirmable but needs the state-machine condition (slow handshake) — note as 'needs protocol stepping'.",
+      "fp_trap": "Cases where every branch that selects the long source also sizes/checks the buffer accordingly — suppress when the long-source branch is dominated by a length check against dest capacity.",
+      "domain": "userland",
+      "uid": "userland/OF-03",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-med"
+    },
+    {
+      "id": "OF-04",
+      "name": "Attacker string copied into fixed stack/struct buffer (unbounded string op)",
+      "cwe": "CWE-121/CWE-787",
+      "lens": "overflow",
+      "pattern": "Attacker-controlled NUL-terminated string is copied into a fixed-size stack array or struct member with strcpy/strcat/sprintf/gets/scanf(%s) — no length cap, no -n variant. Bound is the source's NUL, not the destination's capacity.",
+      "detection_signature": "Sink import: strcpy/strcat/sprintf/vsprintf/gets/__isoc99_scanf/stpcpy. Decompiled shape: dest is a stack slot (rbp-relative, fixed size known from the frame) or a struct field; src traces to argv/getenv/recv/fread. Slice: any unbounded string sink whose dest has a statically known smaller-than-source-bound size. SHARPENING (overflow lens): ensure the sink list includes the often-missed stpcpy, strlcat-misuse (return value ignored), and sprintf with %s; treat sprintf/snprintf where the format's %s width is unbounded as equivalent to strcpy. Taint-source set must include getenv and the full argv[] vector, not just network reads.",
+      "grounding": [
+        "CVE-2023-38545 (curl)",
+        "CVE-2021-3156 sudo Baron Samedit (off-by-one/strcpy-class, iconic)",
+        "CVE-2024-25048 (IBM MQ)",
+        "CVE-2022-0778-adjacent BIND/daemon string copies (generalized)"
+      ],
+      "confirmable": "canary (stack) + CASR for stack smashing; differential-allocator + CASR for heap/struct. Trigger: oversize the input string past the frame buffer; stack canary trips or CASR reports stack-buffer-overflow.",
+      "fp_trap": "strncpy/snprintf/strlcpy with a correct size argument; or a preceding strlen()+compare against capacity. Suppress when a length check on the source dominates the unbounded sink, OR when the bounded variant is used with the dest's sizeof().",
+      "domain": "userland",
+      "uid": "userland/OF-04",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-05",
+      "name": "Off-by-one in NUL-termination / index loop",
+      "cwe": "CWE-193/CWE-787",
+      "lens": "overflow",
+      "pattern": "A copy/loop writes exactly capacity bytes then also writes a terminating NUL at buf[len] == buf[cap] (one past), or uses '<=' instead of '<' as the loop bound, or strncpy fills the buffer with no room for the terminator and a later 'buf[n]=0' lands out of bounds.",
+      "detection_signature": "Sink: single-byte store at buf[i] where i can equal the allocation size; or strncpy(dst,src,sizeof(dst)) followed by dst[sizeof(dst)]=0. Decompiled shape: loop with cmp using <= / a terminator store at an index equal to the size constant. Slice: detect a store at index == known_capacity, or a terminator write whose index is the same constant passed to the preceding bounded copy. SHARPENING (overflow lens): add an explicit 'one-past' rule — when a bounded copy uses size S and a NUL store uses index S (not S-1) on the same buffer, raise; current overflow lens keyed on big overruns can miss single-byte writes.",
+      "grounding": [
+        "CVE-2023-6779 (glibc __vsyslog_internal off-by-one)",
+        "CVE-2021-3156 (sudo single-byte heap)",
+        "CVE-2023-2650-adjacent parsers (generalized)",
+        "RIOT lwext4 off-by-one (GHSA-2hx7-c324-3rxv)"
+      ],
+      "confirmable": "differential-allocator + CASR (heap, 1-byte redzone hit) or canary (stack). Trigger: input of length exactly == capacity so the terminator/last write lands one past. Reliable with a tight redzone allocator.",
+      "fp_trap": "Buffers deliberately sized cap+1 for the terminator. Suppress when the allocation size is provably len+1 relative to the loop bound, or when the terminator index is bound-1.",
+      "domain": "userland",
+      "uid": "userland/OF-05",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-06",
+      "name": "Pixel/sample buffer written with different dimensions than it was allocated for",
+      "cwe": "CWE-787/CWE-122",
+      "lens": "overflow",
+      "pattern": "Buffer allocated as width*height*bpp from one set of header fields, but the fill/scan loop iterates using a different (later-parsed, larger, or per-strip) dimension, or stride/rowbytes computed inconsistently. Common in TIFF/JPEG/PNG strip & tile decoders.",
+      "detection_signature": "Sink: row/scanline store loop, memcpy per row. Decompiled shape: alloc uses dims A; nested loop bound uses dims B (different field loads) or stride S not equal to alloc row size. Slice: compare the symbols feeding the allocation size against the symbols feeding the loop bounds/stride; mismatch with attacker control on either side raises. SHARPENING (overflow lens): add a 'dimension-consistency' check linking alloc-size provenance to loop-bound provenance; flag when width/height used for alloc differ (by symbol identity) from those used in the write loop.",
+      "grounding": [
+        "CVE-2025-9900 (libtiff large image-height write-what-where)",
+        "CVE-2023-52356 (libtiff)",
+        "CVE-2023-4863 (libwebp)",
+        "CVE-2020-19131-class libtiff strip handling (generalized)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: header with inconsistent dims (e.g. small alloc dim, large loop dim). Guard catches the row overrun; CASR shows WRITE OOB.",
+      "fp_trap": "Decoders that recompute and validate stride == alloc_rowbytes, or re-allocate per strip. Suppress when a check ties loop dims back to the allocation dims.",
+      "domain": "userland",
+      "uid": "userland/OF-06",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-07",
+      "name": "Loop appends N attacker-counted entries into a fixed-capacity array",
+      "cwe": "CWE-787/CWE-129",
+      "lens": "overflow",
+      "pattern": "A count field from input drives a loop that stores into a fixed-size array (table of pointers, descriptor array, ID list) without checking the running index against capacity. Out-of-bounds element write.",
+      "detection_signature": "Sink: store to base + index*elemsize in a loop. Decompiled shape: loop counter bounded by an attacker count; store into a buffer of fixed element capacity; no 'index < CAP' guard. Slice: indexed write where the index bound is attacker-derived and the base allocation is fixed/constant. SHARPENING (overflow lens / index sub-lens): track array-index writes (base+i*sz) separately from byte memcpy; flag when i's upper bound is attacker-controlled and the base size is constant.",
+      "grounding": [
+        "CVE-2023-4863 (libwebp Huffman code count)",
+        "CVE-2024-37079 (vCenter DCERPC array, integer-underflow feeding count)",
+        "CVE-2022-2068-adjacent table parsers (generalized)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: oversize the count field. Element store past the array end hits the redzone.",
+      "fp_trap": "Loops with 'if (n > MAX) n = MAX;' or 'for (i=0; i<n && i<CAP; i++)'. Suppress when the loop condition conjoins a capacity bound.",
+      "domain": "userland",
+      "uid": "userland/OF-07",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-08",
+      "name": "memcpy/alloc size from subtraction that underflows (len = total - offset)",
+      "cwe": "CWE-191/CWE-787",
+      "lens": "overflow",
+      "pattern": "Size computed as A - B (remaining = total_len - consumed, or end - start) where B can exceed A, wrapping an unsigned subtraction to a near-SIZE_MAX value used as a copy length, causing a massive OOB read/write.",
+      "detection_signature": "Sink: memcpy/memmove with size = sub result. Decompiled shape: size operand is the result of a 'sub' whose operands are both attacker-influenced (or one parsed offset) with no 'B <= A' check before the subtract. Slice: backward from memcpy.size to a subtraction node; raise if no guard ensures minuend >= subtrahend. SHARPENING (overflow + intoverflow bridge): add 'unsigned-subtraction-as-size' detector — when a size operand is a sub and the subtrahend lacks an upper-bound check vs the minuend, flag; this is a high-yield shape pure-size-constant checks miss.",
+      "grounding": [
+        "CVE-2024-37079 (VMware vCenter integer underflow -> code exec)",
+        "CVE-2023-38545-adjacent length math",
+        "CVE-2022-3602/3786-class OpenSSL length handling (generalized)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: input where consumed/offset > total so the subtraction wraps; copy of ~SIZE_MAX faults immediately (CASR: SEGV / huge memcpy). Strongly confirmable.",
+      "fp_trap": "Code that checks 'if (consumed > total) goto err;' before computing remaining. Suppress when a >= guard on the subtraction operands dominates the sink.",
+      "domain": "userland",
+      "uid": "userland/OF-08",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-09",
+      "name": "sprintf format-expansion overflow (output longer than fixed buffer)",
+      "cwe": "CWE-787/CWE-121",
+      "lens": "overflow",
+      "pattern": "sprintf/vsprintf builds a string (path, command, log line, URL) into a fixed buffer; one or more %s/%d expansions from attacker data make the result exceed the buffer even though each piece looked 'small'. Not a format-string bug (format is trusted) — it is a length bug.",
+      "detection_signature": "Sink: sprintf/vsprintf (no size bound). Decompiled shape: format literal with %s/%d, dest is fixed-size, at least one argument is attacker-tainted with unbounded length. Slice: sprintf where dest capacity < worst-case expansion of a tainted %s argument. SHARPENING (overflow lens): treat every sprintf/vsprintf into a fixed buffer with a tainted %s as an overflow candidate, distinct from the fmtstring lens (which only cares about attacker-controlled FORMAT). Two different lenses must both watch the printf family for different reasons.",
+      "grounding": [
+        "CVE-2021-3156 (sudo, sudoers path building class)",
+        "CVE-2023-6246 (glibc __vsyslog_internal heap overflow building the log line)",
+        "CVE-2024-25048 (IBM MQ)"
+      ],
+      "confirmable": "canary/CASR (stack) or differential-allocator/CASR (heap). Trigger: make a tainted %s argument long enough that the formatted output overruns the dest.",
+      "fp_trap": "snprintf with correct size, or dest sized from a prior strlen-sum. Suppress when dest is provably >= sum of max argument lengths + literal.",
+      "domain": "userland",
+      "uid": "userland/OF-09",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "OF-10",
+      "name": "realloc growth pattern with retained/under-sized state",
+      "cwe": "CWE-787/CWE-122",
+      "lens": "overflow",
+      "pattern": "A dynamic buffer grows via realloc, but the capacity bookkeeping is wrong (off-by-one in the grow condition, or the new size is computed before adding the incoming chunk), so a subsequent write exceeds the actual allocation. (Distinct from the UAF realloc-stale-pointer case.)",
+      "detection_signature": "Sink: store after realloc; the running 'used' vs 'cap' tracking. Decompiled shape: realloc(p, newcap) where newcap < used+incoming, then memcpy(p+used, in, incoming). Slice: detect grow-then-append where the grow size does not account for the appended length. SHARPENING (overflow lens): model a 'cap/used' pair around realloc sites; flag append memcpys where incoming length is not added into the realloc size argument.",
+      "grounding": [
+        "CVE-2023-6246 (glibc syslog buffer growth)",
+        "libarchive RAR window realloc class (CWE-122 adjacent)",
+        "CVE-2024-37407 (libarchive)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: feed chunks that force a grow where the new size is undercomputed; the append overruns. Confirmable but may need multiple chunks to reach the bad grow.",
+      "fp_trap": "Correct 'while (used+incoming > cap) cap *= 2; realloc(p,cap);' patterns. Suppress when the realloc size demonstrably includes the incoming length.",
+      "domain": "userland",
+      "uid": "userland/OF-10",
+      "engine_lens": "bugclass:overflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "IO-01",
+      "name": "Allocation size = count * elem_size with no multiplication-overflow check",
+      "cwe": "CWE-190/CWE-680",
+      "lens": "intoverflow",
+      "pattern": "malloc(count * size) (or malloc(n * sizeof(T))) where count comes from input; the product wraps a 32/64-bit size_t to a small value, a small buffer is allocated, then count elements are written -> heap overflow. The canonical CWE-680 (integer overflow to buffer overflow).",
+      "detection_signature": "Sink: malloc/realloc with a 'mul' size operand; followed by a write loop of 'count' elements. Decompiled shape: imul feeding the alloc size; at least one factor is a tainted load; no prior check that count <= SIZE_MAX/size. Slice: alloc-size = mul(tainted, k) with no overflow guard, paired with a count-bounded write loop. SHARPENING (intoverflow lens): explicitly recognize malloc(a*b) vs calloc(a,b) — calloc is overflow-safe, raw malloc(mul) is not; flag the malloc/realloc-of-product shape and DOWNGRADE if the code is calloc or has a 'count > MAX/size' guard. Add the write-loop pairing as the confirmable amplifier.",
+      "grounding": [
+        "CVE-2023-4863 (libwebp size math)",
+        "CVE-2025-9900 (libtiff height * rowsize)",
+        "CVE-2024-37079 (vCenter integer wrap)",
+        "CWE-680 canonical (OpenSSH/PNG class)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: count/size whose product wraps (e.g. count near 2^32/size on 32-bit, or 2^64/size). Tiny alloc + full write loop overruns -> CASR heap-buffer-overflow. HIGHLY confirmable.",
+      "fp_trap": "calloc(count,size); or an explicit 'if (count > SIZE_MAX/size) fail;' guard; or 64-bit math where the product cannot realistically wrap. Suppress on calloc and on a divide-based overflow guard.",
+      "domain": "userland",
+      "uid": "userland/IO-01",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "IO-02",
+      "name": "Additive size overflow (len1 + len2 + hdr) wraps before allocation",
+      "cwe": "CWE-190/CWE-680",
+      "lens": "intoverflow",
+      "pattern": "A buffer size is the sum of several attacker-influenced lengths (header + payload + padding). The addition wraps to a small value; allocation is small; the components are then copied in full -> overflow.",
+      "detection_signature": "Sink: alloc with an 'add' size operand fed by 2+ tainted lengths; subsequent memcpys of each component. Decompiled shape: add chain into malloc size; components later used individually as memcpy sizes whose sum exceeds the (wrapped) allocation. Slice: alloc-size = sum(tainted...) with no saturating/overflow check; correlate with per-component copies. SHARPENING (intoverflow lens): track additive size expressions, not only multiplicative; flag when the sum of later copy lengths can exceed the allocation due to wrap.",
+      "grounding": [
+        "CVE-2023-6780 (glibc __vsyslog_internal integer overflow)",
+        "CVE-2022-3786 (OpenSSL X.509 length addition class)",
+        "CVE-2024-37079 (vCenter)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: lengths whose sum wraps; first or second component copy overruns the undersized buffer.",
+      "fp_trap": "Checked addition (compiler __builtin_add_overflow, or 'if (a > MAX - b) fail'). Suppress when an overflow-aware guard dominates.",
+      "domain": "userland",
+      "uid": "userland/IO-02",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "IO-03",
+      "name": "Signed/unsigned confusion bypasses a length bounds check",
+      "cwe": "CWE-195/CWE-839",
+      "lens": "intoverflow",
+      "pattern": "A length is read into a signed int and checked 'if (len > MAX) reject', but a negative len passes the check, then is passed to memcpy/read where it is reinterpreted as a huge size_t. Or 'numeric range comparison without minimum check' (CWE-839): only the upper bound is tested.",
+      "detection_signature": "Sink: memcpy/read/malloc with a size operand that is a sign-extended/converted value. Decompiled shape: a signed comparison (jg/jl, movsx) gates the path, but the sink uses the value as unsigned (size_t). Slice: detect a value compared with a SIGNED predicate then consumed in an UNSIGNED context (movsxd before the call), with only an upper-bound check. SHARPENING (intoverflow lens): add the 'signed-check / unsigned-use' detector keyed on movsx/movsxd between the compare and the sink, and on the absence of a 'len >= 0' (lower-bound) guard. This is a top-yield, low-FP shape that pure size-constant lenses miss entirely.",
+      "grounding": [
+        "CVE-2024-37079 (vCenter underflow/range)",
+        "CVE-2021-22555-class netfilter (signed length, generalized)",
+        "CWE-839 canonical (FFmpeg/FreeType signed-size decoders)",
+        "CVE-2022-0778-adjacent"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: supply a negative (or >2^31) length that passes the signed upper-bound check; the unsigned sink reads/writes a huge region -> immediate SEGV/overflow. Strongly confirmable.",
+      "fp_trap": "Code that uses unsigned types throughout, or checks both 'len >= 0 && len <= MAX'. Suppress when a lower-bound (>=0) check or an unsigned-typed compare dominates.",
+      "domain": "userland",
+      "uid": "userland/IO-03",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "IO-04",
+      "name": "Integer truncation: wide length narrowed (64->32 / size_t->int) before alloc",
+      "cwe": "CWE-197/CWE-681",
+      "lens": "intoverflow",
+      "pattern": "A 64-bit or size_t length is truncated to a narrower type (int/uint16/uint32) for the allocation, but the full-width value is used for the copy (or vice-versa). The alloc is small, the copy is large.",
+      "detection_signature": "Sink: alloc takes a narrowed value (mov eax then movzx/and), copy uses the full register. Decompiled shape: a 64-bit load truncated (movsxd/and 0xffffffff/movzx) on the alloc path but full on the copy path. Slice: detect width-mismatch between the alloc-size def and the copy-size def of the same logical length. SHARPENING (intoverflow lens): add a 'width-narrowing' check — when a single tainted length reaches both an allocation and a copy but through different register widths/truncations, flag.",
+      "grounding": [
+        "CVE-2024-37079 (vCenter)",
+        "CVE-2018-10546-class (generalized truncation)",
+        "CVE-2023-52356 (libtiff)",
+        "CWE-681 canonical"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: length whose low 32 bits are small but high bits set (e.g. 0x1_0000_0040); 32-bit alloc small, 64-bit copy huge -> overflow.",
+      "fp_trap": "Consistent widths throughout, or a check that the value fits the narrow type before truncating. Suppress when a 'value <= UINT32_MAX' guard precedes the narrowing.",
+      "domain": "userland",
+      "uid": "userland/IO-04",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "IO-05",
+      "name": "Shift / type-promotion overflow in a size computation",
+      "cwe": "CWE-190",
+      "lens": "intoverflow",
+      "pattern": "Size derived via left-shift (1 << n, count << bpp_shift) or via promotion of small types (uint16*uint16 promoted to int and overflowing), where the shift amount or factors are attacker-controlled, producing a wrapped/negative size.",
+      "detection_signature": "Sink: alloc with a 'shl' or promoted-product size operand. Decompiled shape: shl by a tainted/loaded count, or imul of two sub-int loads, feeding the size. Slice: alloc-size provenance includes shl with tainted shift, or a promotion that can exceed the target type. SHARPENING (intoverflow lens): include shift-based and promotion-based size expressions in the integer-overflow lens, not only explicit mul/add.",
+      "grounding": [
+        "CVE-2023-4863 (libwebp bit-length tables)",
+        "CVE-2016-9535-class libtiff (generalized)",
+        "CVE-2025-9900 (libtiff)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: large shift amount or factor combination that wraps the size; undersized alloc + full write.",
+      "fp_trap": "Shifts with statically bounded amounts (masked to a few bits) that cannot overflow. Suppress when the shift amount is range-limited by a preceding mask/check.",
+      "domain": "userland",
+      "uid": "userland/IO-05",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "IO-06",
+      "name": "Integer underflow on a counter/length used as an index or size",
+      "cwe": "CWE-191",
+      "lens": "intoverflow",
+      "pattern": "An unsigned counter is decremented past zero (len-- in a loop, remaining -= consumed) wrapping to a huge value that then drives a loop bound or index, yielding OOB. Distinct from OF-08 in that the wrap happens via repeated/conditional decrement, not a single subtract.",
+      "detection_signature": "Sink: loop bound or index = an unsigned variable that was decremented. Decompiled shape: 'dec'/'sub' on an unsigned counter inside a loop with no underflow guard, the counter then used as a memcpy size or array index. Slice: detect monotone decrement of an unsigned size with a use after it can reach 0 and wrap. SHARPENING (intoverflow lens): pair with OF-08; add underflow tracking on loop-carried length/counter variables.",
+      "grounding": [
+        "CVE-2024-37079 (vCenter integer underflow)",
+        "CVE-2019-1010315-class (generalized)",
+        "CVE-2022-37434 (zlib inflate length underflow, header processing)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: input that causes one extra decrement (e.g. consumed > remaining) so the counter wraps; subsequent huge loop faults.",
+      "fp_trap": "Counters guarded by 'if (remaining < consumed) break;' before the decrement. Suppress when an underflow guard dominates the decrement.",
+      "domain": "userland",
+      "uid": "userland/IO-06",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "FS-01",
+      "name": "Attacker-controlled string used as the printf-family FORMAT argument",
+      "cwe": "CWE-134",
+      "lens": "fmtstring",
+      "pattern": "User/network/file data flows directly into the format-string parameter of printf/fprintf/sprintf/snprintf/vprintf, e.g. printf(user) instead of printf(\"%s\", user). Enables info leak (%x/%p/%s) and, with %n, an arbitrary write.",
+      "detection_signature": "Sink import: printf/fprintf/sprintf/snprintf/vprintf/vfprintf/dprintf. Decompiled shape: the FORMAT argument register (rdi for printf, rsi for fprintf, etc.) is a tainted pointer, not a string literal in .rodata. Slice: check whether the format-arg points into a read-only literal; if it traces to argv/getenv/recv/fread, fire. SHARPENING (fmtstring lens): precisely model the format-arg POSITION per function (printf=arg0, fprintf/dprintf=arg1, snprintf=arg2, syslog=arg1, err/warn=arg0/varies) so taint is checked on the RIGHT operand; include the *_chk fortified variants and dprintf/asprintf. FP-suppress when the format operand is a .rodata pointer.",
+      "grounding": [
+        "CVE-2024-29510 (Ghostscript format string -> SAFER bypass / RCE)",
+        "CVE-2024-45324 (Fortinet HTTP field -> format string)",
+        "CVE-2023-40296-class daemons (generalized)",
+        "CWE-134 canonical"
+      ],
+      "confirmable": "CASR (with %n: SEGV/controlled write) + differential behavior. Trigger: feed a format payload (e.g. '%n%n%n' or '%99999d%n'); a crash or detectable write confirms. Info-leak-only variants are observable via output but the WRITE variant is cleanly oracle-confirmable.",
+      "fp_trap": "Wrapper functions that pass a CONSTANT format and forward user data as an argument (printf(\"%s\", user)). Suppress when the format operand is a literal; only fire when the format pointer itself is tainted.",
+      "domain": "userland",
+      "uid": "userland/FS-01",
+      "engine_lens": "bugclass:fmtstring",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "FS-02",
+      "name": "Attacker data as format to logging/err helpers (syslog/err/warn/verr)",
+      "cwe": "CWE-134",
+      "lens": "fmtstring",
+      "pattern": "Same as FS-01 but via logging and error helpers that take a format: syslog(pri, user), err/errx/warn/warnx/verr, g_log/g_printerr, custom log(fmt,...) wrappers. Often overlooked because the call looks like 'just logging'.",
+      "detection_signature": "Sink import: syslog/__syslog_chk/err/errx/warn/warnx/verr/vsyslog, plus resolvable custom log wrappers (a function whose Nth arg reaches an internal vprintf). Decompiled shape: the format-position arg is tainted. Slice: same as FS-01 with the logging-function format positions. SHARPENING (fmtstring lens): EXTEND the sink set beyond raw printf to syslog/err/warn families and to user-defined variadic log wrappers (detect by 'arg flows to v*printf inside the callee'). This is the most common real-world format-string locus and a frequent miss.",
+      "grounding": [
+        "CVE-2024-45324 (Fortinet)",
+        "CVE-2023-6246 (glibc __vsyslog_internal, format-handling locus)",
+        "CVE-2012-... CUPS/printer daemons syslog class (generalized to recent printer CVEs)"
+      ],
+      "confirmable": "CASR. Trigger: input containing %n/%s reaches the log call; crash or write confirms. Note: requires the log level/path to actually be emitted (some logs gated by verbosity) — flag as 'needs log path enabled'.",
+      "fp_trap": "Logging calls with a constant format and user data as a trailing %s arg. Suppress when format is a literal.",
+      "domain": "userland",
+      "uid": "userland/FS-02",
+      "engine_lens": "bugclass:fmtstring",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "FS-03",
+      "name": "%n write-primitive / format string used to defeat a sandbox or hijack control",
+      "cwe": "CWE-134",
+      "lens": "fmtstring",
+      "pattern": "A reachable format-string bug containing %n (or positional %k$n) is leveraged for an arbitrary memory write — to corrupt a function pointer, GOT entry, saved return, or a security flag (e.g. Ghostscript's SAFER state). The distinguishing feature is a WRITE conversion in attacker-controlled format.",
+      "detection_signature": "Same sinks as FS-01/02, plus a heuristic that the tainted format can contain conversion specifiers reaching %n. Decompiled shape: tainted format-arg + the binary uses libc printf that supports %n (not hardened with FORTIFY %n-in-writable-format rejection). Slice: FS-01 taint + a note on whether _FORTIFY_SOURCE/%n protection is present (glibc rejects %n in writable-segment format strings under FORTIFY). SHARPENING (fmtstring lens): add a confidence boost when the target binary's printf is NOT fortified (no __printf_chk imports) — %n is then live; downgrade if __*_chk dominates and the format is in a writable segment (glibc will abort).",
+      "grounding": [
+        "CVE-2024-29510 (Ghostscript %n -> SAFER sandbox escape, RCE)",
+        "CWE-134 %n primitive canonical"
+      ],
+      "confirmable": "CASR. Trigger: a positional %n payload writing to a mapped address; the controlled write/crash is oracle-visible. Among the most cleanly confirmable archetypes for a userland PoV.",
+      "fp_trap": "Hardened builds where glibc FORTIFY aborts on %n in a writable-segment format (the abort is a DoS, not a write primitive). Distinguish abort() from a controlled write in CASR classification.",
+      "domain": "userland",
+      "uid": "userland/FS-03",
+      "engine_lens": "bugclass:fmtstring",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "UAF-01",
+      "name": "Free on an error/early branch, then use after the branches merge",
+      "cwe": "CWE-416",
+      "lens": "uaf",
+      "pattern": "An object is freed in one branch (error handling, early-out, retry) but the pointer is not nulled; control merges and a later access (read/write/free) touches the freed object. The most common userland UAF.",
+      "detection_signature": "Sink: load/store/free through a pointer P after a free(P) on a dominating-or-sibling path with no intervening reassignment/NULL. Decompiled shape: free(P) in a branch; P used at a post-dominator without a new def. Slice: alias-aware liveness — flag a use of P that is reachable from a free(P) with no redefinition in between. SHARPENING (uaf lens): ensure the lens models the 'free-then-merge' control shape (free in one predecessor of a join, use at/after the join) and does not require the free and use to be straight-line; track pointer nulling as the suppressor.",
+      "grounding": [
+        "CVE-2024-37407 (libarchive)",
+        "CVE-2023-0286-class (OpenSSL X.400 type confusion -> UAF, generalized)",
+        "CVE-2022-3786-adjacent",
+        "CVE-2023-4863-followups"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: drive the error branch that frees, then the path that uses. Differential allocator quarantines freed chunks so the post-free access is a deterministic UAF read/write, CASR classifies as heap-use-after-free. HIGHLY confirmable.",
+      "fp_trap": "Code that sets P = NULL after free (and checks for NULL before use), or reassigns P. Suppress when a NULL-store to P dominates the later use, or the use is guarded by 'if (P)'.",
+      "domain": "userland",
+      "uid": "userland/UAF-01",
+      "engine_lens": "bugclass:uaf",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "UAF-02",
+      "name": "Double-free in goto-fail / cleanup chains",
+      "cwe": "CWE-415",
+      "lens": "uaf",
+      "pattern": "Error-cleanup code frees an object, and a second cleanup label (or the caller's cleanup) frees it again because ownership was not cleared. Common with cascading 'goto err' labels and shared cleanup functions.",
+      "detection_signature": "Sink: free(P) reachable from another free(P) with no reassignment. Decompiled shape: two free(P) calls on a path (often via fallthrough goto labels) with P unchanged. Slice: detect two frees of the same allocation on a feasible path. SHARPENING (uaf lens): add explicit double-free detection (free reaching free), and recognize the goto-label fallthrough pattern where multiple cleanup labels free overlapping sets; track 'freed' as a state to suppress when P is nulled between.",
+      "grounding": [
+        "CVE-2024-37407 (libarchive RAR integer overflow -> double free)",
+        "libarchive RAR parse_codes realloc(size=0) double-free (CWE-415)",
+        "CVE-2023-... GnuTLS/OpenSSL cleanup double-free (generalized)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: input forcing the dual-cleanup path. Diff-allocator detects the second free of a quarantined/already-freed chunk; CASR reports double-free/invalid-free. Strongly confirmable.",
+      "fp_trap": "Cleanup that nulls P after the first free, or distinct allocations that happen to share a variable across iterations. Suppress on intervening NULL-store or reassignment.",
+      "domain": "userland",
+      "uid": "userland/UAF-02",
+      "engine_lens": "bugclass:uaf",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "UAF-03",
+      "name": "realloc moves the buffer; a stale pointer/alias is used afterward",
+      "cwe": "CWE-416",
+      "lens": "uaf",
+      "pattern": "After p = realloc(p, n) (or q = realloc(...)), code keeps using an OLD pointer or an interior pointer/alias that referenced the pre-realloc block, which realloc may have moved/freed. UAF on the old address.",
+      "detection_signature": "Sink: use of an alias A that was derived from P before a realloc(P) that returned a possibly-different pointer. Decompiled shape: A = P (or P+off) captured before realloc; realloc result stored to P; A used after. Slice: track aliases of the realloc input across the call; flag uses of pre-realloc aliases after the call. SHARPENING (uaf lens): model realloc as 'frees input, returns maybe-new'; any retained alias of the input pointer (including interior cursors into the buffer) used post-realloc is a UAF candidate. Pure free()-based UAF lenses miss realloc entirely — ADD realloc to the free-set.",
+      "grounding": [
+        "CVE-2024-37407 / libarchive RAR window realloc class",
+        "CVE-2023-6246 (glibc syslog buffer realloc handling)",
+        "CVE-2021-3177-class (Python ctypes realloc, generalized)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: force a realloc that relocates (grow past the bin), then exercise the stale-alias use. Diff-allocator always-moves-on-realloc makes this deterministic; CASR = heap-use-after-free. Excellent confirmable (a moving allocator is a known amplifier).",
+      "fp_trap": "Code that recomputes all interior pointers from the new base after realloc, or never aliases the input. Suppress when every post-realloc use derives from the realloc RESULT, not the pre-call pointer.",
+      "domain": "userland",
+      "uid": "userland/UAF-03",
+      "engine_lens": "bugclass:uaf",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "UAF-04",
+      "name": "Reference-count / ownership underflow leading to premature free + use",
+      "cwe": "CWE-416/CWE-911",
+      "lens": "uaf",
+      "pattern": "An object's refcount is decremented too many times (double unref, unref on an error path that already unref'd), the object is freed while another holder still references it, then that holder uses it. Common in parser/object models and GLib/GObject-style code.",
+      "detection_signature": "Sink: use of an object after its refcount reaches 0 / its destructor ran. Decompiled shape: paired incref/decref helpers; a path with more decrefs than increfs followed by a use. Slice: harder statically; 0verse's edge is to fuzz the lifecycle and catch the use post-free dynamically. SHARPENING (uaf lens): treat resolvable unref/release/put helpers (that call free when count hits 0) as conditional frees; add them to the free-set so the dynamic UAF check covers refcounted objects, not just raw free().",
+      "grounding": [
+        "CVE-2023-0286 (OpenSSL GENERAL_NAME type confusion / lifecycle)",
+        "CVE-2024-37407 (libarchive)",
+        "CVE-2022-1271-adjacent GLib (generalized)"
+      ],
+      "confirmable": "differential-allocator + CASR (dynamic). Trigger: exercise the over-decref path then the surviving-reference use. Confirmable when the over-unref is reachable by input; classification = use-after-free. Note: needs the refcount logic to be input-drivable (sometimes deep).",
+      "fp_trap": "Balanced incref/decref; or decref helpers that null the local handle. Suppress when each decref path is matched by an incref on the same object, or the handle is cleared on release.",
+      "domain": "userland",
+      "uid": "userland/UAF-04",
+      "engine_lens": "bugclass:uaf",
+      "route": "userland-med"
+    },
+    {
+      "id": "UAF-05",
+      "name": "Reentrancy / async-signal UAF (signal handler or callback frees shared state)",
+      "cwe": "CWE-416/CWE-364",
+      "lens": "uaf",
+      "pattern": "A signal handler, timer, or reentrant callback calls async-signal-unsafe functions (free/malloc/syslog) while the main flow holds/uses the same heap state, corrupting the allocator or freeing in-use objects. The regreSSHion class.",
+      "detection_signature": "Decompiled shape: a signal()/sigaction() handler (or atexit/timer callback) that transitively calls free/malloc/syslog; the same allocations are live in the interrupted context. Slice: identify handlers registered via signal/sigaction and check whether they reach allocator/stdio calls (async-signal-unsafe). SHARPENING (uaf lens): add a 'signal-handler reaches free/malloc/syslog' static flag as a UAF/heap-corruption HINT (this is hard to PoV deterministically — mark as HYPOTHESIS-leaning, race-gated). Lower confidence than the deterministic UAF shapes.",
+      "grounding": [
+        "CVE-2024-6387 (OpenSSH regreSSHion SIGALRM -> syslog -> malloc/free heap corruption)",
+        "CVE-2006-5051 (the original sshd signal-race it regressed from)"
+      ],
+      "confirmable": "CASR under heavy timing/race fuzzing (NOT deterministic). Trigger: win the signal-delivery race during allocator activity. This is the LEAST oracle-confirmable userland archetype — note as HYPOTHESIS / race-gated; static flag is the primary deliverable, PoV is probabilistic.",
+      "fp_trap": "Handlers that only set a volatile sig_atomic_t flag and do no allocation/stdio (the correct pattern). Suppress when the handler does not reach any async-signal-unsafe allocator/stdio call.",
+      "domain": "userland",
+      "uid": "userland/UAF-05",
+      "engine_lens": "bugclass:uaf",
+      "route": "userland-hypothesis"
+    },
+    {
+      "id": "UAF-06",
+      "name": "Dangling element pointer after container resize/removal",
+      "cwe": "CWE-416",
+      "lens": "uaf",
+      "pattern": "Code holds a pointer/iterator into a dynamic container (vector/list/hashtable/string) and then an operation reallocates or removes from that container (push that grows it, erase, rehash), invalidating the held pointer, which is then dereferenced. C++ STL iterator-invalidation and C dynamic-array equivalents.",
+      "detection_signature": "Sink: deref of a captured interior pointer after a container-mutating call. Decompiled shape (C++): a pointer/reference obtained from vector::operator[]/data()/back(), then a push_back/insert/resize, then a use of the old pointer. In C: pointer into a buffer that is later realloc'd (overlaps UAF-03). Slice: capture-then-mutate-then-use of container-interior pointers. SHARPENING (uaf lens): for C++ targets, add known container-growth methods (push_back/insert/emplace/resize/rehash) to the 'invalidation' set alongside realloc; treat captured element pointers as freed across those calls.",
+      "grounding": [
+        "CVE-2023-4863 followup parsers",
+        "CVE-2024-37407 (libarchive)",
+        "CVE-2022-... Chromium/Skia container UAF (generalized C++ class)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: cause the container to grow/rehash while the stale pointer is held, then use it. Deterministic with a moving allocator / poisoned freed storage.",
+      "fp_trap": "Code that re-fetches the element pointer after every mutation, or reserves capacity up front so no reallocation occurs. Suppress when the pointer is re-derived after the mutating call.",
+      "domain": "userland",
+      "uid": "userland/UAF-06",
+      "engine_lens": "bugclass:uaf",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "UAF-07",
+      "name": "Parent/cache pointer to a freed child node (tree/graph parser)",
+      "cwe": "CWE-416",
+      "lens": "uaf",
+      "pattern": "A parser/DOM/AST frees a child/sub-object but a parent node, cache, or back-reference still points to it; a later traversal dereferences the dangling link. Common in XML/HTML/font/media container parsers with object graphs.",
+      "detection_signature": "Sink: traversal deref of a stored pointer field after the pointee was freed. Decompiled shape: free of an object whose address was stored into another object's field (no subsequent null of that field), later loaded and dereferenced. Slice: escape-aware — when a freed pointer was stored into a longer-lived structure and that field is later read. SHARPENING (uaf lens): track 'freed pointer previously stored into a heap field' (not just stack locals); the dynamic check then catches traversal-time UAF. Requires modeling pointer escapes into structures.",
+      "grounding": [
+        "CVE-2023-0286 (OpenSSL object lifecycle)",
+        "CVE-2024-37407 (libarchive)",
+        "CVE-2021-30858-class WebKit/libxml DOM UAF (generalized)"
+      ],
+      "confirmable": "differential-allocator + CASR. Trigger: input that frees a child then triggers a traversal through the stale parent link. Deterministic under quarantine allocator.",
+      "fp_trap": "Parsers that null the parent's link on child free, or use ownership/arena allocation freed all-at-once. Suppress when the back-reference field is cleared at free time, or the arena outlives all traversals.",
+      "domain": "userland",
+      "uid": "userland/UAF-07",
+      "engine_lens": "bugclass:uaf",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "CI-01",
+      "name": "Attacker string reaches system()/popen() built via sprintf/strcat",
+      "cwe": "CWE-78",
+      "lens": "cmdi",
+      "pattern": "A command line is assembled (often with sprintf/strcat/asprintf) embedding attacker-controlled data (filename, hostname, parameter) and passed to system()/popen()/exec via /bin/sh -c. Shell metacharacters in the data inject commands.",
+      "detection_signature": "Sink import: system/popen/execl(.../\"/bin/sh\",\"-c\",...)/execlp. Decompiled shape: the command-string argument traces to a sprintf/strcat whose inputs include argv/getenv/recv/fread, with no shell-escaping/allowlist between. Slice: forward taint from input to the system/popen format. SHARPENING (cmdi lens): ensure the sink set includes popen, execl/execlp/execvp WHEN the program is a shell (/bin/sh, /bin/bash, sh -c), and asprintf/snprintf-built command buffers; taint sources MUST include getenv and argv, not only network. Detect the '/bin/sh','-c' immediate as a shell-exec marker.",
+      "grounding": [
+        "CVE-2024-47177 (CUPS foomatic-rip FoomaticRIPCommandLine -> command exec)",
+        "CVE-2023-36664 (Ghostscript %pipe% / | -> command exec)",
+        "CVE-2022-... router/daemon system(sprintf) class (generalized)"
+      ],
+      "confirmable": "Direct behavioral oracle (process-exec instrumentation) + CASR-style detection of an unexpected child process. Trigger: input containing ';id' or '`id`' or '$(...)'; observe the injected command run (e.g. a sentinel file/marker). HIGHLY confirmable — 0verse can ptrace/seccomp-trap execve of an unexpected program. NOT a memory oracle; needs an exec-trap oracle.",
+      "fp_trap": "Data passed via execve with an explicit argv vector (no shell) and no metacharacter interpretation; or strict allowlist/escaping (e.g. only [A-Za-z0-9_]). Suppress when the exec is shell-less argv AND the data cannot become a separate argv element, or when a sanitizer/allowlist dominates.",
+      "domain": "userland",
+      "uid": "userland/CI-01",
+      "engine_lens": "bugclass:cmdi",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "CI-02",
+      "name": "Shell-exec of a filename/template field containing metacharacters",
+      "cwe": "CWE-78",
+      "lens": "cmdi",
+      "pattern": "A filename, URI, print-job attribute, or template string from input is handed to a shell (directly, or via a 'pipe'/template feature like %pipe%, |cmd, backticks in config) without neutralizing metacharacters. Filename-as-command.",
+      "detection_signature": "Sink: system/popen/execvp(\"sh\",...) OR a fopen/open of a name starting with '|' (popen-style pipe-open). Decompiled shape: a tainted path/name reaches an exec OR a stdio open whose first char is checked for '|' (pipe device). Slice: taint to exec, plus a special rule for libraries that treat leading '|' / '%pipe%' as exec. SHARPENING (cmdi lens): add the 'pipe-open' idiom (popen-on-fopen, leading-'|' filename, '%pipe%' template) to the cmdi sink model — these are exec sinks that don't literally call system(). Many real CVEs hide here.",
+      "grounding": [
+        "CVE-2023-36664 (Ghostscript %pipe%/| pipe device -> RCE)",
+        "CVE-2024-47177 (CUPS PPD -> command)",
+        "CVE-2022-... Perl/Ruby open('|cmd') class (generalized to C popen)"
+      ],
+      "confirmable": "exec-trap oracle. Trigger: filename '|id' / '%pipe%id' / 'file;id'; observe the unexpected execve. Confirmable with process instrumentation; behavioral, not memory.",
+      "fp_trap": "Code that opens the name with open(2)/fopen without ever invoking a shell and rejects leading '|'. Suppress when the open path cannot reach popen/exec and metachar/leading-pipe is filtered.",
+      "domain": "userland",
+      "uid": "userland/CI-02",
+      "engine_lens": "bugclass:cmdi",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "CI-03",
+      "name": "Argument injection (attacker controls an argv element passed to a subprocess)",
+      "cwe": "CWE-88",
+      "lens": "cmdi",
+      "pattern": "Even without a shell, attacker data becomes a separate argument to a trusted program (git, tar, curl, ssh, find, openssl). A value starting with '-' is interpreted as an option/flag (e.g. '--upload-pack', '-o ProxyCommand', '--use-compress-program'), turning into command execution or file write.",
+      "detection_signature": "Sink: execv/execvp/execve/posix_spawn with an argv array where a tainted element is placed in an option position (or simply present as a standalone element). Decompiled shape: argv[i] = tainted; argv passed to exec of a known multi-option tool. Slice: taint into an argv element of a subprocess exec; raise even when there is NO shell. SHARPENING (cmdi lens): EXTEND beyond system()/shell — add argv-injection detection on execv*/posix_spawn; flag tainted argv elements (especially ones that can start with '-') to known dangerous-flag programs. Pure 'reaches system()' lenses miss the entire CWE-88 argument-injection class.",
+      "grounding": [
+        "CVE-2023-... git argument-injection class (e.g. --upload-pack/--export-marks)",
+        "CVE-2024-... tar --use-compress-program / find -exec (generalized)",
+        "CVE-2022-... ssh ProxyCommand option-injection class"
+      ],
+      "confirmable": "exec-trap oracle + effect observation. Trigger: a value like '--use-compress-program=id' or '-oProxyCommand=id'; observe the resulting command/side effect. Confirmable behaviorally; sometimes needs the target tool present.",
+      "fp_trap": "Code that inserts '--' before user args to stop option parsing, or validates that the value does not start with '-'. Suppress when a '--' separator or leading-dash rejection dominates the exec.",
+      "domain": "userland",
+      "uid": "userland/CI-03",
+      "engine_lens": "bugclass:cmdi",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "CI-04",
+      "name": "Environment/config-derived value flows to exec (getenv -> system/exec)",
+      "cwe": "CWE-78/CWE-426",
+      "lens": "cmdi",
+      "pattern": "A value from getenv() (PATH, IFS, LD_*, a custom VAR), a config file, or a registry/PPD/template flows into system()/popen()/exec or into a constructed command. Includes untrusted-search-path and shell-via-env cases. Especially dangerous in setuid/privileged binaries.",
+      "detection_signature": "Sink: system/popen/exec with an argument/format influenced by getenv/config-read. Decompiled shape: getenv() result (or a config-parse buffer) flows to a command sink; in setuid context (geteuid != getuid hints) severity rises. Slice: taint from getenv/config to exec. SHARPENING (cmdi lens): add getenv and config-file reads as first-class cmdi TAINT SOURCES (not just argv/network); add a setuid/privileged-context modifier to prioritize. Detect IFS/PATH-style env reaching system().",
+      "grounding": [
+        "CVE-2024-47177 (CUPS PPD-derived command)",
+        "CVE-2023-36664 (Ghostscript config/template)",
+        "CVE-2022-... setuid PATH-injection class (generalized)"
+      ],
+      "confirmable": "exec-trap oracle. Trigger: set the env/config value to a payload, run, observe injected exec. Confirmable behaviorally when the env/config is reachable in the harness.",
+      "fp_trap": "Privileged programs that sanitize the environment (clearenv / explicit PATH) before exec, or use absolute paths and argv vectors. Suppress when env is scrubbed or the exec uses a fixed absolute program + argv.",
+      "domain": "userland",
+      "uid": "userland/CI-04",
+      "engine_lens": "bugclass:cmdi",
+      "route": "userland-confirmable"
+    },
+    {
+      "id": "fw-web-cgi-cmdi",
+      "name": "Unauth CGI param to system()/popen() command injection",
+      "cwe": "CWE-78",
+      "category": "web-frontend-of-device",
+      "pattern": "An unauthenticated web/CGI handler reads a request field (query string, POST body, Cookie, Host) via a vendor getter and passes it, unsanitized or with weak shell-metachar filtering, into system()/popen()/execve(\"/bin/sh\",\"-c\",...)/do_system()/twsystem(). Attacker injects `;`, `|`, `&`, `$()`, backticks to run arbitrary commands as root.",
+      "detection_signature": "PLT/imports of system, popen, execve, execlp, ___system, doSystem, twsystem, CsteSystem. Vendor param getters present as strings/PLT: websGetVar, webGetVar, get_cgi, fcgi_get_query, nvram_get, nvram_safe_get, GetValue, websGetVarN, sub_get_value, json_object_get_string. Decompile shape: getter() return value flows (often via sprintf into a cmd buffer) directly into system(cmd) with no execve-style argv split and no allow-list. Lens fires when a taint source (request getter) reaches a shell sink in the same/adjacent function. MIPS: `lw $t9,%call16(system)($gp); jalr $t9` with $a0 built by sprintf; arg in $a0. ARM: `bl system` / `bl popen` with r0 = sprintf dest. Watch for sprintf(buf,\"... %s ...\",param) immediately preceding the sink (command template).",
+      "grounding": [
+        "CVE-2023-1389 (TP-Link Archer AX21 country param -> popen)",
+        "CVE-2024-3273 (D-Link nas_sharing.cgi system param)",
+        "CVE-2024-7261 (Zyxel AP/router host param in cookie)",
+        "CVE-2024-24405 (MitraStar OS command injection)"
+      ],
+      "confirmable": "YES - highest confirmability. cmdi canary: hook/wrap system/popen/execve in Qiling so any invocation whose argument contains an injected canary token (e.g. `;echo PWNK_$RAND`) trips the oracle. Trigger = single crafted HTTP request to the handler. Emulation needs: webserver bootstrapped enough to dispatch (or direct call of the handler with a faked CGI env / QUERY_STRING), plus nvram_get/nvram_safe_get stubs returning benign defaults so init doesn't bail. No real rootfs services required.",
+      "reachability_note": "UNAUTH, network-reachable (HTTP/HTTPS on LAN, sometimes WAN). Highest-impact firmware bug class.",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-cgi-cmdi",
+      "engine_lens": "seed:firmware:cgi-cmdi",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-web-strcpy-stack",
+      "name": "strcpy of HTTP/nvram value into fixed stack buffer",
+      "cwe": "CWE-121",
+      "category": "web-frontend-of-device",
+      "pattern": "A request field or nvram value is copied with strcpy/strcat/memcpy(no bound) into a fixed-size stack array. Oversized input overflows the saved return address / saved registers, giving control of PC. Classic SOHO router web-handler shape.",
+      "detection_signature": "Imports: strcpy, strcat, memcpy, bcopy. Source: websGetVar/nvram_get/recv. Decompile shape: local char buf[N] (N small, 16-256) with strcpy(buf, attacker_str) and no prior strlen()/length check. Stack-canary absence is common (no __stack_chk_fail import). MIPS: spot the stack frame size (addiu $sp,$sp,-N) vs copy length; overwrite target is saved $ra at top of frame. Big-endian (Broadcom) vs little-endian (Realtek/Atheros) changes payload but not the lens. ARM: store of attacker bytes past the buffer onto saved {fp,lr}. Lens: bounded-vs-unbounded copy where dest is a stack slot and the source is request-tainted.",
+      "grounding": [
+        "CVE-2026-9632 (UTT HiPER 1250GW formGroupConfig strcpy)",
+        "Tenda CX12L/RX3 setSchedWifi schedStartTime/schedEndTime into 25-byte buffer",
+        "Tenda HG9 formWlanSetup ssid strcpy",
+        "CVE-2026-34124 (TP-Link HTTP GET realpath stack BOF)"
+      ],
+      "confirmable": "YES (well-suited). Qiling oracle: invoke the handler with an over-long field and detect crash via PC = attacker pattern (cyclic), invalid fetch at controlled address, or write past mapped stack. Needs the webserver/handler reachable and nvram stubs; for a single non-stateful handler you can call the function directly with a synthesized request struct. No full rootfs needed for the corruption itself.",
+      "reachability_note": "Often UNAUTH on /goform, /boaform, /cgi-bin endpoints; some require a session. Network-reachable LAN, sometimes WAN-exposed httpd.",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-strcpy-stack",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-web-sprintf-stack",
+      "name": "sprintf into fixed buffer with attacker data",
+      "cwe": "CWE-787",
+      "category": "web-frontend-of-device",
+      "pattern": "sprintf/vsprintf builds a string into a fixed buffer using one or more attacker-controlled %s fields (request params, headers). Combined length exceeds the buffer -> stack/global overflow. Distinct from cmdi: the sprintf result need not reach a shell; the overflow itself is the bug. Frequently the same sprintf is also the command-template feeding system() (combo bug).",
+      "detection_signature": "Imports: sprintf, vsprintf, swprintf (no snprintf/bound). Decompile: sprintf(fixed_buf, fmt_with_%s, tainted...) where total runtime length is unchecked. Look for format strings in .rodata like \"%s/%s\", \"cmd=%s\", \"/bin/ping %s\". MIPS: format string ptr in $a1, dest in $a0; the %s args in $a2/$a3/stack. ARM: r0=dest, r1=fmt, r2+=args. Lens: unbounded format function whose dest is fixed-size and any %s arg is request-tainted.",
+      "grounding": [
+        "Tenda formWlanSetup (sprintf/strcpy ssid)",
+        "Multiple D-Link /goform sprintf overflows",
+        "CVE-2023-1389 (popen command template via sprintf)",
+        "Generic Realtek/Boa httpd sprintf handlers"
+      ],
+      "confirmable": "YES. Same Qiling approach as strcpy-stack: oversized %s argument -> corruption detected by crash/PC control. cmdi canary catches it too if the sprintf result feeds a shell.",
+      "reachability_note": "UNAUTH or auth depending on endpoint; network-reachable.",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-sprintf-stack",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-web-missing-auth",
+      "name": "Missing auth on sensitive endpoint / auth bypass",
+      "cwe": "CWE-306",
+      "category": "web-frontend-of-device",
+      "pattern": "A sensitive handler (config get/set, firmware upload, factory reset, telnet enable, getcfg) is reachable without authentication because the auth check is keyed on URL prefix/extension allow-list, a path-traversal slips past the check, or the session check is missing entirely on that route. Turns an authed bug into a pre-auth one.",
+      "detection_signature": "Look for the dispatch table / URL router (string table of paths mapped to handler fn pointers) and the auth gate function (checks session cookie / token, often strcmp/strstr on a referer or path). Detection: handler fn pointers that are NOT dominated by the auth-check call, or auth decided by string-prefix match (strncmp(path,\"/login\",6), strstr(uri,\".cgi\")) that a crafted path bypasses. getcfg/hedwig.cgi-style routes leaking XML config (creds). MIPS/ARM: trace whether the auth function's return is branched on before reaching the handler call; an unconditional handler call = missing auth.",
+      "grounding": [
+        "TP-Link Archer NX (unauth firmware upload, missing HTTP auth)",
+        "D-Link DIR-859 hedwig.cgi getcfg path traversal -> config/cred disclosure",
+        "CVE-2024-45697 (D-Link DIR-X4860 telnet enable)",
+        "Generic GoAhead/boa unauth getcfg"
+      ],
+      "confirmable": "PARTIAL. Reaching the handler without a session is confirmable by emulating the dispatch + auth gate and observing the handler fires with no/empty cookie. But proving the security impact (which config/creds leak) needs a fuller rootfs so the handler can read real nvram/config files. cmdi canary still applies if the now-reachable handler also has a shell sink.",
+      "reachability_note": "UNAUTH (that is the whole point). Network-reachable; severity depends on what the endpoint does.",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-missing-auth",
+      "engine_lens": null,
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-web-path-traversal",
+      "name": "Path traversal in CGI file/service param",
+      "cwe": "CWE-22",
+      "category": "web-frontend-of-device",
+      "pattern": "A request param naming a file/service/template is concatenated into a filesystem path and opened/read/written with no canonicalization, allowing ../ to read config (with plaintext creds), arbitrary files, or write to overwrite scripts.",
+      "detection_signature": "Imports: fopen, open, sprintf (to build path), strcat. Decompile: sprintf(path,\"/htdocs/webinc/getcfg/%s\", param) or strcat(base, param) then fopen(path). No realpath()/'..' rejection. Strings: \"/htdocs/\", \"/var/\", \"/tmp/\", \".xml\". Lens: request-tainted string concatenated into a path used by a file API without a traversal filter. MIPS/ARM: param getter -> sprintf path -> fopen, all in one handler.",
+      "grounding": [
+        "D-Link DIR-859 hedwig.cgi service=../../../../htdocs/webinc/getcfg/DHCPS6.BRIDGE-1.xml",
+        "QNAP QHora-322 path traversal (Pwn2Own Ireland 2024 chain)",
+        "Generic GoAhead getcfg traversal"
+      ],
+      "confirmable": "PARTIAL. Confirmable in Qiling only with a populated rootfs (the target config files must exist) so the traversal resolves and returns content. The path-construction sink is statically detectable; runtime proof needs the filesystem.",
+      "reachability_note": "Often UNAUTH; network-reachable. High value as info-leak primitive in a chain (leak creds -> auth -> RCE).",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-path-traversal",
+      "engine_lens": null,
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-web-format-string",
+      "name": "Format string from request field into printf/syslog",
+      "cwe": "CWE-134",
+      "category": "web-frontend-of-device",
+      "pattern": "An attacker-controlled string is passed as the FORMAT argument to printf/sprintf/syslog/fprintf (e.g. syslog(LOG_INFO, user_agent)). %n/%s/%x give read/write primitives and crashes. Common in logging of hostnames, User-Agent, login names.",
+      "detection_signature": "Imports: printf, fprintf, sprintf, snprintf, syslog, vsnprintf. Decompile: the FIRST format arg is a tainted register rather than a .rodata string pointer. MIPS: $a0 (printf) or $a1 (sprintf/syslog level then fmt) loaded from a request getter instead of an address in .rodata. ARM: r0/r1 fmt arg sourced from tainted data. Lens: format-family call whose format-position argument is not a constant string literal but request-tainted. Easy to spot: constant-format calls have a `lui/addiu` or `ldr =addr` into the fmt slot; tainted ones load from a variable.",
+      "grounding": [
+        "Various router httpd syslog(user_input) cases",
+        "D-Link/Tenda logging handlers",
+        "Embedded camera web logging of attacker hostname",
+        "CWE-134 SOHO logging pattern"
+      ],
+      "confirmable": "YES (lightweight). Qiling oracle: send a field containing %n/%x and detect a crash or out-of-bounds access from the varargs walk; or hook printf-family and flag when the format arg is in attacker-tainted memory. Minimal rootfs needed if you can reach the logging path.",
+      "reachability_note": "UNAUTH if the logged field is pre-auth (User-Agent, login name, hostname). Network-reachable.",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-format-string",
+      "engine_lens": "bugclass:fmtstring",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-web-sscanf-stack",
+      "name": "sscanf %s of HTTP header/path into fixed buffer",
+      "cwe": "CWE-121",
+      "category": "web-frontend-of-device",
+      "pattern": "Pre-auth request parsing uses sscanf(input, \"...%s...\", buf) or %[ with no width specifier into a fixed buffer, overflowing it. Common in HTTP request-line / header / Content-Length / Range / boundary parsing in the webserver core before auth runs.",
+      "detection_signature": "Imports: sscanf, __isoc99_sscanf. Decompile: sscanf(headerbuf, \"%s\"/\"%[^ ]\"/\"%d %s\", localbuf) with localbuf fixed-size and no %.Ns width. Format strings in .rodata like \"%[^:]:%s\", \"GET %s\", \"Content-Length: %d\". MIPS/ARM: trace the destination register (varargs) to a stack slot smaller than possible input. Lens: scanf-family with unbounded %s/%[ writing a fixed stack buffer from network data.",
+      "grounding": [
+        "CVE-2025-40596/40597 (SonicWall SMA100 pre-auth sscanf/stack & heap overflows)",
+        "Generic mini_httpd/boa request-line sscanf",
+        "Camera RTSP/HTTP header sscanf overflows"
+      ],
+      "confirmable": "YES. Qiling: feed an over-long header/request line, detect stack corruption / PC control. The webserver request-parse path is reachable pre-auth, so emulation only needs the parser bootstrapped (often a tight loop you can call directly).",
+      "reachability_note": "UNAUTH, network-reachable - it is in the request parser before any auth. High value.",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-sscanf-stack",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-web-header-overflow",
+      "name": "Pre-auth HTTP header/Cookie/Host parse overflow",
+      "cwe": "CWE-787",
+      "category": "web-frontend-of-device",
+      "pattern": "The webserver core copies or parses an HTTP header value (Cookie, Host, Authorization, Content-Length-driven body, Referer) into a fixed buffer before authentication, overflowing on long input or mis-trusting an attacker length field.",
+      "detection_signature": "In the httpd accept/parse loop: recv -> header tokenizer (strchr/strtok on ':' '\\r\\n') -> strcpy/memcpy into fixed buffers per header. Look for memcpy(dst, body, content_length) where content_length is the attacker's value with no cap. Imports: recv, strstr, strtok, strncpy(misused), memcpy. MIPS/ARM: the parse loop sits right after accept()/recv(); buffers are stack or a fixed global request struct.",
+      "grounding": [
+        "CVE-2026-34124 (TP-Link HTTP GET stack BOF)",
+        "CVE-2024-7261 (Zyxel crafted cookie)",
+        "SonicWall SMA100 header parsing",
+        "Realtek/boa Host-header overflows"
+      ],
+      "confirmable": "YES. Same as sscanf/strcpy oracle: malformed header -> crash. Reachable pre-auth in the parse loop.",
+      "reachability_note": "UNAUTH, network-reachable, pre-auth in the server core. Highest-impact.",
+      "domain": "firmware",
+      "uid": "firmware/fw-web-header-overflow",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-net-upnp-soap",
+      "name": "UPnP/SOAP action param to cmdi or overflow",
+      "cwe": "CWE-78",
+      "category": "network-service",
+      "pattern": "A UPnP/SOAP service (miniupnpd, Realtek/Broadcom UPnP, AddPortMapping/SetDefaultConnectionService) reads an action argument (NewInternalClient, NewPortMappingDescription, device descriptor) and feeds it to system()/iptables shell calls or copies it unbounded. Often UNAUTH on UDP 1900 / the SOAP control URL.",
+      "detection_signature": "Strings: \"urn:schemas-upnp-org\", \"AddPortMapping\", \"NewInternalClient\", \"SetupReady\", SOAPAction. Imports: system/popen near iptables/ebtables string templates, or strcpy of SOAP arg. Realtek eCos SDK signatures (UDPServer, formAddDhcps). Decompile: XML/SOAP arg extracted then sprintf'd into an iptables/route command or copied to a fixed buffer. MIPS/ARM: the SOAP dispatcher maps action name -> handler; trace arg -> sink.",
+      "grounding": [
+        "CVE-2021-35394 (Realtek Jungle SDK UDPServer/UPnP multiple overflow+cmdi, mass-exploited)",
+        "Various miniupnpd AddPortMapping issues",
+        "Broadcom UPnP SetConnectionType overflows"
+      ],
+      "confirmable": "PARTIAL-to-YES. cmdi canary catches the iptables/system path if you can drive a SOAP request into the daemon under Qiling (needs the UDP/HTTP listener and minimal nvram). Overflow variant confirmable via crash. Daemon often forks/uses sockets -> needs more emulation scaffolding than a single CGI call.",
+      "reachability_note": "Frequently UNAUTH; LAN-reachable, historically WAN-exposed. Mass-exploited class (Mirai/RondoDox).",
+      "domain": "firmware",
+      "uid": "firmware/fw-net-upnp-soap",
+      "engine_lens": "seed:firmware:cgi-cmdi",
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-net-mgmt-daemon-cmdi",
+      "name": "Custom TCP/UDP management daemon command injection",
+      "cwe": "CWE-78",
+      "category": "network-service",
+      "pattern": "A vendor management/discovery daemon on a custom port (TP-Link tdpServer UDP 20002, Tenda/Realtek config daemons, Netis 53413) parses a proprietary message and passes a field to system()/popen(). Often UNAUTH and reachable on LAN.",
+      "detection_signature": "Non-httpd binary bound to a fixed UDP/TCP port (look for bind()/htons(constant) in the daemon). Custom message parser (magic bytes, TLV) then a field -> sprintf -> system(). Strings: vendor magic, \"slp\", port constants. Imports: recvfrom, system, popen. MIPS/ARM: recvfrom buffer -> field extract -> shell sink.",
+      "grounding": [
+        "Netis backdoor UDP 53413 (cmd exec)",
+        "TP-Link tdpServer onMostFrequentEntries",
+        "Realtek SDK management daemons (CVE-2021-35394 family)",
+        "Tenda config daemon cmdi"
+      ],
+      "confirmable": "PARTIAL-to-YES. cmdi canary applies once the message reaches the sink. Needs the daemon's socket loop emulated (Qiling can feed recvfrom from a scripted buffer) + nvram stubs. More scaffolding than CGI but no real network.",
+      "reachability_note": "UNAUTH, LAN-reachable (sometimes WAN). High value.",
+      "domain": "firmware",
+      "uid": "firmware/fw-net-mgmt-daemon-cmdi",
+      "engine_lens": "seed:firmware:cgi-cmdi",
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-net-telnet-backdoor",
+      "name": "Telnet/debug backdoor with hardcoded creds on WAN",
+      "cwe": "CWE-798",
+      "category": "network-service",
+      "pattern": "Firmware starts telnetd/a debug shell (sometimes only when WAN link comes up) and authenticates against hardcoded credentials or a magic command, giving root. Or a hidden 'utelnetd'/'dbglog' service with a static password.",
+      "detection_signature": "Strings: literal usernames/passwords, \"telnetd\", \"utelnetd\", \"/bin/login -f\", \"Alphanetworks\", vendor signing strings near a strcmp. Imports: system(\"telnetd\"), strcmp(input, \"<const>\"). Detection: a strcmp/memcmp of a network-supplied credential against a constant string in .rodata; or a service-start of telnetd gated on a link/event. MIPS/ARM: constant string operand in the compare = the hardcoded secret.",
+      "grounding": [
+        "CVE-2024-45697 (D-Link DIR-X4860 telnet on WAN, hardcoded creds)",
+        "CVE-2025-46176 (D-Link DIR-605L/DIR-816L hardcoded telnet creds)",
+        "Numerous D-Link/Netgear telnet backdoors"
+      ],
+      "confirmable": "PARTIAL (mostly static). The hardcoded credential and the service-start are statically detectable with high confidence (string + strcmp). Runtime confirmation in Qiling means emulating the login path; the value is already proven by the static constant. Good string/strcmp lens hit, low emulation need.",
+      "reachability_note": "UNAUTH (the creds ARE the backdoor); WAN-reachable in the worst cases. Root.",
+      "domain": "firmware",
+      "uid": "firmware/fw-net-telnet-backdoor",
+      "engine_lens": null,
+      "route": "firmware-static"
+    },
+    {
+      "id": "fw-net-dhcp-dns-parse",
+      "name": "DHCP/DNS/option parser overflow in network daemon",
+      "cwe": "CWE-787",
+      "category": "network-service",
+      "pattern": "udhcpd/udhcpc/dnsmasq-like daemon copies an attacker-supplied option (hostname option 12, DHCP client-id, DNS name label) into a fixed buffer without bounding the option length field, overflowing. Reachable from LAN as a rogue client/server.",
+      "detection_signature": "Imports: memcpy, strcpy near option-parsing loops (read length byte then copy length bytes). Decompile: `len = opt[1]; memcpy(buf, opt+2, len)` with buf fixed and len attacker-controlled. Strings: \"udhcpd\", \"dnsmasq\", option numbers. MIPS/ARM: TLV walk (ptr += 2 + len) with the copy length from the packet.",
+      "grounding": [
+        "Various udhcpd/udhcpc option-12 hostname overflows in BusyBox-derived stacks",
+        "dnsmasq DNS name parse CVEs (DNSpooq family)",
+        "Router DHCP relay overflows"
+      ],
+      "confirmable": "YES. Qiling: feed a crafted DHCP/DNS packet to the parse function; detect overflow crash. The option parser is usually a pure function you can call directly with a packet buffer (no sockets needed).",
+      "reachability_note": "UNAUTH, LAN-reachable (link-local). Lower exposure than HTTP but real.",
+      "domain": "firmware",
+      "uid": "firmware/fw-net-dhcp-dns-parse",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-net-tr069-snmp",
+      "name": "TR-069/CWMP/SNMP parameter handling overflow or injection",
+      "cwe": "CWE-787",
+      "category": "network-service",
+      "pattern": "The CWMP (TR-069) client or SNMP agent copies a server/OID-supplied value (ParameterValue, ACS URL, SNMP SET community/string) into a fixed buffer or into a shell call. ACS-side or rogue-ACS attacker controls input.",
+      "detection_signature": "Strings: \"cwmp\", \"InternalProductClass\", \"ACS\", \"snmpd\", OID strings. Imports: strcpy/sprintf of ParameterValue, system() of a config value applied from CWMP. SOAP/XML parse then copy. MIPS/ARM: trace ParameterValue extraction -> sink.",
+      "grounding": [
+        "Various TR-069/CWMP RCE (Cable Haunt-adjacent, Mirai TR-069 worm)",
+        "SNMP SET overflow in embedded agents",
+        "ACS-injected config command execution"
+      ],
+      "confirmable": "PARTIAL. Needs the CWMP/SNMP daemon and a scripted server message; more stateful. cmdi canary applies if a CWMP value reaches system(). Static detection solid; runtime needs scaffolding.",
+      "reachability_note": "Auth varies (CWMP trusts the ACS; rogue-ACS or MITM); often WAN-side. Medium reachability.",
+      "domain": "firmware",
+      "uid": "firmware/fw-net-tr069-snmp",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-parse-tlv-intoverflow",
+      "name": "TLV/length-field integer overflow to heap overflow",
+      "cwe": "CWE-190",
+      "category": "parser",
+      "pattern": "A binary protocol parser reads a length/count field, performs arithmetic (len-1, len*elem, len+hdr) that wraps or underflows, then allocates/copies based on the bad value -> heap overflow. Canonical baseband/IoT-protocol shape.",
+      "detection_signature": "Decompile: read 16/32-bit field from packet -> arithmetic -> malloc/memcpy. Red flags: malloc(len * n) without overflow check, memcpy(dst, src, len - k), signed/unsigned mix on the length. Imports: malloc, memcpy. MIPS/ARM: load (lhu/lh, big-endian on many basebands) the length, then a multiply/subtract feeding move into $a2/r2 of memcpy. Lens: allocation or copy size derived by arithmetic from a packet field with no bounds/overflow guard.",
+      "grounding": [
+        "CVE-2023-21517 (Samsung baseband LTE ESM TFT IE heap overflow)",
+        "CVE-2023-26073 (Samsung 5G NAS extended emergency number list)",
+        "CVE-2023-32889 (MediaTek baseband overflow)",
+        "CVE-2025-20727 (MediaTek SIP Authentication-Info heap overflow)"
+      ],
+      "confirmable": "STATIC-ONLY in the firmware lane. Detectable with high confidence in Ghidra (the wrap/underflow shape). NOT confirmable in the Qiling CGI/router oracle: baseband requires a dedicated emulator (FirmWire/ShannonEmu) modelling the RTOS, mailboxes and RF stack. Flag as 'detect, hand to specialist emulator', do not claim Qiling confirmation.",
+      "reachability_note": "UNAUTH, OVER-THE-AIR (rogue base station) for baseband; for IoT TLV daemons it is network-reachable. Critical impact, hard to confirm.",
+      "domain": "firmware",
+      "uid": "firmware/fw-parse-tlv-intoverflow",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "firmware-detect-only"
+    },
+    {
+      "id": "fw-parse-copy-before-check",
+      "name": "Copy-before-validate / reassembly off-by-one",
+      "cwe": "CWE-120",
+      "category": "parser",
+      "pattern": "A fragment/segment reassembler copies fragment data into a buffer in a loop and checks the exit/overflow condition AFTER the copy, or trusts a per-fragment length that diverges from the allocation length, overflowing the reassembly buffer.",
+      "detection_signature": "Decompile: a loop `while(more){ memcpy(dst+off, frag, frag_len); off+=frag_len; if(off>max) break; }` (check after copy). Two different length variables for allocate vs copy. Imports: memcpy in a loop with a running offset. MIPS/ARM: loop with accumulating offset register; the bound compare is post-copy. Lens: monotonic-offset copy loop where the guard does not dominate the write.",
+      "grounding": [
+        "CVE-2023-41112/41111 (Samsung Exynos GPRS LLC reassembly heap overflow)",
+        "IP/SAR fragment reassembly overflows",
+        "TCP/IP stack reassembly bugs in embedded stacks"
+      ],
+      "confirmable": "STATIC-ONLY for baseband (same emulator caveat as TLV). For an embedded-Linux reassembler (IP frag, file-format), the loop is a callable pure function -> Qiling CAN drive it with crafted fragments and detect the overflow. Confirmability depends on whether the parser is OS-level (yes) or baseband RTOS (no).",
+      "reachability_note": "UNAUTH/OTA or network-reachable. Critical.",
+      "domain": "firmware",
+      "uid": "firmware/fw-parse-copy-before-check",
+      "engine_lens": "bugclass:overflow",
+      "route": "firmware-detect-only"
+    },
+    {
+      "id": "fw-parse-signed-length-memcpy",
+      "name": "Signed/negative length in memcpy from packet field",
+      "cwe": "CWE-195",
+      "category": "parser",
+      "pattern": "A length read as signed (or computed as remaining = total - consumed going negative) is passed to memcpy/read, which treats it as a huge size_t -> massive overread/overwrite. A pervasive embedded-parser footgun.",
+      "detection_signature": "Decompile: signed int length compared with `<= max` only (no `>= 0` lower bound), then used as memcpy size. MIPS/ARM: sign-extending load (lb/lh, not lbu/lhu) of a length, or a subtraction that can go negative, feeding the size arg. Lens: memcpy/memmove/read size argument that is a signed value lacking a lower-bound check.",
+      "grounding": [
+        "Numerous embedded TLS/cert/ASN.1 parse overflows",
+        "Camera/RTSP length-field overreads",
+        "Baseband and IoT length-handling CVEs (shared root cause)"
+      ],
+      "confirmable": "YES for OS-level parsers (callable function + crafted buffer in Qiling -> overread/overwrite crash). STATIC-ONLY when inside baseband. Lens is cheap and high-signal.",
+      "reachability_note": "Depends on host parser; generally network-reachable, often UNAUTH.",
+      "domain": "firmware",
+      "uid": "firmware/fw-parse-signed-length-memcpy",
+      "engine_lens": "bugclass:intoverflow",
+      "route": "firmware-detect-only"
+    },
+    {
+      "id": "fw-parse-config-restore",
+      "name": "Config/NVRAM backup-restore blob parser overflow",
+      "cwe": "CWE-787",
+      "category": "parser",
+      "pattern": "The 'restore configuration' / import-backup handler parses an attacker-supplied .cfg/.bin/.dat blob (often XOR/weakly encrypted) and copies fields into fixed structs or applies values without validation -> overflow or stored injection. The blob format is reverse-engineered from the same binary.",
+      "detection_signature": "Find the restore handler (string \"restore\", \"config.bin\", \"NVRAM\", \"backup\"). Decompile: read header magic -> loop copying TLV entries into nvram_set or fixed buffers. Imports: memcpy, nvram_set, the vendor decrypt routine (look for a hardcoded XOR/AES key nearby). MIPS/ARM: blob field -> struct copy with no bound.",
+      "grounding": [
+        "Multiple D-Link/Netgear config-restore overflows",
+        "Cisco/Linksys backup import bugs",
+        "TP-Link cfg import parse issues"
+      ],
+      "confirmable": "YES (auth permitting). Qiling: feed a crafted config blob to the restore parser; detect overflow or, if values reach system()/nvram-then-system, the cmdi canary fires. Needs the decrypt key (extractable from the binary) and nvram_set stubs.",
+      "reachability_note": "Usually AUTHED (upload via admin UI) -> lower severity, but chains with auth bypass. Network-reachable.",
+      "domain": "firmware",
+      "uid": "firmware/fw-parse-config-restore",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-parse-multipart-upload",
+      "name": "Multipart/XML/JSON upload boundary parser overflow",
+      "cwe": "CWE-787",
+      "category": "parser",
+      "pattern": "The multipart/form-data, XML, or JSON parser in the webserver copies a boundary token, filename, field name, or value into a fixed buffer without bounding -> pre/post-auth overflow during upload handling.",
+      "detection_signature": "Strings: \"Content-Disposition\", \"boundary=\", \"multipart/form-data\", \"filename=\". Decompile: strstr/strchr to locate boundary -> strcpy/memcpy of the delimited region into a fixed buffer. Imports: strstr, memcpy, strcpy. MIPS/ARM: the body scan loop with a fixed destination.",
+      "grounding": [
+        "GoAhead/boa multipart parse overflows",
+        "Camera firmware upload handlers",
+        "Router file-upload (cert/firmware) boundary overflows"
+      ],
+      "confirmable": "YES. Qiling: craft a multipart body with an over-long boundary/filename, detect crash. Reachable pre-auth if upload parsing precedes auth (common). Webserver bootstrap + nvram stubs.",
+      "reachability_note": "UNAUTH if pre-auth multipart parsing; else authed. Network-reachable.",
+      "domain": "firmware",
+      "uid": "firmware/fw-parse-multipart-upload",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-nvram-stored-cmdi",
+      "name": "nvram_get value used unsanitized in system()",
+      "cwe": "CWE-78",
+      "category": "nvram-config",
+      "pattern": "A config value previously settable via the web UI/API/CWMP is read with nvram_get and concatenated into a shell command at apply time (e.g. building iptables/route/ping/ddns commands). A second-order/stored command injection: the malicious value is set in one request, executed when config is applied/rebooted.",
+      "detection_signature": "Imports: nvram_get/nvram_safe_get/nvram_bufget + system/popen. Decompile: nvram_get(\"<key>\") -> sprintf into a command -> system(). The taint source is nvram, not the immediate request, so single-function lenses miss it - need a cross-cutting 'nvram value reaches shell' lens that pairs the SET path (websGetVar->nvram_set) with the APPLY path (nvram_get->system). Strings: nvram keys like \"ddns_hostname\", \"wan_ifname\", \"lan_ipaddr\". MIPS/ARM: same shell-sink shape, different source.",
+      "grounding": [
+        "Numerous Asus/Tenda/D-Link ddns/ntp/route stored cmdi",
+        "ASUSWRT nvram-to-shell cases",
+        "OpenWRT-derived uci/nvram apply injections"
+      ],
+      "confirmable": "YES with nvram model. cmdi canary catches it IF the emulation makes nvram_get return an attacker-chosen value (your nvram stub must be writable: set the key to `;echo CANARY`, then drive the apply path). Two-step trigger. No real rootfs services needed beyond the nvram model.",
+      "reachability_note": "Often AUTHED to set the value, but the value may be settable via a separate UNAUTH endpoint or default; network-reachable. Common Mirai vector.",
+      "domain": "firmware",
+      "uid": "firmware/fw-nvram-stored-cmdi",
+      "engine_lens": "seed:firmware:cgi-cmdi",
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-nvram-set-overflow",
+      "name": "nvram_set / oversized value into fixed config struct",
+      "cwe": "CWE-121",
+      "category": "nvram-config",
+      "pattern": "An oversized config value is copied into a fixed-size field of an in-memory config struct or stack buffer during set/apply (strcpy(cfg->field, nvram_get(key))), overflowing adjacent fields or the stack.",
+      "detection_signature": "Imports: strcpy/memcpy with dest = a struct field of known size and src = nvram_get/websGetVar. Decompile: per-key copy into a typed config struct without length cap. MIPS/ARM: struct base + offset store loop. Lens: bounded-vs-unbounded copy where dest is a config-struct field.",
+      "grounding": [
+        "Tenda/D-Link nvram field overflows in apply handlers",
+        "Asus config-struct overflows",
+        "Realtek SDK apsd/config copies"
+      ],
+      "confirmable": "YES. Qiling: set an over-long nvram value (writable stub) and drive apply; detect corruption. Same scaffolding as stored-cmdi.",
+      "reachability_note": "Usually AUTHED set; network-reachable; chains with auth bypass.",
+      "domain": "firmware",
+      "uid": "firmware/fw-nvram-set-overflow",
+      "engine_lens": "seed:firmware:stack-overflow",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-nvram-hardcoded-creds",
+      "name": "Hardcoded credentials / keys in defaults or binary",
+      "cwe": "CWE-798",
+      "category": "nvram-config",
+      "pattern": "Default admin credentials, an undocumented support account, a magic 'master' password, API keys, or private keys are embedded in the binary or the default nvram set, granting access or enabling firmware/traffic decryption.",
+      "detection_signature": "String scan for credential-shaped constants near a strcmp/memcmp on a network/login input, or in the nvram-default table (init function that nvram_set's many keys). Imports: strcmp/memcmp(input, const), and crypto with a fixed key buffer in .rodata. The 'backdoor account' shape = a hidden username compared before/around the normal auth. MIPS/ARM: constant operand of the compare is the secret; default-table = sequence of addiu/move with .rodata string args into nvram_set.",
+      "grounding": [
+        "CVE-2024-3272 (D-Link NAS hardcoded 'messagebus' account, no password)",
+        "CVE-2024-45697 (DIR-X4860 hardcoded telnet creds)",
+        "CVE-2025-46176 (D-Link telnet creds)",
+        "Numerous default/master passwords"
+      ],
+      "confirmable": "STATIC-ONLY (and that is enough). The constant + its use in an auth compare is provable in Ghidra without emulation. Qiling can demo login with the recovered cred but adds little; this is a string/compare lens, near-zero emulation need.",
+      "reachability_note": "UNAUTH (the creds bypass auth). Network-reachable; severity = whatever the account can do (often root).",
+      "domain": "firmware",
+      "uid": "firmware/fw-nvram-hardcoded-creds",
+      "engine_lens": null,
+      "route": "firmware-static"
+    },
+    {
+      "id": "fw-nvram-value-as-path-or-fmt",
+      "name": "Config value used as path/format without validation",
+      "cwe": "CWE-426",
+      "category": "nvram-config",
+      "pattern": "An nvram/config value is used to build a filesystem path, a library/script load path, or a format string at apply time, enabling traversal, arbitrary file write, or format-string abuse via a stored value.",
+      "detection_signature": "nvram_get -> fopen/exec path, or nvram_get used as printf/sprintf format. Same lenses as path-traversal and format-string but with an nvram source. Strings: nvram keys feeding \"/tmp/%s\", script names. MIPS/ARM: nvram value reaches a file API or format slot.",
+      "grounding": [
+        "Router script-path-from-config bugs",
+        "ddns/usb-mount script injection",
+        "logging-of-config format-string cases"
+      ],
+      "confirmable": "PARTIAL. Path variant needs a rootfs to demonstrate; format variant catchable by the printf hook. Static detection solid.",
+      "reachability_note": "Usually AUTHED set; network-reachable; second-order.",
+      "domain": "firmware",
+      "uid": "firmware/fw-nvram-value-as-path-or-fmt",
+      "engine_lens": null,
+      "route": "firmware-lane-partial"
+    },
+    {
+      "id": "fw-update-weak-integrity",
+      "name": "Missing/weak firmware signature verification",
+      "cwe": "CWE-347",
+      "category": "update-mechanism",
+      "pattern": "The update handler verifies the image with only CRC32/MD5 (or nothing), or checks integrity but not authenticity, so an attacker who can deliver an image (MITM of the update URL, or local upload) flashes arbitrary firmware -> persistent root.",
+      "detection_signature": "Find the verify routine in the update path (strings: \"upgrade\", \"sysupgrade\", \"image\", \"signature\", \"verify\"). Imports present: crc32, MD5_Init -> WEAK; absent RSA/EC verify (no mbedtls/openssl verify, no ECDSA/RSA_verify import) -> no authenticity. Decompile: header magic + length + checksum compared, then write to mtd/flash; no public-key check. MIPS/ARM: trace from image-receive to flash-write and inventory which integrity primitive gates it.",
+      "grounding": [
+        "USENIX Sec'24 firmware-update study (39% CRC, 23.8% MD5)",
+        "TP-Link WR-series (RSA sig does not cover header)",
+        "Numerous SOHO devices with CRC-only images"
+      ],
+      "confirmable": "STATIC-ONLY (mostly). Detectable with high confidence by inventorying crypto primitives in the update path. Runtime confirmation = emulating the updater to accept a forged image, which needs the flash/mtd model -> heavier; static call-graph evidence is the deliverable.",
+      "reachability_note": "AUTHED upload, or UNAUTH via MITM of an HTTP update URL / unauth upload endpoint. Persistent root impact.",
+      "domain": "firmware",
+      "uid": "firmware/fw-update-weak-integrity",
+      "engine_lens": null,
+      "route": "firmware-static"
+    },
+    {
+      "id": "fw-update-sig-bypass-region",
+      "name": "Signature-check bypass via unsigned region / header redirect",
+      "cwe": "CWE-347",
+      "category": "update-mechanism",
+      "pattern": "Authenticity IS checked, but the verifier reads metadata (signing table, fwmap, length, offset) from a part of the image the signature does NOT cover, letting the attacker point verification at attacker-controlled data and pass with a malicious payload.",
+      "detection_signature": "Decompile the verify routine: does it locate the signed-data range using a length/offset/table pointer taken from the unsigned header? Look for: parse header table -> hash range [a,b] where a/b come from the image -> verify. The signed region being defined by unsigned bytes is the bug. MIPS/ARM: the offsets feeding the hash loop are loaded from the image rather than fixed constants.",
+      "grounding": [
+        "CVE-2025-7937 / CVE-2025-6198 (Supermicro BMC fake fwmap/signing table in unsigned region)",
+        "Cisco SD-WAN signature verification bypass",
+        "TP-Link header-not-covered-by-signature"
+      ],
+      "confirmable": "STATIC-ONLY. This is a logic flaw provable by reading the verify routine; emulation adds little and needs the full updater. High-confidence static lens (crypto-coverage analysis), not a Qiling-canary target.",
+      "reachability_note": "AUTHED/local or MITM depending on delivery. Persistent root, defeats secure boot.",
+      "domain": "firmware",
+      "uid": "firmware/fw-update-sig-bypass-region",
+      "engine_lens": null,
+      "route": "firmware-static"
+    },
+    {
+      "id": "fw-update-handler-cmdi",
+      "name": "Command injection in update/restore/upgrade handler",
+      "cwe": "CWE-78",
+      "category": "update-mechanism",
+      "pattern": "The upgrade/restore handler passes an attacker-influenced filename, update URL, or version string to a shell (system(\"wget \"+url), system(\"tar -xf \"+name), sysupgrade wrapper) -> command injection during update.",
+      "detection_signature": "Imports: system/popen near update strings (\"wget\", \"curl\", \"tar\", \"mtd\", \"sysupgrade\", \"fwupdate\"). Decompile: sprintf(cmd,\"wget %s\",url)/(\"tar -xzf /tmp/%s\",fname) -> system(cmd) with url/fname from the request. MIPS/ARM: standard shell-sink shape in the update code path.",
+      "grounding": [
+        "Router 'check for update' URL injection cases",
+        "Restore-handler tar/unzip filename injection",
+        "DDNS/USB update-script injections"
+      ],
+      "confirmable": "YES. cmdi canary catches it: drive the update/restore endpoint with a filename/URL containing `;echo CANARY`. Needs the handler reachable + nvram stubs; no real flash needed since the injection fires before/around the flash op.",
+      "reachability_note": "AUTHED typically; UNAUTH if the update-check endpoint is unauth or MITM-able. Network-reachable.",
+      "domain": "firmware",
+      "uid": "firmware/fw-update-handler-cmdi",
+      "engine_lens": "seed:firmware:cgi-cmdi",
+      "route": "firmware-lane"
+    },
+    {
+      "id": "fw-update-hardcoded-fw-key",
+      "name": "Hardcoded firmware encryption/decryption key",
+      "cwe": "CWE-321",
+      "category": "update-mechanism",
+      "pattern": "Encrypted firmware images are protected by a symmetric key embedded in the bootloader/updater binary. Recovering the key lets an attacker decrypt (to find more bugs) and, combined with weak authenticity, re-encrypt a forged image the device will accept.",
+      "detection_signature": "Find the decrypt routine in the updater (AES/DES/XOR). Imports: AES_set_decrypt_key, EVP_DecryptInit, or a hand-rolled XOR. The key is a fixed 16/24/32-byte buffer in .rodata or built by constant stores. MIPS/ARM: constant key bytes loaded into the cipher context; IV often fixed too. Lens: symmetric-crypto init whose key argument points to a constant.",
+      "grounding": [
+        "D-Link/Netgear/Zyxel encrypted-firmware key-recovery writeups",
+        "Many vendors ship a single static AES key across a product line",
+        "Combined with CRC-only authenticity -> forge accepted images"
+      ],
+      "confirmable": "STATIC-ONLY (and decisive). The key is recoverable directly from the binary; you can then decrypt offline. No Qiling needed to PROVE the key; emulating the decrypt to validate the key is a cheap optional cross-check.",
+      "reachability_note": "Not a remote bug by itself; an enabler/analysis primitive that, with weak signing, becomes persistent-root. Local/supply-chain.",
+      "domain": "firmware",
+      "uid": "firmware/fw-update-hardcoded-fw-key",
+      "engine_lens": null,
+      "route": "firmware-static"
+    }
+  ]
+}

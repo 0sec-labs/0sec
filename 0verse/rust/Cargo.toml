@@ -1,0 +1,21 @@
+[package]
+name = "zeroverse_native"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.74"
+description = "Optional Rust/PyO3 fast-path for 0verse ingest + bug-class lens scanning."
+license = "Apache-2.0"
+
+[lib]
+# Importable as ``zeroverse._native`` (see rust/pyproject.toml module-name).
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py311", "extension-module"] }
+aho-corasick = "1.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

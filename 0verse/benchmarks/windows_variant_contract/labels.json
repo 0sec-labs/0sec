@@ -1,0 +1,16 @@
+{
+  "schema_version": "0verse.windows-variant-labels/v1",
+  "campaign_sha256": "68108eff89f01df61eb0a3a63486bc55525a964c1fc095d158510916019d469f",
+  "current_binary_sha256": "caaaf13731e2b24b3d6c55351464023d5027385705950d599a493b1d380f4436",
+  "current_export_sha256": "5f95780341b72031abd03c3822e809481836b8529daaa52960977acb4d5bb988",
+  "expected_sites": [
+    {"function": "OrdinaryChildDispatch", "function_address": "0x1100"}
+  ],
+  "patched_control_sites": [
+    {"function": "PatchedSibling", "function_address": "0x1300"}
+  ],
+  "rank_cutoff": 20,
+  "minimum_recall_at_cutoff": 0.7,
+  "minimum_patched_control_suppression": 0.95,
+  "maximum_unsupported_at_cutoff": 3
+}

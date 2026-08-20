@@ -1,0 +1,2 @@
+BugCheck 133, {0, 2}
+FAILURE_BUCKET_ID: 0x133_DPC_fixture!ContractOnly

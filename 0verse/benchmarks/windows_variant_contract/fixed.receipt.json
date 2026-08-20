@@ -1,0 +1,13 @@
+{
+  "schema_version": "0verse.ghidra-analysis-receipt/v1",
+  "producer": "zeroverse.windows-analysis/fixture-v1",
+  "binary_path": "fixed.sys",
+  "binary_sha256": "6f8cc8124233171b3b361fc0a9ccf993ebb37f0ecf3a259b019f049dc6e0e2f8",
+  "ghidra_export_path": "fixed.json",
+  "ghidra_export_sha256": "4897548a99b26fac5aad9e3528ba2808ace67734c81d527071ca6b721b89b948",
+  "tool": "ghidra",
+  "tool_version": "fixture-11.4",
+  "cache_key": "6f8cc8124233171b",
+  "synthetic_fixture": true,
+  "pdb": {"path": "", "sha256": "", "codeview_identity": ""}
+}

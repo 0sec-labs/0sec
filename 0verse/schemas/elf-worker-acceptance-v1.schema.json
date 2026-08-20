@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/elf-worker-acceptance-v1.schema.json",
+  "title": "0verse Linux ELF worker acceptance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "acceptance_id",
+    "campaign_id",
+    "worker",
+    "target_sha256",
+    "control_sha256",
+    "execution_mode",
+    "oracles",
+    "accepted_at",
+    "expires_at",
+    "statement",
+    "accepted_by",
+    "signature_ssh"
+  ],
+  "properties": {
+    "schema_version": {"const": "0verse.elf-worker-acceptance/v1"},
+    "acceptance_id": {"$ref": "#/$defs/identifier"},
+    "campaign_id": {"$ref": "#/$defs/identifier"},
+    "worker": {"$ref": "#/$defs/identifier"},
+    "target_sha256": {"$ref": "#/$defs/sha256"},
+    "control_sha256": {"$ref": "#/$defs/sha256"},
+    "execution_mode": {"enum": ["native", "qemu-user"]},
+    "oracles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "asan",
+          "msan",
+          "ubsan",
+          "native-signal",
+          "differential-allocator",
+          "exec-trap",
+          "casr"
+        ]
+      }
+    },
+    "accepted_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "statement": {"type": "string", "minLength": 1},
+    "accepted_by": {"$ref": "#/$defs/identifier"},
+    "signature_ssh": {"$ref": "#/$defs/signature"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^(?!0{64}$)[0-9a-f]{64}$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "signature": {"type": "string", "minLength": 1, "maxLength": 65536}
+  }
+}

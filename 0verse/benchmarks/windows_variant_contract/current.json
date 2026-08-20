@@ -1,0 +1,16 @@
+{
+  "insts": [
+    {"id": 1, "func": "SeedDispatch", "addr": 4096, "kind": "OTHER"},
+    {"id": 2, "func": "OrdinaryChildDispatch", "addr": 4352, "kind": "OTHER"},
+    {"id": 3, "func": "UnknownDispatch", "addr": 4608, "kind": "OTHER"},
+    {"id": 4, "func": "PatchedSibling", "addr": 4864, "kind": "OTHER"}
+  ],
+  "meta": {
+    "decompiled_c": {
+      "SeedDispatch": "void SeedDispatch(char *input, unsigned count) { if (count > 256) return; memcpy(dst, input, count); }",
+      "OrdinaryChildDispatch": "void OrdinaryChildDispatch(char *packet, unsigned count) { memcpy(output, packet, count); }",
+      "UnknownDispatch": "void UnknownDispatch(char *buffer, unsigned count) { RtlCopyMemory(output, buffer, count); }",
+      "PatchedSibling": "void PatchedSibling(char *buffer, unsigned length) { if (length >= 256) return; memcpy(output, buffer, length); }"
+    }
+  }
+}

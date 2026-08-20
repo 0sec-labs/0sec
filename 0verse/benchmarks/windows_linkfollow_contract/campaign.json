@@ -1,0 +1,41 @@
+{
+ "schema_version": "0verse.windows-variant-campaign/v1",
+ "seed": {
+  "vulnerable": {
+   "binary_path": "vulnerable.sys",
+   "ghidra_export_path": "vulnerable.json",
+   "binary_sha256": "205aaf7ceb6617c77c5ce94bc66e2844affd0368c21412dda615cb87231f8f14",
+   "ghidra_export_sha256": "9e3f12fb78d6935280d163f16e69e857068a63767b7dd39d899e0db337dfb7d9",
+   "analysis_receipt_path": "vulnerable.receipt.json",
+   "analysis_receipt_sha256": "3ca9ca2fcfaa1d3c8030675e9efc2fb57f0cac293a60254eb0b43d1ea869bbfb"
+  },
+  "fixed": {
+   "binary_path": "fixed.sys",
+   "ghidra_export_path": "fixed.json",
+   "binary_sha256": "dd40854cdef8b344393a3285fd4219a6d16f6b51a29341386809b29196c289bd",
+   "ghidra_export_sha256": "1bbb7c2692ddd121c91c87bd7c28627848115997d67588f71ffaf15565ddacb1",
+   "analysis_receipt_path": "fixed.receipt.json",
+   "analysis_receipt_sha256": "4ddb0361909f4d89a28698210b6b67d83d6046275dad4011e4037fb2760e019d"
+  },
+  "function": "SeedScan",
+  "reference": "synthetic CWE-59: missing reparse check before path re-resolution"
+ },
+ "current": {
+  "binary_path": "current.sys",
+  "ghidra_export_path": "current.json",
+  "binary_sha256": "a6f673a97e64e3b712051dc174b59f36e042d6bb9337a5c00db9e02d61701384",
+  "ghidra_export_sha256": "fbfe5fd06a23947d09e3f93dffb9ef5ece836aa97119dab738abf775d80067f6",
+  "analysis_receipt_path": "current.receipt.json",
+  "analysis_receipt_sha256": "fdafbb5b083f23ed3f13ba5e1b7791e65c95eee42f75cd348148596a671fbc74"
+ },
+ "reachability": {
+  "ScanThenPurge": {
+   "grade": "unprivileged-ioctl",
+   "evidence": "synthetic dispatch entry reachable from an unprivileged device ioctl"
+  },
+  "QuarantineMove": {
+   "grade": "unprivileged-ioctl",
+   "evidence": "synthetic quarantine callback reachable from an unprivileged scan request"
+  }
+ }
+}

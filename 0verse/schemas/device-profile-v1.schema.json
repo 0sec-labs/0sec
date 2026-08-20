@@ -1,0 +1,383 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/device-profile-v1.schema.json",
+  "title": "0verse declarative device profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "identity",
+    "transports",
+    "endpoints",
+    "service_session_claims",
+    "memory_metadata"
+  ],
+  "properties": {
+    "schema_version": {"const": "0verse.device-profile/v1"},
+    "profile_id": {"$ref": "#/$defs/identifier"},
+    "identity": {"$ref": "#/$defs/identity"},
+    "transports": {"$ref": "#/$defs/transportCollectionFact"},
+    "endpoints": {"$ref": "#/$defs/endpointCollectionFact"},
+    "service_session_claims": {"$ref": "#/$defs/serviceSessionClaimCollectionFact"},
+    "memory_metadata": {"$ref": "#/$defs/memoryMetadataCollectionFact"}
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000]+(?![\\s\\S])"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^(?:(?:0{3}[1-9]|0{2}[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29))T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])(?![\\s\\S])"
+    },
+    "confidence": {"enum": ["unassessed", "low", "medium", "high"]},
+    "factEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "value", "source", "confidence", "observed_at"],
+      "properties": {
+        "state": {"enum": ["unknown", "declared", "observed", "inferred"]},
+        "value": {},
+        "source": {"type": ["string", "null"]},
+        "confidence": {"type": ["string", "null"]},
+        "observed_at": {"type": ["string", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "unknown"}}},
+          "then": {
+            "properties": {
+              "value": {"type": "null"},
+              "source": {"type": "null"},
+              "confidence": {"type": "null"},
+              "observed_at": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {
+            "properties": {
+              "source": {"$ref": "#/$defs/text"},
+              "confidence": {"$ref": "#/$defs/confidence"},
+              "observed_at": {"$ref": "#/$defs/timestamp"}
+            }
+          }
+        }
+      ]
+    },
+    "textFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"$ref": "#/$defs/text"}}}
+        }
+      ]
+    },
+    "identifierFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"$ref": "#/$defs/identifier"}}}
+        }
+      ]
+    },
+    "transportKindFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {
+            "properties": {
+              "value": {"enum": ["file", "can", "serial", "network", "debug-port", "storage"]}
+            }
+          }
+        }
+      ]
+    },
+    "canIdFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"type": "integer", "minimum": 0, "maximum": 536870911}}}
+        }
+      ]
+    },
+    "serviceFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"type": "integer", "minimum": 0, "maximum": 255}}}
+        }
+      ]
+    },
+    "subfunctionFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {
+            "properties": {
+              "value": {"anyOf": [{"const": "none"}, {"type": "integer", "minimum": 0, "maximum": 127}]}
+            }
+          }
+        }
+      ]
+    },
+    "sessionFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"type": "integer", "minimum": 0, "maximum": 127}}}
+        }
+      ]
+    },
+    "booleanFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"type": "boolean"}}}
+        }
+      ]
+    },
+    "nonNegativeIntegerFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"type": "integer", "minimum": 0}}}
+        }
+      ]
+    },
+    "positiveIntegerFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"type": "integer", "minimum": 1}}}
+        }
+      ]
+    },
+    "memoryRoleFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {
+            "properties": {
+              "value": {
+                "enum": ["firmware", "bootloader", "code", "calibration", "data", "filesystem", "configuration"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "transportParameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {"value": {"$ref": "#/$defs/textFact"}}
+    },
+    "transportParameterMap": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])": {"$ref": "#/$defs/transportParameter"}
+      },
+      "additionalProperties": false
+    },
+    "transportParameterCollectionFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"$ref": "#/$defs/transportParameterMap"}}}
+        }
+      ]
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "protocol", "parameters"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/transportKindFact"},
+        "protocol": {"$ref": "#/$defs/textFact"},
+        "parameters": {"$ref": "#/$defs/transportParameterCollectionFact"}
+      }
+    },
+    "transportMap": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])": {"$ref": "#/$defs/transport"}
+      },
+      "additionalProperties": false
+    },
+    "transportCollectionFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"$ref": "#/$defs/transportMap"}}}
+        }
+      ]
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport_id", "request_can_id", "response_can_id", "extended_id"],
+      "properties": {
+        "transport_id": {"$ref": "#/$defs/identifierFact"},
+        "request_can_id": {"$ref": "#/$defs/canIdFact"},
+        "response_can_id": {"$ref": "#/$defs/canIdFact"},
+        "extended_id": {"$ref": "#/$defs/booleanFact"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "request_can_id": {
+                    "allOf": [
+                      {"$ref": "#/$defs/canIdFact"},
+                      {
+                        "properties": {
+                          "state": {"enum": ["declared", "observed", "inferred"]},
+                          "value": {"minimum": 2048}
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "response_can_id": {
+                    "allOf": [
+                      {"$ref": "#/$defs/canIdFact"},
+                      {
+                        "properties": {
+                          "state": {"enum": ["declared", "observed", "inferred"]},
+                          "value": {"minimum": 2048}
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "extended_id": {
+                "allOf": [
+                  {"$ref": "#/$defs/booleanFact"},
+                  {
+                    "properties": {
+                      "state": {"enum": ["declared", "observed", "inferred"]},
+                      "value": {"const": true}
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "endpointMap": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])": {"$ref": "#/$defs/endpoint"}
+      },
+      "additionalProperties": false
+    },
+    "endpointCollectionFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"$ref": "#/$defs/endpointMap"}}}
+        }
+      ]
+    },
+    "serviceSessionClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "subfunction", "session", "safety_evidence", "authorization_effect"],
+      "properties": {
+        "service": {"$ref": "#/$defs/serviceFact"},
+        "subfunction": {"$ref": "#/$defs/subfunctionFact"},
+        "session": {"$ref": "#/$defs/sessionFact"},
+        "safety_evidence": {"$ref": "#/$defs/textFact"},
+        "authorization_effect": {"const": "none"}
+      }
+    },
+    "serviceSessionClaimMap": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])": {"$ref": "#/$defs/serviceSessionClaim"}
+      },
+      "additionalProperties": false
+    },
+    "serviceSessionClaimCollectionFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"$ref": "#/$defs/serviceSessionClaimMap"}}}
+        }
+      ]
+    },
+    "memoryMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address_space", "start", "length", "role"],
+      "properties": {
+        "address_space": {"$ref": "#/$defs/textFact"},
+        "start": {"$ref": "#/$defs/nonNegativeIntegerFact"},
+        "length": {"$ref": "#/$defs/positiveIntegerFact"},
+        "role": {"$ref": "#/$defs/memoryRoleFact"}
+      }
+    },
+    "memoryMetadataMap": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])": {"$ref": "#/$defs/memoryMetadata"}
+      },
+      "additionalProperties": false
+    },
+    "memoryMetadataCollectionFact": {
+      "allOf": [
+        {"$ref": "#/$defs/factEnvelope"},
+        {
+          "if": {"properties": {"state": {"enum": ["declared", "observed", "inferred"]}}},
+          "then": {"properties": {"value": {"$ref": "#/$defs/memoryMetadataMap"}}}
+        }
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "manufacturer", "model", "part_number"],
+      "properties": {
+        "category": {"$ref": "#/$defs/textFact"},
+        "manufacturer": {"$ref": "#/$defs/textFact"},
+        "model": {"$ref": "#/$defs/textFact"},
+        "part_number": {"$ref": "#/$defs/textFact"}
+      }
+    }
+  }
+}

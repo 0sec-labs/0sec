@@ -1,0 +1,32 @@
+{
+  "schema_version": "0verse.windows-driver-entry-abi-authority/v1",
+  "retrieved_utc": "2026-07-17T23:28:00Z",
+  "sources": [
+    {
+      "canonical_url": "https://learn.microsoft.com/cpp/build/x64-calling-convention",
+      "derived_proposition": "A scalar return value that fits in 64 bits is returned through RAX on Windows x64.",
+      "path": "x64-calling-convention.md",
+      "pinned_commit": "6f73b32152b68ff6d5b30578eaac61cfd0a6292e",
+      "published_raw_url": "https://raw.githubusercontent.com/MicrosoftDocs/cpp-docs/6f73b32152b68ff6d5b30578eaac61cfd0a6292e/docs/build/x64-calling-convention.md",
+      "raw_sha256": "043986cc9256b62c29b4b18fba978cfece03da69e8680054d210d40b625d89c0",
+      "raw_size_bytes": 18835,
+      "snapshot_normalization": "none",
+      "snapshot_sha256": "043986cc9256b62c29b4b18fba978cfece03da69e8680054d210d40b625d89c0",
+      "snapshot_size_bytes": 18835,
+      "supporting_lines": [106]
+    },
+    {
+      "canonical_url": "https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nc-wdm-driver_initialize",
+      "derived_proposition": "DRIVER_INITIALIZE is conventionally DriverEntry, whose implementation returns NTSTATUS.",
+      "path": "nc-wdm-driver_initialize.md",
+      "pinned_commit": "37b43c11dd5441ef528eeec45935b7f2a196ca65",
+      "published_raw_url": "https://raw.githubusercontent.com/MicrosoftDocs/windows-driver-docs-ddi/37b43c11dd5441ef528eeec45935b7f2a196ca65/wdk-ddi-src/content/wdm/nc-wdm-driver_initialize.md",
+      "raw_sha256": "aa853c41b56d1f299e370ea09c48c335bc98ec964f378374774d7288731c947d",
+      "raw_size_bytes": 5030,
+      "snapshot_normalization": "none",
+      "snapshot_sha256": "aa853c41b56d1f299e370ea09c48c335bc98ec964f378374774d7288731c947d",
+      "snapshot_size_bytes": 5030,
+      "supporting_lines": [44, 84, 85, 86, 87, 88, 89, 90]
+    }
+  ]
+}

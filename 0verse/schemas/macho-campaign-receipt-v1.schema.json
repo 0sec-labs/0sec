@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/macho-campaign-receipt-v1.schema.json",
+  "title": "0verse Apple Mach-O target/control replay receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "campaign_id", "campaign_sha256", "worker_acceptance_sha256", "coordinator", "worker", "hardware_model", "authorization_kind", "input", "started_at", "finished_at", "classification", "target_observation", "control_observation", "artifacts", "bounty_eligibility", "operational_maturity_claimed", "auto_disclosure"],
+  "properties": {
+    "schema_version": {"const": "0verse.macho-campaign-receipt/v1"},
+    "campaign_id": {"$ref": "#/$defs/identifier"}, "campaign_sha256": {"$ref": "#/$defs/sha256"},
+    "worker_acceptance_sha256": {"$ref": "#/$defs/sha256"}, "coordinator": {"$ref": "#/$defs/identifier"}, "worker": {"$ref": "#/$defs/identifier"},
+    "hardware_model": {"$ref": "#/$defs/hardwareModel"},
+    "authorization_kind": {"enum": ["published-bounty", "written-authorization", "owned-lab"]},
+    "input": {"$ref": "#/$defs/artifact"},
+    "started_at": {"type": "string", "format": "date-time"}, "finished_at": {"type": "string", "format": "date-time"},
+    "classification": {"enum": ["CLEAN", "TARGET_ONLY_CRASH", "CONTROL_ONLY_CRASH", "BOTH_CRASH", "ERROR", "TIMEOUT"]},
+    "target_observation": {"allOf": [{"$ref": "#/$defs/observation"}, {"properties": {"role": {"const": "target"}}}]},
+    "control_observation": {"allOf": [{"$ref": "#/$defs/observation"}, {"properties": {"role": {"const": "control"}, "target_flag_reference": {"type": "null"}}}]},
+    "artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/artifact"}},
+    "bounty_eligibility": {"$ref": "#/$defs/eligibility"},
+    "operational_maturity_claimed": {"const": false}, "auto_disclosure": {"const": false}
+  },
+  "oneOf": [
+    {"properties": {"classification": {"const": "CLEAN"}, "target_observation": {"properties": {"outcome": {"const": "CLEAN"}}}, "control_observation": {"properties": {"outcome": {"const": "CLEAN"}}}}},
+    {"properties": {"classification": {"const": "TARGET_ONLY_CRASH"}, "target_observation": {"properties": {"outcome": {"const": "CRASH"}}}, "control_observation": {"properties": {"outcome": {"const": "CLEAN"}}}}},
+    {"properties": {"classification": {"const": "CONTROL_ONLY_CRASH"}, "target_observation": {"properties": {"outcome": {"const": "CLEAN"}}}, "control_observation": {"properties": {"outcome": {"const": "CRASH"}}}}},
+    {"properties": {"classification": {"const": "BOTH_CRASH"}, "target_observation": {"properties": {"outcome": {"const": "CRASH"}}}, "control_observation": {"properties": {"outcome": {"const": "CRASH"}}}}},
+    {"properties": {"classification": {"const": "TIMEOUT"}}, "anyOf": [{"properties": {"target_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}, {"properties": {"control_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}]},
+    {"properties": {"classification": {"const": "ERROR"}}, "allOf": [{"anyOf": [{"properties": {"target_observation": {"properties": {"outcome": {"const": "ERROR"}}}}}, {"properties": {"control_observation": {"properties": {"outcome": {"const": "ERROR"}}}}}]}, {"not": {"anyOf": [{"properties": {"target_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}, {"properties": {"control_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}]}}]}
+  ],
+  "allOf": [
+    {"if": {"properties": {"classification": {"const": "TARGET_ONLY_CRASH"}}}, "then": {"properties": {"bounty_eligibility": {"properties": {"target_only_reproduced": {"const": true}}}}}, "else": {"properties": {"bounty_eligibility": {"properties": {"target_only_reproduced": {"const": false}}}}}},
+    {"if": {"properties": {"authorization_kind": {"const": "published-bounty"}}}, "then": {"properties": {"bounty_eligibility": {"properties": {"public_scope_current": {"const": true}}}}}, "else": {"properties": {"bounty_eligibility": {"properties": {"public_scope_current": {"const": false}}}}}},
+    {"if": {"properties": {"bounty_eligibility": {"properties": {"target_flag_present": {"const": true}}}}}, "then": {"properties": {"target_observation": {"properties": {"target_flag_reference": {"$ref": "#/$defs/artifact"}}}}}, "else": {"properties": {"target_observation": {"properties": {"target_flag_reference": {"type": "null"}}}}}}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^(?!0{64}$)[0-9a-f]{64}$"},
+    "cdhash": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "uuid": {"type": "string", "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "hardwareModel": {"type": "string", "pattern": "^[A-Za-z]+[0-9]+,[0-9]+$"},
+    "relativePath": {"type": "string", "pattern": "^(?!\\.{1,2}$)(?!\\.{1,2}/)(?!.*\\/\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$"},
+    "absolutePath": {"type": "string", "pattern": "^/(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\u0000]+$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "size"],
+      "properties": {"path": {"$ref": "#/$defs/relativePath"}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"type": "integer", "minimum": 0}}
+    },
+    "process": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pid", "parent_pid", "responsible_pid", "launch_id", "executable_path", "executable_sha256", "macho_uuid", "cdhash", "evidence"],
+      "properties": {
+        "pid": {"type": "integer", "minimum": 1}, "parent_pid": {"type": "integer", "minimum": 1}, "responsible_pid": {"type": "integer", "minimum": 1},
+        "launch_id": {"$ref": "#/$defs/identifier"}, "executable_path": {"$ref": "#/$defs/absolutePath"},
+        "executable_sha256": {"$ref": "#/$defs/sha256"}, "macho_uuid": {"$ref": "#/$defs/uuid"}, "cdhash": {"$ref": "#/$defs/cdhash"},
+        "evidence": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "replay_index", "coordinator", "worker", "campaign_sha256", "worker_acceptance_sha256", "binary_sha256", "binary_uuid", "input_sha256", "process", "outcome", "exit_code", "termination_reason", "started_at", "finished_at", "crash_log", "sysdiagnose", "target_flag_reference", "evidence", "observed_by", "authority_key_sha256", "signature_ssh"],
+      "properties": {
+        "role": {"enum": ["target", "control"]}, "replay_index": {"type": "integer", "minimum": 1},
+        "coordinator": {"$ref": "#/$defs/identifier"}, "worker": {"$ref": "#/$defs/identifier"},
+        "campaign_sha256": {"$ref": "#/$defs/sha256"}, "worker_acceptance_sha256": {"$ref": "#/$defs/sha256"},
+        "binary_sha256": {"$ref": "#/$defs/sha256"}, "binary_uuid": {"$ref": "#/$defs/uuid"}, "input_sha256": {"$ref": "#/$defs/sha256"},
+        "process": {"$ref": "#/$defs/process"}, "outcome": {"enum": ["CLEAN", "CRASH", "ERROR", "TIMEOUT"]},
+        "exit_code": {"type": ["integer", "null"]}, "termination_reason": {"type": ["string", "null"], "minLength": 1},
+        "started_at": {"type": "string", "format": "date-time"}, "finished_at": {"type": "string", "format": "date-time"},
+        "crash_log": {"oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "sysdiagnose": {"oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "target_flag_reference": {"oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+        "observed_by": {"$ref": "#/$defs/identifier"}, "authority_key_sha256": {"$ref": "#/$defs/sha256"},
+        "signature_ssh": {"type": "string", "minLength": 1, "maxLength": 65536}
+      },
+      "allOf": [
+        {"if": {"properties": {"outcome": {"const": "CRASH"}}}, "then": {"properties": {"exit_code": {"type": "null"}, "crash_log": {"$ref": "#/$defs/artifact"}, "sysdiagnose": {"$ref": "#/$defs/artifact"}, "termination_reason": {"type": "string", "minLength": 1}}}},
+        {"if": {"properties": {"outcome": {"const": "CLEAN"}}}, "then": {"properties": {"exit_code": {"const": 0}, "termination_reason": {"type": "null"}, "crash_log": {"type": "null"}}}},
+        {"if": {"properties": {"outcome": {"enum": ["ERROR", "TIMEOUT"]}}}, "then": {"properties": {"exit_code": {"not": {"const": 0}}, "termination_reason": {"type": "string", "minLength": 1}, "crash_log": {"type": "null"}, "evidence": {"minItems": 1}}}},
+        {"if": {"properties": {"outcome": {"const": "TIMEOUT"}}}, "then": {"properties": {"exit_code": {"type": "null"}}}}
+      ]
+    },
+    "eligibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "target_flag_present", "public_scope_current", "current_supported_build", "target_only_reproduced", "process_attributed", "security_impact_established", "originality_reviewed", "private_submission_only", "eligible"],
+      "properties": {
+        "status": {"const": "UNASSESSED"}, "target_flag_present": {"type": "boolean"},
+        "public_scope_current": {"type": "boolean"},
+        "current_supported_build": {"const": false}, "target_only_reproduced": {"type": "boolean"},
+        "process_attributed": {"const": true}, "security_impact_established": {"const": false},
+        "originality_reviewed": {"const": false}, "private_submission_only": {"const": true}, "eligible": {"const": false}
+      }
+    }
+  }
+}

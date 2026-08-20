@@ -1,0 +1,16 @@
+[Unit]
+Description=syzkaller KCSAN manager for the KCM psock-lifetime race surface on 6.12.94
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/syzkaller
+ExecStart=/usr/bin/nice -n 10 /usr/bin/ionice -c3 /root/syzkaller/bin/syz-manager -config /root/syz/kcsan-kcm.cfg
+Restart=on-failure
+RestartSec=15
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
