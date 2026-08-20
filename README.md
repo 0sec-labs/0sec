@@ -71,6 +71,17 @@ node dist/0sec.js review ./my-app
 # Audit a package
 node dist/0sec.js audit lodash
 
+# Verify that an authorized MCP agent cannot perform a prohibited action
+node dist/0sec.js agent-assure \
+  --agent-endpoint https://agent.staging.example.test/execute \
+  --mcp-endpoint https://mcp.staging.example.test/mcp \
+  --oracle-endpoint https://oracle.staging.example.test/observe \
+  --scenario ./agent-scenario.json \
+  --scope ./scope.json \
+  --target-version build-42 \
+  --policy-version policy-7 \
+  --model-version model-2026-08-20
+
 # Inspect available commands and configuration
 node dist/0sec.js --help
 ```

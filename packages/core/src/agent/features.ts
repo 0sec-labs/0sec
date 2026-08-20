@@ -72,6 +72,12 @@ export const features = {
    */
   get pythonExec(): boolean { return env("0SEC_FEATURE_PYTHON_EXEC", false); },
   /**
+   * Expose the path-confined `analyze_binary` bridge to 0verse. Default OFF:
+   * a model may request a long-running binary analysis only after an operator
+   * opts in with 0SEC_FEATURE_ZEROVERSE=1.
+   */
+  get zeroverse(): boolean { return env("0SEC_FEATURE_ZEROVERSE", false); },
+  /**
    * EGATS specialist routing (#557, HPTSA-inspired). When ON, an EGATS branch
    * whose hypothesis names a concrete vuln class (SQLi/XSS/SSRF/SSTI/IDOR/
    * auth-bypass) runs as a per-class SPECIALIST: a class system prompt built

@@ -23,6 +23,7 @@ import { cloudDispatch } from "./cloud.js";
 import { orchestratorDispatch } from "./orchestrator.js";
 import { oastDispatch } from "./oast.js";
 import { pythonDispatch } from "./python.js";
+import { binaryDispatch } from "./binary.js";
 
 export const TOOL_DISPATCH: Record<string, string> = {
   ...reconDispatch,
@@ -38,4 +39,5 @@ export const TOOL_DISPATCH: Record<string, string> = {
   ...orchestratorDispatch,
   ...oastDispatch,
   ...pythonDispatch,
+  ...binaryDispatch,
 };

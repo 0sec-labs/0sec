@@ -121,6 +121,7 @@ describe("runCraftScan infrastructure faults", () => {
       runtime: "api",
       model: "gpt-5.5",
       maxSteps: 15,
+      maxTests: 1,
       evaluatePoc: graded,
       testPoc: selfTest,
     };
