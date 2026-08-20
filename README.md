@@ -39,10 +39,26 @@ continuing.
 Use 0sec only on systems and code you own or are explicitly authorized to
 test. It is not a substitute for a written testing scope.
 
-## Install from source
+## Install
 
-`0sec` is not published to npm yet. Do not run `npx 0sec`/`npx 0sec-cli` or
-install an unverified package with either name.
+### Standalone binary
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
+0sec --help
+```
+
+The installer downloads the matching GitHub Release binary, verifies its SHA-256
+against the release manifest, and installs it to `~/.0sec/bin/0sec`. It supports
+Apple Silicon macOS plus Linux x64 and arm64. Download
+`0sec-windows-x64.exe` directly from the GitHub Release on Windows.
+
+### npm
+
+`0sec` and `0sec-cli` are not published to npm yet. Do not install an
+unverified package with either name.
+
+### Source
 
 ```bash
 git clone https://github.com/0sec-labs/0sec.git
@@ -68,16 +84,16 @@ node dist/0sec.js scan --target https://example.com --scope ./scope.json
 
 ```bash
 # Scan an authorized web target with an engagement scope
-node dist/0sec.js scan --target https://example.com --mode web --scope ./scope.json
+0sec scan --target https://example.com --mode web --scope ./scope.json
 
 # Review a local codebase
-node dist/0sec.js review ./my-app
+0sec review ./my-app
 
 # Audit a package
-node dist/0sec.js audit lodash
+0sec audit lodash
 
 # Inspect available commands and configuration
-node dist/0sec.js --help
+0sec --help
 ```
 
 Live network targets require `--scope <file>`. Run `doctor` before a new
