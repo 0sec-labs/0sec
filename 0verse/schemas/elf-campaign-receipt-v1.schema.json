@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/elf-campaign-receipt-v1.schema.json",
+  "title": "0verse Linux ELF campaign receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "campaign_id",
+    "campaign_sha256",
+    "worker_acceptance_sha256",
+    "worker",
+    "target_sha256",
+    "control_sha256",
+    "input",
+    "execution_mode",
+    "oracles",
+    "started_at",
+    "finished_at",
+    "classification",
+    "target_observation",
+    "control_observation",
+    "artifacts",
+    "claim_eligible",
+    "auto_disclosure"
+  ],
+  "properties": {
+    "schema_version": {"const": "0verse.elf-campaign-receipt/v1"},
+    "campaign_id": {"$ref": "#/$defs/identifier"},
+    "campaign_sha256": {"$ref": "#/$defs/sha256"},
+    "worker_acceptance_sha256": {"$ref": "#/$defs/sha256"},
+    "worker": {"$ref": "#/$defs/identifier"},
+    "target_sha256": {"$ref": "#/$defs/sha256"},
+    "control_sha256": {"$ref": "#/$defs/sha256"},
+    "input": {"$ref": "#/$defs/artifact"},
+    "execution_mode": {"enum": ["native", "qemu-user"]},
+    "oracles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "asan",
+          "msan",
+          "ubsan",
+          "native-signal",
+          "differential-allocator",
+          "exec-trap",
+          "casr"
+        ]
+      }
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "classification": {
+      "enum": ["CLEAN", "TARGET_ONLY_CRASH", "CONTROL_ONLY_CRASH", "BOTH_CRASH", "ERROR", "TIMEOUT"]
+    },
+    "target_observation": {"$ref": "#/$defs/targetObservation"},
+    "control_observation": {"$ref": "#/$defs/controlObservation"},
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/artifact"}
+    },
+    "claim_eligible": {"const": false},
+    "auto_disclosure": {"const": false}
+  },
+  "oneOf": [
+    {"properties": {"classification": {"const": "TARGET_ONLY_CRASH"}, "target_observation": {"properties": {"outcome": {"const": "CRASH"}}}, "control_observation": {"properties": {"outcome": {"const": "CLEAN"}}}}},
+    {"properties": {"classification": {"const": "CONTROL_ONLY_CRASH"}, "target_observation": {"properties": {"outcome": {"const": "CLEAN"}}}, "control_observation": {"properties": {"outcome": {"const": "CRASH"}}}}},
+    {"properties": {"classification": {"const": "BOTH_CRASH"}, "target_observation": {"properties": {"outcome": {"const": "CRASH"}}}, "control_observation": {"properties": {"outcome": {"const": "CRASH"}}}}},
+    {"properties": {"classification": {"const": "CLEAN"}, "target_observation": {"properties": {"outcome": {"const": "CLEAN"}}}, "control_observation": {"properties": {"outcome": {"const": "CLEAN"}}}}},
+    {"properties": {"classification": {"const": "TIMEOUT"}}, "anyOf": [{"properties": {"target_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}, {"properties": {"control_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}]},
+    {"properties": {"classification": {"const": "ERROR"}}, "not": {"anyOf": [{"properties": {"target_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}, {"properties": {"control_observation": {"properties": {"outcome": {"const": "TIMEOUT"}}}}}]}, "anyOf": [{"properties": {"target_observation": {"properties": {"outcome": {"const": "ERROR"}}}}}, {"properties": {"control_observation": {"properties": {"outcome": {"const": "ERROR"}}}}}]}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^(?!0{64}$)[0-9a-f]{64}$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "signature": {"type": "string", "minLength": 1, "maxLength": 65536},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 0}
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "campaign_sha256", "worker_acceptance_sha256", "binary_sha256", "input_sha256", "outcome", "exit_code", "signal", "started_at", "finished_at", "evidence", "observed_by", "signature_ssh"],
+      "properties": {
+        "role": {"enum": ["target", "control"]},
+        "campaign_sha256": {"$ref": "#/$defs/sha256"},
+        "worker_acceptance_sha256": {"$ref": "#/$defs/sha256"},
+        "binary_sha256": {"$ref": "#/$defs/sha256"},
+        "input_sha256": {"$ref": "#/$defs/sha256"},
+        "outcome": {"enum": ["CLEAN", "CRASH", "ERROR", "TIMEOUT"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "signal": {"type": ["integer", "null"], "minimum": 1, "maximum": 255},
+        "started_at": {"type": "string", "format": "date-time"},
+        "finished_at": {"type": "string", "format": "date-time"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+        "observed_by": {"$ref": "#/$defs/identifier"},
+        "signature_ssh": {"$ref": "#/$defs/signature"}
+      },
+      "allOf": [
+        {"if": {"properties": {"outcome": {"const": "CRASH"}}}, "then": {"properties": {"exit_code": {"type": "null"}, "signal": {"type": "integer"}}}},
+        {"if": {"properties": {"outcome": {"const": "CLEAN"}}}, "then": {"properties": {"exit_code": {"const": 0}, "signal": {"type": "null"}}}},
+        {"if": {"properties": {"outcome": {"enum": ["ERROR", "TIMEOUT"]}}}, "then": {"properties": {"signal": {"type": "null"}}}}
+      ]
+    },
+    "targetObservation": {"allOf": [{"$ref": "#/$defs/observation"}, {"properties": {"role": {"const": "target"}}}]},
+    "controlObservation": {"allOf": [{"$ref": "#/$defs/observation"}, {"properties": {"role": {"const": "control"}}}]},
+    "relativePath": {"type": "string", "pattern": "^(?!\\.{1,2}$)(?!\\.{1,2}/)(?!.*\\/\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$"}
+  }
+}

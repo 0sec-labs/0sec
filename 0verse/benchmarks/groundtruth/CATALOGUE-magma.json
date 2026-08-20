@@ -1,0 +1,974 @@
+{
+  "_about": "Magma (github.com/HexHive/magma) ground-truth bug CATALOGUE \u2014 provenance for a full eval, NOT built/scored in the bounded run. Each entry is a REAL upstream bug toggled by MAGMA_ENABLE_FIXES with a MAGMA_BUG canary; file+function extracted from the bug patch hunks (verifiable in-repo). CVE ids live in the published Magma bug list (https://hexhive.epfl.ch/magma/) and are intentionally NOT invented here. All held-out vs 0verse seeds (in_seed_set=false). Building a target is a Docker multi-hour job producing a large fuzz-driver binary; see docs/EVAL-GROUNDTRUTH.md residuals.",
+  "source": "github.com/HexHive/magma",
+  "n_bugs": 138,
+  "note_xml001": "XML001 (valid.c:xmlSnprintfElementContent) == CVE-2017-9047, which is faithfully reproduced + scored as cve_2017_9047_xml_vuln in the measured corpus.",
+  "bugs": [
+    {
+      "target": "libpng",
+      "bug": "PNG001",
+      "file": "pngrutil.c",
+      "function": "png_check_chunk_length",
+      "in_seed_set": false
+    },
+    {
+      "target": "libpng",
+      "bug": "PNG002",
+      "file": "png.c",
+      "function": "png_image_free_function",
+      "in_seed_set": false
+    },
+    {
+      "target": "libpng",
+      "bug": "PNG003",
+      "file": "pngrutil.c",
+      "function": "png_handle_PLTE",
+      "in_seed_set": false
+    },
+    {
+      "target": "libpng",
+      "bug": "PNG004",
+      "file": "pngrutil.c",
+      "function": "png_combine_row",
+      "in_seed_set": false
+    },
+    {
+      "target": "libpng",
+      "bug": "PNG005",
+      "file": "png.c",
+      "function": "png_check_IHDR",
+      "in_seed_set": false
+    },
+    {
+      "target": "libpng",
+      "bug": "PNG006",
+      "file": "png.c",
+      "function": "png_free_data",
+      "in_seed_set": false
+    },
+    {
+      "target": "libpng",
+      "bug": "PNG007",
+      "file": "pngrtran.c",
+      "function": "png_read_transform_info",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND001",
+      "file": "src/paf.c",
+      "function": "paf_read_header",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND002",
+      "file": "src/sd2.c",
+      "function": "sd2_parse_rsrc_fork",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND004",
+      "file": "src/file_io.c",
+      "function": "psf_fwrite",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND005",
+      "file": "src/aiff.c",
+      "function": "aiff_read_chanmap",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND006",
+      "file": "src/flac.c",
+      "function": "flac_buffer_copy",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND007",
+      "file": "src/flac.c",
+      "function": "sf_flac_meta_callback",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND010",
+      "file": "src/common.c",
+      "function": "psf_binheader_writef",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND012",
+      "file": "src/common.c",
+      "function": "psf_binheader_writef",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND013",
+      "file": "src/common.c",
+      "function": "psf_binheader_writef",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND014",
+      "file": "src/alaw.c",
+      "function": "f2alaw_array",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND015",
+      "file": "src/alaw.c",
+      "function": "s2alaw_array",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND016",
+      "file": "src/double64.c",
+      "function": "double64_init",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND017",
+      "file": "src/wavlike.c",
+      "function": "wavlike_read_fmt_chunk",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND020",
+      "file": "src/wavlike.c",
+      "function": "wavlike_read_fmt_chunk",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND022",
+      "file": "src/ulaw.c",
+      "function": "f2ulaw_array",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND023",
+      "file": "src/ulaw.c",
+      "function": "s2ulaw_array",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND024",
+      "file": "src/flac.c",
+      "function": "sf_flac_meta_callback",
+      "in_seed_set": false
+    },
+    {
+      "target": "libsndfile",
+      "bug": "SND025",
+      "file": "src/wav.c",
+      "function": "wav_write_header",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF001",
+      "file": "libtiff/tif_predict.c",
+      "function": "horAcc8",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF002",
+      "file": "libtiff/tif_pixarlog.c",
+      "function": "PixarLogDecode",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF003",
+      "file": "libtiff/tif_read.c",
+      "function": "TIFFReadEncodedStripGetStripSize",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF004",
+      "file": "libtiff/tif_ojpeg.c",
+      "function": "OJPEGDecode",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF005",
+      "file": "libtiff/tif_luv.c",
+      "function": "LogLuvClose",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF006",
+      "file": "libtiff/tif_pixarlog.c",
+      "function": "PixarLogClose",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF007",
+      "file": "libtiff/tif_dirread.c",
+      "function": "allocChoppedUpStripArrays",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF008",
+      "file": "libtiff/tif_next.c",
+      "function": "NeXTDecode",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF009",
+      "file": "libtiff/tif_dirwrite.c",
+      "function": "TIFFWriteDirectoryTagTransferfunction",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF010",
+      "file": "libtiff/tif_lzw.c",
+      "function": "LZWDecodeCompat",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF011",
+      "file": "libtiff/tif_print.c",
+      "function": "TIFFPrintDirectory",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF012",
+      "file": "libtiff/tif_dir.c",
+      "function": "setExtraSamples",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF013",
+      "file": "libtiff/tif_jbig.c",
+      "function": "JBIGDecode",
+      "in_seed_set": false
+    },
+    {
+      "target": "libtiff",
+      "bug": "TIF014",
+      "file": "libtiff/tif_dirread.c",
+      "function": "ChopUpSingleUncompressedStrip",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML001",
+      "file": "valid.c",
+      "function": "xmlSnprintfElementContent",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML002",
+      "file": "valid.c",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML003",
+      "file": "parser.c",
+      "function": "xmlParsePEReference",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML004",
+      "file": "xzlib.c",
+      "function": "xz_decomp",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML005",
+      "file": "xmlmemory.c",
+      "function": "xmlMallocLoc",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML006",
+      "file": "valid.c",
+      "function": "xmlSnprintfElementContent",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML007",
+      "file": "HTMLparser.c",
+      "function": "htmlParseTryOrFinish",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML008",
+      "file": "parser.c",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML009",
+      "file": "parser.c",
+      "function": "xmlParseEncodingDecl",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML010",
+      "file": "parser.c",
+      "function": "xmlStringLenDecodeEntities",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML011",
+      "file": "xmlstring.c",
+      "function": "xmlStrncat",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML012",
+      "file": "parser.c",
+      "function": "xmlParseNCNameComplex",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML013",
+      "file": "HTMLparser.c",
+      "function": "htmlParseAttValue",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML014",
+      "file": "HTMLparser.c",
+      "function": "htmlParseName",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML015",
+      "file": "HTMLparser.c",
+      "function": "htmlParseNameComplex",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML016",
+      "file": "xmlregexp.c",
+      "function": "xmlFAParseCharRange",
+      "in_seed_set": false
+    },
+    {
+      "target": "libxml2",
+      "bug": "XML017",
+      "file": "parser.c",
+      "function": "xmlParseInternalSubset",
+      "in_seed_set": false
+    },
+    {
+      "target": "lua",
+      "bug": "LUA001",
+      "file": "ldebug.c",
+      "function": "upvalname",
+      "in_seed_set": false
+    },
+    {
+      "target": "lua",
+      "bug": "LUA002",
+      "file": "ldebug.c",
+      "function": "luaG_runerror",
+      "in_seed_set": false
+    },
+    {
+      "target": "lua",
+      "bug": "LUA003",
+      "file": "liolib.c",
+      "function": "io_popen",
+      "in_seed_set": false
+    },
+    {
+      "target": "lua",
+      "bug": "LUA004",
+      "file": "ldebug.c",
+      "function": "lua_sethook",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL001",
+      "file": "crypto/asn1/a_int.c",
+      "function": "i2c_ibuf",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL002",
+      "file": "ssl/statem/statem.c",
+      "function": "grow_init_buf",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL003",
+      "file": "crypto/asn1/a_d2i_fp.c",
+      "function": "asn1_d2i_read_bio",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL004",
+      "file": "crypto/x509/x509_obj.c",
+      "function": "X509_NAME_oneline",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL005",
+      "file": "ssl/statem/extensions_srvr.c",
+      "function": "tls_parse_ctos_status_request",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL006",
+      "file": "crypto/evp/encode.c",
+      "function": "EVP_EncodeUpdate",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL007",
+      "file": "crypto/mdc2/mdc2dgst.c",
+      "function": "MDC2_Update",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL008",
+      "file": "ssl/statem/statem_clnt.c",
+      "function": "tls_construct_cke_dhe",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL009",
+      "file": "crypto/x509/v3_addr.c",
+      "function": "length_from_afi",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL010",
+      "file": "crypto/bn/bn_local.h",
+      "function": "int_bn_mod_inverse",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL011",
+      "file": "crypto/pkcs7/pk7_doit.c",
+      "function": "PKCS7_dataDecode",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL012",
+      "file": "crypto/x509/x509_req.c",
+      "function": "X509_to_X509_REQ",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL013",
+      "file": "crypto/rsa/rsa_ameth.c",
+      "function": "rsa_item_verify",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL014",
+      "file": "crypto/asn1/a_type.c",
+      "function": "ASN1_TYPE_cmp",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL015",
+      "file": "crypto/pkcs7/pk7_doit.c",
+      "function": "PKCS7_dataInit",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL016",
+      "file": "crypto/bn/bn_gf2m.c",
+      "function": "BN_GF2m_mod_inv_vartime",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL017",
+      "file": "crypto/x509/x509_vfy.c",
+      "function": "get_crl_sk",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL018",
+      "file": "ssl/statem/statem_dtls.c",
+      "function": "dtls1_preprocess_fragment",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL019",
+      "file": "ssl/record/rec_layer_s3.c",
+      "function": "ssl3_read_bytes",
+      "in_seed_set": false
+    },
+    {
+      "target": "openssl",
+      "bug": "SSL020",
+      "file": "ssl/t1_lib.c",
+      "function": "tls_decrypt_ticket",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP001",
+      "file": "ext/phar/phar.c",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP002",
+      "file": "ext/exif/exif.c",
+      "function": "exif_process_IFD_in_TIFF",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP003",
+      "file": "ext/exif/exif.c",
+      "function": "exif_scan_thumbnail",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP004",
+      "file": "ext/exif/exif.c",
+      "function": "exif_process_IFD_in_MAKERNOTE",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP005",
+      "file": "ext/iconv/iconv.c",
+      "function": "_php_iconv_mime_decode",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP006",
+      "file": "ext/exif/exif.c",
+      "function": "exif_scan_thumbnail",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP007",
+      "file": "ext/phar/phar.c",
+      "function": "phar_parse_pharfile",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP008",
+      "file": "ext/standard/dns.c",
+      "function": "php_parserr",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP009",
+      "file": "ext/exif/exif.c",
+      "function": "exif_process_IFD_in_MAKERNOTE",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP010",
+      "file": "ext/exif/exif.c",
+      "function": "exif_scan_thumbnail",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP011",
+      "file": "ext/exif/exif.c",
+      "function": "exif_offset_info_init",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP012",
+      "file": "ext/standard/http_fopen_wrapper.c",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP013",
+      "file": "ext/intl/msgformat/msgformat_parse.c",
+      "function": "PHP_FUNCTION",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP014",
+      "file": "ext/intl/locale/locale_methods.c",
+      "function": "get_icu_disp_value_src_php",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP015",
+      "file": "ext/phar/phar.c",
+      "function": "phar_parse_pharfile",
+      "in_seed_set": false
+    },
+    {
+      "target": "php",
+      "bug": "PHP016",
+      "file": "ext/phar/util.c",
+      "function": "phar_verify_signature",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF001",
+      "file": "poppler/SplashOutputDev.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF002",
+      "file": "poppler/JPEG2000Stream.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF003",
+      "file": "utils/HtmlOutputDev.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF004",
+      "file": "splash/SplashXPathScanner.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF005",
+      "file": "poppler/JPEG2000Stream.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF006",
+      "file": "splash/Splash.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF007",
+      "file": "poppler/Stream.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF008",
+      "file": "poppler/GfxState.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF009",
+      "file": "poppler/Parser.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF010",
+      "file": "poppler/SplashOutputDev.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF011",
+      "file": "poppler/XRef.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF012",
+      "file": "poppler/Parser.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF013",
+      "file": "poppler/FileSpec.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF014",
+      "file": "poppler/XRef.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF015",
+      "file": "poppler/FileSpec.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF016",
+      "file": "poppler/Parser.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF017",
+      "file": "fofi/FoFiTrueType.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF018",
+      "file": "poppler/Annot.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF019",
+      "file": "poppler/JBIG2Stream.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF020",
+      "file": "fofi/FoFiType1C.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF021",
+      "file": "poppler/Stream.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "poppler",
+      "bug": "PDF022",
+      "file": "poppler/GfxState.cc",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL001",
+      "file": "ext/fts5/fts5_hash.c",
+      "function": "fts5HashEntrySort",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL002",
+      "file": "src/select.c",
+      "function": "selectExpander",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL003",
+      "file": "src/select.c",
+      "function": "flattenSubquery",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL004",
+      "file": "ext/misc/zipfile.c",
+      "function": "zipfileUpdate",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL005",
+      "file": "ext/misc/zipfile.c",
+      "function": "zipfileUpdate",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL006",
+      "file": "src/select.c",
+      "function": "sqlite3Select",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL007",
+      "file": "src/build.c",
+      "function": "sqlite3EndTable",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL008",
+      "file": "src/shell.c.in",
+      "function": "tableColumnList",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL009",
+      "file": "src/vdbemem.c",
+      "function": "valueToText",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL010",
+      "file": "src/whereexpr.c",
+      "function": "exprAnalyze",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL011",
+      "file": "ext/rtree/rtree.c",
+      "function": "getNodeSize",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL012",
+      "file": "src/pragma.c",
+      "function": "sqlite3Pragma",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL013",
+      "file": "src/where.c",
+      "function": "whereLoopAddBtreeIndex",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL014",
+      "file": "src/select.c",
+      "function": "multiSelect",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL015",
+      "file": "src/resolve.c",
+      "function": "areDoubleQuotedStringsEnabled",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL016",
+      "file": "src/vdbe.c",
+      "function": "",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL017",
+      "file": "src/expr.c",
+      "function": "impliesNotNullRow",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL018",
+      "file": "src/expr.c",
+      "function": "sqlite3ExprAddCollateToken",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL019",
+      "file": "src/printf.c",
+      "function": "sqlite3_str_vappendf",
+      "in_seed_set": false
+    },
+    {
+      "target": "sqlite3",
+      "bug": "SQL020",
+      "file": "src/window.c",
+      "function": "exprListAppendList",
+      "in_seed_set": false
+    }
+  ]
+}

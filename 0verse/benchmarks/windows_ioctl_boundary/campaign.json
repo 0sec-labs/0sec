@@ -1,0 +1,77 @@
+{
+  "schema_version": "0verse.windows-ioctl-boundary/v1",
+  "campaign_id": "fixture-driver-buffer-geometry",
+  "synthetic_fixture": true,
+  "scope_manifest_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "worker": {
+    "fqdn": "fixture-worker.local",
+    "machine_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "build_lab_ex": "synthetic.26100.amd64fre.fixture",
+    "architecture": "amd64",
+    "collector_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "target": {
+    "driver_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "pdb_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "analysis_receipt_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "service_name": "ZeroverseFixture",
+    "device_type": 33591
+  },
+  "boundary": {
+    "schema_version": "0verse.windows-boundary-observation/fixture-v1",
+    "receipt_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "worker_machine_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "build_lab_ex": "synthetic.26100.amd64fre.fixture",
+    "driver_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "interface_class_guid": "{12345678-1234-1234-1234-1234567890ab}",
+    "instance_id": "ROOT\\ZEROVERSEFIXTURE\\0000",
+    "starting_context_assertion": "synthetic-standard-user",
+    "open_result_assertion": "synthetic-allowed"
+  },
+  "budgets": {
+    "max_ioctls": 4,
+    "max_seeds": 4,
+    "max_fields_per_seed": 4,
+    "max_candidates": 64,
+    "max_input_bytes": 4096,
+    "max_output_bytes": 4096,
+    "timeout_ms": 5000
+  },
+  "ioctls": [
+    {
+      "code": 2201427972,
+      "device_type": 33591,
+      "function": 2049,
+      "method": "buffered",
+      "access": "any",
+      "handler_name": "FixtureDeviceControl",
+      "handler_rva": 4608,
+      "max_output_bytes": 256
+    }
+  ],
+  "seeds": [
+    {
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "size": 16,
+      "fields": [
+        {
+          "name": "length",
+          "offset": 4,
+          "width": 4,
+          "byte_order": "little",
+          "kind": "length"
+        }
+      ]
+    }
+  ],
+  "policy": {
+    "owned_isolated_lab": true,
+    "snapshot_reset_required": true,
+    "network_allowed": false,
+    "concurrency": 1,
+    "attempts_per_candidate": 1,
+    "runtime_enabled": false,
+    "automatic_disclosure": false,
+    "human_report_gate": true
+  }
+}

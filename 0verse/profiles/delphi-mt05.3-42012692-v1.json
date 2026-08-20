@@ -1,0 +1,62 @@
+{
+  "schema_version": "0verse.device-profile/v1",
+  "profile_id": "delphi.mt05.3.42012692",
+  "identity": {
+    "category": {
+      "state": "unknown",
+      "value": null,
+      "source": null,
+      "confidence": null,
+      "observed_at": null
+    },
+    "manufacturer": {
+      "state": "declared",
+      "value": "Delphi",
+      "source": "https://github.com/0sec-labs/0verse/issues/69",
+      "confidence": "unassessed",
+      "observed_at": "2026-07-13T18:20:27Z"
+    },
+    "model": {
+      "state": "declared",
+      "value": "MT05.3",
+      "source": "https://github.com/0sec-labs/0verse/issues/69",
+      "confidence": "unassessed",
+      "observed_at": "2026-07-13T18:20:27Z"
+    },
+    "part_number": {
+      "state": "declared",
+      "value": "42012692",
+      "source": "https://github.com/0sec-labs/0verse/issues/69",
+      "confidence": "unassessed",
+      "observed_at": "2026-07-13T18:20:27Z"
+    }
+  },
+  "transports": {
+    "state": "unknown",
+    "value": null,
+    "source": null,
+    "confidence": null,
+    "observed_at": null
+  },
+  "endpoints": {
+    "state": "unknown",
+    "value": null,
+    "source": null,
+    "confidence": null,
+    "observed_at": null
+  },
+  "service_session_claims": {
+    "state": "unknown",
+    "value": null,
+    "source": null,
+    "confidence": null,
+    "observed_at": null
+  },
+  "memory_metadata": {
+    "state": "unknown",
+    "value": null,
+    "source": null,
+    "confidence": null,
+    "observed_at": null
+  }
+}

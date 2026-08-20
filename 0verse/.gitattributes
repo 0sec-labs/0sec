@@ -1,0 +1,6 @@
+tests/fixtures/windows-token-sshsig/* text eol=lf
+tests/fixtures/windows-token-authority-v1/* text eol=lf
+tests/fixtures/windows-token-authority-v2/* text eol=lf
+docs/evidence/windows-driver-entry-abi/*.md binary
+docs/evidence/windows-driver-dispatch-abi/*.md binary
+campaigns/browser/v8-json-parser-001/* -text

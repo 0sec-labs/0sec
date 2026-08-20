@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/elf-campaign-v1.schema.json",
+  "title": "0verse Linux ELF campaign manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "campaign_id",
+    "target",
+    "control",
+    "worker",
+    "worker_acceptance_path",
+    "worker_acceptance_sha256",
+    "execution_mode",
+    "oracles",
+    "authorization"
+  ],
+  "properties": {
+    "schema_version": {"const": "0verse.elf-campaign/v1"},
+    "campaign_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "target": {"$ref": "#/$defs/artifact"},
+    "control": {"$ref": "#/$defs/artifact"},
+    "worker": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "worker_acceptance_path": {"$ref": "#/$defs/relativePath"},
+    "worker_acceptance_sha256": {"$ref": "#/$defs/sha256"},
+    "execution_mode": {"enum": ["native", "qemu-user"]},
+    "oracles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "asan",
+          "msan",
+          "ubsan",
+          "native-signal",
+          "differential-allocator",
+          "exec-trap",
+          "casr"
+        ]
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["campaign_id", "target_sha256", "control_sha256", "worker", "execution_mode", "oracles", "kind", "reference", "statement", "checked_at", "expires_at", "authorized_by", "signature_ssh"],
+      "properties": {
+        "campaign_id": {"$ref": "#/$defs/identifier"},
+        "target_sha256": {"$ref": "#/$defs/sha256"},
+        "control_sha256": {"$ref": "#/$defs/sha256"},
+        "worker": {"$ref": "#/$defs/identifier"},
+        "execution_mode": {"enum": ["native", "qemu-user"]},
+        "oracles": {"$ref": "#/$defs/oracles"},
+        "kind": {"enum": ["owned-lab", "published-bounty", "written-authorization"]},
+        "reference": {"type": "string", "minLength": 1},
+        "statement": {"type": "string", "minLength": 1},
+        "checked_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "authorized_by": {"$ref": "#/$defs/identifier"},
+        "signature_ssh": {"$ref": "#/$defs/signature"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^(?!0{64}$)[0-9a-f]{64}$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "signature": {"type": "string", "minLength": 1, "maxLength": 65536},
+    "relativePath": {"type": "string", "pattern": "^(?!\\.{1,2}$)(?!\\.{1,2}/)(?!.*\\/\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$"},
+    "oracles": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"enum": ["asan", "msan", "ubsan", "native-signal", "differential-allocator", "exec-trap", "casr"]}
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^/"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

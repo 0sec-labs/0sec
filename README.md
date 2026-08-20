@@ -23,6 +23,11 @@ be distinguished from an unproven lead.
 - Supports local research workflows for source review, package audit, kernel
   intake, and benchmark evaluation.
 
+This repository also hosts [`0verse/`](0verse/README.md), the binary-native
+research engine for compiled programs without source. Its platform role is
+evidence producer and notary: it produces proof-of-vulnerability artifacts and
+never adjudicates without a reproducing oracle.
+
 ## Multi-model execution
 
 pwnkit supports API, local, and CLI runtime paths. Its OpenRouter ensemble runs

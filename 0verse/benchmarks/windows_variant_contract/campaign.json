@@ -1,0 +1,37 @@
+{
+  "schema_version": "0verse.windows-variant-campaign/v1",
+  "seed": {
+    "vulnerable": {
+      "binary_path": "vulnerable.sys",
+      "ghidra_export_path": "vulnerable.json",
+      "binary_sha256": "58d229df70bc981950f831e7cd106d28990f7f89779b63e88ed6927bc777eac1",
+      "ghidra_export_sha256": "c656f4d4ec87d7d6c7b483c9a5dd4f4fa114d5e7128ff9614a3204ca228281de",
+      "analysis_receipt_path": "vulnerable.receipt.json",
+      "analysis_receipt_sha256": "27606e9d3a227c73a4fd3322272c55571dafae9c20603ea3799ee168194cad76"
+    },
+    "fixed": {
+      "binary_path": "fixed.sys",
+      "ghidra_export_path": "fixed.json",
+      "binary_sha256": "6f8cc8124233171b3b361fc0a9ccf993ebb37f0ecf3a259b019f049dc6e0e2f8",
+      "ghidra_export_sha256": "4897548a99b26fac5aad9e3528ba2808ace67734c81d527071ca6b721b89b948",
+      "analysis_receipt_path": "fixed.receipt.json",
+      "analysis_receipt_sha256": "31e2babc483fe8ca0d9e02e86f568f2725d59ba9ef0afe1001e8e5d86c844e4a"
+    },
+    "function": "SeedDispatch",
+    "reference": "synthetic missing count bound before copy"
+  },
+  "current": {
+    "binary_path": "current.sys",
+    "ghidra_export_path": "current.json",
+    "binary_sha256": "caaaf13731e2b24b3d6c55351464023d5027385705950d599a493b1d380f4436",
+    "ghidra_export_sha256": "5f95780341b72031abd03c3822e809481836b8529daaa52960977acb4d5bb988",
+    "analysis_receipt_path": "current.receipt.json",
+    "analysis_receipt_sha256": "90c96a0c71ce400f64d0c8f12e61cbb6c0e8043fff689d590f6a9e79b277ccaa"
+  },
+  "reachability": {
+    "OrdinaryChildDispatch": {
+      "grade": "ordinary-child",
+      "evidence": "synthetic stock child dispatch table entry"
+    }
+  }
+}

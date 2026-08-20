@@ -1,0 +1,367 @@
+{
+  "schema_version": "1.1",
+  "tool": {
+    "name": "0verse",
+    "version": "0.0.1"
+  },
+  "kind": "post-training-cutoff-cve",
+  "training_cutoff": "2026-01-31",
+  "post_cutoff_gate": "ok",
+  "llm": "codex",
+  "backend": "auto",
+  "wall_s": 590.2,
+  "n_items": 10,
+  "metrics": {
+    "n_vulnerable": 5,
+    "n_clean": 5,
+    "confirmed_finds": 1,
+    "located_finds": 4,
+    "misses": 1,
+    "recall_confirmed": 0.2,
+    "recall_located": 0.8,
+    "confirmed_pov_rate": 0.25,
+    "clean_ok": 4,
+    "hypothesis_fps": 1,
+    "confirmed_fps_items": 0,
+    "fp_rate_confirmed": 0.0,
+    "fp_rate_hypothesis": 0.2,
+    "confirmed_tp_findings": 1,
+    "confirmed_fp_findings": 2,
+    "precision_confirmed": 0.3333
+  },
+  "heldout": {
+    "total": 10,
+    "held_out": 10,
+    "in_seed_set": 0,
+    "fully_held_out": true,
+    "seeded_ids": []
+  },
+  "items": [
+    {
+      "id": "openjpeg_pi_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-190",
+      "cve": "CVE-2026-6192",
+      "in_seed_set": false,
+      "elapsed_s": 67.77,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,dynamic,poc,report,fuzz,fuzz-poc",
+      "findings": [
+        {
+          "function": "opj_pi_initialise_encode",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": true
+        },
+        {
+          "function": "<whole-program>",
+          "source": "fuzz:stdin",
+          "sink": "<whole-program>",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "located-hypothesis"
+    },
+    {
+      "id": "openjpeg_pi_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2026-6192",
+      "in_seed_set": false,
+      "elapsed_s": 104.38,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "opj_pi_initialise_encode",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "clean"
+    },
+    {
+      "id": "libheif_copy_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-787",
+      "cve": "CVE-2026-32740",
+      "in_seed_set": false,
+      "elapsed_s": 27.8,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "copy_image_to",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "located-hypothesis"
+    },
+    {
+      "id": "libheif_copy_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2026-32740",
+      "in_seed_set": false,
+      "elapsed_s": 60.81,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "copy_image_to",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "clean"
+    },
+    {
+      "id": "ffmpeg_magicyuv_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-787",
+      "cve": "CVE-2026-8461",
+      "in_seed_set": false,
+      "elapsed_s": 77.28,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,dynamic,poc,report,fuzz",
+      "findings": [
+        {
+          "function": "magy_decode_slice",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "located-hypothesis"
+    },
+    {
+      "id": "ffmpeg_magicyuv_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2026-8461",
+      "in_seed_set": false,
+      "elapsed_s": 57.86,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "magy_decode_slice",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "clean"
+    },
+    {
+      "id": "ffmpeg_rasc_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-787",
+      "cve": "CVE-2026-58049",
+      "in_seed_set": false,
+      "elapsed_s": 25.59,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "decode_dlta",
+          "source": "read",
+          "sink": "malloc",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "miss"
+    },
+    {
+      "id": "ffmpeg_rasc_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2026-58049",
+      "in_seed_set": false,
+      "elapsed_s": 70.5,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "decode_dlta",
+          "source": "read",
+          "sink": "free:double-free(ptr)",
+          "confirmed": false,
+          "hypothesis": false
+        },
+        {
+          "function": "decode_dlta",
+          "source": "read",
+          "sink": "malloc",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "clean"
+    },
+    {
+      "id": "libtiff_ycbcr_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-190",
+      "cve": "CVE-2026-4775",
+      "in_seed_set": false,
+      "elapsed_s": 40.06,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "putcontig8bitYCbCr44tile",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "confirmed-find"
+    },
+    {
+      "id": "libtiff_ycbcr_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2026-4775",
+      "in_seed_set": false,
+      "elapsed_s": 58.11,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,dynamic,poc,report,fuzz",
+      "findings": [
+        {
+          "function": "putcontig8bitYCbCr44tile",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "hypothesis-fp"
+    }
+  ],
+  "scores": [
+    {
+      "item_id": "openjpeg_pi_vuln",
+      "label": "vulnerable",
+      "outcome": "located-hypothesis",
+      "n_findings": 2,
+      "n_confirmed": 1,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 1,
+      "confirmed_fp": 1,
+      "note": ""
+    },
+    {
+      "item_id": "openjpeg_pi_fixed",
+      "label": "clean",
+      "outcome": "clean",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "libheif_copy_vuln",
+      "label": "vulnerable",
+      "outcome": "located-hypothesis",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 1,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "libheif_copy_fixed",
+      "label": "clean",
+      "outcome": "clean",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "ffmpeg_magicyuv_vuln",
+      "label": "vulnerable",
+      "outcome": "located-hypothesis",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 1,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "ffmpeg_magicyuv_fixed",
+      "label": "clean",
+      "outcome": "clean",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "ffmpeg_rasc_vuln",
+      "label": "vulnerable",
+      "outcome": "miss",
+      "n_findings": 1,
+      "n_confirmed": 1,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 1,
+      "note": ""
+    },
+    {
+      "item_id": "ffmpeg_rasc_fixed",
+      "label": "clean",
+      "outcome": "clean",
+      "n_findings": 2,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "libtiff_ycbcr_vuln",
+      "label": "vulnerable",
+      "outcome": "confirmed-find",
+      "n_findings": 1,
+      "n_confirmed": 1,
+      "matched_confirmed": 1,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "libtiff_ycbcr_fixed",
+      "label": "clean",
+      "outcome": "hypothesis-fp",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    }
+  ]
+}

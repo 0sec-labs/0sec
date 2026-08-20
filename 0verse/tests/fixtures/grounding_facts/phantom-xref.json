@@ -1,0 +1,37 @@
+{
+  "schema_version": "zeroverse-grounding-facts/v1",
+  "target": {
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "machine": "AMD64",
+    "image_base": "0x140000000",
+    "size": 8192,
+    "codeview": {
+      "guid": "12345678-1234-5678-9abc-def012345678",
+      "age": 1,
+      "pdb_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  },
+  "producer": {
+    "schema": "ntrays-facts/v1",
+    "exporter_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "ida_version": "9.1",
+    "hexrays_version": "9.1",
+    "ntrays_version": "0.1.0",
+    "idb_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "functions": [
+    {"rva": "0x1000", "name": "DriverEntry"},
+    {"rva": "0x2000", "name": "DispatchRequest"}
+  ],
+  "call_edges": [],
+  "xrefs": [
+    {
+      "function_rva": "0x1000",
+      "site_rva": "0x1010",
+      "target_rva": "0x2000",
+      "ref_type": "call"
+    }
+  ],
+  "type_fields": [],
+  "unresolved_calls": []
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "0verse.browser-campaign/v3",
+  "campaign_id": "v8-json-parser-001",
+  "component": "v8",
+  "revision": "REPLACE_WITH_FULL_CHROMIUM_GIT_REVISION",
+  "build_flags": [
+    "use_libfuzzer=true",
+    "is_asan=true",
+    "is_debug=false",
+    "dcheck_always_on=true"
+  ],
+  "corpus": "/srv/0verse/corpora/v8-json",
+  "harness": "v8_json_parser_fuzzer",
+  "harness_sha256": "REPLACE_WITH_BUILD_MANIFEST_ARTIFACT_SHA256",
+  "build_receipt": "/srv/0verse/chromium/src/out/0verse-asan/REPLACE_BUILD_RECEIPT.json",
+  "build_receipt_sha256": "REPLACE_WITH_BUILD_RECEIPT_SHA256",
+  "target_catalog": "/srv/0verse/chromium/src/out/0verse-asan/0verse-libfuzzer-target-catalog.json",
+  "target_catalog_sha256": "REPLACE_WITH_TARGET_CATALOG_SHA256",
+  "gn_label": "//testing/libfuzzer/fuzzers:v8_json_parser_fuzzer",
+  "oracle": "asan",
+  "process": "js-engine",
+  "target_os": "linux",
+  "bounty_program": "Chrome Vulnerability Reward Program",
+  "bounty_scope_url": "https://bughunters.google.com/about/rules/chrome-friends/chrome-vulnerability-reward-program-rules",
+  "scope_checked_at": "2026-07-11T00:00:00Z",
+  "authorization": "published Chrome VRP scope; 0sec-owned dedicated worker",
+  "worker": "browser",
+  "source_root": "/srv/0verse/chromium/src",
+  "command": [
+    "/srv/0verse/chromium/src/out/0verse-asan/v8_json_parser_fuzzer",
+    "-artifact_prefix=/srv/0verse/artifacts/v8-json/",
+    "-timeout=20",
+    "/srv/0verse/corpora/v8-json"
+  ],
+  "replay_command": [
+    "/srv/0verse/chromium/src/out/0verse-asan/v8_json_parser_fuzzer",
+    "-runs=1",
+    "{input}"
+  ],
+  "timeout_seconds": 3600
+}

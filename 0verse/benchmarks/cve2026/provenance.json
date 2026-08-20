@@ -1,0 +1,81 @@
+{
+  "_about": "Per-CVE provenance for the post-training-cutoff corpus (#49). The discovery-vs-memorization claim rests on each CVE being (a) real & NVD-verified with an upstream fix reference and (b) published after the model training cutoff. cross-checked against manifest.json by tests/test_cve2026.py.",
+  "training_cutoff": "2026-01-31",
+  "cves": [
+    {
+      "cve": "CVE-2026-6192",
+      "library": "OpenJPEG",
+      "function": "opj_pi_initialise_encode",
+      "cwe": "CWE-190",
+      "bug_class": "intoverflow",
+      "publish_date": "2026-04-13",
+      "post_cutoff": "Q2-2026",
+      "severity": "LOW (CVSS 3.3)",
+      "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2026-6192",
+      "fix_commit": "https://github.com/uclouvain/openjpeg/commit/839936aa33eb8899bbbd80fda02796bb65068951",
+      "summary": "Unchecked numlayers*step_l 32-bit unsigned product wraps -> undersized opj_calloc -> OOB write; fix adds UINT_MAX/numlayers guard.",
+      "source": "benchmarks/cve2026/sources/cve_2026_6192_openjpeg_pi.c",
+      "pair_id": "openjpeg_pi"
+    },
+    {
+      "cve": "CVE-2026-32740",
+      "library": "libheif",
+      "function": "copy_image_to",
+      "cwe": "CWE-787",
+      "bug_class": "overflow",
+      "publish_date": "2026-05-19",
+      "post_cutoff": "Q2-2026",
+      "severity": "HIGH",
+      "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2026-32740",
+      "fix_commit": "https://github.com/strukturag/libheif/security/advisories/GHSA-frfr-f3vg-2g6j (fixed in v1.22.0)",
+      "summary": "HeifPixelImage::copy_image_to ceil-div chroma offset ys + copy_height exceeds plane by one row on 1xN odd-height tile grids -> 64-byte heap OOB write; fix bounds ys+copy_height to plane height. (Originally C++ pixelimage.cc; faithful C extract.)",
+      "source": "benchmarks/cve2026/sources/cve_2026_32740_libheif_copy.c",
+      "pair_id": "libheif_copy"
+    },
+    {
+      "cve": "CVE-2026-8461",
+      "library": "FFmpeg",
+      "function": "magy_decode_slice",
+      "cwe": "CWE-787",
+      "bug_class": "overflow",
+      "publish_date": "2026-06-18",
+      "post_cutoff": "Q2-2026",
+      "severity": "HIGH (CVSS 8.8)",
+      "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2026-8461",
+      "fix_commit": "https://github.com/FFmpeg/FFmpeg commit 374b726ffa878ee1cadb987bd1e1e20cc7ed8845 (shipped 8.1.2)",
+      "summary": "'PixelSmash': odd slice_height + AV_CEIL_RSHIFT rounds up chroma rows so the last 4:2:0 slice writes one row past the floored chroma plane -> heap OOB write; fix rejects slice_height misaligned with chroma vshift. Found by Ori Hollander (JFrog).",
+      "source": "benchmarks/cve2026/sources/cve_2026_8461_ffmpeg_magicyuv.c",
+      "pair_id": "ffmpeg_magicyuv"
+    },
+    {
+      "cve": "CVE-2026-58049",
+      "library": "FFmpeg",
+      "function": "decode_dlta",
+      "cwe": "CWE-787",
+      "bug_class": "overflow",
+      "publish_date": "2026-06-27",
+      "post_cutoff": "Q2-2026",
+      "severity": "HIGH (CVSS 8.6)",
+      "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2026-58049",
+      "fix_commit": "https://www.vulncheck.com/advisories/ffmpeg-out-of-bounds-write-in-rasc-decoder-decode-dlta (libavcodec/rasc.c)",
+      "summary": "RASC decode_dlta validates the DLTA run in pixel (not byte) units and does the 32-bit store before the NEXT_LINE row-boundary check, so on PAL8 a run writes 4*count bytes past the row -> heap OOB write; fix validates in byte units.",
+      "source": "benchmarks/cve2026/sources/cve_2026_58049_ffmpeg_rasc.c",
+      "pair_id": "ffmpeg_rasc"
+    },
+    {
+      "cve": "CVE-2026-4775",
+      "library": "libtiff",
+      "function": "putcontig8bitYCbCr44tile",
+      "cwe": "CWE-190",
+      "bug_class": "intoverflow",
+      "publish_date": "2026-03-24",
+      "post_cutoff": "Q1tail-2026",
+      "severity": "HIGH (CVSS 7.8)",
+      "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2026-4775",
+      "fix_commit": "https://access.redhat.com/security/cve/CVE-2026-4775 (RHSA-2026 series; upstream tif_getimage.c)",
+      "summary": "Signed 32-bit row-progression incr=4*width wraps negative for huge width, slips the upper-bound check, then is used as an (unsigned) store length -> heap OOB write; fix uses width-safe size_t arithmetic. NOTE: published 2026-03-24 (Q1 tail) - still after the conservative cutoff but the Q2 four are the strongest post-cutoff guarantee.",
+      "source": "benchmarks/cve2026/sources/cve_2026_4775_libtiff_ycbcr.c",
+      "pair_id": "libtiff_ycbcr"
+    }
+  ]
+}

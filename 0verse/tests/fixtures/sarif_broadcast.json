@@ -1,0 +1,36 @@
+{
+  "message_id": "22222222-2222-2222-2222-222222222222",
+  "message_time": 1750000100000,
+  "broadcasts": [
+    {
+      "sarif_id": "33333333-3333-3333-3333-333333333333",
+      "task_id": "task-1",
+      "metadata": {"source": "foxguard"},
+      "sarif": {
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [
+          {
+            "tool": {"driver": {"name": "foxguard", "version": "0.1.0"}},
+            "results": [
+              {
+                "ruleId": "CWE-787",
+                "level": "error",
+                "message": {"text": "out-of-bounds write reachable from xmlParseRecord"},
+                "locations": [
+                  {
+                    "physicalLocation": {
+                      "artifactLocation": {"uri": "src/proj/parse.c"},
+                      "region": {"startLine": 40, "endLine": 45}
+                    },
+                    "logicalLocations": [{"name": "process_record", "kind": "function"}]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

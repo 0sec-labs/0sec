@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/macho-worker-acceptance-v1.schema.json",
+  "title": "0verse role-separated Darwin worker acceptance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "acceptance_id", "campaign_id", "coordinator", "worker", "role", "hardware_model", "architecture", "os_product_version", "os_build", "kernel_uuid", "target_sha256", "target_uuid", "control_sha256", "control_uuid", "target_identity_sha256", "control_identity_sha256", "input_model", "capabilities", "network_isolated", "coordinator_is_worker", "accepted_at", "expires_at", "accepted_by", "authority_key_sha256", "signature_ssh"],
+  "properties": {
+    "schema_version": {"const": "0verse.macho-worker-acceptance/v1"},
+    "acceptance_id": {"$ref": "#/$defs/identifier"}, "campaign_id": {"$ref": "#/$defs/identifier"},
+    "coordinator": {"$ref": "#/$defs/identifier"},
+    "worker": {"$ref": "#/$defs/identifier"}, "role": {"const": "darwin-native-observer"},
+    "hardware_model": {"$ref": "#/$defs/hardwareModel"}, "architecture": {"enum": ["arm64", "arm64e", "x86_64"]},
+    "os_product_version": {"type": "string", "minLength": 1}, "os_build": {"type": "string", "pattern": "^[0-9]{2}[A-Z][0-9]{2,4}[a-z]?$"},
+    "kernel_uuid": {"$ref": "#/$defs/uuid"}, "target_sha256": {"$ref": "#/$defs/sha256"},
+    "target_uuid": {"$ref": "#/$defs/uuid"}, "control_sha256": {"$ref": "#/$defs/sha256"}, "control_uuid": {"$ref": "#/$defs/uuid"},
+    "target_identity_sha256": {"$ref": "#/$defs/sha256"}, "control_identity_sha256": {"$ref": "#/$defs/sha256"}, "input_model": {"type": "string", "minLength": 1},
+    "capabilities": {"type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true, "items": {"enum": ["native-macho", "crash-log-capture", "sysdiagnose-capture", "process-attribution"]}},
+    "network_isolated": {"const": true}, "coordinator_is_worker": {"const": false},
+    "accepted_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"},
+    "accepted_by": {"$ref": "#/$defs/identifier"}, "authority_key_sha256": {"$ref": "#/$defs/sha256"},
+    "signature_ssh": {"type": "string", "minLength": 1, "maxLength": 65536}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^(?!0{64}$)[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "hardwareModel": {"type": "string", "pattern": "^[A-Za-z]+[0-9]+,[0-9]+$"}
+  }
+}

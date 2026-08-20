@@ -1,0 +1,317 @@
+{
+  "targets": [
+    {
+      "name": "cmdi[mock]",
+      "label": "CWE-78 command-injection",
+      "is_clean": false,
+      "n_findings": 2,
+      "n_real": 2,
+      "n_escalated": 2,
+      "n_confirmed": 2,
+      "confirmed_classes": [
+        "CWE-78 OS command injection",
+        "CWE-78 OS command injection"
+      ],
+      "wall_s": 8.4,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "cmdi[real]",
+      "label": "CWE-78 command-injection",
+      "is_clean": false,
+      "n_findings": 2,
+      "n_real": 2,
+      "n_escalated": 2,
+      "n_confirmed": 2,
+      "confirmed_classes": [
+        "CWE-78: OS Command Injection",
+        "CWE-78: OS Command Injection"
+      ],
+      "wall_s": 21.3,
+      "in_tokens": 750,
+      "out_tokens": 430,
+      "error": ""
+    },
+    {
+      "name": "overflow[mock]",
+      "label": "CWE-120 stack-overflow",
+      "is_clean": false,
+      "n_findings": 1,
+      "n_real": 1,
+      "n_escalated": 1,
+      "n_confirmed": 1,
+      "confirmed_classes": [
+        "CWE-120 buffer overflow"
+      ],
+      "wall_s": 2.6,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "overflow[real]",
+      "label": "CWE-120 stack-overflow",
+      "is_clean": false,
+      "n_findings": 1,
+      "n_real": 1,
+      "n_escalated": 1,
+      "n_confirmed": 1,
+      "confirmed_classes": [
+        "CWE-121 stack-based buffer overflow via unbounded strcpy"
+      ],
+      "wall_s": 13.3,
+      "in_tokens": 586,
+      "out_tokens": 276,
+      "error": ""
+    },
+    {
+      "name": "fmtstring[mock]",
+      "label": "CWE-134 format-string",
+      "is_clean": false,
+      "n_findings": 3,
+      "n_real": 1,
+      "n_escalated": 1,
+      "n_confirmed": 1,
+      "confirmed_classes": [
+        "memory-safety (fuzz-confirmed)"
+      ],
+      "wall_s": 2.7,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "fmtstring[real]",
+      "label": "CWE-134 format-string",
+      "is_clean": false,
+      "n_findings": 2,
+      "n_real": 1,
+      "n_escalated": 1,
+      "n_confirmed": 1,
+      "confirmed_classes": [
+        "CWE-134: Use of Externally-Controlled Format String"
+      ],
+      "wall_s": 14.4,
+      "in_tokens": 3834,
+      "out_tokens": 291,
+      "error": ""
+    },
+    {
+      "name": "intoverflow[mock]",
+      "label": "CWE-190 integer-overflow",
+      "is_clean": false,
+      "n_findings": 3,
+      "n_real": 2,
+      "n_escalated": 3,
+      "n_confirmed": 2,
+      "confirmed_classes": [
+        "CWE-120 buffer overflow",
+        "CWE-120 buffer overflow"
+      ],
+      "wall_s": 2.1,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "intoverflow[real]",
+      "label": "CWE-190 integer-overflow",
+      "is_clean": false,
+      "n_findings": 3,
+      "n_real": 3,
+      "n_escalated": 3,
+      "n_confirmed": 3,
+      "confirmed_classes": [
+        "CWE-122 Heap-Based Buffer Overflow via CWE-190/CWE-131 integer truncation in allocation size",
+        "CWE-190 integer truncation/wraparound leading to CWE-122 heap-based buffer overflow",
+        "CWE-190 Integer Overflow or Wraparound leading to CWE-122 Heap-based Buffer Overflow"
+      ],
+      "wall_s": 68.7,
+      "in_tokens": 2051,
+      "out_tokens": 1359,
+      "error": ""
+    },
+    {
+      "name": "uaf[mock]",
+      "label": "CWE-416 use-after-free",
+      "is_clean": false,
+      "n_findings": 2,
+      "n_real": 0,
+      "n_escalated": 2,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 32.0,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "uaf[real]",
+      "label": "CWE-416 use-after-free",
+      "is_clean": false,
+      "n_findings": 2,
+      "n_real": 1,
+      "n_escalated": 2,
+      "n_confirmed": 1,
+      "confirmed_classes": [
+        "CWE-416 Use After Free"
+      ],
+      "wall_s": 39.8,
+      "in_tokens": 1472,
+      "out_tokens": 1027,
+      "error": ""
+    },
+    {
+      "name": "auth_bypass[mock]",
+      "label": "CWE-287 logic (hypothesis-only)",
+      "is_clean": false,
+      "n_findings": 2,
+      "n_real": 0,
+      "n_escalated": 1,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 32.3,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "auth_bypass[real]",
+      "label": "CWE-287 logic (hypothesis-only)",
+      "is_clean": false,
+      "n_findings": 2,
+      "n_real": 1,
+      "n_escalated": 1,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 167.0,
+      "in_tokens": 1573,
+      "out_tokens": 3666,
+      "error": ""
+    },
+    {
+      "name": "clean_safe_malloc[mock]",
+      "label": "clean",
+      "is_clean": true,
+      "n_findings": 3,
+      "n_real": 2,
+      "n_escalated": 3,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 32.4,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "clean_safe_malloc[real]",
+      "label": "clean",
+      "is_clean": true,
+      "n_findings": 3,
+      "n_real": 0,
+      "n_escalated": 3,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 129.0,
+      "in_tokens": 2697,
+      "out_tokens": 2581,
+      "error": ""
+    },
+    {
+      "name": "clean_bounded_copy[mock]",
+      "label": "clean",
+      "is_clean": true,
+      "n_findings": 0,
+      "n_real": 0,
+      "n_escalated": 0,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 32.1,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "clean_bounded_copy[real]",
+      "label": "clean",
+      "is_clean": true,
+      "n_findings": 0,
+      "n_real": 0,
+      "n_escalated": 0,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 72.6,
+      "in_tokens": 379,
+      "out_tokens": 1137,
+      "error": ""
+    },
+    {
+      "name": "true[mock]",
+      "label": "clean",
+      "is_clean": true,
+      "n_findings": 1,
+      "n_real": 0,
+      "n_escalated": 0,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 30.5,
+      "in_tokens": 0,
+      "out_tokens": 0,
+      "error": ""
+    },
+    {
+      "name": "true[real]",
+      "label": "clean",
+      "is_clean": true,
+      "n_findings": 1,
+      "n_real": 0,
+      "n_escalated": 0,
+      "n_confirmed": 0,
+      "confirmed_classes": [],
+      "wall_s": 331.2,
+      "in_tokens": 4544,
+      "out_tokens": 8106,
+      "error": ""
+    }
+  ],
+  "harness_synth": {
+    "template": {
+      "compile_ok": true,
+      "attempts": 1,
+      "from_llm": false,
+      "notes": "",
+      "wall_s": 0.0
+    },
+    "real-llm": {
+      "compile_ok": true,
+      "attempts": 1,
+      "from_llm": true,
+      "notes": "Harness reads stdin via read(0, ...), passes the byte buffer and length to parse",
+      "wall_s": 54.5
+    }
+  },
+  "summary": {
+    "mock": {
+      "vuln_targets": 6,
+      "vuln_confirmed": 4,
+      "vuln_hypothesis_only": 0,
+      "clean_targets": 3,
+      "clean_false_confirmed": 0,
+      "clean_hypothesis_noise": 2,
+      "real_llm_out_tokens": 0,
+      "total_wall_s": 175.1
+    },
+    "real": {
+      "vuln_targets": 6,
+      "vuln_confirmed": 5,
+      "vuln_hypothesis_only": 1,
+      "clean_targets": 3,
+      "clean_false_confirmed": 0,
+      "clean_hypothesis_noise": 0,
+      "real_llm_out_tokens": 18873,
+      "total_wall_s": 857.3
+    }
+  }
+}

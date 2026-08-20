@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/scout-event-v1.schema.json",
+  "title": "0verse Firmware Scout event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sequence",
+    "timestamp_ns",
+    "kind",
+    "capture_index",
+    "arbitration_id",
+    "extended_id",
+    "remote_frame",
+    "error_frame",
+    "declared_length",
+    "data_hex",
+    "detail"
+  ],
+  "properties": {
+    "schema_version": {"const": "0verse.scout-event/v1"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "timestamp_ns": {"type": "integer", "minimum": 0},
+    "kind": {
+      "enum": ["frame", "timeout", "malformed-frame", "reset", "capture-error"]
+    },
+    "capture_index": {
+      "anyOf": [
+        {"type": "integer", "minimum": 0},
+        {"type": "null"}
+      ]
+    },
+    "arbitration_id": {
+      "anyOf": [
+        {"type": "integer", "minimum": 0, "maximum": 536870911},
+        {"type": "null"}
+      ]
+    },
+    "extended_id": {"type": ["boolean", "null"]},
+    "remote_frame": {"type": ["boolean", "null"]},
+    "error_frame": {"type": ["boolean", "null"]},
+    "declared_length": {
+      "anyOf": [
+        {"type": "integer", "minimum": 0, "maximum": 65534},
+        {"type": "null"}
+      ]
+    },
+    "data_hex": {
+      "anyOf": [
+        {"type": "string", "pattern": "^(?:[0-9a-f]{2})*$", "maxLength": 8192},
+        {"type": "null"}
+      ]
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000]+$"
+        },
+        {"type": "null"}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "frame"}}},
+      "then": {
+        "properties": {
+          "capture_index": {"type": "integer", "minimum": 0},
+          "arbitration_id": {"type": "integer", "minimum": 0, "maximum": 536870911},
+          "extended_id": {"type": "boolean"},
+          "remote_frame": {"type": "boolean"},
+          "error_frame": {"type": "boolean"},
+          "declared_length": {"type": "integer", "minimum": 0, "maximum": 64},
+          "data_hex": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{2})*$",
+            "maxLength": 128
+          },
+          "detail": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "malformed-frame"}}},
+      "then": {
+        "properties": {
+          "capture_index": {"type": "integer", "minimum": 0},
+          "data_hex": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{2})+$",
+            "maxLength": 8192
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000]+$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {"enum": ["timeout", "reset", "capture-error"]}
+        }
+      },
+      "then": {
+        "properties": {
+          "capture_index": {"type": "null"},
+          "arbitration_id": {"type": "null"},
+          "extended_id": {"type": "null"},
+          "remote_frame": {"type": "null"},
+          "error_frame": {"type": "null"},
+          "declared_length": {"type": "null"},
+          "data_hex": {"type": "null"},
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000]+$"
+          }
+        }
+      }
+    }
+  ]
+}
