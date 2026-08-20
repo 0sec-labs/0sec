@@ -28,8 +28,8 @@ function fakeExec(parts: { proof?: string; sources?: string; kos?: string[] }) {
 
 function honestProof(c: RootProofChallenge): string {
   return [
-    `PWNKIT-CANARY:${c.nonce}:DROP:uid=65534`,
-    `PWNKIT-CANARY:${c.nonce}:ROOT`,
+    `0SEC-CANARY:${c.nonce}:DROP:uid=65534`,
+    `0SEC-CANARY:${c.nonce}:ROOT`,
     "uid=0(root) gid=0(root) groups=0(root)",
   ].join("\n");
 }

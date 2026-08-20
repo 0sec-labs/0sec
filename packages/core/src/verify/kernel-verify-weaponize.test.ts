@@ -87,7 +87,7 @@ function attemptedOnlyVmRunner() {
     return {
       compiled: true,
       executed: true,
-      output: canary ? `PWNKIT-CANARY:${canary}:ATTEMPTED:entry` : "ran",
+      output: canary ? `0SEC-CANARY:${canary}:ATTEMPTED:entry` : "ran",
       dmesg: "",
       exitCode: 0,
       timedOut: false,

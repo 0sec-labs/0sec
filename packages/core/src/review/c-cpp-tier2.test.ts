@@ -130,7 +130,7 @@ describe("buildTier2Harness", () => {
 
       // Makefile fragment should be non-empty and call out the sanitizers.
       const mk = await readFile(artifact.makefile_fragment_path, "utf8");
-      expect(mk).toMatch(/0SEC_TIER2_HARNESS/);
+      expect(mk).toMatch(/OSEC_TIER2_HARNESS/);
       expect(mk).toContain(artifact.compile_command);
       expect(mk).toMatch(/Sanitizers: asan, ubsan/);
 

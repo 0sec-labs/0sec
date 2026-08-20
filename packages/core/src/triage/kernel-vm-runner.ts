@@ -635,7 +635,7 @@ const RACE_HARNESS_BASE_HEADERS: readonly string[] = [
  *    `maxIters` / `seconds` (both overridable via `0SEC_RACE_RETRIES` /
  *    `0SEC_RACE_SECONDS`) and NEVER dereferences freed memory or aborts —
  *    only the in-kernel KASAN/KCSAN splat (on the serial console) terminates
- *    the run. Prints a `PWNKIT-RACE` progress marker so the oracle sees liveness.
+ *    the run. Prints a `0SEC-RACE` progress marker so the oracle sees liveness.
  *
  * Pure string builder — no I/O — so it unit-tests offline.
  */
@@ -725,9 +725,9 @@ export function renderRealIpiRaceHarness(spec: RealIpiRaceHarnessSpec): string {
     "    g_stop = 1;",
     "    pthread_join(ta, NULL);",
     "    pthread_join(tb, NULL);",
-    "    if ((iter & 0x3ff) == 0) { printf(\"PWNKIT-RACE iter=%ld\\n\", iter); fflush(stdout); }",
+    "    if ((iter & 0x3ff) == 0) { printf(\"0SEC-RACE iter=%ld\\n\", iter); fflush(stdout); }",
     "  }",
-    "  printf(\"PWNKIT-RACE done (budget exhausted, no splat)\\n\");",
+    "  printf(\"0SEC-RACE done (budget exhausted, no splat)\\n\");",
     "  fflush(stdout);",
     "  return 0;",
     "}",
@@ -820,11 +820,11 @@ export function renderInitramfsInitScript(
     "/bin/busybox mount -t sysfs none /sys",
     "/bin/busybox mount -t devtmpfs none /dev 2>/dev/null",
     "/bin/busybox --install -s /bin 2>/dev/null",
-    'echo "=== PWNKIT-INITRAMFS weaponize lane up ==="',
+    'echo "=== 0SEC-INITRAMFS weaponize lane up ==="',
     "cat /proc/version",
     insmods,
     envExports,
-    'echo "=== PWNKIT-INITRAMFS run (env: ' +
+    'echo "=== 0SEC-INITRAMFS run (env: ' +
       Object.keys(raceEnv).join(",") +
       ') ==="',
     // CRITICAL: the engine's emitted exploit prints a RECLAIM marker on EVERY
@@ -836,13 +836,13 @@ export function renderInitramfsInitScript(
     // stream either way, and the KASAN splats (kernel printk, a separate path)
     // still interleave live. `timeout` caps a hung flood; busybox `timeout` takes
     // the seconds as a POSITIONAL arg (`timeout SECS PROG`), NOT GNU `-t SECS`.
-    `/bin/busybox timeout ${timeoutSec} /exploit > /tmp/run.log 2>&1 || echo "PWNKIT-INITRAMFS exploit exit=$?" >> /tmp/run.log`,
-    'echo "=== PWNKIT-INITRAMFS exploit output (batched off the UART hot path) ==="',
+    `/bin/busybox timeout ${timeoutSec} /exploit > /tmp/run.log 2>&1 || echo "0SEC-INITRAMFS exploit exit=$?" >> /tmp/run.log`,
+    'echo "=== 0SEC-INITRAMFS exploit output (batched off the UART hot path) ==="',
     "cat /tmp/run.log",
-    'echo "=== PWNKIT-INITRAMFS post-run ==="',
+    'echo "=== 0SEC-INITRAMFS post-run ==="',
     "sync",
-    "cat /tmp/pwned 2>/dev/null && echo PWNKIT-INITRAMFS-PWNED-FILE-PRESENT",
-    'echo "=== PWNKIT-INITRAMFS done; powering off ==="',
+    "cat /tmp/pwned 2>/dev/null && echo 0SEC-INITRAMFS-PWNED-FILE-PRESENT",
+    'echo "=== 0SEC-INITRAMFS done; powering off ==="',
     "/bin/busybox poweroff -f",
   ].join("\n");
 }
@@ -1217,7 +1217,7 @@ async function waitForInitramfsVm(
     // run is provably done, without waiting on QEMU's own teardown.
     if (existsSync(serialLogPath)) {
       const tail = readFileSync(serialLogPath, "utf-8").slice(-2000);
-      if (tail.includes("PWNKIT-INITRAMFS done")) return { poweredOff: true };
+      if (tail.includes("0SEC-INITRAMFS done")) return { poweredOff: true };
     }
     await sleep(1_000);
   }
@@ -1273,7 +1273,7 @@ async function runWeaponizeInitramfs(
     const serial = existsSync(serialLogPath) ? readFileSync(serialLogPath, "utf-8") : "";
     // Execution is proven by the run banner; the exploit always reaches at least
     // its first print once /init runs it.
-    const executed = serial.includes("PWNKIT-INITRAMFS run");
+    const executed = serial.includes("0SEC-INITRAMFS run");
     const timedOut = !poweredOff;
     // Bug-attribution guards: a run that would be credited must not have loaded
     // an out-of-band module or baked in an unprovenanced kernel address. The

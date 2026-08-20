@@ -553,15 +553,15 @@ function renderMakefileFragment(args: {
   return `# 0sec Tier-2 harness Makefile fragment — generated.
 # Sanitizers: ${args.sanitizers.join(", ")}
 
-0SEC_TIER2_HARNESS := ${args.harnessBinary}
+OSEC_TIER2_HARNESS := ${args.harnessBinary}
 0SEC_TIER2_DEPS := \\
   ${deps}
 
-$(0SEC_TIER2_HARNESS): $(0SEC_TIER2_DEPS)
+$(OSEC_TIER2_HARNESS): $(0SEC_TIER2_DEPS)
 \t${args.compileCommand}
 
 .PHONY: 0sec-tier2-run
-0sec-tier2-run: $(0SEC_TIER2_HARNESS)
+0sec-tier2-run: $(OSEC_TIER2_HARNESS)
 \t${args.runCommand}
 `;
 }

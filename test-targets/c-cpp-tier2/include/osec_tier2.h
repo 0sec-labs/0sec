@@ -11,8 +11,8 @@
  * (multi-component linking) is the right harness tier for this shape.
  */
 
-#ifndef PWNKIT_TIER2_H
-#define PWNKIT_TIER2_H
+#ifndef OSEC_TIER2_H
+#define OSEC_TIER2_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -38,4 +38,4 @@ int osec_tier2_decoder_run(const uint8_t *payload, size_t payload_size,
 }
 #endif
 
-#endif /* PWNKIT_TIER2_H */
+#endif /* OSEC_TIER2_H */

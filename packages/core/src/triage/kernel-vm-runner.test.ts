@@ -935,7 +935,7 @@ describe("weaponize-initramfs lane", () => {
     expect(init).not.toContain("timeout -t");
     // poweroff so the host's QEMU-exit wait returns
     expect(init).toContain("poweroff -f");
-    expect(init).toContain("PWNKIT-INITRAMFS done");
+    expect(init).toContain("0SEC-INITRAMFS done");
   });
 
   it("buildInitramfsQemuCommand uses -initrd with NO -drive/-virtfs (9p)", () => {
@@ -1022,7 +1022,7 @@ describe("renderRealIpiRaceHarness — ExpRace userspace race harness", () => {
     expect(c).toContain('osec_env_long("0SEC_RACE_RETRIES", 12345)');
     expect(c).toContain('osec_env_long("0SEC_RACE_SECONDS", 30)');
     expect(c).toContain("time(NULL) < deadline");
-    expect(c).toContain("PWNKIT-RACE");
+    expect(c).toContain("0SEC-RACE");
   });
 
   it("splices the composed gadget setup C once, before the race loop", () => {
@@ -1165,9 +1165,9 @@ describe("bug-attribution guard — out-of-band module-load denier", () => {
 
   it("passes a legit insmod of the sanctioned target module", () => {
     const serial = [
-      "=== PWNKIT-INITRAMFS weaponize lane up ===",
+      "=== 0SEC-INITRAMFS weaponize lane up ===",
       "insmod snd-mtpav.ko ok",
-      `PWNKIT-CANARY:${CANARY}:ROOT uid=0`,
+      `0SEC-CANARY:${CANARY}:ROOT uid=0`,
     ].join("\n");
     const v = detectOutOfBandModuleLoad(serial, ["snd-mtpav.ko"]);
     expect(v.denied).toBe(false);
@@ -1213,7 +1213,7 @@ describe("bug-attribution guard — hardcoded kernel-address static scan", () =>
   });
 
   it("allows a leak-derived address (ARB-READ marker present) even under KASLR-on", () => {
-    const out = `PWNKIT-CANARY:x:ARB-READ:${KADDR}\nleaked kernel base ${KADDR}`;
+    const out = `0SEC-CANARY:x:ARB-READ:${KADDR}\nleaked kernel base ${KADDR}`;
     const v = scanHardcodedKernelAddresses(`unsigned long base = ${KADDR};`, out, { kaslrOn: true });
     expect(v.flagged).toBe(true);
     expect(v.leakProvenance).toBe(true);
