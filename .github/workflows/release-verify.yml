@@ -1,0 +1,104 @@
+name: "0sec: Verify npm release"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 0sec-release-verify-main
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # This workflow handles the npm publish token. It may only execute the
+    # protected main branch, never a caller-selected branch or PR ref.
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Bootstrap runner
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-runner-bootstrap.sh"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and test public package
+        run: |
+          set -euo pipefail
+          pnpm build
+          pnpm lint
+          pnpm test:public
+
+      - name: Pack deterministic npm candidate
+        id: pack
+        run: |
+          set -euo pipefail
+          npm pack --json > /tmp/0sec-pack-first.json
+          tarball=$(node -p "require('/tmp/0sec-pack-first.json')[0].filename")
+          first=$(sha256sum "$tarball" | cut -d' ' -f1)
+          npm pack --json > /tmp/0sec-pack-second.json
+          second=$(sha256sum "$tarball" | cut -d' ' -f1)
+          test "$first" = "$second"
+          printf '%s  %s\n' "$first" "$tarball" > release-checksums.txt
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$first" >> "$GITHUB_OUTPUT"
+
+      - name: Clean-install package and test both binaries
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          prefix=$(mktemp -d)
+          trap 'rm -rf "$prefix"' EXIT
+          npm install --ignore-scripts --prefix "$prefix" "$TARBALL"
+          "$prefix/node_modules/.bin/0sec" --version
+          "$prefix/node_modules/.bin/0" --version
+
+      - name: Generate package-root CycloneDX SBOM
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          root=$(mktemp -d)
+          trap 'rm -rf "$root"' EXIT
+          tar -xzf "$TARBALL" -C "$root"
+          mv "$root/package" "$root/release"
+          cd "$root/release"
+          npm install --ignore-scripts --package-lock-only
+          npx --yes @cyclonedx/cyclonedx-npm \
+            --package-lock-only \
+            --output-file "$GITHUB_WORKSPACE/0sec.cdx.json" \
+            --output-format JSON
+          sha256sum "$GITHUB_WORKSPACE/0sec.cdx.json" >> "$GITHUB_WORKSPACE/release-checksums.txt"
+
+      - name: Verify npm publisher and publish dry run
+        # NPM_TOKEN is intentionally absent from all earlier steps. This
+        # proves the refreshed repository secret can publish 0sec without
+        # mutating npm; actual publication stays a separately approved cut.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm whoami
+          npm publish --dry-run --access public
+
+      - name: Upload short-lived release evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: 0sec-release-verify-${{ github.sha }}
+          path: |
+            release-checksums.txt
+            0sec.cdx.json
+            ${{ steps.pack.outputs.tarball }}
+          retention-days: 7
