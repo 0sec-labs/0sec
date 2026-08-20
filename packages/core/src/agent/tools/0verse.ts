@@ -1,35 +1,21 @@
 /**
- * `analyze_binary` agent tool — a thin, agent-callable bridge to **0verse**,
- * the binary-native / no-source CRS (see `docs/design/0verse-0sec-integration.md`).
+ * `analyze_binary` agent tool — an opt-in bridge to **0verse**, the
+ * binary-native / no-source CRS. The registry exposes it only when
+ * `0SEC_FEATURE_ZEROVERSE=1`; ToolExecutor confines it to the local source
+ * scope and launches it with a minimal credential-free environment.
  *
- * This tool is OPT-IN and modeled on the endorsed **kernel-run** pattern
- * (`tools/kernel-run.ts` + `verify/kernel-verify.ts`): it is deliberately NOT in
- * the global `TOOL_DEFINITIONS` table nor returned by `getToolsForRole`. It is
- * meant to be injected only into a dedicated, bounded binary-target sub-loop
- * with a wall-clock deadline, so web/audit agents can never spawn a
- * minutes-long binary hunt by accident. No branch is added to the `tools.ts`
- * god-module (house rule) — this is a self-contained module.
+ * It runs one bounded `0verse scan <binary> --format ndjson` invocation through
+ * a dedicated launcher allowlist. The web-scanner allowlist is never widened,
+ * and this is not the full fuzzing sub-loop.
  *
- * Thin first cut (per §3/§6-P1 of the scoping doc): a single
- * `0verse scan <binary> --format ndjson` invocation, spawned via a **dedicated**
- * launcher allowlist (the web-scanner allowlist in `scanner-tools.ts` is NOT
- * widened), parsed into a structured `ToolResult` the way `parseNucleiOutput`
- * parses nuclei's JSONL. It is NOT the full fuzzing sub-loop.
- *
- * Contract discipline (AIxCC T9, same as kernel-run):
- *   - Args are parsed against {@link overseArgsSchema} and *rejected* on a
- *     mismatch before any subprocess is spawned. Unknown top-level keys are
- *     stripped so a model-emitted `argv`/`cwd` can never propagate downstream.
- *   - **PoV-is-truth**: only ndjson findings with `confirmed:true` (a
- *     reproducing PoV attached) are surfaced as verified; everything else stays
- *     a ranked *hypothesis* the agent may reason about but must never report as
- *     a confirmed finding. This mirrors `mapOversePoVToCloudFinding` on the
- *     cloud side (`@0cloud/cloud-contracts` `zeroverse.ts`).
- *
- * The 0verse ndjson contract (0verse `api.result_to_ndjson`, CONTRACT_VERSION
- * 1.x): line 1 is a `{"_meta": {...}}` header carrying `contract_version`; each
- * subsequent line is one flat `ScanFinding`. We validate the MAJOR of
- * `contract_version` before trusting the stream.
+ * Contract discipline:
+ *   - Args are parsed against {@link overseArgsSchema}; unknown keys are
+ *     stripped before any subprocess is spawned.
+ *   - **PoV-is-truth**: only ndjson findings with `confirmed:true` remain
+ *     confirmed. Every other line is a ranked hypothesis and must not be
+ *     promoted by this bridge.
+ *   - The parser accepts only the supported major version of the 0verse ndjson
+ *     contract before returning a successful tool result.
  */
 
 import { z } from "zod";

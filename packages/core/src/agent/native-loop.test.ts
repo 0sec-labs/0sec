@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { randomUUID } from "node:crypto";
 import {
   runNativeAgentLoop,
   compactMessagesWithLLM,
@@ -14,7 +15,7 @@ import type { NativeRuntime, NativeRuntimeResult, NativeMessage, NativeToolDef }
 import type { Finding } from "@0sec/shared";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { eventBus } from "../events/bus.js";
 import {
   UNTRUSTED_OPEN,
@@ -521,6 +522,7 @@ describe("runNativeAgentLoop", () => {
       async isAvailable() { return true; },
     };
 
+    const scanId = `test-progress-summary-${randomUUID()}`;
     const state = await runNativeAgentLoop({
       config: {
         role: "attack",
@@ -528,19 +530,23 @@ describe("runNativeAgentLoop", () => {
         tools: [],
         maxTurns: 20,
         target: "https://example.com",
-        scanId: "test-progress-summary",
+        scanId,
         retryCount: 0,
       },
       runtime,
       db: null,
     });
 
-    expect(state.earlyStopNoProgress).toBe(true);
-    expect(state.progressSummary).toContain("Endpoints/URLs Discovered");
-    expect(state.progressSummary).toContain("example.com");
-    expect(state.progressSummary).toContain("Remaining Untried Approaches");
-    // Should have written a progress JSON file
-    expect(state.progressPath).toContain("progress.json");
+    try {
+      expect(state.earlyStopNoProgress).toBe(true);
+      expect(state.progressSummary).toContain("Endpoints/URLs Discovered");
+      expect(state.progressSummary).toContain("example.com");
+      expect(state.progressSummary).toContain("Remaining Untried Approaches");
+      expect(state.progressPath).toContain("progress.json");
+    } finally {
+      if (state.progressPath) rmSync(dirname(state.progressPath), { recursive: true, force: true });
+    }
+
   });
 
   it("does NOT early stop when save_finding is called before halfway", async () => {

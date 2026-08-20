@@ -2,7 +2,10 @@
 
 ## Status
 
-Design doc + skeleton seam. Not wired into any scan path by default.
+`HuntScanOptions.runtimeVerify` is wired as an opt-in terminal gate after the
+skeptic/prover and optional exploitability gates. The E2B provisioner remains a
+skeleton: without an injected verifier, it reports an honest no-op/error rather
+than fabricating runtime evidence.
 
 ## Motivation
 
@@ -117,18 +120,14 @@ The runtime verifier fits into the existing stage architecture at two seams:
 
 ### Seam A: composeGate (recommended for MVP)
 
-Add an optional `runtimeVerify?: HuntVerifier` field to `HuntScanOptions`.
-Wire it the same way as `exploitability`:
+`HuntScanOptions` now exposes an optional `runtimeVerify?: HuntVerifier`.
+`runHuntScan` composes it after `verify` and `exploitability`; it is skipped
+with a warning when no prior confirmation gate exists:
 
 ```typescript
-// In the verify composition section of runHuntScan:
 let verify = opts.verify;
-if (opts.exploitability) {
-  verify = composeGate(opts.verify!, opts.exploitability);
-}
-if (opts.runtimeVerify) {
-  verify = composeGate(verify ?? /* pass-through */, opts.runtimeVerify);
-}
+if (opts.exploitability && verify) verify = composeGate(verify, opts.exploitability);
+if (opts.runtimeVerify && verify) verify = composeGate(verify, opts.runtimeVerify);
 ```
 
 This places the runtime verifier as the **terminal gate stage** — it only runs
@@ -155,11 +154,11 @@ adversarial refute AND the sandbox PoC in parallel, requiring all lenses to
 survive. This is architecturally cleaner but needs the E2B client at lens
 construction time.
 
-### Chosen seam for skeleton
+### Chosen seam
 
-The skeleton implements **Seam A** (composeGate stage) because it requires no
-changes to `makeMultiLensVerifier` or the lens quorum logic. See
-`packages/core/src/stages/runtime-verify.ts` for the interface.
+`runHuntScan` now implements **Seam A**. The option is injectable for a real
+customer runtime verifier or test harness, while `makeRuntimeVerifier` retains
+its E2B guardrails and does not claim that an E2B driver exists.
 
 ## Dependencies
 

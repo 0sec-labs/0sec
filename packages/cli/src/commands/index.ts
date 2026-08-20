@@ -45,3 +45,4 @@ export { registerResearchCommand } from "./research.js";
 export { registerTimelineCommand } from "./timeline.js";
 export { registerFileReviewCommand } from "./file-review.js";
 export { runUnified } from "./run.js";
+export { registerAgentAssureCommand } from "./agent-assure.js";

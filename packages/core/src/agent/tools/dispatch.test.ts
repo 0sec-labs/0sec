@@ -64,6 +64,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   oast_poll: "oastPoll",
   // Phase-0 — persistent compute-only Python kernel.
   python_exec: "pythonExec",
+  analyze_binary: "analyzeBinary",
 };
 
 describe("TOOL_DISPATCH (0sec#614)", () => {

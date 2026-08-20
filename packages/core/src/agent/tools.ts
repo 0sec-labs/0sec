@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
 import { isIP } from "node:net";
@@ -150,6 +150,8 @@ import {
 } from "./tools/intel.js";
 import { resolveScopedPath } from "./tools/scope-path.js";
 import { windowFileContent } from "./tools/read-file-window.js";
+import { executeOverseScan, validateOverseArgs } from "./tools/0verse.js";
+
 
 // ── Tool registry (0sec#611) ──
 // The per-tool ToolDefinition objects now live in per-domain modules under
@@ -160,8 +162,22 @@ import { windowFileContent } from "./tools/read-file-window.js";
 // ToolExecutor below see them as local bindings. Splitting the old 600-line
 // literal lets parallel feature PRs touch disjoint domain files instead of
 // serializing on one merge-conflict chokepoint.
-import { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES, OAST_TOOL_NAMES } from "./tools/index.js";
-export { TOOL_DEFINITIONS, SCANNER_TOOL_NAMES, CLOUD_TOOL_NAMES, ORCHESTRATOR_TOOL_NAMES, OAST_TOOL_NAMES };
+import {
+  TOOL_DEFINITIONS,
+  SCANNER_TOOL_NAMES,
+  CLOUD_TOOL_NAMES,
+  ORCHESTRATOR_TOOL_NAMES,
+  OAST_TOOL_NAMES,
+  BINARY_TOOL_NAMES,
+} from "./tools/index.js";
+export {
+  TOOL_DEFINITIONS,
+  SCANNER_TOOL_NAMES,
+  CLOUD_TOOL_NAMES,
+  ORCHESTRATOR_TOOL_NAMES,
+  OAST_TOOL_NAMES,
+  BINARY_TOOL_NAMES,
+};
 import { executeStartScan } from "./tools/orchestrator.js";
 
 // Tool-name → handler-method-name routing table (0sec#614), assembled from
@@ -407,6 +423,9 @@ const SCOPED_SOURCE_AUDIT_TOOLS: Record<string, true> = {
   save_finding: true,
   update_finding: true,
   done: true,
+  // Explicitly opt-in; the handler confines the path, strips credentials, and
+  // leaves dynamic target execution disabled unless 0verse itself is configured.
+  analyze_binary: true,
 };
 
 /**
@@ -5100,6 +5119,48 @@ export class ToolExecutor {
     }
   }
 
+  /**
+   * `analyze_binary` is an explicit 0verse bridge. The agent may only submit a
+   * regular file below its local source scope; the child receives the minimal
+   * credential-free environment and 0verse keeps target execution disabled by
+   * default.
+   */
+  private async analyzeBinary(args: Record<string, unknown>): Promise<ToolResult> {
+    if (!featureFlags.zeroverse) {
+      return {
+        success: false,
+        output: null,
+        error: "analyze_binary is disabled. Set 0SEC_FEATURE_ZEROVERSE=1 to enable.",
+      };
+    }
+    if (!this.ctx.scopePath) {
+      return {
+        success: false,
+        output: null,
+        error: "analyze_binary requires a local scoped source root.",
+      };
+    }
+
+    const validated = validateOverseArgs(args);
+    if (!validated.ok) {
+      return { success: false, output: null, error: validated.error };
+    }
+
+    try {
+      const binaryPath = resolveScopedPath(this.ctx.scopePath, validated.args.binary_path);
+      if (!statSync(binaryPath).isFile()) {
+        return { success: false, output: null, error: "analyze_binary requires a regular file." };
+      }
+      return await executeOverseScan({
+        args: { ...validated.args, binary_path: binaryPath },
+        env: sanitizedEnv(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, output: null, error: `analyze_binary refused: ${message}` };
+    }
+  }
+
   // ── Web search (anti-cheat gated) ──
 
   private static WEB_SEARCH_BLOCKLIST = [
@@ -5830,6 +5891,9 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
   const ptyTools = featureFlags.ptySession ? ["pty_session"] : [];
   // Phase-0 persistent compute-only Python kernel, opt-in (default off).
   const pythonTools = featureFlags.pythonExec ? ["python_exec"] : [];
+  // Binary analysis remains opt-in and is only offered to local verification/audit
+  // roles; it is never a generic network-scanner capability.
+  const binaryTools = featureFlags.zeroverse ? [...BINARY_TOOL_NAMES] : [];
   const payloadTools = ["payload_lookup"];
   const wpTools = featureFlags.wpFingerprint ? ["wp_fingerprint"] : [];
   const mongoTools = featureFlags.mongoObjectIdForge ? ["mongo_objectid"] : [];
@@ -5878,7 +5942,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     "update_target",
     ...common,
   ];
-  const fileTools = ["read_file", "apply_patch", "run_command"];
+  const fileTools = ["read_file", "apply_patch", "run_command", ...binaryTools];
   const allEnabledTools = Object.keys(TOOL_DEFINITIONS).filter((name) =>
     (featureFlags.jitSkills || (name !== "list_skills" && name !== "load_skill"))
     // Keep use_loot out of the audit/review "everything" set when the loot
@@ -5899,10 +5963,15 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // #659 — OAST tools stay out of the audit/review "everything" set unless the
     // collaborator feature is on (parity with the gating above).
     && (featureFlags.oastCollaborator || !OAST_TOOL_NAMES.includes(name))
-    // Phase-0 python_exec likewise stays out of the audit/review "everything"
-    // set unless the pythonExec feature is on (parity with the gating above).
-    && (featureFlags.pythonExec || name !== "python_exec"),
+    // Phase-0 python_exec stays out unless pythonExec is on.
+    && (featureFlags.pythonExec || name !== "python_exec")
+    // 0verse execution is opt-in and path-confined by the executor.
+    && (featureFlags.zeroverse || !BINARY_TOOL_NAMES.includes(name as (typeof BINARY_TOOL_NAMES)[number])),
   );
+  const scopedSourceTools = Object.keys(SCOPED_SOURCE_AUDIT_TOOLS).filter((name) =>
+    featureFlags.zeroverse || name !== "analyze_binary",
+  );
+
 
   const roleTools: Record<string, string[]> = {
     discovery: networkTools,
@@ -5910,8 +5979,8 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // Verify agent gets file tools when there's a local scope (audit/review mode)
     verify: opts?.hasScope ? [...networkTools, ...fileTools] : networkTools,
     report: [...common],
-    audit: opts?.hasScope ? Object.keys(SCOPED_SOURCE_AUDIT_TOOLS) : allEnabledTools,
-    review: opts?.hasScope ? Object.keys(SCOPED_SOURCE_AUDIT_TOOLS) : allEnabledTools,
+    audit: opts?.hasScope ? scopedSourceTools : allEnabledTools,
+    review: opts?.hasScope ? scopedSourceTools : allEnabledTools,
   };
 
   const toolNames = roleTools[role] ?? allEnabledTools;

@@ -340,6 +340,10 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
   let lastReachabilityCitation: { path: string; line: number } | undefined;
   let oracleUnreachable = false;
   let costCeilingExceeded = false;
+  // A self-test infrastructure fault is not a negative PoC result. Once it
+  // consumes the remaining self-test budget, stop rather than silently falling
+  // through into unrelated provider turns.
+  let selfTestBudgetInconclusive = false;
 
   if (!existsSync(sourceRoot)) {
     // The per-task source vanished before the run even started — a /tmp janitor
@@ -540,6 +544,10 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
         log(`[craft] SELF-TEST ORACLE UNREACHABLE (strike ${strike}): ${reason}`);
         return `The self-test oracle is UNREACHABLE (${reason}) — infrastructure fault, not your PoC. Stop.`;
       }
+      if (tests >= maxTests) {
+        selfTestBudgetInconclusive = true;
+        return `self-test executor error: ${String(e).slice(0, 400)} — self-test budget exhausted; task is inconclusive.`;
+      }
       return `self-test executor error: ${String(e).slice(0, 400)}`;
     }
     if (v.oracleError) {
@@ -550,6 +558,10 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
         oracleUnreachable = true;
         log(`[craft] SELF-TEST ORACLE UNREACHABLE (strike ${strike}): ${clip(v.oracleError, 200)}`);
         return `The self-test oracle is UNREACHABLE (${clip(v.oracleError, 160)}) — infrastructure fault, not your PoC. Stop.`;
+      }
+      if (tests >= maxTests) {
+        selfTestBudgetInconclusive = true;
+        return `self-test could not run (${clip(v.oracleError, 160)}) — self-test budget exhausted; task is inconclusive.`;
       }
       return `self-test could not run (${clip(v.oracleError, 160)}) — try submit_poc`;
     }
@@ -904,7 +916,7 @@ ${g.err}`;
     llmUnavailable = clip(String(reason), 300);
     warnings.push(`craft: LLM UNAVAILABLE at step ${steps}: ${llmUnavailable}`);
   };
-  for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable; steps++) {
+  for (steps = 0; steps < maxSteps && !passed && !oracleUnreachable && !selfTestBudgetInconclusive; steps++) {
     currentStep = steps;
     if (stages.current() === "reachability" && steps >= reachabilityStepCap) {
       const fallbackCitation = lastReachabilityCitation ?? targetSpec.fuzzerEntrypoints[0];
@@ -1099,12 +1111,15 @@ ${g.err}`;
     const inconclusive =
       oracleUnreachable ||
       selfTestInfraUnresolved ||
+      selfTestBudgetInconclusive ||
       llmUnavailable !== undefined ||
       costCeilingExceeded;
     warnings.push(oracleUnreachable
       ? `craft: ORACLE UNREACHABLE — task inconclusive (grader never ran; NOT a capability fail) after ${submits} submit(s) / ${steps} step(s)`
       : selfTestInfraUnresolved
         ? `craft: SELF-TEST ORACLE FAULT — task inconclusive (no deterministic self-test verdict) after ${submits} submit(s) / ${steps} step(s)`
+      : selfTestBudgetInconclusive
+        ? `craft: SELF-TEST ORACLE INCONCLUSIVE — self-test budget exhausted before a verdict after ${submits} submit(s) / ${tests} test(s) / ${steps} step(s)`
         : llmUnavailable !== undefined
           ? `craft: LLM UNAVAILABLE — task inconclusive (${llmUnavailable}) after ${submits} submit(s) / ${steps} step(s)`
           : costCeilingExceeded

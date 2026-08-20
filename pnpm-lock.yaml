@@ -85,15 +85,6 @@ importers:
 
   packages/cli:
     dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@3.25.76)
-      '@opentui/core':
-        specifier: 0.5.4
-        version: 0.5.4(typescript@5.9.3)(web-tree-sitter@0.25.10)
-      '@opentui/react':
-        specifier: 0.5.4
-        version: 0.5.4(react-devtools-core@7.0.1)(react@19.2.6)(typescript@5.9.3)(web-tree-sitter@0.25.10)(ws@8.21.0)
       '@0sec/benchmark':
         specifier: workspace:*
         version: link:../benchmark
@@ -103,6 +94,9 @@ importers:
       '@0sec/db':
         specifier: workspace:*
         version: link:../db
+      '@0sec/llm-redteam':
+        specifier: workspace:*
+        version: link:../llm-redteam
       '@0sec/shared':
         specifier: workspace:*
         version: link:../shared
@@ -112,6 +106,15 @@ importers:
       '@0sec/test-targets':
         specifier: workspace:*
         version: link:../../test-targets
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+      '@opentui/core':
+        specifier: 0.5.4
+        version: 0.5.4(typescript@5.9.3)(web-tree-sitter@0.25.10)
+      '@opentui/react':
+        specifier: 0.5.4
+        version: 0.5.4(react-devtools-core@7.0.1)(react@19.2.6)(typescript@5.9.3)(web-tree-sitter@0.25.10)(ws@8.21.0)
       chalk:
         specifier: ^5.3.0
         version: 5.6.2
@@ -302,6 +305,10 @@ importers:
         version: 2.1.9(@types/node@25.9.1)(lightningcss@1.32.0)(msw@2.14.6(@types/node@25.9.1)(typescript@5.9.3))
 
   packages/llm-redteam:
+    dependencies:
+      '@0sec/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       typescript:
         specifier: ^5.7.2
