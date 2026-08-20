@@ -1,0 +1,11 @@
+{
+  "campaign_id": "contract-fixture-hyperv-001",
+  "worker": "fixture-host",
+  "guest_worker": "fixture-guest",
+  "vm_name": "fixture-child",
+  "checkpoint_name": "clean",
+  "trigger_argv": ["/root/harness/fixture-probe", "target"],
+  "control_argv": ["/root/harness/fixture-probe", "control"],
+  "trials": 2,
+  "minimum_confirmations": 2
+}

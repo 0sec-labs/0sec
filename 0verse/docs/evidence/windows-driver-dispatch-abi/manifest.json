@@ -1,0 +1,10 @@
+{
+  "schema_version": "0verse.windows-driver-dispatch-abi-authority/v1",
+  "source": {
+    "commit": "758b904a9035ee00c0bea6a2ed34a78202bcf8ce",
+    "path": "nc-wdm-driver_dispatch.md",
+    "sha256": "999809924074acbc0edd0c416f9d6f5477a99da3f042f734765fd062254f78c7",
+    "size_bytes": 12807,
+    "url": "https://raw.githubusercontent.com/MicrosoftDocs/windows-driver-docs-ddi/758b904a9035ee00c0bea6a2ed34a78202bcf8ce/wdk-ddi-src/content/wdm/nc-wdm-driver_dispatch.md"
+  }
+}

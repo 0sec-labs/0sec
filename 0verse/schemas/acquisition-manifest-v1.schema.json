@@ -1,0 +1,402 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://0sec.ai/schemas/0verse/acquisition-manifest-v1.schema.json",
+  "title": "0verse firmware acquisition manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "acquisition_id",
+    "created_at",
+    "device",
+    "transport",
+    "regions",
+    "artifacts",
+    "provenance",
+    "redaction"
+  ],
+  "properties": {
+    "schema_version": {"const": "0verse.acquisition-manifest/v1"},
+    "acquisition_id": {"$ref": "#/$defs/identifier"},
+    "created_at": {"$ref": "#/$defs/timestamp"},
+    "device": {"$ref": "#/$defs/deviceIdentity"},
+    "transport": {"$ref": "#/$defs/transport"},
+    "regions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/memoryRegion"}
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/artifact"}
+    },
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "redaction": {"$ref": "#/$defs/redaction"}
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000]+$"
+    },
+    "nullableText": {
+      "anyOf": [
+        {"$ref": "#/$defs/text"},
+        {"type": "null"}
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$"
+    },
+    "nullableSha256": {
+      "anyOf": [
+        {"$ref": "#/$defs/sha256"},
+        {"type": "null"}
+      ]
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nullableNonNegativeInteger": {
+      "anyOf": [
+        {"$ref": "#/$defs/nonNegativeInteger"},
+        {"type": "null"}
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+    },
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?!\\.{1,2}$)(?!\\.{1,2}/)(?!.*\\/\\.{1,2}(?:/|$))(?!.*\\\\)[^/]+(?:/[^/]+)*$"
+    },
+    "deviceIdentifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value", "alias", "sensitivity"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/identifier"},
+        "value": {"$ref": "#/$defs/nullableText"},
+        "alias": {
+          "anyOf": [
+            {"$ref": "#/$defs/identifier"},
+            {"type": "null"}
+          ]
+        },
+        "sensitivity": {"enum": ["technical", "personal", "secret"]}
+      },
+      "anyOf": [
+        {"properties": {"value": {"type": "string"}}},
+        {"properties": {"alias": {"type": "string"}}}
+      ]
+    },
+    "deviceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "manufacturer", "model", "hardware_revision", "identifiers"],
+      "properties": {
+        "category": {"$ref": "#/$defs/identifier"},
+        "manufacturer": {"$ref": "#/$defs/nullableText"},
+        "model": {"$ref": "#/$defs/nullableText"},
+        "hardware_revision": {"$ref": "#/$defs/nullableText"},
+        "identifiers": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/deviceIdentifier"}
+        }
+      }
+    },
+    "transportParameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value", "basis"],
+      "properties": {
+        "name": {"$ref": "#/$defs/identifier"},
+        "value": {"$ref": "#/$defs/text"},
+        "basis": {"enum": ["configured", "declared", "observed", "inferred", "unknown"]}
+      }
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "protocol",
+        "interface",
+        "mode",
+        "transmitted",
+        "parameters",
+        "capture_artifact_ids"
+      ],
+      "properties": {
+        "kind": {"enum": ["file", "can", "serial", "network", "debug-port", "storage", "unknown"]},
+        "protocol": {"$ref": "#/$defs/nullableText"},
+        "interface": {"$ref": "#/$defs/nullableText"},
+        "mode": {"enum": ["offline", "passive", "active-read", "active-write"]},
+        "transmitted": {"type": "boolean"},
+        "parameters": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/transportParameter"}
+        },
+        "capture_artifact_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"enum": ["offline", "passive"]}}},
+          "then": {"properties": {"transmitted": {"const": false}}}
+        }
+      ]
+    },
+    "memoryRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "region_id",
+        "address_space",
+        "start",
+        "length",
+        "role",
+        "basis",
+        "permissions",
+        "artifact_id",
+        "artifact_offset"
+      ],
+      "properties": {
+        "region_id": {"$ref": "#/$defs/identifier"},
+        "address_space": {"$ref": "#/$defs/text"},
+        "start": {"$ref": "#/$defs/nullableNonNegativeInteger"},
+        "length": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["firmware", "bootloader", "code", "calibration", "data", "filesystem", "configuration", "unknown"]},
+        "basis": {"enum": ["configured", "declared", "observed", "inferred", "unknown"]},
+        "permissions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["read", "write", "execute"]}
+        },
+        "artifact_id": {
+          "anyOf": [
+            {"$ref": "#/$defs/identifier"},
+            {"type": "null"}
+          ]
+        },
+        "artifact_offset": {"$ref": "#/$defs/nullableNonNegativeInteger"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "artifact_id": {"type": "null"},
+            "artifact_offset": {"type": "null"}
+          }
+        },
+        {
+          "properties": {
+            "artifact_id": {"type": "string"},
+            "artifact_offset": {"type": "integer", "minimum": 0}
+          }
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "kind",
+        "path",
+        "media_type",
+        "size",
+        "sha256",
+        "observed_size",
+        "observed_sha256",
+        "availability",
+        "integrity",
+        "content",
+        "coverage",
+        "region_ids"
+      ],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/identifier"},
+        "kind": {"enum": ["firmware-image", "memory-region", "traffic-capture", "transaction-log", "tool-log", "metadata", "other"]},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "media_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$"
+        },
+        "size": {"$ref": "#/$defs/nullableNonNegativeInteger"},
+        "sha256": {"$ref": "#/$defs/nullableSha256"},
+        "observed_size": {"$ref": "#/$defs/nullableNonNegativeInteger"},
+        "observed_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "availability": {"enum": ["present", "missing"]},
+        "integrity": {"enum": ["recorded", "verified", "modified", "unavailable"]},
+        "content": {"enum": ["plaintext", "encoded", "encrypted", "unknown"]},
+        "coverage": {"enum": ["full", "partial", "virtual-read", "calibration-only", "not-applicable", "unknown"]},
+        "region_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"availability": {"const": "present"}}},
+          "then": {
+            "properties": {
+              "size": {"type": "integer", "minimum": 0},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "integrity": {"enum": ["recorded", "verified", "modified"]}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"availability": {"const": "missing"}}},
+          "then": {
+            "properties": {
+              "integrity": {"const": "unavailable"},
+              "observed_size": {"type": "null"},
+              "observed_sha256": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"integrity": {"const": "recorded"}}},
+          "then": {
+            "properties": {
+              "observed_size": {"type": "null"},
+              "observed_sha256": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"integrity": {"const": "verified"}}},
+          "then": {
+            "properties": {
+              "observed_size": {"type": "integer", "minimum": 0},
+              "observed_sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"integrity": {"const": "modified"}}},
+          "then": {
+            "properties": {
+              "observed_size": {"type": "integer", "minimum": 0},
+              "observed_sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"integrity": {"const": "unavailable"}}},
+          "then": {"properties": {"availability": {"const": "missing"}}}
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "method",
+        "collector",
+        "authorization_basis",
+        "started_at",
+        "completed_at",
+        "tool_name",
+        "tool_version",
+        "evidence_artifact_ids",
+        "notes"
+      ],
+      "properties": {
+        "source": {"$ref": "#/$defs/text"},
+        "method": {"$ref": "#/$defs/text"},
+        "collector": {"$ref": "#/$defs/text"},
+        "authorization_basis": {"enum": ["owner-operated", "written-authorization", "published-scope", "synthetic-fixture", "unknown"]},
+        "started_at": {"$ref": "#/$defs/timestamp"},
+        "completed_at": {"$ref": "#/$defs/timestamp"},
+        "tool_name": {"$ref": "#/$defs/text"},
+        "tool_version": {"$ref": "#/$defs/text"},
+        "evidence_artifact_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        },
+        "notes": {"$ref": "#/$defs/nullableText"}
+      }
+    },
+    "redactionEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "classification", "action"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$"
+        },
+        "classification": {"enum": ["personal", "secret", "operator", "location", "network", "other"]},
+        "action": {"enum": ["removed", "replaced", "generalized", "hashed"]}
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "policy", "contains_sensitive_values", "entries"],
+      "properties": {
+        "status": {"enum": ["not-required", "unredacted", "partial", "complete"]},
+        "policy": {"$ref": "#/$defs/text"},
+        "contains_sensitive_values": {"type": "boolean"},
+        "entries": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/redactionEntry"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "not-required"}}},
+          "then": {
+            "properties": {
+              "contains_sensitive_values": {"const": false},
+              "entries": {"maxItems": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "unredacted"}}},
+          "then": {
+            "properties": {
+              "contains_sensitive_values": {"const": true},
+              "entries": {"maxItems": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "partial"}}},
+          "then": {
+            "properties": {
+              "contains_sensitive_values": {"const": true},
+              "entries": {"minItems": 1}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "complete"}}},
+          "then": {
+            "properties": {
+              "contains_sensitive_values": {"const": false},
+              "entries": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    }
+  }
+}

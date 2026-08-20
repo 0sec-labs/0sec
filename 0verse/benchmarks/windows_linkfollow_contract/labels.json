@@ -1,0 +1,22 @@
+{
+ "schema_version": "0verse.windows-variant-labels/v1",
+ "campaign_sha256": "c896fc0ebf25c9725cde3f26e90363da54379db7ebce2758c176ea4c2275cebc",
+ "current_binary_sha256": "a6f673a97e64e3b712051dc174b59f36e042d6bb9337a5c00db9e02d61701384",
+ "current_export_sha256": "fbfe5fd06a23947d09e3f93dffb9ef5ece836aa97119dab738abf775d80067f6",
+ "expected_sites": [
+  {
+   "function": "ScanThenPurge",
+   "function_address": "0x1200"
+  }
+ ],
+ "patched_control_sites": [
+  {
+   "function": "HardenedQuarantine",
+   "function_address": "0x1400"
+  }
+ ],
+ "rank_cutoff": 20,
+ "minimum_recall_at_cutoff": 0.7,
+ "minimum_patched_control_suppression": 0.95,
+ "maximum_unsupported_at_cutoff": 3
+}

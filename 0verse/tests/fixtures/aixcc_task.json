@@ -1,0 +1,20 @@
+{
+  "message_id": "11111111-1111-1111-1111-111111111111",
+  "message_time": 1750000000000,
+  "tasks": [
+    {
+      "task_id": "task-1",
+      "type": "delta",
+      "project_name": "example-libxml2",
+      "focus": "libxml2",
+      "deadline": 1750003600000,
+      "harnesses_included": true,
+      "metadata": {"round_id": "demo", "task_uuid": "task-1"},
+      "source": [
+        {"type": "repo", "url": "https://example.invalid/libxml2-repo.tar.gz", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+        {"type": "fuzz-tooling", "url": "https://example.invalid/oss-fuzz.tar.gz", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+        {"type": "diff", "url": "https://example.invalid/delta.diff.tar.gz", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"}
+      ]
+    }
+  ]
+}

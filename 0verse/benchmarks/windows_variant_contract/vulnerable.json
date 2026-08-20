@@ -1,0 +1,10 @@
+{
+  "insts": [
+    {"id": 1, "func": "SeedDispatch", "addr": 4096, "kind": "OTHER"}
+  ],
+  "meta": {
+    "decompiled_c": {
+      "SeedDispatch": "void SeedDispatch(char *input, unsigned count) { memcpy(dst, input, count); }"
+    }
+  }
+}

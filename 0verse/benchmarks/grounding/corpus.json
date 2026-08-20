@@ -1,0 +1,52 @@
+{
+  "_about": "Prospective-precision corpus for the G1 structural-grounding gate (docs/operations/0verse-g1-grounding-integration.md). Each case is a finding + the recovered call graph it is grounded against + a ground-truth label (real | fp). The gate NEVER sees the label; measure_precision.py runs the gate and scores against it. Oracles are REAL captured call graphs (afd.sys v6725 Ghidra headless; amdxdna linux-next source) from research/g1-structural-grounding/ground_truth, plus small synthetic oracles for the stripped-graph and PoV-override cases.",
+  "oracles": {
+    "afd_v6725": {
+      "_source": "Ghidra 11.x headless FunctionManager.getCalledFunctions on afd.sys v6725 (research/g1-structural-grounding/ground_truth/afd_v6725_ghidra_callees.json). AfdNotifySockIndicateEventsUnlock->AfdNotifyPostEvents added from the captured callers_of set; AfdSuperAccept reaches AfdNotifyPostEvents only TRANSITIVELY (direct edge provably absent).",
+      "exports": [],
+      "imports": ["ExFreePoolWithTag", "ExFreeToLookasideListEx"],
+      "callees": {
+        "AfdTLFastDgramSendComplete": ["AfdCalculateBufferSize", "AfdDereferenceEndpoint", "AfdNotifyPostEvents", "AfdNotifySockIndicateEventsUnlock", "ExAcquireRundownProtection", "ExFreePoolWithTag", "ExFreeToLookasideListEx", "ExReleaseRundownProtection", "KeAcquireInStackQueuedSpinLock", "KeReleaseInStackQueuedSpinLock", "PsReturnPoolQuota", "TdiReturnChainedReceives", "__security_check_cookie", "_guard_dispatch_icall"],
+        "AfdTLFastDgramSend": ["AfdCalculateBufferSize", "AfdDereferenceEndpoint", "AfdNotifyPostEvents", "AfdNotifySockIndicateEventsUnlock", "AfdTLCloseEndpoint", "ExAcquireRundownProtection", "ExFreePoolWithTag", "ExFreeToLookasideListEx", "ExReleaseRundownProtection", "KeAcquireInStackQueuedSpinLock", "KeReleaseInStackQueuedSpinLock", "PsReturnPoolQuota", "TdiReturnChainedReceives"],
+        "AfdIndicateEventSelectEvent": ["KeSetEvent", "WPP_SF_I", "WPP_SF_qqLLL"],
+        "AfdIndicatePollEvent": ["AfdCompletePollIrp", "AfdFreePollInfo", "AfdUpdatePollInfo", "KeReleaseInStackQueuedSpinLock", "ObfDereferenceObject"],
+        "AfdSuperAccept": ["AfdCleanupSuperAccept", "AfdFreeQueuedConnections", "AfdGetFreeConnection", "AfdNotifySockIndicateEventsUnlock", "AfdReplenishListenBacklog", "AfdServiceSuperAccept", "AfdWaitForListen", "IoAllocateMdl", "IoFreeMdl", "KeAcquireInStackQueuedSpinLock", "KeReleaseInStackQueuedSpinLock", "MmProbeAndLockPages", "MmUnlockPages", "ObReferenceObjectByHandle", "ObfDereferenceObject"],
+        "AfdNotifySockIndicateEventsUnlock": ["AfdNotifyPostEvents", "KeReleaseInStackQueuedSpinLock"]
+      }
+    },
+    "amdxdna": {
+      "_source": "linux-next accel/amdxdna source call chain (research/g1-structural-grounding/ground_truth/amdxdna_verified_edges.json). The SENT-upstream NULL-deref TP the gate must NOT over-block; every edge is a real source call edge.",
+      "exports": [],
+      "imports": [],
+      "callees": {
+        "amdxdna_sched_job_run": ["amdxdna_cmd_get_state", "amdxdna_cmd_set_state", "aie2_hwctx_status"],
+        "amdxdna_cmd_set_state": ["amdxdna_gem_vmap"],
+        "amdxdna_gem_vmap": ["to_gobj"]
+      }
+    },
+    "stripped_elf": {
+      "_source": "synthetic — a leaf function with no modeled callees (stripped/indirect-heavy binary), to prove a poor graph does NOT mass-cap real findings.",
+      "exports": [],
+      "imports": [],
+      "callees": {"handler": []}
+    },
+    "synthetic_uaf": {
+      "_source": "synthetic — a real UAF slice whose sink is genuinely reachable and frees, used for the PoV-override guard.",
+      "exports": [],
+      "imports": ["free"],
+      "callees": {"process_packet": ["parse_hdr"], "parse_hdr": ["memcpy"]}
+    }
+  },
+  "cases": [
+    {"id": "afd-phantom-uaf-no-free", "oracle": "afd_v6725", "function": "AfdIndicateEventSelectEvent", "sink": "AfdNotifyPostEvents", "bug_class": "CWE-416 use-after-free", "proposed_severity": "high", "explanation": "notify context freed then reused", "pov_confirmed": false, "label": "fp", "note": "UAF claim on a function whose modeled calls (KeSetEvent/WPP) reach no free primitive AND do not reach the sink -> free_site+reachability REFUTED."},
+    {"id": "afd-phantom-direct-edge", "oracle": "afd_v6725", "function": "AfdSuperAccept", "sink": "AfdNotifyPostEvents", "bug_class": "CWE-416 use-after-free", "proposed_severity": "high", "explanation": "AfdSuperAccept directly frees+notifies\n@claim call_edge caller=AfdSuperAccept callee=AfdNotifyPostEvents", "pov_confirmed": false, "label": "fp", "note": "The afd phantom-direct-edge: the LLM asserts a DIRECT call that is provably absent (real path is transitive via AfdNotifySockIndicateEventsUnlock). Explicit @claim call_edge -> REFUTED."},
+    {"id": "afd-offset-halving", "oracle": "afd_v6725", "function": "AfdTLFastDgramSendComplete", "sink": "ExFreePoolWithTag", "bug_class": "CWE-416 use-after-free", "proposed_severity": "high", "explanation": "rundown at +0xc0 does not cover +0x178 notify ctx\n@claim offset_field func=AfdTLFastDgramSendComplete claimed_offset=0xc0", "pov_confirmed": false, "label": "fp", "note": "The original ushort*-halving incident: a decompiler-halved offset premise. No per-binary operand oracle -> offset_field UNKNOWN -> severity CAPPED (blocked from HIGH), grounded fully only at v2."},
+    {"id": "afd-real-datagram-free", "oracle": "afd_v6725", "function": "AfdTLFastDgramSend", "sink": "ExFreePoolWithTag", "bug_class": "CWE-416 use-after-free", "proposed_severity": "high", "explanation": "datagram send path frees pool then the notify path may reuse it", "pov_confirmed": false, "label": "real", "note": "The genuine afd datagram-send area: the function's modeled calls DO reach ExFreePoolWithTag and the sink -> free_site+reachability GROUNDED -> kept."},
+    {"id": "afd-transitive-reachability", "oracle": "afd_v6725", "function": "AfdSuperAccept", "sink": "AfdNotifyPostEvents", "bug_class": "CWE-416 use-after-free", "proposed_severity": "medium", "explanation": "reached over the unlock path\n@claim reachability from=AfdSuperAccept to=AfdNotifyPostEvents", "pov_confirmed": false, "label": "real", "note": "Same target as the phantom-direct case but claimed correctly as TRANSITIVE reachability -> GROUNDED. Demonstrates the gate separates a refuted DIRECT edge from a grounded TRANSITIVE path."},
+    {"id": "amdxdna-null-deref-tp", "oracle": "amdxdna", "function": "amdxdna_sched_job_run", "sink": "to_gobj", "bug_class": "CWE-476 NULL pointer dereference", "proposed_severity": "high", "explanation": "cmd_handles=0 leaves cmd_bo NULL, dereferenced in to_gobj", "pov_confirmed": false, "label": "real", "note": "The SENT-upstream amdxdna TP: sink reached over 3 real hops -> reachability GROUNDED. A direct-edge check would over-block; the reachability premise preserves it."},
+    {"id": "amdxdna-poc-confirmed-override", "oracle": "synthetic_uaf", "function": "process_packet", "sink": "free", "bug_class": "CWE-416 use-after-free", "proposed_severity": "high", "explanation": "double free on error path\n@claim free_site func=process_packet", "pov_confirmed": true, "label": "real", "note": "PoV-override guard: process_packet's modeled calls do NOT reach 'free' -> free_site REFUTED would floor it, BUT a crash oracle reproduced the bug -> execution truth overrides, severity restored. A real finding must not be lost to a static refutation."},
+    {"id": "stripped-leaf-not-capped", "oracle": "stripped_elf", "function": "handler", "sink": "memcpy", "bug_class": "CWE-120 buffer overflow", "proposed_severity": "medium", "explanation": "unbounded copy", "pov_confirmed": false, "label": "real", "note": "A leaf/unmodeled function on a stripped graph: premises are non-load-bearing (calls not modeled) -> NOT capped. Proves a poor graph does not mass-floor real findings."},
+    {"id": "afd-poll-real-free", "oracle": "afd_v6725", "function": "AfdIndicatePollEvent", "sink": "AfdFreePollInfo", "bug_class": "CWE-416 use-after-free", "proposed_severity": "medium", "explanation": "poll info freed while indicated", "pov_confirmed": false, "label": "real", "note": "AfdIndicatePollEvent reaches AfdFreePollInfo (a poll-info free) and the sink -> reachability GROUNDED. free_site here relies only on the generic free set, so at worst UNKNOWN (kept), never falsely refuted."},
+    {"id": "afd-unreachable-sink-fp", "oracle": "afd_v6725", "function": "AfdIndicateEventSelectEvent", "sink": "ExFreePoolWithTag", "bug_class": "CWE-120 buffer overflow", "proposed_severity": "high", "explanation": "overflow before the pool free", "pov_confirmed": false, "label": "fp", "note": "The sink ExFreePoolWithTag is NOT reachable from AfdIndicateEventSelectEvent (its calls are KeSetEvent/WPP only) -> reachability REFUTED -> floored."}
+  ]
+}

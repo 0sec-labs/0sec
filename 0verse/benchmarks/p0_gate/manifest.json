@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "kind": "p0-gate-known-cve",
+  "_status": "TEMPLATE ONLY. No P0 target is currently registered or executable.",
+  "_about": "Register a target only after its public CVE provenance, stripped ELF digest, local dynamic oracle, trigger input, vulnerable control, and clean false-positive control have been independently reviewed.",
+  "items": []
+}

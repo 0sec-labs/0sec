@@ -1,0 +1,213 @@
+{
+  "schema_version": "0verse.acquisition-manifest/v1",
+  "acquisition_id": "synthetic-bundle-valid-001",
+  "created_at": "2026-07-17T12:02:00Z",
+  "device": {
+    "category": "ecu",
+    "manufacturer": "Synthetic Controls",
+    "model": "Fixture ECU",
+    "hardware_revision": "v1",
+    "identifiers": [
+      {
+        "kind": "fixture-id",
+        "value": "SYNTHETIC-ECU-001",
+        "alias": null,
+        "sensitivity": "technical"
+      }
+    ]
+  },
+  "transport": {
+    "kind": "can",
+    "protocol": "raw-can",
+    "interface": "fixture-can0",
+    "mode": "passive",
+    "transmitted": false,
+    "parameters": [
+      {
+        "name": "bitrate",
+        "value": "500000",
+        "basis": "configured"
+      }
+    ],
+    "capture_artifact_ids": [
+      "capture"
+    ]
+  },
+  "regions": [
+    {
+      "region_id": "flash",
+      "address_space": "physical",
+      "start": 134217728,
+      "length": 26,
+      "role": "firmware",
+      "basis": "declared",
+      "permissions": [
+        "read",
+        "execute"
+      ],
+      "artifact_id": "firmware",
+      "artifact_offset": 0
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "firmware",
+      "kind": "firmware-image",
+      "path": "artifacts/firmware.bin",
+      "media_type": "application/octet-stream",
+      "size": 26,
+      "sha256": "af94055c58c306272201e0d74640c3657a87782f4a7801c7e590a4a5b031ab98",
+      "observed_size": 26,
+      "observed_sha256": "af94055c58c306272201e0d74640c3657a87782f4a7801c7e590a4a5b031ab98",
+      "availability": "present",
+      "integrity": "verified",
+      "content": "plaintext",
+      "coverage": "full",
+      "region_ids": [
+        "flash"
+      ]
+    },
+    {
+      "artifact_id": "capture",
+      "kind": "traffic-capture",
+      "path": "captures/passive-can.log",
+      "media_type": "application/x-can-log",
+      "size": 45,
+      "sha256": "e0f21c97ca85213854ba3c601d002ae675f374e26e38f5a144bc8a8c3cdaa2f5",
+      "observed_size": 45,
+      "observed_sha256": "e0f21c97ca85213854ba3c601d002ae675f374e26e38f5a144bc8a8c3cdaa2f5",
+      "availability": "present",
+      "integrity": "verified",
+      "content": "plaintext",
+      "coverage": "not-applicable",
+      "region_ids": []
+    },
+    {
+      "artifact_id": "transactions",
+      "kind": "transaction-log",
+      "path": "logs/transactions.jsonl",
+      "media_type": "application/x-ndjson",
+      "size": 56,
+      "sha256": "02f1f13dc5e2501441f36c7cbde7392977b93830e08d81b0e6e8730ebdb829ae",
+      "observed_size": 56,
+      "observed_sha256": "02f1f13dc5e2501441f36c7cbde7392977b93830e08d81b0e6e8730ebdb829ae",
+      "availability": "present",
+      "integrity": "verified",
+      "content": "plaintext",
+      "coverage": "not-applicable",
+      "region_ids": []
+    },
+    {
+      "artifact_id": "collector-log",
+      "kind": "tool-log",
+      "path": "logs/collector.log",
+      "media_type": "text/plain",
+      "size": 49,
+      "sha256": "c3c0876f3396d55a73679a3927a47e904e7f66f397a5461c2ab459ee0ad30398",
+      "observed_size": null,
+      "observed_sha256": null,
+      "availability": "present",
+      "integrity": "recorded",
+      "content": "plaintext",
+      "coverage": "not-applicable",
+      "region_ids": []
+    },
+    {
+      "artifact_id": "missing",
+      "kind": "firmware-image",
+      "path": "artifacts/missing.bin",
+      "media_type": "application/octet-stream",
+      "size": 26,
+      "sha256": "af94055c58c306272201e0d74640c3657a87782f4a7801c7e590a4a5b031ab98",
+      "observed_size": null,
+      "observed_sha256": null,
+      "availability": "missing",
+      "integrity": "unavailable",
+      "content": "unknown",
+      "coverage": "unknown",
+      "region_ids": []
+    },
+    {
+      "artifact_id": "modified",
+      "kind": "firmware-image",
+      "path": "artifacts/modified.bin",
+      "media_type": "application/octet-stream",
+      "size": 26,
+      "sha256": "af94055c58c306272201e0d74640c3657a87782f4a7801c7e590a4a5b031ab98",
+      "observed_size": 32,
+      "observed_sha256": "5b7fa3f4b394287a40691721f579897b844d906d2bd751de6b34214d8d998529",
+      "availability": "present",
+      "integrity": "modified",
+      "content": "plaintext",
+      "coverage": "partial",
+      "region_ids": []
+    },
+    {
+      "artifact_id": "encrypted",
+      "kind": "firmware-image",
+      "path": "artifacts/encrypted.bin",
+      "media_type": "application/octet-stream",
+      "size": 27,
+      "sha256": "0b67f441ae0abedfe41e223dde4186c908bbcfcba12d2473d6040191e0ca9fd6",
+      "observed_size": 27,
+      "observed_sha256": "0b67f441ae0abedfe41e223dde4186c908bbcfcba12d2473d6040191e0ca9fd6",
+      "availability": "present",
+      "integrity": "verified",
+      "content": "encrypted",
+      "coverage": "full",
+      "region_ids": []
+    },
+    {
+      "artifact_id": "virtual-read",
+      "kind": "firmware-image",
+      "path": "artifacts/virtual-read.bin",
+      "media_type": "application/octet-stream",
+      "size": 30,
+      "sha256": "960e21cd30ac612d0fc2e5b4ac1089ec9ea283044a891fcbd20bd766d2053a8d",
+      "observed_size": 30,
+      "observed_sha256": "960e21cd30ac612d0fc2e5b4ac1089ec9ea283044a891fcbd20bd766d2053a8d",
+      "availability": "present",
+      "integrity": "verified",
+      "content": "plaintext",
+      "coverage": "virtual-read",
+      "region_ids": []
+    },
+    {
+      "artifact_id": "calibration",
+      "kind": "firmware-image",
+      "path": "artifacts/calibration.bin",
+      "media_type": "application/octet-stream",
+      "size": 25,
+      "sha256": "6f1d582c5e5b076ff5b3ff8397e8b3e41a0c5750de288c59805f0658de004fac",
+      "observed_size": 25,
+      "observed_sha256": "6f1d582c5e5b076ff5b3ff8397e8b3e41a0c5750de288c59805f0658de004fac",
+      "availability": "present",
+      "integrity": "verified",
+      "content": "plaintext",
+      "coverage": "calibration-only",
+      "region_ids": []
+    }
+  ],
+  "provenance": {
+    "source": "committed synthetic acquisition fixture",
+    "method": "offline fixture assembly",
+    "collector": "0verse-tests",
+    "authorization_basis": "synthetic-fixture",
+    "started_at": "2026-07-17T12:00:00Z",
+    "completed_at": "2026-07-17T12:01:00Z",
+    "tool_name": "fixture-builder",
+    "tool_version": "1",
+    "evidence_artifact_ids": [
+      "capture",
+      "transactions",
+      "collector-log"
+    ],
+    "notes": "No hardware or live transport was used."
+  },
+  "redaction": {
+    "status": "not-required",
+    "policy": "0verse.default-export/v1",
+    "contains_sensitive_values": false,
+    "entries": []
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": "91db345f5e0ca640cfb528e065a6ffdc0d6d2c789cb9c7dcc98b9aa6f2e5e2fc",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "native/windows-token-capture/Cargo.lock",
+      "line": 363
+    },
+    {
+      "fingerprint": "29f32776f691bc1bcc968a8087ae2c18b39cfd1105d37b03e9eadf0b20646a61",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "native/windows-token-capture/Cargo.lock",
+      "line": 639
+    },
+    {
+      "fingerprint": "24a5a4db2a8e5e2fada88c0ab317b5d262c01b2d18960a247c0a11d0f8598b2b",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "native/windows-token-capture/Cargo.lock",
+      "line": 742
+    }
+  ]
+}

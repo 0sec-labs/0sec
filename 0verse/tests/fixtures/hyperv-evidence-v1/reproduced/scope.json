@@ -1,0 +1,20 @@
+{
+  "schema_version": "0verse.windows-scope/v1",
+  "campaign_id": "contract-fixture-hyperv-001",
+  "program": "hyperv-insider",
+  "scope_url": "https://example.invalid/sanitized-contract-fixture",
+  "target_feature": "sanitized Hyper-V contract fixture",
+  "reachability": "synthetic receipt contract only; no trigger included",
+  "authorization": "local non-executing contract fixture",
+  "worker": "fixture-host",
+  "latest_build_verified_at": "2026-07-13T00:00:00+00:00",
+  "preflight": {
+    "ok": true,
+    "program": "hyperv-insider",
+    "checked_at": "2026-07-13T00:00:00+00:00",
+    "build_lab_ex": "28020.1.amd64fre.rs_prerelease",
+    "product_name": "Windows contract fixture",
+    "hyperv_available": true,
+    "insider": {"ring": "External", "branch_name": "rs_prerelease"}
+  }
+}

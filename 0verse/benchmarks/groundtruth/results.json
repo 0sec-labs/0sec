@@ -1,0 +1,511 @@
+{
+  "schema_version": "1.0",
+  "tool": {
+    "name": "0verse",
+    "version": "0.0.1"
+  },
+  "llm": "mock",
+  "lane": "ci-regression-floor (NOT a capability measure)",
+  "capability_measure": false,
+  "backend": "auto",
+  "wall_s": 286.0,
+  "n_items": 14,
+  "metrics": {
+    "n_vulnerable": 9,
+    "n_clean": 5,
+    "confirmed_finds": 6,
+    "located_finds": 9,
+    "misses": 0,
+    "recall_confirmed": 0.6667,
+    "recall_located": 1.0,
+    "confirmed_pov_rate": 0.6667,
+    "clean_ok": 2,
+    "hypothesis_fps": 3,
+    "confirmed_fps_items": 0,
+    "fp_rate_confirmed": 0.0,
+    "fp_rate_hypothesis": 0.6,
+    "confirmed_tp_findings": 10,
+    "confirmed_fp_findings": 0,
+    "precision_confirmed": 1.0
+  },
+  "heldout": {
+    "total": 14,
+    "held_out": 6,
+    "in_seed_set": 8,
+    "fully_held_out": false,
+    "seeded_ids": [
+      "sf_overflow",
+      "sf_heap_overflow",
+      "sf_cmdi",
+      "sf_intoverflow",
+      "sf_uaf",
+      "sf_fmtstring",
+      "sf_clean_safe_malloc",
+      "sf_clean_bounded_copy"
+    ]
+  },
+  "items": [
+    {
+      "id": "cve_2004_0597_png_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-120",
+      "cve": "CVE-2004-0597",
+      "in_seed_set": false,
+      "elapsed_s": 9.77,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,reason,concolic,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "png_handle_tRNS",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "confirmed-find"
+    },
+    {
+      "id": "cve_2004_0597_png_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2004-0597",
+      "in_seed_set": false,
+      "elapsed_s": 32.85,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,reason,concolic,dynamic,poc,report,fuzz",
+      "findings": [
+        {
+          "function": "png_handle_tRNS",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "hypothesis-fp"
+    },
+    {
+      "id": "cve_2017_9047_xml_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-787",
+      "cve": "CVE-2017-9047",
+      "in_seed_set": false,
+      "elapsed_s": 2.3,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,reason,concolic,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "xmlSnprintfElementContent",
+          "source": "read",
+          "sink": "strcat",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "confirmed-find"
+    },
+    {
+      "id": "cve_2017_9047_xml_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2017-9047",
+      "in_seed_set": false,
+      "elapsed_s": 34.2,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,reason,concolic,dynamic,poc,report,fuzz",
+      "findings": [
+        {
+          "function": "xmlSnprintfElementContent",
+          "source": "read",
+          "sink": "strcat",
+          "confirmed": false,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "hypothesis-fp"
+    },
+    {
+      "id": "cve_2012_0809_sudo_vuln",
+      "label": "vulnerable",
+      "tier": "real-cve",
+      "cwe": "CWE-134",
+      "cve": "CVE-2012-0809",
+      "in_seed_set": false,
+      "elapsed_s": 31.8,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "sudo_debug",
+          "source": "stdin",
+          "sink": "printf",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "located-hypothesis"
+    },
+    {
+      "id": "cve_2012_0809_sudo_fixed",
+      "label": "clean",
+      "tier": "real-cve",
+      "cwe": "",
+      "cve": "CVE-2012-0809",
+      "in_seed_set": false,
+      "elapsed_s": 31.98,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,reason,fuzz",
+      "findings": [],
+      "outcome": "clean"
+    },
+    {
+      "id": "sf_overflow",
+      "label": "vulnerable",
+      "tier": "sanity-floor",
+      "cwe": "CWE-120",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 4.17,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,concolic,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "strcpy",
+          "confirmed": true,
+          "hypothesis": true
+        },
+        {
+          "function": "main",
+          "source": "stdin",
+          "sink": "strcpy",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "confirmed-find"
+    },
+    {
+      "id": "sf_heap_overflow",
+      "label": "vulnerable",
+      "tier": "sanity-floor",
+      "cwe": "CWE-122",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 2.8,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,concolic,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "strcpy",
+          "confirmed": true,
+          "hypothesis": true
+        },
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "strcpy",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "confirmed-find"
+    },
+    {
+      "id": "sf_cmdi",
+      "label": "vulnerable",
+      "tier": "sanity-floor",
+      "cwe": "CWE-78",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 2.25,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,reason,concolic,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "main",
+          "source": "getenv",
+          "sink": "system",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "confirmed-find"
+    },
+    {
+      "id": "sf_intoverflow",
+      "label": "vulnerable",
+      "tier": "sanity-floor",
+      "cwe": "CWE-190",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 3.9,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,concolic,dynamic,poc,report",
+      "findings": [
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": true,
+          "hypothesis": true
+        },
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": true,
+          "hypothesis": true
+        },
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": true,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "confirmed-find"
+    },
+    {
+      "id": "sf_uaf",
+      "label": "vulnerable",
+      "tier": "sanity-floor",
+      "cwe": "CWE-416",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 31.8,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "free:use-after-free(__ptr)",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "located-hypothesis"
+    },
+    {
+      "id": "sf_fmtstring",
+      "label": "vulnerable",
+      "tier": "sanity-floor",
+      "cwe": "CWE-134",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 31.83,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,fuzz",
+      "findings": [
+        {
+          "function": "main",
+          "source": "stdin",
+          "sink": "printf",
+          "confirmed": false,
+          "hypothesis": false
+        }
+      ],
+      "outcome": "located-hypothesis"
+    },
+    {
+      "id": "sf_clean_safe_malloc",
+      "label": "clean",
+      "tier": "sanity-floor",
+      "cwe": "",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 34.69,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,bugclass-lens,reason,concolic,dynamic,poc,report,fuzz",
+      "findings": [
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": true
+        },
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": true
+        },
+        {
+          "function": "main",
+          "source": "read",
+          "sink": "memcpy",
+          "confirmed": false,
+          "hypothesis": true
+        }
+      ],
+      "outcome": "hypothesis-fp"
+    },
+    {
+      "id": "sf_clean_bounded_copy",
+      "label": "clean",
+      "tier": "sanity-floor",
+      "cwe": "",
+      "cve": "",
+      "in_seed_set": true,
+      "elapsed_s": 31.67,
+      "stages": "ingest,decompile,lift,analyze,foxguard-prepass,reason,fuzz",
+      "findings": [],
+      "outcome": "clean"
+    }
+  ],
+  "scores": [
+    {
+      "item_id": "cve_2004_0597_png_vuln",
+      "label": "vulnerable",
+      "outcome": "confirmed-find",
+      "n_findings": 1,
+      "n_confirmed": 1,
+      "matched_confirmed": 1,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "cve_2004_0597_png_fixed",
+      "label": "clean",
+      "outcome": "hypothesis-fp",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "cve_2017_9047_xml_vuln",
+      "label": "vulnerable",
+      "outcome": "confirmed-find",
+      "n_findings": 1,
+      "n_confirmed": 1,
+      "matched_confirmed": 1,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "cve_2017_9047_xml_fixed",
+      "label": "clean",
+      "outcome": "hypothesis-fp",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "cve_2012_0809_sudo_vuln",
+      "label": "vulnerable",
+      "outcome": "located-hypothesis",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 1,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "cve_2012_0809_sudo_fixed",
+      "label": "clean",
+      "outcome": "clean",
+      "n_findings": 0,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_overflow",
+      "label": "vulnerable",
+      "outcome": "confirmed-find",
+      "n_findings": 2,
+      "n_confirmed": 2,
+      "matched_confirmed": 2,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_heap_overflow",
+      "label": "vulnerable",
+      "outcome": "confirmed-find",
+      "n_findings": 2,
+      "n_confirmed": 2,
+      "matched_confirmed": 2,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_cmdi",
+      "label": "vulnerable",
+      "outcome": "confirmed-find",
+      "n_findings": 1,
+      "n_confirmed": 1,
+      "matched_confirmed": 1,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_intoverflow",
+      "label": "vulnerable",
+      "outcome": "confirmed-find",
+      "n_findings": 3,
+      "n_confirmed": 3,
+      "matched_confirmed": 3,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_uaf",
+      "label": "vulnerable",
+      "outcome": "located-hypothesis",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 1,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_fmtstring",
+      "label": "vulnerable",
+      "outcome": "located-hypothesis",
+      "n_findings": 1,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 1,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_clean_safe_malloc",
+      "label": "clean",
+      "outcome": "hypothesis-fp",
+      "n_findings": 3,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    },
+    {
+      "item_id": "sf_clean_bounded_copy",
+      "label": "clean",
+      "outcome": "clean",
+      "n_findings": 0,
+      "n_confirmed": 0,
+      "matched_confirmed": 0,
+      "matched_hypothesis": 0,
+      "confirmed_fp": 0,
+      "note": ""
+    }
+  ]
+}

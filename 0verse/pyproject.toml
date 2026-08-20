@@ -1,0 +1,117 @@
+[project]
+name = "0verse"
+version = "0.0.1"
+description = "Automated reverse engineering for vulnerability discovery in compiled programs."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "0sec Labs" }]
+keywords = ["reverse-engineering", "binary-analysis", "vulnerability", "fuzzing", "ghidra", "angr", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+]
+# Core install is dependency-free so `0verse triage` works everywhere.
+dependencies = []
+
+[project.optional-dependencies]
+# Heavy engines live behind extras; the Docker image installs them all.
+analyze = ["lief>=0.15", "capa"]
+# The PyGhidra CPython bridge (#296). Ghidra itself is NOT pip-installable — this
+# extra only declares the bridge that drives an already-installed Ghidra
+# ($GHIDRA_HOME). PyGhidra is version-locked to that install, so the pin tracks
+# `GHIDRA_VERSION` in the Dockerfile (12.1.2 bundles pyghidra 2.1.0); bump the two
+# together. PyPI ships the same artifact Ghidra bundles, which is the point of the
+# exact pin: a hand-installed
+# $GHIDRA_HOME/Ghidra/Features/PyGhidra/pypkg/dist/pyghidra-*.whl satisfies the
+# lock, so a later `uv run` no longer uninstalls it. See docs/GHIDRA-SETUP.md.
+# jpype1 is pinned for the same reason: pyghidra only asks for `>=1.5.2`, so an
+# unpinned resolve would silently upgrade the JNI bridge away from the version
+# Ghidra ships next to it.
+ghidra = ["pyghidra==2.1.0", "jpype1==1.5.2"]
+symbolic = ["angr>=9.2"]
+poc = ["pwntools>=4.12"]
+llm = ["anthropic>=0.69", "openai>=1.40"]
+# M3 firmware lane (#21): Qiling drives the rootfs-less MIPS/ARM emulation oracle.
+# System (non-pip) deps the firmware/breadth lanes shell out to — install via the
+# OS package manager (and bundled in the Docker image): binwalk (firmware
+# carving), the MIPS / ARM cross toolchains + qemu-user (qemu-mips / qemu-aarch64)
+# for fuzz QEMU-mode, and mingw-w64 for PE test fixtures. The differential-
+# allocator / quarantine-guard oracles additionally need a C compiler at runtime.
+firmware = ["qiling"]
+# M5 #27 — non-Ghidra decompiler fallback. rizin backend needs the `r2`/`radare2`
+# binary (+ the r2ghidra `pdg` plugin for high-fidelity pseudo-C) installed via the
+# OS package manager; r2pipe is the Python bridge. angr reuses the `symbolic` extra.
+rizin = ["r2pipe>=1.8"]
+# M5 #29 — MCP bridge. Optional: `python -m zeroverse.mcp` falls back to a built-in
+# JSON-RPC-over-stdio stub when the official SDK is absent.
+mcp = ["mcp>=1.0"]
+scout = ["python-can>=4.5"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "jsonschema[format]>=4.23"]
+
+[project.scripts]
+"0verse" = "zeroverse.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/0sec-labs/0verse"
+Issues = "https://github.com/0sec-labs/0verse/issues"
+
+# M6 #31 — OPTIONAL Rust/PyO3 fast-path (``zeroverse._native``). It is a SEPARATE
+# maturin project under ``rust/`` so the core install below stays pure-Python and
+# never requires a Rust toolchain. Build it only for the large-blob ingest speedup:
+#     pip install maturin && ./rust/build.sh
+# ``zeroverse._fastpath`` imports it when present and falls back transparently
+# otherwise (see docs/PERF.md). The core build stays hatchling (no Rust):
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zeroverse"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"scripts/browser/replay-candidate.py" = "zeroverse/execution/replay-candidate.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RET", "C4", "PTH", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# This canary verifier is retained byte-for-byte as signed campaign evidence.
+# Reformatting it would invalidate the externally pinned launch manifest.
+"campaigns/elf/openthread-radio-regression-20260715/canary_package.py" = [
+    "E501",
+    "E731",
+    "PTH100",
+    "PTH208",
+]
+# Driver-triage test doubles hold class-level fixture tables (fake r2 op/import
+# maps); RUF012 (ClassVar) adds noise with no safety value on never-mutated
+# test constants.
+"tests/test_rizin_driver_icfg.py" = ["RUF012"]
+"tests/test_rizin_driver_locate.py" = ["RUF012"]
+"tests/test_windows_driver_triage.py" = ["RUF012"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+# engine extras (angr, lief, capa, pwntools) aren't typed/installed in lint CI
+ignore_missing_imports = true
+
+# angr / claripy ship Python 3.12-only syntax in their sources; never follow
+# them (they're optional, untyped engine extras). ignore_missing_imports also
+# covers the lint CI where these aren't installed at all.
+[[tool.mypy.overrides]]
+module = ["angr", "angr.*", "claripy", "claripy.*", "pwn", "pwnlib.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

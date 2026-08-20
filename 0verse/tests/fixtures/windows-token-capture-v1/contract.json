@@ -1,0 +1,45 @@
+{
+  "auto_disclosure": false,
+  "build_lab_ex": "fixture.1.amd64fre.contract",
+  "campaign_id": "windows-token-contract-v1",
+  "campaign_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "capture_nonce": "capture_nonce_000000000000000001",
+  "case": "control",
+  "claim_eligible": false,
+  "execution_grant_nonce": "execution_grant_nonce_0000000001",
+  "finish_token": {
+    "admin_group": "absent",
+    "app_container": false,
+    "elevated": false,
+    "elevation_type": "default",
+    "enabled_privileges": [
+      "SeChangeNotifyPrivilege"
+    ],
+    "integrity_rid": 8192,
+    "restricted_sid_count": 0,
+    "token_id": "finish_token_0001",
+    "user_sid": "S-1-5-21-1000"
+  },
+  "fixture": true,
+  "run_nonce": "control_run_nonce_000000000000001",
+  "schema_version": "0verse.windows-token-capture/v1",
+  "scope_manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "start_token": {
+    "admin_group": "absent",
+    "app_container": false,
+    "elevated": false,
+    "elevation_type": "default",
+    "enabled_privileges": [
+      "SeChangeNotifyPrivilege"
+    ],
+    "integrity_rid": 8192,
+    "restricted_sid_count": 0,
+    "token_id": "start_token_00001",
+    "user_sid": "S-1-5-21-1000"
+  },
+  "trial": 1,
+  "weaponization": false,
+  "worker": "fixture-worker",
+  "worker_acceptance_nonce": "worker_acceptance_nonce_00000001",
+  "worker_acceptance_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}

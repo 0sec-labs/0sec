@@ -1,0 +1,369 @@
+{
+  "schema": "0verse.windows-driver-novelty-tally/v1",
+  "generated": "2026-07-20",
+  "gate": "zeroverse.windows_novelty.assess_novelty",
+  "principle": "Hash-absence from a blocklist is a blocklist-EVASION signal, not a novelty signal. This tally is the novelty gate's verdict over recorded public-record searches. NO-PUBLIC-RECORD-FOUND is a novelty CANDIDATE, never a novelty claim (absence of evidence is not evidence of absence).",
+  "counts": {
+    "confirmed": {
+      "KNOWN-CVE": 2
+    },
+    "queued_class1_shape": {
+      "KNOWN-ADVISORY": 15,
+      "KNOWN-CVE": 10,
+      "NO-PUBLIC-RECORD-FOUND": 3
+    },
+    "other": {}
+  },
+  "no_public_record_candidates": [
+    "Bs_Def.sys",
+    "MyPortIO_x64.sys",
+    "fjfwupgd.sys"
+  ],
+  "drivers": {
+    "segwindrvx64.sys": {
+      "bucket": "confirmed",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2024-33228)",
+      "cve_ids": [
+        "CVE-2024-33228"
+      ],
+      "advisory_ids": [
+        "GHSA-42XQ-25Q2-4FV9"
+      ],
+      "sources": [
+        "https://github.com/advisories/GHSA-42xq-25q2-4fv9"
+      ]
+    },
+    "iscflashx64.sys": {
+      "bucket": "confirmed",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2024-33228)",
+      "cve_ids": [
+        "CVE-2024-33228"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-33228"
+      ]
+    },
+    "ADV64DRV.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/namazso/physmem_drivers"
+      ]
+    },
+    "AMDPowerProfiler.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2021-26334)",
+      "cve_ids": [
+        "CVE-2021-26334"
+      ],
+      "advisory_ids": [
+        "GHSA-4XJC-QQH2-PGWJ"
+      ],
+      "sources": [
+        "https://github.com/advisories/GHSA-4xjc-qqh2-pgwj"
+      ]
+    },
+    "Amd_RPMC_BiosToolCommonDriver.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/magicsword-io/LOLDrivers/blob/main/detections/sigma/driver_load_win_vuln_drivers_names.yml"
+      ]
+    },
+    "AppShopDrv103.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2020-15368)",
+      "cve_ids": [
+        "CVE-2020-15368"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.cvedetails.com/cve/CVE-2020-15368/"
+      ]
+    },
+    "AsrDrv.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2018-10709, CVE-2020-15368)",
+      "cve_ids": [
+        "CVE-2018-10709",
+        "CVE-2020-15368"
+      ],
+      "advisory_ids": [
+        "GHSA-7387-H76H-9M29"
+      ],
+      "sources": [
+        "https://github.com/advisories/GHSA-7387-h76h-9m29"
+      ]
+    },
+    "AsrSmartConnectDrv.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2020-15368)",
+      "cve_ids": [
+        "CVE-2020-15368"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/2d3178da-ea76-4f36-93f4-d76bf846c240/"
+      ]
+    },
+    "Bs_Def.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "NO-PUBLIC-RECORD-FOUND",
+      "label": "NO-PUBLIC-RECORD-FOUND",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": []
+    },
+    "ECSIoDriver.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/"
+      ]
+    },
+    "EIO.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/"
+      ]
+    },
+    "FDMCJHJYXZITI.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/lallouslab/vulnerable-drivers-ex"
+      ]
+    },
+    "IOMap64.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2024-33223, CVE-2024-41498)",
+      "cve_ids": [
+        "CVE-2024-33223",
+        "CVE-2024-41498"
+      ],
+      "advisory_ids": [
+        "GHSA-R7MM-CCP4-9HC5"
+      ],
+      "sources": [
+        "https://github.com/advisories/GHSA-r7mm-ccp4-9hc5"
+      ]
+    },
+    "LenovoDiagnosticsDriver.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2022-3699)",
+      "cve_ids": [
+        "CVE-2022-3699"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/alfarom256/CVE-2022-3699"
+      ]
+    },
+    "MyPortIO_x64.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "NO-PUBLIC-RECORD-FOUND",
+      "label": "NO-PUBLIC-RECORD-FOUND",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.file.net/process/"
+      ]
+    },
+    "NBIOLib_X64.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.exploit-db.com/exploits/40426"
+      ]
+    },
+    "PDFWKRNL.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2023-20598)",
+      "cve_ids": [
+        "CVE-2023-20598"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/unkvolism/pdfwkrnl"
+      ]
+    },
+    "PhlashNT.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2023-35841)",
+      "cve_ids": [
+        "CVE-2023-35841"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/be3e49ea-095e-4fdb-9529-f4c2dbb9a9fc/"
+      ]
+    },
+    "RtsTpx.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/"
+      ]
+    },
+    "RwDrv.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2020-15368)",
+      "cve_ids": [
+        "CVE-2020-15368"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/b03798af-d25a-400b-9236-4643a802846f/"
+      ]
+    },
+    "SMARTEIO64.SYS": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/2a7a59c1-35b8-42b6-a560-2fbf4247a584/"
+      ]
+    },
+    "amifldrv.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/namazso/physmem_drivers/blob/master/amifldrv64.sys"
+      ]
+    },
+    "cpuz.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-CVE",
+      "label": "KNOWN-CVE(CVE-2017-15302, CVE-2017-15303)",
+      "cve_ids": [
+        "CVE-2017-15302",
+        "CVE-2017-15303"
+      ],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.cvedetails.com/vulnerability-list/vendor_id-17103/product_id-41026/Cpuid-Cpu-z.html"
+      ]
+    },
+    "fjfwupgd.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "NO-PUBLIC-RECORD-FOUND",
+      "label": "NO-PUBLIC-RECORD-FOUND",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": []
+    },
+    "iOCdrv.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/9bf541fb-a68e-41a5-aab2-b939acc22bb1/"
+      ]
+    },
+    "nvoclock.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/3d7da79b-fe34-45cd-a0c9-d4432d40611c/"
+      ]
+    },
+    "rtkio.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/blogresponder/Realtek-rtkio64-Windows-driver-privilege-escalation"
+      ]
+    },
+    "rtkio64.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://github.com/blogresponder/Realtek-rtkio64-Windows-driver-privilege-escalation"
+      ]
+    },
+    "rtkiow8x64.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/"
+      ]
+    },
+    "stdcdrvws64.sys": {
+      "bucket": "queued_class1_shape",
+      "verdict": "KNOWN-ADVISORY",
+      "label": "KNOWN-ADVISORY(public vulnerable-driver record, no CVE id parsed)",
+      "cve_ids": [],
+      "advisory_ids": [],
+      "sources": [
+        "https://www.loldrivers.io/drivers/1d2cdef1-de44-4849-80e5-e2fa288df681/"
+      ]
+    }
+  },
+  "headline": {
+    "confirmed_total": 2,
+    "confirmed_no_public_record": 0,
+    "confirmed_known_cve": [
+      "CVE-2024-33228"
+    ],
+    "queue_total": 28,
+    "queue_no_public_record_candidates": [
+      "Bs_Def.sys",
+      "MyPortIO_x64.sys",
+      "fjfwupgd.sys"
+    ],
+    "note": "Every CONFIRMED driver maps to a published CVE (CVE-2024-33228, the Insyde SEG/H2OFFT family \u2014 count the family ONCE). Zero confirmed drivers have no public record. The queued NO-PUBLIC-RECORD entries are obscure OEM tools whose focused search returned no attributable public record; they are novelty CANDIDATES for the novel-hunt, NOT findings."
+  }
+}

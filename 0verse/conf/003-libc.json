@@ -1,0 +1,206 @@
+{
+  "taint_model": {
+    "libc": {
+      "Line-Oriented Inputs": {
+        "gets": {
+          "aliases": [
+            "_gets",
+            "__builtin_gets"
+          ],
+          "synopsis": "char * gets (char *s)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i == 1"
+            }
+          }
+        },
+        "fgets": {
+          "synopsis": "char * fgets (char *s, int count, FILE *stream)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i == 1"
+            }
+          }
+        }
+      },
+      "Unbuffered Inputs": {
+        "read": {
+          "synopsis": "ssize_t read (int filedes, void *buffer, size_t size)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i == 2"
+            }
+          }
+        },
+        "recv": {
+          "synopsis": "ssize_t recv (int socket, void *buffer, size_t length, int flags)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i == 2"
+            }
+          }
+        },
+        "recvfrom": {
+          "synopsis": "ssize_t recvfrom (int socket, void *buffer, size_t length, int flags, struct sockaddr *address, socklen_t *address_len)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i == 2"
+            }
+          }
+        }
+      },
+      "Environment": {
+        "getenv": {
+          "synopsis": "char * getenv (const char *name)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i == 0"
+            }
+          }
+        }
+      },
+      "Formatted Inputs": {
+        "scanf": {
+          "synopsis": "int scanf (const char *template, ...)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i >= 1"
+            }
+          }
+        },
+        "sscanf": {
+          "synopsis": "int sscanf (const char *s, const char *template, ...)",
+          "roles": {
+            "source": {
+              "enabled": true,
+              "par_slice": "i >= 2"
+            }
+          }
+        }
+      },
+      "Memory Copy": {
+        "memcpy": {
+          "synopsis": "void * memcpy (void *to, const void *from, size_t size)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "True"
+            }
+          }
+        },
+        "strcpy": {
+          "synopsis": "char * strcpy (char *to, const char *from)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "True"
+            }
+          }
+        },
+        "strcat": {
+          "synopsis": "char * strcat (char *to, const char *from)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "True"
+            }
+          }
+        },
+        "stpcpy": {
+          "synopsis": "char * stpcpy (char *to, const char *from)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "True"
+            }
+          }
+        },
+        "strlcat": {
+          "synopsis": "size_t strlcat (char *dst, const char *src, size_t size)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "i == 1"
+            }
+          }
+        },
+        "strlcpy": {
+          "synopsis": "size_t strlcpy (char *dst, const char *src, size_t size)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "i == 1"
+            }
+          }
+        }
+      },
+      "Formatted Output": {
+        "sprintf": {
+          "synopsis": "int sprintf (char *s, const char *template, ...)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "i >= 1"
+            }
+          }
+        },
+        "snprintf": {
+          "synopsis": "int snprintf (char *s, size_t size, const char *template, ...)",
+          "roles": {
+            "sink": {
+              "enabled": false,
+              "par_slice": "i >= 2"
+            }
+          }
+        },
+        "printf": {
+          "synopsis": "int printf (const char *template, ...)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "i == 0"
+            }
+          }
+        }
+      },
+      "Command Execution": {
+        "system": {
+          "synopsis": "int system (const char *command)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "i == 0"
+            }
+          }
+        },
+        "popen": {
+          "synopsis": "FILE * popen (const char *command, const char *type)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "i == 0"
+            }
+          }
+        }
+      },
+      "Allocation": {
+        "malloc": {
+          "synopsis": "void * malloc (size_t size)",
+          "roles": {
+            "sink": {
+              "enabled": true,
+              "par_slice": "i == 0"
+            }
+          }
+        }
+      }
+    }
+  }
+}

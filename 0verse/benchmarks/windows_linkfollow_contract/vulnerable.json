@@ -1,0 +1,15 @@
+{
+ "insts": [
+  {
+   "id": 1,
+   "func": "SeedScan",
+   "addr": 4352,
+   "kind": "OTHER"
+  }
+ ],
+ "meta": {
+  "decompiled_c": {
+   "SeedScan": "void SeedScan(wchar_t *path) { HANDLE h = CreateFileW(path, 1, 2, 0, 3, 0, 0); ReadFile(h, buf, 64, pn, 0); DeleteFileW(path); }"
+  }
+ }
+}

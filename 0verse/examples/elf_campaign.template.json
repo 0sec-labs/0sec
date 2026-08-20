@@ -1,0 +1,35 @@
+{
+  "schema_version": "0verse.elf-campaign/v1",
+  "campaign_id": "REPLACE_WITH_CAMPAIGN_ID",
+  "target": {
+    "path": "/replace/with/exact/target",
+    "sha256": "REPLACE_WITH_TARGET_SHA256"
+  },
+  "control": {
+    "path": "/replace/with/exact/control",
+    "sha256": "REPLACE_WITH_CONTROL_SHA256"
+  },
+  "worker": "REPLACE_WITH_ACCEPTED_WORKER",
+  "worker_acceptance_path": "worker-acceptance.json",
+  "worker_acceptance_sha256": "REPLACE_WITH_ACCEPTANCE_SHA256",
+  "execution_mode": "native",
+  "oracles": [
+    "asan",
+    "casr"
+  ],
+  "authorization": {
+    "campaign_id": "REPLACE_WITH_CAMPAIGN_ID",
+    "target_sha256": "REPLACE_WITH_TARGET_SHA256",
+    "control_sha256": "REPLACE_WITH_CONTROL_SHA256",
+    "worker": "REPLACE_WITH_ACCEPTED_WORKER",
+    "execution_mode": "native",
+    "oracles": ["asan", "casr"],
+    "kind": "REPLACE_WITH_AUTHORIZATION_KIND",
+    "reference": "REPLACE_WITH_AUTHORIZATION_REFERENCE",
+    "statement": "REPLACE_WITH_EXACT_AUTHORIZATION_STATEMENT",
+    "checked_at": "REPLACE_WITH_ISO8601_TIME",
+    "expires_at": "REPLACE_WITH_ISO8601_TIME",
+    "authorized_by": "REPLACE_WITH_AUTHORIZER_PRINCIPAL",
+    "signature_ssh": "REPLACE_WITH_OPENSSH_SIGNATURE"
+  }
+}

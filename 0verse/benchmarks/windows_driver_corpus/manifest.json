@@ -1,0 +1,52 @@
+{
+  "_comment": "Regression set for the Windows kernel-driver LPE triage harness (defensive candidate-surfacing, static-only). These are old/legacy world-accessible BYOVDs with public CVEs whose vulnerable IOCTL sink is documented, so they pin the pre-filter (world_accessible) and the LOCATE ranking (handler recovered + known-vuln sink in top-5). Binaries live in the access-controlled CAS (private/windows-cas/<sha256>/artifact), never committed; only these hashes + expected measurements are published. Hashes are cross-checked against loldrivers.io.",
+  "cas_env": "ZEROVERSE_WINDOWS_CAS",
+  "cas_default": "private/windows-cas",
+  "samples": [
+    {
+      "name": "dbutil_2_3.sys",
+      "sha256": "0296e2ce999e67c76352613a718e11516fe1b0efc3ffdb8918fc999dd76a73a5",
+      "cve": "CVE-2021-21551",
+      "vendor": "Dell",
+      "device": "\\Device\\DBUtil_2_3",
+      "source": "loldrivers.io / Dell dbutil BYOVD",
+      "expect": {
+        "world_accessible": true,
+        "handler_recovered": true,
+        "known_vuln_sink_addrs": ["0x15100"],
+        "known_vuln_sink_kind": "MmMapIoSpace arbitrary physical R/W",
+        "max_rank": 5
+      }
+    },
+    {
+      "name": "iqvw64e.sys",
+      "sha256": "4429f32db1cc70567919d7d47b844a91cf1329a6cd116f582305f3b7b60cd60b",
+      "cve": "CVE-2015-2291",
+      "vendor": "Intel",
+      "device": "\\Device\\Nal",
+      "source": "loldrivers.io / Intel iQVW64 BYOVD",
+      "expect": {
+        "world_accessible": true,
+        "handler_recovered": true,
+        "known_vuln_sink_addrs": ["0x113c0", "0x129c0"],
+        "known_vuln_sink_kind": "IOCTL sub-handler reaching MmMapIoSpace primitive",
+        "max_rank": 5
+      }
+    },
+    {
+      "name": "viragt64.sys",
+      "sha256": "58a74dceb2022cd8a358b92acd1b48a5e01c524c3b0195d7033e4bd55eff4495",
+      "vendor": "TG Soft (VirIT)",
+      "device": "\\Device\\Viragtlt",
+      "source": "loldrivers.io / viragt64 BYOVD",
+      "install_idiom": "rep-stosq MajorFunction fill (no +0xe0 store)",
+      "expect": {
+        "world_accessible": true,
+        "handler_recovered": true,
+        "known_vuln_sink_addrs": ["0x1311c"],
+        "known_vuln_sink_kind": "MmMapLockedPagesSpecifyCache mapped-page R/W",
+        "max_rank": 5
+      }
+    }
+  ]
+}

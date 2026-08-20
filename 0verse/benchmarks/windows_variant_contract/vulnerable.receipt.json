@@ -1,0 +1,13 @@
+{
+  "schema_version": "0verse.ghidra-analysis-receipt/v1",
+  "producer": "zeroverse.windows-analysis/fixture-v1",
+  "binary_path": "vulnerable.sys",
+  "binary_sha256": "58d229df70bc981950f831e7cd106d28990f7f89779b63e88ed6927bc777eac1",
+  "ghidra_export_path": "vulnerable.json",
+  "ghidra_export_sha256": "c656f4d4ec87d7d6c7b483c9a5dd4f4fa114d5e7128ff9614a3204ca228281de",
+  "tool": "ghidra",
+  "tool_version": "fixture-11.4",
+  "cache_key": "58d229df70bc9819",
+  "synthetic_fixture": true,
+  "pdb": {"path": "", "sha256": "", "codeview_identity": ""}
+}

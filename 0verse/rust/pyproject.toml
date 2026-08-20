@@ -1,0 +1,29 @@
+# OPTIONAL native fast-path for 0verse. Building this is NEVER required to use
+# 0verse — the pure-Python package (root pyproject.toml, hatchling) installs and
+# runs everywhere, and ``zeroverse._fastpath`` falls back transparently when this
+# extension is absent. Build it only when you want the speedup on large inputs:
+#
+#     pip install maturin
+#     ./rust/build.sh        # builds + drops zeroverse._native into the package
+#
+# build.sh compiles the wheel here and copies the ``_native`` .so into the
+# installed ``zeroverse`` package so it imports as ``zeroverse._native``.
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "zeroverse-native"
+version = "0.0.1"
+description = "Optional Rust/PyO3 fast-path for 0verse (zeroverse._native)."
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+classifiers = ["Programming Language :: Rust"]
+
+[tool.maturin]
+# Place the compiled module inside the existing ``zeroverse`` package. This is a
+# pure-Rust maturin project (the Python lives in ../src/zeroverse); the built
+# wheel ships only ``zeroverse/_native`` and layers onto an installed 0verse.
+module-name = "zeroverse._native"
+manifest-path = "Cargo.toml"
+strip = true

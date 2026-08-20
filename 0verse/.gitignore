@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Rust / native fast-path (#31) — build artifacts, never the sources in rust/
+rust/target/
+*.so
+*.abi3.so
+# local profiling / benchmark scratch
+.profdata/
+.bench_native.py
+.profile_hotpath.py
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Engine / analysis artifacts
+*.bndb            # Binary Ninja databases
+*.gpr            # Ghidra projects
+ghidra_projects/
+*.rep/
+out/
+crashes/
+corpus/
+findings/
+*.pov
+# cached Ghidra exports (keyed by binary hash)
+.0verse-cache/
+# emitted PoV replay scripts
+0verse-out/
+
+# M6 #32 — labeled-PoV dataset: the real corpus is the PRIVATE MOAT and never
+# lands in the repo. Only examples/dataset/ (synthetic-only) is tracked.
+*.0verse-dataset.ndjson
+dataset-out/
+# M6 #34 — negative-results machine log (operator-local, append-only)
+*.negatives.ndjson
+negatives.ndjson
+# M6 #33 — benchmark crash artifacts (results.ndjson IS tracked as the record)
+benchmarks/fuzzbench/out/
+
+# core dumps from crash/oracle runs
+core
+core.*
+
+# qemu-user core dumps + pyghidra scratch projects
+qemu_*.core
+*_ghidra/
+
+# Binarygym materialized task binaries (built from cve2026 sources at runtime)
+benchmarks/binarygym/tasks/
+# Binarygym ARVO materialized targets (GPL/LGPL binaries — recipe-only, never committed)
+benchmarks/binarygym/tasks-arvo/
+uv.lock
+
+# Access-controlled Windows artifact CAS (BYOVD binaries) — private moat, never committed.
+private/
