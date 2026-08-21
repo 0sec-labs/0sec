@@ -204,6 +204,22 @@ These are valuable, but they should not outrank the workflow / control-plane wor
 - shared artifact store
 - eventually a hosted control plane if adoption justifies it
 
+### 12. Isolated improvement workers and promotion canaries
+
+The improvement plane must create a new immutable worker version; it must not
+rewrite a target-facing worker during an engagement.
+
+- sealed development, held-out, and negative-control evaluation lanes
+- candidate, evaluator, CI, artifact, and evidence digests bound into a
+  promotion decision
+- disposable candidate workers with no engagement credentials or production
+  target egress
+- source candidates held for explicit human approval
+- signed policy-bundle canaries, rollback, and retained decision ledgers before
+  any future automated policy promotion
+
+See [Improvement Plane](/improvement-plane/).
+
 ## Non-Goals Right Now
 
 Things that sound flashy but should stay below the line for now:

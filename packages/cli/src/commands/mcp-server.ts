@@ -30,6 +30,7 @@ type McpServerOptions = {
   dbPath?: string;
   timeout?: string;
   scope?: string;
+  tools?: string;
   rateLimit?: string;
   allowScanners?: boolean;
   engagementProfile?: string;
@@ -64,6 +65,19 @@ const MCP_LIVE_TOOL_NAMES = new Set([
   "wp_fingerprint",
   "mongo_objectid",
 ]);
+
+function resolveMcpToolNames(raw: string | undefined): ReadonlySet<string> {
+  if (raw === undefined) return MCP_LIVE_TOOL_NAMES;
+  const requested = [...new Set(raw.split(",").map((name) => name.trim()).filter(Boolean))];
+  if (requested.length === 0) {
+    throw new Error("--tools must name at least one 0sec MCP tool.");
+  }
+  const unsupported = requested.filter((name) => !MCP_LIVE_TOOL_NAMES.has(name));
+  if (unsupported.length > 0) {
+    throw new Error(`--tools contains unsupported 0sec MCP tool(s): ${unsupported.join(", ")}`);
+  }
+  return new Set(requested);
+}
 
 function parseJsonEnv<T>(name: string): T | undefined {
   const raw = process.env[name];
@@ -258,6 +272,7 @@ export function registerMcpServerCommand(program: Command): void {
     .option("--db-path <path>", "Path to SQLite database")
     .option("--timeout <ms>", "Default tool timeout in milliseconds", "30000")
     .option("--scope <path>", "Path to a 0sec scope JSON file. Out-of-scope URLs are refused by every target tool.")
+    .option("--tools <names>", "Comma-separated live 0sec MCP tools to expose (default: all).")
     .option("--rate-limit <spec>", "Per-host request rate-limit spec. Defaults to 5 rps when unset. An active --engagement-profile caps this: the effective rate is the minimum of the two, so the profile can only lower it.")
     .option("--allow-scanners", "Disable generic-scanner suppression for scoped engagements.", false)
     .option(
@@ -279,6 +294,7 @@ export function registerMcpServerCommand(program: Command): void {
           throw new Error(`--target ${target} is out of scope per ${opts.scope}: ${verdict.reason}`);
         }
       }
+      const selectedToolNames = resolveMcpToolNames(opts.tools);
       // Engagement hardening posture (`scope/engagement-profile.ts`). Resolved
       // BEFORE the DB is opened, matching the scope-rejection ordering above:
       // a config error must fail without leaving a DB handle behind. Same
@@ -376,7 +392,7 @@ export function registerMcpServerCommand(program: Command): void {
       );
 
       const tools = getToolsForRole("attack", { webMode: true })
-        .filter((tool) => MCP_LIVE_TOOL_NAMES.has(tool.name));
+        .filter((tool) => selectedToolNames.has(tool.name));
       for (const tool of tools) {
         server.registerTool(
           tool.name,

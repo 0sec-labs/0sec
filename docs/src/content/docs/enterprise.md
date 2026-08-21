@@ -11,7 +11,7 @@ owner: OWNER_TBD
 
 > **This page is the single source of truth for enterprise capability claims. Sales materials reference it; do not duplicate facts elsewhere.** When something ships or its target date moves, update the badge here first; everything downstream (deck, RFP responses, security questionnaires) should link back here rather than restate.
 
-0sec is the open-source agentic pentest engine. **0sec cloud** is the managed layer on top — recurring scans, multi-tenant triage, evidence bundles. This page covers enterprise readiness for both surfaces.
+0sec is the open-source security harness for source and live targets. **0sec cloud** is the managed layer on top — recurring scans, multi-tenant triage, and evidence bundles. This page covers enterprise readiness for both surfaces.
 
 We use three status badges. They are intentionally precise so a procurement reviewer can map each row to evidence:
 

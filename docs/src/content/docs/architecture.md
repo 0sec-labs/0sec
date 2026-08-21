@@ -1,20 +1,17 @@
 ---
 title: Architecture
-description: How the interactive scan pipeline and target-neutral research plane work.
+description: "One harness, two evidence engines, and one rule: reproduce before trusting."
 ---
 
-0sec has two complementary control loops. The interactive scan pipeline drives
-web, LLM, package, and source engagements. The shared research plane lets
-specialized engines use one evidence lifecycle without flattening their native
-harnesses and oracle results.
+0sec is one harness with two evidence engines.
 
-## Shared research plane
+- **0sec** investigates source and live targets: repositories, packages, web
+  applications, AI endpoints, and MCP servers.
+- **0verse** produces evidence for compiled programs when source is unavailable.
 
-Different targets require different proof machinery. An HTTP protocol rule is
-tested with requests and a deterministic response oracle. A userspace memory bug
-needs a sanitizer build and saved input. A kernel finding may require a configured
-VM and repeated boots. The adapter contract preserves those differences while the
-runner owns stage order, artifacts, cancellation, warnings, and cleanup.
+Models propose and explore. Reproducing evidence decides what is real. The
+shared research plane keeps target-specific proof methods intact while retaining
+their artifacts, provenance, and verdicts in one evidence lifecycle.
 
 ```mermaid
 flowchart LR
@@ -112,16 +109,14 @@ Current adapters:
 | XNU IOKit | Selector discovery, reachability hints, deterministic programs; panic promotion disabled | Partially connected, fail-closed |
 | Unified web/AI/source/package/on-chain pipeline | Native retained findings wrapped without rerunning the pipeline | Connected |
 
-### 0verse boundary
+### 0verse evidence engine
 
-`0verse` remains a separate Python evidence-producer repository, not an
-`@0sec/*` workspace package. Its Ghidra/angr/AFL++ extras, independent
-benchmark methodology, and PoV/notary contract have a different release and
-trust boundary from the TypeScript 0sec engine. 0sec consumes only explicit,
-versioned interfaces: the opt-in `0verse` binary/NDJSON tool contract and
-verified external evidence receipts. It does not vendor 0verse, schedule it as
-a generic scan worker, or promote its hypotheses without the matching proof
-gate.
+`0verse` is a separate Python evidence-producer repository, not an
+`@0sec/*` workspace package. It handles compiled-program evidence with its own
+Ghidra, angr, AFL++, PoV, and notary contracts. 0sec consumes only explicit,
+versioned interfaces: the opt-in `0verse` binary/NDJSON contract and verified
+external receipts. It does not vendor 0verse, schedule it as a generic scan
+worker, or promote a 0verse hypothesis without the matching proof gate.
 
 The shared differential runner can execute identical input against two versions,
 builds, configurations, or implementations. A failed side makes the comparison
@@ -370,6 +365,28 @@ The `--runtime` flag selects which adapter to use. The `auto` runtime probes for
 ### As an MCP client
 
 The `McpRuntime` adapter can connect to MCP servers, using their exposed tools as the LLM backend for the scanning pipeline. This enables using any MCP-compatible model server.
+
+
+### As an MCP server
+
+`0sec mcp-server` exposes a scoped subset of 0sec tools over stdio for an
+external MCP host. The external host presents tools; 0sec still owns target
+scope, rate limiting, engagement posture, finding persistence, and verifier
+state.
+
+```bash
+0sec mcp-server \
+  --target https://example.com \
+  --scan-id engagement-001 \
+  --scope ./scope.json \
+  --tools http_request,crawl,send_prompt,submit_form
+```
+
+`--tools` is an allowlist, not a capability grant: every exposed tool still
+runs through the normal 0sec execution and engagement guards. DSH, Codex, and
+Claude Code are optional clients of this server; they do not replace the native
+0sec scan loop. See [Improvement Plane](/improvement-plane/) for the separate
+future-worker promotion boundary.
 
 ### Scanning MCP servers
 

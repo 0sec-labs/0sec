@@ -1,9 +1,9 @@
 ---
 title: 0sec
-description: Open-source security research harness for authorized targets.
+description: One harness. Two evidence engines.
 template: splash
 hero:
-  tagline: Investigate authorized software with scoped tools and evidence-aware verification. The technical project and CLI are named 0sec.
+  tagline: 0sec investigates source and live targets. 0verse produces evidence for compiled programs without source. Models propose and explore; reproducing evidence decides what is real.
   actions:
     - text: Get Started
       link: /getting-started/
@@ -17,17 +17,17 @@ hero:
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
 <CardGrid>
-  <Card title="Scoped local workflow" icon="rocket">
-    Run `0sec scan --target <url>` against an authorized target with an explicit scope.
+  <Card title="Source and live targets" icon="rocket">
+    0sec investigates repositories, packages, web applications, AI endpoints, and MCP servers within an explicit scope.
   </Card>
-  <Card title="Evidence-aware verification" icon="approve-check-circle">
-    The harness can run an independent verification pass so investigators can separate reproduced evidence from unproven leads.
+  <Card title="Compiled programs without source" icon="document">
+    0verse is a separate evidence producer. 0sec accepts only its versioned, verified receipts.
   </Card>
-  <Card title="Bring your own AI" icon="setting">
-    Use a supported provider key or an available local CLI runtime.
+  <Card title="Reproduce before trusting" icon="approve-check-circle">
+    Models can propose and explore. Findings become real only when retained evidence and verification support them.
   </Card>
-  <Card title="Multiple research surfaces" icon="list-format">
-    Web applications, AI systems, package ecosystems, and source code repositories.
+  <Card title="Use the model host you need" icon="setting">
+    Run the native loop or use a narrow MCP boundary with an optional compatible host.
   </Card>
 </CardGrid>
 
@@ -37,6 +37,7 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 
 - [Architecture](/architecture/) — the 5-stage pipeline, runtime adapters, and MCP integration
 - [Agent Loop](/agent-loop/) — how the autonomous loop thinks, calls tools, reflects, and stops
+- [Improvement Plane](/improvement-plane/) — how future worker artifacts are evaluated without mutating a live engagement
 - [Finding Triage](/triage/) — the multi-layer pipeline between research and verify agents
 - [Blind Verification](/blind-verification/) — why findings are re-exploited before they count
 - [Adversarial Evals](/adversarial-evals/) — how 0sec extends beyond classic pentesting into attack-driven evaluation of AI systems

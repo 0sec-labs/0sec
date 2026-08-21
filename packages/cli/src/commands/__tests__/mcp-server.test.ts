@@ -407,6 +407,36 @@ describe("mcp-server — happy path wiring", () => {
     expect(names).toEqual(["http_request", "save_finding"]);
   });
 
+  it("restricts registration to the explicit --tools allowlist", async () => {
+    const result = await runCli([
+      "mcp-server",
+      "--target",
+      "https://example.com",
+      "--scan-id",
+      "scan-abc",
+      "--tools",
+      "http_request",
+    ]);
+    expect(result).toBeUndefined();
+    expect(registerToolCalls.map((call) => call.name)).toEqual(["http_request"]);
+  });
+
+  it("rejects unknown --tools names before opening the run database", async () => {
+    const result = await runCli([
+      "mcp-server",
+      "--target",
+      "https://example.com",
+      "--scan-id",
+      "scan-abc",
+      "--tools",
+      "http_request,not_a_tool",
+    ]);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toMatch(/unsupported 0sec MCP tool\(s\): not_a_tool/);
+    expect(dbCtorCalls).toHaveLength(0);
+    expect(toolExecutorCtorCalls).toHaveLength(0);
+  });
+
   it("constructs osecDB and ToolExecutor when target/scan-id are valid", async () => {
     await runCli([
       "mcp-server",

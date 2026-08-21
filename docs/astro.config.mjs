@@ -60,6 +60,7 @@ export default defineConfig({
           items: [
             { label: "Architecture", slug: "architecture" },
             { label: "Agent Loop", slug: "agent-loop" },
+            { label: "Improvement Plane", slug: "improvement-plane" },
             { label: "Finding Triage", slug: "triage" },
             { label: "Blind Verification", slug: "blind-verification" },
             { label: "Verification Results", slug: "verification-result" },

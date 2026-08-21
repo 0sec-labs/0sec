@@ -7,7 +7,7 @@ description: Runtime modes, scan modes, depth settings, and environment options.
 
 ## Runtime modes
 
-0sec is an agentic harness — bring your own AI. The `--runtime` flag controls which LLM backend powers the agents.
+Models help 0sec propose and explore. Scoped tools, evidence capture, and verification decide what is retained. The `--runtime` flag selects the LLM backend.
 
 | Runtime | Flag | Description |
 |---------|------|-------------|
