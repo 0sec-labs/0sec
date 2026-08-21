@@ -220,6 +220,26 @@ describe("LlmApiRuntime provider detection", () => {
     expect((luna as any).wireApi).toBe("chat_completions");
   });
 
+  it("uses Responses wire format for direct OpenAI GPT-5.6 Luna tool calls", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENAI_API_KEY = "openai-key-123";
+    process.env["0SEC_MODEL"] = "gpt-5.6-luna";
+    process.env["0SEC_SELECTED_PROVIDER"] = "openai";
+
+    const luna = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    // Provider-selection tests inspect stable private runtime state directly.
+    const resolved = luna as unknown as {
+      provider: string;
+      model: string;
+      wireApi: string;
+    };
+
+    expect(resolved.provider).toBe("openai");
+    expect(resolved.model).toBe("gpt-5.6-luna");
+    expect(resolved.wireApi).toBe("responses");
+  });
+
   it("detects provider from explicit config key prefix", () => {
     const rt1 = new LlmApiRuntime({ type: "api", timeout: 5000, apiKey: "sk-or-cfg" });
     expect((rt1 as any).provider).toBe("openrouter");
