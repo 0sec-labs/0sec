@@ -295,17 +295,16 @@ function nextCraftCallUpperBoundUsd(
 }
 
 /**
- * Reserve enough of a bounded trajectory for test-and-refine work while
- * retaining four source-evidence turns before the trigger stage. The
- * first-self-test deadline scales for short runs; the reachability minimum is
- * an evidence contract, not a time budget.
+ * Reserve four source-evidence turns before trigger design on normal runs. A
+ * two-step canary cannot afford that contract: it gets one reachability turn
+ * and one trigger-design turn so its deterministic transition remains testable.
  */
 export function craftStepBudget(maxSteps: number): {
   reachabilityStepCap: number;
   firstSelfTestStep: number;
 } {
   const boundedSteps = Math.max(1, Math.floor(maxSteps));
-  const reachabilityStepCap = 4;
+  const reachabilityStepCap = boundedSteps <= 2 ? 1 : 4;
   const firstSelfTestStep = Math.min(
     18,
     Math.max(reachabilityStepCap + 1, Math.floor(boundedSteps * 0.45)),
