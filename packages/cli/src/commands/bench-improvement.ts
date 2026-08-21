@@ -18,19 +18,25 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { Command } from "commander";
 import {
   aggregateScorecard,
+  appendImprovementLedgerEntry,
   digestBenchManifest,
-  parseManifest,
+  evaluateImprovementPromotion,
   pairwiseDeltas,
+  parseManifest,
   pickChampion,
-  projectResearchImprovementResult,
   projectResearchExecutionEvidence,
+  projectResearchImprovementResult,
   researchExecutionEvidenceRef,
   snapshotBenchVariant,
-  type BenchScorecard,
+  verifyImprovementLedger,
   type BenchCaseResult,
-  type BenchManifest,
-  type BenchVariant,
   type BenchEvaluatorAttestation,
+  type BenchManifest,
+  type BenchScorecard,
+  type BenchVariant,
+  type ImprovementCandidate,
+  type ImprovementLedgerEntry,
+  type ImprovementPromotionDecision,
   type ResearchImprovementResult,
   type ResearchExecutionEvidence,
   type ResearchTournamentRun,
@@ -138,6 +144,11 @@ export interface ImprovementBundleProjectionInputs {
   calibration?: boolean;
 }
 
+
+export interface PromotionAssessmentBundle {
+  decision: ImprovementPromotionDecision;
+  ledger: ImprovementLedgerEntry[];
+}
 export interface ResearchImprovementBundle {
   result: ResearchImprovementResult;
   executionEvidence: ResearchExecutionEvidence;
@@ -1114,6 +1125,34 @@ export function writeImprovementBundleAtomic(
   }
 }
 
+/**
+ * Publish a new immutable ledger snapshot. The prior snapshot remains intact;
+ * consumers must retain the terminal ledger digest outside this directory to
+ * make the hash chain tamper-evident across storage boundaries.
+ */
+export function writePromotionAssessmentBundleAtomic(
+  outputDirectoryValue: string,
+  bundle: PromotionAssessmentBundle,
+): void {
+  const outputDirectory = resolve(outputDirectoryValue);
+  const parent = dirname(outputDirectory);
+  mkdirSync(parent, { recursive: true });
+  try {
+    mkdirSync(outputDirectory, { mode: 0o700 });
+  } catch (error) {
+    if (existsSync(outputDirectory)) throw new Error(`output already exists: ${outputDirectory}`);
+    throw error;
+  }
+  try {
+    writeCanonicalJsonAtomic(join(outputDirectory, "promotion-decision.json"), bundle.decision);
+    writeCanonicalJsonAtomic(join(outputDirectory, "ledger.json"), bundle.ledger);
+    writeCanonicalJsonAtomic(join(outputDirectory, "COMPLETE"), { schemaVersion: 1 });
+  } catch (error) {
+    rmSync(outputDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
@@ -1204,6 +1243,64 @@ export function registerBenchImprovementCommand(bench: Command): void {
         calibration: Boolean(opts.calibration),
       });
       writeImprovementBundleAtomic(String(opts.outputDir), bundle);
+      process.stdout.write(`${String(opts.outputDir)}\n`);
+    });
+
+  bench
+    .command("improvement-assess")
+    .description("Evaluate a sealed improvement result and publish an immutable promotion-decision ledger snapshot; generic artifacts always require human approval")
+    .requiredOption("--result <path>", "sealed result.json from bench improvement-project")
+    .requiredOption("--base-artifact <path>", "immutable champion artifact to bind into the decision")
+    .requiredOption("--candidate-artifact <path>", "immutable challenger artifact to bind into the decision")
+    .requiredOption("--output-dir <path>", "create-once promotion decision + ledger snapshot directory")
+    .option("--ledger <path>", "prior immutable ledger.json snapshot to extend")
+    .action((opts) => {
+      const resultArtifact = readArtifactJsonWithDigest(String(opts.result), "sealed improvement result");
+      const rawResult = record(resultArtifact.value, "sealed improvement result");
+      if (rawResult.schemaVersion !== 1) {
+        throw new Error("sealed improvement result schemaVersion must be 1");
+      }
+      const candidateId = text(rawResult.candidateId, "sealed improvement result candidateId");
+
+      let previousLedger: ImprovementLedgerEntry[] = [];
+      if (opts.ledger !== undefined) {
+        const rawLedger = readArtifactJson(String(opts.ledger), "prior improvement ledger");
+        if (!Array.isArray(rawLedger)) throw new Error("prior improvement ledger must be a JSON array");
+        previousLedger = rawLedger as ImprovementLedgerEntry[];
+        const verification = verifyImprovementLedger(previousLedger);
+        if (!verification.valid) {
+          throw new Error(`prior improvement ledger is invalid: ${verification.reason}`);
+        }
+      }
+
+      const candidate: ImprovementCandidate = {
+        schemaVersion: 1,
+        candidateId,
+        kind: "source",
+        baseArtifactDigest: sha256Bytes(readArtifactBytes(String(opts.baseArtifact), "base artifact")),
+        candidateArtifactDigest: sha256Bytes(
+          readArtifactBytes(String(opts.candidateArtifact), "candidate artifact"),
+        ),
+        result: rawResult as unknown as ResearchImprovementResult,
+      };
+      const decision = evaluateImprovementPromotion(candidate);
+      const occurredAt = new Date().toISOString();
+      const recorded = appendImprovementLedgerEntry(previousLedger, {
+        occurredAt,
+        type: "candidate_recorded",
+        candidateId,
+        payloadDigest: resultArtifact.digest,
+      });
+      const decided = appendImprovementLedgerEntry([...previousLedger, recorded], {
+        occurredAt,
+        type: "promotion_decided",
+        candidateId,
+        payloadDigest: decision.decisionDigest,
+      });
+      writePromotionAssessmentBundleAtomic(String(opts.outputDir), {
+        decision,
+        ledger: [...previousLedger, recorded, decided],
+      });
       process.stdout.write(`${String(opts.outputDir)}\n`);
     });
 }

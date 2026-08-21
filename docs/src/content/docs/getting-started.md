@@ -1,9 +1,12 @@
 ---
 title: Getting Started
-description: Install 0sec, set up your API key, and run your first scan.
+description: Install 0sec and run an authorized investigation.
 ---
 
-0sec is a general-purpose autonomous pentesting framework. It scans AI/LLM apps, web applications, REST/OpenAPI APIs, package ecosystems, and source code using an agentic pipeline that discovers, attacks, verifies, and reports — with blind verification to kill false positives.
+0sec is one harness with two evidence engines. 0sec investigates source and
+live targets. The separate `0verse` evidence producer handles compiled programs
+when source is unavailable. Models propose and explore; reproduced evidence
+decides what is real.
 
 ## Installation
 

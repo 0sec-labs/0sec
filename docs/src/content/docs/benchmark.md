@@ -124,6 +124,27 @@ readable only for rejection and calibration. Evaluator bundle, code, and config
 references remain distinct roles, allowing 0brain replay to verify retained
 bytes before emitting any draft-promotion bundle.
 
+
+### Promotion assessment
+
+`0sec bench improvement-assess` binds a sealed result to immutable champion and
+challenger artifact bytes, evaluates the promotion policy, and writes a
+create-once decision plus hash-chained ledger snapshot. It does not run,
+install, deploy, or hot-reload a candidate:
+
+```bash
+0sec bench improvement-assess \
+  --result improvement-bundle/result.json \
+  --base-artifact champion-artifact.tar.gz \
+  --candidate-artifact challenger-artifact.tar.gz \
+  --output-dir promotion-assessment
+```
+
+The generic CLI path always treats its candidate as source and returns
+`requires_human_approval` even when every evaluation gate passes. See
+[Improvement Plane](/improvement-plane/) for the gates, ledger contract, and
+candidate-worker boundary.
+
 > **Wave 2 headlines (scored 2026-05-06).**
 >
 > **Cybench — first scored full 40-challenge run: 36 / 40 = 90.0%.** Single-config (Azure gpt-5.4), single-shot, 3 retries per challenge. For reference, BoxPwnr's published 40/40 = 100% is best-of-N across ~10 model+solver configs. This supersedes the older 8/10 = 80% historical 10-challenge subset (preserved below).

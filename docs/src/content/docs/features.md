@@ -1,11 +1,11 @@
 ---
 title: Features
-description: Comprehensive feature list for 0sec, organized by category.
+description: What ships in 0sec and how evidence becomes a finding.
 ---
 
-0sec is a fully autonomous agentic pentesting framework. This page is a
-complete, category-organized inventory of what ships in the current release.
-For deep dives, follow the linked pages.
+One harness. Two evidence engines. 0sec investigates source and live targets;
+the separate `0verse` evidence producer handles compiled programs without
+source. Models propose and explore. Reproducing evidence decides what is real.
 
 ## Target coverage
 

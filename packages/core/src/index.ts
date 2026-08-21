@@ -2021,3 +2021,24 @@ export type {
 // gate → batched AI investigation with refusal audit/field repair →
 // static revalidation), resumable with cost/duration caps.
 export * from "./file-review/index.js";
+
+// Improvement-plane promotion policy. This evaluates sealed benchmark
+// receipts and appends tamper-evident decision records; it never executes or
+// deploys a candidate into an active engagement worker.
+export {
+  DEFAULT_IMPROVEMENT_PROMOTION_POLICY,
+  appendImprovementLedgerEntry,
+  evaluateImprovementPromotion,
+  verifyImprovementLedger,
+} from "./bench/improvement-promotion.js";
+export type {
+  ImprovementCandidate,
+  ImprovementCandidateKind,
+  ImprovementLedgerEntry,
+  ImprovementLedgerEventType,
+  ImprovementLedgerVerification,
+  ImprovementPromotionCheck,
+  ImprovementPromotionDecision,
+  ImprovementPromotionPolicy,
+  ImprovementPromotionStatus,
+} from "./bench/improvement-promotion.js";

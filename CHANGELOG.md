@@ -12,6 +12,16 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+### Added
+
+- `bench improvement-assess` binds sealed improvement results to champion and
+  challenger artifact digests, evaluates promotion gates, and writes a
+  create-once decision plus hash-chained ledger snapshot. Generic artifacts
+  require human approval; the command never executes or deploys a candidate.
+- The stdio MCP server accepts `--tools <comma-separated-names>` to limit the
+  model-visible 0sec tool set. The source-checkout DSH runner defaults to the
+  bounded recon profile rather than exposing every live tool schema.
+
 ### Changed
 
 - Fresh `scan`, `audit`, `review`, legacy scanner, MCP, and persisted-ingest
