@@ -1,5 +1,31 @@
 import { execFileSync } from "node:child_process";
 
+export const DEFAULT_GIT_CLONE_TIMEOUT_MS = 120_000;
+export const MAX_GIT_CLONE_TIMEOUT_MS = 600_000;
+
+/**
+ * Resolve the optional cloud-provided clone deadline. The worker only sets it
+ * for linux-kernel reviews; every other source clone retains the historical
+ * two-minute ceiling.
+ */
+export function resolveGitCloneTimeoutMs(
+  raw = process.env["0SEC_GIT_CLONE_TIMEOUT_MS"],
+): number {
+  if (raw == null || raw.trim() === "") return DEFAULT_GIT_CLONE_TIMEOUT_MS;
+
+  const timeoutMs = Number(raw);
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < DEFAULT_GIT_CLONE_TIMEOUT_MS ||
+    timeoutMs > MAX_GIT_CLONE_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `0SEC_GIT_CLONE_TIMEOUT_MS must be an integer between ${DEFAULT_GIT_CLONE_TIMEOUT_MS} and ${MAX_GIT_CLONE_TIMEOUT_MS}`,
+    );
+  }
+  return timeoutMs;
+}
+
 /**
  * Source/kernel git targets can pin a version with the `<url>.git@<ref>`
  * convention (e.g. `https://github.com/torvalds/linux.git@v5.10`). Both clone
@@ -23,7 +49,7 @@ export function parseRepoRef(target: string): { url: string; ref?: string } {
 export function cloneGitRepo(
   target: string,
   destDir: string,
-  timeoutMs = 120_000,
+  timeoutMs = resolveGitCloneTimeoutMs(),
 ): void {
   const { url, ref } = parseRepoRef(target);
   const args = ["clone", "--depth", "1"];

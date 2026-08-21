@@ -5,7 +5,13 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { execFileSync } from "node:child_process";
-import { parseRepoRef, cloneGitRepo } from "./repo-clone.js";
+import {
+  cloneGitRepo,
+  DEFAULT_GIT_CLONE_TIMEOUT_MS,
+  MAX_GIT_CLONE_TIMEOUT_MS,
+  parseRepoRef,
+  resolveGitCloneTimeoutMs,
+} from "./repo-clone.js";
 
 const execMock = vi.mocked(execFileSync);
 
@@ -36,6 +42,22 @@ describe("parseRepoRef", () => {
   });
 });
 
+describe("resolveGitCloneTimeoutMs", () => {
+  it("keeps the historical deadline unless the worker supplies an override", () => {
+    expect(resolveGitCloneTimeoutMs()).toBe(DEFAULT_GIT_CLONE_TIMEOUT_MS);
+    expect(resolveGitCloneTimeoutMs("600000")).toBe(600_000);
+  });
+
+  it.each(["119999", "600001", "120000.5", "not-a-number"])(
+    "rejects an unsafe clone timeout %s",
+    (raw) => {
+      expect(() => resolveGitCloneTimeoutMs(raw)).toThrow(
+        `0SEC_GIT_CLONE_TIMEOUT_MS must be an integer between ${DEFAULT_GIT_CLONE_TIMEOUT_MS} and ${MAX_GIT_CLONE_TIMEOUT_MS}`,
+      );
+    },
+  );
+});
+
 describe("cloneGitRepo", () => {
   beforeEach(() => execMock.mockClear());
 
@@ -44,7 +66,10 @@ describe("cloneGitRepo", () => {
     expect(execMock).toHaveBeenCalledWith(
       "git",
       ["clone", "--depth", "1", "--branch", "v5.10", "https://github.com/torvalds/linux.git", "/tmp/repo"],
-      expect.objectContaining({ stdio: "pipe" }),
+      expect.objectContaining({
+        stdio: "pipe",
+        timeout: DEFAULT_GIT_CLONE_TIMEOUT_MS,
+      }),
     );
   });
 
@@ -53,7 +78,26 @@ describe("cloneGitRepo", () => {
     expect(execMock).toHaveBeenCalledWith(
       "git",
       ["clone", "--depth", "1", "https://github.com/owner/repo.git", "/tmp/repo"],
-      expect.objectContaining({ stdio: "pipe" }),
+      expect.objectContaining({
+        stdio: "pipe",
+        timeout: DEFAULT_GIT_CLONE_TIMEOUT_MS,
+      }),
+    );
+  });
+
+  it("honors the bounded timeout the linux-kernel worker passes", () => {
+    cloneGitRepo(
+      "https://github.com/torvalds/linux.git@v5.10",
+      "/tmp/repo",
+      MAX_GIT_CLONE_TIMEOUT_MS,
+    );
+    expect(execMock).toHaveBeenCalledWith(
+      "git",
+      ["clone", "--depth", "1", "--branch", "v5.10", "https://github.com/torvalds/linux.git", "/tmp/repo"],
+      expect.objectContaining({
+        stdio: "pipe",
+        timeout: MAX_GIT_CLONE_TIMEOUT_MS,
+      }),
     );
   });
 });
