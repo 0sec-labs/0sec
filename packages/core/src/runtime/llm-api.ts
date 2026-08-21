@@ -1554,15 +1554,15 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.model = requestedModel ?? detected.defaultModel;
     }
 
-    // Azure GPT-5.6 Sol rejects function tools on /chat/completions even
-    // with reasoning_effort="none". The same deployment supports tools on
-    // /responses, so upgrade only this exact Azure deployment. Other Azure
-    // models keep the operator-selected wire API.
-    if (
-      this.provider === "azure"
-      && this.model.toLowerCase() === "gpt-5.6-sol"
-      && this.wireApi === "chat_completions"
-    ) {
+    // These deployments reject function tools plus reasoning_effort on
+    // /chat/completions. The Responses endpoint supports the agent loop, so
+    // upgrade only the exact provider/model pairs rather than changing every
+    // OpenAI-compatible deployment's requested wire API.
+    const normalizedModel = this.model.toLowerCase();
+    const requiresResponses =
+      (this.provider === "azure" && normalizedModel === "gpt-5.6-sol") ||
+      (this.provider === "openai" && normalizedModel === "gpt-5.6-luna");
+    if (requiresResponses && this.wireApi === "chat_completions") {
       this.wireApi = "responses";
     }
 
