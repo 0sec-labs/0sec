@@ -20,14 +20,11 @@
 
 ---
 
-> **Status — 2026-08-20 (0sec ADR-066).** 0verse is scope-frozen as an
-> **evidence producer / notary**: it finds, proves, patches, and verifies bugs in
-> binaries. The generic dispatch-engine role stays **parked** until the blind
-> known-CVE stripped-ELF gate passes. Ships publicly as part of
-> [`0sec-labs/0sec`](https://github.com/0sec-labs/0sec) under `0verse/`, Apache-2.0.
-> Maturity terms (`implemented → fixture-proven → live-proven → operational`,
-> plus `parked` / `unsupported`) are defined in
-> [ARCHITECTURE.md](ARCHITECTURE.md#scope-decision-and-maturity-vocabulary).
+> **Research-stage.** 0verse proves bugs in binaries — it is built to *produce
+> evidence* (a reproducing crash), not to run autonomously at fleet scale yet.
+> Read the capabilities below as research maturity unless stated otherwise, and
+> the honest misses in [Honest limitations](#honest-limitations). Apache-2.0,
+> shipped in this repo under `0verse/`.
 
 ## What it is
 
