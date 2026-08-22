@@ -88,6 +88,20 @@ export interface TuiSettings {
   theme: ThemeName | (string & {});
   /** Let the model add tools to its own session (off by default). */
   allowModelSelfExtension: boolean;
+  /**
+   * Per-turn "in→out tok" line under each answer. Consumed by chat-screen's
+   * per-message footer (wired by the coordinator); this module only declares it.
+   */
+  showTokenUsage: boolean;
+  /** Estimated dollar cost — per turn (chat-screen) and in the bottom bar. */
+  showCost: boolean;
+  /** Visual context-usage meter (a compact bar + percent) in the bottom bar. */
+  showContextMeter: boolean;
+  /**
+   * Where the model name is surfaced: the bottom status bar ("statusbar"),
+   * per message ("message", drawn by chat-screen), or nowhere ("off").
+   */
+  modelDisplay: "statusbar" | "message" | "off";
 }
 
 /** Keys of `TuiSettings` whose value is a boolean. */
@@ -119,6 +133,7 @@ type TuiSettingDef =
   | EnumSettingDef<"transcriptStyle">
   | EnumSettingDef<"roleLabelStyle">
   | EnumSettingDef<"toolCardStyle">
+  | EnumSettingDef<"modelDisplay">
   | EnumSettingDef<"theme">;
 
 /**
@@ -240,10 +255,10 @@ const DEFS: readonly TuiSettingDef[] = [
   {
     key: "toolCardStyle",
     label: "Tool card",
-    description: "How a tool or subagent call is drawn: rail, inline, compact or hidden (failures always show).",
+    description: "How a tool or subagent call is drawn: compact, rail, inline or hidden (failures always show).",
     kind: "enum",
     default: "compact",
-    choices: ["rail", "inline", "compact", "hidden"],
+    choices: ["compact", "rail", "inline", "hidden"],
     group: "Display",
   },
   {
@@ -265,6 +280,39 @@ const DEFS: readonly TuiSettingDef[] = [
     default: false,
     group: "Security",
   },
+  {
+    key: "showTokenUsage",
+    label: "Token usage",
+    description: 'Per-turn "in→out tok" line under each answer.',
+    kind: "boolean",
+    default: false,
+    group: "Telemetry",
+  },
+  {
+    key: "showCost",
+    label: "Cost",
+    description: "Estimated dollar cost, per turn and in the status bar.",
+    kind: "boolean",
+    default: false,
+    group: "Telemetry",
+  },
+  {
+    key: "showContextMeter",
+    label: "Context meter",
+    description: "Visual context-usage bar in the status bar.",
+    kind: "boolean",
+    default: false,
+    group: "Telemetry",
+  },
+  {
+    key: "modelDisplay",
+    label: "Model display",
+    description: "Where the model name appears: status bar, per message, or hidden.",
+    kind: "enum",
+    default: "statusbar",
+    choices: ["statusbar", "message", "off"],
+    group: "Telemetry",
+  },
 ];
 
 export const SETTING_DEFS: readonly SettingDef[] = DEFS;
@@ -285,9 +333,13 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   allowSubagentOperatorMessaging: true,
   transcriptStyle: "rail",
   roleLabelStyle: "full",
-  toolCardStyle: "rail",
+  toolCardStyle: "compact",
   theme: "dark",
   allowModelSelfExtension: false,
+  showTokenUsage: false,
+  showCost: false,
+  showContextMeter: false,
+  modelDisplay: "statusbar",
 };
 
 /** Basename of the settings file inside the 0sec state directory. */
@@ -481,6 +533,10 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     toolCardStyle: enumAt(raw, "toolCardStyle"),
     theme: themeAt(raw),
     allowModelSelfExtension: booleanAt(raw, "allowModelSelfExtension"),
+    showTokenUsage: booleanAt(raw, "showTokenUsage"),
+    showCost: booleanAt(raw, "showCost"),
+    showContextMeter: booleanAt(raw, "showContextMeter"),
+    modelDisplay: enumAt(raw, "modelDisplay"),
   };
 }
 

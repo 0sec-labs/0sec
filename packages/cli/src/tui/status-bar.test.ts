@@ -250,6 +250,104 @@ describe("buildStatusSegments", () => {
   });
 });
 
+describe("modelDisplay", () => {
+  it("keeps the model in the bar for the unset default and for statusbar", () => {
+    expect(textOf(buildStatusSegments({ model: "m" }), "model")).toBe("m");
+    expect(textOf(buildStatusSegments({ model: "m", modelDisplay: "statusbar" }), "model")).toBe("m");
+  });
+
+  it("drops the model segment for message and off", () => {
+    expect(textOf(buildStatusSegments({ model: "m", modelDisplay: "message" }), "model")).toBeUndefined();
+    expect(textOf(buildStatusSegments({ model: "m", modelDisplay: "off" }), "model")).toBeUndefined();
+  });
+
+  it("still prices cost from the model even when it is hidden from the bar", () => {
+    const segments = buildStatusSegments({
+      model: "claude-sonnet-4-6",
+      modelDisplay: "off",
+      showCost: true,
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+    });
+    expect(textOf(segments, "model")).toBeUndefined();
+    expect(textOf(segments, "cost")).toBe("$3.00"); // 1M input @ $3/M
+  });
+});
+
+describe("context meter", () => {
+  it("replaces the plain percent with a bar when enabled", () => {
+    const meter = textOf(
+      buildStatusSegments({ contextWindow: 1_000_000, contextUsed: 500_000, showContextMeter: true }),
+      "meter",
+    );
+    expect(meter).toBe("▰▰▰▱▱▱ 50% of 1M");
+  });
+
+  it("emits the meter instead of the context segment, never both", () => {
+    const segments = buildStatusSegments({
+      contextWindow: 200_000,
+      contextUsed: 100_000,
+      showContextMeter: true,
+    });
+    expect(textOf(segments, "meter")).toBeDefined();
+    expect(textOf(segments, "context")).toBeUndefined();
+  });
+
+  it("clamps the bar fill at full and empty", () => {
+    expect(
+      textOf(buildStatusSegments({ contextWindow: 100, contextUsed: 100, showContextMeter: true }), "meter"),
+    ).toBe("▰▰▰▰▰▰ 100% of 100");
+    expect(
+      textOf(buildStatusSegments({ contextWindow: 100, contextUsed: 0, showContextMeter: true }), "meter"),
+    ).toBe("▱▱▱▱▱▱ 0% of 100");
+  });
+
+  it("still needs both window and usage to draw a meter", () => {
+    expect(textOf(buildStatusSegments({ contextUsed: 10, showContextMeter: true }), "meter")).toBeUndefined();
+    expect(textOf(buildStatusSegments({ contextWindow: 100, showContextMeter: true }), "meter")).toBeUndefined();
+  });
+});
+
+describe("cost", () => {
+  it("prices a known model from session tokens", () => {
+    // claude-sonnet-4-6 is $3/M in, $15/M out.
+    expect(
+      textOf(
+        buildStatusSegments({ model: "claude-sonnet-4-6", showCost: true, inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+        "cost",
+      ),
+    ).toBe("$18.00");
+  });
+
+  it("prices a differently-cased or vendor-prefixed id", () => {
+    expect(
+      textOf(
+        buildStatusSegments({ model: "anthropic/claude-sonnet-4-6", showCost: true, inputTokens: 1_000_000, outputTokens: 0 }),
+        "cost",
+      ),
+    ).toBe("$3.00");
+  });
+
+  it("shows a sub-cent estimate as <$0.01", () => {
+    expect(
+      textOf(buildStatusSegments({ model: "claude-sonnet-4-6", showCost: true, inputTokens: 1_000, outputTokens: 0 }), "cost"),
+    ).toBe("<$0.01");
+  });
+
+  it("shows $— for a model with no known rate rather than the fallback rate", () => {
+    expect(
+      textOf(buildStatusSegments({ model: "totally-made-up-model", showCost: true, inputTokens: 1_000_000, outputTokens: 0 }), "cost"),
+    ).toBe("$—");
+  });
+
+  it("omits cost entirely without usage or when disabled", () => {
+    expect(textOf(buildStatusSegments({ model: "claude-sonnet-4-6", showCost: true }), "cost")).toBeUndefined();
+    expect(
+      textOf(buildStatusSegments({ model: "claude-sonnet-4-6", inputTokens: 1_000_000, outputTokens: 0 }), "cost"),
+    ).toBeUndefined();
+  });
+});
+
 describe("fitStatusSegments", () => {
   const segments = buildStatusSegments(RICH_INPUT);
   const full = segments.map((segment) => segment.text).join(" · ");

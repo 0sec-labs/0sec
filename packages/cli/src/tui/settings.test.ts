@@ -373,6 +373,63 @@ describe("subagent messaging settings", () => {
   });
 });
 
+describe("telemetry settings", () => {
+  // The four telemetry knobs ship OFF/neutral by default: token counts, cost
+  // and a context meter are noise until an operator asks for them, and the model
+  // stays in the status bar (its established home) rather than moving.
+  const OFF_BY_DEFAULT = ["showTokenUsage", "showCost", "showContextMeter"] as const;
+
+  it("ships the token/cost/meter toggles OFF", () => {
+    for (const key of OFF_BY_DEFAULT) {
+      expect(DEFAULT_SETTINGS[key]).toBe(false);
+    }
+  });
+
+  it("defaults modelDisplay to the status bar", () => {
+    expect(DEFAULT_SETTINGS.modelDisplay).toBe("statusbar");
+  });
+
+  it("files every telemetry setting under Telemetry", () => {
+    for (const key of [...OFF_BY_DEFAULT, "modelDisplay"] as const) {
+      expect(SETTING_DEFS.find((d) => d.key === key)?.group).toBe("Telemetry");
+    }
+  });
+
+  it("offers modelDisplay exactly statusbar / message / off", () => {
+    const def = SETTING_DEFS.find((d) => d.key === "modelDisplay");
+    expect(def?.kind).toBe("enum");
+    expect(def?.choices).toEqual(["statusbar", "message", "off"]);
+  });
+
+  it("cycles modelDisplay through its three values and wraps", () => {
+    const one = toggleSetting(DEFAULT_SETTINGS, "modelDisplay");
+    const two = toggleSetting(one, "modelDisplay");
+    const three = toggleSetting(two, "modelDisplay");
+    expect([one.modelDisplay, two.modelDisplay, three.modelDisplay]).toEqual([
+      "message",
+      "off",
+      "statusbar",
+    ]);
+  });
+
+  it("round-trips the telemetry settings through save and load", () => {
+    const home = makeHome();
+    const on: TuiSettings = {
+      ...DEFAULT_SETTINGS,
+      showTokenUsage: true,
+      showCost: true,
+      showContextMeter: true,
+      modelDisplay: "message",
+    };
+    expect(saveSettings(on, home)).toBe(true);
+    expect(loadSettings(home)).toEqual(on);
+  });
+
+  it("rejects an out-of-range modelDisplay value", () => {
+    expect(normalizeSettings({ modelDisplay: "sidebar" }).modelDisplay).toBe("statusbar");
+  });
+});
+
 describe("SETTING_DEFS", () => {
   // The table and the interface are two halves of one declaration; nothing but
   // a test stops a new field from being added to `TuiSettings` without a def

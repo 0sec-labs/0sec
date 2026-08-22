@@ -26,6 +26,8 @@
  *    not a cosmetic one.
  */
 
+import { MODEL_PRICING, type ModelRates, type TokenUsageForPricing } from "@0sec/shared";
+
 import { fitTuiText } from "./text.js";
 
 export type StatusSegmentKind =
@@ -36,8 +38,15 @@ export type StatusSegmentKind =
   | "branch"
   | "dirty"
   | "tokens"
+  | "cost"
   | "context"
+  | "meter"
   | "plan";
+
+/** Where the model name is surfaced. Mirrors `TuiSettings["modelDisplay"]`; the
+ *  bar shows the model only for "statusbar" (and for `undefined`, the pre-setting
+ *  default), and drops it for "message" (chat-screen draws it) and "off". */
+export type ModelDisplay = "statusbar" | "message" | "off";
 
 export interface StatusSegment {
   kind: StatusSegmentKind;
@@ -61,6 +70,8 @@ export interface StatusBarInput {
   /** Cumulative session tokens. */
   inputTokens?: number;
   outputTokens?: number;
+  /** Cumulative cached-input tokens, for a more accurate cost estimate. */
+  cachedInputTokens?: number;
   /**
    * Total context window in tokens. When omitted, NO context segment is
    * produced — the percentage must never be invented.
@@ -70,6 +81,25 @@ export interface StatusBarInput {
   contextUsed?: number;
   /** Billing/plan label, e.g. "sub". Omit when unknown. */
   plan?: string;
+  /**
+   * Where to surface the model name. Optional so existing callers (chat-screen
+   * is mid-edit by the coordinator) keep the pre-setting default of showing it
+   * in the bar; the coordinator passes the operator's `modelDisplay` later.
+   */
+  modelDisplay?: ModelDisplay;
+  /**
+   * Replace the plain "N%/window" context segment with a visual meter
+   * (`▰▰▰▱▱▱ 42% of 1M`). Optional and off by default, so the existing bar is
+   * unchanged until the coordinator wires the `showContextMeter` setting.
+   */
+  showContextMeter?: boolean;
+  /**
+   * Add an estimated dollar-cost segment computed from the session tokens and
+   * the model's rate. Optional and off by default. When the model's rate is
+   * unknown the segment shows "$—" rather than a figure at a rate the model was
+   * not billed — the same "never invent a number" rule the context percent obeys.
+   */
+  showCost?: boolean;
 }
 
 /**
@@ -92,10 +122,17 @@ export interface StatusBarInput {
 const PRIORITY: Record<StatusSegmentKind, number> = {
   cwd: 1,
   dirty: 2,
+  // Cost sits in the token band — it is the same session-usage telemetry — and
+  // drops just before the raw token counts (ties break rightward, and `cost`
+  // follows `tokens` in ORDER).
+  cost: 3,
   tokens: 3,
   plan: 4,
   effort: 5,
+  // The meter is the visual form of `context` and is never emitted alongside
+  // it, so it shares that band: dropped as readily as the plain percent was.
   context: 6,
+  meter: 6,
   branch: 7,
   mode: 8,
   model: 0,
@@ -110,7 +147,9 @@ const ORDER: StatusSegmentKind[] = [
   "branch",
   "dirty",
   "tokens",
+  "cost",
   "context",
+  "meter",
   "plan",
 ];
 
@@ -170,6 +209,86 @@ function label(value: string | null | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+// ── Context meter ─────────────────────────────────────────────────────────
+
+/** Cells in the visual context bar; matches the `▰▰▰▱▱▱` reference width. */
+const METER_CELLS = 6;
+const METER_FILLED = "▰";
+const METER_EMPTY = "▱";
+
+/**
+ * A compact unicode usage bar plus the percent and window, e.g.
+ * `▰▰▰▱▱▱ 42% of 1M`. The fill is clamped to [0, METER_CELLS] so a rounding
+ * artefact can never paint a seventh cell or a negative one. The renderer picks
+ * the colour off the `meter` segment kind, matching the existing pattern.
+ */
+function contextMeter(percent: number, contextWindow: number): string {
+  const fraction = Math.max(0, Math.min(1, percent / 100));
+  const filled = Math.max(0, Math.min(METER_CELLS, Math.round(fraction * METER_CELLS)));
+  const bar = METER_FILLED.repeat(filled) + METER_EMPTY.repeat(METER_CELLS - filled);
+  return `${bar} ${percent}% of ${formatTokenCount(contextWindow)}`;
+}
+
+// ── Cost ──────────────────────────────────────────────────────────────────
+
+/** Vendor prefixes shared's `normalizeModel` strips; mirrored here so a
+ *  "vendor/model" id resolves to the same rate row. */
+const VENDOR_PREFIXES = [
+  "openai/", "anthropic/", "google/", "deepseek/", "meta/", "mistral/",
+  "z-ai/", "zai/", "kimi/", "moonshot/", "openrouter/", "xai/", "x-ai/",
+] as const;
+
+/**
+ * Priced rate rows indexed by lower-cased id. "default" is deliberately
+ * excluded: it is shared's fallback rate for an UNKNOWN model, not a model, and
+ * pricing an unrecognised id at it would put a fabricated dollar figure on
+ * screen. Lower-casing lets a differently-cased id (e.g. "GPT-5.6-Terra") or an
+ * Azure deployment name still find its row.
+ */
+const RATES_BY_LOWER: ReadonlyMap<string, ModelRates> = new Map(
+  Object.entries(MODEL_PRICING)
+    .filter(([key]) => key !== "default")
+    .map(([key, rates]) => [key.toLowerCase(), rates]),
+);
+
+/**
+ * Resolve a model id to its rate row, or `undefined` — the quiet, TUI-safe
+ * counterpart to shared's `getRates`. `getRates` `console.warn`s on an unknown
+ * id and then returns the `default` row; neither is acceptable in the status
+ * bar, which renders inside the terminal (it must never print) and must never
+ * show a cost computed at a rate the model was not billed. Resolution mirrors
+ * `getRates`: exact id, then a leading "vendor/" strip, both case-insensitive.
+ */
+function resolveRates(model: string): ModelRates | undefined {
+  const lower = model.toLowerCase();
+  const direct = RATES_BY_LOWER.get(lower);
+  if (direct) return direct;
+  for (const prefix of VENDOR_PREFIXES) {
+    if (lower.startsWith(prefix)) return RATES_BY_LOWER.get(lower.slice(prefix.length));
+  }
+  return undefined;
+}
+
+/** Estimate USD spend for the usage at the given rates. Mirrors shared's
+ *  `estimateCost` arithmetic exactly, but on rates we already resolved. */
+function costUsd(usage: TokenUsageForPricing, rates: ModelRates): number {
+  const cachedRate = rates.cachedInput ?? rates.input;
+  const cached = usage.cachedInputTokens ?? 0;
+  const uncachedInput = Math.max(0, usage.inputTokens - cached);
+  return (
+    (uncachedInput / 1_000_000) * rates.input +
+    (cached / 1_000_000) * cachedRate +
+    (usage.outputTokens / 1_000_000) * rates.output
+  );
+}
+
+/** Render a positive cost as "$1.23", a sub-cent one as "<$0.01". */
+function formatCost(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+
 function dirtyText(modified: number, untracked: number): string {
   const parts: string[] = [];
   if (modified > 0) parts.push(`*${modified}`);
@@ -187,8 +306,12 @@ function dirtyText(modified: number, untracked: number): string {
 export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
   const texts = new Map<StatusSegmentKind, string>();
 
+  // The model is kept for pricing regardless of where it is displayed, but it
+  // only occupies a bar segment when `modelDisplay` is "statusbar" (or is
+  // unset — the pre-setting default). "message"/"off" drop it from the bar.
   const model = label(input.model);
-  if (model) texts.set("model", model);
+  const modelDisplay = input.modelDisplay ?? "statusbar";
+  if (model && modelDisplay === "statusbar") texts.set("model", model);
 
   const effort = label(input.effort);
   if (effort) texts.set("effort", effort);
@@ -214,15 +337,44 @@ export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
     texts.set("tokens", `${formatTokenCount(inputTokens)}/${formatTokenCount(outputTokens)}`);
   }
 
+  // Cost is opt-in and needs real usage. When the model's rate is unknown we
+  // show "$—" rather than a figure computed at the fallback rate — an honest
+  // "no rate" instead of a plausible-looking lie, the same rule the context
+  // percentage obeys.
+  if (input.showCost && inputTokens + outputTokens > 0) {
+    const rates = model ? resolveRates(model) : undefined;
+    texts.set(
+      "cost",
+      rates
+        ? formatCost(
+            costUsd(
+              {
+                inputTokens,
+                outputTokens,
+                cachedInputTokens: positiveCount(input.cachedInputTokens),
+              },
+              rates,
+            ),
+          )
+        : "$—",
+    );
+  }
+
   // Both halves are required. A window with no usage reading, or a usage
   // reading with no window, cannot produce an honest percentage, and a
-  // zero/negative window would produce a meaningless one.
+  // zero/negative window would produce a meaningless one. When the operator
+  // enabled the meter, the same figure renders as a visual bar instead of the
+  // plain percent (the two are mutually exclusive, never both).
   const contextWindow = positiveCount(input.contextWindow);
   const hasUsage = typeof input.contextUsed === "number" && Number.isFinite(input.contextUsed);
   if (contextWindow > 0 && hasUsage) {
     const used = Math.max(0, input.contextUsed as number);
     const percent = roundForDisplay((used / contextWindow) * 100);
-    texts.set("context", `${percent}%/${formatTokenCount(contextWindow)}`);
+    if (input.showContextMeter) {
+      texts.set("meter", contextMeter(percent, contextWindow));
+    } else {
+      texts.set("context", `${percent}%/${formatTokenCount(contextWindow)}`);
+    }
   }
 
   const plan = label(input.plan);

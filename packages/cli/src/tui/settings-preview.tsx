@@ -193,7 +193,7 @@ function toolCardBlocks(value: string, width: number): PreviewBlock[] {
     }
   }
 
-  blocks.push(choiceStripBlock("tool-choices", width, ["rail", "inline", "compact", "hidden"], value));
+  blocks.push(choiceStripBlock("tool-choices", width, ["compact", "rail", "inline", "hidden"], value));
   return blocks;
 }
 
@@ -418,6 +418,80 @@ function densityBlocks(value: string, width: number): PreviewBlock[] {
   return blocks;
 }
 
+/**
+ * The model-display sample: a one-line mock of WHERE the model name lands for
+ * the current value — in the bottom bar, on a message header, or nowhere — plus
+ * the choice strip with the active value bracketed.
+ */
+function modelDisplayBlocks(value: string, width: number): PreviewBlock[] {
+  const MODEL = "claude-opus-5";
+  const blocks: PreviewBlock[] = [];
+
+  if (value === "statusbar") {
+    blocks.push({
+      key: "model-statusbar",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { content: MODEL, fg: theme.ACCENT, key: "model" },
+            { content: "·", fg: theme.MUTED, key: "sep" },
+            { flex: 1, min: 1, text: "Standard · ~/proj", fg: theme.MUTED, key: "rest" },
+          ]}
+        />
+      ),
+    });
+  } else if (value === "message") {
+    blocks.push({
+      key: "model-message",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { content: "▌ 0sec", fg: theme.PRIMARY, key: "label" },
+            { content: MODEL, fg: theme.MUTED, key: "model" },
+          ]}
+        />
+      ),
+    });
+  } else {
+    blocks.push(line("model-off", width, "model name hidden", (t) => t.MUTED));
+  }
+
+  blocks.push(
+    choiceStripBlock("model-display-choices", width, ["statusbar", "message", "off"], value),
+  );
+  return blocks;
+}
+
+/**
+ * The context-meter sample: the real bottom-bar glyphs when ON so the operator
+ * sees the bar they are enabling, an on/off chip when OFF.
+ */
+function contextMeterBlocks(value: boolean, width: number): PreviewBlock[] {
+  if (!value) return stateChipBlocks(false, width);
+  return [
+    {
+      key: "meter-sample",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { content: "▰▰▰▱▱▱", fg: theme.ACCENT, key: "bar" },
+            { flex: 1, min: 1, text: "42% of 1M", fg: theme.MUTED, key: "pct" },
+          ]}
+        />
+      ),
+    },
+  ];
+}
+
 /** The theme sample: a swatch strip of the palette's key colours + a live line. */
 function themeBlocks(width: number): PreviewBlock[] {
   // Ordered so the tokens an operator judges a palette by come first, and the
@@ -537,6 +611,12 @@ export function previewBlocks({ def, value, width, settings }: PreviewInput): Pr
       break;
     case "density":
       body = densityBlocks(String(value), w);
+      break;
+    case "modelDisplay":
+      body = modelDisplayBlocks(String(value), w);
+      break;
+    case "showContextMeter":
+      body = contextMeterBlocks(value === true, w);
       break;
     case "theme":
       body = themeBlocks(w);
