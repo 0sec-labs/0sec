@@ -1,0 +1,2316 @@
+/** @jsxImportSource @opentui/react */
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import {
+  ScopePolicy,
+  createConsoleRuntime,
+  createConsoleSession,
+  eventBus,
+  type ConsoleAutonomyMode,
+  type ConsoleScopeRequest,
+  type ConsoleScopeResolution,
+  claimDiagnostics,
+  type ConsoleLocalScopeRequest,
+  type ConsoleLocalScopeResolution,
+  type ScopedAuditEscalationRequest,
+  type ConsoleSession,
+  type NativeMessage,
+  type SubagentLifecyclePayload,
+  type ToolCall,
+  type ToolResult,
+} from "@0sec/core";
+import {
+  ACCENT,
+  BORDER,
+  CANVAS,
+  ERROR,
+  INFO,
+  MUTED,
+  PANEL,
+  PANEL_ALT,
+  PRIMARY,
+  SUCCESS,
+  TEXT,
+  WARNING,
+} from "../ui/theme.js";
+import { modelProvider } from "@0sec/shared";
+import { homedir } from "node:os";
+import { readGitStatus, type GitStatus } from "./git-status.js";
+import { buildStatusSegments, fitStatusSegments } from "./status-bar.js";
+import {
+  createSelectorState,
+  highlighted,
+  reduceSelector,
+  visibleItems,
+  windowFor,
+  type SelectorItem,
+  type SelectorState,
+} from "./selector.js";
+import { modelSelectorItems } from "./model-catalog.js";
+import { appendFeedback } from "./feedback.js";
+import { formatToolArgs, formatToolResult, toolResultDetail } from "./tool-format.js";
+import {
+  listSessions,
+  loadSession,
+  pruneSessions,
+  saveSession,
+} from "./session-store.js";
+import { reportOperatorGate } from "../herdr-state.js";
+import { listItemGutterWidth, renderMarkdown, type MdBlock, type MdSpan } from "./markdown.js";
+import { GLYPH_CELLS, frameAt, frameIntervalMs, type AnimationKind } from "./animation.js";
+import { PROVIDERS, providerStates } from "./provider-status.js";
+import {
+  credentialEnvPatch,
+  loadCredentials,
+  redactSecret,
+  saveCredentials,
+} from "./credential-store.js";
+import { VERSION } from "@0sec/shared";
+import {
+  SETTING_DEFS,
+  describeSetting,
+  loadSettings,
+  saveSettings,
+  toggleSetting,
+  type TuiSettings,
+} from "./settings.js";
+import {
+  buildHelpPanel,
+  buildScopePanel,
+  buildStatusPanel,
+  buildToolsPanel,
+  panelColumns,
+  type PanelData,
+} from "./panels.js";
+import { fitTuiText, sanitizeTuiText } from "./text.js";
+import { parseSubagentCard, reduceActiveSubagents } from "./subagent-card.js";
+import { onTuiOutputLine } from "./output-guard.js";
+import {
+  COMPOSER_QUEUE_LIMIT,
+  classifyComposerInput,
+  composerQueueLabel,
+  dequeueComposerInput,
+  enqueueComposerInput,
+} from "./composer-queue.js";
+import {
+  LEDGER_MARK_ROWS,
+  commandMenuBoxHeight,
+  computeChatLayout,
+  computeCommandMenuHeight,
+  computeCommandMenuLayout,
+  computeLedgerRows,
+} from "./chat-layout.js";
+import {
+  SLASH_COMMANDS,
+  filterCommands,
+  findCommand,
+  type SlashCommand,
+} from "./slash-commands.js";
+
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay";
+
+
+export interface ChatScreenOptions {
+  target?: string;
+  scope?: ScopePolicy;
+  model?: string;
+  role?: "discovery" | "attack" | "verify" | "report" | "audit" | "review";
+  maxToolIterations?: number;
+  allowScanners?: boolean;
+  autonomyMode?: ConsoleAutonomyMode;
+}
+
+export interface ChatScreenProps {
+  options?: ChatScreenOptions;
+  onGoBack: () => void;
+  onNavigate: (destination: ChatDestination) => void;
+  onExit: () => void;
+}
+
+type ChatEntry = {
+  id: string;
+  /**
+   * The transcript speaks in distinct voices, because a slash-command
+   * listing is not conversation and reasoning is not an answer. Rendering
+   * them all as the same muted bullet is what made command output read as
+   * an undifferentiated dump.
+   */
+  kind: "user" | "assistant" | "reasoning" | "tool" | "subagent" | "notice" | "panel" | "error";
+  text: string;
+  detail?: string;
+  success?: boolean;
+  turn: number;
+  subagentOutcome?: "completed" | "failed";
+  subagentTurns?: number;
+  subagentFindings?: number;
+  subagentSummary?: string;
+  subagentError?: string;
+  panel?: PanelData;
+  /** Epoch ms the entry was appended, for relative timestamps. */
+  at?: number;
+};
+
+type PendingScope = {
+  request: ConsoleScopeRequest;
+  resolve: (resolution: ConsoleScopeResolution | null) => void;
+};
+
+type PendingLocalScope = {
+  request: ConsoleLocalScopeRequest;
+  resolve: (resolution: ConsoleLocalScopeResolution | null) => void;
+};
+
+type PendingEscalation = {
+  request: ScopedAuditEscalationRequest;
+  resolve: (approved: boolean) => void;
+};
+
+type PendingToolApproval = {
+  call: ToolCall;
+  resolve: (approved: boolean) => void;
+};
+
+const TERMINAL_BLOCK_LOGO = [
+  " ██████   ███████  ███████   ██████  ",
+  "██    ██  ██       ██       ██       ",
+  "██    ██  ███████  █████    ██       ",
+  "██    ██       ██  ██       ██       ",
+  " ██████   ███████  ███████   ██████  ",
+] as const;
+const TERMINAL_BLOCK_LOGO_WIDTH = 37;
+
+function modeLabel(mode: ConsoleAutonomyMode): string {
+  if (mode === "standard") return "Standard";
+  return mode === "copilot" ? "Co-pilot" : "YOLO";
+}
+
+function completionFor(command: SlashCommand, args = ""): string {
+  const base = `/${command.name}`;
+  if (args) return `${base} ${args}`;
+  return command.usage?.includes(" ") ? `${base} ` : base;
+}
+
+function commandMatchesPrefix(command: SlashCommand, rawName: string): boolean {
+  return rawName.length === 0
+    || command.name.startsWith(rawName)
+    || command.aliases.some((alias) => alias.startsWith(rawName));
+}
+
+/**
+ * Normalize a reasoning stream for display.
+ *
+ * Reasoning summaries arrive as a sequence of bold headers with no
+ * separator between them, so the raw text reads `**A****B****C**`. Four
+ * adjacent asterisks are never a single intended run — it is always one
+ * bold closing and the next opening — so split them onto their own lines.
+ */
+function normalizeReasoning(text: string): string {
+  return text.replace(/\*\*\*\*/g, "**\n\n**");
+}
+
+/** Compact relative age, e.g. "12s" / "4m" / "2h". */
+function relativeAge(at: number | undefined, now: number): string {
+  if (!at) return "";
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h`;
+}
+
+interface EntryDisplay {
+  /** "comfortable" separates entries with a blank line; "compact" does not. */
+  spacing: number;
+  showTimestamps: boolean;
+  now: number;
+}
+
+/** Map a markdown span style onto the theme. */
+function spanColor(style: MdSpan["style"], tone?: string): string {
+  // A tone override keeps a whole block in one voice (e.g. reasoning stays
+  // muted) while still honouring structure like code and links.
+  if (tone && style !== "code" && style !== "link") return tone;
+  if (style === "code") return ACCENT;
+  if (style === "link") return INFO;
+  if (style === "muted" || style === "strike") return MUTED;
+  return TEXT;
+}
+
+/**
+ * Render parsed markdown blocks.
+ *
+ * Models emit markdown constantly, and showing `**bold**` literally is the
+ * single most visible way a terminal agent looks unfinished. Every line is
+ * pre-wrapped to an exact width by `renderMarkdown`, so nothing here needs
+ * to guess at widths — which is also what keeps a long span from
+ * overflowing its row.
+ */
+function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, tone?: string) {
+  return blocks.map((block, index) => {
+    const id = `${key}-b${index}`;
+    if (block.kind === "rule") {
+      return <text key={id} fg={tone ?? MUTED}>{"─".repeat(8)}</text>;
+    }
+    if (block.kind === "code") {
+      return (
+        <box key={id} flexDirection="column" marginLeft={2}>
+          {block.lines.map((line, i) => (
+            <text key={`${id}-${i}`} fg={ACCENT}>{line}</text>
+          ))}
+        </box>
+      );
+    }
+    if (block.kind === "heading") {
+      return (
+        <box key={id} flexDirection="column" minWidth={0}>
+          {block.lines.map((line, i) => (
+            <text key={`${id}-${i}`} fg={tone ?? PRIMARY}>{line.map((span) => span.text).join("")}</text>
+          ))}
+        </box>
+      );
+    }
+    if (block.kind === "listItem") {
+      const gutter = listItemGutterWidth(block);
+      return (
+        <box key={id} flexDirection="row" minWidth={0}>
+          <box width={gutter} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{`${" ".repeat(block.indent)}${block.marker}`}</text>
+          </box>
+          <box flexDirection="column" flexGrow={1} minWidth={0}>
+            {block.lines.map((line, i) => (
+              <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
+                {line.map((span, j) => (
+                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, tone)}>{span.text}</text>
+                ))}
+              </box>
+            ))}
+          </box>
+        </box>
+      );
+    }
+    // paragraph | quote — a quote is always muted, otherwise inherit the
+    // caller's tone override (if any).
+    const blockTone = block.kind === "quote" ? MUTED : tone;
+    return (
+      <box key={id} flexDirection="column" minWidth={0} marginLeft={block.kind === "quote" ? 2 : 0}>
+        {block.lines.map((line, i) => (
+          <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
+            {line.map((span, j) => (
+              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, blockTone)}>{span.text}</text>
+            ))}
+          </box>
+        ))}
+      </box>
+    );
+  });
+}
+
+function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) {
+  const detailWidth = Math.max(20, maxWidth - 8);
+  if (entry.kind === "user") {
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing}>
+        <box width={1} alignSelf="stretch" backgroundColor={ACCENT} />
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+          <text fg={ACCENT}>{`▌ operator${display.showTimestamps ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
+          <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "assistant") {
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing}>
+        <box width={1} alignSelf="stretch" backgroundColor={PRIMARY} />
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+          <text fg={PRIMARY}>{`▌ 0sec${display.showTimestamps ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
+          {renderMarkdownBlocks(renderMarkdown(entry.text, Math.max(8, maxWidth - 2)), entry.id)}
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "tool") {
+    const tone = entry.success === false ? ERROR : entry.success ? SUCCESS : PRIMARY;
+    const state = entry.success === false ? "failed" : entry.success ? "complete" : "running";
+    const icon = entry.success === false ? "×" : entry.success ? "✓" : "◌";
+    // Icon, label and name are siblings on one row; the name must be
+    // budgeted against the label's real length or the row overruns its
+    // container and the renderer paints the columns into each other.
+    const toolPrefix = ` evidence / tool · ${state} · `;
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={maxWidth < 56 ? 0 : 2}>
+        <box width={1} alignSelf="stretch" backgroundColor={tone} />
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+          <box flexDirection="row" minWidth={0}>
+            <text fg={tone}>{icon}</text>
+            <text fg={MUTED}>{toolPrefix}</text>
+            <text fg={TEXT}>{fitTuiText(entry.text, Math.max(1, detailWidth - toolPrefix.length - 1))}</text>
+          </box>
+          {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text> : null}
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "subagent") {
+    const outcome = entry.subagentOutcome ?? "failed";
+    const ok = outcome === "completed";
+    const tone = ok ? SUCCESS : ERROR;
+    const statusParts: string[] = [];
+    if (entry.subagentTurns !== undefined) statusParts.push(`turns ${entry.subagentTurns}`);
+    if (entry.subagentFindings !== undefined) statusParts.push(`findings ${entry.subagentFindings}`);
+    const statusLine = statusParts.length > 0 ? statusParts.join(" · ") : null;
+
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={maxWidth < 56 ? 0 : 2}>
+        <box width={1} alignSelf="stretch" backgroundColor={tone} />
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+          <box flexDirection="row">
+            <text fg={tone}>{ok ? "✓" : "×"}</text>
+            <text fg={MUTED}> evidence / subagent · {ok ? "completed" : "failed"}</text>
+          </box>
+          {statusLine ? <text fg={MUTED}>{fitTuiText(statusLine, detailWidth)}</text> : null}
+          {entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, detailWidth)}</text> : null}
+          {entry.subagentError ? <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, detailWidth)}</text> : null}
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "error") {
+    // Failures get the same rail treatment as speech, in the error tone:
+    // an operator must be able to see at a glance that the turn did not
+    // produce an answer, and why.
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+        <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ERROR} />
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+          <text fg={ERROR}>▌ {fitTuiText(entry.text, Math.max(1, maxWidth - 3))}</text>
+          {entry.detail ? (
+            <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text>
+          ) : null}
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "reasoning") {
+    // Thinking is deliberately quieter than the answer: a dotted rail and
+    // muted text, so it reads as working-out rather than a conclusion.
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+        <box width={1} flexShrink={0} alignSelf="stretch">
+          <text fg={MUTED}>┊</text>
+        </box>
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+          <text fg={MUTED}>thinking</text>
+          {renderMarkdownBlocks(
+            renderMarkdown(normalizeReasoning(entry.text), Math.max(8, maxWidth - 2)),
+            entry.id,
+            MUTED,
+          )}
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "panel" && entry.panel) {
+    // Command output is not dialogue, so it gets a bordered block with
+    // aligned columns instead of one muted bullet per line. Column widths
+    // come from panelColumns so the two columns can never overspend the
+    // panel and paint into each other.
+    const panel = entry.panel;
+    // Two border cells plus one padding cell on each side.
+    const innerWidth = Math.max(1, maxWidth - 4);
+    const columns = panelColumns(panel.rows, innerWidth);
+    return (
+      <box key={entry.id} flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={display.spacing} border borderColor={BORDER} paddingX={1}>
+        <box flexDirection="row" width="100%" minWidth={0}>
+          <text fg={PRIMARY}>{fitTuiText(panel.title, innerWidth)}</text>
+        </box>
+        {panel.subtitle ? (
+          <text fg={MUTED}>{fitTuiText(panel.subtitle, innerWidth)}</text>
+        ) : null}
+        {panel.rows.map((row, index) => {
+          if (row.heading) {
+            return (
+              <text key={`h-${index}`} fg={ACCENT}>{fitTuiText(row.value, innerWidth)}</text>
+            );
+          }
+          if (!row.label || columns.labelWidth === 0) {
+            return (
+              <text key={`r-${index}`} fg={TEXT} wrapMode="word">{fitTuiText(row.value, innerWidth)}</text>
+            );
+          }
+          return (
+            <box key={`r-${index}`} flexDirection="row" width="100%" minWidth={0} gap={columns.gap}>
+              <box width={columns.labelWidth} flexShrink={0} minWidth={0}>
+                <text fg={TEXT}>{fitTuiText(row.label, columns.labelWidth)}</text>
+              </box>
+              <box width={columns.valueWidth} flexShrink={0} minWidth={0}>
+                <text fg={MUTED}>{fitTuiText(row.value, columns.valueWidth)}</text>
+              </box>
+            </box>
+          );
+        })}
+      </box>
+    );
+  }
+
+  return (
+    <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+      <text fg={MUTED}>·</text>
+      <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+        <text fg={MUTED} wrapMode="word">{fitTuiText(entry.text, maxWidth - 2)}</text>
+        {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, maxWidth - 2)}</text> : null}
+      </box>
+    </box>
+  );
+}
+
+function buildScopeResolution(request: ConsoleScopeRequest): ConsoleScopeResolution | null {
+  const raw = request.currentScope?.raw ?? {};
+  const inScope = new Set(raw.in_scope ?? []);
+  let target = request.target.trim();
+
+  for (const requestedUrl of request.requestedUrls) {
+    try {
+      const url = new URL(requestedUrl);
+      inScope.add(url.hostname);
+      if (!target) target = url.origin;
+    } catch {
+      return null;
+    }
+  }
+
+  if (!target || inScope.size === 0) return null;
+  const scope = ScopePolicy.fromJson({ ...raw, in_scope: [...inScope] });
+  if (request.requestedUrls.some((url) => !scope.match(url).allowed)) return null;
+  return { target, scope };
+}
+
+/**
+ * Composer chrome, selected by the `composerStyle` setting.
+ *
+ * Deliberately three distinct elements instead of one box with toggled
+ * props: opentui renders a frame whenever `border` is present at all, so a
+ * falsy value does not remove it.
+ */
+function ComposerFrame({
+  style,
+  active,
+  children,
+}: {
+  style: TuiSettings["composerStyle"];
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  if (style === "border") {
+    return (
+      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? PRIMARY : BORDER} backgroundColor={PANEL_ALT} paddingX={1}>
+        {children}
+      </box>
+    );
+  }
+  if (style === "rail") {
+    return (
+      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} marginLeft={1} backgroundColor={PANEL_ALT}>
+        {children}
+      </box>
+    );
+  }
+  return (
+    <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0}>
+      {children}
+    </box>
+  );
+}
+
+export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreenProps) {
+  const [entries, setEntries] = useState<ChatEntry[]>([]);
+  const entriesRef = useRef<ChatEntry[]>([]);
+  entriesRef.current = entries;
+  const [session, setSession] = useState<ConsoleSession | null>(null);
+  const [modelId, setModelId] = useState<string | null>(null);
+  const [git, setGit] = useState<GitStatus | null>(null);
+  const [clockTick, setClockTick] = useState(() => Date.now());
+  const [animTick, setAnimTick] = useState(0);
+  /** When the current busy/blocked state began, for elapsed display. */
+  const activitySince = useRef<number>(Date.now());
+  /**
+   * Masked credential entry. Held in component state only, written
+   * straight to the 0600 store, and never appended to the transcript —
+   * a secret must not end up in scrollback or an evidence record.
+   */
+  const [secretPrompt, setSecretPrompt] = useState<
+    { providerId: string; label: string; envVar: string; value: string } | null
+  >(null);
+  // Loaded once from disk; a failed read yields defaults rather than
+  // blocking startup, so a corrupt settings file can never brick the TUI.
+  const [settings, setSettings] = useState<TuiSettings>(() => loadSettings());
+  // The output-guard subscription is registered once; a ref lets it read
+  // the live setting without tearing down and re-adding the listener.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  /**
+   * Open picker overlay. `commit` runs with the chosen item id; the
+   * overlay owns no domain logic so the same component serves /model,
+   * /mode and anything added later.
+   */
+  const [picker, setPicker] = useState<
+    { state: SelectorState; commit: (id: string) => void } | null
+  >(null);
+  const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 });
+  /** Live turn-budget consumption, updated per model call. */
+  const [turnBudget, setTurnBudget] = useState<{ used: number; limit: number } | null>(null);
+  const [startupError, setStartupError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ConsoleAutonomyMode>(options?.autonomyMode ?? "standard");
+  /**
+   * The live autonomy mode, for callbacks that must not be rebuilt when it
+   * changes. `buildSession` in particular is a `useCallback` that reruns on
+   * `/model`; reading the ref is what keeps a model switch from silently
+   * reverting the operator's mode.
+   */
+  const modeRef = useRef<ConsoleAutonomyMode>(options?.autonomyMode ?? "standard");
+  modeRef.current = mode;
+  const [target, setTarget] = useState(options?.target ?? "");
+  const [scopeRules, setScopeRules] = useState<string[]>(options?.scope?.raw.in_scope ?? []);
+  const [busy, setBusy] = useState(false);
+  /**
+   * Messages typed while a turn was in flight, delivered FIFO once it ends.
+   * A ref rather than state because the keyboard handler writes it
+   * synchronously; `queuedCount` mirrors its length purely so the composer can
+   * show the operator that the text went somewhere.
+   */
+  const queuedRef = useRef<string[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [composer, setComposer] = useState("");
+  const [composing, setComposing] = useState(false);
+  const [commandMenuOpen, setCommandMenuOpen] = useState(false);
+  const [slashSelected, setSlashSelected] = useState(0);
+  const [pendingScope, setPendingScope] = useState<PendingScope | null>(null);
+  const [pendingLocalScope, setPendingLocalScope] = useState<PendingLocalScope | null>(null);
+  const [pendingEscalation, setPendingEscalation] = useState<PendingEscalation | null>(null);
+  const [pendingToolApproval, setPendingToolApproval] = useState<PendingToolApproval | null>(null);
+  const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
+  const { width, height } = useTerminalDimensions();
+  const alive = useRef(true);
+  const turn = useRef(0);
+  const statusText = session
+    ? `${turn.current} turns · ${session.tools.length} tools`
+    : "connecting";
+  // All row/column cell budgets live in chat-layout.ts, where the
+  // "a row never claims more cells than its container" invariant is
+  // covered by tests instead of by inspection.
+  const layout = computeChatLayout({ width, height, statusTextLength: statusText.length });
+  const {
+    compact,
+    contentWidth,
+    headerTargetWidth,
+    headerScopeWidth,
+    headerGap,
+    composerTextWidth,
+    approvalWidth,
+    controlsWidth,
+    statusWidth,
+    statusGap,
+  } = layout;
+  const composerRef = useRef("");
+  const composingRef = useRef(false);
+  const commandMenuOpenRef = useRef(false);
+  const commandCatalog: readonly SlashCommand[] = SLASH_COMMANDS;
+  const isSlashComposer = composer.trimStart().startsWith("/");
+  const slashQuery = isSlashComposer ? composer.trimStart().slice(1).split(/\s+/, 1)[0] ?? "" : "";
+  // A wide menu prints a description under each command; a compact one
+  // does not. The row cost per entry therefore differs, and the visible
+  // count has to be derived from the real height instead of a constant —
+  // over-allocating is what painted the menu's bottom border through the
+  // last two command rows.
+  const commandRowsPerCommand = compact ? 1 : 2;
+  const commandMenuLimit = computeCommandMenuHeight({
+    height,
+    compact,
+    rowsPerCommand: commandRowsPerCommand,
+  }).maxCommands;
+  const filteredSlashCommands = useMemo(
+    () => isSlashComposer ? filterCommands(slashQuery) : [],
+    [isSlashComposer, slashQuery],
+  );
+  const menuCommands = filteredSlashCommands.slice(0, commandMenuLimit);
+  const selectedSlashCommand = menuCommands[slashSelected];
+  const scopeLabel = scopeRules.length > 0
+    ? scopeRules.join(", ")
+    : mode === "yolo" ? "not configured" : "scope on demand";
+
+  useEffect(() => {
+    setSlashSelected((current) => Math.min(current, Math.max(menuCommands.length - 1, 0)));
+  }, [menuCommands.length]);
+
+  const setCommandMenuVisible = useCallback((visible: boolean) => {
+    commandMenuOpenRef.current = visible;
+    setCommandMenuOpen(visible);
+  }, []);
+
+  const setComposerText = useCallback((value: string) => {
+    composerRef.current = value;
+    setComposer(value);
+    setSlashSelected(0);
+    setCommandMenuVisible(value.trimStart().startsWith("/"));
+  }, [setCommandMenuVisible]);
+
+  const appendEntry = useCallback((entry: Omit<ChatEntry, "id">) => {
+    setEntries((current) => [
+      ...current,
+      { at: Date.now(), ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
+    ]);
+  }, []);
+
+  /**
+   * Build a console session.
+   *
+   * Extracted from the mount effect because `/model` rebuilds the session
+   * against a different runtime: the model is fixed when the runtime is
+   * constructed, so switching means a new runtime, and the engagement
+   * context has to be carried across via `initialMessages` rather than
+   * silently discarded mid-engagement.
+   */
+  const buildSession = useCallback((
+    opts: { model?: string; initialMessages?: NativeMessage[] } = {},
+  ): { session: ConsoleSession; model: string } => {
+    // Apply stored provider credentials before the runtime resolves any.
+    // credentialEnvPatch never overrides a variable the shell already set,
+    // so an explicit export always beats the file.
+    const patch = credentialEnvPatch(loadCredentials(), process.env);
+    for (const [key, value] of Object.entries(patch)) process.env[key] = value;
+    const runtime = createConsoleRuntime({ model: opts.model ?? options?.model });
+    const created = createConsoleSession({
+      runtime,
+      target: options?.target,
+      scope: options?.scope,
+      role: options?.role,
+      maxToolIterations: options?.maxToolIterations,
+      allowScanners: options?.allowScanners,
+      // The LAUNCH mode is only the seed. Rebuilds trigger on /model and on
+      // resume, and reseeding from options there would drop the operator back
+      // to standard while the header kept showing the mode they chose.
+      autonomyMode: modeRef.current,
+      initialMessages: opts.initialMessages,
+      requestScope: (request) => {
+        const deferred = Promise.withResolvers<ConsoleScopeResolution | null>();
+        if (!alive.current) {
+          deferred.resolve(null);
+          return deferred.promise;
+        }
+        setPendingScope({ request, resolve: deferred.resolve });
+        return deferred.promise;
+      },
+      requestLocalScope: (request) => {
+        const deferred = Promise.withResolvers<ConsoleLocalScopeResolution | null>();
+        if (!alive.current) {
+          deferred.resolve(null);
+          return deferred.promise;
+        }
+        setPendingLocalScope({ request, resolve: deferred.resolve });
+        return deferred.promise;
+      },
+      escalateScopedAudit: (request) => {
+        const deferred = Promise.withResolvers<boolean>();
+        if (!alive.current) {
+          deferred.resolve(false);
+          return deferred.promise;
+        }
+        setPendingEscalation({ request, resolve: deferred.resolve });
+        return deferred.promise;
+      },
+      approveTool: (call) => {
+        const deferred = Promise.withResolvers<boolean>();
+        if (!alive.current) {
+          deferred.resolve(false);
+          return deferred.promise;
+        }
+        setPendingToolApproval({ call, resolve: deferred.resolve });
+        return deferred.promise;
+      },
+    });
+    // resolvedModel() is the id the runtime actually settled on after
+    // provider detection — not necessarily what was requested — so it is
+    // the only value honest enough to display.
+    return { session: created, model: runtime.resolvedModel() };
+  }, [options]);
+
+  useEffect(() => {
+    let created: ConsoleSession | null = null;
+    alive.current = true;
+
+    try {
+      const built = buildSession();
+      created = built.session;
+      setModelId(built.model);
+      setSession(created);
+    } catch (error) {
+      setStartupError(error instanceof Error ? error.message : String(error));
+    }
+
+    return () => {
+      alive.current = false;
+      setPendingScope((pending) => {
+        pending?.resolve(null);
+        return null;
+      });
+      setPendingLocalScope((pending) => {
+        pending?.resolve(null);
+        return null;
+      });
+      setPendingEscalation((pending) => {
+        pending?.resolve(false);
+        return null;
+      });
+      setPendingToolApproval((pending) => {
+        pending?.resolve(false);
+        return null;
+      });
+      setActiveSubagents({});
+      void created?.cleanup();
+    };
+  }, []);
+
+  /**
+   * Claim the structured diagnostics channel while the console is mounted.
+   *
+   * The channel writes to stderr by default, which is right for a CLI run
+   * but would paint straight over this renderer. Claiming redirects those
+   * messages into the transcript, and `replay: true` picks up anything
+   * emitted during startup before this effect ran.
+   *
+   * The stream-level output guard stays installed regardless: only part of
+   * core has been migrated to the channel, so un-migrated call sites can
+   * still write directly (see diagnostics/MIGRATION.md).
+   */
+  useEffect(() => {
+    return claimDiagnostics(
+      {
+        emit: (event) => {
+          if (!alive.current) return;
+          if (!settingsRef.current.showRuntimeNotices) return;
+          appendEntry({
+            kind: event.level === "error" ? "error" : "notice",
+            text: `runtime: ${event.message}`,
+            detail: event.fields && Object.keys(event.fields).length > 0
+              ? Object.entries(event.fields).map(([k, v]) => `${k}=${String(v)}`).join(" ")
+              : undefined,
+            turn: turn.current,
+          });
+        },
+      },
+      { replay: true },
+    );
+  }, [appendEntry]);
+
+  // Surface anything the runtime wrote to stdout/stderr while the TUI owns
+  // the screen. The output guard has already intercepted it (so it cannot
+  // corrupt the framebuffer); showing it here keeps operationally important
+  // notices — plan quota exhausted, retry budget spent, scanner warnings —
+  // visible instead of silently swallowed.
+  useEffect(() => {
+    return onTuiOutputLine((line) => {
+      if (!alive.current) return;
+      if (!settingsRef.current.showRuntimeNotices) return;
+      appendEntry({
+        kind: "notice",
+        text: line.stream === "stderr" ? `runtime: ${line.text}` : line.text,
+        turn: turn.current,
+      });
+    });
+  }, [appendEntry]);
+
+  // Tell herdr when 0sec is parked on a human decision, so the pane joins
+  // its attention queue instead of looking busy. No-op outside herdr.
+  useEffect(() => {
+    reportOperatorGate(Boolean(pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval || secretPrompt));
+  }, [pendingScope, pendingLocalScope, pendingEscalation, pendingToolApproval, secretPrompt]);
+
+  useEffect(() => {
+    if (!settings.showTimestamps) return;
+    const timer = setInterval(() => setClockTick(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, [settings.showTimestamps]);
+
+  // Refresh the git context behind the status bar. readGitStatus never
+  // throws and is time-boxed, so a huge or broken repo degrades to
+  // "not a repo" instead of stalling a frame.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void readGitStatus(process.cwd()).then((next) => {
+        if (!cancelled) setGit(next);
+      });
+    };
+    refresh();
+    const timer = setInterval(refresh, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  // Subscribe to subagent lifecycle events from the core event bus.
+  // Filter by this session's scanId; remove active entries on terminal state.
+  useEffect(() => {
+    if (!session) return;
+    const scanId = session.scanId;
+    const unsub = eventBus.subscribe({
+      emit: (type, payload) => {
+        if (type !== "subagent_lifecycle") return;
+        const event = payload as unknown as SubagentLifecyclePayload;
+        if (event.parent_scan_id !== scanId) return;
+        setActiveSubagents((prev) => reduceActiveSubagents(prev, event));
+      },
+    });
+    return unsub;
+  }, [session]);
+
+  const resolveScope = useCallback((approved: boolean) => {
+    const pending = pendingScope;
+    if (!pending) return;
+    setPendingScope(null);
+    if (!approved) {
+      pending.resolve(null);
+      appendEntry({ kind: "notice", text: "scope extension rejected; the requested tool did not run", turn: turn.current });
+      return;
+    }
+
+    const resolution = buildScopeResolution(pending.request);
+    if (!resolution) {
+      pending.resolve(null);
+      appendEntry({ kind: "notice", text: "scope extension could not be safely constructed", turn: turn.current });
+      return;
+    }
+
+    pending.resolve(resolution);
+    setTarget(resolution.target);
+    setScopeRules(resolution.scope.raw.in_scope ?? []);
+    appendEntry({ kind: "notice", text: `session scope approved: ${(resolution.scope.raw.in_scope ?? []).join(", ")}`, turn: turn.current });
+  }, [appendEntry, pendingScope]);
+
+  const resolveLocalScope = useCallback((approved: boolean) => {
+    const pending = pendingLocalScope;
+    if (!pending) return;
+    setPendingLocalScope(null);
+    if (!approved) {
+      pending.resolve(null);
+      appendEntry({
+        kind: "notice",
+        text: "local directory access declined; the tool did not run",
+        turn: turn.current,
+      });
+      return;
+    }
+    // Authorize the directory the operator was actually shown. The engine
+    // re-canonicalizes and re-checks it, so a symlink swapped between the
+    // prompt and the apply cannot widen what was approved.
+    pending.resolve({ scopePath: pending.request.requestedPath });
+    appendEntry({
+      kind: "notice",
+      text: `local scope approved: ${pending.request.requestedPath}`,
+      detail: "This directory subtree only, for this session. Nothing is written to disk.",
+      turn: turn.current,
+    });
+  }, [appendEntry, pendingLocalScope]);
+
+  const resolveEscalation = useCallback((approved: boolean) => {
+    const pending = pendingEscalation;
+    if (!pending) return;
+    setPendingEscalation(null);
+    pending.resolve(approved);
+    appendEntry({
+      kind: "notice",
+      text: approved
+        ? `${pending.request.call.name} enabled for this session`
+        : `${pending.request.call.name} left disabled`,
+      detail: approved
+        ? "Scope and approval rules still apply to it — this only lifts the source-audit tool restriction."
+        : undefined,
+      turn: turn.current,
+    });
+  }, [appendEntry, pendingEscalation]);
+
+  const resolveToolApproval = useCallback((approved: boolean) => {
+    const pending = pendingToolApproval;
+    if (!pending) return;
+    setPendingToolApproval(null);
+    pending.resolve(approved);
+    appendEntry({
+      kind: "notice",
+      text: approved ? `${pending.call.name} approved` : `${pending.call.name} rejected`,
+      turn: turn.current,
+    });
+  }, [appendEntry, pendingToolApproval]);
+
+  /**
+   * `send` is declared after the command router, but /explain needs to
+   * submit a real turn. A ref breaks the cycle without reordering two
+   * large callbacks or making either depend on the other's identity.
+   */
+  const submitRef = useRef<((text: string) => Promise<void>) | null>(null);
+  /** True once the model has produced visible tokens in this turn. */
+  const streamingRef = useRef(false);
+  /** Name of the tool currently executing, for the tool animation. */
+  const [runningTool, setRunningTool] = useState<string | null>(null);
+
+  const routeSlashCommand = useCallback((raw: string): boolean => {
+    const parsed = findCommand(raw);
+    if (!parsed.isSlash) return false;
+
+    if (!parsed.isKnown || !parsed.command) {
+      appendEntry({
+        kind: "notice",
+        text: parsed.rawName ? `unknown command: /${parsed.rawName}` : "choose a slash command",
+        detail: "Type /help to browse local commands.",
+        turn: turn.current,
+      });
+      return true;
+    }
+
+    const args = parsed.args.trim();
+    switch (parsed.command) {
+      case "help": {
+        const query = args.startsWith("/") ? args.slice(1) : args;
+        const commands = query ? filterCommands(query) : commandCatalog;
+        appendEntry({
+          kind: "panel",
+          text: "help",
+          panel: buildHelpPanel(commands, query || undefined),
+          turn: turn.current,
+        });
+        return true;
+      }
+      case "status":
+        appendEntry({
+          kind: "panel",
+          text: "status",
+          panel: buildStatusPanel({
+            model: modelId ?? undefined,
+            provider: modelId ? modelProvider(modelId) : undefined,
+            mode: modeLabel(mode),
+            target: target || undefined,
+            scopeRules,
+            toolCount: session?.tools.length ?? 0,
+            turns: turn.current,
+            inputTokens: sessionTokens.input,
+            outputTokens: sessionTokens.output,
+          }),
+          turn: turn.current,
+        });
+        return true;
+      case "scope":
+        appendEntry({
+          kind: "panel",
+          text: "scope",
+          panel: buildScopePanel({
+            target: target || undefined,
+            scopeRules,
+            mode: modeLabel(mode),
+          }),
+          turn: turn.current,
+        });
+        return true;
+      case "resume": {
+        const saved = listSessions(undefined, { cwd: process.cwd(), limit: 30 });
+        if (saved.length === 0) {
+          appendEntry({
+            kind: "notice",
+            text: "no saved sessions for this directory",
+            detail: "Sessions are stored per project after each completed turn.",
+            turn: turn.current,
+          });
+          return true;
+        }
+        if (busy) {
+          appendEntry({ kind: "notice", text: "wait for the active turn before resuming", turn: turn.current });
+          return true;
+        }
+        const items: SelectorItem[] = saved.map((meta) => ({
+          id: meta.id,
+          label: meta.preview || "(no prompt recorded)",
+          meta: `${meta.messageCount} msg${meta.messageCount === 1 ? "" : "s"}${meta.model ? ` · ${meta.model}` : ""}`,
+          detail: `${meta.target ? `target ${meta.target} · ` : ""}saved ${new Date(meta.savedAt).toISOString()}`,
+          current: session?.scanId === meta.id,
+        }));
+        setPicker({
+          state: createSelectorState("Resume a session", items),
+          commit: (id) => {
+            const stored = loadSession(id);
+            if (!stored) {
+              appendEntry({
+                kind: "error",
+                text: "could not read that session",
+                detail: "The file is missing or unreadable; nothing was changed.",
+                turn: turn.current,
+              });
+              return;
+            }
+            const previous = session;
+            let built: { session: ConsoleSession; model: string };
+            try {
+              // Rebuild around the stored transcript. A failed rebuild must
+              // leave the operator exactly where they were.
+              built = buildSession({
+                initialMessages: stored.messages as never,
+                model: stored.model,
+              });
+            } catch (error) {
+              appendEntry({
+                kind: "error",
+                text: "could not resume that session",
+                detail: error instanceof Error ? error.message : String(error),
+                turn: turn.current,
+              });
+              return;
+            }
+            setSession(built.session);
+            setModelId(built.model);
+            if (previous) void previous.cleanup();
+            setEntries([]);
+            turn.current = 0;
+            appendEntry({
+              kind: "notice",
+              text: `resumed session ${id}`,
+              detail: `${stored.messageCount} prior message(s) restored. The transcript above starts fresh; the model still has the history.`,
+              turn: turn.current,
+            });
+          },
+        });
+        return true;
+      }
+      case "providers": {
+        const states = providerStates(process.env);
+        const items: SelectorItem[] = states.map((provider) => ({
+          id: provider.id,
+          label: provider.label,
+          meta: provider.configured
+            ? `configured${provider.via ? ` via ${provider.via}` : ""}`
+            : "not configured",
+          detail: provider.configured
+            ? `Credentials found. Select to replace the stored key.`
+            : provider.hint,
+          current: provider.configured,
+        }));
+        setPicker({
+          state: createSelectorState("Providers · select one to set a key", items),
+          commit: (providerId) => {
+            const info = PROVIDERS.find((provider) => provider.id === providerId);
+            if (!info) return;
+            setSecretPrompt({
+              providerId,
+              label: info.label,
+              envVar: info.envVars[0] ?? "",
+              value: "",
+            });
+          },
+        });
+        return true;
+      }
+      case "feedback": {
+        const message = args.trim();
+        if (!message) {
+          appendEntry({
+            kind: "notice",
+            text: "usage: /feedback <message>",
+            detail: "Feedback is written to a local file. Nothing is transmitted.",
+            turn: turn.current,
+          });
+          return true;
+        }
+        const written = appendFeedback({
+          message,
+          timestamp: new Date().toISOString(),
+          version: VERSION,
+          model: modelId ?? undefined,
+          mode: modeLabel(mode),
+        });
+        appendEntry({
+          kind: written.ok ? "notice" : "error",
+          text: written.ok ? "feedback recorded locally" : "could not write feedback",
+          detail: written.ok
+            ? `Saved to ${written.path}. Nothing was transmitted — share it if and when you choose.`
+            : written.error,
+          turn: turn.current,
+        });
+        return true;
+      }
+      case "explain": {
+        if (!session) {
+          appendEntry({ kind: "notice", text: "runtime is not ready", turn: turn.current });
+          return true;
+        }
+        if (busy) {
+          appendEntry({ kind: "notice", text: "wait for the active turn before asking for an explanation", turn: turn.current });
+          return true;
+        }
+        const topic = args.trim();
+        if (entries.length === 0 && !topic) {
+          appendEntry({
+            kind: "notice",
+            text: "nothing to explain yet",
+            detail: "Run something first, or use /explain <topic>.",
+            turn: turn.current,
+          });
+          return true;
+        }
+        // Sent as a normal turn so the explanation is a real model answer
+        // grounded in this conversation, not a canned local string.
+        const prompt = topic
+          ? `Explain "${topic}" in plain language for a non-technical reader. Avoid jargon; when a security term is unavoidable, define it in one short clause. Be concrete about impact and what someone should actually do.`
+          : `Explain your previous result in plain language for a non-technical reader. Avoid jargon; when a security term is unavoidable, define it in one short clause. Cover what was found, why it matters, and what to do next. Do not overstate certainty — say plainly if something is unconfirmed.`;
+        void submitRef.current?.(prompt);
+        return true;
+      }
+      case "settings": {
+        const openSettings = (live: TuiSettings) => {
+          const values = live as unknown as Record<string, unknown>;
+          const items: SelectorItem[] = SETTING_DEFS.map((def) => {
+            const value = values[def.key];
+            return {
+              id: def.key,
+              label: def.label,
+              meta: typeof value === "boolean" ? (value ? "on" : "off") : String(value),
+              detail: def.description,
+            };
+          });
+          setPicker({
+            state: createSelectorState("Console settings", items),
+            commit: (key) => {
+              const next = toggleSetting(live, key);
+              setSettings(next);
+              if (!saveSettings(next)) {
+                appendEntry({
+                  kind: "notice",
+                  text: "settings changed for this session only",
+                  detail: "The settings file could not be written.",
+                  turn: turn.current,
+                });
+              }
+              // Reopen against the updated values so the meta column shows
+              // the new state immediately.
+              openSettings(next);
+            },
+          });
+        };
+        openSettings(settings);
+        return true;
+      }
+      case "model": {
+        const requested = args.trim();
+        if (!requested) {
+          if (!session) {
+            appendEntry({ kind: "notice", text: "runtime is not ready", turn: turn.current });
+            return true;
+          }
+          // Deliberately NOT annotating each row with "no credentials".
+          // The catalogue's provider comes from the pricing table, while
+          // the runtime resolves a model's provider through its own
+          // detection and failover order (`providerForModel`, which core
+          // does not export). Those disagree — an OpenAI-named model can
+          // in fact be served by the ChatGPT/Codex backend — so a per-row
+          // verdict would flag working models as broken. Report only what
+          // is verifiable: which providers hold credentials.
+          const configured = providerStates(process.env)
+            .filter((provider) => provider.configured)
+            .map((provider) => provider.label);
+          setPicker({
+            state: createSelectorState(
+              configured.length > 0
+                ? `Select model · credentials: ${configured.join(", ")}`
+                : "Select model · no provider credentials found",
+              modelSelectorItems(modelId ?? undefined),
+              modelId ?? undefined,
+            ),
+            commit: (id) => void routeSlashCommand(`/model ${id}`),
+          });
+          return true;
+        }
+        if (busy) {
+          appendEntry({
+            kind: "notice",
+            text: "wait for the active turn before switching model",
+            turn: turn.current,
+          });
+          return true;
+        }
+        if (!session) {
+          appendEntry({
+            kind: "notice",
+            text: "runtime is not ready; model is unchanged",
+            turn: turn.current,
+          });
+          return true;
+        }
+        if (requested === modelId) {
+          appendEntry({ kind: "notice", text: `Model is already ${requested}`, turn: turn.current });
+          return true;
+        }
+        // The model is fixed when the runtime is constructed, so switching
+        // means building a new session. Carry the conversation across so an
+        // engagement does not lose its context, and keep the old session
+        // alive until the new one is built — a failed switch must leave the
+        // operator exactly where they were.
+        const previous = session;
+        let built: { session: ConsoleSession; model: string };
+        try {
+          built = buildSession({ model: requested, initialMessages: previous.messages });
+        } catch (error) {
+          appendEntry({
+            kind: "notice",
+            text: `could not switch to ${requested}; model is unchanged`,
+            detail: error instanceof Error ? error.message : String(error),
+            turn: turn.current,
+          });
+          return true;
+        }
+        setSession(built.session);
+        setModelId(built.model);
+        void previous.cleanup();
+        appendEntry({
+          kind: "notice",
+          text: `Model: ${built.model} (${modelProvider(built.model)})`,
+          detail: `${previous.messages.length} prior message(s) carried over.`,
+          turn: turn.current,
+        });
+        return true;
+      }
+      case "mode": {
+        const modeArg = args.toLowerCase();
+        if (!modeArg) {
+          const modeItems: SelectorItem[] = [
+            {
+              id: "standard",
+              label: "Standard",
+              meta: "automatic in scope",
+              detail: "Runs automatically inside scope; asks only to extend it.",
+              current: mode === "standard",
+            },
+            {
+              id: "copilot",
+              label: "Co-pilot",
+              meta: "approve each action",
+              detail: "Asks before every non-read-only tool call.",
+              current: mode === "copilot",
+            },
+            {
+              id: "yolo",
+              label: "YOLO",
+              meta: scopeRules.length === 0 ? "needs a scope" : "no prompts in scope",
+              detail: "No prompts, but only inside an already-configured scope.",
+              current: mode === "yolo",
+              // Selecting YOLO without a scope cannot be honoured, so it is
+              // shown greyed rather than silently failing on commit.
+              disabled: scopeRules.length === 0,
+            },
+          ];
+          setPicker({
+            state: createSelectorState("Engagement mode", modeItems, mode),
+            commit: (id) => void routeSlashCommand(`/mode ${id}`),
+          });
+          return true;
+        }
+        if (modeArg !== "standard" && modeArg !== "copilot" && modeArg !== "yolo") {
+          appendEntry({
+            kind: "notice",
+            text: "invalid mode",
+            detail: "Use /mode standard, /mode copilot, or /mode yolo.",
+            turn: turn.current,
+          });
+          return true;
+        }
+        if (busy) {
+          appendEntry({
+            kind: "notice",
+            text: "wait for the active turn before changing mode",
+            turn: turn.current,
+          });
+          return true;
+        }
+        if (!session) {
+          appendEntry({
+            kind: "notice",
+            text: "runtime is not ready; mode is unchanged",
+            turn: turn.current,
+          });
+          return true;
+        }
+        const next: ConsoleAutonomyMode = modeArg === "standard"
+          ? "standard"
+          : modeArg === "copilot"
+            ? "copilot"
+            : "yolo";
+        if (next === "yolo" && scopeRules.length === 0) {
+          appendEntry({
+            kind: "notice",
+            text: "YOLO requires a configured scope; mode is unchanged",
+            detail: "Use Standard or Co-pilot to approve a narrow session-only scope extension first.",
+            turn: turn.current,
+          });
+          return true;
+        }
+        session.setAutonomyMode(next);
+        setMode(next);
+        appendEntry({
+          kind: "notice",
+          text: `Mode: ${modeLabel(next)}`,
+          detail: next === "standard"
+            ? "0sec works automatically inside scope and requests approval only for narrow session-only scope extensions."
+            : next === "copilot"
+              ? "0sec asks before each non-read-only tool and before narrow session-only scope extensions."
+              : "0sec works without prompts only inside the configured scope; missing or out-of-scope work is denied.",
+          turn: turn.current,
+        });
+        return true;
+      }
+      case "tools": {
+        const toolNames = session?.tools.map((tool) => tool.name) ?? [];
+        appendEntry({
+          kind: "panel",
+          text: "tools",
+          panel: buildToolsPanel(toolNames),
+          turn: turn.current,
+        });
+        return true;
+      }
+      case "agents": {
+        const agents = Object.values(activeSubagents);
+        appendEntry({
+          kind: "notice",
+          text: agents.length > 0 ? `${agents.length} active subagent${agents.length === 1 ? "" : "s"}` : "No active subagents",
+          detail: agents.length > 0
+            ? agents.map((agent) => agent.task).join(" · ")
+            : "Subagents appear here when 0sec delegates work.",
+          turn: turn.current,
+        });
+        return true;
+      }
+      case "chat":
+        appendEntry({
+          kind: "notice",
+          text: "Chat is already active",
+          detail: "Type a request to continue the current conversation.",
+          turn: turn.current,
+        });
+        return true;
+      case "launcher":
+        onNavigate("launcher");
+        return true;
+      case "ops":
+        onNavigate("ops");
+        return true;
+      case "history":
+        onNavigate("history");
+        return true;
+      case "findings":
+        onNavigate("findings");
+        return true;
+      case "doctor":
+        onNavigate("doctor");
+        return true;
+      case "replay":
+        onNavigate("replay");
+        return true;
+      case "back":
+        onGoBack();
+        return true;
+      case "exit":
+        onExit();
+        return true;
+      default:
+        appendEntry({
+          kind: "notice",
+          text: `unknown command: /${parsed.rawName}`,
+          turn: turn.current,
+        });
+        return true;
+    }
+  }, [
+    activeSubagents,
+    appendEntry,
+    busy,
+    commandCatalog,
+    mode,
+    onExit,
+    onGoBack,
+    onNavigate,
+    scopeLabel,
+    scopeRules,
+    session,
+    target,
+  ]);
+
+  const send = useCallback(async (raw: string) => {
+    const text = raw.trim();
+    if (!text) return;
+    if (routeSlashCommand(text)) return;
+    if (busy || !session) return;
+
+    const currentTurn = ++turn.current;
+    setBusy(true);
+    appendEntry({ kind: "user", text, turn: currentTurn });
+    let assistantText = "";
+    // Reasoning is a separate stream from the answer and gets its own
+    // accumulator so the two never interleave into one entry.
+    let reasoningText = "";
+    streamingRef.current = false;
+
+    try {
+      const outcome = await session.send(text, {
+        onAssistantDelta: (chunk) => {
+          assistantText += chunk;
+          streamingRef.current = true;
+          setEntries((current) => {
+            const last = current.at(-1);
+            if (last?.kind === "assistant" && last.turn === currentTurn) {
+              return [...current.slice(0, -1), { ...last, text: assistantText }];
+            }
+            return [...current, {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              kind: "assistant",
+              text: assistantText,
+              turn: currentTurn,
+            }];
+          });
+        },
+        onReasoningDelta: (chunk) => {
+          reasoningText += chunk;
+          setEntries((current) => {
+            const last = current.at(-1);
+            if (last?.kind === "reasoning" && last.turn === currentTurn) {
+              return [...current.slice(0, -1), { ...last, text: reasoningText }];
+            }
+            return [...current, {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              kind: "reasoning",
+              text: reasoningText,
+              turn: currentTurn,
+            }];
+          });
+        },
+        onToolStart: (call) => {
+          setRunningTool(call.name);
+          // A tool call ends the current thought. Reset the accumulator so
+          // the NEXT reasoning entry contains only new reasoning: without
+          // this, the coalescing check below sees a tool entry as `last`,
+          // starts a fresh entry, and re-prints the entire thought history.
+          reasoningText = "";
+          appendEntry({
+          kind: "tool",
+          text: call.name,
+          detail: formatToolArgs(call),
+          turn: currentTurn,
+          });
+        },
+        onToolResult: (call, result) => {
+          setRunningTool(null);
+          if (call.name === "spawn_agent") {
+            const card = parseSubagentCard(result.success, result.output, result.error);
+            if (card) {
+              appendEntry({
+                kind: "subagent",
+                text: call.name,
+                success: result.success,
+                turn: currentTurn,
+                subagentOutcome: card.outcome,
+                subagentTurns: card.turns,
+                subagentFindings: card.findings,
+                subagentSummary: card.summary,
+                subagentError: card.error ?? "",
+              });
+              return;
+            }
+            // malformed output — fall through to generic tool card
+          }
+          // A counted summary ("4 matches in 3 files") beats a truncated JSON
+          // blob: the operator needs to know what happened, and the raw
+          // payload is already in the model's context, not theirs.
+          appendEntry({
+            kind: "tool",
+            text: call.name,
+            detail: formatToolResult(call, result),
+            success: result.success,
+            turn: currentTurn,
+          });
+        },
+        onUsage: (usage) => {
+          // Fires once per model call, so the operator watches the budget
+          // being consumed instead of discovering it at the stop.
+          setTurnBudget({ used: usage.turnTokensUsed, limit: usage.turnTokenBudget });
+        },
+        onNotice: (notice) => appendEntry({ kind: "notice", text: notice, turn: currentTurn }),
+      });
+
+      if (!assistantText && outcome.assistantText) {
+        appendEntry({ kind: "assistant", text: outcome.assistantText, turn: currentTurn });
+      }
+      setSessionTokens((prev) => ({
+        input: prev.input + outcome.usage.inputTokens,
+        output: prev.output + outcome.usage.outputTokens,
+      }));
+
+      // A turn that fails must say so. The engine reports failure through
+      // `stopReason`/`error`, and neither was surfaced before: a provider
+      // rejection rendered as "0 tool calls · 0→0 tok" and nothing else,
+      // which reads as the agent having simply ignored the operator.
+      const producedText = Boolean(assistantText || outcome.assistantText);
+      if (outcome.stopReason === "error") {
+        appendEntry({
+          kind: "error",
+          text: "turn failed",
+          detail: outcome.error ?? "The runtime reported an error but gave no message.",
+          turn: currentTurn,
+        });
+      } else if (outcome.stopReason === "max_turn_tokens") {
+        // Report the real numbers: "paused" plus a budget the operator can
+        // see is far more actionable than a bare limit message.
+        const used = Math.round(outcome.budget.tokensUsed / 1000);
+        const limit = Math.round(outcome.budget.tokenBudget / 1000);
+        appendEntry({
+          kind: "error",
+          text: `paused at the turn token budget (${used}k of ${limit}k)`,
+          detail: `Ran ${outcome.budget.iterations} tool call${outcome.budget.iterations === 1 ? "" : "s"}. Send another message to continue — the conversation is kept, and nothing re-runs.`,
+          turn: currentTurn,
+        });
+      } else if (outcome.stopReason === "max_tool_iterations") {
+        appendEntry({
+          kind: "error",
+          text: `paused at the tool-call backstop (${outcome.budget.iterations} of ${outcome.budget.maxToolIterations})`,
+          detail: outcome.error
+            ?? "This guard only trips when calls report no token cost. Send another message to continue from here.",
+          turn: currentTurn,
+        });
+      } else if (!producedText && outcome.toolCalls.length === 0) {
+        // Not an error, but silence is never a useful answer.
+        appendEntry({
+          kind: "error",
+          text: "no response from the model",
+          detail: outcome.usage.inputTokens === 0 && outcome.usage.outputTokens === 0
+            ? "The request consumed no tokens, which usually means the provider rejected it — check /doctor and the model's credentials."
+            : "The model returned an empty reply. Try rephrasing, or /model to switch.",
+          turn: currentTurn,
+        });
+      }
+
+      if (settings.showTurnSummary) {
+        appendEntry({
+          kind: "notice",
+          text: `${outcome.toolCalls.length} tool call${outcome.toolCalls.length === 1 ? "" : "s"} · ${outcome.usage.inputTokens}→${outcome.usage.outputTokens} tok`,
+          turn: currentTurn,
+        });
+      }
+    } catch (error) {
+      appendEntry({
+        kind: "error",
+        text: "turn failed",
+        detail: error instanceof Error ? error.message : String(error),
+        turn: currentTurn,
+      });
+      setTurnBudget(null);
+      // Persist after each turn rather than only on exit: a crash, a lost
+      // SSH session or a plain Ctrl+C should still leave something to
+      // resume. Failure is non-fatal — the console keeps working.
+      if (session) {
+        const firstUser = entriesRef.current.find((entry) => entry.kind === "user");
+        saveSession({
+          id: session.scanId,
+          savedAt: Date.now(),
+          target: session.target || undefined,
+          model: modelId ?? undefined,
+          mode: modeLabel(mode),
+          cwd: process.cwd(),
+          messageCount: session.messages.length,
+          preview: firstUser?.text ?? "",
+          messages: session.messages as unknown[],
+        });
+        pruneSessions();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [appendEntry, busy, routeSlashCommand, session, settings.showTurnSummary]);
+  submitRef.current = send;
+
+  // Deliver one parked message per idle transition. One at a time rather than a
+  // loop: delivering makes the console busy again, so the NEXT idle drains the
+  // one after it. That preserves FIFO order without the drain re-entering
+  // itself, and it means a queued message never races the turn it was typed
+  // during.
+  useEffect(() => {
+    if (busy || !session) return;
+    const { next, rest } = dequeueComposerInput(queuedRef.current);
+    if (next === undefined) return;
+    queuedRef.current = rest;
+    setQueuedCount(rest.length);
+    void submitRef.current?.(next);
+  }, [busy, session]);
+
+  useKeyboard((key) => {
+    if (pendingScope) {
+      if (key.name === "return") resolveScope(true);
+      if (key.name === "escape") resolveScope(false);
+      return;
+    }
+    if (pendingLocalScope) {
+      if (key.name === "return") resolveLocalScope(true);
+      if (key.name === "escape") resolveLocalScope(false);
+      return;
+    }
+    if (pendingEscalation) {
+      if (key.name === "return") resolveEscalation(true);
+      if (key.name === "escape") resolveEscalation(false);
+      return;
+    }
+    if (pendingToolApproval) {
+      if (key.name === "return") resolveToolApproval(true);
+      if (key.name === "escape") resolveToolApproval(false);
+      return;
+    }
+    // The picker is modal: while it is open it owns navigation, typing and
+    // Enter, so a stray keystroke cannot leak into the composer behind it.
+    // Ctrl+C still exits, because a modal must never trap the operator.
+    if (secretPrompt) {
+      if (key.ctrl && key.name === "c") {
+        onExit();
+        return;
+      }
+      if (key.name === "escape") {
+        setSecretPrompt(null);
+        return;
+      }
+      if (key.name === "return") {
+        const entry = secretPrompt;
+        setSecretPrompt(null);
+        const secret = entry.value.trim();
+        if (!secret) {
+          appendEntry({ kind: "notice", text: "no credential entered; nothing was saved", turn: turn.current });
+          return;
+        }
+        const stored = loadCredentials();
+        const ok = saveCredentials({ ...stored, [entry.providerId]: secret });
+        // The secret itself is never echoed back into the transcript.
+        appendEntry({
+          kind: ok ? "notice" : "error",
+          text: ok
+            ? `${entry.label} credential saved (${redactSecret(secret)})`
+            : `could not save the ${entry.label} credential`,
+          detail: ok
+            ? `Stored owner-only and exported as ${entry.envVar}. Use /model to switch to one of its models.`
+            : "The credentials file could not be written.",
+          turn: turn.current,
+        });
+        if (ok) process.env[entry.envVar] = secret;
+        return;
+      }
+      if (key.name === "backspace") {
+        setSecretPrompt((p) => (p ? { ...p, value: p.value.slice(0, -1) } : p));
+        return;
+      }
+      if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta && key.sequence >= " ") {
+        const char = key.sequence;
+        setSecretPrompt((p) => (p ? { ...p, value: p.value + char } : p));
+        return;
+      }
+      return;
+    }
+    if (picker) {
+      if (key.ctrl && key.name === "c") {
+        onExit();
+        return;
+      }
+      if (key.name === "escape") {
+        setPicker(null);
+        return;
+      }
+      if (key.name === "return") {
+        const choice = highlighted(picker.state);
+        const commit = picker.commit;
+        setPicker(null);
+        if (choice && !choice.disabled) commit(choice.id);
+        return;
+      }
+      if (key.name === "up") {
+        setPicker((p) => (p ? { ...p, state: reduceSelector(p.state, { type: "up" }) } : p));
+        return;
+      }
+      if (key.name === "down") {
+        setPicker((p) => (p ? { ...p, state: reduceSelector(p.state, { type: "down" }) } : p));
+        return;
+      }
+      if (key.name === "backspace") {
+        setPicker((p) => (p ? { ...p, state: reduceSelector(p.state, { type: "backspace" }) } : p));
+        return;
+      }
+      if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta && key.sequence >= " ") {
+        const char = key.sequence;
+        setPicker((p) => (p ? { ...p, state: reduceSelector(p.state, { type: "append", char }) } : p));
+        return;
+      }
+      return;
+    }
+    if (key.ctrl && key.name === "c") {
+      onExit();
+      return;
+    }
+    // Shift+Tab cycles the autonomy mode. It is handled ABOVE the composing
+    // block for two reasons: it should work while the operator is mid-sentence,
+    // and the composing block's catch-all appends `key.sequence` for anything
+    // without ctrl/meta — which meant Shift+Tab used to paste its own raw
+    // escape sequence (`\x1b[Z`, or `\x1b[9;2u` under the kitty protocol) into
+    // the composer.
+    //
+    // The cycle delegates to `/mode` rather than calling `setAutonomyMode`
+    // directly, so it inherits that command's preconditions for free: refuse
+    // mid-turn, refuse without a runtime, and refuse YOLO without a scope. YOLO
+    // is skipped entirely when no scope is configured, so the cycle degrades to
+    // a two-state toggle instead of stopping on a mode it cannot enter.
+    if (key.name === "tab" && key.shift) {
+      const cycle: ConsoleAutonomyMode[] = scopeRules.length === 0
+        ? ["standard", "copilot"]
+        : ["standard", "copilot", "yolo"];
+      const at = cycle.indexOf(mode);
+      const next = cycle[(at + 1) % cycle.length] ?? "standard";
+      routeSlashCommand(`/mode ${next}`);
+      return;
+    }
+    if (key.ctrl && (key.name === "p" || key.name === "k")) {
+      composingRef.current = true;
+      setComposing(true);
+      setComposerText("/");
+      return;
+    }
+    if (key.name === "escape") {
+      if (commandMenuOpenRef.current && composerRef.current.trimStart().startsWith("/")) {
+        setCommandMenuVisible(false);
+        return;
+      }
+      if (composingRef.current) {
+        composingRef.current = false;
+        setComposerText("");
+        setComposing(false);
+        return;
+      }
+      onGoBack();
+      return;
+    }
+    if (composingRef.current) {
+      if (commandMenuOpenRef.current && composerRef.current.trimStart().startsWith("/")) {
+        if (key.name === "up") {
+          setSlashSelected((current) => Math.max(0, current - 1));
+          return;
+        }
+        if (key.name === "down") {
+          setSlashSelected((current) => Math.min(Math.max(menuCommands.length - 1, 0), current + 1));
+          return;
+        }
+        if (key.name === "tab") {
+          if (selectedSlashCommand) {
+            setComposerText(completionFor(selectedSlashCommand, findCommand(composerRef.current).args));
+            setCommandMenuVisible(true);
+          }
+          return;
+        }
+      }
+      if (key.name === "return") {
+        const currentComposer = composerRef.current;
+        const parsed = findCommand(currentComposer);
+        const useSelectedCommand = commandMenuOpenRef.current
+          && composerRef.current.trimStart().startsWith("/")
+          && selectedSlashCommand !== undefined
+          && (!parsed.rawName || (!parsed.isKnown && commandMatchesPrefix(selectedSlashCommand, parsed.rawName)));
+        const input = useSelectedCommand && selectedSlashCommand
+          ? completionFor(selectedSlashCommand, parsed.args)
+          : currentComposer;
+        if (!input.trim()) {
+          composingRef.current = false;
+          setComposerText("");
+          setComposing(false);
+          return;
+        }
+        const disposition = classifyComposerInput({
+          input,
+          isSlash: findCommand(input).isSlash,
+          busy,
+          hasSession: Boolean(session),
+        });
+        if (disposition === "queue") {
+          // A turn is in flight, or the session is still connecting. Park the
+          // message rather than dropping it. Before this, Enter here was a bare
+          // `return`: the text was discarded AND left in the composer, which is
+          // indistinguishable from a dead keyboard.
+          const { queue, accepted } = enqueueComposerInput(queuedRef.current, input);
+          queuedRef.current = queue;
+          setQueuedCount(queue.length);
+          appendEntry({
+            kind: accepted ? "notice" : "error",
+            text: accepted
+              ? `queued — will send when the current turn ends: ${input}`
+              : `queue is full (${COMPOSER_QUEUE_LIMIT} messages); not queued: ${input}`,
+            turn: turn.current,
+          });
+        } else if (disposition === "send") {
+          void send(input);
+        }
+        composingRef.current = false;
+        setComposerText("");
+        setComposing(false);
+        setCommandMenuVisible(false);
+        return;
+      }
+      if (key.name === "backspace") {
+        setComposerText(composerRef.current.slice(0, -1));
+        return;
+      }
+      if (key.sequence && !key.ctrl && !key.meta) {
+        setComposerText(`${composerRef.current}${key.sequence}`);
+      }
+      return;
+    }
+    if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+      composingRef.current = true;
+      setComposing(true);
+      setComposerText(key.sequence);
+    }
+  });
+
+  const empty = entries.length === 0;
+  // Parked messages are surfaced next to the working indicator, because that is
+  // exactly where the operator is looking while they wait.
+  const queueLabel = composerQueueLabel(queuedCount);
+  // The status bar is built from data the session actually reports: the
+  // resolved model id, the real git tree, and accumulated turn usage. No
+  // context percentage is produced, because no context-window size is
+  // available anywhere in the codebase and inventing one would be worse
+  // than omitting it.
+  // Built at every width now: the bottom bar is the only place this state
+  // appears, so a compact terminal still gets the degraded version rather
+  // than nothing (fitStatusSegments drops low-priority segments to fit).
+  const statusBarText = fitStatusSegments(
+    buildStatusSegments({
+      model: modelId ?? undefined,
+      mode: modeLabel(mode),
+      cwd: process.cwd(),
+      home: homedir(),
+      branch: git?.isRepo ? git.branch ?? git.detachedSha : undefined,
+      modified: git?.modified,
+      untracked: git?.untracked,
+      inputTokens: sessionTokens.input,
+      outputTokens: sessionTokens.output,
+      // The per-turn token budget, shown only while a turn is actually
+      // running. This is the turn budget, NOT a model context window —
+      // nothing in the codebase knows context-window sizes.
+      contextWindow: turnBudget?.limit,
+      contextUsed: turnBudget?.used,
+    }),
+    contentWidth,
+  );
+  // The picker reuses the menu's vertical budget: it occupies the same slot
+  // above the composer, so it must obey the same "leave the transcript real
+  // rows" rule rather than growing to the size of the model catalogue.
+  const pickerVisible = picker ? visibleItems(picker.state) : [];
+  const pickerMaxRows = picker
+    ? computeCommandMenuHeight({ height, compact, rowsPerCommand: 1 }).maxCommands
+    : 0;
+  const pickerWindow = picker
+    ? windowFor(picker.state, pickerMaxRows)
+    : { start: 0, end: 0 };
+  const pickerRows = pickerVisible.slice(pickerWindow.start, pickerWindow.end);
+  const pickerDetail = picker ? highlighted(picker.state)?.detail ?? "" : "";
+  // The detail line is an extra row inside the box; count it or the border
+  // gets painted through the last entry.
+  const pickerBoxHeight = commandMenuBoxHeight(Math.max(pickerRows.length, 1), 1)
+    + (pickerDetail ? 1 : 0);
+  const pickerInnerWidth = Math.max(1, contentWidth - 4);
+  const pickerLabelWidth = Math.max(1, Math.floor(pickerInnerWidth * 0.45));
+  const pickerMetaWidth = Math.max(0, pickerInnerWidth - pickerLabelWidth - 1);
+  // Usable width INSIDE the transcript panel: the ledger box adds its own
+  // paddingX, which an entry's own border must live within.
+  const transcriptWidth = Math.max(8, contentWidth - (compact ? 2 : 4));
+  // "0sec" is 4 cells; the mode label is right-sized to its own text so
+  // the engagement summary gets every remaining cell.
+  const headerModeWidth = Math.min(10, Math.max(1, contentWidth - 8));
+  const headerEngagementWidth = Math.max(1, contentWidth - 4 - headerModeWidth - 2);
+  // Relative ages need a clock, but the transcript must not repaint every
+  // second just to age a label. Tick only while timestamps are enabled, and
+  // only at the granularity the format actually shows.
+  const entryDisplay = {
+    spacing: settings.density === "compact" ? 0 : 1,
+    showTimestamps: settings.showTimestamps,
+    now: clockTick,
+  };
+  // One animation kind per real state. `awaiting-operator` is deliberately
+  // NOT a busy spinner: when the human is the bottleneck the surface should
+  // look expectant, not like it is grinding.
+  const gateOpen = Boolean(pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval || secretPrompt);
+  const animationKind: AnimationKind | null = gateOpen
+    ? "awaiting-operator"
+    : runningTool
+      ? "tool"
+      : !session
+        ? "connecting"
+        : busy
+          ? streamingRef.current
+            ? "streaming"
+            : "thinking"
+          : null;
+  // animTick is read only to make the frame recompute on each interval.
+  void animTick;
+  const animation = animationKind
+    ? frameAt(animationKind, Date.now() - activitySince.current, {
+        label: animationKind === "tool" ? runningTool ?? undefined : undefined,
+      })
+    : null;
+
+  // Drive the animation at the kind's own interval; stop entirely when
+  // nothing is animating so an idle console costs no repaints.
+  useEffect(() => {
+    if (!animationKind) return;
+    const timer = setInterval(
+      () => setAnimTick((n) => n + 1),
+      frameIntervalMs(animationKind),
+    );
+    return () => clearInterval(timer);
+  }, [animationKind]);
+
+  // Restart the elapsed clock whenever the kind of activity changes.
+  useEffect(() => {
+    activitySince.current = Date.now();
+  }, [animationKind]);
+
+  const menu = computeCommandMenuLayout({ width, compact });
+  // Height is stated explicitly so the border is drawn where the content
+  // actually ends, and flexShrink is disabled so the column cannot squeeze
+  // the box out from under its own children.
+  const commandMenuHeight = commandMenuBoxHeight(menuCommands.length, commandRowsPerCommand);
+
+  const commandMenuVisible = composing && commandMenuOpen && isSlashComposer;
+  // Every overlay — command menu, picker, approval panel — already prints
+  // its own key hints inside its border. Repeating them down here is the
+  // duplication that made the old two-line composer read as noise. So the
+  // bar yields to contextual keys ONLY while composing plain text, where
+  // "enter send · esc cancel" appears nowhere else on screen.
+  const showContextualKeys = composing && !commandMenuVisible && !picker;
+  const subagentCount = Object.keys(activeSubagents).length;
+  // Every other region in the column is flexShrink={0}, so the transcript
+  // absorbs all the pressure. Compute what it actually has left: a
+  // scrollbox squeezed below its content still paints that content, and
+  // the empty state then interleaves into itself.
+  const ledgerRows = computeLedgerRows({
+    height,
+    compact,
+    menuRows: commandMenuVisible ? commandMenuHeight : 0,
+    subagentRows: subagentCount > 0 ? subagentCount + 2 : 0,
+    approvalRows: pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval ? 6 : 0,
+  });
+  // Optional empty-state lines are dropped from the bottom up rather than
+  // overprinted. The mark needs the most room, so it goes first.
+  const showTerminalMark = settings.showLogo && empty && !compact && ledgerRows >= LEDGER_MARK_ROWS;
+  const showEmptyStateHint = empty && ledgerRows >= 4;
+  const showEmptyStateTagline = empty && ledgerRows >= 3;
+  const sessionState = startupError ? "unavailable" : busy ? "working" : session ? "ready" : "connecting";
+  const targetSummary = target ? `target: ${target}` : "target: none";
+  const scopeSummary = `scope: ${scopeLabel} · ${sessionState}`;
+  const headerEngagement = `${targetSummary} · ${scopeSummary}`;
+
+  const controls = pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval
+    ? "enter approve · esc reject"
+    : commandMenuVisible
+      ? "↑↓ select · tab complete · enter run · esc close"
+      : composing
+        ? "enter send · esc cancel"
+        : "type to chat · / commands · shift+tab mode · ctrl+p / ctrl+k palette · esc back";
+  const commandMenuInnerWidth = menu.innerWidth;
+  const commandRowWidth = menu.rowWidth;
+  const commandNameWidth = menu.nameWidth;
+  const commandMetaWidth = menu.metaWidth;
+  const commandHeaderTitleWidth = menu.headerTitleWidth;
+  const commandHeaderQueryWidth = menu.headerQueryWidth;
+  const commandHeaderGap = menu.headerGap;
+  const modeColor = mode === "yolo" ? SUCCESS : mode === "copilot" ? INFO : PRIMARY;
+
+  return (
+    <box flexDirection="column" width="100%" height="100%" paddingLeft={compact ? 1 : 2} paddingRight={compact ? 1 : 2} paddingTop={1} backgroundColor={CANVAS}>
+      {/*
+        * flexShrink is disabled because this box is two stacked rows with
+        * no explicit height: when the column is over-subscribed Yoga
+        * collapses it to one row and the two lines overlap, which is how
+        * "0sec / chat" bled into "target: none" as "target:cnone".
+        */}
+      {/*
+        * ONE header row. It carries identity plus the two facts that are
+        * security-relevant at a glance — the engagement target and the
+        * scope state — and the autonomy mode on the right. Everything
+        * environmental (model, cwd, branch, counters) moved to the bottom
+        * bar, where it sits next to the input the operator is looking at.
+        */}
+      <box flexDirection="row" width="100%" minWidth={0} flexShrink={0} marginBottom={1} gap={1}>
+        <box flexDirection="row" flexShrink={0} minWidth={0}>
+          <text fg={PRIMARY}>0sec</text>
+        </box>
+        <box width={headerEngagementWidth} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(headerEngagement, headerEngagementWidth, { mode: "middle" })}</text>
+        </box>
+        <box width={headerModeWidth} flexShrink={0} minWidth={0}>
+          <text fg={modeColor}>{fitTuiText(modeLabel(mode), headerModeWidth)}</text>
+        </box>
+      </box>
+
+      <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" backgroundColor={PANEL} paddingX={compact ? 1 : 2} paddingY={1}>
+        {/*
+          * flexShrink={0}: this title shares the ledger box with a
+          * flexGrow scrollbox. Without it a tight column collapses the
+          * title to zero height while it still paints, so the transcript's
+          * first visible row lands on top of it.
+          */}
+        <box flexDirection="row" width="100%" minWidth={0} flexShrink={0}>
+          <text fg={MUTED}>EVIDENCE LEDGER</text>
+          <text fg={MUTED}> · {empty ? "awaiting an objective" : `${entries.length} records`}</text>
+        </box>
+        <scrollbox width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
+          <box flexDirection="column" width="100%">
+            {empty ? (
+              <box flexDirection="column" alignItems={showTerminalMark ? "center" : "flex-start"} paddingTop={showTerminalMark ? 3 : 1}>
+                {showTerminalMark ? (
+                  <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
+                    {/* Row 0 and row 4 are identical, so the line cannot be the key. */}
+                    {TERMINAL_BLOCK_LOGO.map((line, index) => <text key={`logo-${index}`} fg={PRIMARY}>{line}</text>)}
+                  </box>
+                ) : <text fg={PRIMARY}>0SEC · OPERATOR CONSOLE</text>}
+                {showEmptyStateTagline ? <text fg={TEXT}>evidence-first security research</text> : null}
+                {showEmptyStateHint ? <text fg={MUTED}>{fitTuiText("Describe an objective. 0sec enforces engagement scope before egress.", contentWidth)}</text> : null}
+                {!compact && showTerminalMark ? <text fg={MUTED}>{fitTuiText("Type / for local commands. Standard works in scope; Co-pilot confirms active work; YOLO requires a configured scope.", contentWidth)}</text> : null}
+              </box>
+            ) : entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay))}
+            {animation ? (
+              <box flexDirection="row" minWidth={0} marginTop={entryDisplay.spacing} gap={1}>
+                {/* Rendered verbatim in a fixed-width cell: fitTuiText trims,
+                    and every frame is exactly GLYPH_CELLS wide by contract. */}
+                <box width={GLYPH_CELLS} flexShrink={0}>
+                  <text fg={animationKind === "awaiting-operator" ? WARNING : PRIMARY}>{animation.glyph}</text>
+                </box>
+                <text fg={MUTED}>{animation.label}</text>
+                {animation.elapsedLabel ? <text fg={MUTED}>{animation.elapsedLabel}</text> : null}
+              </box>
+            ) : null}
+            {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
+          </box>
+        </scrollbox>
+      </box>
+
+      {settings.showSubagents && Object.keys(activeSubagents).length > 0 ? (
+        <box flexDirection="column" width="100%" marginTop={1}>
+          <text fg={MUTED}>ACTIVE SUBAGENTS</text>
+          {Object.values(activeSubagents).map((sa) => {
+            const running = sa.status === "running";
+            const turnsInfo = sa.turns !== undefined ? ` (${sa.turns}/${sa.max_turns})` : "";
+            // Budget against the marker cell and the actual counter text.
+            const labelWidth = Math.max(1, contentWidth - 1 - turnsInfo.length);
+            return (
+              <box key={sa.agent_id} flexDirection="row" alignItems="center" minWidth={0}>
+                <text width={1} flexShrink={0} fg={running ? PRIMARY : WARNING}>{running ? "◉" : "◌"}</text>
+                <box width={labelWidth} flexShrink={0} minWidth={0}>
+                  <text fg={TEXT}>{fitTuiText(sa.task, labelWidth)}</text>
+                </box>
+                {turnsInfo ? <text flexShrink={0} fg={MUTED}>{turnsInfo}</text> : null}
+              </box>
+            );
+          })}
+        </box>
+      ) : null}
+
+      {commandMenuVisible ? (
+        <box flexDirection="column" width="100%" minWidth={0} height={commandMenuHeight} flexShrink={0} marginTop={1} border borderColor={PRIMARY} backgroundColor={PANEL_ALT} paddingX={1}>
+          <box flexDirection="row" width={commandMenuInnerWidth} minWidth={0} gap={commandHeaderGap}>
+            <box width={commandHeaderTitleWidth} flexShrink={0} minWidth={0}>
+              <text fg={PRIMARY}>{fitTuiText("COMMANDS", commandHeaderTitleWidth)}</text>
+            </box>
+            {commandHeaderQueryWidth > 0 ? (
+              <box width={commandHeaderQueryWidth} flexShrink={0} minWidth={0}>
+                <text fg={MUTED}>{fitTuiText(slashQuery ? `/${slashQuery}` : "all commands", commandHeaderQueryWidth, { mode: "middle" })}</text>
+              </box>
+            ) : null}
+          </box>
+          {menuCommands.length > 0 ? menuCommands.map((command, index) => {
+            const active = index === slashSelected;
+            const meta = command.aliases.length > 0
+              ? command.aliases.map((alias) => `/${alias}`).join(" ")
+              : command.category;
+            return (
+              <box key={command.name} flexDirection="row" width={commandMenuInnerWidth} minWidth={0}>
+                <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
+                <box flexDirection="column" width={commandRowWidth} flexGrow={0} flexShrink={0} minWidth={0} marginLeft={1}>
+                  <box flexDirection="row" width={commandRowWidth} minWidth={0} gap={1}>
+                    <box width={commandNameWidth} flexShrink={0} minWidth={0}>
+                      <text fg={active ? TEXT : MUTED}>{fitTuiText(`/${command.name}`, commandNameWidth)}</text>
+                    </box>
+                    {commandMetaWidth > 0 ? (
+                      <box width={commandMetaWidth} flexShrink={0} minWidth={0}>
+                        <text fg={active ? ACCENT : MUTED}>{fitTuiText(meta, commandMetaWidth)}</text>
+                      </box>
+                    ) : null}
+                  </box>
+                  {!compact ? (
+                    <box width={commandRowWidth} minWidth={0}>
+                      <text fg={active ? ACCENT : MUTED} wrapMode="word">{fitTuiText(command.description, commandRowWidth)}</text>
+                    </box>
+                  ) : null}
+                </box>
+              </box>
+            );
+          }) : <text fg={ERROR}>{fitTuiText(`No command matches /${slashQuery}`, Math.max(1, commandMenuInnerWidth))}</text>}
+          <text fg={MUTED}>{fitTuiText("↑↓ select · tab complete · enter run · esc close", Math.max(1, commandMenuInnerWidth))}</text>
+        </box>
+      ) : null}
+
+      {secretPrompt ? (
+        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+          <text fg={WARNING}>{fitTuiText(`${secretPrompt.label} credential`, approvalWidth)}</text>
+          <text fg={TEXT}>{fitTuiText(`${"•".repeat(Math.min(secretPrompt.value.length, 40))}█`, approvalWidth)}</text>
+          <text fg={MUTED}>{fitTuiText(`Stored owner-only in your 0sec state dir and exported as ${secretPrompt.envVar}. Never transmitted by 0sec.`, approvalWidth)}</text>
+          <text fg={MUTED}>{fitTuiText("enter save · esc cancel", approvalWidth)}</text>
+        </box>
+      ) : null}
+      {picker ? (
+        <box flexDirection="column" width="100%" minWidth={0} height={pickerBoxHeight} flexShrink={0} marginTop={1} border borderColor={PRIMARY} backgroundColor={PANEL_ALT} paddingX={1}>
+          <box flexDirection="row" width="100%" minWidth={0} gap={1}>
+            <text fg={PRIMARY}>{fitTuiText(picker.state.title, Math.max(1, Math.floor(contentWidth * 0.5)))}</text>
+            <text fg={MUTED}>{fitTuiText(picker.state.query ? picker.state.query : `${pickerVisible.length} available`, Math.max(1, contentWidth - Math.floor(contentWidth * 0.5) - 3))}</text>
+          </box>
+          {pickerRows.length > 0 ? pickerRows.map((item, offset) => {
+            const index = pickerWindow.start + offset;
+            const active = index === picker.state.index;
+            return (
+              <box key={item.id} flexDirection="row" width="100%" minWidth={0} gap={1}>
+                <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
+                <box width={pickerLabelWidth} flexShrink={0} minWidth={0}>
+                  <text fg={item.disabled ? MUTED : active ? TEXT : MUTED}>{fitTuiText(`${item.current ? "● " : "  "}${item.label}`, pickerLabelWidth)}</text>
+                </box>
+                {pickerMetaWidth > 0 ? (
+                  <box width={pickerMetaWidth} flexShrink={0} minWidth={0}>
+                    <text fg={active ? ACCENT : MUTED}>{fitTuiText(item.meta ?? "", pickerMetaWidth, { mode: "middle" })}</text>
+                  </box>
+                ) : null}
+              </box>
+            );
+          }) : <text fg={ERROR}>{fitTuiText(`no match for "${picker.state.query}"`, Math.max(1, contentWidth - 2))}</text>}
+          {pickerDetail ? (
+            <text fg={MUTED}>{fitTuiText(pickerDetail, Math.max(1, contentWidth - 2))}</text>
+          ) : null}
+          <text fg={MUTED}>{fitTuiText("↑↓ select · type to filter · enter apply · esc cancel", Math.max(1, contentWidth - 2))}</text>
+        </box>
+      ) : null}
+
+      {/*
+        * Authorization prompts live directly above the composer rather than
+        * as a centered overlay. The operator's eyes are already on the input
+        * line, the answer is typed there, and an in-flow panel cannot cover
+        * the transcript evidence the decision is based on.
+        */}
+      {pendingScope ? (
+        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+          <text fg={WARNING}>{fitTuiText("AUTHORIZE SESSION SCOPE", approvalWidth)}</text>
+          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingScope.request.call.name} requests ${pendingScope.request.requestedUrls.join(", ")}`, approvalWidth)}</text>
+          <text fg={MUTED} wrapMode="word">{fitTuiText("Exact hosts apply only to this session. Existing deny rules still win.", approvalWidth)}</text>
+          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
+            <text fg={SUCCESS}>enter approve</text>
+            <text fg={ERROR}>esc reject</text>
+          </box>
+        </box>
+      ) : null}
+      {pendingLocalScope ? (
+        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+          <text fg={WARNING}>{fitTuiText("AUTHORIZE LOCAL DIRECTORY", approvalWidth)}</text>
+          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingLocalScope.request.call.name} wants to read ${pendingLocalScope.request.requestedPath}`, approvalWidth)}</text>
+          <text fg={MUTED} wrapMode="word">{fitTuiText("Grants this directory subtree for this session only. Nothing is written to disk.", approvalWidth)}</text>
+          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
+            <text fg={SUCCESS}>enter approve</text>
+            <text fg={ERROR}>esc reject</text>
+          </box>
+        </box>
+      ) : null}
+      {pendingEscalation ? (
+        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+          <text fg={WARNING}>{fitTuiText("ENABLE ADDITIONAL TOOL", approvalWidth)}</text>
+          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingEscalation.request.call.name} — ${pendingEscalation.request.reason}`, approvalWidth)}</text>
+          <text fg={MUTED} wrapMode="word">{fitTuiText("Enables this tool for the rest of the session. Scope approval and the Co-pilot gate still apply to it.", approvalWidth)}</text>
+          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
+            <text fg={SUCCESS}>enter enable</text>
+            <text fg={ERROR}>esc keep disabled</text>
+          </box>
+        </box>
+      ) : null}
+      {pendingToolApproval ? (
+        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={INFO} backgroundColor={PANEL_ALT} paddingX={1}>
+          <text fg={INFO}>{fitTuiText("CO-PILOT APPROVAL", approvalWidth)}</text>
+          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingToolApproval.call.name} ${JSON.stringify(pendingToolApproval.call.arguments)}`, approvalWidth)}</text>
+          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
+            <text fg={SUCCESS}>enter approve</text>
+            <text fg={ERROR}>esc reject</text>
+          </box>
+        </box>
+      ) : null}
+
+      {/*
+        * The composer frame is a preference, not a hardcode: "border" draws
+        * the box, "rail" replaces it with a single accent column, "plain"
+        * drops the chrome entirely for operators who want maximum rows.
+        */}
+      <box flexDirection="row" width="100%" flexShrink={0} marginTop={1} minWidth={0}>
+        {settings.composerStyle === "rail" ? (
+          <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={composing ? PRIMARY : BORDER} />
+        ) : null}
+      {/*
+        * Two separate elements rather than `border={...}` on one: opentui
+        * draws the frame whenever the `border` prop is present, so
+        * `border={false}` still renders a box. Branching on the element
+        * keeps "no chrome" actually meaning no chrome.
+        */}
+      <ComposerFrame style={settings.composerStyle} active={composing || commandMenuVisible}>
+        <box flexDirection="row" width="100%" minWidth={0}>
+          <text width={1} flexShrink={0} fg={PRIMARY}>›</text>
+          <text width={1} flexShrink={0} fg={MUTED}> </text>
+          <box width={composerTextWidth} flexShrink={0} minWidth={0}>
+            <text fg={TEXT}>{composing
+              ? `${fitTuiText(composer || " ", composerTextWidth - 1, { mode: "middle" })}█`
+              : startupError
+                ? fitTuiText("runtime unavailable", composerTextWidth)
+                : animation
+                  // The frame already carries its own state word and elapsed
+                  // time, so the composer echoes it rather than inventing a
+                  // second, possibly contradictory, status string.
+                  ? fitTuiText(`${animation.glyph} ${animation.label}${animation.elapsedLabel ? ` ${animation.elapsedLabel}` : ""}${queueLabel ? ` · ${queueLabel}` : ""}`, composerTextWidth)
+                  : fitTuiText("type to chat or / for commands", composerTextWidth)}</text>
+          </box>
+        </box>
+      </ComposerFrame>
+      </box>
+
+      {/*
+        * The bottom bar is its own row BELOW the composer, not a second
+        * line inside it. The composer's placeholder already says "type to
+        * chat or / for commands"; repeating that verbatim underneath was
+        * pure noise. What goes here instead is state the operator cannot
+        * otherwise see — model, mode, working tree, counters — replaced by
+        * contextual keys only while an overlay is actually open, when the
+        * keys genuinely are the useful thing.
+        */}
+      {settings.showStatusBar ? (
+        <box flexDirection="row" width="100%" minWidth={0} flexShrink={0} gap={statusGap}>
+          <box width={controlsWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(showContextualKeys ? controls : statusBarText, controlsWidth)}</text>
+          </box>
+          {statusWidth > 0 ? (
+            <box width={statusWidth} flexShrink={0} minWidth={0}>
+              <text fg={MUTED}>{fitTuiText(statusText, statusWidth, { mode: "middle" })}</text>
+            </box>
+          ) : null}
+        </box>
+      ) : null}
+    </box>
+  );
+}

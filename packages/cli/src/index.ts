@@ -4,8 +4,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { VERSION } from "@0sec/shared";
-import { maybeSubscribeCloudEventSink } from "@0sec/core";
+import { createHerdrEventSink, eventBus, maybeSubscribeCloudEventSink } from "@0sec/core";
 import { maybeLoadCodexAuth } from "./codex-auth.js";
+import { setHerdrSink } from "./herdr-state.js";
 
 // Local-dev convenience: if `codex login` has run (~/.codex/auth.json) and no
 // 0SEC_CHATGPT_* token is in the env, plumb the codex tokens in so the engine
@@ -22,6 +23,18 @@ maybeLoadCodexAuth();
 // the sink module is dead code and the cloud's live-trace UI stays
 // dark for every scan.
 maybeSubscribeCloudEventSink();
+
+// Report coarse agent state to herdr when 0sec is running inside one of its
+// panes, so the pane shows working/idle instead of "unknown" and
+// `herdr agent wait` becomes usable against a scan. The factory returns null
+// off-herdr, every write is fail-soft, and the payload carries only counters
+// and a fixed phase enum — never a target, finding, path or tool name, since
+// that socket is readable by any process running as this user.
+const herdrSink = createHerdrEventSink();
+if (herdrSink) eventBus.subscribe(herdrSink);
+// Parked so the interactive console can also report the `blocked` state,
+// which no bus event covers (approval gates resolve inline).
+setHerdrSink(herdrSink);
 import {
   registerScanCommand,
   registerResumeCommand,
@@ -29,6 +42,7 @@ import {
   registerHistoryCommand,
   registerFindingsCommand,
   registerReviewCommand,
+  registerFixCommand,
   registerAuditCommand,
   registerDoctorCommand,
   registerDashboardCommand,
@@ -70,6 +84,7 @@ import {
   registerTimelineCommand,
   registerFileReviewCommand,
   registerAgentAssureCommand,
+  registerBinaryCommand,
 } from "./commands/index.js";
 import { detectAndRoute } from "./routing.js";
 import { maybeNotifyUpdate } from "./utils/update-check.js";
@@ -95,6 +110,7 @@ registerReplayCommand(program);
 registerHistoryCommand(program);
 registerFindingsCommand(program);
 registerReviewCommand(program);
+registerFixCommand(program);
 registerAuditCommand(program);
 registerDoctorCommand(program);
 registerDashboardCommand(program);
@@ -136,6 +152,7 @@ registerResearchCommand(program);
 registerTimelineCommand(program);
 registerFileReviewCommand(program);
 registerAgentAssureCommand(program);
+registerBinaryCommand(program);
 
 // ── Interactive menu ──
 //
@@ -171,7 +188,7 @@ async function showInteractiveMenu(): Promise<void> {
 
 // ── Entry point ──
 const userArgs = process.argv.slice(2);
-const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "file-review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "entragraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "agent-assure", "help"];
+const knownCommands = ["scan", "resume", "replay", "history", "findings", "review", "fix", "file-review", "audit", "doctor", "dashboard", "tui", "watch", "orchestrate", "db", "mcp-server", "eval", "bench", "ingest", "kernel", "disclose", "verify", "exploit", "hunt", "recency-hunt", "deep-review", "lens-synth", "memsafety", "assumption-hunt", "specdrift", "protocol-check", "cve", "upgrade", "h1", "auth", "intel", "recon", "js-recon", "npm-discovery", "identity", "adgraph", "entragraph", "cloud", "xnu-fuzz", "research", "timeline", "console", "agent-assure", "binary", "help"];
 
 if (userArgs.length === 0) {
   showInteractiveMenu().catch((err) => {

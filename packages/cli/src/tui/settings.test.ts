@@ -1,0 +1,387 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  DEFAULT_SETTINGS,
+  SETTING_DEFS,
+  describeSetting,
+  loadSettings,
+  normalizeSettings,
+  saveSettings,
+  settingsFilePath,
+  toggleSetting,
+  type SettingDef,
+  type TuiSettings,
+} from "./settings.js";
+
+/** Temp homes created by a test, torn down after it regardless of outcome. */
+const tempHomes: string[] = [];
+
+function makeHome(): string {
+  const dir = mkdtempSync(join(tmpdir(), "0sec-tui-settings-"));
+  tempHomes.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  while (tempHomes.length > 0) {
+    const dir = tempHomes.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe("settingsFilePath", () => {
+  it("places the file inside the shared 0sec state directory", () => {
+    expect(settingsFilePath("/home/someone")).toBe("/home/someone/.0sec/tui-settings.json");
+  });
+
+  it("defaults the home directory when none is given", () => {
+    expect(settingsFilePath().endsWith(join(".0sec", "tui-settings.json"))).toBe(true);
+  });
+});
+
+describe("normalizeSettings", () => {
+  // The file on disk is user-editable, so "anything at all" is a realistic
+  // input, not a hypothetical: each of these must produce a usable object.
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["a number", 42],
+    ["a string", "string"],
+    ["an array", []],
+    ["an empty object", {}],
+    ["a boolean", true],
+    ["a nested object with no known keys", { nope: { deep: 1 } }],
+  ])("returns the full defaults for %s", (_label, raw) => {
+    expect(normalizeSettings(raw)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("falls back per key when every value has the wrong type", () => {
+    const raw = {
+      showStatusBar: "yes",
+      showComposerHints: 1,
+      showLogo: null,
+      showRuntimeNotices: [],
+      showTurnSummary: {},
+      showSubagents: "false",
+      showTimestamps: 0,
+      density: true,
+      composerStyle: 7,
+    };
+
+    expect(normalizeSettings(raw)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("drops unknown keys instead of carrying them forward", () => {
+    const normalized = normalizeSettings({
+      showStatusBar: false,
+      legacyShowFooter: true,
+      showstatusbar: true,
+      __proto__marker: "x",
+    });
+
+    expect(normalized).toEqual({ ...DEFAULT_SETTINGS, showStatusBar: false });
+    expect(Object.keys(normalized).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
+  });
+
+  it("keeps supplied values and defaults only the missing ones", () => {
+    const normalized = normalizeSettings({
+      showLogo: false,
+      showTimestamps: true,
+      density: "compact",
+    });
+
+    expect(normalized.showLogo).toBe(false);
+    expect(normalized.showTimestamps).toBe(true);
+    expect(normalized.density).toBe("compact");
+    // Everything not mentioned above must be untouched.
+    expect(normalized.showStatusBar).toBe(DEFAULT_SETTINGS.showStatusBar);
+    expect(normalized.showComposerHints).toBe(DEFAULT_SETTINGS.showComposerHints);
+    expect(normalized.showRuntimeNotices).toBe(DEFAULT_SETTINGS.showRuntimeNotices);
+    expect(normalized.showTurnSummary).toBe(DEFAULT_SETTINGS.showTurnSummary);
+    expect(normalized.showSubagents).toBe(DEFAULT_SETTINGS.showSubagents);
+    expect(normalized.composerStyle).toBe(DEFAULT_SETTINGS.composerStyle);
+  });
+
+  it("rejects an enum value outside its choices", () => {
+    const normalized = normalizeSettings({ density: "cosy", composerStyle: "double-line" });
+
+    expect(normalized.density).toBe(DEFAULT_SETTINGS.density);
+    expect(normalized.composerStyle).toBe(DEFAULT_SETTINGS.composerStyle);
+  });
+
+  it("accepts every declared choice for every enum setting", () => {
+    for (const def of SETTING_DEFS) {
+      if (def.kind !== "enum") continue;
+      for (const choice of def.choices ?? []) {
+        const normalized = normalizeSettings({ [def.key]: choice }) as unknown as Record<
+          string,
+          unknown
+        >;
+        expect(normalized[def.key]).toBe(choice);
+      }
+    }
+  });
+
+  it("does not mutate its input", () => {
+    const raw = { showStatusBar: false, density: "bogus", extra: 1 };
+    const snapshot = JSON.parse(JSON.stringify(raw));
+
+    normalizeSettings(raw);
+
+    expect(raw).toEqual(snapshot);
+  });
+
+  it("returns a fresh object rather than DEFAULT_SETTINGS itself", () => {
+    const normalized = normalizeSettings(null);
+
+    expect(normalized).not.toBe(DEFAULT_SETTINGS);
+    normalized.showStatusBar = !normalized.showStatusBar;
+    expect(DEFAULT_SETTINGS.showStatusBar).toBe(true);
+  });
+});
+
+describe("loadSettings / saveSettings", () => {
+  it("round-trips a settings object through the file", () => {
+    const home = makeHome();
+    const settings: TuiSettings = {
+      ...DEFAULT_SETTINGS,
+      showStatusBar: false,
+      showTimestamps: true,
+      density: "compact",
+      composerStyle: "plain",
+    };
+
+    expect(saveSettings(settings, home)).toBe(true);
+    expect(loadSettings(home)).toEqual(settings);
+  });
+
+  it("writes pretty-printed JSON with a trailing newline", () => {
+    const home = makeHome();
+
+    saveSettings(DEFAULT_SETTINGS, home);
+    const text = readText(settingsFilePath(home));
+
+    expect(text.endsWith("}\n")).toBe(true);
+    expect(text).toContain('\n  "showStatusBar": true,');
+  });
+
+  it("creates the state directory when it does not exist yet", () => {
+    const home = join(makeHome(), "nested", "home");
+
+    expect(saveSettings(DEFAULT_SETTINGS, home)).toBe(true);
+    expect(loadSettings(home)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("returns defaults, without throwing, when nothing has been saved", () => {
+    const home = join(makeHome(), "never-created");
+
+    expect(() => loadSettings(home)).not.toThrow();
+    expect(loadSettings(home)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("returns defaults, without throwing, on invalid JSON", () => {
+    const home = makeHome();
+    mkdirSync(join(home, ".0sec"), { recursive: true });
+    writeFileSync(settingsFilePath(home), "{ this is not json, ", "utf8");
+
+    expect(() => loadSettings(home)).not.toThrow();
+    expect(loadSettings(home)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("returns defaults when the file holds valid JSON of the wrong shape", () => {
+    const home = makeHome();
+    mkdirSync(join(home, ".0sec"), { recursive: true });
+    writeFileSync(settingsFilePath(home), '["showStatusBar"]', "utf8");
+
+    expect(loadSettings(home)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("returns false instead of throwing when the path cannot be created", () => {
+    // A regular file standing where a parent directory would have to be makes
+    // mkdir fail with ENOTDIR — the cheap, portable stand-in for a home the
+    // process may not write to.
+    const blocker = join(makeHome(), "not-a-directory");
+    writeFileSync(blocker, "occupied", "utf8");
+    const home = join(blocker, "home");
+
+    expect(() => saveSettings(DEFAULT_SETTINGS, home)).not.toThrow();
+    expect(saveSettings(DEFAULT_SETTINGS, home)).toBe(false);
+  });
+
+  it("normalises on the way out, so a corrupt in-memory object cannot be persisted", () => {
+    const home = makeHome();
+    const corrupt = { showStatusBar: "nope", density: "cosy", stray: 1 } as unknown as TuiSettings;
+
+    expect(saveSettings(corrupt, home)).toBe(true);
+    expect(loadSettings(home)).toEqual(DEFAULT_SETTINGS);
+    expect(readText(settingsFilePath(home))).not.toContain("stray");
+  });
+});
+
+describe("toggleSetting", () => {
+  it("flips a boolean setting", () => {
+    const on = { ...DEFAULT_SETTINGS, showStatusBar: true };
+
+    const off = toggleSetting(on, "showStatusBar");
+    expect(off.showStatusBar).toBe(false);
+    expect(toggleSetting(off, "showStatusBar").showStatusBar).toBe(true);
+  });
+
+  it("leaves the other settings alone when flipping one", () => {
+    const next = toggleSetting(DEFAULT_SETTINGS, "showLogo");
+
+    expect({ ...next, showLogo: DEFAULT_SETTINGS.showLogo }).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("cycles a two-value enum and wraps", () => {
+    const a = toggleSetting(DEFAULT_SETTINGS, "density");
+    expect(a.density).toBe("compact");
+
+    const b = toggleSetting(a, "density");
+    expect(b.density).toBe("comfortable");
+  });
+
+  it("cycles a three-value enum and wraps", () => {
+    const one = toggleSetting(DEFAULT_SETTINGS, "composerStyle");
+    const two = toggleSetting(one, "composerStyle");
+    const three = toggleSetting(two, "composerStyle");
+
+    expect([one.composerStyle, two.composerStyle, three.composerStyle]).toEqual([
+      "rail",
+      "plain",
+      "border",
+    ]);
+  });
+
+  it("returns the input unchanged for an unknown key", () => {
+    expect(toggleSetting(DEFAULT_SETTINGS, "showFooter")).toBe(DEFAULT_SETTINGS);
+    expect(toggleSetting(DEFAULT_SETTINGS, "")).toBe(DEFAULT_SETTINGS);
+    expect(toggleSetting(DEFAULT_SETTINGS, "toString")).toBe(DEFAULT_SETTINGS);
+  });
+
+  it("repairs an enum value that is not in the choice list", () => {
+    const corrupt = { ...DEFAULT_SETTINGS, composerStyle: "neon" as TuiSettings["composerStyle"] };
+
+    expect(toggleSetting(corrupt, "composerStyle").composerStyle).toBe("border");
+  });
+
+  it("does not mutate its input", () => {
+    const before = { ...DEFAULT_SETTINGS };
+    const snapshot = { ...before };
+
+    toggleSetting(before, "showStatusBar");
+    toggleSetting(before, "density");
+
+    expect(before).toEqual(snapshot);
+  });
+
+  it("returns every setting to its starting value after a full cycle", () => {
+    for (const def of SETTING_DEFS) {
+      const steps = def.kind === "boolean" ? 2 : (def.choices?.length ?? 0);
+      let settings = DEFAULT_SETTINGS;
+      for (let i = 0; i < steps; i += 1) settings = toggleSetting(settings, def.key);
+
+      expect(settings).toEqual(DEFAULT_SETTINGS);
+    }
+  });
+});
+
+describe("describeSetting", () => {
+  it("renders booleans as on/off with the label and description", () => {
+    const text = describeSetting(DEFAULT_SETTINGS, "showStatusBar");
+
+    expect(text).toContain("Status bar");
+    expect(text).toContain("on");
+    expect(describeSetting({ ...DEFAULT_SETTINGS, showStatusBar: false }, "showStatusBar")).toContain(
+      "off",
+    );
+  });
+
+  it("renders the current enum value", () => {
+    expect(describeSetting({ ...DEFAULT_SETTINGS, density: "compact" }, "density")).toContain(
+      "compact",
+    );
+  });
+
+  it("returns an empty string for an unknown key rather than throwing", () => {
+    expect(describeSetting(DEFAULT_SETTINGS, "nope")).toBe("");
+  });
+
+  it("produces a single line for every declared setting", () => {
+    for (const def of SETTING_DEFS) {
+      const text = describeSetting(DEFAULT_SETTINGS, def.key);
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toContain("\n");
+    }
+  });
+});
+
+describe("SETTING_DEFS", () => {
+  // The table and the interface are two halves of one declaration; nothing but
+  // a test stops a new field from being added to `TuiSettings` without a def
+  // (invisible in the settings UI) or a def from outliving its field.
+  it("has one def per TuiSettings field", () => {
+    const defKeys = SETTING_DEFS.map((def) => def.key).sort();
+    const fieldKeys = Object.keys(DEFAULT_SETTINGS).sort();
+
+    expect(defKeys).toEqual(fieldKeys);
+  });
+
+  it("has a field for every def", () => {
+    for (const def of SETTING_DEFS) {
+      expect(Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, def.key)).toBe(true);
+    }
+  });
+
+  it("has a def for every field", () => {
+    const defKeys = new Set(SETTING_DEFS.map((def) => def.key));
+
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      expect(defKeys.has(key)).toBe(true);
+    }
+  });
+
+  it("declares each key exactly once", () => {
+    const keys = SETTING_DEFS.map((def) => def.key);
+
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("agrees with DEFAULT_SETTINGS on every default value", () => {
+    const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+
+    for (const def of SETTING_DEFS) {
+      expect(def.default).toEqual(defaults[def.key]);
+    }
+  });
+
+  it("gives every def a label, description and group", () => {
+    for (const def of SETTING_DEFS) {
+      expect(def.label.length).toBeGreaterThan(0);
+      expect(def.description.length).toBeGreaterThan(0);
+      expect(def.group.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives enums at least two choices including their default, and booleans none", () => {
+    for (const def of SETTING_DEFS as readonly SettingDef[]) {
+      if (def.kind === "enum") {
+        expect(def.choices?.length ?? 0).toBeGreaterThanOrEqual(2);
+        expect(def.choices).toContain(def.default);
+        expect(typeof def.default).toBe("string");
+      } else {
+        expect(def.choices).toBeUndefined();
+        expect(typeof def.default).toBe("boolean");
+      }
+    }
+  });
+});
+
+/** Reads back a file the tests just wrote. */
+function readText(path: string): string {
+  return readFileSync(path, "utf8");
+}
