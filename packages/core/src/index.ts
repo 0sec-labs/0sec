@@ -1742,6 +1742,29 @@ export {
   type GuardContext,
   type GuardVerdict,
 } from "./plugins/guards.js";
+// Model-authored session extensions. A contribution carries tool
+// definitions and DENY-ONLY guards and nothing else — no hook, interceptor
+// or listener is expressible, so it cannot suppress the authorization chain
+// the way dsh's pre-execute waterfall can. Off by default.
+export {
+  SelfExtensionRegistry,
+  SELF_EXTENSION_SETTING_DEF,
+  MAX_EXTENSIONS_PER_SESSION,
+  MAX_TOOLS_PER_EXTENSION,
+  MAX_TOOLS_PER_SESSION,
+  MAX_GUARDS_PER_EXTENSION,
+  MAX_MANIFEST_BYTES,
+} from "./plugins/self-extension.js";
+export type {
+  ExtensionSubmission,
+  ExtensionGateFlags,
+  RegisteredExtensionTool,
+  SelfExtensionRecord,
+  SelfExtensionEvent,
+  RegistrationResult,
+  ExtensionDisposer,
+  ExtensionOrigin,
+} from "./plugins/self-extension.js";
 export type {
   CostBreakdownEntry,
   ScanCompletedPayload,
