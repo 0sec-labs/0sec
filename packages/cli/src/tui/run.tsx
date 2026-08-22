@@ -1,8 +1,8 @@
 /** @jsxImportSource @opentui/react */
 import { appendFileSync } from "node:fs";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createCliRenderer } from "@opentui/core";
-import { createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
 import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
 import { getRuntimeAvailability } from "../utils.js";
@@ -30,7 +30,9 @@ import {
   fixResultLines,
 } from "./fix-action.js";
 import { ChatScreen, type ChatScreenOptions } from "./chat-screen.js";
+import { HerdScreen } from "./herd-screen.js";
 import { SettingsScreen } from "./settings-screen.js";
+import { ModelScreen } from "./model-screen.js";
 import { createSessionCloseGate } from "./session-close-gate.js";
 import { installTuiOutputGuard } from "./output-guard.js";
 import {
@@ -72,6 +74,8 @@ type ConsoleRoute =
   | { type: "findings"; options: FindingsScreenOptions }
   | { type: "replay"; dbPath?: string; scanId?: string }
   | { type: "settings" }
+  | { type: "herd" }
+  | { type: "models"; chatOptions?: ChatScreenOptions }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onClose: () => void };
 
 interface ShellNav {
@@ -79,7 +83,14 @@ interface ShellNav {
   canGoForward: boolean;
   goBack: () => void;
   goForward: () => void;
-  openChat: () => void;
+  /**
+   * Returns to the chat route.
+   *
+   * The optional options are how a screen that outlives the chat component
+   * hands something back to it — the model picker's selection, today. Passing
+   * none re-enters chat with its defaults, which is what the palette does.
+   */
+  openChat: (options?: ChatScreenOptions) => void;
   openLauncher: () => void;
   openOps: () => void;
   openDoctor: () => void;
@@ -87,6 +98,21 @@ interface ShellNav {
   openFindings: () => void;
   openReplay: (scanId?: string) => void;
   openSettings: () => void;
+  /**
+   * Opens the full-screen model picker.
+   *
+   * The chat route's options are carried through so that selecting a model
+   * can re-enter chat with the same target, scope and mode — only the model
+   * changed. `ChatScreen` is unmounted while another route is on screen, so
+   * the selection cannot be handed back to a live component; it is handed to
+   * a fresh one instead.
+   */
+  openModels: (chatOptions?: ChatScreenOptions) => void;
+  /**
+   * Opens the agent-herd overview: the roster of peers working this project
+   * directory. Empty by default until the roster producer is wired.
+   */
+  openHerd: () => void;
 }
 
 interface HomeOption {
@@ -526,6 +552,24 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       keybind: "8",
       suggested: true,
       action: shell.openSettings,
+    },
+    {
+      id: "nav-models",
+      title: "Open model picker",
+      category: "Navigate",
+      description: "Browse models by provider, with credential state",
+      keybind: "9",
+      suggested: true,
+      action: () => shell.openModels(),
+    },
+    {
+      id: "nav-herd",
+      title: "Open agent herd",
+      category: "Navigate",
+      description: "Roster of agents working this project and their status",
+      keybind: "0",
+      suggested: true,
+      action: shell.openHerd,
     },
     {
       id: "nav-back",
@@ -3359,6 +3403,77 @@ function SettingsRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav
   );
 }
 
+/**
+ * Routes the agent-herd overview, supplying the console shell around it.
+ *
+ * `readRoster` is left at its default — an empty roster — because the hub has
+ * no producer wired yet (see `herd-layout.ts` and `packages/core/src/hub`).
+ * The screen therefore ships as an honest empty view; the day a producer
+ * persists the roster, this is where a real reader is injected.
+ */
+function HerdRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+  return (
+    <HerdScreen
+      onBack={() => leaveCurrentScreen(shell, onExit)}
+      onExit={onExit}
+      frame={({ body, hint }) => (
+        <ShellFrame view="herd">
+          {body}
+          <FooterBar hint={hint} />
+        </ShellFrame>
+      )}
+    />
+  );
+}
+
+/**
+ * Routes the full-screen model picker, supplying the console shell around it.
+ *
+ * Selecting a model re-enters the chat route carrying the chosen id in
+ * `ChatScreenOptions`, which is what `ChatScreen` already reads when it builds
+ * its runtime. That is the only channel available: `ConsoleApp` renders one
+ * route at a time, so the chat screen is unmounted while this one is up and
+ * there is no live component to hand the selection back to. The engagement's
+ * target, scope, role and autonomy mode ride along unchanged, so the rebuilt
+ * chat differs from the old one in exactly the model — and, as with
+ * `/settings`, the transcript does not survive the round trip.
+ *
+ * Like `SettingsRoute`, the command palette is deliberately not mounted here:
+ * every printable key on this screen filters the list, so a second
+ * `useKeyboard` competing for those keystrokes would make `p` both a filter
+ * character and a palette toggle.
+ */
+function ModelRoute({
+  chatOptions,
+  onExit,
+  shell,
+}: {
+  chatOptions?: ChatScreenOptions;
+  onExit: () => void;
+  shell?: ShellNav;
+}) {
+  return (
+    <ModelScreen
+      currentModel={chatOptions?.model}
+      onSelect={(id) => {
+        if (!shell) {
+          onExit();
+          return;
+        }
+        shell.openChat({ ...chatOptions, model: id });
+      }}
+      onBack={() => leaveCurrentScreen(shell, onExit)}
+      onExit={onExit}
+      frame={({ body, hint }) => (
+        <ShellFrame view="models">
+          {body}
+          <FooterBar hint={hint} />
+        </ShellFrame>
+      )}
+    />
+  );
+}
+
 type AppMode =
   | { type: "home"; onResolve: (selection: HomeSelection) => void; onExit: () => void }
   | { type: "ops"; dbPath?: string; refreshMs: number; onExit: () => void }
@@ -3377,6 +3492,20 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   );
   const [routeIndex, setRouteIndex] = useState(() => hasChatRoot ? 0 : 1);
 
+  // The chat is the console's persistent base layer (see the render at the end
+  // of ConsoleApp). Its options live here rather than being read off the nav
+  // stack, so returning to chat from a screen never resets the model or target
+  // the operator was using. `chatGeneration` is the chat's remount key: it is
+  // bumped ONLY when the model picker applies a DIFFERENT model, because a model
+  // switch is the one action that must rebuild the chat's session. Every other
+  // navigation keeps the generation, so the transcript, scroll and composer
+  // survive the round trip untouched.
+  const initialChatOptions = initialRoute.type === "chat" ? initialRoute.options : undefined;
+  const [chatOptions, setChatOptions] = useState<ChatScreenOptions | undefined>(initialChatOptions);
+  const [chatGeneration, setChatGeneration] = useState(0);
+  const chatOptionsRef = useRef(chatOptions);
+  chatOptionsRef.current = chatOptions;
+
   const navigate = (route: ConsoleRoute) => {
     setRoutes((current) => {
       const next = [...current.slice(0, routeIndex + 1), route];
@@ -3391,7 +3520,17 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     canGoForward: routeIndex < routes.length - 1,
     goBack: () => setRouteIndex((current) => Math.max(0, current - 1)),
     goForward: () => setRouteIndex((current) => Math.min(routes.length - 1, current + 1)),
-    openChat: () => navigate({ type: "chat" }),
+    openChat: (options) => {
+      // Applying a NEW model is the only reason to rebuild the persistent chat.
+      // Bump the generation so ChatScreen remounts with the new model; every
+      // other openChat (e.g. the palette's "Open chat") keeps the generation and
+      // the existing options, so the live transcript is preserved.
+      if (options && options.model !== undefined && options.model !== chatOptionsRef.current?.model) {
+        setChatOptions((prev) => ({ ...prev, ...options }));
+        setChatGeneration((generation) => generation + 1);
+      }
+      navigate({ type: "chat", options });
+    },
     openLauncher: () => navigate({ type: "launcher" }),
     openOps: () => navigate({ type: "ops", refreshMs: 4000 }),
     openDoctor: () => navigate({ type: "doctor" }),
@@ -3399,6 +3538,8 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     openFindings: () => navigate({ type: "findings", options: { limit: 50 } }),
     openReplay: (scanId) => navigate({ type: "replay", scanId }),
     openSettings: () => navigate({ type: "settings" }),
+    openModels: (chatOpts) => navigate({ type: "models", chatOptions: chatOpts ?? chatOptionsRef.current }),
+    openHerd: () => navigate({ type: "herd" }),
   };
 
   const launchSelection = async (selection: HomeSelection) => {
@@ -3527,12 +3668,37 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     }
   };
 
-  if (currentRoute.type === "chat") {
-    return (
+  const overlayActive = currentRoute.type !== "chat";
+
+  // The chat screen is mounted ONCE and kept mounted for the entire life of the
+  // console; every other screen renders as a full-screen overlay ON TOP of it
+  // instead of replacing it. Navigating away therefore never unmounts the chat
+  // and never destroys its ConsoleSession, transcript, scroll or composer — Esc
+  // from any screen just drops the overlay and reveals the exact same chat.
+  //
+  // OpenTUI dispatches keys to EVERY mounted `useKeyboard` handler globally —
+  // there is no focus scoping — so a chat left mounted under an overlay would
+  // still eat the operator's keystrokes and fight the screen on top. The cure is
+  // to hand the chat subtree an AppContext whose `keyHandler` is null while an
+  // overlay is up: `useKeyboard` (and `usePaste`) then subscribe to nothing and
+  // the chat goes deaf without unmounting. The overlay renders OUTSIDE that
+  // provider, keeps the real handler, and is the only screen hearing keys.
+  const appContext = useContext(AppContext);
+  const baseChat = (
+    <AppContext.Provider value={overlayActive ? { ...appContext, keyHandler: null } : appContext}>
       <ChatScreen
-        options={currentRoute.options}
+        key={`chat-${chatGeneration}`}
+        options={chatOptions}
         onGoBack={shell.goBack}
         onNavigate={(destination) => {
+          // `herd` is not in `ChatDestination` yet (chat-screen owns that union
+          // and this change does not touch it); the cast-guard keeps run.tsx
+          // compiling and the route reachable, and the branch starts routing the
+          // moment the one-line chat-screen change lands.
+          if ((destination as string) === "herd") {
+            shell.openHerd();
+            return;
+          }
           switch (destination) {
             case "launcher":
               shell.openLauncher();
@@ -3555,53 +3721,78 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             case "settings":
               shell.openSettings();
               return;
+            case "models":
+              shell.openModels(chatOptions);
+              return;
           }
         }}
         onExit={onExit}
       />
+    </AppContext.Provider>
+  );
+
+  let overlay: React.ReactNode = null;
+  if (currentRoute.type === "launcher") {
+    overlay = (
+      <HomeScreen onResolve={(selection) => {
+        if (selection.action === "tui") {
+          shell.openOps();
+          return;
+        }
+        if (selection.action === "doctor") {
+          shell.openDoctor();
+          return;
+        }
+        if (selection.action === "history") {
+          shell.openHistory();
+          return;
+        }
+        if (selection.action === "findings") {
+          shell.openFindings();
+          return;
+        }
+        if (selection.action === "replay") {
+          shell.openReplay();
+          return;
+        }
+        if (onResolve) {
+          onResolve(selection);
+          onExit();
+          return;
+        }
+        void launchSelection(selection);
+      }} onExit={onExit} shell={shell} />
     );
+  } else if (currentRoute.type === "ops") {
+    overlay = <OpsScreen dbPath={currentRoute.dbPath} refreshMs={currentRoute.refreshMs} onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "doctor") {
+    overlay = <DoctorScreen onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "history") {
+    overlay = <HistoryScreen dbPath={currentRoute.dbPath} limit={currentRoute.limit} onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "findings") {
+    overlay = <FindingsScreen options={currentRoute.options} onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "session") {
+    overlay = <ConsoleSessionRoute route={currentRoute} shell={shell} />;
+  } else if (currentRoute.type === "replay") {
+    overlay = <ReplayScreen dbPath={currentRoute.dbPath} scanId={currentRoute.scanId} onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "settings") {
+    overlay = <SettingsRoute onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "models") {
+    overlay = <ModelRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "herd") {
+    overlay = <HerdRoute onExit={onExit} shell={shell} />;
   }
 
-  if (currentRoute.type === "launcher") {
-    return <HomeScreen onResolve={(selection) => {
-      if (selection.action === "tui") {
-        shell.openOps();
-        return;
-      }
-      if (selection.action === "doctor") {
-        shell.openDoctor();
-        return;
-      }
-      if (selection.action === "history") {
-        shell.openHistory();
-        return;
-      }
-      if (selection.action === "findings") {
-        shell.openFindings();
-        return;
-      }
-      if (selection.action === "replay") {
-        shell.openReplay();
-        return;
-      }
-      if (onResolve) {
-        onResolve(selection);
-        onExit();
-        return;
-      }
-      void launchSelection(selection);
-    }} onExit={onExit} shell={shell} />;
-  }
-  if (currentRoute.type === "ops") return <OpsScreen dbPath={currentRoute.dbPath} refreshMs={currentRoute.refreshMs} onExit={onExit} shell={shell} />;
-  if (currentRoute.type === "doctor") return <DoctorScreen onExit={onExit} shell={shell} />;
-  if (currentRoute.type === "history") return <HistoryScreen dbPath={currentRoute.dbPath} limit={currentRoute.limit} onExit={onExit} shell={shell} />;
-  if (currentRoute.type === "findings") return <FindingsScreen options={currentRoute.options} onExit={onExit} shell={shell} />;
-  if (currentRoute.type === "session") return <ConsoleSessionRoute route={currentRoute} shell={shell} />;
-  if (currentRoute.type === "replay") {
-    return <ReplayScreen dbPath={currentRoute.dbPath} scanId={currentRoute.scanId} onExit={onExit} shell={shell} />;
-  }
-  if (currentRoute.type === "settings") return <SettingsRoute onExit={onExit} shell={shell} />;
-  return null;
+  return (
+    <box flexDirection="column" width="100%" height="100%">
+      {baseChat}
+      {overlayActive && overlay ? (
+        <box position="absolute" top={0} left={0} width="100%" height="100%" zIndex={100}>
+          {overlay}
+        </box>
+      ) : null}
+    </box>
+  );
 }
 
 function UnifiedApp({ mode }: { mode: AppMode }) {
@@ -3708,6 +3899,17 @@ export async function showOpenTuiHistory(options: { dbPath?: string; limit: numb
 /** Opens the console straight onto the settings screen. */
 export async function showOpenTuiSettings(): Promise<void> {
   await mountApp({ type: "console", initialRoute: { type: "settings" }, onResolve: () => {}, onExit: () => {} });
+}
+
+/**
+ * Opens the console straight onto the model picker.
+ *
+ * Mirrors `showOpenTuiSettings`. The route is rooted on a chat route, so Esc
+ * lands in chat rather than exiting — which is also what happens when the
+ * picker is reached from `/model`.
+ */
+export async function showOpenTuiModels(options: ChatScreenOptions = {}): Promise<void> {
+  await mountApp({ type: "console", initialRoute: { type: "models", chatOptions: options }, onResolve: () => {}, onExit: () => {} });
 }
 
 export async function showOpenTuiFindings(options: FindingsScreenOptions): Promise<void> {
