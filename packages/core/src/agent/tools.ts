@@ -1837,7 +1837,7 @@ function messagingRuntimeOf(ctx: ToolContext): MessagingRuntime | undefined {
  * authority, and it re-checks the settings on every send. A stale or omitted
  * description can only make a child fail to use a channel, never gain one.
  */
-function buildSendMessageTool(rt: MessagingRuntime | undefined): ToolDefinition {
+export function buildSendMessageTool(rt: MessagingRuntime | undefined): ToolDefinition {
   const parentId = rt && isValidPeerId(rt.parentId) ? rt.parentId : undefined;
   const operatorId =
     rt && rt.operatorChannelEnabled && isValidPeerId(rt.operatorId) ? rt.operatorId : undefined;
@@ -1854,11 +1854,27 @@ function buildSendMessageTool(rt: MessagingRuntime | undefined): ToolDefinition 
         "Use it only for something a person must see; it lands in their transcript.",
     );
   }
-  targets.push(
-    rt?.siblingChannelEnabled
-      ? "Sibling subagent ids are reachable; the operator enabled subagent peer messaging."
-      : "Sibling subagents are NOT reachable in this session.",
-  );
+  if (rt?.siblingChannelEnabled) {
+    // Discovery: a sibling can otherwise never learn a sibling's id (no roster
+    // tool, no id in spawn results). Naming the concrete batch peer ids here —
+    // the same mechanism already used for the parent/operator ids above — is the
+    // lowest-risk way to make an addressable sibling id available to the model.
+    // Ids are shape-checked (`isValidPeerId`) before interpolation, so nothing
+    // hostile reaches the description; naming an id grants NOTHING —
+    // `decideAddressing` re-checks the roster + settings on every send.
+    const peers = (rt.knownPeerIds ?? []).filter(
+      (id) => isValidPeerId(id) && id !== rt.selfId,
+    );
+    targets.push(
+      peers.length > 0
+        ? `Your sibling subagents in this batch are ${peers
+            .map((id) => `"${id}"`)
+            .join(", ")} — reachable because the operator enabled subagent peer messaging. Address one at a time to hand off a lead or coordinate.`
+        : "Sibling subagent ids are reachable; the operator enabled subagent peer messaging.",
+    );
+  } else {
+    targets.push("Sibling subagents are NOT reachable in this session.");
+  }
 
   return {
     name: "send_message",
@@ -1879,6 +1895,59 @@ function buildSendMessageTool(rt: MessagingRuntime | undefined): ToolDefinition 
   };
 }
 
+/**
+ * Seed the child↔child (sibling) messaging runtimes for ONE concurrent
+ * `spawn_agents` batch, BEFORE any child starts, so siblings can address each
+ * other BY DEFAULT without any TUI wiring.
+ *
+ * The returned array is index-aligned with `agentIds`: entry `i` is the runtime
+ * for the child whose lifecycle `agent_id` is `agentIds[i]`. Each runtime:
+ *   - carries that child's own `agent_id` as `selfId` (the id it sends as);
+ *   - shares the scan-wide `<scanId>-sub-` `siblingPrefix` (the shape guard);
+ *   - lists the OTHER children of THIS batch as `knownPeerIds` — this is the
+ *     DISCOVERY seed (a sibling can otherwise never learn a sibling's id) and,
+ *     because `decideAddressing` now requires a sibling `to` to be on
+ *     `knownPeerIds`, the BATCH-SCOPING allow-list: no cross-batch reach even
+ *     though the prefix is scan-wide.
+ *
+ * SECURITY: the sibling channel is a deliberate, documented, gated risk. A
+ * subagent runs attacker-influenced content, so a direct child↔child channel is
+ * how one compromised child could reach another child's context. It is therefore
+ * (a) gated on `siblingChannelEnabled` — mirrored from the operator's
+ * `allowSubagentPeerMessaging` (default TRUE); passing `false` disables it
+ * outright; (b) scoped to the batch (no cross-batch, no cross-scan reach); and
+ * (c) carried only as inert prose that the delivery path in `agent-messaging.ts`
+ * sanitizes, fences, and attributes before it re-enters a peer's context. It
+ * grants NO capability: a message can never widen scope, approve a tool, change
+ * autonomy mode, or spawn.
+ */
+export function buildSiblingMessagingBatch(params: {
+  agentIds: readonly string[];
+  scanId: string;
+  siblingChannelEnabled: boolean;
+  projectPath: string;
+  homeDir?: string;
+  parentId?: string;
+  operatorId?: string;
+  operatorChannelEnabled?: boolean;
+}): MessagingRuntime[] {
+  const siblingPrefix = `${params.scanId}-sub-`;
+  return params.agentIds.map((selfId) => ({
+    selfId,
+    selfRole: "child" as const,
+    ...(params.parentId !== undefined ? { parentId: params.parentId } : {}),
+    ...(params.operatorId !== undefined ? { operatorId: params.operatorId } : {}),
+    siblingPrefix,
+    siblingChannelEnabled: params.siblingChannelEnabled,
+    operatorChannelEnabled: params.operatorChannelEnabled ?? false,
+    projectPath: params.projectPath,
+    ...(params.homeDir !== undefined ? { homeDir: params.homeDir } : {}),
+    // This batch's OTHER children only — the discovery seed AND the batch-scoped
+    // allow-list `decideAddressing`'s sibling branch enforces.
+    knownPeerIds: params.agentIds.filter((id) => id !== selfId),
+  }));
+}
+
 const CHECK_MESSAGES_TOOL: ToolDefinition = {
   name: "check_messages",
   description:
@@ -1896,8 +1965,8 @@ const CHECK_MESSAGES_TOOL: ToolDefinition = {
  * outcomes AFTER the pool has fully joined (never mid-flight from a child).
  */
 type SubagentOutcome =
-  | { ok: true; findings: Finding[]; turns: number; summary: string; done: boolean }
-  | { ok: false; error: string };
+  | { ok: true; agent_id: string; findings: Finding[]; turns: number; summary: string; done: boolean }
+  | { ok: false; agent_id: string; error: string };
 
 /** Shared lifecycle payload base for one subagent (carries its unique id). */
 interface SubagentLifecycleBase {
@@ -4533,6 +4602,7 @@ export class ToolExecutor {
     maxTurns: number,
     base: SubagentLifecycleBase,
     deps?: SubagentDeps,
+    messagingOverride?: MessagingRuntime,
   ): Promise<SubagentOutcome> {
     try {
       // Single-child path resolves deps here (inside the try, so an import
@@ -4547,7 +4617,7 @@ export class ToolExecutor {
           status: "failed" as const,
           error: "No API key available for sub-agent",
         });
-        return { ok: false, error: "No API key available for sub-agent" };
+        return { ok: false, agent_id: base.agent_id, error: "No API key available for sub-agent" };
       }
 
       // DEPTH GUARD (single-level nesting): the child tool set is hardcoded to
@@ -4581,20 +4651,28 @@ export class ToolExecutor {
       // cannot be reached by guessing (see `agent-messaging.ts`). A parent whose
       // own runtime carries no `operatorId` hands its children none, and the
       // channel stays closed however the setting is set.
+      // `spawn_agents` pre-builds a batch-scoped runtime per child (seeded with
+      // its siblings' ids as `knownPeerIds`) and passes it in as
+      // `messagingOverride`, so concurrent siblings can address each other even
+      // when the top-level parent runtime is absent (console, no TUI wiring).
+      // The single-child `spawn_agent` path passes none and derives the runtime
+      // from the parent's, as before (a lone child has no siblings anyway).
       const parentMessaging = messagingRuntimeOf(this.ctx);
-      const childMessaging: MessagingRuntime | undefined = parentMessaging
-        ? {
-            selfId: base.agent_id,
-            selfRole: "child",
-            parentId: parentMessaging.selfId,
-            operatorId: parentMessaging.operatorId,
-            siblingPrefix: `${this.ctx.scanId}-sub-`,
-            siblingChannelEnabled: parentMessaging.siblingChannelEnabled,
-            operatorChannelEnabled: parentMessaging.operatorChannelEnabled,
-            projectPath: parentMessaging.projectPath,
-            homeDir: parentMessaging.homeDir,
-          }
-        : undefined;
+      const childMessaging: MessagingRuntime | undefined =
+        messagingOverride ??
+        (parentMessaging
+          ? {
+              selfId: base.agent_id,
+              selfRole: "child",
+              parentId: parentMessaging.selfId,
+              operatorId: parentMessaging.operatorId,
+              siblingPrefix: `${this.ctx.scanId}-sub-`,
+              siblingChannelEnabled: parentMessaging.siblingChannelEnabled,
+              operatorChannelEnabled: parentMessaging.operatorChannelEnabled,
+              projectPath: parentMessaging.projectPath,
+              homeDir: parentMessaging.homeDir,
+            }
+          : undefined);
 
       const subTools: ToolDefinition[] = ["bash", "save_finding", "done"]
         .map((n) => TOOL_DEFINITIONS[n])
@@ -4669,6 +4747,7 @@ export class ToolExecutor {
 
       return {
         ok: true,
+        agent_id: base.agent_id,
         findings: state.findings,
         turns: state.turnCount,
         summary: state.summary,
@@ -4682,7 +4761,7 @@ export class ToolExecutor {
         status: "failed" as const,
         error: truncated,
       });
-      return { ok: false, error: truncated };
+      return { ok: false, agent_id: base.agent_id, error: truncated };
     }
   }
 
@@ -4709,6 +4788,7 @@ export class ToolExecutor {
     return {
       success: true,
       output: {
+        agent_id: outcome.agent_id,
         turns: outcome.turns,
         findings: outcome.findings.length,
         summary: outcome.summary,
@@ -4766,6 +4846,35 @@ export class ToolExecutor {
     // concurrent first-`import()` path.
     const deps = await this.loadSubagentDeps();
 
+    // Seed sibling (child↔child) messaging for the WHOLE batch BEFORE fan-out,
+    // so each concurrent child knows (and may address) its siblings by default —
+    // self-contained, no TUI wiring required. See `buildSiblingMessagingBatch`
+    // for the security model (gated + batch-scoped + inert prose only).
+    //
+    // The sibling channel is default-ON, gated by the operator setting: when the
+    // parent has a messaging runtime (TUI-wired), mirror its
+    // `siblingChannelEnabled`; otherwise (console — no parent runtime) read an
+    // optional `allowSubagentPeerMessaging` off the context if present, default
+    // TRUE. Setting it `false` disables child↔child entirely. The mailbox is the
+    // SAME shared spool (keyed by projectPath+homeDir) the child derivation
+    // already copies — reused here from the parent runtime, or `process.cwd()`
+    // (the same key the parent TUI uses) when there is no parent runtime.
+    const parentMessaging = messagingRuntimeOf(this.ctx);
+    const siblingChannelEnabled =
+      parentMessaging?.siblingChannelEnabled ??
+      ((this.ctx as { allowSubagentPeerMessaging?: boolean }).allowSubagentPeerMessaging ?? true);
+    const batchMessaging = buildSiblingMessagingBatch({
+      agentIds: specs.map((s) => s.base.agent_id),
+      scanId: this.ctx.scanId,
+      siblingChannelEnabled,
+      projectPath: parentMessaging?.projectPath ?? process.cwd(),
+      homeDir: parentMessaging?.homeDir,
+      parentId: parentMessaging?.selfId,
+      operatorId: parentMessaging?.operatorId,
+      operatorChannelEnabled: parentMessaging?.operatorChannelEnabled ?? false,
+    });
+    const messagingById = new Map(batchMessaging.map((m) => [m.selfId, m]));
+
     // queued — emit for ALL children up front so the whole fan-out is visible
     // immediately, before the concurrency cap lets only some start running.
     for (const spec of specs) {
@@ -4778,7 +4887,14 @@ export class ToolExecutor {
     const outcomes = await mapWithConcurrency(
       specs,
       subagentConcurrency(),
-      async (spec) => this.runOneSubagent(spec.task, spec.maxTurns, spec.base, deps),
+      async (spec) =>
+        this.runOneSubagent(
+          spec.task,
+          spec.maxTurns,
+          spec.base,
+          deps,
+          messagingById.get(spec.base.agent_id),
+        ),
     );
 
     // Merge findings AFTER the pool has fully joined — single-threaded, in
@@ -4790,6 +4906,7 @@ export class ToolExecutor {
         }
         return {
           index,
+          agent_id: outcome.agent_id,
           ok: true as const,
           findings: outcome.findings.length,
           turns: outcome.turns,
@@ -4797,7 +4914,7 @@ export class ToolExecutor {
           done: outcome.done,
         };
       }
-      return { index, ok: false as const, error: outcome.error };
+      return { index, agent_id: outcome.agent_id, ok: false as const, error: outcome.error };
     });
 
     const succeeded = perChild.filter((c) => c.ok).length;

@@ -34,7 +34,7 @@ import {
   sendOperatorMessage,
   type MessagingRuntime,
 } from "./agent-messaging.js";
-import { ToolExecutor } from "./tools.js";
+import { ToolExecutor, buildSiblingMessagingBatch, buildSendMessageTool } from "./tools.js";
 import type { ToolContext } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -768,6 +768,190 @@ describe("child send_message / check_messages (real mailbox)", () => {
     const newDir = join(home, ".0sec", "hub");
     // Just assert the hub root exists; detailed layout is the mailbox's own test.
     expect(readdirSync(newDir).length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrent spawn_agents fan-out: seeded child↔child (sibling) messaging
+// ---------------------------------------------------------------------------
+
+describe("buildSiblingMessagingBatch (sibling discovery seed)", () => {
+  const IDS = [`${SIBLING_PREFIX}a`, `${SIBLING_PREFIX}b`, `${SIBLING_PREFIX}c`] as const;
+
+  it("seeds each child with the OTHER batch children's ids as knownPeerIds", () => {
+    const batch = buildSiblingMessagingBatch({
+      agentIds: IDS,
+      scanId: SCAN,
+      siblingChannelEnabled: true,
+      projectPath: "/tmp/project",
+    });
+    expect(batch).toHaveLength(3);
+    for (let i = 0; i < IDS.length; i++) {
+      const rt = batch[i];
+      expect(rt.selfId).toBe(IDS[i]);
+      expect(rt.selfRole).toBe("child");
+      expect(rt.siblingPrefix).toBe(SIBLING_PREFIX);
+      // Its OWN id is never in the roster; every sibling is.
+      expect(rt.knownPeerIds).not.toContain(IDS[i]);
+      expect([...(rt.knownPeerIds ?? [])].sort()).toEqual(
+        IDS.filter((id) => id !== IDS[i]).slice().sort(),
+      );
+    }
+  });
+
+  it("mirrors the gate: siblingChannelEnabled=false disables the whole batch", () => {
+    const batch = buildSiblingMessagingBatch({
+      agentIds: IDS,
+      scanId: SCAN,
+      siblingChannelEnabled: false,
+      projectPath: "/tmp/project",
+    });
+    for (const rt of batch) expect(rt.siblingChannelEnabled).toBe(false);
+  });
+
+  it("a seeded child may address an in-batch sibling but NOT an out-of-batch id", () => {
+    const [a] = buildSiblingMessagingBatch({
+      agentIds: [IDS[0], IDS[1]],
+      scanId: SCAN,
+      siblingChannelEnabled: true,
+      projectPath: "/tmp/project",
+    });
+    // In-batch sibling: allowed.
+    expect(decideAddressing(a, IDS[1])).toEqual({ allowed: true, kind: "sibling" });
+    // Out-of-batch id that STILL matches the scan-wide prefix: refused, because
+    // the seeded roster scopes a child to its own batch.
+    expect(decideAddressing(a, `${SIBLING_PREFIX}zzz`)).toEqual({
+      allowed: false,
+      reason: GENERIC_DENY_REASON,
+    });
+  });
+
+  it("surfaces concrete sibling ids in the send_message tool description (discovery)", () => {
+    const [a] = buildSiblingMessagingBatch({
+      agentIds: [IDS[0], IDS[1]],
+      scanId: SCAN,
+      siblingChannelEnabled: true,
+      projectPath: "/tmp/project",
+    });
+    const tool = buildSendMessageTool(a);
+    const desc = (tool.parameters as { to: { description: string } }).to.description;
+    // The model can read a concrete, addressable sibling id straight off the tool.
+    expect(desc).toContain(IDS[1]);
+    expect(desc).not.toContain(IDS[0]); // never lists the child's own id
+  });
+
+  it("says siblings are NOT reachable when the channel is disabled", () => {
+    const [a] = buildSiblingMessagingBatch({
+      agentIds: [IDS[0], IDS[1]],
+      scanId: SCAN,
+      siblingChannelEnabled: false,
+      projectPath: "/tmp/project",
+    });
+    const desc = (buildSendMessageTool(a).parameters as { to: { description: string } }).to
+      .description;
+    expect(desc).toContain("NOT reachable");
+    expect(desc).not.toContain(IDS[1]);
+  });
+});
+
+describe("fan-out sibling messaging end-to-end (real mailbox)", () => {
+  let root: string;
+  let home: string;
+  let project: string;
+  const A_ID = `${SIBLING_PREFIX}childA`;
+  const B_ID = `${SIBLING_PREFIX}childB`;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "0sec-fanout-"));
+    home = join(root, "home");
+    project = join(root, "project");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(project, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** A ToolContext carrying an arbitrary child messaging runtime. */
+  function ctxFor(rt: MessagingRuntime): ToolContext {
+    return {
+      target: "https://target.test",
+      scanId: SCAN,
+      role: "attack",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      currentTurn: 1,
+      agentMessaging: rt,
+    } as unknown as ToolContext;
+  }
+
+  it("child A → sibling B is delivered and B's check_messages drains it", async () => {
+    const [a, b] = buildSiblingMessagingBatch({
+      agentIds: [A_ID, B_ID],
+      scanId: SCAN,
+      siblingChannelEnabled: true,
+      projectPath: project,
+      homeDir: home,
+    });
+
+    // Child A addresses the sibling id it was seeded with.
+    const execA = new ToolExecutor(ctxFor(a), null);
+    const sent = await execA.execute({
+      name: "send_message",
+      arguments: { to: B_ID, body: "found an IDOR on /orders — pivot there" },
+    });
+    expect(sent.success).toBe(true);
+    expect((sent.output as { delivered: boolean }).delivered).toBe(true);
+
+    // Child B drains its inbox and sees the sibling's message, fenced + attributed.
+    const execB = new ToolExecutor(ctxFor(b), null);
+    const got = await execB.execute({ name: "check_messages", arguments: {} });
+    expect(got.success).toBe(true);
+    const msgs = (got.output as { messages: string[] }).messages;
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]).toContain(`peer ${A_ID} said`);
+    expect(msgs[0]).toContain("pivot there");
+    // Destructive drain: nothing left on the wire.
+    expect(peekInbox(project, B_ID, home)).toHaveLength(0);
+  });
+
+  it("refuses an out-of-batch / unknown sibling id and delivers nothing", async () => {
+    const [a] = buildSiblingMessagingBatch({
+      agentIds: [A_ID, B_ID],
+      scanId: SCAN,
+      siblingChannelEnabled: true,
+      projectPath: project,
+      homeDir: home,
+    });
+    const execA = new ToolExecutor(ctxFor(a), null);
+    const outOfBatch = `${SIBLING_PREFIX}stranger`;
+    const r = await execA.execute({
+      name: "send_message",
+      arguments: { to: outOfBatch, body: "hi" },
+    });
+    expect(r.success).toBe(false);
+    expect(r.error).toBe(GENERIC_DENY_REASON);
+    expect(peekInbox(project, outOfBatch, home)).toHaveLength(0);
+  });
+
+  it("blocks sibling messaging entirely when allowSubagentPeerMessaging is off", async () => {
+    const [a] = buildSiblingMessagingBatch({
+      agentIds: [A_ID, B_ID],
+      scanId: SCAN,
+      siblingChannelEnabled: false,
+      projectPath: project,
+      homeDir: home,
+    });
+    const execA = new ToolExecutor(ctxFor(a), null);
+    const r = await execA.execute({
+      name: "send_message",
+      arguments: { to: B_ID, body: "pivot" },
+    });
+    expect(r.success).toBe(false);
+    expect(r.error).toBe(GENERIC_DENY_REASON);
+    expect(peekInbox(project, B_ID, home)).toHaveLength(0);
   });
 });
 

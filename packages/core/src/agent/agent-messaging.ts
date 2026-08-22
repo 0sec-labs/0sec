@@ -161,13 +161,26 @@ export interface MessagingRuntime {
   /** Optional home-state-dir override (tests point this at a temp dir). */
   homeDir?: string;
   /**
-   * OPERATOR ROLE ONLY: the ids currently on the operator's live herd roster.
+   * The concrete peer ids this sender is allowed to reach, used by TWO roles:
    *
-   * When present, an `operator` sender may address ONLY a peer on this list, so
-   * a dead or unknown agent id is refused cleanly instead of being spooled into
-   * a mailbox no live process will ever drain. When absent, an `operator` is
-   * treated as a trust boundary (like the parent) and may address any
-   * shape-valid, non-self peer id. Ignored for `parent`/`child` senders.
+   *   - OPERATOR: the ids currently on the operator's live herd roster. When
+   *     present, an `operator` may address ONLY a peer on this list, so a dead
+   *     or unknown agent id is refused cleanly instead of being spooled into a
+   *     mailbox no live process will ever drain. When absent, an `operator` is
+   *     treated as a trust boundary (like the parent) and may address any
+   *     shape-valid, non-self peer id.
+   *
+   *   - CHILD (sibling channel): the OTHER children in THIS spawn batch — the
+   *     discovery seed (a sibling can otherwise never learn a sibling's id) AND
+   *     the batch-scoping allow-list. When present, a child's sibling `to` must
+   *     be on this list IN ADDITION to matching {@link siblingPrefix}, so even
+   *     though the `<scanId>-sub-` prefix is scan-wide a child can never reach a
+   *     sibling from another batch. When absent, the sibling check falls back to
+   *     the prefix guard alone (backward-compatible with a runtime that never
+   *     seeded a batch roster). Never consulted for the parent/operator branches
+   *     of a child verdict — only the sibling branch reads it.
+   *
+   * Ignored for `parent` senders.
    */
   knownPeerIds?: readonly string[];
 }
@@ -204,7 +217,10 @@ export const BROADCAST_DENY_REASON =
  *   - `to === operatorId` AND the operator channel is on → ALLOWED
  *     (child → operator).
  *   - `to` is a sibling (shares `siblingPrefix`, ≠ self, ≠ `operatorId`) AND
- *     the sibling channel is on → ALLOWED (child → sibling).
+ *     the sibling channel is on AND — when a batch roster is seeded — `to` is on
+ *     {@link MessagingRuntime.knownPeerIds} → ALLOWED (child → sibling). The
+ *     roster check is ADDITIVE: it only tightens (scoping a child to its own
+ *     batch); with no roster it is a no-op and the prefix guard stands alone.
  *   - anything else (other session, disabled channel, unknown id) → DENIED with
  *     {@link GENERIC_DENY_REASON} (no roster leak, no settings leak).
  *   - broadcast → DENIED with {@link BROADCAST_DENY_REASON}, unconditionally.
@@ -272,7 +288,12 @@ export function decideAddressing(from: MessagingRuntime, to: unknown): AddressDe
     from.siblingChannelEnabled &&
     from.siblingPrefix &&
     from.siblingPrefix.length > 0 &&
-    to.startsWith(from.siblingPrefix)
+    to.startsWith(from.siblingPrefix) &&
+    // A seeded batch roster scopes a child to its OWN batch's siblings. This is
+    // purely additive: when `knownPeerIds` is undefined the prefix guard stands
+    // alone (unchanged behavior); when it is set, a sibling `to` must also be on
+    // it, so the scan-wide prefix can never reach a sibling from another batch.
+    (from.knownPeerIds === undefined || from.knownPeerIds.includes(to))
   ) {
     return { allowed: true, kind: "sibling" };
   }
