@@ -21,9 +21,9 @@ import {
 } from "@0sec/core";
 import { TextAttributes } from "@opentui/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
-import { useSettings } from "./settings-store.js";
+import { useSettings, updateSetting } from "./settings-store.js";
 import { useTheme, type Theme } from "./theme-context.js";
-import { modelProvider } from "@0sec/shared";
+import { MODEL_PRICING, modelProvider, type ModelRates } from "@0sec/shared";
 import { homedir } from "node:os";
 import { readGitStatus, type GitStatus } from "./git-status.js";
 import { buildStatusSegments, fitStatusSegments } from "./status-bar.js";
@@ -106,6 +106,8 @@ import {
 import { deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
 import { appendTranscriptEntry, repeatSuffix } from "./transcript.js";
 import {
+  foldSummary,
+  planTranscript,
   resolveTranscriptStyleSettings,
   roleLabelText,
   speechFrame,
@@ -117,6 +119,8 @@ import {
   toolHeaderPrefix,
   type RoleLabelStyle,
   type ToolCardStyle,
+  type TranscriptDetail,
+  type TranscriptPlanItem,
   type TranscriptStyle,
 } from "./transcript-style.js";
 
@@ -172,6 +176,13 @@ type ChatEntry = {
    * when the turn ends. Rendered as the elapsed in the AI turn's footer.
    */
   durationMs?: number;
+  /**
+   * Per-turn model usage, stamped onto the turn's assistant answer(s) when the
+   * turn settles. Drives the optional in→out token and cost segments on the AI
+   * footer (gated by `showTokenUsage` / `showCost`).
+   */
+  usageInput?: number;
+  usageOutput?: number;
   /**
    * How many consecutive identical entries this row stands for; see
    * `appendTranscriptEntry`. Rendered as a trailing "(xN)".
@@ -394,6 +405,59 @@ interface EntryDisplay {
   mode: string;
   /** Resolved model id, for the AI turn footer ("… · gpt-…"). */
   model: string;
+  /** Show the model name on the AI footer (settings.modelDisplay === "message"). */
+  modelInFooter: boolean;
+  /** Show the per-turn "in→out tok" segment on the AI footer. */
+  showTokenUsage: boolean;
+  /** Show the estimated per-turn dollar cost on the AI footer. */
+  showCost: boolean;
+  /** How the transcript folds turn detail; drives the fold planner. */
+  transcriptDetail: TranscriptDetail;
+}
+
+/**
+ * Priced rate rows by lower-cased model id, mirroring status-bar.ts. "default"
+ * is excluded on purpose: it is shared's fallback for an UNKNOWN model, and
+ * pricing an unrecognised id at it would put a fabricated figure on screen.
+ * Kept local (rather than importing status-bar's private map) so the footer's
+ * cost estimate never routes through shared's `estimateCost`, which
+ * `console.warn`s on an unknown id — forbidden inside a TUI that owns stdout.
+ */
+const FOOTER_RATES_BY_LOWER: ReadonlyMap<string, ModelRates> = new Map(
+  Object.entries(MODEL_PRICING)
+    .filter(([key]) => key !== "default")
+    .map(([key, rates]) => [key.toLowerCase(), rates]),
+);
+
+const FOOTER_VENDOR_PREFIXES = [
+  "openai/", "anthropic/", "google/", "deepseek/", "meta/", "mistral/",
+  "z-ai/", "zai/", "kimi/", "moonshot/", "openrouter/", "xai/", "x-ai/",
+];
+
+function footerRates(model: string): ModelRates | undefined {
+  const lower = model.toLowerCase();
+  const direct = FOOTER_RATES_BY_LOWER.get(lower);
+  if (direct) return direct;
+  for (const prefix of FOOTER_VENDOR_PREFIXES) {
+    if (lower.startsWith(prefix)) return FOOTER_RATES_BY_LOWER.get(lower.slice(prefix.length));
+  }
+  return undefined;
+}
+
+/**
+ * A quiet per-turn cost string for the AI footer, or "$—" when the model's rate
+ * is unknown (never a figure at a rate the model was not billed). Mirrors the
+ * status-bar's arithmetic and formatting.
+ */
+function formatTurnCost(model: string, inputTokens: number, outputTokens: number): string {
+  const rates = model ? footerRates(model) : undefined;
+  if (!rates) return "$—";
+  const usd =
+    (Math.max(0, inputTokens) / 1_000_000) * rates.input +
+    (Math.max(0, outputTokens) / 1_000_000) * rates.output;
+  if (!Number.isFinite(usd) || usd <= 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
 }
 
 /**
@@ -605,9 +669,21 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
           </box>
         );
       }
-      const modeModel = `${display.mode}${display.model ? ` · ${display.model}` : ""}`;
+      // The footer is composed from the mode plus whatever telemetry the
+      // operator opted into: the model only when `modelDisplay` routes it here
+      // (otherwise it lives in the bottom bar), the per-turn tokens under
+      // `showTokenUsage`, the per-turn cost under `showCost`, and the elapsed.
+      const footerParts: string[] = [display.mode];
+      if (display.modelInFooter && display.model) footerParts.push(display.model);
+      if (display.showTokenUsage && entry.usageInput !== undefined) {
+        footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
+      }
+      if (display.showCost && entry.usageInput !== undefined) {
+        footerParts.push(formatTurnCost(display.model, entry.usageInput, entry.usageOutput ?? 0));
+      }
       const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
-      const footer = `${modeModel}${elapsed ? ` · ${elapsed}` : ""}`;
+      if (elapsed) footerParts.push(elapsed);
+      const footer = footerParts.join(" · ");
       return (
         <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
           {body}
@@ -834,6 +910,41 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
       <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
         <text fg={MUTED} wrapMode="word">{fitTuiText(`${entry.text}${repeat}`, maxWidth - 2)}</text>
         {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, maxWidth - 2)}</text> : null}
+      </box>
+    </box>
+  );
+}
+
+/**
+ * A folded run of collapsed detail: one quiet line, a ▸ disclosure glyph then
+ * the summary. The planner never folds a failure into a run, so the muted tone
+ * is always correct — every entry behind this line succeeded (or is reasoning).
+ * Expanding the transcript (Ctrl+R) restores the full cards.
+ */
+function renderFold(
+  item: Extract<TranscriptPlanItem<ChatEntry>, { type: "fold" }>,
+  maxWidth: number,
+  display: EntryDisplay,
+  theme: Theme,
+) {
+  const { MUTED } = theme;
+  const key = `fold-${item.entries[0]?.id ?? item.turn}`;
+  // `toolCardStyle: "hidden"` means "don't show me successful tool activity";
+  // honour it inside a fold too by dropping the tool/subagent steps from the
+  // summary (reasoning still folds). A fold left with nothing renders nothing.
+  const shown =
+    display.toolCardStyle === "hidden"
+      ? item.entries.filter((entry) => entry.kind !== "tool" && entry.kind !== "subagent")
+      : item.entries;
+  if (shown.length === 0) return null;
+  const summary = shown.length === item.entries.length ? item.summary : foldSummary(shown);
+  return (
+    <box key={key} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+      <box width={2} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>▸ </text>
+      </box>
+      <box flexGrow={1} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText(summary, Math.max(1, maxWidth - 2))}</text>
       </box>
     </box>
   );
@@ -1394,11 +1505,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   /**
    * Messages typed while a turn was in flight, delivered FIFO once it ends.
    * A ref rather than state because the keyboard handler writes it
-   * synchronously; `queuedCount` mirrors its length purely so the composer can
-   * show the operator that the text went somewhere.
+   * synchronously; `queuedMessages` mirrors it (not just a count) so the sticky
+   * queue block near the composer can show WHAT is parked, not only how much.
    */
   const queuedRef = useRef<string[]>([]);
-  const [queuedCount, setQueuedCount] = useState(0);
+  const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
+  const queuedCount = queuedMessages.length;
   const [composer, setComposer] = useState("");
   const [composing, setComposing] = useState(false);
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
@@ -2548,6 +2660,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     // Reasoning is a separate stream from the answer and gets its own
     // accumulator so the two never interleave into one entry.
     let reasoningText = "";
+    // The turn's usage, captured from the outcome so `finally` can stamp it onto
+    // the answer alongside the elapsed. Null until the turn returns, so a turn
+    // that throws before reporting usage simply stamps nothing.
+    let turnUsage: { inputTokens: number; outputTokens: number } | null = null;
     streamingRef.current = false;
     // One controller per turn, published so Esc can reach it. It is cleared
     // in `finally`, so an Esc after the turn ended aborts nothing.
@@ -2649,6 +2765,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         input: prev.input + outcome.usage.inputTokens,
         output: prev.output + outcome.usage.outputTokens,
       }));
+      turnUsage = { inputTokens: outcome.usage.inputTokens, outputTokens: outcome.usage.outputTokens };
 
       // A turn that fails must say so. The engine reports failure through
       // `stopReason`/`error`, and neither was surfaced before: a provider
@@ -2730,12 +2847,21 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       // and only for entries that do not already carry one, so a later repaint
       // never re-times an old answer.
       const turnDuration = Date.now() - turnStartedAt;
+      const usage = turnUsage;
       setEntries((current) => current.some(
         (e) => e.kind === "assistant" && e.turn === currentTurn && e.durationMs === undefined,
       )
         ? current.map((e) =>
             e.kind === "assistant" && e.turn === currentTurn && e.durationMs === undefined
-              ? { ...e, durationMs: turnDuration }
+              ? {
+                  ...e,
+                  durationMs: turnDuration,
+                  // Stamp per-turn usage alongside the elapsed so the footer's
+                  // token/cost segments have a real figure to render.
+                  ...(usage
+                    ? { usageInput: usage.inputTokens, usageOutput: usage.outputTokens }
+                    : {}),
+                }
               : e)
         : current);
       // Persist in `finally`, not in the success path and not in `catch`:
@@ -2771,7 +2897,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     const { next, rest } = dequeueComposerInput(queuedRef.current);
     if (next === undefined) return;
     queuedRef.current = rest;
-    setQueuedCount(rest.length);
+    setQueuedMessages(rest);
     void submitRef.current?.(next);
   }, [busy, session]);
 
@@ -2902,6 +3028,34 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       transcriptRef.current?.scrollBy(0.5, "viewport");
       return;
     }
+    // Ctrl+R flips the whole transcript between collapsed and expanded detail —
+    // the global disclosure toggle for the folded tool/reasoning summaries. It
+    // persists via the settings store (same layer `/settings` would write), so
+    // the choice survives the session; the store notifies subscribers, so the
+    // transcript repaints immediately with no remount.
+    if (key.ctrl && key.name === "r") {
+      updateSetting(
+        "transcriptDetail",
+        settingsRef.current.transcriptDetail === "collapsed" ? "expanded" : "collapsed",
+      );
+      return;
+    }
+    // Ctrl+Y pulls the most recently queued message back into the composer for
+    // editing — which doubles as cancel: it leaves the queue, and dropping it
+    // (Esc) or re-sending it (Enter, re-queued at the back while still busy) is
+    // then just normal composer editing. Newest-first so a hurried operator can
+    // fix the last thing they typed without disturbing earlier parked lines.
+    if (key.ctrl && key.name === "y" && queuedRef.current.length > 0) {
+      const queue = queuedRef.current;
+      const last = queue[queue.length - 1];
+      const rest = queue.slice(0, -1);
+      queuedRef.current = rest;
+      setQueuedMessages(rest);
+      composingRef.current = true;
+      setComposing(true);
+      setComposerText(last);
+      return;
+    }
     // Shift+Tab cycles the autonomy mode. It is handled ABOVE the composing
     // block for two reasons: it should work while the operator is mid-sentence,
     // and the composing block's catch-all appends `key.sequence` for anything
@@ -3015,7 +3169,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           // indistinguishable from a dead keyboard.
           const { queue, accepted } = enqueueComposerInput(queuedRef.current, input);
           queuedRef.current = queue;
-          setQueuedCount(queue.length);
+          setQueuedMessages(queue);
           appendEntry({
             kind: accepted ? "notice" : "error",
             text: accepted
@@ -3110,6 +3264,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       // nothing in the codebase knows context-window sizes.
       contextWindow: turnBudget?.limit,
       contextUsed: turnBudget?.used,
+      // Telemetry toggles: where the model name is surfaced, whether the
+      // context reading renders as a visual meter, and whether an estimated
+      // dollar cost is appended. status-bar.ts honours each and invents no
+      // number it was not given.
+      modelDisplay: settings.modelDisplay,
+      showContextMeter: settings.showContextMeter,
+      showCost: settings.showCost,
     }),
     contentWidth,
   );
@@ -3183,6 +3344,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     toolCardStyle: transcriptStyleSettings.toolCardStyle,
     mode: modeLabel(mode),
     model: modelId ?? "",
+    modelInFooter: settings.modelDisplay === "message",
+    showTokenUsage: settings.showTokenUsage,
+    showCost: settings.showCost,
+    transcriptDetail: settings.transcriptDetail,
   };
   // One animation kind per real state. `awaiting-operator` is deliberately
   // NOT a busy spinner: when the human is the bottleneck the surface should
@@ -3287,9 +3452,18 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     settings.showLogo && empty && ledgerRows >= LEDGER_MARK_ROWS && contentWidth >= TERMINAL_BLOCK_LOGO_WIDTH;
   const showEmptyStateTagline = empty && ledgerRows >= 3;
   const sessionState = startupError ? "unavailable" : busy ? "working" : session ? "ready" : "connecting";
+  // The header's engagement summary is assembled from opt-out segments so a
+  // hidden one leaves no dangling " · ": target and scope are each gated on
+  // their setting, and the session state (connecting/working/ready) always
+  // rides along — it is status, not scope, and stays visible even when both
+  // labels are off.
   const targetSummary = target ? `target: ${target}` : "target: none";
-  const scopeSummary = `scope: ${scopeLabel} · ${sessionState}`;
-  const headerEngagement = `${targetSummary} · ${scopeSummary}`;
+  const scopeSummary = `scope: ${scopeLabel}`;
+  const headerSegments: string[] = [];
+  if (settings.showTarget) headerSegments.push(targetSummary);
+  if (settings.showScope) headerSegments.push(scopeSummary);
+  headerSegments.push(sessionState);
+  const headerEngagement = headerSegments.join(" · ");
 
   const controls = approvalPrompt
     ? "↑↓ choose · enter confirm · esc decline"
@@ -3414,6 +3588,63 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     </box>
   );
   const composerNode = buildComposer({ textWidth: composerTextWidth });
+
+  // ── Sticky context above the composer ──────────────────────────────────────
+  // Two things must stay on screen while the transcript scrolls and the agent
+  // works: the request currently being answered, and anything the operator has
+  // parked for the next round. Both live in a flexShrink={0} block pinned
+  // directly above the composer, so the transcript (flexGrow) absorbs the rows
+  // and nothing overflows. Bounded on purpose — the parked list caps at a few
+  // rows with a "+N more" tail — so it can never crowd out the transcript.
+  const lastUserRequest = (() => {
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      if (entries[i].kind === "user") return entries[i].text;
+    }
+    return "";
+  })();
+  const STICKY_QUEUE_ROWS = 3;
+  const stickyWidth = Math.max(1, contentWidth - 2);
+  const showStickyRequest = busy && Boolean(lastUserRequest);
+  const stickyNode =
+    showStickyRequest || queuedMessages.length > 0 ? (
+      <box flexDirection="column" width="100%" flexShrink={0} minWidth={0} marginTop={1}>
+        {showStickyRequest ? (
+          <box flexDirection="row" minWidth={0}>
+            <box width={2} flexShrink={0} minWidth={0}>
+              <text fg={ACCENT}>▎</text>
+            </box>
+            <box flexGrow={1} minWidth={0}>
+              <text fg={MUTED}>{fitTuiText(`request · ${lastUserRequest}`, stickyWidth)}</text>
+            </box>
+          </box>
+        ) : null}
+        {queuedMessages.length > 0 ? (
+          <box flexDirection="column" minWidth={0}>
+            <text fg={WARNING}>
+              {fitTuiText(
+                `${composerQueueLabel(queuedMessages.length)} · sent on the next round · ctrl+y edit`,
+                contentWidth,
+              )}
+            </text>
+            {queuedMessages.slice(0, STICKY_QUEUE_ROWS).map((message, index) => (
+              <box key={`queued-${index}`} flexDirection="row" minWidth={0}>
+                <box width={2} flexShrink={0} minWidth={0}>
+                  <text fg={MUTED}>{`${index + 1} `}</text>
+                </box>
+                <box flexGrow={1} minWidth={0}>
+                  <text fg={MUTED}>{fitTuiText(message, stickyWidth)}</text>
+                </box>
+              </box>
+            ))}
+            {queuedMessages.length > STICKY_QUEUE_ROWS ? (
+              <text fg={MUTED}>
+                {fitTuiText(`+${queuedMessages.length - STICKY_QUEUE_ROWS} more`, contentWidth)}
+              </text>
+            ) : null}
+          </box>
+        ) : null}
+      </box>
+    ) : null;
   // The hero composer is a centered card, not a full-bleed bar: ~60% of the
   // content column, clamped to a comfortable 40..72 cells and never wider than
   // the column itself. Four cells of chrome (rail + its gap + the "› " prefix)
@@ -3742,7 +3973,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" backgroundColor={PANEL} paddingX={compact ? 1 : 2} paddingY={1}>
             <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
               <box flexDirection="column" width="100%">
-                {entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay, theme))}
+                {planTranscript(entries, entryDisplay.transcriptDetail).map((item) =>
+                  item.type === "fold"
+                    ? renderFold(item, transcriptWidth, entryDisplay, theme)
+                    : renderEntry(item.entry, transcriptWidth, entryDisplay, theme),
+                )}
                 {workingIndicator}
                 {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
               </box>
@@ -3757,6 +3992,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
             */}
           {subagentNode}
           {overlaysNode}
+          {stickyNode}
           {composerNode}
         </>
       )}

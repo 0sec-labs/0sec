@@ -113,6 +113,14 @@ describe("normalizeSettings", () => {
     expect(normalized.composerStyle).toBe(DEFAULT_SETTINGS.composerStyle);
   });
 
+  it("defaults transcriptDetail to collapsed and honours a valid override", () => {
+    expect(DEFAULT_SETTINGS.transcriptDetail).toBe("collapsed");
+    expect(normalizeSettings({}).transcriptDetail).toBe("collapsed");
+    expect(normalizeSettings({ transcriptDetail: "expanded" }).transcriptDetail).toBe("expanded");
+    // A bogus value degrades to the default rather than crashing.
+    expect(normalizeSettings({ transcriptDetail: "folded" }).transcriptDetail).toBe("collapsed");
+  });
+
   it("accepts every declared choice for every enum setting", () => {
     for (const def of SETTING_DEFS) {
       if (def.kind !== "enum") continue;

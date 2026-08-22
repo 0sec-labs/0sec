@@ -87,6 +87,134 @@ export const DEFAULT_TRANSCRIPT_STYLE: TranscriptStyle = "rail";
 export const DEFAULT_ROLE_LABEL_STYLE: RoleLabelStyle = "full";
 export const DEFAULT_TOOL_CARD_STYLE: ToolCardStyle = "rail";
 
+// ---------------------------------------------------------------------------
+// Transcript detail (collapse planning)
+// ---------------------------------------------------------------------------
+
+/**
+ * "collapsed" folds each turn's successful tool calls and reasoning into a
+ * single one-line summary so the transcript reads as operator input + the
+ * model's answer, rather than a wall of tool output. "expanded" shows every
+ * entry in full. Modelled on OpenCode's collapsible ToolPart/ReasoningPart,
+ * which are hidden-when-successful outside detail mode.
+ */
+export const TRANSCRIPT_DETAILS = ["collapsed", "expanded"] as const;
+export type TranscriptDetail = (typeof TRANSCRIPT_DETAILS)[number];
+export const DEFAULT_TRANSCRIPT_DETAIL: TranscriptDetail = "collapsed";
+
+/**
+ * The subset of a transcript entry the collapse planner reasons about. Kept
+ * structural (not the full `ChatEntry`) so the planning is a pure, unit-tested
+ * function independent of the render layer.
+ */
+export interface CollapseEntryLike {
+  kind: "user" | "assistant" | "reasoning" | "tool" | "subagent" | "notice" | "panel" | "error";
+  /** Tool result success, when known. `false` marks a failed tool. */
+  success?: boolean;
+  /** Subagent outcome, when this is a subagent entry. */
+  subagentOutcome?: "completed" | "failed";
+  /** The turn this entry belongs to; a fold never spans two turns. */
+  turn: number;
+  /** Tool/entry name, used to caption the fold summary. */
+  text?: string;
+}
+
+/**
+ * Whether an entry's detail may be folded in collapsed mode.
+ *
+ * Failures are the hard exception the operator relies on: a failed tool, a
+ * failed subagent and an error entry always render in full, so a problem is
+ * never hidden behind a summary. Reasoning always folds (it is working-out, not
+ * a conclusion); a successful or still-running tool/subagent folds too.
+ */
+export function isCollapsibleEntry(entry: CollapseEntryLike): boolean {
+  switch (entry.kind) {
+    case "tool":
+      return entry.success !== false;
+    case "subagent":
+      return entry.subagentOutcome !== "failed";
+    case "reasoning":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** One caption token for an entry in a fold summary. */
+function foldToken(entry: CollapseEntryLike): string {
+  if (entry.kind === "reasoning") return "thinking";
+  if (entry.kind === "subagent") return "subagent";
+  const name = entry.text?.trim();
+  return name && name.length > 0 ? name : entry.kind;
+}
+
+/**
+ * A one-line caption for a folded run: the single step's name when there is
+ * one, otherwise a count plus the first few distinct names ("3 steps ·
+ * run_command, read_file"). Pure; the caller owns the leading glyph and colour.
+ */
+export function foldSummary(entries: readonly CollapseEntryLike[]): string {
+  if (entries.length === 0) return "";
+  const names: string[] = [];
+  for (const entry of entries) {
+    const token = foldToken(entry);
+    if (!names.includes(token)) names.push(token);
+  }
+  const shown = names.slice(0, 3).join(", ");
+  const more = names.length > 3 ? ` +${names.length - 3}` : "";
+  if (entries.length === 1) return shown;
+  return `${entries.length} steps · ${shown}${more}`;
+}
+
+/** A planned transcript row: a normal entry, or a folded run of collapsibles. */
+export type TranscriptPlanItem<E> =
+  | { type: "entry"; entry: E }
+  | { type: "fold"; turn: number; entries: E[]; summary: string };
+
+/**
+ * Turn a flat entry list into an ordered render plan.
+ *
+ * In "expanded" every entry renders as itself. In "collapsed" each maximal run
+ * of consecutive collapsible entries WITHIN one turn becomes a single `fold`
+ * item; anything non-collapsible (operator input, the answer, and every
+ * failure) breaks the run and renders in full. A turn present in
+ * `expandedTurns` is treated as expanded, so a future per-turn toggle drops in
+ * without touching the planner.
+ */
+export function planTranscript<E extends CollapseEntryLike>(
+  entries: readonly E[],
+  detail: TranscriptDetail,
+  expandedTurns?: ReadonlySet<number>,
+): TranscriptPlanItem<E>[] {
+  if (detail === "expanded") {
+    return entries.map((entry) => ({ type: "entry", entry }));
+  }
+  const out: TranscriptPlanItem<E>[] = [];
+  let run: E[] = [];
+  let runTurn = Number.NaN;
+  const flush = (): void => {
+    if (run.length === 0) return;
+    // Even a lone collapsible folds: a single reasoning block still reduces to
+    // "thinking", and a single successful tool to its name, so collapsed mode
+    // is uniformly one line per fold. Expanding the turn restores full detail.
+    out.push({ type: "fold", turn: runTurn, entries: run, summary: foldSummary(run) });
+    run = [];
+  };
+  for (const entry of entries) {
+    const foldable = isCollapsibleEntry(entry) && !expandedTurns?.has(entry.turn);
+    if (!foldable) {
+      flush();
+      out.push({ type: "entry", entry });
+      continue;
+    }
+    if (run.length > 0 && entry.turn !== runTurn) flush();
+    runTurn = entry.turn;
+    run.push(entry);
+  }
+  flush();
+  return out;
+}
+
 /** The kinds framed as speech (everything that is not a tool/subagent/panel). */
 export type SpeechKind = "user" | "assistant" | "error" | "reasoning" | "notice";
 

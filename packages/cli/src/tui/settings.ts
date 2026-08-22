@@ -82,6 +82,13 @@ export interface TuiSettings {
   /** How a tool/subagent call is drawn (failures always show). */
   toolCardStyle: "rail" | "inline" | "compact" | "hidden";
   /**
+   * Transcript detail. "collapsed" folds each turn's successful tool calls and
+   * reasoning into one-line summaries so the transcript reads as input + answer;
+   * "expanded" shows every detail. Failures are never folded. Consumed by
+   * chat-screen's transcript planner.
+   */
+  transcriptDetail: "collapsed" | "expanded";
+  /**
    * Colour palette. A built-in theme name OR an installed theme id (themes.ts).
    * Typed loosely on purpose: an installed theme's id is an arbitrary safe
    * string, and `normalizeSettings` validates it with `isKnownTheme` (built-in
@@ -148,6 +155,7 @@ type TuiSettingDef =
   | EnumSettingDef<"transcriptStyle">
   | EnumSettingDef<"roleLabelStyle">
   | EnumSettingDef<"toolCardStyle">
+  | EnumSettingDef<"transcriptDetail">
   | EnumSettingDef<"modelDisplay">
   | EnumSettingDef<"logoAnimation">
   | EnumSettingDef<"theme">;
@@ -294,6 +302,16 @@ const DEFS: readonly TuiSettingDef[] = [
     group: "Display",
   },
   {
+    key: "transcriptDetail",
+    label: "Transcript detail",
+    description:
+      "Collapsed folds each turn's successful tool calls and reasoning into one-line summaries; expanded shows every detail (failures always show).",
+    kind: "enum",
+    default: "collapsed",
+    choices: ["collapsed", "expanded"],
+    group: "Transcript",
+  },
+  {
     key: "theme",
     label: "Theme",
     description:
@@ -387,6 +405,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   transcriptStyle: "rail",
   roleLabelStyle: "full",
   toolCardStyle: "compact",
+  transcriptDetail: "collapsed",
   theme: "dark",
   allowModelSelfExtension: false,
   showTokenUsage: false,
@@ -588,6 +607,7 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     transcriptStyle: enumAt(raw, "transcriptStyle"),
     roleLabelStyle: enumAt(raw, "roleLabelStyle"),
     toolCardStyle: enumAt(raw, "toolCardStyle"),
+    transcriptDetail: enumAt(raw, "transcriptDetail"),
     theme: themeAt(raw),
     allowModelSelfExtension: booleanAt(raw, "allowModelSelfExtension"),
     showTokenUsage: booleanAt(raw, "showTokenUsage"),

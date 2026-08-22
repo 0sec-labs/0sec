@@ -493,6 +493,26 @@ function logoAnimationBlocks(value: string, width: number): PreviewBlock[] {
  * The context-meter sample: the real bottom-bar glyphs when ON so the operator
  * sees the bar they are enabling, an on/off chip when OFF.
  */
+/**
+ * The transcript-detail sample: the same turn shown the way this value renders
+ * it. "collapsed" folds the successful tool calls and reasoning into one ▸ line
+ * (a failure would still show); "expanded" lists every step.
+ */
+function transcriptDetailBlocks(value: string, width: number): PreviewBlock[] {
+  if (value === "expanded") {
+    return [
+      line("td-think", width, "▸ thinking", (t) => t.MUTED),
+      line("td-a", width, "✓ run_command · nmap -sV", (t) => t.SUCCESS),
+      line("td-b", width, "✓ read_file · report.md", (t) => t.SUCCESS),
+      line("td-ans", width, "▌ 0sec  Two services exposed.", (t) => t.PRIMARY),
+    ];
+  }
+  return [
+    line("td-fold", width, "▸ 3 steps · thinking, run_command, read_file", (t) => t.MUTED),
+    line("td-ans", width, "▌ 0sec  Two services exposed.", (t) => t.PRIMARY),
+  ];
+}
+
 function contextMeterBlocks(value: boolean, width: number): PreviewBlock[] {
   if (!value) return stateChipBlocks(false, width);
   return [
@@ -620,6 +640,9 @@ export function previewBlocks({ def, value, width, settings }: PreviewInput): Pr
   switch (def.key) {
     case "toolCardStyle":
       body = toolCardBlocks(String(value), w);
+      break;
+    case "transcriptDetail":
+      body = transcriptDetailBlocks(String(value), w);
       break;
     case "transcriptStyle":
       body = transcriptBlocks(String(value), w, settings);

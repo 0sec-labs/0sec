@@ -3,10 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ROLE_LABEL_STYLE,
   DEFAULT_TOOL_CARD_STYLE,
+  DEFAULT_TRANSCRIPT_DETAIL,
   DEFAULT_TRANSCRIPT_STYLE,
   ROLE_LABEL_STYLES,
   TOOL_CARD_STYLES,
+  TRANSCRIPT_DETAILS,
   TRANSCRIPT_STYLES,
+  foldSummary,
+  isCollapsibleEntry,
+  planTranscript,
   resolveTranscriptStyleSettings,
   roleLabelText,
   roleLabelWidth,
@@ -17,6 +22,7 @@ import {
   toolGlyphState,
   toolHeaderColumns,
   toolHeaderPrefix,
+  type CollapseEntryLike,
   type SpeechKind,
   type ToolCardStyle,
   type TranscriptStyle,
@@ -376,5 +382,108 @@ describe("resolveTranscriptStyleSettings", () => {
       roleLabelStyle: "full",
       toolCardStyle: "rail",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transcript detail — collapse planning
+// ---------------------------------------------------------------------------
+
+function entry(
+  kind: CollapseEntryLike["kind"],
+  turn: number,
+  extra: Partial<CollapseEntryLike> = {},
+): CollapseEntryLike {
+  return { kind, turn, ...extra };
+}
+
+describe("transcript detail — the collapse contract", () => {
+  it("declares collapsed the default", () => {
+    expect(DEFAULT_TRANSCRIPT_DETAIL).toBe("collapsed");
+    expect(TRANSCRIPT_DETAILS).toEqual(["collapsed", "expanded"]);
+  });
+
+  it("folds successful tools and reasoning but never a failure", () => {
+    expect(isCollapsibleEntry(entry("tool", 1, { success: true }))).toBe(true);
+    // A still-running tool (no success yet) may fold; a failed one never does.
+    expect(isCollapsibleEntry(entry("tool", 1))).toBe(true);
+    expect(isCollapsibleEntry(entry("tool", 1, { success: false }))).toBe(false);
+    expect(isCollapsibleEntry(entry("reasoning", 1))).toBe(true);
+    expect(isCollapsibleEntry(entry("subagent", 1, { subagentOutcome: "completed" }))).toBe(true);
+    expect(isCollapsibleEntry(entry("subagent", 1, { subagentOutcome: "failed" }))).toBe(false);
+    // Speech and errors always render in full.
+    expect(isCollapsibleEntry(entry("user", 1))).toBe(false);
+    expect(isCollapsibleEntry(entry("assistant", 1))).toBe(false);
+    expect(isCollapsibleEntry(entry("error", 1))).toBe(false);
+  });
+
+  it("passes every entry through untouched in expanded mode", () => {
+    const entries = [
+      entry("user", 1),
+      entry("reasoning", 1),
+      entry("tool", 1, { success: true, text: "run_command" }),
+      entry("assistant", 1),
+    ];
+    const plan = planTranscript(entries, "expanded");
+    expect(plan).toHaveLength(entries.length);
+    expect(plan.every((item) => item.type === "entry")).toBe(true);
+  });
+
+  it("folds a turn's successful detail into a single summary line", () => {
+    const entries = [
+      entry("user", 1),
+      entry("reasoning", 1),
+      entry("tool", 1, { success: true, text: "run_command" }),
+      entry("tool", 1, { success: true, text: "read_file" }),
+      entry("assistant", 1),
+    ];
+    const plan = planTranscript(entries, "collapsed");
+    // user, fold(3), assistant.
+    expect(plan.map((item) => item.type)).toEqual(["entry", "fold", "entry"]);
+    const fold = plan[1];
+    if (fold.type !== "fold") throw new Error("expected a fold");
+    expect(fold.entries).toHaveLength(3);
+    expect(fold.summary).toBe("3 steps · thinking, run_command, read_file");
+  });
+
+  it("never hides a failure — it breaks the fold and renders in full", () => {
+    const entries = [
+      entry("tool", 1, { success: true, text: "run_command" }),
+      entry("tool", 1, { success: false, text: "curl" }),
+      entry("tool", 1, { success: true, text: "read_file" }),
+    ];
+    const plan = planTranscript(entries, "collapsed");
+    // fold(run_command), the failure as its own entry, fold(read_file).
+    expect(plan.map((item) => item.type)).toEqual(["fold", "entry", "fold"]);
+    const failure = plan[1];
+    if (failure.type !== "entry") throw new Error("expected an entry");
+    expect(failure.entry.success).toBe(false);
+  });
+
+  it("does not fold across a turn boundary", () => {
+    const entries = [
+      entry("tool", 1, { success: true, text: "a" }),
+      entry("tool", 2, { success: true, text: "b" }),
+    ];
+    const plan = planTranscript(entries, "collapsed");
+    expect(plan.map((item) => item.type)).toEqual(["fold", "fold"]);
+    expect(plan[0].type === "fold" && plan[0].turn).toBe(1);
+    expect(plan[1].type === "fold" && plan[1].turn).toBe(2);
+  });
+
+  it("folds a lone reasoning or tool to its name", () => {
+    expect(foldSummary([entry("reasoning", 1)])).toBe("thinking");
+    expect(foldSummary([entry("tool", 1, { success: true, text: "run_command" })])).toBe(
+      "run_command",
+    );
+  });
+
+  it("treats an expanded turn as expanded even in collapsed mode", () => {
+    const entries = [
+      entry("tool", 1, { success: true, text: "a" }),
+      entry("reasoning", 1),
+    ];
+    const plan = planTranscript(entries, "collapsed", new Set([1]));
+    expect(plan.map((item) => item.type)).toEqual(["entry", "entry"]);
   });
 });
