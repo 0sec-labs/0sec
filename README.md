@@ -24,7 +24,9 @@
   <sub>Created by the <strong>Swiss Applied AI Cybersecurity Research Lab</strong> · <a href="https://0.security">0.security</a></sub>
 </p>
 
-<!-- TODO: fresh terminal recording (asciinema/vhs) of `0sec scan` running — the old demo.gif was stale pwnkit branding and was removed. -->
+<p align="center">
+  <img src="assets/0sec-demo.gif" alt="0sec — a swarm of AI agents finds, proves, and reports vulnerabilities" width="840">
+</p>
 
 ## Install
 
