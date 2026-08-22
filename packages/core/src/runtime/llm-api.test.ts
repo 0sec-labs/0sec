@@ -40,6 +40,8 @@ describe("LlmApiRuntime provider detection", () => {
     delete process.env.QWEN_BASE_URL;
     delete process.env.Z_AI_API_KEY;
     delete process.env.Z_AI_BASE_URL;
+    delete process.env.XAI_API_KEY;
+    delete process.env.XAI_BASE_URL;
     delete process.env["0SEC_MODEL"];
     delete process.env["0SEC_SELECTED_PROVIDER"];
     delete process.env["0SEC_FORCE_PROVIDER"];
@@ -288,6 +290,51 @@ describe("LlmApiRuntime provider detection", () => {
     expect((rt as any).provider).toBe("qwen");
     expect((rt as any).model).toBe("qwen3.7-max");
     expect((rt as any).baseUrl).toBe("https://qwen.example/v1");
+  });
+
+  it("selects xAI via XAI_API_KEY with Grok defaults on the OpenAI-compatible wire", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.XAI_API_KEY = "sk-xai-test";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("xai");
+    expect((rt as any).model).toBe("grok-4.6");
+    expect((rt as any).baseUrl).toBe("https://api.x.ai/v1");
+    // OpenAI-compatible: Bearer + /chat/completions, NOT the Anthropic
+    // x-api-key + /v1/messages path z-ai/kimi ride.
+    const headers = (rt as any).buildHeaders();
+    expect(headers["Authorization"]).toBe("Bearer sk-xai-test");
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect((rt as any).buildUrl()).toBe("https://api.x.ai/v1/chat/completions");
+  });
+
+  it("routes grok-prefixed model picks to xai, honoring XAI_BASE_URL", () => {
+    // Test fixture, literal non-secret key.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.XAI_API_KEY = "sk-xai-test";
+    process.env.XAI_BASE_URL = "https://xai.example/v1";
+    process.env["0SEC_MODEL"] = "grok-4.3";
+    const rt = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((rt as any).provider).toBe("xai");
+    expect((rt as any).model).toBe("grok-4.3");
+    expect((rt as any).baseUrl).toBe("https://xai.example/v1");
+  });
+
+  it("places xai ahead of the Anthropic final fallback, and routes per model pick", () => {
+    // xai joins z-ai/kimi/qwen as an explicit opt-in tried BEFORE Anthropic,
+    // so Anthropic stays the last-resort fallback. With both keys present a
+    // bare run therefore resolves to xai, while an explicit claude pick still
+    // routes per-call to Anthropic.
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.XAI_API_KEY = "sk-xai-test";
+    const bare = new LlmApiRuntime({ type: "api", timeout: 5000 });
+    expect((bare as any).provider).toBe("xai");
+    const picked = new LlmApiRuntime({ type: "api", timeout: 5000, model: "grok-4.6" });
+    expect((picked as any).provider).toBe("xai");
+    const claude = new LlmApiRuntime({ type: "api", timeout: 5000, model: "claude-sonnet-4-6" });
+    expect((claude as any).provider).toBe("anthropic");
   });
 
   it("routes the Token Plan deepseek revision id to qwen, never direct deepseek", () => {
