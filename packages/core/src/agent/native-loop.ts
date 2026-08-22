@@ -43,6 +43,14 @@ import {
   type CoordinatorIntervention,
 } from "./coordinator-rails.js";
 import {
+  sendOperatorMessage,
+  type MessagingRuntime,
+} from "./agent-messaging.js";
+import {
+  HuntMemoryStore,
+  type HuntSeverity,
+} from "../memory/index.js";
+import {
   isUntrustedSourceTool,
   sanitizeUntrustedToolResult,
 } from "../untrusted-sanitizer.js";
@@ -307,6 +315,14 @@ export interface NativeAgentLoopOptions {
    * consulted when `features.inlineValidation` is on.
    */
   inlineValidationOracle?: InlineOracle;
+  /**
+   * Cross-scan hunt-memory store override. Normally left unset — the loop lazily
+   * constructs a single {@link HuntMemoryStore} (defaulting to
+   * ~/.0sec/hunt-memory) for the run. Tests inject a deterministic store here so
+   * the memory path never touches the real per-user state dir. Ignored when the
+   * memory integration is disabled via `0SEC_DISABLE_HUNT_MEMORY`.
+   */
+  huntMemoryStore?: HuntMemoryStore;
 }
 
 export interface NativeAgentState {
@@ -757,19 +773,27 @@ export async function runNativeAgentLoop(
   const unregisterSignalCleanup = registerSignalCleanup(signalCleanup);
 
   // ── Coordinator rails (multi-agent supervisor) ──
-  // Additive, feature-flagged (0SEC_FEATURE_COORDINATOR_RAILS, default OFF).
-  // When on, this loop's spawned sub-agents (spawn_agent/spawn_agents) are
-  // observed via the eventBus and the pure rails in `coordinator-rails.ts`
-  // (stall watchdog on idle-since-last-output, kill-vs-escalate policy,
-  // anti-solo-takeover gate, and loop/repetition detection) run BETWEEN
-  // iterations. The supervisor is strictly READ-ONLY: it never touches
-  // `toolCtx.findings` (a reaped/stalled child's saved findings are preserved),
-  // and it LOGS every intervention through the diagnostics channel + `onEvent`
-  // — never raw stdout. When the flag is off nothing subscribes and the
-  // supervise step is skipped, so default behavior is byte-identical.
+  // Additive, feature-flagged (0SEC_FEATURE_COORDINATOR_RAILS, default ON /
+  // opt-OUT). Set the env var to "0"/"false" to disable. When on, this loop's
+  // spawned sub-agents (spawn_agent/spawn_agents) are observed via the eventBus
+  // and the pure rails in `coordinator-rails.ts` (stall watchdog on
+  // idle-since-last-output, kill-vs-escalate policy, anti-solo-takeover gate,
+  // and loop/repetition detection) run BETWEEN iterations. The supervisor NEVER
+  // touches `toolCtx.findings` (a reaped/stalled child's saved findings are
+  // preserved) and LOGS every intervention AND enforcement action through the
+  // diagnostics channel + `onEvent` — never raw stdout. Its enforcement is
+  // conservative and non-destructive: a spin / warn-or-escalate stall is
+  // NUDGED (a guidance message to the affected running child via
+  // `sendOperatorMessage` when a messaging runtime is wired, otherwise an
+  // `onEvent` the surface can show); an anti-takeover trip surfaces a
+  // checkpoint/yield signal; and a provably-dead 'kill' is DOWNGRADED to
+  // escalate-to-operator because no per-agent cancellation path is wired to a
+  // spawned subagent (see `actOnIntervention`). When the flag is opted out
+  // nothing subscribes and the supervise step is skipped, so behavior is
+  // byte-identical to the legacy path.
   const coordinatorRailsEnabled =
-    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] === "1" ||
-    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] === "true";
+    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] !== "0" &&
+    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] !== "false";
   let coordinatorState: CoordinatorState = {};
   // Log each (agent, kind, action) transition once so a persistent condition
   // does not spam the diagnostics channel every turn.
@@ -823,6 +847,260 @@ export async function runNativeAgentLoop(
         action: iv.action,
         reason: iv.reason,
       });
+      // ── Enforcement: ACT on the intervention (conservative, non-destructive,
+      // never touches findings). Wrapped so an action can never break the loop.
+      try {
+        actOnIntervention(iv);
+      } catch {
+        /* enforcement is best-effort — it must never break the loop */
+      }
+    }
+  }
+
+  // Narrow the loop's (deliberately untyped) `agentMessaging` handle to a
+  // MessagingRuntime we can address a running child through. Returns undefined
+  // when messaging is not wired for this session, in which case a nudge falls
+  // back to a surfaced `onEvent`.
+  function nudgeMessagingRuntime(): MessagingRuntime | undefined {
+    const m = config.agentMessaging as Partial<MessagingRuntime> | undefined;
+    if (
+      m &&
+      typeof m === "object" &&
+      typeof m.selfId === "string" &&
+      typeof m.selfRole === "string" &&
+      typeof m.projectPath === "string"
+    ) {
+      return m as MessagingRuntime;
+    }
+    return undefined;
+  }
+
+  // Log (once, via diagnostics — never stdout) AND surface the concrete
+  // ENFORCEMENT action the supervisor took for an intervention. Dedup is the
+  // caller's `loggedInterventions` key, so this fires at most once per
+  // (agent, kind, action). Never touches `toolCtx.findings`.
+  function emitCoordinatorAction(
+    iv: CoordinatorIntervention,
+    enforcement: string,
+    detail: string,
+  ): void {
+    diag.warn("coordinator_rails_action", detail, {
+      scanId: config.scanId,
+      agentId: iv.agentId,
+      kind: iv.kind,
+      intervention: iv.action,
+      enforcement,
+      turn: state.turnCount,
+    });
+    onEvent?.("coordinator_action", {
+      turn: state.turnCount,
+      agentId: iv.agentId,
+      kind: iv.kind,
+      intervention: iv.action,
+      enforcement,
+      reason: detail,
+    });
+  }
+
+  // Map one supervisor intervention to a concrete, conservative enforcement:
+  //   • loop-detection nudge/force-pivot, or stall warn/escalate → NUDGE the
+  //     affected running child (guidance message via `sendOperatorMessage` when
+  //     a messaging runtime is wired; else a surfaced `onEvent`).
+  //   • anti-takeover checkpoint → surface a checkpoint/yield signal (NO kill).
+  //   • kill-escalate 'kill' (provably dead) → DOWNGRADED to escalate-to-operator
+  //     because no per-agent cancellation path is wired to a spawned subagent
+  //     (runOneSubagent awaits runNativeAgentLoop with no AbortController/signal),
+  //     so inventing a kill here could drop a child's in-flight work. Other
+  //     kill-escalate actions (escalate-to-operator / restart) surface as an
+  //     operator escalation. Findings are never touched by any branch.
+  function actOnIntervention(iv: CoordinatorIntervention): void {
+    const isNudge =
+      (iv.kind === "loop-detection" &&
+        (iv.action === "nudge" || iv.action === "force-pivot")) ||
+      (iv.kind === "stall-watchdog" &&
+        (iv.action === "warn" || iv.action === "escalate"));
+
+    if (isNudge) {
+      const body =
+        `[coordinator] ${iv.reason}. Change approach: try a different tool, ` +
+        `endpoint, parameter, or technique instead of repeating the last action.`;
+      const runtime = nudgeMessagingRuntime();
+      if (runtime) {
+        try {
+          const res = sendOperatorMessage(runtime, iv.agentId, body, Date.now());
+          if (res.ok) {
+            emitCoordinatorAction(
+              iv,
+              "nudge-message",
+              `nudged agent ${iv.agentId} via operator message`,
+            );
+            return;
+          }
+        } catch {
+          /* delivery failed — fall back to the event surface below */
+        }
+      }
+      emitCoordinatorAction(
+        iv,
+        "nudge-event",
+        `nudge surfaced via event for ${iv.agentId} (no messaging runtime wired)`,
+      );
+      return;
+    }
+
+    if (iv.kind === "anti-takeover" && iv.action === "checkpoint") {
+      emitCoordinatorAction(
+        iv,
+        "checkpoint",
+        `checkpoint/yield signal surfaced for ${iv.agentId} (no hard-kill)`,
+      );
+      return;
+    }
+
+    if (iv.kind === "kill-escalate") {
+      if (iv.action === "kill") {
+        emitCoordinatorAction(
+          iv,
+          "escalate-downgraded-from-kill",
+          `provably-dead ${iv.agentId}: no per-agent cancellation path wired — ` +
+            `escalating to operator instead of killing (in-flight work preserved)`,
+        );
+      } else {
+        // escalate-to-operator / restart both surface as an operator escalation:
+        // there is no restart-capable dispatch here either, so we hand off.
+        emitCoordinatorAction(iv, "escalate-to-operator", iv.reason);
+      }
+      return;
+    }
+  }
+
+  // ── Hunt memory (cross-scan pattern DB) ──
+  // Default ON, opt out with 0SEC_DISABLE_HUNT_MEMORY=1. On each saved finding
+  // we append a REDACTED HuntRecord (the store redacts every persisted string;
+  // `evidenceRef` is a POINTER, never raw evidence), and once at loop start we
+  // surface a concise "prior findings for similar targets" count via `onEvent`
+  // (never injected into the model prompt). Best-effort throughout: every store
+  // call is wrapped and a failure is logged via the diagnostics channel only —
+  // it never blocks or fails the scan.
+  const huntMemoryEnabled =
+    process.env["0SEC_DISABLE_HUNT_MEMORY"] !== "1" &&
+    process.env["0SEC_DISABLE_HUNT_MEMORY"] !== "true";
+  // Single store instance for the run. When a store is injected (tests) it is
+  // used as-is; otherwise it is lazily constructed on first use so a scan that
+  // never saves a finding pays no store-open cost.
+  let huntMemory: HuntMemoryStore | undefined = huntMemoryEnabled
+    ? opts.huntMemoryStore
+    : undefined;
+  function getHuntMemory(): HuntMemoryStore | undefined {
+    if (!huntMemoryEnabled) return undefined;
+    if (!huntMemory) {
+      try {
+        huntMemory = new HuntMemoryStore({});
+      } catch (err) {
+        diag.warn(
+          "hunt_memory_unavailable",
+          "could not open hunt-memory store; continuing without it",
+          {
+            scanId: config.scanId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+        // Disable further attempts this run so we don't log on every finding.
+        huntMemory = undefined;
+      }
+    }
+    return huntMemory;
+  }
+
+  // Append one saved finding to hunt memory as a redacted HuntRecord. Never
+  // throws into the scan; a store error is logged via diagnostics only.
+  function recordFindingToMemory(finding: Finding): void {
+    const store = getHuntMemory();
+    if (!store) return;
+    try {
+      store.append({
+        kind: "finding",
+        target: config.target,
+        // Vuln class is mapped from the finding's category (an AttackCategory);
+        // the store lowercases/normalizes it.
+        vulnClass: String(finding.category ?? "other"),
+        title: finding.title ?? "(untitled finding)",
+        summary: finding.description ?? "",
+        // POINTER to where the evidence lives — never the raw evidence itself.
+        evidenceRef: finding.fingerprint
+          ? `fp:${finding.fingerprint}`
+          : `finding:${finding.id}`,
+        // Severity shares the exact value set with HuntSeverity.
+        severity: finding.severity as HuntSeverity,
+        tags: [
+          String(finding.category ?? "other"),
+          String(finding.severity ?? "info"),
+        ],
+        source: `scan:${config.scanId}`,
+        createdAt: Date.now(),
+      });
+    } catch (err) {
+      diag.warn(
+        "hunt_memory_append_failed",
+        "failed to record finding to hunt memory; continuing",
+        {
+          scanId: config.scanId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
+    }
+  }
+
+  // Surface a concise cross-target context line ONCE at loop start: how many
+  // prior findings exist for this exact target and for OTHER (similar) targets,
+  // plus the top vuln classes. Redacted-by-construction (the store only holds
+  // redacted data) and emitted via `onEvent` only — nothing is injected into
+  // the model prompt uninvited. Cheap and best-effort.
+  if (huntMemoryEnabled) {
+    try {
+      const store = getHuntMemory();
+      if (store) {
+        const priorForTarget = store.query({
+          target: config.target,
+          kind: "finding",
+          limit: 200,
+        }).length;
+        const cross = store.crossTarget({
+          excludeTarget: config.target,
+          kind: "finding",
+          limit: 500,
+        });
+        if (priorForTarget > 0 || cross.length > 0) {
+          const classCounts = new Map<string, number>();
+          for (const r of cross) {
+            classCounts.set(r.vulnClass, (classCounts.get(r.vulnClass) ?? 0) + 1);
+          }
+          const topClasses = [...classCounts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([cls]) => cls);
+          onEvent?.("hunt_memory_context", {
+            scanId: config.scanId,
+            target: config.target,
+            priorForTarget,
+            crossTargetFindings: cross.length,
+            topClasses,
+            note:
+              `prior findings for similar targets: ${cross.length}` +
+              (topClasses.length ? ` (top: ${topClasses.join(", ")})` : "") +
+              (priorForTarget ? `; ${priorForTarget} on this target` : ""),
+          });
+        }
+      }
+    } catch (err) {
+      diag.warn(
+        "hunt_memory_query_failed",
+        "failed to query hunt-memory context; continuing",
+        {
+          scanId: config.scanId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
     }
   }
 
@@ -1483,6 +1761,10 @@ export async function runNativeAgentLoop(
           } catch {
             // External sinks must not make a successfully-saved local finding fail.
           }
+          // Hunt memory: persist a redacted record of this finding so future
+          // hunts on this / similar targets can learn from it. Self-contained
+          // and best-effort — swallows its own errors, never blocks the save.
+          recordFindingToMemory(saved);
           // Live findings tail (data path for a `tail -f findings.md`-style
           // view). Additive + non-blocking: gated on the coordinator-rails flag,
           // emits one sanitized single-line summary through `onEvent` as each

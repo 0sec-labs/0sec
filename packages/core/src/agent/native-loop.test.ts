@@ -21,6 +21,18 @@ import {
   UNTRUSTED_OPEN,
   UNTRUSTED_CLOSE,
 } from "../untrusted-sanitizer.js";
+import { HuntMemoryStore } from "../memory/index.js";
+
+// Hunt memory defaults ON in the engine; keep the suite from writing to the
+// real ~/.0sec store. The dedicated hunt-memory describe below re-enables it and
+// injects a throwaway store. This file-level hook runs outer-most, before any
+// describe-scoped beforeEach, so a nested `delete` of the same var wins.
+beforeEach(() => {
+  process.env["0SEC_DISABLE_HUNT_MEMORY"] = "1";
+});
+afterEach(() => {
+  delete process.env["0SEC_DISABLE_HUNT_MEMORY"];
+});
 
 // ── Mock runtime that returns scripted responses ──
 
@@ -2288,5 +2300,378 @@ describe("runNativeAgentLoop — action-level tool_calls log", () => {
       expect(e.payload.ts as number).toBeLessThanOrEqual(after);
     }
     expect(completed!.payload.ts as number).toBeGreaterThanOrEqual(started!.payload.ts as number);
+  });
+});
+
+// ── Hunt memory integration (default ON, opt out via 0SEC_DISABLE_HUNT_MEMORY) ──
+
+describe("runNativeAgentLoop — hunt memory integration", () => {
+  const HM_ENV = "0SEC_DISABLE_HUNT_MEMORY";
+  let tmp: string;
+
+  beforeEach(() => {
+    // The file-level hook set this to "1"; enable memory for these tests.
+    delete process.env[HM_ENV];
+    tmp = mkdtempSync(join(tmpdir(), "0sec-huntmem-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function saveThenDone(input: Record<string, unknown>): NativeRuntime {
+    let turn = 0;
+    return {
+      type: "api" as const,
+      async executeNative() {
+        turn++;
+        if (turn === 1) {
+          return {
+            content: [
+              { type: "tool_use", id: "f1", name: "save_finding", input },
+            ],
+            stopReason: "tool_use",
+            durationMs: 1,
+          };
+        }
+        return {
+          content: [
+            { type: "tool_use", id: "d1", name: "done", input: { summary: "ok" } },
+          ],
+          stopReason: "tool_use",
+          durationMs: 1,
+        };
+      },
+      async isAvailable() {
+        return true;
+      },
+    };
+  }
+
+  it("appends a redacted HuntRecord to an injected store on a saved finding", async () => {
+    const store = new HuntMemoryStore({ path: join(tmp, "patterns.jsonl") });
+    const runtime = saveThenDone({
+      title: "Reflected XSS in search",
+      severity: "high",
+      category: "xss",
+      evidence_request: "GET /?q=<script>",
+      // A secret-shaped value that MUST be redacted before it reaches disk.
+      evidence_response: "set-cookie: session_token=supersecretvalue123456",
+    });
+
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "t",
+        tools: [],
+        maxTurns: 5,
+        target: "https://shop.example.com",
+        scanId: "hm-scan-1",
+      },
+      runtime,
+      db: null,
+      huntMemoryStore: store,
+    });
+
+    expect(state.findings).toHaveLength(1);
+
+    const recs = store.all();
+    expect(recs).toHaveLength(1);
+    const rec = recs[0];
+    expect(rec.kind).toBe("finding");
+    expect(rec.target).toBe("https://shop.example.com");
+    expect(rec.vulnClass).toBe("xss");
+    expect(rec.source).toBe("scan:hm-scan-1");
+    expect(typeof rec.createdAt).toBe("number");
+    expect(rec.createdAt).toBeGreaterThan(0);
+    // evidenceRef is a POINTER, never raw evidence.
+    expect(rec.evidenceRef).toMatch(/^(fp:|finding:)/);
+    // Redaction: no secret material anywhere in the persisted record.
+    expect(JSON.stringify(rec)).not.toContain("supersecretvalue123456");
+  });
+
+  it("swallows a memory-store error without failing the scan or dropping the finding", async () => {
+    const store = new HuntMemoryStore({ path: join(tmp, "patterns.jsonl") });
+    // Make every append blow up — the scan must not notice.
+    store.append = () => {
+      throw new Error("boom: disk full");
+    };
+
+    const runtime = saveThenDone({
+      title: "SQLi in id param",
+      severity: "critical",
+      category: "sql-injection",
+      evidence_request: "GET /item?id=1'",
+      evidence_response: "SQL syntax error",
+    });
+
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "t",
+        tools: [],
+        maxTurns: 5,
+        target: "https://api.example.com",
+        scanId: "hm-scan-2",
+      },
+      runtime,
+      db: null,
+      huntMemoryStore: store,
+    });
+
+    // The finding survived and the loop completed cleanly despite the store error.
+    expect(state.findings).toHaveLength(1);
+    expect(state.findings[0].title).toBe("SQLi in id param");
+    expect(state.done).toBe(true);
+  });
+
+  it("surfaces a prior-findings context line at loop start via onEvent", async () => {
+    const store = new HuntMemoryStore({ path: join(tmp, "patterns.jsonl") });
+    // Seed a prior finding on a DIFFERENT target so the cross-target lookup hits.
+    store.append({
+      kind: "finding",
+      target: "other.example.org",
+      vulnClass: "sqli",
+      title: "prior sqli",
+      summary: "s",
+      source: "scan:prev",
+      createdAt: 1,
+    });
+
+    const events: Array<[string, Record<string, unknown>]> = [];
+    let turn = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative() {
+        turn++;
+        return {
+          content: [
+            { type: "tool_use", id: "d1", name: "done", input: { summary: "ok" } },
+          ],
+          stopReason: "tool_use",
+          durationMs: 1,
+        };
+      },
+      async isAvailable() {
+        return true;
+      },
+    };
+
+    await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "t",
+        tools: [],
+        maxTurns: 3,
+        target: "https://new-target.example.com",
+        scanId: "hm-scan-3",
+      },
+      runtime,
+      db: null,
+      huntMemoryStore: store,
+      onEvent: (t, p) => events.push([t, p]),
+    });
+
+    const ctx = events.find(([t]) => t === "hunt_memory_context");
+    expect(ctx).toBeDefined();
+    expect(ctx![1].crossTargetFindings).toBe(1);
+    expect(ctx![1].topClasses).toContain("sqli");
+    expect(typeof ctx![1].note).toBe("string");
+  });
+
+  it("writes nothing when disabled via 0SEC_DISABLE_HUNT_MEMORY", async () => {
+    process.env[HM_ENV] = "1";
+    const store = new HuntMemoryStore({ path: join(tmp, "patterns.jsonl") });
+    const runtime = saveThenDone({
+      title: "XSS",
+      severity: "high",
+      category: "xss",
+      evidence_request: "GET /",
+      evidence_response: "<script>",
+    });
+
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "t",
+        tools: [],
+        maxTurns: 5,
+        target: "https://off.example.com",
+        scanId: "hm-scan-4",
+      },
+      runtime,
+      db: null,
+      huntMemoryStore: store,
+    });
+
+    expect(state.findings).toHaveLength(1);
+    expect(store.all()).toHaveLength(0);
+  });
+});
+
+// ── Coordinator rails enforcement (now default ON / opt-out) ──
+
+describe("runNativeAgentLoop — coordinator rails enforcement", () => {
+  beforeEach(() => {
+    // Keep the real hunt-memory store untouched here (file-level hook already
+    // disabled it), and ensure the coordinator flag is at its new default (ON).
+    delete process.env["0SEC_FEATURE_COORDINATOR_RAILS"];
+  });
+
+  it("nudges a spinning subagent by default (no flag set) via a coordinator_action event", async () => {
+    const events: Array<[string, Record<string, unknown>]> = [];
+    let turn = 0;
+    const runtime: NativeRuntime = {
+      type: "api" as const,
+      async executeNative() {
+        turn++;
+        if (turn === 1) {
+          // A child that re-issues the SAME call repeatedly (a spin).
+          eventBus.emit("subagent_lifecycle", {
+            agent_id: "loopy-sub-1",
+            status: "running",
+            max_turns: 50,
+          });
+          for (let i = 0; i < 4; i++) {
+            eventBus.emit("subagent_progress", {
+              agent_id: "loopy-sub-1",
+              tool: "http_request",
+              note: "same",
+              turn: i + 1,
+              max_turns: 50,
+            });
+          }
+          return {
+            content: [{ type: "text", text: "recon" }],
+            stopReason: "end_turn",
+            durationMs: 1,
+          };
+        }
+        return {
+          content: [
+            { type: "tool_use", id: "d1", name: "done", input: { summary: "ok" } },
+          ],
+          stopReason: "tool_use",
+          durationMs: 1,
+        };
+      },
+      async isAvailable() {
+        return true;
+      },
+    };
+
+    const state = await runNativeAgentLoop({
+      config: {
+        role: "attack",
+        systemPrompt: "t",
+        tools: [],
+        maxTurns: 50,
+        target: "https://x.example.com",
+        scanId: "loopy",
+      },
+      runtime,
+      db: null,
+      onEvent: (t, p) => events.push([t, p]),
+    });
+
+    const action = events.find(
+      ([t, p]) =>
+        t === "coordinator_action" &&
+        (p.intervention === "nudge" || p.intervention === "force-pivot"),
+    );
+    expect(action).toBeDefined();
+    // No messaging runtime wired → the nudge is surfaced via the event channel.
+    expect(action![1].enforcement).toBe("nudge-event");
+    expect(state.done).toBe(true);
+  });
+
+  it("escalates a stalled subagent holding findings (kill downgraded) and preserves findings", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const events: Array<[string, Record<string, unknown>]> = [];
+      let turn = 0;
+      const runtime: NativeRuntime = {
+        type: "api" as const,
+        async executeNative() {
+          turn++;
+          if (turn === 1) {
+            // Parent saves its own finding — must survive any supervision.
+            return {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "f1",
+                  name: "save_finding",
+                  input: {
+                    title: "Parent XSS",
+                    severity: "high",
+                    category: "xss",
+                    evidence_request: "GET /",
+                    evidence_response: "resp",
+                  },
+                },
+              ],
+              stopReason: "tool_use",
+              durationMs: 1,
+            };
+          }
+          if (turn === 2) {
+            // A running child that already saved a finding, then goes silent.
+            eventBus.emit("subagent_lifecycle", {
+              agent_id: "stall-sub-1",
+              status: "running",
+              max_turns: 100,
+              findings: 1,
+            });
+            // Jump the clock past the escalate threshold (>180s, <420s kill).
+            vi.setSystemTime(200_000);
+            return {
+              content: [{ type: "text", text: "waiting" }],
+              stopReason: "end_turn",
+              durationMs: 1,
+            };
+          }
+          return {
+            content: [
+              { type: "tool_use", id: "d1", name: "done", input: { summary: "ok" } },
+            ],
+            stopReason: "tool_use",
+            durationMs: 1,
+          };
+        },
+        async isAvailable() {
+          return true;
+        },
+      };
+
+      const state = await runNativeAgentLoop({
+        config: {
+          role: "attack",
+          systemPrompt: "t",
+          tools: [],
+          maxTurns: 100,
+          target: "https://y.example.com",
+          scanId: "stall",
+        },
+        runtime,
+        db: null,
+        onEvent: (t, p) => events.push([t, p]),
+      });
+
+      // Findings are NEVER dropped by supervision.
+      expect(state.findings.map((f) => f.title)).toContain("Parent XSS");
+
+      // The provably-dead kill path is downgraded to an operator escalation
+      // (no per-agent cancellation is wired to a spawned subagent).
+      const esc = events.find(
+        ([t, p]) =>
+          t === "coordinator_action" &&
+          p.kind === "kill-escalate" &&
+          p.enforcement === "escalate-to-operator",
+      );
+      expect(esc).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
