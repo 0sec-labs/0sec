@@ -22,10 +22,12 @@ import {
   runInfo,
   runInstall,
   runList,
+  runRun,
   runSearch,
   type CorePort,
   type ManifestView,
   type PluginCommandDeps,
+  type PluginHostView,
 } from "../plugin.js";
 
 // ── Real-backed core port (no barrel dependency) ─────────────────────────────
@@ -64,7 +66,61 @@ async function realCorePort(): Promise<CorePort> {
     PLUGIN_ENTRY_FILE: ld.PLUGIN_ENTRY_FILE,
     PLUGIN_DIR_MODE: ld.PLUGIN_DIR_MODE,
     PLUGIN_FILE_MODE: ld.PLUGIN_FILE_MODE,
+    // `run` uses these; injected as fakes so the command NEVER spawns a real
+    // subprocess in a unit test while still exercising the enablement + consent
+    // gates in `runRun`.
+    PluginHost: FakeRunHost,
+    TOOL_DEFINITIONS: [{ name: "run_command" }],
   } as unknown as CorePort;
+}
+
+/**
+ * Fake in-process host for `run` wiring tests. Records the calls it received and
+ * echoes back a result; it never spawns anything. Its `registeredTools` mirrors
+ * the fixture manifest (one read-only tool, one network tool) so the command's
+ * consent gate has something to gate on.
+ */
+const runCalls: { tool: string; args: Record<string, unknown> }[] = [];
+class FakeRunHost implements PluginHostView {
+  constructor(_opts: unknown) {}
+  async load(pluginId: string) {
+    return { ok: true, pluginId, tools: ["acme_read", "acme_probe"] };
+  }
+  registeredTools() {
+    return [
+      {
+        pluginId: "acme.recon",
+        name: "acme_read",
+        capabilities: ["filesystem-read" as const],
+        networkCapable: false,
+        localScope: true,
+        readOnly: true,
+      },
+      {
+        pluginId: "acme.recon",
+        name: "acme_probe",
+        capabilities: ["network" as const],
+        networkCapable: true,
+        localScope: false,
+        readOnly: false,
+      },
+    ];
+  }
+  ownsTool() {
+    return true;
+  }
+  async call(toolName: string, args: Record<string, unknown>) {
+    runCalls.push({ tool: toolName, args });
+    return {
+      ok: true as const,
+      content: `ran ${toolName} ${JSON.stringify(args)}`,
+      failed: false,
+      truncated: false,
+      neutralized: false,
+      markers: [],
+    };
+  }
+  shutdown() {}
 }
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
@@ -323,5 +379,79 @@ describe("search / browse", () => {
     await runSearch("acme", deps({ registryUrl: "http://plugins.example/index.json", fetchImpl: fakeFetch(indexBody()) }));
     expect(joined(err)).toMatch(/must be https/);
     expect(process.exitCode).toBe(1);
+  });
+});
+
+// ── run: enablement gate + effectful-tool consent ────────────────────────────
+
+describe("run", () => {
+  async function installAndEnable() {
+    await runInstall("acme.recon", deps({ registryUrl: REGISTRY_URL, fetchImpl: fakeFetch(indexBody()) }));
+    runEnable("acme.recon", deps());
+    out = [];
+    err = [];
+    runCalls.length = 0;
+  }
+
+  it("refuses to run a plugin that is not enabled for this project", async () => {
+    await runInstall("acme.recon", deps({ registryUrl: REGISTRY_URL, fetchImpl: fakeFetch(indexBody()) }));
+    out = [];
+    err = [];
+    await runRun("acme.recon", "acme_read", [], deps());
+    expect(joined(err)).toMatch(/not enabled for this project/);
+    expect(runCalls).toHaveLength(0);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("runs a READ-ONLY tool without --yes and prints the sanitized result", async () => {
+    await installAndEnable();
+    await runRun("acme.recon", "acme_read", ["path=/etc/hostname"], deps());
+    expect(runCalls).toEqual([{ tool: "acme_read", args: { path: "/etc/hostname" } }]);
+    expect(joined(out)).toMatch(/ran acme_read/);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("REFUSES an effectful (non read-only) tool without --yes, running nothing", async () => {
+    await installAndEnable();
+    await runRun("acme.recon", "acme_probe", ["host=example.test"], deps());
+    expect(runCalls).toHaveLength(0);
+    expect(joined(err)).toMatch(/not read-only/);
+    expect(joined(err)).toMatch(/--yes/);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("runs an effectful tool once --yes is passed", async () => {
+    await installAndEnable();
+    await runRun("acme.recon", "acme_probe", ["host=example.test"], deps({ yes: true }));
+    expect(runCalls).toEqual([{ tool: "acme_probe", args: { host: "example.test" } }]);
+    expect(joined(out)).toMatch(/ran acme_probe/);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("refuses a plugin whose on-disk capabilities widened past what was approved", async () => {
+    await installAndEnable();
+    // Widen the on-disk manifest to add process-exec — an unapproved capability.
+    const wide = manifest({
+      tools: [
+        { name: "acme_read", description: "read", parameters: {}, capabilities: ["filesystem-read"] },
+        { name: "acme_probe", description: "probe", parameters: {}, capabilities: ["network"] },
+        { name: "acme_exec", description: "exec", parameters: {}, capabilities: ["process-exec"] },
+      ] as ManifestView["tools"],
+    });
+    const manifestPath = join(home, ".0sec", "plugins", "acme.recon", "plugin.json");
+    writeFileSync(manifestPath, JSON.stringify(wide, null, 2));
+    out = [];
+    err = [];
+    await runRun("acme.recon", "acme_read", [], deps());
+    expect(joined(err)).toMatch(/needs re-approval/);
+    expect(runCalls).toHaveLength(0);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("merges --json args under key=value pairs", async () => {
+    await installAndEnable();
+    await runRun("acme.recon", "acme_read", ["path=/b"], deps({ jsonArgs: '{"path":"/a","depth":2}' }));
+    // key=value overrides the json value for the same key; json-only keys survive.
+    expect(runCalls).toEqual([{ tool: "acme_read", args: { path: "/b", depth: 2 } }]);
   });
 });

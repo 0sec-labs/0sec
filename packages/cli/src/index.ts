@@ -85,6 +85,8 @@ import {
   registerFileReviewCommand,
   registerAgentAssureCommand,
   registerBinaryCommand,
+  registerPluginCommand,
+  registerThemeCommand,
 } from "./commands/index.js";
 import { detectAndRoute } from "./routing.js";
 import { maybeNotifyUpdate } from "./utils/update-check.js";
@@ -153,6 +155,8 @@ registerTimelineCommand(program);
 registerFileReviewCommand(program);
 registerAgentAssureCommand(program);
 registerBinaryCommand(program);
+registerPluginCommand(program);
+registerThemeCommand(program);
 
 // ── Interactive menu ──
 //

@@ -48,3 +48,5 @@ export { registerFileReviewCommand } from "./file-review.js";
 export { runUnified } from "./run.js";
 export { registerAgentAssureCommand } from "./agent-assure.js";
 export { registerBinaryCommand } from "./binary.js";
+export { registerPluginCommand } from "./plugin.js";
+export { registerThemeCommand } from "./theme.js";

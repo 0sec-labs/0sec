@@ -1765,6 +1765,140 @@ export type {
   ExtensionDisposer,
   ExtensionOrigin,
 } from "./plugins/self-extension.js";
+// ── Third-party plugin lifecycle (install → enable → run → hot-swap) ──────────
+// These are the primitives the `0sec plugin` CLI surface drives. They are the
+// SAME modules the console loads plugins through, so the CLI never duplicates
+// loader/registry/enablement logic — it imports it. Every security invariant
+// (install ≠ enablement, the single capability→gate translation, the re-approval
+// rule on a widened capability set, the subprocess boundary) lives in these
+// modules and is not re-implemented at the CLI layer.
+//
+// Per-project enablement store. `enable`/`disable` write ONE json record and
+// spawn nothing; `reconcile` + `loadableIds` enforce the re-approval rule so a
+// plugin whose on-disk capabilities widened past what the operator approved is
+// never handed to the loader.
+export {
+  ENABLEMENT_DIR_NAME,
+  ENABLEMENT_DIR_MODE,
+  ENABLEMENT_FILE_MODE,
+  ENABLEMENT_SCHEMA_VERSION,
+  emptyEnablement,
+  aggregateCapabilities,
+  isEnabled,
+  enable,
+  disable,
+  reconcile,
+  loadableIds,
+  coerceEnablementRecord,
+  enablementDir,
+  enablementFilePath,
+  readEnablement,
+  writeEnablement,
+} from "./plugins/enablement.js";
+export type {
+  EnabledPluginRecord,
+  EnablementRecord,
+  InstalledPluginView,
+  EnablementStatus,
+  ReconciledPlugin,
+  EnableResult,
+} from "./plugins/enablement.js";
+// Loader / host. `PluginHost` is the ONLY module that spawns a plugin; it runs
+// every contributed tool through `gateFlagsFor` and refuses any id absent from
+// the caller-supplied `enabled` set. `reload()` is a genuine kill+respawn that
+// is refused while a call is in flight — hot-swap without dropping a turn.
+export {
+  PLUGINS_ROOT_NAME,
+  PLUGIN_MANIFEST_FILE,
+  PLUGIN_ENTRY_FILE,
+  PLUGIN_DIR_MODE,
+  PLUGIN_FILE_MODE,
+  DEFAULT_HANDSHAKE_TIMEOUT_MS,
+  DEFAULT_CALL_TIMEOUT_MS,
+  MAX_INFLIGHT_CALLS,
+  MAX_PROTOCOL_ERRORS,
+  isSafePluginId,
+  pluginsRootDir,
+  ensurePluginsRoot,
+  listInstalledPluginIds,
+  readInstalledPlugin,
+  buildPluginEnv,
+  nodeChildSpawner,
+  manifestDrift,
+  satisfiesMinVersion,
+  PluginHost,
+} from "./plugins/loader.js";
+export type {
+  DiscoveredPlugin,
+  DiscoveryResult,
+  PluginSpawnSpec,
+  PluginChannel,
+  PluginChannelHandlers,
+  PluginSpawner,
+  RegisteredPluginTool,
+  PluginGateMaps,
+  PluginHostEvent,
+  LoadResult,
+  PluginCallResult,
+  PluginHostOptions,
+} from "./plugins/loader.js";
+// Marketplace registry client. Fetches + validates an index (HTTPS only) and
+// applies the signature policy; the index is DATA, never code — nothing here
+// executes anything. No endpoint ships (`DEFAULT_REGISTRY_URL` is empty).
+export {
+  DEFAULT_REGISTRY_URL,
+  unconfiguredVerifier,
+  createStubSignatureVerifier,
+  canonicalEntryPayload,
+  evaluateSignature,
+  installableFromEntry,
+  parseRegistryIndex,
+  fetchRegistryIndex,
+  searchInstallable,
+  findInstallable,
+} from "./plugins/registry-client.js";
+export type {
+  RegistrySource,
+  RawRegistryEntry,
+  RawRegistryIndex,
+  SignatureState,
+  InstallableEntry,
+  DroppedEntry,
+  RegistryResult,
+  SignatureVerifier,
+  ParseOptions,
+  FetchRegistryOptions,
+  FetchRegistryResult,
+} from "./plugins/registry-client.js";
+// Plugin wire protocol (pure). Message shapes + total decoders shared by the
+// host, tests, and any third-party plugin SDK.
+export {
+  PROTOCOL_VERSION,
+  MAX_FRAME_CHARS,
+  MAX_RESULT_CHARS,
+  RESULT_TRUNCATION_MARKER,
+  MAX_TOOLS_IN_LIST,
+  clampResultContent,
+  encodeHostMessage,
+  encodePluginMessage,
+  decodePluginMessage,
+  decodeHostMessage,
+  FrameReader,
+} from "./plugins/protocol.js";
+export type {
+  HostListToolsMessage,
+  HostCallToolMessage,
+  HostMessage,
+  PluginHandshakeMessage,
+  PluginListToolsMessage,
+  PluginToolResultMessage,
+  PluginErrorMessage,
+  PluginMessage,
+  ProtocolDecodeFailureReason,
+  ProtocolDecodeFailure,
+  DecodeResult,
+  FrameBatch,
+} from "./plugins/protocol.js";
 export type {
   CostBreakdownEntry,
   ScanCompletedPayload,

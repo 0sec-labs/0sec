@@ -116,6 +116,55 @@ interface SignatureVerifierView {
   verify(canonicalPayload: string, signature: string): boolean;
 }
 
+// ── Host views (used only by `run`, the one command that spawns a plugin) ──────
+// `run` is the sole place this surface crosses from "installed/enabled state" to
+// "a child process actually executes". It goes through the SAME `PluginHost` the
+// console uses, so the single capability→gate translation and the subprocess
+// boundary are not re-implemented here.
+
+export interface PluginHostOptionsView {
+  pluginsDir?: string;
+  homeDir?: string;
+  enabled?: readonly string[];
+  reservedToolNames?: readonly string[];
+  coreVersion?: string;
+  callTimeoutMs?: number;
+}
+
+interface RegisteredPluginToolView {
+  pluginId: string;
+  name: string;
+  capabilities: PluginCapability[];
+  networkCapable: boolean;
+  localScope: boolean;
+  readOnly: boolean;
+}
+
+type PluginCallResultView =
+  | {
+      ok: true;
+      content: string;
+      failed: boolean;
+      truncated: boolean;
+      neutralized: boolean;
+      markers: string[];
+    }
+  | { ok: false; error: string };
+
+export interface PluginHostView {
+  load(
+    pluginId: string,
+  ): Promise<{ ok: boolean; pluginId: string; tools?: string[]; errors?: string[] }>;
+  call(
+    toolName: string,
+    args: Record<string, unknown>,
+    opts?: { timeoutMs?: number },
+  ): Promise<PluginCallResultView>;
+  registeredTools(): RegisteredPluginToolView[];
+  ownsTool(name: string): boolean;
+  shutdown(): void;
+}
+
 /**
  * Everything this command needs from `@0sec/core`. Injected so tests supply
  * fakes; the default {@link defaultCorePort} lazily imports the real barrel.
@@ -157,6 +206,11 @@ export interface CorePort {
   readonly PLUGIN_ENTRY_FILE: string;
   readonly PLUGIN_DIR_MODE: number;
   readonly PLUGIN_FILE_MODE: number;
+  // loader.ts (the host — used ONLY by `run`, the one command that spawns)
+  PluginHost: new (opts: PluginHostOptionsView) => PluginHostView;
+  /** Built-in tool definitions; their names are the reserved set a plugin may
+   *  not shadow. Passed to the host so there is one authorization namespace. */
+  readonly TOOL_DEFINITIONS: readonly { name: string }[];
 }
 
 /** Lazy real port. Cast through {@link CorePort} so tsc does not require the
@@ -193,6 +247,17 @@ export interface PluginCommandDeps {
   spawn?: (...args: unknown[]) => unknown;
   out?: (line: string) => void;
   err?: (line: string) => void;
+  // ── `run`-only ──────────────────────────────────────────────────────────────
+  /** Explicit operator authorization required before an EFFECTFUL plugin tool
+   *  (anything not pure read-only) is invoked. Without it, `run` refuses rather
+   *  than silently granting the tool its declared side effects. */
+  yes?: boolean;
+  /** JSON object of tool arguments (merged under any `key=value` pairs). */
+  jsonArgs?: string;
+  /** @0sec/core version, for the host's `minCoreVersion` enforcement. */
+  coreVersion?: string;
+  /** Per-call timeout override (ms). */
+  callTimeoutMs?: number;
 }
 
 interface ResolvedDeps {
@@ -534,6 +599,178 @@ export function runInfo(id: string, deps: PluginCommandDeps): void {
   process.exitCode = EXIT_OK;
 }
 
+// ── run ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse `key=value` argument pairs, merged on top of an optional `--json`
+ * object. Values from pairs are strings (the shell has no types); `--json` is
+ * for typed/nested arguments. Later pairs override earlier ones and override the
+ * json object for the same key.
+ */
+function parseRunArgs(
+  pairs: readonly string[],
+  jsonArgs: string | undefined,
+): { ok: true; args: Record<string, unknown> } | { ok: false; error: string } {
+  const args: Record<string, unknown> = {};
+  if (jsonArgs && jsonArgs.trim().length > 0) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonArgs);
+    } catch {
+      return { ok: false, error: "--json was not valid JSON" };
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return { ok: false, error: "--json must be a JSON object of tool arguments" };
+    }
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (k === "__proto__" || k === "prototype" || k === "constructor") continue;
+      args[k] = v;
+    }
+  }
+  for (const pair of pairs) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) return { ok: false, error: `argument ${JSON.stringify(pair)} is not key=value` };
+    const key = pair.slice(0, eq);
+    if (key === "__proto__" || key === "prototype" || key === "constructor") continue;
+    args[key] = pair.slice(eq + 1);
+  }
+  return { ok: true, args };
+}
+
+/**
+ * Invoke one contributed tool of an ENABLED plugin over the real subprocess
+ * protocol, in-process, with no scan running. This is the only command that
+ * spawns a plugin, and it preserves every invariant:
+ *
+ *   - it refuses any plugin that is not cleanly ENABLED + loadable for this
+ *     project (the re-approval rule — a widened capability set is refused here
+ *     exactly as it is at scan time);
+ *   - it hands the host the built-in names as `reservedToolNames`, so a plugin
+ *     tool can never shadow a built-in and inherit its authorization;
+ *   - it runs through the SAME `PluginHost`/`gateFlagsFor` path the console
+ *     uses, so a tool's capabilities cannot be exceeded;
+ *   - an EFFECTFUL tool (anything not pure read-only) is refused unless the
+ *     operator passes `--yes`, so running never silently grants a side effect.
+ */
+export async function runRun(
+  id: string,
+  tool: string | undefined,
+  pairs: readonly string[],
+  deps: PluginCommandDeps,
+): Promise<void> {
+  const d = resolve(deps);
+  if (!d.core.isSafePluginId(id)) {
+    d.err(chalk.red(`"${id}" is not a valid plugin id.`));
+    process.exitCode = EXIT_USER_ERROR;
+    return;
+  }
+
+  const root = d.core.pluginsRootDir(d.homeDir);
+  const discovered = d.core.readInstalledPlugin(root, id);
+  if (!discovered.ok || !discovered.plugin) {
+    d.err(chalk.red(`Plugin "${id}" is not installed.`));
+    if (discovered.errors) for (const e of discovered.errors) d.err(chalk.dim(`  ${e}`));
+    process.exitCode = EXIT_USER_ERROR;
+    return;
+  }
+
+  // Enablement + the re-approval rule: only a cleanly-enabled plugin may run.
+  const installed = installedViews(d);
+  const record = d.core.readEnablement(d.projectPath, d.homeDir);
+  if (!d.core.isEnabled(record, id)) {
+    d.err(chalk.red(`Plugin "${id}" is not enabled for this project.`));
+    d.err(chalk.cyan(`    0sec plugin enable ${id}`));
+    process.exitCode = EXIT_USER_ERROR;
+    return;
+  }
+  const reconciled = d.core.reconcile(record, installed);
+  const loadable = new Set(d.core.loadableIds(reconciled));
+  if (!loadable.has(id)) {
+    const r = reconciled.find((x) => x.pluginId === id);
+    d.err(chalk.red(`Plugin "${id}" cannot run: it needs re-approval.`));
+    if (r?.reason) d.err(chalk.yellow(`  ${r.reason}`));
+    d.err(chalk.cyan(`    0sec plugin enable ${id}`));
+    process.exitCode = EXIT_USER_ERROR;
+    return;
+  }
+
+  const parsedArgs = parseRunArgs(pairs, deps.jsonArgs);
+  if (!parsedArgs.ok) {
+    d.err(chalk.red(parsedArgs.error));
+    process.exitCode = EXIT_USER_ERROR;
+    return;
+  }
+
+  const host = new d.core.PluginHost({
+    pluginsDir: root,
+    homeDir: d.homeDir,
+    enabled: [...loadable],
+    reservedToolNames: d.core.TOOL_DEFINITIONS.map((t) => t.name),
+    coreVersion: deps.coreVersion,
+    callTimeoutMs: deps.callTimeoutMs,
+  });
+
+  try {
+    const loaded = await host.load(id);
+    if (!loaded.ok) {
+      d.err(chalk.red(`Plugin "${id}" failed to load.`));
+      if (loaded.errors) for (const e of loaded.errors) d.err(chalk.dim(`  ${e}`));
+      process.exitCode = EXIT_USER_ERROR;
+      return;
+    }
+
+    const owned = host.registeredTools().filter((t) => t.pluginId === id);
+    let target: RegisteredPluginToolView | undefined;
+    if (tool) {
+      target = owned.find((t) => t.name === tool);
+      if (!target) {
+        d.err(chalk.red(`Plugin "${id}" contributes no tool named "${tool}".`));
+        d.err(`  Available: ${owned.map((t) => t.name).join(", ") || "(none)"}`);
+        process.exitCode = EXIT_USER_ERROR;
+        return;
+      }
+    } else if (owned.length === 1) {
+      target = owned[0];
+    } else {
+      d.err(chalk.red(`Plugin "${id}" contributes ${owned.length} tools; name which to run.`));
+      d.err(`  ${owned.map((t) => t.name).join(", ")}`);
+      process.exitCode = EXIT_USER_ERROR;
+      return;
+    }
+
+    // Consent gate: never silently grant an effectful tool its side effects.
+    if (!target.readOnly && deps.yes !== true) {
+      d.err(
+        chalk.yellow(
+          `Tool "${target.name}" declares [${capSummary(target.capabilities)}] — it is not read-only.`,
+        ),
+      );
+      d.err("  Re-run with --yes to authorize it. Nothing was run.");
+      process.exitCode = EXIT_USER_ERROR;
+      return;
+    }
+
+    d.out(chalk.dim(`Running ${id}:${target.name}  [${capSummary(target.capabilities)}]`));
+    const result = await host.call(target.name, parsedArgs.args, {
+      timeoutMs: deps.callTimeoutMs,
+    });
+    if (!result.ok) {
+      d.err(chalk.red(`Tool error: ${result.error}`));
+      process.exitCode = EXIT_USER_ERROR;
+      return;
+    }
+    if (result.failed) d.out(chalk.yellow("The tool reported failure:"));
+    if (result.neutralized) {
+      d.out(chalk.dim(`  (untrusted-input defense neutralized markers: ${result.markers.join(", ")})`));
+    }
+    d.out(result.content);
+    if (result.truncated) d.out(chalk.dim("  (result truncated)"));
+    process.exitCode = result.failed ? EXIT_USER_ERROR : EXIT_OK;
+  } finally {
+    host.shutdown();
+  }
+}
+
 // ── commander wiring ───────────────────────────────────────────────────────────
 
 export function registerPluginCommand(program: Command): void {
@@ -597,4 +834,30 @@ export function registerPluginCommand(program: Command): void {
     .action(async (id: string) => {
       runInfo(id, await withDeps({}));
     });
+
+  plugin
+    .command("run <id> [tool] [pairs...]")
+    .description(
+      "Invoke a tool of an ENABLED plugin over the protocol (spawns the plugin; " +
+        "effectful tools require --yes). Args: key=value pairs and/or --json '<obj>'.",
+    )
+    .option("--json <json>", "JSON object of tool arguments")
+    .option("--yes", "Authorize an effectful (non read-only) tool to run")
+    .option("--timeout <ms>", "Per-call timeout in milliseconds", (v) => Number(v))
+    .action(
+      async (
+        id: string,
+        tool: string | undefined,
+        pairs: string[],
+        opts: { json?: string; yes?: boolean; timeout?: number },
+      ) => {
+        const base = await withDeps({});
+        await runRun(id, tool, pairs ?? [], {
+          ...base,
+          jsonArgs: opts.json,
+          yes: opts.yes === true,
+          callTimeoutMs: typeof opts.timeout === "number" && Number.isFinite(opts.timeout) ? opts.timeout : undefined,
+        });
+      },
+    );
 }

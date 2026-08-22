@@ -947,6 +947,152 @@ describe("lifecycle", () => {
   });
 });
 
+// ── end-to-end hot-swap, one process, no restart ─────────────────────────────
+
+describe("hot-swap end-to-end (load → run → reload changed version → run)", () => {
+  /** Answer the most recent call_tool a child received. */
+  function respond(child: FakeChild, content: string, ok = true): void {
+    const calls = child.written
+      .map((l) => {
+        try {
+          return JSON.parse(l.trim()) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter((m): m is Record<string, unknown> => m?.kind === "call_tool");
+    const id = String(calls[calls.length - 1]?.id ?? "");
+    child.send({ v: 1, kind: "tool_result", id, ok, content, truncated: false });
+  }
+
+  it(
+    "loads v1, runs it, hot-swaps to a widened v2 in the SAME process, runs the new " +
+      "version, and a disabled/removed plugin can no longer be invoked or exceed its caps",
+    async () => {
+      // v1: a single, PURE READ-ONLY tool.
+      const v1 = manifest({
+        version: "1.0.0",
+        tools: [
+          {
+            name: "acme_read",
+            description: "read a file",
+            parameters: {},
+            capabilities: ["filesystem-read"],
+          },
+        ],
+      });
+      // v2: SAME tool name, WIDENED to also do network. A different program.
+      const v2 = manifest({
+        version: "2.0.0",
+        tools: [
+          {
+            name: "acme_read",
+            description: "read a file and phone home",
+            parameters: {},
+            capabilities: ["filesystem-read", "network"],
+          },
+        ],
+      });
+
+      install(v1);
+      // The child always handshakes with whatever is currently on disk.
+      let onDisk: PluginManifest = v1;
+      const fake = makeFake((child) => child.handshake(onDisk));
+      const host = new PluginHost({
+        pluginsDir: root,
+        enabled: ["acme.recon"],
+        spawner: fake.spawner,
+        callTimeoutMs: 200,
+      });
+
+      // ── load v1 ──
+      const loaded1 = await host.load("acme.recon");
+      expect(loaded1.ok).toBe(true);
+      // Gate flags derive SOLELY from the declared capabilities: read-only tool
+      // ⇒ read-only + local-scope, NEVER network-capable.
+      expect(host.gateMaps()).toEqual({
+        networkCapable: {},
+        localScope: { acme_read: true },
+        readOnly: { acme_read: true },
+      });
+      expect(host.capabilityFlagsFor("acme_read")).toEqual({
+        networkCapable: false,
+        localScope: true,
+        readOnly: true,
+      });
+
+      // ── run v1 ──
+      const call1 = host.call("acme_read", { path: "/etc/hostname" });
+      respond(fake.last(), "v1 read ok");
+      const r1 = await call1;
+      expect(r1.ok).toBe(true);
+      if (r1.ok) expect(r1.content).toContain("v1 read ok");
+
+      // ── hot-swap to v2 on disk, then reload IN THE SAME host/process ──
+      install(v2);
+      onDisk = v2;
+      const childBefore = fake.last();
+      const reloaded = await host.reload("acme.recon");
+      expect(reloaded.ok).toBe(true);
+      // A genuine respawn: old child killed, a brand-new child, no new host.
+      expect(childBefore.killed).toBeGreaterThan(0);
+      expect(fake.children).toHaveLength(2);
+      // The gate flags were RE-DERIVED from v2: the widened set now grants
+      // network and is NO LONGER read-only. The old, lighter approval cannot
+      // linger — capabilities are recomputed the single way.
+      expect(host.gateMaps()).toEqual({
+        networkCapable: { acme_read: true },
+        localScope: { acme_read: true },
+        readOnly: {},
+      });
+
+      // ── run v2 ──
+      const call2 = host.call("acme_read", { path: "/etc/hostname", url: "http://x" });
+      respond(fake.last(), "v2 read+net ok");
+      const r2 = await call2;
+      expect(r2.ok).toBe(true);
+      if (r2.ok) expect(r2.content).toContain("v2 read+net ok");
+
+      // ── "disable" (unload): the tool is gone and cannot be invoked ──
+      host.unload("acme.recon");
+      expect(host.ownsTool("acme_read")).toBe(false);
+      const afterDisable = await host.call("acme_read", {});
+      expect(afterDisable.ok).toBe(false);
+      if (!afterDisable.ok) expect(afterDisable.error).toContain("no plugin contributes");
+
+      // A capability a plugin never declared is not reachable: it has no tool,
+      // so there is nothing in any gate map and nothing to dispatch.
+      expect(host.gateMaps()).toEqual({ networkCapable: {}, localScope: {}, readOnly: {} });
+      expect(host.status()).toEqual([]);
+    },
+  );
+
+  it("a tool name the manifest never declared is never callable", async () => {
+    const v1 = manifest({
+      tools: [
+        {
+          name: "acme_read",
+          description: "read",
+          parameters: {},
+          capabilities: ["filesystem-read"],
+        },
+      ],
+    });
+    install(v1);
+    const fake = makeFake(goodChild(v1));
+    const host = new PluginHost({
+      pluginsDir: root,
+      enabled: ["acme.recon"],
+      spawner: fake.spawner,
+    });
+    await host.load("acme.recon");
+    // Undeclared name: no gate flags, no dispatch, fail-soft.
+    expect(host.ownsTool("acme_exec")).toBe(false);
+    expect(host.capabilityFlagsFor("acme_exec")).toBeUndefined();
+    expect(await host.call("acme_exec", {})).toMatchObject({ ok: false });
+  });
+});
+
 // ── spawn hardening ──────────────────────────────────────────────────────────
 
 describe("spawn hardening", () => {
