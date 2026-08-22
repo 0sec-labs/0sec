@@ -6,9 +6,9 @@
  * layer ABOVE it that decides:
  *
  *   1. WHO MAY ADDRESS WHOM ({@link decideAddressing}) — a pure function of the
- *      sender's role/identity and the child↔child setting. No filesystem, no
- *      clock, no session. This is where the security policy lives, expressed as
- *      code rather than convention so a test can pin it.
+ *      sender's role/identity and the operator's channel settings. No
+ *      filesystem, no clock, no session. This is where the security policy
+ *      lives, expressed as code rather than convention so a test can pin it.
  *   2. HOW A DELIVERED BODY RE-ENTERS A MODEL CONTEXT
  *      ({@link renderInboundMessage}) — every inbound body is UNTRUSTED input
  *      authored by another agent (a direct agent-to-agent prompt-injection
@@ -20,12 +20,25 @@
  * ## The decided policy
  *
  *   - parent → child: ALLOWED (the parent is the curated trust boundary).
- *   - child → parent: ALLOWED (a child reports/asks upward).
- *   - child → sibling: DENIED unless the child↔child setting is on. This is the
- *     lateral-movement path: children run attacker-influenced code, so a direct
- *     sibling channel is how one compromised child pivots into another.
- *   - child → operator / any non-parent session: NEVER. A child addresses its
- *     parent only; broadcast (`to: "all"`) is unavailable to children entirely.
+ *   - child → parent: ALLOWED, ALWAYS, and deliberately NOT a setting. This is
+ *     the coordination channel the whole feature exists for — a child that
+ *     cannot report upward is a child that cannot be re-tasked — so there is no
+ *     operator toggle that turns it off. Its risk is already carried by the
+ *     delivery path below (sanitized, fenced, attributed, bounded), which is the
+ *     same protection every other channel gets.
+ *   - child → sibling: gated on `siblingChannelEnabled`. Children run
+ *     attacker-influenced code, so a direct sibling channel is how one
+ *     compromised child reaches another's context. The operator decides.
+ *   - child → operator: gated on `operatorChannelEnabled` AND on the parent
+ *     having supplied {@link MessagingRuntime.operatorId}. A child cannot derive
+ *     that id: it is not the parent id, and it is explicitly excluded from the
+ *     sibling-prefix rule so a misconfigured prefix can never expose it.
+ *   - child → any other session: DENIED. There is no configured id for it, so
+ *     nothing matches and it collapses into the generic denial.
+ *   - child → broadcast (`to: "all"`): DENIED unconditionally, no setting. A
+ *     broadcast from a leaf is a fan-out amplifier — one compromised child
+ *     reaching every peer in the roster at once — and a child that needs to
+ *     reach several peers can address them one at a time under the rules above.
  *
  * ## Authority stays human-gated
  *
@@ -36,10 +49,12 @@
  *
  * ## No roster leak on denial
  *
- * A denial NEVER names another peer. An attempt to reach a sibling while the
- * setting is off, to reach the operator, or to reach an unknown id all collapse
- * to the SAME generic "recipient is not reachable" reason, so a child cannot
- * probe the roster by watching which addresses are refused differently.
+ * A denial NEVER names another peer, and never says WHICH rule refused. An
+ * attempt to reach a sibling while that channel is off, the operator while that
+ * channel is off, or an id that simply does not exist all collapse to the SAME
+ * generic "recipient is not reachable" reason. Byte-identical denials are what
+ * stop a child from probing either the roster or the operator's settings by
+ * watching which addresses are refused differently.
  */
 
 import { BROADCAST_ID, isValidPeerId, type HubMessage } from "../hub/mailbox.js";
@@ -96,18 +111,37 @@ export interface MessagingRuntime {
   selfId: string;
   /** Parent or child. Drives which addressing branch applies. */
   selfRole: PeerRole;
-  /** The child's parent peer id. Present (and the ONLY allowed target) for a child. */
+  /**
+   * The child's parent peer id. Present for a child, and ALWAYS addressable —
+   * parent↔child is the coordination channel the feature exists for, so it is
+   * not behind a setting (see the policy note in the module header).
+   */
   parentId?: string;
+  /**
+   * The OPERATOR's peer id — the human's console session, which is a different
+   * peer from this child's parent agent. A child cannot compute this: it is
+   * supplied by the parent when the child's runtime is built, and matched by
+   * exact equality only. Absent means the operator is unaddressable no matter
+   * what {@link operatorChannelEnabled} says, so a session that never wired the
+   * operator's id fails closed.
+   */
+  operatorId?: string;
   /**
    * Namespace prefix shared by this child and its siblings, e.g.
    * `"<parentScanId>-sub-"`. A peer id starting with this (and not equal to
-   * `selfId`) is a SIBLING. The operator's session id never carries this
-   * prefix, which is what makes "child → operator" fall through to a denial
-   * even when the sibling channel is enabled.
+   * `selfId`) is a SIBLING. {@link operatorId} is excluded from this rule
+   * explicitly, so even a misconfigured prefix that happens to cover the
+   * operator's id cannot turn the sibling channel into an operator channel.
    */
   siblingPrefix?: string;
   /** The child↔child setting. When false, sibling addressing is denied. */
   siblingChannelEnabled: boolean;
+  /**
+   * The child→operator setting. When false, {@link operatorId} is not
+   * addressable and the attempt is refused with the same generic reason as an
+   * unknown peer.
+   */
+  operatorChannelEnabled: boolean;
   /** Absolute project path — the mailbox rendezvous key. */
   projectPath: string;
   /** Optional home-state-dir override (tests point this at a temp dir). */
@@ -116,20 +150,25 @@ export interface MessagingRuntime {
 
 /** Verdict from {@link decideAddressing}. `reason` is present iff `allowed` is false. */
 export type AddressDecision =
-  | { allowed: true; kind: "parent" | "child" | "sibling" }
+  | { allowed: true; kind: "parent" | "child" | "sibling" | "operator" }
   | { allowed: false; reason: string };
 
 /**
- * The single generic denial reason. It NEVER names a peer, so a child cannot
- * distinguish "sibling channel is off", "that id is the operator", and "no such
- * peer" — all three look identical. This is deliberate: a differentiated denial
- * would leak the roster.
+ * The single generic denial reason. It NEVER names a peer and never names a
+ * rule, so a child cannot distinguish "sibling channel is off", "operator
+ * channel is off", "that id is someone else's session", and "no such peer" —
+ * they are byte-identical. This is deliberate twice over: a differentiated
+ * denial would leak the roster, and it would let a child probe which channels
+ * the operator has enabled.
  */
 export const GENERIC_DENY_REASON = "recipient is not reachable from this agent";
 
-/** Denial for the broadcast address — stated plainly; it leaks nothing. */
+/**
+ * Denial for the broadcast address. Broadcast is not a peer, so naming it leaks
+ * nothing and a plain reason beats a confusing generic one.
+ */
 export const BROADCAST_DENY_REASON =
-  "broadcast is not available to a subagent; a subagent may message its parent only";
+  "broadcast is not available to a subagent; address one peer at a time";
 
 /**
  * Decide whether `from` may address `to`. PURE — no I/O, no clock. This is the
@@ -137,12 +176,14 @@ export const BROADCAST_DENY_REASON =
  *
  * Child rules (the security-critical direction):
  *   - `to` must be a shape-valid peer id and not self and not broadcast.
- *   - `to === parentId` → ALLOWED (child → parent).
- *   - `to` is a sibling (shares `siblingPrefix`, ≠ self) AND the sibling
- *     channel is on → ALLOWED (child → sibling).
- *   - anything else (operator/other session, disabled sibling, unknown id) →
- *     DENIED with {@link GENERIC_DENY_REASON} (no roster leak).
- *   - broadcast → DENIED with {@link BROADCAST_DENY_REASON}.
+ *   - `to === parentId` → ALLOWED (child → parent). Not a setting.
+ *   - `to === operatorId` AND the operator channel is on → ALLOWED
+ *     (child → operator).
+ *   - `to` is a sibling (shares `siblingPrefix`, ≠ self, ≠ `operatorId`) AND
+ *     the sibling channel is on → ALLOWED (child → sibling).
+ *   - anything else (other session, disabled channel, unknown id) → DENIED with
+ *     {@link GENERIC_DENY_REASON} (no roster leak, no settings leak).
+ *   - broadcast → DENIED with {@link BROADCAST_DENY_REASON}, unconditionally.
  *
  * Parent rules (parent ↔ child on by default):
  *   - broadcast is allowed for a parent (the operator's session may fan out).
@@ -162,7 +203,18 @@ export function decideAddressing(from: MessagingRuntime, to: unknown): AddressDe
   if (!isValidPeerId(to)) return { allowed: false, reason: GENERIC_DENY_REASON };
   if (to === from.selfId) return { allowed: false, reason: GENERIC_DENY_REASON };
 
+  // Parent↔child is unconditional: no setting reads here, by design.
   if (from.parentId && to === from.parentId) return { allowed: true, kind: "parent" };
+
+  // The operator is reachable ONLY by exact match on an id the parent supplied,
+  // and only while the operator channel is on.
+  const operatorId =
+    isValidPeerId(from.operatorId) && from.operatorId !== from.selfId ? from.operatorId : undefined;
+  if (operatorId && to === operatorId) {
+    return from.operatorChannelEnabled
+      ? { allowed: true, kind: "operator" }
+      : { allowed: false, reason: GENERIC_DENY_REASON };
+  }
 
   if (
     from.siblingChannelEnabled &&

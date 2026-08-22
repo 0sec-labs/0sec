@@ -60,11 +60,10 @@ export interface TuiSettings {
   density: "comfortable" | "compact";
   /** How the composer frame is drawn. */
   composerStyle: "border" | "rail" | "plain";
-  /**
-   * Let sibling subagents message each other directly (child↔child channel).
-   * Off by default because it is a lateral-movement path.
-   */
+  /** Let sibling subagents message each other directly (child↔child channel). */
   allowSubagentPeerMessaging: boolean;
+  /** Let a subagent send a message to the operator's transcript (child→operator). */
+  allowSubagentOperatorMessaging: boolean;
 }
 
 /** Keys of `TuiSettings` whose value is a boolean. */
@@ -175,9 +174,18 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "allowSubagentPeerMessaging",
     label: "Subagent peer messaging",
     description:
-      "Allow sibling subagents to message each other directly — a lateral-movement path, since one compromised subagent could then steer another's context.",
+      "A subagent runs attacker-influenced code, so a direct sibling channel is how one compromised subagent reaches another's context.",
     kind: "boolean",
-    default: false,
+    default: true,
+    group: "Security",
+  },
+  {
+    key: "allowSubagentOperatorMessaging",
+    label: "Subagent messages to you",
+    description:
+      "Messages arrive in your transcript sanitized and attributed, but a compromised subagent can use this channel to say things to you.",
+    kind: "boolean",
+    default: true,
     group: "Security",
   },
 ];
@@ -196,7 +204,8 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showTimestamps: false,
   density: "comfortable",
   composerStyle: "border",
-  allowSubagentPeerMessaging: false,
+  allowSubagentPeerMessaging: true,
+  allowSubagentOperatorMessaging: true,
 };
 
 /** Basename of the settings file inside the 0sec state directory. */
@@ -257,6 +266,7 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     density: enumAt(raw, "density"),
     composerStyle: enumAt(raw, "composerStyle"),
     allowSubagentPeerMessaging: booleanAt(raw, "allowSubagentPeerMessaging"),
+    allowSubagentOperatorMessaging: booleanAt(raw, "allowSubagentOperatorMessaging"),
   };
 }
 

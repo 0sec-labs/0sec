@@ -320,6 +320,59 @@ describe("describeSetting", () => {
   });
 });
 
+describe("subagent messaging settings", () => {
+  // These two are the only settings that gate a security boundary rather than
+  // chrome, so they get their own assertions: the shipped default, the group
+  // they surface under, and a description an operator can act on.
+  const CHANNEL_KEYS = ["allowSubagentPeerMessaging", "allowSubagentOperatorMessaging"] as const;
+
+  it("ships both subagent messaging channels ON", () => {
+    for (const key of CHANNEL_KEYS) {
+      expect(DEFAULT_SETTINGS[key]).toBe(true);
+    }
+  });
+
+  it("files both channels under Security", () => {
+    for (const key of CHANNEL_KEYS) {
+      const def = SETTING_DEFS.find((d) => d.key === key);
+      expect(def?.group).toBe("Security");
+      expect(def?.kind).toBe("boolean");
+    }
+  });
+
+  it("describes the concrete risk in one sentence instead of hedging", () => {
+    for (const def of SETTING_DEFS.filter((d) => d.group === "Security")) {
+      // "may be unsafe" tells an operator nothing they can act on.
+      expect(def.description).not.toMatch(/may be unsafe|potentially unsafe|use with caution|be careful/i);
+      expect(def.description.trim().endsWith(".")).toBe(true);
+      // One sentence: no interior sentence break.
+      expect(def.description.trim().slice(0, -1)).not.toMatch(/[.!?]\s/);
+    }
+  });
+
+  it("toggles each channel off and back on", () => {
+    for (const key of CHANNEL_KEYS) {
+      const off = toggleSetting(DEFAULT_SETTINGS, key);
+      expect(off[key]).toBe(false);
+      expect(toggleSetting(off, key)[key]).toBe(true);
+    }
+  });
+
+  it("round-trips a disabled channel through save and load", () => {
+    const home = makeHome();
+    const disabled: TuiSettings = {
+      ...DEFAULT_SETTINGS,
+      allowSubagentPeerMessaging: false,
+      allowSubagentOperatorMessaging: false,
+    };
+
+    expect(saveSettings(disabled, home)).toBe(true);
+    const loaded = loadSettings(home);
+    expect(loaded.allowSubagentPeerMessaging).toBe(false);
+    expect(loaded.allowSubagentOperatorMessaging).toBe(false);
+  });
+});
+
 describe("SETTING_DEFS", () => {
   // The table and the interface are two halves of one declaration; nothing but
   // a test stops a new field from being added to `TuiSettings` without a def
