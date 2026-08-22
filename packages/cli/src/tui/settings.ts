@@ -179,7 +179,7 @@ const DEFS: readonly TuiSettingDef[] = [
     label: "Turn summary",
     description: 'Per-turn "N tool calls - in->out tok" line after each answer.',
     kind: "boolean",
-    default: true,
+    default: false,
     group: "Transcript",
   },
   {
@@ -324,7 +324,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showComposerHints: true,
   showLogo: true,
   showRuntimeNotices: true,
-  showTurnSummary: true,
+  showTurnSummary: false,
   showSubagents: true,
   showTimestamps: false,
   density: "comfortable",
