@@ -5,7 +5,7 @@ import rehypeMermaid from "rehype-mermaid";
 export default defineConfig({
   output: "static",
   outDir: "./dist",
-  site: "https://docs.0sec.ai",
+  site: "https://docs.0.security",
   markdown: {
     // Render ```mermaid code blocks as SVG at build time
     syntaxHighlight: { type: "shiki", excludeLangs: ["mermaid"] },
