@@ -173,6 +173,71 @@ Use `--verbose` to see the animated attack replay and detailed agent reasoning:
 0sec scan --target https://api.example.com/chat --verbose
 ```
 
+## State directory
+
+Per-user 0sec state — the scan database, journals, caches, stored provider
+credentials, console display settings, and console session transcripts — lives
+in a single directory resolved by the shared `homeStateDir` helper. Today that
+is `~/.0sec` (i.e. `.0sec` under your home directory); everything else that
+references a state file joins onto that one root, so a future relocation or an
+`$XDG_STATE_HOME` migration would move all of it together rather than leaving
+stragglers behind. Paths below are written relative to that root.
+
+## Console display settings
+
+The interactive console persists its display preferences to
+`tui-settings.json` in the [state directory](#state-directory). You normally
+change these from the console (`/settings`), but the file is plain JSON and
+safe to hand-edit. Every key, its type, its allowed values, and its default:
+
+| Key | Type | Values | Default |
+|-----|------|--------|---------|
+| `showStatusBar` | boolean | `true` / `false` | `true` |
+| `showComposerHints` | boolean | `true` / `false` | `true` |
+| `showLogo` | boolean | `true` / `false` | `true` |
+| `showRuntimeNotices` | boolean | `true` / `false` | `true` |
+| `showTurnSummary` | boolean | `true` / `false` | `true` |
+| `showSubagents` | boolean | `true` / `false` | `true` |
+| `showTimestamps` | boolean | `true` / `false` | `false` |
+| `density` | enum | `comfortable`, `compact` | `comfortable` |
+| `composerStyle` | enum | `border`, `rail`, `plain` | `border` |
+
+The file cannot break the console. On load it is normalised against the table
+above: an unknown key is dropped, and a value of the wrong type or outside an
+enum's allowed set falls back to that key's default rather than raising. A
+missing, unreadable, or corrupt file simply yields the full set of defaults.
+Saving rewrites the file from the normalised object, so a stale or misspelled
+key you added by hand does not survive the next write.
+
+## Session persistence
+
+The interactive console stores its transcripts as one JSON file per session in
+a `console-sessions/` subdirectory of the [state directory](#state-directory),
+so you can close the console and resume an engagement later. Each transcript
+and the directory are owner-only (`0600` file, `0700` directory), re-applied on
+every save. Listings and resume are filtered to the current working directory,
+so each project sees its own sessions. History is bounded: the store keeps the
+20 most-recent sessions across all projects and prunes older ones
+automatically.
+
+A transcript is the full engagement record — the entire native message array:
+operator prompts, model replies, and every tool call together with its result.
+In practice that means **target hostnames and approved scope, findings before
+triage, and raw request/response bodies** captured as evidence — which can
+include session cookies, bearer tokens, and anything a tool echoed.
+
+**Secrets are deliberately not scrubbed from transcripts.** This is a decision,
+not an omission: a scrubber over free-form tool output cannot be complete (it
+would catch an `Authorization:` header and miss the same token inside a JSON
+body, a JWT in a URL, or a password in a stack trace), and a partial scrub is
+worse than none — it advertises a guarantee it cannot keep, so the file gets
+treated as safe to paste into a ticket or a shared host when it is not. A scrub
+would also corrupt the very evidence a resumed session needs. As with stored
+credentials, transcripts are **not encrypted**; their protection is filesystem
+permissions plus your ability to delete them (the console exposes deletion, and
+the 20-session prune caps how much accumulates). Nothing here is transmitted
+anywhere — this is local disk only.
+
 ## Feature flags
 
 0sec ships a set of agent-improvement features behind environment-variable flags so you can A/B test them and opt in/out per run. Every flag is read at process start; set `<FLAG>=0` or `<FLAG>=false` to disable, anything else to enable.
