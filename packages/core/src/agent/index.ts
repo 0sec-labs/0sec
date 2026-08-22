@@ -81,6 +81,7 @@ export type {
   ToolCall,
   ToolResult,
   ToolContext,
+  ScopedAuditEscalationRequest,
   MessageRole,
   DispatchMode,
 } from "./types.js";

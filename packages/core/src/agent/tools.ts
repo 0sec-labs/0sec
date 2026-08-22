@@ -141,6 +141,7 @@ import {
   loadSkillRegistry,
 } from "./skills/index.js";
 import { eventBus } from "../events/bus.js";
+import { mapWithConcurrency } from "../concurrency.js";
 import {
   executeIntelSearchAdvisories,
   executeIntelLookupCve,
@@ -1656,6 +1657,61 @@ const OAST_CLASS_BY_NAME: Record<string, OastClass> = {
   jndi: "jndi",
 };
 
+// ── Concurrent subagent fan-out (spawn_agents) ──
+//
+// Upper bound on how many children a single `spawn_agents` call may request.
+// A structured rejection (not a throw) is returned above this — it caps blast
+// radius (provider 429s, socket/memory pressure) and keeps a runaway lead
+// agent from fanning out unboundedly in one tool call.
+const SUBAGENT_MAX_FANOUT = 8;
+
+// Default number of children run CONCURRENTLY within one `spawn_agents` batch.
+// This bounds the RATE only: every requested child still runs, and findings
+// merge back in input order with identical behavior — matching the
+// VERIFY_CONCURRENCY pattern in unified-pipeline.ts. Override via
+// `0SEC_SUBAGENT_CONCURRENCY`.
+const SUBAGENT_CONCURRENCY = 4;
+
+/** Resolve the subagent fan-out limit, honoring `0SEC_SUBAGENT_CONCURRENCY`. */
+function subagentConcurrency(): number {
+  const raw = process.env["0SEC_SUBAGENT_CONCURRENCY"];
+  if (raw !== undefined) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return SUBAGENT_CONCURRENCY;
+}
+
+/**
+ * Result of running one subagent. Discriminated so a child failing is data,
+ * not a thrown exception — `spawn_agents` needs one child's failure to leave
+ * its siblings untouched, and the parent merges findings only from `ok: true`
+ * outcomes AFTER the pool has fully joined (never mid-flight from a child).
+ */
+type SubagentOutcome =
+  | { ok: true; findings: Finding[]; turns: number; summary: string; done: boolean }
+  | { ok: false; error: string };
+
+/** Shared lifecycle payload base for one subagent (carries its unique id). */
+interface SubagentLifecycleBase {
+  agent_id: string;
+  parent_scan_id: string;
+  task: string;
+  max_turns: number;
+  scope_rules?: string[];
+}
+
+/**
+ * The two lazily-imported dependencies a subagent needs. Dynamic import breaks
+ * the tools ↔ native-loop circular dependency; resolving them ONCE (here, via
+ * `loadSubagentDeps`) and sharing them across a `spawn_agents` batch also keeps
+ * every child off the concurrent-first-import path.
+ */
+type SubagentDeps = {
+  runNativeAgentLoop: typeof import("./native-loop.js")["runNativeAgentLoop"];
+  LlmApiRuntime: typeof import("../runtime/llm-api.js")["LlmApiRuntime"];
+};
+
 export class ToolExecutor {
   private db: osecDB | null;
   private ctx: ToolContext;
@@ -1673,6 +1729,19 @@ export class ToolExecutor {
    * See GitHub issue #82.
    */
   private _rejectedDecoyFlags: Set<string> = new Set();
+
+  /**
+   * Per-session memory for the scoped-source-audit escalation gate
+   * (see `_evaluateScopedAuditGate`). Keyed by tool NAME. `_scopedAuditGrants`
+   * holds tools the operator approved this session — approved once, never
+   * re-prompted. `_scopedAuditDenials` holds tools the operator declined —
+   * denied outright on retry without re-prompting. Both mirror the
+   * denied-host / denied-path memory pattern in `console/turn-engine.ts`.
+   * In-memory only; the executor is constructed once per console session and
+   * discarded with it, so these are session-scoped and never persisted.
+   */
+  private _scopedAuditGrants: Set<string> = new Set();
+  private _scopedAuditDenials: Set<string> = new Set();
 
   /**
    * OAST interaction handles minted this scan, plus verified callback verdicts
@@ -1809,18 +1878,8 @@ export class ToolExecutor {
     const previousCorrelationId = this._correlationId;
     this._correlationId = opts?.correlationId ?? null;
     try {
-      if (
-        (this.ctx.role === "audit" || this.ctx.role === "review") &&
-        typeof this.ctx.scopePath === "string" &&
-        this.ctx.scopePath.length > 0 &&
-        !Object.hasOwn(SCOPED_SOURCE_AUDIT_TOOLS, call.name)
-      ) {
-        return {
-          success: false,
-          output: null,
-          error: `Tool "${call.name}" is not available in a scoped source audit`,
-        };
-      }
+      const scopedAuditVerdict = await this._evaluateScopedAuditGate(call);
+      if (scopedAuditVerdict) return scopedAuditVerdict;
 
       // Coverage-gate accounting (#audit-laziness). Counted BEFORE dispatch
       // so a tool that throws still contributes to the "total tool calls"
@@ -1851,6 +1910,79 @@ export class ToolExecutor {
     } finally {
       this._correlationId = previousCorrelationId;
     }
+  }
+
+  /**
+   * Scoped-source-audit allow-list gate — autonomy-aware and escalatable.
+   *
+   * Returns `null` when `call` may proceed to dispatch, or a "denied"
+   * `ToolResult` to block it. Re-evaluated on EVERY `execute()` (it reads
+   * `this.ctx.autonomyMode` and the grant/denial sets fresh each time), so
+   * switching autonomy mid-session takes effect immediately with no executor
+   * rebuild.
+   *
+   * A scoped source audit (role audit/review with a genuinely configured,
+   * non-empty `scopePath`) processes attacker-controlled package contents, so
+   * by default only the `SCOPED_SOURCE_AUDIT_TOOLS` allow-list may run.
+   *
+   * IMPORTANT — this gate ONLY lifts that allow-list; it is NOT a master key.
+   * The console turn-engine's network scope-on-demand gate, local-filesystem
+   * scope gate, and co-pilot per-tool approval gate all run BEFORE
+   * `execute()` is reached, and each tool handler's own `scopePath`/`target`
+   * guards still apply AFTER dispatch. A YOLO grant or an escalation approval
+   * here changes none of those.
+   */
+  private async _evaluateScopedAuditGate(call: ToolCall): Promise<ToolResult | null> {
+    // The gate applies only inside a scoped source audit: role audit/review
+    // AND a genuinely configured (non-empty) local scope. Absent either, there
+    // is no allow-list restriction to evaluate — proceed. This nonempty-scope
+    // requirement is also what stops YOLO from ever granting execution rights
+    // when no scope exists.
+    const inScopedSourceAudit =
+      (this.ctx.role === "audit" || this.ctx.role === "review") &&
+      typeof this.ctx.scopePath === "string" &&
+      this.ctx.scopePath.length > 0;
+    if (!inScopedSourceAudit) return null;
+
+    // Allow-listed tools always run — they are never a candidate for
+    // escalation and never consume the escalation callback.
+    if (Object.hasOwn(SCOPED_SOURCE_AUDIT_TOOLS, call.name)) return null;
+
+    const denied: ToolResult = {
+      success: false,
+      output: null,
+      error: `Tool "${call.name}" is not available in a scoped source audit`,
+    };
+
+    // YOLO with a configured scope: the allow-list no longer restricts
+    // execution — this is what YOLO means (no prompts inside the configured
+    // scope). It does not touch the OTHER gates listed above.
+    if (this.ctx.autonomyMode === "yolo") return null;
+
+    // Standard / co-pilot: honour a decision already made this session before
+    // prompting again (mirrors the denied-host / denied-path memory pattern in
+    // console/turn-engine.ts).
+    if (this._scopedAuditGrants.has(call.name)) return null;
+    if (this._scopedAuditDenials.has(call.name)) return denied;
+
+    // No escalation callback wired (every existing non-console caller,
+    // including the scan pipeline): behave BYTE-IDENTICALLY to the pre-autonomy
+    // hard denial. This is the default-must-not-weaken path.
+    const escalate = this.ctx.escalateScopedAudit;
+    if (!escalate) return denied;
+
+    const approved = await escalate({
+      call,
+      reason: `Tool "${call.name}" is outside the scoped source-audit allow-list`,
+    });
+    if (approved) {
+      // Grant is per-tool-name, in-memory, session-scoped — never re-prompted.
+      this._scopedAuditGrants.add(call.name);
+      return null;
+    }
+    // Remember the denial so a retry of the same tool does not re-prompt.
+    this._scopedAuditDenials.add(call.name);
+    return denied;
   }
 
   private async _dispatch(call: ToolCall): Promise<ToolResult> {
@@ -4073,30 +4205,111 @@ export class ToolExecutor {
     }
   }
 
-  private async spawnAgent(args: Record<string, unknown>): Promise<ToolResult> {
-    const task = args.task as string;
-    if (!task) return { success: false, output: null, error: "Task description is required" };
+  /**
+   * Build the shared lifecycle payload base for one subagent: a globally
+   * unique `agent_id` (so concurrent children never collide) plus the parent
+   * scan id, task, turn budget, and — when the parent is scoped — the inherited
+   * scope rules. Split out so both `spawnAgent` and `spawnAgents` mint bases the
+   * same way.
+   */
+  private buildSubagentLifecycleBase(
+    task: string,
+    maxTurns: number,
+  ): SubagentLifecycleBase {
+    const scopeRulesArr: string[] | undefined = this.ctx.scope
+      ? [
+          ...(this.ctx.scope.raw.in_scope ?? []),
+          ...(this.ctx.scope.raw.out_of_scope ?? []),
+        ]
+      : undefined;
+    return {
+      agent_id: `${this.ctx.scanId}-sub-${randomUUID()}`,
+      parent_scan_id: this.ctx.scanId,
+      task,
+      max_turns: maxTurns,
+      ...(scopeRulesArr !== undefined ? { scope_rules: scopeRulesArr } : {}),
+    };
+  }
 
-    const maxTurns = Math.min((args.max_turns as number) ?? 15, 25);
+  /**
+   * Run ONE subagent to completion and RETURN its outcome rather than throwing
+   * or mutating parent state. This is the shared core of both the single-child
+   * `spawn_agent` and the concurrent `spawn_agents`; keeping it pure of
+   * side-effects on `this.ctx.findings` is what lets the concurrent path merge
+   * findings AFTER the pool joins (single-threaded, index-ordered) instead of
+   * racing in-child pushes.
+   *
+   * Lifecycle: the CALLER emits `queued` (so `spawn_agents` can show the whole
+   * fan-out as queued up front, before the concurrency cap lets only some
+   * start running); this method emits `running` immediately before the loop and
+   * exactly one terminal event (`completed` on any normal return — including a
+   * cost-ceiling / max-turns partial — or `failed` on a thrown error or missing
+   * API key). Net per-child sequence stays queued → running → terminal-once.
+   */
+  /**
+   * Resolve the subagent's lazily-imported dependencies once. Callers pass the
+   * result into `runOneSubagent` so a concurrent `spawn_agents` batch shares a
+   * single resolution instead of each child racing its own first-time
+   * `import()`. In production these modules are already cached (the parent runs
+   * inside `runNativeAgentLoop`), so this is effectively free.
+   */
+  private async loadSubagentDeps(): Promise<SubagentDeps> {
+    // Dynamic import to avoid the tools ↔ native-loop circular dependency.
+    const { runNativeAgentLoop } = await import("./native-loop.js");
+    const { LlmApiRuntime } = await import("../runtime/llm-api.js");
+    return { runNativeAgentLoop, LlmApiRuntime };
+  }
 
+  private async runOneSubagent(
+    task: string,
+    maxTurns: number,
+    base: SubagentLifecycleBase,
+    deps?: SubagentDeps,
+  ): Promise<SubagentOutcome> {
     try {
-      // Dynamic import to avoid circular dependency
-      const { runNativeAgentLoop } = await import("./native-loop.js");
-      const { LlmApiRuntime } = await import("../runtime/llm-api.js");
+      // Single-child path resolves deps here (inside the try, so an import
+      // failure still emits `failed`); the concurrent batch pre-resolves once
+      // and passes them in to stay off the per-child first-import path.
+      const { runNativeAgentLoop, LlmApiRuntime } = deps ?? (await this.loadSubagentDeps());
 
       const rt = new LlmApiRuntime({ type: "api" as any, timeout: 60_000 });
       if (!(await rt.isAvailable())) {
-        return { success: false, output: null, error: "No API key available for sub-agent" };
+        eventBus.emit("subagent_lifecycle", {
+          ...base,
+          status: "failed" as const,
+          error: "No API key available for sub-agent",
+        });
+        return { ok: false, error: "No API key available for sub-agent" };
       }
 
+      // DEPTH GUARD (single-level nesting): the child tool set is hardcoded to
+      // ["bash","save_finding","done"] and deliberately EXCLUDES spawn_agent /
+      // spawn_agents. A subagent therefore cannot spawn its own subagents, so
+      // fan-out is bounded to one level and can never recurse into an
+      // unbounded tree of sessions. Do NOT add any spawn tool here.
       const subTools: ToolDefinition[] = ["bash", "save_finding", "done"]
         .map((n) => TOOL_DEFINITIONS[n])
         .filter((t): t is ToolDefinition => t !== undefined);
+
+      // running — immediately before the agent loop starts
+      eventBus.emit("subagent_lifecycle", {
+        ...base,
+        status: "running" as const,
+      });
 
       // 0sec#218 review: propagate scope + auth to the spawned loop so
       // the sub-agent's bash/http_request gates use the same policy as
       // the parent. Without this, a parent scan locked to in-scope hosts
       // could spawn a child that hits arbitrary URLs via bash/curl.
+      //
+      // Cost ledger: pass the parent's shared ledger + ceiling + model so the
+      // child charges the SAME scan-wide ledger and trips the SAME ceiling.
+      // Without this, subagent spend was off-ledger and each child got the full
+      // ceiling to itself. Children never receive the auth `session` object —
+      // concurrent children sharing one stateful session would race its cookie
+      // state — so header building stays stateless per child (matching the
+      // single-child path). `db: null` keeps children out of the SQLite writer
+      // (no concurrent writers); findings merge-back is the sole durability sink.
       const state = await runNativeAgentLoop({
         config: {
           role: "attack",
@@ -4107,29 +4320,168 @@ export class ToolExecutor {
           scanId: this.ctx.scanId + "-sub",
           scope: this.ctx.scope,
           authConfig: this.ctx.authConfig,
+          costLedger: this.ctx.costLedger,
+          costCeilingUsd: this.ctx.costCeilingUsd,
+          costModel: this.ctx.costModel,
         },
         runtime: rt,
         db: null,
       });
 
-      // Merge sub-agent findings into parent context
-      for (const f of state.findings) {
-        this.ctx.findings.push(f);
-      }
+      // completed — exactly once after a normal return (including a partial
+      // return from a tripped cost ceiling or exhausted turn budget, whose
+      // `state.findings` still merge back at the caller).
+      eventBus.emit("subagent_lifecycle", {
+        ...base,
+        status: "completed" as const,
+        turns: state.turnCount,
+        findings: state.findings.length,
+        summary: state.summary,
+      });
 
       return {
-        success: true,
-        output: {
-          turns: state.turnCount,
-          findings: state.findings.length,
-          summary: state.summary,
-          done: state.done,
-        },
+        ok: true,
+        findings: state.findings,
+        turns: state.turnCount,
+        summary: state.summary,
+        done: state.done,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, output: null, error: msg.slice(0, 500) };
+      const truncated = msg.slice(0, 500);
+      eventBus.emit("subagent_lifecycle", {
+        ...base,
+        status: "failed" as const,
+        error: truncated,
+      });
+      return { ok: false, error: truncated };
     }
+  }
+
+  private async spawnAgent(args: Record<string, unknown>): Promise<ToolResult> {
+    const task = args.task as string;
+    if (!task) return { success: false, output: null, error: "Task description is required" };
+
+    const maxTurns = Math.min((args.max_turns as number) ?? 15, 25);
+    const base = this.buildSubagentLifecycleBase(task, maxTurns);
+
+    // queued — before any async setup
+    eventBus.emit("subagent_lifecycle", { ...base, status: "queued" as const });
+
+    const outcome = await this.runOneSubagent(task, maxTurns, base);
+    if (!outcome.ok) {
+      return { success: false, output: null, error: outcome.error };
+    }
+
+    // Merge sub-agent findings into parent context (single-threaded here).
+    for (const f of outcome.findings) {
+      this.ctx.findings.push(f);
+    }
+
+    return {
+      success: true,
+      output: {
+        turns: outcome.turns,
+        findings: outcome.findings.length,
+        summary: outcome.summary,
+        done: outcome.done,
+      },
+    };
+  }
+
+  /**
+   * Fan out into N subagents that run CONCURRENTLY (bounded), instead of the
+   * one-at-a-time `spawn_agent`. Each child is isolated: one failing does NOT
+   * kill the batch (`runOneSubagent` never throws), and findings merge back
+   * post-join in input order — never mid-flight — so there are no concurrent
+   * writers to `this.ctx.findings`. The shared cost ledger + ceiling threaded
+   * into each child means the ceiling binds the whole batch collectively: every
+   * concurrent child adds only its own turn's usage and reads the shared total,
+   * so the batch trips within one in-flight turn per active child of the
+   * collective spend crossing the ceiling (same overshoot bound as the verify
+   * wave).
+   */
+  private async spawnAgents(args: Record<string, unknown>): Promise<ToolResult> {
+    const rawTasks = args.tasks;
+    if (!Array.isArray(rawTasks) || rawTasks.length === 0) {
+      return {
+        success: false,
+        output: null,
+        error: "tasks must be a non-empty array of { task, max_turns? }",
+      };
+    }
+    if (rawTasks.length > SUBAGENT_MAX_FANOUT) {
+      return {
+        success: false,
+        output: null,
+        error: `Too many subagents: ${rawTasks.length} requested, max ${SUBAGENT_MAX_FANOUT} per spawn_agents call`,
+      };
+    }
+
+    // Normalize + validate each task entry before any side effect.
+    const specs: Array<{ task: string; maxTurns: number; base: SubagentLifecycleBase }> = [];
+    for (let i = 0; i < rawTasks.length; i++) {
+      const entry = rawTasks[i] as Record<string, unknown> | undefined;
+      const task = entry?.task;
+      if (typeof task !== "string" || !task.trim()) {
+        return {
+          success: false,
+          output: null,
+          error: `tasks[${i}].task is required and must be a non-empty string`,
+        };
+      }
+      const maxTurns = Math.min((entry?.max_turns as number) ?? 15, 25);
+      specs.push({ task, maxTurns, base: this.buildSubagentLifecycleBase(task, maxTurns) });
+    }
+
+    // Resolve the shared deps ONCE before fanning out, so no child sits on the
+    // concurrent first-`import()` path.
+    const deps = await this.loadSubagentDeps();
+
+    // queued — emit for ALL children up front so the whole fan-out is visible
+    // immediately, before the concurrency cap lets only some start running.
+    for (const spec of specs) {
+      eventBus.emit("subagent_lifecycle", { ...spec.base, status: "queued" as const });
+    }
+
+    // Run bounded-concurrently. `runOneSubagent` encodes failure in its return
+    // value (never throws), so one child failing leaves the pool — and its
+    // siblings — untouched; `mapWithConcurrency` preserves input order.
+    const outcomes = await mapWithConcurrency(
+      specs,
+      subagentConcurrency(),
+      async (spec) => this.runOneSubagent(spec.task, spec.maxTurns, spec.base, deps),
+    );
+
+    // Merge findings AFTER the pool has fully joined — single-threaded, in
+    // index order — so concurrent children never race on `this.ctx.findings`.
+    const perChild = outcomes.map((outcome, index) => {
+      if (outcome.ok) {
+        for (const f of outcome.findings) {
+          this.ctx.findings.push(f);
+        }
+        return {
+          index,
+          ok: true as const,
+          findings: outcome.findings.length,
+          turns: outcome.turns,
+          summary: outcome.summary,
+          done: outcome.done,
+        };
+      }
+      return { index, ok: false as const, error: outcome.error };
+    });
+
+    const succeeded = perChild.filter((c) => c.ok).length;
+    return {
+      success: true,
+      output: {
+        spawned: specs.length,
+        succeeded,
+        failed: specs.length - succeeded,
+        agents: perChild,
+      },
+    };
   }
 
   private async saveFinding(args: Record<string, unknown>): Promise<ToolResult> {

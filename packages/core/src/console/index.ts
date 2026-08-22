@@ -9,4 +9,11 @@ export type {
   ConsoleRenderCallbacks,
   ConsoleTurnOutcome,
   ConsoleStopReason,
+  ConsoleAutonomyMode,
+  ConsoleScopeRequest,
+  ConsoleScopeResolution,
+  ConsoleLocalScopeRequest,
+  ConsoleLocalScopeResolution,
+  ConsoleTurnBudget,
+  ConsoleUsageReport,
 } from "./turn-engine.js";

@@ -9,6 +9,7 @@ import type { TaskLedger } from "./task-ledger.js";
 import type { OastCollaborator } from "../oast/types.js";
 import type { SessionEngine } from "./session.js";
 import type { WafDetector } from "../scope/waf-detect.js";
+import type { ScanCostLedger } from "./cost-ledger.js";
 
 // ── Agent Roles ──
 
@@ -24,9 +25,16 @@ export interface ToolDefinition {
 }
 
 export interface ToolParam {
-  type: "string" | "number" | "boolean" | "object";
+  type: "string" | "number" | "boolean" | "object" | "array";
   description: string;
   enum?: string[];
+  /**
+   * JSON-schema `items` for `type: "array"` params (e.g. `spawn_agents`'
+   * `tasks` list). Passed through verbatim into the tool's `input_schema` so
+   * the model receives a properly typed array-of-objects. Omit for scalar
+   * params.
+   */
+  items?: Record<string, unknown>;
 }
 
 export interface ToolCall {
@@ -38,6 +46,36 @@ export interface ToolResult {
   success: boolean;
   output: unknown;
   error?: string;
+}
+
+// ── Console autonomy (scoped source-audit gate) ──
+
+/**
+ * Operator engagement mode, as seen by the tool executor. This union is a
+ * copy of the console's `ConsoleAutonomyMode` (`console/turn-engine.ts`) kept
+ * here to avoid a layering inversion — `agent/` is a lower layer than
+ * `console/` and must not import from it. Keep the two unions in sync.
+ *
+ * Only the scoped-source-audit allow-list gate in `ToolExecutor.execute`
+ * consults this. It is OPTIONAL: when absent (every non-console caller,
+ * including the scan pipeline), that gate behaves exactly as it did before the
+ * field existed — a hard denial of any non-allow-listed tool.
+ */
+export type ToolAutonomyMode = "standard" | "copilot" | "yolo";
+
+/**
+ * Payload handed to {@link ToolContext.escalateScopedAudit} when a scoped
+ * source audit hits a tool outside the `SCOPED_SOURCE_AUDIT_TOOLS` allow-list
+ * in `standard` / `copilot` mode. The console renders this to the operator and
+ * resolves to `true` (allow the call, once, and remember it) or `false` (deny,
+ * and remember the denial so a retry does not re-prompt). Mirrors the shape of
+ * the console's existing scope-request callbacks.
+ */
+export interface ScopedAuditEscalationRequest {
+  /** The blocked tool call. */
+  call: ToolCall;
+  /** Human-readable reason the call was blocked (for the operator prompt). */
+  reason: string;
 }
 
 // ── Agent Messages (multi-turn) ──
@@ -184,6 +222,29 @@ export interface ToolContext {
    */
   role?: AgentRole;
   scopePath?: string;
+  /**
+   * Current console autonomy mode, re-read by the scoped-source-audit gate on
+   * every `execute()` so switching mode mid-session takes effect immediately
+   * (no executor rebuild). Absent for every non-console caller — the scan
+   * pipeline never sets it — in which case the gate behaves byte-identically
+   * to the pre-autonomy hard denial. See {@link ToolAutonomyMode}.
+   */
+  autonomyMode?: ToolAutonomyMode;
+  /**
+   * Escalation callback for the scoped-source-audit allow-list gate. When a
+   * scoped source audit (role audit/review + a non-empty {@link scopePath})
+   * hits a tool outside `SCOPED_SOURCE_AUDIT_TOOLS` in `standard`/`copilot`
+   * mode, the executor invokes this instead of dead-ending: `true` runs the
+   * tool (and the grant is remembered per-tool for the session), `false`
+   * returns the existing denial (and is remembered so a retry does not
+   * re-prompt). When ABSENT — every existing non-console caller — the gate
+   * falls back to today's hard denial, so no existing behaviour changes.
+   *
+   * This callback ONLY lifts the scoped-source-audit allow-list. It is not a
+   * master key: the console's network scope-on-demand, local-filesystem scope,
+   * and co-pilot per-tool approval gates all still apply on top.
+   */
+  escalateScopedAudit?: (req: ScopedAuditEscalationRequest) => Promise<boolean>;
   persistFindings?: boolean;
   authConfig?: AuthConfig;
   /**
@@ -288,6 +349,28 @@ export interface ToolContext {
    * a graceful "not deployed" result.
    */
   oast?: OastCollaborator;
+  /**
+   * Shared per-scan cost ledger (see agent/cost-ledger.ts). Threaded onto the
+   * ToolContext so the `spawn_agent` / `spawn_agents` handlers can pass it into
+   * the child `runNativeAgentLoop` config — otherwise every subagent session
+   * charges only its own session-local usage and escapes the scan-wide ceiling
+   * (the off-ledger gap the ledger exists to close). Mirrors
+   * `NativeAgentConfig.costLedger`. Undefined outside a native loop.
+   */
+  costLedger?: ScanCostLedger;
+  /**
+   * Hard per-scan cost ceiling in USD, mirrored from
+   * `NativeAgentConfig.costCeilingUsd` onto the ToolContext so spawned
+   * subagents inherit and enforce the SAME ceiling as the parent, priced
+   * against the shared {@link costLedger}.
+   */
+  costCeilingUsd?: number;
+  /**
+   * Model id used to price token usage against the ceiling, mirrored from
+   * `NativeAgentConfig.costModel`. Passed through to spawned subagents so
+   * their ledger contributions price identically to the parent.
+   */
+  costModel?: string;
 }
 
 // ── Dispatch Mode (0sec#232) ──
