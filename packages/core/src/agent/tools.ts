@@ -141,6 +141,7 @@ import {
   loadSkillRegistry,
 } from "./skills/index.js";
 import { eventBus } from "../events/bus.js";
+import type { SubagentProgressPayload } from "../events/bus.js";
 import { mapWithConcurrency } from "../concurrency.js";
 import {
   executeIntelSearchAdvisories,
@@ -1682,6 +1683,79 @@ function subagentConcurrency(): number {
   return SUBAGENT_CONCURRENCY;
 }
 
+// ── Child status channel (Task 2: `report_status`) ──────────────────────────
+//
+// Max characters retained on a child-authored status line. Bounded because it
+// renders into a single terminal line on the operator's screen.
+const SUBAGENT_NOTE_MAX_LEN = 200;
+
+/* eslint-disable no-control-regex */
+/** C0/C1 controls + DEL, and the bidi/zero-width "trojan source" spoofers. */
+const RE_SUBAGENT_NOTE_UNSAFE =
+  /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+/* eslint-enable no-control-regex */
+
+/**
+ * Sanitize a child-authored status line into something safe to render on ONE
+ * terminal line in the PARENT operator's view. A child's prose is untrusted
+ * text authored by another model, so we: strip every control character
+ * (newlines/tabs included — this is a single line, not a block), strip bidi and
+ * zero-width formatting (so a child cannot reorder or hide what it "said"),
+ * collapse runs of whitespace, and clamp the length. Returns `undefined` when
+ * nothing printable remains, so callers can simply omit the field.
+ *
+ * Exported for the progress-event unit tests.
+ */
+export function sanitizeSubagentNote(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const cleaned = raw
+    .replace(RE_SUBAGENT_NOTE_UNSAFE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return undefined;
+  return cleaned.slice(0, SUBAGENT_NOTE_MAX_LEN);
+}
+
+/**
+ * Child-only, NON-PRIVILEGED status tool (Task 2).
+ *
+ * Deliberately NOT registered in the global `TOOL_DEFINITIONS` registry or the
+ * `TOOL_DISPATCH` barrel — it is injected ONLY into the sub-agent tool set
+ * (see `runOneSubagent`), so the parent and every normal scan never see it. It
+ * performs NO privileged action whatsoever: no filesystem, no network, no
+ * subprocess, no spawn, no durable write. It only lets a child announce, in one
+ * short line, what it is currently doing. That line is surfaced on the
+ * `subagent_progress` event by the parent's `onTurn` hook (which is the only
+ * place that knows the child's `agent_id`); the handler itself merely echoes the
+ * sanitized line back so the child sees confirmation and its context stays
+ * clean. Because it is not in the dispatch barrel, it is routed via
+ * {@link CHILD_LOCAL_DISPATCH} inside `_dispatch`.
+ */
+const REPORT_STATUS_TOOL: ToolDefinition = {
+  name: "report_status",
+  description:
+    "Report a short, one-line status describing what you are doing RIGHT NOW " +
+    '(e.g. "enumerating the users table via UNION-based SQLi"). Purely ' +
+    "informational: it runs nothing and changes nothing. Call it whenever you " +
+    "start a distinct phase of work so the operator watching can see your progress.",
+  parameters: {
+    status: {
+      type: "string",
+      description: "One short line describing your current activity.",
+    },
+  },
+  required: ["status"],
+};
+
+/**
+ * Child-only dispatch routes that are intentionally absent from the global
+ * `TOOL_DISPATCH` barrel (which `tools/dispatch.test.ts` pins byte-for-byte
+ * against `TOOL_DEFINITIONS`). Consulted BEFORE `TOOL_DISPATCH` in `_dispatch`.
+ */
+const CHILD_LOCAL_DISPATCH: Record<string, string> = {
+  report_status: "reportStatus",
+};
+
 /**
  * Result of running one subagent. Discriminated so a child failing is data,
  * not a thrown exception — `spawn_agents` needs one child's failure to leave
@@ -1699,6 +1773,48 @@ interface SubagentLifecycleBase {
   task: string;
   max_turns: number;
   scope_rules?: string[];
+}
+
+/**
+ * Build ONE `subagent_progress` payload for a child turn (Task 1 + Task 2).
+ *
+ * Pure and side-effect-free (exported for unit testing): given the child's
+ * lifecycle base, the completed turn number, the turn budget, and the tool
+ * calls the child made THIS turn, it returns the event payload the parent's
+ * `onTurn` hook emits. It reads only the tool NAME and the `report_status`
+ * argument — never any other tool's arguments and never any tool OUTPUT — so the
+ * event can fire every turn for every concurrent child without leaking payloads
+ * or flooding the bus.
+ *
+ * `tool` is the most recent NON-`report_status` tool the child ran (its actual
+ * activity); `report_status` is meta, not activity, so it never occupies the
+ * `tool` slot but its (sanitized) line rides on `note`. Last write wins for
+ * both within a turn.
+ */
+export function buildSubagentProgress(
+  base: SubagentLifecycleBase,
+  turn: number,
+  maxTurns: number,
+  toolCalls: ReadonlyArray<{ name: string; arguments?: Record<string, unknown> }>,
+): SubagentProgressPayload {
+  let tool: string | undefined;
+  let note: string | undefined;
+  for (const call of toolCalls) {
+    if (call.name === "report_status") {
+      const n = sanitizeSubagentNote(call.arguments?.["status"]);
+      if (n) note = n; // last status this turn wins
+    } else {
+      tool = call.name; // last real tool this turn wins ("most recent activity")
+    }
+  }
+  return {
+    agent_id: base.agent_id,
+    parent_scan_id: base.parent_scan_id,
+    turn,
+    max_turns: maxTurns,
+    ...(tool !== undefined ? { tool } : {}),
+    ...(note !== undefined ? { note } : {}),
+  };
 }
 
 /**
@@ -1994,7 +2110,11 @@ export class ToolExecutor {
       // full routing and asserts every name resolves to a real method. An
       // unmapped (or, defensively, unresolvable) name returns the same
       // "Unknown tool" result the previous switch's default did.
-      const methodName = TOOL_DISPATCH[call.name];
+      // Child-only routes (e.g. `report_status`) are resolved FIRST, off the
+      // local map, because they are intentionally absent from the global
+      // TOOL_DISPATCH barrel that tools/dispatch.test.ts pins against the
+      // registry. They still resolve to a real private method below.
+      const methodName = CHILD_LOCAL_DISPATCH[call.name] ?? TOOL_DISPATCH[call.name];
       const handler = methodName
         ? (this as unknown as Record<
             string,
@@ -4287,9 +4407,16 @@ export class ToolExecutor {
       // spawn_agents. A subagent therefore cannot spawn its own subagents, so
       // fan-out is bounded to one level and can never recurse into an
       // unbounded tree of sessions. Do NOT add any spawn tool here.
+      //
+      // `report_status` (Task 2) is appended as the sole EXCEPTION: it is a
+      // child-only, strictly NON-PRIVILEGED status channel (no filesystem, no
+      // network, no subprocess, no spawn) that only lets a child narrate what it
+      // is doing. It does NOT widen the depth guard — it cannot spawn — and it
+      // is not in the global registry, so no other loop gains it.
       const subTools: ToolDefinition[] = ["bash", "save_finding", "done"]
         .map((n) => TOOL_DEFINITIONS[n])
-        .filter((t): t is ToolDefinition => t !== undefined);
+        .filter((t): t is ToolDefinition => t !== undefined)
+        .concat(REPORT_STATUS_TOOL);
 
       // running — immediately before the agent loop starts
       eventBus.emit("subagent_lifecycle", {
@@ -4326,6 +4453,20 @@ export class ToolExecutor {
         },
         runtime: rt,
         db: null,
+        // Per-turn child progress (Task 1 + Task 2). Fires ONCE per completed
+        // child turn — the right granularity for a "what is this child doing"
+        // indicator, and deliberately NOT per token/delta (that channel is
+        // high-volume and the parent UI does not need it). This closure is the
+        // ONLY place that knows both the child's unique `agent_id` (from `base`)
+        // and its per-turn tool calls, which is why the emission lives here and
+        // not in the child's own tool handlers. `buildSubagentProgress` reads
+        // only tool NAMES + the report_status line — never args or output.
+        onTurn: (turn, toolCalls) => {
+          eventBus.emit(
+            "subagent_progress",
+            buildSubagentProgress(base, turn, maxTurns, toolCalls),
+          );
+        },
       });
 
       // completed — exactly once after a normal return (including a partial
@@ -6161,6 +6302,29 @@ export class ToolExecutor {
         content: skill.content,
       },
     };
+  }
+
+  /**
+   * Child-only status channel (Task 2). Strictly NON-PRIVILEGED: it records
+   * nothing durable and touches no filesystem, network, or subprocess. The
+   * sanitized line is echoed back so the child sees confirmation and keeps a
+   * clean context; the actual `subagent_progress` emission happens in the
+   * parent's `onTurn` hook (the only place that knows this child's `agent_id`),
+   * so this handler must NOT emit. Reachable only by sub-agents — it is injected
+   * into the sub-agent tool set and routed via CHILD_LOCAL_DISPATCH; it is not
+   * in the global TOOL_DEFINITIONS / TOOL_DISPATCH tables, so normal scans and
+   * the parent never see it.
+   */
+  private reportStatus(args: Record<string, unknown>): ToolResult {
+    const note = sanitizeSubagentNote(args.status);
+    if (!note) {
+      return {
+        success: false,
+        output: null,
+        error: "report_status requires a non-empty 'status' string",
+      };
+    }
+    return { success: true, output: { recorded: true, status: note } };
   }
 
   private markDone(args: Record<string, unknown>): ToolResult {

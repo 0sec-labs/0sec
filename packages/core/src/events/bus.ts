@@ -485,6 +485,63 @@ export interface SubagentLifecyclePayload {
   [k: string]: unknown;
 }
 
+/**
+ * Fine-grained progress for ONE running sub-agent, keyed by the SAME
+ * `agent_id` as {@link SubagentLifecyclePayload}. A UI joins these to the
+ * lifecycle record by `agent_id` and renders "turn N of M" plus the tool the
+ * child is working, so an operator watching a `spawn_agents` fan-out sees what
+ * each child is doing instead of a bare wall-clock counter.
+ *
+ * GRANULARITY — turn boundaries, NOT tokens. This event is emitted once per
+ * COMPLETED child turn (from the parent's per-child `onTurn` hook). It is
+ * deliberately NOT emitted per token or per streaming `delta`: a child's
+ * streaming text is high-volume and the parent UI does not need it — turn
+ * boundaries and the tool that ran are the right granularity for a
+ * "what is this child doing" indicator. See the `delta` event for the
+ * (cloud-only, opt-in) high-volume token channel that this is NOT.
+ *
+ * PRIVACY / SIZE — this payload carries the tool NAME and small counters ONLY.
+ * It never carries tool ARGUMENTS or tool OUTPUT, and it does NOT re-send the
+ * child's task text (that rides once on the `queued` lifecycle event). Keeping
+ * it this small is what lets it fire every turn for every concurrent child
+ * without flooding the bus.
+ *
+ * ADDITIVE — this is a SIBLING event, not a change to `subagent_lifecycle`.
+ * The existing queued/running/completed/failed transitions and their payload
+ * fields are untouched, so `packages/cli/src/tui/subagent-card.ts` (which only
+ * subscribes to `subagent_lifecycle`) keeps working unchanged. A sibling event
+ * was chosen over a new lifecycle `status` precisely because the card's reducer
+ * upserts any non-terminal lifecycle event into its active-set record; a fifth
+ * status would have overwritten the stored `running` payload each turn.
+ */
+export interface SubagentProgressPayload {
+  /** Same opaque id as this child's `subagent_lifecycle` events. */
+  agent_id: string;
+  /** Scan id of the parent that called spawn_agent(s). */
+  parent_scan_id: string;
+  /**
+   * 1-based turn the child just completed. Increases monotonically per
+   * `agent_id` (one emit per child turn), so a UI can drive a progress bar.
+   */
+  turn: number;
+  /** The child's effective turn budget M, so a UI can render "turn N of M". */
+  max_turns: number;
+  /**
+   * NAME of the most recent tool the child ran this turn — no arguments, no
+   * output. Absent on a turn where the child ran no tool (or ran only the
+   * meta `report_status` channel). Never a path or a payload.
+   */
+  tool?: string;
+  /**
+   * Optional short, single-line, control-character-stripped status the child
+   * authored via the child-only `report_status` tool (see agent/tools.ts).
+   * Bounded length — it renders into one terminal line. Absent when the child
+   * did not report a status this turn.
+   */
+  note?: string;
+  [k: string]: unknown;
+}
+
 /** Discriminated union of all events flowing through the bus. */
 export type osecEvent =
   | { type: "step_started"; payload: StepStartedPayload }
@@ -508,7 +565,8 @@ export type osecEvent =
   | { type: "oast_confirmed"; payload: OastConfirmedPayload }
   | { type: "phase_started"; payload: PhaseStartedPayload }
   | { type: "phase_completed"; payload: PhaseCompletedPayload }
-  | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload };
+  | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload }
+  | { type: "subagent_progress"; payload: SubagentProgressPayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = osecEvent["type"];
