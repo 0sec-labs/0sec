@@ -11,8 +11,8 @@
 | **Atlantis** (Team Atlanta, AIxCC 🥇) | K8s multi-module CRS, fuzzing+concolic+LLM | Orchestration DNA: deterministic scheduler, LLM-as-worker, cost discipline |
 | **Buttercup** (Trail of Bits, AIxCC 🥈) | Leaner CRS, cheaper models (~$181/bug) | Deterministic scheduler, tiered-model cost discipline, WASI generator-code trick |
 
-> Cross-project reuse (foxguard as the decompiled-C static pass; pwnkit oracle
-> boundary) is its own doc: [INTEGRATION.md](INTEGRATION.md).
+> Cross-project reuse (foxguard as the decompiled-C static pass; the source-side
+> engine's oracle boundary) is its own doc: [INTEGRATION.md](INTEGRATION.md).
 
 **Framing caveat:** AIxCC was *source-available* (provided harnesses + ASan/UBSan/Jazzer). Binary-only loses all three. We take the *orchestration*, and must build the *substrate* (harness synthesis, crash oracle, sink detection) ourselves.
 

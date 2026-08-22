@@ -41,7 +41,7 @@
 This repository follows
 [0sec ADR-066](https://github.com/0sec-labs/0sec/blob/main/docs/DECISIONS.md#adr-066--2026-07-17--0verse-is-an-evidence-producernotary-input-not-a-dispatchable-engine-yet):
 **0verse produces and notarizes evidence out of band; it is not a generic
-pwnkit/0cloud dispatch engine.** Dispatch investment is gated on a blind run that
+managed dispatch engine.** Dispatch investment is gated on a blind run that
 confirms a known-CVE stripped x86-64 ELF. Until that gate passes, the generic
 cloud job type, engine template, and agent-callable binary tool are parked.
 
@@ -128,7 +128,7 @@ Rust for performance-critical leaf passes behind PyO3.
 ## Relationship to the rest of the line
 
 - **foxguard** — source-level SAST (Rust). `0verse` is its no-source sibling.
-- **pwnkit / 0cloud** (proprietary platform) — currently imports the specific signed
+- **the managed platform (proprietary)** — currently imports the specific signed
   Hyper-V evidence shape produced by `0verse` out of band. Provider-neutral PoV
   import, the generic dispatch engine, binary job type, and agent-callable binary
   tool remain planned and parked behind the blind stripped-ELF gate above.
@@ -165,6 +165,6 @@ src/zeroverse/
   crs_api.py / dedup.py        # M7 CRS-API/SARIF adapter + tiered crash dedup
   patch.py            # stage 9 — patch + deterministic verify (opt-in)
   report.py           # Finding + PoV + Patch data model; json/sarif/ndjson/md
-  cloud_sink.py / mcp.py            # 0cloud engine-side sink + stdio MCP bridge
+  cloud_sink.py / mcp.py            # managed cloud sink + stdio MCP bridge
   dataset.py / negative.py / groundtruth.py / benchmark.py   # the rigor layer (moat + honesty + eval)
 ```

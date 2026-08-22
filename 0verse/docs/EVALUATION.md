@@ -91,7 +91,7 @@ Three concrete, measured wins over the static lenses alone:
    loss of true-positive recall.
 3. **Sharper classification.** The model assigns precise, chained CWEs
    (CWE-190→CWE-122 truncation→heap-overflow; CWE-121 vs the baseline's generic
-   CWE-120) — better triage signal for a downstream analyst or the 0cloud contract.
+   CWE-120) — better triage signal for a downstream analyst or the managed contract.
 
 ## Harness synthesis (#16)
 
