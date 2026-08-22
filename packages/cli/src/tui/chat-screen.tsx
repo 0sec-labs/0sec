@@ -123,7 +123,7 @@ import {
   type TranscriptStyle,
 } from "./transcript-style.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models";
 
 
 export interface ChatScreenOptions {
@@ -1862,31 +1862,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       case "model": {
         const requested = args.trim();
         if (!requested) {
-          if (!session) {
-            appendEntry({ kind: "notice", text: "runtime is not ready", turn: turn.current });
-            return true;
-          }
-          // Deliberately NOT annotating each row with "no credentials".
-          // The catalogue's provider comes from the pricing table, while
-          // the runtime resolves a model's provider through its own
-          // detection and failover order (`providerForModel`, which core
-          // does not export). Those disagree — an OpenAI-named model can
-          // in fact be served by the ChatGPT/Codex backend — so a per-row
-          // verdict would flag working models as broken. Report only what
-          // is verifiable: which providers hold credentials.
-          const configured = providerStates(process.env)
-            .filter((provider) => provider.configured)
-            .map((provider) => provider.label);
-          setPicker({
-            state: createSelectorState(
-              configured.length > 0
-                ? `Select model · credentials: ${configured.join(", ")}`
-                : "Select model · no provider credentials found",
-              modelSelectorItems(modelId ?? undefined),
-              modelId ?? undefined,
-            ),
-            commit: (id) => void routeSlashCommand(`/model ${id}`),
-          });
+          // The full screen, not the composer picker: the model list wants
+          // provider grouping, per-provider credential state and setup hints,
+          // none of which fit above the composer. `/model <id>` below still
+          // switches in place without leaving chat.
+          onNavigate("models");
           return true;
         }
         if (busy) {
