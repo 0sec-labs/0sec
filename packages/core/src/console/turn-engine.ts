@@ -17,6 +17,7 @@ import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
   evaluateGuards,
   guardApprovalUnavailable,
+  guardNetworkRequiresScope,
   guardUnresolvedCapabilities,
   type GuardContext,
   type ToolGuard,
@@ -128,6 +129,17 @@ export interface ConsoleScopeRequest {
   call: ToolCall;
   /** URLs extracted from the tool call's arguments. */
   requestedUrls: string[];
+  /**
+   * Descriptions of network-reaching shell constructs whose destination could
+   * NOT be resolved to a URL (`curl "$H"`, `… | sh`, `eval …`). Present only
+   * for shell-payload tools. When this is non-empty the operator is being asked
+   * to approve a call whose destination is UNKNOWN — the request carries the
+   * full `call`, so the surface should show the actual command, not just
+   * `requestedUrls` (which may be empty). Approving such a call means "I read
+   * the command and I accept it", not "the scope covers it": nothing here can
+   * be checked against `ScopePolicy`.
+   */
+  unresolvedTargets?: string[];
   /** Current session target (may be empty). */
   target: string;
   /** Current scope policy, if any. */
@@ -661,13 +673,517 @@ function hostOf(url: string): string | null {
   }
 }
 
-/** Extract candidate URLs from nested tool arguments, falling back to the session target. */
-function extractToolUrls(call: ToolCall, target: string): string[] {
+// ── Target extraction from tool arguments ──
+//
+// HONEST LIMIT — READ THIS BEFORE TRUSTING ANYTHING BELOW.
+//
+// A regex (or a hand-rolled tokenizer) over a shell command CANNOT be a
+// security boundary, and this code does not pretend to be one. A shell command
+// is a program in a Turing-complete language whose destination is decided at
+// RUNTIME, not at parse time. Every one of these defeats the extractor below,
+// trivially and by design of the shell, not by a bug here:
+//
+//   H=evil.example; curl "$H"          — variable indirection
+//   curl $(cat /tmp/h)                 — command substitution
+//   echo Y3VybCBldmls | base64 -d | sh — encoded payload piped to a shell
+//   python3 -c 'import socket; ...'    — any interpreter with a socket API
+//   curl -K /tmp/cfg                   — destination read from a config file
+//   ./fetch.sh                         — a script whose contents we never see
+//   printf '\\x63url evil.example' | sh — escaped/obfuscated program name
+//
+// So the extractor is DEFENCE IN DEPTH, not ENFORCEMENT. Its job is to raise
+// the cost of an accidental or lazily-constructed out-of-scope call and to give
+// the operator something concrete to approve. The ACTUAL enforcement decision
+// lives in `maybeResolveScope`: when a network-capable tool carries a shell
+// payload whose destination we could NOT resolve, the call is escalated to the
+// operator (standard/copilot) or denied (yolo) instead of being approved by
+// default. "We did not find a URL" must never again mean "there is no URL".
+//
+// Real enforcement, if it is ever wanted, has to happen where the syscalls
+// happen: a network namespace, a filtering proxy the tools are forced through,
+// or a seccomp/LSM policy. None of that is in this file.
+
+/**
+ * Tools whose arguments are (or contain) a shell command line — the payload
+ * class the schemeless extraction below understands, and the ONLY class the
+ * unresolved-target escalation in `maybeResolveScope` applies to. Structured
+ * tools (`http_request`, `crawl`, `read_file`, …) keep their previous
+ * behaviour exactly: explicit `http(s)://` extraction plus the session-target
+ * fallback.
+ *
+ * `python_exec` is deliberately NOT here: its payload is Python, not shell, so
+ * the shell tokenizer would produce noise rather than signal. That is a known
+ * residual hole (see the honesty note above) — it is covered only by the
+ * yolo-requires-scope floor, not by target extraction.
+ */
+const SHELL_PAYLOAD_TOOLS: Record<string, true> = {
+  bash: true,
+  run_command: true,
+  pty_session: true,
+};
+
+/**
+ * Programs that speak to the network with a destination in argv. A bare
+ * `host`, `host:port` or `host/path` argument to one of these is treated as an
+ * engagement target even without a scheme. Restricting schemeless host
+ * detection to these argument windows is the central FALSE-POSITIVE control:
+ * scanning every shell token for "something with a dot in it" would classify
+ * `package.json`, `app.ts` and `README.md` as hosts.
+ */
+const NETWORK_CLIENTS: Record<string, true> = {
+  curl: true,
+  wget: true,
+  wget2: true,
+  nc: true,
+  ncat: true,
+  netcat: true,
+  socat: true,
+  ssh: true,
+  scp: true,
+  sftp: true,
+  rsync: true,
+  ftp: true,
+  telnet: true,
+  dig: true,
+  nslookup: true,
+  host: true,
+  ping: true,
+  ping6: true,
+  openssl: true,
+};
+
+/**
+ * Clients whose remote operand is a `[user@]host:path` / `host::module` spec.
+ * For these, a token is only read as a host when it carries `@` or `:` — the
+ * syntax that actually makes it remote. Without this, `scp report.txt srv:/tmp`
+ * would report `report.txt` as a target host.
+ */
+const REMOTE_SPEC_CLIENTS: Record<string, true> = { scp: true, sftp: true, rsync: true };
+
+/** Clients that take a bare positional port after the host (`nc host 443`). */
+const PORT_POSITIONAL_CLIENTS: Record<string, true> = {
+  nc: true,
+  ncat: true,
+  netcat: true,
+  telnet: true,
+};
+
+/** Command prefixes that wrap another command; the real program follows. */
+const COMMAND_WRAPPERS: Record<string, true> = {
+  sudo: true,
+  doas: true,
+  env: true,
+  time: true,
+  timeout: true,
+  nohup: true,
+  nice: true,
+  ionice: true,
+  stdbuf: true,
+  command: true,
+  builtin: true,
+  exec: true,
+  xargs: true,
+  then: true,
+  do: true,
+  else: true,
+};
+
+/** Interpreters that execute whatever text is piped into them. */
+const SHELL_INTERPRETERS: Record<string, true> = {
+  sh: true,
+  bash: true,
+  zsh: true,
+  dash: true,
+  ksh: true,
+  python: true,
+  python3: true,
+  perl: true,
+  ruby: true,
+  node: true,
+};
+
+/**
+ * Flags whose NEXT token is a value, not a destination. Skipping them stops
+ * `curl -d @payload.json host` from reporting `payload.json` as a host. The set
+ * is a union across clients on purpose: over-skipping can only LOSE a host,
+ * which downgrades the call to "unresolved" and still gates it, whereas
+ * under-skipping invents targets the operator then has to reject.
+ */
+const VALUE_FLAGS: Record<string, true> = {
+  "-H": true, "--header": true,
+  "-d": true, "--data": true, "--data-raw": true, "--data-binary": true, "--data-urlencode": true,
+  "--post-data": true, "--post-file": true,
+  "-o": true, "--output": true, "-O": true, "--output-document": true,
+  "-u": true, "--user": true, "--proxy-user": true,
+  "-X": true, "--request": true,
+  "-A": true, "--user-agent": true, "-U": true,
+  "-b": true, "--cookie": true, "-c": true, "--cookie-jar": true,
+  "-e": true, "--referer": true,
+  "-F": true, "--form": true,
+  "-T": true, "--upload-file": true, "--timeout": true,
+  "-x": true, "--proxy": true,
+  "-m": true, "--max-time": true, "--connect-timeout": true, "--retry": true,
+  "-w": true, "--write-out": true,
+  "-K": true, "--config": true,
+  "--cacert": true, "--cert": true, "--key": true,
+  "-p": true, "-l": true, "-P": true,
+};
+
+/** Flags whose next token IS the destination. */
+const TARGET_VALUE_FLAGS: Record<string, true> = {
+  "--url": true,
+  "-connect": true,
+  "--connect": true,
+  "--connect-to": true,
+};
+
+/** `>/dev/tcp/host/port` — bash's built-in socket, no external binary needed. */
+const DEV_SOCKET_RE = /\/dev\/(?:tcp|udp)\/([^\s/'"`;|&()<>]+)\/(\d{1,5})/gi;
+
+/** A bare IPv4 literal (optionally `:port` and `/path`), not part of a longer word. */
+const BARE_IPV4_RE =
+  /(?<![\w.-])((?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})(?::(\d{1,5}))?((?:\/[^\s'"`<>|;&)]*)?)(?![\w.-])/g;
+
+/** A bracketed IPv6 literal (`[::1]`, `[2001:db8::1]:8443`). */
+const BRACKET_IPV6_RE = /\[([0-9a-f:]{2,}(?:%[0-9a-z]+)?)\](?::(\d{1,5}))?/gi;
+
+const IPV4_RE = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const IPV6_RE = /^[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7}(?:%[0-9a-z]+)?$/i;
+const HOSTNAME_RE = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)+$/i;
+
+/** A destination recovered from a shell token. */
+interface ParsedHost {
+  host: string;
+  ipv6: boolean;
+  port?: number;
+  path?: string;
+}
+
+/** Bound a payload fragment before it is embedded in an operator-facing reason. */
+function truncateForReason(text: string, max = 80): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+/** The program name of a command token (`/usr/bin/curl` → `curl`). */
+function programName(token: string): string {
+  const cleaned = token.replace(/^\.\//, "");
+  const slash = cleaned.lastIndexOf("/");
+  return (slash >= 0 ? cleaned.slice(slash + 1) : cleaned).toLowerCase();
+}
+
+/**
+ * Interpret one shell token as a network destination, or return null when it is
+ * not host-shaped. Accepts `host`, `host:port`, `host/path`, `user@host`,
+ * `user@host:/path`, `[v6]:port` and bare IPv4/IPv6 literals. A single-label
+ * name is rejected (it is far more likely a file or a subcommand) with the sole
+ * exception of `localhost`.
+ */
+function parseHostToken(rawToken: string): ParsedHost | null {
+  let token = rawToken.trim();
+  if (!token || token.startsWith("-")) return null;
+  // A token that still carries a scheme is handled by the URL regex; report it
+  // as "resolved" to the caller without duplicating it.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(token)) return null;
+  // Strip userinfo (`user:pass@host`).
+  const at = token.lastIndexOf("@");
+  if (at >= 0) token = token.slice(at + 1);
+  if (!token) return null;
+
+  // Bracketed IPv6 first — its colons are not a port separator.
+  const bracket = token.match(/^\[([^\]]+)\](?::(\d{1,5}))?(\/.*)?$/);
+  if (bracket) {
+    const inner = bracket[1];
+    if (!IPV6_RE.test(inner)) return null;
+    return { host: inner.toLowerCase(), ipv6: true, port: clampPort(bracket[2]), path: bracket[3] };
+  }
+
+  // Bare IPv6 (two or more colons and nothing but hex/colon characters).
+  const beforeSlashV6 = token.split("/")[0];
+  if ((beforeSlashV6.match(/:/g) ?? []).length >= 2 && IPV6_RE.test(beforeSlashV6)) {
+    return { host: beforeSlashV6.toLowerCase(), ipv6: true };
+  }
+
+  // Split off a path, then a `:port` or an rsync `::module` / scp `:path`.
+  const slash = token.indexOf("/");
+  let authority = slash >= 0 ? token.slice(0, slash) : token;
+  const path = slash >= 0 ? token.slice(slash) : undefined;
+  let port: number | undefined;
+  const colon = authority.indexOf(":");
+  if (colon >= 0) {
+    const tail = authority.slice(colon + 1);
+    authority = authority.slice(0, colon);
+    if (/^\d{1,5}$/.test(tail)) port = clampPort(tail);
+  }
+  const host = authority.toLowerCase();
+  if (!host) return null;
+  if (IPV4_RE.test(host)) return { host, ipv6: false, port, path };
+  if (host === "localhost") return { host, ipv6: false, port, path };
+  if (!HOSTNAME_RE.test(host)) return null;
+  // Require an alphabetic, >=2 char final label so `1.2.3` / `v1.0` are not hosts.
+  const last = host.slice(host.lastIndexOf(".") + 1);
+  if (!/^[a-z]{2,}$/.test(last)) return null;
+  return { host, ipv6: false, port, path };
+}
+
+function clampPort(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : undefined;
+}
+
+/**
+ * Normalize a recovered destination into a URL `ScopePolicy.match` can parse.
+ * The scheme is cosmetic — the policy only ever reads the hostname — but it has
+ * to be present and the host has to be bracketed when it is IPv6, or `new URL`
+ * throws and the policy fails closed on a target we actually did resolve.
+ */
+function hostToUrl(parsed: ParsedHost): string {
+  const authority = parsed.ipv6 ? `[${parsed.host}]` : parsed.host;
+  const scheme = parsed.port === 80 || parsed.port === 8080 ? "http" : "https";
+  const port = parsed.port !== undefined ? `:${parsed.port}` : "";
+  const path = parsed.path ?? "";
+  const url = `${scheme}://${authority}${port}${path}`;
+  try {
+    // Round-trip so an unparseable synthesis never reaches the policy.
+    new URL(url);
+    return url;
+  } catch {
+    return `${scheme}://${authority}`;
+  }
+}
+
+/** Shell separators the tokenizer emits as standalone tokens. */
+function isSeparator(token: string): boolean {
+  return token === "|" || token === "||" || token === "&" || token === "&&" ||
+    token === ";" || token === ";;" || token === "\n";
+}
+
+/**
+ * Split a shell payload into tokens, honouring single/double quotes and
+ * emitting `| || & && ; \n` as separators. A quoted run that contains spaces is
+ * preserved as ONE token, which is what lets the scanner recurse into
+ * `bash -c '…'` bodies.
+ */
+function shellTokens(payload: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let started = false;
+  let quote: '"' | "'" | null = null;
+  const flush = () => {
+    if (started) {
+      tokens.push(current);
+      current = "";
+      started = false;
+    }
+  };
+  for (let i = 0; i < payload.length; i++) {
+    const ch = payload[i];
+    if (quote) {
+      if (ch === quote) { quote = null; continue; }
+      if (quote === '"' && ch === "\\" && i + 1 < payload.length) { current += payload[++i]; started = true; continue; }
+      current += ch;
+      started = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; started = true; continue; }
+    if (ch === "\n") { flush(); tokens.push("\n"); continue; }
+    if (ch === " " || ch === "\t" || ch === "\r") { flush(); continue; }
+    if (ch === "|" || ch === "&" || ch === ";") {
+      flush();
+      let op = ch;
+      while (i + 1 < payload.length && payload[i + 1] === ch) { op += payload[++i]; }
+      tokens.push(op);
+      continue;
+    }
+    current += ch;
+    started = true;
+  }
+  flush();
+  return tokens;
+}
+
+/** Accumulator threaded through the shell scan. */
+interface ShellScanSink {
+  urls: Set<string>;
+  unresolved: Set<string>;
+}
+
+/**
+ * Read one network client's argument window (up to the next separator) and add
+ * every destination it names. When the window names none — `curl "$H"`,
+ * `wget -i list.txt`, a destination hidden behind a substitution — the client is
+ * recorded as UNRESOLVED so the caller escalates instead of approving.
+ */
+function scanClientWindow(program: string, window: string[], sink: ShellScanSink): void {
+  if (program === "openssl" && !window.some((t) => t === "s_client" || t === "s_time")) {
+    // `openssl rand`, `openssl x509`, … are not network clients.
+    return;
+  }
+  const remoteSpecOnly = REMOTE_SPEC_CLIENTS[program] === true;
+  let found = 0;
+  for (let i = 0; i < window.length; i++) {
+    const token = window[i];
+    const eq = token.match(/^(--[a-z][a-z0-9-]*)=(.*)$/i);
+    if (eq && TARGET_VALUE_FLAGS[eq[1].toLowerCase()]) {
+      const parsed = parseHostToken(eq[2]);
+      if (parsed) { sink.urls.add(hostToUrl(parsed)); found += 1; }
+      else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(eq[2])) found += 1;
+      continue;
+    }
+    if (TARGET_VALUE_FLAGS[token.toLowerCase()]) {
+      const value = window[++i];
+      if (value !== undefined) {
+        const parsed = parseHostToken(value);
+        if (parsed) { sink.urls.add(hostToUrl(parsed)); found += 1; }
+        else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) found += 1;
+      }
+      continue;
+    }
+    if (token.startsWith("-")) {
+      if (VALUE_FLAGS[token]) i += 1;
+      continue;
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+    if (/^\d+$/.test(token)) continue;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(token)) { found += 1; continue; }
+    if (remoteSpecOnly && !token.includes("@") && !token.includes(":")) continue;
+    const parsed = parseHostToken(token);
+    if (!parsed) continue;
+    // `nc host 443` / `telnet host 23`: a bare number right after the host is
+    // the port, not another argument.
+    if (
+      parsed.port === undefined &&
+      PORT_POSITIONAL_CLIENTS[program] &&
+      i + 1 < window.length &&
+      /^\d{1,5}$/.test(window[i + 1])
+    ) {
+      parsed.port = clampPort(window[i + 1]);
+      i += 1;
+    }
+    sink.urls.add(hostToUrl(parsed));
+    found += 1;
+  }
+  if (found === 0) {
+    sink.unresolved.add(
+      `"${program}" is invoked with no destination this gate can read (${truncateForReason([program, ...window].join(" "))})`,
+    );
+  }
+}
+
+/**
+ * Scan a shell payload for engagement destinations and for constructs that hide
+ * one. Recurses into quoted sub-commands (`bash -c '…'`) up to a small depth.
+ *
+ * This is best-effort pattern recognition, NOT parsing and NOT enforcement —
+ * see the honesty note at the top of this section.
+ */
+function scanShellPayload(payload: string, sink: ShellScanSink, depth = 0): void {
+  if (depth > 3 || !payload) return;
+
+  // bash's built-in socket: `exec 3<>/dev/tcp/host/port`.
+  for (const match of payload.matchAll(DEV_SOCKET_RE)) {
+    const parsed = parseHostToken(`${match[1]}:${match[2]}`);
+    if (parsed) sink.urls.add(hostToUrl(parsed));
+    else sink.unresolved.add(`a /dev/tcp socket to an unreadable host (${truncateForReason(match[0])})`);
+  }
+
+  // Bare IP literals anywhere in the payload — high signal, and not confusable
+  // with a filename the way a bare hostname is.
+  for (const match of payload.matchAll(BARE_IPV4_RE)) {
+    sink.urls.add(hostToUrl({ host: match[1], ipv6: false, port: clampPort(match[2]), path: match[3] || undefined }));
+  }
+  for (const match of payload.matchAll(BRACKET_IPV6_RE)) {
+    if (!IPV6_RE.test(match[1])) continue;
+    sink.urls.add(hostToUrl({ host: match[1].toLowerCase(), ipv6: true, port: clampPort(match[2]) }));
+  }
+
+  const tokens = shellTokens(payload);
+  let commandPosition = true;
+  let afterPipe = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (isSeparator(token)) {
+      afterPipe = token === "|" || token === "||";
+      commandPosition = true;
+      continue;
+    }
+    if (commandPosition) {
+      if (token.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+      if (/\s/.test(token)) {
+        // A whole quoted command sat in command position (`sh -c` with the
+        // body quoted as one word, `xargs "curl host"`, …).
+        commandPosition = false;
+        afterPipe = false;
+        scanShellPayload(token, sink, depth + 1);
+        continue;
+      }
+      const program = programName(token);
+      if (COMMAND_WRAPPERS[program]) continue;
+      commandPosition = false;
+      const window: string[] = [];
+      for (let j = i + 1; j < tokens.length && !isSeparator(tokens[j]); j++) window.push(tokens[j]);
+
+      if (afterPipe && SHELL_INTERPRETERS[program]) {
+        sink.unresolved.add(`output is piped into "${program}", which executes text this gate never sees`);
+      }
+      if (program === "eval") {
+        sink.unresolved.add(`"eval" executes a string this gate cannot resolve (${truncateForReason(window.join(" "))})`);
+      }
+      if (program === "base64" && window.some((t) => t === "-d" || t === "-D" || t === "--decode")) {
+        sink.unresolved.add(`"base64 --decode" hides the payload from this gate`);
+      }
+      if (NETWORK_CLIENTS[program]) scanClientWindow(program, window, sink);
+      afterPipe = false;
+      continue;
+    }
+    // A quoted sub-command (`sh -c 'curl evil.example'`) survives tokenization
+    // as one token containing whitespace; scan it as a payload in its own right.
+    if (/\s/.test(token)) scanShellPayload(token, sink, depth + 1);
+  }
+}
+
+/** What the scope gate learned about a pending tool call. */
+interface ToolTargets {
+  /** Destinations normalized to URLs, ready for `ScopePolicy.match`. */
+  urls: string[];
+  /**
+   * Human-readable descriptions of shell constructs that reach the network (or
+   * execute opaque text) WITHOUT naming a destination this gate could read.
+   * Non-empty means "we do not know where this goes" — which is precisely the
+   * case that must not be silently approved.
+   */
+  unresolved: string[];
+  /** The raw shell payloads seen, used as the key for declined-payload memory. */
+  shellPayloads: string[];
+}
+
+/**
+ * Extract candidate targets from nested tool arguments.
+ *
+ * Structured (non-shell) tools behave exactly as before: explicit `http(s)://`
+ * URLs, plus the session target as a fallback when nothing was found — correct
+ * for `crawl`/`surface_sweep`/… which really do operate on the session target.
+ *
+ * Shell-payload tools additionally get schemeless extraction, and deliberately
+ * DROP the session-target fallback: substituting the session target for a shell
+ * command validated a host the command was never going to contact, which made
+ * the gate look like it had done its job when it had not.
+ */
+function extractToolTargets(call: ToolCall, target: string): ToolTargets {
   const urls = new Set<string>();
+  const unresolved = new Set<string>();
+  const shellPayloads: string[] = [];
+  const shellShaped = SHELL_PAYLOAD_TOOLS[call.name] === true;
+
   const visit = (value: unknown) => {
     if (typeof value === "string") {
       if (/^https?:\/\//i.test(value)) urls.add(value);
       for (const embedded of value.match(/https?:\/\/[^\s'"`<>|]+/gi) ?? []) urls.add(embedded);
+      if (shellShaped && value.trim()) {
+        shellPayloads.push(value);
+        scanShellPayload(value, { urls, unresolved });
+      }
       return;
     }
     if (Array.isArray(value)) {
@@ -679,8 +1195,17 @@ function extractToolUrls(call: ToolCall, target: string): string[] {
     }
   };
   visit(call.arguments);
-  if (urls.size === 0 && target.trim() && NETWORK_CAPABLE_TOOLS[call.name]) urls.add(target);
-  return [...urls];
+
+  if (
+    !shellShaped &&
+    urls.size === 0 &&
+    unresolved.size === 0 &&
+    target.trim() &&
+    NETWORK_CAPABLE_TOOLS[call.name]
+  ) {
+    urls.add(target);
+  }
+  return { urls: [...urls], unresolved: [...unresolved], shellPayloads };
 }
 
 /**
@@ -705,6 +1230,13 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   // denied outright without re-prompting, so a single rejection can't turn
   // into an unbounded re-prompt loop when the model retries the same target.
   const deniedHosts = new Set<string>();
+
+  // Session-scoped memory of SHELL PAYLOADS the operator declined when this
+  // gate could not resolve their destination. An unresolved destination has no
+  // hostname, so `deniedHosts` cannot hold it; keying on the exact command text
+  // is what stops a retried `curl "$H"` from re-prompting on every round.
+  // In-memory only, per session — never persisted.
+  const deniedShellPayloads = new Set<string>();
 
   // In-memory, session-only local filesystem scope — the directory subtree the
   // operator authorized via requestLocalScope. Starts unset (the console never
@@ -775,19 +1307,31 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   ): Promise<"approved" | ToolResult> {
     if (!NETWORK_CAPABLE_TOOLS[call.name]) return "approved";
 
-    const urls = extractToolUrls(call, sessionTarget);
-    if (urls.length === 0) return "approved";
+    const { urls, unresolved, shellPayloads } = extractToolTargets(call, sessionTarget);
 
-    // Check if every extracted URL is already covered by the current scope.
+    // Nothing to decide about: no destination was named AND nothing in the call
+    // reaches the network in a way this gate could not read. This is the branch
+    // that keeps `bash echo hello`, `read_file`, and every other ordinary local
+    // call prompt-free — the escalation below is driven by evidence of network
+    // reach, never by mere membership in NETWORK_CAPABLE_TOOLS.
+    if (urls.length === 0 && unresolved.length === 0) return "approved";
+
+    // Check if every extracted URL is already covered by the current scope. An
+    // unresolved destination can NEVER be "covered": there is nothing to match
+    // a policy against, so scope coverage cannot discharge it.
     const allCovered = urls.every((url) => sessionScope?.match(url).allowed);
-    if (allCovered) return "approved";
+    if (allCovered && unresolved.length === 0) return "approved";
 
     // In yolo mode, missing or out-of-scope targets are a hard denial
     // without invoking requestScope — enforced even when no requestScope
-    // callback is configured.
+    // callback is configured. An unreadable destination is denied on the same
+    // principle: yolo means "no prompts INSIDE an authorized scope", and a
+    // destination nobody can name is not inside anything.
     if (autonomyMode === "yolo") {
       const reason = !sessionScope
         ? `YOLO mode: no scope configured — tool "${call.name}" cannot run without an explicit preconfigured scope.`
+        : allCovered
+        ? `YOLO mode: tool "${call.name}" reaches the network with a destination this gate cannot resolve (${unresolved.join("; ")}) — denied.`
         : `YOLO mode: target ${urls.join(", ")} is outside the configured scope — tool "${call.name}" denied.`;
       return {
         success: false,
@@ -801,6 +1345,21 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // same-origin OK).
     const requestScope = config.requestScope;
     if (!requestScope) return "approved";
+
+    // A shell payload the operator already refused must not re-prompt — the
+    // same unbounded-re-prompt guard `deniedHosts` provides for named hosts.
+    // Keyed on the exact payload text because an unresolved destination has no
+    // host to key on.
+    if (unresolved.length > 0) {
+      const refused = shellPayloads.find((payload) => deniedShellPayloads.has(payload));
+      if (refused !== undefined) {
+        return {
+          success: false,
+          output: null,
+          error: `Scope request for tool "${call.name}" denied — this command was already declined by the operator this session; not prompting again.`,
+        };
+      }
+    }
 
     // Hosts the operator already declined this session must not trigger a fresh
     // prompt — that re-prompt loop is exactly the bug this guards against. Only
@@ -826,6 +1385,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     const resolution = await requestScope({
       call,
       requestedUrls: urls,
+      ...(unresolved.length > 0 ? { unresolvedTargets: unresolved } : {}),
       target: sessionTarget,
       currentScope: sessionScope,
     });
@@ -837,6 +1397,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       for (const url of urls) {
         const host = hostOf(url);
         if (host !== null) deniedHosts.add(host);
+      }
+      // An unreadable destination contributes no host, so remember the payload
+      // itself; otherwise a retried `curl "$H"` would re-prompt forever.
+      if (unresolved.length > 0) {
+        for (const payload of shellPayloads) deniedShellPayloads.add(payload);
       }
       return {
         success: false,
@@ -1026,29 +1591,32 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   // In standard and yolo modes, skip this per-tool gate. When approveTool is
   // absent, always allow.
   /**
-   * The guards actually wired into dispatch.
+   * The guards actually wired into dispatch — equivalent to `BUILTIN_GUARDS`,
+   * listed explicitly so the wiring states its own policy rather than
+   * inheriting whatever a shared default happens to contain.
    *
-   * NOT `BUILTIN_GUARDS`: that set also contains `guardNetworkRequiresScope`,
-   * which denies EVERY network-capable tool in yolo mode whenever no scope
-   * object exists. Its docstring says it lifts the yolo hard-deny out of
-   * `maybeResolveScope`, but the real gate denies on UNCOVERED TARGETS — it
-   * extracts URLs from the call and refuses the ones a scope does not cover.
-   * Scope-absence and target-uncovered are different predicates: because
-   * `bash` and `run_command` are network-capable, the guard's version refuses
-   * `bash echo hello` in yolo with no scope, which the gate has always allowed
-   * and which is ordinary local work.
+   * `guardNetworkRequiresScope` is the load-bearing addition, and it IS a
+   * deliberate product decision rather than a wiring detail: yolo mode means
+   * "no prompts INSIDE an authorized scope", not "unrestricted". A yolo session
+   * with no scope object has no authorized scope, so there is nothing for the
+   * absence of prompts to be safe relative to. The TUI already refuses
+   * `/mode yolo` without a configured scope; wiring the guard makes that
+   * invariant hold in the ENGINE, so a session constructed directly against
+   * `createConsoleSession` (a script, a test harness, an embedder) cannot end
+   * up in the state the UI forbids.
    *
-   * Guards are a deny-only floor, so adopting it could only ever REMOVE access
-   * that operators rely on today. Closing that gap means either teaching the
-   * guard about target coverage or deciding that yolo genuinely requires a
-   * scope — a product call, not a wiring detail. Until it is made, the two
-   * guards below are wired because both are unambiguous hardening: one refuses
-   * tools this build does not recognize, the other closes the documented
-   * fail-open corner where copilot mode allows an effectful tool because no
-   * approval mechanism was supplied.
+   * The cost is real and is accepted knowingly: `bash echo hello` in yolo with
+   * no scope is now denied, because `bash` is network-capable and this layer
+   * cannot prove a shell command is local. The remedy is one step — configure a
+   * scope, or use standard mode — and the failure is a clear message rather
+   * than an unbounded egress.
+   *
+   * Guards remain a deny-only floor: adding one can only ever narrow access,
+   * and it runs last, after every gate above has already approved.
    */
   const WIRED_GUARDS: readonly ToolGuard[] = [
     guardUnresolvedCapabilities,
+    guardNetworkRequiresScope,
     guardApprovalUnavailable,
   ];
 
