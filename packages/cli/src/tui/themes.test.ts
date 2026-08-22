@@ -65,6 +65,7 @@ const SHIPPED_PALETTE: Record<string, string> = {
   MUTED: "#8A7D73",
   PRIMARY: "#FFFFFF",
   ACCENT: "#F3EEE9",
+  BRAND: "#A78BFA",
   SUCCESS: "#22C55E",
   WARNING: "#EAB308",
   ERROR: "#DC2626",
