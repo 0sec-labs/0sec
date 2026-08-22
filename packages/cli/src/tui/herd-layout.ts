@@ -845,7 +845,45 @@ export function herdListTitle(window: HerdWindow): string {
 export const HERD_EMPTY_TEXT = "no other agents in this project";
 
 export function herdFooterHint(): string {
-  return ["up/down move", "enter focus", "esc back", "ctrl+c exit"].join(" · ");
+  return ["up/down move", "m message", "esc back", "ctrl+c exit"].join(" · ");
+}
+
+/** The footer hint while the steering composer is open. */
+export function herdComposerFooterHint(): string {
+  return ["enter send", "esc cancel", "ctrl+c exit"].join(" · ");
+}
+
+/**
+ * The prompt shown before the steering draft, e.g. `› `. A real prefix rather
+ * than a padded literal, so its width is accounted for in
+ * {@link herdComposerTextWidth} and it cannot fuse onto the draft.
+ */
+export const HERD_COMPOSER_PROMPT = "› ";
+
+/** A single cursor cell painted at the tail of the steering draft. */
+export const HERD_COMPOSER_CURSOR = "▏";
+
+/**
+ * Cells available to the steering draft text on the reserved composer row.
+ *
+ * The row is the prompt ({@link HERD_COMPOSER_PROMPT}, 2 cells) + the draft +
+ * a one-cell cursor block, budgeted against the screen's content width exactly
+ * as `chat-layout.ts` budgets its own composer. Floored at one cell so a very
+ * narrow terminal still shows a caret rather than nothing. Pure.
+ */
+export function herdComposerTextWidth(contentWidth: number): number {
+  return Math.max(1, cells(contentWidth) - HERD_COMPOSER_PROMPT.length - HERD_COMPOSER_CURSOR.length);
+}
+
+/**
+ * The tail of `draft` that fits the composer text column, so the newest
+ * characters an operator types stay visible (end-truncation would hide them).
+ * Sanitized so a pasted control sequence cannot reach the frame. Pure.
+ */
+export function herdComposerVisibleDraft(draft: unknown, contentWidth: number): string {
+  const width = herdComposerTextWidth(contentWidth);
+  const text = sanitizeHerdText(draft);
+  return text.length > width ? text.slice(text.length - width) : text;
 }
 
 /** Budget the empty-state text to the pane and clip it if the pane is tiny. */

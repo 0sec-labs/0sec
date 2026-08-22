@@ -57,7 +57,13 @@
  * watching which addresses are refused differently.
  */
 
-import { BROADCAST_ID, isValidPeerId, type HubMessage } from "../hub/mailbox.js";
+import {
+  BROADCAST_ID,
+  isValidPeerId,
+  newMessageId,
+  sendMessage,
+  type HubMessage,
+} from "../hub/mailbox.js";
 import { sanitizeUntrustedToolResult, type SanitizeResult } from "../untrusted-sanitizer.js";
 
 // ---------------------------------------------------------------------------
@@ -98,8 +104,16 @@ export const MAX_DRAINS_PER_TURN = 3;
 // Identity + policy
 // ---------------------------------------------------------------------------
 
-/** Whether an agent is a parent (main session) or a spawned child (subagent). */
-export type PeerRole = "parent" | "child";
+/**
+ * Whether an agent is a parent (main session), a spawned child (subagent), or
+ * the human operator's console session steering the herd.
+ *
+ * `operator` was added for operator→child STEERING (a message composed from the
+ * herd view and delivered into a running subagent's inbox). It is purely
+ * additive: no existing `parent`/`child` branch reads it, so widening the union
+ * cannot change an existing verdict.
+ */
+export type PeerRole = "parent" | "child" | "operator";
 
 /**
  * The messaging identity + policy a running agent carries. Threaded onto the
@@ -146,6 +160,16 @@ export interface MessagingRuntime {
   projectPath: string;
   /** Optional home-state-dir override (tests point this at a temp dir). */
   homeDir?: string;
+  /**
+   * OPERATOR ROLE ONLY: the ids currently on the operator's live herd roster.
+   *
+   * When present, an `operator` sender may address ONLY a peer on this list, so
+   * a dead or unknown agent id is refused cleanly instead of being spooled into
+   * a mailbox no live process will ever drain. When absent, an `operator` is
+   * treated as a trust boundary (like the parent) and may address any
+   * shape-valid, non-self peer id. Ignored for `parent`/`child` senders.
+   */
+  knownPeerIds?: readonly string[];
 }
 
 /** Verdict from {@link decideAddressing}. `reason` is present iff `allowed` is false. */
@@ -189,8 +213,36 @@ export const BROADCAST_DENY_REASON =
  *   - broadcast is allowed for a parent (the operator's session may fan out).
  *   - any shape-valid, non-self peer id is allowed; the parent is the trust
  *     boundary and addresses its own children.
+ *
+ * Operator rules (operator → child STEERING, added additively):
+ *   - the operator is the human's console session, a trust boundary like the
+ *     parent, so operator → a specific child is ALLOWED BY DEFAULT.
+ *   - it is gated by the SAME operator↔child channel toggle
+ *     ({@link MessagingRuntime.operatorChannelEnabled}) the child→operator
+ *     direction already reads: disabling that channel shuts BOTH directions.
+ *   - when a live roster is pinned ({@link MessagingRuntime.knownPeerIds}) the
+ *     target must be on it, so a dead/unknown agent id is refused cleanly.
+ *   - broadcast is NOT part of steering: address one running peer.
+ *   - self and shape-invalid ids are refused, same as every other role.
+ *   This branch only ADDS an allow for a role no prior runtime used; it reads
+ *   no field a child/parent verdict depends on, so no existing deny weakens.
  */
 export function decideAddressing(from: MessagingRuntime, to: unknown): AddressDecision {
+  if (from.selfRole === "operator") {
+    // Broadcast is not operator steering — the feature targets one running peer.
+    if (to === BROADCAST_ID) return { allowed: false, reason: GENERIC_DENY_REASON };
+    if (!isValidPeerId(to)) return { allowed: false, reason: GENERIC_DENY_REASON };
+    if (to === from.selfId) return { allowed: false, reason: GENERIC_DENY_REASON };
+    // The operator↔child channel governs this direction too; off shuts it.
+    if (!from.operatorChannelEnabled) return { allowed: false, reason: GENERIC_DENY_REASON };
+    // A pinned live roster makes a dead/unknown id unreachable rather than
+    // spooling mail into a mailbox nothing will drain.
+    if (from.knownPeerIds && !from.knownPeerIds.includes(to)) {
+      return { allowed: false, reason: GENERIC_DENY_REASON };
+    }
+    return { allowed: true, kind: "child" };
+  }
+
   if (from.selfRole === "parent") {
     if (to === BROADCAST_ID) return { allowed: true, kind: "child" };
     if (!isValidPeerId(to)) return { allowed: false, reason: GENERIC_DENY_REASON };
@@ -237,6 +289,67 @@ export function clampOutboundBody(raw: string): { body: string; truncated: boole
   if (raw.length <= OUTBOUND_BODY_MAX_CHARS) return { body: raw, truncated: false };
   const keep = OUTBOUND_BODY_MAX_CHARS - OUTBOUND_TRUNCATION_MARKER.length;
   return { body: raw.slice(0, Math.max(0, keep)) + OUTBOUND_TRUNCATION_MARKER, truncated: true };
+}
+
+// ---------------------------------------------------------------------------
+// Operator → child steering (authorize + clamp + deliver)
+// ---------------------------------------------------------------------------
+
+/** Outcome of {@link sendOperatorMessage}. `reason` is present iff `!ok`. */
+export interface OperatorMessageResult {
+  /** Did the message pass the policy AND land in the recipient's mailbox? */
+  ok: boolean;
+  /**
+   * Why the send did not happen: the {@link decideAddressing} denial reason, an
+   * empty-body refusal, or a delivery failure. Present only when `ok` is false.
+   */
+  reason?: string;
+  /** Body hit {@link OUTBOUND_BODY_MAX_CHARS} and was truncated with a marker. */
+  truncated?: boolean;
+  /** Messages evicted from the recipient's inbox by its retention cap. */
+  dropped?: number;
+}
+
+/**
+ * The single supported path for an operator-originated message addressed to a
+ * specific peer (the console's herd-steering affordance).
+ *
+ * It is the SAME shape the child `send_message` tool uses — authorize with the
+ * pure {@link decideAddressing} FIRST (so operator steering obeys exactly the
+ * policy this module pins by test), clamp the body with {@link clampOutboundBody},
+ * then hand inert prose to the mailbox. It grants no authority and mutates no
+ * state; a denial returns the policy's reason and delivers nothing.
+ *
+ * `ts` is INJECTED (a clock at the edge), keeping this free of ambient time.
+ * `runtime.selfRole` should be `"operator"`; any other role is still authorized
+ * by its own `decideAddressing` branch, so this never becomes a privilege path.
+ */
+export function sendOperatorMessage(
+  runtime: MessagingRuntime,
+  to: unknown,
+  body: string,
+  ts: number,
+): OperatorMessageResult {
+  const decision = decideAddressing(runtime, to);
+  if (!decision.allowed) return { ok: false, reason: decision.reason };
+  if (typeof body !== "string" || body.trim().length === 0) {
+    return { ok: false, reason: "message body is empty" };
+  }
+
+  const { body: clamped, truncated } = clampOutboundBody(body);
+  const msg: HubMessage = {
+    id: newMessageId(ts),
+    from: runtime.selfId,
+    to: to as string,
+    body: clamped,
+    ts,
+  };
+
+  const result = sendMessage(runtime.projectPath, msg, runtime.homeDir);
+  if (!result.ok) {
+    return { ok: false, reason: `message could not be delivered (${result.reason ?? "io-error"})` };
+  }
+  return { ok: true, truncated: truncated || result.truncated === true, dropped: result.dropped };
 }
 
 // ---------------------------------------------------------------------------

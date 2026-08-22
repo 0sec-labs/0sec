@@ -1713,6 +1713,23 @@ export {
   stripUnsafeText,
 } from "./hub/mailbox.js";
 export type { HubMessage, SendResult, SendFailure } from "./hub/mailbox.js";
+// Agent-to-agent addressing policy + the operator→child steering path. The
+// policy is pure and inert (it grants nothing); `sendOperatorMessage` is the
+// one supported way the console steers a specific running subagent's mailbox.
+export {
+  decideAddressing,
+  clampOutboundBody,
+  sendOperatorMessage,
+} from "./agent/agent-messaging.js";
+export type {
+  MessagingRuntime,
+  PeerRole,
+  AddressDecision,
+  OperatorMessageResult,
+} from "./agent/agent-messaging.js";
+// Persistent cross-session hunt memory: a redacted, crash-safe findings/pattern
+// store so one target's learnings inform the next.
+export * from "./memory/index.js";
 // Plugin manifest + capability model. Capabilities translate into the SAME
 // gate maps the built-in tools use, so a plugin tool cannot acquire a
 // second, weaker authorization path. Fail-closed: an undeclared or unknown

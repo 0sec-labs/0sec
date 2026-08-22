@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  HERD_COMPOSER_CURSOR,
+  HERD_COMPOSER_PROMPT,
   HERD_PEER_TTL_MS,
   HERD_STATUS_ORDER,
   abbreviateHomePath,
@@ -11,6 +13,9 @@ import {
   computeHerdWindow,
   firstSelectableIndex,
   formatRelativeAge,
+  herdComposerFooterHint,
+  herdComposerTextWidth,
+  herdComposerVisibleDraft,
   herdDetailLines,
   herdListTitle,
   herdRowLabelText,
@@ -467,5 +472,44 @@ describe("herdRowStatusText", () => {
     expect(herdRowStatusText(peer("p"), "idle")).toBe("idle");
     // stale never shows a stale tool as if it were live
     expect(herdRowStatusText(peer("p", { activity: { tool: "grep" } }), "stale")).toBe("stale");
+  });
+});
+
+describe("steering composer helpers", () => {
+  it("budgets the draft text so prompt + draft + cursor never exceed the row", () => {
+    // Swept across every content width, including the degenerate small ones.
+    for (let contentWidth = 0; contentWidth <= 200; contentWidth++) {
+      const textWidth = herdComposerTextWidth(contentWidth);
+      expect(isInteger(textWidth), `textWidth integer at ${contentWidth}`).toBe(true);
+      expect(textWidth, `textWidth floored at 1 at ${contentWidth}`).toBeGreaterThanOrEqual(1);
+      // The rendered line is prompt + (visible draft) + cursor; with a draft
+      // longer than the column, the visible slice is exactly the text width, so
+      // the whole line fits the content column whenever the column can hold the
+      // prompt and cursor at all.
+      const visible = herdComposerVisibleDraft("x".repeat(500), contentWidth);
+      const lineLength = HERD_COMPOSER_PROMPT.length + visible.length + HERD_COMPOSER_CURSOR.length;
+      if (contentWidth >= HERD_COMPOSER_PROMPT.length + HERD_COMPOSER_CURSOR.length + 1) {
+        expect(lineLength, `line fits content column at ${contentWidth}`).toBeLessThanOrEqual(contentWidth);
+      }
+    }
+  });
+
+  it("shows the TAIL of a long draft so the newest characters stay visible", () => {
+    const draft = "reproduce the IDOR on /api/orders/{id} then confirm the leak";
+    const visible = herdComposerVisibleDraft(draft, 30);
+    expect(draft.endsWith(visible)).toBe(true);
+    expect(visible.length).toBe(herdComposerTextWidth(30));
+  });
+
+  it("passes a short draft through untouched and strips control sequences", () => {
+    expect(herdComposerVisibleDraft("hi", 40)).toBe("hi");
+    // A pasted escape/bidi sequence cannot reach the frame.
+    expect(herdComposerVisibleDraft("a[31mb‮", 40)).toBe("ab");
+  });
+
+  it("the composing footer hint names send and cancel", () => {
+    const hint = herdComposerFooterHint();
+    expect(hint).toContain("enter send");
+    expect(hint).toContain("esc cancel");
   });
 });

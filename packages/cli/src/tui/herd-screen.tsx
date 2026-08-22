@@ -30,17 +30,21 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { peekInbox } from "@0sec/core";
+import { peekInbox, sendOperatorMessage, type MessagingRuntime } from "@0sec/core";
 
 import { useTheme, type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
 import {
+  HERD_COMPOSER_CURSOR,
+  HERD_COMPOSER_PROMPT,
   HERD_EMPTY_TEXT,
   buildHerdRows,
   clampHerdSelection,
   clipDetailLines,
   computeHerdLayout,
   computeHerdWindow,
+  herdComposerFooterHint,
+  herdComposerVisibleDraft,
   herdDetailLines,
   herdFooterHint,
   herdListTitle,
@@ -93,6 +97,30 @@ export interface HerdScreenProps {
   homeDir?: string;
   /** Injected clock, tests only. Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * The OPERATOR's own peer id — the `from` on a steering message. Without it
+   * the console cannot name itself, so the compose affordance still opens but a
+   * send fails cleanly ("operator identity not wired"). Supplied once the
+   * roster producer lands; left unset today, consistent with the empty roster.
+   */
+  selfId?: string;
+  /**
+   * The operator↔child channel toggle, mirrored onto the steering runtime.
+   * Defaults to `true` — steering a running subagent is on by default, and the
+   * pure {@link import("@0sec/core").decideAddressing} still re-checks it.
+   */
+  operatorChannelEnabled?: boolean;
+  /**
+   * Sends a steering message to `to`, returning the delivery outcome. Injected
+   * for tests; the default authorizes with `decideAddressing` and delivers via
+   * the hub mailbox (`sendOperatorMessage`) using an `operator` runtime built
+   * from {@link selfId}, the live roster, and the project/home paths.
+   */
+  sendSteer?: (input: { to: string; body: string }) => {
+    ok: boolean;
+    reason?: string;
+    truncated?: boolean;
+  };
 }
 
 function toneColor(theme: Theme, tone: HerdDetailTone): string | undefined {
@@ -190,6 +218,9 @@ export function HerdScreen({
   projectPath,
   homeDir,
   now: nowFn,
+  selfId,
+  operatorChannelEnabled,
+  sendSteer,
 }: HerdScreenProps) {
   const theme = useTheme();
   const { width, height } = useTerminalDimensions();
@@ -222,6 +253,25 @@ export function HerdScreen({
   const [selected, setSelected] = useState(0);
   const [anchor, setAnchor] = useState(0);
 
+  // Steering composer. `composing`/`draft` are mirrored onto refs so the
+  // keyboard handler reads the latest value synchronously between keystrokes
+  // (the chat composer relies on the same pattern). `notice` is the one-row
+  // delivery confirmation or error shown after a send.
+  const [composing, setComposing] = useState(false);
+  const composingRef = useRef(false);
+  const [draft, setDraft] = useState("");
+  const draftRef = useRef("");
+  const [notice, setNotice] = useState<{ text: string; tone: "ok" | "error" } | null>(null);
+
+  const setComposingBoth = (value: boolean) => {
+    composingRef.current = value;
+    setComposing(value);
+  };
+  const setDraftBoth = (value: string) => {
+    draftRef.current = value;
+    setDraft(value);
+  };
+
   const signatureRef = useRef<string>("");
 
   // Poll the roster on a timer, repainting only when the signature changes.
@@ -249,7 +299,11 @@ export function HerdScreen({
   const activeRow = cursor >= 0 ? rows[cursor] : undefined;
   const activePeer = activeRow?.kind === "peer" ? activeRow.peer : undefined;
 
-  const layout = computeHerdLayout({ width, height });
+  // A composer or a delivery notice claims one row above the footer; reserve it
+  // through the layout's own `noticeRows` budget so the panes shrink by exactly
+  // that row and nothing overlaps.
+  const overlayRow = composing || notice !== null;
+  const layout = computeHerdLayout({ width, height, noticeRows: overlayRow ? 1 : 0 });
   const window = computeHerdWindow({
     rows,
     selected: cursor,
@@ -273,16 +327,84 @@ export function HerdScreen({
   }, [activePeer?.id, peekOne, tick]);
 
   const move = (delta: number) => {
+    setNotice(null);
     const next = moveHerdSelection(rows, cursor, delta);
     if (next >= 0) setSelected(next);
   };
 
+  /**
+   * Authorize and deliver a steering message to `to`. Uses the injected
+   * `sendSteer` when present (tests); otherwise builds an `operator` messaging
+   * runtime — pinned to the live roster so a dead id is refused — and hands it
+   * to `sendOperatorMessage`, which re-runs `decideAddressing` before it spools.
+   */
+  const deliver = (to: string, body: string): { ok: boolean; reason?: string; truncated?: boolean } => {
+    if (sendSteer) return sendSteer({ to, body });
+    if (!selfId) return { ok: false, reason: "operator identity not wired" };
+    const runtime: MessagingRuntime = {
+      selfId,
+      selfRole: "operator",
+      siblingChannelEnabled: false,
+      operatorChannelEnabled: operatorChannelEnabled ?? true,
+      projectPath: cwd,
+      homeDir: home,
+      knownPeerIds: peers.map((peer) => peer.id),
+    };
+    const result = sendOperatorMessage(runtime, to, body, clock());
+    return { ok: result.ok, reason: result.reason, truncated: result.truncated };
+  };
+
   useKeyboard((key) => {
-    const seq = typeof key.sequence === "string" ? key.sequence : "";
+    // Ctrl+C always exits — a modal composer must never trap the operator.
     if (key.ctrl && key.name === "c") {
       onExit();
       return;
     }
+
+    // ── Compose mode: the composer is modal, owning typing, Enter and Esc ──
+    if (composingRef.current) {
+      if (key.name === "escape") {
+        setComposingBoth(false);
+        setDraftBoth("");
+        return;
+      }
+      if (key.name === "return") {
+        const body = draftRef.current.trim();
+        setComposingBoth(false);
+        setDraftBoth("");
+        if (body.length === 0) return; // empty draft: just close, deliver nothing
+        if (!activePeer) {
+          setNotice({ text: "no agent selected", tone: "error" });
+          return;
+        }
+        const result = deliver(activePeer.id, body);
+        setNotice(
+          result.ok
+            ? {
+                text: `sent to ${activePeer.id}${result.truncated ? " (truncated)" : ""}`,
+                tone: "ok",
+              }
+            : { text: result.reason ?? "message could not be delivered", tone: "error" },
+        );
+        return;
+      }
+      if (key.name === "backspace") {
+        setDraftBoth(draftRef.current.slice(0, -1));
+        return;
+      }
+      if (
+        typeof key.sequence === "string" &&
+        key.sequence.length === 1 &&
+        !key.ctrl &&
+        !key.meta &&
+        key.sequence.charCodeAt(0) >= 32
+      ) {
+        setDraftBoth(`${draftRef.current}${key.sequence}`);
+      }
+      return;
+    }
+
+    // ── Navigation mode ──
     if (key.name === "escape") {
       onBack();
       return;
@@ -303,11 +425,15 @@ export function HerdScreen({
       move(PAGE_STEP);
       return;
     }
-    // Enter focuses the selected peer; with a single detail pane that is the
-    // current selection already, so it is a no-op that still consumes the key
-    // rather than letting it fall through. `seq` guards against a stray return.
-    if (key.name === "return" && seq !== "") {
-      /* selection is the focus; nothing further to do */
+    // `m` opens the steering composer bound to the highlighted peer. A no-op
+    // when the roster is empty, so it can never open a composer with no target.
+    if (!key.ctrl && !key.meta && (key.sequence === "m" || key.sequence === "M")) {
+      if (activePeer) {
+        setNotice(null);
+        setDraftBoth("");
+        setComposingBoth(true);
+      }
+      return;
     }
   });
 
@@ -393,6 +519,23 @@ export function HerdScreen({
         </Cells>
       );
 
+  // The single reserved overlay row: the composer while composing, otherwise the
+  // most recent delivery notice. Both are budgeted to `contentWidth` by `Cells`,
+  // so neither can overrun the row `noticeRows` reserved for it.
+  const overlayBody = composing ? (
+    <box flexDirection="row" width={layout.contentWidth} flexShrink={0} minWidth={0}>
+      <Cells width={layout.contentWidth} fg={theme.TEXT}>
+        {`${HERD_COMPOSER_PROMPT}${herdComposerVisibleDraft(draft, layout.contentWidth)}${HERD_COMPOSER_CURSOR}`}
+      </Cells>
+    </box>
+  ) : notice ? (
+    <box flexDirection="row" width={layout.contentWidth} flexShrink={0} minWidth={0}>
+      <Cells width={layout.contentWidth} fg={notice.tone === "ok" ? theme.SUCCESS : theme.ERROR}>
+        {notice.text}
+      </Cells>
+    </box>
+  ) : null;
+
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
       <box
@@ -413,8 +556,15 @@ export function HerdScreen({
           {detailBody}
         </Pane>
       </box>
+      {overlayBody}
     </box>
   );
 
-  return <>{frame({ body, hint: herdFooterHint() })}</>;
+  // While composing, the footer names the bound target so the operator can see
+  // which agent the draft is addressed to; otherwise the navigation hint.
+  const hint = composing
+    ? `to ${activePeer?.id ?? "?"} · ${herdComposerFooterHint()}`
+    : herdFooterHint();
+
+  return <>{frame({ body, hint })}</>;
 }
