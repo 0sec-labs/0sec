@@ -107,11 +107,7 @@ import {
   type SlashCommand,
 } from "./slash-commands.js";
 import { deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
-import {
-  appendTranscriptEntry,
-  repeatSuffix,
-  restoreTranscript,
-} from "./transcript.js";
+import { appendTranscriptEntry, repeatSuffix } from "./transcript.js";
 
 export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay";
 
@@ -307,6 +303,8 @@ export function entriesFromStoredMessages(messages: readonly unknown[]): ChatEnt
 
 /** Compact relative age, e.g. "12s" / "4m" / "2h". */
 function relativeAge(at: number | undefined, now: number): string {
+  // Restored entries carry no timestamp; return empty so the caller can omit
+  // the separator entirely rather than rendering a dangling "0sec ·".
   if (!at) return "";
   const seconds = Math.max(0, Math.floor((now - at) / 1000));
   if (seconds < 60) return `${seconds}s`;
@@ -413,7 +411,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
       <box key={entry.id} flexDirection="row" marginTop={display.spacing}>
         <box width={1} alignSelf="stretch" backgroundColor={ACCENT} />
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={ACCENT}>{`▌ operator${display.showTimestamps ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
+          <text fg={ACCENT}>{`▌ operator${display.showTimestamps && relativeAge(entry.at, display.now) ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
           <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
         </box>
       </box>
@@ -425,7 +423,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
       <box key={entry.id} flexDirection="row" marginTop={display.spacing}>
         <box width={1} alignSelf="stretch" backgroundColor={PRIMARY} />
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={PRIMARY}>{`▌ 0sec${display.showTimestamps ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
+          <text fg={PRIMARY}>{`▌ 0sec${display.showTimestamps && relativeAge(entry.at, display.now) ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
           {renderMarkdownBlocks(renderMarkdown(entry.text, Math.max(8, maxWidth - 2)), entry.id)}
         </box>
       </box>
@@ -827,6 +825,17 @@ type ApprovalPrompt = {
 const APPROVAL_GRANT_ID = "grant";
 const APPROVAL_DENY_ID = "deny";
 
+/**
+ * Most subagent rows the ACTIVE SUBAGENTS block will paint.
+ *
+ * `spawn_agents` fans out up to 8 agents with 4 concurrent, so 4 covers the
+ * steady-state fan-out and the 5th-and-beyond are reported as a count. The
+ * block sits between the transcript and the composer; letting it grow to
+ * eight rows would eat the transcript on any normal terminal, and the block
+ * is not where an operator reads detail — `/agents` is.
+ */
+const SUBAGENT_MAX_VISIBLE = 4;
+
 export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreenProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const entriesRef = useRef<ChatEntry[]>([]);
@@ -1155,6 +1164,56 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     };
   }, []);
 
+  // <<<TEMP-RENDER-HARNESS>>>
+  useEffect(() => {
+    const which = process.env.ZEROSEC_TUI_DEBUG_PROMPT;
+    if (!which) return;
+    const longName = "run_source_audit_with_extended_capabilities";
+    const longReason = "the scoped source audit needs the process-action containment tool to inspect packages/core/src/disclose/poc-runtime.ts and packages/cli/src/commands/verify.ts for additional evidence";
+    if (which === "escalation") {
+      setPendingEscalation({
+        request: { call: { name: longName, arguments: {} }, reason: longReason } as never,
+        resolve: () => {},
+      });
+    } else if (which === "scope") {
+      setPendingScope({
+        request: {
+          call: { name: "http_request", arguments: {} },
+          requestedUrls: ["https://api.staging.example.com/v2/accounts", "https://cdn.staging.example.com"],
+          target: "example.com",
+          currentScope: undefined,
+        } as never,
+        resolve: () => {},
+      });
+    } else if (which === "local") {
+      setPendingLocalScope({
+        request: { call: { name: "read_file", arguments: {} }, requestedPath: "/home/dev/coding/0sec-labs/0sec/packages/core/src/disclose" } as never,
+        resolve: () => {},
+      });
+    } else if (which === "copilot") {
+      setPendingToolApproval({
+        call: { name: "run_command", arguments: { command: "pnpm --filter 0sec-cli exec vitest run src/tui/", cwd: "/home/dev/coding/0sec-labs/0sec" } } as never,
+        resolve: () => {},
+      });
+    } else if (which === "secret") {
+      setSecretPrompt({ providerId: "openai", label: "OpenAI", envVar: "OPENAI_API_KEY", value: "sk-abcdef" });
+    } else if (which === "subagents") {
+      const tasks = [
+        "Source review this TypeScript/Node monorepo for command injection and unsafe shell execution across every package",
+        "Dependency audit for this Node/pnpm monorepo. Inspect package.json files and pnpm-lock.yaml, query advisories",
+        "Inspect packages/core/src/disclose/poc-runtime.ts and packages/cli/src/commands/verify.ts for additional process-action containment gaps",
+        "Enumerate authentication and session handling in the console runtime and report any missing authorization checks",
+        "Fifth agent doing extra work that must not be painted",
+        "Sixth agent doing extra work that must not be painted",
+      ];
+      const map: Record<string, unknown> = {};
+      tasks.forEach((task, index) => {
+        map[`a${index}`] = { agent_id: `a${index}`, task, status: index < 4 ? "running" : "queued", turns: index, max_turns: 12 };
+      });
+      setActiveSubagents(map as never);
+    }
+  }, []);
+
   // Subscribe to subagent lifecycle events from the core event bus.
   // Filter by this session's scanId; remove active entries on terminal state.
   useEffect(() => {
@@ -1427,6 +1486,35 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const streamingRef = useRef(false);
   /** Name of the tool currently executing, for the tool animation. */
   const [runningTool, setRunningTool] = useState<string | null>(null);
+  /**
+   * Interrupt handle for the turn in flight, or null when none is running.
+   * Held in a ref because the keyboard handler must reach the CURRENT turn's
+   * controller, not the one captured when the handler was built.
+   */
+  const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * Operator interrupt (Esc while a turn is running).
+   *
+   * The engine honours the signal at checkpoints — before the next model
+   * call and before dispatching each tool — so a tool or a request already
+   * in flight still runs to completion. The notice says exactly that rather
+   * than claiming the turn stopped dead; the definitive entry, with the
+   * tokens actually spent, is written when the turn returns with
+   * `stopReason: "cancelled"`.
+   */
+  const interruptTurn = useCallback(() => {
+    const controller = abortRef.current;
+    if (!controller || controller.signal.aborted) return false;
+    controller.abort();
+    appendEntry({
+      kind: "notice",
+      text: "interrupting the current turn…",
+      detail: "Stops before the next tool call or model request. Anything already in flight finishes first.",
+      turn: turn.current,
+    });
+    return true;
+  }, [appendEntry]);
 
   const routeSlashCommand = useCallback((raw: string): boolean => {
     const parsed = findCommand(raw);
@@ -1485,6 +1573,41 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           turn: turn.current,
         });
         return true;
+      // `/clear` (and its `/new` alias) was in the registry and in the
+      // palette but had no handler, so it fell through to `default:` and
+      // answered "unknown command: /clear".
+      case "clear": {
+        if (busy) {
+          appendEntry({
+            kind: "notice",
+            text: "wait for the active turn before clearing",
+            detail: "The turn in flight is still appending to the conversation this would empty.",
+            turn: turn.current,
+          });
+          return true;
+        }
+        // Conversation only. Scope, target, autonomy mode, granted
+        // escalations and the denied-host / denied-path memory all live on
+        // the session and are deliberately LEFT ALONE: they are
+        // authorization state, and dropping a *denial* because the operator
+        // tidied their screen would silently re-open something they already
+        // refused. `clearConversation()` empties the message array and
+        // nothing else — see ConsoleSession in turn-engine.ts.
+        session?.clearConversation();
+        setEntries([]);
+        entriesRef.current = [];
+        turn.current = 0;
+        setTurnBudget(null);
+        appendEntry({
+          kind: "notice",
+          text: "conversation cleared",
+          detail: session
+            ? "The model starts from an empty history. Scope, target and mode are unchanged, and nothing you previously denied has been re-allowed."
+            : "The transcript is empty. The runtime is not connected, so there was no model history to clear.",
+          turn: turn.current,
+        });
+        return true;
+      }
       case "resume": {
         // Every project, not just this directory: an operator moving between
         // checkouts still wants the session they were in.
@@ -1802,14 +1925,18 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           });
           return true;
         }
-        if (busy) {
-          appendEntry({
-            kind: "notice",
-            text: "wait for the active turn before changing mode",
-            turn: turn.current,
-          });
-          return true;
-        }
+        // NO busy guard. `autonomyMode` is a scalar on the shared tool
+        // context, re-read fresh at every gate — maybeResolveScope,
+        // maybeApproveTool and the scoped-audit gate in agent/tools.ts all
+        // look it up at dispatch time — so there is no torn state to protect
+        // and a change simply applies from the next tool call. It is also
+        // operator-initiated authority, and tightening mid-turn (standard →
+        // copilot) is exactly when an operator wants it.
+        //
+        // This licence is for the MODE SCALAR ONLY. Anything that mutates
+        // the tool set or the gate maps must still refuse mid-turn: a tool
+        // could otherwise be gated under one policy at scope resolution and
+        // a different one at approval.
         if (!session) {
           appendEntry({
             kind: "notice",
@@ -1834,14 +1961,21 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         }
         session.setAutonomyMode(next);
         setMode(next);
+        const modeMeaning = next === "standard"
+          ? "0sec works automatically inside scope and requests approval only for narrow session-only scope extensions."
+          : next === "copilot"
+            ? "0sec asks before each non-read-only tool and before narrow session-only scope extensions."
+            : "0sec works without prompts only inside the configured scope; missing or out-of-scope work is denied.";
         appendEntry({
           kind: "notice",
           text: `Mode: ${modeLabel(next)}`,
-          detail: next === "standard"
-            ? "0sec works automatically inside scope and requests approval only for narrow session-only scope extensions."
-            : next === "copilot"
-              ? "0sec asks before each non-read-only tool and before narrow session-only scope extensions."
-              : "0sec works without prompts only inside the configured scope; missing or out-of-scope work is denied.",
+          // Changed mid-turn, the new mode governs the NEXT tool call. It
+          // does not reach back into work already dispatched, and saying so
+          // is the difference between an honest notice and a claim that it
+          // stopped something.
+          detail: busy
+            ? `Applies from the next tool call in the turn already running; work already dispatched is unaffected. ${modeMeaning}`
+            : modeMeaning,
           turn: turn.current,
         });
         return true;
@@ -2041,7 +2175,19 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       // rejection rendered as "0 tool calls · 0→0 tok" and nothing else,
       // which reads as the agent having simply ignored the operator.
       const producedText = Boolean(assistantText || outcome.assistantText);
-      if (outcome.stopReason === "error") {
+      if (outcome.stopReason === "cancelled") {
+        // The operator stopped this turn. Report what it cost before it
+        // stopped: an interrupt that hides the spend is an interrupt the
+        // operator cannot reason about.
+        const used = Math.round(outcome.budget.tokensUsed / 1000);
+        const limit = Math.round(outcome.budget.tokenBudget / 1000);
+        appendEntry({
+          kind: "error",
+          text: "turn interrupted by the operator",
+          detail: `Ran ${outcome.budget.iterations} tool call${outcome.budget.iterations === 1 ? "" : "s"} · ${used}k of ${limit}k tokens spent. The conversation is kept; send another message to continue.`,
+          turn: currentTurn,
+        });
+      } else if (outcome.stopReason === "error") {
         appendEntry({
           kind: "error",
           text: "turn failed",
@@ -2095,6 +2241,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       });
       setTurnBudget(null);
     } finally {
+      // Drop the controller before clearing `busy`, so Esc can never abort a
+      // turn that has already returned.
+      if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
       // Persist in `finally`, not in the success path and not in `catch`:
       // a turn that failed is exactly the one an operator wants to resume,
@@ -2285,6 +2434,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         setComposing(false);
         return;
       }
+      // With no overlay and no draft to discard, Esc means "stop" while a
+      // turn is running and "go back" when nothing is. Interrupting takes
+      // the place of navigation ONLY while a turn is actually in flight, so
+      // the menu → draft → back precedence is unchanged when idle.
+      if (interruptTurn()) return;
       onGoBack();
       return;
     }
@@ -2352,6 +2506,29 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         setCommandMenuVisible(false);
         return;
       }
+      // Line editing. The composer is append-only — there is no caret to
+      // move — so the kill verbs that operate on the tail of the buffer are
+      // implemented and the caret-relative ones (Ctrl+A / Ctrl+E / Ctrl+K,
+      // arrows) deliberately are not; faking them would be worse than their
+      // absence. The transforms live in composer-edit.ts so word-boundary
+      // handling is unit-tested rather than inlined here.
+      //
+      // Ctrl+U — delete to start of line. This is where macOS maps
+      // Cmd+Backspace, which is the key the operator reported dead.
+      if (key.ctrl && key.name === "u") {
+        setComposerText(deleteToLineStart(composerRef.current));
+        return;
+      }
+      // Ctrl+W, and Alt/Option+Backspace (`\x1b\x7f`, parsed as backspace
+      // with meta/option set) — delete the previous word.
+      if (key.ctrl && key.name === "w") {
+        setComposerText(deletePreviousWord(composerRef.current));
+        return;
+      }
+      if (key.name === "backspace" && (key.meta || key.option || key.ctrl)) {
+        setComposerText(deletePreviousWord(composerRef.current));
+        return;
+      }
       if (key.name === "backspace") {
         setComposerText(composerRef.current.slice(0, -1));
         return;
@@ -2402,22 +2579,43 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // The picker reuses the menu's vertical budget: it occupies the same slot
   // above the composer, so it must obey the same "leave the transcript real
   // rows" rule rather than growing to the size of the model catalogue.
+  //
+  // The picker and an approval panel share that slot, so both are budgeted
+  // the same way: ask the column what it can spare, then buy the optional
+  // lines out of that budget rather than adding them on top of it.
+  const selectorBudget = computeCommandMenuHeight({ height, compact, rowsPerCommand: 1 }).maxCommands;
+
   const pickerVisible = picker ? visibleItems(picker.state) : [];
-  const pickerMaxRows = picker
-    ? computeCommandMenuHeight({ height, compact, rowsPerCommand: 1 }).maxCommands
-    : 0;
+  const pickerDetail = picker ? highlighted(picker.state)?.detail ?? "" : "";
+  const pickerPlan = selectorPanelBudget({
+    budget: selectorBudget,
+    hasContext: false,
+    hasDetail: Boolean(pickerDetail),
+  });
   const pickerWindow = picker
-    ? windowFor(picker.state, pickerMaxRows)
+    ? windowFor(picker.state, pickerPlan.maxItemRows)
     : { start: 0, end: 0 };
   const pickerRows = pickerVisible.slice(pickerWindow.start, pickerWindow.end);
-  const pickerDetail = picker ? highlighted(picker.state)?.detail ?? "" : "";
-  // The detail line is an extra row inside the box; count it or the border
-  // gets painted through the last entry.
-  const pickerBoxHeight = commandMenuBoxHeight(Math.max(pickerRows.length, 1), 1)
-    + (pickerDetail ? 1 : 0);
-  const pickerInnerWidth = Math.max(1, contentWidth - 4);
-  const pickerLabelWidth = Math.max(1, Math.floor(pickerInnerWidth * 0.45));
-  const pickerMetaWidth = Math.max(0, pickerInnerWidth - pickerLabelWidth - 1);
+  const pickerBoxHeight = selectorPanelHeight(pickerRows.length, false, pickerPlan.showDetail);
+
+  const approvalDetail = approvalState ? highlighted(approvalState)?.detail ?? "" : "";
+  const approvalPlan = selectorPanelBudget({
+    budget: selectorBudget,
+    hasContext: Boolean(approvalPrompt?.context),
+    hasDetail: Boolean(approvalDetail),
+  });
+  const approvalVisible = approvalState ? visibleItems(approvalState) : [];
+  const approvalWindow = approvalState
+    ? windowFor(approvalState, approvalPlan.maxItemRows)
+    : { start: 0, end: 0 };
+  const approvalItemRows = approvalVisible.slice(approvalWindow.start, approvalWindow.end);
+  const approvalBoxHeight = approvalPrompt
+    ? selectorPanelHeight(approvalItemRows.length, approvalPlan.showContext, approvalPlan.showDetail)
+    : 0;
+  // The masked credential panel stays a typed field — a secret is entered,
+  // not chosen — but it gets the same treatment that stops a panel from
+  // collapsing: four content lines plus two border rows, stated explicitly.
+  const SECRET_PANEL_HEIGHT = 6;
   // Usable width INSIDE the transcript panel: the ledger box adds its own
   // paddingX, which an entry's own border must live within.
   const transcriptWidth = Math.max(8, contentWidth - (compact ? 2 : 4));
@@ -2484,18 +2682,44 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // duplication that made the old two-line composer read as noise. So the
   // bar yields to contextual keys ONLY while composing plain text, where
   // "enter send · esc cancel" appears nowhere else on screen.
-  const showContextualKeys = composing && !commandMenuVisible && !picker;
-  const subagentCount = Object.keys(activeSubagents).length;
+  const showContextualKeys = composing && !commandMenuVisible && !picker && !approvalPrompt && !secretPrompt;
+
+  // ACTIVE SUBAGENTS. `spawn_agents` fans out up to 8 with 4 running at
+  // once, so this block is genuinely multi-row and genuinely unbounded —
+  // and it was neither height-capped nor `flexShrink={0}`, so under column
+  // pressure Yoga collapsed it and its rows painted into each other and
+  // into the title. Cap what is shown, state the overflow, and reserve
+  // EXACTLY what is rendered.
+  const subagentEntries = settings.showSubagents ? Object.values(activeSubagents) : [];
+  const subagentVisible = subagentEntries.slice(0, SUBAGENT_MAX_VISIBLE);
+  const subagentOverflow = subagentEntries.length - subagentVisible.length;
+  const subagentOverflowRow = subagentOverflow > 0 ? 1 : 0;
+  // Title + rows + optional overflow line. Zero when nothing is running.
+  const subagentBlockRows = subagentVisible.length > 0
+    ? 1 + subagentVisible.length + subagentOverflowRow
+    : 0;
+
   // Every other region in the column is flexShrink={0}, so the transcript
   // absorbs all the pressure. Compute what it actually has left: a
   // scrollbox squeezed below its content still paints that content, and
   // the empty state then interleaves into itself.
+  //
+  // Each reservation below is the panel's REAL rendered height plus its
+  // marginTop, not a guess. The approval slot used to be a fixed 6 while
+  // the panel it stood for wrapped its text — a long tool name or reason
+  // made the box taller than the rows reserved, the column over-subscribed,
+  // and everything downstream of that (the fused approval card, the fused
+  // subagent rows, the transcript that would not scroll to the bottom)
+  // followed from the same miscount.
   const ledgerRows = computeLedgerRows({
     height,
     compact,
-    menuRows: commandMenuVisible ? commandMenuHeight : 0,
-    subagentRows: subagentCount > 0 ? subagentCount + 2 : 0,
-    approvalRows: pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval ? 6 : 0,
+    // The picker and the command menu occupy the same slot and both carry a
+    // marginTop, which computeLedgerRows adds for a non-zero menuRows.
+    menuRows: commandMenuVisible ? commandMenuHeight : picker ? pickerBoxHeight : 0,
+    subagentRows: subagentBlockRows > 0 ? subagentBlockRows + 1 : 0,
+    approvalRows: (approvalPrompt ? approvalBoxHeight + 1 : 0)
+      + (secretPrompt ? SECRET_PANEL_HEIGHT + 1 : 0),
   });
   // Optional empty-state lines are dropped from the bottom up rather than
   // overprinted. The mark needs the most room, so it goes first.
@@ -2507,8 +2731,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const scopeSummary = `scope: ${scopeLabel} · ${sessionState}`;
   const headerEngagement = `${targetSummary} · ${scopeSummary}`;
 
-  const controls = pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval
-    ? "enter approve · esc reject"
+  const controls = approvalPrompt
+    ? "↑↓ choose · enter confirm · esc decline"
     : commandMenuVisible
       ? "↑↓ select · tab complete · enter run · esc close"
       : composing
@@ -2592,24 +2816,43 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         </scrollbox>
       </box>
 
-      {settings.showSubagents && Object.keys(activeSubagents).length > 0 ? (
-        <box flexDirection="column" width="100%" marginTop={1}>
-          <text fg={MUTED}>ACTIVE SUBAGENTS</text>
-          {Object.values(activeSubagents).map((sa) => {
+      {/*
+        * Explicit height AND flexShrink={0}. Without both, opentui defaults
+        * flexShrink to 1 for any box with no numeric width or height (see
+        * setupYogaProperties), so a squeezed column collapsed this block to
+        * a single row while its children kept painting — which is how two
+        * subagent tasks became one line of interleaved characters.
+        * `subagentBlockRows` is the same count the ledger reserved.
+        */}
+      {subagentBlockRows > 0 ? (
+        <box flexDirection="column" width="100%" minWidth={0} height={subagentBlockRows} flexShrink={0} marginTop={1}>
+          <box width={contentWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(`ACTIVE SUBAGENTS · ${subagentEntries.length}`, contentWidth)}</text>
+          </box>
+          {subagentVisible.map((sa) => {
             const running = sa.status === "running";
             const turnsInfo = sa.turns !== undefined ? ` (${sa.turns}/${sa.max_turns})` : "";
-            // Budget against the marker cell and the actual counter text.
-            const labelWidth = Math.max(1, contentWidth - 1 - turnsInfo.length);
+            // Budget against the marker cell, its gap and the counter text.
+            const labelWidth = Math.max(1, contentWidth - 2 - turnsInfo.length);
             return (
-              <box key={sa.agent_id} flexDirection="row" alignItems="center" minWidth={0}>
+              <box key={sa.agent_id} flexDirection="row" width={contentWidth} flexShrink={0} minWidth={0}>
                 <text width={1} flexShrink={0} fg={running ? PRIMARY : WARNING}>{running ? "◉" : "◌"}</text>
-                <box width={labelWidth} flexShrink={0} minWidth={0}>
+                <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
                   <text fg={TEXT}>{fitTuiText(sa.task, labelWidth)}</text>
                 </box>
-                {turnsInfo ? <text flexShrink={0} fg={MUTED}>{turnsInfo}</text> : null}
+                {turnsInfo ? (
+                  <box width={turnsInfo.length} flexShrink={0} minWidth={0}>
+                    <text fg={MUTED}>{turnsInfo}</text>
+                  </box>
+                ) : null}
               </box>
             );
           })}
+          {subagentOverflowRow > 0 ? (
+            <box width={contentWidth} flexShrink={0} minWidth={0}>
+              <text fg={MUTED}>{fitTuiText(`  +${subagentOverflow} more · /agents to list them`, contentWidth)}</text>
+            </box>
+          ) : null}
         </box>
       ) : null}
 
@@ -2657,92 +2900,77 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         </box>
       ) : null}
 
+      {/*
+        * The masked credential field is the ONE prompt that stays a typed
+        * panel: a secret is entered, not chosen from a list. It gets the
+        * same anti-collapse treatment as everything else in this column —
+        * an explicit height matching its four content lines plus the two
+        * border rows, flexShrink disabled, and every child budgeted to a
+        * fixed cell width so no line can reach the border.
+        */}
       {secretPrompt ? (
-        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
-          <text fg={WARNING}>{fitTuiText(`${secretPrompt.label} credential`, approvalWidth)}</text>
-          <text fg={TEXT}>{fitTuiText(`${"•".repeat(Math.min(secretPrompt.value.length, 40))}█`, approvalWidth)}</text>
-          <text fg={MUTED}>{fitTuiText(`Stored owner-only in your 0sec state dir and exported as ${secretPrompt.envVar}. Never transmitted by 0sec.`, approvalWidth)}</text>
-          <text fg={MUTED}>{fitTuiText("enter save · esc cancel", approvalWidth)}</text>
+        <box flexDirection="column" width="100%" minWidth={0} height={SECRET_PANEL_HEIGHT} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+          <box width={approvalWidth} flexShrink={0} minWidth={0}>
+            <text fg={WARNING}>{fitTuiText(`${secretPrompt.label} credential`, approvalWidth)}</text>
+          </box>
+          <box width={approvalWidth} flexShrink={0} minWidth={0}>
+            <text fg={TEXT}>{fitTuiText(`${"•".repeat(Math.min(secretPrompt.value.length, 40))}█`, approvalWidth)}</text>
+          </box>
+          <box width={approvalWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(`Stored owner-only in your 0sec state dir and exported as ${secretPrompt.envVar}. Never transmitted by 0sec.`, approvalWidth, { mode: "middle" })}</text>
+          </box>
+          <box width={approvalWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText("enter save · esc cancel", approvalWidth)}</text>
+          </box>
         </box>
       ) : null}
+
       {picker ? (
-        <box flexDirection="column" width="100%" minWidth={0} height={pickerBoxHeight} flexShrink={0} marginTop={1} border borderColor={PRIMARY} backgroundColor={PANEL_ALT} paddingX={1}>
-          <box flexDirection="row" width="100%" minWidth={0} gap={1}>
-            <text fg={PRIMARY}>{fitTuiText(picker.state.title, Math.max(1, Math.floor(contentWidth * 0.5)))}</text>
-            <text fg={MUTED}>{fitTuiText(picker.state.query ? picker.state.query : `${pickerVisible.length} available`, Math.max(1, contentWidth - Math.floor(contentWidth * 0.5) - 3))}</text>
-          </box>
-          {pickerRows.length > 0 ? pickerRows.map((item, offset) => {
-            const index = pickerWindow.start + offset;
-            const active = index === picker.state.index;
-            return (
-              <box key={item.id} flexDirection="row" width="100%" minWidth={0} gap={1}>
-                <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
-                <box width={pickerLabelWidth} flexShrink={0} minWidth={0}>
-                  <text fg={item.disabled ? MUTED : active ? TEXT : MUTED}>{fitTuiText(`${item.current ? "● " : "  "}${item.label}`, pickerLabelWidth)}</text>
-                </box>
-                {pickerMetaWidth > 0 ? (
-                  <box width={pickerMetaWidth} flexShrink={0} minWidth={0}>
-                    <text fg={active ? ACCENT : MUTED}>{fitTuiText(item.meta ?? "", pickerMetaWidth, { mode: "middle" })}</text>
-                  </box>
-                ) : null}
-              </box>
-            );
-          }) : <text fg={ERROR}>{fitTuiText(`no match for "${picker.state.query}"`, Math.max(1, contentWidth - 2))}</text>}
-          {pickerDetail ? (
-            <text fg={MUTED}>{fitTuiText(pickerDetail, Math.max(1, contentWidth - 2))}</text>
-          ) : null}
-          <text fg={MUTED}>{fitTuiText("↑↓ select · type to filter · enter apply · esc cancel", Math.max(1, contentWidth - 2))}</text>
-        </box>
+        <SelectorPanel
+          title={picker.state.title}
+          subtitle={picker.state.query ? picker.state.query : `${pickerVisible.length} available`}
+          rows={pickerRows}
+          windowStart={pickerWindow.start}
+          activeIndex={picker.state.index}
+          detail={pickerPlan.showDetail ? pickerDetail : undefined}
+          hint="↑↓ select · type to filter · enter apply · esc cancel"
+          emptyText={`no match for "${picker.state.query}"`}
+          borderColor={PRIMARY}
+          titleColor={PRIMARY}
+          contentWidth={contentWidth}
+          height={pickerBoxHeight}
+        />
       ) : null}
 
       {/*
         * Authorization prompts live directly above the composer rather than
         * as a centered overlay. The operator's eyes are already on the input
-        * line, the answer is typed there, and an in-flow panel cannot cover
+        * line, the answer is given there, and an in-flow panel cannot cover
         * the transcript evidence the decision is based on.
+        *
+        * All four prompts — session scope, local directory, scoped-audit
+        * escalation and the Co-pilot tool gate — render through the SAME
+        * component and the SAME selector reducer as /model and /mode. One
+        * decision surface, one code path, one set of key bindings. Esc
+        * always declines; it can never grant.
         */}
-      {pendingScope ? (
-        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
-          <text fg={WARNING}>{fitTuiText("AUTHORIZE SESSION SCOPE", approvalWidth)}</text>
-          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingScope.request.call.name} requests ${pendingScope.request.requestedUrls.join(", ")}`, approvalWidth)}</text>
-          <text fg={MUTED} wrapMode="word">{fitTuiText("Exact hosts apply only to this session. Existing deny rules still win.", approvalWidth)}</text>
-          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
-            <text fg={SUCCESS}>enter approve</text>
-            <text fg={ERROR}>esc reject</text>
-          </box>
-        </box>
-      ) : null}
-      {pendingLocalScope ? (
-        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
-          <text fg={WARNING}>{fitTuiText("AUTHORIZE LOCAL DIRECTORY", approvalWidth)}</text>
-          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingLocalScope.request.call.name} wants to read ${pendingLocalScope.request.requestedPath}`, approvalWidth)}</text>
-          <text fg={MUTED} wrapMode="word">{fitTuiText("Grants this directory subtree for this session only. Nothing is written to disk.", approvalWidth)}</text>
-          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
-            <text fg={SUCCESS}>enter approve</text>
-            <text fg={ERROR}>esc reject</text>
-          </box>
-        </box>
-      ) : null}
-      {pendingEscalation ? (
-        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
-          <text fg={WARNING}>{fitTuiText("ENABLE ADDITIONAL TOOL", approvalWidth)}</text>
-          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingEscalation.request.call.name} — ${pendingEscalation.request.reason}`, approvalWidth)}</text>
-          <text fg={MUTED} wrapMode="word">{fitTuiText("Enables this tool for the rest of the session. Scope approval and the Co-pilot gate still apply to it.", approvalWidth)}</text>
-          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
-            <text fg={SUCCESS}>enter enable</text>
-            <text fg={ERROR}>esc keep disabled</text>
-          </box>
-        </box>
-      ) : null}
-      {pendingToolApproval ? (
-        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={INFO} backgroundColor={PANEL_ALT} paddingX={1}>
-          <text fg={INFO}>{fitTuiText("CO-PILOT APPROVAL", approvalWidth)}</text>
-          <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingToolApproval.call.name} ${JSON.stringify(pendingToolApproval.call.arguments)}`, approvalWidth)}</text>
-          <box flexDirection="row" width="100%" minWidth={0} gap={2}>
-            <text fg={SUCCESS}>enter approve</text>
-            <text fg={ERROR}>esc reject</text>
-          </box>
-        </box>
+      {approvalPrompt && approvalState ? (
+        <SelectorPanel
+          title={approvalPrompt.title}
+          subtitle={`${approvalState.index + 1}/${approvalVisible.length}`}
+          context={approvalPlan.showContext ? approvalPrompt.context : undefined}
+          contextColor={TEXT}
+          rows={approvalItemRows}
+          windowStart={approvalWindow.start}
+          activeIndex={approvalState.index}
+          detail={approvalPlan.showDetail ? approvalDetail : undefined}
+          hint="↑↓ choose · enter confirm · esc decline"
+          emptyText="no choice available"
+          borderColor={approvalPrompt.borderColor}
+          titleColor={approvalPrompt.titleColor}
+          contentWidth={contentWidth}
+          height={approvalBoxHeight}
+        />
       ) : null}
 
       {/*
