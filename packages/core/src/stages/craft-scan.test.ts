@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { craftStepBudget, runCraftScan, type CraftScanOptions } from "./craft-scan.js";
@@ -200,6 +200,82 @@ describe("runCraftScan self-test executor outage", () => {
       if (prevKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = prevKey;
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("runCraftScan generator env isolation", () => {
+  it("runs the MODEL-AUTHORED generator without the harness credentials in its env, keeping PATH", async () => {
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY;
+    const prevGithub = process.env.GITHUB_TOKEN;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-should-not-leak";
+    process.env.GITHUB_TOKEN = "ghp_should_not_leak";
+
+    const sourceRoot = mkdtempSync(join(tmpdir(), "craft-generator-env-"));
+    roots.push(sourceRoot);
+    writeFileSync(join(sourceRoot, "target.c"), [
+      "#include <stddef.h>",
+      "int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {",
+      "  return size ? data[0] : 0;",
+      "}",
+      "",
+    ].join("\n"));
+
+    // The model-authored generator dumps its own os.environ view to a file we
+    // read back, then writes a valid PoC so the flow continues normally.
+    const dumpPath = join(sourceRoot, "env-dump.json");
+    const generator = [
+      "import os, json, sys",
+      "open(sys.argv[1], 'wb').write(b'\\x01')",
+      `json.dump({k: os.environ.get(k, 'ABSENT') for k in ('ANTHROPIC_API_KEY','GITHUB_TOKEN','PATH')}, open(${JSON.stringify(dumpPath)}, 'w'))`,
+      "",
+    ].join("\n");
+
+    try {
+      vi.spyOn(LlmApiRuntime.prototype, "executeNative")
+        .mockResolvedValueOnce({
+          content: [{
+            type: "tool_use",
+            id: "advance-1",
+            name: "advance_stage",
+            input: { to: "trigger", citations: [{ path: "target.c", line: 2 }] },
+          }],
+          stopReason: "tool_use",
+          usage: { inputTokens: 1, outputTokens: 1 },
+          durationMs: 1,
+        } as never)
+        .mockResolvedValueOnce({
+          content: [{
+            type: "tool_use",
+            id: "test-1",
+            name: "test_poc",
+            input: { python: generator },
+          }],
+          stopReason: "tool_use",
+          usage: { inputTokens: 1, outputTokens: 1 },
+          durationMs: 1,
+        } as never);
+
+      await runCraftScan({
+        target: { sourceRoot, description: "reachable parser overflow", language: "c", taskId: "fixture:env" },
+        runtime: "api",
+        model: "gpt-5.5",
+        maxSteps: 2,
+        generatorTimeoutMs: 5000,
+        evaluatePoc: vi.fn(async () => ({ triggered: false, output: "" })),
+        testPoc: vi.fn(async () => ({ triggered: false, output: "" })),
+      });
+
+      expect(existsSync(dumpPath)).toBe(true);
+      const seen = JSON.parse(readFileSync(dumpPath, "utf8"));
+      expect(seen.ANTHROPIC_API_KEY).toBe("ABSENT");
+      expect(seen.GITHUB_TOKEN).toBe("ABSENT");
+      expect(seen.PATH).not.toBe("ABSENT");
+    } finally {
+      if (prevAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevAnthropic;
+      if (prevGithub === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = prevGithub;
     }
   });
 });

@@ -1,5 +1,6 @@
 import type { SemgrepFinding } from "@0sec/shared";
 import { spawn } from "node:child_process";
+import { allowlistedChildEnv } from "../agent/sanitized-env.js";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -450,6 +451,10 @@ function runProcess(
   return new Promise((resolveResult) => {
     const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
+      // Toolchain probe (clang compile of a fixed check). No target code runs
+      // here, but there is no reason for the compiler child to see the
+      // harness's credentials — build its env from the allowlist.
+      env: allowlistedChildEnv(),
     });
     let stdout = "";
     let stderr = "";

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
+import { execPath } from "node:process";
 import {
   createSandboxPackageRunner,
+  localSandboxProvider,
   type SandboxProvider,
   type SandboxSession,
   type SandboxCommandResult,
@@ -188,5 +190,36 @@ describe("runNpmDynamicDiscovery via the packageRunner (sandbox) seam", () => {
     await expect(
       runNpmDynamicDiscovery({ worklist: [{ name: "pkg" }] } as never),
     ).rejects.toThrow(/packageRunner .* probeFactory/);
+  });
+});
+
+describe("localSandboxProvider env isolation", () => {
+  it("does not expose harness credentials to untrusted package code, but keeps PATH", async () => {
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY;
+    const prevGithub = process.env.GITHUB_TOKEN;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-should-not-leak";
+    process.env.GITHUB_TOKEN = "ghp_should_not_leak";
+    const provider = localSandboxProvider();
+    const session = await provider.create();
+    try {
+      // Stand in for an untrusted install/exec: a node one-liner that reports
+      // whether the secrets and PATH are visible in its own process.env.
+      const script =
+        "process.stdout.write(JSON.stringify({" +
+        "anthropic: process.env.ANTHROPIC_API_KEY ?? 'ABSENT'," +
+        "github: process.env.GITHUB_TOKEN ?? 'ABSENT'," +
+        "path: process.env.PATH ? 'SET' : 'ABSENT'}))";
+      const res = await session.run(execPath, ["-e", script]);
+      const seen = JSON.parse(res.stdout);
+      expect(seen.anthropic).toBe("ABSENT");
+      expect(seen.github).toBe("ABSENT");
+      expect(seen.path).toBe("SET");
+    } finally {
+      await session.dispose();
+      if (prevAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevAnthropic;
+      if (prevGithub === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = prevGithub;
+    }
   });
 });

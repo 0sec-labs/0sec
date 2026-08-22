@@ -590,3 +590,79 @@ describe("runUserspaceFuzzLoop — tooling-absent contract", () => {
     expect(result.toolingMissing).toContain("cargo");
   });
 });
+
+// ────────────────────────────────────────────────────────────────────
+// Env isolation: cargo-fuzz builds and RUNS target-derived code (a hostile
+// crate's build.rs / the fuzzed code can read process.env). The fuzz child
+// must therefore never inherit the harness's provider/cloud credentials.
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Like useFakeCargo, but the `fuzz run` branch dumps the child's own view of a
+ * representative credential + PATH to `dumpPath` so the test can assert what
+ * the fuzz subprocess actually received in its environment.
+ */
+function useEnvDumpingCargo(dumpPath: string): string {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "0sec-envdump-cargo-"));
+  fakeCargoDirs.push(fixtureDir);
+  const sourceRoot = join(fixtureDir, "source");
+  mkdirSync(join(sourceRoot, "fuzz"), { recursive: true });
+  writeFileSync(
+    join(sourceRoot, "fuzz", "Cargo.toml"),
+    "[package]\nname = \"fake-fuzz\"\nversion = \"0.0.0\"\n",
+    "utf8",
+  );
+  writeFileSync(
+    join(fixtureDir, "cargo"),
+    `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") process.exit(0);
+if (args[0] === "fuzz" && args[1] === "--help") process.exit(0);
+if (args[0] === "fuzz" && args[1] === "list") { process.stdout.write("only_target\\n"); process.exit(0); }
+if (args[0] === "fuzz" && args[1] === "run") {
+  fs.writeFileSync(${JSON.stringify(dumpPath)}, JSON.stringify({
+    anthropic: process.env.ANTHROPIC_API_KEY || "ABSENT",
+    github: process.env.GITHUB_TOKEN || "ABSENT",
+    path: process.env.PATH ? "SET" : "ABSENT",
+  }));
+  process.stdout.write("Done. 1000 iterations, 0 crashes.\\n");
+  process.exit(0);
+}
+process.exit(1);
+`,
+    "utf8",
+  );
+  chmodSync(join(fixtureDir, "cargo"), 0o755);
+  process.env.PATH = fixtureDir;
+  return sourceRoot;
+}
+
+describe("runUserspaceFuzzLoop — env isolation", () => {
+  it("does not expose harness credentials to the fuzz child, but keeps PATH", async () => {
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY;
+    const prevGithub = process.env.GITHUB_TOKEN;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-should-not-leak";
+    process.env.GITHUB_TOKEN = "ghp_should_not_leak";
+    const dumpDir = mkdtempSync(join(tmpdir(), "0sec-fuzz-envdump-"));
+    fakeCargoDirs.push(dumpDir);
+    const dumpPath = join(dumpDir, "child-env.json");
+    try {
+      const sourceRoot = useEnvDumpingCargo(dumpPath);
+      const result = await runUserspaceFuzzLoop({
+        target: { language: "rust", sourceRoot, buildSystem: "cargo" },
+        logger: () => {},
+      });
+      expect(result.executedHarness).toBe("only_target");
+      const seen = JSON.parse(readFileSync(dumpPath, "utf8"));
+      expect(seen.anthropic).toBe("ABSENT");
+      expect(seen.github).toBe("ABSENT");
+      expect(seen.path).toBe("SET");
+    } finally {
+      if (prevAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevAnthropic;
+      if (prevGithub === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = prevGithub;
+    }
+  });
+});
