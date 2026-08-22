@@ -1,9 +1,34 @@
 export { suggestCwesForCategory, formatCweSection } from "./cwe.js";
 export type { CweEntry } from "./cwe.js";
-export { suggestCvss } from "./cvss.js";
-export type { CvssSuggestion } from "./cvss.js";
-export { renderAdvisoryMarkdown, EmptyPocError, redactSensitiveHeaders } from "./template.js";
-export type { AdvisoryContext, AdvisoryScreenshot, RenderedAdvisory } from "./template.js";
+export {
+  suggestCvss,
+  suggestCvss4,
+  computeCvss4BaseScore,
+  parseCvss4Vector,
+  formatCvss4Vector,
+  scoreCvss4Vector,
+  cvss4Severity,
+  renderCvssSection,
+  Cvss4ParseError,
+} from "./cvss.js";
+export type { CvssSuggestion, Cvss4Selection, Cvss4Score, Cvss4BaseKey } from "./cvss.js";
+export {
+  renderAdvisoryMarkdown,
+  EmptyPocError,
+  redactSensitiveHeaders,
+  reportTemplate,
+  renderPlatformReport,
+  REPORT_PLATFORMS,
+} from "./template.js";
+export type {
+  AdvisoryContext,
+  AdvisoryScreenshot,
+  RenderedAdvisory,
+  ReportPlatform,
+  ReportSection,
+  RenderedPlatformReport,
+  PlatformReportTemplate,
+} from "./template.js";
 export { renderExploitScreenshot, isFreezeAvailable, composeExploitSession, composeStepSession } from "./screenshots.js";
 export type { ScreenshotResult, ScreenshotOptions } from "./screenshots.js";
 export { verifyAgainstRef, extractFileRefs, formatPatchStatusSection } from "./canary.js";
