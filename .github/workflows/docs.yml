@@ -24,11 +24,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @0sec/docs build
-      # Publishes docs/dist to the Cloudflare Pages project `0sec-docs`
-      # (custom domain docs.0.security). Requires repo secret
-      # CLOUDFLARE_API_TOKEN (Account · Cloudflare Pages: Edit).
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: e84b55c82d29ff76b789af0aea3d9121
-          command: pages deploy docs/dist --project-name=0sec-docs --branch=main
+      # Publish docs/dist to the Cloudflare Pages project `0sec-docs`
+      # (custom domain docs.0.security). Uses npx to avoid wrangler-action's
+      # `pnpm add` at the workspace root (ERR_PNPM_ADDING_TO_ROOT).
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: e84b55c82d29ff76b789af0aea3d9121
+        run: npx --yes wrangler@4 pages deploy docs/dist --project-name=0sec-docs --branch=main
