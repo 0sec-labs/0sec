@@ -233,6 +233,29 @@ export function commandMenuBoxHeight(visibleCommands: number, rowsPerCommand: nu
   return MENU_CHROME_ROWS + Math.max(0, visibleCommands) * Math.max(1, rowsPerCommand);
 }
 
+/**
+ * First entry index a scrolling command-menu viewport should show so the
+ * highlighted row is on screen.
+ *
+ * The menu box is height-clamped to `visibleRows` entries but the filtered
+ * list can be longer, so the rows live in a `<scrollbox>` and this decides how
+ * far it is scrolled. The highlight is centred (context above and below) and
+ * then pulled flush against the ends so the last page is never padded with
+ * blank rows — the same viewport rule as {@link SelectorState}'s `windowFor`,
+ * expressed over plain indices so it is unit-testable without a selector.
+ */
+export function commandMenuWindowStart(
+  selectedIndex: number,
+  visibleRows: number,
+  totalRows: number,
+): number {
+  if (visibleRows <= 0 || totalRows <= 0) return 0;
+  if (visibleRows >= totalRows) return 0;
+  const index = Math.min(Math.max(selectedIndex, 0), totalRows - 1);
+  const centred = index - Math.floor((visibleRows - 1) / 2);
+  return Math.min(Math.max(centred, 0), totalRows - visibleRows);
+}
+
 export interface LedgerRowsInput {
   height: number;
   compact: boolean;

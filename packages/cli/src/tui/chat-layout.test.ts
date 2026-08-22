@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   commandMenuBoxHeight,
+  commandMenuWindowStart,
   computeChatLayout,
   computeCommandMenuHeight,
   computeCommandMenuLayout,
@@ -203,5 +204,39 @@ describe("computeCommandMenuHeight", () => {
     expect(commandMenuBoxHeight(0, 2)).toBe(4);
     expect(commandMenuBoxHeight(3, 2)).toBe(10);
     expect(commandMenuBoxHeight(3, 1)).toBe(7);
+  });
+});
+
+describe("commandMenuWindowStart", () => {
+  it("does not scroll when everything fits", () => {
+    expect(commandMenuWindowStart(4, 8, 6)).toBe(0);
+    expect(commandMenuWindowStart(0, 8, 8)).toBe(0);
+  });
+
+  it("keeps the selected row on screen and inside bounds", () => {
+    const visible = 4;
+    const total = 12;
+    for (let selected = 0; selected < total; selected += 1) {
+      const start = commandMenuWindowStart(selected, visible, total);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(start).toBeLessThanOrEqual(total - visible);
+      expect(selected).toBeGreaterThanOrEqual(start);
+      expect(selected).toBeLessThan(start + visible);
+    }
+  });
+
+  it("pulls flush against the ends (no blank tail)", () => {
+    expect(commandMenuWindowStart(0, 4, 12)).toBe(0);
+    expect(commandMenuWindowStart(11, 4, 12)).toBe(8);
+  });
+
+  it("centres the highlight in the interior", () => {
+    expect(commandMenuWindowStart(6, 5, 20)).toBe(4);
+  });
+
+  it("is total-safe for degenerate inputs", () => {
+    expect(commandMenuWindowStart(3, 0, 10)).toBe(0);
+    expect(commandMenuWindowStart(3, 4, 0)).toBe(0);
+    expect(commandMenuWindowStart(-5, 4, 10)).toBe(0);
   });
 });

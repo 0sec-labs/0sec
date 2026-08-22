@@ -5,6 +5,7 @@ import {
   finalLogoFrame,
   logoAnimationFrameCount,
   logoAnimationLoops,
+  logoRowRuns,
   type LogoAnimStyle,
   type LogoFrame,
 } from "./logo-animation.js";
@@ -255,5 +256,38 @@ describe("frame clamping / guards", () => {
 
   it("is deterministic (same inputs -> identical output)", () => {
     expect(framesEqual(computeLogoFrame(LOGO, "strike", 4), computeLogoFrame(LOGO, "strike", 4))).toBe(true);
+  });
+});
+
+describe("logoRowRuns", () => {
+  it("run lengths across a row sum to the grid width (no overflow)", () => {
+    const frame = finalLogoFrame(LOGO);
+    const width = LOGO.reduce((w, row) => Math.max(w, row.length), 0);
+    for (const row of frame) {
+      const runs = logoRowRuns(row);
+      expect(runs.reduce((n, r) => n + r.length, 0)).toBe(width);
+    }
+  });
+
+  it("coalesces adjacent cells sharing (tone, visible)", () => {
+    // Row 0 of the mark: a leading empty cell, then a run of white blocks.
+    const row0 = finalLogoFrame(LOGO)[0]!;
+    const runs = logoRowRuns(row0);
+    expect(runs.length).toBeGreaterThan(1);
+    expect(runs[0]).toMatchObject({ tone: "text", visible: false });
+    expect(runs[1]).toMatchObject({ tone: "text", visible: true });
+    // Neighbouring runs never share the same (tone, visible) pair.
+    for (let i = 1; i < runs.length; i += 1) {
+      const same = runs[i]!.tone === runs[i - 1]!.tone && runs[i]!.visible === runs[i - 1]!.visible;
+      expect(same).toBe(false);
+    }
+  });
+
+  it("keeps the red slash tone distinct from the white blocks", () => {
+    // A mid-strike frame reveals some slash cells: an "error" run must appear.
+    const frame = computeLogoFrame(LOGO, "strike", logoAnimationFrameCount("strike") - 1);
+    const tones = new Set(frame.flatMap((row) => logoRowRuns(row).map((r) => r.tone)));
+    expect(tones.has("error")).toBe(true);
+    expect(tones.has("text")).toBe(true);
   });
 });

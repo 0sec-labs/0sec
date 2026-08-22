@@ -15,6 +15,8 @@ import {
   type ScopedAuditEscalationRequest,
   type ConsoleSession,
   type NativeMessage,
+  type OperatorQuestionRequest,
+  type OperatorQuestionAnswer,
   type SubagentLifecyclePayload,
   type ToolCall,
   type ToolResult,
@@ -92,11 +94,33 @@ import {
 import {
   LEDGER_MARK_ROWS,
   commandMenuBoxHeight,
+  commandMenuWindowStart,
   computeChatLayout,
   computeCommandMenuHeight,
   computeCommandMenuLayout,
   computeLedgerRows,
 } from "./chat-layout.js";
+import {
+  computeLogoFrame,
+  logoAnimationFrameCount,
+  logoAnimationLoops,
+  logoRowRuns,
+  type LogoCellTone,
+} from "./logo-animation.js";
+import {
+  buildOperatorAnswer,
+  createOperatorQuestionState,
+  operatorActiveDisplayIndex,
+  operatorActiveRow,
+  operatorAppend,
+  operatorBackspace,
+  operatorHasOptions,
+  operatorMove,
+  operatorToggle,
+  planOperatorRows,
+  type OperatorDisplayRow,
+  type OperatorQuestionState,
+} from "./operator-question.js";
 import {
   SLASH_COMMANDS,
   filterCommands,
@@ -211,15 +235,27 @@ type PendingToolApproval = {
 };
 
 /**
+ * A pending `ask_operator` question. It authorizes NOTHING — it is the model
+ * asking the human for a decision/value — so it lives apart from the approval
+ * gates above and resolves an {@link OperatorQuestionAnswer} (or `null` when the
+ * operator dismisses it with Esc).
+ */
+type PendingOperatorQuestion = {
+  request: OperatorQuestionRequest;
+  resolve: (answer: OperatorQuestionAnswer | null) => void;
+};
+
+/**
  * The 0sec block mark as a per-cell colour grid, one string per row over a
  * three-letter alphabet: ' ' is an empty cell, '#' a white (`theme.TEXT`)
  * block, '/' a red (`theme.ERROR`) block. The "0" is drawn wider than the
  * other letters so its interior has room for a two-cell-thick red diagonal
  * slash — lower-left to upper-right — that clears the white outline on both
- * sides: a slashed zero. "SEC" stays white. `logoCellRuns` groups each row's cells into
- * runs of one colour so the render can draw each as an explicitly-sized
- * `<text>` (their widths sum to exactly `TERMINAL_BLOCK_LOGO_WIDTH`), which is
- * what keeps a row's segments from overflowing and fusing.
+ * sides: a slashed zero. "SEC" stays white. This grid is the fixed base the
+ * intro animation reveals: `computeLogoFrame` (logo-animation.ts) turns it into
+ * a per-cell frame and `logoRowRuns` coalesces each row into same-tone runs the
+ * render draws as explicitly-sized `<text>`s (widths sum to exactly
+ * `TERMINAL_BLOCK_LOGO_WIDTH`), which keeps a row's segments from overflowing.
  */
 const TERMINAL_BLOCK_LOGO = [
   " ######   #######  #######   ######",
@@ -230,24 +266,32 @@ const TERMINAL_BLOCK_LOGO = [
 ] as const;
 const TERMINAL_BLOCK_LOGO_WIDTH = 35;
 
-/** One same-colour run of logo cells: its display text and which token paints it. */
-type LogoCellRun = { text: string; kind: " " | "#" | "/" };
+/**
+ * Milliseconds between logo intro frames. One rate for every style — the frame
+ * *counts* differ (see logo-animation.ts), so a shorter style simply settles
+ * sooner; shimmer loops at this cadence. ~14 Hz reads as motion without the
+ * repaint cost of the busy spinners.
+ */
+const LOGO_FRAME_INTERVAL_MS = 70;
 
 /**
- * Split a logo grid row into consecutive same-colour runs. Empty cells stay
- * spaces; '#' and '/' both draw the full block glyph (█) and differ only in
- * colour, so the run's `kind` — not its text — chooses the token at render.
+ * How a computed logo frame's per-cell `tone` maps onto the theme (and DIM):
+ *   text  -> TEXT             error -> ERROR
+ *   dim   -> TEXT + DIM       muted -> MUTED
+ * A hidden cell renders as spaces (the caller picks the glyph), so this is only
+ * consulted for visible runs; the fg is harmless on a space run regardless.
  */
-function logoCellRuns(row: string): LogoCellRun[] {
-  const runs: LogoCellRun[] = [];
-  for (const ch of row) {
-    const kind: LogoCellRun["kind"] = ch === "#" ? "#" : ch === "/" ? "/" : " ";
-    const glyph = kind === " " ? " " : "█";
-    const last = runs[runs.length - 1];
-    if (last && last.kind === kind) last.text += glyph;
-    else runs.push({ text: glyph, kind });
+function logoRunStyle(tone: LogoCellTone, theme: Theme): { fg: string; attributes?: number } {
+  switch (tone) {
+    case "error":
+      return { fg: theme.ERROR };
+    case "muted":
+      return { fg: theme.MUTED };
+    case "dim":
+      return { fg: theme.TEXT, attributes: TextAttributes.DIM };
+    default:
+      return { fg: theme.TEXT };
   }
-  return runs;
 }
 
 function modeLabel(mode: ConsoleAutonomyMode): string {
@@ -1417,6 +1461,135 @@ function ApprovalCard({
   );
 }
 
+/**
+ * The `ask_operator` question modal.
+ *
+ * The model paused mid-turn to put a STRUCTURED question to the operator. This
+ * renders each question's header + prose and its answerable rows — options
+ * (with a `(Recommended)` badge, a radio for single-select and a checkbox for
+ * multi-select) and, when the question allows it, a small free-text field — and
+ * lets the operator move/toggle/type. It AUTHORIZES NOTHING; it only collects an
+ * answer, so its voice is the brand purple (never the red/amber of a gate).
+ *
+ * The body lives in a fixed-height `<scrollbox>` so any number of questions fits
+ * the reserved rows without overflow; the caller scrolls the active row into
+ * view. Every child carries an explicit cell width so no row reaches the border.
+ */
+function OperatorQuestionCard({
+  rows,
+  cursor,
+  hintPairs,
+  bodyViewportRows,
+  scrollRef,
+  contentWidth,
+  height,
+  theme,
+}: {
+  rows: OperatorDisplayRow[];
+  cursor: number;
+  hintPairs: KeyHint[];
+  bodyViewportRows: number;
+  scrollRef: React.RefObject<ScrollBoxRenderable | null>;
+  contentWidth: number;
+  height: number;
+  theme: Theme;
+}) {
+  const { PANEL_ALT, MUTED, TEXT, PRIMARY, ACCENT, INFO, BRAND } = theme;
+  const innerWidth = Math.max(1, contentWidth - 4);
+  const hintLen = keyHintsLength(hintPairs, " · ");
+  return (
+    <box flexDirection="column" width="100%" minWidth={0} height={height} flexShrink={0} marginTop={1} border borderColor={BRAND} backgroundColor={PANEL_ALT} paddingX={1}>
+      <box width={innerWidth} flexShrink={0} minWidth={0}>
+        <text fg={BRAND} attributes={TextAttributes.BOLD}>{fitTuiText("0sec has a question for you", innerWidth)}</text>
+      </box>
+      <scrollbox
+        ref={scrollRef}
+        focusable={false}
+        scrollX={false}
+        width={innerWidth}
+        height={bodyViewportRows}
+        flexShrink={0}
+        scrollbarOptions={{ visible: false }}
+      >
+        <box flexDirection="column" width={innerWidth} minWidth={0}>
+          {rows.map((row, index) => {
+            const key = `oq-${row.questionIndex}-${row.type}-${index}`;
+            if (row.type === "header") {
+              return (
+                <box key={key} width={innerWidth} flexShrink={0} minWidth={0}>
+                  <text fg={ACCENT} attributes={TextAttributes.BOLD}>{fitTuiText(row.text ?? "", innerWidth)}</text>
+                </box>
+              );
+            }
+            if (row.type === "prose") {
+              return (
+                <box key={key} width={innerWidth} flexShrink={0} minWidth={0}>
+                  <text fg={MUTED}>{fitTuiText(row.text ?? "", innerWidth, { mode: "middle" })}</text>
+                </box>
+              );
+            }
+            const active = row.navIndex === cursor;
+            const marker = active ? "›" : " ";
+            if (row.type === "custom") {
+              const fieldWidth = Math.max(1, innerWidth - 2);
+              const value = row.customText ?? "";
+              const isEmpty = value.length === 0 && !active;
+              // Keep the tail (where the cursor sits) visible as the field grows.
+              const full = `${value}${active ? "█" : ""}`;
+              const body = isEmpty
+                ? "type a free-text answer…"
+                : full.length > fieldWidth ? full.slice(full.length - fieldWidth) : full;
+              const bodyColor = isEmpty ? MUTED : TEXT;
+              return (
+                <box key={key} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
+                  <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{marker}</text>
+                  <box width={fieldWidth} flexShrink={0} minWidth={0} marginLeft={1}>
+                    <text fg={bodyColor}>{fitTuiText(body, fieldWidth)}</text>
+                  </box>
+                </box>
+              );
+            }
+            // option
+            const boxGlyph = row.multiSelect
+              ? row.selected ? "[x]" : "[ ]"
+              : row.selected ? "(•)" : "( )";
+            const indicatorCells = 1 /* marker */ + 1 /* gap */ + 3 /* box */ + 1 /* gap */;
+            const badge = "(Recommended)";
+            const badgeWidth = row.recommended
+              ? Math.min(badge.length, Math.max(0, innerWidth - indicatorCells - 8))
+              : 0;
+            const badgeGap = badgeWidth > 0 ? 1 : 0;
+            const labelWidth = Math.max(1, innerWidth - indicatorCells - badgeWidth - badgeGap);
+            return (
+              <box key={key} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
+                <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{marker}</text>
+                <box width={3} flexShrink={0} minWidth={0} marginLeft={1}>
+                  <text fg={row.selected ? ACCENT : MUTED}>{boxGlyph}</text>
+                </box>
+                <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
+                  <text fg={active ? PRIMARY : TEXT}>{fitTuiText(row.label ?? "", labelWidth)}</text>
+                </box>
+                {badgeWidth > 0 ? (
+                  <box width={badgeWidth} flexShrink={0} minWidth={0} marginLeft={badgeGap}>
+                    <text fg={INFO}>{fitTuiText(badge, badgeWidth)}</text>
+                  </box>
+                ) : null}
+              </box>
+            );
+          })}
+        </box>
+      </scrollbox>
+      <box width={innerWidth} flexShrink={0} minWidth={0}>
+        {hintLen <= innerWidth ? (
+          <KeyHints pairs={hintPairs} theme={theme} />
+        ) : (
+          <text fg={MUTED}>{fitTuiText(hintPairs.map((p) => `${p.key} ${p.label}`).join(" · "), innerWidth)}</text>
+        )}
+      </box>
+    </box>
+  );
+}
+
 /** The item id that grants. Everything else declines. */
 const APPROVAL_GRANT_ID = "grant";
 const APPROVAL_DENY_ID = "deny";
@@ -1441,6 +1614,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const [git, setGit] = useState<GitStatus | null>(null);
   const [clockTick, setClockTick] = useState(() => Date.now());
   const [animTick, setAnimTick] = useState(0);
+  /** Frame counter for the empty-state logo intro; driven by the ticker below. */
+  const [logoFrame, setLogoFrame] = useState(0);
   /** When the current busy/blocked state began, for elapsed display. */
   const activitySince = useRef<number>(Date.now());
   /**
@@ -1519,6 +1694,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const [pendingLocalScope, setPendingLocalScope] = useState<PendingLocalScope | null>(null);
   const [pendingEscalation, setPendingEscalation] = useState<PendingEscalation | null>(null);
   const [pendingToolApproval, setPendingToolApproval] = useState<PendingToolApproval | null>(null);
+  const [pendingOperatorQuestion, setPendingOperatorQuestion] = useState<PendingOperatorQuestion | null>(null);
+  /**
+   * Live edit state for the `ask_operator` modal (cursor, selections, custom
+   * text). Reset from the pending request whenever a new question arrives; the
+   * keyboard handler mutates it through the pure operator-question reducers.
+   */
+  const [operatorState, setOperatorState] = useState<OperatorQuestionState | null>(null);
   const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
   const { width, height } = useTerminalDimensions();
   const alive = useRef(true);
@@ -1562,6 +1744,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
    * Up/Down belong to composer history, never to scrolling.
    */
   const transcriptRef = useRef<ScrollBoxRenderable | null>(null);
+  /**
+   * The slash-command list scrollbox, so the selected row can be scrolled into
+   * view as the operator arrows past the height-clamped window. Not focusable —
+   * navigation stays with the module-level keyboard handler.
+   */
+  const commandMenuScrollRef = useRef<ScrollBoxRenderable | null>(null);
+  /** The `ask_operator` modal body scrollbox, scrolled to keep the active row visible. */
+  const operatorScrollRef = useRef<ScrollBoxRenderable | null>(null);
   const commandCatalog: readonly SlashCommand[] = SLASH_COMMANDS;
   const isSlashComposer = composer.trimStart().startsWith("/");
   const slashQuery = isSlashComposer ? composer.trimStart().slice(1).split(/\s+/, 1)[0] ?? "" : "";
@@ -1580,7 +1770,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     () => isSlashComposer ? filterCommands(slashQuery) : [],
     [isSlashComposer, slashQuery],
   );
-  const menuCommands = filteredSlashCommands.slice(0, commandMenuLimit);
+  // Every matching command is selectable — the list is no longer truncated to
+  // what fits. The height-clamped box shows a window of `commandMenuLimit`
+  // entries and the rows live in a <scrollbox> the selection scrolls (below), so
+  // commands past the visible window are still reachable by arrowing down.
+  const menuCommands = filteredSlashCommands;
+  const visibleCommandRows = Math.min(menuCommands.length, commandMenuLimit);
   const selectedSlashCommand = menuCommands[slashSelected];
   const scopeLabel = scopeRules.length > 0
     ? scopeRules.join(", ")
@@ -1718,6 +1913,18 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         setPendingToolApproval({ call, resolve: deferred.resolve });
         return deferred.promise;
       },
+      // The `ask_operator` question channel. Unlike the gates above it grants
+      // nothing — it surfaces the model's structured question, waits for the
+      // operator's answer, and resolves it (or null on Esc / a dead console).
+      askOperator: (request) => {
+        const deferred = Promise.withResolvers<OperatorQuestionAnswer | null>();
+        if (!alive.current) {
+          deferred.resolve(null);
+          return deferred.promise;
+        }
+        setPendingOperatorQuestion({ request, resolve: deferred.resolve });
+        return deferred.promise;
+      },
     });
     // resolvedModel() is the id the runtime actually settled on after
     // provider detection — not necessarily what was requested — so it is
@@ -1754,6 +1961,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       });
       setPendingToolApproval((pending) => {
         pending?.resolve(false);
+        return null;
+      });
+      setPendingOperatorQuestion((pending) => {
+        pending?.resolve(null);
         return null;
       });
       setActiveSubagents({});
@@ -1815,6 +2026,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   useEffect(() => {
     reportOperatorGate(Boolean(pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval || secretPrompt));
   }, [pendingScope, pendingLocalScope, pendingEscalation, pendingToolApproval, secretPrompt]);
+
+  // Seed the ask_operator modal's live edit state from each incoming request,
+  // and clear it when the question is answered or dismissed.
+  useEffect(() => {
+    setOperatorState(
+      pendingOperatorQuestion
+        ? createOperatorQuestionState(pendingOperatorQuestion.request)
+        : null,
+    );
+  }, [pendingOperatorQuestion]);
 
   useEffect(() => {
     if (!settings.showTimestamps) return;
@@ -2902,6 +3123,51 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   }, [busy, session]);
 
   useKeyboard((key) => {
+    // The `ask_operator` modal takes precedence exactly like an approval prompt,
+    // but it AUTHORIZES NOTHING — Esc resolves a `null` answer (the tool renders
+    // that as "dismissed, nothing authorized"), Enter resolves the collected
+    // selections + custom text. Space toggles the highlighted option (or types a
+    // space into an active free-text field); other printable keys type into it.
+    // Ctrl+C still exits, resolving null first so the awaiting turn is released.
+    if (pendingOperatorQuestion) {
+      if (key.ctrl && key.name === "c") {
+        pendingOperatorQuestion.resolve(null);
+        onExit();
+        return;
+      }
+      if (key.name === "escape") {
+        pendingOperatorQuestion.resolve(null);
+        setPendingOperatorQuestion(null);
+        return;
+      }
+      if (key.name === "return") {
+        pendingOperatorQuestion.resolve(operatorState ? buildOperatorAnswer(operatorState) : null);
+        setPendingOperatorQuestion(null);
+        return;
+      }
+      if (key.name === "up" || key.name === "down") {
+        const dir = key.name;
+        setOperatorState((s) => (s ? operatorMove(s, dir) : s));
+        return;
+      }
+      if (key.name === "space" || key.sequence === " ") {
+        setOperatorState((s) => {
+          if (!s) return s;
+          return operatorActiveRow(s)?.kind === "custom" ? operatorAppend(s, " ") : operatorToggle(s);
+        });
+        return;
+      }
+      if (key.name === "backspace") {
+        setOperatorState((s) => (s ? operatorBackspace(s) : s));
+        return;
+      }
+      if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta && key.sequence >= " ") {
+        const char = key.sequence;
+        setOperatorState((s) => (s ? operatorAppend(s, char) : s));
+        return;
+      }
+      return;
+    }
     // Authorization prompts are modal and drive the SAME selector reducer the
     // command pickers use, so ↑↓/enter/esc mean one thing everywhere. Ctrl+C
     // still exits — a modal must never trap the operator — and takes the
@@ -3317,6 +3583,25 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         choiceRows: approvalItems.length,
       })
     : 0;
+
+  // ── The ask_operator modal: budget, body window, footer hint ───────────────
+  // The body (headers + prose + option/custom rows) lives in a fixed-height
+  // scrollbox, so it is bought out of the SAME column budget the picker/approval
+  // use and can never over-subscribe the column, however many questions arrive.
+  const operatorQuestionOpen = Boolean(pendingOperatorQuestion && operatorState);
+  const operatorRows: OperatorDisplayRow[] = operatorState ? planOperatorRows(operatorState) : [];
+  // Title + footer + two border rows on top of the body viewport.
+  const OPERATOR_CHROME_ROWS = 4;
+  const operatorBodyViewport = operatorQuestionOpen
+    ? Math.max(1, Math.min(operatorRows.length, Math.max(1, selectorBudget - (OPERATOR_CHROME_ROWS - 2))))
+    : 0;
+  const operatorBoxHeight = operatorQuestionOpen ? operatorBodyViewport + OPERATOR_CHROME_ROWS : 0;
+  const operatorHintPairs: KeyHint[] = [
+    { key: "↑↓", label: "move" },
+    ...(operatorState && operatorHasOptions(operatorState) ? [{ key: "space", label: "toggle" }] : []),
+    { key: "enter", label: "confirm" },
+    { key: "esc", label: "dismiss" },
+  ];
   // The masked credential panel stays a typed field — a secret is entered,
   // not chosen — but it gets the same treatment that stops a panel from
   // collapsing: four content lines plus two border rows, stated explicitly.
@@ -3352,7 +3637,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // One animation kind per real state. `awaiting-operator` is deliberately
   // NOT a busy spinner: when the human is the bottleneck the surface should
   // look expectant, not like it is grinding.
-  const gateOpen = Boolean(pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval || secretPrompt);
+  const gateOpen = Boolean(pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval || secretPrompt || operatorQuestionOpen);
   const animationKind: AnimationKind | null = gateOpen
     ? "awaiting-operator"
     : runningTool
@@ -3395,7 +3680,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // single content row for its "No command matches" line — without it the box
   // is one row short and the hint footer overprints the bottom border.
   const commandMenuHeight = menuCommands.length > 0
-    ? commandMenuBoxHeight(menuCommands.length, commandRowsPerCommand)
+    ? commandMenuBoxHeight(visibleCommandRows, commandRowsPerCommand)
     : commandMenuBoxHeight(0, commandRowsPerCommand) + 1;
 
   const commandMenuVisible = composing && commandMenuOpen && isSlashComposer;
@@ -3404,7 +3689,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // duplication that made the old two-line composer read as noise. So the
   // bar yields to contextual keys ONLY while composing plain text, where
   // "enter send · esc cancel" appears nowhere else on screen.
-  const showContextualKeys = composing && !commandMenuVisible && !picker && !approvalPrompt && !secretPrompt;
+  const showContextualKeys = composing && !commandMenuVisible && !picker && !approvalPrompt && !secretPrompt && !operatorQuestionOpen;
 
   // ACTIVE SUBAGENTS. `spawn_agents` fans out up to 8 with 4 running at
   // once, so this block is genuinely multi-row and genuinely unbounded —
@@ -3441,7 +3726,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     menuRows: commandMenuVisible ? commandMenuHeight : picker ? pickerBoxHeight : 0,
     subagentRows: subagentBlockRows > 0 ? subagentBlockRows + 1 : 0,
     approvalRows: (approvalPrompt ? approvalBoxHeight + 1 : 0)
-      + (secretPrompt ? SECRET_PANEL_HEIGHT + 1 : 0),
+      + (secretPrompt ? SECRET_PANEL_HEIGHT + 1 : 0)
+      + (operatorQuestionOpen ? operatorBoxHeight + 1 : 0),
   });
   // Optional empty-state lines are dropped from the bottom up rather than
   // overprinted. The mark needs the most room, so it goes first.
@@ -3692,34 +3978,54 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           </box>
         ) : null}
       </box>
-      {menuCommands.length > 0 ? menuCommands.map((command, index) => {
-        const active = index === slashSelected;
-        const meta = command.aliases.length > 0
-          ? command.aliases.map((alias) => `/${alias}`).join(" ")
-          : command.category;
-        return (
-          <box key={command.name} flexDirection="row" width={ml.innerWidth} minWidth={0}>
-            <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
-            <box flexDirection="column" width={ml.rowWidth} flexGrow={0} flexShrink={0} minWidth={0} marginLeft={1}>
-              <box flexDirection="row" width={ml.rowWidth} minWidth={0} gap={1}>
-                <box width={ml.nameWidth} flexShrink={0} minWidth={0}>
-                  <text fg={active ? PRIMARY : TEXT}>{fitTuiText(`/${command.name}`, ml.nameWidth)}</text>
-                </box>
-                {ml.metaWidth > 0 ? (
-                  <box width={ml.metaWidth} flexShrink={0} minWidth={0}>
-                    <text fg={MUTED}>{fitTuiText(meta, ml.metaWidth)}</text>
+      {menuCommands.length > 0 ? (
+        // The rows live in a fixed-height scrollbox: the box shows a window of
+        // `visibleCommandRows` entries and the selection is scrolled into view
+        // (the effect below drives scrollTop), so every match is reachable while
+        // the box height, budget and no-overflow contract are unchanged. The
+        // scrollbar is hidden and the box is not focusable — navigation stays
+        // with the module keyboard handler.
+        <scrollbox
+          ref={commandMenuScrollRef}
+          focusable={false}
+          scrollX={false}
+          width={ml.innerWidth}
+          height={visibleCommandRows * commandRowsPerCommand}
+          flexShrink={0}
+          scrollbarOptions={{ visible: false }}
+        >
+          <box flexDirection="column" width={ml.innerWidth} minWidth={0}>
+            {menuCommands.map((command, index) => {
+              const active = index === slashSelected;
+              const meta = command.aliases.length > 0
+                ? command.aliases.map((alias) => `/${alias}`).join(" ")
+                : command.category;
+              return (
+                <box key={command.name} flexDirection="row" width={ml.innerWidth} flexShrink={0} minWidth={0}>
+                  <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
+                  <box flexDirection="column" width={ml.rowWidth} flexGrow={0} flexShrink={0} minWidth={0} marginLeft={1}>
+                    <box flexDirection="row" width={ml.rowWidth} minWidth={0} gap={1}>
+                      <box width={ml.nameWidth} flexShrink={0} minWidth={0}>
+                        <text fg={active ? PRIMARY : TEXT}>{fitTuiText(`/${command.name}`, ml.nameWidth)}</text>
+                      </box>
+                      {ml.metaWidth > 0 ? (
+                        <box width={ml.metaWidth} flexShrink={0} minWidth={0}>
+                          <text fg={MUTED}>{fitTuiText(meta, ml.metaWidth)}</text>
+                        </box>
+                      ) : null}
+                    </box>
+                    {!compact ? (
+                      <box width={ml.rowWidth} minWidth={0}>
+                        <text fg={MUTED} wrapMode="word">{fitTuiText(command.description, ml.rowWidth)}</text>
+                      </box>
+                    ) : null}
                   </box>
-                ) : null}
-              </box>
-              {!compact ? (
-                <box width={ml.rowWidth} minWidth={0}>
-                  <text fg={MUTED} wrapMode="word">{fitTuiText(command.description, ml.rowWidth)}</text>
                 </box>
-              ) : null}
-            </box>
+              );
+            })}
           </box>
-        );
-      }) : (
+        </scrollbox>
+      ) : (
         <box width={ml.innerWidth} flexShrink={0} minWidth={0}>
           <text fg={ERROR}>{fitTuiText(`No command matches /${slashQuery}`, Math.max(1, ml.innerWidth))}</text>
         </box>
@@ -3787,12 +4093,26 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     />
   ) : null;
 
+  const operatorQuestionNode = operatorQuestionOpen && operatorState ? (
+    <OperatorQuestionCard
+      rows={operatorRows}
+      cursor={operatorState.index}
+      hintPairs={operatorHintPairs}
+      bodyViewportRows={operatorBodyViewport}
+      scrollRef={operatorScrollRef}
+      contentWidth={contentWidth}
+      height={operatorBoxHeight}
+      theme={theme}
+    />
+  ) : null;
+
   const overlaysNode = (
     <>
       {commandMenuNode}
       {secretNode}
       {pickerNode}
       {approvalNode}
+      {operatorQuestionNode}
     </>
   );
   // The hero overlays match the centered composer's width (the slash menu) and
@@ -3804,6 +4124,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       {secretNode}
       {pickerNode}
       {approvalNode}
+      {operatorQuestionNode}
     </>
   );
 
@@ -3854,8 +4175,60 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // prompt): the masthead is hidden so the tall menu + logo cannot overflow
   // upward into the header. The composer stays put — it is anchored by the
   // fixed bottom spacer regardless of what the region above it holds.
-  const heroOverlayOpen = commandMenuVisible || Boolean(picker) || Boolean(approvalPrompt) || Boolean(secretPrompt);
+  const heroOverlayOpen = commandMenuVisible || Boolean(picker) || Boolean(approvalPrompt) || Boolean(secretPrompt) || operatorQuestionOpen;
   const showMasthead = !heroOverlayOpen;
+
+  // ── Command-menu selection scroll ──────────────────────────────────────────
+  // Keep the highlighted command inside the height-clamped window: the rows live
+  // in a scrollbox, so scrolling — not slicing — is what makes entries past the
+  // visible window reachable. Centred, clamped flush to the ends (chat-layout).
+  useEffect(() => {
+    const box = commandMenuScrollRef.current;
+    if (!box || !commandMenuVisible || menuCommands.length === 0) return;
+    const start = commandMenuWindowStart(slashSelected, visibleCommandRows, menuCommands.length);
+    box.scrollTop = start * commandRowsPerCommand;
+  }, [commandMenuVisible, slashSelected, visibleCommandRows, menuCommands.length, commandRowsPerCommand]);
+
+  // ── ask_operator body scroll ───────────────────────────────────────────────
+  // Scroll the active answerable row into view within the fixed-height body.
+  useEffect(() => {
+    const box = operatorScrollRef.current;
+    if (!box || !operatorQuestionOpen || !operatorState) return;
+    const activeY = operatorActiveDisplayIndex(operatorRows, operatorState.index);
+    box.scrollTop = commandMenuWindowStart(activeY, operatorBodyViewport, operatorRows.length);
+  }, [operatorQuestionOpen, operatorState, operatorRows, operatorBodyViewport]);
+
+  // ── Logo intro ticker ──────────────────────────────────────────────────────
+  // computeLogoFrame is pure; this only advances the frame counter. A one-shot
+  // style stops once it settles (frame >= count-1); a looping style (shimmer)
+  // keeps ticking. reduceMotion / "off" never start a ticker — the frame is
+  // rendered statically as finalLogoFrame by computeLogoFrame regardless.
+  const logoStyle = settings.logoAnimation;
+  const logoAnimating =
+    showMasthead && showTerminalMark && !settings.reduceMotion && logoStyle !== "off";
+  useEffect(() => {
+    if (!logoAnimating) return;
+    setLogoFrame(0);
+    const count = logoAnimationFrameCount(logoStyle);
+    const loops = logoAnimationLoops(logoStyle);
+    let frame = 0;
+    const timer = setInterval(() => {
+      frame += 1;
+      if (!loops && frame >= count - 1) {
+        setLogoFrame(count - 1);
+        clearInterval(timer);
+        return;
+      }
+      setLogoFrame(frame);
+    }, LOGO_FRAME_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [logoAnimating, logoStyle]);
+  // The per-cell frame the masthead paints. computeLogoFrame folds reduceMotion
+  // and "off" into the settled final frame internally, so this one call covers
+  // both the animated and the static case.
+  const logoFrameGrid = computeLogoFrame(TERMINAL_BLOCK_LOGO, logoStyle, logoFrame, {
+    reduceMotion: settings.reduceMotion,
+  });
 
   return (
     <box flexDirection="column" width="100%" height="100%" paddingLeft={compact ? 1 : 2} paddingRight={compact ? 1 : 2} paddingTop={1} backgroundColor={CANVAS}>
@@ -3923,21 +4296,28 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                   {/*
                     * 0sec brand mark: a slashed zero — a white "0" outline with a
                     * red diagonal slash through its hollow — then white "SEC".
-                    * Each row is a sequence of same-colour runs (logoCellRuns)
-                    * with explicit widths summing to TERMINAL_BLOCK_LOGO_WIDTH, so
-                    * no run overflows and the slash keeps its own colour.
-                    * Rendered verbatim — never through fitTuiText, which trims.
+                    * The per-cell frame comes from computeLogoFrame (the intro
+                    * animation, or the settled final frame under reduceMotion/"off");
+                    * logoRowRuns coalesces each row into (tone,visible) runs whose
+                    * widths sum to TERMINAL_BLOCK_LOGO_WIDTH, so no run overflows and
+                    * each tone keeps its own token. Rendered verbatim — the row
+                    * widths are exact, so no fitTuiText/trim is needed.
                     */}
-                  {TERMINAL_BLOCK_LOGO.map((line, index) => (
+                  {logoFrameGrid.map((row, index) => (
                     <box key={`logo-${index}`} flexDirection="row" width={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0} minWidth={0}>
-                      {logoCellRuns(line).map((run, runIndex) => (
-                        <text
-                          key={`logo-${index}-${runIndex}`}
-                          width={run.text.length}
-                          flexShrink={0}
-                          fg={run.kind === "/" ? ERROR : TEXT}
-                        >{run.text}</text>
-                      ))}
+                      {logoRowRuns(row).map((run, runIndex) => {
+                        const style = logoRunStyle(run.tone, theme);
+                        const glyph = run.visible ? "█" : " ";
+                        return (
+                          <text
+                            key={`logo-${index}-${runIndex}`}
+                            width={run.length}
+                            flexShrink={0}
+                            fg={style.fg}
+                            attributes={style.attributes}
+                          >{glyph.repeat(run.length)}</text>
+                        );
+                      })}
                     </box>
                   ))}
                 </box>
