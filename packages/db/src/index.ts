@@ -1,4 +1,12 @@
-export { osecDB, repairOsecDatabase, resetOsecDatabase, resolveOsecDbPath } from "./database.js";
+export {
+  osecDB,
+  repairOsecDatabase,
+  resetOsecDatabase,
+  resolveOsecDbPath,
+  parseFindingVerificationResult,
+  parseFindingReviewAnnotation,
+  restoreFindingReviewFields,
+} from "./database.js";
 export {
   listOsecRunDatabasePaths,
   resolveOsecRunStorage,
@@ -39,6 +47,8 @@ export {
   type CredentialKindDB,
 } from "./schema.js";
 export type {
+  FindingReviewAnnotation,
+  PersistedFindingReviewFields,
   PersistentCredentialRow,
   PersistentCredentialUpsert,
   PersistentCredentialQuery,

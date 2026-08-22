@@ -104,6 +104,7 @@ function makePersistedRow(
     evidenceResponse: "y",
     evidenceAnalysis: null,
     layerVerdicts: null,
+    impactAssessment: null,
     pocSteps: null,
     verificationSpec: null,
     pocExecution: null,
@@ -338,5 +339,94 @@ describe("restorePersistedFinding (0sec#414 — six-field round-trip)", () => {
     expect(restored.pocSteps).toEqual(pocSteps);
     expect(restored.layerVerdicts).toEqual(layerVerdicts);
     expect(restored.pocExecution).toEqual(pocExecution);
+  });
+});
+
+describe("restorePersistedFinding — impactAssessment round-trip", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const ASSESSMENT = {
+    reachability_tier: "remote-unauth" as const,
+    blast_radius: "every unauthenticated caller",
+    weaponizability: "rce" as const,
+    business_impact: "headline" as const,
+    rationale: "Reachable pre-auth; the sink is a raw exec.",
+  };
+
+  it("threads impactAssessment through saveFinding → getFindings → restore", () => {
+    const { db, scanId } = makeDb();
+    try {
+      const original = { ...makeFinding(undefined), impactAssessment: ASSESSMENT };
+      db.saveFinding(scanId, original);
+      const restored = restorePersistedFinding(db.getFindings(scanId)[0]);
+      expect(restored.impactAssessment).toEqual(ASSESSMENT);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("restores impactAssessment=undefined for a legacy NULL column", () => {
+    const { db, scanId } = makeDb();
+    try {
+      db.saveFinding(scanId, makeFinding(undefined));
+      const restored = restorePersistedFinding(db.getFindings(scanId)[0]);
+      expect(restored.impactAssessment).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("drops an assessment with an out-of-vocabulary tier rather than leaking it", () => {
+    const restored = restorePersistedFinding(makePersistedRow({
+      impactAssessment: JSON.stringify({ ...ASSESSMENT, reachability_tier: "from-mars" }),
+    }));
+    expect(restored.impactAssessment).toBeUndefined();
+    expect(restored.title).toBe("still useful");
+  });
+
+  it("drops a malformed JSON column without breaking the restore", () => {
+    const restored = restorePersistedFinding(makePersistedRow({ impactAssessment: "{not json [" }));
+    expect(restored.impactAssessment).toBeUndefined();
+    expect(restored.title).toBe("still useful");
+  });
+});
+
+describe("restorePersistedFinding \u2014 review fields (0sec#420)", () => {
+  it("threads a persisted verification_result back onto the finding", () => {
+    const restored = restorePersistedFinding(
+      makePersistedRow({
+        verificationResult: JSON.stringify({ status: "reproduced", notes: "confirmed by rerun" }),
+      }),
+    );
+    expect(restored.verification_result?.status).toBe("reproduced");
+  });
+
+  it("threads a persisted reviewAnnotation back onto the finding", () => {
+    const restored = restorePersistedFinding(
+      makePersistedRow({
+        reviewAnnotation: JSON.stringify({ path: "src/app.ts", startLine: 42 }),
+      }),
+    );
+    expect(restored.reviewAnnotation?.path).toBe("src/app.ts");
+  });
+
+  it("omits the keys entirely when the columns are null", () => {
+    const restored = restorePersistedFinding(
+      makePersistedRow({ verificationResult: null, reviewAnnotation: null }),
+    );
+    // Absent, never an empty object: a truthy {} would let the source-fix
+    // eligibility check treat an unverified finding as reproduced.
+    expect("verification_result" in restored).toBe(false);
+    expect("reviewAnnotation" in restored).toBe(false);
+  });
+
+  it("drops a malformed payload instead of throwing", () => {
+    const restored = restorePersistedFinding(
+      makePersistedRow({ verificationResult: "{not json", reviewAnnotation: "{nope" }),
+    );
+    expect("verification_result" in restored).toBe(false);
+    expect("reviewAnnotation" in restored).toBe(false);
   });
 });

@@ -21,6 +21,7 @@ import {
 import type {
   ArtifactRecord,
   Finding,
+  VerificationResult,
   AttackResult,
   CaseRecord,
   TargetInfo,
@@ -453,6 +454,9 @@ export class osecDB {
     if (!colNames.has("layerVerdicts")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN layerVerdicts TEXT");
     }
+    if (!colNames.has("impactAssessment")) {
+      this.sqlite.exec("ALTER TABLE findings ADD COLUMN impactAssessment TEXT");
+    }
     // 0sec#170 — proof-of-concept step graph. JSON-stringified PocStep[].
     if (!colNames.has("pocSteps")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN pocSteps TEXT");
@@ -476,6 +480,18 @@ export class osecDB {
     }
     if (!colNames.has("findingRank")) {
       this.sqlite.exec("ALTER TABLE findings ADD COLUMN findingRank INTEGER");
+    }
+    // Deterministic-replay result + scoped source reference. Both were
+    // produced by the agent and consumed by the fix / disclosure gates but
+    // never had a column, so every reload reported the finding as
+    // unverified and un-scoped. Optional/additive: rows written before
+    // these columns existed keep NULL, which hydrates as *absent* (never
+    // as an empty object that could be mistaken for a real result).
+    if (!colNames.has("verificationResult")) {
+      this.sqlite.exec("ALTER TABLE findings ADD COLUMN verificationResult TEXT");
+    }
+    if (!colNames.has("reviewAnnotation")) {
+      this.sqlite.exec("ALTER TABLE findings ADD COLUMN reviewAnnotation TEXT");
     }
     // Backfill NULL fingerprint / triageStatus / workflowStatus for rows
     // created before those columns existed.
@@ -1193,6 +1209,9 @@ export class osecDB {
       },
     );
     const inheritedWorkflowAssignee = workflowFinding.workflowAssignee ?? inheritedTriage?.workflowAssignee ?? null;
+    const impactAssessmentJson = finding.impactAssessment
+      ? JSON.stringify(finding.impactAssessment)
+      : null;
     const layerVerdictsJson =
       finding.layerVerdicts && finding.layerVerdicts.length > 0
         ? JSON.stringify(finding.layerVerdicts)
@@ -1219,6 +1238,14 @@ export class osecDB {
     const semanticDedupeJson = finding.semanticDedupe
       ? JSON.stringify(finding.semanticDedupe)
       : null;
+    // Deterministic-replay result + scoped source reference. Both gate the
+    // source-fix action (`verification_result.status === "reproduced"` plus
+    // a `reviewAnnotation.path` to scope the patch), so dropping them here
+    // made every reloaded finding permanently ineligible. Serialized to
+    // NULL — never `"{}"` — when absent or unusable, so a reload can never
+    // manufacture a truthy-but-empty verification result.
+    const verificationResultJson = serializeFindingVerificationResult(finding.verification_result);
+    const reviewAnnotationJson = serializeFindingReviewAnnotation(finding.reviewAnnotation);
     const candidateFindingRank = finding.findingRank;
     const findingRank =
       typeof candidateFindingRank === "number" &&
@@ -1258,10 +1285,13 @@ export class osecDB {
         evidenceResponse,
         evidenceAnalysis,
         layerVerdicts: layerVerdictsJson,
+        impactAssessment: impactAssessmentJson,
         pocSteps: pocStepsJson,
         verificationSpec: verificationSpecJson,
         semanticDedupe: semanticDedupeJson,
         findingRank,
+        verificationResult: verificationResultJson,
+        reviewAnnotation: reviewAnnotationJson,
         timestamp: finding.timestamp,
       })
       .onConflictDoUpdate({
@@ -1287,10 +1317,13 @@ export class osecDB {
           evidenceResponse,
           evidenceAnalysis,
           layerVerdicts: layerVerdictsJson,
+          impactAssessment: impactAssessmentJson,
           pocSteps: pocStepsJson,
           verificationSpec: verificationSpecJson,
           semanticDedupe: semanticDedupeJson,
           findingRank,
+          verificationResult: verificationResultJson,
+          reviewAnnotation: reviewAnnotationJson,
           timestamp: finding.timestamp,
         },
       })
@@ -1304,6 +1337,17 @@ export class osecDB {
       .from(schema.findings)
       .where(eq(schema.findings.id, findingId))
       .get();
+  }
+
+  /**
+   * Read path for the two source-fix gate fields. Returns the hydrated
+   * `verification_result` / `reviewAnnotation` for a finding, with each key
+   * omitted when the finding has none (including rows written before the
+   * columns existed). Callers building a `Finding` spread this over the row:
+   * `{ ...mapped, ...db.getFindingReviewFields(id) }`.
+   */
+  getFindingReviewFields(findingId: string): PersistedFindingReviewFields {
+    return restoreFindingReviewFields(this.getFinding(findingId));
   }
 
   getFindings(scanId: string) {
@@ -2254,6 +2298,122 @@ function buildFindingFingerprint(target: string, finding: Finding): string {
 }
 
 /**
+ * The scoped source reference persisted in the `reviewAnnotation` column.
+ * Structurally identical to the shared `Finding["reviewAnnotation"]`; aliased
+ * here so the parsers below have a name to return without importing the
+ * whole Finding shape at every call site.
+ */
+export type FindingReviewAnnotation = NonNullable<Finding["reviewAnnotation"]>;
+
+/**
+ * Hydrated form of the two columns. Both keys are OPTIONAL and are omitted
+ * entirely when the underlying column is NULL / unusable — never present as
+ * an empty object.
+ */
+export interface PersistedFindingReviewFields {
+  verification_result?: VerificationResult;
+  reviewAnnotation?: FindingReviewAnnotation;
+}
+
+/**
+ * ── Persisted `verification_result` / `reviewAnnotation` (source-fix gate) ──
+ *
+ * Both fields live on the shared `Finding` and gate the TUI `f` source-fix
+ * action: it requires `verification_result.status === "reproduced"` AND a
+ * scoped source reference (`reviewAnnotation.path`). Before these columns
+ * existed the writer silently dropped them, so every finding reloaded from
+ * SQLite reported "finding is not reproduced" and the action could never run.
+ *
+ * The pair below is deliberately symmetric and conservative:
+ *
+ *   • The writer emits NULL — never `"{}"` — for anything that is not a
+ *     usable value, so a reload can never invent a truthy-but-empty result.
+ *   • The reader returns `undefined` (key omitted entirely) for NULL, empty
+ *     text, malformed JSON, non-objects, and payloads missing the field that
+ *     gives them meaning. A false "reproduced" would let the fix action patch
+ *     source for an unverified finding, so absence must stay absence.
+ *
+ * Validation is intentionally structural (no zod at runtime here, keeping
+ * @0sec/db free of a zod dependency); the authoritative shape check remains
+ * `VerificationResultSchema` in @0sec/shared.
+ */
+
+/** A non-null, non-array object — the only shape either column may hold. */
+function asPlainObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function parseJsonObjectColumn(value: unknown): Record<string, unknown> | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") {
+    if (value.length === 0) return undefined;
+    try {
+      return asPlainObject(JSON.parse(value));
+    } catch {
+      // Malformed JSON is non-fatal: the finding still loads, just without
+      // this field. Never fall back to a partial/empty stand-in.
+      return undefined;
+    }
+  }
+  // Already-parsed object handed back by a shim / in-memory test double.
+  return asPlainObject(value);
+}
+
+/**
+ * A verification result is only meaningful when it carries a `status`
+ * string — every consumer (`isReproduced`, disclosure promotion) keys off it.
+ * Anything else is stored as NULL / read back as `undefined`.
+ */
+export function parseFindingVerificationResult(value: unknown): VerificationResult | undefined {
+  const parsed = parseJsonObjectColumn(value);
+  if (!parsed || typeof parsed.status !== "string" || parsed.status.length === 0) return undefined;
+  return parsed as unknown as VerificationResult;
+}
+
+/**
+ * A review annotation is only meaningful when it carries a `path` — that is
+ * the scoped source reference the fix action patches against.
+ */
+export function parseFindingReviewAnnotation(value: unknown): FindingReviewAnnotation | undefined {
+  const parsed = parseJsonObjectColumn(value);
+  if (!parsed || typeof parsed.path !== "string" || parsed.path.length === 0) return undefined;
+  return parsed as unknown as FindingReviewAnnotation;
+}
+
+function serializeFindingVerificationResult(value: unknown): string | null {
+  const usable = parseFindingVerificationResult(value);
+  return usable ? JSON.stringify(usable) : null;
+}
+
+function serializeFindingReviewAnnotation(value: unknown): string | null {
+  const usable = parseFindingReviewAnnotation(value);
+  return usable ? JSON.stringify(usable) : null;
+}
+
+/**
+ * Hydrate the two columns off a persisted findings row into the shape the
+ * shared `Finding` uses. Keys are OMITTED (not set to `undefined`) when the
+ * column is absent, so `"verification_result" in finding` stays false for an
+ * unverified finding and `{ ...row, ...restoreFindingReviewFields(row) }`
+ * never overwrites a value a caller already resolved.
+ *
+ * Accepts a partial row so it also works against pre-migration rows read by
+ * raw SQL, where the properties simply do not exist.
+ */
+export function restoreFindingReviewFields(
+  row: { verificationResult?: unknown; reviewAnnotation?: unknown } | null | undefined,
+): PersistedFindingReviewFields {
+  if (!row) return {};
+  const verificationResult = parseFindingVerificationResult(row.verificationResult);
+  const reviewAnnotation = parseFindingReviewAnnotation(row.reviewAnnotation);
+  return {
+    ...(verificationResult ? { verification_result: verificationResult } : {}),
+    ...(reviewAnnotation ? { reviewAnnotation } : {}),
+  };
+}
+
+/**
  * When a finding only carries `pocSteps` and no prose evidence, derive the
  * legacy `evidence.{request,response,analysis}` strings from the step graph
  * so older readers (markdown advisory templates that pre-date pocSteps,
@@ -2353,11 +2513,14 @@ CREATE TABLE IF NOT EXISTS findings (
   evidenceResponse TEXT NOT NULL,
   evidenceAnalysis TEXT,
   layerVerdicts TEXT,
+  impactAssessment TEXT,
   pocSteps TEXT,
   verificationSpec TEXT,
   pocExecution TEXT,
   semanticDedupe TEXT,
   findingRank INTEGER,
+  verificationResult TEXT,
+  reviewAnnotation TEXT,
   timestamp INTEGER NOT NULL
 );
 

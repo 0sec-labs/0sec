@@ -125,6 +125,7 @@ export const findings = sqliteTable(
      * query individual verdict rows. See 0sec#112.
      */
     layerVerdicts: text("layerVerdicts"),
+    impactAssessment: text("impactAssessment"), // JSON: ImpactAssessment (reachability/blast/weaponizability/business)
     /**
      * JSON-stringified PocStep[] (see @0sec/shared types). NULL when the
      * agent only produced prose evidence (the legacy default). Stored as
@@ -158,6 +159,25 @@ export const findings = sqliteTable(
      * 0sec#171.
      */
     pocExecution: text("pocExecution"),
+    /**
+     * JSON-stringified VerificationResult (see @0sec/shared
+     * `VerificationResultSchema`) — the last deterministic-replay result
+     * attached to the finding. NULL when the finding was never verified;
+     * readers MUST treat NULL / malformed / statusless payloads as
+     * *absent* rather than as an empty result, because downstream gates
+     * (the TUI `f` source-fix action, disclosure promotion) key off
+     * `status === "reproduced"`. Stored as text for the same reason as
+     * `verificationSpec`: the blob is read and written whole.
+     */
+    verificationResult: text("verificationResult"),
+    /**
+     * JSON-stringified Finding["reviewAnnotation"] — the scoped source
+     * reference (`path` + line range, optional suggestion / knownMarker)
+     * the agent cited at save_finding time. NULL when the finding carries
+     * no workspace-contained source location. Additive: every reader must
+     * keep working when it is absent.
+     */
+    reviewAnnotation: text("reviewAnnotation"),
     timestamp: integer("timestamp").notNull(),
   },
   (table) => [
