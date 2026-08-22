@@ -1017,12 +1017,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         });
         return true;
       case "resume": {
-        const saved = listSessions(undefined, { cwd: process.cwd(), limit: 30 });
+        // Every project, not just this directory: an operator moving between
+        // checkouts still wants the session they were in.
+        const here = process.cwd();
+        const saved = listSessions(undefined, { limit: 50 });
+        saved.sort((a, b) => Number(b.cwd === here) - Number(a.cwd === here));
         if (saved.length === 0) {
           appendEntry({
             kind: "notice",
-            text: "no saved sessions for this directory",
-            detail: "Sessions are stored per project after each completed turn.",
+            text: "no saved sessions yet",
+            detail: "A session is stored after each turn; this list appears once you have run one.",
             turn: turn.current,
           });
           return true;
@@ -1035,7 +1039,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           id: meta.id,
           label: meta.preview || "(no prompt recorded)",
           meta: `${meta.messageCount} msg${meta.messageCount === 1 ? "" : "s"}${meta.model ? ` · ${meta.model}` : ""}`,
-          detail: `${meta.target ? `target ${meta.target} · ` : ""}saved ${new Date(meta.savedAt).toISOString()}`,
+          detail: `${meta.cwd === here ? "this project" : meta.cwd} · ${meta.target ? `target ${meta.target} · ` : ""}saved ${new Date(meta.savedAt).toISOString()}`,
           current: session?.scanId === meta.id,
         }));
         setPicker({
@@ -1612,9 +1616,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         turn: currentTurn,
       });
       setTurnBudget(null);
-      // Persist after each turn rather than only on exit: a crash, a lost
-      // SSH session or a plain Ctrl+C should still leave something to
-      // resume. Failure is non-fatal — the console keeps working.
+    } finally {
+      setBusy(false);
+      // Persist in `finally`, not in the success path and not in `catch`:
+      // a turn that failed is exactly the one an operator wants to resume,
+      // and this previously sat inside `catch`, so a SUCCESSFUL turn saved
+      // nothing at all and /resume always reported an empty history.
       if (session) {
         const firstUser = entriesRef.current.find((entry) => entry.kind === "user");
         saveSession({
@@ -1630,8 +1637,6 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         });
         pruneSessions();
       }
-    } finally {
-      setBusy(false);
     }
   }, [appendEntry, busy, routeSlashCommand, session, settings.showTurnSummary]);
   submitRef.current = send;
