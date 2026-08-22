@@ -434,7 +434,7 @@ Each agent has access to a set of tools depending on the scan type:
 | `done` | All modes | Signal that the agent has finished |
 | `send_prompt` | LLM | Send prompts to AI/LLM apps |
 | `read_file` | Source, npm | Read source files for code review |
-| `run_command` | Source, npm | Execute commands in a sandbox |
+| `run_command` | Source, npm | Execute an allowlisted command on the host (not a sandbox) |
 | `list_files` | Source, npm | Enumerate files in a directory |
 | `search_code` | Source, npm | Search for patterns across a codebase |
 | `crawl_page` | Web (optional) | Crawl a web page -- available but `bash` with curl is preferred |

@@ -219,32 +219,24 @@ Spawn 5 attack agents in parallel and let the fastest one win. Great for hard ta
 0sec scan --target https://example.com --mode web --scope ./scope.json --race
 ```
 
-### Kali Docker executor
+### How commands are executed (no sandbox by default)
 
-Enable `0SEC_FEATURE_DOCKER_EXECUTOR=1` to run every bash command inside a containerized pentest environment. By default, 0sec now pulls the prebuilt GHCR image `ghcr.io/0sec-labs/0sec:latest`, which already includes Node, Playwright/Chromium, and the standard pentest toolset. No host pollution, reproducible tool versions, and much faster startup than bootstrapping raw Kali on every run.
-
-```bash
-export 0SEC_FEATURE_DOCKER_EXECUTOR=1
-0sec scan --target https://example.com --mode web --scope ./scope.json --verbose
-```
-
-Advanced overrides:
-
-```bash
-# Force a specific image
-export 0SEC_DOCKER_IMAGE=ghcr.io/0sec-labs/0sec:latest
-
-# Force apt-based tool bootstrap even on a custom image
-export 0SEC_DOCKER_BOOTSTRAP_TOOLS=1
-```
-
-Use the raw Kali path only when you explicitly want to debug parity:
+Be aware of the execution model before you scan: the `bash` tool runs commands
+**directly on your host machine** (`spawn("/bin/bash", ["-c", …])`), guarded only
+by a wall-clock timeout, scope-URL checks, and a scanner-binary blocklist — there
+is no container or VM isolation around a local scan. Run 0sec against authorized
+targets from a machine you're willing to run pentest tooling on (a disposable VM
+is a good idea), or use the published container image as your operating
+environment:
 
 ```bash
-export 0SEC_FEATURE_DOCKER_EXECUTOR=1
-export 0SEC_DOCKER_IMAGE=kalilinux/kali-rolling
-export 0SEC_DOCKER_BOOTSTRAP_TOOLS=1
+docker run --rm -v "$PWD:/work" ghcr.io/0sec-labs/0sec:latest \
+  scan --target https://example.com --scope /work/scope.json
 ```
+
+Per-scan sandbox isolation (one ephemeral sandbox per run) is a property of the
+managed platform, not the open-source CLI; container/VM execution runners in the
+engine are stubs tracked in [issue #193](https://github.com/0sec-labs/0sec/issues/193).
 
 ### Export findings to GitHub Issues
 
