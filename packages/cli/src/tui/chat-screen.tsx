@@ -108,6 +108,20 @@ import {
 } from "./slash-commands.js";
 import { deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
 import { appendTranscriptEntry, repeatSuffix } from "./transcript.js";
+import {
+  resolveTranscriptStyleSettings,
+  roleLabelText,
+  speechFrame,
+  toolCompactLine,
+  toolDetailWidth,
+  toolFrame,
+  toolGlyphState,
+  toolHeaderColumns,
+  toolHeaderPrefix,
+  type RoleLabelStyle,
+  type ToolCardStyle,
+  type TranscriptStyle,
+} from "./transcript-style.js";
 
 export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings";
 
@@ -318,6 +332,12 @@ interface EntryDisplay {
   spacing: number;
   showTimestamps: boolean;
   now: number;
+  /** Framing of a speaking turn (rail / bubble / plain / compact / document). */
+  transcriptStyle: TranscriptStyle;
+  /** How the "who said this" label is drawn (full / short / glyph / off). */
+  roleLabelStyle: RoleLabelStyle;
+  /** How a tool / subagent call is drawn (rail / inline / compact / hidden). */
+  toolCardStyle: ToolCardStyle;
 }
 
 /** Map a markdown span style onto the theme. */
@@ -400,31 +420,83 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, tone?: st
   });
 }
 
+/**
+ * The left rail for a speaking turn, or `null` when the style has none. The
+ * `solid` variant is the coloured 1-cell block the console has always used;
+ * `dotted` is the reasoning gutter; `marker` is the notice `·`. All widths and
+ * the choice itself come from `speechFrame`, so the component draws rather than
+ * decides.
+ */
+function speechRail(railKind: "solid" | "dotted" | "marker" | "none", tone: string) {
+  if (railKind === "solid") {
+    return <box width={1} alignSelf="stretch" backgroundColor={tone} />;
+  }
+  if (railKind === "dotted") {
+    return (
+      <box width={1} flexShrink={0} alignSelf="stretch">
+        <text fg={MUTED}>┊</text>
+      </box>
+    );
+  }
+  if (railKind === "marker") {
+    return <text fg={MUTED}>·</text>;
+  }
+  return null;
+}
+
 function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) {
   const detailWidth = Math.max(20, maxWidth - 8);
+  const { transcriptStyle, roleLabelStyle, toolCardStyle } = display;
   // A row that stands for several collapsed repeats says so. The count is
   // appended at render time and never written into `entry.text`, so the next
   // repeat still compares equal and keeps collapsing.
   const repeat = repeatSuffix(entry.repeat);
-  if (entry.kind === "user") {
-    return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing}>
-        <box width={1} alignSelf="stretch" backgroundColor={ACCENT} />
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={ACCENT}>{`▌ operator${display.showTimestamps && relativeAge(entry.at, display.now) ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
-          <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
-        </box>
-      </box>
-    );
-  }
 
-  if (entry.kind === "assistant") {
+  if (entry.kind === "user" || entry.kind === "assistant") {
+    const isUser = entry.kind === "user";
+    const tone = isUser ? ACCENT : PRIMARY;
+    const frame = speechFrame(transcriptStyle, entry.kind, maxWidth);
+    const marginTop = display.spacing + frame.extraMarginTop;
+    const age = display.showTimestamps ? relativeAge(entry.at, display.now) : "";
+    const label = roleLabelText(isUser ? "user" : "assistant", roleLabelStyle, age);
+    // Body: raw text for the operator, rendered markdown for the model.
+    const body = isUser
+      ? <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
+      : renderMarkdownBlocks(renderMarkdown(entry.text, frame.markdownWidth), entry.id);
+
+    if (frame.bordered) {
+      // A bordered turn MUST carry an explicit numeric width plus flexShrink=0:
+      // width="100%" leaves flexShrink at 1, so under column pressure the box
+      // collapses and paints its own border through the message (PRIMITIVES.md).
+      return (
+        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={tone} paddingX={1}>
+          {label ? <text fg={tone}>{label}</text> : null}
+          {body}
+        </box>
+      );
+    }
+
+    // compact inlines a one-line operator message next to its label; every
+    // other unbordered style (rail/plain/document, and assistant markdown which
+    // cannot share a row) keeps the label above the body.
+    if (!frame.labelOwnRow && isUser) {
+      return (
+        <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
+          {label ? <box flexShrink={0}><text fg={tone}>{label}</text></box> : null}
+          <box flexGrow={1} minWidth={0} marginLeft={label ? 1 : 0}>
+            {body}
+          </box>
+        </box>
+      );
+    }
+
+    const rail = speechRail(frame.railKind, tone);
     return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing}>
-        <box width={1} alignSelf="stretch" backgroundColor={PRIMARY} />
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={PRIMARY}>{`▌ 0sec${display.showTimestamps && relativeAge(entry.at, display.now) ? ` · ${relativeAge(entry.at, display.now)}` : ""}`}</text>
-          {renderMarkdownBlocks(renderMarkdown(entry.text, Math.max(8, maxWidth - 2)), entry.id)}
+      <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
+        {rail}
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
+          {label ? <text fg={tone}>{label}</text> : null}
+          {body}
         </box>
       </box>
     );
@@ -432,23 +504,42 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
 
   if (entry.kind === "tool") {
     const tone = entry.success === false ? ERROR : entry.success ? SUCCESS : PRIMARY;
-    const state = entry.success === false ? "failed" : entry.success ? "complete" : "running";
-    const icon = entry.success === false ? "×" : entry.success ? "✓" : "◌";
-    // Icon, label and name are siblings on one row; the name must be
-    // budgeted against the label's real length or the row overruns its
-    // container and the renderer paints the columns into each other.
-    const toolPrefix = ` evidence / tool · ${state} · `;
-    return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={maxWidth < 56 ? 0 : 2}>
-        <box width={1} alignSelf="stretch" backgroundColor={tone} />
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <box flexDirection="row" minWidth={0}>
-            <text fg={tone}>{icon}</text>
-            <text fg={MUTED}>{toolPrefix}</text>
-            <text fg={TEXT}>{fitTuiText(`${entry.text}${repeat}`, Math.max(1, detailWidth - toolPrefix.length - 1))}</text>
-          </box>
-          {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text> : null}
+    const { icon, state } = toolGlyphState(entry.success);
+    const frame = toolFrame(toolCardStyle, maxWidth, entry.success);
+    if (!frame.render) return null;
+    const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);
+
+    // compact / hidden: a single summary line, detail only when it failed.
+    if (frame.singleLine) {
+      return (
+        <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
+          <text fg={tone}>{toolCompactLine(icon, `${entry.text}${repeat}`, state, frame.contentWidth)}</text>
+          {frame.showDetail && entry.detail ? (
+            <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text>
+          ) : null}
         </box>
+      );
+    }
+
+    // rail / inline: icon, muted prefix and name are siblings on one row; the
+    // name is budgeted against the prefix's real length or the row overruns its
+    // container and the renderer paints the columns into each other.
+    const toolPrefix = toolHeaderPrefix(state);
+    const cols = toolHeaderColumns(frame.contentWidth, toolPrefix.length, toolDetail);
+    const header = (
+      <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
+        <box flexDirection="row" minWidth={0}>
+          <text fg={tone}>{icon}</text>
+          <text fg={MUTED}>{toolPrefix}</text>
+          <text fg={TEXT}>{fitTuiText(`${entry.text}${repeat}`, cols.nameWidth)}</text>
+        </box>
+        {frame.showDetail && entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, toolDetail)}</text> : null}
+      </box>
+    );
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
+        {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
+        {header}
       </box>
     );
   }
@@ -457,33 +548,57 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
     const outcome = entry.subagentOutcome ?? "failed";
     const ok = outcome === "completed";
     const tone = ok ? SUCCESS : ERROR;
+    const frame = toolFrame(toolCardStyle, maxWidth, ok);
+    if (!frame.render) return null;
+    const subDetailWidth = toolDetailWidth(frame.contentWidth, maxWidth);
     const statusParts: string[] = [];
     if (entry.subagentTurns !== undefined) statusParts.push(`turns ${entry.subagentTurns}`);
     if (entry.subagentFindings !== undefined) statusParts.push(`findings ${entry.subagentFindings}`);
     const statusLine = statusParts.length > 0 ? statusParts.join(" · ") : null;
 
+    if (frame.singleLine) {
+      return (
+        <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
+          <text fg={tone}>{toolCompactLine(ok ? "✓" : "×", "subagent", ok ? "completed" : "failed", frame.contentWidth)}</text>
+          {frame.showDetail && entry.subagentError ? (
+            <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, frame.contentWidth)}</text>
+          ) : null}
+        </box>
+      );
+    }
+
     return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={maxWidth < 56 ? 0 : 2}>
-        <box width={1} alignSelf="stretch" backgroundColor={tone} />
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
+        {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
           <box flexDirection="row">
             <text fg={tone}>{ok ? "✓" : "×"}</text>
             <text fg={MUTED}> evidence / subagent · {ok ? "completed" : "failed"}</text>
           </box>
-          {statusLine ? <text fg={MUTED}>{fitTuiText(statusLine, detailWidth)}</text> : null}
-          {entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, detailWidth)}</text> : null}
-          {entry.subagentError ? <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, detailWidth)}</text> : null}
+          {frame.showDetail && statusLine ? <text fg={MUTED}>{fitTuiText(statusLine, subDetailWidth)}</text> : null}
+          {frame.showDetail && entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, subDetailWidth)}</text> : null}
+          {entry.subagentError ? <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, subDetailWidth)}</text> : null}
         </box>
       </box>
     );
   }
 
   if (entry.kind === "error") {
-    // Failures get the same rail treatment as speech, in the error tone:
-    // an operator must be able to see at a glance that the turn did not
-    // produce an answer, and why.
+    // Failures get the same rail treatment as speech, in the error tone: an
+    // operator must be able to see at a glance that the turn did not produce an
+    // answer, and why. `bubble` frames it as a bordered ERROR block instead.
+    const frame = speechFrame(transcriptStyle, "error", maxWidth);
+    const marginTop = display.spacing + frame.extraMarginTop;
+    if (frame.bordered) {
+      return (
+        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={ERROR} paddingX={1}>
+          <text fg={ERROR}>{fitTuiText(`${entry.text}${repeat}`, frame.contentWidth)}</text>
+          {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text> : null}
+        </box>
+      );
+    }
     return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+      <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
         <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ERROR} />
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
           <text fg={ERROR}>▌ {fitTuiText(`${entry.text}${repeat}`, Math.max(1, maxWidth - 3))}</text>
@@ -2552,10 +2667,17 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // Relative ages need a clock, but the transcript must not repaint every
   // second just to age a label. Tick only while timestamps are enabled, and
   // only at the granularity the format actually shows.
-  const entryDisplay = {
+  // Density stays the spacing knob; the three visual knobs are resolved
+  // separately and are orthogonal to it. An env override lets a style be pinned
+  // for a preview or a capture without touching the settings file.
+  const transcriptStyleSettings = resolveTranscriptStyleSettings(settings, process.env);
+  const entryDisplay: EntryDisplay = {
     spacing: settings.density === "compact" ? 0 : 1,
     showTimestamps: settings.showTimestamps,
     now: clockTick,
+    transcriptStyle: transcriptStyleSettings.transcriptStyle,
+    roleLabelStyle: transcriptStyleSettings.roleLabelStyle,
+    toolCardStyle: transcriptStyleSettings.toolCardStyle,
   };
   // One animation kind per real state. `awaiting-operator` is deliberately
   // NOT a busy spinner: when the human is the bottleneck the surface should
