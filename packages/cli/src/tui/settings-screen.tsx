@@ -38,18 +38,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
-import {
-  ACCENT,
-  BORDER,
-  ERROR,
-  MUTED,
-  PANEL,
-  PANEL_ALT,
-  PRIMARY,
-  TEXT,
-  WARNING,
-} from "../ui/theme.js";
 import { Cells } from "./primitives.js";
+import { setSettings, useSettings } from "./settings-store.js";
+import { useTheme, type Theme } from "./theme-context.js";
 import {
   buildSettingsRows,
   clampSelection,
@@ -71,7 +62,8 @@ import {
   type SettingsMode,
   type SettingsPane,
 } from "./settings-layout.js";
-import { SETTING_DEFS, loadSettings, saveSettings, type TuiSettings } from "./settings.js";
+import { SETTING_DEFS, type TuiSettings } from "./settings.js";
+import { SettingsPreview, previewRowCount } from "./settings-preview.js";
 
 /** How many rows page-up and page-down move. */
 const PAGE_STEP = 5;
@@ -110,19 +102,19 @@ interface Notice {
   tone: "error" | "warn" | "info";
 }
 
-function toneColor(tone: SettingsDetailTone): string | undefined {
+function toneColor(tone: SettingsDetailTone, theme: Theme): string | undefined {
   switch (tone) {
     case "title":
-      return PRIMARY;
+      return theme.PRIMARY;
     case "accent":
-      return ACCENT;
+      return theme.ACCENT;
     case "warn":
-      return WARNING;
+      return theme.WARNING;
     case "muted":
     case "blank":
-      return MUTED;
+      return theme.MUTED;
     default:
-      return TEXT;
+      return theme.TEXT;
   }
 }
 
@@ -149,6 +141,7 @@ function Pane({
   titleFg: string;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
   if (pane.width <= 0 || pane.height <= 0) return null;
   // `hasTitle` is the layout's decision, not the caller's: the row it costs
   // was either budgeted for or it was not, and rendering a title the budget
@@ -167,8 +160,8 @@ function Pane({
       flexGrow={0}
       minWidth={0}
       border={bordered || undefined}
-      borderColor={bordered ? BORDER : undefined}
-      backgroundColor={bordered ? PANEL : undefined}
+      borderColor={bordered ? theme.BORDER : undefined}
+      backgroundColor={bordered ? theme.PANEL : undefined}
       paddingX={bordered ? 1 : undefined}
     >
       {titleRow}
@@ -177,12 +170,16 @@ function Pane({
   );
 }
 
-export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScreenProps) {
+export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   const { width, height } = useTerminalDimensions();
+  const theme = useTheme();
 
-  // Loaded once, lazily. `loadSettings` never throws and never reports, so a
-  // corrupt or unreadable file yields defaults rather than an empty screen.
-  const [settings, setSettings] = useState<TuiSettings>(() => loadSettings(homeDir));
+  // The live settings, read from the process-wide store. This screen is the
+  // writer: `setSettings` (the store's, imported above) persists AND notifies
+  // every other subscribed screen synchronously, so a change here takes effect
+  // on the chat screen without a remount. Reading a snapshot via
+  // `useState(loadSettings())` is exactly the stale-copy bug the store fixes.
+  const settings = useSettings();
   const [filter, setFilter] = useState("");
   const [filtering, setFiltering] = useState(false);
   const [selected, setSelected] = useState(0);
@@ -219,7 +216,7 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
         : filter
           ? `filter: ${filter}`
           : "";
-  const statusTone = pending ? WARNING : notice?.tone === "error" ? ERROR : MUTED;
+  const statusTone = pending ? theme.WARNING : notice?.tone === "error" ? theme.ERROR : theme.MUTED;
 
   const layout = computeSettingsLayout({
     width,
@@ -241,17 +238,19 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
   }, [cursor, selected]);
 
   /**
-   * Applies a change and writes it through.
+   * Applies a change and writes it through the store.
    *
-   * `saveSettings` reports failure as a return value rather than throwing,
+   * The store's `setSettings` persists, updates the in-memory copy AND notifies
+   * every subscriber (this screen and chat included) synchronously, then reports
+   * whether the disk write succeeded as its return value rather than throwing —
    * because a read-only `$HOME` must not take the console down. What it must
    * also not do is look like it worked: the change stays live for the session
    * and the status line says so.
    */
   const commit = (next: TuiSettings) => {
-    setSettings(next);
     setPending(null);
-    if (saveSettings(next, homeDir)) {
+    const saved = setSettings(next);
+    if (saved) {
       setNotice(null);
       return;
     }
@@ -401,7 +400,7 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
           flexShrink={0}
           minWidth={0}
         >
-          <Cells width={row.width} fg={PRIMARY}>
+          <Cells width={row.width} fg={theme.PRIMARY}>
             {entry.group.toUpperCase()}
           </Cells>
         </box>
@@ -411,7 +410,7 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
     const active = index === cursor;
     const value = settingValue(settings, entry.def);
     const modified = isSettingModified(settings, entry.def);
-    const background = active ? PANEL_ALT : undefined;
+    const background = active ? theme.PANEL_ALT : undefined;
     return (
       <box
         key={`setting-${entry.def.key}`}
@@ -420,13 +419,13 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
         flexShrink={0}
         minWidth={0}
       >
-        <Cells width={row.markerWidth} fg={PRIMARY} bg={background}>
+        <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
           {active ? ">" : ""}
         </Cells>
         <Cells width={row.markerGap} bg={background}>
           {""}
         </Cells>
-        <Cells width={row.labelWidth} fg={active ? TEXT : MUTED} bg={background}>
+        <Cells width={row.labelWidth} fg={active ? theme.TEXT : theme.MUTED} bg={background}>
           {entry.def.label}
         </Cells>
         <Cells width={row.valueGap} bg={background}>
@@ -435,7 +434,7 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
         <Cells
           width={row.valueWidth}
           align="right"
-          fg={modified ? ACCENT : MUTED}
+          fg={modified ? theme.ACCENT : theme.MUTED}
           bg={background}
         >
           {settingValueLabel(entry.def, value)}
@@ -444,14 +443,36 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
     );
   });
 
+  // The detail pane's rows are shared between the textual metadata and a live
+  // visual PREVIEW of the highlighted setting. The preview reserves rows first,
+  // but never so many that the description loses its footing: at least
+  // `MIN_TEXT_ROWS` stay with the prose, and the preview only appears when it
+  // can show its header plus real content. Every width and the total row budget
+  // still come off `settings-layout`; this is the one split the screen performs
+  // on top, and the preview physically cannot paint more rows than it is lent.
+  const activeValue = settingValue(settings, activeDef);
+  const detailInner = layout.detail.innerWidth;
+  const detailRows = layout.detail.bodyRows;
+  const MIN_TEXT_ROWS = 3;
+  const desiredPreview =
+    activeDef && detailInner > 0
+      ? previewRowCount({ def: activeDef, value: activeValue, width: detailInner, settings })
+      : 0;
+  let previewRows = 0;
+  if (desiredPreview >= 2 && detailRows >= MIN_TEXT_ROWS + 2) {
+    previewRows = Math.min(desiredPreview, detailRows - MIN_TEXT_ROWS);
+    if (previewRows < 2) previewRows = 0;
+  }
+  const textRows = detailRows - previewRows;
+
   const detailBody = clipDetailLines(
-    settingsDetailLines(activeDef, settingValue(settings, activeDef), layout.detail.innerWidth, {
+    settingsDetailLines(activeDef, activeValue, detailInner, {
       compact: layout.detailCompact,
     }),
-    layout.detail.bodyRows,
-    layout.detail.innerWidth,
+    textRows,
+    detailInner,
   ).map((line, index) => (
-    <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(line.tone)}>
+    <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(line.tone, theme)}>
       {line.text}
     </Cells>
   ));
@@ -468,10 +489,10 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
           pane={layout.list}
           bordered={layout.bordered}
           title={settingsListTitle(window)}
-          titleFg={MUTED}
+          titleFg={theme.MUTED}
         >
           {rows.length === 0 ? (
-            <Cells width={row.width} fg={MUTED}>
+            <Cells width={row.width} fg={theme.MUTED}>
               no settings match this filter
             </Cells>
           ) : (
@@ -482,9 +503,19 @@ export function SettingsScreen({ frame, onBack, onExit, homeDir }: SettingsScree
           pane={layout.detail}
           bordered={layout.bordered}
           title={activeDef ? "DETAIL" : "DETAIL -"}
-          titleFg={MUTED}
+          titleFg={theme.MUTED}
         >
           {detailBody}
+          {previewRows > 0 ? (
+            <SettingsPreview
+              def={activeDef}
+              value={activeValue}
+              width={detailInner}
+              settings={settings}
+              rowBudget={previewRows}
+              theme={theme}
+            />
+          ) : null}
         </Pane>
       </box>
       {statusText ? (
