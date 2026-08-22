@@ -199,6 +199,8 @@ const TERMINAL_BLOCK_LOGO = [
   " ██████   ███████  ███████   ██████  ",
 ] as const;
 const TERMINAL_BLOCK_LOGO_WIDTH = 37;
+/** Columns of the block logo occupied by the "0" glyph (rendered red). */
+const LOGO_ZERO_COLS = 9;
 
 function modeLabel(mode: ConsoleAutonomyMode): string {
   if (mode === "standard") return "Standard";
@@ -2835,10 +2837,25 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
               <box flexDirection="column" alignItems={showTerminalMark ? "center" : "flex-start"} paddingTop={showTerminalMark ? 3 : 1}>
                 {showTerminalMark ? (
                   <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
-                    {/* Row 0 and row 4 are identical, so the line cannot be the key. */}
-                    {TERMINAL_BLOCK_LOGO.map((line, index) => <text key={`logo-${index}`} fg={PRIMARY}>{line}</text>)}
+                    {/*
+                      * 0sec brand mark: the "0" glyph in red, "SEC" in white.
+                      * The block font is column-aligned so LOGO_ZERO_COLS splits
+                      * every row at the same point. Row 0 and row 4 are
+                      * identical glyphs, so index — not the line — is the key.
+                      */}
+                    {TERMINAL_BLOCK_LOGO.map((line, index) => (
+                      <box key={`logo-${index}`} flexDirection="row" flexShrink={0}>
+                        <text fg={ERROR}>{line.slice(0, LOGO_ZERO_COLS)}</text>
+                        <text fg={TEXT}>{line.slice(LOGO_ZERO_COLS)}</text>
+                      </box>
+                    ))}
                   </box>
-                ) : <text fg={PRIMARY}>0SEC · OPERATOR CONSOLE</text>}
+                ) : (
+                  <box flexDirection="row" flexShrink={0}>
+                    <text fg={ERROR}>0</text>
+                    <text fg={TEXT}>SEC · OPERATOR CONSOLE</text>
+                  </box>
+                )}
                 {showEmptyStateTagline ? <text fg={TEXT}>evidence-first security research</text> : null}
                 {showEmptyStateHint ? <text fg={MUTED}>{fitTuiText("Describe an objective. 0sec enforces engagement scope before egress.", contentWidth)}</text> : null}
                 {!compact && showTerminalMark ? <text fg={MUTED}>{fitTuiText("Type / for local commands. Standard works in scope; Co-pilot confirms active work; YOLO requires a configured scope.", contentWidth)}</text> : null}
