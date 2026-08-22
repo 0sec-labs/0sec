@@ -1121,6 +1121,22 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       // to standard while the header kept showing the mode they chose.
       autonomyMode: modeRef.current,
       initialMessages: opts.initialMessages,
+      // The parent messaging runtime. WITHOUT this, no subagent gets the
+      // send_message/check_messages tools and the model correctly reports it
+      // cannot coordinate — which is exactly what an operator was seeing.
+      //
+      // The console IS the operator's session, so the parent and the operator
+      // are the same peer: operatorId is left undefined (child->operator would
+      // just be child->parent, which is always on). Children address "Main"
+      // and each other; sibling messaging flows child->child directly through
+      // the mailbox spool, so it needs no console-side draining to work.
+      agentMessaging: {
+        selfId: "Main",
+        selfRole: "parent" as const,
+        siblingChannelEnabled: settingsRef.current.allowSubagentPeerMessaging,
+        operatorChannelEnabled: settingsRef.current.allowSubagentOperatorMessaging,
+        projectPath: process.cwd(),
+      },
       requestScope: (request) => {
         const deferred = Promise.withResolvers<ConsoleScopeResolution | null>();
         if (!alive.current) {
