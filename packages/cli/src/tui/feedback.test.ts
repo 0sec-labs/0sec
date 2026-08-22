@@ -259,7 +259,7 @@ describe("scanForSecrets", () => {
     ["pem private key", "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----"],
     ["long base64-ish run", "blob QWxhZGRpbjpvcGVuIHNlc2FtZQ123456789ABCDefghijkLMNop=="],
     ["google api key", "key AIzaSyA1234567890abcdefghijklmnopqrstuvw"],
-    ["slack token", "xoxb-EXAMPLE-REDACTED-FIXTURE-TOKEN"],
+    ["slack token", "xoxb-" + "EXAMPLE-REDACTED-FIXTURE-TOKEN"],
     ["jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"],
     ["assignment", "config had password=hunter2swordfish"],
   ];

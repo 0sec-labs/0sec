@@ -32,7 +32,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { peekInbox } from "@0sec/core";
 
-import { ACCENT, BORDER, MUTED, PANEL, PANEL_ALT, PRIMARY, TEXT, WARNING } from "../ui/theme.js";
+import { useTheme, type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
 import {
   HERD_EMPTY_TEXT,
@@ -95,32 +95,32 @@ export interface HerdScreenProps {
   now?: () => number;
 }
 
-function toneColor(tone: HerdDetailTone): string | undefined {
+function toneColor(theme: Theme, tone: HerdDetailTone): string | undefined {
   switch (tone) {
     case "title":
-      return PRIMARY;
+      return theme.PRIMARY;
     case "accent":
-      return ACCENT;
+      return theme.ACCENT;
     case "warn":
-      return WARNING;
+      return theme.WARNING;
     case "muted":
     case "blank":
-      return MUTED;
+      return theme.MUTED;
     default:
-      return TEXT;
+      return theme.TEXT;
   }
 }
 
 /** The colour a status heading and its rows render in. */
-function statusColor(status: string): string {
+function statusColor(theme: Theme, status: string): string {
   switch (status) {
     case "working":
-      return ACCENT;
+      return theme.ACCENT;
     case "blocked":
     case "stale":
-      return WARNING;
+      return theme.WARNING;
     default:
-      return MUTED;
+      return theme.MUTED;
   }
 }
 
@@ -143,6 +143,7 @@ function Pane({
   titleFg: string;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
   if (pane.width <= 0 || pane.height <= 0) return null;
   const titleRow = pane.hasTitle ? (
     <Cells width={pane.innerWidth} fg={titleFg}>
@@ -158,8 +159,8 @@ function Pane({
       flexGrow={0}
       minWidth={0}
       border={bordered || undefined}
-      borderColor={bordered ? BORDER : undefined}
-      backgroundColor={bordered ? PANEL : undefined}
+      borderColor={bordered ? theme.BORDER : undefined}
+      backgroundColor={bordered ? theme.PANEL : undefined}
       paddingX={bordered ? 1 : undefined}
     >
       {titleRow}
@@ -190,6 +191,7 @@ export function HerdScreen({
   homeDir,
   now: nowFn,
 }: HerdScreenProps) {
+  const theme = useTheme();
   const { width, height } = useTerminalDimensions();
   const clock = nowFn ?? Date.now;
   const cwd = projectPath ?? process.cwd();
@@ -314,7 +316,7 @@ export function HerdScreen({
 
   const listBody =
     rows.length === 0 ? (
-      <Cells width={row.width || layout.list.innerWidth} fg={MUTED}>
+      <Cells width={row.width || layout.list.innerWidth} fg={theme.MUTED}>
         {HERD_EMPTY_TEXT}
       </Cells>
     ) : (
@@ -329,7 +331,7 @@ export function HerdScreen({
               flexShrink={0}
               minWidth={0}
             >
-              <Cells width={row.width} fg={statusColor(entry.status)}>
+              <Cells width={row.width} fg={statusColor(theme, entry.status)}>
                 {`${herdStatusLabel(entry.status)} ${entry.count}`}
               </Cells>
             </box>
@@ -337,7 +339,7 @@ export function HerdScreen({
         }
 
         const active = index === cursor;
-        const background = active ? PANEL_ALT : undefined;
+        const background = active ? theme.PANEL_ALT : undefined;
         return (
           <box
             key={`peer-${entry.peer.id}`}
@@ -347,13 +349,13 @@ export function HerdScreen({
             minWidth={0}
             onMouseDown={() => setSelected(index)}
           >
-            <Cells width={row.markerWidth} fg={PRIMARY} bg={background}>
+            <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
               {active ? ">" : ""}
             </Cells>
             <Cells width={row.markerGap} bg={background}>
               {""}
             </Cells>
-            <Cells width={row.labelWidth} fg={active ? TEXT : MUTED} bg={background}>
+            <Cells width={row.labelWidth} fg={active ? theme.TEXT : theme.MUTED} bg={background}>
               {herdRowLabelText(entry.peer)}
             </Cells>
             <Cells width={row.statusGap} bg={background}>
@@ -362,7 +364,7 @@ export function HerdScreen({
             <Cells
               width={row.statusWidth}
               align="right"
-              fg={statusColor(entry.status)}
+              fg={statusColor(theme, entry.status)}
               bg={background}
             >
               {herdRowStatusText(entry.peer, entry.status)}
@@ -381,12 +383,12 @@ export function HerdScreen({
         layout.detail.bodyRows,
         layout.detail.innerWidth,
       ).map((line, index) => (
-        <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(line.tone)}>
+        <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(theme, line.tone)}>
           {line.text}
         </Cells>
       ))
     : (
-        <Cells width={layout.detail.innerWidth} fg={MUTED}>
+        <Cells width={layout.detail.innerWidth} fg={theme.MUTED}>
           {rows.length === 0 ? "waiting for the roster" : "select a peer"}
         </Cells>
       );
@@ -399,14 +401,14 @@ export function HerdScreen({
         flexShrink={0}
         minWidth={0}
       >
-        <Pane pane={layout.list} bordered={layout.bordered} title={herdListTitle(window)} titleFg={MUTED}>
+        <Pane pane={layout.list} bordered={layout.bordered} title={herdListTitle(window)} titleFg={theme.MUTED}>
           {listBody}
         </Pane>
         <Pane
           pane={layout.detail}
           bordered={layout.bordered}
           title={activePeer ? "DETAIL" : "DETAIL -"}
-          titleFg={MUTED}
+          titleFg={theme.MUTED}
         >
           {detailBody}
         </Pane>

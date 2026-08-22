@@ -6,21 +6,8 @@ import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@ope
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
 import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
 import { getRuntimeAvailability } from "../utils.js";
-import {
-  ACCENT,
-  CANVAS,
-  BORDER,
-  ERROR,
-  INFO,
-  MUTED,
-  PANEL,
-  PANEL_ALT,
-  PRIMARY,
-  SUCCESS,
-  TEXT,
-  WARNING,
-  severityTone,
-} from "../ui/theme.js";
+import { useTheme, type Theme } from "./theme-context.js";
+import { severityToneFor } from "./themes.js";
 import { fitTuiText, fitTuiUrl } from "./text.js";
 import {
   describeFixStatus,
@@ -220,6 +207,7 @@ class TuiErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
 // dimensions, so the panel does it: a crash message is arbitrary length and
 // a guessed 96-column budget spills past the frame on a narrow terminal.
 function CrashPanel({ message }: { message: string }) {
+  const theme = useTheme();
   const { width } = useTerminalDimensions();
   const contentWidth = Math.max(1, width - SHELL_HORIZONTAL_PADDING * 2 - PANEL_HORIZONTAL_CHROME);
   const tracePath = process.env["0SEC_TRACE_TUI_EVENTS"] ?? "/tmp/0sec-tui-crashes.ndjson";
@@ -227,9 +215,9 @@ function CrashPanel({ message }: { message: string }) {
   return (
     <ShellFrame view="crash">
       <box flexDirection="column" width="100%" minWidth={0}>
-        <text fg={ERROR}>{fitTuiText("TUI crashed while rendering the current screen.", contentWidth)}</text>
-        <text fg={MUTED} wrapMode="word">{fitTuiText(message, contentWidth)}</text>
-        <text fg={MUTED}>{fitTuiUrl(`Trace file: ${tracePath}`, contentWidth)}</text>
+        <text fg={theme.ERROR}>{fitTuiText("TUI crashed while rendering the current screen.", contentWidth)}</text>
+        <text fg={theme.MUTED} wrapMode="word">{fitTuiText(message, contentWidth)}</text>
+        <text fg={theme.MUTED}>{fitTuiUrl(`Trace file: ${tracePath}`, contentWidth)}</text>
       </box>
     </ShellFrame>
   );
@@ -778,15 +766,16 @@ function OverlayFrame({
   footer: string;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
   const { width } = useTerminalDimensions();
   const overlay = getOverlayLayout(width);
 
   return (
-    <box position="absolute" top="12%" left={overlay.left} width={overlay.width} border borderColor={MUTED} backgroundColor={PANEL_ALT} paddingX={1} paddingY={0} zIndex={10}>
+    <box position="absolute" top="12%" left={overlay.left} width={overlay.width} border borderColor={theme.MUTED} backgroundColor={theme.PANEL_ALT} paddingX={1} paddingY={0} zIndex={10}>
       <box flexDirection="column" width="100%" minWidth={0}>
-        <text fg={PRIMARY}>{fitTuiText(title, overlay.contentWidth)}</text>
+        <text fg={theme.PRIMARY}>{fitTuiText(title, overlay.contentWidth)}</text>
         {children}
-        <text fg={MUTED}>{fitTuiText(footer, overlay.contentWidth)}</text>
+        <text fg={theme.MUTED}>{fitTuiText(footer, overlay.contentWidth)}</text>
       </box>
     </box>
   );
@@ -803,6 +792,7 @@ function PaletteOverlay({
   selected: number;
   commands: PaletteCommand[];
 }) {
+  const theme = useTheme();
   const { width, height } = useTerminalDimensions();
   const contentWidth = getOverlayLayout(width).contentWidth;
   // Every command row is a one-cell rail plus a one-cell margin before its
@@ -823,42 +813,56 @@ function PaletteOverlay({
     1,
     Math.min(PALETTE_MAX_COMMANDS, Math.floor((getOverlayBodyRows(height) - 1) / 2)),
   );
+  // The no-match message carries the query, so it is built as one string with
+  // a real gap between the words: fitTuiText trims and collapses whitespace, so
+  // a padded literal in a separate <text> beside the query would lose the gap
+  // and fuse. The message is a bounded <text> of its own, distinct from the
+  // OverlayFrame footer hint below it, so the two can never share a line.
+  const trimmedQuery = query.trim();
+  const noMatchText = trimmedQuery
+    ? `no command matches ${trimmedQuery}`
+    : "no commands available";
 
   return (
     <OverlayFrame title={title} footer="ctrl+p close · enter run · esc cancel">
         <box flexDirection="row" width="100%" minWidth={0}>
-          <text flexShrink={0} fg={MUTED}>{queryLabel}</text>
+          <text flexShrink={0} fg={theme.MUTED}>{queryLabel}</text>
           <box width={queryWidth} flexShrink={0} minWidth={0}>
-            <text fg={TEXT}>{fitTuiText(query || "type to filter commands", queryWidth)}</text>
+            <text fg={theme.TEXT}>{fitTuiText(query || "type to filter commands", queryWidth)}</text>
           </box>
-          <text width={1} flexShrink={0} fg={INFO}>█</text>
+          <text width={1} flexShrink={0} fg={theme.INFO}>█</text>
         </box>
         {commands.slice(0, visibleCommands).map((command, index) => {
           const active = index === selected;
           return (
             <box key={command.id} flexDirection="row" width="100%" minWidth={0}>
-              <RailBar tone={active ? PRIMARY : BORDER} />
+              <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
               <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
                 <box flexDirection="row" width={rowWidth} minWidth={0} gap={commandMetaGap}>
                   <box width={commandTitleWidth} flexShrink={0} minWidth={0}>
-                    <text fg={active ? TEXT : "#CCCCCC"}>{fitTuiText(command.title, commandTitleWidth)}</text>
+                    <text fg={active ? theme.TEXT : "#CCCCCC"}>{fitTuiText(command.title, commandTitleWidth)}</text>
                   </box>
                   {commandMetaWidth > 0 ? (
                     <box width={commandMetaWidth} flexShrink={0} minWidth={0} alignItems="flex-end">
-                      <text fg={MUTED}>{fitTuiText(command.keybind ?? command.category, commandMetaWidth)}</text>
+                      <text fg={theme.MUTED}>{fitTuiText(command.keybind ?? command.category, commandMetaWidth)}</text>
                     </box>
                   ) : null}
                 </box>
-                <text fg={active ? ACCENT : MUTED} wrapMode="word">{fitTuiText(command.description, rowWidth)}</text>
+                <text fg={active ? theme.ACCENT : theme.MUTED} wrapMode="word">{fitTuiText(command.description, rowWidth)}</text>
               </box>
             </box>
           );
         })}
+        {commands.length === 0 ? (
+          <box width={rowWidth} flexShrink={0} minWidth={0}>
+            <text fg={theme.MUTED}>{fitTuiText(noMatchText, rowWidth)}</text>
+          </box>
+        ) : null}
     </OverlayFrame>
   );
 }
 
-function parseToolAction(action: string): {
+function parseToolAction(theme: Theme, action: string): {
   kind: "http" | "crawl" | "bash" | "save" | "read" | "run" | "install" | "summary" | "generic";
   title: string;
   meta?: string;
@@ -873,7 +877,7 @@ function parseToolAction(action: string): {
       kind: "http",
       title: `${method} ${url || "request"}`,
       meta: "http request",
-      tone: PRIMARY,
+      tone: theme.PRIMARY,
     };
   }
   if (action.startsWith("crawl:")) {
@@ -881,7 +885,7 @@ function parseToolAction(action: string): {
       kind: "crawl",
       title: action.slice("crawl:".length).trim() || "crawl",
       meta: "crawl",
-      tone: PRIMARY,
+      tone: theme.PRIMARY,
     };
   }
   if (action.startsWith("bash:")) {
@@ -889,7 +893,7 @@ function parseToolAction(action: string): {
       kind: "bash",
       title: action.slice("bash:".length).trim() || "shell",
       meta: "shell",
-      tone: PRIMARY,
+      tone: theme.PRIMARY,
     };
   }
   if (action.startsWith("save_finding:")) {
@@ -897,7 +901,7 @@ function parseToolAction(action: string): {
       kind: "save",
       title: action.slice("save_finding:".length).trim() || "saved finding",
       meta: "finding",
-      tone: SUCCESS,
+      tone: theme.SUCCESS,
     };
   }
   if (action.startsWith("read_file:")) {
@@ -905,7 +909,7 @@ function parseToolAction(action: string): {
       kind: "read",
       title: action.slice("read_file:".length).trim() || "source file",
       meta: "reading source",
-      tone: INFO,
+      tone: theme.INFO,
     };
   }
   if (action.startsWith("run_command:")) {
@@ -913,7 +917,7 @@ function parseToolAction(action: string): {
       kind: "run",
       title: action.slice("run_command:".length).trim() || "command",
       meta: "running command",
-      tone: PRIMARY,
+      tone: theme.PRIMARY,
     };
   }
   if (action.startsWith("Reading ")) {
@@ -921,7 +925,7 @@ function parseToolAction(action: string): {
       kind: "read",
       title: action.slice("Reading ".length).trim() || "source file",
       meta: "reading source",
-      tone: INFO,
+      tone: theme.INFO,
     };
   }
   if (action.startsWith("Running: ")) {
@@ -929,7 +933,7 @@ function parseToolAction(action: string): {
       kind: "run",
       title: action.slice("Running: ".length).trim() || "command",
       meta: "running command",
-      tone: PRIMARY,
+      tone: theme.PRIMARY,
     };
   }
   if (action.startsWith("Installing ") || action.startsWith("Installed ")) {
@@ -937,7 +941,7 @@ function parseToolAction(action: string): {
       kind: "install",
       title: action,
       meta: "preparing package",
-      tone: ACCENT,
+      tone: theme.ACCENT,
     };
   }
   if (action.startsWith("Target ready:") || action.startsWith("Analysis complete:") || action.startsWith("done:")) {
@@ -945,26 +949,26 @@ function parseToolAction(action: string): {
       kind: "summary",
       title: action,
       meta: "stage summary",
-      tone: MUTED,
+      tone: theme.MUTED,
     };
   }
   return {
       kind: "generic",
       title: action,
       meta: undefined,
-      tone: TEXT,
+      tone: theme.TEXT,
     };
 }
 
-function renderToolActionLine(action: string, key: string, maxWidth: number) {
-  const parsed = parseToolAction(action);
+function renderToolActionLine(theme: Theme, action: string, key: string, maxWidth: number) {
+  const parsed = parseToolAction(theme, action);
   const contentWidth = Math.max(8, maxWidth - 2);
   return (
     <box key={key} flexDirection="row" width="100%" minWidth={0}>
       <text width={1} flexShrink={0} fg={parsed.tone}>•</text>
       <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
         <text fg={parsed.tone} wrapMode="word">{fitTuiText(parsed.title, contentWidth)}</text>
-        {parsed.meta ? <text fg={MUTED}>{fitTuiText(parsed.meta, contentWidth)}</text> : null}
+        {parsed.meta ? <text fg={theme.MUTED}>{fitTuiText(parsed.meta, contentWidth)}</text> : null}
       </box>
     </box>
   );
@@ -977,6 +981,7 @@ function TimelineOverlay({
   selected: number;
   turns: TranscriptItem[];
 }) {
+  const theme = useTheme();
   const { width, height } = useTerminalDimensions();
   const contentWidth = Math.max(8, getOverlayLayout(width).contentWidth - 2);
   // Same unbordered-overflow trap as the palette: each turn costs two rows
@@ -992,10 +997,10 @@ function TimelineOverlay({
           const active = index === selected;
           return (
             <box key={turn.id} flexDirection="row" width="100%" minWidth={0}>
-              <RailBar tone={active ? PRIMARY : BORDER} />
+              <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
               <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                <text fg={active ? TEXT : "#CCCCCC"} wrapMode="word">{fitTuiText(turn.text, contentWidth)}</text>
-                <text fg={active ? ACCENT : MUTED}>{fitTuiText(`${turn.stage ?? "session"}${turn.turn !== undefined ? ` · turn ${turn.turn}` : ""}`, contentWidth)}</text>
+                <text fg={active ? theme.TEXT : "#CCCCCC"} wrapMode="word">{fitTuiText(turn.text, contentWidth)}</text>
+                <text fg={active ? theme.ACCENT : theme.MUTED}>{fitTuiText(`${turn.stage ?? "session"}${turn.turn !== undefined ? ` · turn ${turn.turn}` : ""}`, contentWidth)}</text>
               </box>
             </box>
           );
@@ -1005,19 +1010,20 @@ function TimelineOverlay({
 }
 
 function ComposeOverlay({ text }: { text: string }) {
+  const theme = useTheme();
   const { width } = useTerminalDimensions();
   const contentWidth = getOverlayLayout(width).contentWidth;
   const inputWidth = Math.max(1, contentWidth - 3);
 
   return (
     <OverlayFrame title="MESSAGE TO AGENT" footer="enter send · esc cancel">
-      <text fg={MUTED} wrapMode="word">{fitTuiText("will be injected at next turn boundary", contentWidth)}</text>
+      <text fg={theme.MUTED} wrapMode="word">{fitTuiText("will be injected at next turn boundary", contentWidth)}</text>
       <box flexDirection="row" marginTop={1} width="100%" minWidth={0}>
-        <text width={2} flexShrink={0} fg={PRIMARY}>&gt; </text>
+        <text width={2} flexShrink={0} fg={theme.PRIMARY}>&gt; </text>
         <box width={inputWidth} flexShrink={0} minWidth={0}>
-          <text fg={TEXT} wrapMode="word">{fitTuiText(text || " ", inputWidth)}</text>
+          <text fg={theme.TEXT} wrapMode="word">{fitTuiText(text || " ", inputWidth)}</text>
         </box>
-        <text width={1} flexShrink={0} fg={INFO}>█</text>
+        <text width={1} flexShrink={0} fg={theme.INFO}>█</text>
       </box>
     </OverlayFrame>
   );
@@ -1069,26 +1075,28 @@ function BrandSignature({
   subtitle?: string;
   animated?: boolean;
 }) {
+  const theme = useTheme();
   const brand = useAnimatedBrand(animated && !muted);
 
   return (
     <box flexDirection="column" alignItems="flex-end">
       <box flexDirection="row" width={BRAND_STAMP_WIDTH} flexShrink={0}>
-        <text width={4} flexShrink={0} fg={muted ? MUTED : PRIMARY}>{animated && !muted ? brand.word : "0sec"}</text>
-        <text flexShrink={0} fg={MUTED}>{` v${VERSION}`}</text>
+        <text width={4} flexShrink={0} fg={muted ? theme.MUTED : theme.PRIMARY}>{animated && !muted ? brand.word : "0sec"}</text>
+        <text flexShrink={0} fg={theme.MUTED}>{` v${VERSION}`}</text>
       </box>
-      {subtitle ? <text fg={MUTED}>{fitTuiText(subtitle, 36)}</text> : null}
+      {subtitle ? <text fg={theme.MUTED}>{fitTuiText(subtitle, 36)}</text> : null}
     </box>
   );
 }
 
 function BrandStamp({ animated = false }: { animated?: boolean }) {
+  const theme = useTheme();
   const brand = useAnimatedBrand(animated);
 
   return (
     <box flexDirection="row" width={BRAND_STAMP_WIDTH} flexShrink={0}>
-      <text width={4} flexShrink={0} fg={MUTED}>{animated ? brand.word : "0sec"}</text>
-      <text flexShrink={0} fg={MUTED}>{` v${VERSION}`}</text>
+      <text width={4} flexShrink={0} fg={theme.MUTED}>{animated ? brand.word : "0sec"}</text>
+      <text flexShrink={0} fg={theme.MUTED}>{` v${VERSION}`}</text>
     </box>
   );
 }
@@ -1104,6 +1112,7 @@ function HeaderBar({
   view: string;
   status?: React.ReactNode;
 }) {
+  const theme = useTheme();
   const { width } = useTerminalDimensions();
   const contentWidth = Math.max(1, width - SHELL_HORIZONTAL_PADDING * 2 - PANEL_HORIZONTAL_CHROME);
   const compact = contentWidth < HEADER_COMPACT_WIDTH;
@@ -1120,32 +1129,32 @@ function HeaderBar({
     ? contentWidth
     : Math.max(1, contentWidth - statusWidth);
   const statusContent = typeof status === "string"
-    ? <text fg={MUTED}>{fitTuiText(status, statusWidth)}</text>
+    ? <text fg={theme.MUTED}>{fitTuiText(status, statusWidth)}</text>
     : status;
 
   return (
-    <box border borderColor={BORDER} backgroundColor={PANEL} paddingX={1} paddingY={0} marginBottom={1} width="100%" minWidth={0}>
+    <box border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} paddingY={0} marginBottom={1} width="100%" minWidth={0}>
       <box flexDirection="column" width="100%" minWidth={0}>
         {compact ? (
           <>
-            <text fg={TEXT}>{fitTuiText("0SEC TUI CONSOLE", titleWidth)}</text>
-            <text fg={PRIMARY}>{fitTuiText(view.toUpperCase(), viewWidth)}</text>
-            <text fg={MUTED}>{fitTuiText("Launch targets, monitor sessions, and review findings.", descriptionWidth)}</text>
+            <text fg={theme.TEXT}>{fitTuiText("0SEC TUI CONSOLE", titleWidth)}</text>
+            <text fg={theme.PRIMARY}>{fitTuiText(view.toUpperCase(), viewWidth)}</text>
+            <text fg={theme.MUTED}>{fitTuiText("Launch targets, monitor sessions, and review findings.", descriptionWidth)}</text>
             {status ? <box width={statusWidth} flexShrink={0} minWidth={0}>{statusContent}</box> : null}
           </>
         ) : (
           <>
             <box flexDirection="row" width="100%" minWidth={0}>
               <box flexGrow={1} minWidth={0}>
-                <text fg={TEXT}>{fitTuiText("0SEC TUI CONSOLE", titleWidth)}</text>
+                <text fg={theme.TEXT}>{fitTuiText("0SEC TUI CONSOLE", titleWidth)}</text>
               </box>
               <box width={viewWidth} flexShrink={0} flexDirection="column" alignItems="flex-end" minWidth={0}>
-                <text fg={PRIMARY}>{fitTuiText(view.toUpperCase(), viewWidth)}</text>
+                <text fg={theme.PRIMARY}>{fitTuiText(view.toUpperCase(), viewWidth)}</text>
               </box>
             </box>
             <box flexDirection="row" width="100%" minWidth={0}>
               <box flexGrow={1} minWidth={0}>
-                <text fg={MUTED}>{fitTuiText("Launch targets, monitor sessions, and review findings.", descriptionWidth)}</text>
+                <text fg={theme.MUTED}>{fitTuiText("Launch targets, monitor sessions, and review findings.", descriptionWidth)}</text>
               </box>
               {status ? <box width={statusWidth} flexShrink={0} flexDirection="column" alignItems="flex-end" minWidth={0}>{statusContent}</box> : null}
             </box>
@@ -1187,18 +1196,19 @@ function getFooterLayout(terminalWidth: number, hasStatus: boolean): {
 }
 
 function FooterBar({ hint, status }: { hint: string; status?: React.ReactNode }) {
+  const theme = useTheme();
   const { width } = useTerminalDimensions();
   const footer = getFooterLayout(width, Boolean(status));
 
   return (
     <box flexDirection={footer.inline ? "row" : "column"} width="100%" minWidth={0}>
       <box width={footer.inline ? footer.hintWidth : "100%"} flexShrink={0} minWidth={0}>
-        <text fg={MUTED} wrapMode="word">{fitTuiText(hint, footer.hintWidth)}</text>
+        <text fg={theme.MUTED} wrapMode="word">{fitTuiText(hint, footer.hintWidth)}</text>
       </box>
       <box flexDirection="row" flexShrink={0} marginTop={footer.inline ? 0 : 1}>
         {status ? (
           <box width={footer.statusWidth} flexShrink={0} minWidth={0} marginRight={footer.statusGap}>
-            {typeof status === "string" ? <text fg={MUTED}>{fitTuiText(status, footer.statusWidth)}</text> : status}
+            {typeof status === "string" ? <text fg={theme.MUTED}>{fitTuiText(status, footer.statusWidth)}</text> : status}
           </box>
         ) : null}
         <box width={BRAND_STAMP_WIDTH} flexShrink={0} minWidth={0}>
@@ -1210,6 +1220,7 @@ function FooterBar({ hint, status }: { hint: string; status?: React.ReactNode })
 }
 
 function LiveBadge({ label, active = true }: { label: string; active?: boolean }) {
+  const theme = useTheme();
   const { width } = useTerminalDimensions();
   // The badge is only ever rendered as FooterBar's status, so it spends the
   // cells the footer reserved for that slot — the dot and the space in front
@@ -1218,13 +1229,14 @@ function LiveBadge({ label, active = true }: { label: string; active?: boolean }
 
   return (
     <box flexDirection="row" width="100%" minWidth={0}>
-      <text width={1} flexShrink={0} fg={active ? SUCCESS : MUTED}>●</text>
-      <text flexShrink={0} fg={MUTED}>{` ${fitTuiText(label, labelWidth)}`}</text>
+      <text width={1} flexShrink={0} fg={active ? theme.SUCCESS : theme.MUTED}>●</text>
+      <text flexShrink={0} fg={theme.MUTED}>{` ${fitTuiText(label, labelWidth)}`}</text>
     </box>
   );
 }
 
 function ShimmerLabel({ text }: { text: string }) {
+  const theme = useTheme();
   const [frame, setFrame] = useState(0);
   const chars = useMemo(() => Array.from(text), [text]);
   const padding = 10;
@@ -1241,7 +1253,7 @@ function ShimmerLabel({ text }: { text: string }) {
       {chars.map((char, index) => {
         const center = frame - padding;
         const distance = Math.abs(index - center);
-        const fg = distance < 1.5 ? ACCENT : distance < 3.5 ? TEXT : MUTED;
+        const fg = distance < 1.5 ? theme.ACCENT : distance < 3.5 ? theme.TEXT : theme.MUTED;
         return <text key={`${index}-${char}`} width={1} flexShrink={0} fg={fg}>{char}</text>;
       })}
     </box>
@@ -1249,6 +1261,7 @@ function ShimmerLabel({ text }: { text: string }) {
 }
 
 function WorkingPulse({ label, detail, maxWidth }: { label: string; detail?: string; maxWidth: number }) {
+  const theme = useTheme();
   const [frame, setFrame] = useState(0);
   const contentWidth = Math.max(12, maxWidth);
 
@@ -1269,21 +1282,21 @@ function WorkingPulse({ label, detail, maxWidth }: { label: string; detail?: str
 
   return (
     <box flexDirection="row" marginTop={1} width="100%" minWidth={0}>
-      <RailBar tone={PRIMARY} />
-      <box flexDirection="column" marginLeft={1} backgroundColor={PANEL_ALT} paddingX={1} flexGrow={1} minWidth={0}>
+      <RailBar tone={theme.PRIMARY} />
+      <box flexDirection="column" marginLeft={1} backgroundColor={theme.PANEL_ALT} paddingX={1} flexGrow={1} minWidth={0}>
         <box flexDirection="row" width="100%" minWidth={0}>
-          <text width={loader.length} flexShrink={0} fg={ACCENT}>{loader}</text>
+          <text width={loader.length} flexShrink={0} fg={theme.ACCENT}>{loader}</text>
           <box width={labelWidth} flexShrink={0} marginLeft={1} minWidth={0}>
             <ShimmerLabel text={fitTuiText(label, labelWidth)} />
           </box>
         </box>
-        {detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(detail, innerWidth)}</text> : null}
+        {detail ? <text fg={theme.MUTED} wrapMode="word">{fitTuiText(detail, innerWidth)}</text> : null}
       </box>
     </box>
   );
 }
 
-function formatLiveActivity(state: SessionState, runningStage: SessionState["stages"][number] | null, latestRunningAction?: string): {
+function formatLiveActivity(theme: Theme, state: SessionState, runningStage: SessionState["stages"][number] | null, latestRunningAction?: string): {
   label: string;
   detail?: string;
 } {
@@ -1294,17 +1307,17 @@ function formatLiveActivity(state: SessionState, runningStage: SessionState["sta
     };
   }
 
-  const liveTool = formatActiveToolLabel(latestRunningAction);
+  const liveTool = formatActiveToolLabel(theme, latestRunningAction);
   return {
     label: liveTool.label,
     detail: latestRunningAction ? liveTool.detail : (runningStage?.detail ?? "waiting for the next tool result"),
   };
 }
 
-function formatActiveToolLabel(action?: string): { label: string; detail?: string } {
+function formatActiveToolLabel(theme: Theme, action?: string): { label: string; detail?: string } {
   if (!action) return { label: "agent working", detail: "waiting for the next tool result" };
 
-  const parsed = parseToolAction(action);
+  const parsed = parseToolAction(theme, action);
   switch (parsed.kind) {
     case "http":
       return { label: "http request in flight", detail: parsed.title };
@@ -1327,29 +1340,30 @@ function formatActiveToolLabel(action?: string): { label: string; detail?: strin
   }
 }
 
-function railTone(item: TranscriptItem): string {
+function railTone(theme: Theme, item: TranscriptItem): string {
   switch (item.tone) {
-    case "primary": return PRIMARY;
-    case "success": return SUCCESS;
-    case "warning": return WARNING;
-    case "error": return ERROR;
-    case "info": return INFO;
-    default: return BORDER;
+    case "primary": return theme.PRIMARY;
+    case "success": return theme.SUCCESS;
+    case "warning": return theme.WARNING;
+    case "error": return theme.ERROR;
+    case "info": return theme.INFO;
+    default: return theme.BORDER;
   }
 }
 
-function textTone(item: TranscriptItem): string {
+function textTone(theme: Theme, item: TranscriptItem): string {
   switch (item.tone) {
-    case "primary": return TEXT;
-    case "success": return SUCCESS;
-    case "warning": return WARNING;
-    case "error": return ERROR;
-    case "info": return INFO;
-    default: return item.kind === "finding" ? PRIMARY : item.kind === "thinking" ? MUTED : TEXT;
+    case "primary": return theme.TEXT;
+    case "success": return theme.SUCCESS;
+    case "warning": return theme.WARNING;
+    case "error": return theme.ERROR;
+    case "info": return theme.INFO;
+    default: return item.kind === "finding" ? theme.PRIMARY : item.kind === "thinking" ? theme.MUTED : theme.TEXT;
   }
 }
 
 function renderTranscriptItem(
+  theme: Theme,
   item: TranscriptItem,
   options: {
     expanded: Set<string>;
@@ -1371,10 +1385,10 @@ function renderTranscriptItem(
   if (item.kind === "turn") {
     return (
       <box key={item.id} flexDirection="row" marginTop={1} width="100%" minWidth={0}>
-        <RailBar tone={PRIMARY} />
-        <box flexDirection="column" marginLeft={1} backgroundColor={PANEL_ALT} paddingX={1} flexGrow={1} minWidth={0}>
-          <text fg={TEXT} wrapMode="word">{fitTuiText(item.text.toUpperCase(), paddedWidth)}</text>
-          <text fg={MUTED}>{fitTuiText(`${item.stage ?? "session"}${item.turn !== undefined ? ` · operator turn ${item.turn}` : ""}`, paddedWidth)}</text>
+        <RailBar tone={theme.PRIMARY} />
+        <box flexDirection="column" marginLeft={1} backgroundColor={theme.PANEL_ALT} paddingX={1} flexGrow={1} minWidth={0}>
+          <text fg={theme.TEXT} wrapMode="word">{fitTuiText(item.text.toUpperCase(), paddedWidth)}</text>
+          <text fg={theme.MUTED}>{fitTuiText(`${item.stage ?? "session"}${item.turn !== undefined ? ` · operator turn ${item.turn}` : ""}`, paddedWidth)}</text>
         </box>
       </box>
     );
@@ -1393,13 +1407,13 @@ function renderTranscriptItem(
     const titleWidth = Math.max(1, cardWidth - controlWidth - controlGap);
     return (
       <box key={item.id} flexDirection="row" width="100%" minWidth={0}>
-        <RailBar tone={isHovered ? PRIMARY : railTone(item)} />
+        <RailBar tone={isHovered ? theme.PRIMARY : railTone(theme, item)} />
         <box
           flexDirection="column"
           marginLeft={1}
-          backgroundColor={isHovered ? PANEL : PANEL_ALT}
+          backgroundColor={isHovered ? theme.PANEL : theme.PANEL_ALT}
           border
-          borderColor={isHovered || isExpanded ? MUTED : BORDER}
+          borderColor={isHovered || isExpanded ? theme.MUTED : theme.BORDER}
           paddingX={1}
           paddingY={0}
           flexGrow={1}
@@ -1410,18 +1424,18 @@ function renderTranscriptItem(
         >
           <box flexDirection="row" width={cardWidth} minWidth={0} gap={controlGap}>
             <box width={titleWidth} flexShrink={0} minWidth={0}>
-              <text fg={isHovered ? PRIMARY : TEXT}>{fitTuiText((item.label ?? "Actions").toUpperCase(), titleWidth)}</text>
+              <text fg={isHovered ? theme.PRIMARY : theme.TEXT}>{fitTuiText((item.label ?? "Actions").toUpperCase(), titleWidth)}</text>
             </box>
             {controlWidth > 0 ? (
               <box width={controlWidth} flexShrink={0} minWidth={0} alignItems="flex-end">
-                <text fg={isHovered ? ACCENT : MUTED}>{fitTuiText(isExpanded ? "click to collapse" : "click to expand", controlWidth)}</text>
+                <text fg={isHovered ? theme.ACCENT : theme.MUTED}>{fitTuiText(isExpanded ? "click to collapse" : "click to expand", controlWidth)}</text>
               </box>
             ) : null}
           </box>
-          <text fg={MUTED}>{fitTuiText(`${item.stage}${item.turn !== undefined ? ` · turn ${item.turn}` : ""}`, cardWidth)}</text>
-          <text fg={MUTED} wrapMode="word">{fitTuiText(item.text, cardWidth)}</text>
-          {(isExpanded ? actions : preview).map((action, index) => renderToolActionLine(action, `${item.id}-${index}`, cardWidth))}
-          {isExpandable && !isExpanded ? <text fg={MUTED}>{fitTuiText(`${actions.length - preview.length} more hidden`, cardWidth)}</text> : null}
+          <text fg={theme.MUTED}>{fitTuiText(`${item.stage}${item.turn !== undefined ? ` · turn ${item.turn}` : ""}`, cardWidth)}</text>
+          <text fg={theme.MUTED} wrapMode="word">{fitTuiText(item.text, cardWidth)}</text>
+          {(isExpanded ? actions : preview).map((action, index) => renderToolActionLine(theme, action, `${item.id}-${index}`, cardWidth))}
+          {isExpandable && !isExpanded ? <text fg={theme.MUTED}>{fitTuiText(`${actions.length - preview.length} more hidden`, cardWidth)}</text> : null}
         </box>
       </box>
     );
@@ -1430,10 +1444,10 @@ function renderTranscriptItem(
   if (item.kind === "user-inject") {
     return (
       <box key={item.id} flexDirection="row" width="100%" minWidth={0}>
-        <RailBar tone={ACCENT} />
+        <RailBar tone={theme.ACCENT} />
         <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-          <text fg={ACCENT}>{fitTuiText("USER MESSAGE INJECTED", railedWidth)}</text>
-          <text fg={TEXT} wrapMode="word">{fitTuiText(item.text, railedWidth)}</text>
+          <text fg={theme.ACCENT}>{fitTuiText("USER MESSAGE INJECTED", railedWidth)}</text>
+          <text fg={theme.TEXT} wrapMode="word">{fitTuiText(item.text, railedWidth)}</text>
         </box>
       </box>
     );
@@ -1441,10 +1455,10 @@ function renderTranscriptItem(
 
   return (
     <box key={item.id} flexDirection="row" width="100%" minWidth={0}>
-      <RailBar tone={railTone(item)} />
+      <RailBar tone={railTone(theme, item)} />
       <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-        {item.stage ? <text fg={MUTED}>{fitTuiText(item.stage, railedWidth)}</text> : null}
-        <text fg={textTone(item)} wrapMode="word">{fitTuiText(item.text, railedWidth)}</text>
+        {item.stage ? <text fg={theme.MUTED}>{fitTuiText(item.stage, railedWidth)}</text> : null}
+        <text fg={textTone(theme, item)} wrapMode="word">{fitTuiText(item.text, railedWidth)}</text>
       </box>
     </box>
   );
@@ -1462,11 +1476,12 @@ function PanelSection({
   contentWidth?: number;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
   return (
     // flexShrink is off because the section draws its own border: squeeze it
     // and Yoga paints that bottom border straight through the last row of
     // content. Overflowing off-screen is recoverable; a corrupt frame is not.
-    <box flexDirection="column" flexShrink={0} minWidth={0} border borderColor={tone} backgroundColor={PANEL} paddingX={1} paddingY={0}>
+    <box flexDirection="column" flexShrink={0} minWidth={0} border borderColor={tone} backgroundColor={theme.PANEL} paddingX={1} paddingY={0}>
       <text fg={tone}>{fitTuiText(title.toUpperCase(), contentWidth ?? 44)}</text>
       <box flexDirection="column" minWidth={0}>
         {children}
@@ -1486,8 +1501,9 @@ function ShellFrame({
   meta?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
   return (
-    <box flexDirection="column" width="100%" height="100%" paddingLeft={2} paddingRight={2} paddingTop={1} backgroundColor={CANVAS}>
+    <box flexDirection="column" width="100%" height="100%" paddingLeft={2} paddingRight={2} paddingTop={1} backgroundColor={theme.CANVAS}>
       <HeaderBar view={view} status={status ?? meta} />
       {children}
     </box>
@@ -1495,6 +1511,7 @@ function ShellFrame({
 }
 
 function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeSelection) => void; onExit: () => void; shell?: ShellNav }) {
+  const theme = useTheme();
   const [phase, setPhase] = useState<"menu" | "compose">("menu");
   const [selected, setSelected] = useState(0);
   const [action, setAction] = useState<HomeAction>("scan");
@@ -1672,23 +1689,23 @@ function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeS
       {palette.paletteOpen ? <PaletteOverlay title="Console commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
       <box flexDirection="column" width="100%" minWidth={0}>
         {phase === "menu" ? (
-          <box flexDirection="column" width="100%" minWidth={0} height={visibleOptionCount * 2 + 2} flexShrink={0} border borderColor={BORDER} backgroundColor={PANEL} paddingX={1} paddingY={0}>
+          <box flexDirection="column" width="100%" minWidth={0} height={visibleOptionCount * 2 + 2} flexShrink={0} border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} paddingY={0}>
             {HOME_OPTIONS.slice(optionWindowStart, optionWindowStart + visibleOptionCount).map((option, windowIndex) => {
               const index = optionWindowStart + windowIndex;
               const active = index === selected;
               return (
                 <box key={option.value} flexDirection="row" width="100%" minWidth={0}>
-                  <RailBar tone={active ? PRIMARY : BORDER} />
+                  <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
                   <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                    <text fg={active ? TEXT : "#CCCCCC"}>{fitTuiText(active ? option.label.toUpperCase() : option.label, homeRowContentWidth)}</text>
-                    <text fg={active ? ACCENT : MUTED}>{fitTuiText(option.hint, homeRowContentWidth)}</text>
+                    <text fg={active ? theme.TEXT : "#CCCCCC"}>{fitTuiText(active ? option.label.toUpperCase() : option.label, homeRowContentWidth)}</text>
+                    <text fg={active ? theme.ACCENT : theme.MUTED}>{fitTuiText(option.hint, homeRowContentWidth)}</text>
                   </box>
                 </box>
               );
             })}
           </box>
         ) : (
-          <box flexDirection="column" width="100%" minWidth={0} height={visibleFieldCount * 2 + 3} flexShrink={0} border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} paddingY={0}>
+          <box flexDirection="column" width="100%" minWidth={0} height={visibleFieldCount * 2 + 3} flexShrink={0} border borderColor={theme.MUTED} backgroundColor={theme.PANEL} paddingX={1} paddingY={0}>
             {composeFields.slice(fieldWindowStart, fieldWindowStart + visibleFieldCount).map((field, windowIndex) => {
               const fieldIndex = fieldWindowStart + windowIndex;
               const active = fieldIndex === focusIndex;
@@ -1699,19 +1716,19 @@ function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeS
               const fieldValueWidth = Math.max(0, homeRowContentWidth - fieldHelpWidth - cursorWidth - fieldGapWidth);
               return (
                 <box key={field.key} flexDirection="row" width="100%" minWidth={0}>
-                  <RailBar tone={active ? PRIMARY : BORDER} />
+                  <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
                   <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                    <text fg={active ? TEXT : MUTED}>{fitTuiText(field.label, homeRowContentWidth)}</text>
+                    <text fg={active ? theme.TEXT : theme.MUTED}>{fitTuiText(field.label, homeRowContentWidth)}</text>
                     <box flexDirection="row" width={homeRowContentWidth} minWidth={0} gap={fieldGapWidth}>
                       <box flexDirection="row" width={fieldValueWidth + cursorWidth} flexShrink={0} minWidth={0}>
                         <box width={fieldValueWidth} flexShrink={0} minWidth={0}>
-                          <text fg={field.value ? (active ? TEXT : "#CCCCCC") : MUTED}>{fitTuiText(field.value || "", fieldValueWidth, { mode: field.key === "target" ? "middle" : "end" })}</text>
+                          <text fg={field.value ? (active ? theme.TEXT : "#CCCCCC") : theme.MUTED}>{fitTuiText(field.value || "", fieldValueWidth, { mode: field.key === "target" ? "middle" : "end" })}</text>
                         </box>
-                        {active && field.editable ? <text width={1} flexShrink={0} fg={INFO}>█</text> : null}
+                        {active && field.editable ? <text width={1} flexShrink={0} fg={theme.INFO}>█</text> : null}
                       </box>
                       {fieldHelpWidth > 0 ? (
                         <box width={fieldHelpWidth} flexShrink={0} minWidth={0} alignItems="flex-end">
-                          <text fg={active ? ACCENT : MUTED}>{fitTuiText(fieldHelp, fieldHelpWidth)}</text>
+                          <text fg={active ? theme.ACCENT : theme.MUTED}>{fitTuiText(fieldHelp, fieldHelpWidth)}</text>
                         </box>
                       ) : null}
                     </box>
@@ -1719,7 +1736,7 @@ function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeS
                 </box>
               );
             })}
-            <text fg={MUTED}>{fitTuiText("enter launch · esc back · ctrl+p commands · up/down focus", homePanelContentWidth)}</text>
+            <text fg={theme.MUTED}>{fitTuiText("enter launch · esc back · ctrl+p commands · up/down focus", homePanelContentWidth)}</text>
           </box>
         )}
         <FooterBar hint="esc back · ctrl+p commands · ctrl+c exit" />
@@ -1729,6 +1746,7 @@ function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeS
 }
 
 function OpsScreen({ dbPath, refreshMs, onExit, shell }: { dbPath?: string; refreshMs: number; onExit: () => void; shell?: ShellNav }) {
+  const theme = useTheme();
   const [snapshot, setSnapshot] = useState<OpsSnapshot>({ scans: [], findings: [], incidents: [] });
   const [error, setError] = useState<string | null>(null);
   const { width, height } = useTerminalDimensions();
@@ -1834,53 +1852,53 @@ function OpsScreen({ dbPath, refreshMs, onExit, shell }: { dbPath?: string; refr
       {palette.paletteOpen ? <PaletteOverlay title="Mission control commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
       <box flexDirection={metricsInline ? "row" : "column"} gap={metricGap} marginBottom={1} width="100%" minWidth={0}>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={theme.MUTED} backgroundColor={theme.PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
-              {runsLabelWidth > 0 ? <text width={runsLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("runs", runsLabelWidth)}</text> : null}
-              <text fg={PRIMARY}>{fitTuiText(String(snapshot.scans.length), Math.max(1, metricContentWidth - runsLabelWidth - metricLabelGap))}</text>
+              {runsLabelWidth > 0 ? <text width={runsLabelWidth} flexShrink={0} fg={theme.TEXT}>{fitTuiText("runs", runsLabelWidth)}</text> : null}
+              <text fg={theme.PRIMARY}>{fitTuiText(String(snapshot.scans.length), Math.max(1, metricContentWidth - runsLabelWidth - metricLabelGap))}</text>
             </box>
           </box>
         </box>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={theme.MUTED} backgroundColor={theme.PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
-              {findingsLabelWidth > 0 ? <text width={findingsLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("findings", findingsLabelWidth)}</text> : null}
-              <text fg={PRIMARY}>{fitTuiText(String(snapshot.findings.length), Math.max(1, metricContentWidth - findingsLabelWidth - metricLabelGap))}</text>
+              {findingsLabelWidth > 0 ? <text width={findingsLabelWidth} flexShrink={0} fg={theme.TEXT}>{fitTuiText("findings", findingsLabelWidth)}</text> : null}
+              <text fg={theme.PRIMARY}>{fitTuiText(String(snapshot.findings.length), Math.max(1, metricContentWidth - findingsLabelWidth - metricLabelGap))}</text>
             </box>
           </box>
         </box>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={snapshot.incidents.length > 0 ? ERROR : BORDER} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={snapshot.incidents.length > 0 ? theme.ERROR : theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
-              {incidentsLabelWidth > 0 ? <text width={incidentsLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("incidents", incidentsLabelWidth)}</text> : null}
-              <text fg={snapshot.incidents.length > 0 ? ERROR : MUTED}>{fitTuiText(String(snapshot.incidents.length), Math.max(1, metricContentWidth - incidentsLabelWidth - metricLabelGap))}</text>
+              {incidentsLabelWidth > 0 ? <text width={incidentsLabelWidth} flexShrink={0} fg={theme.TEXT}>{fitTuiText("incidents", incidentsLabelWidth)}</text> : null}
+              <text fg={snapshot.incidents.length > 0 ? theme.ERROR : theme.MUTED}>{fitTuiText(String(snapshot.incidents.length), Math.max(1, metricContentWidth - incidentsLabelWidth - metricLabelGap))}</text>
             </box>
           </box>
         </box>
       </box>
-      {error ? <text fg={ERROR}>{fitTuiText(error, contentWidth)}</text> : null}
+      {error ? <text fg={theme.ERROR}>{fitTuiText(error, contentWidth)}</text> : null}
       <box flexDirection={panelsInline ? "row" : "column"} gap={panelGap} flexGrow={1} width="100%" minWidth={0}>
         <box width={panelWidth} flexGrow={panelsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <PanelSection title="Recent runs" contentWidth={panelContentWidth} tone={BORDER}>
-            {snapshot.scans.length === 0 ? <text fg={MUTED}>{fitTuiText("No local scans yet.", panelContentWidth)}</text> : snapshot.scans.slice(0, visiblePanelEntries).map((scan) => {
+          <PanelSection title="Recent runs" contentWidth={panelContentWidth} tone={theme.BORDER}>
+            {snapshot.scans.length === 0 ? <text fg={theme.MUTED}>{fitTuiText("No local scans yet.", panelContentWidth)}</text> : snapshot.scans.slice(0, visiblePanelEntries).map((scan) => {
               const summary = parseSummary(scan.summary);
               return (
                 <box key={scan.id} flexDirection="column" minWidth={0}>
-                  <text fg={TEXT}>{fitTuiUrl(scan.target, panelContentWidth)}</text>
-                  <text fg={MUTED}>{fitTuiText(`${scan.mode}/${scan.depth} · ${scan.runtime} · ${scan.status}`, panelContentWidth)}</text>
-                  <text fg={MUTED}>{fitTuiText(`${summary.totalFindings ?? 0} findings · ${formatDuration(scan.durationMs)}`, panelContentWidth)}</text>
+                  <text fg={theme.TEXT}>{fitTuiUrl(scan.target, panelContentWidth)}</text>
+                  <text fg={theme.MUTED}>{fitTuiText(`${scan.mode}/${scan.depth} · ${scan.runtime} · ${scan.status}`, panelContentWidth)}</text>
+                  <text fg={theme.MUTED}>{fitTuiText(`${summary.totalFindings ?? 0} findings · ${formatDuration(scan.durationMs)}`, panelContentWidth)}</text>
                 </box>
               );
             })}
           </PanelSection>
         </box>
         <box width={panelWidth} flexGrow={panelsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <PanelSection title="Recent incidents" contentWidth={panelContentWidth} tone={snapshot.incidents.length > 0 ? ERROR : BORDER}>
-            {snapshot.incidents.length === 0 ? <text fg={SUCCESS}>{fitTuiText("No recent runtime incidents.", panelContentWidth)}</text> : snapshot.incidents.slice(0, visiblePanelEntries).map((incident, index) => (
+          <PanelSection title="Recent incidents" contentWidth={panelContentWidth} tone={snapshot.incidents.length > 0 ? theme.ERROR : theme.BORDER}>
+            {snapshot.incidents.length === 0 ? <text fg={theme.SUCCESS}>{fitTuiText("No recent runtime incidents.", panelContentWidth)}</text> : snapshot.incidents.slice(0, visiblePanelEntries).map((incident, index) => (
               <box key={`${incident.scanId}-${index}`} flexDirection="column" minWidth={0}>
-                <text fg={TEXT}>{fitTuiUrl(incident.target, panelContentWidth)}</text>
-                <text fg={ERROR}>{fitTuiText(incident.headline, panelContentWidth)}</text>
-                <text fg={MUTED}>{fitTuiText(incident.stage, panelContentWidth)}</text>
+                <text fg={theme.TEXT}>{fitTuiUrl(incident.target, panelContentWidth)}</text>
+                <text fg={theme.ERROR}>{fitTuiText(incident.headline, panelContentWidth)}</text>
+                <text fg={theme.MUTED}>{fitTuiText(incident.stage, panelContentWidth)}</text>
               </box>
             ))}
           </PanelSection>
@@ -1892,6 +1910,7 @@ function OpsScreen({ dbPath, refreshMs, onExit, shell }: { dbPath?: string; refr
 }
 
 function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+  const theme = useTheme();
   const [state, setState] = useState<DoctorState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { width, height } = useTerminalDimensions();
@@ -1989,56 +2008,56 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
       {palette.paletteOpen ? <PaletteOverlay title="Doctor commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
       <box flexDirection={metricsInline ? "row" : "column"} gap={metricGap} marginBottom={1} width="100%" minWidth={0}>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={state?.nodeOk ? SUCCESS : ERROR} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={state?.nodeOk ? theme.SUCCESS : theme.ERROR} backgroundColor={theme.PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
-              {nodeLabelWidth > 0 ? <text width={nodeLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("node", nodeLabelWidth)}</text> : null}
-              <text fg={state?.nodeOk ? SUCCESS : ERROR}>{fitTuiText(state?.nodeVersion ?? "checking", Math.max(1, metricContentWidth - nodeLabelWidth - metricLabelGap))}</text>
+              {nodeLabelWidth > 0 ? <text width={nodeLabelWidth} flexShrink={0} fg={theme.TEXT}>{fitTuiText("node", nodeLabelWidth)}</text> : null}
+              <text fg={state?.nodeOk ? theme.SUCCESS : theme.ERROR}>{fitTuiText(state?.nodeVersion ?? "checking", Math.max(1, metricContentWidth - nodeLabelWidth - metricLabelGap))}</text>
             </box>
           </box>
         </box>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={state?.hasApiKey ? SUCCESS : state?.apiRuntime.configured ? ERROR : WARNING} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={state?.hasApiKey ? theme.SUCCESS : state?.apiRuntime.configured ? theme.ERROR : theme.WARNING} backgroundColor={theme.PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
-              {apiLabelWidth > 0 ? <text width={apiLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("api", apiLabelWidth)}</text> : null}
-              <text fg={state?.hasApiKey ? SUCCESS : state?.apiRuntime.configured ? ERROR : WARNING}>{fitTuiText(state?.apiRuntime.providerLabel ?? "checking", Math.max(1, metricContentWidth - apiLabelWidth - metricLabelGap))}</text>
+              {apiLabelWidth > 0 ? <text width={apiLabelWidth} flexShrink={0} fg={theme.TEXT}>{fitTuiText("api", apiLabelWidth)}</text> : null}
+              <text fg={state?.hasApiKey ? theme.SUCCESS : state?.apiRuntime.configured ? theme.ERROR : theme.WARNING}>{fitTuiText(state?.apiRuntime.providerLabel ?? "checking", Math.max(1, metricContentWidth - apiLabelWidth - metricLabelGap))}</text>
             </box>
           </box>
         </box>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={state && state.availableRuntimes.length > 0 ? SUCCESS : WARNING} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={state && state.availableRuntimes.length > 0 ? theme.SUCCESS : theme.WARNING} backgroundColor={theme.PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
-              {cliLabelWidth > 0 ? <text width={cliLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("cli", cliLabelWidth)}</text> : null}
-              <text fg={state && state.availableRuntimes.length > 0 ? SUCCESS : WARNING}>{fitTuiText(state ? (state.availableRuntimes.join(", ") || "none") : "checking", Math.max(1, metricContentWidth - cliLabelWidth - metricLabelGap))}</text>
+              {cliLabelWidth > 0 ? <text width={cliLabelWidth} flexShrink={0} fg={theme.TEXT}>{fitTuiText("cli", cliLabelWidth)}</text> : null}
+              <text fg={state && state.availableRuntimes.length > 0 ? theme.SUCCESS : theme.WARNING}>{fitTuiText(state ? (state.availableRuntimes.join(", ") || "none") : "checking", Math.max(1, metricContentWidth - cliLabelWidth - metricLabelGap))}</text>
             </box>
           </box>
         </box>
       </box>
-      {error ? <text fg={ERROR}>{fitTuiText(error, contentWidth)}</text> : null}
+      {error ? <text fg={theme.ERROR}>{fitTuiText(error, contentWidth)}</text> : null}
       <box flexDirection={panelsInline ? "row" : "column"} gap={panelGap} flexGrow={1} width="100%" minWidth={0}>
         <box width={panelWidth} flexGrow={panelsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <PanelSection title="Environment" contentWidth={panelContentWidth} tone={BORDER}>
+          <PanelSection title="Environment" contentWidth={panelContentWidth} tone={theme.BORDER}>
             <box flexDirection="column" minWidth={0}>
-              <text fg={TEXT}>{fitTuiText("Node.js", panelContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(state ? `${state.nodeOk ? "ok" : "bad"} · ${state.nodeVersion}` : "checking", panelContentWidth)}</text>
-              <text fg={TEXT}>{fitTuiText("API runtime", panelContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(state ? `${state.hasApiKey ? "ok" : state.apiRuntime.configured ? "bad" : "missing"} · ${state.apiRuntime.providerLabel}` : "checking", panelContentWidth)}</text>
-              <text fg={TEXT}>{fitTuiText("CLI runtimes", panelContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(state ? `${state.availableRuntimes.length > 0 ? "ok" : "missing"} · ${state.availableRuntimes.join(", ") || "none"}` : "checking", panelContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText("Node.js", panelContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(state ? `${state.nodeOk ? "ok" : "bad"} · ${state.nodeVersion}` : "checking", panelContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText("API runtime", panelContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(state ? `${state.hasApiKey ? "ok" : state.apiRuntime.configured ? "bad" : "missing"} · ${state.apiRuntime.providerLabel}` : "checking", panelContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText("CLI runtimes", panelContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(state ? `${state.availableRuntimes.length > 0 ? "ok" : "missing"} · ${state.availableRuntimes.join(", ") || "none"}` : "checking", panelContentWidth)}</text>
             </box>
           </PanelSection>
         </box>
         <box width={panelWidth} flexGrow={panelsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <PanelSection title="Next steps" contentWidth={panelContentWidth} tone={PRIMARY}>
+          <PanelSection title="Next steps" contentWidth={panelContentWidth} tone={theme.PRIMARY}>
             <box flexDirection="column" minWidth={0}>
-              <text fg={TEXT}>{fitTuiText(nextStep, panelContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText(nextStep, panelContentWidth)}</text>
               {showNextStepExamples && (state?.hasApiKey || (state && state.availableRuntimes.length > 0)) ? (
                 <>
-                  <text fg={MUTED}>{fitTuiText("0sec scan --target https://example.com --mode web", panelContentWidth)}</text>
-                  <text fg={MUTED}>{fitTuiText("0sec review .", panelContentWidth)}</text>
-                  <text fg={MUTED}>{fitTuiText("0sec audit express", panelContentWidth)}</text>
+                  <text fg={theme.MUTED}>{fitTuiText("0sec scan --target https://example.com --mode web", panelContentWidth)}</text>
+                  <text fg={theme.MUTED}>{fitTuiText("0sec review .", panelContentWidth)}</text>
+                  <text fg={theme.MUTED}>{fitTuiText("0sec audit express", panelContentWidth)}</text>
                 </>
               ) : null}
-              {state?.apiRuntime.error ? <text fg={ERROR}>{fitTuiText(state.apiRuntime.error, panelContentWidth)}</text> : null}
+              {state?.apiRuntime.error ? <text fg={theme.ERROR}>{fitTuiText(state.apiRuntime.error, panelContentWidth)}</text> : null}
             </box>
           </PanelSection>
         </box>
@@ -2049,6 +2068,7 @@ function DoctorScreen({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
 }
 
 function HistoryScreen({ dbPath, limit, onResolve, onExit, shell }: { dbPath?: string; limit: number; onResolve?: (selection: HistorySelection) => void; onExit: () => void; shell?: ShellNav }) {
+  const theme = useTheme();
   const [scans, setScans] = useState<HistoryScanRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
@@ -2156,7 +2176,7 @@ function HistoryScreen({ dbPath, limit, onResolve, onExit, shell }: { dbPath?: s
   return (
     <ShellFrame view="history">
       {palette.paletteOpen ? <PaletteOverlay title="History commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
-      {error ? <text fg={ERROR}>{fitTuiText(error, historyLayout.contentWidth)}</text> : null}
+      {error ? <text fg={theme.ERROR}>{fitTuiText(error, historyLayout.contentWidth)}</text> : null}
       <box
         flexDirection={historyUsesSideBySideLayout ? "row" : "column"}
         gap={historyUsesSideBySideLayout ? SESSION_LAYOUT_GAP : 1}
@@ -2164,18 +2184,18 @@ function HistoryScreen({ dbPath, limit, onResolve, onExit, shell }: { dbPath?: s
         width="100%"
         minWidth={0}
       >
-        <scrollbox flexGrow={1} minWidth={0} border borderColor={BORDER} focusedBorderColor={BORDER} backgroundColor={PANEL} paddingX={1} paddingY={0}>
+        <scrollbox flexGrow={1} minWidth={0} border borderColor={theme.BORDER} focusedBorderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} paddingY={0}>
           <box flexDirection="column" width="100%" minWidth={0}>
-            {scans.length === 0 ? <text fg={MUTED}>{fitTuiText("No scan history found.", historyListContentWidth)}</text> : scans.map((scan, scanIndex) => {
+            {scans.length === 0 ? <text fg={theme.MUTED}>{fitTuiText("No scan history found.", historyListContentWidth)}</text> : scans.map((scan, scanIndex) => {
               const active = scanIndex === index;
               const scanSummary = parseSummary(scan.summary);
               return (
                 <box key={scan.id} flexDirection="row" width="100%" minWidth={0}>
-                  <RailBar tone={active ? PRIMARY : BORDER} />
+                  <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
                   <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                    <text fg={active ? TEXT : "#CCCCCC"}>{fitTuiUrl(scan.target, historyListRowWidth)}</text>
-                    <text fg={MUTED}>{fitTuiText(`${scan.mode}/${scan.depth} · ${scan.runtime} · ${scan.status}`, historyListRowWidth)}</text>
-                    <text fg={MUTED}>{fitTuiText(`${scanSummary.totalFindings ?? 0} findings · ${formatDuration(scan.durationMs)} · ${scan.startedAt}`, historyListRowWidth)}</text>
+                    <text fg={active ? theme.TEXT : "#CCCCCC"}>{fitTuiUrl(scan.target, historyListRowWidth)}</text>
+                    <text fg={theme.MUTED}>{fitTuiText(`${scan.mode}/${scan.depth} · ${scan.runtime} · ${scan.status}`, historyListRowWidth)}</text>
+                    <text fg={theme.MUTED}>{fitTuiText(`${scanSummary.totalFindings ?? 0} findings · ${formatDuration(scan.durationMs)} · ${scan.startedAt}`, historyListRowWidth)}</text>
                   </box>
                 </box>
               );
@@ -2183,19 +2203,19 @@ function HistoryScreen({ dbPath, limit, onResolve, onExit, shell }: { dbPath?: s
           </box>
         </scrollbox>
         <box flexDirection="column" width={historyUsesSideBySideLayout ? historyLayout.sidebarWidth : "100%"} flexShrink={0} minWidth={0}>
-          <PanelSection title="Selected run" contentWidth={historyDetailContentWidth} tone={PRIMARY}>
+          <PanelSection title="Selected run" contentWidth={historyDetailContentWidth} tone={theme.PRIMARY}>
             <box flexDirection="column">
-              <text fg={TEXT}>{selected ? fitTuiUrl(selected.target, historyDetailContentWidth) : fitTuiText("No run selected", historyDetailContentWidth)}</text>
-              {selected ? <text fg={MUTED}>{fitTuiText(`${selected.mode}/${selected.depth} · ${selected.runtime}`, historyDetailContentWidth)}</text> : null}
-              {selected ? <text fg={MUTED}>{fitTuiText(`${selected.status} · ${formatDuration(selected.durationMs)}`, historyDetailContentWidth)}</text> : null}
+              <text fg={theme.TEXT}>{selected ? fitTuiUrl(selected.target, historyDetailContentWidth) : fitTuiText("No run selected", historyDetailContentWidth)}</text>
+              {selected ? <text fg={theme.MUTED}>{fitTuiText(`${selected.mode}/${selected.depth} · ${selected.runtime}`, historyDetailContentWidth)}</text> : null}
+              {selected ? <text fg={theme.MUTED}>{fitTuiText(`${selected.status} · ${formatDuration(selected.durationMs)}`, historyDetailContentWidth)}</text> : null}
             </box>
           </PanelSection>
-          <PanelSection title="Summary" contentWidth={historyDetailContentWidth} tone={BORDER}>
+          <PanelSection title="Summary" contentWidth={historyDetailContentWidth} tone={theme.BORDER}>
             <box flexDirection="column">
-              <text fg={MUTED}>{fitTuiText(`findings ${summary.totalFindings ?? 0}`, historyDetailContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(`started ${selected?.startedAt ?? "-"}`, historyDetailContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(`scan ${selected?.id.slice(0, 8) ?? "-"}`, historyDetailContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText("key r replay selected", historyDetailContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`findings ${summary.totalFindings ?? 0}`, historyDetailContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`started ${selected?.startedAt ?? "-"}`, historyDetailContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`scan ${selected?.id.slice(0, 8) ?? "-"}`, historyDetailContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText("key r replay selected", historyDetailContentWidth)}</text>
             </box>
           </PanelSection>
         </box>
@@ -2206,6 +2226,7 @@ function HistoryScreen({ dbPath, limit, onResolve, onExit, shell }: { dbPath?: s
 }
 
 function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOptions; onExit: () => void; shell?: ShellNav }) {
+  const theme = useTheme();
   const [rows, setRows] = useState<FindingsRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
@@ -2325,12 +2346,12 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
   const activeFixRun = fixRun && selectedRow && fixRun.findingId === selectedRow.id ? fixRun : null;
   const fixRunning = fixRun?.status === "running";
   const fixPanelTone = !activeFixRun
-    ? BORDER
+    ? theme.BORDER
     : activeFixRun.status === "running"
-      ? PRIMARY
+      ? theme.PRIMARY
       : activeFixRun.status === "validated_candidate" || activeFixRun.status === "applied_and_retested"
-        ? SUCCESS
-        : ERROR;
+        ? theme.SUCCESS
+        : theme.ERROR;
 
   const palette = usePaletteController([
     {
@@ -2518,8 +2539,8 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
   return (
     <ShellFrame view="findings" status={fixRunning ? "generating fix" : triageBusy ? `updating ${triageBusy}` : options.all ? "raw rows" : "grouped families"}>
       {palette.paletteOpen ? <PaletteOverlay title="Findings commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
-      {error ? <text fg={ERROR} wrapMode="word">{fitTuiText(error, findingsLayout.contentWidth)}</text> : null}
-      {notice ? <text fg={ACCENT} wrapMode="word">{fitTuiText(notice, findingsLayout.contentWidth)}</text> : null}
+      {error ? <text fg={theme.ERROR} wrapMode="word">{fitTuiText(error, findingsLayout.contentWidth)}</text> : null}
+      {notice ? <text fg={theme.ACCENT} wrapMode="word">{fitTuiText(notice, findingsLayout.contentWidth)}</text> : null}
       <box
         flexDirection={findingsUsesSideBySideLayout ? "row" : "column"}
         gap={summaryBarGap}
@@ -2527,22 +2548,22 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
         width="100%"
         minWidth={0}
       >
-        <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width={scopeChipWidth} flexGrow={findingsUsesSideBySideLayout ? 1 : 0} flexShrink={0} minWidth={0}>
+        <box border borderColor={theme.MUTED} backgroundColor={theme.PANEL} paddingX={1} width={scopeChipWidth} flexGrow={findingsUsesSideBySideLayout ? 1 : 0} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
-            <text flexShrink={0} fg={TEXT}>scope </text>
-            <text fg={PRIMARY}>{fitTuiText(filterSummary, scopeSummaryWidth)}</text>
+            <text flexShrink={0} fg={theme.TEXT}>scope </text>
+            <text fg={theme.PRIMARY}>{fitTuiText(filterSummary, scopeSummaryWidth)}</text>
           </box>
         </box>
-        <box border borderColor={BORDER} backgroundColor={PANEL} paddingX={1} width={findingsUsesSideBySideLayout ? itemCountChipWidth : "100%"} flexShrink={0} minWidth={0}>
+        <box border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} width={findingsUsesSideBySideLayout ? itemCountChipWidth : "100%"} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
-            <text flexShrink={0} fg={TEXT}>{itemCountLabel}</text>
-            <text flexShrink={0} fg={MUTED}>{String(itemCount)}</text>
+            <text flexShrink={0} fg={theme.TEXT}>{itemCountLabel}</text>
+            <text flexShrink={0} fg={theme.MUTED}>{String(itemCount)}</text>
           </box>
         </box>
-        <box border borderColor={BORDER} backgroundColor={PANEL} paddingX={1} width={findingsUsesSideBySideLayout ? loadedChipWidth : "100%"} flexShrink={0} minWidth={0}>
+        <box border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} width={findingsUsesSideBySideLayout ? loadedChipWidth : "100%"} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
-            <text flexShrink={0} fg={TEXT}>loaded </text>
-            <text flexShrink={0} fg={MUTED}>{String(rows.length)}</text>
+            <text flexShrink={0} fg={theme.TEXT}>loaded </text>
+            <text flexShrink={0} fg={theme.MUTED}>{String(rows.length)}</text>
           </box>
         </box>
       </box>
@@ -2559,24 +2580,24 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
           minWidth={0}
           minHeight={0}
           border
-          borderColor={BORDER}
-          focusedBorderColor={BORDER}
-          backgroundColor={PANEL}
+          borderColor={theme.BORDER}
+          focusedBorderColor={theme.BORDER}
+          backgroundColor={theme.PANEL}
           paddingX={1}
           paddingY={0}
         >
           <box flexDirection="column" width="100%" minWidth={0}>
-            {itemCount === 0 ? <text fg={MUTED}>{fitTuiText("No findings found.", findingsListContentWidth)}</text> : options.all
+            {itemCount === 0 ? <text fg={theme.MUTED}>{fitTuiText("No findings found.", findingsListContentWidth)}</text> : options.all
               ? rows.slice(0, options.limit).map((row, rowIndex) => {
                   const active = rowIndex === index;
                   const fingerprint = row.fingerprint ?? row.id;
                   return (
                     <box key={row.id} flexDirection="row" width="100%" minWidth={0}>
-                      <RailBar tone={active ? PRIMARY : BORDER} />
+                      <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
                       <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                        <text fg={severityTone(row.severity)}>{fitTuiText(`${row.severity.toUpperCase()} · ${row.title}`, findingsListRowWidth)}</text>
-                        <text fg={MUTED}>{fitTuiText(`${row.category} · ${row.status} · ${row.triageStatus ?? "new"}`, findingsListRowWidth)}</text>
-                        <text fg={MUTED}>{fitTuiText(`scan:${row.scanId.slice(0, 8)} · fp:${fingerprint.slice(0, 10)}`, findingsListRowWidth)}</text>
+                        <text fg={severityToneFor(theme, row.severity)}>{fitTuiText(`${row.severity.toUpperCase()} · ${row.title}`, findingsListRowWidth)}</text>
+                        <text fg={theme.MUTED}>{fitTuiText(`${row.category} · ${row.status} · ${row.triageStatus ?? "new"}`, findingsListRowWidth)}</text>
+                        <text fg={theme.MUTED}>{fitTuiText(`scan:${row.scanId.slice(0, 8)} · fp:${fingerprint.slice(0, 10)}`, findingsListRowWidth)}</text>
                       </box>
                     </box>
                   );
@@ -2586,11 +2607,11 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
                   const latest = group.latest;
                   return (
                     <box key={group.fingerprint} flexDirection="row" width="100%" minWidth={0}>
-                      <RailBar tone={active ? PRIMARY : BORDER} />
+                      <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
                       <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
-                        <text fg={severityTone(latest.severity)}>{fitTuiText(`${latest.severity.toUpperCase()} · ${latest.title}`, findingsListRowWidth)}</text>
-                        <text fg={MUTED}>{fitTuiText(`${latest.category} · ${latest.status} · ${latest.triageStatus ?? "new"}`, findingsListRowWidth)}</text>
-                        <text fg={MUTED}>{fitTuiText(`${group.count} hits / ${group.scans} scans · fp:${group.fingerprint.slice(0, 10)}`, findingsListRowWidth)}</text>
+                        <text fg={severityToneFor(theme, latest.severity)}>{fitTuiText(`${latest.severity.toUpperCase()} · ${latest.title}`, findingsListRowWidth)}</text>
+                        <text fg={theme.MUTED}>{fitTuiText(`${latest.category} · ${latest.status} · ${latest.triageStatus ?? "new"}`, findingsListRowWidth)}</text>
+                        <text fg={theme.MUTED}>{fitTuiText(`${group.count} hits / ${group.scans} scans · fp:${group.fingerprint.slice(0, 10)}`, findingsListRowWidth)}</text>
                       </box>
                     </box>
                   );
@@ -2605,22 +2626,22 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
           minHeight={0}
           verticalScrollbarOptions={{
             trackOptions: {
-              backgroundColor: PANEL_ALT,
-              foregroundColor: PRIMARY,
+              backgroundColor: theme.PANEL_ALT,
+              foregroundColor: theme.PRIMARY,
             },
             arrowOptions: {
-              foregroundColor: MUTED,
-              backgroundColor: PANEL,
+              foregroundColor: theme.MUTED,
+              backgroundColor: theme.PANEL,
             },
           }}
         >
-          <PanelSection title={options.all ? "Finding" : "Family"} contentWidth={findingsDetailContentWidth} tone={selectedRow ? severityTone(selectedRow.severity) : BORDER}>
+          <PanelSection title={options.all ? "Finding" : "Family"} contentWidth={findingsDetailContentWidth} tone={selectedRow ? severityToneFor(theme, selectedRow.severity) : theme.BORDER}>
             <box flexDirection="column" width="100%" minWidth={0}>
-              <text fg={TEXT} wrapMode="word">{selectedTitleText}</text>
-              {selectedRow ? <text fg={MUTED}>{fitTuiText(`${selectedRow.severity} · ${selectedRow.status} · ${selectedRow.triageStatus ?? "new"}`, findingsDetailContentWidth)}</text> : null}
-              {selectedGroup ? <text fg={MUTED}>{fitTuiText(`${selectedGroup.count} hits / ${selectedGroup.scans} scans`, findingsDetailContentWidth)}</text> : null}
-              {selectedRow ? <text fg={MUTED}>{fitTuiText(`scan ${selectedRow.scanId.slice(0, 8)} · fp:${selectedFingerprint?.slice(0, 10)}`, findingsDetailContentWidth)}</text> : null}
-              {triageNoteText ? <text fg={ACCENT} wrapMode="word">{triageNoteText}</text> : null}
+              <text fg={theme.TEXT} wrapMode="word">{selectedTitleText}</text>
+              {selectedRow ? <text fg={theme.MUTED}>{fitTuiText(`${selectedRow.severity} · ${selectedRow.status} · ${selectedRow.triageStatus ?? "new"}`, findingsDetailContentWidth)}</text> : null}
+              {selectedGroup ? <text fg={theme.MUTED}>{fitTuiText(`${selectedGroup.count} hits / ${selectedGroup.scans} scans`, findingsDetailContentWidth)}</text> : null}
+              {selectedRow ? <text fg={theme.MUTED}>{fitTuiText(`scan ${selectedRow.scanId.slice(0, 8)} · fp:${selectedFingerprint?.slice(0, 10)}`, findingsDetailContentWidth)}</text> : null}
+              {triageNoteText ? <text fg={theme.ACCENT} wrapMode="word">{triageNoteText}</text> : null}
             </box>
           </PanelSection>
           {/*
@@ -2634,7 +2655,7 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
           */}
           <PanelSection title="Source fix" contentWidth={findingsDetailContentWidth} tone={fixPanelTone}>
             <box flexDirection="column" width="100%" minWidth={0}>
-              <text fg={fixReadiness.eligible ? SUCCESS : MUTED} wrapMode="word">
+              <text fg={fixReadiness.eligible ? theme.SUCCESS : theme.MUTED} wrapMode="word">
                 {fitTuiText(
                   fixReadiness.eligible
                     ? "ready — press f to generate a candidate fix"
@@ -2642,42 +2663,42 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
                   detailWrapWidth,
                 )}
               </text>
-              {fixSourceFile ? <text fg={MUTED} wrapMode="word">{fitTuiText(`source ${fixSourceFile}`, detailWrapWidth)}</text> : null}
-              {fixRepoRoot ? <text fg={MUTED} wrapMode="word">{fitTuiText(`repo ${fixRepoRoot}`, detailWrapWidth)}</text> : null}
-              {fixNotice ? <text fg={WARNING} wrapMode="word">{fitTuiText(fixNotice, detailWrapWidth)}</text> : null}
+              {fixSourceFile ? <text fg={theme.MUTED} wrapMode="word">{fitTuiText(`source ${fixSourceFile}`, detailWrapWidth)}</text> : null}
+              {fixRepoRoot ? <text fg={theme.MUTED} wrapMode="word">{fitTuiText(`repo ${fixRepoRoot}`, detailWrapWidth)}</text> : null}
+              {fixNotice ? <text fg={theme.WARNING} wrapMode="word">{fitTuiText(fixNotice, detailWrapWidth)}</text> : null}
               {activeFixRun ? (
                 <text fg={fixPanelTone} wrapMode="word">
                   {fitTuiText(describeFixStatus(activeFixRun.status, activeFixRun.result), detailWrapWidth)}
                 </text>
               ) : null}
-              {activeFixRun?.error ? <text fg={ERROR} wrapMode="word">{fitTuiText(`error ${activeFixRun.error}`, detailWrapWidth)}</text> : null}
+              {activeFixRun?.error ? <text fg={theme.ERROR} wrapMode="word">{fitTuiText(`error ${activeFixRun.error}`, detailWrapWidth)}</text> : null}
               {activeFixRun?.result
                 ? fixResultLines(activeFixRun.result).map((line, lineIndex) => (
-                    <text key={`fix-line-${lineIndex}`} fg={MUTED} wrapMode="word">{fitTuiText(line, detailWrapWidth)}</text>
+                    <text key={`fix-line-${lineIndex}`} fg={theme.MUTED} wrapMode="word">{fitTuiText(line, detailWrapWidth)}</text>
                   ))
                 : null}
-              {fixRunning && !activeFixRun ? <text fg={MUTED} wrapMode="word">{fitTuiText("a fix is running for another finding", detailWrapWidth)}</text> : null}
+              {fixRunning && !activeFixRun ? <text fg={theme.MUTED} wrapMode="word">{fitTuiText("a fix is running for another finding", detailWrapWidth)}</text> : null}
             </box>
           </PanelSection>
-          <PanelSection title="Filters" contentWidth={findingsDetailContentWidth} tone={BORDER}>
+          <PanelSection title="Filters" contentWidth={findingsDetailContentWidth} tone={theme.BORDER}>
             <box flexDirection="column" width="100%" minWidth={0}>
-              <text fg={MUTED} wrapMode="word">{fitTuiText(filterSummary, findingsDetailContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(`limit ${options.limit}`, findingsDetailContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(`mode ${options.all ? "raw rows" : "grouped families"}`, findingsDetailContentWidth)}</text>
-              <text fg={MUTED} wrapMode="word">{fitTuiText("keys a accept · s suppress · r reopen · f fix", findingsDetailContentWidth)}</text>
+              <text fg={theme.MUTED} wrapMode="word">{fitTuiText(filterSummary, findingsDetailContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`limit ${options.limit}`, findingsDetailContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`mode ${options.all ? "raw rows" : "grouped families"}`, findingsDetailContentWidth)}</text>
+              <text fg={theme.MUTED} wrapMode="word">{fitTuiText("keys a accept · s suppress · r reopen · f fix", findingsDetailContentWidth)}</text>
             </box>
           </PanelSection>
-          <PanelSection title="Description" contentWidth={findingsDetailContentWidth} tone={BORDER}>
+          <PanelSection title="Description" contentWidth={findingsDetailContentWidth} tone={theme.BORDER}>
             <box flexDirection="column" width="100%" minWidth={0}>
-              <text fg={MUTED} wrapMode="word">{descriptionText}</text>
+              <text fg={theme.MUTED} wrapMode="word">{descriptionText}</text>
             </box>
           </PanelSection>
-          <PanelSection title="Evidence" contentWidth={findingsDetailContentWidth} tone={BORDER}>
+          <PanelSection title="Evidence" contentWidth={findingsDetailContentWidth} tone={theme.BORDER}>
             <box flexDirection="column" width="100%" minWidth={0}>
-              <text fg={TEXT}>{fitTuiText("request", findingsDetailContentWidth)}</text>
-              <text fg={MUTED} wrapMode="word">{evidenceRequestText}</text>
-              <text fg={TEXT}>{fitTuiText("response", findingsDetailContentWidth)}</text>
-              <text fg={MUTED} wrapMode="word">{evidenceResponseText}</text>
+              <text fg={theme.TEXT}>{fitTuiText("request", findingsDetailContentWidth)}</text>
+              <text fg={theme.MUTED} wrapMode="word">{evidenceRequestText}</text>
+              <text fg={theme.TEXT}>{fitTuiText("response", findingsDetailContentWidth)}</text>
+              <text fg={theme.MUTED} wrapMode="word">{evidenceResponseText}</text>
             </box>
           </PanelSection>
         </scrollbox>
@@ -2688,6 +2709,7 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
 }
 
 function ReplayScreen({ dbPath, scanId, onExit, shell }: { dbPath?: string; scanId?: string; onExit: () => void; shell?: ShellNav }) {
+  const theme = useTheme();
   const [scan, setScan] = useState<ReplayScanRow | null>(null);
   const [findings, setFindings] = useState<FindingsRow[]>([]);
   const [events, setEvents] = useState<ReplayEventRow[]>([]);
@@ -2829,45 +2851,45 @@ function ReplayScreen({ dbPath, scanId, onExit, shell }: { dbPath?: string; scan
   return (
     <ShellFrame view="replay" status={scan ? scan.id.slice(0, 8) : "latest scan"}>
       {palette.paletteOpen ? <PaletteOverlay title="Replay commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
-      {error ? <text fg={ERROR} wrapMode="word">{fitTuiText(error, contentWidth)}</text> : null}
+      {error ? <text fg={theme.ERROR} wrapMode="word">{fitTuiText(error, contentWidth)}</text> : null}
       <box flexDirection="row" gap={chipGap} marginBottom={1} width="100%" minWidth={0}>
-        <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width={targetChipWidth} flexGrow={1} flexShrink={0} minWidth={0}>
+        <box border borderColor={theme.MUTED} backgroundColor={theme.PANEL} paddingX={1} width={targetChipWidth} flexGrow={1} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
-            <text flexShrink={0} fg={TEXT}>target </text>
-            <text fg={PRIMARY}>{scan ? fitTuiUrl(scan.target, targetChipTextWidth) : fitTuiText("loading", targetChipTextWidth)}</text>
+            <text flexShrink={0} fg={theme.TEXT}>target </text>
+            <text fg={theme.PRIMARY}>{scan ? fitTuiUrl(scan.target, targetChipTextWidth) : fitTuiText("loading", targetChipTextWidth)}</text>
           </box>
         </box>
-        <box border borderColor={BORDER} backgroundColor={PANEL} paddingX={1} width={findingsChipWidth} flexShrink={0} minWidth={0}>
+        <box border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} width={findingsChipWidth} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
-            <text flexShrink={0} fg={TEXT}>findings </text>
-            <text flexShrink={0} fg={MUTED}>{findingsChipValue}</text>
+            <text flexShrink={0} fg={theme.TEXT}>findings </text>
+            <text flexShrink={0} fg={theme.MUTED}>{findingsChipValue}</text>
           </box>
         </box>
-        <box border borderColor={BORDER} backgroundColor={PANEL} paddingX={1} width={eventsChipWidth} flexShrink={0} minWidth={0}>
+        <box border borderColor={theme.BORDER} backgroundColor={theme.PANEL} paddingX={1} width={eventsChipWidth} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
-            <text flexShrink={0} fg={TEXT}>events </text>
-            <text flexShrink={0} fg={MUTED}>{eventsChipValue}</text>
+            <text flexShrink={0} fg={theme.TEXT}>events </text>
+            <text flexShrink={0} fg={theme.MUTED}>{eventsChipValue}</text>
           </box>
         </box>
       </box>
       <box flexDirection={panesStacked ? "column" : "row"} gap={paneGap} flexGrow={1} width="100%" minWidth={0}>
         <box flexDirection="column" width={findingsPaneWidth} flexGrow={panesStacked ? 0 : 1} flexShrink={0} minWidth={0}>
-          <PanelSection title="Replay lane" contentWidth={findingsContentWidth} tone={PRIMARY}>
+          <PanelSection title="Replay lane" contentWidth={findingsContentWidth} tone={theme.PRIMARY}>
             <box flexDirection="column" minWidth={0}>
-              <text fg={TEXT}>{fitTuiText("DISCOVER", findingsContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(scan ? `${scan.mode}/${scan.depth} via ${scan.runtime}` : "loading", findingsContentWidth)}</text>
-              <text fg={TEXT}>{fitTuiText("ATTACK", findingsContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(verifiedFindings.length > 0 ? `${verifiedFindings.length} findings survived triage` : "No confirmed findings recorded", findingsContentWidth)}</text>
-              <text fg={TEXT}>{fitTuiText("VERIFY", findingsContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(`${findings.filter((finding) => finding.status === "false-positive").length} false positives removed`, findingsContentWidth)}</text>
-              <text fg={TEXT}>{fitTuiText("REPORT", findingsContentWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(`${formatDuration(scan?.durationMs)} total runtime`, findingsContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText("DISCOVER", findingsContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(scan ? `${scan.mode}/${scan.depth} via ${scan.runtime}` : "loading", findingsContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText("ATTACK", findingsContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(verifiedFindings.length > 0 ? `${verifiedFindings.length} findings survived triage` : "No confirmed findings recorded", findingsContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText("VERIFY", findingsContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`${findings.filter((finding) => finding.status === "false-positive").length} false positives removed`, findingsContentWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiText("REPORT", findingsContentWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`${formatDuration(scan?.durationMs)} total runtime`, findingsContentWidth)}</text>
             </box>
           </PanelSection>
-          <PanelSection title="Findings" contentWidth={findingsContentWidth} tone={verifiedFindings.length > 0 ? WARNING : BORDER}>
+          <PanelSection title="Findings" contentWidth={findingsContentWidth} tone={verifiedFindings.length > 0 ? theme.WARNING : theme.BORDER}>
             <box flexDirection="column" minWidth={0}>
-              {verifiedFindings.length === 0 ? <text fg={MUTED}>{fitTuiText("No findings recorded for this scan.", findingsContentWidth)}</text> : verifiedFindings.slice(0, visibleReplayFindings).map((finding) => (
-                <text key={finding.id} fg={severityTone(finding.severity)}>{fitTuiText(`${finding.severity} · ${finding.title}`, findingsContentWidth)}</text>
+              {verifiedFindings.length === 0 ? <text fg={theme.MUTED}>{fitTuiText("No findings recorded for this scan.", findingsContentWidth)}</text> : verifiedFindings.slice(0, visibleReplayFindings).map((finding) => (
+                <text key={finding.id} fg={severityToneFor(theme, finding.severity)}>{fitTuiText(`${finding.severity} · ${finding.title}`, findingsContentWidth)}</text>
               ))}
             </box>
           </PanelSection>
@@ -2878,28 +2900,28 @@ function ReplayScreen({ dbPath, scanId, onExit, shell }: { dbPath?: string; scan
           minWidth={0}
           minHeight={0}
           border
-          borderColor={BORDER}
-          focusedBorderColor={BORDER}
-          backgroundColor={PANEL}
+          borderColor={theme.BORDER}
+          focusedBorderColor={theme.BORDER}
+          backgroundColor={theme.PANEL}
           paddingX={1}
           paddingY={0}
         >
           <box flexDirection="column" width="100%" minWidth={0}>
-            {events.length === 0 ? <text fg={MUTED}>{fitTuiText("No pipeline events captured for this scan.", eventContentWidth)}</text> : events.map((event, index) => {
+            {events.length === 0 ? <text fg={theme.MUTED}>{fitTuiText("No pipeline events captured for this scan.", eventContentWidth)}</text> : events.map((event, index) => {
               const active = index === eventIndex;
               return (
                 <box key={event.id} flexDirection="row" width="100%" minWidth={0}>
-                  <RailBar tone={active ? PRIMARY : BORDER} />
+                  <RailBar tone={active ? theme.PRIMARY : theme.BORDER} />
                   <box flexDirection="column" marginLeft={1} flexGrow={1} minWidth={0}>
                     <box flexDirection={eventHeaderInline ? "row" : "column"} width={eventDetailWidth} minWidth={0} gap={eventHeaderGap}>
                       <box width={eventTitleWidth} flexShrink={0} minWidth={0}>
-                        <text fg={active ? TEXT : "#CCCCCC"}>{fitTuiText(`${event.stage} · ${event.eventType}`, eventTitleWidth)}</text>
+                        <text fg={active ? theme.TEXT : "#CCCCCC"}>{fitTuiText(`${event.stage} · ${event.eventType}`, eventTitleWidth)}</text>
                       </box>
                       <box width={eventTimestampFitWidth} flexShrink={0} minWidth={0} alignItems={eventHeaderInline ? "flex-end" : "flex-start"}>
-                        <text fg={MUTED}>{fitTuiText(new Date(event.timestamp).toISOString(), eventTimestampFitWidth)}</text>
+                        <text fg={theme.MUTED}>{fitTuiText(new Date(event.timestamp).toISOString(), eventTimestampFitWidth)}</text>
                       </box>
                     </box>
-                    <text fg={active ? ACCENT : MUTED} wrapMode="word">{fitTuiText(describeEventPayload(event.payload), eventDetailWidth)}</text>
+                    <text fg={active ? theme.ACCENT : theme.MUTED} wrapMode="word">{fitTuiText(describeEventPayload(event.payload), eventDetailWidth)}</text>
                   </box>
                 </box>
               );
@@ -2907,7 +2929,7 @@ function ReplayScreen({ dbPath, scanId, onExit, shell }: { dbPath?: string; scan
           </box>
         </scrollbox>
       </box>
-      {selectedEvent ? <text fg={MUTED}>{fitTuiText(`${selectedEvent.stage} · ${selectedEvent.eventType} · up/down browse events`, contentWidth)}</text> : null}
+      {selectedEvent ? <text fg={theme.MUTED}>{fitTuiText(`${selectedEvent.stage} · ${selectedEvent.eventType} · up/down browse events`, contentWidth)}</text> : null}
       <FooterBar hint="esc back · ctrl+p commands · ctrl+c exit" />
     </ShellFrame>
   );
@@ -2920,6 +2942,7 @@ function ConsoleSessionRoute({ route, shell }: { route: Extract<ConsoleRoute, { 
 }
 
 function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: SessionState; onExit: () => void; shell?: ShellNav; queueUserMessage?: (text: string) => void }) {
+  const theme = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteSelected, setPaletteSelected] = useState(0);
@@ -3188,7 +3211,7 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
   const totalFindings = state.stages.reduce((count, stage) => count + stage.findings.length, 0);
   const runningStage = state.stages.find((stage) => stage.status === "running") ?? null;
   const latestRunningAction = runningStage?.actions.at(-1);
-  const liveActivity = formatLiveActivity(state, runningStage, latestRunningAction);
+  const liveActivity = formatLiveActivity(theme, state, runningStage, latestRunningAction);
 
   return (
     <ShellFrame
@@ -3208,24 +3231,24 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
           stickyScroll
           stickyStart="bottom"
           border
-          borderColor={BORDER}
-          focusedBorderColor={BORDER}
-          backgroundColor={PANEL}
+          borderColor={theme.BORDER}
+          focusedBorderColor={theme.BORDER}
+          backgroundColor={theme.PANEL}
           paddingX={1}
           paddingY={0}
           verticalScrollbarOptions={{
             trackOptions: {
-              backgroundColor: PANEL_ALT,
-              foregroundColor: PRIMARY,
+              backgroundColor: theme.PANEL_ALT,
+              foregroundColor: theme.PRIMARY,
             },
             arrowOptions: {
-              foregroundColor: MUTED,
-              backgroundColor: PANEL,
+              foregroundColor: theme.MUTED,
+              backgroundColor: theme.PANEL,
             },
           }}
         >
           <box flexDirection="column" width="100%" minWidth={0}>
-            {visibleTranscript.map((item) => renderTranscriptItem(item, {
+            {visibleTranscript.map((item) => renderTranscriptItem(theme, item, {
               expanded: expandedToolCards,
               toggleExpanded: toggleToolCard,
               hoveredToolId,
@@ -3248,117 +3271,117 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
           minHeight={0}
           verticalScrollbarOptions={{
             trackOptions: {
-              backgroundColor: PANEL_ALT,
-              foregroundColor: PRIMARY,
+              backgroundColor: theme.PANEL_ALT,
+              foregroundColor: theme.PRIMARY,
             },
             arrowOptions: {
-              foregroundColor: MUTED,
-              backgroundColor: PANEL,
+              foregroundColor: theme.MUTED,
+              backgroundColor: theme.PANEL,
             },
           }}
         >
-          <PanelSection title="Target" contentWidth={sidebarTextWidth} tone={PRIMARY}>
+          <PanelSection title="Target" contentWidth={sidebarTextWidth} tone={theme.PRIMARY}>
             <box flexDirection="column" minWidth={0}>
-              <text fg={TEXT}>{fitTuiUrl(state.target, sidebarTextWidth)}</text>
-              <text fg={MUTED}>{fitTuiText(`${state.mode} · ${state.depth}`, sidebarTextWidth)}</text>
+              <text fg={theme.TEXT}>{fitTuiUrl(state.target, sidebarTextWidth)}</text>
+              <text fg={theme.MUTED}>{fitTuiText(`${state.mode} · ${state.depth}`, sidebarTextWidth)}</text>
             </box>
           </PanelSection>
-          <PanelSection title="Runtime" contentWidth={sidebarTextWidth} tone={state.connection.apiConnected ? SUCCESS : state.connection.apiConfigured ? WARNING : BORDER}>
+          <PanelSection title="Runtime" contentWidth={sidebarTextWidth} tone={state.connection.apiConnected ? theme.SUCCESS : state.connection.apiConfigured ? theme.WARNING : theme.BORDER}>
             <box flexDirection="column" minWidth={0}>
-              <text fg={TEXT}>selected {fitTuiText(state.connection.runtime, Math.max(1, sidebarTextWidth - "selected ".length))}</text>
+              <text fg={theme.TEXT}>selected {fitTuiText(state.connection.runtime, Math.max(1, sidebarTextWidth - "selected ".length))}</text>
               <box flexDirection="row" width="100%" minWidth={0}>
-                <text flexShrink={0} fg={TEXT}>api {apiStatus} </text>
-                <text fg={MUTED}>· {fitTuiText(apiProviderLabel, apiProviderWidth)}</text>
+                <text flexShrink={0} fg={theme.TEXT}>api {apiStatus} </text>
+                <text fg={theme.MUTED}>· {fitTuiText(apiProviderLabel, apiProviderWidth)}</text>
               </box>
               <box flexDirection="row" width="100%" minWidth={0}>
-                <text flexShrink={0} fg={TEXT}>local </text>
-                <text fg={MUTED}>{fitTuiText(state.connection.localRuntimes.length > 0 ? state.connection.localRuntimes.join(", ") : "none", localRuntimesWidth)}</text>
+                <text flexShrink={0} fg={theme.TEXT}>local </text>
+                <text fg={theme.MUTED}>{fitTuiText(state.connection.localRuntimes.length > 0 ? state.connection.localRuntimes.join(", ") : "none", localRuntimesWidth)}</text>
               </box>
               {state.usage.inputTokens > 0 || state.usage.outputTokens > 0 ? (
                 <>
                   <box flexDirection="row" width="100%" minWidth={0}>
-                    <text flexShrink={0} fg={TEXT}>tokens </text>
-                    <text fg={MUTED}>{fitTuiText(`${state.usage.inputTokens}/${state.usage.outputTokens}`, tokensValueWidth)}</text>
+                    <text flexShrink={0} fg={theme.TEXT}>tokens </text>
+                    <text fg={theme.MUTED}>{fitTuiText(`${state.usage.inputTokens}/${state.usage.outputTokens}`, tokensValueWidth)}</text>
                   </box>
                   <box flexDirection="row" width="100%" minWidth={0}>
-                    <text flexShrink={0} fg={TEXT}>cost </text>
-                    <text fg={MUTED}>{fitTuiText(`$${state.usage.estimatedCostUsd.toFixed(4)}`, costValueWidth)}</text>
+                    <text flexShrink={0} fg={theme.TEXT}>cost </text>
+                    <text fg={theme.MUTED}>{fitTuiText(`$${state.usage.estimatedCostUsd.toFixed(4)}`, costValueWidth)}</text>
                   </box>
                 </>
               ) : (
-                <text fg={MUTED}>{fitTuiText("usage awaiting first model response", sidebarTextWidth)}</text>
+                <text fg={theme.MUTED}>{fitTuiText("usage awaiting first model response", sidebarTextWidth)}</text>
               )}
               {state.connection.model ? (
                 <box flexDirection="row" width="100%" minWidth={0}>
-                  <text flexShrink={0} fg={TEXT}>model </text>
-                  <text fg={MUTED}>{fitTuiText(state.connection.model, modelWidth)}</text>
+                  <text flexShrink={0} fg={theme.TEXT}>model </text>
+                  <text fg={theme.MUTED}>{fitTuiText(state.connection.model, modelWidth)}</text>
                 </box>
               ) : null}
             </box>
           </PanelSection>
-          <PanelSection title="Session" contentWidth={sidebarTextWidth} tone={BORDER}>
+          <PanelSection title="Session" contentWidth={sidebarTextWidth} tone={theme.BORDER}>
             <box flexDirection="column" minWidth={0}>
               <box flexDirection="row" width="100%" minWidth={0}>
-                <text flexShrink={0} fg={TEXT}>transcript </text>
-                <text fg={MUTED}>{fitTuiText(`${state.transcript.length} items`, transcriptCountWidth)}</text>
+                <text flexShrink={0} fg={theme.TEXT}>transcript </text>
+                <text fg={theme.MUTED}>{fitTuiText(`${state.transcript.length} items`, transcriptCountWidth)}</text>
               </box>
               <box flexDirection="row" width="100%" minWidth={0}>
-                <text flexShrink={0} fg={TEXT}>turns </text>
-                <text fg={MUTED}>{fitTuiText(String(turnItems.length), turnsCountWidth)}</text>
+                <text flexShrink={0} fg={theme.TEXT}>turns </text>
+                <text fg={theme.MUTED}>{fitTuiText(String(turnItems.length), turnsCountWidth)}</text>
               </box>
               <box flexDirection="row" width="100%" minWidth={0}>
-                <text flexShrink={0} fg={TEXT}>findings </text>
-                <text fg={MUTED}>{fitTuiText(String(totalFindings), findingsCountWidth)}</text>
+                <text flexShrink={0} fg={theme.TEXT}>findings </text>
+                <text fg={theme.MUTED}>{fitTuiText(String(totalFindings), findingsCountWidth)}</text>
               </box>
-              <text fg={summary ? SUCCESS : PRIMARY}>{fitTuiText(summary ? "completed" : "running", sidebarTextWidth)}</text>
-              {visibleFromTurnId ? <text fg={ACCENT}>{fitTuiText("timeline focus active", sidebarTextWidth)}</text> : null}
+              <text fg={summary ? theme.SUCCESS : theme.PRIMARY}>{fitTuiText(summary ? "completed" : "running", sidebarTextWidth)}</text>
+              {visibleFromTurnId ? <text fg={theme.ACCENT}>{fitTuiText("timeline focus active", sidebarTextWidth)}</text> : null}
             </box>
           </PanelSection>
-          <PanelSection title="Pipeline" contentWidth={sidebarTextWidth} tone={state.stages.some((stage) => stage.status === "running") ? PRIMARY : BORDER}>
+          <PanelSection title="Pipeline" contentWidth={sidebarTextWidth} tone={state.stages.some((stage) => stage.status === "running") ? theme.PRIMARY : theme.BORDER}>
             <box flexDirection="column" minWidth={0}>
               {state.stages.map((stage) => (
                 <box key={stage.id} flexDirection="column" minWidth={0}>
-                  <text fg={stage.status === "running" ? PRIMARY : stage.status === "done" ? SUCCESS : stage.status === "error" ? ERROR : MUTED}>
+                  <text fg={stage.status === "running" ? theme.PRIMARY : stage.status === "done" ? theme.SUCCESS : stage.status === "error" ? theme.ERROR : theme.MUTED}>
                     {fitTuiText(`${stage.label} · ${stage.status}`, sidebarTextWidth)}
                   </text>
-                  {stage.detail ? <text fg={TEXT} wrapMode="word">{fitTuiText(stage.detail, sidebarTextWidth)}</text> : stage.status === "pending" ? <text fg={MUTED}>{fitTuiText("waiting for stage handoff", sidebarTextWidth)}</text> : null}
+                  {stage.detail ? <text fg={theme.TEXT} wrapMode="word">{fitTuiText(stage.detail, sidebarTextWidth)}</text> : stage.status === "pending" ? <text fg={theme.MUTED}>{fitTuiText("waiting for stage handoff", sidebarTextWidth)}</text> : null}
                 </box>
               ))}
             </box>
           </PanelSection>
-          <PanelSection title="Findings" contentWidth={sidebarTextWidth} tone={totalFindings > 0 ? WARNING : BORDER}>
+          <PanelSection title="Findings" contentWidth={sidebarTextWidth} tone={totalFindings > 0 ? theme.WARNING : theme.BORDER}>
             <box flexDirection="column" minWidth={0}>
               {state.stages.flatMap((stage) => stage.findings).length === 0 ? (
-                <text fg={TEXT}>{fitTuiText("No findings yet.", sidebarTextWidth)}</text>
+                <text fg={theme.TEXT}>{fitTuiText("No findings yet.", sidebarTextWidth)}</text>
               ) : state.stages.flatMap((stage) => stage.findings).slice(0, SESSION_MAX_SIDEBAR_FINDINGS).map((finding, index) => (
-                <text key={`${finding.title}-${index}`} fg={severityTone(finding.severity)}>{fitTuiText(`${finding.severity} · ${finding.title}`, sidebarTextWidth)}</text>
+                <text key={`${finding.title}-${index}`} fg={severityToneFor(theme, finding.severity)}>{fitTuiText(`${finding.severity} · ${finding.title}`, sidebarTextWidth)}</text>
               ))}
             </box>
           </PanelSection>
           {summary ? (
-            <PanelSection title="Report" contentWidth={sidebarTextWidth} tone={summary.critical > 0 || summary.high > 0 ? ERROR : SUCCESS}>
+            <PanelSection title="Report" contentWidth={sidebarTextWidth} tone={summary.critical > 0 || summary.high > 0 ? theme.ERROR : theme.SUCCESS}>
               <box flexDirection="column" minWidth={0}>
                 <box flexDirection="row" width="100%" minWidth={0}>
-                  <text flexShrink={0} fg={summary.critical > 0 ? ERROR : TEXT}>critical </text>
-                  <text fg={MUTED}>{fitTuiText(String(summary.critical), Math.max(1, sidebarTextWidth - "critical ".length))}</text>
+                  <text flexShrink={0} fg={summary.critical > 0 ? theme.ERROR : theme.TEXT}>critical </text>
+                  <text fg={theme.MUTED}>{fitTuiText(String(summary.critical), Math.max(1, sidebarTextWidth - "critical ".length))}</text>
                 </box>
                 <box flexDirection="row" width="100%" minWidth={0}>
-                  <text flexShrink={0} fg={summary.high > 0 ? ERROR : TEXT}>high </text>
-                  <text fg={MUTED}>{fitTuiText(String(summary.high), Math.max(1, sidebarTextWidth - "high ".length))}</text>
+                  <text flexShrink={0} fg={summary.high > 0 ? theme.ERROR : theme.TEXT}>high </text>
+                  <text fg={theme.MUTED}>{fitTuiText(String(summary.high), Math.max(1, sidebarTextWidth - "high ".length))}</text>
                 </box>
                 <box flexDirection="row" width="100%" minWidth={0}>
-                  <text flexShrink={0} fg={summary.medium > 0 ? WARNING : TEXT}>medium </text>
-                  <text fg={MUTED}>{fitTuiText(String(summary.medium), Math.max(1, sidebarTextWidth - "medium ".length))}</text>
+                  <text flexShrink={0} fg={summary.medium > 0 ? theme.WARNING : theme.TEXT}>medium </text>
+                  <text fg={theme.MUTED}>{fitTuiText(String(summary.medium), Math.max(1, sidebarTextWidth - "medium ".length))}</text>
                 </box>
                 <box flexDirection="row" width="100%" minWidth={0}>
-                  <text flexShrink={0} fg={TEXT}>low </text>
-                  <text fg={MUTED}>{fitTuiText(String(summary.low), Math.max(1, sidebarTextWidth - "low ".length))}</text>
+                  <text flexShrink={0} fg={theme.TEXT}>low </text>
+                  <text fg={theme.MUTED}>{fitTuiText(String(summary.low), Math.max(1, sidebarTextWidth - "low ".length))}</text>
                 </box>
                 <box flexDirection="row" width="100%" minWidth={0}>
-                  <text flexShrink={0} fg={TEXT}>info </text>
-                  <text fg={MUTED}>{fitTuiText(String(summary.info ?? 0), Math.max(1, sidebarTextWidth - "info ".length))}</text>
+                  <text flexShrink={0} fg={theme.TEXT}>info </text>
+                  <text fg={theme.MUTED}>{fitTuiText(String(summary.info ?? 0), Math.max(1, sidebarTextWidth - "info ".length))}</text>
                 </box>
-                {summary.shareUrl ? <text fg={ACCENT}>{fitTuiUrl(summary.shareUrl, sidebarTextWidth)}</text> : null}
+                {summary.shareUrl ? <text fg={theme.ACCENT}>{fitTuiUrl(summary.shareUrl, sidebarTextWidth)}</text> : null}
               </box>
             </PanelSection>
           ) : null}

@@ -47,7 +47,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
-import { ACCENT, BORDER, MUTED, PANEL, PANEL_ALT, PRIMARY, SUCCESS, TEXT, WARNING } from "../ui/theme.js";
+import { useTheme, type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
 import {
   buildModelRows,
@@ -108,32 +108,32 @@ export interface ModelScreenProps {
   env?: Record<string, string | undefined>;
 }
 
-function toneColor(tone: ModelDetailTone): string | undefined {
+function toneColor(theme: Theme, tone: ModelDetailTone): string | undefined {
   switch (tone) {
     case "title":
-      return PRIMARY;
+      return theme.PRIMARY;
     case "accent":
-      return ACCENT;
+      return theme.ACCENT;
     case "ok":
-      return SUCCESS;
+      return theme.SUCCESS;
     case "warn":
-      return WARNING;
+      return theme.WARNING;
     case "muted":
     case "blank":
-      return MUTED;
+      return theme.MUTED;
     default:
-      return TEXT;
+      return theme.TEXT;
   }
 }
 
-function credentialColor(credential: ProviderCredential): string {
+function credentialColor(theme: Theme, credential: ProviderCredential): string {
   switch (credential) {
     case "ready":
-      return SUCCESS;
+      return theme.SUCCESS;
     case "missing":
-      return WARNING;
+      return theme.WARNING;
     default:
-      return MUTED;
+      return theme.MUTED;
   }
 }
 
@@ -162,6 +162,7 @@ function Pane({
   titleFg: string;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
   if (pane.width <= 0 || pane.height <= 0) return null;
   // `hasTitle` is the layout's decision, not the caller's: the row it costs
   // was either budgeted for or it was not, and rendering a title the budget
@@ -180,8 +181,8 @@ function Pane({
       flexGrow={0}
       minWidth={0}
       border={bordered || undefined}
-      borderColor={bordered ? BORDER : undefined}
-      backgroundColor={bordered ? PANEL : undefined}
+      borderColor={bordered ? theme.BORDER : undefined}
+      backgroundColor={bordered ? theme.PANEL : undefined}
       paddingX={bordered ? 1 : undefined}
     >
       {titleRow}
@@ -198,6 +199,7 @@ export function ModelScreen({
   onExit,
   env,
 }: ModelScreenProps) {
+  const theme = useTheme();
   const { width, height } = useTerminalDimensions();
 
   const [filter, setFilter] = useState("");
@@ -359,14 +361,14 @@ export function ModelScreen({
           flexShrink={0}
           minWidth={0}
         >
-          <Cells width={heading.labelWidth} fg={PRIMARY}>
+          <Cells width={heading.labelWidth} fg={theme.PRIMARY}>
             {entry.group.label.toUpperCase()}
           </Cells>
           <Cells width={heading.gap}>{""}</Cells>
           <Cells
             width={heading.stateWidth}
             align="right"
-            fg={credentialColor(entry.group.credential)}
+            fg={credentialColor(theme, entry.group.credential)}
           >
             {credentialLabel(entry.group.credential)}
           </Cells>
@@ -375,7 +377,7 @@ export function ModelScreen({
     }
 
     const selectedRow = index === cursor;
-    const background = selectedRow ? PANEL_ALT : undefined;
+    const background = selectedRow ? theme.PANEL_ALT : undefined;
     return (
       <box
         key={`model-${entry.model.id}`}
@@ -384,13 +386,13 @@ export function ModelScreen({
         flexShrink={0}
         minWidth={0}
       >
-        <Cells width={row.markerWidth} fg={PRIMARY} bg={background}>
+        <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
           {selectedRow ? ">" : ""}
         </Cells>
         <Cells width={row.markerGap} bg={background}>
           {""}
         </Cells>
-        <Cells width={row.activeWidth} fg={ACCENT} bg={background}>
+        <Cells width={row.activeWidth} fg={theme.ACCENT} bg={background}>
           {entry.active ? "*" : ""}
         </Cells>
         <Cells width={row.activeGap} bg={background}>
@@ -398,7 +400,7 @@ export function ModelScreen({
         </Cells>
         <Cells
           width={row.labelWidth}
-          fg={entry.active ? ACCENT : selectedRow ? TEXT : MUTED}
+          fg={entry.active ? theme.ACCENT : selectedRow ? theme.TEXT : theme.MUTED}
           bg={background}
         >
           {entry.model.id}
@@ -406,7 +408,7 @@ export function ModelScreen({
         <Cells width={row.priceGap} bg={background}>
           {""}
         </Cells>
-        <Cells width={row.priceWidth} align="right" fg={MUTED} bg={background}>
+        <Cells width={row.priceWidth} align="right" fg={theme.MUTED} bg={background}>
           {entry.model.price}
         </Cells>
       </box>
@@ -421,7 +423,7 @@ export function ModelScreen({
     layout.detail.bodyRows,
     layout.detail.innerWidth,
   ).map((line, index) => (
-    <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(line.tone)}>
+    <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(theme, line.tone)}>
       {line.text}
     </Cells>
   ));
@@ -438,10 +440,10 @@ export function ModelScreen({
           pane={layout.list}
           bordered={layout.bordered}
           title={modelListTitle(window)}
-          titleFg={MUTED}
+          titleFg={theme.MUTED}
         >
           {rows.length === 0 ? (
-            <Cells width={row.width} fg={MUTED}>
+            <Cells width={row.width} fg={theme.MUTED}>
               no models match this filter
             </Cells>
           ) : (
@@ -452,13 +454,13 @@ export function ModelScreen({
           pane={layout.detail}
           bordered={layout.bordered}
           title={activeRow ? "MODEL" : "MODEL -"}
-          titleFg={MUTED}
+          titleFg={theme.MUTED}
         >
           {detailBody}
         </Pane>
       </box>
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
-        <Cells width={layout.contentWidth} fg={MUTED}>
+        <Cells width={layout.contentWidth} fg={theme.MUTED}>
           {statusText}
         </Cells>
       </box>
