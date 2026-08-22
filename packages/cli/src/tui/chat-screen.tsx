@@ -725,7 +725,7 @@ function ComposerFrame({
 }) {
   if (style === "border") {
     return (
-      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? PRIMARY : BORDER} backgroundColor={PANEL_ALT} paddingX={1}>
+      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? MUTED : BORDER} backgroundColor={PANEL_ALT} paddingX={1}>
         {children}
       </box>
     );
@@ -2918,7 +2918,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       ) : null}
 
       {commandMenuVisible ? (
-        <box flexDirection="column" width="100%" minWidth={0} height={commandMenuHeight} flexShrink={0} marginTop={1} border borderColor={PRIMARY} backgroundColor={PANEL_ALT} paddingX={1}>
+        <box flexDirection="column" width="100%" minWidth={0} height={commandMenuHeight} flexShrink={0} marginTop={1} border borderColor={MUTED} backgroundColor={PANEL_ALT} paddingX={1}>
           <box flexDirection="row" width={commandMenuInnerWidth} minWidth={0} gap={commandHeaderGap}>
             <box width={commandHeaderTitleWidth} flexShrink={0} minWidth={0}>
               <text fg={PRIMARY}>{fitTuiText("COMMANDS", commandHeaderTitleWidth)}</text>
@@ -2996,7 +2996,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           detail={pickerPlan.showDetail ? pickerDetail : undefined}
           hint="↑↓ select · type to filter · enter apply · esc cancel"
           emptyText={`no match for "${picker.state.query}"`}
-          borderColor={PRIMARY}
+          borderColor={MUTED}
           titleColor={PRIMARY}
           contentWidth={contentWidth}
           height={pickerBoxHeight}

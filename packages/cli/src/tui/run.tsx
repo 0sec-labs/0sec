@@ -782,7 +782,7 @@ function OverlayFrame({
   const overlay = getOverlayLayout(width);
 
   return (
-    <box position="absolute" top="12%" left={overlay.left} width={overlay.width} border borderColor={PRIMARY} backgroundColor={PANEL_ALT} paddingX={1} paddingY={0} zIndex={10}>
+    <box position="absolute" top="12%" left={overlay.left} width={overlay.width} border borderColor={MUTED} backgroundColor={PANEL_ALT} paddingX={1} paddingY={0} zIndex={10}>
       <box flexDirection="column" width="100%" minWidth={0}>
         <text fg={PRIMARY}>{fitTuiText(title, overlay.contentWidth)}</text>
         {children}
@@ -1399,7 +1399,7 @@ function renderTranscriptItem(
           marginLeft={1}
           backgroundColor={isHovered ? PANEL : PANEL_ALT}
           border
-          borderColor={isHovered || isExpanded ? PRIMARY : BORDER}
+          borderColor={isHovered || isExpanded ? MUTED : BORDER}
           paddingX={1}
           paddingY={0}
           flexGrow={1}
@@ -1688,7 +1688,7 @@ function HomeScreen({ onResolve, onExit, shell }: { onResolve: (selection: HomeS
             })}
           </box>
         ) : (
-          <box flexDirection="column" width="100%" minWidth={0} height={visibleFieldCount * 2 + 3} flexShrink={0} border borderColor={PRIMARY} backgroundColor={PANEL} paddingX={1} paddingY={0}>
+          <box flexDirection="column" width="100%" minWidth={0} height={visibleFieldCount * 2 + 3} flexShrink={0} border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} paddingY={0}>
             {composeFields.slice(fieldWindowStart, fieldWindowStart + visibleFieldCount).map((field, windowIndex) => {
               const fieldIndex = fieldWindowStart + windowIndex;
               const active = fieldIndex === focusIndex;
@@ -1834,7 +1834,7 @@ function OpsScreen({ dbPath, refreshMs, onExit, shell }: { dbPath?: string; refr
       {palette.paletteOpen ? <PaletteOverlay title="Mission control commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
       <box flexDirection={metricsInline ? "row" : "column"} gap={metricGap} marginBottom={1} width="100%" minWidth={0}>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={PRIMARY} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
               {runsLabelWidth > 0 ? <text width={runsLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("runs", runsLabelWidth)}</text> : null}
               <text fg={PRIMARY}>{fitTuiText(String(snapshot.scans.length), Math.max(1, metricContentWidth - runsLabelWidth - metricLabelGap))}</text>
@@ -1842,7 +1842,7 @@ function OpsScreen({ dbPath, refreshMs, onExit, shell }: { dbPath?: string; refr
           </box>
         </box>
         <box width={metricWidth} flexGrow={metricsInline ? 1 : 0} flexShrink={0} minWidth={0}>
-          <box border borderColor={PRIMARY} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
+          <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width="100%" minWidth={0}>
             <box flexDirection="row" width="100%" minWidth={0} gap={metricLabelGap}>
               {findingsLabelWidth > 0 ? <text width={findingsLabelWidth} flexShrink={0} fg={TEXT}>{fitTuiText("findings", findingsLabelWidth)}</text> : null}
               <text fg={PRIMARY}>{fitTuiText(String(snapshot.findings.length), Math.max(1, metricContentWidth - findingsLabelWidth - metricLabelGap))}</text>
@@ -2527,7 +2527,7 @@ function FindingsScreen({ options, onExit, shell }: { options: FindingsScreenOpt
         width="100%"
         minWidth={0}
       >
-        <box border borderColor={PRIMARY} backgroundColor={PANEL} paddingX={1} width={scopeChipWidth} flexGrow={findingsUsesSideBySideLayout ? 1 : 0} flexShrink={0} minWidth={0}>
+        <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width={scopeChipWidth} flexGrow={findingsUsesSideBySideLayout ? 1 : 0} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
             <text flexShrink={0} fg={TEXT}>scope </text>
             <text fg={PRIMARY}>{fitTuiText(filterSummary, scopeSummaryWidth)}</text>
@@ -2831,7 +2831,7 @@ function ReplayScreen({ dbPath, scanId, onExit, shell }: { dbPath?: string; scan
       {palette.paletteOpen ? <PaletteOverlay title="Replay commands" query={palette.paletteQuery} selected={palette.paletteSelected} commands={palette.filteredPalette} /> : null}
       {error ? <text fg={ERROR} wrapMode="word">{fitTuiText(error, contentWidth)}</text> : null}
       <box flexDirection="row" gap={chipGap} marginBottom={1} width="100%" minWidth={0}>
-        <box border borderColor={PRIMARY} backgroundColor={PANEL} paddingX={1} width={targetChipWidth} flexGrow={1} flexShrink={0} minWidth={0}>
+        <box border borderColor={MUTED} backgroundColor={PANEL} paddingX={1} width={targetChipWidth} flexGrow={1} flexShrink={0} minWidth={0}>
           <box flexDirection="row" width="100%" minWidth={0}>
             <text flexShrink={0} fg={TEXT}>target </text>
             <text fg={PRIMARY}>{scan ? fitTuiUrl(scan.target, targetChipTextWidth) : fitTuiText("loading", targetChipTextWidth)}</text>
