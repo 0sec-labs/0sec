@@ -109,7 +109,7 @@ import {
 import { deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
 import { appendTranscriptEntry, repeatSuffix } from "./transcript.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings";
 
 
 export interface ChatScreenOptions {
@@ -1722,40 +1722,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         void submitRef.current?.(prompt);
         return true;
       }
-      case "settings": {
-        const openSettings = (live: TuiSettings) => {
-          const values = live as unknown as Record<string, unknown>;
-          const items: SelectorItem[] = SETTING_DEFS.map((def) => {
-            const value = values[def.key];
-            return {
-              id: def.key,
-              label: def.label,
-              meta: typeof value === "boolean" ? (value ? "on" : "off") : String(value),
-              detail: def.description,
-            };
-          });
-          setPicker({
-            state: createSelectorState("Console settings", items),
-            commit: (key) => {
-              const next = toggleSetting(live, key);
-              setSettings(next);
-              if (!saveSettings(next)) {
-                appendEntry({
-                  kind: "notice",
-                  text: "settings changed for this session only",
-                  detail: "The settings file could not be written.",
-                  turn: turn.current,
-                });
-              }
-              // Reopen against the updated values so the meta column shows
-              // the new state immediately.
-              openSettings(next);
-            },
-          });
-        };
-        openSettings(settings);
+      case "settings":
+        // The full screen, not the composer picker: settings want grouping,
+        // real descriptions and reset affordances, none of which fit in a
+        // list squeezed above the composer.
+        onNavigate("settings");
         return true;
-      }
       case "model": {
         const requested = args.trim();
         if (!requested) {

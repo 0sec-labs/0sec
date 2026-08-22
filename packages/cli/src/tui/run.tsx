@@ -30,6 +30,7 @@ import {
   fixResultLines,
 } from "./fix-action.js";
 import { ChatScreen, type ChatScreenOptions } from "./chat-screen.js";
+import { SettingsScreen } from "./settings-screen.js";
 import { createSessionCloseGate } from "./session-close-gate.js";
 import { installTuiOutputGuard } from "./output-guard.js";
 import {
@@ -70,6 +71,7 @@ type ConsoleRoute =
   | { type: "history"; dbPath?: string; limit: number }
   | { type: "findings"; options: FindingsScreenOptions }
   | { type: "replay"; dbPath?: string; scanId?: string }
+  | { type: "settings" }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onClose: () => void };
 
 interface ShellNav {
@@ -84,6 +86,7 @@ interface ShellNav {
   openHistory: () => void;
   openFindings: () => void;
   openReplay: (scanId?: string) => void;
+  openSettings: () => void;
 }
 
 interface HomeOption {
@@ -514,6 +517,15 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       keybind: "6",
       suggested: true,
       action: () => shell.openReplay(),
+    },
+    {
+      id: "nav-settings",
+      title: "Open settings",
+      category: "Navigate",
+      description: "Console display, transcript and security toggles",
+      keybind: "8",
+      suggested: true,
+      action: shell.openSettings,
     },
     {
       id: "nav-back",
@@ -3318,6 +3330,35 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
   );
 }
 
+/**
+ * Routes the settings screen, supplying the console shell around it.
+ *
+ * `SettingsScreen` takes the frame as a prop rather than importing
+ * `ShellFrame` so that `settings-screen.tsx` does not have to import this
+ * module — which owns every other screen — just to draw a header. The footer
+ * text is handed back per render because the hint changes with the screen's
+ * mode: browsing, filtering, and confirming a reset each bind different keys.
+ *
+ * The command palette is deliberately not mounted here. Every printable key
+ * on this screen filters the list, so a second `useKeyboard` competing for
+ * those keystrokes would make `p` both a filter character and a palette
+ * toggle. Esc leaves, which is the binding the palette was mostly used for.
+ */
+function SettingsRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+  return (
+    <SettingsScreen
+      onBack={() => leaveCurrentScreen(shell, onExit)}
+      onExit={onExit}
+      frame={({ body, hint }) => (
+        <ShellFrame view="settings">
+          {body}
+          <FooterBar hint={hint} />
+        </ShellFrame>
+      )}
+    />
+  );
+}
+
 type AppMode =
   | { type: "home"; onResolve: (selection: HomeSelection) => void; onExit: () => void }
   | { type: "ops"; dbPath?: string; refreshMs: number; onExit: () => void }
@@ -3357,6 +3398,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     openHistory: () => navigate({ type: "history", limit: 12 }),
     openFindings: () => navigate({ type: "findings", options: { limit: 50 } }),
     openReplay: (scanId) => navigate({ type: "replay", scanId }),
+    openSettings: () => navigate({ type: "settings" }),
   };
 
   const launchSelection = async (selection: HomeSelection) => {
@@ -3510,6 +3552,9 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             case "replay":
               shell.openReplay();
               return;
+            case "settings":
+              shell.openSettings();
+              return;
           }
         }}
         onExit={onExit}
@@ -3555,6 +3600,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   if (currentRoute.type === "replay") {
     return <ReplayScreen dbPath={currentRoute.dbPath} scanId={currentRoute.scanId} onExit={onExit} shell={shell} />;
   }
+  if (currentRoute.type === "settings") return <SettingsRoute onExit={onExit} shell={shell} />;
   return null;
 }
 
@@ -3657,6 +3703,11 @@ export async function showOpenTuiDoctor(): Promise<void> {
 
 export async function showOpenTuiHistory(options: { dbPath?: string; limit: number }): Promise<void> {
   await mountApp({ type: "console", initialRoute: { type: "history", dbPath: options.dbPath, limit: options.limit }, onResolve: () => {}, onExit: () => {} });
+}
+
+/** Opens the console straight onto the settings screen. */
+export async function showOpenTuiSettings(): Promise<void> {
+  await mountApp({ type: "console", initialRoute: { type: "settings" }, onResolve: () => {}, onExit: () => {} });
 }
 
 export async function showOpenTuiFindings(options: FindingsScreenOptions): Promise<void> {
