@@ -625,6 +625,12 @@ const READ_ONLY_TOOLS: Record<string, true> = {
   intel_search_similar: true,
   intel_build_dossier: true,
   payload_lookup: true,
+  // Reads only this agent's own inbox and grants no authority, so it is
+  // exempt from the copilot gate. Its counterpart `send_message` is
+  // deliberately absent from all three maps: it changes state, so copilot
+  // gates it like any other action, but it reaches neither the target
+  // network nor the operator-approved project scope.
+  check_messages: true,
   done: true,
 };
 

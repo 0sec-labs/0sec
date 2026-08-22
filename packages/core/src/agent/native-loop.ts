@@ -151,6 +151,12 @@ export function isContextWindowError(errorMsg: string): boolean {
 // ── Native Agent Loop Config ──
 
 export interface NativeAgentConfig {
+  /**
+   * Agent-to-agent messaging identity and policy, propagated to the tool
+   * context so the child messaging tools know who they are and whom they
+   * may address. Absent means messaging is unavailable.
+   */
+  agentMessaging?: unknown;
   role: AgentRole;
   systemPrompt: string;
   tools: ToolDefinition[];
@@ -463,6 +469,7 @@ export async function runNativeAgentLoop(
     scope: config.scope,
     rateLimiter: config.rateLimiter,
     enforcement: config.enforcement,
+    agentMessaging: config.agentMessaging,
     // WAF detection + adaptive evasion (0sec#568). Auto-enabled for
     // authorized engagements (scope/enforcement configured) unless the caller
     // passed `wafDetector: null` to opt out.

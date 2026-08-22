@@ -245,6 +245,15 @@ export interface ToolContext {
    * and co-pilot per-tool approval gates all still apply on top.
    */
   escalateScopedAudit?: (req: ScopedAuditEscalationRequest) => Promise<boolean>;
+  /**
+   * Agent-to-agent messaging identity and policy for this executor.
+   *
+   * Absent means messaging is unavailable — the child tools report that
+   * rather than failing obscurely. Typed as `unknown` here because the
+   * concrete shape lives in `agent-messaging.ts`, which imports from this
+   * module; importing it back would be a cycle. `tools.ts` narrows it.
+   */
+  agentMessaging?: unknown;
   persistFindings?: boolean;
   authConfig?: AuthConfig;
   /**
