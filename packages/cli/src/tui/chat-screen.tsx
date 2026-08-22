@@ -3054,19 +3054,24 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         */}
       <ComposerFrame style={settings.composerStyle} active={composing || commandMenuVisible}>
         <box flexDirection="row" width="100%" minWidth={0}>
-          <text width={1} flexShrink={0} fg={PRIMARY}>›</text>
+          <text width={1} flexShrink={0} fg={composing ? PRIMARY : MUTED}>›</text>
           <text width={1} flexShrink={0} fg={MUTED}> </text>
+          {/*
+            * Real operator input is TEXT-bright; everything else the composer
+            * shows — the empty-state placeholder, the working animation, the
+            * unavailable notice — is MUTED, so a placeholder never reads as
+            * something the operator typed. This is the grey-placeholder look.
+            */}
           <box width={composerTextWidth} flexShrink={0} minWidth={0}>
-            <text fg={TEXT}>{composing
-              ? `${fitTuiText(composer || " ", composerTextWidth - 1, { mode: "middle" })}█`
-              : startupError
-                ? fitTuiText("runtime unavailable", composerTextWidth)
-                : animation
-                  // The frame already carries its own state word and elapsed
-                  // time, so the composer echoes it rather than inventing a
-                  // second, possibly contradictory, status string.
-                  ? fitTuiText(`${animation.glyph} ${animation.label}${animation.elapsedLabel ? ` ${animation.elapsedLabel}` : ""}${queueLabel ? ` · ${queueLabel}` : ""}`, composerTextWidth)
-                  : fitTuiText("type to chat or / for commands", composerTextWidth)}</text>
+            {composing ? (
+              <text fg={TEXT}>{`${fitTuiText(composer || " ", composerTextWidth - 1, { mode: "middle" })}█`}</text>
+            ) : startupError ? (
+              <text fg={ERROR}>{fitTuiText("runtime unavailable", composerTextWidth)}</text>
+            ) : animation ? (
+              <text fg={MUTED}>{fitTuiText(`${animation.glyph} ${animation.label}${animation.elapsedLabel ? ` ${animation.elapsedLabel}` : ""}${queueLabel ? ` · ${queueLabel}` : ""}`, composerTextWidth)}</text>
+            ) : (
+              <text fg={MUTED}>{fitTuiText("type to chat or / for commands", composerTextWidth)}</text>
+            )}
           </box>
         </box>
       </ComposerFrame>
