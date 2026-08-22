@@ -69,3 +69,59 @@ describe("newly covered credential shapes", () => {
     expect(Object.keys(env)).toEqual(["PATH"]);
   });
 });
+
+describe("generic credential-shape screening (extras path)", () => {
+  // Names that no vendor-specific pattern anticipated but every generic shape
+  // should catch. Each is a real credential envelope the task called out.
+  it.each([
+    ["NVD_CREDS", "generic CRED shape"],
+    ["MY_COMPANY_APIKEY", "APIKEY with no separator"],
+    ["GH_PAT", "personal access token (_PAT)"],
+    ["AWS_SESSION_TOKEN", "generic TOKEN shape"],
+    ["AWS_ACCESS_KEY_ID", "ACCESS_KEY shape"],
+    ["AWS_SECRET_ACCESS_KEY", "SECRET shape"],
+    ["DATABASE_PASSWORD", "PASSWORD shape"],
+    ["SSH_PASSPHRASE", "PASSPHRASE shape"],
+    ["MY_PRIVATE_KEY", "PRIVATE_KEY shape"],
+    ["SERVICE_CLIENT_SECRET", "SECRET shape"],
+    ["SOME_BEARER_TOKEN", "BEARER shape"],
+    ["VENDOR_AUTH_TOKEN", "AUTH_TOKEN shape"],
+  ])("screens %s out of caller extras (%s)", (name) => {
+    const env = allowlistedChildEnv({ [name]: "leak" }, { PATH: "/bin" });
+    expect(env[name]).toBeUndefined();
+    expect(env.PATH).toBe("/bin");
+  });
+
+  it("matches credential shapes case-insensitively", () => {
+    const env = allowlistedChildEnv(
+      { github_token: "leak", Aws_Session_Token: "leak", api_key: "leak" },
+      { PATH: "/bin" },
+    );
+    expect(env.github_token).toBeUndefined();
+    expect(env.Aws_Session_Token).toBeUndefined();
+    expect(env.api_key).toBeUndefined();
+  });
+
+  it("does not over-block: PATH is not treated as a _PAT credential", () => {
+    // "PATH".includes("PAT") is true, but the pattern is "_PAT" (underscore),
+    // so a legitimate PATH extra survives.
+    const env = allowlistedChildEnv({ PATH: "/opt/bin" }, {});
+    expect(env.PATH).toBe("/opt/bin");
+  });
+
+  it("still passes the non-secret child-runtime extras callers rely on", () => {
+    // Regression guard: the block-net flag, verify marker, scan id and target
+    // must NOT be caught by the widened patterns.
+    const env = allowlistedChildEnv(
+      {
+        "0SEC_KERNEL_BLOCK_NET": "1",
+        "0SEC_VERIFY": "1",
+        TARGET: "https://t.example",
+      },
+      { PATH: "/bin" },
+    );
+    expect(env["0SEC_KERNEL_BLOCK_NET"]).toBe("1");
+    expect(env["0SEC_VERIFY"]).toBe("1");
+    expect(env.TARGET).toBe("https://t.example");
+  });
+});

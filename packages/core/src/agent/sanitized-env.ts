@@ -1,7 +1,40 @@
 // Credentials supplied to the 0sec process must not reach agent-controlled
 // child processes. This is defense in depth only: credentials retained by the
 // parent process are a separate process-isolation problem (0sec#134).
+//
+// Two layers, most-general first:
+//
+//   1. GENERIC CREDENTIAL SHAPES — substrings that appear in the *name* of
+//      almost any secret regardless of vendor. Because the child env is built
+//      from an allowlist (see CHILD_ENV_ALLOWLIST) and these patterns only ever
+//      screen caller-supplied `extras`, a broad net here can never drop a
+//      variable a child legitimately needs — the legit ones are added from the
+//      allowlist before screening runs. It CAN stop a caller from re-injecting
+//      a freshly-minted secret shape the specific list below never anticipated
+//      (e.g. NVD_CREDS, MY_COMPANY_APIKEY, GH_PAT, AWS_SESSION_TOKEN,
+//      AWS_ACCESS_KEY_ID). Matching is case-insensitive (see the reducer).
+//
+//   2. VENDOR-SPECIFIC NAMES — kept for documentation / auditability even where
+//      a generic shape already covers them, so the security boundary reads as an
+//      explicit inventory of what 0sec knows it handles.
 const SENSITIVE_ENV_PATTERNS = [
+  // ── Generic credential shapes (see note above) ──────────────────────────
+  "TOKEN", // *_TOKEN, AWS_SESSION_TOKEN, API_TOKEN, …
+  "SECRET", // *_SECRET, AWS_SECRET_ACCESS_KEY, CLIENT_SECRET, …
+  "PASSWORD",
+  "PASSWD",
+  "PASSPHRASE",
+  "CRED", // CREDS, CREDENTIAL(S), NVD_CREDS, …
+  "APIKEY", // MY_COMPANY_APIKEY (no separator)
+  "API_KEY", // *_API_KEY beyond the vendor list below
+  "PRIVATE_KEY",
+  "ACCESS_KEY", // AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+  "SECRET_KEY",
+  "_PAT", // GH_PAT / *_PAT personal access tokens (NOT "PATH": no underscore)
+  "SESSION_TOKEN",
+  "AUTH_TOKEN",
+  "BEARER",
+  // ── Vendor-specific LLM provider keys ────────────────────────────────────
   "OPENROUTER_API",
   "ANTHROPIC_API",
   "OPENAI_API",
@@ -113,7 +146,10 @@ export function allowlistedChildEnv(
     if (value !== undefined) out[key] = value;
   }
   for (const [key, value] of Object.entries(extras)) {
-    if (SENSITIVE_ENV_PATTERNS.some((pattern) => key.includes(pattern))) continue;
+    // Case-insensitive: a lowercase alias (`github_token`) must be screened the
+    // same as its canonical uppercase form. Patterns are authored uppercase.
+    const upper = key.toUpperCase();
+    if (SENSITIVE_ENV_PATTERNS.some((pattern) => upper.includes(pattern))) continue;
     out[key] = value;
   }
   return out;

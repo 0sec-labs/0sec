@@ -26,6 +26,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { allowlistedChildEnv } from "../agent/sanitized-env.js";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -127,7 +128,7 @@ function commandAvailable(
   args: string[],
 ): Promise<boolean> {
   return new Promise((resolveProbe) => {
-    execFile(command, args, { timeout: 10_000 }, (error) => {
+    execFile(command, args, { timeout: 10_000, env: fuzzChildEnv() }, (error) => {
       resolveProbe(!error);
     });
   });
@@ -366,6 +367,37 @@ interface RunResult {
   failed: boolean;
 }
 
+/**
+ * Non-secret toolchain configuration that cargo / rustup legitimately need but
+ * the base allowlist does not carry. Passed through as `allowlistedChildEnv`
+ * EXTRAS (still screened for credential shapes) so the fuzz child can locate a
+ * custom CARGO_HOME/RUSTUP_HOME without widening the global boundary shared by
+ * the far more dangerous python kernel. HOME alone covers the default layout;
+ * these only matter when the operator relocated the toolchain.
+ */
+const FUZZ_TOOLCHAIN_ENV_PASSTHROUGH = [
+  "CARGO_HOME",
+  "RUSTUP_HOME",
+  "RUSTUP_TOOLCHAIN",
+  "CARGO_TARGET_DIR",
+] as const;
+
+/**
+ * Build the child env for a fuzz subprocess. cargo-fuzz builds and RUNS
+ * target-derived code (a malicious crate's build.rs or the fuzzed code itself
+ * can read `process.env`), so the child must not inherit the harness's
+ * provider/cloud credentials. Built from the allowlist + the non-secret Rust
+ * toolchain passthrough above.
+ */
+function fuzzChildEnv(): Record<string, string> {
+  const extras: Record<string, string> = {};
+  for (const key of FUZZ_TOOLCHAIN_ENV_PASSTHROUGH) {
+    const value = process.env[key];
+    if (value !== undefined) extras[key] = value;
+  }
+  return allowlistedChildEnv(extras);
+}
+
 /** Run a child process under a wall-clock budget, capturing combined output. */
 function runChild(
   command: string,
@@ -377,7 +409,7 @@ function runChild(
     execFile(
       command,
       args,
-      { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, killSignal: "SIGKILL" },
+      { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, killSignal: "SIGKILL", env: fuzzChildEnv() },
       (error, stdout, stderr) => {
         const stdoutText = String(stdout ?? "");
         const output = `${stdoutText}${String(stderr ?? "")}`;

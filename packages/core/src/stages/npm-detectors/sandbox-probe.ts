@@ -28,6 +28,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { allowlistedChildEnv } from "../../agent/sanitized-env.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,7 +128,12 @@ export function localSandboxProvider(): SandboxProvider {
                 cwd: runOpts?.cwd ?? workdir,
                 timeout: runOpts?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
                 maxBuffer: 64 * 1024 * 1024,
-                env: runOpts?.env ? { ...process.env, ...runOpts.env } : process.env,
+                // This child runs UNTRUSTED npm package code (install + harness
+                // exec). Inheriting process.env would hand every provider /
+                // cloud credential to attacker-authored package code via one
+                // `process.env` read. Build from the allowlist instead; a fresh
+                // npm install needs only PATH/HOME/TMPDIR, all carried there.
+                env: allowlistedChildEnv(runOpts?.env ?? {}),
               },
               (err, stdout, stderr) => {
                 // A non-zero exit surfaces as `err.code`; that is a soft failure

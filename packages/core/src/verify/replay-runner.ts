@@ -58,6 +58,7 @@ import {
   type VerificationCommand,
   type VerificationResult,
 } from "@0sec/shared";
+import { allowlistedChildEnv } from "../agent/sanitized-env.js";
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -175,7 +176,11 @@ export class LocalShellRunner implements ReplayRunner {
       try {
         child = spawn("/bin/sh", ["-c", cmd], {
           cwd: stepCwd,
-          env: { ...process.env, "0SEC_VERIFY": "1" },
+          // `cmd` is a PoC-authored shell step (model/target-derived), so this
+          // child must not inherit the harness's provider/cloud credentials.
+          // Build from the allowlist (PATH/HOME/TMPDIR + target-auth vars a
+          // reproduction legitimately needs) rather than copying process.env.
+          env: allowlistedChildEnv({ "0SEC_VERIFY": "1" }),
           stdio: ["ignore", "pipe", "pipe"],
           // On POSIX, isolate the shell and all descendants into a process
           // group so a timeout cannot leave a grandchild holding stdout open.

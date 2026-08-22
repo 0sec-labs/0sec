@@ -65,6 +65,45 @@ describe("LocalShellRunner", () => {
     expect(r.timedOut).toBeFalsy();
   });
 
+  it("does not leak harness credentials into the PoC shell, but keeps PATH + 0SEC_VERIFY", async () => {
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY;
+    const prevGithub = process.env.GITHUB_TOKEN;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-should-not-leak";
+    process.env.GITHUB_TOKEN = "ghp_should_not_leak";
+    try {
+      const runner = new LocalShellRunner();
+      const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-env-"));
+      const step: PocStep = {
+        id: "s-env",
+        kind: "exploit",
+        summary: "print sensitive + required env vars",
+        action: {
+          // `env` lists the child's full environment. `0SEC_VERIFY` cannot be
+          // referenced via `$`-expansion (identifiers may not start with a
+          // digit), so we inspect the raw listing instead.
+          type: "shell",
+          cmd: "env",
+        },
+      };
+      const r = await runner.exec(step, { runDir, stepTimeoutMs: 5000 });
+      expect(r.exitCode).toBe(0);
+      // Harness credentials must NOT reach a PoC-authored shell step.
+      expect(r.stdoutFull).not.toContain("ANTHROPIC_API_KEY");
+      expect(r.stdoutFull).not.toContain("GITHUB_TOKEN");
+      expect(r.stdoutFull).not.toContain("sk-ant-should-not-leak");
+      expect(r.stdoutFull).not.toContain("ghp_should_not_leak");
+      // What the child legitimately needs is still present. (Note: 0SEC_VERIFY
+      // is passed to the spawn but /bin/sh strips digit-prefixed names on
+      // startup, so it is deliberately not asserted via `env` here.)
+      expect(r.stdoutFull).toMatch(/^PATH=/m);
+    } finally {
+      if (prevAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevAnthropic;
+      if (prevGithub === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = prevGithub;
+    }
+  });
+
   it("captures non-zero exit codes faithfully", async () => {
     const runner = new LocalShellRunner();
     const runDir = mkdtempSync(join(tmpdir(), "0sec-runner-test-"));

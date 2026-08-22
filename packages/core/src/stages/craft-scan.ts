@@ -44,6 +44,7 @@ import {
   LOOP_SERVER_COMPACTION_TOKENS,
 } from "../runtime/llm-api.js";
 import { formatTruncated, truncateMiddle } from "../agent/output-truncation.js";
+import { allowlistedChildEnv } from "../agent/sanitized-env.js";
 import { lookupFormatPrimer, knownFormatIds } from "./format-knowledge.js";
 import { PROVER_TOOL_NAMES, listProverPluginIds, proverToolDefs, runProverTool } from "./prover/index.js";
 import { fdpEncodeToolDef, runFdpEncode } from "../agent/input-encoder.js";
@@ -392,8 +393,19 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     if (abs !== sourceRoot && !abs.startsWith(sourceRootPrefix)) throw new Error("path escapes source root");
     return abs;
   };
+  // Read-only repo tools the model drives (list_dir/grep/find). The command
+  // templates are fixed and paths are `safe()`-bounded, but the model steers
+  // *which* tool runs, so — defense in depth — the child gets the allowlisted
+  // env (PATH/HOME suffice for bash/grep/find) rather than the harness's full
+  // process.env with its provider/cloud credentials.
   const sh = (cmd: string, args: string[], cwd?: string) =>
-    execFileSync(cmd, args, { encoding: "utf8", stdio: "pipe", maxBuffer: 64 * 1024 * 1024, cwd }) as string;
+    execFileSync(cmd, args, {
+      encoding: "utf8",
+      stdio: "pipe",
+      maxBuffer: 64 * 1024 * 1024,
+      cwd,
+      env: allowlistedChildEnv(),
+    }) as string;
   const listDir = (p: string) => sh("bash", ["-lc", `cd ${JSON.stringify(safe(p || "."))} && ls -la --group-directories-first | head -200`]);
   const readFile = (p: string, a?: number, b?: number) => {
     const abs = safe(p);
@@ -446,15 +458,15 @@ export async function runCraftScan(opts: CraftScanOptions): Promise<CraftScanRes
     sanitizerOutput: string;
     pocPath: string;
   } | undefined;
-  const generatorEnv = (): NodeJS.ProcessEnv => {
-    const env = { ...process.env };
-    for (const key of Object.keys(env)) {
-      if (/(?:^|_)(?:TOKEN|SECRET|API_KEY|AUTH|PASSWORD|CREDENTIALS?)(?:_|$)/i.test(key)) {
-        delete env[key];
-      }
-    }
-    return env;
-  };
+  // The generator is MODEL-AUTHORED Python — the model can be steered by
+  // prompt injection in the scanned target, so this child must not see the
+  // harness's own credentials. Build its env from the allowlist rather than
+  // deny-listing a `process.env` copy: the old regex denylist leaked every
+  // credential shape it didn't anticipate (GH_PAT, AWS_ACCESS_KEY_ID,
+  // AWS_SESSION_TOKEN, MY_COMPANY_APIKEY — none match its `_TOKEN|_AUTH_` form).
+  // A PoC generator needs only PATH/HOME/TMPDIR/LANG, all of which the
+  // allowlist carries.
+  const generatorEnv = (): NodeJS.ProcessEnv => allowlistedChildEnv();
   const requestedGeneratorTimeoutMs = opts.generatorTimeoutMs ?? 30_000;
   const generatorTimeoutMs = Number.isFinite(requestedGeneratorTimeoutMs)
     && requestedGeneratorTimeoutMs > 0
