@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>An evidence-first security research harness for authorized targets.</strong><br/>
-  It runs an autonomous agent against your target, then reports a finding only after reproducing it.
+  It runs a coordinated swarm of agents against your target, then reports a finding only after reproducing it.
 </p>
 
 <p align="center">
@@ -18,9 +18,7 @@
   <img src="https://img.shields.io/badge/docs-0.security-6366f1" alt="docs" />
 </p>
 
-<p align="center">
-  <img src="assets/demo.gif" alt="0sec demo" width="760">
-</p>
+<!-- TODO: fresh terminal recording (asciinema/vhs) of `0sec scan` running — the old demo.gif was stale pwnkit branding and was removed. -->
 
 ## Install
 
@@ -48,8 +46,12 @@ export ANTHROPIC_API_KEY=...          # or OpenAI, Azure, OpenRouter, Ollama, �
 # 3. Or review code, audit a package, or open the chat console.
 0sec review ./my-app                  # source review
 0sec audit lodash                     # npm/pypi/cargo/oci package audit
-0 console --scope ./scope.json        # interactive operator console
+0 console --scope ./scope.json        # interactive operator console; type / for commands
 ```
+
+Inside the Bun console, `/` opens the local command menu. Start with `/status`,
+`/scope`, `/mode yolo`, `/clear`, and `/help`; commands never bypass the
+scope-on-demand and approval flow.
 
 Add `--cost-ceiling 5` for a hard spend cap, `--race` for best-of-N strategy
 racing, `--format sarif` for the GitHub Security tab. Every command has its own
@@ -57,9 +59,11 @@ racing, `--format sarif` for the GitHub Security tab. Every command has its own
 
 ## What it does
 
-An agent explores the target and saves candidate findings; a separate
-verification plane decides which survive. A finding it can't reproduce is
-dropped — not shipped as "low confidence." Each run keeps its own evidence under
+A swarm of agents explores the target and saves candidate findings — a lead
+agent that can fan out into parallel strategies (`--race`) and focused subagents,
+plus a separate, blind verification agent that decides which findings survive. A
+finding it can't reproduce is dropped — not shipped as "low confidence." Each run
+keeps its own evidence under
 `~/.0sec/runs/<id>/` (isolated SQLite state, an append-only journal, artifacts)
 so you can `resume`, `replay`, or `disclose` it later.
 
@@ -73,16 +77,17 @@ so you can `resume`, `replay`, or `disclose` it later.
 | Generate & re-test a source fix | `fix` |
 | Assess identity / AD posture (read-only, offline) | `identity`, `adgraph`, `entragraph` |
 | Analyze a compiled binary (no source) | [`0verse`](0verse/README.md) |
-| Integrate | `mcp-server`, `console`, `tui`, `dashboard`, GitHub Action |
+| Integrate | `mcp-server`, `console`, `tui`, `dashboard` |
 
 That's a slice of the **48-command CLI** — run `0sec --help` for the rest.
 Full reference: **[0.security](https://0.security)**.
 
 ## How it works
 
-- **A free-form agent inside deterministic guardrails.** No hard-coded exploit
-  playbook — the model decides what to probe and how to chain it. Turn budgets,
-  reflection checkpoints, loop detection, and context compaction keep it on
+- **Free-form agents inside deterministic guardrails.** No hard-coded exploit
+  playbook — the models decide what to probe and how to chain it, and a lead
+  agent can spawn parallel strategy racers and focused subagents. Turn budgets,
+  reflection checkpoints, loop detection, and context compaction keep them on
   track; scope is enforced on every tool call.
 - **Reproduce before trust.** A blind verify agent re-exploits each finding
   seeing only the PoC (never the finder's reasoning); a deterministic

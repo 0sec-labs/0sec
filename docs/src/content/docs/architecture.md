@@ -401,12 +401,12 @@ The `--mode mcp` scan mode probes MCP servers for:
 The product is intentionally split into two surfaces:
 
 - **0sec CLI** — the execution surface for local runs, CI, replay, and exports
-- **0cloud** — the managed control plane for scoped, multi-worker engagements
+- **Managed control plane** — a separate hosted product for scoped, multi-worker engagements (not part of this repository)
 
 Every fresh local CLI run owns `~/.0sec/runs/<scan-id>/state.db`, its journal,
 and its report. The local dashboard can inspect a selected run via `--db-path`;
 it is not a shared worker database. Managed findings, verification state,
-budgets, and organization ownership live in 0cloud's Postgres store.
+budgets, and organization ownership live in the managed control plane's store.
 
 ## Shell-first approach (web mode)
 

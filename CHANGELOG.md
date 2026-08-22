@@ -30,7 +30,7 @@ on the published npm package and the GitHub Release tag.
   aggregate run-local state; `0sec resume` resolves an unambiguous abbreviated
   run id.
 - Managed workers bind the local run directory, database, and final report to
-  their 0cloud scan id. The worker controller retrieves that report after the
+  their managed scan id. The worker controller retrieves that report after the
   engine exits and posts it through the retrying, idempotent final-report path,
   so transient per-finding webhook loss cannot silently erase the completed
   scan's findings.
