@@ -2066,22 +2066,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           : modeArg === "copilot"
             ? "copilot"
             : "yolo";
-        if (next === "yolo" && scopeRules.length === 0) {
-          appendEntry({
-            kind: "notice",
-            text: "YOLO requires a configured scope; mode is unchanged",
-            detail: "Use Standard or Co-pilot to approve a narrow session-only scope extension first.",
-            turn: turn.current,
-          });
-          return true;
-        }
         session.setAutonomyMode(next);
         setMode(next);
         const modeMeaning = next === "standard"
-          ? "0sec works automatically inside scope and requests approval only for narrow session-only scope extensions."
+          ? "0sec asks you to approve each action before it runs."
           : next === "copilot"
-            ? "0sec asks before each non-read-only tool and before narrow session-only scope extensions."
-            : "0sec works without prompts only inside the configured scope; missing or out-of-scope work is denied.";
+            ? "0sec runs autonomously inside scope and expands scope to in-engagement hosts without asking."
+            : "0sec runs with no prompts on your target and everything reachable from it — still bounded to that target.";
         appendEntry({
           kind: "notice",
           text: `Mode: ${modeLabel(next)}`,
@@ -2538,9 +2529,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     // is skipped entirely when no scope is configured, so the cycle degrades to
     // a two-state toggle instead of stopping on a mode it cannot enter.
     if (key.name === "tab" && key.shift) {
-      const cycle: ConsoleAutonomyMode[] = scopeRules.length === 0
-        ? ["standard", "copilot"]
-        : ["standard", "copilot", "yolo"];
+      const cycle: ConsoleAutonomyMode[] = ["standard", "copilot", "yolo"];
       const at = cycle.indexOf(mode);
       const next = cycle[(at + 1) % cycle.length] ?? "standard";
       routeSlashCommand(`/mode ${next}`);
@@ -2894,11 +2883,6 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const showTerminalMark =
     settings.showLogo && empty && ledgerRows >= LEDGER_MARK_ROWS && contentWidth >= TERMINAL_BLOCK_LOGO_WIDTH;
   const showEmptyStateTagline = empty && ledgerRows >= 3;
-  // The three-line mode explanation is the lowest-priority hero block: it costs
-  // three rows on top of the mark, its Swiss tagline and the shorter captions,
-  // so it is only shown when the column can actually spare them. Dropped (not
-  // clipped or overprinted) on a short terminal, keeping the empty state whole.
-  const showEmptyStateModes = showTerminalMark && ledgerRows >= LEDGER_MARK_ROWS + 4;
   const sessionState = startupError ? "unavailable" : busy ? "working" : session ? "ready" : "connecting";
   const targetSummary = target ? `target: ${target}` : "target: none";
   const scopeSummary = `scope: ${scopeLabel} · ${sessionState}`;
@@ -2948,70 +2932,43 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       </box>
 
       <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" backgroundColor={PANEL} paddingX={compact ? 1 : 2} paddingY={1}>
-        {/*
-          * flexShrink={0}: this title shares the ledger box with a
-          * flexGrow scrollbox. Without it a tight column collapses the
-          * title to zero height while it still paints, so the transcript's
-          * first visible row lands on top of it.
-          */}
-        <box flexDirection="row" width="100%" minWidth={0} flexShrink={0}>
-          <text fg={MUTED}>EVIDENCE LEDGER</text>
-          <text fg={MUTED}> · {empty ? "awaiting an objective" : `${entries.length} records`}</text>
-        </box>
-        <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
-          <box flexDirection="column" width="100%">
-            {empty ? (
-              <box flexDirection="column" alignItems={showTerminalMark ? "center" : "flex-start"} paddingTop={showTerminalMark ? 3 : 1}>
-                {showTerminalMark ? (
-                  <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
-                    {/*
-                      * 0sec brand mark: a slashed zero — a white "0" outline
-                      * with a red diagonal slash through its hollow — then white
-                      * "SEC". Each row is drawn as a sequence of same-colour
-                      * runs (see logoCellRuns) with explicit widths that sum to
-                      * TERMINAL_BLOCK_LOGO_WIDTH, so no run overflows and the
-                      * slash keeps its own colour rather than being sliced off.
-                      * Rendered verbatim — never through fitTuiText, which trims.
-                      */}
-                    {TERMINAL_BLOCK_LOGO.map((line, index) => (
-                      <box key={`logo-${index}`} flexDirection="row" width={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0} minWidth={0}>
-                        {logoCellRuns(line).map((run, runIndex) => (
-                          <text
-                            key={`logo-${index}-${runIndex}`}
-                            width={run.text.length}
-                            flexShrink={0}
-                            fg={run.kind === "/" ? ERROR : TEXT}
-                          >{run.text}</text>
-                        ))}
-                      </box>
+        {empty ? (
+          // Minimal start screen: the mark and its captions sit centered in the
+          // whole transcript area (a sticky-bottom scrollbox can't center, so
+          // the empty state is its own flexGrow box, not the scrollbox).
+          <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" minWidth={0} justifyContent="center" alignItems="center">
+            {showTerminalMark ? (
+              <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
+                {/*
+                  * 0sec brand mark: a slashed zero — a white "0" outline with a
+                  * red diagonal slash through its hollow — then white "SEC".
+                  * Each row is a sequence of same-colour runs (logoCellRuns)
+                  * with explicit widths summing to TERMINAL_BLOCK_LOGO_WIDTH, so
+                  * no run overflows and the slash keeps its own colour.
+                  * Rendered verbatim — never through fitTuiText, which trims.
+                  */}
+                {TERMINAL_BLOCK_LOGO.map((line, index) => (
+                  <box key={`logo-${index}`} flexDirection="row" width={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0} minWidth={0}>
+                    {logoCellRuns(line).map((run, runIndex) => (
+                      <text
+                        key={`logo-${index}-${runIndex}`}
+                        width={run.text.length}
+                        flexShrink={0}
+                        fg={run.kind === "/" ? ERROR : TEXT}
+                      >{run.text}</text>
                     ))}
                   </box>
-                ) : (
-                  <box flexDirection="row" flexShrink={0}>
-                    <text fg={TEXT}>0SEC · OPERATOR CONSOLE</text>
-                  </box>
-                )}
-                {/* The lab attribution sits directly under the mark, muted and
-                    centered, before the shorter captions — it says who is
-                    behind the console. */}
-                {showEmptyStateTagline ? <text fg={TEXT} marginTop={2}>evidence-first security research</text> : null}
-                {showTerminalMark ? <text fg={MUTED} marginTop={1}>{fitTuiText("made with 🤍 by the Swiss 🇨🇭 Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
-                {/* The mode explanation: three short labelled lines rather than
-                    one clipped sentence, so nothing is cut off mid-word. Dropped
-                    entirely (not truncated) when the column is too short. */}
-                {showEmptyStateModes ? (
-                  <box flexDirection="column" alignItems="center" flexShrink={0} minWidth={0} marginTop={2}>
-                    <text fg={MUTED}>{fitTuiText("Standard — approves each action before it runs", contentWidth)}</text>
-                    <text fg={MUTED}>{fitTuiText("Co-pilot — autonomous within scope; expands scope automatically", contentWidth)}</text>
-                    <text fg={MUTED}>{fitTuiText("YOLO — no prompts; full send on your target", contentWidth)}</text>
-                  </box>
-                ) : null}
+                ))}
               </box>
-            ) : entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay, theme))}
+            ) : (
+              <box flexDirection="row" flexShrink={0}>
+                <text fg={TEXT}>0SEC · OPERATOR CONSOLE</text>
+              </box>
+            )}
+            {showEmptyStateTagline ? <text fg={TEXT} marginTop={2}>evidence-first autonomous cybersecurity research</text> : null}
+            {showTerminalMark ? <text fg={MUTED} marginTop={1}>{fitTuiText("the Swiss 🇨🇭 Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
             {animation ? (
-              <box flexDirection="row" minWidth={0} marginTop={entryDisplay.spacing} gap={1}>
-                {/* Rendered verbatim in a fixed-width cell: fitTuiText trims,
-                    and every frame is exactly GLYPH_CELLS wide by contract. */}
+              <box flexDirection="row" minWidth={0} marginTop={2} gap={1}>
                 <box width={GLYPH_CELLS} flexShrink={0}>
                   <text fg={animationKind === "awaiting-operator" ? WARNING : PRIMARY}>{animation.glyph}</text>
                 </box>
@@ -3019,9 +2976,27 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                 {animation.elapsedLabel ? <text fg={MUTED}>{animation.elapsedLabel}</text> : null}
               </box>
             ) : null}
-            {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
+            {startupError ? <text fg={ERROR} marginTop={1}>{fitTuiText(startupError, contentWidth)}</text> : null}
           </box>
-        </scrollbox>
+        ) : (
+          <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
+            <box flexDirection="column" width="100%">
+              {entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay, theme))}
+              {animation ? (
+                <box flexDirection="row" minWidth={0} marginTop={entryDisplay.spacing} gap={1}>
+                  {/* Rendered verbatim in a fixed-width cell: fitTuiText trims,
+                      and every frame is exactly GLYPH_CELLS wide by contract. */}
+                  <box width={GLYPH_CELLS} flexShrink={0}>
+                    <text fg={animationKind === "awaiting-operator" ? WARNING : PRIMARY}>{animation.glyph}</text>
+                  </box>
+                  <text fg={MUTED}>{animation.label}</text>
+                  {animation.elapsedLabel ? <text fg={MUTED}>{animation.elapsedLabel}</text> : null}
+                </box>
+              ) : null}
+              {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
+            </box>
+          </scrollbox>
+        )}
       </box>
 
       {/*
