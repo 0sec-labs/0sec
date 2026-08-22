@@ -1017,31 +1017,52 @@ function validateTargetUrl(
     throw new Error(`Unsupported protocol for http_request: ${candidate.protocol}`);
   }
 
-  if (candidate.origin !== base.origin) {
-    throw new Error(`Cross-origin http_request blocked: ${candidate.origin}`);
-  }
-
   const hostname = candidate.hostname.toLowerCase();
   const baseHostname = base.hostname.toLowerCase();
   const baseIsLocal = isLocalHostname(baseHostname) || isPrivateIpv4(baseHostname) || isPrivateIpv6(baseHostname);
   const candidateIsLocal = isLocalHostname(hostname) || isPrivateIpv4(hostname) || isPrivateIpv6(hostname);
 
+  // Absolute private/internal-network guard (SSRF rail). This is the ONE
+  // check scope can never lift: an approved scope must not become a path
+  // to SSRF against localhost / RFC1918 / link-local metadata endpoints
+  // (169.254.169.254, 127.0.0.1, …) when the base is a public target.
+  // It runs before scope authorization so an in-scope local host is
+  // still refused.
   if (candidateIsLocal && !baseIsLocal) {
     throw new Error(`Local/internal http_request blocked: ${candidate.hostname}`);
   }
 
   const candidateUrl = candidate.toString();
 
-  // Programmatic scope enforcement (0sec#215). Additive on top of the
-  // existing same-origin / private-network guards above — scope cannot
-  // loosen those, only further restrict. When `scope` is undefined the
-  // behaviour is identical to the pre-#215 implementation.
+  // Cross-origin / scope authorization (0sec#215, cross-origin-in-scope fix).
+  //
+  // The same-origin rail is the correct default for a *scopeless* console:
+  // with no operator-approved scope, never wander off the single named
+  // target's origin. But once an operator has approved a `scope` that
+  // COVERS the candidate host, the scope is the authority — an in-scope
+  // host is permitted even when its origin differs from the base target's
+  // (e.g. an approved sibling subdomain like api.doruk.ch).
+  //
+  // Order:
+  //   1. If a scope is present, it decides. In-scope → authorized (origin
+  //      may differ). Out-of-scope → hard block (noteOutOfScopeBlocked).
+  //   2. If no scope is present, fall back to the same-origin rail —
+  //      BYTE-IDENTICAL to the pre-fix behaviour so scopeless callers and
+  //      their tests are unchanged.
+  // The private-network guard above already ran, so scope can never
+  // authorize an SSRF target.
   if (scope) {
     const verdict = scope.match(candidateUrl);
     if (!verdict.allowed) {
       enforcement?.noteOutOfScopeBlocked();
       throw new Error(`Scope violation blocked: ${verdict.reason}`);
     }
+    // In scope → the scope check is the authority; the same-origin rail
+    // does not override an explicitly-approved in-scope host.
+  } else if (candidate.origin !== base.origin) {
+    // Scopeless default: same-origin only. Identical error/message/caller
+    // contract as before the fix.
+    throw new Error(`Cross-origin http_request blocked: ${candidate.origin}`);
   }
 
   // http_audit path-prefix allowlist (FROZEN CONTRACT). Layered on top of

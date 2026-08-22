@@ -2510,6 +2510,195 @@ describe("ToolExecutor — scope enforcement (0sec#215)", () => {
   });
 });
 
+// ── Cross-origin-in-scope authorization (subdomain scope fix) ─────────────
+//
+// Reproduces a live-session bug: an operator approved a scope covering
+// several sibling subdomains (api.doruk.ch, www.doruk.ch, …), but every
+// http_request to a subdomain still failed `Cross-origin http_request
+// blocked` because the same-origin rail ran unconditionally BEFORE scope
+// was consulted. The fix makes an explicitly-approved in-scope host the
+// authority: scope, when present and covering the host, satisfies the
+// cross-origin check. With no scope, the same-origin rail is unchanged.
+describe("ToolExecutor — cross-origin in-scope authorization", () => {
+  const okFetch = () =>
+    vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: new Headers({ "content-type": "text/plain" }),
+      text: async () => "ok",
+      json: async () => ({}),
+    }));
+
+  it("ALLOWS an in-scope subdomain whose origin differs from the base target", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const scope = ScopePolicy.fromJson({
+      in_scope: ["doruk.ch", "www.doruk.ch", "api.doruk.ch", "admin.doruk.ch"],
+    });
+    const ctx: ToolContext = {
+      target: "https://doruk.ch",
+      scanId: "xorigin-inscope-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+    };
+    const fetchStub = okFetch();
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const ex = new ToolExecutor(ctx, null);
+      const result = await ex.execute({
+        name: "http_request",
+        arguments: { url: "https://api.doruk.ch/" },
+      });
+      // The scope authorizes the cross-origin subdomain: whatever the
+      // outcome, it must NOT be rejected by the same-origin rail, and the
+      // request must actually reach fetch.
+      expect(result.error ?? "").not.toMatch(/Cross-origin/);
+      expect(result.error ?? "").not.toMatch(/Scope violation/);
+      expect(fetchStub).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("REGRESSION: the same subdomain request with NO scope still throws cross-origin", async () => {
+    const ctx: ToolContext = {
+      target: "https://doruk.ch",
+      scanId: "xorigin-noscope-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      // scope intentionally absent → same-origin rail is the authority.
+    };
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "http_request",
+      arguments: { url: "https://api.doruk.ch/" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Cross-origin");
+  });
+
+  it("blocks an out-of-scope host even with a scope present (scope-violation)", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const scope = ScopePolicy.fromJson({ in_scope: ["doruk.ch", "api.doruk.ch"] });
+    const ctx: ToolContext = {
+      target: "https://doruk.ch",
+      scanId: "xorigin-oos-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+    };
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "http_request",
+      arguments: { url: "https://evil.com/" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Scope violation/);
+  });
+
+  it("SSRF GUARD: a private/local candidate that is in scope is STILL blocked", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    // Operator (mistakenly or maliciously) lists loopback + metadata in
+    // scope while the base is a public target. Scope must NOT lift the
+    // private-network rail — this is the one guard scope cannot bypass.
+    const scope = ScopePolicy.fromJson({
+      in_scope: ["api.doruk.ch", "127.0.0.1", "169.254.169.254"],
+    });
+    const ctx: ToolContext = {
+      target: "https://api.doruk.ch",
+      scanId: "xorigin-ssrf-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+    };
+    const ex = new ToolExecutor(ctx, null);
+
+    const loopback = await ex.execute({
+      name: "http_request",
+      arguments: { url: "http://127.0.0.1/" },
+    });
+    expect(loopback.success).toBe(false);
+    expect(loopback.error).toMatch(/Local\/internal/);
+
+    const metadata = await ex.execute({
+      name: "http_request",
+      arguments: { url: "http://169.254.169.254/latest/meta-data/" },
+    });
+    expect(metadata.success).toBe(false);
+    expect(metadata.error).toMatch(/Local\/internal/);
+  });
+
+  it("PATH ALLOWLIST still applies on top of an in-scope cross-origin host", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const scope = ScopePolicy.fromJson({
+      in_scope: ["doruk.ch", "api.doruk.ch"],
+    });
+    const mkCtx = (): ToolContext => ({
+      target: "https://doruk.ch",
+      scanId: "xorigin-path-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+      enforcement: new EnforcementTracker({
+        pathPolicy: new PathPolicy(["/api"]),
+        killAfterSec: 1800,
+      }),
+    });
+
+    // Out-of-path on the in-scope cross-origin host → path violation.
+    const blockedCtx = mkCtx();
+    const blocked = await new ToolExecutor(blockedCtx, null).execute({
+      name: "http_request",
+      arguments: { url: "https://api.doruk.ch/secret" },
+    });
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toMatch(/Scope violation/);
+    expect(blockedCtx.enforcement!.summarize().requests_out_of_scope_blocked).toBe(1);
+
+    // In-path on the same in-scope cross-origin host → passes the URL gate.
+    const okCtx = mkCtx();
+    const fetchStub = okFetch();
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      const allowed = await new ToolExecutor(okCtx, null).execute({
+        name: "http_request",
+        arguments: { url: "https://api.doruk.ch/api/health" },
+      });
+      expect(allowed.error ?? "").not.toMatch(/Cross-origin/);
+      expect(allowed.error ?? "").not.toMatch(/Scope violation/);
+      expect(fetchStub).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("PROTOCOL check is unchanged for an in-scope cross-origin host", async () => {
+    const { ScopePolicy } = await import("../scope/scope.js");
+    const scope = ScopePolicy.fromJson({ in_scope: ["doruk.ch", "api.doruk.ch"] });
+    const ctx: ToolContext = {
+      target: "https://doruk.ch",
+      scanId: "xorigin-proto-1",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scope,
+    };
+    const ex = new ToolExecutor(ctx, null);
+    const result = await ex.execute({
+      name: "http_request",
+      arguments: { url: "ftp://api.doruk.ch/" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Unsupported protocol/);
+  });
+});
+
 // 0sec#133. The guards above all live inside `if (this.ctx.scope)`, and
 // `ctx.scope` is undefined on every local run without `--scope` and on every
 // cloud scan mode except http_audit. That is not going to change (fail-closed
