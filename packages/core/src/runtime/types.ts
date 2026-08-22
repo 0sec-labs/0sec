@@ -139,6 +139,17 @@ export interface NativeRuntimeResult {
   durationMs: number;
   error?: string;
   /**
+   * Set only when the call ended because the caller's `signal` (see
+   * {@link NativeRuntime.executeNative}) fired — an OPERATOR cancellation, not
+   * a timeout, a stall or a transport failure.
+   *
+   * `stopReason` stays `"error"` so every existing consumer keeps working
+   * unchanged; this flag is the structural way to tell "the operator pressed
+   * Esc" apart from "the provider broke", without string-matching `error`.
+   * A runtime that cannot abort an in-flight request simply never sets it.
+   */
+  cancelled?: boolean;
+  /**
    * The provider's raw response items for this turn, when the wire format has
    * items worth replaying (Responses API). Callers that maintain a message
    * history should carry this onto the assistant message they push — see
@@ -169,11 +180,25 @@ export interface NativeStreamCallbacks {
 
 export interface NativeRuntime {
   readonly type: RuntimeType;
+  /**
+   * `signal` is OPERATOR cancellation (the console's Esc), and is optional and
+   * last so every pre-existing implementation and call site stays valid — a
+   * runtime that ignores it behaves exactly as it did before.
+   *
+   * An implementation that DOES honour it must:
+   *   - make no request at all when the signal is already aborted;
+   *   - abort the in-flight request (and any streamed body) when it fires;
+   *   - treat the cancellation as TERMINAL — never retry it, never fail over
+   *     to another provider, because both would defeat the cancellation;
+   *   - report it as {@link NativeRuntimeResult.cancelled}, distinguishable
+   *     from the runtime's own timeout/stall aborts.
+   */
   executeNative(
     system: string,
     messages: NativeMessage[],
     tools: NativeToolDef[],
     callbacks?: NativeStreamCallbacks,
+    signal?: AbortSignal,
   ): Promise<NativeRuntimeResult>;
   isAvailable(): Promise<boolean>;
 }

@@ -201,12 +201,19 @@ export interface ConsoleLocalScopeResolution {
  *   for tools past a round count no legitimate investigation should reach.
  *   Distinct from `max_turn_tokens` on purpose, so a surface can say "something
  *   is looping" rather than "you ran out of budget".
+ * - `cancelled` — the operator interrupted the turn via an {@link AbortSignal}
+ *   (see {@link ConsoleSendOptions.signal}). Like the budget stops, this is NOT
+ *   an error: the conversation is left intact and resumable — every dispatched
+ *   `tool_use` still has a matching `tool_result` — so the operator can send
+ *   another message to continue. What it does and does NOT interrupt is spelled
+ *   out on {@link ConsoleSendOptions.signal}.
  * - `error` — the LLM runtime failed.
  */
 export type ConsoleStopReason =
   | "end_turn"
   | "max_tool_iterations"
   | "max_turn_tokens"
+  | "cancelled"
   | "error";
 
 /**
@@ -239,6 +246,62 @@ export interface ConsoleTurnOutcome {
   budget: ConsoleTurnBudget;
   stopReason: ConsoleStopReason;
   error?: string;
+}
+
+/**
+ * Per-call options for {@link ConsoleSession.send}. A dedicated options bag —
+ * NOT a field on {@link ConsoleRenderCallbacks} — because cancellation is a
+ * different concern from rendering: `callbacks` are output hooks a *renderer*
+ * owns (deltas, tool start/result, usage), whereas an `AbortSignal` is turn
+ * *control* a *controller* owns. A headless caller with no renderer must still
+ * be able to cancel, and a renderer must not have to become a cancellation
+ * authority to draw output. Keeping them separate also matches the platform
+ * `{ signal }` convention (fetch, addEventListener, node streams). The whole
+ * bag is optional and every field within it is optional, so every existing
+ * `send(text)` / `send(text, callbacks)` caller compiles and behaves
+ * identically.
+ */
+export interface ConsoleSendOptions {
+  /**
+   * Operator interrupt for this turn. When it fires (or is already aborted on
+   * entry), the turn stops at the next checkpoint and returns a
+   * {@link ConsoleTurnOutcome} with `stopReason: "cancelled"`, still carrying
+   * the {@link ConsoleTurnOutcome.budget} spent so far.
+   *
+   * WHAT IT INTERRUPTS — and only these, checked at the points where a check
+   * can actually take effect:
+   *   - before the FIRST model call (already-aborted signal ⇒ immediate return,
+   *     no model call, no history mutation);
+   *   - between rounds / before issuing the NEXT model call;
+   *   - before dispatching each tool in a round.
+   *
+   * WHAT IT CANNOT INTERRUPT — stated plainly so no one is misled:
+   *   - a tool already executing. Same-process JavaScript cannot be hard-
+   *     killed; a tool in `executor.execute(...)` runs to completion and the
+   *     signal takes effect only at the NEXT checkpoint (the next tool, or the
+   *     next round).
+   *   - an OAuth token refresh already in flight. `executeNative` now takes
+   *     the signal and aborts an in-flight model call, but a ChatGPT/Codex
+   *     token refresh issued inside `ensureFreshHeaders` takes no signal, so
+   *     an abort during that one refresh waits it out — the model fetch then
+   *     aborts immediately and the pre-attempt guard stops any retry.
+   *
+   * An in-flight MODEL call IS interruptible: the runtime composes the
+   * operator signal with its own timeout and idle watchdog, and reports the
+   * result structurally via `cancelled` so a cancellation is never mistaken
+   * for a transport failure. A cancelled call is also never retried and never
+   * fails over to another provider — retrying a request the operator just
+   * cancelled would defeat the cancellation.
+   *
+   * CONVERSATION INTEGRITY is preserved regardless of when the signal fires:
+   * if it fires mid-round after tool calls were already dispatched, every
+   * outstanding `tool_use` still receives a matching `tool_result` (a synthetic
+   * "cancelled by operator" result) before the turn returns, so history is
+   * never left with an unmatched `tool_use` and the next `send()` resumes
+   * cleanly. Cancelling a turn NEVER clears or bypasses authorization state —
+   * denied-host / denied-path memory and granted scope are untouched.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ConsoleSessionConfig {
@@ -388,8 +451,18 @@ export interface ConsoleSession {
    * The next call to {@link send} starts from an empty history.
    */
   clearConversation(): void;
-  /** Run one operator message to a natural stop, streaming via `callbacks`. */
-  send(userText: string, callbacks?: ConsoleRenderCallbacks): Promise<ConsoleTurnOutcome>;
+  /**
+   * Run one operator message to a natural stop, streaming via `callbacks`.
+   * Pass `opts.signal` to make the turn cancellable — see
+   * {@link ConsoleSendOptions.signal} for exactly what an abort can and cannot
+   * interrupt. Both trailing parameters are optional; omitting them is today's
+   * behaviour exactly.
+   */
+  send(
+    userText: string,
+    callbacks?: ConsoleRenderCallbacks,
+    opts?: ConsoleSendOptions,
+  ): Promise<ConsoleTurnOutcome>;
   /** Release tool resources (browser/PTY) held by the executor. */
   cleanup(): Promise<void>;
 }
@@ -1662,7 +1735,33 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     return "approved";
   }
 
-  async function send(userText: string, callbacks?: ConsoleRenderCallbacks): Promise<ConsoleTurnOutcome> {
+  async function send(
+    userText: string,
+    callbacks?: ConsoleRenderCallbacks,
+    opts?: ConsoleSendOptions,
+  ): Promise<ConsoleTurnOutcome> {
+    const signal = opts?.signal;
+
+    // Checkpoint — already aborted before any work. Return immediately with the
+    // cancel reason and, crucially, WITHOUT mutating history or issuing a model
+    // call: the user message is not even appended, so a session cancelled here
+    // is byte-for-byte where it was before the call. The budget snapshot reads
+    // zero because nothing was spent.
+    if (signal?.aborted) {
+      return {
+        assistantText: "",
+        toolCalls: [],
+        usage: { inputTokens: 0, outputTokens: 0 },
+        budget: {
+          tokensUsed: 0,
+          tokenBudget: maxTurnTokens,
+          iterations: 0,
+          maxToolIterations,
+        },
+        stopReason: "cancelled",
+      };
+    }
+
     messages.push({ role: "user", content: [{ type: "text", text: userText }] });
 
     const runCalls: Array<{ call: ToolCall; result: ToolResult }> = [];
@@ -1708,10 +1807,42 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // stops requesting tools (end_turn), the turn's token budget is spent, or
     // the runaway iteration backstop trips.
     for (;;) {
+      // Checkpoint — between rounds / before issuing the next model call. On the
+      // first iteration this is redundant with the pre-abort check above and
+      // harmless; on later iterations it is what stops the loop AFTER a round
+      // has been fully closed out (every tool_use matched by a tool_result and
+      // the tool_result message pushed), so history is well-formed and the next
+      // send() resumes from it. We cannot abort an executeNative call that is
+      // already in flight — the runtime takes no AbortSignal (see the honest
+      // note where executeNative is called), so the signal is honoured here,
+      // before the request is issued, not during it.
+      if (signal?.aborted) {
+        callbacks?.onNotice?.(
+          `Turn cancelled by operator after ${iterations} tool round(s) — used ${usage.inputTokens + usage.outputTokens} of ${maxTurnTokens} tokens. Conversation is intact; send another message to continue.`,
+        );
+        return { assistantText, toolCalls: runCalls, usage, budget: budgetSnapshot(), stopReason: "cancelled" };
+      }
+
       streamedUsage = undefined;
-      const result = await config.runtime.executeNative(systemPrompt, messages, nativeTools, streamCallbacks);
+      // HONEST LIMIT: this call cannot be interrupted once issued. NativeRuntime
+      // .executeNative takes no AbortSignal, so an abort that fires while the
+      // model request is in flight only takes effect at the next checkpoint
+      // (the top of this loop, or before the next tool dispatch). Aborting the
+      const result = await config.runtime.executeNative(systemPrompt, messages, nativeTools, streamCallbacks, signal);
 
       if (result.stopReason === "error") {
+        // The runtime reports an operator abort structurally via `cancelled`
+        // rather than by message text, so an interrupted call is reported as
+        // a cancellation and not as a failure the operator has to interpret.
+        if (result.cancelled) {
+          return {
+            assistantText,
+            toolCalls: runCalls,
+            usage,
+            budget: budgetSnapshot(),
+            stopReason: "cancelled",
+          };
+        }
         return {
           assistantText,
           toolCalls: runCalls,
@@ -1757,8 +1888,42 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       }
 
       const toolResultBlocks: NativeContentBlock[] = [];
+      // Set once the abort fires partway through this round. We do NOT break out
+      // of the loop: CONVERSATION INTEGRITY requires that every tool_use block
+      // the assistant emitted (already pushed to history above) gets a matching
+      // tool_result, or the next model call rejects the history as malformed.
+      // So once cancelled we keep iterating, but instead of dispatching we
+      // append a synthetic "cancelled" tool_result for each outstanding block.
+      let cancelledMidRound = false;
       for (const block of toolUseBlocks) {
         const call: ToolCall = { name: block.name, arguments: block.input };
+
+        // Checkpoint — before dispatching this tool. A tool already running in a
+        // PRIOR iteration of this loop cannot be interrupted (same-process JS is
+        // not hard-killable); the abort takes effect here, before the NEXT tool
+        // is dispatched. Every remaining block still gets a matching tool_result
+        // so history stays well-formed. This runs BEFORE the scope / local-scope
+        // / copilot / guard gates so a cancel never consults, mutates, or
+        // bypasses any authorization state — denial memory and granted scope are
+        // left exactly as they were.
+        if (cancelledMidRound || signal?.aborted) {
+          cancelledMidRound = true;
+          const cancelResult: ToolResult = {
+            success: false,
+            output: null,
+            error: "Tool call cancelled by operator before dispatch.",
+          };
+          callbacks?.onToolStart?.(call);
+          callbacks?.onToolResult?.(call, cancelResult);
+          runCalls.push({ call, result: cancelResult });
+          toolResultBlocks.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: stringifyToolResult(cancelResult),
+            is_error: true,
+          });
+          continue;
+        }
 
         // ── Scope resolution gate (network-capable tools) ──
         const scopeVerdict = await maybeResolveScope(call);
@@ -1846,6 +2011,16 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       messages.push({ role: "user", content: toolResultBlocks });
 
       iterations += 1;
+
+      // A mid-round abort stops here — AFTER the tool_result message for this
+      // round is pushed, so every tool_use in it is matched and the history is
+      // resumable. Reported as `cancelled`, carrying the budget spent so far.
+      if (cancelledMidRound) {
+        callbacks?.onNotice?.(
+          `Turn cancelled by operator mid-round — used ${usage.inputTokens + usage.outputTokens} of ${maxTurnTokens} tokens over ${iterations} tool round(s). Outstanding tool calls were closed out; send another message to continue.`,
+        );
+        return { assistantText, toolCalls: runCalls, usage, budget: budgetSnapshot(), stopReason: "cancelled" };
+      }
 
       // Both guards are evaluated HERE — after every tool_use block in this
       // round has a matching tool_result appended — and never between the

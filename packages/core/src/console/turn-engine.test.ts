@@ -10,6 +10,7 @@ import type {
   ConsoleUsageReport,
 } from "./turn-engine.js";
 import type {
+  NativeContentBlock,
   NativeMessage,
   NativeRuntime,
   NativeRuntimeResult,
@@ -1994,5 +1995,230 @@ describe("Console autonomy — yolo requires a configured scope (engine-level)",
     const session = createConsoleSession({ runtime, autonomyMode: "yolo" });
     const outcome = await session.send("go");
     expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+});
+
+// ── Console turn cancellation (operator AbortSignal) ──
+
+describe("Console turn cancellation — AbortSignal", () => {
+  // A one-round result that requests two tools, so a mid-round abort has an
+  // outstanding tool_use to close out with a synthetic tool_result.
+  function twoToolRound(idA: string, idB: string): NativeRuntimeResult {
+    return {
+      content: [
+        { type: "tool_use", id: idA, name: "payload_lookup", input: { name: "jsfuck_alert" } },
+        { type: "tool_use", id: idB, name: "payload_lookup", input: { name: "jsfuck_alert" } },
+      ],
+      stopReason: "tool_use",
+      durationMs: 1,
+    };
+  }
+  function oneToolRound(id: string): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id, name: "payload_lookup", input: { name: "jsfuck_alert" } }],
+      stopReason: "tool_use",
+      durationMs: 1,
+    };
+  }
+  function toolUseIds(msg: NativeMessage | undefined): string[] {
+    return (msg?.content ?? [])
+      .filter((b): b is Extract<NativeContentBlock, { type: "tool_use" }> => b.type === "tool_use")
+      .map((b) => b.id)
+      .sort();
+  }
+  function toolResultIds(msg: NativeMessage | undefined): string[] {
+    return (msg?.content ?? [])
+      .filter((b): b is Extract<NativeContentBlock, { type: "tool_result" }> => b.type === "tool_result")
+      .map((b) => b.tool_use_id)
+      .sort();
+  }
+
+  it("returns immediately with `cancelled` for an already-aborted signal — no model call, no history change", async () => {
+    const runtime = new ScriptedRuntime([endTurn("must never run")]);
+    const session = createConsoleSession({ runtime });
+    const controller = new AbortController();
+    controller.abort();
+
+    const outcome = await session.send("hello", undefined, { signal: controller.signal });
+
+    expect(outcome.stopReason).toBe("cancelled");
+    expect(outcome.toolCalls).toHaveLength(0);
+    // No model call was issued...
+    expect(runtime.calls).toHaveLength(0);
+    // ...and the user message was never even appended (history is pristine).
+    expect(session.messages).toHaveLength(0);
+    // The budget is still carried, reading zero.
+    expect(outcome.budget.tokensUsed).toBe(0);
+    expect(outcome.budget.tokenBudget).toBeGreaterThan(0);
+  });
+
+  it("aborting between rounds stops the loop and reports `cancelled` with the budget spent", async () => {
+    const runtime = new ScriptedRuntime([
+      { ...oneToolRound("c1"), usage: { inputTokens: 7, outputTokens: 3 } },
+      endTurn("second round must not run"),
+    ]);
+    const controller = new AbortController();
+    const session = createConsoleSession({ runtime });
+
+    // Fire the abort once the first round's tool has resolved; the loop then
+    // trips the between-rounds checkpoint before the next model call.
+    const outcome = await session.send(
+      "go",
+      { onToolResult: () => controller.abort() },
+      { signal: controller.signal },
+    );
+
+    expect(outcome.stopReason).toBe("cancelled");
+    expect(outcome.toolCalls).toHaveLength(1); // the first tool really ran
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    // Only the first model call happened; the second (endTurn) was never issued.
+    expect(runtime.calls).toHaveLength(1);
+    // The spent budget is reported.
+    expect(outcome.budget.tokensUsed).toBe(10);
+    expect(outcome.budget.iterations).toBe(1);
+  });
+
+  it("aborting mid-round still yields matching tool_use / tool_result ids (integrity)", async () => {
+    const runtime = new ScriptedRuntime([
+      twoToolRound("call-A", "call-B"),
+      endTurn("must not run"),
+    ]);
+    const controller = new AbortController();
+    const session = createConsoleSession({ runtime });
+
+    let results = 0;
+    const outcome = await session.send(
+      "run both",
+      {
+        // Abort after the FIRST tool resolves; the second tool hits the
+        // pre-dispatch checkpoint and must be closed out synthetically.
+        onToolResult: () => {
+          results += 1;
+          if (results === 1) controller.abort();
+        },
+      },
+      { signal: controller.signal },
+    );
+
+    expect(outcome.stopReason).toBe("cancelled");
+
+    // The conversation-integrity invariant: every tool_use has a matching
+    // tool_result, by id.
+    const assistantMsg = session.messages.find(
+      (m) => m.role === "assistant" && m.content.some((b) => b.type === "tool_use"),
+    );
+    const resultMsg = session.messages.find(
+      (m) => m.role === "user" && m.content.some((b) => b.type === "tool_result"),
+    );
+    expect(toolUseIds(assistantMsg)).toEqual(["call-A", "call-B"]);
+    expect(toolResultIds(resultMsg)).toEqual(["call-A", "call-B"]);
+
+    // The first tool genuinely ran; the second was a synthetic cancellation.
+    expect(outcome.toolCalls).toHaveLength(2);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    expect(outcome.toolCalls[1].result.success).toBe(false);
+    expect(outcome.toolCalls[1].result.error).toContain("cancelled by operator");
+  });
+
+  it("after a cancelled turn, a subsequent send resumes cleanly and re-runs nothing", async () => {
+    const runtime = new ScriptedRuntime([
+      oneToolRound("c1"), // round 1 — will be cancelled between rounds
+      endTurn("resumed and done"), // the resume's first (and only) model call
+    ]);
+    const controller = new AbortController();
+    const session = createConsoleSession({ runtime });
+
+    const first = await session.send(
+      "go",
+      { onToolResult: () => controller.abort() },
+      { signal: controller.signal },
+    );
+    expect(first.stopReason).toBe("cancelled");
+    expect(runtime.calls).toHaveLength(1);
+
+    // Resume with a fresh (unsignalled) send.
+    const second = await session.send("continue");
+    expect(second.stopReason).toBe("end_turn");
+    // Nothing re-run: the resume dispatched no tools of its own.
+    expect(second.toolCalls).toHaveLength(0);
+    // The resume's model call saw the earlier tool_result already in history,
+    // so the model does not re-request the completed tool.
+    const resumeMessages = runtime.calls[1].messages;
+    expect(
+      resumeMessages.some((m) =>
+        m.content.some((b) => b.type === "tool_result" && b.tool_use_id === "c1"),
+      ),
+    ).toBe(true);
+  });
+
+  it("cancellation does not clear denied-host memory or granted scope", async () => {
+    const runtime = new ScriptedRuntime([
+      httpTurn("c1", "https://blocked.test/a"), // turn 1: declined → remembered
+      endTurn("declined"),
+      httpTurn("c2", "https://ok.test/b"), // turn 2: approve a scope
+      endTurn("scope granted"),
+      // turn 3 is an already-aborted cancel — issues no model call.
+      httpTurn("c3", "https://blocked.test/c"), // turn 4: must still be denied
+      endTurn("still denied from memory"),
+    ]);
+
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async (req) => {
+        prompts += 1;
+        // Decline blocked.test; approve anything else with a covering scope.
+        if (req.requestedUrls.some((u) => u.includes("blocked.test"))) return null;
+        return {
+          target: "https://ok.test",
+          scope: ScopePolicy.fromJson({ in_scope: ["ok.test"] }),
+        };
+      },
+    });
+
+    await session.send("hit blocked.test"); // prompt #1 → declined & remembered
+    await session.send("hit ok.test"); // prompt #2 → scope granted
+    expect(prompts).toBe(2);
+    expect(session.scope).toBeDefined();
+
+    // The cancelled turn: an already-aborted signal, no model call.
+    const controller = new AbortController();
+    controller.abort();
+    const cancelled = await session.send("try to cancel", undefined, { signal: controller.signal });
+    expect(cancelled.stopReason).toBe("cancelled");
+    // Turns 1 & 2 each made two model calls (tool round + endTurn); the cancel
+    // itself issued none.
+    expect(runtime.calls).toHaveLength(4);
+
+    // Granted scope survived the cancel.
+    expect(session.scope).toBeDefined();
+
+    // Denied-host memory survived the cancel: blocked.test is still auto-denied
+    // WITHOUT a fresh prompt (prompts stays 2).
+    const after = await session.send("hit blocked.test again");
+    expect(after.toolCalls[0].result.success).toBe(false);
+    expect(after.toolCalls[0].result.error).toContain("already declined");
+    expect(prompts).toBe(2);
+  });
+
+  it("no signal passed = today's behaviour exactly (normal tool turn unaffected)", async () => {
+    const runtime = new ScriptedRuntime([
+      { ...oneToolRound("c1"), usage: { inputTokens: 4, outputTokens: 2 } },
+      endTurn("done normally"),
+    ]);
+    const session = createConsoleSession({ runtime });
+
+    const seen: string[] = [];
+    // Callbacks but no opts — the historical two-argument call shape.
+    const outcome = await session.send("go", {
+      onToolStart: (c) => seen.push(`start:${c.name}`),
+      onToolResult: (c, r) => seen.push(`result:${c.name}:${r.success}`),
+    });
+
+    expect(outcome.stopReason).toBe("end_turn");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    expect(seen).toEqual(["start:payload_lookup", "result:payload_lookup:true"]);
+    expect(outcome.budget.tokensUsed).toBe(6);
   });
 });

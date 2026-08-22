@@ -7,6 +7,7 @@ import {
   retryBackoffMs,
   parseUsageLimitReached,
   QuotaExhaustedError,
+  OperatorAbortError,
   parseLlmFallbackChain,
   resolveFailoverProvider,
   __resetFallbackChainForTests,
@@ -2074,5 +2075,275 @@ describe("LlmApiRuntime cross-provider failover (0SEC_LLM_FALLBACK)", () => {
     // 400 fails fast — no retry, no failover.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.stopReason).toBe("error");
+  });
+});
+
+// ── Operator cancellation (executeNative `signal`) ─────────────────────────
+//
+// Cancellation is TERMINAL by construction. Every assertion below exists to
+// pin one of the two ways a naive implementation silently defeats it: retrying
+// (or failing over) the request the operator just cancelled, and reporting the
+// cancellation as the runtime's own timeout so the caller cannot tell them
+// apart. The last two cases are the regression guards for the other direction
+// — a real timeout, and a call with no signal at all, must be untouched.
+
+describe("LlmApiRuntime operator cancellation", () => {
+  const origEnv = { ...process.env };
+  const IDLE_ENV = "0SEC_LLM_STREAM_IDLE_TIMEOUT_MS";
+
+  beforeEach(() => {
+    process.env["0SEC_SKIP_PROVIDER_BANNER"] = "1";
+    __resetFallbackChainForTests();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete process.env[IDLE_ENV];
+    for (const k of Object.keys(process.env)) {
+      if (!(k in origEnv)) delete process.env[k];
+    }
+    Object.assign(process.env, origEnv);
+    __resetFallbackChainForTests();
+  });
+
+  const userMsg: NativeMessage[] = [
+    { role: "user", content: [{ type: "text", text: "go" }] },
+  ];
+
+  function mkChatRt(timeout = 30_000): LlmApiRuntime {
+    const rt = new LlmApiRuntime({ type: "api", timeout, apiKey: "test" });
+    (rt as any).provider = "openai";
+    (rt as any).wireApi = "chat_completions";
+    // test fixture, literal non-secret "test" key
+    // foxguard: ignore[js/no-hardcoded-secret]
+    (rt as any).apiKey = "test";
+    return rt;
+  }
+
+  function mkStreamRt(timeout = 30_000): LlmApiRuntime {
+    const rt = mkChatRt(timeout);
+    (rt as any).wireApi = "responses";
+    return rt;
+  }
+
+  function okChat(text: string): Response {
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          choices: [{ message: { content: text }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        }),
+    } as unknown as Response;
+  }
+
+  function rateLimited(): Response {
+    return {
+      ok: false,
+      status: 429,
+      headers: new Headers({ "retry-after": "0" }),
+      text: async () => '{"detail":"rate limit exceeded"}',
+    } as unknown as Response;
+  }
+
+  it("names the cancellation error type like the other typed wire errors", () => {
+    const err = new OperatorAbortError();
+    expect(err.name).toBe("OperatorAbortError");
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it("an already-aborted signal costs nothing — no HTTP request at all", async () => {
+    const fetchMock = vi.fn(async () => okChat("never reached"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const operator = new AbortController();
+    operator.abort();
+
+    const rt = mkChatRt();
+    const result = await rt.executeNative("sys", userMsg, [], undefined, operator.signal);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.cancelled).toBe(true);
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("cancelled by operator");
+    // Distinguishable from the runtime's own abort, which reports a timeout.
+    expect(result.error).not.toContain("timed out");
+  });
+
+  it("aborts a request already in flight instead of waiting for it", async () => {
+    const operator = new AbortController();
+    // The server never answers; only the abort ends this call.
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("This operation was aborted", "AbortError")),
+            { once: true },
+          );
+          setTimeout(() => operator.abort(), 10);
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkChatRt();
+    const t0 = Date.now();
+    const result = await rt.executeNative("sys", userMsg, [], undefined, operator.signal);
+
+    expect(Date.now() - t0).toBeLessThan(5000); // nowhere near the 30s timeout
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.cancelled).toBe(true);
+    expect(result.error).toContain("cancelled by operator");
+  });
+
+  it("terminates a live SSE read mid-stream and cancels the reader", async () => {
+    // Idle window far longer than the test — proves the watchdog is not what
+    // ended the stream.
+    process.env[IDLE_ENV] = "5000";
+    const operator = new AbortController();
+    let readerCancelled = false;
+
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "hi" })}\n\n`,
+          ));
+          // then holds the stream open forever
+        },
+        cancel() {
+          readerCancelled = true;
+        },
+      }),
+    } as unknown as Response)));
+
+    const rt = mkStreamRt();
+    const t0 = Date.now();
+    const result = await rt.executeNative(
+      "sys",
+      userMsg,
+      [],
+      // Cancel the moment the first token lands — the operator reading along.
+      { onDelta: () => operator.abort() },
+      operator.signal,
+    );
+
+    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(readerCancelled).toBe(true);
+    expect(result.cancelled).toBe(true);
+    expect(result.error).toContain("cancelled by operator");
+    // Not the stall path, not the timeout path.
+    expect(result.error).not.toContain("stalled");
+    expect(result.error).not.toContain("timed out");
+  });
+
+  it("does NOT retry a cancelled request", async () => {
+    const operator = new AbortController();
+    // 429 with retry-after: 0 — this WOULD be retried without the guard.
+    const fetchMock = vi.fn(async () => {
+      operator.abort();
+      return rateLimited();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkChatRt();
+    const result = await rt.executeNative("sys", userMsg, [], undefined, operator.signal);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.cancelled).toBe(true);
+    expect(result.error).toContain("cancelled by operator");
+  });
+
+  it("does NOT fail over to another provider on a cancelled request", async () => {
+    // test fixtures, literal non-secret keys
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENAI_API_KEY = "sk-openai-primary";
+    // foxguard: ignore[js/no-hardcoded-secret]
+    process.env.OPENROUTER_API_KEY = "sk-or-fallback";
+    process.env["0SEC_LLM_429_MAX_RETRIES"] = "0"; // next stop would be failover
+    process.env["0SEC_LLM_FALLBACK"] = "openrouter:qwen/qwen-2.5-coder-32b-instruct";
+    __resetFallbackChainForTests();
+
+    const operator = new AbortController();
+    const fetchMock = vi.fn(async () => {
+      operator.abort();
+      return rateLimited();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkChatRt();
+    const result = await rt.executeNative("sys", userMsg, [], undefined, operator.signal);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Provider never switched — the fallback chain was not advanced.
+    expect((rt as any).provider).toBe("openai");
+    expect(result.cancelled).toBe(true);
+  });
+
+  it("a timeout abort is still a timeout, even with an operator signal attached", async () => {
+    // The operator signal is supplied but never fires; the composed signal
+    // must not steal the timeout's classification.
+    const operator = new AbortController();
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("This operation was aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkChatRt(60);
+    const result = await rt.executeNative("sys", userMsg, [], undefined, operator.signal);
+
+    expect(result.stopReason).toBe("error");
+    expect(result.error).toContain("timed out");
+    expect(result.cancelled).toBeUndefined();
+    expect(result.error).not.toContain("cancelled by operator");
+  });
+
+  it("with NO signal, behaviour is unchanged (success + retry both intact)", async () => {
+    const responses = [rateLimited(), okChat("done")];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkChatRt();
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    // Still retried the 429, still succeeded, never flagged as cancelled.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.error).toBeUndefined();
+    expect(result.cancelled).toBeUndefined();
+  });
+
+  it("with NO signal, a timeout is reported exactly as before", async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("This operation was aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rt = mkChatRt(60);
+    const result = await rt.executeNative("sys", userMsg, []);
+
+    expect(result.error).toContain("timed out");
+    expect(result.cancelled).toBeUndefined();
   });
 });

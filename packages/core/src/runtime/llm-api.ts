@@ -318,6 +318,128 @@ export class QuotaExhaustedError extends Error {
   }
 }
 
+/**
+ * Operator cancellation: the caller handed `executeNative` an `AbortSignal`
+ * (the console's Esc) and it fired.
+ *
+ * This is a sibling of {@link QuotaExhaustedError} and exists for the same
+ * reason — some failures must NOT be retried, and the retry loop can only know
+ * that if the failure carries its own type. Retrying a request the operator
+ * just cancelled is not merely wasteful, it silently defeats the cancellation;
+ * so is failing over to a second provider. Both paths check for this error and
+ * rethrow it immediately.
+ *
+ * Deliberately distinct from the runtime's OWN aborts (the per-call timeout
+ * and the SSE idle watchdog), which stay transient-class and keep their
+ * existing retry/report behaviour. Those surface as an `AbortError`
+ * `DOMException` and are classified by message; this one is classified by
+ * type, so the two can never be confused.
+ */
+export class OperatorAbortError extends Error {
+  override readonly name = "OperatorAbortError";
+  constructor(message = "request cancelled by operator") {
+    super(message);
+  }
+}
+
+/**
+ * Per-call abort composition.
+ *
+ * A call has up to two independent abort sources that must NOT clobber each
+ * other: the runtime's own per-call timeout (`AbortController` + `setTimeout`,
+ * unchanged) and the operator's signal. `signal` is what goes on the wire —
+ * either alone or unioned — while `operatorAborted()` records WHICH of the two
+ * fired first, because by the time `fetch` rejects, both look like the same
+ * anonymous `AbortError`.
+ *
+ * The race is resolved in favour of whichever fired first: the operator
+ * listener only latches when the timeout has not already aborted, so a
+ * timeout that is immediately followed by an operator abort is still reported
+ * as a timeout — preserving the pre-existing "API request timed out" path
+ * byte for byte.
+ */
+interface CallAbort {
+  /** Handed to `fetch` and `sleepWithAbort`. Identical to the timeout signal when no operator signal was supplied. */
+  readonly signal: AbortSignal;
+  /** The operator's raw signal, when supplied — needed to race the SSE reader without catching timeout aborts. */
+  readonly operator?: AbortSignal;
+  /** True once the OPERATOR signal fired first. Never true for a timeout or stall. */
+  operatorAborted(): boolean;
+  /** Throw {@link OperatorAbortError} if the operator cancelled. Terminal — callers must not swallow it. */
+  throwIfCancelled(): void;
+  /** Detach the listeners this composition installed on the (long-lived) operator signal. */
+  dispose(): void;
+}
+
+const NO_OPERATOR_ABORT: Omit<CallAbort, "signal"> = {
+  operatorAborted: () => false,
+  throwIfCancelled: () => {},
+  dispose: () => {},
+};
+
+/**
+ * Union two abort signals without `AbortSignal.any`. Only used if the host
+ * lacks it; `package.json` requires Node >= 24, where it has existed since
+ * Node 20, so in practice `AbortSignal.any` is what runs. The manual path is
+ * kept because it is four lines and removes the need to reason about the
+ * platform at all.
+ *
+ * `detach` unsubscribes both listeners when the call ends, so a session-long
+ * operator signal does not accumulate one listener per model call.
+ */
+function manualAnySignal(sources: AbortSignal[], detach: AbortSignal): AbortSignal {
+  const merged = new AbortController();
+  for (const source of sources) {
+    if (source.aborted) {
+      merged.abort(source.reason);
+      return merged.signal;
+    }
+    source.addEventListener("abort", () => merged.abort(source.reason), {
+      once: true,
+      signal: detach,
+    });
+  }
+  return merged.signal;
+}
+
+/**
+ * Compose the per-call timeout signal with an optional operator signal.
+ *
+ * With no operator signal this returns the timeout signal ITSELF (not a copy,
+ * not a union), so every existing code path sees exactly the object it saw
+ * before and behaviour is unchanged.
+ */
+function composeCallAbort(timeout: AbortSignal, operator?: AbortSignal): CallAbort {
+  if (!operator) return { signal: timeout, ...NO_OPERATOR_ABORT };
+
+  // Latched at construction for an already-aborted signal; `timeout` cannot
+  // have fired yet at that point, so this cannot mislabel a timeout.
+  let operatorFired = operator.aborted;
+  const detach = new AbortController();
+  operator.addEventListener(
+    "abort",
+    () => {
+      if (!timeout.aborted) operatorFired = true;
+    },
+    { once: true, signal: detach.signal },
+  );
+
+  const signal =
+    typeof AbortSignal.any === "function"
+      ? AbortSignal.any([timeout, operator])
+      : manualAnySignal([timeout, operator], detach.signal);
+
+  return {
+    signal,
+    operator,
+    operatorAborted: () => operatorFired,
+    throwIfCancelled: () => {
+      if (operatorFired) throw new OperatorAbortError();
+    },
+    dispose: () => detach.abort(),
+  };
+}
+
 /** Parsed fields of a supported plan-quota-exhaustion 429 body. */
 export interface UsageLimitDetails {
   quotaKind?: "usage_limit_reached" | "insufficient_quota";
@@ -2055,10 +2177,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
   private async postWithRetry(
     bodyFactory: () => string,
     signal: AbortSignal,
+    abort?: CallAbort,
   ): Promise<Response> {
     let waited429Ms = 0;
     let waitedOtherMs = 0;
     for (let attempt = 0; ; attempt++) {
+      // Operator cancellation is TERMINAL, checked before every attempt so a
+      // signal that fired during a backoff wait, a body read or an OAuth
+      // refresh never gets a request issued for it. `abort` is undefined for
+      // every caller that passes no operator signal, making this a no-op.
+      abort?.throwIfCancelled();
       // buildUrl() is the configured LLM provider endpoint (operator-set via
       // provider config / 0SEC_* env), never user/attacker input; same
       // trusted endpoint the client already POSTed to, now wrapped in retry.
@@ -2072,6 +2200,11 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           signal,
         });
       } catch (error) {
+        // An operator abort rejects `fetch` with an anonymous AbortError that
+        // is indistinguishable from a timeout abort at this level. Reclassify
+        // it FIRST so it can never be treated as a retryable transport fault
+        // or wrapped as a "transport failure".
+        abort?.throwIfCancelled();
         const cause = error instanceof Error ? error.cause : undefined;
         const causeCode =
           cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string"
@@ -2112,6 +2245,12 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       if (res.ok || !isRetryableHttpStatus(res.status)) {
         return res;
       }
+
+      // Past this point every branch either retries or fails over to another
+      // provider. Both are exactly wrong after an operator cancellation, so
+      // this single guard covers the quota-failover, 429-failover and
+      // backoff-and-retry branches below at once.
+      abort?.throwIfCancelled();
 
       const is429 = res.status === 429;
       // A 429 body distinguishes per-minute rate limiting (retry) from plan-
@@ -2420,11 +2559,23 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
   // ── Native Runtime interface (structured messages + tool_use) ──
 
+  /** Terminal result for an operator cancellation — `stopReason:"error"` for compatibility, `cancelled:true` for consumers that can tell the difference. */
+  private cancelledResult(start: number): NativeRuntimeResult {
+    return {
+      content: [{ type: "text", text: "" }],
+      stopReason: "error",
+      cancelled: true,
+      durationMs: Date.now() - start,
+      error: `${this.providerLabel} request cancelled by operator`,
+    };
+  }
+
   async executeNative(
     system: string,
     messages: NativeMessage[],
     tools: NativeToolDef[],
     callbacks?: NativeStreamCallbacks,
+    signal?: AbortSignal,
   ): Promise<NativeRuntimeResult> {
     const start = Date.now();
 
@@ -2440,11 +2591,19 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       };
     }
 
+    // Already cancelled before we started: no request, no timer, no OAuth
+    // refresh, no body construction. The console re-checks its signal between
+    // rounds, so this is the common shape of "Esc pressed during a tool run".
+    if (signal?.aborted) return this.cancelledResult(start);
+
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(),
       this.config.timeout || 120_000,
     );
+    // The timeout controller above is untouched; `call.signal` is it verbatim
+    // when no operator signal was passed, and the union of the two otherwise.
+    const call = composeCallAbort(controller.signal, signal);
 
     try {
       let res: Response;
@@ -2537,7 +2696,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
         res = await this.postWithRetry(
           () => JSON.stringify({ ...body, model: this.model }),
-          controller.signal,
+          call.signal,
+          call,
         );
       } else if (this.isOpenAICompat && this.wireApi === "responses") {
         // Responses API uses a flat list of items, not role-based messages.
@@ -2729,7 +2889,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
         res = await this.postWithRetry(
           () => JSON.stringify({ ...body, stream: true, model: this.model }),
-          controller.signal,
+          call.signal,
+          call,
         );
 
 
@@ -2746,6 +2907,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
         const streamed = await this.consumeResponsesStream(res, start, callbacks, {
           idleTimeoutMs: llmStreamIdleTimeoutMs(),
+          abort: call,
         });
         clearTimeout(timer);
         return streamed;
@@ -2849,7 +3011,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
 
         res = await this.postWithRetry(
           () => JSON.stringify({ ...body, model: this.model }),
-          controller.signal,
+          call.signal,
+          call,
         );
       } else {
         throw new Error(`executeNative: provider ${this.provider} is not mapped to a wire`);
@@ -3094,6 +3257,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       };
     } catch (err) {
       clearTimeout(timer);
+      // Operator cancellation, checked BEFORE the timeout classification
+      // below: an aborted `fetch` and an aborted stream read both reject with
+      // an anonymous AbortError whose message contains "abort", so without
+      // this the operator's Esc would be reported as "API request timed out".
+      // `operatorAborted()` is the authority (not the raw signal state), so a
+      // timeout that merely happened to be followed by an abort is still a
+      // timeout.
+      if (err instanceof OperatorAbortError || call.operatorAborted()) {
+        return this.cancelledResult(start);
+      }
       if (err instanceof QuotaExhaustedError) {
         // Plan-quota exhaustion: fail fast with the distinct, greppable
         // message (carries usage_limit_reached + resets_at) — never retried.
@@ -3114,6 +3287,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           ? `${this.providerLabel} API request timed out`
           : `${this.providerLabel} API error: ${msg}`,
       };
+    } finally {
+      // Drop the listeners this call installed on the caller's (session-long)
+      // operator signal. A no-op when no operator signal was passed.
+      call.dispose();
     }
   }
 
@@ -3121,7 +3298,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     res: Response,
     start: number,
     callbacks?: NativeStreamCallbacks,
-    opts?: { idleTimeoutMs?: number },
+    opts?: { idleTimeoutMs?: number; abort?: CallAbort },
   ): Promise<NativeRuntimeResult> {
     const reader = res.body?.getReader();
     if (!reader) {
@@ -3137,9 +3314,17 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     // overall request timer stays armed through this stream; the watchdog adds
     // a tighter bound for a silent stream between otherwise-valid SSE events.
     const idleTimeoutMs = opts?.idleTimeoutMs ?? llmStreamIdleTimeoutMs();
+    // The OPERATOR signal only — never the composed one. Racing the composed
+    // signal here would convert a timeout abort into a cancellation and break
+    // the "total request timeout applies even while the stream keeps yielding"
+    // contract the watchdog tests pin.
+    const operatorSignal = opts?.abort?.operator;
     let stalled = false;
     const readBounded = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      // Undefined unless an operator signal exists, so the racer array below
+      // stays exactly the two entries it has always had for every other call.
+      const detach = operatorSignal ? new AbortController() : undefined;
       try {
         return await Promise.race([
           reader.read(),
@@ -3149,9 +3334,29 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
               reject(new Error("stream stalled"));
             }, idleTimeoutMs);
           }),
+          // A real aborted `fetch` also errors the body stream, so `read()`
+          // would reject on its own — but only for a live socket. This racer
+          // is what makes cancellation immediate and unconditional, including
+          // for a body that is buffered, mocked, or already fully delivered.
+          ...(operatorSignal && detach
+            ? [
+                new Promise<never>((_resolve, reject) => {
+                  if (operatorSignal.aborted) {
+                    reject(new OperatorAbortError());
+                    return;
+                  }
+                  operatorSignal.addEventListener(
+                    "abort",
+                    () => reject(new OperatorAbortError()),
+                    { once: true, signal: detach.signal },
+                  );
+                }),
+              ]
+            : []),
         ]);
       } finally {
         if (timer) clearTimeout(timer);
+        detach?.abort();
       }
     };
 
@@ -3190,6 +3395,17 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       try {
         chunk = await readBounded();
       } catch (err) {
+        if (err instanceof OperatorAbortError || opts?.abort?.operatorAborted()) {
+          // Release the socket, then let executeNative's catch turn this into
+          // the cancelled result. NOT a stall and NOT a timeout: no watchdog
+          // diagnostic, no transient-class error the agent loop would retry.
+          try {
+            await reader.cancel();
+          } catch {
+            /* best-effort — the stream is already broken */
+          }
+          throw err instanceof OperatorAbortError ? err : new OperatorAbortError();
+        }
         if (stalled) {
           // Release the held socket best-effort, then surface the stall as a
           // transient-class error (the agent loop's bounded retry applies; a
