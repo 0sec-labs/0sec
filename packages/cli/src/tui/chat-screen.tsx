@@ -2994,8 +2994,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                 {/* The lab attribution sits directly under the mark, muted and
                     centered, before the shorter captions — it says who is
                     behind the console. */}
-                {showTerminalMark ? <text fg={MUTED} marginTop={2}>{fitTuiText("by a Swiss Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
-                {showEmptyStateTagline ? <text fg={TEXT} marginTop={1}>evidence-first security research</text> : null}
+                {showEmptyStateTagline ? <text fg={TEXT} marginTop={2}>evidence-first security research</text> : null}
+                {showTerminalMark ? <text fg={MUTED} marginTop={1}>{fitTuiText("made with 🤍 by the Swiss 🇨🇭 Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
                 {/* The mode explanation: three short labelled lines rather than
                     one clipped sentence, so nothing is cut off mid-word. Dropped
                     entirely (not truncated) when the column is too short. */}
