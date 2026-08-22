@@ -13,12 +13,17 @@ description: Supported LLM providers, environment variables, and model routing.
 | **Alibaba Qwen** | `QWEN_API_KEY` | Use `--model qwen3.8-max` or `0SEC_MODEL=qwen3.8-max`. Uses Alibaba Model Studio's OpenAI-compatible endpoint. |
 | **Moonshot Kimi** | `KIMI_API_KEY` | Use `--model k3`. Uses Moonshot's Anthropic-compatible Coding endpoint. |
 | **xAI Grok** | `XAI_API_KEY` | Use `--model grok-4.6`. Uses xAI's OpenAI-compatible endpoint. Override the host with `XAI_BASE_URL`. Cost note: our price table carries xAI's short-context rates, so spend on prompts over 200k tokens is under-reported — reconcile against the xAI console. |
-| **ChatGPT Codex** | `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` | Uses ChatGPT/Codex subscription auth from `codex login`. Copy the refresh token from `~/.codex/auth.json`. |
-| **DeepSeek** | `DEEPSEEK_API_KEY` | Direct DeepSeek API access. |
+| **ChatGPT Codex** | `0SEC_CHATGPT_ACCESS_TOKEN`, `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` | OAuth subscription auth, not an API key. Both tokens are accepted; the access token is read first, the refresh token is refreshed on demand. This is the one provider that can also authenticate from a file — see [ChatGPT Codex authentication](#chatgpt-codex-authentication) below. |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | Direct DeepSeek API access. Endpoint override: `DEEPSEEK_BASE_URL`. |
 | **OpenRouter** | `OPENROUTER_API_KEY` | Access to many hosted model families through one API. |
-| **Anthropic** | `ANTHROPIC_API_KEY` | Direct access to Claude models. |
+| **Anthropic** | `ANTHROPIC_API_KEY` | Direct access to Claude models. Endpoint override: `ANTHROPIC_BASE_URL`. |
 | **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | Azure-hosted OpenAI models. See [Azure configuration](#azure-openai-configuration) below for additional settings. |
-| **OpenAI** | `OPENAI_API_KEY` | Direct access to GPT models. |
+| **OpenAI** | `OPENAI_API_KEY` | Direct access to GPT models. Endpoint override: `OPENAI_BASE_URL`. |
+
+These ten providers are exactly the ones the runtime can detect from the
+environment. A model whose family maps to a vendor with no direct runtime path
+(for example Google, Meta, or Mistral in the pricing table) is not configurable
+here; reach those through OpenRouter instead.
 
 ## Model routing
 
@@ -52,8 +57,9 @@ export QWEN_API_KEY="..."
 # Or use OpenRouter.
 export OPENROUTER_API_KEY="sk-or-v1-..."
 
-# ChatGPT Codex subscription auth.
+# ChatGPT Codex subscription auth (either token works).
 export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..."
+# export 0SEC_CHATGPT_ACCESS_TOKEN="..."   # read first when both are set
 ```
 
 ### GitHub Actions
@@ -68,6 +74,61 @@ Add the key as a repository secret, then reference it in your workflow:
   env:
     OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 ```
+
+## ChatGPT Codex authentication
+
+ChatGPT Codex is the only provider that can authenticate from a file on disk
+instead of an environment variable. When neither `0SEC_CHATGPT_ACCESS_TOKEN`
+nor `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is exported, the runtime reads
+`~/.codex/auth.json` — the file `codex login` writes — and uses the tokens
+inside it. Override that path with `0SEC_CHATGPT_AUTH_FILE`. An account id, if
+present, is picked up from `0SEC_CHATGPT_ACCOUNT_ID` or from the same file.
+
+This creates one known false negative in credential detection. The
+`/providers` view and the `0sec doctor` checks only inspect environment
+variables — they never stat the filesystem — so an operator whose only
+credential is `~/.codex/auth.json` is reported as **not configured** for
+ChatGPT Codex even though a real scan authenticates and runs. If you rely on
+the file, treat the "not configured" line as a display limitation, not a
+broken setup; export `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` if you want the status
+view to agree with reality.
+
+## Console credential store
+
+The interactive console can hold provider keys for you so you do not have to
+re-export them in every shell. In the console, run `/providers` to see which
+providers actually hold credentials on the current machine, then select one to
+paste its key. The status line for each provider reflects the real
+environment: it shows `configured via <VAR>` when a key is found and
+`not configured` otherwise.
+
+Keys entered this way are written to `credentials.json` in the 0sec state
+directory (`~/.0sec/` by default — see
+[Configuration](/configuration/#state-directory) for how that path is
+resolved). The file and its parent directory are created and re-tightened to
+owner-only permissions (`0600` file, `0700` directory) on every save.
+
+**An explicitly exported shell environment variable always wins over the
+stored value.** The store only fills a provider's variable when the
+environment does not already carry a credential for it — an `export` in your
+shell is never overridden. This precedence is deliberate: an `export` is an
+explicit, deliberate choice, and a stored key silently shadowing it would make
+"which key did that run use?" unanswerable — exactly the question you need
+answered when a request returns 401 or a metered key runs up unexpected spend.
+
+**Stored credentials are not encrypted at rest.** They are plaintext in
+`credentials.json`, protected only by file permissions (`0600`) and your
+account's control of the home directory. There is no passphrase and no
+key-management layer. Anything with read access to your home directory can read
+the keys, so treat that file the same way you would treat an exported secret in
+a shell profile.
+
+A model whose provider holds no credentials — neither in the environment nor in
+the store — does not fail at startup. The `/model` picker is built from the
+pricing table, which lists every model 0sec knows how to price, not every model
+it can currently call. Selecting an uncredentialed model succeeds; the request
+then fails at request time (typically a turn that consumes zero tokens and
+reports a missing key). Run `/providers` first to confirm the provider is lit.
 
 ## When to use OpenRouter
 
