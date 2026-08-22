@@ -19,20 +19,9 @@ import {
   type ToolCall,
   type ToolResult,
 } from "@0sec/core";
-import {
-  ACCENT,
-  BORDER,
-  CANVAS,
-  ERROR,
-  INFO,
-  MUTED,
-  PANEL,
-  PANEL_ALT,
-  PRIMARY,
-  SUCCESS,
-  TEXT,
-  WARNING,
-} from "../ui/theme.js";
+import type { ScrollBoxRenderable } from "@opentui/core";
+import { useSettings } from "./settings-store.js";
+import { useTheme, type Theme } from "./theme-context.js";
 import { modelProvider } from "@0sec/shared";
 import { homedir } from "node:os";
 import { readGitStatus, type GitStatus } from "./git-status.js";
@@ -69,11 +58,11 @@ import { VERSION } from "@0sec/shared";
 import {
   SETTING_DEFS,
   describeSetting,
-  loadSettings,
   saveSettings,
   toggleSetting,
   type TuiSettings,
 } from "./settings.js";
+import { pushHistory, recallNext, recallPrev } from "./composer-history.js";
 import {
   buildHelpPanel,
   buildScopePanel,
@@ -191,16 +180,45 @@ type PendingToolApproval = {
   resolve: (approved: boolean) => void;
 };
 
+/**
+ * The 0sec block mark as a per-cell colour grid, one string per row over a
+ * three-letter alphabet: ' ' is an empty cell, '#' a white (`theme.TEXT`)
+ * block, '/' a red (`theme.ERROR`) block. The "0" is drawn wider than the
+ * other letters so its interior has room for a two-cell-thick red diagonal
+ * slash — lower-left to upper-right — that clears the white outline on both
+ * sides: a slashed zero. "SEC" stays white. `logoCellRuns` groups each row's cells into
+ * runs of one colour so the render can draw each as an explicitly-sized
+ * `<text>` (their widths sum to exactly `TERMINAL_BLOCK_LOGO_WIDTH`), which is
+ * what keeps a row's segments from overflowing and fusing.
+ */
 const TERMINAL_BLOCK_LOGO = [
-  " ██████   ███████  ███████   ██████  ",
-  "██    ██  ██       ██       ██       ",
-  "██    ██  ███████  █████    ██       ",
-  "██    ██       ██  ██       ██       ",
-  " ██████   ███████  ███████   ██████  ",
+  "##########  #######  #######   ######  ",
+  "##   // ##  ##       ##       ##       ",
+  "##  //  ##  #######  #####    ##       ",
+  "## //   ##       ##  ##       ##       ",
+  "##########  #######  #######   ######  ",
 ] as const;
-const TERMINAL_BLOCK_LOGO_WIDTH = 37;
-/** Columns of the block logo occupied by the "0" glyph (rendered red). */
-const LOGO_ZERO_COLS = 9;
+const TERMINAL_BLOCK_LOGO_WIDTH = 39;
+
+/** One same-colour run of logo cells: its display text and which token paints it. */
+type LogoCellRun = { text: string; kind: " " | "#" | "/" };
+
+/**
+ * Split a logo grid row into consecutive same-colour runs. Empty cells stay
+ * spaces; '#' and '/' both draw the full block glyph (█) and differ only in
+ * colour, so the run's `kind` — not its text — chooses the token at render.
+ */
+function logoCellRuns(row: string): LogoCellRun[] {
+  const runs: LogoCellRun[] = [];
+  for (const ch of row) {
+    const kind: LogoCellRun["kind"] = ch === "#" ? "#" : ch === "/" ? "/" : " ";
+    const glyph = kind === " " ? " " : "█";
+    const last = runs[runs.length - 1];
+    if (last && last.kind === kind) last.text += glyph;
+    else runs.push({ text: glyph, kind });
+  }
+  return runs;
+}
 
 function modeLabel(mode: ConsoleAutonomyMode): string {
   if (mode === "standard") return "Standard";
@@ -343,7 +361,8 @@ interface EntryDisplay {
 }
 
 /** Map a markdown span style onto the theme. */
-function spanColor(style: MdSpan["style"], tone?: string): string {
+function spanColor(style: MdSpan["style"], theme: Theme, tone?: string): string {
+  const { ACCENT, INFO, MUTED, TEXT } = theme;
   // A tone override keeps a whole block in one voice (e.g. reasoning stays
   // muted) while still honouring structure like code and links.
   if (tone && style !== "code" && style !== "link") return tone;
@@ -362,7 +381,8 @@ function spanColor(style: MdSpan["style"], tone?: string): string {
  * to guess at widths — which is also what keeps a long span from
  * overflowing its row.
  */
-function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, tone?: string) {
+function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Theme, tone?: string) {
+  const { MUTED, ACCENT, PRIMARY } = theme;
   return blocks.map((block, index) => {
     const id = `${key}-b${index}`;
     if (block.kind === "rule") {
@@ -397,7 +417,7 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, tone?: st
             {block.lines.map((line, i) => (
               <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
                 {line.map((span, j) => (
-                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, tone)}>{span.text}</text>
+                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, tone)}>{span.text}</text>
                 ))}
               </box>
             ))}
@@ -413,7 +433,7 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, tone?: st
         {block.lines.map((line, i) => (
           <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
             {line.map((span, j) => (
-              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, blockTone)}>{span.text}</text>
+              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)}>{span.text}</text>
             ))}
           </box>
         ))}
@@ -429,7 +449,8 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, tone?: st
  * the choice itself come from `speechFrame`, so the component draws rather than
  * decides.
  */
-function speechRail(railKind: "solid" | "dotted" | "marker" | "none", tone: string) {
+function speechRail(railKind: "solid" | "dotted" | "marker" | "none", tone: string, theme: Theme) {
+  const { MUTED } = theme;
   if (railKind === "solid") {
     return <box width={1} alignSelf="stretch" backgroundColor={tone} />;
   }
@@ -446,7 +467,8 @@ function speechRail(railKind: "solid" | "dotted" | "marker" | "none", tone: stri
   return null;
 }
 
-function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) {
+function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, theme: Theme) {
+  const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER } = theme;
   const detailWidth = Math.max(20, maxWidth - 8);
   const { transcriptStyle, roleLabelStyle, toolCardStyle } = display;
   // A row that stands for several collapsed repeats says so. The count is
@@ -464,7 +486,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
     // Body: raw text for the operator, rendered markdown for the model.
     const body = isUser
       ? <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
-      : renderMarkdownBlocks(renderMarkdown(entry.text, frame.markdownWidth), entry.id);
+      : renderMarkdownBlocks(renderMarkdown(entry.text, frame.markdownWidth), entry.id, theme);
 
     if (frame.bordered) {
       // A bordered turn MUST carry an explicit numeric width plus flexShrink=0:
@@ -492,7 +514,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
       );
     }
 
-    const rail = speechRail(frame.railKind, tone);
+    const rail = speechRail(frame.railKind, tone, theme);
     return (
       <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
         {rail}
@@ -625,6 +647,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
           {renderMarkdownBlocks(
             renderMarkdown(normalizeReasoning(entry.text), Math.max(8, maxWidth - 2)),
             entry.id,
+            theme,
             MUTED,
           )}
         </box>
@@ -717,12 +740,15 @@ function buildScopeResolution(request: ConsoleScopeRequest): ConsoleScopeResolut
 function ComposerFrame({
   style,
   active,
+  theme,
   children,
 }: {
   style: TuiSettings["composerStyle"];
   active: boolean;
+  theme: Theme;
   children: React.ReactNode;
 }) {
+  const { MUTED, BORDER, PANEL_ALT } = theme;
   if (style === "border") {
     return (
       <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? MUTED : BORDER} backgroundColor={PANEL_ALT} paddingX={1}>
@@ -823,6 +849,7 @@ function SelectorPanel({
   titleColor,
   contentWidth,
   height,
+  theme,
 }: {
   title: string;
   subtitle: string;
@@ -838,7 +865,9 @@ function SelectorPanel({
   titleColor: string;
   contentWidth: number;
   height: number;
+  theme: Theme;
 }) {
+  const { PANEL_ALT, MUTED, TEXT, PRIMARY, ACCENT, ERROR } = theme;
   // Deliberately conservative: the real inner width is 2 (compact) to 4
   // (wide) cells more than this, so every explicit allocation below fits
   // with room to spare and can never reach the border.
@@ -972,9 +1001,29 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const [secretPrompt, setSecretPrompt] = useState<
     { providerId: string; label: string; envVar: string; value: string } | null
   >(null);
-  // Loaded once from disk; a failed read yields defaults rather than
-  // blocking startup, so a corrupt settings file can never brick the TUI.
-  const [settings, setSettings] = useState<TuiSettings>(() => loadSettings());
+  // Live settings from the process-wide store: every screen subscribes to the
+  // same source, so a change made in the settings screen re-renders chat
+  // immediately instead of waiting for a remount that (now chat stays mounted
+  // for the whole session) never comes.
+  const settings = useSettings();
+  // Live colour palette, derived from `settings.theme` and delivered
+  // subscribably. Read once at the top of the component (hook rules) and
+  // threaded into the module-level render helpers that cannot call the hook.
+  const theme = useTheme();
+  const {
+    PRIMARY,
+    MUTED,
+    TEXT,
+    ERROR,
+    WARNING,
+    SUCCESS,
+    INFO,
+    ACCENT,
+    PANEL,
+    PANEL_ALT,
+    CANVAS,
+    BORDER,
+  } = theme;
   // The output-guard subscription is registered once; a ref lets it read
   // the live setting without tearing down and re-adding the listener.
   const settingsRef = useRef(settings);
@@ -1045,6 +1094,23 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const composerRef = useRef("");
   const composingRef = useRef(false);
   const commandMenuOpenRef = useRef(false);
+  /**
+   * Shell-style recall of submitted operator messages. `historyRef` is the
+   * ring (oldest first), `historyIndexRef` the cursor (>= length means "editing
+   * the live draft, not browsing") and `historyDraftRef` the draft saved on the
+   * first Up so Down can restore it. The pure transitions live in
+   * composer-history.ts; these refs are written synchronously from the keyboard
+   * handler, so they are refs rather than state.
+   */
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(0);
+  const historyDraftRef = useRef("");
+  /**
+   * The transcript scrollbox, so PageUp/PageDown can drive it directly. The box
+   * is deliberately NOT focusable (see the `focusable={false}` prop): plain
+   * Up/Down belong to composer history, never to scrolling.
+   */
+  const transcriptRef = useRef<ScrollBoxRenderable | null>(null);
   const commandCatalog: readonly SlashCommand[] = SLASH_COMMANDS;
   const isSlashComposer = composer.trimStart().startsWith("/");
   const slashQuery = isSlashComposer ? composer.trimStart().slice(1).split(/\s+/, 1)[0] ?? "" : "";
@@ -1083,7 +1149,33 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     setComposer(value);
     setSlashSelected(0);
     setCommandMenuVisible(value.trimStart().startsWith("/"));
+    // Any composer edit leaves history browsing and re-bases the cursor on the
+    // live draft. A recall re-sets the cursor immediately after calling this.
+    historyIndexRef.current = historyRef.current.length;
   }, [setCommandMenuVisible]);
+
+  /**
+   * Recall a previously submitted message into the composer. Up walks toward
+   * older entries (saving the live draft on the first step), Down walks back
+   * toward that draft. A no-op step leaves everything untouched; a real step
+   * enters composing so the recalled text is editable.
+   */
+  const recallComposerHistory = useCallback((direction: "up" | "down") => {
+    const entries = historyRef.current;
+    const result = direction === "up"
+      ? recallPrev(entries, historyIndexRef.current, historyDraftRef.current, composerRef.current)
+      : recallNext(entries, historyIndexRef.current, historyDraftRef.current);
+    if (!result.changed) return;
+    if (!composingRef.current) {
+      composingRef.current = true;
+      setComposing(true);
+    }
+    setComposerText(result.value);
+    // setComposerText re-based the cursor on the draft; restore the recall
+    // position and remembered draft so the next step continues the walk.
+    historyIndexRef.current = result.index;
+    historyDraftRef.current = result.draft;
+  }, [setComposerText]);
 
   const appendEntry = useCallback((entry: Omit<ChatEntry, "id">) => {
     setEntries((current) => appendTranscriptEntry<ChatEntry>(current, {
@@ -2435,6 +2527,19 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       onExit();
       return;
     }
+    // Transcript scrolling lives on PageUp/PageDown (and Ctrl+Up/Ctrl+Down
+    // where the terminal distinguishes them), NOT on plain Up/Down — those
+    // recall composer history. The box is non-focusable, so it never grabs the
+    // arrows itself; we drive it explicitly here. Sticky-bottom auto-scroll
+    // keeps the newest evidence in view the rest of the time.
+    if (key.name === "pageup" || (key.ctrl && key.name === "up")) {
+      transcriptRef.current?.scrollBy(-0.5, "viewport");
+      return;
+    }
+    if (key.name === "pagedown" || (key.ctrl && key.name === "down")) {
+      transcriptRef.current?.scrollBy(0.5, "viewport");
+      return;
+    }
     // Shift+Tab cycles the autonomy mode. It is handled ABOVE the composing
     // block for two reasons: it should work while the operator is mid-sentence,
     // and the composing block's catch-all appends `key.sequence` for anything
@@ -2499,6 +2604,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           return;
         }
       }
+      // Outside the command menu, Up/Down recall submitted-message history into
+      // the composer (readline semantics) rather than scrolling the transcript.
+      if (key.name === "up") {
+        recallComposerHistory("up");
+        return;
+      }
+      if (key.name === "down") {
+        recallComposerHistory("down");
+        return;
+      }
       if (key.name === "return") {
         const currentComposer = composerRef.current;
         const parsed = findCommand(currentComposer);
@@ -2515,6 +2630,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           setComposing(false);
           return;
         }
+        // Remember every submitted message (sent or queued) for Up/Down recall.
+        // Done before the setComposerText("") below, which re-bases the history
+        // cursor onto the freshly-grown ring.
+        historyRef.current = pushHistory(historyRef.current, input);
         const disposition = classifyComposerInput({
           input,
           isSlash: findCommand(input).isSlash,
@@ -2575,6 +2694,17 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       if (key.sequence && !key.ctrl && !key.meta) {
         setComposerText(`${composerRef.current}${key.sequence}`);
       }
+      return;
+    }
+    // Idle composer (nothing typed yet): Up recalls the most recent submission
+    // into the composer; Down is a no-op until browsing has begun. Neither
+    // scrolls the transcript.
+    if (key.name === "up") {
+      recallComposerHistory("up");
+      return;
+    }
+    if (key.name === "down") {
+      recallComposerHistory("down");
       return;
     }
     if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
@@ -2719,8 +2849,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const menu = computeCommandMenuLayout({ width, compact });
   // Height is stated explicitly so the border is drawn where the content
   // actually ends, and flexShrink is disabled so the column cannot squeeze
-  // the box out from under its own children.
-  const commandMenuHeight = commandMenuBoxHeight(menuCommands.length, commandRowsPerCommand);
+  // the box out from under its own children. The no-match state still needs a
+  // single content row for its "No command matches" line — without it the box
+  // is one row short and the hint footer overprints the bottom border.
+  const commandMenuHeight = menuCommands.length > 0
+    ? commandMenuBoxHeight(menuCommands.length, commandRowsPerCommand)
+    : commandMenuBoxHeight(0, commandRowsPerCommand) + 1;
 
   const commandMenuVisible = composing && commandMenuOpen && isSlashComposer;
   // Every overlay — command menu, picker, approval panel — already prints
@@ -2831,36 +2965,44 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           <text fg={MUTED}>EVIDENCE LEDGER</text>
           <text fg={MUTED}> · {empty ? "awaiting an objective" : `${entries.length} records`}</text>
         </box>
-        <scrollbox width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
+        <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
           <box flexDirection="column" width="100%">
             {empty ? (
               <box flexDirection="column" alignItems={showTerminalMark ? "center" : "flex-start"} paddingTop={showTerminalMark ? 3 : 1}>
                 {showTerminalMark ? (
                   <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
                     {/*
-                      * 0sec brand mark: the "0" glyph in red, "SEC" in white.
-                      * The block font is column-aligned so LOGO_ZERO_COLS splits
-                      * every row at the same point. Row 0 and row 4 are
-                      * identical glyphs, so index — not the line — is the key.
+                      * 0sec brand mark: a slashed zero — a white "0" outline
+                      * with a red diagonal slash through its hollow — then white
+                      * "SEC". Each row is drawn as a sequence of same-colour
+                      * runs (see logoCellRuns) with explicit widths that sum to
+                      * TERMINAL_BLOCK_LOGO_WIDTH, so no run overflows and the
+                      * slash keeps its own colour rather than being sliced off.
+                      * Rendered verbatim — never through fitTuiText, which trims.
                       */}
                     {TERMINAL_BLOCK_LOGO.map((line, index) => (
-                      <box key={`logo-${index}`} flexDirection="row" flexShrink={0}>
-                        <text fg={ERROR}>{line.slice(0, LOGO_ZERO_COLS)}</text>
-                        <text fg={TEXT}>{line.slice(LOGO_ZERO_COLS)}</text>
+                      <box key={`logo-${index}`} flexDirection="row" width={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0} minWidth={0}>
+                        {logoCellRuns(line).map((run, runIndex) => (
+                          <text
+                            key={`logo-${index}-${runIndex}`}
+                            width={run.text.length}
+                            flexShrink={0}
+                            fg={run.kind === "/" ? ERROR : TEXT}
+                          >{run.text}</text>
+                        ))}
                       </box>
                     ))}
                   </box>
                 ) : (
                   <box flexDirection="row" flexShrink={0}>
-                    <text fg={ERROR}>0</text>
-                    <text fg={TEXT}>SEC · OPERATOR CONSOLE</text>
+                    <text fg={TEXT}>0SEC · OPERATOR CONSOLE</text>
                   </box>
                 )}
                 {showEmptyStateTagline ? <text fg={TEXT}>evidence-first security research</text> : null}
                 {showEmptyStateHint ? <text fg={MUTED}>{fitTuiText("Describe an objective. 0sec enforces engagement scope before egress.", contentWidth)}</text> : null}
                 {!compact && showTerminalMark ? <text fg={MUTED}>{fitTuiText("Type / for local commands. Standard works in scope; Co-pilot confirms active work; YOLO requires a configured scope.", contentWidth)}</text> : null}
               </box>
-            ) : entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay))}
+            ) : entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay, theme))}
             {animation ? (
               <box flexDirection="row" minWidth={0} marginTop={entryDisplay.spacing} gap={1}>
                 {/* Rendered verbatim in a fixed-width cell: fitTuiText trims,
@@ -2956,8 +3098,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                 </box>
               </box>
             );
-          }) : <text fg={ERROR}>{fitTuiText(`No command matches /${slashQuery}`, Math.max(1, commandMenuInnerWidth))}</text>}
-          <text fg={MUTED}>{fitTuiText("↑↓ select · tab complete · enter run · esc close", Math.max(1, commandMenuInnerWidth))}</text>
+          }) : (
+            <box width={commandMenuInnerWidth} flexShrink={0} minWidth={0}>
+              <text fg={ERROR}>{fitTuiText(`No command matches /${slashQuery}`, Math.max(1, commandMenuInnerWidth))}</text>
+            </box>
+          )}
+          <box width={commandMenuInnerWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText("↑↓ select · tab complete · enter run · esc close", Math.max(1, commandMenuInnerWidth))}</text>
+          </box>
         </box>
       ) : null}
 
@@ -3000,6 +3148,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           titleColor={PRIMARY}
           contentWidth={contentWidth}
           height={pickerBoxHeight}
+          theme={theme}
         />
       ) : null}
 
@@ -3031,6 +3180,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           titleColor={approvalPrompt.titleColor}
           contentWidth={contentWidth}
           height={approvalBoxHeight}
+          theme={theme}
         />
       ) : null}
 
@@ -3049,7 +3199,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         * `border={false}` still renders a box. Branching on the element
         * keeps "no chrome" actually meaning no chrome.
         */}
-      <ComposerFrame style={settings.composerStyle} active={composing || commandMenuVisible}>
+      <ComposerFrame style={settings.composerStyle} active={composing || commandMenuVisible} theme={theme}>
         <box flexDirection="row" width="100%" minWidth={0}>
           <text width={1} flexShrink={0} fg={composing ? PRIMARY : MUTED}>›</text>
           <text width={1} flexShrink={0} fg={MUTED}> </text>
