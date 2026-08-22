@@ -128,6 +128,34 @@ export const features = {
    */
   get semanticDedupe(): boolean { return env("0SEC_FEATURE_SEMANTIC_DEDUPE", false); },
   /**
+   * Finding-specific remediation written by the model
+   * (`generateRemediationWithLLM`) instead of the static category knowledge
+   * base. Default OFF: it spends one extra LLM call per non-false-positive
+   * finding at report-assembly time, which is real money on a noisy scan and
+   * buys nothing on a scan with no findings.
+   *
+   * Worth turning on for disclosure-bound work: the static KB emits the same
+   * generic snippet for every finding in a category, whereas the model sees
+   * this finding's evidence and can name the actual sink. The call is
+   * fail-open — any error falls back to the KB answer — so enabling it can
+   * degrade cost, never correctness.
+   */
+  get llmRemediation(): boolean { return env("0SEC_FEATURE_LLM_REMEDIATION", false); },
+  /**
+   * Per-finding impact assessment (`assessImpact`, `triage/impact-assessment.ts`)
+   * written by the model: reachability tier, weaponizability, blast radius,
+   * business-impact tier. Default OFF — one extra LLM call per non-false-positive
+   * finding at report time.
+   *
+   * When on, the assessment feeds three things it is otherwise absent from:
+   * a real CVSS exploitability vector (AV/PR/UI from the reachability tier
+   * rather than the AV:N/severity-floor guess), the advisory's Impact +
+   * attack-prerequisites section, and the vendor-notification impact line. When
+   * off, all three fall back to today's category/severity heuristics — so this
+   * flag strictly adds fidelity, never changes the no-assessment output.
+   */
+  get impactAssessment(): boolean { return env("0SEC_FEATURE_IMPACT_ASSESSMENT", false); },
+  /**
    * Incremental finding ranking post-pass (decimal-insertion between ranked
    * anchors, `triage/incremental-rank.ts`). Orders the report by comparative
    * promise (exploitability × impact × evidence strength). Default OFF: it

@@ -63,6 +63,7 @@ const AUTH_VARS = [
   "Z_AI_API_KEY",
   "KIMI_API_KEY",
   "QWEN_API_KEY",
+  "XAI_API_KEY",
   "0SEC_HUNT_REFUTER_CANDIDATES",
   "0SEC_HUNT_CROSS_FAMILY",
 ] as const;
@@ -110,6 +111,43 @@ describe("refuterFamily", () => {
     expect(refuterFamily("gpt-5.5")).toBe("openai");
     expect(refuterFamily("glm-5.2")).toBe("z-ai");
     expect(refuterFamily(undefined)).toBe("unknown");
+  });
+
+  it("classifies Grok as its own family, so xAI can serve as a refuter", () => {
+    // Regression guard: `refuterFamily` delegates to `modelProvider`, and until
+    // it learned the grok prefix this answered "unknown" — which
+    // `selectCrossFamilyRefuter` filters out. Adding grok to REFUTER_ROSTER
+    // without this classification would be a SILENT no-op: the candidate is in
+    // the roster but can never be selected.
+    expect(refuterFamily("grok-4.6")).toBe("xai");
+    expect(refuterFamily("xai/grok-4.6")).toBe("xai");
+    expect(refuterFamily("openrouter/x-ai/grok-4.6")).toBe("xai");
+  });
+
+  it("picks Grok to decorrelate from an all-Western-frontier finder fan-out", () => {
+    withProviders({ XAI_API_KEY: "sk-xai-test" });
+    expect(availableRefuterCandidates()).toEqual(["grok-4.6"]);
+    const choice = selectCrossFamilyRefuter({
+      enabled: true,
+      finderModel: "gpt-5.5",
+      finderModels: ["claude-sonnet-4-6", "glm-5.3"],
+      candidates: availableRefuterCandidates(),
+    });
+    expect(choice.crossFamily).toBe(true);
+    expect(choice.status).toBe("enforced");
+    expect(choice.model).toBe("grok-4.6");
+    expect(choice.refuterFamily).toBe("xai");
+  });
+
+  it("will not pick Grok to refute a Grok finder", () => {
+    withProviders({ XAI_API_KEY: "sk-xai-test" });
+    const choice = selectCrossFamilyRefuter({
+      enabled: true,
+      finderModel: "grok-4.6",
+      candidates: availableRefuterCandidates(),
+    });
+    expect(choice.crossFamily).toBe(false);
+    expect(choice.status).toBe("no-distinct-family");
   });
 
   it("unwraps the openrouter/ routing prefix — same weights are NOT a second family", () => {

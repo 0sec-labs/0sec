@@ -9,9 +9,11 @@
 
 <p align="center">
   <strong>The open cybersecurity harness.</strong><br/>
-  0sec puts a team of AI agents on your target — web apps, APIs, source, packages,
-  or binaries. They explore in parallel, chain exploits, and a separate agent
-  reproduces every finding before it counts.
+  0sec puts a team of AI agents on your target — web apps, AI/LLM endpoints,
+  source, and packages. They explore in parallel, chain exploits, and a separate
+  agent reproduces every finding before it counts. For compiled binaries with no
+  source, the companion engine <a href="0verse/README.md">0verse</a> does the
+  same job on its own toolchain.
 </p>
 
 <p align="center">
@@ -25,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/0sec-demo.gif" alt="0sec — a swarm of AI agents finds, proves, and reports vulnerabilities" width="840">
+  <img src="assets/0sec-demo.gif" alt="0sec — a team of AI agents finds, proves, and reports vulnerabilities" width="840">
 </p>
 
 ## Install
@@ -67,7 +69,7 @@ racing, `--format sarif` for the GitHub Security tab. Every command has its own
 
 ## What it does
 
-A swarm of agents explores the target and saves candidate findings — a lead
+A team of agents explores the target and saves candidate findings — a lead
 agent that can fan out into parallel strategies (`--race`) and focused subagents,
 plus a separate, blind verification agent that decides which findings survive. A
 finding it can't reproduce is dropped — not shipped as "low confidence." Each run
@@ -77,7 +79,7 @@ so you can `resume`, `replay`, or `disclose` it later.
 
 | You want to… | Command |
 | --- | --- |
-| Pentest a web app, AI/LLM endpoint, API, or MCP server | `scan`, `eval`, `agent-assure` |
+| Pentest a web app, AI/LLM endpoint, or MCP server | `scan`, `eval`, `agent-assure` |
 | Review source, packages, C/C++, or a kernel tree | `review`, `file-review`, `deep-review`, `audit` |
 | Recon an attack surface | `recon`, `js-recon`, `npm-discovery`, `intel` |
 | Hunt a bug class / kernel variants | `hunt`, `kernel`, `cve` |

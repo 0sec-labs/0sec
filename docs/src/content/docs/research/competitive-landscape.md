@@ -106,7 +106,7 @@ Ranked by expected impact and implementation complexity. Estimates based on chal
 | 14 | PoV gate | FP reduction | 1x | **Shipped** |
 | 15 | External working memory | +2-3 flags | 1x | Planned |
 | 16 | RAG from prior solves | +2-4 flags | 1x | Planned |
-| 17 | Adversarial debate verification | FP reduction | 2x verify cost | **Shipped** |
+| 17 | Adversarial debate verification | FP reduction | 2x verify cost | Planned |
 
 ### Shipped
 
@@ -132,15 +132,15 @@ Ranked by expected impact and implementation complexity. Estimates based on chal
 
 **foxguard multi-modal agreement.** `packages/core/src/triage/multi-modal.ts` — for every 0sec finding, run foxguard against the same source tree and require agreement before auto-accepting. Endor Labs' rules-plus-neural architecture, open-source.
 
-**Consensus (self-consistency) verification.** `packages/core/src/triage/verify-pipeline.ts` — `runSelfConsistencyVerify` runs the structured verify pipeline N times in parallel, takes the majority vote, with early termination when a verdict locks up an unreachable lead.
+**Consensus (self-consistency) verification.** `packages/core/src/triage/structured-verify.ts` — `runSelfConsistencyVerify` runs the structured verify pipeline N times in parallel, takes the majority vote, with early termination when a verdict locks up an unreachable lead.
 
 **Triage memories.** `packages/core/src/triage/memories.ts` — Semgrep-style per-target persistent FP context. User marks a finding as FP with a reason; the reason becomes a `TriageMemory` scoped to `global`, `package`, or `target`. Strong matches auto-reject future findings without any LLM call.
 
 **PoV gate.** `packages/core/src/triage/pov-gate.ts` — a narrowly-scoped mini agent loop must produce a concrete executable exploit; no PoV → severity downgrade to `info`. Based on "All You Need Is A Fuzzing Brain" (arXiv:2509.07225).
 
-**Adversarial debate verification.** `packages/core/src/triage/adversarial.ts` — prosecutor vs. defender agents debate each finding with fresh contexts; a skeptical judge decides. Based on Anthropic's debate paper (arXiv:2402.06782). The point is uncorrelated error modes vs. single-pass verify.
-
 ### Planned
+
+**Adversarial debate verification.** Prosecutor vs. defender agents debate each finding with fresh contexts; a skeptical judge decides. Based on Anthropic's debate paper (arXiv:2402.06782). The point is uncorrelated error modes vs. single-pass verify. Not implemented — the shipped mechanism pursuing the same goal is the cross-family refuter (`stages/hunt-cross-family.ts`).
 
 **External working memory.** Persist structured notes (discovered endpoints, credentials, observed behaviors) in a memory store the agent can query. Prevents the agent from re-discovering information it already found. Inspired by Cyber-AutoAgent's mem0 integration.
 
@@ -189,11 +189,11 @@ See [FP Reduction Moat](/research/fp-reduction-moat/) for the full stack and pub
 | Reachability gate | Endor Labs "Code API" moat | `triage/reachability.ts` |
 | Per-class exploit oracles | MAPTA evidence-gated branching | `triage/oracles.ts` |
 | foxguard multi-modal agreement | Endor Labs rules+neural | `triage/multi-modal.ts` |
-| Structured 4-step verify | GitHub Security Lab taskflow-agent | `triage/verify-pipeline.ts` |
-| Consensus (self-consistency) verify | Self-consistency decoding | `triage/verify-pipeline.ts` |
+| Structured 4-step verify | GitHub Security Lab taskflow-agent | `triage/structured-verify.ts` |
+| Consensus (self-consistency) verify | Self-consistency decoding | `triage/structured-verify.ts` |
 | PoV gate | Fuzzing Brain (arXiv:2509.07225) | `triage/pov-gate.ts` |
 | Triage memories | Semgrep Assistant | `triage/memories.ts` |
-| Adversarial debate | Anthropic Debate (arXiv:2402.06782) | `triage/adversarial.ts` |
+| Adversarial debate | Anthropic Debate (arXiv:2402.06782) | _planned — not implemented_ |
 
 ## What's next
 

@@ -166,13 +166,13 @@ For findings that the hybrid model classifies as "likely true positive" (high co
 
 Each step uses domain-specific prompts with category-specific addendums (SQLi, XSS, SSTI, IDOR, SSRF, command injection, file upload, deserialization, auth bypass). Any step failure marks the finding as a false positive.
 
-**Implementation:** `packages/core/src/triage/verify-pipeline.ts` — `runStructuredVerify(finding, target, runtime, memoryOptions)`.
+**Implementation:** `packages/core/src/triage/structured-verify.ts` — `runStructuredVerify(finding, target, runtime, memoryOptions)`.
 
 ### Layer 4.5: Self-Consistency Consensus Verification — SHIPPED
 
 Because LLM sampling is non-deterministic, any single run of the structured verify pipeline may produce a false positive or false negative. We run the pipeline N times (default 5) in parallel and take the majority vote, with early termination as soon as a verdict locks up an unreachable lead.
 
-**Implementation:** `runSelfConsistencyVerify(finding, target, runtime, opts)` and `tallyConsensus(runs)` in `verify-pipeline.ts`. Feature flag: `0SEC_FEATURE_CONSENSUS_VERIFY`.
+**Implementation:** `runSelfConsistencyVerify(finding, target, runtime, opts)` and `tallyConsensus(runs)` in `structured-verify.ts`. Feature flag: `0SEC_FEATURE_CONSENSUS_VERIFY`.
 
 ### Layer 4.75: PoV (Proof-of-Vulnerability) Gate — SHIPPED
 
@@ -190,7 +190,7 @@ Per-target persistent FP context that learns from human triage decisions. When a
 
 Prosecutor vs. defender agents debate each finding with fresh contexts, and a skeptical judge picks the winner. Based on Anthropic's debate paper (arXiv:2402.06782). The point is error decorrelation: single-pass verify shares priors with the discovery agent, whereas explicitly opposing debaters have uncorrelated error modes.
 
-**Implementation:** `packages/core/src/triage/adversarial.ts`. Feature flag: `0SEC_FEATURE_DEBATE`.
+**Status: planned, not implemented.** There is no `triage/adversarial.ts` and no `0SEC_FEATURE_DEBATE` flag in the engine today. The closest shipped mechanism is the cross-family refuter (`stages/hunt-cross-family.ts`), which pursues the same error-decorrelation goal by forcing the refute pass onto a different model family than the finder.
 
 ### Training Data Pipeline
 

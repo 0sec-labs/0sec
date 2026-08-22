@@ -15,7 +15,7 @@
  */
 
 import { z } from "zod";
-import type { Finding, PocStep, ReportSummary } from "@0sec/shared";
+import type { AttackCategory, Finding, PocStep, ReportSummary } from "@0sec/shared";
 
 // ── Enum mirrors ────────────────────────────────────────────────────────────
 //
@@ -46,14 +46,27 @@ const attackCategoryEnum = z.enum([
   "xss",
   "cors",
   "security-misconfiguration",
+  "missing-validation",
+  "crypto-misuse",
   "heap-overflow",
+  "out-of-bounds-read",
+  "out-of-bounds-write",
   "use-after-free",
   "stack-buffer-overflow",
   "null-pointer-deref",
+  "null-deref",
   "integer-overflow",
+  "integer-truncation",
   "race-condition",
+  "toctou",
   "type-confusion",
   "double-free",
+  "format-string",
+  "uninitialized-memory",
+  "denial-of-service",
+  "known-vulnerable-package",
+  "supply-chain",
+  "other",
 ]);
 
 const findingStatusEnum = z.enum([
@@ -203,6 +216,9 @@ type _PocStepSchemaShape = z.infer<typeof pocStepSchema>;
 type _ReportSummarySchemaShape = z.infer<typeof reportSummarySchema>;
 const _reportSummaryAssign: (x: _ReportSummarySchemaShape) => ReportSummary = (x) => x;
 void _reportSummaryAssign;
+type _AttackCategorySchema = z.infer<typeof attackCategoryEnum>;
+const _attackCategoryAssign: (x: AttackCategory) => _AttackCategorySchema = (x) => x;
+void _attackCategoryAssign;
 
 // Width check: schema output must be assignable to the shared type for the
 // fields we copy out. We intentionally don't require the schema to recreate

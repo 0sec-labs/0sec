@@ -3,6 +3,7 @@ import {
   blindVerifyPrompt,
   buildAuthPromptBlock,
   researchPrompt,
+  researchPromptSingleFile,
   shellPentestPrompt,
   sourceVerifyPrompt,
   webPentestAttackPrompt,
@@ -116,6 +117,12 @@ describe("scoped source prompts", () => {
       expect(prompt).not.toContain("run_command");
     }
     expect(research).toContain("list_files");
+    const perFile = researchPromptSingleFile("/scope", "src/index.ts", [], [], "npm:example@1.0.0");
+    for (const prompt of [research, perFile]) {
+      expect(prompt).toContain("verification_spec");
+      expect(prompt).toContain("file-contains");
+      expect(prompt).toContain("file-missing-pattern");
+    }
 
   });
 });

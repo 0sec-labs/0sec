@@ -145,7 +145,7 @@ is a no-op on npm-bench).
 - Structured 4-step verify pipeline
 - Self-consistency voting
 - Assistant memories (Semgrep-style)
-- Adversarial debate (prosecutor vs defender vs judge)
+- Adversarial debate (prosecutor vs defender vs judge) — *planned, not implemented*
 - EGATS (Evidence-Gated Attack Tree Search) — *opt-in only*, see
   [#116](https://github.com/0sec-labs/0sec/issues/116): the single-feature
   ablation on 2026-04-11 showed this layer regresses on hard challenges
@@ -165,7 +165,7 @@ is a no-op on npm-bench).
 | JIT skills | `0SEC_FEATURE_JIT_SKILLS` | Methodology skills loaded on demand instead of injected upfront |
 | External working memory | `0SEC_FEATURE_EXTERNAL_MEMORY` | Agent writes plan/creds to disk; re-injected at reflection checkpoints |
 | Progress handoff | `0SEC_FEATURE_PROGRESS_HANDOFF` (on) | LLM-summarized structured progress injected when retrying after early-stop |
-| Adversarial debate | `0SEC_FEATURE_DEBATE` | Prosecutor vs defender debate with a skeptical judge |
+| Adversarial debate | _(planned)_ | **Not implemented.** Prosecutor vs defender debate with a skeptical judge. No `0SEC_FEATURE_DEBATE` flag exists yet. |
 
 ## Benchmarks
 

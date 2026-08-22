@@ -41,7 +41,7 @@ flowchart TD
     S8 -->|minority| R4[Rejected]
     S8 -->|majority| S9{9. Memory match?}
     S9 -->|strong FP match| R5[Auto-rejected]
-    S9 -->|no match| S10{10. Adversarial debate?}
+    S9 -->|no match| S10{10. Adversarial debate? — planned}
     S10 -->|judge rejects| R6[Rejected as FP]
     S10 -->|judge confirms| S11[11. EGATS tree search]
     S11 --> CF[Confirmed finding]
@@ -243,8 +243,12 @@ public API.
 
 ## 10. Adversarial debate
 
-**Module:** `triage/adversarial.ts`
-**Flag:** `0SEC_FEATURE_DEBATE=1`
+**Status: planned — not implemented.** There is no `triage/adversarial.ts` module
+and no `0SEC_FEATURE_DEBATE` flag in the engine today; the design below is the
+intent, kept here because it is still the plan. The error-decorrelation goal it
+targets is partly served in the meantime by the **cross-family refuter**
+(`stages/hunt-cross-family.ts`, on by default on the hunt path), which forces the
+refute pass onto a model family different from the finder's.
 
 Two fresh-context agents argue opposing positions — a prosecutor makes the
 case that the finding is real, a defender makes the case that it is a

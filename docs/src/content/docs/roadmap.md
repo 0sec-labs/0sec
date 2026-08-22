@@ -13,6 +13,63 @@ The current thesis is unchanged from earlier in the year:
 
 What has changed is that the trust layer is now real. The retained artifact-backed XBOW aggregate is 103/104 = 99.0% (only XBEN-030 unsolved in any mode), the load-bearing gpt-5.4 model-specific cohort sits at 93/95 = 97.9% on black-box, and the first scored full Cybench run lands at 36/40 = 90.0% single-config single-shot. The older mixed local+CI publication line remains documented separately. Most of the next-quarter work is about taking that capability and making it operationally easy to live with — for one developer running a single review, for a CI pipeline gating PRs, and for a security team running a continuous campaign.
 
+## August 2026 product-discovery checkpoint
+
+**No commercial vertical has been selected yet.** 0sec is deliberately an
+open-source, evidence-backed cyber reasoning system: given an authorized
+objective, a scoped target, tools, and a verifier, it plans, investigates,
+tests, and returns replayable evidence. That is a platform thesis. It does
+not by itself prove which company problem is urgent enough to buy.
+
+### Platform role
+
+The stable platform primitives are:
+
+1. scenario / objective
+2. target adapter
+3. scoped tool policy
+4. reasoning and execution loop
+5. verifier / evidence oracle
+6. replayable evidence bundle
+
+Web testing, source review, package audit, MCP testing, and agent assurance
+are applications of those primitives. New modes should strengthen one of them;
+they should not turn the CLI into a collection of unrelated product claims. No
+architecture rewrite follows solely from this framing.
+
+### Commercial hypotheses
+
+- **Generic autonomous web pentesting:** a core OSS capability, but a crowded
+  commercial category. Benchmark strength and verified findings do not alone
+  establish a paid wedge.
+- **Agent-action assurance:** a candidate paid workflow, not a selected
+  strategy. The question is whether a company can prove that a tool-using agent
+  cannot perform a named prohibited action after a model, prompt, tool, or MCP
+  change. `agent-assure` supplies the initial scope-bound, externally observed
+  action primitive.
+- **Managed operation:** if a workflow proves repeat use, the managed layer
+  sells scheduling, protected-target access, shared evidence, triage,
+  integrations, and support around the public engine. It must not depend on a
+  private fork of the scanner.
+
+### Validation before product commitment
+
+Do not pick a commercial vertical from benchmarks, free downloads, or a feature
+inventory. For each candidate workflow:
+
+1. interview ten companies with the actual target and a named security owner;
+2. sell three paid pilots rather than free evaluations;
+3. require an authorized staging target, a concrete success or prohibited-action
+   definition, and a replayable evidence review;
+4. count collected revenue, a remediation decision, and a requested re-run after
+   a real change as the leading evidence;
+5. build only blockers that recur across at least two pilots.
+
+Agent-action assurance becomes a product direction only if companies attach a
+real agent and observer, pay for the test, and ask to run it again. If the
+evidence instead points to another repeatable workflow, retain the OSS platform
+and choose that workflow. The decision is deliberately reversible until then.
+
 ## May 2026 strategy addendum
 
 FoxGuard is now the default static lead source and the explicit stepping stone away from Semgrep. The product direction is not "delete Semgrep immediately" or "rewrite 0sec in Rust." The direction is:

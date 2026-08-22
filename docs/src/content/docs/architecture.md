@@ -264,7 +264,7 @@ flowchart TD
     L8 --> L9[9. Triage memories]
     L9 -->|known FP match| REJ[Rejected]
     L9 --> L10[10. EGATS tree search]
-    L10 --> L11[11. Adversarial debate]
+    L10 --> L11[11. Adversarial debate — planned]
     L11 --> VF[Verified findings]
     ACC --> VF
 
@@ -296,10 +296,10 @@ flowchart TD
 | Multi-modal agreement | `packages/core/src/triage/multi-modal.ts` | Cross-validates against [foxguard](https://github.com/0sec-labs/foxguard) (Rust pattern scanner). Both fire = strong signal; foxguard silent on scanned file = likely FP. |
 | Per-class oracles | `packages/core/src/triage/oracles.ts` | Deterministic exploit oracles per category (SQLi, XSS, SSRF, RCE, path traversal, IDOR). Verified = accept with no LLM call. |
 | PoV gate | `packages/core/src/triage/pov-gate.ts` | Narrowly-scoped mini agent loop must produce a working executable PoC. No PoV = downgrade to `info`. Based on "All You Need Is A Fuzzing Brain". |
-| Structured verify pipeline | `packages/core/src/triage/verify-pipeline.ts` | 4-step LLM verification: reachability -> payload validation -> impact assessment -> exploit confirmation. Category-specific addendums per vuln class. |
-| Consensus verify | `packages/core/src/triage/verify-pipeline.ts` (`runSelfConsistencyVerify`) | Runs the structured verify pipeline N times in parallel and takes the majority vote with early termination. |
+| Structured verify pipeline | `packages/core/src/triage/structured-verify.ts` | 4-step LLM verification: reachability -> payload validation -> impact assessment -> exploit confirmation. Category-specific addendums per vuln class. |
+| Consensus verify | `packages/core/src/triage/structured-verify.ts` (`runSelfConsistencyVerify`) | Runs the structured verify pipeline N times in parallel and takes the majority vote with early termination. |
 | Triage memories | `packages/core/src/triage/memories.ts` | Semgrep-style per-target FP memories. Injected as few-shot into the verify prompt; strong matches auto-reject without an LLM call. |
-| Adversarial debate | `packages/core/src/triage/adversarial.ts` | Prosecutor vs. defender vs. judge with fresh contexts, based on Anthropic's debate paper (arXiv:2402.06782). Uncorrelated error modes vs. single-pass verify. |
+| Adversarial debate | _not implemented_ | **Planned, not shipped.** Prosecutor vs. defender vs. judge with fresh contexts, per Anthropic's debate paper (arXiv:2402.06782). The error-decorrelation goal it targets is partly served today by the cross-family refuter (`stages/hunt-cross-family.ts`), which forces the refute pass onto a different model family than the finder. |
 
 Most layers are gated by feature flags (`0SEC_FEATURE_REACHABILITY_GATE`, `0SEC_FEATURE_MULTIMODAL`, `0SEC_FEATURE_CONSENSUS_VERIFY`, `0SEC_FEATURE_POV_GATE`, `0SEC_FEATURE_TRIAGE_MEMORIES`, `0SEC_FEATURE_DEBATE`) so they can be A/B tested independently. See `packages/core/src/agent/features.ts` for the full list.
 

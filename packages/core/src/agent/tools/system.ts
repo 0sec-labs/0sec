@@ -131,6 +131,35 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     required: ["task"],
   },
 
+  spawn_agents: {
+    name: "spawn_agents",
+    description:
+      "Spawn MULTIPLE focused sub-agents that run CONCURRENTLY (bounded), each with fresh context and its own turn budget. Use to fan out independent exploitation tasks in parallel (e.g. probe several endpoints or leads at once) instead of one-at-a-time spawn_agent. Returns each sub-agent's findings and summary. Max 8 tasks per call.",
+    parameters: {
+      tasks: {
+        type: "array",
+        description:
+          "The sub-agent tasks to run concurrently (1-8). Each item is an object { task, max_turns? }.",
+        items: {
+          type: "object",
+          properties: {
+            task: {
+              type: "string",
+              description:
+                "What this sub-agent should do. Be specific: include the target URL, the vulnerability, and what to extract.",
+            },
+            max_turns: {
+              type: "number",
+              description: "Turn budget for this sub-agent (default 15, max 25)",
+            },
+          },
+          required: ["task"],
+        },
+      },
+    },
+    required: ["tasks"],
+  },
+
   pty_session: {
     name: "pty_session",
     description:
@@ -161,6 +190,7 @@ export const systemDispatch: Record<string, string> = {
   update_target: "updateTarget",
   bash: "shellExec",
   spawn_agent: "spawnAgent",
+  spawn_agents: "spawnAgents",
   pty_session: "ptySession",
   plan: "planTool",
 };

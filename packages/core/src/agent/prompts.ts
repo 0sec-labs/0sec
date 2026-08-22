@@ -738,6 +738,7 @@ For EACH vulnerability you find, you MUST write a concrete proof-of-concept — 
 - evidence_request: the file path and location of the vulnerable code
 - evidence_response: the PoC code/command that exploits the vulnerability
 - evidence_analysis: your detailed analysis of the vulnerability and how the PoC triggers it
+- verification_spec: JSON-encoded code predicates that are true only while the cited vulnerable source shape remains present. Include at least one \`file-contains\` or \`file-missing-pattern\` predicate for the cited file; do not use a mere \`file-exists\` or \`git-diff-applies\` receipt as proof.
 
 ## Static Analysis Leads
 
@@ -798,6 +799,7 @@ You will analyze ONE FILE in this session. Stay focused — do NOT enumerate the
    - evidence_request: \`${filePath}:lineNumber\`
    - evidence_response: PoC code/command that exploits the vulnerability
    - evidence_analysis: detailed analysis of how the PoC triggers it
+   - verification_spec: JSON-encoded code predicates that are true only while the cited vulnerable source shape remains present. Include at least one \`file-contains\` or \`file-missing-pattern\` predicate for this file; do not use a mere \`file-exists\` or \`git-diff-applies\` receipt as proof.
 
 ## Static Analysis Leads (this file)
 

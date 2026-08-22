@@ -106,6 +106,37 @@ function impactForSeverity(severity: string): string {
   }
 }
 
+/**
+ * The impact line for a vendor notification.
+ *
+ * Leads with the severity word (which downstream tooling and the tests rely on
+ * being present) and, when the finding carries a real impact assessment, adds
+ * the two facts a vendor triager actually acts on: what the attacker gains and
+ * how they must be positioned. Without an assessment it degrades to exactly the
+ * old severity-only line.
+ */
+function impactLine(finding: Finding): string {
+  const base = impactForSeverity(finding.severity);
+  const a = finding.impactAssessment;
+  if (!a) return base;
+  const gain: Record<string, string> = {
+    rce: "remote code execution",
+    "lpe-to-root": "local privilege escalation to root/SYSTEM",
+    "info-leak": "information disclosure",
+    "dos-crash": "denial of service (crash)",
+  };
+  const reach: Record<string, string> = {
+    "remote-unauth": "remotely, unauthenticated",
+    "proximity-rf": "from RF/physical proximity",
+    "local-unpriv": "by an unprivileged local user",
+    "local-priv": "by a privileged local user",
+    "needs-hardware": "with specific/attacker-supplied hardware",
+    "needs-host-migration": "if the victim mounts an attacker-supplied artifact",
+  };
+  const detail = `Attacker gains ${gain[a.weaponizability] ?? a.weaponizability}, exploitable ${reach[a.reachability_tier] ?? a.reachability_tier}.`;
+  return `${base} ${detail}`;
+}
+
 /** Render one PoC step as a human-readable, redacted reproduction line. */
 function renderReproStep(step: PocStep, index: number): string {
   const n = index + 1;
@@ -212,7 +243,7 @@ export function assembleEvidencePack(
     severity: finding.severity,
     what: redact(finding.description.trim()),
     where,
-    impact: impactForSeverity(finding.severity),
+    impact: impactLine(finding),
     reproSteps,
     remediation,
     reproduced,

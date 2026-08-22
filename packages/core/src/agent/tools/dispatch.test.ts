@@ -32,6 +32,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   bash: "shellExec",
   browser: "browserAction",
   spawn_agent: "spawnAgent",
+  spawn_agents: "spawnAgents",
   web_search: "webSearch",
   intel_search_advisories: "intelSearchAdvisories",
   intel_lookup_cve: "intelLookupCve",
