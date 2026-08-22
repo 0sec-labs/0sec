@@ -7,7 +7,8 @@ All commands are available via `0sec <command>`. You can also skip the subcomman
 
 ## scan
 
-Probe AI/LLM apps, web apps, APIs, or MCP servers for vulnerabilities.
+Probe AI/LLM apps, web apps, or MCP servers for vulnerabilities. A REST API is
+scanned as a web target; `--api-spec` pre-loads its endpoints (see below).
 
 Live network targets require `--scope <file>`. The CLI refuses an unscoped live
 target before making a request. Local source review and package audit commands
@@ -212,6 +213,58 @@ The `--target` alias selects the review workflow while preserving the older `--p
 **`linux-kernel` — kernel-aware static review.** Tunes the agent toward kernel-specific failure modes: missing `copy_from_user` length validation, signed/unsigned int comparison on user-controlled length, UAF across `__free_pages`/`kfree_skb` error paths, refcount races (`get_task_struct` without matching `put_task_struct`), TOCTOU on `inode->i_*` fields, unsafe `unsafe_get_user`/`unsafe_put_user` outside a `user_access_begin`/`user_access_end` block, and skb cow/share violations (the Dirty Frag class — in-place AEAD/cipher on a shared frag without `skb_cow_data` / `skb_unshare`). The agent first verifies the tree is actually a kernel tree (`MAINTAINERS`, `Kconfig`, `KERNELRELEASE`, `arch/`) and refuses if not. Findings are tagged with the same subsystem labels (`fs/nfsd`, `net/tcp`, `mm`, …) used by the kernel-crash ingest pipeline so the two streams line up.
 
 > **Non-goal: this is static review, not exploit reproduction.** The `linux-kernel` profile produces hypothesis-grade findings grounded at file:line and accompanied by a syzkaller-program or C-syscall reproducer SHAPE — it does not compile or boot the kernel. A libFuzzer harness does not apply (kernel state isn't reachable from a libFuzzer process). For machine-checkable verification, see issues #271 (kernel oracle) and #272 (syzkaller harness scaffold). Static-only findings are flagged `confidence: 0.4` with `hypothesis: true` until the verification phase lands.
+
+## fix
+
+Generate a narrowly-scoped patch for one independently reproduced local source
+finding, validate it in an isolated Git worktree, and optionally apply it.
+
+The command is intentionally stricter than remediation guidance:
+
+- `<repo>` must be the clean root of a local Git worktree;
+- the finding or `--verification-result` input must establish
+  `verification_result.status: "reproduced"`;
+- the finding must have a code-only `verificationSpec` that describes the
+  vulnerable source state;
+- `--test-command` is required and runs after every candidate patch;
+- by default the original checkout is unchanged;
+- `--apply` modifies the original checkout only after the candidate invalidates
+  the vulnerable-source contract and the regression command succeeds.
+
+```bash
+# Generate and validate a candidate; keep the original checkout unchanged.
+0sec fix ./my-app \
+  --finding ./finding.json \
+  --test-command "pnpm test" \
+  --verification-result ./verification.json \
+  --output ./candidate-fix.patch
+
+# Apply only a candidate that passed the isolated re-check and regression run.
+0sec fix ./my-app \
+  --finding ./finding.json \
+  --test-command "pnpm test" \
+  --verification-result ./verification.json \
+  --apply
+```
+
+`fix` currently supports source-only verification contracts. A live behavioral
+re-test needs a provisioned target and remains outside this command's contract;
+do not treat a source fix as proof that an unrelated deployed target has already
+been remediated.
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `<repo>` | Clean local Git worktree with the affected source | required |
+| `--finding <path>` | Finding JSON with a code-only `verificationSpec` | required |
+| `--verification-result <path>` | Optional `0sec verify` JSON when the finding does not already carry a reproduced result | |
+| `--test-command <command>` | Explicit regression command run in the candidate worktree | required |
+| `--runtime <runtime>` | `auto` or `api` | `auto` |
+| `--model <model>` | Model identifier for the selected runtime | provider default |
+| `--timeout <ms>` | Per-model-call timeout | `600000` |
+| `--test-timeout <ms>` | Regression-command timeout | `300000` |
+| `--max-attempts <n>` | Candidate patch attempts; capped at 3 | `3` |
+| `--apply` | Apply only the patch that passed both gates | `false` |
+| `--output <path>` | Persist the validated `apply_patch` DSL | stdout only |
 
 ## kernel variant-hunt
 
@@ -549,7 +602,7 @@ Query, filter, and inspect verified findings. Fresh scans keep local findings
 in `~/.0sec/runs/<scan-id>/state.db`; `0sec findings list` aggregates local
 run databases, while `--scan <scan-id>` or `--db-path <path>` selects one run
 for detailed inspection and triage. Managed findings are queried through the
-0cloud control plane, not this local store.
+managed control plane, not this local store.
 
 ```bash
 # List all findings

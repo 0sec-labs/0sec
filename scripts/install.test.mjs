@@ -45,6 +45,10 @@ test("install.sh installs a checksum-verified host binary", { skip: !hostAsset()
     const installed = spawnSync(join(installDir, "0sec"), ["--version"], { encoding: "utf8" });
     assert.equal(installed.status, 0, installed.stderr);
     assert.equal(installed.stdout.trim(), "fixture-0sec");
+
+    const alias = spawnSync(join(installDir, "0"), ["--version"], { encoding: "utf8" });
+    assert.equal(alias.status, 0, alias.stderr);
+    assert.equal(alias.stdout.trim(), "fixture-0sec");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

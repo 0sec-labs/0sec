@@ -7,7 +7,7 @@
  */
 
 import type { Finding, AttackCategory } from "@0sec/shared";
-import type { NativeRuntime } from "./runtime/types.js";
+import type { NativeRuntime, NativeRuntimeResult } from "./runtime/types.js";
 
 // ── Public types ──
 
@@ -22,6 +22,33 @@ export interface Remediation {
   steps: string[];
   codeExample?: RemediationCodeExample;
   references: string[];
+}
+
+/** Why {@link generateRemediationWithLLM} fell back to the static knowledge base. */
+export type RemediationFallbackReason =
+  | "no_text_block"      // runtime returned no text content (often a keyless/errored call)
+  | "invalid_structure"  // model replied, but not in the required JSON shape
+  | "error";             // the call threw, or the JSON did not parse
+
+/**
+ * What one {@link generateRemediationWithLLM} call actually did.
+ *
+ * The function is deliberately fail-open — a failed model call silently yields
+ * the static knowledge-base answer, which is the right behaviour for output
+ * quality and the wrong behaviour for operability: a mis-wired or unauthorised
+ * runtime looks exactly like a working one. It also means the LLM spend is
+ * invisible unless the caller is told about it.
+ *
+ * So callers may pass `onObservation` to learn (a) which source produced the
+ * answer and why, so a silent 100% fallback rate is detectable, and (b) the
+ * token usage, so the spend can be folded into the scan's cost accounting
+ * instead of going unmetered.
+ */
+export interface RemediationObservation {
+  source: "llm" | "baseline";
+  fallbackReason?: RemediationFallbackReason;
+  /** Present only when the runtime reported usage for the call. */
+  usage?: NativeRuntimeResult["usage"];
 }
 
 // ── Static knowledge base keyed by AttackCategory ──
@@ -516,9 +543,11 @@ export function generateRemediation(finding: Finding): Remediation {
 export async function generateRemediationWithLLM(
   finding: Finding,
   runtime: NativeRuntime,
+  opts?: { onObservation?: (observation: RemediationObservation) => void },
 ): Promise<Remediation> {
   // Start with the static KB as a baseline
   const baseline = generateRemediation(finding);
+  const report = opts?.onObservation;
 
   const systemPrompt = `You are a senior application security engineer. Given a vulnerability finding, produce remediation guidance as JSON. The response MUST be valid JSON matching this schema:
 {
@@ -553,6 +582,9 @@ Generate specific remediation guidance for this vulnerability.`;
     // Extract text from the response
     const textBlock = result.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
+      // Usage is reported even on the fallback paths: the call was made and
+      // billed regardless of whether its output was usable.
+      report?.({ source: "baseline", fallbackReason: "no_text_block", usage: result.usage });
       return baseline;
     }
 
@@ -590,12 +622,16 @@ Generate specific remediation guidance for this vulnerability.`;
         };
       }
 
+      report?.({ source: "llm", usage: result.usage });
       return remediation;
     }
 
+    report?.({ source: "baseline", fallbackReason: "invalid_structure", usage: result.usage });
     return baseline;
   } catch {
-    // LLM call failed — return static KB guidance
+    // LLM call failed — return static KB guidance. No usage is available here:
+    // the call threw, so there is no result to read it from.
+    report?.({ source: "baseline", fallbackReason: "error" });
     return baseline;
   }
 }

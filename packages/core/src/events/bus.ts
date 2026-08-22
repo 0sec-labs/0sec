@@ -451,6 +451,40 @@ export interface PhaseCompletedPayload {
   [k: string]: unknown;
 }
 
+// ── Subagent lifecycle events (live TUI agent cards) ────────────────────
+
+/**
+ * A sub-agent emits queued → running → completed|failed after runtime setup,
+ * or queued → failed when startup itself fails. The event has no graph, DAG,
+ * cost, or cancellation fields.
+ *
+ * Consumers (CLI TUI, cloud trace) filter by `parent_scan_id` and
+ * unsubscribe on unmount. `agent_id` uniquely identifies the sub-agent
+ * instance across the parent scan's lifetime.
+ */
+export interface SubagentLifecyclePayload {
+  /** Opaque instance id for this sub-agent, unique within the parent scan. */
+  agent_id: string;
+  /** Scan id of the parent that called spawn_agent. */
+  parent_scan_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  /** The task description passed to spawn_agent. */
+  task: string;
+  /** Effective max turns for the sub-agent (clamped to ≤25). */
+  max_turns: number;
+  /** Actual turns consumed — present on completed|failed. */
+  turns?: number;
+  /** Number of findings the sub-agent saved — present on completed|failed. */
+  findings?: number;
+  /** Sub-agent's final summary — present on completed. */
+  summary?: string;
+  /** Error message on failure (truncated to 500 chars). */
+  error?: string;
+  /** Scope rules inherited from the parent — only when scope is active. */
+  scope_rules?: string[];
+  [k: string]: unknown;
+}
+
 /** Discriminated union of all events flowing through the bus. */
 export type osecEvent =
   | { type: "step_started"; payload: StepStartedPayload }
@@ -473,7 +507,8 @@ export type osecEvent =
   | { type: "pov_oracle"; payload: PovOraclePayload }
   | { type: "oast_confirmed"; payload: OastConfirmedPayload }
   | { type: "phase_started"; payload: PhaseStartedPayload }
-  | { type: "phase_completed"; payload: PhaseCompletedPayload };
+  | { type: "phase_completed"; payload: PhaseCompletedPayload }
+  | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = osecEvent["type"];

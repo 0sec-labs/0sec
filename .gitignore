@@ -14,3 +14,8 @@ pnpm-publish-summary.json
 .astro/
 **/.astro/
 
+
+# Private managed control-plane — not part of the public engine
+services/
+# Local build artifacts
+*.tgz

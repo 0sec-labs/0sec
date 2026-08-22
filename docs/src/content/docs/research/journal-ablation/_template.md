@@ -28,9 +28,14 @@ The flag flips to default ON only when ALL of the following hold:
   **<= +50%** (i.e. journal is at most 1.5x the native wall-clock).
 
 If any of those checks fails, the flag stays OFF and the design doc records
-the gap. See `packages/core/src/agent/features.ts` (`journalLoop`) for the
-flag plumbing and `packages/core/src/agent/loop-dispatch.ts` for the
-single-point dispatcher.
+the gap.
+
+> **Status note (audited 2026-08-22):** the `journalLoop` flag and the
+> single-point dispatcher described here were never built — there is no
+> `loop-dispatch.ts`, and `features.ts` has no `journalLoop` entry.
+> `packages/core/src/agent/native-loop.ts` remains the only agent loop;
+> `packages/core/src/agent/journal/` holds the journal primitives. This
+> ablation protocol is retained as the plan of record, not as shipped wiring.
 
 ## Results
 

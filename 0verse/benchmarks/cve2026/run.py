@@ -18,6 +18,14 @@ uses.
     python benchmarks/cve2026/run.py --llm codex \
         --out benchmarks/cve2026/results-codex.json
     python benchmarks/cve2026/run.py --only ffmpeg_magicyuv_vuln ffmpeg_magicyuv_fixed
+
+Repeat / pass@k: ``--repeat N`` runs the whole corpus N independent times and
+reports the pass@1 per-attempt rate WITH a 95% Wilson interval, the pass@N pooled
+rate, and the consistent-across-all-runs core -- for both recall and the
+false-positive controls. A single pass is a sample, not a measurement; see
+``zeroverse.pooling`` for why pooling raises recall AND the FP rate together.
+
+    python benchmarks/cve2026/run.py --llm codex --repeat 3
 """
 
 from __future__ import annotations
@@ -45,6 +53,12 @@ from zeroverse.groundtruth import (  # noqa: E402
     load_manifest,
     validate_post_cutoff,
 )
+from zeroverse.pooling import (  # noqa: E402
+    POOLING_SCHEMA_VERSION,
+    format_pooling_report,
+    pool_report,
+    representative_scores,
+)
 
 
 def _load_gt_runner() -> Any:
@@ -71,7 +85,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="ISO training-cutoff override; default = manifest.training_cutoff")
     ap.add_argument("--no-cutoff-gate", action="store_true",
                     help="run even if an item fails post-cutoff provenance validation")
+    ap.add_argument("--repeat", type=int, default=1, metavar="N",
+                    help="run the corpus N independent times and report pass@1 "
+                         "(with 95%% CI), pass@N pooled, and the consistent core, "
+                         "for recall AND the false-positive controls (default 1)")
     args = ap.parse_args(argv)
+
+    if args.repeat < 1:
+        print(f"--repeat must be >= 1 (got {args.repeat})", file=sys.stderr)
+        return 2
 
     raw = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     cutoff = args.cutoff or str(raw.get("training_cutoff", ""))
@@ -102,19 +124,38 @@ def main(argv: list[str] | None = None) -> int:
 
     gt = _load_gt_runner()
     opts = api.ScanOptions(backend=args.backend, llm=args.llm, model=args.model)
-    scores: list[ItemScore] = []
-    details: list[dict[str, Any]] = []
+    # One entry per independent pass. The outer loop is the RUN, not the item, so
+    # each pass is a full independent attempt at the whole corpus -- which is what
+    # pass@k semantics require.
+    runs: list[list[ItemScore]] = []
+    run_details: list[list[dict[str, Any]]] = []
     t_start = time.monotonic()
     with tempfile.TemporaryDirectory() as td:
         workdir = Path(td)
-        for item in items:
-            print(f"== {item.id} [{item.label}/{item.cve}] ==", file=sys.stderr)
-            score, detail = gt.run_item(item, opts, workdir)
-            print(f"   outcome={score.outcome} findings={detail.get('findings')} "
-                  f"({detail['elapsed_s']}s)", file=sys.stderr)
-            scores.append(score)
-            details.append(detail)
+        for run_idx in range(args.repeat):
+            if args.repeat > 1:
+                print(f"\n=== run {run_idx + 1}/{args.repeat} ===", file=sys.stderr)
+            scores: list[ItemScore] = []
+            details: list[dict[str, Any]] = []
+            for item in items:
+                print(f"== {item.id} [{item.label}/{item.cve}] ==", file=sys.stderr)
+                score, detail = gt.run_item(item, opts, workdir)
+                print(f"   outcome={score.outcome} findings={detail.get('findings')} "
+                      f"({detail['elapsed_s']}s)", file=sys.stderr)
+                if args.repeat > 1:
+                    detail = {**detail, "run": run_idx}
+                scores.append(score)
+                details.append(detail)
+            runs.append(scores)
+            run_details.append(details)
     wall = round(time.monotonic() - t_start, 1)
+
+    pooling = pool_report(items, runs)
+    # Pooled metrics ride the SAME aggregate() scorer as a single run, fed the
+    # real per-item score from the run that determined the pooled outcome -- so
+    # k=1 output stays byte-identical in shape and k>1 adds no parallel math.
+    scores = representative_scores(items, runs) if args.repeat > 1 else runs[0]
+    details = run_details[0] if args.repeat == 1 else [d for r in run_details for d in r]
 
     metrics = aggregate(items, scores)
     heldout = heldout_summary(items)
@@ -130,13 +171,19 @@ def main(argv: list[str] | None = None) -> int:
         "backend": args.backend,
         "wall_s": wall,
         "n_items": len(items),
+        "repeat": args.repeat,
+        "pooling_schema_version": POOLING_SCHEMA_VERSION,
+        "pooling": pooling.to_dict(),
         "metrics": metrics.to_dict(),
         "heldout": heldout.to_dict(),
         "items": details,
         "scores": [s.to_dict() for s in scores],
     }
+    if args.repeat > 1:
+        out["runs"] = [[s.to_dict() for s in r] for r in runs]
     Path(args.out).write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
     print("\n" + report)
+    print("\n" + format_pooling_report(pooling))
     print(f"\nwall={wall}s  results -> {args.out}", file=sys.stderr)
     return 0
 

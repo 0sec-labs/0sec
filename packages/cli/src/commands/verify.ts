@@ -772,7 +772,7 @@ export async function runVerify(opts: {
     if (!baseTarget.cwd) {
       const isolated = allocateIsolatedWorkspace();
       cleanup = isolated.cleanup;
-      target = { ...baseTarget, cwd: isolated.cwd };
+      target = { ...target, cwd: isolated.cwd };
     }
 
     if (!finding.pocSteps || finding.pocSteps.length === 0) {

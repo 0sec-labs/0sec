@@ -1,9 +1,18 @@
-import type { AttackCategory, Finding, Severity } from "@0sec/shared";
+import type { AttackCategory, Finding, ReachabilityTier, Severity } from "@0sec/shared";
 
 export interface CvssSuggestion {
   vector: string;
   score: number;
-  source: "finding" | "heuristic";
+  /**
+   * Where the exploitability metrics came from:
+   *   - "finding" — the agent already emitted a full vector + score; used verbatim.
+   *   - "impact-assessment" — AV/PR/UI derived from the finding's
+   *     `impactAssessment.reachability_tier` (a real assessment of how the
+   *     attacker must be positioned), impact metrics from category.
+   *   - "heuristic" — no assessment present; AV/UI default to network/none and
+   *     PR is floored from severity. A first-pass guess, not a measurement.
+   */
+  source: "finding" | "impact-assessment" | "heuristic";
 }
 
 // Heuristic: pick impact (C/I/A) from category, privilege-required from severity
@@ -97,16 +106,59 @@ function prForSeverity(severity: Severity): "N" | "L" | "H" {
   }
 }
 
+/**
+ * Derive the CVSS exploitability metrics (Attack Vector, Privileges Required,
+ * User Interaction) from a real reachability assessment — "how must the
+ * attacker be positioned to reach the sink". This is exactly the
+ * attack-prerequisites axis that severity + category cannot express, which is
+ * why an assessed finding gets a materially better vector than the heuristic
+ * one. Impact metrics (C/I/A/S) still come from category; reachability speaks
+ * only to exploitability.
+ *
+ * The mapping is intentionally conservative at the edges (RF proximity → the
+ * Adjacent vector rather than Network; a hardware requirement → Physical), so a
+ * derived score never over-claims reach relative to the heuristic default.
+ */
+function metricsForReachability(
+  tier: ReachabilityTier,
+): { av: keyof typeof W.AV; pr: "N" | "L" | "H"; ui: "N" | "R" } {
+  switch (tier) {
+    case "remote-unauth":
+      return { av: "N", pr: "N", ui: "N" };
+    case "proximity-rf":
+      return { av: "A", pr: "N", ui: "N" };
+    case "local-unpriv":
+      return { av: "L", pr: "L", ui: "N" };
+    case "local-priv":
+      return { av: "L", pr: "H", ui: "N" };
+    case "needs-hardware":
+      return { av: "P", pr: "N", ui: "N" };
+    case "needs-host-migration":
+      // The victim must mount / import an attacker-supplied artifact: a local
+      // vector that requires user interaction and no attacker privileges.
+      return { av: "L", pr: "N", ui: "R" };
+  }
+}
+
 export function suggestCvss(finding: Finding): CvssSuggestion {
   if (finding.cvssVector && finding.cvssScore !== undefined) {
     return { vector: finding.cvssVector, score: finding.cvssScore, source: "finding" };
   }
   const impact = IMPACT_BY_CATEGORY[finding.category] ?? { C: "L", I: "L", A: "L", scope: "U" as const };
-  const av = "N" as const;
   const ac = "L" as const;
-  const pr = prForSeverity(finding.severity);
-  const ui = "N" as const;
+
+  // Strictly additive: only a finding that carries a real reachability
+  // assessment departs from the historic default. A finding without one
+  // produces the exact same vector it always did (AV:N / UI:N / PR-from-
+  // severity), so every caller and pinned test is unaffected.
+  const assessed = finding.impactAssessment
+    ? metricsForReachability(finding.impactAssessment.reachability_tier)
+    : undefined;
+  const av = assessed?.av ?? ("N" as const);
+  const pr = assessed?.pr ?? prForSeverity(finding.severity);
+  const ui = assessed?.ui ?? ("N" as const);
+
   const vector = `CVSS:3.1/AV:${av}/AC:${ac}/PR:${pr}/UI:${ui}/S:${impact.scope}/C:${impact.C}/I:${impact.I}/A:${impact.A}`;
   const score = computeBaseScore(av, ac, pr, ui, impact.scope, impact.C, impact.I, impact.A);
-  return { vector, score, source: "heuristic" };
+  return { vector, score, source: assessed ? "impact-assessment" : "heuristic" };
 }

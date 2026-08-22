@@ -44,6 +44,12 @@ describe("findingSchema", () => {
     expect(parsed.category).toBe("xss");
   });
 
+  it("accepts the shared source remediation categories", () => {
+    const f = validFinding();
+    f.category = "missing-validation";
+    expect(findingSchema.parse(f).category).toBe("missing-validation");
+  });
+
   it("rejects a finding missing `id`", () => {
     const f = validFinding();
     delete f.id;

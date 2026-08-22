@@ -211,7 +211,7 @@ A first-run anonymous-id file at `~/.strix/.seen` (`posthog.py:25-34`) seeds a `
 | Concern | Strix | 0sec |
 |---|---|---|
 | Agent loop entry | `strix/agents/base_agent.py:152` `agent_loop` (single `while True`, `max_iterations=300`) | `packages/core/src/agent/loop.ts:38` `runAgentLoop` (300 LOC, session-restore aware); plus `native-loop.ts:1449` for the legacy native path |
-| Loop dispatch | implicit (one agent class) | `packages/core/src/agent/loop-dispatch.ts` — feature-flag gate `journalLoop` (`agent/features.ts`) selects journal vs native |
+| Loop dispatch | implicit (one agent class) | _not implemented_ — there is no `loop-dispatch.ts` and no `journalLoop` feature flag; `agent/native-loop.ts` is the single agent loop today (`agent/journal/` holds the journal primitives only) |
 | Planner | none (prompt-only) | `packages/core/src/agent/journal/orchestrator.ts:30-71` rule-based dispatcher with R1–R7 + pluggable `decideNext` hook for the FSM upgrade (#225) |
 | Sub-agent model | Python `threading.Thread` per sub-agent, shared `_agent_messages` dict (`tools/agents_graph/agents_graph_actions.py:18`) | per-role specialist registry; explicit budget per dispatch (`journal/specialists.ts:1-50`) |
 | Tool calling | XML, parsed via regex (`llm/utils.py`) | JSON tool-calling default; XML dispatch fallback for cheap models (`agent/xml-dispatch.ts`, `agent/loop.ts:59-66`) |
@@ -279,7 +279,7 @@ Strix references (all on `usestrix/strix@HEAD`, cloned 2026-05-23):
 
 - Agent loop: `packages/core/src/agent/loop.ts:38-120`, `:350`
 - Native loop: `packages/core/src/agent/native-loop.ts` (1449 LOC)
-- Loop dispatch: `packages/core/src/agent/loop-dispatch.ts`, `agent/features.ts`
+- Loop dispatch: _planned, not implemented_ — today `packages/core/src/agent/native-loop.ts` is the only loop; `packages/core/src/agent/journal/` holds the journal primitives
 - Journal writer: `packages/core/src/agent/journal/writer.ts:64-100`
 - Journal orchestrator: `packages/core/src/agent/journal/orchestrator.ts:30-71`, `:104-112`, `:122-130`
 - Journal summarizer: `packages/core/src/agent/journal/summarizer.ts:11-30`, `:67-82`

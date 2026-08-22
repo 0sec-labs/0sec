@@ -1,4 +1,4 @@
-import type { Finding } from "@0sec/shared";
+import type { Finding, ReachabilityTier, Weaponizability } from "@0sec/shared";
 import { suggestCwesForCategory, formatCweSection } from "./cwe.js";
 import { suggestCvss } from "./cvss.js";
 import { formatPatchStatusSection, type ReverifyResult } from "./canary.js";
@@ -149,6 +149,41 @@ export function redactSensitiveHeaders(text: string): string {
   return out;
 }
 
+/**
+ * Human-readable gloss of a reachability tier — the "who can do this" line a
+ * vendor triager needs, phrased the way a disclosure email would put it.
+ */
+function reachabilityLabel(tier: ReachabilityTier): string {
+  switch (tier) {
+    case "remote-unauth":
+      return "remote, unauthenticated — reachable over the network with no credentials";
+    case "proximity-rf":
+      return "RF/physical proximity — attacker must be within radio range (NFC/BLE/Wi-Fi)";
+    case "local-unpriv":
+      return "local, unprivileged — requires an unprivileged account on the host";
+    case "local-priv":
+      return "local, privileged — requires an already-privileged local account";
+    case "needs-hardware":
+      return "requires specific or attacker-supplied hardware";
+    case "needs-host-migration":
+      return "requires the victim to mount/import an attacker-supplied artifact";
+  }
+}
+
+/** Human-readable gloss of what the attacker gains once the bug fires. */
+function weaponizabilityLabel(w: Weaponizability): string {
+  switch (w) {
+    case "rce":
+      return "remote code execution";
+    case "lpe-to-root":
+      return "local privilege escalation to root/SYSTEM";
+    case "info-leak":
+      return "information disclosure";
+    case "dos-crash":
+      return "denial of service (crash)";
+  }
+}
+
 function severityHeading(severity: string): string {
   const upper = severity.toUpperCase();
   return upper === "CRITICAL" || upper === "HIGH" || upper === "MEDIUM" || upper === "LOW" ? upper : severity;
@@ -211,9 +246,12 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
     affectedLine = "_Pass `--repo <path>` to `0sec-cli disclose` to auto-detect the affected version range from git tags._";
   }
 
-  const cvssSource = cvss.source === "finding"
-    ? "populated on the finding by 0sec"
-    : "heuristic from category + severity — override in the GHSA editor if the operator disagrees";
+  const cvssSource =
+    cvss.source === "finding"
+      ? "populated on the finding by 0sec"
+      : cvss.source === "impact-assessment"
+        ? "exploitability metrics derived from 0sec's reachability assessment; impact from category — verify against your deployment"
+        : "heuristic from category + severity — override in the GHSA editor if the operator disagrees";
 
   const remediation = finding.remediation;
   const suggestedFixParts: string[] = [];
@@ -247,6 +285,22 @@ export function renderAdvisoryMarkdown(finding: Finding, ctx: AdvisoryContext = 
   out.push("# Severity", "");
   out.push(`**${severity}** — ${cvss.vector} (~${cvss.score.toFixed(1)})`, "");
   out.push(`_CVSS source: ${cvssSource}._`, "");
+
+  // Impact + attack prerequisites: rendered only when the finding carries a
+  // real assessment, so an unassessed advisory is byte-identical to before.
+  // This is the section a vendor reads to decide "how bad, and who can do it".
+  const impactAssessment = finding.impactAssessment;
+  if (impactAssessment) {
+    out.push("# Impact", "");
+    out.push(`**Attacker gains:** ${weaponizabilityLabel(impactAssessment.weaponizability)}`, "");
+    out.push(`**Attack prerequisites:** ${reachabilityLabel(impactAssessment.reachability_tier)}`, "");
+    if (impactAssessment.blast_radius) {
+      out.push(`**Blast radius:** ${impactAssessment.blast_radius}`, "");
+    }
+    if (impactAssessment.rationale) {
+      out.push(`_${impactAssessment.rationale}_`, "");
+    }
+  }
 
   out.push(formatCweSection(cwes), "");
 

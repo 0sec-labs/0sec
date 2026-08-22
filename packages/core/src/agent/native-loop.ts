@@ -477,6 +477,13 @@ export async function runNativeAgentLoop(
     loot,
     plan,
     oast,
+    // Thread the shared cost ledger + ceiling onto the tool context so the
+    // spawn_agent / spawn_agents handlers can charge spawned subagents against
+    // the SAME scan-wide ledger and ceiling as this session (closing the
+    // off-ledger gap where subagent spend escaped the ceiling entirely).
+    costLedger: config.costLedger,
+    costCeilingUsd: config.costCeilingUsd,
+    costModel: config.costModel,
   };
 
   const executor = new ToolExecutor(toolCtx, db);
@@ -2667,6 +2674,7 @@ function toNativeToolDef(tool: ToolDefinition): NativeToolDef {
       description: param.description,
     };
     if (param.enum) prop.enum = param.enum;
+    if (param.items) prop.items = param.items;
     properties[key] = prop;
   }
 

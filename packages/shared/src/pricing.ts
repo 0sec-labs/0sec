@@ -57,6 +57,16 @@ export const MANUAL_PRICING: Record<string, ModelRates> = {
   // credit-billed variant whose per-credit rate Alibaba does not publish.
   "qwen3.8-max": { input: 2.00, output: 6.00 },
   "qwen3.7-max": { input: 2.50, output: 7.50 },
+  // xAI Grok (docs.x.ai/developers/pricing, checked 2026-08-22) — SHORT-CONTEXT
+  // rates only. xAI charges a second, higher tier once a request's prompt
+  // crosses 200k tokens (grok-4.6: $4.00/$12.00 vs the $2.00/$6.00 below;
+  // grok-4.3 likewise), and this schema has no way to express a
+  // context-length-dependent rate. Long agent loops DO cross that line — the
+  // native loop only compacts at 150k prompt tokens — so treat Grok spend on
+  // long transcripts as a FLOOR and reconcile against the xAI console.
+  "grok-4.6": { input: 2.00, output: 6.00 },
+  "grok-4.5": { input: 2.00, output: 6.00 },
+  "grok-4.3": { input: 1.25, output: 2.50 },
   // Azure Foundry deployment names (verified 2026-07-25) — exact aliases
   // forwarded by the engine. DeepSeek/gpt-oss rates use the Azure-specific `azure_ai/*` LiteLLM feed
   // entries (not the cheaper direct-provider rates). Kimi is Microsoft's
@@ -168,6 +178,7 @@ export function modelProvider(model?: string): string {
   if (lowered.startsWith("z-ai/") || lowered.startsWith("zai/")) return "z-ai";
   if (lowered.startsWith("kimi/") || lowered.startsWith("moonshot/")) return "kimi";
   if (lowered.startsWith("openrouter/")) return "openrouter";
+  if (lowered.startsWith("xai/") || lowered.startsWith("x-ai/")) return "xai";
 
   const stripped = normalizeModel(model).toLowerCase();
   if (stripped.startsWith("gpt-") || stripped.startsWith("o3") || stripped.startsWith("o4-")) return "openai";
@@ -179,6 +190,7 @@ export function modelProvider(model?: string): string {
   if (stripped.startsWith("glm-")) return "z-ai";
   if (stripped.startsWith("k3") || stripped.startsWith("kimi")) return "kimi";
   if (stripped.startsWith("qwen")) return "qwen";
+  if (stripped.startsWith("grok")) return "xai";
   return "unknown";
 }
 

@@ -196,7 +196,7 @@ Use `--verbose` to see the animated attack replay and detailed agent reasoning:
 | `0SEC_FEATURE_PTY_SESSION` | off | Interactive PTY sessions for exploits requiring interactivity (reverse shells, DB clients, SSH). |
 | `0SEC_FEATURE_EGATS` | off | Evidence-Gated Attack Tree Search — beam search over a hypothesis tree. Also toggled by `--egats`. |
 | `0SEC_FEATURE_CONSENSUS_VERIFY` | off | Self-consistency voting: runs the verify pipeline N times and takes the majority vote. |
-| `0SEC_FEATURE_DEBATE` | off | Adversarial debate: prosecutor vs. defender agents argue each finding, a skeptical judge decides. |
+| `0SEC_FEATURE_DEBATE` | _n/a_ | **Planned — not implemented.** The flag is not read by the engine today. Adversarial debate: prosecutor vs. defender agents argue each finding, a skeptical judge decides. |
 | `0SEC_FEATURE_MULTIMODAL` | off | Cross-validates findings against foxguard (Rust pattern scanner). |
 | `0SEC_FEATURE_REACHABILITY_GATE` | off | Suppresses findings whose sink is not reachable from an application entry point. |
 | `0SEC_FEATURE_POV_GATE` | off | Requires a working executable PoC per finding, otherwise downgrades to `info`. |
