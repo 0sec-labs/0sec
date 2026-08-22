@@ -8,14 +8,20 @@
 <h1 align="center">0sec</h1>
 
 <p align="center">
-  <strong>An evidence-first security research harness for authorized targets.</strong><br/>
-  It runs a coordinated swarm of agents against your target, then reports a finding only after reproducing it.
+  <strong>The open cybersecurity harness.</strong><br/>
+  0sec runs a coordinated swarm of AI agents against your target — web apps, APIs,
+  source, packages, or binaries — and reports a vulnerability only after
+  reproducing it.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3fb950" alt="license" />
   <img src="https://img.shields.io/github/v/release/0sec-labs/0sec?color=2563eb" alt="release" />
   <img src="https://img.shields.io/badge/docs-0.security-6366f1" alt="docs" />
+</p>
+
+<p align="center">
+  <sub>Created by the <strong>Swiss Applied AI Cybersecurity Research Lab</strong> · <a href="https://0.security">0.security</a></sub>
 </p>
 
 <!-- TODO: fresh terminal recording (asciinema/vhs) of `0sec scan` running — the old demo.gif was stale pwnkit branding and was removed. -->
@@ -128,18 +134,21 @@ numbers we treat as secondary evidence, with the caveats spelled out in the
 [benchmark docs](docs/src/content/docs/benchmark.md) and
 [XBOW analysis](docs/src/content/docs/research/xbow-analysis.md).
 
-## Two engines, one repo
+## Binary analysis (no source)
 
-`0sec` (TypeScript) handles source and live targets. `0verse` (Python, under
-[`0verse/`](0verse/README.md)) is the binary-native engine for compiled programs
-with no source — a find → prove → patch → verify loop where nothing counts
-without a reproducing proof-of-vulnerability. They're kept separate on purpose:
-different toolchains, and 0sec trusts a 0verse finding only through its verified
-receipt.
+When there's no source — just a compiled binary — the harness switches to its
+binary-native engine, [**0verse**](0verse/README.md). Same principle, harder
+setting (no symbols, no sanitizers): it runs a find → prove → patch → verify loop
+and confirms a bug only with a reproducing proof-of-vulnerability. It's a
+separate engine under the hood (Python + Ghidra/angr/AFL++, so it installs on its
+own toolchain), and 0sec trusts its findings only through a verified receipt.
 
 ```bash
 cd 0verse && uv sync --frozen && uv run --frozen 0verse triage ./target-binary
 ```
+
+See the [0verse README](0verse/README.md) for the full binary pipeline, backends,
+and honest limits.
 
 ## Honest limitations
 
