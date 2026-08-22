@@ -55,7 +55,7 @@ export interface GuardContext {
   readonly localScope: boolean;
   readonly readOnly: boolean;
   /** Autonomy mode in effect for this call. */
-  readonly autonomyMode: "standard" | "copilot" | "yolo";
+  readonly autonomyMode: "standard" | "copilot" | "yolo" | "recon";
   /** True when an engagement scope is configured. */
   readonly hasScope: boolean;
   /** True when an operator-approval mechanism is available for this call. */
@@ -246,20 +246,31 @@ export function composeGuards(...groups: readonly (readonly ToolGuard[])[]): Too
 // resolves toward denial, never toward access.
 
 /**
- * Deny a network-capable tool when no scope is configured, in YOLO mode.
+ * RETIRED — kept exported for backward compatibility, but wired NOWHERE.
  *
- * DERIVED FROM: the yolo hard-deny inside `maybeResolveScope`
- * (`turn-engine.ts`): a `NETWORK_CAPABLE_TOOLS` call whose targets are not
- * covered by a scope is denied outright in yolo mode
- * ("YOLO mode: no scope configured — tool ... cannot run"). This guard lifts
- * exactly that invariant into the guard layer.
+ * ORIGINAL INTENT: deny a network-capable tool when no scope is configured, in
+ * YOLO mode, mirroring an old `maybeResolveScope` hard-deny ("YOLO mode: no
+ * scope configured — tool ... cannot run").
  *
- * WHY YOLO-ONLY: this is the ONLY mode where "network + no scope" is a hard
- * denial. In standard/copilot the console runs scope-on-demand (prompt the
- * operator) or falls through to same-origin validation — NOT a denial.
- * Broadening this guard to those modes would contradict the real gate
- * semantics (it would kill same-origin scanning in standard mode), which the
- * design forbids. The floor mirrors the gate; it does not exceed it.
+ * WHY IT WAS RETIRED: the "network requires a PRECONFIGURED scope" invariant no
+ * longer holds in ANY mode, so there is no mode this guard could soundly fire
+ * in:
+ *   - yolo is anchored to the launch TARGET, not to a scope object. A scopeless
+ *     yolo call (even `bash echo hello`) is legitimate; the target anchor is
+ *     enforced precisely by `maybeResolveScope` (target-relatedness) plus the
+ *     executor's own same-origin/scope boundary and the absolute SSRF rail.
+ *     Firing here would wrongly re-deny scopeless yolo.
+ *   - standard/recon run scope-on-demand (prompt) or fall through to
+ *     same-origin validation — never a blanket "needs a scope" denial.
+ *   - copilot auto-expands scope to in-engagement targets; it never requires a
+ *     preconfigured scope either.
+ * It is therefore fully SUPERSEDED by the executor's same-origin anchoring and
+ * is removed from both `BUILTIN_GUARDS` and the console's `WIRED_GUARDS`. The
+ * function survives only so external callers and its own unit tests still
+ * resolve; do NOT add it to any wired set.
+ *
+ * Its body is unchanged (a pure predicate over the context) so its existing
+ * unit tests stay coherent — retirement is about WIRING, not behaviour.
  */
 export function guardNetworkRequiresScope(ctx: GuardContext): string | null | undefined {
   // Fail closed: treat a non-explicit-false networkCapable as capable, and a
@@ -273,27 +284,30 @@ export function guardNetworkRequiresScope(ctx: GuardContext): string | null | un
 }
 
 /**
- * Deny a non-read-only tool in a mode that requires approval when approval is
- * unavailable.
+ * Deny a non-read-only tool in the mode that requires per-action approval when
+ * no approval mechanism is available.
  *
- * DERIVED FROM: the copilot-approval gate `maybeApproveTool`
- * (`turn-engine.ts`): in copilot mode every non-`READ_ONLY_TOOLS` tool must be
- * approved by the operator before dispatch.
+ * DERIVED FROM: the per-action approval gate `maybeApproveTool`
+ * (`turn-engine.ts`). Under the CURRENT autonomy model `standard` is the mode
+ * that puts every non-`READ_ONLY_TOOLS` action to the operator before dispatch
+ * (copilot and yolo run prompt-free; recon refuses effectful tools outright via
+ * its own capability gate). This guard is re-pointed from the obsolete copilot
+ * coupling to `standard` accordingly.
  *
  * HARDENING NOTE (a deliberate, monotonic tightening): the console's gate has a
  * fail-OPEN corner — "when approveTool is absent, always allow." This guard
- * closes it: in copilot mode, a non-read-only tool with no approval mechanism
- * available is DENIED. Because guards are a deny-only floor, this can only
- * narrow the console's behaviour, never widen it, and it removes a fail-open
- * path the plugin design explicitly wants closed.
+ * closes it: in standard mode, a non-read-only tool with no approval mechanism
+ * available is DENIED rather than run unapproved. Because guards are a deny-only
+ * floor, this can only narrow the console's behaviour, never widen it, and it
+ * removes a fail-open path the plugin design explicitly wants closed.
  */
 export function guardApprovalUnavailable(ctx: GuardContext): string | null | undefined {
   // Fail closed: non-explicit-true readOnly counts as effectful; non-explicit-
   // true approvalAvailable counts as unavailable.
   const effectful = ctx.readOnly !== true;
   const noApproval = ctx.approvalAvailable !== true;
-  if (ctx.autonomyMode === "copilot" && effectful && noApproval) {
-    return `Copilot mode: tool "${ctx.toolName}" requires operator approval, but no approval mechanism is available`;
+  if (ctx.autonomyMode === "standard" && effectful && noApproval) {
+    return `Standard mode: tool "${ctx.toolName}" requires operator approval, but no approval mechanism is available`;
   }
   return null;
 }
@@ -316,12 +330,21 @@ export function guardUnresolvedCapabilities(ctx: GuardContext): string | null | 
 }
 
 /**
- * The default built-in guard set, encoding 0sec's existing invariants so the
+ * The default built-in guard set, encoding 0sec's CURRENT invariants so the
  * layer is useful immediately. Frozen so a consumer cannot mutate the shared
  * default (which would silently change policy for everyone).
+ *
+ * Two invariants remain, both always-correct wherever they are wired:
+ *   - `guardUnresolvedCapabilities` — refuse any tool whose capability flags
+ *     were not resolved from a known source (danger-by-omission).
+ *   - `guardApprovalUnavailable` — in standard mode, refuse an effectful tool
+ *     with no approval mechanism (closes the fail-open corner).
+ * `guardNetworkRequiresScope` is intentionally ABSENT: it is retired (its
+ * "network requires a preconfigured scope" invariant no longer holds in any
+ * mode — see that function's doc), so keeping it here would re-introduce a
+ * denial the executor's own same-origin anchoring already supersedes.
  */
 export const BUILTIN_GUARDS: readonly ToolGuard[] = Object.freeze([
   guardUnresolvedCapabilities,
-  guardNetworkRequiresScope,
   guardApprovalUnavailable,
 ]);

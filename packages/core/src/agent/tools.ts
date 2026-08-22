@@ -2213,14 +2213,19 @@ export class ToolExecutor {
       error: `Tool "${call.name}" is not available in a scoped source audit`,
     };
 
-    // YOLO with a configured scope: the allow-list no longer restricts
-    // execution — this is what YOLO means (no prompts inside the configured
-    // scope). It does not touch the OTHER gates listed above.
-    if (this.ctx.autonomyMode === "yolo") return null;
+    // YOLO or CO-PILOT with a configured scope: the allow-list no longer
+    // restricts execution. Neither mode has per-action prompts under the
+    // current model, so both auto-lift the scoped-audit allow-list inside the
+    // configured scope (the expansion is still surfaced via the console's
+    // scope/local-scope notify path and the per-tool gates listed above still
+    // run). It does not touch the OTHER gates listed above.
+    if (this.ctx.autonomyMode === "yolo" || this.ctx.autonomyMode === "copilot") return null;
 
-    // Standard / co-pilot: honour a decision already made this session before
+    // Standard / recon: honour a decision already made this session before
     // prompting again (mirrors the denied-host / denied-path memory pattern in
-    // console/turn-engine.ts).
+    // console/turn-engine.ts). Recon keeps prompting here exactly like standard
+    // — the console refuses effectful recon tools upstream, so anything that
+    // reaches this gate in recon is a genuine allow-list escalation decision.
     if (this._scopedAuditGrants.has(call.name)) return null;
     if (this._scopedAuditDenials.has(call.name)) return denied;
 

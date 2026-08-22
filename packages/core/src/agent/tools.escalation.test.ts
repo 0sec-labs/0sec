@@ -124,12 +124,37 @@ describe("scoped source-audit escalation gate", () => {
     }
   });
 
-  it("copilot + approving callback → escalation applies in copilot mode too", async () => {
+  it("copilot + configured scope → auto-lifts like yolo WITHOUT invoking the callback", async () => {
+    // Under the current autonomy model copilot has no per-action prompts, so the
+    // scoped-audit allow-list is auto-lifted inside the configured scope exactly
+    // like yolo — the escalation callback is never consulted.
     const root = mkdtempSync(join(tmpdir(), "0sec-esc-"));
     try {
       const escalate = vi.fn(async (_req: ScopedAuditEscalationRequest) => true);
       const exec = new ToolExecutor(
         baseCtx({ scopePath: root, autonomyMode: "copilot", escalateScopedAudit: escalate }),
+        null,
+      );
+      const result = await exec.execute(patchCall);
+      expect(escalate).not.toHaveBeenCalled();
+      // Gate opened: we reach the handler (which rejects the empty patch arg),
+      // NOT the scoped-audit block message.
+      expect(result.error).not.toMatch(BLOCK_MSG);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recon + approving callback → still prompts (recon keeps the standard escalation flow)", async () => {
+    // Recon is NOT auto-lifted (only yolo/copilot are). Anything that reaches
+    // this gate in recon is a genuine allow-list escalation decision, so the
+    // callback is invoked exactly as in standard. (In practice the console
+    // refuses effectful recon tools upstream; this pins the gate's own policy.)
+    const root = mkdtempSync(join(tmpdir(), "0sec-esc-"));
+    try {
+      const escalate = vi.fn(async (_req: ScopedAuditEscalationRequest) => true);
+      const exec = new ToolExecutor(
+        baseCtx({ scopePath: root, autonomyMode: "recon", escalateScopedAudit: escalate }),
         null,
       );
       const result = await exec.execute(patchCall);

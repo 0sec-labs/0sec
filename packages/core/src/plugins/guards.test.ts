@@ -165,7 +165,12 @@ describe("guardUnresolvedCapabilities", () => {
   });
 });
 
-describe("guardNetworkRequiresScope (yolo hard-deny mirror)", () => {
+// RETIRED guard: no longer in BUILTIN_GUARDS nor the console's WIRED_GUARDS
+// (its "network requires a preconfigured scope" invariant no longer holds in
+// any mode — see the function doc). Its BODY is unchanged, so these unit tests
+// still pin its pure behaviour for the backward-compat export; they do NOT
+// imply it is wired anywhere.
+describe("guardNetworkRequiresScope (RETIRED — pure-behaviour pin only)", () => {
   it("denies a network-capable tool with no scope in yolo mode", () => {
     expect(
       guardNetworkRequiresScope(ctx({ autonomyMode: "yolo", networkCapable: true, hasScope: false })),
@@ -201,33 +206,39 @@ describe("guardNetworkRequiresScope (yolo hard-deny mirror)", () => {
   });
 });
 
-describe("guardApprovalUnavailable (copilot approval gate, fail-closed)", () => {
-  it("denies a non-read-only tool in copilot when approval is unavailable", () => {
-    expect(
-      guardApprovalUnavailable(ctx({ autonomyMode: "copilot", readOnly: false, approvalAvailable: false })),
-    ).toMatch(/approval/i);
-  });
-  it("abstains in copilot when approval IS available", () => {
-    expect(
-      guardApprovalUnavailable(ctx({ autonomyMode: "copilot", readOnly: false, approvalAvailable: true })),
-    ).toBeNull();
-  });
-  it("abstains for a read-only tool in copilot even without approval", () => {
-    expect(
-      guardApprovalUnavailable(ctx({ autonomyMode: "copilot", readOnly: true, approvalAvailable: false })),
-    ).toBeNull();
-  });
-  it("abstains in standard/yolo (no per-tool approval gate there)", () => {
+describe("guardApprovalUnavailable (standard approval gate, fail-closed)", () => {
+  it("denies a non-read-only tool in standard when approval is unavailable", () => {
     expect(
       guardApprovalUnavailable(ctx({ autonomyMode: "standard", readOnly: false, approvalAvailable: false })),
+    ).toMatch(/approval/i);
+  });
+  it("abstains in standard when approval IS available", () => {
+    expect(
+      guardApprovalUnavailable(ctx({ autonomyMode: "standard", readOnly: false, approvalAvailable: true })),
+    ).toBeNull();
+  });
+  it("abstains for a read-only tool in standard even without approval", () => {
+    expect(
+      guardApprovalUnavailable(ctx({ autonomyMode: "standard", readOnly: true, approvalAvailable: false })),
+    ).toBeNull();
+  });
+  it("abstains in copilot/yolo/recon (no per-action approval gate there)", () => {
+    // copilot and yolo run prompt-free; recon refuses effectful tools via its
+    // own capability gate, never via per-action approval. None of them couple
+    // dispatch to an approveTool channel, so this guard must not fire there.
+    expect(
+      guardApprovalUnavailable(ctx({ autonomyMode: "copilot", readOnly: false, approvalAvailable: false })),
     ).toBeNull();
     expect(
       guardApprovalUnavailable(ctx({ autonomyMode: "yolo", readOnly: false, approvalAvailable: false })),
     ).toBeNull();
+    expect(
+      guardApprovalUnavailable(ctx({ autonomyMode: "recon", readOnly: false, approvalAvailable: false })),
+    ).toBeNull();
   });
-  it("fails closed on missing flags in copilot", () => {
+  it("fails closed on missing flags in standard", () => {
     const bad = {
-      ...ctx({ autonomyMode: "copilot" }),
+      ...ctx({ autonomyMode: "standard" }),
       readOnly: undefined,
       approvalAvailable: undefined,
     } as unknown as GuardContext;
@@ -241,9 +252,17 @@ describe("BUILTIN_GUARDS", () => {
   });
   it("passes a clean context and denies a dirty one", () => {
     expect(evaluateGuards(BUILTIN_GUARDS, ctx()).allowed).toBe(true);
+    // A context that trips BOTH wired guards: capabilities unresolved
+    // (guardUnresolvedCapabilities) AND a standard-mode effectful tool with no
+    // approval channel (guardApprovalUnavailable).
     const dirty = evaluateGuards(
       BUILTIN_GUARDS,
-      ctx({ capabilitiesResolved: false, autonomyMode: "yolo", networkCapable: true, hasScope: false }),
+      ctx({
+        capabilitiesResolved: false,
+        autonomyMode: "standard",
+        readOnly: false,
+        approvalAvailable: false,
+      }),
     );
     expect(dirty.allowed).toBe(false);
     // BOTH applicable guards fire — reasons are collected, not first-wins.

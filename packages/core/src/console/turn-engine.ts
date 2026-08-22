@@ -16,6 +16,7 @@ import { ToolExecutor, getToolsForRole } from "../agent/tools.js";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
   evaluateGuards,
+  guardApprovalUnavailable,
   guardUnresolvedCapabilities,
   type GuardContext,
   type ToolGuard,
@@ -131,8 +132,21 @@ export interface ConsoleUsageReport {
  *   network destination this gate cannot even resolve, is still refused. The
  *   dangerous-local-root refusal, the denied-decision memory, the executor's
  *   target/scope boundary and the absolute SSRF rail all still apply.
+ * - `"recon"`: passive, in-scope reconnaissance — the MOST capability-restricted
+ *   mode. For AUTHORIZATION it behaves like standard: it operates strictly
+ *   within the configured scope / target anchor and NEVER auto-expands scope
+ *   (out-of-anchor targets are prompted via `requestScope`, or fall through to
+ *   the executor's same-origin validation — never silently widened). For
+ *   CAPABILITY it is stricter than any other mode: only non-exploitative work is
+ *   permitted — read-only tools plus a conservative set of passive network-recon
+ *   tools (see {@link RECON_PASSIVE_NETWORK_TOOLS}). Every effectful / mutating /
+ *   exploitation tool (apply_patch, run_command, browser, exploit-class
+ *   scanners, spawn_agent, raw http_request, …) is REFUSED with a clear reason —
+ *   never prompted, never auto-lifted. Because it never runs effectful tools,
+ *   recon does not use the per-action approval prompt at all. The target anchor
+ *   and the absolute SSRF rail still bound the passive tools it does allow.
  */
-export type ConsoleAutonomyMode = "standard" | "copilot" | "yolo";
+export type ConsoleAutonomyMode = "standard" | "copilot" | "yolo" | "recon";
 
 /**
  * Request payload passed to `ConsoleSessionConfig.requestScope` when a
@@ -543,6 +557,8 @@ export function buildConsoleSystemPrompt(opts: {
     ? "YOLO mode: run without any approval prompts and without a preconfigured scope. You are anchored to the launch target — the target and hosts that belong to it (its sub-domains) are reached automatically; a host unrelated to the target, and any network destination whose address cannot be determined, is refused. Do not attempt to pivot to unrelated hosts."
     : opts.autonomyMode === "copilot"
     ? "Co-pilot mode: act with full autonomy within the engagement — no per-action approval prompts. Scope expands automatically to newly-discovered targets that belong to the engagement; a target outside the established engagement still needs the operator's decision."
+    : opts.autonomyMode === "recon"
+    ? "Recon mode: passive, in-scope reconnaissance ONLY. Operate strictly within the authorized target/scope and use only read-only and passive network-recon tools (crawling, fingerprinting, surface/API discovery, JS recon, intel lookups, source reading). Do NOT attempt any effectful, mutating, or exploitation action — those tools are refused in this mode. Gather and report what you observe, then hand control back. Scope is not auto-expanded; an out-of-scope target needs the operator's decision."
     : "Standard mode: the operator approves each action before it runs. Take one concrete step, wait for approval, and when a target is not authorized request a narrow scope extension and wait for the operator's decision.";
   return [
     "You are the 0sec operator console — an interactive security assistant with",
@@ -662,6 +678,33 @@ const READ_ONLY_TOOLS: Record<string, true> = {
   // network nor the operator-approved project scope.
   check_messages: true,
   done: true,
+};
+
+/**
+ * Passive network-recon tools permitted in `"recon"` mode ON TOP OF every
+ * {@link READ_ONLY_TOOLS} entry. This is a deliberately CONSERVATIVE allow-list
+ * ("prefer passive; when unsure, deny"): a network tool earns a place here only
+ * when its entire job is passive information gathering about the engagement
+ * surface — spidering/crawling, fingerprinting, surface/API discovery, and
+ * client-side JS reconnaissance. None of these mutate target state or exercise
+ * an exploit.
+ *
+ * Deliberately EXCLUDED (and therefore refused in recon): everything that can
+ * mutate, submit input, or exploit — `http_request` (carries any method/body),
+ * `submit_form`, `browser` (drives clicks/forms), `send_prompt`,
+ * `access_control_probe`, all `structural_sqli_probe`/`prompt_layer_probe`/
+ * `auth_boundary_probe`/`cloud_*` probes, every `run_*` scanner
+ * (sqlmap/nmap/ffuf/nuclei — active/intrusive), `oast_*`, `start_scan`, the
+ * shell/interpreter tools (`bash`/`run_command`/`pty_session`/`python_exec`),
+ * `apply_patch`, and agent-spawning (`spawn_agent`/`spawn_agents`). Recon is the
+ * most capability-restricted mode by design.
+ */
+const RECON_PASSIVE_NETWORK_TOOLS: Record<string, true> = {
+  crawl: true,
+  wp_fingerprint: true,
+  discover_api_surface: true,
+  surface_sweep: true,
+  js_recon: true,
 };
 
 /**
@@ -1923,34 +1966,35 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
    * explicitly so the wiring states its own policy rather than inheriting a
    * shared default.
    *
-   * ONLY `guardUnresolvedCapabilities` is wired, and it is mode-agnostic: it
-   * refuses any tool whose capability flags could not be resolved from a known
-   * source (the danger-by-omission class), which is always correct regardless of
-   * autonomy mode. The deny-only pattern is preserved intact — "allow" remains
-   * inexpressible, and adding guards can only narrow access.
+   * TWO guards are wired, both mode-correct under the CURRENT autonomy model:
+   *   - `guardUnresolvedCapabilities` (mode-agnostic): refuses any tool whose
+   *     capability flags could not be resolved from a known source (the
+   *     danger-by-omission class), always correct regardless of autonomy mode.
+   *   - `guardApprovalUnavailable` (standard-mode): standard is now the mode
+   *     that requires per-action approval, so this guard closes that gate's
+   *     fail-OPEN corner — in standard mode a non-read-only tool with no
+   *     approval mechanism is denied rather than run unapproved. It is inert in
+   *     copilot/yolo (prompt-free by design) and in recon (whose capability gate
+   *     refuses effectful tools before this floor is ever reached).
+   * The deny-only pattern is preserved intact — "allow" remains inexpressible,
+   * and adding guards can only narrow access.
    *
-   * The two OTHER built-ins in `plugins/guards.ts` are DELIBERATELY NOT wired
-   * here, because each encodes the PREVIOUS mode semantics that this engine no
-   * longer implements, and wiring them would contradict the current model:
-   *   - `guardNetworkRequiresScope` denies a network-capable tool in yolo when
-   *     no scope is configured. The new yolo intentionally drops the
-   *     require-preconfigured-scope gate: it is anchored to the launch target,
-   *     not to a scope object. That anchor is now enforced precisely by
-   *     `maybeResolveScope` (target-relatedness) plus the executor's own
-   *     same-origin/scope boundary and the absolute SSRF rail — a stronger,
-   *     mode-correct check than a blanket "needs a scope". Wiring this guard
-   *     would wrongly re-deny scopeless yolo (even `bash echo hello`).
-   *   - `guardApprovalUnavailable` denies a non-read-only tool in COPILOT when
-   *     no approval channel exists. Under the new model copilot has NO
-   *     per-action approval at all (standard is the approval mode), so this
-   *     guard would deny every effectful copilot action whenever `approveTool`
-   *     is absent — the normal copilot configuration — breaking the mode.
-   * (Both functions still exist and are exported from `plugins/guards.ts` for
-   * their own unit tests and any other consumer; only the CONSOLE wiring omits
-   * them.)
+   * The THIRD built-in, `guardNetworkRequiresScope`, is DELIBERATELY NOT wired:
+   * it is retired. It denied a network-capable tool in yolo when no scope was
+   * configured, but the new yolo intentionally drops the
+   * require-preconfigured-scope gate — it is anchored to the launch target, not
+   * to a scope object. That anchor is enforced precisely by `maybeResolveScope`
+   * (target-relatedness) plus the executor's own same-origin/scope boundary and
+   * the absolute SSRF rail — a stronger, mode-correct check than a blanket
+   * "needs a scope", and no OTHER mode requires a preconfigured scope either
+   * (standard/recon prompt or same-origin-validate, copilot auto-expands).
+   * Wiring it would wrongly re-deny scopeless yolo (even `bash echo hello`). The
+   * function still exists and is exported from `plugins/guards.ts` for its own
+   * unit tests and any other consumer; only the wired sets omit it.
    */
   const WIRED_GUARDS: readonly ToolGuard[] = [
     guardUnresolvedCapabilities,
+    guardApprovalUnavailable,
   ];
 
   /**
@@ -2003,6 +2047,30 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       };
     }
     return "approved";
+  }
+
+  // Recon capability gate — the RECON-mode friction, and the strictest one.
+  // Recon permits only non-exploitative, passive/read work: every
+  // READ_ONLY_TOOLS entry plus the conservative RECON_PASSIVE_NETWORK_TOOLS
+  // set. Any effectful / mutating / exploitation tool is REFUSED with a clear
+  // reason — never prompted (recon does not use the per-action approval flow)
+  // and never auto-lifted. This is a hard capability floor, so it runs FIRST in
+  // the dispatch loop: a denied tool never reaches the scope, local-scope,
+  // approval, or plugin-guard gates, so it can never trigger a scope/approval
+  // prompt. Recon still authorizes the passive tools it DOES allow exactly like
+  // standard (target anchor + scope-on-demand, no auto-expansion), and the
+  // executor's SSRF rail and target/scope boundary run underneath. In every
+  // other mode this gate is a no-op.
+  function maybeAllowReconCapability(call: ToolCall): "approved" | ToolResult {
+    if (autonomyMode !== "recon") return "approved";
+    if (READ_ONLY_TOOLS[call.name] || RECON_PASSIVE_NETWORK_TOOLS[call.name]) {
+      return "approved";
+    }
+    return {
+      success: false,
+      output: null,
+      error: `Recon mode: tool "${call.name}" is not permitted — recon allows only passive, read-only reconnaissance (read-only tools and passive network recon), never effectful, mutating, or exploitation tools. Switch to standard, copilot, or yolo to run it.`,
+    };
   }
 
   async function send(
@@ -2195,6 +2263,23 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
           continue;
         }
 
+        // ── Recon capability gate (recon mode only; runs first) ──
+        // A hard, passive-only capability floor: an effectful/exploit tool is
+        // refused here before any scope or approval prompt can fire.
+        const reconVerdict = maybeAllowReconCapability(call);
+        if (reconVerdict !== "approved") {
+          callbacks?.onToolStart?.(call);
+          callbacks?.onToolResult?.(call, reconVerdict);
+          runCalls.push({ call, result: reconVerdict });
+          toolResultBlocks.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: stringifyToolResult(reconVerdict),
+            is_error: true,
+          });
+          continue;
+        }
+
         // ── Scope resolution gate (network-capable tools) ──
         const scopeVerdict = await maybeResolveScope(call, callbacks?.onNotice);
         if (scopeVerdict !== "approved") {
@@ -2225,7 +2310,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
           continue;
         }
 
-        // ── Copilot approval gate (non-read-only tools) ──
+        // ── Standard per-action approval gate (non-read-only tools) ──
         const approvalVerdict = await maybeApproveTool(call);
         if (approvalVerdict !== "approved") {
           callbacks?.onToolStart?.(call);

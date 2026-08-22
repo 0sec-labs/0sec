@@ -60,8 +60,13 @@ export interface ToolResult {
  * consults this. It is OPTIONAL: when absent (every non-console caller,
  * including the scan pipeline), that gate behaves exactly as it did before the
  * field existed — a hard denial of any non-allow-listed tool.
+ *
+ * `"recon"` is the passive, capability-restricted mode: for the scoped-audit
+ * gate it behaves like `standard`/`copilot`'s prompting path (it is NOT
+ * auto-lifted like `yolo`/`copilot`), because the console's own recon
+ * capability gate already refuses effectful tools before dispatch.
  */
-export type ToolAutonomyMode = "standard" | "copilot" | "yolo";
+export type ToolAutonomyMode = "standard" | "copilot" | "yolo" | "recon";
 
 /**
  * Payload handed to {@link ToolContext.escalateScopedAudit} when a scoped
