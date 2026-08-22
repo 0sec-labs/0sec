@@ -423,6 +423,18 @@ export interface ConsoleSessionConfig {
    * blocked tools hard-deny exactly as they always have.
    */
   escalateScopedAudit?: (req: ScopedAuditEscalationRequest) => Promise<boolean>;
+  /**
+   * Agent-to-agent messaging identity and policy for this session's agent.
+   *
+   * Propagates to every subagent, which is how a child learns its parent's
+   * id and — when the operator channel is enabled — the operator console's
+   * id, a value a child cannot compute for itself. Absent means messaging
+   * is unavailable and the child tools say so.
+   *
+   * Typed `unknown` because the concrete shape lives in
+   * `agent/agent-messaging.ts`; importing it here would invert the layering.
+   */
+  agentMessaging?: unknown;
 }
 
 /** A live console session: persistent history + a `send()` per operator line. */
@@ -1345,6 +1357,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // filesystem and co-pilot gates in this file still run first.
     autonomyMode,
     escalateScopedAudit: config.escalateScopedAudit,
+    agentMessaging: config.agentMessaging,
   };
 
   // The real dispatcher over the real registry. `db = null` → no persistence
