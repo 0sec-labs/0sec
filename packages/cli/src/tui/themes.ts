@@ -34,9 +34,19 @@
  * and `degradePalette` handle that honestly and narrowly; read the "Terminal
  * capability" section of `THEMES.md` for exactly what they do and do not do.
  *
- * Everything in this module is pure: no I/O, no React, no process access. The
- * one function that reads the environment takes it as an argument.
+ * The colour/validation core of this module is pure: no I/O, no React, no
+ * process access; the one function that reads the environment takes it as an
+ * argument. The single exception is the clearly-fenced "Installed themes"
+ * section at the foot of the file, which reads validated theme palettes off disk
+ * (`~/.0sec/themes/`). That I/O is total and fail-soft — an unreadable dir or a
+ * corrupt file is skipped, never thrown — so it cannot take a session down, and
+ * the pure functions above it never call into it.
  */
+
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+import { homeStateDir } from "@0sec/shared";
 
 import type { SettingDef } from "./settings.js";
 
@@ -468,7 +478,8 @@ export const DEFAULT_THEME_NAME: ThemeName = "dark";
 export type ThemeMode = "dark" | "light";
 
 export interface ThemeEntry {
-  readonly name: ThemeName;
+  /** Built-in theme name, or an installed theme id (an arbitrary safe string). */
+  readonly name: string;
   /** Short human label for the settings UI. */
   readonly label: string;
   /** One line explaining who this theme is for. */
@@ -554,9 +565,22 @@ export function getTheme(name: unknown): Theme {
   return getThemeEntry(name).palette;
 }
 
-/** As `getTheme`, but returns the label and description too. Also total. */
+/**
+ * As `getTheme`, but returns the label and description too. Also total.
+ *
+ * Resolution order: a built-in name wins, then a currently-loaded INSTALLED
+ * theme id, then the default. Installed themes only resolve once the cache has
+ * been populated (see `ensureInstalledThemesLoaded`), which the settings load
+ * path does before any render; this function itself performs NO I/O so it stays
+ * deterministic and safe to call from the render path.
+ */
 export function getThemeEntry(name: unknown): ThemeEntry {
-  return isThemeName(name) ? THEMES[name] : THEMES[DEFAULT_THEME_NAME];
+  if (isThemeName(name)) return THEMES[name];
+  if (typeof name === "string" && installedThemes !== null) {
+    const installed = installedThemes.get(name);
+    if (installed) return installed;
+  }
+  return THEMES[DEFAULT_THEME_NAME];
 }
 
 /**
@@ -1018,3 +1042,218 @@ export const THEME_SETTING_DEF: SettingDef<ThemeName> & {
   choices: THEME_NAMES,
   group: "Display",
 };
+
+/* ----------------------------------------------------- installed themes (I/O) */
+//
+// Themes become shareable artifacts by living as validated JSON palettes under
+// the per-user state dir (`~/.0sec/themes/<id>.json`). This is the ONLY part of
+// the module that touches the filesystem. Every read is total and fail-soft: a
+// missing dir, an unreadable file, malformed JSON, or a palette that fails
+// `validateTheme` is skipped, never thrown. Installed themes carry NO code and
+// NO capabilities — they are a palette plus display metadata, nothing more, so
+// loading one can never reach the tool loader or a capability gate.
+
+/** Directory name for installed themes inside the 0sec state dir. */
+export const INSTALLED_THEMES_DIRNAME = "themes";
+
+/** On-disk shape of an installed theme file. `id` is authoritative (the file's
+ *  resolvable name); the rest is display metadata plus the palette. */
+export interface InstalledThemeFile {
+  readonly id: string;
+  readonly label?: string;
+  readonly description?: string;
+  readonly mode?: ThemeMode;
+  readonly palette: Theme;
+}
+
+/** Absolute path to the installed-themes directory. */
+export function installedThemesDir(homeDir?: string): string {
+  return join(homeStateDir(homeDir), INSTALLED_THEMES_DIRNAME);
+}
+
+/** Absolute path to one installed theme's file. Caller must pass a safe id. */
+export function installedThemeFilePath(id: string, homeDir?: string): string {
+  return join(installedThemesDir(homeDir), `${id}.json`);
+}
+
+/**
+ * Ids must be a single safe path segment so an installed theme can never write
+ * or read outside the themes dir. Mirrors the plugin-id charset: lowercase
+ * dotted/hyphenated identifier, bounded length, no separators or traversal.
+ */
+const THEME_ID_RE = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
+const THEME_ID_MAX = 64;
+
+/** True when `id` is a safe installed-theme id (a single path segment). */
+export function isSafeThemeId(id: unknown): id is string {
+  return (
+    typeof id === "string" &&
+    id.length > 0 &&
+    id.length <= THEME_ID_MAX &&
+    THEME_ID_RE.test(id) &&
+    !id.includes("/") &&
+    !id.includes("\\") &&
+    id !== "." &&
+    id !== ".."
+  );
+}
+
+/**
+ * The installed-theme cache. `null` until first loaded so a session that never
+ * resolves a theme does no I/O; `installedFromHome` records which home it was
+ * loaded from so pointing at a different home (a `--home`, or a test's temp dir)
+ * reloads rather than serving a stale set.
+ */
+let installedThemes: Map<string, ThemeEntry> | null = null;
+let installedFromHome: string | undefined;
+
+/**
+ * Coerce one parsed theme file into a validated `ThemeEntry`, or `null`.
+ *
+ * The palette must pass the FULL `validateTheme` (completeness + contrast, no
+ * waivers — waivers exist only for the preserved built-in default), so an
+ * installed theme is held to the same legibility bar as a shipped one. Fail
+ * closed: any problem drops the theme.
+ */
+export function installedThemeEntryFromFile(id: string, raw: unknown): ThemeEntry | null {
+  if (!isSafeThemeId(id)) return null;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const palette = record.palette;
+  if (validateTheme(palette).length > 0) return null;
+  const label = typeof record.label === "string" && record.label.length > 0 ? record.label : id;
+  const description =
+    typeof record.description === "string" ? record.description : "Installed theme.";
+  const mode: ThemeMode = record.mode === "light" ? "light" : "dark";
+  return { name: id, label, description, mode, palette: palette as Theme };
+}
+
+/** Read + validate every installed theme file. Total, fail-soft. */
+function readInstalledThemes(homeDir?: string): Map<string, ThemeEntry> {
+  const out = new Map<string, ThemeEntry>();
+  let files: string[];
+  try {
+    files = readdirSync(installedThemesDir(homeDir));
+  } catch {
+    return out; // no dir yet, or unreadable — no installed themes
+  }
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    const id = file.slice(0, -".json".length);
+    if (!isSafeThemeId(id)) continue;
+    // A built-in name is never shadowed by an installed file.
+    if (isThemeName(id)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(installedThemeFilePath(id, homeDir), "utf8"));
+    } catch {
+      continue;
+    }
+    const entry = installedThemeEntryFromFile(id, parsed);
+    if (entry) out.set(id, entry);
+  }
+  return out;
+}
+
+/**
+ * Ensure the installed-theme cache is populated for `homeDir`, loading it once
+ * (or reloading when the home changed). Returns the cache. Safe to call on the
+ * settings load path — it is total and fail-soft.
+ */
+export function ensureInstalledThemesLoaded(homeDir?: string): Map<string, ThemeEntry> {
+  if (installedThemes === null || installedFromHome !== homeDir) {
+    installedThemes = readInstalledThemes(homeDir);
+    installedFromHome = homeDir;
+  }
+  return installedThemes;
+}
+
+/**
+ * Re-read the themes dir unconditionally and swap the cache — for after a fresh
+ * `theme install`, so a newly-written theme is resolvable live without a
+ * restart. Returns the reloaded cache.
+ */
+export function reloadInstalledThemes(homeDir?: string): Map<string, ThemeEntry> {
+  installedThemes = readInstalledThemes(homeDir);
+  installedFromHome = homeDir;
+  return installedThemes;
+}
+
+/** The installed theme entries currently resolvable (loads lazily). */
+export function installedThemeEntries(homeDir?: string): ThemeEntry[] {
+  return [...ensureInstalledThemesLoaded(homeDir).values()];
+}
+
+/**
+ * Every resolvable theme name: the stable built-ins first, then installed ids.
+ * This is the picker's full set; `THEME_NAMES` remains the built-ins-only list
+ * that settings.ts and the enum cycler depend on.
+ */
+export function allThemeNames(homeDir?: string): string[] {
+  return [...THEME_NAMES, ...ensureInstalledThemesLoaded(homeDir).keys()];
+}
+
+/**
+ * Predicate: is `value` a resolvable theme — a built-in name OR a currently
+ * loaded installed id? Performs NO I/O (reads the current cache only), so it is
+ * safe to call from the pure `normalizeSettings` path and stays deterministic:
+ * the caller (the settings load path) is responsible for having loaded the
+ * installed themes first via `ensureInstalledThemesLoaded`.
+ */
+export function isKnownTheme(value: unknown): boolean {
+  if (isThemeName(value)) return true;
+  return typeof value === "string" && installedThemes !== null && installedThemes.has(value);
+}
+
+/**
+ * Persist a validated palette as an installed theme file. Fail closed: the
+ * palette is re-validated with `validateTheme` before anything is written, and
+ * an invalid palette or a bad id is refused rather than written. Reports success
+ * as a return value; never throws on an I/O failure.
+ */
+export function writeInstalledTheme(file: InstalledThemeFile, homeDir?: string): { ok: true; path: string } | { ok: false; error: string } {
+  if (!isSafeThemeId(file.id)) return { ok: false, error: `unsafe theme id ${JSON.stringify(file.id)}` };
+  if (isThemeName(file.id)) return { ok: false, error: `"${file.id}" is a built-in theme name and cannot be overridden` };
+  const issues = validateTheme(file.palette);
+  if (issues.length > 0) {
+    return { ok: false, error: `invalid palette: ${issues.map((i) => i.message).join("; ")}` };
+  }
+  try {
+    const path = installedThemeFilePath(file.id, homeDir);
+    mkdirSync(dirname(path), { recursive: true });
+    const body: InstalledThemeFile = {
+      id: file.id,
+      ...(file.label !== undefined ? { label: file.label } : {}),
+      ...(file.description !== undefined ? { description: file.description } : {}),
+      ...(file.mode !== undefined ? { mode: file.mode } : {}),
+      palette: file.palette,
+    };
+    writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`, "utf8");
+    return { ok: true, path };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Delete an installed theme file. Refuses a built-in name or an unsafe id.
+ * Reports success as a return value; a missing file is reported, not thrown.
+ */
+export function removeInstalledTheme(id: string, homeDir?: string): { ok: true } | { ok: false; error: string } {
+  if (!isSafeThemeId(id)) return { ok: false, error: `unsafe theme id ${JSON.stringify(id)}` };
+  if (isThemeName(id)) return { ok: false, error: `"${id}" is a built-in theme and cannot be removed` };
+  const cache = ensureInstalledThemesLoaded(homeDir);
+  if (!cache.has(id)) return { ok: false, error: `theme "${id}" is not installed` };
+  try {
+    rmSync(installedThemeFilePath(id, homeDir), { force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Test-only: drop the installed-theme cache so each test starts clean. */
+export function __resetInstalledThemesForTests(): void {
+  installedThemes = null;
+  installedFromHome = undefined;
+}

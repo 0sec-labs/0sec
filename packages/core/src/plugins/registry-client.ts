@@ -40,9 +40,14 @@
  */
 
 import {
+  manifestKindOf,
   validatePluginManifest,
+  validateConfigArtifact,
+  validateThemeArtifact,
+  type ConfigArtifactManifest,
   type PluginCapability,
   type PluginManifest,
+  type ThemeArtifactManifest,
 } from "./manifest.js";
 import { aggregateCapabilities } from "./enablement.js";
 
@@ -112,8 +117,69 @@ export interface DroppedEntry {
   reason: string;
 }
 
+// ── Theme / config artifacts in the index (DATA, not code) ────────────────────
+//
+// The registry index carries THREE artifact kinds side by side, discriminated by
+// the `kind` field of each entry's `manifest` (see manifest.ts / ARTIFACT_KINDS):
+//
+//   - kind absent / "tool"  → a tool plugin. Parsed into `RegistryResult.entries`
+//                             as an InstallableEntry, exactly as before. Carries
+//                             a `source` (inline files) and rides the plugin
+//                             install → enable → run path.
+//   - kind "theme"          → a colour palette. Parsed into `RegistryResult.artifacts`
+//                             as an InstallableThemeArtifact. Carries NO source
+//                             files and NO capabilities — it is inert data written
+//                             verbatim to the themes dir and never loaded as code.
+//   - kind "config"         → a settings bundle. Parsed into `.artifacts` as an
+//                             InstallableConfigArtifact. Also inert data.
+//
+// Wire shape of a theme entry (all fields untrusted, validated as data):
+//
+//   {
+//     "id": "acme.midnight",
+//     "version": "1.0.0",
+//     "manifest": {
+//       "kind": "theme",
+//       "id": "acme.midnight", "name": "Acme Midnight", "version": "1.0.0",
+//       "theme": {
+//         "label": "Midnight", "description": "…", "mode": "dark",
+//         "palette": { "CANVAS": "#0A0E14", "TEXT": "#E8ECF2", … }
+//       }
+//     },
+//     "signature": "…"            // optional; same policy as tool entries
+//   }
+//
+// A config entry mirrors this with `"kind": "config"` and a `"config": { … }`
+// bag of settings keys instead of a `theme`. Neither may carry `source`,
+// `tools`, or `capabilities`; the manifest validators reject those outright.
+
+/** A validated theme artifact fetched from the index. Inert data. */
+export interface InstallableThemeArtifact {
+  kind: "theme";
+  id: string;
+  version: string;
+  manifest: ThemeArtifactManifest;
+  signature?: string;
+  signatureState: Extract<SignatureState, "verified" | "unverified">;
+}
+
+/** A validated config artifact fetched from the index. Inert data. */
+export interface InstallableConfigArtifact {
+  kind: "config";
+  id: string;
+  version: string;
+  manifest: ConfigArtifactManifest;
+  signature?: string;
+  signatureState: Extract<SignatureState, "verified" | "unverified">;
+}
+
+export type InstallableArtifact = InstallableThemeArtifact | InstallableConfigArtifact;
+
 export interface RegistryResult {
+  /** Tool plugins — the install → enable → run path. */
   entries: InstallableEntry[];
+  /** Theme + config data artifacts. Never carry code or capabilities. */
+  artifacts: InstallableArtifact[];
   dropped: DroppedEntry[];
 }
 
@@ -324,9 +390,89 @@ export function installableFromEntry(
 }
 
 /**
+ * Turn one raw entry into an {@link InstallableArtifact} (theme or config), or
+ * drop it with a reason. Applies the SAME signature policy as tool entries, but
+ * over a payload with no `source` (data artifacts carry none). Pure.
+ *
+ * Only ever called for entries whose manifest kind is "theme" or "config"; a
+ * tool entry goes through {@link installableFromEntry} instead.
+ */
+export function artifactFromEntry(
+  raw: unknown,
+  opts: ParseOptions = {},
+): { ok: true; artifact: InstallableArtifact } | { ok: false; dropped: DroppedEntry } {
+  const verifier = opts.verifier ?? unconfiguredVerifier;
+  if (!isPlainObject(raw)) {
+    return { ok: false, dropped: { reason: "entry is not an object" } };
+  }
+  const id = typeof raw.id === "string" ? raw.id : undefined;
+  const kind = manifestKindOf(raw.manifest);
+
+  const validation =
+    kind === "theme"
+      ? validateThemeArtifact(raw.manifest)
+      : validateConfigArtifact(raw.manifest);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      dropped: { id, reason: `invalid ${kind ?? "artifact"} manifest: ${validation.errors.join("; ")}` },
+    };
+  }
+  const manifest = validation.manifest;
+
+  if (id !== undefined && id !== manifest.id) {
+    return {
+      ok: false,
+      dropped: { id, reason: `index id "${id}" does not match manifest id "${manifest.id}"` },
+    };
+  }
+  if (typeof raw.version === "string" && raw.version !== manifest.version) {
+    return {
+      ok: false,
+      dropped: {
+        id: manifest.id,
+        reason: `index version "${raw.version}" does not match manifest version "${manifest.version}"`,
+      },
+    };
+  }
+  // Data artifacts must not smuggle a source (which would carry files/code).
+  if (raw.source !== undefined) {
+    return {
+      ok: false,
+      dropped: { id: manifest.id, reason: "a theme/config artifact must not carry a `source`" },
+    };
+  }
+
+  const signature = typeof raw.signature === "string" ? raw.signature : undefined;
+  const sigState = evaluateSignature(
+    { id: manifest.id, version: manifest.version, manifest: raw.manifest, source: null, signature },
+    verifier,
+  );
+  if (sigState === "refused-unsigned" || sigState === "refused-bad-signature") {
+    return {
+      ok: false,
+      dropped: {
+        id: manifest.id,
+        reason:
+          sigState === "refused-unsigned"
+            ? "signature required (a verification key is configured) but the entry is unsigned"
+            : "signature verification failed",
+      },
+    };
+  }
+
+  const artifact =
+    manifest.kind === "theme"
+      ? ({ kind: "theme", id: manifest.id, version: manifest.version, manifest, signature, signatureState: sigState } as InstallableThemeArtifact)
+      : ({ kind: "config", id: manifest.id, version: manifest.version, manifest, signature, signatureState: sigState } as InstallableConfigArtifact);
+  return { ok: true, artifact };
+}
+
+/**
  * Parse an already-fetched index body into a {@link RegistryResult}. Total: any
  * shape yields a result (possibly all-dropped), never a throw. Accepts either
- * `{ entries: [...] }` or a bare array.
+ * `{ entries: [...] }` or a bare array. Tool entries land in `entries`, theme/
+ * config entries in `artifacts`, and everything unusable in `dropped`.
  */
 export function parseRegistryIndex(raw: unknown, opts: ParseOptions = {}): RegistryResult {
   let list: unknown[];
@@ -335,17 +481,32 @@ export function parseRegistryIndex(raw: unknown, opts: ParseOptions = {}): Regis
   } else if (isPlainObject(raw) && Array.isArray(raw.entries)) {
     list = raw.entries;
   } else {
-    return { entries: [], dropped: [{ reason: "index must be an array or `{ entries: [...] }`" }] };
+    return {
+      entries: [],
+      artifacts: [],
+      dropped: [{ reason: "index must be an array or `{ entries: [...] }`" }],
+    };
   }
 
   const entries: InstallableEntry[] = [];
+  const artifacts: InstallableArtifact[] = [];
   const dropped: DroppedEntry[] = [];
   for (const rawEntry of list) {
-    const result = installableFromEntry(rawEntry, opts);
-    if (result.ok) entries.push(result.entry);
-    else dropped.push(result.dropped);
+    const manifest = isPlainObject(rawEntry) ? rawEntry.manifest : undefined;
+    const kind = manifestKindOf(manifest);
+    if (kind === "theme" || kind === "config") {
+      const result = artifactFromEntry(rawEntry, opts);
+      if (result.ok) artifacts.push(result.artifact);
+      else dropped.push(result.dropped);
+    } else {
+      // kind "tool" (or absent, or unknown) → the tool path, which reports its
+      // own reason for an unknown kind via validatePluginManifest's kind gate.
+      const result = installableFromEntry(rawEntry, opts);
+      if (result.ok) entries.push(result.entry);
+      else dropped.push(result.dropped);
+    }
   }
-  return { entries, dropped };
+  return { entries, artifacts, dropped };
 }
 
 // ── Fetch (injected fetch; HTTPS only) ───────────────────────────────────────
@@ -428,4 +589,27 @@ export function findInstallable(
   id: string,
 ): InstallableEntry | undefined {
   return entries.find((e) => e.id === id);
+}
+
+/** Find one data artifact (theme/config) by exact id. */
+export function findArtifact(
+  artifacts: readonly InstallableArtifact[],
+  id: string,
+): InstallableArtifact | undefined {
+  return artifacts.find((a) => a.id === id);
+}
+
+/** Case-insensitive substring match over a data artifact's id, name, and version. */
+export function searchArtifacts(
+  artifacts: readonly InstallableArtifact[],
+  query: string,
+): InstallableArtifact[] {
+  const q = query.trim().toLowerCase();
+  if (q.length === 0) return [...artifacts];
+  return artifacts.filter(
+    (a) =>
+      a.id.toLowerCase().includes(q) ||
+      a.manifest.name.toLowerCase().includes(q) ||
+      a.version.toLowerCase().includes(q),
+  );
 }

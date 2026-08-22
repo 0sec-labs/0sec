@@ -438,3 +438,159 @@ describe("SETTING_DEFS", () => {
 function readText(path: string): string {
   return readFileSync(path, "utf8");
 }
+
+// ── Two-level configuration (global + project override) ───────────────────────
+
+import { mkdtempSync as mkdtempSync2 } from "node:fs";
+import {
+  loadGlobalSettings,
+  loadLayeredSettings,
+  projectSettingsExist,
+  projectSettingsFilePath,
+  readProjectOverrides,
+  resolveLayeredSettings,
+  sanitizeOverrides,
+  saveProjectOverrides,
+} from "./settings.js";
+import {
+  __resetInstalledThemesForTests,
+  reloadInstalledThemes,
+  writeInstalledTheme,
+} from "./themes.js";
+
+function makeProjectDir(): string {
+  const dir = mkdtempSync2(join(tmpdir(), "0sec-project-"));
+  tempHomes.push(dir);
+  return dir;
+}
+
+function writeGlobalFull(home: string, settings: TuiSettings): void {
+  saveSettings(settings, home);
+}
+function writeProjectRaw(projectDir: string, raw: unknown): void {
+  const path = projectSettingsFilePath(projectDir);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, typeof raw === "string" ? raw : JSON.stringify(raw), "utf8");
+}
+
+// dirname is needed above.
+import { dirname } from "node:path";
+
+describe("two-level layering", () => {
+  it("global-only: every key comes from the global file", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeGlobalFull(home, { ...DEFAULT_SETTINGS, showLogo: false, density: "compact" });
+
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings.showLogo).toBe(false);
+    expect(settings.density).toBe("compact");
+    expect(sources.showLogo).toBe("global");
+    expect(sources.showTimestamps).toBe("global"); // present in the full global file
+  });
+
+  it("project overrides global per key; unset keys fall through", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeGlobalFull(home, { ...DEFAULT_SETTINGS, showLogo: false, showStatusBar: false });
+    writeProjectRaw(project, { showLogo: true, density: "compact" });
+
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings.showLogo).toBe(true); // project wins
+    expect(sources.showLogo).toBe("project");
+    expect(settings.density).toBe("compact");
+    expect(sources.density).toBe("project");
+    expect(settings.showStatusBar).toBe(false); // falls through to global
+    expect(sources.showStatusBar).toBe("global");
+  });
+
+  it("corrupt project file falls through to global entirely", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeGlobalFull(home, { ...DEFAULT_SETTINGS, showLogo: false });
+    writeProjectRaw(project, "{ not json ,,");
+
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings.showLogo).toBe(false);
+    expect(sources.showLogo).toBe("global");
+  });
+
+  it("an invalid project value for one key falls through, not to default", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeGlobalFull(home, { ...DEFAULT_SETTINGS, density: "compact" });
+    writeProjectRaw(project, { density: "cosy" }); // invalid enum
+
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings.density).toBe("compact"); // global, not the default
+    expect(sources.density).toBe("global");
+  });
+
+  it("defaults win when neither layer has a valid key", () => {
+    const home = join(makeHome(), "empty");
+    const project = makeProjectDir();
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings).toEqual(DEFAULT_SETTINGS);
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      expect(sources[key as keyof TuiSettings]).toBe("default");
+    }
+  });
+
+  it("resolveLayeredSettings is pure and total on garbage layers", () => {
+    expect(() => resolveLayeredSettings(null, 42)).not.toThrow();
+    expect(resolveLayeredSettings(null, 42).settings).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("projectSettingsExist reflects a present, object-shaped override", () => {
+    const project = makeProjectDir();
+    expect(projectSettingsExist(project)).toBe(false);
+    writeProjectRaw(project, { showLogo: true });
+    expect(projectSettingsExist(project)).toBe(true);
+    writeProjectRaw(project, "[]"); // array is not layerable
+    expect(projectSettingsExist(project)).toBe(false);
+  });
+});
+
+describe("project override writes", () => {
+  it("sanitizeOverrides keeps known valid keys and drops the rest, sparsely", () => {
+    const patch = sanitizeOverrides({ showLogo: false, density: "compact", nope: 1, showStatusBar: "x" });
+    expect(patch).toEqual({ showLogo: false, density: "compact" });
+  });
+
+  it("round-trips a sparse project override", () => {
+    const project = makeProjectDir();
+    expect(saveProjectOverrides({ showLogo: false }, project)).toBe(true);
+    expect(readProjectOverrides(project)).toEqual({ showLogo: false });
+  });
+});
+
+import { THEMES as THEMES_FIXTURE } from "./themes.js";
+
+describe("installed theme survives normalize + layering", () => {
+  it("keeps an installed theme id set in the global file", () => {
+    __resetInstalledThemesForTests();
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeInstalledTheme({ id: "acme.midnight", label: "Mid", palette: THEMES_FIXTURE.midnight.palette }, home);
+    reloadInstalledThemes(home);
+    // Persist the installed theme id via the global full-object save path.
+    saveSettings({ ...DEFAULT_SETTINGS, theme: "acme.midnight" }, home);
+
+    const { settings, sources } = loadLayeredSettings({ homeDir: home, projectDir: project });
+    expect(settings.theme).toBe("acme.midnight");
+    expect(sources.theme).toBe("global");
+    // And a direct normalize keeps it too (cache populated).
+    expect(normalizeSettings({ theme: "acme.midnight" }).theme).toBe("acme.midnight");
+    __resetInstalledThemesForTests();
+  });
+});
+
+describe("loadGlobalSettings", () => {
+  it("reads only the global layer, ignoring a project override", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    writeGlobalFull(home, { ...DEFAULT_SETTINGS, showLogo: false });
+    writeProjectRaw(project, { showLogo: true });
+    expect(loadGlobalSettings(home).showLogo).toBe(false);
+  });
+});

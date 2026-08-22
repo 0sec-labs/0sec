@@ -257,3 +257,85 @@ describe("useSettings (store contract behind the hook)", () => {
     expect(onStoreChange).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── Two-level layering in the store ───────────────────────────────────────────
+
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import {
+  loadGlobalSettings,
+  projectSettingsFilePath,
+  readProjectOverrides,
+  saveSettings as saveGlobalSettings,
+} from "./settings.js";
+import { defaultWriteLayer, getSettingSources } from "./settings-store.js";
+
+function makeProjectDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "0sec-store-project-"));
+  tempHomes.push(dir);
+  return dir;
+}
+function writeProjectRaw(projectDir: string, raw: unknown): void {
+  const path = projectSettingsFilePath(projectDir);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(raw), "utf8");
+}
+
+describe("store: layered reads", () => {
+  it("merges project over global with provenance", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    saveGlobalSettings({ ...DEFAULT_SETTINGS, showLogo: false }, home);
+    writeProjectRaw(project, { density: "compact" });
+
+    configureSettingsStore({ homeDir: home, projectDir: project });
+    expect(getSettings().showLogo).toBe(false); // global
+    expect(getSettings().density).toBe("compact"); // project
+    expect(getSettingSources().density).toBe("project");
+    expect(getSettingSources().showLogo).toBe("global");
+  });
+});
+
+describe("store: write target", () => {
+  it("defaults to global when no project override exists", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    configureSettingsStore({ homeDir: home, projectDir: project });
+    expect(defaultWriteLayer()).toBe("global");
+
+    updateSetting("showLogo", false);
+    // Global file changed; no project file created.
+    expect(loadGlobalSettings(home).showLogo).toBe(false);
+    expect(readProjectOverrides(project)).toEqual({});
+    expect(getSettingSources().showLogo).toBe("global");
+  });
+
+  it("defaults to the project file once a project override exists", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    saveGlobalSettings({ ...DEFAULT_SETTINGS, showStatusBar: false }, home);
+    writeProjectRaw(project, { density: "compact" });
+    configureSettingsStore({ homeDir: home, projectDir: project });
+    expect(defaultWriteLayer()).toBe("project");
+
+    updateSetting("showLogo", false);
+    // The project override grew the key; global is untouched.
+    expect(readProjectOverrides(project)).toEqual({ density: "compact", showLogo: false });
+    expect(loadGlobalSettings(home).showLogo).toBe(DEFAULT_SETTINGS.showLogo);
+    expect(getSettings().showLogo).toBe(false);
+    expect(getSettingSources().showLogo).toBe("project");
+    // Global-only key still falls through.
+    expect(getSettings().showStatusBar).toBe(false);
+    expect(getSettingSources().showStatusBar).toBe("global");
+  });
+
+  it("honours an explicit scope override", () => {
+    const home = makeHome();
+    const project = makeProjectDir();
+    configureSettingsStore({ homeDir: home, projectDir: project });
+
+    updateSetting("density", "compact", { scope: "project" });
+    expect(readProjectOverrides(project)).toEqual({ density: "compact" });
+    expect(loadGlobalSettings(home).density).toBe(DEFAULT_SETTINGS.density);
+  });
+});

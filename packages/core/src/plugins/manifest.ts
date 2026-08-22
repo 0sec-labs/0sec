@@ -227,6 +227,24 @@ export function validatePluginManifest(
     return { ok: false, errors: ["manifest must be a JSON object"] };
   }
 
+  // ── artifact kind gate ──
+  // A manifest may now declare a `kind` (see ARTIFACT_KINDS). This validator is
+  // the TOOL path: it accepts only a tool manifest (kind absent or "tool") so
+  // that existing manifests validate EXACTLY as before, and refuses a theme/
+  // config artifact rather than mis-validating it as a bag of tools. Themes and
+  // configs carry NO tools and NO capabilities, so they must never reach this
+  // function's output (and thus never the loader / capability gates); route them
+  // through `validateArtifactManifest` instead.
+  if (raw.kind !== undefined && raw.kind !== "tool") {
+    return {
+      ok: false,
+      errors: [
+        `manifest \`kind\` ${JSON.stringify(raw.kind)} is not a tool manifest; ` +
+          "a theme/config artifact carries no tools and must be validated as data",
+      ],
+    };
+  }
+
   // ── top-level id / name / version ──
   const id = raw.id;
   if (!isNonEmptyString(id)) {
@@ -388,4 +406,267 @@ function validateTool(
     ...(Array.isArray(t.required) ? { required: t.required as string[] } : {}),
     capabilities: (caps as PluginCapability[]).slice(),
   };
+}
+
+// ── Artifact kinds: tool | theme | config ────────────────────────────────────
+//
+// A manifest describes one of three artifact KINDS. A tool manifest is the
+// original shape (validated by `validatePluginManifest`), and stays the default:
+// a manifest with no `kind` field, or `kind: "tool"`, is a tool plugin exactly
+// as before. The two new kinds are pure DATA:
+//
+//   - "theme"  — carries a colour palette (a token → #RRGGBB map) plus display
+//                metadata. NO tools, NO capabilities, NO code. The palette is
+//                validated STRUCTURALLY here (object of string tokens); the full
+//                WCAG contrast validation (validateTheme) runs at install time in
+//                the CLI, which is the only layer that owns that check.
+//   - "config" — carries a settings bundle (a partial TuiSettings object) to be
+//                merged into a config layer. Also NO tools, NO capabilities.
+//
+// The security spine: a theme/config artifact must NEVER be able to reach the
+// tool loader or the capability gates. That is enforced two ways — the tool
+// validator refuses any non-"tool" kind (see the kind gate in
+// `validatePluginManifest`), and the artifact validators below REJECT any
+// manifest that declares `tools` or `capabilities`. Data cannot smuggle code in.
+
+/** The closed set of artifact kinds, in a stable order. */
+export const ARTIFACT_KINDS = ["tool", "theme", "config"] as const;
+export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
+
+/** A palette as it rides a theme manifest: token name → colour string. Validated
+ *  structurally here; contrast/completeness is the CLI's `validateTheme`. */
+export type ArtifactPalette = Record<string, string>;
+
+export interface ThemeArtifactManifest {
+  kind: "theme";
+  id: string;
+  name: string;
+  version: string;
+  minCoreVersion?: string;
+  theme: {
+    label?: string;
+    description?: string;
+    mode?: "dark" | "light";
+    palette: ArtifactPalette;
+  };
+}
+
+export interface ConfigArtifactManifest {
+  kind: "config";
+  id: string;
+  name: string;
+  version: string;
+  minCoreVersion?: string;
+  /** Partial settings bundle. Opaque here (the CLI owns the settings schema); a
+   *  plain object of key → value that the importer normalises before use. */
+  config: Record<string, unknown>;
+}
+
+export type ArtifactManifest =
+  | PluginManifest
+  | ThemeArtifactManifest
+  | ConfigArtifactManifest;
+
+export type ArtifactValidationResult =
+  | { ok: true; kind: "tool"; manifest: PluginManifest }
+  | { ok: true; kind: "theme"; manifest: ThemeArtifactManifest }
+  | { ok: true; kind: "config"; manifest: ConfigArtifactManifest }
+  | { ok: false; errors: string[] };
+
+/** Read the declared kind of a raw manifest, defaulting to "tool". Returns
+ *  `undefined` for a non-object or an unrecognised kind string. */
+export function manifestKindOf(raw: unknown): ArtifactKind | undefined {
+  if (!isPlainObject(raw)) return undefined;
+  if (raw.kind === undefined) return "tool";
+  if (typeof raw.kind === "string" && (ARTIFACT_KINDS as readonly string[]).includes(raw.kind)) {
+    return raw.kind as ArtifactKind;
+  }
+  return undefined;
+}
+
+/** Shared top-level id/name/version checks for the data artifacts. Pushes
+ *  problems onto `errors`; returns the cleaned trio when all three are valid. */
+function validateArtifactHead(
+  raw: Record<string, unknown>,
+  errors: string[],
+): { id: string; name: string; version: string; minCoreVersion?: string } | null {
+  const id = raw.id;
+  if (!isNonEmptyString(id)) {
+    errors.push("`id` is required and must be a non-empty string");
+  } else if (id.length > PLUGIN_ID_MAX) {
+    errors.push(`\`id\` must be at most ${PLUGIN_ID_MAX} characters`);
+  } else if (!PLUGIN_ID_RE.test(id)) {
+    errors.push('`id` must be a lowercase dotted/hyphenated identifier (e.g. "acme.midnight")');
+  }
+  if (!isNonEmptyString(raw.name)) {
+    errors.push("`name` is required and must be a non-empty string");
+  } else if (raw.name.length > DESCRIPTION_MAX) {
+    errors.push(`\`name\` must be at most ${DESCRIPTION_MAX} characters`);
+  }
+  const version = raw.version;
+  if (!isNonEmptyString(version)) {
+    errors.push("`version` is required and must be a non-empty string");
+  } else if (!VERSION_RE.test(version)) {
+    errors.push('`version` must be semver-like "MAJOR.MINOR.PATCH" (e.g. "1.0.0")');
+  }
+  let minCoreVersion: string | undefined;
+  if (raw.minCoreVersion !== undefined) {
+    if (!isNonEmptyString(raw.minCoreVersion) || !VERSION_RE.test(raw.minCoreVersion)) {
+      errors.push('`minCoreVersion`, when present, must be semver-like "MAJOR.MINOR.PATCH"');
+    } else {
+      minCoreVersion = raw.minCoreVersion;
+    }
+  }
+  // A data artifact must never carry code or capabilities — reject loudly.
+  if ("tools" in raw) {
+    errors.push("a theme/config artifact must not declare `tools` (data carries no code)");
+  }
+  if ("capabilities" in raw) {
+    errors.push("a theme/config artifact must not declare `capabilities` (data has none)");
+  }
+  if (errors.length > 0) return null;
+  return {
+    id: id as string,
+    name: raw.name as string,
+    version: version as string,
+    ...(minCoreVersion !== undefined ? { minCoreVersion } : {}),
+  };
+}
+
+/** Validate a theme artifact manifest. Pure, total, actionable. The palette is
+ *  checked structurally (object of string tokens); full contrast validation is
+ *  the CLI's job at install time and is deliberately NOT done here. */
+export function validateThemeArtifact(
+  raw: unknown,
+): { ok: true; manifest: ThemeArtifactManifest } | { ok: false; errors: string[] } {
+  if (!isPlainObject(raw)) return { ok: false, errors: ["manifest must be a JSON object"] };
+  if (raw.kind !== "theme") {
+    return { ok: false, errors: [`expected \`kind: "theme"\`, got ${JSON.stringify(raw.kind)}`] };
+  }
+  const errors: string[] = [];
+  const head = validateArtifactHead(raw, errors);
+
+  const themeRaw = raw.theme;
+  let palette: ArtifactPalette | null = null;
+  let label: string | undefined;
+  let description: string | undefined;
+  let mode: "dark" | "light" | undefined;
+  if (!isPlainObject(themeRaw)) {
+    errors.push("`theme` is required and must be an object with a `palette`");
+  } else {
+    if (!isPlainObject(themeRaw.palette)) {
+      errors.push("`theme.palette` is required and must be an object of token → colour");
+    } else {
+      const bad = Object.entries(themeRaw.palette).filter(([, v]) => typeof v !== "string");
+      if (bad.length > 0) {
+        errors.push(
+          `\`theme.palette\` values must be strings; non-string: ${bad.map(([k]) => k).join(", ")}`,
+        );
+      } else if (Object.keys(themeRaw.palette).length === 0) {
+        errors.push("`theme.palette` must not be empty");
+      } else {
+        palette = { ...(themeRaw.palette as ArtifactPalette) };
+      }
+    }
+    if (themeRaw.label !== undefined && !isNonEmptyString(themeRaw.label)) {
+      errors.push("`theme.label`, when present, must be a non-empty string");
+    } else if (typeof themeRaw.label === "string") {
+      label = themeRaw.label;
+    }
+    if (themeRaw.description !== undefined && typeof themeRaw.description !== "string") {
+      errors.push("`theme.description`, when present, must be a string");
+    } else if (typeof themeRaw.description === "string") {
+      description = themeRaw.description;
+    }
+    if (themeRaw.mode !== undefined && themeRaw.mode !== "dark" && themeRaw.mode !== "light") {
+      errors.push('`theme.mode`, when present, must be "dark" or "light"');
+    } else if (themeRaw.mode === "dark" || themeRaw.mode === "light") {
+      mode = themeRaw.mode;
+    }
+  }
+
+  if (errors.length > 0 || !head || !palette) {
+    return { ok: false, errors: errors.length > 0 ? errors : ["invalid theme artifact"] };
+  }
+  return {
+    ok: true,
+    manifest: {
+      kind: "theme",
+      id: head.id,
+      name: head.name,
+      version: head.version,
+      ...(head.minCoreVersion !== undefined ? { minCoreVersion: head.minCoreVersion } : {}),
+      theme: {
+        ...(label !== undefined ? { label } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(mode !== undefined ? { mode } : {}),
+        palette,
+      },
+    },
+  };
+}
+
+/** Validate a config artifact manifest. Pure, total. The `config` bag is opaque
+ *  here — the CLI's `normalizeSettings` is the schema authority and runs on
+ *  import — so this only checks it is a plain object. */
+export function validateConfigArtifact(
+  raw: unknown,
+): { ok: true; manifest: ConfigArtifactManifest } | { ok: false; errors: string[] } {
+  if (!isPlainObject(raw)) return { ok: false, errors: ["manifest must be a JSON object"] };
+  if (raw.kind !== "config") {
+    return { ok: false, errors: [`expected \`kind: "config"\`, got ${JSON.stringify(raw.kind)}`] };
+  }
+  const errors: string[] = [];
+  const head = validateArtifactHead(raw, errors);
+  if (!isPlainObject(raw.config)) {
+    errors.push("`config` is required and must be an object of settings");
+  }
+  if (errors.length > 0 || !head) {
+    return { ok: false, errors: errors.length > 0 ? errors : ["invalid config artifact"] };
+  }
+  return {
+    ok: true,
+    manifest: {
+      kind: "config",
+      id: head.id,
+      name: head.name,
+      version: head.version,
+      ...(head.minCoreVersion !== undefined ? { minCoreVersion: head.minCoreVersion } : {}),
+      config: { ...(raw.config as Record<string, unknown>) },
+    },
+  };
+}
+
+/**
+ * Validate an untrusted manifest of ANY artifact kind, dispatching on `kind`.
+ * The single entry point a registry parser or importer should use when it does
+ * not know the kind in advance. Backward compatible: a manifest with no kind, or
+ * `kind: "tool"`, is validated by `validatePluginManifest` and returned as a
+ * tool. Total — never throws.
+ */
+export function validateArtifactManifest(
+  raw: unknown,
+  opts?: { reservedToolNames?: readonly string[] },
+): ArtifactValidationResult {
+  const kind = manifestKindOf(raw);
+  if (kind === undefined) {
+    const declared = isPlainObject(raw) ? raw.kind : undefined;
+    return {
+      ok: false,
+      errors: [
+        `unknown manifest \`kind\` ${JSON.stringify(declared)}; ` +
+          `allowed: ${ARTIFACT_KINDS.join(", ")}`,
+      ],
+    };
+  }
+  if (kind === "theme") {
+    const res = validateThemeArtifact(raw);
+    return res.ok ? { ok: true, kind: "theme", manifest: res.manifest } : res;
+  }
+  if (kind === "config") {
+    const res = validateConfigArtifact(raw);
+    return res.ok ? { ok: true, kind: "config", manifest: res.manifest } : res;
+  }
+  const res = validatePluginManifest(raw, opts);
+  return res.ok ? { ok: true, kind: "tool", manifest: res.manifest } : res;
 }

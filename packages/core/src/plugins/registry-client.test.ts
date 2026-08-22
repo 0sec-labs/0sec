@@ -240,3 +240,91 @@ describe("searchInstallable / findInstallable", () => {
     expect(findInstallable(entries, "nope")).toBeUndefined();
   });
 });
+
+// ── Theme / config artifacts in the index (data, never code) ──────────────────
+
+import {
+  artifactFromEntry,
+  findArtifact,
+  searchArtifacts,
+} from "./registry-client.js";
+
+function themeEntry(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    id: "acme.midnight",
+    version: "1.0.0",
+    manifest: {
+      kind: "theme",
+      id: "acme.midnight",
+      name: "Acme Midnight",
+      version: "1.0.0",
+      theme: { label: "Midnight", mode: "dark", palette: { CANVAS: "#0A0E14", TEXT: "#E8ECF2" } },
+    },
+    ...overrides,
+  };
+}
+
+function configEntry(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    id: "acme.quiet",
+    version: "1.0.0",
+    manifest: {
+      kind: "config",
+      id: "acme.quiet",
+      name: "Acme Quiet",
+      version: "1.0.0",
+      config: { showLogo: false },
+    },
+    ...overrides,
+  };
+}
+
+describe("registry carries theme/config artifacts alongside tools", () => {
+  it("routes tool, theme and config entries to their buckets", () => {
+    const result = parseRegistryIndex([entry(), themeEntry(), configEntry()]);
+    expect(result.entries.map((e) => e.id)).toEqual(["acme.recon"]);
+    expect(result.artifacts.map((a) => `${a.kind}:${a.id}`)).toEqual([
+      "theme:acme.midnight",
+      "config:acme.quiet",
+    ]);
+    expect(result.dropped).toHaveLength(0);
+  });
+
+  it("drops an invalid theme manifest with a reason", () => {
+    const bad = themeEntry({ manifest: { kind: "theme", id: "acme.midnight" } });
+    const result = parseRegistryIndex([bad]);
+    expect(result.artifacts).toHaveLength(0);
+    expect(result.dropped[0].reason).toMatch(/invalid theme manifest/);
+  });
+
+  it("drops a theme entry that carries a source (data has none)", () => {
+    const bad = themeEntry({ source: { kind: "inline", files: {} } });
+    const res = artifactFromEntry(bad);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.dropped.reason).toMatch(/must not carry a `source`/);
+  });
+
+  it("applies the signature policy to artifacts too (fail-closed)", () => {
+    const verifier: SignatureVerifier = { keyConfigured: true, verify: () => false };
+    const result = parseRegistryIndex([themeEntry()], { verifier });
+    expect(result.artifacts).toHaveLength(0);
+    expect(result.dropped[0].reason).toMatch(/signature required/);
+  });
+
+  it("marks an artifact verified with a good signature", () => {
+    const verifier: SignatureVerifier = { keyConfigured: true, verify: () => true };
+    const [a] = parseRegistryIndex([themeEntry({ signature: "ok" })], { verifier }).artifacts;
+    expect(a.signatureState).toBe("verified");
+  });
+
+  it("finds and searches artifacts", () => {
+    const { artifacts } = parseRegistryIndex([themeEntry(), configEntry()]);
+    expect(findArtifact(artifacts, "acme.midnight")?.kind).toBe("theme");
+    expect(searchArtifacts(artifacts, "quiet").map((a) => a.id)).toEqual(["acme.quiet"]);
+  });
+
+  it("still returns an artifacts array for a tool-only index", () => {
+    expect(parseRegistryIndex([entry()]).artifacts).toEqual([]);
+  });
+});

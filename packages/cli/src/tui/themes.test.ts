@@ -772,3 +772,143 @@ describe("purity", () => {
     }
   });
 });
+
+// ── Installed themes (disk-backed, shareable) ─────────────────────────────────
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach } from "vitest";
+
+import {
+  INSTALLED_THEMES_DIRNAME,
+  __resetInstalledThemesForTests,
+  allThemeNames,
+  ensureInstalledThemesLoaded,
+  installedThemeEntries,
+  installedThemesDir,
+  isKnownTheme,
+  isSafeThemeId,
+  reloadInstalledThemes,
+  removeInstalledTheme,
+  writeInstalledTheme,
+} from "./themes.js";
+
+const themeHomes: string[] = [];
+function makeThemeHome(): string {
+  const dir = mkdtempSync(join(tmpdir(), "0sec-installed-themes-"));
+  themeHomes.push(dir);
+  return dir;
+}
+afterEach(() => {
+  __resetInstalledThemesForTests();
+  while (themeHomes.length > 0) {
+    const dir = themeHomes.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** A full, valid palette to seed installed themes with. */
+const GOOD_PALETTE = THEMES.midnight.palette;
+
+function seedInstalledTheme(home: string, id: string, palette = GOOD_PALETTE): void {
+  const dir = installedThemesDir(home);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.json`), JSON.stringify({ id, label: id, palette }), "utf8");
+}
+
+describe("installed theme paths + id safety", () => {
+  it("places themes under the shared 0sec state dir", () => {
+    expect(installedThemesDir("/home/x")).toBe(`/home/x/.0sec/${INSTALLED_THEMES_DIRNAME}`);
+  });
+  it("accepts safe ids and rejects traversal / unsafe ones", () => {
+    expect(isSafeThemeId("acme.midnight")).toBe(true);
+    expect(isSafeThemeId("a_b-c")).toBe(true);
+    for (const bad of ["../x", "a/b", "A", "1abc", "", ".", ".."]) {
+      expect(isSafeThemeId(bad)).toBe(false);
+    }
+  });
+});
+
+describe("loading installed themes", () => {
+  it("returns no installed themes when the dir is absent", () => {
+    const home = makeThemeHome();
+    expect(installedThemeEntries(home)).toEqual([]);
+  });
+
+  it("loads a valid installed palette and makes it resolvable", () => {
+    const home = makeThemeHome();
+    seedInstalledTheme(home, "acme.midnight");
+    const entries = reloadInstalledThemes(home);
+    expect([...entries.keys()]).toEqual(["acme.midnight"]);
+    expect(isKnownTheme("acme.midnight")).toBe(true);
+    expect(getThemeEntry("acme.midnight").name).toBe("acme.midnight");
+    expect(getTheme("acme.midnight")).toEqual(GOOD_PALETTE);
+  });
+
+  it("adds installed ids to allThemeNames after the built-ins", () => {
+    const home = makeThemeHome();
+    seedInstalledTheme(home, "acme.midnight");
+    reloadInstalledThemes(home);
+    expect(allThemeNames(home)).toEqual([...THEME_NAMES, "acme.midnight"]);
+  });
+
+  it("skips a corrupt file and a palette that fails validateTheme (fail-soft)", () => {
+    const home = makeThemeHome();
+    const dir = installedThemesDir(home);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "broken.json"), "{ not json", "utf8");
+    writeFileSync(join(dir, "thin.json"), JSON.stringify({ id: "thin", palette: { CANVAS: "#000000" } }), "utf8");
+    seedInstalledTheme(home, "acme.midnight");
+    const entries = reloadInstalledThemes(home);
+    expect([...entries.keys()]).toEqual(["acme.midnight"]);
+  });
+
+  it("never lets an installed file shadow a built-in name", () => {
+    const home = makeThemeHome();
+    seedInstalledTheme(home, "dark"); // would collide with the built-in
+    const entries = reloadInstalledThemes(home);
+    expect(entries.has("dark")).toBe(false);
+  });
+
+  it("isKnownTheme does no I/O — unknown until the cache is populated", () => {
+    const home = makeThemeHome();
+    seedInstalledTheme(home, "acme.midnight");
+    __resetInstalledThemesForTests();
+    expect(isKnownTheme("acme.midnight")).toBe(false); // cache empty
+    ensureInstalledThemesLoaded(home);
+    expect(isKnownTheme("acme.midnight")).toBe(true);
+  });
+});
+
+describe("writeInstalledTheme / removeInstalledTheme", () => {
+  it("writes a valid palette then resolves it after reload", () => {
+    const home = makeThemeHome();
+    const res = writeInstalledTheme({ id: "acme.midnight", label: "Mid", palette: GOOD_PALETTE }, home);
+    expect(res.ok).toBe(true);
+    reloadInstalledThemes(home);
+    expect(isKnownTheme("acme.midnight")).toBe(true);
+  });
+
+  it("fails closed on an invalid palette", () => {
+    const home = makeThemeHome();
+    const res = writeInstalledTheme({ id: "bad", palette: { CANVAS: "#000000" } as never }, home);
+    expect(res.ok).toBe(false);
+  });
+
+  it("refuses a built-in name and an unsafe id", () => {
+    const home = makeThemeHome();
+    expect(writeInstalledTheme({ id: "dark", palette: GOOD_PALETTE }, home).ok).toBe(false);
+    expect(writeInstalledTheme({ id: "../x", palette: GOOD_PALETTE }, home).ok).toBe(false);
+  });
+
+  it("removes an installed theme and refuses built-ins", () => {
+    const home = makeThemeHome();
+    seedInstalledTheme(home, "acme.midnight");
+    reloadInstalledThemes(home);
+    expect(removeInstalledTheme("acme.midnight", home).ok).toBe(true);
+    expect(reloadInstalledThemes(home).has("acme.midnight")).toBe(false);
+    expect(removeInstalledTheme("dark", home).ok).toBe(false);
+    expect(removeInstalledTheme("acme.midnight", home).ok).toBe(false); // already gone
+  });
+});

@@ -27,7 +27,12 @@ import { dirname, join } from "node:path";
 
 import { homeStateDir } from "@0sec/shared";
 
-import { THEME_NAMES, type ThemeName } from "./themes.js";
+import {
+  THEME_NAMES,
+  ensureInstalledThemesLoaded,
+  isKnownTheme,
+  type ThemeName,
+} from "./themes.js";
 
 export type SettingKind = "boolean" | "enum";
 
@@ -72,8 +77,15 @@ export interface TuiSettings {
   roleLabelStyle: "full" | "short" | "glyph" | "off";
   /** How a tool/subagent call is drawn (failures always show). */
   toolCardStyle: "rail" | "inline" | "compact" | "hidden";
-  /** Colour palette. One of the ids in the theme registry (themes.ts). */
-  theme: ThemeName;
+  /**
+   * Colour palette. A built-in theme name OR an installed theme id (themes.ts).
+   * Typed loosely on purpose: an installed theme's id is an arbitrary safe
+   * string, and `normalizeSettings` validates it with `isKnownTheme` (built-in
+   * or installed) rather than the static built-in choice list, so applying an
+   * installed theme survives a normalise. The `& {}` keeps built-in-name
+   * autocomplete while still admitting any string.
+   */
+  theme: ThemeName | (string & {});
   /** Let the model add tools to its own session (off by default). */
   allowModelSelfExtension: boolean;
 }
@@ -292,6 +304,120 @@ export function settingsFilePath(homeDir?: string): string {
   return join(homeStateDir(homeDir), SETTINGS_FILENAME);
 }
 
+/**
+ * Two-level configuration: a per-user GLOBAL file and a per-project OVERRIDE.
+ *
+ * The global file (`~/.0sec/tui-settings.json`) is the base. A project may add a
+ * local `<cwd>/.0sec/tui-settings.json` whose SET keys override the global ones;
+ * a key absent from the project file falls through to global, and a key absent
+ * from both falls through to the built-in default. Precedence, highest first:
+ *
+ *     project  >  global  >  default
+ *
+ * The layering is resolved per KEY, not per file: a project file that sets only
+ * `theme` overrides only the theme and leaves every other key to the global
+ * layer. And it is total — a corrupt project file (bad JSON, wrong shape) or a
+ * single out-of-range value degrades to the lower layer instead of crashing.
+ */
+export type SettingLayer = "default" | "global" | "project";
+
+/** The `.0sec` directory inside a project working tree. */
+export function projectStateDir(projectDir: string = process.cwd()): string {
+  return join(projectDir, ".0sec");
+}
+
+/** The per-project override settings file (may not exist; that is the norm). */
+export function projectSettingsFilePath(projectDir: string = process.cwd()): string {
+  return join(projectStateDir(projectDir), SETTINGS_FILENAME);
+}
+
+/** Read + parse a settings file into a raw value, or `undefined`. Never throws:
+ *  a missing/unreadable/malformed file is simply "no layer here". */
+function readRawSettingsFile(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when a project override file exists and parses to an object we can layer
+ *  over. Used to decide the default write target. */
+export function projectSettingsExist(projectDir: string = process.cwd()): boolean {
+  const raw = readRawSettingsFile(projectSettingsFilePath(projectDir));
+  return typeof raw === "object" && raw !== null && !Array.isArray(raw);
+}
+
+/**
+ * Strict per-key extractor: the valid value this key holds in `raw`, or
+ * `undefined` when the key is absent or its value is not valid for the key. This
+ * is what makes the layering per-key — a layer "has" a key only when it carries
+ * a usable value for it, so an invalid project value falls through to global
+ * rather than masking it.
+ */
+function strictValueAt<K extends keyof TuiSettings>(raw: unknown, key: K): TuiSettings[K] | undefined {
+  const value = rawValue(raw, key);
+  if (value === undefined) return undefined;
+  if (key === "theme") {
+    return typeof value === "string" && isKnownTheme(value)
+      ? (value as TuiSettings[K])
+      : undefined;
+  }
+  const def = DEF_BY_KEY.get(key);
+  if (def?.kind === "boolean") {
+    return typeof value === "boolean" ? (value as TuiSettings[K]) : undefined;
+  }
+  const choices: readonly string[] = def?.choices ?? [];
+  return typeof value === "string" && choices.includes(value)
+    ? (value as TuiSettings[K])
+    : undefined;
+}
+
+export interface LayeredSettings {
+  /** The effective, fully-populated, valid settings object. */
+  settings: TuiSettings;
+  /** Which layer each key's effective value came from. */
+  sources: Record<keyof TuiSettings, SettingLayer>;
+}
+
+/**
+ * Resolve two raw layers (already parsed) plus the built-in defaults into the
+ * effective settings and per-key provenance. Pure and total.
+ */
+export function resolveLayeredSettings(globalRaw: unknown, projectRaw: unknown): LayeredSettings {
+  const settings = {} as Record<string, unknown>;
+  const sources = {} as Record<keyof TuiSettings, SettingLayer>;
+  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof TuiSettings)[]) {
+    const projectValue = strictValueAt(projectRaw, key);
+    if (projectValue !== undefined) {
+      settings[key] = projectValue;
+      sources[key] = "project";
+      continue;
+    }
+    const globalValue = strictValueAt(globalRaw, key);
+    if (globalValue !== undefined) {
+      settings[key] = globalValue;
+      sources[key] = "global";
+      continue;
+    }
+    settings[key] = DEFAULT_SETTINGS[key];
+    sources[key] = "default";
+  }
+  return { settings: settings as unknown as TuiSettings, sources };
+}
+
+/**
+ * Load the effective settings AND their provenance, merging the project override
+ * over the global file over the defaults. Ensures installed themes are loaded
+ * first so an installed theme id in either layer validates rather than resetting.
+ */
+export function loadLayeredSettings(opts: { homeDir?: string; projectDir?: string } = {}): LayeredSettings {
+  ensureInstalledThemesLoaded(opts.homeDir);
+  const globalRaw = readRawSettingsFile(settingsFilePath(opts.homeDir));
+  const projectRaw = readRawSettingsFile(projectSettingsFilePath(opts.projectDir));
+  return resolveLayeredSettings(globalRaw, projectRaw);
+}
+
 /** Reads `key` off a raw object, tolerating any value shape. */
 function rawValue(raw: unknown, key: string): unknown {
   // Arrays and `null` are typeof "object" too; neither can carry our keys, and
@@ -318,6 +444,19 @@ function enumAt<K extends EnumKey>(raw: unknown, key: K): TuiSettings[K] {
 }
 
 /**
+ * The `theme` key is validated against `isKnownTheme` (a built-in name OR a
+ * currently-loaded installed theme id) rather than the static built-in choice
+ * list, so a `theme apply`/`config import` of an installed theme is not reset to
+ * the default on the next normalise. `isKnownTheme` performs no I/O — it reads
+ * the installed-theme cache, which the load path populates before it normalises
+ * — so this stays pure and total.
+ */
+function themeAt(raw: unknown): TuiSettings["theme"] {
+  const value = rawValue(raw, "theme");
+  return typeof value === "string" && isKnownTheme(value) ? value : DEFAULT_SETTINGS.theme;
+}
+
+/**
  * Total, pure coercion of anything at all into a valid `TuiSettings`.
  *
  * Building a fresh literal rather than merging over the input is what drops
@@ -340,7 +479,7 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     transcriptStyle: enumAt(raw, "transcriptStyle"),
     roleLabelStyle: enumAt(raw, "roleLabelStyle"),
     toolCardStyle: enumAt(raw, "toolCardStyle"),
-    theme: enumAt(raw, "theme"),
+    theme: themeAt(raw),
     allowModelSelfExtension: booleanAt(raw, "allowModelSelfExtension"),
   };
 }
@@ -351,13 +490,19 @@ export function normalizeSettings(raw: unknown): TuiSettings {
  * still not worth interrupting a session over — the user sees default chrome
  * and can re-toggle, which rewrites the file cleanly.
  */
-export function loadSettings(homeDir?: string): TuiSettings {
-  try {
-    const text = readFileSync(settingsFilePath(homeDir), "utf8");
-    return normalizeSettings(JSON.parse(text));
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
+export function loadSettings(homeDir?: string, projectDir?: string): TuiSettings {
+  return loadLayeredSettings({ homeDir, projectDir }).settings;
+}
+
+/**
+ * The GLOBAL layer alone, as a complete normalised object (ignoring any project
+ * override). Used by `config import --global`, which merges into the global file
+ * rather than the effective view. Ensures installed themes are loaded so a global
+ * theme id validates rather than resetting.
+ */
+export function loadGlobalSettings(homeDir?: string): TuiSettings {
+  ensureInstalledThemesLoaded(homeDir);
+  return normalizeSettings(readRawSettingsFile(settingsFilePath(homeDir)));
 }
 
 /**
@@ -377,6 +522,59 @@ export function saveSettings(settings: TuiSettings, homeDir?: string): boolean {
   } catch {
     return false;
   }
+}
+
+/* --------------------------------------------------- project override writes */
+
+/**
+ * Keep only known keys that carry a valid value for their key, dropping unknown
+ * or malformed entries — the same "build a clean literal" discipline
+ * `normalizeSettings` uses, but SPARSE: keys not present stay absent so they keep
+ * falling through to the global layer. This is what a project override file is
+ * allowed to contain.
+ */
+export function sanitizeOverrides(raw: unknown): Partial<TuiSettings> {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof TuiSettings)[]) {
+    const value = strictValueAt(raw, key);
+    if (value !== undefined) out[key] = value;
+  }
+  return out as Partial<TuiSettings>;
+}
+
+/** Read the current project override file as a sanitised sparse patch. */
+export function readProjectOverrides(projectDir?: string): Partial<TuiSettings> {
+  return sanitizeOverrides(readRawSettingsFile(projectSettingsFilePath(projectDir)));
+}
+
+/**
+ * Write a sparse project override file. The patch is sanitised on the way out so
+ * a project file can never carry an unknown or invalid key. Reports success as a
+ * return value; never throws on an I/O failure.
+ */
+export function saveProjectOverrides(patch: Partial<TuiSettings>, projectDir?: string): boolean {
+  try {
+    const path = projectSettingsFilePath(projectDir);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(sanitizeOverrides(patch), null, 2)}\n`, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Merge one key into the project override file, preserving the other overrides.
+ * The value is validated (via the sanitiser) before it lands, so an out-of-range
+ * value is simply not written. Reports success as a return value.
+ */
+export function setProjectOverride<K extends keyof TuiSettings>(
+  key: K,
+  value: TuiSettings[K],
+  projectDir?: string,
+): boolean {
+  const current = readProjectOverrides(projectDir);
+  return saveProjectOverrides({ ...current, [key]: value }, projectDir);
 }
 
 /**

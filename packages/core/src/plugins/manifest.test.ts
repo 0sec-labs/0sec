@@ -382,3 +382,136 @@ describe("gateFlagsFor — conservative defaults across every subset", () => {
     expect(flags).toEqual({ networkCapable: false, localScope: false, readOnly: false });
   });
 });
+
+// ── Artifact kinds: tool | theme | config ────────────────────────────────────
+
+import {
+  ARTIFACT_KINDS,
+  manifestKindOf,
+  validateArtifactManifest,
+  validateConfigArtifact,
+  validateThemeArtifact,
+} from "./manifest.js";
+
+function validThemeArtifact(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    kind: "theme",
+    id: "acme.midnight",
+    name: "Acme Midnight",
+    version: "1.0.0",
+    theme: {
+      label: "Midnight",
+      description: "A deep blue-black dark theme.",
+      mode: "dark",
+      palette: { CANVAS: "#0A0E14", TEXT: "#E8ECF2" },
+    },
+    ...overrides,
+  };
+}
+
+function validConfigArtifact(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    kind: "config",
+    id: "acme.quiet",
+    name: "Acme Quiet",
+    version: "1.0.0",
+    config: { showLogo: false, theme: "slate" },
+    ...overrides,
+  };
+}
+
+describe("tool validator stays backward compatible with kinds", () => {
+  it("accepts a manifest with no kind exactly as before", () => {
+    expect(validatePluginManifest(validManifest()).ok).toBe(true);
+  });
+
+  it('accepts an explicit kind "tool"', () => {
+    expect(validatePluginManifest(validManifest({ kind: "tool" } as never)).ok).toBe(true);
+  });
+
+  it('rejects a non-tool kind through the tool validator', () => {
+    const res = validatePluginManifest(validThemeArtifact());
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errors.join(" ")).toMatch(/not a tool manifest/);
+  });
+});
+
+describe("manifestKindOf", () => {
+  it("defaults a kindless manifest to tool", () => {
+    expect(manifestKindOf(validManifest())).toBe("tool");
+  });
+  it("reads theme and config", () => {
+    expect(manifestKindOf(validThemeArtifact())).toBe("theme");
+    expect(manifestKindOf(validConfigArtifact())).toBe("config");
+  });
+  it("returns undefined for an unknown kind or non-object", () => {
+    expect(manifestKindOf({ kind: "spaceship" })).toBeUndefined();
+    expect(manifestKindOf(null)).toBeUndefined();
+    expect(manifestKindOf(42)).toBeUndefined();
+  });
+  it("exposes the closed kind set", () => {
+    expect([...ARTIFACT_KINDS]).toEqual(["tool", "theme", "config"]);
+  });
+});
+
+describe("validateThemeArtifact", () => {
+  it("accepts a well-formed theme and returns the typed manifest", () => {
+    const res = validateThemeArtifact(validThemeArtifact());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.manifest.kind).toBe("theme");
+    expect(res.manifest.theme.palette.CANVAS).toBe("#0A0E14");
+  });
+
+  it("requires a palette object of string values", () => {
+    expect(validateThemeArtifact(validThemeArtifact({ theme: { palette: 7 } })).ok).toBe(false);
+    const res = validateThemeArtifact(validThemeArtifact({ theme: { palette: { CANVAS: 1 } } }));
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errors.join(" ")).toMatch(/values must be strings/);
+  });
+
+  it("rejects a theme artifact that smuggles tools or capabilities", () => {
+    expect(validateThemeArtifact(validThemeArtifact({ tools: [] })).ok).toBe(false);
+    expect(validateThemeArtifact(validThemeArtifact({ capabilities: ["network"] })).ok).toBe(false);
+  });
+
+  it("does NOT run contrast validation (that is the CLI's job at install)", () => {
+    // A 2-token palette that would never pass validateTheme still validates
+    // STRUCTURALLY here — proof the core validator is data-only.
+    expect(validateThemeArtifact(validThemeArtifact()).ok).toBe(true);
+  });
+});
+
+describe("validateConfigArtifact", () => {
+  it("accepts a well-formed config artifact", () => {
+    const res = validateConfigArtifact(validConfigArtifact());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.manifest.config.showLogo).toBe(false);
+  });
+  it("requires a config object", () => {
+    expect(validateConfigArtifact(validConfigArtifact({ config: 5 })).ok).toBe(false);
+  });
+  it("rejects tools/capabilities on a config artifact", () => {
+    expect(validateConfigArtifact(validConfigArtifact({ capabilities: ["network"] })).ok).toBe(false);
+  });
+});
+
+describe("validateArtifactManifest dispatch", () => {
+  it("routes a kindless/tool manifest to the tool validator", () => {
+    const res = validateArtifactManifest(validManifest());
+    expect(res.ok && res.kind).toBe("tool");
+  });
+  it("routes a theme and a config", () => {
+    expect(validateArtifactManifest(validThemeArtifact())).toMatchObject({ ok: true, kind: "theme" });
+    expect(validateArtifactManifest(validConfigArtifact())).toMatchObject({ ok: true, kind: "config" });
+  });
+  it("fails an unknown kind, total", () => {
+    const res = validateArtifactManifest({ kind: "spaceship", id: "x" });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errors.join(" ")).toMatch(/unknown manifest/);
+  });
+});
