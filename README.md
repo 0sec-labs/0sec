@@ -9,9 +9,9 @@
 
 <p align="center">
   <strong>The open cybersecurity harness.</strong><br/>
-  0sec runs a coordinated swarm of AI agents against your target — web apps, APIs,
-  source, packages, or binaries — and reports a vulnerability only after
-  reproducing it.
+  0sec puts a team of AI agents on your target — web apps, APIs, source, packages,
+  or binaries. They explore in parallel, chain exploits, and a separate agent
+  reproduces every finding before it counts.
 </p>
 
 <p align="center">
