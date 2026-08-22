@@ -20,6 +20,10 @@ const SENSITIVE_ENV_PATTERNS = [
   "HF_TOKEN",
   "Z_AI_API",
   "KIMI_API",
+  "QWEN_API",
+  // Non-LLM service credentials.
+  "NVD_API",
+  "E2B_API",
   "WPSCAN_API_TOKEN",
   "0SEC_WPSCAN_API_TOKEN",
   "GITHUB_TOKEN",
@@ -34,6 +38,7 @@ const SENSITIVE_ENV_PATTERNS = [
   "0SEC_GITLAB_TOKEN",
   "0SEC_TARGET_AUTH_JSON",
   "0SEC_GRAPH_ACCESS_TOKEN",
+  "0SEC_LLM_TARGET_KEY",
 ] as const;
 
 /**
