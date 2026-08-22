@@ -192,13 +192,13 @@ type PendingToolApproval = {
  * what keeps a row's segments from overflowing and fusing.
  */
 const TERMINAL_BLOCK_LOGO = [
-  "##########  #######  #######   ######  ",
-  "##   // ##  ##       ##       ##       ",
-  "##  //  ##  #######  #####    ##       ",
-  "## //   ##       ##  ##       ##       ",
-  "##########  #######  #######   ######  ",
+  " ######   #######  #######   ######",
+  "##  //##  ##       ##       ##     ",
+  "## // ##  #######  #####    ##     ",
+  "##//  ##       ##  ##       ##     ",
+  " ######   #######  #######   ######",
 ] as const;
-const TERMINAL_BLOCK_LOGO_WIDTH = 39;
+const TERMINAL_BLOCK_LOGO_WIDTH = 35;
 
 /** One same-colour run of logo cells: its display text and which token paints it. */
 type LogoCellRun = { text: string; kind: " " | "#" | "/" };
@@ -442,33 +442,8 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Th
   });
 }
 
-/**
- * The left rail for a speaking turn, or `null` when the style has none. The
- * `solid` variant is the coloured 1-cell block the console has always used;
- * `dotted` is the reasoning gutter; `marker` is the notice `·`. All widths and
- * the choice itself come from `speechFrame`, so the component draws rather than
- * decides.
- */
-function speechRail(railKind: "solid" | "dotted" | "marker" | "none", tone: string, theme: Theme) {
-  const { MUTED } = theme;
-  if (railKind === "solid") {
-    return <box width={1} alignSelf="stretch" backgroundColor={tone} />;
-  }
-  if (railKind === "dotted") {
-    return (
-      <box width={1} flexShrink={0} alignSelf="stretch">
-        <text fg={MUTED}>┊</text>
-      </box>
-    );
-  }
-  if (railKind === "marker") {
-    return <text fg={MUTED}>·</text>;
-  }
-  return null;
-}
-
 function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, theme: Theme) {
-  const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER } = theme;
+  const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER, PANEL_ALT } = theme;
   const detailWidth = Math.max(20, maxWidth - 8);
   const { transcriptStyle, roleLabelStyle, toolCardStyle } = display;
   // A row that stands for several collapsed repeats says so. The count is
@@ -478,35 +453,45 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
 
   if (entry.kind === "user" || entry.kind === "assistant") {
     const isUser = entry.kind === "user";
+    // Frame accents (a bubble border, the inline label gap) stay in the
+    // speaker's own tone. The LABEL, however, carries the brand: the assistant
+    // "0sec" label renders in the slash red (theme.ERROR); the operator label
+    // stays the neutral accent. Body text is never tinted by this — it keeps
+    // TEXT / PRIMARY via renderMarkdownBlocks below.
     const tone = isUser ? ACCENT : PRIMARY;
+    const labelTone = isUser ? ACCENT : ERROR;
     const frame = speechFrame(transcriptStyle, entry.kind, maxWidth);
     const marginTop = display.spacing + frame.extraMarginTop;
     const age = display.showTimestamps ? relativeAge(entry.at, display.now) : "";
     const label = roleLabelText(isUser ? "user" : "assistant", roleLabelStyle, age);
+    // With the old full-height rail gone, an unbordered turn hands the whole
+    // pane to its body: the two cells the rail and its gap used to spend are
+    // reclaimed for text. A bordered turn still wraps to its inner width.
+    const bodyWidth = frame.bordered ? frame.markdownWidth : Math.max(8, maxWidth);
     // Body: raw text for the operator, rendered markdown for the model.
     const body = isUser
       ? <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
-      : renderMarkdownBlocks(renderMarkdown(entry.text, frame.markdownWidth), entry.id, theme);
+      : renderMarkdownBlocks(renderMarkdown(entry.text, bodyWidth), entry.id, theme);
 
     if (frame.bordered) {
-      // A bordered turn MUST carry an explicit numeric width plus flexShrink=0:
-      // width="100%" leaves flexShrink at 1, so under column pressure the box
-      // collapses and paints its own border through the message (PRIMITIVES.md).
+      // The grouped style: a subtle surface plus a border frames the turn,
+      // never a tall left bar. A bordered turn MUST carry an explicit numeric
+      // width plus flexShrink=0: width="100%" leaves flexShrink at 1, so under
+      // column pressure the box collapses and paints its own border through the
+      // message (PRIMITIVES.md).
       return (
-        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={tone} paddingX={1}>
-          {label ? <text fg={tone}>{label}</text> : null}
+        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={tone} backgroundColor={PANEL_ALT} paddingX={1}>
+          {label ? <text fg={labelTone}>{label}</text> : null}
           {body}
         </box>
       );
     }
 
-    // compact inlines a one-line operator message next to its label; every
-    // other unbordered style (rail/plain/document, and assistant markdown which
-    // cannot share a row) keeps the label above the body.
+    // compact inlines a one-line operator message next to its label.
     if (!frame.labelOwnRow && isUser) {
       return (
         <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
-          {label ? <box flexShrink={0}><text fg={tone}>{label}</text></box> : null}
+          {label ? <box flexShrink={0}><text fg={labelTone}>{label}</text></box> : null}
           <box flexGrow={1} minWidth={0} marginLeft={label ? 1 : 0}>
             {body}
           </box>
@@ -514,14 +499,14 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
       );
     }
 
-    const rail = speechRail(frame.railKind, tone, theme);
+    // The default separation, OpenCode-style: consecutive turns are set apart
+    // by whitespace (marginTop) and a compact coloured speaker label on its own
+    // row — NOT a full-height rail down the left of every message. The body
+    // then takes every cell of the pane, flush left.
     return (
-      <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
-        {rail}
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
-          {label ? <text fg={tone}>{label}</text> : null}
-          {body}
-        </box>
+      <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
+        {label ? <text fg={labelTone}>{label}</text> : null}
+        {body}
       </box>
     );
   }
@@ -621,15 +606,15 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
         </box>
       );
     }
+    // A failed turn reads as speech in the error tone: a compact red marker and
+    // label, the body beneath it, and the same whitespace separation as any
+    // other turn — no full-height bar.
     return (
-      <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
-        <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ERROR} />
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={ERROR}>▌ {fitTuiText(`${entry.text}${repeat}`, Math.max(1, maxWidth - 3))}</text>
-          {entry.detail ? (
-            <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text>
-          ) : null}
-        </box>
+      <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
+        <text fg={ERROR}>{fitTuiText(`▌ ${entry.text}${repeat}`, Math.max(1, maxWidth))}</text>
+        {entry.detail ? (
+          <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text>
+        ) : null}
       </box>
     );
   }
@@ -2906,6 +2891,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const showTerminalMark = settings.showLogo && empty && !compact && ledgerRows >= LEDGER_MARK_ROWS;
   const showEmptyStateHint = empty && ledgerRows >= 4;
   const showEmptyStateTagline = empty && ledgerRows >= 3;
+  // The three-line mode explanation is the lowest-priority hero block: it costs
+  // three rows on top of the mark, its Swiss tagline and the shorter captions,
+  // so it is only shown when the column can actually spare them. Dropped (not
+  // clipped or overprinted) on a short terminal, keeping the empty state whole.
+  const showEmptyStateModes = showTerminalMark && ledgerRows >= LEDGER_MARK_ROWS + 4;
   const sessionState = startupError ? "unavailable" : busy ? "working" : session ? "ready" : "connecting";
   const targetSummary = target ? `target: ${target}` : "target: none";
   const scopeSummary = `scope: ${scopeLabel} · ${sessionState}`;
@@ -2998,9 +2988,22 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                     <text fg={TEXT}>0SEC · OPERATOR CONSOLE</text>
                   </box>
                 )}
+                {/* The lab attribution sits directly under the mark, muted and
+                    centered, before the shorter captions — it says who is
+                    behind the console. */}
+                {showTerminalMark ? <text fg={MUTED}>{fitTuiText("by a Swiss Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
                 {showEmptyStateTagline ? <text fg={TEXT}>evidence-first security research</text> : null}
                 {showEmptyStateHint ? <text fg={MUTED}>{fitTuiText("Describe an objective. 0sec enforces engagement scope before egress.", contentWidth)}</text> : null}
-                {!compact && showTerminalMark ? <text fg={MUTED}>{fitTuiText("Type / for local commands. Standard works in scope; Co-pilot confirms active work; YOLO requires a configured scope.", contentWidth)}</text> : null}
+                {/* The mode explanation: three short labelled lines rather than
+                    one clipped sentence, so nothing is cut off mid-word. Dropped
+                    entirely (not truncated) when the column is too short. */}
+                {showEmptyStateModes ? (
+                  <box flexDirection="column" alignItems="center" flexShrink={0} minWidth={0} marginTop={1}>
+                    <text fg={MUTED}>{fitTuiText("Standard — acts within the configured scope", contentWidth)}</text>
+                    <text fg={MUTED}>{fitTuiText("Co-pilot — confirms each active step before it runs", contentWidth)}</text>
+                    <text fg={MUTED}>{fitTuiText("YOLO — full autonomy, but only inside a configured scope", contentWidth)}</text>
+                  </box>
+                ) : null}
               </box>
             ) : entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay, theme))}
             {animation ? (
