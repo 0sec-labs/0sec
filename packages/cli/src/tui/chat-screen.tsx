@@ -106,6 +106,12 @@ import {
   findCommand,
   type SlashCommand,
 } from "./slash-commands.js";
+import { deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
+import {
+  appendTranscriptEntry,
+  repeatSuffix,
+  restoreTranscript,
+} from "./transcript.js";
 
 export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay";
 
@@ -148,6 +154,11 @@ type ChatEntry = {
   panel?: PanelData;
   /** Epoch ms the entry was appended, for relative timestamps. */
   at?: number;
+  /**
+   * How many consecutive identical entries this row stands for; see
+   * `appendTranscriptEntry`. Rendered as a trailing "(xN)".
+   */
+  repeat?: number;
 };
 
 type PendingScope = {
@@ -206,6 +217,92 @@ function commandMatchesPrefix(command: SlashCommand, rawName: string): boolean {
  */
 function normalizeReasoning(text: string): string {
   return text.replace(/\*\*\*\*/g, "**\n\n**");
+}
+
+/**
+ * Rebuild visible transcript entries from a stored conversation.
+ *
+ * Resuming used to restore the model's history but leave the ledger empty,
+ * so the operator saw a blank screen and had no idea what the session was
+ * about. These messages come off disk and may be malformed or from an
+ * older shape, so every branch is defensive: anything unrecognised is
+ * skipped rather than rendered as a raw blob, and nothing here throws.
+ *
+ * Nothing is invented — an assistant message with no text produces no
+ * entry rather than a placeholder.
+ */
+export function entriesFromStoredMessages(messages: readonly unknown[]): ChatEntry[] {
+  const out: ChatEntry[] = [];
+  // tool_use ids are matched to their results so a call renders as one
+  // card with its outcome, the same shape a live turn produces.
+  const pendingCalls = new Map<string, { name: string; input: unknown }>();
+  let seq = 0;
+  const id = () => `restored-${seq++}`;
+
+  for (const raw of messages) {
+    if (!raw || typeof raw !== "object") continue;
+    const message = raw as { role?: unknown; content?: unknown };
+    const blocks = Array.isArray(message.content) ? message.content : [];
+    for (const block of blocks) {
+      if (!block || typeof block !== "object") continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === "text" && typeof b.text === "string" && b.text.trim()) {
+        out.push({
+          id: id(),
+          kind: message.role === "user" ? "user" : "assistant",
+          text: b.text,
+          turn: 0,
+        });
+      } else if (b.type === "tool_use" && typeof b.name === "string") {
+        if (typeof b.id === "string") {
+          pendingCalls.set(b.id, { name: b.name, input: b.input });
+        }
+      } else if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
+        const call = pendingCalls.get(b.tool_use_id);
+        pendingCalls.delete(b.tool_use_id);
+        const name = call?.name ?? "tool";
+        const success = b.is_error !== true;
+        // Stored results are serialized, so the summariser would otherwise
+        // see an opaque string and report "N lines" instead of the counted
+        // summary a live turn produces. Parse when it looks like JSON.
+        let output: unknown = b.content;
+        if (typeof output === "string") {
+          const trimmed = output.trim();
+          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+              output = JSON.parse(trimmed);
+            } catch {
+              // Not JSON after all; the raw string is still a fine summary input.
+            }
+          }
+        }
+        out.push({
+          id: id(),
+          kind: "tool",
+          text: name,
+          detail: formatToolResult(
+            { name, arguments: call?.input },
+            { success, output, error: success ? null : String(b.content ?? "") },
+          ),
+          success,
+          turn: 0,
+        });
+      }
+    }
+  }
+
+  // A call with no recorded result still happened; show it as unresolved
+  // rather than dropping evidence silently.
+  for (const [, call] of pendingCalls) {
+    out.push({
+      id: id(),
+      kind: "tool",
+      text: call.name,
+      detail: formatToolArgs({ name: call.name, arguments: call.input }),
+      turn: 0,
+    });
+  }
+  return out;
 }
 
 /** Compact relative age, e.g. "12s" / "4m" / "2h". */
@@ -307,6 +404,10 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, tone?: st
 
 function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) {
   const detailWidth = Math.max(20, maxWidth - 8);
+  // A row that stands for several collapsed repeats says so. The count is
+  // appended at render time and never written into `entry.text`, so the next
+  // repeat still compares equal and keeps collapsing.
+  const repeat = repeatSuffix(entry.repeat);
   if (entry.kind === "user") {
     return (
       <box key={entry.id} flexDirection="row" marginTop={display.spacing}>
@@ -346,7 +447,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
           <box flexDirection="row" minWidth={0}>
             <text fg={tone}>{icon}</text>
             <text fg={MUTED}>{toolPrefix}</text>
-            <text fg={TEXT}>{fitTuiText(entry.text, Math.max(1, detailWidth - toolPrefix.length - 1))}</text>
+            <text fg={TEXT}>{fitTuiText(`${entry.text}${repeat}`, Math.max(1, detailWidth - toolPrefix.length - 1))}</text>
           </box>
           {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text> : null}
         </box>
@@ -387,7 +488,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
       <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
         <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ERROR} />
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={ERROR}>▌ {fitTuiText(entry.text, Math.max(1, maxWidth - 3))}</text>
+          <text fg={ERROR}>▌ {fitTuiText(`${entry.text}${repeat}`, Math.max(1, maxWidth - 3))}</text>
           {entry.detail ? (
             <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text>
           ) : null}
@@ -463,7 +564,7 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay) 
     <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
       <text fg={MUTED}>·</text>
       <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-        <text fg={MUTED} wrapMode="word">{fitTuiText(entry.text, maxWidth - 2)}</text>
+        <text fg={MUTED} wrapMode="word">{fitTuiText(`${entry.text}${repeat}`, maxWidth - 2)}</text>
         {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, maxWidth - 2)}</text> : null}
       </box>
     </box>
@@ -527,6 +628,204 @@ function ComposerFrame({
     </box>
   );
 }
+
+/**
+ * How many rows a selector panel may spend, and on what.
+ *
+ * The panel is a bordered box stacked above the composer with an EXPLICIT
+ * height, so whatever it claims here is exactly what it paints. `budget` is
+ * the number of content rows the column can spare (from
+ * `computeCommandMenuHeight`, which already reserves the composer, the
+ * header and a minimum transcript).
+ *
+ * The optional lines are bought in priority order out of that budget rather
+ * than added on top of it: at least one item row always survives, then the
+ * context line (which says WHAT is being decided), then the detail line for
+ * the highlighted item. A panel that cannot afford them drops them instead
+ * of growing past its budget and over-subscribing the column — which is the
+ * exact failure that painted four `<text>` children onto one another and
+ * through the box border.
+ */
+function selectorPanelBudget({
+  budget,
+  hasContext,
+  hasDetail,
+}: {
+  budget: number;
+  hasContext: boolean;
+  hasDetail: boolean;
+}): { maxItemRows: number; showContext: boolean; showDetail: boolean } {
+  const total = Math.max(1, budget);
+  let remaining = total - 1; // one item row is non-negotiable
+  const showContext = hasContext && remaining > 0;
+  if (showContext) remaining -= 1;
+  const showDetail = hasDetail && remaining > 0;
+  if (showDetail) remaining -= 1;
+  return { maxItemRows: 1 + remaining, showContext, showDetail };
+}
+
+/**
+ * Total rows a selector panel occupies for the rows it actually renders.
+ * `commandMenuBoxHeight` covers the two border rows, the header and the
+ * hint footer; the optional lines are added explicitly.
+ */
+function selectorPanelHeight(itemRows: number, showContext: boolean, showDetail: boolean): number {
+  return commandMenuBoxHeight(Math.max(itemRows, 1), 1)
+    + (showContext ? 1 : 0)
+    + (showDetail ? 1 : 0);
+}
+
+/**
+ * THE decision surface.
+ *
+ * `/model`, `/mode`, `/settings`, `/providers`, `/resume` and every
+ * authorization prompt render through this one component, driven by the same
+ * `SelectorState` reducer and the same key bindings. Approvals used to be
+ * four bespoke bordered boxes of loose `<text>` children; opentui defaults
+ * `flexShrink` to 1 for any box without a numeric width/height, so under
+ * column pressure Yoga collapsed those boxes while their children kept their
+ * intrinsic size — every line, and the border, painted onto one row.
+ *
+ * Two properties prevent that here and are the reason approvals were moved
+ * onto this component rather than patched in place:
+ *   - an explicit `height` plus `flexShrink={0}`, so the box is clipped by
+ *     the layout rather than squeezed under its own contents;
+ *   - every child given an explicit cell width, so no row can overspend the
+ *     panel's inner width and paint into the border.
+ */
+function SelectorPanel({
+  title,
+  subtitle,
+  context,
+  contextColor,
+  rows,
+  windowStart,
+  activeIndex,
+  detail,
+  hint,
+  emptyText,
+  borderColor,
+  titleColor,
+  contentWidth,
+  height,
+}: {
+  title: string;
+  subtitle: string;
+  context?: string;
+  contextColor?: string;
+  rows: SelectorItem[];
+  windowStart: number;
+  activeIndex: number;
+  detail?: string;
+  hint: string;
+  emptyText: string;
+  borderColor: string;
+  titleColor: string;
+  contentWidth: number;
+  height: number;
+}) {
+  // Deliberately conservative: the real inner width is 2 (compact) to 4
+  // (wide) cells more than this, so every explicit allocation below fits
+  // with room to spare and can never reach the border.
+  const innerWidth = Math.max(1, contentWidth - 4);
+  const headerGap = innerWidth > 12 ? 1 : 0;
+  const headerTitleWidth = Math.max(1, Math.min(innerWidth - headerGap, Math.floor(innerWidth * 0.55)));
+  const headerSubtitleWidth = Math.max(0, innerWidth - headerTitleWidth - headerGap);
+  // Marker cell + its gap, then label, then whatever is left for the meta
+  // column. Widths and margins sum to exactly `innerWidth`; the old picker
+  // used `gap={1}` on top of widths that already spent the full row, which
+  // overspent it by two cells.
+  const labelWidth = Math.max(1, Math.min(Math.max(1, innerWidth - 2), Math.floor(innerWidth * 0.45)));
+  const afterLabel = innerWidth - 2 - labelWidth;
+  const metaGap = afterLabel > 1 ? 1 : 0;
+  const metaWidth = Math.max(0, afterLabel - metaGap);
+
+  return (
+    <box flexDirection="column" width="100%" minWidth={0} height={height} flexShrink={0} marginTop={1} border borderColor={borderColor} backgroundColor={PANEL_ALT} paddingX={1}>
+      <box flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
+        <box width={headerTitleWidth} flexShrink={0} minWidth={0}>
+          <text fg={titleColor}>{fitTuiText(title, headerTitleWidth)}</text>
+        </box>
+        {headerSubtitleWidth > 0 ? (
+          <box width={headerSubtitleWidth} flexShrink={0} minWidth={0} marginLeft={headerGap}>
+            <text fg={MUTED}>{fitTuiText(subtitle, headerSubtitleWidth, { mode: "middle" })}</text>
+          </box>
+        ) : null}
+      </box>
+      {context ? (
+        <box width={innerWidth} flexShrink={0} minWidth={0}>
+          {/* Truncated, never wrapped: a wrapping line has an unpredictable
+              height, and an unpredictable height is what over-subscribes the
+              column in the first place. */}
+          <text fg={contextColor ?? TEXT}>{fitTuiText(context, innerWidth, { mode: "middle" })}</text>
+        </box>
+      ) : null}
+      {rows.length > 0 ? rows.map((item, offset) => {
+        const index = windowStart + offset;
+        const active = index === activeIndex;
+        return (
+          <box key={item.id} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
+            <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
+            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
+              <text fg={item.disabled ? MUTED : active ? TEXT : MUTED}>{fitTuiText(`${item.current ? "● " : "  "}${item.label}`, labelWidth)}</text>
+            </box>
+            {metaWidth > 0 ? (
+              <box width={metaWidth} flexShrink={0} minWidth={0} marginLeft={metaGap}>
+                <text fg={active ? ACCENT : MUTED}>{fitTuiText(item.meta ?? "", metaWidth, { mode: "middle" })}</text>
+              </box>
+            ) : null}
+          </box>
+        );
+      }) : (
+        <box width={innerWidth} flexShrink={0} minWidth={0}>
+          <text fg={ERROR}>{fitTuiText(emptyText, innerWidth)}</text>
+        </box>
+      )}
+      {detail ? (
+        <box width={innerWidth} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(detail, innerWidth, { mode: "middle" })}</text>
+        </box>
+      ) : null}
+      <box width={innerWidth} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText(hint, innerWidth)}</text>
+      </box>
+    </box>
+  );
+}
+
+/**
+ * One pending authorization decision, projected onto the selector.
+ *
+ * The pending promise itself stays in the `pending*` state it always lived
+ * in — this is only a presentation + dispatch view over it, so the unmount
+ * cleanup that resolves every outstanding prompt to a DENIAL keeps working
+ * untouched.
+ */
+type ApprovalPrompt = {
+  /**
+   * The pending record this prompt speaks for. Object identity, so a new
+   * request gets a fresh selector position and a repeat of an identical
+   * request is still its own decision.
+   */
+  owner: object;
+  title: string;
+  /** What is being decided — tool name, hosts, path, reason. */
+  context: string;
+  items: SelectorItem[];
+  borderColor: string;
+  titleColor: string;
+  /** Applies the chosen item. Guarded to run at most once per `owner`. */
+  decide: (id: string) => void;
+  /**
+   * Esc / dismissal. ALWAYS the declining outcome: an operator must never be
+   * able to grant authority by walking away from the prompt.
+   */
+  decline: () => void;
+};
+
+/** The item id that grants. Everything else declines. */
+const APPROVAL_GRANT_ID = "grant";
+const APPROVAL_DENY_ID = "deny";
 
 export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreenProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
@@ -661,10 +960,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   }, [setCommandMenuVisible]);
 
   const appendEntry = useCallback((entry: Omit<ChatEntry, "id">) => {
-    setEntries((current) => [
-      ...current,
-      { at: Date.now(), ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
-    ]);
+    setEntries((current) => appendTranscriptEntry<ChatEntry>(current, {
+      at: Date.now(),
+      ...entry,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    }));
   }, []);
 
   /**
@@ -949,6 +1249,175 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   }, [appendEntry, pendingToolApproval]);
 
   /**
+   * Records whose decision has already been dispatched.
+   *
+   * `resolve*` above reads `pending*` from the render it was built in, so two
+   * key events delivered in the same tick — before React has re-rendered with
+   * the cleared state — would both see a non-null pending record and run the
+   * grant twice: two transcript notices, and a scope resolution applied
+   * twice. The promise itself is idempotent, but the side effects are not.
+   * Keying on the pending record's identity makes "exactly once" a property
+   * of the dispatcher rather than of event timing. A WeakSet so a resolved
+   * record is collectable.
+   */
+  const dispatched = useRef<WeakSet<object>>(new WeakSet());
+  const dispatchOnce = useCallback((owner: object, run: () => void) => {
+    if (dispatched.current.has(owner)) return;
+    dispatched.current.add(owner);
+    run();
+  }, []);
+
+  /**
+   * The single authorization prompt currently in front of the operator.
+   *
+   * Only the topmost is shown. Four independently-rendered panels could
+   * previously stack in the same column at once; each one that appears is a
+   * decision the operator has to take in order anyway, and a stack of them
+   * is precisely what over-subscribes the column.
+   *
+   * Precedence matches the order the old keyboard handler used, so which
+   * prompt answers a keystroke has not changed.
+   */
+  const approvalPrompt = useMemo<ApprovalPrompt | null>(() => {
+    if (pendingScope) {
+      const owner = pendingScope;
+      return {
+        owner,
+        title: "AUTHORIZE SESSION SCOPE",
+        context: `${owner.request.call.name} requests ${owner.request.requestedUrls.join(", ")}`,
+        borderColor: WARNING,
+        titleColor: WARNING,
+        items: [
+          {
+            id: APPROVAL_GRANT_ID,
+            label: "Approve for this session",
+            meta: "adds the exact hosts",
+            detail: "Exact hosts apply only to this session. Existing deny rules still win.",
+          },
+          {
+            id: APPROVAL_DENY_ID,
+            label: "Reject",
+            meta: "tool does not run",
+            detail: "Scope is unchanged and the requested tool call is refused.",
+          },
+        ],
+        decide: (id) => dispatchOnce(owner, () => resolveScope(id === APPROVAL_GRANT_ID)),
+        decline: () => dispatchOnce(owner, () => resolveScope(false)),
+      };
+    }
+    if (pendingLocalScope) {
+      const owner = pendingLocalScope;
+      return {
+        owner,
+        title: "AUTHORIZE LOCAL DIRECTORY",
+        context: `${owner.request.call.name} wants to read ${owner.request.requestedPath}`,
+        borderColor: WARNING,
+        titleColor: WARNING,
+        items: [
+          {
+            id: APPROVAL_GRANT_ID,
+            label: "Approve this directory",
+            meta: "this subtree, this session",
+            detail: "Grants this directory subtree for this session only. Nothing is written to disk.",
+          },
+          {
+            id: APPROVAL_DENY_ID,
+            label: "Decline",
+            meta: "tool does not run",
+            detail: "No filesystem access is granted and the tool call is refused.",
+          },
+        ],
+        decide: (id) => dispatchOnce(owner, () => resolveLocalScope(id === APPROVAL_GRANT_ID)),
+        decline: () => dispatchOnce(owner, () => resolveLocalScope(false)),
+      };
+    }
+    if (pendingEscalation) {
+      const owner = pendingEscalation;
+      return {
+        owner,
+        title: "ENABLE ADDITIONAL TOOL",
+        context: `${owner.request.call.name} — ${owner.request.reason}`,
+        borderColor: WARNING,
+        titleColor: WARNING,
+        items: [
+          {
+            id: APPROVAL_GRANT_ID,
+            label: "Enable for this session",
+            meta: "lifts the audit restriction",
+            detail: "Scope approval and the Co-pilot gate still apply to it.",
+          },
+          {
+            id: APPROVAL_DENY_ID,
+            label: "Keep disabled",
+            meta: "tool stays blocked",
+            detail: "The source-audit tool restriction stays in force for this session.",
+          },
+        ],
+        decide: (id) => dispatchOnce(owner, () => resolveEscalation(id === APPROVAL_GRANT_ID)),
+        decline: () => dispatchOnce(owner, () => resolveEscalation(false)),
+      };
+    }
+    if (pendingToolApproval) {
+      const owner = pendingToolApproval;
+      return {
+        owner,
+        title: "CO-PILOT APPROVAL",
+        context: `${owner.call.name} ${JSON.stringify(owner.call.arguments)}`,
+        borderColor: INFO,
+        titleColor: INFO,
+        items: [
+          {
+            id: APPROVAL_GRANT_ID,
+            label: "Approve this call",
+            meta: "runs once",
+            detail: "Approves only this call. The next one asks again.",
+          },
+          {
+            id: APPROVAL_DENY_ID,
+            label: "Reject",
+            meta: "call does not run",
+            detail: "The model is told the operator refused, and continues without it.",
+          },
+        ],
+        decide: (id) => dispatchOnce(owner, () => resolveToolApproval(id === APPROVAL_GRANT_ID)),
+        decline: () => dispatchOnce(owner, () => resolveToolApproval(false)),
+      };
+    }
+    return null;
+  }, [
+    dispatchOnce,
+    pendingEscalation,
+    pendingLocalScope,
+    pendingScope,
+    pendingToolApproval,
+    resolveEscalation,
+    resolveLocalScope,
+    resolveScope,
+    resolveToolApproval,
+  ]);
+
+  /**
+   * Selector position for the open approval, keyed by the pending record it
+   * belongs to. Derived rather than pushed through an effect: an effect would
+   * leave one frame in which the prompt is up and its selector is not, and
+   * that frame is a keystroke the operator could lose.
+   */
+  const [approvalCursor, setApprovalCursor] = useState<{ owner: object; state: SelectorState } | null>(null);
+  const approvalState: SelectorState | null = approvalPrompt
+    ? (approvalCursor && approvalCursor.owner === approvalPrompt.owner
+        ? approvalCursor.state
+        // The grant is highlighted first, exactly as Enter used to approve
+        // directly — the semantics of the default answer are unchanged.
+        : createSelectorState(approvalPrompt.title, approvalPrompt.items, APPROVAL_GRANT_ID))
+    : null;
+  const stepApproval = useCallback((action: "up" | "down") => {
+    setApprovalCursor((current) => {
+      if (!approvalPrompt || !approvalState) return current;
+      return { owner: approvalPrompt.owner, state: reduceSelector(approvalState, { type: action }) };
+    });
+  }, [approvalPrompt, approvalState]);
+
+  /**
    * `send` is declared after the command router, but /explain needs to
    * submit a real turn. A ref breaks the cycle without reordering two
    * large callbacks or making either depend on the other's identity.
@@ -1076,12 +1545,17 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
             setSession(built.session);
             setModelId(built.model);
             if (previous) void previous.cleanup();
-            setEntries([]);
             turn.current = 0;
+            const restored = entriesFromStoredMessages(stored.messages);
+            setEntries(restored);
             appendEntry({
               kind: "notice",
-              text: `resumed session ${id}`,
-              detail: `${stored.messageCount} prior message(s) restored. The transcript above starts fresh; the model still has the history.`,
+              text: restored.length > 0
+                ? `— end of resumed session ${id} · new messages continue below —`
+                : `resumed session ${id}`,
+              detail: restored.length > 0
+                ? `${stored.messageCount} prior message(s) restored. Everything above is replayed history, not new activity.`
+                : `${stored.messageCount} prior message(s) restored, but none could be rendered. The model still has the history.`,
               turn: turn.current,
             });
           },
@@ -1463,6 +1937,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     // accumulator so the two never interleave into one entry.
     let reasoningText = "";
     streamingRef.current = false;
+    // One controller per turn, published so Esc can reach it. It is cleared
+    // in `finally`, so an Esc after the turn ended aborts nothing.
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const outcome = await session.send(text, {
@@ -1548,7 +2026,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           setTurnBudget({ used: usage.turnTokensUsed, limit: usage.turnTokenBudget });
         },
         onNotice: (notice) => appendEntry({ kind: "notice", text: notice, turn: currentTurn }),
-      });
+      }, { signal: controller.signal });
 
       if (!assistantText && outcome.assistantText) {
         appendEntry({ kind: "assistant", text: outcome.assistantText, turn: currentTurn });
@@ -1656,24 +2134,31 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   }, [busy, session]);
 
   useKeyboard((key) => {
-    if (pendingScope) {
-      if (key.name === "return") resolveScope(true);
-      if (key.name === "escape") resolveScope(false);
-      return;
-    }
-    if (pendingLocalScope) {
-      if (key.name === "return") resolveLocalScope(true);
-      if (key.name === "escape") resolveLocalScope(false);
-      return;
-    }
-    if (pendingEscalation) {
-      if (key.name === "return") resolveEscalation(true);
-      if (key.name === "escape") resolveEscalation(false);
-      return;
-    }
-    if (pendingToolApproval) {
-      if (key.name === "return") resolveToolApproval(true);
-      if (key.name === "escape") resolveToolApproval(false);
+    // Authorization prompts are modal and drive the SAME selector reducer the
+    // command pickers use, so ↑↓/enter/esc mean one thing everywhere. Ctrl+C
+    // still exits — a modal must never trap the operator — and takes the
+    // declining path on the way out rather than dropping the promise.
+    if (approvalPrompt) {
+      if (key.ctrl && key.name === "c") {
+        approvalPrompt.decline();
+        onExit();
+        return;
+      }
+      if (key.name === "escape") {
+        approvalPrompt.decline();
+        return;
+      }
+      if (key.name === "return") {
+        const choice = approvalState ? highlighted(approvalState) : undefined;
+        // No highlighted row (the filter matched nothing) is NOT a grant:
+        // the prompt simply stays open.
+        if (choice && !choice.disabled) approvalPrompt.decide(choice.id);
+        return;
+      }
+      if (key.name === "up" || key.name === "down") {
+        stepApproval(key.name);
+        return;
+      }
       return;
     }
     // The picker is modal: while it is open it owns navigation, typing and
@@ -2217,7 +2702,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         * the transcript evidence the decision is based on.
         */}
       {pendingScope ? (
-        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
           <text fg={WARNING}>{fitTuiText("AUTHORIZE SESSION SCOPE", approvalWidth)}</text>
           <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingScope.request.call.name} requests ${pendingScope.request.requestedUrls.join(", ")}`, approvalWidth)}</text>
           <text fg={MUTED} wrapMode="word">{fitTuiText("Exact hosts apply only to this session. Existing deny rules still win.", approvalWidth)}</text>
@@ -2228,7 +2713,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         </box>
       ) : null}
       {pendingLocalScope ? (
-        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
           <text fg={WARNING}>{fitTuiText("AUTHORIZE LOCAL DIRECTORY", approvalWidth)}</text>
           <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingLocalScope.request.call.name} wants to read ${pendingLocalScope.request.requestedPath}`, approvalWidth)}</text>
           <text fg={MUTED} wrapMode="word">{fitTuiText("Grants this directory subtree for this session only. Nothing is written to disk.", approvalWidth)}</text>
@@ -2239,7 +2724,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         </box>
       ) : null}
       {pendingEscalation ? (
-        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
           <text fg={WARNING}>{fitTuiText("ENABLE ADDITIONAL TOOL", approvalWidth)}</text>
           <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingEscalation.request.call.name} — ${pendingEscalation.request.reason}`, approvalWidth)}</text>
           <text fg={MUTED} wrapMode="word">{fitTuiText("Enables this tool for the rest of the session. Scope approval and the Co-pilot gate still apply to it.", approvalWidth)}</text>
@@ -2250,7 +2735,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         </box>
       ) : null}
       {pendingToolApproval ? (
-        <box flexDirection="column" width="100%" minWidth={0} marginTop={1} border borderColor={INFO} backgroundColor={PANEL_ALT} paddingX={1}>
+        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={1} border borderColor={INFO} backgroundColor={PANEL_ALT} paddingX={1}>
           <text fg={INFO}>{fitTuiText("CO-PILOT APPROVAL", approvalWidth)}</text>
           <text fg={TEXT} wrapMode="word">{fitTuiText(`${pendingToolApproval.call.name} ${JSON.stringify(pendingToolApproval.call.arguments)}`, approvalWidth)}</text>
           <box flexDirection="row" width="100%" minWidth={0} gap={2}>
