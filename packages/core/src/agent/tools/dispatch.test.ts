@@ -66,6 +66,8 @@ const EXPECTED_ROUTING: Record<string, string> = {
   // Phase-0 — persistent compute-only Python kernel.
   python_exec: "pythonExec",
   analyze_binary: "analyzeBinary",
+  // Operator question channel — information-gathering only, grants nothing.
+  ask_operator: "askOperator",
 };
 
 describe("TOOL_DISPATCH (0sec#614)", () => {

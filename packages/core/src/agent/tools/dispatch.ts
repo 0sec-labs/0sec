@@ -24,6 +24,7 @@ import { orchestratorDispatch } from "./orchestrator.js";
 import { oastDispatch } from "./oast.js";
 import { pythonDispatch } from "./python.js";
 import { binaryDispatch } from "./binary.js";
+import { askOperatorDispatch } from "./ask-operator.js";
 
 export const TOOL_DISPATCH: Record<string, string> = {
   ...reconDispatch,
@@ -40,4 +41,5 @@ export const TOOL_DISPATCH: Record<string, string> = {
   ...oastDispatch,
   ...pythonDispatch,
   ...binaryDispatch,
+  ...askOperatorDispatch,
 };

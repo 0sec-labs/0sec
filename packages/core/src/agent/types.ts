@@ -83,6 +83,73 @@ export interface ScopedAuditEscalationRequest {
   reason: string;
 }
 
+// ── Operator question channel (`ask_operator`) ──
+
+/**
+ * One selectable option offered alongside an {@link OperatorQuestion}.
+ *
+ * The model authors these (they are not attacker-influenced) so the operator
+ * gets concrete, low-friction choices instead of a free-text prompt. `label` is
+ * the short choice text; `description` optionally elaborates; `recommended`
+ * marks the option the model would pick, purely as a display hint.
+ */
+export interface OperatorQuestionOption {
+  label: string;
+  description?: string;
+  recommended?: boolean;
+}
+
+/**
+ * A single structured question the model puts to the human operator via the
+ * `ask_operator` tool. `header` is a short title for the prompt; `question` is
+ * the full prose. When `options` are present the operator picks from them
+ * (`multiSelect` allows more than one); `allowCustom` additionally permits a
+ * free-text answer. This is an INFORMATION-GATHERING structure only — answering
+ * it grants no authority, widens no scope, and approves no tool.
+ */
+export interface OperatorQuestion {
+  header: string;
+  question: string;
+  options?: OperatorQuestionOption[];
+  multiSelect?: boolean;
+  allowCustom?: boolean;
+}
+
+/**
+ * Typed request handed to {@link ToolContext.askOperator}. Built by the
+ * `ask_operator` handler from validated model input, stamped with a generated
+ * {@link requestId} so the UI can correlate the answer back to the pending ask.
+ * Modeled on OpenCode's `QuestionRequest` and Claude Code's `AskUserQuestion`.
+ */
+export interface OperatorQuestionRequest {
+  /** Correlation id for this ask (generated; injectable factory in tests). */
+  requestId: string;
+  /** 1–4 questions to put to the operator. */
+  questions: OperatorQuestion[];
+}
+
+/** One question's answer, correlated back to its {@link OperatorQuestion.header}. */
+export interface OperatorQuestionAnswerItem {
+  /** The `header` of the question this answers. */
+  header: string;
+  /** Option labels the operator selected (omitted / empty when none). */
+  selectedLabels?: string[];
+  /** Free-text the operator typed (only when the question allowed custom input). */
+  customText?: string;
+}
+
+/**
+ * Answer returned by {@link ToolContext.askOperator}. `requestId` echoes the
+ * request. `answers` is index-aligned-by-`header` with the asked questions. A
+ * `null` return from the callback means the operator dismissed the ask without
+ * answering — the tool renders that as a graceful "no answer" result, never a
+ * block.
+ */
+export interface OperatorQuestionAnswer {
+  requestId: string;
+  answers: OperatorQuestionAnswerItem[];
+}
+
 // ── Agent Messages (multi-turn) ──
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
@@ -250,6 +317,27 @@ export interface ToolContext {
    * and co-pilot per-tool approval gates all still apply on top.
    */
   escalateScopedAudit?: (req: ScopedAuditEscalationRequest) => Promise<boolean>;
+  /**
+   * Operator question channel for the `ask_operator` tool.
+   *
+   * When wired, the tool builds a typed {@link OperatorQuestionRequest} and
+   * awaits this callback; the UI renders the structured question(s), collects
+   * the operator's selections / free text, and resolves the promise with an
+   * {@link OperatorQuestionAnswer} (or `null` if the operator dismissed the ask
+   * without answering). The handler returns that answer as a NORMAL tool result
+   * so the model treats it as the operator's input/data.
+   *
+   * This is an INFORMATION-GATHERING gate ONLY — distinct from
+   * `approveTool` / `requestScope` / `escalateScopedAudit`. It authorizes
+   * NOTHING: it never widens scope, approves a tool, or changes autonomy mode.
+   * `ask_operator` is in `READ_ONLY_TOOLS` for exactly this reason.
+   *
+   * When ABSENT — every non-console caller, including the scan pipeline — the
+   * tool returns a graceful "operator questions are not available in this
+   * session" result rather than blocking forever, mirroring every other gate's
+   * "no callback → defer" contract.
+   */
+  askOperator?: (req: OperatorQuestionRequest) => Promise<OperatorQuestionAnswer | null>;
   /**
    * Agent-to-agent messaging identity and policy for this executor.
    *

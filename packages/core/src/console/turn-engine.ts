@@ -21,7 +21,7 @@ import {
   type GuardContext,
   type ToolGuard,
 } from "../plugins/guards.js";
-import type { AgentRole, ScopedAuditEscalationRequest, ToolCall, ToolContext, ToolDefinition, ToolResult } from "../agent/types.js";
+import type { AgentRole, OperatorQuestionAnswer, OperatorQuestionRequest, ScopedAuditEscalationRequest, ToolCall, ToolContext, ToolDefinition, ToolResult } from "../agent/types.js";
 import { ScopePolicy } from "../scope/scope.js";
 
 /**
@@ -456,6 +456,19 @@ export interface ConsoleSessionConfig {
    */
   escalateScopedAudit?: (req: ScopedAuditEscalationRequest) => Promise<boolean>;
   /**
+   * Operator question channel for the `ask_operator` tool. Invoked when the
+   * model pauses to ask the operator a STRUCTURED question; render the
+   * question(s), collect the answer, and resolve with an
+   * {@link OperatorQuestionAnswer} — or `null` if the operator dismissed the ask
+   * without answering.
+   *
+   * This is INFORMATION-GATHERING ONLY and distinct from `approveTool` /
+   * `requestScope` / `escalateScopedAudit`: it authorizes NOTHING. When absent,
+   * `ask_operator` returns a graceful "not available" result rather than
+   * blocking, mirroring every other gate's "no callback → defer" contract.
+   */
+  askOperator?: (req: OperatorQuestionRequest) => Promise<OperatorQuestionAnswer | null>;
+  /**
    * Agent-to-agent messaging identity and policy for this session's agent.
    *
    * Propagates to every subagent, which is how a child learns its parent's
@@ -677,6 +690,11 @@ const READ_ONLY_TOOLS: Record<string, true> = {
   // gates it like any other action, but it reaches neither the target
   // network nor the operator-approved project scope.
   check_messages: true,
+  // Puts a structured question to the operator and blocks for an answer. It is
+  // an INFORMATION-GATHERING tool: it authorizes nothing — no scope, no
+  // approval, no capability — so, like check_messages, it grants no authority
+  // and is exempt from the copilot/standard approval gate.
+  ask_operator: true,
   done: true,
 };
 
@@ -1506,6 +1524,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // filesystem and co-pilot gates in this file still run first.
     autonomyMode,
     escalateScopedAudit: config.escalateScopedAudit,
+    // Information-gathering only — grants no authority (see ConsoleSessionConfig).
+    askOperator: config.askOperator,
     agentMessaging: config.agentMessaging,
   };
 

@@ -82,6 +82,11 @@ export type {
   ToolResult,
   ToolContext,
   ScopedAuditEscalationRequest,
+  OperatorQuestion,
+  OperatorQuestionOption,
+  OperatorQuestionRequest,
+  OperatorQuestionAnswer,
+  OperatorQuestionAnswerItem,
   MessageRole,
   DispatchMode,
 } from "./types.js";
