@@ -890,3 +890,525 @@ export function herdComposerVisibleDraft(draft: unknown, contentWidth: number): 
 export function fitHerdEmptyText(width: number): string {
   return fitTuiText(HERD_EMPTY_TEXT, cells(width));
 }
+
+// ===========================================================================
+// FOCUS MODE — drill into ONE subagent, watch its live activity, steer it.
+// ===========================================================================
+//
+// The list is a roster overview; focus mode is the operator "going into" a
+// single running subagent. The list pane feeds it a peer; the event bus feeds
+// it that peer's LIVE activity. Both halves are pure and swept here, for the
+// same Yoga-shrinks-not-clips reason the list layout is:
+//
+//   1. {@link computeHerdFocusLayout} splits the body into a fixed meta pane
+//      (identity + status + turns + findings) stacked over a transcript pane
+//      (the scrolling mini-transcript of the child's per-turn activity). Both
+//      are the full content width — a single column — so the only failure mode
+//      is vertical, and the allocator gives the transcript every row the meta
+//      does not need while guaranteeing the meta keeps at least its title.
+//   2. {@link applySubagentLifecycle} / {@link applySubagentProgress} are pure
+//      reducers over the `subagent_lifecycle` / `subagent_progress` bus events
+//      (mirrored structurally here — the payload arrives as a bare record and
+//      core's `SubagentProgressPayload` is not exported). They build a bounded
+//      per-agent record: latest snapshot + a ring of activity entries.
+//   3. {@link focusHeaderLines} / {@link renderFocusActivity} turn a record
+//      into tone-tagged, width-wrapped lines the component paints without any
+//      arithmetic of its own — every peer-authored field is sanitized on the
+//      way, exactly as the detail pane sanitizes.
+
+// ---------------------------------------------------------------------------
+// Live subagent model — a structural mirror of the bus payloads
+// ---------------------------------------------------------------------------
+
+/** The four lifecycle states a subagent moves through. Mirrors the bus. */
+export type SubagentStatus = "queued" | "running" | "completed" | "failed";
+
+/** How many activity entries a single agent's ring buffer retains. */
+export const HERD_ACTIVITY_MAX = 200;
+
+/**
+ * One entry in a subagent's live activity ring. A `lifecycle` entry marks a
+ * state transition (queued → running → completed|failed); a `progress` entry
+ * is one completed child turn carrying the tool that ran and any note the
+ * child authored. Everything here is DISPLAY data — sanitized when rendered.
+ */
+export interface SubagentActivityEntry {
+  readonly kind: "lifecycle" | "progress";
+  /** Epoch ms the entry was recorded (the event arrival clock). */
+  readonly ts: number;
+  readonly status?: SubagentStatus;
+  readonly turn?: number;
+  readonly maxTurns?: number;
+  readonly tool?: string;
+  readonly note?: string;
+  readonly findings?: number;
+  readonly turns?: number;
+  readonly error?: string;
+}
+
+/**
+ * The live record the focus view is a view over: the latest snapshot for one
+ * subagent joined to its bounded activity ring. Keyed elsewhere by `agentId`,
+ * which is the SAME id a roster subagent peer carries, so a peer and its live
+ * record join on the id.
+ */
+export interface HerdSubagentRecord {
+  readonly agentId: string;
+  readonly parentScanId: string;
+  readonly task: string;
+  readonly status: SubagentStatus;
+  readonly maxTurns: number;
+  readonly turn?: number;
+  readonly turns?: number;
+  readonly findings?: number;
+  readonly summary?: string;
+  readonly error?: string;
+  /** Latest tool the child ran, mirrored onto the roster row's activity. */
+  readonly tool?: string;
+  /** Latest note the child authored. */
+  readonly note?: string;
+  /** Epoch ms of the last event for this agent — drives age/staleness. */
+  readonly lastSeen: number;
+  readonly activity: readonly SubagentActivityEntry[];
+}
+
+/** A live subagent map, keyed by `agentId`. */
+export type HerdSubagentMap = Record<string, HerdSubagentRecord>;
+
+// -- Defensive coercion of bus payload fields (payloads arrive as records) --
+
+function pickString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function pickFiniteInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : undefined;
+}
+
+function pickStatus(value: unknown): SubagentStatus | undefined {
+  return value === "queued" || value === "running" || value === "completed" || value === "failed"
+    ? value
+    : undefined;
+}
+
+function boundActivity(
+  prev: readonly SubagentActivityEntry[],
+  entry: SubagentActivityEntry,
+  maxLines: number,
+): SubagentActivityEntry[] {
+  const cap = Math.max(1, cells(maxLines) || HERD_ACTIVITY_MAX);
+  const next = [...prev, entry];
+  return next.length > cap ? next.slice(next.length - cap) : next;
+}
+
+/**
+ * Fold one `subagent_lifecycle` bus payload into the map. Pure: the arrival
+ * clock is injected. Returns the SAME map when the payload is unusable (no
+ * `agent_id`), so a malformed event never forces a repaint; otherwise a new
+ * map with the agent's record upserted and a lifecycle entry appended.
+ *
+ * Terminal states (completed|failed) are KEPT, not dropped — unlike the chat
+ * card's active-set reducer, the focus view wants the final summary/error to
+ * stay readable after the child finishes.
+ */
+export function applySubagentLifecycle(
+  map: HerdSubagentMap,
+  payload: Record<string, unknown>,
+  now: number,
+  maxLines: number = HERD_ACTIVITY_MAX,
+): HerdSubagentMap {
+  const agentId = pickString(payload["agent_id"]);
+  if (!agentId) return map;
+  const ts = Number.isFinite(now) ? now : 0;
+  const prev = map[agentId];
+  const status = pickStatus(payload["status"]) ?? prev?.status ?? "queued";
+  const task = pickString(payload["task"]) ?? prev?.task ?? "";
+  const maxTurns = pickFiniteInt(payload["max_turns"]) ?? prev?.maxTurns ?? 0;
+  const turns = pickFiniteInt(payload["turns"]) ?? prev?.turns;
+  const findings = pickFiniteInt(payload["findings"]) ?? prev?.findings;
+  const summary = pickString(payload["summary"]) ?? prev?.summary;
+  const error = pickString(payload["error"]) ?? prev?.error;
+
+  const entry: SubagentActivityEntry = {
+    kind: "lifecycle",
+    ts,
+    status,
+    turns,
+    findings,
+    error,
+  };
+
+  const record: HerdSubagentRecord = {
+    agentId,
+    parentScanId: pickString(payload["parent_scan_id"]) ?? prev?.parentScanId ?? "",
+    task,
+    status,
+    maxTurns,
+    turn: prev?.turn,
+    turns,
+    findings,
+    summary,
+    error,
+    tool: prev?.tool,
+    note: prev?.note,
+    lastSeen: ts,
+    activity: boundActivity(prev?.activity ?? [], entry, maxLines),
+  };
+  return { ...map, [agentId]: record };
+}
+
+/**
+ * Fold one `subagent_progress` bus payload into the map. Pure. A progress
+ * event only lands for a running child, so if no record exists yet one is
+ * seeded in `running` — the roster/lifecycle event may simply not have been
+ * observed by this process first. Appends a progress entry and refreshes the
+ * latest turn / tool / note mirrored onto the roster row.
+ */
+export function applySubagentProgress(
+  map: HerdSubagentMap,
+  payload: Record<string, unknown>,
+  now: number,
+  maxLines: number = HERD_ACTIVITY_MAX,
+): HerdSubagentMap {
+  const agentId = pickString(payload["agent_id"]);
+  if (!agentId) return map;
+  const ts = Number.isFinite(now) ? now : 0;
+  const prev = map[agentId];
+  const turn = pickFiniteInt(payload["turn"]);
+  const maxTurns = pickFiniteInt(payload["max_turns"]) ?? prev?.maxTurns ?? 0;
+  const tool = pickString(payload["tool"]);
+  const note = pickString(payload["note"]);
+
+  const entry: SubagentActivityEntry = { kind: "progress", ts, turn, maxTurns, tool, note };
+
+  const record: HerdSubagentRecord = {
+    agentId,
+    parentScanId: pickString(payload["parent_scan_id"]) ?? prev?.parentScanId ?? "",
+    task: prev?.task ?? "",
+    // A child still emitting turns is running, unless it already reached a
+    // terminal state we recorded (a late progress event never resurrects it).
+    status: prev?.status === "completed" || prev?.status === "failed" ? prev.status : "running",
+    maxTurns,
+    turn: turn ?? prev?.turn,
+    turns: prev?.turns,
+    findings: prev?.findings,
+    summary: prev?.summary,
+    error: prev?.error,
+    tool: tool ?? prev?.tool,
+    note: note ?? prev?.note,
+    lastSeen: ts,
+    activity: boundActivity(prev?.activity ?? [], entry, maxLines),
+  };
+  return { ...map, [agentId]: record };
+}
+
+/** Map a lifecycle status to the roster's live phase bucket. */
+function statusPhase(status: SubagentStatus): HerdPhase {
+  switch (status) {
+    case "running":
+      return "working";
+    case "queued":
+      return "idle";
+    default:
+      // completed AND failed are both terminal → "done"; a failed child keeps
+      // its error visible in the note rather than masquerading as "blocked".
+      return "done";
+  }
+}
+
+/** Human label for a subagent's own lifecycle status (focus header). */
+export function subagentStatusLabel(status: SubagentStatus): string {
+  switch (status) {
+    case "queued":
+      return "queued";
+    case "running":
+      return "running";
+    case "completed":
+      return "completed";
+    default:
+      return "failed";
+  }
+}
+
+/**
+ * Project the live subagent map onto roster peers, so a subagent actually
+ * running in this process shows in the list even before the (unwired) roster
+ * producer lands. These are REAL agents emitting REAL events — not fabricated
+ * placeholders — so surfacing them does not violate the screen's no-invented-
+ * herd rule. Insertion order is preserved (JS keeps string-key order).
+ */
+export function subagentPeers(map: HerdSubagentMap, _now: number): HerdPeer[] {
+  const peers: HerdPeer[] = [];
+  for (const record of Object.values(map)) {
+    if (!record || typeof record.agentId !== "string") continue;
+    peers.push({
+      id: record.agentId,
+      kind: "subagent",
+      pid: 0,
+      cwd: "",
+      lastSeen: record.lastSeen,
+      label: record.task || undefined,
+      activity: {
+        phase: statusPhase(record.status),
+        turn: record.turn,
+        maxTurns: record.maxTurns > 0 ? record.maxTurns : undefined,
+        tool: record.tool,
+        note: record.note,
+      },
+    });
+  }
+  return peers;
+}
+
+/**
+ * Merge a provider roster with the live subagent peers, provider winning on an
+ * id collision (the injected reader is authoritative once it lands). Additive:
+ * with no provider peers this is just the live subagents; with no live
+ * subagents it is just the provider roster.
+ */
+export function mergeSubagentRoster(
+  providerPeers: readonly HerdPeer[],
+  livePeers: readonly HerdPeer[],
+): HerdPeer[] {
+  const seen = new Set(providerPeers.map((p) => p.id));
+  const merged: HerdPeer[] = [...providerPeers];
+  for (const peer of livePeers) {
+    if (!seen.has(peer.id)) {
+      merged.push(peer);
+      seen.add(peer.id);
+    }
+  }
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// Focus content — header lines + activity transcript
+// ---------------------------------------------------------------------------
+
+function focusStatusTone(status: SubagentStatus): HerdDetailTone {
+  switch (status) {
+    case "running":
+      return "accent";
+    case "failed":
+      return "warn";
+    default:
+      return "muted";
+  }
+}
+
+/**
+ * The focus header: identity + live status counters for one subagent, as flat
+ * tone-tagged lines wrapped to `width`. Prefers the live record when present
+ * (its lifecycle status/findings/summary are richer than the roster row), and
+ * falls back to the peer's own roster fields otherwise, so focusing a peer
+ * with no live record still reads.
+ */
+export function focusHeaderLines(
+  peer: HerdPeer | undefined,
+  record: HerdSubagentRecord | undefined,
+  width: number,
+  now: number,
+  { compact = false }: { compact?: boolean } = {},
+): HerdDetailLine[] {
+  const limit = cells(width);
+  if (!peer || limit <= 0) return [];
+  const lines: HerdDetailLine[] = [];
+  const push = (value: string, tone: HerdDetailTone) => {
+    for (const text of wrapCells(value, limit)) lines.push({ text, tone });
+  };
+  const separate = () => {
+    if (!compact) lines.push({ text: "", tone: "blank" });
+  };
+
+  const task = record?.task || peer.label || "";
+  push(sanitizeHerdText(task).length > 0 ? task : peer.id, "title");
+  if (sanitizeHerdText(task).length > 0) push(peer.id, "muted");
+  separate();
+
+  if (record) {
+    push(`Status: ${subagentStatusLabel(record.status)}`, focusStatusTone(record.status));
+    const budget = record.maxTurns > 0 ? `/${record.maxTurns}` : "";
+    const turnValue =
+      typeof record.turn === "number"
+        ? record.turn
+        : typeof record.turns === "number"
+          ? record.turns
+          : undefined;
+    if (typeof turnValue === "number") push(`Turns: ${turnValue}${budget}`, "text");
+    else if (record.maxTurns > 0) push(`Turns: 0${budget}`, "muted");
+    if (typeof record.findings === "number") push(`Findings: ${record.findings}`, "text");
+    if (record.tool) push(`Tool: ${record.tool}`, "text");
+    if (record.note) push(`Note: ${record.note}`, "text");
+    push(`Last seen: ${formatRelativeAge(record.lastSeen, now)}`, "muted");
+    if (record.status === "completed" && record.summary) {
+      separate();
+      push(`Summary: ${record.summary}`, "text");
+    }
+    if (record.status === "failed" && record.error) {
+      separate();
+      push(`Error: ${record.error}`, "warn");
+    }
+  } else {
+    const status = herdStatusOf(peer, now);
+    push(`Status: ${herdStatusLabel(status).toLowerCase()}`, statusTone(status));
+    push(`Kind: ${peer.kind === "subagent" ? "subagent" : "session"}`, "muted");
+    const a = peer.activity;
+    if (a && typeof a.turn === "number") {
+      const budget = typeof a.maxTurns === "number" && a.maxTurns > 0 ? `/${a.maxTurns}` : "";
+      push(`Turns: ${Math.trunc(a.turn)}${budget}`, "text");
+    }
+    if (a?.tool) push(`Tool: ${a.tool}`, "text");
+    if (a?.note) push(`Note: ${a.note}`, "text");
+    push(`Last seen: ${formatRelativeAge(peer.lastSeen, now)}`, "muted");
+  }
+
+  return lines;
+}
+
+/**
+ * The live activity transcript for one subagent: its ring of entries rendered
+ * oldest-first as tone-tagged, width-wrapped lines. A progress turn reads
+ * `t3/8 · read_file` with any note on a continuation line; a lifecycle entry
+ * marks the transition. Every child-authored value is sanitized. Newest lines
+ * are last, so a tail window shows the most recent activity.
+ */
+export function renderFocusActivity(
+  entries: readonly SubagentActivityEntry[],
+  width: number,
+): HerdDetailLine[] {
+  const limit = cells(width);
+  if (limit <= 0) return [];
+  const lines: HerdDetailLine[] = [];
+  const push = (value: string, tone: HerdDetailTone) => {
+    for (const text of wrapCells(value, limit)) lines.push({ text, tone });
+  };
+
+  for (const entry of entries) {
+    if (entry.kind === "lifecycle") {
+      const status = entry.status ?? "queued";
+      let text = `• ${subagentStatusLabel(status)}`;
+      if (status === "completed" || status === "failed") {
+        const bits: string[] = [];
+        if (typeof entry.turns === "number") bits.push(`${entry.turns} turns`);
+        if (typeof entry.findings === "number") bits.push(`${entry.findings} findings`);
+        if (bits.length > 0) text += ` · ${bits.join(" · ")}`;
+      }
+      push(text, status === "failed" ? "warn" : status === "running" ? "accent" : "muted");
+      if (status === "failed" && entry.error) push(`  ↳ ${entry.error}`, "warn");
+    } else {
+      const budget =
+        typeof entry.maxTurns === "number" && entry.maxTurns > 0 ? `/${entry.maxTurns}` : "";
+      const turn = typeof entry.turn === "number" ? `t${entry.turn}${budget}` : "turn";
+      const tool = entry.tool ? ` · ${entry.tool}` : "";
+      push(`${turn}${tool}`, "text");
+      if (entry.note) push(`  ↳ ${entry.note}`, "muted");
+    }
+  }
+  return lines;
+}
+
+/**
+ * A tail window over `total` lines showing `capacity` of them, scrolled back
+ * `offsetFromBottom` lines. Offset 0 is the newest (the natural follow-tail);
+ * a larger offset scrolls toward older lines and is clamped so the window
+ * never runs off either end. Pure — the mirror of {@link computeHerdWindow}
+ * for a bottom-anchored transcript.
+ */
+export function windowFocusTail(
+  total: number,
+  capacity: number,
+  offsetFromBottom: number,
+): { start: number; end: number; count: number; hasAbove: boolean; hasBelow: boolean } {
+  const rows = cells(total);
+  const cap = cells(capacity);
+  if (cap <= 0 || rows <= 0) {
+    return { start: 0, end: 0, count: 0, hasAbove: rows > 0, hasBelow: false };
+  }
+  if (rows <= cap) return { start: 0, end: rows, count: rows, hasAbove: false, hasBelow: false };
+  const maxOffset = rows - cap;
+  const off = clamp(cells(offsetFromBottom), 0, maxOffset);
+  const end = rows - off;
+  const start = end - cap;
+  return { start, end, count: cap, hasAbove: start > 0, hasBelow: end < rows };
+}
+
+// ---------------------------------------------------------------------------
+// Focus geometry — a meta pane stacked over a transcript pane
+// ---------------------------------------------------------------------------
+
+/** Rows of meta CONTENT the focus header wants before the transcript. */
+const FOCUS_META_ROWS = 6;
+
+export interface HerdFocusLayout {
+  bordered: boolean;
+  contentWidth: number;
+  bodyRows: number;
+  /** Identity + status counters. Zero-height when the body is too short. */
+  meta: HerdPane;
+  /** The scrolling live-activity transcript. Takes what the meta leaves. */
+  transcript: HerdPane;
+}
+
+/**
+ * The focus view's geometry: two full-width panes stacked vertically, the meta
+ * header over the live transcript. Because both are the content width, the only
+ * failure mode is vertical — the allocator hands the transcript every row the
+ * meta does not need, guaranteeing the meta keeps at least its title row and
+ * the transcript keeps at least one content row, and dropping the meta entirely
+ * before it would squeeze the transcript below a single line.
+ */
+export function computeHerdFocusLayout({
+  width,
+  height,
+  noticeRows = 0,
+}: HerdLayoutInput): HerdFocusLayout {
+  const terminalWidth = cells(width);
+  const contentWidth = Math.max(0, terminalWidth - SHELL_HORIZONTAL_PADDING * 2);
+  const bodyRows = Math.max(
+    0,
+    cells(height) - shellChromeRows(terminalWidth) - Math.min(1, cells(noticeRows)),
+  );
+
+  const bordered = bodyRows >= BORDERED_MIN_ROWS && contentWidth >= DETAIL_MIN_WIDTH + 4;
+  const chrome = borderChrome(bordered);
+  // Minimum outer height for a pane that keeps a title + one content row.
+  const paneMin = chrome.vertical + 1 + 1;
+
+  let metaHeight = 0;
+  let transcriptHeight = 0;
+  if (bodyRows >= paneMin * 2) {
+    // Both panes fit: give the meta what it wants, capped so the transcript
+    // keeps at least its minimum, and hand the transcript the remainder.
+    const wantMeta = chrome.vertical + 1 + FOCUS_META_ROWS;
+    metaHeight = clamp(wantMeta, paneMin, bodyRows - paneMin);
+    transcriptHeight = bodyRows - metaHeight;
+  } else if (bodyRows >= paneMin) {
+    // Only room for one pane — the transcript is the point of focus mode.
+    transcriptHeight = bodyRows;
+  }
+
+  const meta = makePane(contentWidth, metaHeight, chrome.horizontal, chrome.vertical, true);
+  const transcript = makePane(
+    contentWidth,
+    transcriptHeight,
+    chrome.horizontal,
+    chrome.vertical,
+    true,
+  );
+
+  return { bordered, contentWidth, bodyRows, meta, transcript };
+}
+
+/** Footer hint while a subagent is focused (navigation, not composing). */
+export function herdFocusFooterHint(): string {
+  return ["up/down scroll", "m steer", "esc back to list", "ctrl+c exit"].join(" · ");
+}
+
+/** Title for the transcript pane: `LIVE 12` (entry count) or `LIVE`. */
+export function herdFocusTranscriptTitle(count: number): string {
+  const n = cells(count);
+  return n > 0 ? `LIVE ${n}` : "LIVE";
+}
+
+/** Shown in the transcript pane when the focused agent has no activity yet. */
+export const HERD_FOCUS_EMPTY_TEXT = "no live activity yet";

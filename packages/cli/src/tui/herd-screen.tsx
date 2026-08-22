@@ -30,7 +30,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { peekInbox, sendOperatorMessage, type MessagingRuntime } from "@0sec/core";
+import { eventBus, peekInbox, sendOperatorMessage, type MessagingRuntime } from "@0sec/core";
 
 import { useTheme, type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
@@ -38,24 +38,36 @@ import {
   HERD_COMPOSER_CURSOR,
   HERD_COMPOSER_PROMPT,
   HERD_EMPTY_TEXT,
+  HERD_FOCUS_EMPTY_TEXT,
+  applySubagentLifecycle,
+  applySubagentProgress,
   buildHerdRows,
   clampHerdSelection,
   clipDetailLines,
+  computeHerdFocusLayout,
   computeHerdLayout,
   computeHerdWindow,
+  focusHeaderLines,
   herdComposerFooterHint,
   herdComposerVisibleDraft,
   herdDetailLines,
+  herdFocusFooterHint,
+  herdFocusTranscriptTitle,
   herdFooterHint,
   herdListTitle,
   herdRowLabelText,
   herdRowStatusText,
   herdStatusLabel,
+  mergeSubagentRoster,
   moveHerdSelection,
+  renderFocusActivity,
+  subagentPeers,
+  windowFocusTail,
   type HerdDetailTone,
   type HerdInboxMessage,
   type HerdPane,
   type HerdPeer,
+  type HerdSubagentMap,
 } from "./herd-layout.js";
 
 /** How many rows page-up and page-down move. */
@@ -253,6 +265,18 @@ export function HerdScreen({
   const [selected, setSelected] = useState(0);
   const [anchor, setAnchor] = useState(0);
 
+  // Live subagents seen on this process's event bus. Keyed by `agent_id`, the
+  // same id a roster subagent peer carries, so the two join. Built additively
+  // from `subagent_lifecycle` / `subagent_progress` — the herd screen carries
+  // only a snapshot roster otherwise, so this is the live half the focus view
+  // renders. Fail-soft: a malformed payload folds to the same map (no repaint).
+  const [subagents, setSubagents] = useState<HerdSubagentMap>({});
+
+  // Focus mode: the id of the subagent the operator drilled into, or null in
+  // list mode. `scrollOffset` scrolls the live transcript back from its tail.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+
   // Steering composer. `composing`/`draft` are mirrored onto refs so the
   // keyboard handler reads the latest value synchronously between keystrokes
   // (the chat composer relies on the same pattern). `notice` is the one-row
@@ -294,16 +318,65 @@ export function HerdScreen({
     // latest providers so the interval never needs re-creating.
   }, [clock]);
 
-  const rows = useMemo(() => buildHerdRows(peers, now), [peers, now]);
+  // Subscribe to the core event bus for per-subagent activity, additively. The
+  // reducers are pure; the subscription is unsubscribed on unmount. Unlike the
+  // chat screen this view is NOT scoped to one session's scanId — the herd is
+  // the cross-cutting roster, so every subagent emitting on this process's bus
+  // is surfaced. (The bus is process-local: a subagent in another process is
+  // out of reach until the roster transport lands — see the report.)
+  useEffect(() => {
+    const unsub = eventBus.subscribe({
+      emit: (type, payload) => {
+        const at = clock();
+        if (type === "subagent_lifecycle") {
+          setSubagents((prev) => applySubagentLifecycle(prev, payload, at));
+        } else if (type === "subagent_progress") {
+          setSubagents((prev) => applySubagentProgress(prev, payload, at));
+        }
+      },
+    });
+    return unsub;
+  }, [clock]);
+
+  // The roster the list renders is the injected provider's peers merged with
+  // the live subagents (provider wins on an id collision). These are real
+  // agents emitting real events, not fabricated placeholders.
+  const livePeers = useMemo(() => subagentPeers(subagents, now), [subagents, now]);
+  const mergedPeers = useMemo(
+    () => mergeSubagentRoster(peers, livePeers),
+    [peers, livePeers],
+  );
+
+  const rows = useMemo(() => buildHerdRows(mergedPeers, now), [mergedPeers, now]);
   const cursor = clampHerdSelection(rows, selected);
   const activeRow = cursor >= 0 ? rows[cursor] : undefined;
   const activePeer = activeRow?.kind === "peer" ? activeRow.peer : undefined;
+
+  // Focus mode: the peer being drilled into and its live record. The peer is
+  // looked up in the merged roster so a focused subagent survives list
+  // reshuffles; `focused` gates the whole alternate view and its keymap. A
+  // focused peer that leaves the roster (a session that vanished) drops focus.
+  const focusedPeer = focusId ? mergedPeers.find((peer) => peer.id === focusId) : undefined;
+  const focusRecord = focusId ? subagents[focusId] : undefined;
+  const focused = focusId != null && focusedPeer != null;
+
+  // Whichever peer a steering message is addressed to: the focused agent while
+  // drilled in, otherwise the highlighted list row.
+  const steerTarget = focused ? focusedPeer : activePeer;
+
+  useEffect(() => {
+    if (focusId != null && !focusedPeer) {
+      setFocusId(null);
+      setScrollOffset(0);
+    }
+  }, [focusId, focusedPeer]);
 
   // A composer or a delivery notice claims one row above the footer; reserve it
   // through the layout's own `noticeRows` budget so the panes shrink by exactly
   // that row and nothing overlaps.
   const overlayRow = composing || notice !== null;
   const layout = computeHerdLayout({ width, height, noticeRows: overlayRow ? 1 : 0 });
+  const focusLayout = computeHerdFocusLayout({ width, height, noticeRows: overlayRow ? 1 : 0 });
   const window = computeHerdWindow({
     rows,
     selected: cursor,
@@ -348,7 +421,7 @@ export function HerdScreen({
       operatorChannelEnabled: operatorChannelEnabled ?? true,
       projectPath: cwd,
       homeDir: home,
-      knownPeerIds: peers.map((peer) => peer.id),
+      knownPeerIds: mergedPeers.map((peer) => peer.id),
     };
     const result = sendOperatorMessage(runtime, to, body, clock());
     return { ok: result.ok, reason: result.reason, truncated: result.truncated };
@@ -373,15 +446,15 @@ export function HerdScreen({
         setComposingBoth(false);
         setDraftBoth("");
         if (body.length === 0) return; // empty draft: just close, deliver nothing
-        if (!activePeer) {
+        if (!steerTarget) {
           setNotice({ text: "no agent selected", tone: "error" });
           return;
         }
-        const result = deliver(activePeer.id, body);
+        const result = deliver(steerTarget.id, body);
         setNotice(
           result.ok
             ? {
-                text: `sent to ${activePeer.id}${result.truncated ? " (truncated)" : ""}`,
+                text: `sent to ${steerTarget.id}${result.truncated ? " (truncated)" : ""}`,
                 tone: "ok",
               }
             : { text: result.reason ?? "message could not be delivered", tone: "error" },
@@ -400,6 +473,45 @@ export function HerdScreen({
         key.sequence.charCodeAt(0) >= 32
       ) {
         setDraftBoth(`${draftRef.current}${key.sequence}`);
+      }
+      return;
+    }
+
+    // ── Focus mode: one subagent, its live transcript, a steer composer ──
+    // Esc returns to the LIST (it does not leave the herd screen); up/down
+    // scroll the transcript back from its tail; `m`/Enter open the steer
+    // composer bound to the focused agent.
+    if (focused) {
+      if (key.name === "escape") {
+        setFocusId(null);
+        setScrollOffset(0);
+        setNotice(null);
+        return;
+      }
+      if (key.name === "up") {
+        setScrollOffset((offset) => offset + 1);
+        return;
+      }
+      if (key.name === "down") {
+        setScrollOffset((offset) => Math.max(0, offset - 1));
+        return;
+      }
+      if (key.name === "pageup") {
+        setScrollOffset((offset) => offset + PAGE_STEP);
+        return;
+      }
+      if (key.name === "pagedown") {
+        setScrollOffset((offset) => Math.max(0, offset - PAGE_STEP));
+        return;
+      }
+      if (
+        key.name === "return" ||
+        (!key.ctrl && !key.meta && (key.sequence === "m" || key.sequence === "M"))
+      ) {
+        setNotice(null);
+        setDraftBoth("");
+        setComposingBoth(true);
+        return;
       }
       return;
     }
@@ -423,6 +535,16 @@ export function HerdScreen({
     }
     if (key.name === "pagedown") {
       move(PAGE_STEP);
+      return;
+    }
+    // Enter drills into the highlighted peer — focus mode. A no-op with nothing
+    // highlighted, so it can never enter focus with no subject.
+    if (key.name === "return") {
+      if (activePeer) {
+        setNotice(null);
+        setScrollOffset(0);
+        setFocusId(activePeer.id);
+      }
       return;
     }
     // `m` opens the steering composer bound to the highlighted peer. A no-op
@@ -536,7 +658,7 @@ export function HerdScreen({
     </box>
   ) : null;
 
-  const body = (
+  const listView = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
       <box
         flexDirection={layout.stacked ? "column" : "row"}
@@ -560,11 +682,86 @@ export function HerdScreen({
     </box>
   );
 
-  // While composing, the footer names the bound target so the operator can see
-  // which agent the draft is addressed to; otherwise the navigation hint.
+  // ── Focus view: one subagent's meta stacked over its live transcript ──
+  // Every number comes off `focusLayout`; the two panes are the full content
+  // width (a single column) so they can only fail vertically, which the
+  // allocator has already fitted. The transcript renders a tail window over
+  // the agent's activity ring, scrolled back by `scrollOffset`.
+  const focusMetaLines = focused
+    ? clipDetailLines(
+        focusHeaderLines(focusedPeer, focusRecord, focusLayout.meta.innerWidth, now, {
+          compact: !focusLayout.bordered,
+        }),
+        focusLayout.meta.bodyRows,
+        focusLayout.meta.innerWidth,
+      )
+    : [];
+  const focusActivityLines =
+    focused && focusRecord
+      ? renderFocusActivity(focusRecord.activity, focusLayout.transcript.innerWidth)
+      : [];
+  const focusTail = windowFocusTail(
+    focusActivityLines.length,
+    focusLayout.transcript.bodyRows,
+    scrollOffset,
+  );
+  const focusVisibleActivity = focusActivityLines.slice(focusTail.start, focusTail.end);
+
+  const focusView = (
+    <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
+      <box flexDirection="column" flexShrink={0} minWidth={0}>
+        <Pane
+          pane={focusLayout.meta}
+          bordered={focusLayout.bordered}
+          title="FOCUS"
+          titleFg={theme.MUTED}
+        >
+          {focusMetaLines.map((line, index) => (
+            <Cells
+              key={`meta-${index}`}
+              width={focusLayout.meta.innerWidth}
+              fg={toneColor(theme, line.tone)}
+            >
+              {line.text}
+            </Cells>
+          ))}
+        </Pane>
+        <Pane
+          pane={focusLayout.transcript}
+          bordered={focusLayout.bordered}
+          title={herdFocusTranscriptTitle(focusActivityLines.length)}
+          titleFg={theme.MUTED}
+        >
+          {focusVisibleActivity.length === 0 ? (
+            <Cells width={focusLayout.transcript.innerWidth} fg={theme.MUTED}>
+              {HERD_FOCUS_EMPTY_TEXT}
+            </Cells>
+          ) : (
+            focusVisibleActivity.map((line, index) => (
+              <Cells
+                key={`live-${focusTail.start + index}`}
+                width={focusLayout.transcript.innerWidth}
+                fg={toneColor(theme, line.tone)}
+              >
+                {line.text}
+              </Cells>
+            ))
+          )}
+        </Pane>
+      </box>
+      {overlayBody}
+    </box>
+  );
+
+  const body = focused ? focusView : listView;
+
+  // While composing, the footer names the bound steer target; in focus mode the
+  // focus keymap; otherwise the list navigation hint.
   const hint = composing
-    ? `to ${activePeer?.id ?? "?"} · ${herdComposerFooterHint()}`
-    : herdFooterHint();
+    ? `to ${steerTarget?.id ?? "?"} · ${herdComposerFooterHint()}`
+    : focused
+      ? herdFocusFooterHint()
+      : herdFooterHint();
 
   return <>{frame({ body, hint })}</>;
 }
