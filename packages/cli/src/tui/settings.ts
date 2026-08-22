@@ -242,7 +242,7 @@ const DEFS: readonly TuiSettingDef[] = [
     label: "Tool card",
     description: "How a tool or subagent call is drawn: rail, inline, compact or hidden (failures always show).",
     kind: "enum",
-    default: "rail",
+    default: "compact",
     choices: ["rail", "inline", "compact", "hidden"],
     group: "Display",
   },

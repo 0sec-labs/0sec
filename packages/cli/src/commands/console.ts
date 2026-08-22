@@ -48,10 +48,10 @@ export function registerConsoleCommand(program: Command): void {
       "Interactive chat console — talk to the engine and drive the full tool registry (recon, web, source-scan, variant-hunt, verify, patch-gen) from one prompt.",
     )
     .option("--target <url>", "Engagement target the tools operate against (optional; can be named in-chat)")
-    .option("--scope <file>", "Initial authorization scope; required for YOLO and for the Node fallback")
+    .option("--scope <file>", "Initial authorization scope; required for the Node fallback (optional otherwise)")
     .option("--model <id>", "Override the LLM model id (else provider default)")
     .option("--role <role>", "Tool set to expose: audit|review|discovery|attack|verify (default audit = every tool)")
-    .option("--autonomy <mode>", "Execution policy: standard|copilot|yolo (default standard; YOLO requires --scope)", "standard")
+    .option("--autonomy <mode>", "Execution policy: standard|copilot|yolo|recon (default standard)", "standard")
     .option("--max-tool-calls <n>", "Safety cap on tool-call rounds per operator message", "20")
     .option("--allow-scanners", "Expose generic-scanner tool wrappers (sqlmap/nikto/…); default off")
     .action(async (opts: ConsoleOptions) => {
@@ -80,8 +80,8 @@ export function registerConsoleCommand(program: Command): void {
 
       let autonomyMode: ConsoleAutonomyMode = "standard";
       if (opts.autonomy !== undefined) {
-        if (opts.autonomy !== "standard" && opts.autonomy !== "copilot" && opts.autonomy !== "yolo") {
-          console.error(chalk.red(`Invalid --autonomy '${opts.autonomy}': expected standard, copilot, or yolo.`));
+        if (opts.autonomy !== "standard" && opts.autonomy !== "copilot" && opts.autonomy !== "yolo" && opts.autonomy !== "recon") {
+          console.error(chalk.red(`Invalid --autonomy '${opts.autonomy}': expected standard, copilot, yolo, or recon.`));
           process.exitCode = 2;
           return;
         }
