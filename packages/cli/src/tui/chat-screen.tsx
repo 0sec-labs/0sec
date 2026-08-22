@@ -2888,8 +2888,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   });
   // Optional empty-state lines are dropped from the bottom up rather than
   // overprinted. The mark needs the most room, so it goes first.
-  const showTerminalMark = settings.showLogo && empty && !compact && ledgerRows >= LEDGER_MARK_ROWS;
-  const showEmptyStateHint = empty && ledgerRows >= 4;
+  // The block mark shows whenever the column can hold it — width for the glyph,
+  // height for the mark rows — regardless of the compact flag, so a narrow-but-
+  // tall terminal still gets the real logo instead of the text fallback.
+  const showTerminalMark =
+    settings.showLogo && empty && ledgerRows >= LEDGER_MARK_ROWS && contentWidth >= TERMINAL_BLOCK_LOGO_WIDTH;
   const showEmptyStateTagline = empty && ledgerRows >= 3;
   // The three-line mode explanation is the lowest-priority hero block: it costs
   // three rows on top of the mark, its Swiss tagline and the shorter captions,
@@ -2991,17 +2994,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                 {/* The lab attribution sits directly under the mark, muted and
                     centered, before the shorter captions — it says who is
                     behind the console. */}
-                {showTerminalMark ? <text fg={MUTED}>{fitTuiText("by a Swiss Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
-                {showEmptyStateTagline ? <text fg={TEXT}>evidence-first security research</text> : null}
-                {showEmptyStateHint ? <text fg={MUTED}>{fitTuiText("Describe an objective. 0sec enforces engagement scope before egress.", contentWidth)}</text> : null}
+                {showTerminalMark ? <text fg={MUTED} marginTop={2}>{fitTuiText("by a Swiss Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
+                {showEmptyStateTagline ? <text fg={TEXT} marginTop={1}>evidence-first security research</text> : null}
                 {/* The mode explanation: three short labelled lines rather than
                     one clipped sentence, so nothing is cut off mid-word. Dropped
                     entirely (not truncated) when the column is too short. */}
                 {showEmptyStateModes ? (
-                  <box flexDirection="column" alignItems="center" flexShrink={0} minWidth={0} marginTop={1}>
-                    <text fg={MUTED}>{fitTuiText("Standard — acts within the configured scope", contentWidth)}</text>
-                    <text fg={MUTED}>{fitTuiText("Co-pilot — confirms each active step before it runs", contentWidth)}</text>
-                    <text fg={MUTED}>{fitTuiText("YOLO — full autonomy, but only inside a configured scope", contentWidth)}</text>
+                  <box flexDirection="column" alignItems="center" flexShrink={0} minWidth={0} marginTop={2}>
+                    <text fg={MUTED}>{fitTuiText("Standard — approves each action before it runs", contentWidth)}</text>
+                    <text fg={MUTED}>{fitTuiText("Co-pilot — autonomous within scope; expands scope automatically", contentWidth)}</text>
+                    <text fg={MUTED}>{fitTuiText("YOLO — no prompts; full send on your target", contentWidth)}</text>
                   </box>
                 ) : null}
               </box>
