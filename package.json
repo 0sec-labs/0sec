@@ -2,7 +2,7 @@
   "name": "0sec",
   "type": "module",
   "version": "0.13.0",
-  "description": "Open-source security research harness for authorized targets.",
+  "description": "The open cybersecurity harness \u2014 evidence-first, agent-driven security research for authorized targets.",
   "bin": {
     "0sec": "dist/0sec.js",
     "0": "dist/0sec.js"
