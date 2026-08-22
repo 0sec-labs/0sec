@@ -34,6 +34,14 @@ import { formatJitSkillsInstruction, getSkillById } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
 import type { ScanCostLedger } from "./cost-ledger.js";
 import { eventBus, isCloudEventSinkActive } from "../events/bus.js";
+import { diag } from "../diagnostics/channel.js";
+import {
+  reduceCoordinatorState,
+  superviseCoordinator,
+  formatFindingTailLine,
+  type CoordinatorState,
+  type CoordinatorIntervention,
+} from "./coordinator-rails.js";
 import {
   isUntrustedSourceTool,
   sanitizeUntrustedToolResult,
@@ -748,6 +756,76 @@ export async function runNativeAgentLoop(
   };
   const unregisterSignalCleanup = registerSignalCleanup(signalCleanup);
 
+  // ── Coordinator rails (multi-agent supervisor) ──
+  // Additive, feature-flagged (0SEC_FEATURE_COORDINATOR_RAILS, default OFF).
+  // When on, this loop's spawned sub-agents (spawn_agent/spawn_agents) are
+  // observed via the eventBus and the pure rails in `coordinator-rails.ts`
+  // (stall watchdog on idle-since-last-output, kill-vs-escalate policy,
+  // anti-solo-takeover gate, and loop/repetition detection) run BETWEEN
+  // iterations. The supervisor is strictly READ-ONLY: it never touches
+  // `toolCtx.findings` (a reaped/stalled child's saved findings are preserved),
+  // and it LOGS every intervention through the diagnostics channel + `onEvent`
+  // — never raw stdout. When the flag is off nothing subscribes and the
+  // supervise step is skipped, so default behavior is byte-identical.
+  const coordinatorRailsEnabled =
+    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] === "1" ||
+    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] === "true";
+  let coordinatorState: CoordinatorState = {};
+  // Log each (agent, kind, action) transition once so a persistent condition
+  // does not spam the diagnostics channel every turn.
+  const loggedInterventions = new Set<string>();
+  const unsubscribeCoordinator = coordinatorRailsEnabled
+    ? eventBus.subscribe({
+        emit: (type, payload) => {
+          if (type === "subagent_lifecycle" || type === "subagent_progress") {
+            coordinatorState = reduceCoordinatorState(
+              coordinatorState,
+              { type, payload },
+              Date.now(),
+            );
+          }
+        },
+      })
+    : () => {};
+
+  function runCoordinatorSupervisor(): void {
+    if (!coordinatorRailsEnabled) return;
+    let interventions: CoordinatorIntervention[];
+    try {
+      // Bind the takeover gate to this loop's own turn budget so a single
+      // child can never eat the whole allocation.
+      interventions = superviseCoordinator(coordinatorState, {
+        now: Date.now(),
+        totalBudget: config.maxTurns,
+      });
+    } catch {
+      // The supervisor is best-effort telemetry — it must never break the loop.
+      return;
+    }
+    for (const iv of interventions) {
+      const key = `${iv.agentId}:${iv.kind}:${iv.action}`;
+      if (loggedInterventions.has(key)) continue;
+      loggedInterventions.add(key);
+      diag.warn("coordinator_rails_intervention", iv.reason, {
+        scanId: config.scanId,
+        agentId: iv.agentId,
+        kind: iv.kind,
+        action: iv.action,
+        turn: state.turnCount,
+        ...(iv.idleMs !== undefined ? { idleMs: iv.idleMs } : {}),
+        ...(iv.share !== undefined ? { share: iv.share } : {}),
+        ...(iv.repeatCount !== undefined ? { repeatCount: iv.repeatCount } : {}),
+      });
+      onEvent?.("coordinator_intervention", {
+        turn: state.turnCount,
+        agentId: iv.agentId,
+        kind: iv.kind,
+        action: iv.action,
+        reason: iv.reason,
+      });
+    }
+  }
+
   // ── Main loop ──
 
   // Transient-error backoff budget. A provider that returns 429/529/5xx
@@ -760,6 +838,10 @@ export async function runNativeAgentLoop(
 
   try {
   while (!state.done && state.turnCount < config.maxTurns) {
+    // ── Coordinator rails: supervise sub-agents BETWEEN iterations ──
+    // No-op unless the feature flag is on. Read-only observation + logging.
+    runCoordinatorSupervisor();
+
     // ── http_audit wall-clock kill switch ──
     // Checked at the turn boundary BEFORE spending another LLM call so an
     // expired budget can't trigger one more (expensive) round-trip. Breaks
@@ -1401,6 +1483,24 @@ export async function runNativeAgentLoop(
           } catch {
             // External sinks must not make a successfully-saved local finding fail.
           }
+          // Live findings tail (data path for a `tail -f findings.md`-style
+          // view). Additive + non-blocking: gated on the coordinator-rails flag,
+          // emits one sanitized single-line summary through `onEvent` as each
+          // finding lands. Best-effort — a formatter error never fails the save.
+          if (coordinatorRailsEnabled) {
+            try {
+              const tailLine = formatFindingTailLine(saved);
+              if (tailLine) {
+                onEvent?.("findings_tail", {
+                  turn: state.turnCount,
+                  findingId: saved.id,
+                  line: tailLine,
+                });
+              }
+            } catch {
+              /* findings tail is best-effort, never blocks the loop */
+            }
+          }
         }
         if (
           features.inlineValidation &&
@@ -1975,6 +2075,7 @@ export async function runNativeAgentLoop(
   } finally {
     executor.cleanup();
     unregisterSignalCleanup();
+    unsubscribeCoordinator();
   }
 }
 
