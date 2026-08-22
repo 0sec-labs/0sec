@@ -94,7 +94,7 @@ Before 0sec#402 only the web / URL scan path honoured the direct
 provider — the other surfaces aborted with
 `Requested runtime 'codex' is not available` whenever the codex CLI
 binary was missing, even with subscription auth configured. Cloud
-sandbox dispatch (0cloud worker-controller) still gates codex on
+sandbox dispatch (the managed worker-controller) still gates codex on
 `target_ecosystem === "web"` and is tracked as a separate follow-up.
 
 ## Scan modes

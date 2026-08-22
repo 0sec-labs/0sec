@@ -25,7 +25,7 @@ We deliberately do **not** claim SOC 2 Type II or ISO 27001 certification until 
 
 | Capability | Status | Notes |
 |---|---|---|
-| SAML SSO (Okta, Azure AD / Entra ID, Google Workspace) | **In progress (target Q3 2026)** | better-auth backs the dashboard today; SAML connector is the active gap. Tracked on the 0cloud roadmap. |
+| SAML SSO (Okta, Azure AD / Entra ID, Google Workspace) | **In progress (target Q3 2026)** | better-auth backs the dashboard today; SAML connector is the active gap. Tracked on the managed-platform roadmap. |
 | OIDC SSO | **In progress (target Q3 2026)** | Lands with the SAML work; shares the better-auth provider plumbing. |
 | SCIM 2.0 provisioning + deprovisioning | **Planned (Q4 2026)** | Follows SAML/OIDC. Manual invite + revoke works today via the dashboard. |
 | GitHub OAuth (for OSS / individual users) | **Shipped** | Default sign-in for `cloud.0sec.ai`. Not appropriate for enterprise tenants — use SAML when available. |
