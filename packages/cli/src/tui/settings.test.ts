@@ -430,6 +430,85 @@ describe("telemetry settings", () => {
   });
 });
 
+describe("header display settings", () => {
+  // The two header segments (target/scope) ship ON and live under Display; the
+  // chat-screen header gates each segment on its flag.
+  const HEADER_KEYS = ["showTarget", "showScope"] as const;
+
+  it("ships both header segments ON", () => {
+    for (const key of HEADER_KEYS) {
+      expect(DEFAULT_SETTINGS[key]).toBe(true);
+    }
+  });
+
+  it("files both header segments under Display as booleans", () => {
+    for (const key of HEADER_KEYS) {
+      const def = SETTING_DEFS.find((d) => d.key === key);
+      expect(def?.group).toBe("Display");
+      expect(def?.kind).toBe("boolean");
+    }
+  });
+
+  it("toggles each header segment off and back on", () => {
+    for (const key of HEADER_KEYS) {
+      const off = toggleSetting(DEFAULT_SETTINGS, key);
+      expect(off[key]).toBe(false);
+      expect(toggleSetting(off, key)[key]).toBe(true);
+    }
+  });
+
+  it("round-trips the header segments through save and load", () => {
+    const home = makeHome();
+    const hidden: TuiSettings = { ...DEFAULT_SETTINGS, showTarget: false, showScope: false };
+    expect(saveSettings(hidden, home)).toBe(true);
+    const loaded = loadSettings(home);
+    expect(loaded.showTarget).toBe(false);
+    expect(loaded.showScope).toBe(false);
+  });
+});
+
+describe("motion settings", () => {
+  const MOTION_KEYS = ["logoAnimation", "reduceMotion"] as const;
+
+  it("files both motion knobs under Motion", () => {
+    for (const key of MOTION_KEYS) {
+      expect(SETTING_DEFS.find((d) => d.key === key)?.group).toBe("Motion");
+    }
+  });
+
+  it("defaults logoAnimation to strike (its first choice) and reduceMotion off", () => {
+    expect(DEFAULT_SETTINGS.logoAnimation).toBe("strike");
+    expect(DEFAULT_SETTINGS.reduceMotion).toBe(false);
+  });
+
+  it("offers logoAnimation exactly strike / draw / fade / shimmer / off", () => {
+    const def = SETTING_DEFS.find((d) => d.key === "logoAnimation");
+    expect(def?.kind).toBe("enum");
+    expect(def?.choices).toEqual(["strike", "draw", "fade", "shimmer", "off"]);
+  });
+
+  it("cycles logoAnimation through all five values and wraps", () => {
+    let s = DEFAULT_SETTINGS;
+    const seen: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      s = toggleSetting(s, "logoAnimation");
+      seen.push(s.logoAnimation);
+    }
+    expect(seen).toEqual(["draw", "fade", "shimmer", "off", "strike"]);
+  });
+
+  it("rejects an out-of-range logoAnimation value", () => {
+    expect(normalizeSettings({ logoAnimation: "slide" }).logoAnimation).toBe("strike");
+  });
+
+  it("round-trips the motion settings through save and load", () => {
+    const home = makeHome();
+    const on: TuiSettings = { ...DEFAULT_SETTINGS, logoAnimation: "shimmer", reduceMotion: true };
+    expect(saveSettings(on, home)).toBe(true);
+    expect(loadSettings(home)).toEqual(on);
+  });
+});
+
 describe("SETTING_DEFS", () => {
   // The table and the interface are two halves of one declaration; nothing but
   // a test stops a new field from being added to `TuiSettings` without a def
@@ -487,6 +566,15 @@ describe("SETTING_DEFS", () => {
         expect(def.choices).toBeUndefined();
         expect(typeof def.default).toBe("boolean");
       }
+    }
+  });
+
+  it("makes every enum's default its first choice", () => {
+    // toggleSetting cycles from choices[0], and the settings UI leans on the
+    // default being the head of the list; keep that invariant explicit.
+    for (const def of SETTING_DEFS as readonly SettingDef[]) {
+      if (def.kind !== "enum") continue;
+      expect(def.choices?.[0]).toBe(def.default);
     }
   });
 });

@@ -469,6 +469,27 @@ function modelDisplayBlocks(value: string, width: number): PreviewBlock[] {
 }
 
 /**
+ * The logo-animation sample: a one-line description of the HIGHLIGHTED style
+ * (the preview cannot actually animate here) plus the choice strip with the
+ * active value bracketed, consistent with the other enum previews.
+ */
+function logoAnimationBlocks(value: string, width: number): PreviewBlock[] {
+  const DESCRIPTIONS: Record<string, string> = {
+    strike: "strike — the red slash strikes through the 0",
+    draw: "draw — the letters draw in stroke by stroke",
+    fade: "fade — the mark fades in",
+    shimmer: "shimmer — a subtle idle shimmer over the mark",
+    off: "off — the mark is drawn static, no intro",
+  };
+  const choices = ["strike", "draw", "fade", "shimmer", "off"];
+  const description = DESCRIPTIONS[value] ?? `current: ${value}`;
+  return [
+    line("logo-anim-desc", width, description, (t) => t.ACCENT),
+    choiceStripBlock("logo-anim-choices", width, choices, value),
+  ];
+}
+
+/**
  * The context-meter sample: the real bottom-bar glyphs when ON so the operator
  * sees the bar they are enabling, an on/off chip when OFF.
  */
@@ -614,6 +635,9 @@ export function previewBlocks({ def, value, width, settings }: PreviewInput): Pr
       break;
     case "modelDisplay":
       body = modelDisplayBlocks(String(value), w);
+      break;
+    case "logoAnimation":
+      body = logoAnimationBlocks(String(value), w);
       break;
     case "showContextMeter":
       body = contextMeterBlocks(value === true, w);

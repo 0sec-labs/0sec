@@ -63,6 +63,10 @@ export interface TuiSettings {
   showSubagents: boolean;
   /** Relative timestamps on transcript entries. */
   showTimestamps: boolean;
+  /** Header "target: …" segment (chat-screen gates the header target on this). */
+  showTarget: boolean;
+  /** Header "scope: …" segment (chat-screen gates the header scope on this). */
+  showScope: boolean;
   /** Density of the transcript: "comfortable" adds blank lines. */
   density: "comfortable" | "compact";
   /** How the composer frame is drawn. */
@@ -102,6 +106,17 @@ export interface TuiSettings {
    * per message ("message", drawn by chat-screen), or nowhere ("off").
    */
   modelDisplay: "statusbar" | "message" | "off";
+  /**
+   * Intro animation style for the "0SEC" logo: "strike" (a red slash strikes
+   * through the 0), "draw" (letters draw in), "fade" (fade-in), "shimmer" (a
+   * subtle idle shimmer) or "off" (static). Consumed by chat-screen's logo.
+   */
+  logoAnimation: "strike" | "draw" | "fade" | "shimmer" | "off";
+  /**
+   * Master reduce-motion. When true the console keeps essential feedback but
+   * disables decorative animations (logo intro, shimmers, sweeps).
+   */
+  reduceMotion: boolean;
 }
 
 /** Keys of `TuiSettings` whose value is a boolean. */
@@ -134,6 +149,7 @@ type TuiSettingDef =
   | EnumSettingDef<"roleLabelStyle">
   | EnumSettingDef<"toolCardStyle">
   | EnumSettingDef<"modelDisplay">
+  | EnumSettingDef<"logoAnimation">
   | EnumSettingDef<"theme">;
 
 /**
@@ -197,6 +213,22 @@ const DEFS: readonly TuiSettingDef[] = [
     kind: "boolean",
     default: false,
     group: "Transcript",
+  },
+  {
+    key: "showTarget",
+    label: "Target",
+    description: 'Header "target: …" segment naming the host or app under assessment.',
+    kind: "boolean",
+    default: true,
+    group: "Display",
+  },
+  {
+    key: "showScope",
+    label: "Scope",
+    description: 'Header "scope: …" segment showing the boundary the run is confined to.',
+    kind: "boolean",
+    default: true,
+    group: "Display",
   },
   {
     key: "density",
@@ -313,6 +345,25 @@ const DEFS: readonly TuiSettingDef[] = [
     choices: ["statusbar", "message", "off"],
     group: "Telemetry",
   },
+  {
+    key: "logoAnimation",
+    label: "Logo animation",
+    description:
+      'Intro animation for the "0SEC" logo: strike (a red slash strikes through the 0), draw (letters draw in), fade (fade-in), shimmer (a subtle idle shimmer) or off (static).',
+    kind: "enum",
+    default: "strike",
+    choices: ["strike", "draw", "fade", "shimmer", "off"],
+    group: "Motion",
+  },
+  {
+    key: "reduceMotion",
+    label: "Reduce motion",
+    description:
+      "Master reduce-motion: the console keeps essential feedback but disables decorative animations like the logo intro, shimmers and sweeps.",
+    kind: "boolean",
+    default: false,
+    group: "Motion",
+  },
 ];
 
 export const SETTING_DEFS: readonly SettingDef[] = DEFS;
@@ -327,6 +378,8 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showTurnSummary: false,
   showSubagents: true,
   showTimestamps: false,
+  showTarget: true,
+  showScope: true,
   density: "comfortable",
   composerStyle: "border",
   allowSubagentPeerMessaging: true,
@@ -340,6 +393,8 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showCost: false,
   showContextMeter: false,
   modelDisplay: "statusbar",
+  logoAnimation: "strike",
+  reduceMotion: false,
 };
 
 /** Basename of the settings file inside the 0sec state directory. */
@@ -524,6 +579,8 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     showTurnSummary: booleanAt(raw, "showTurnSummary"),
     showSubagents: booleanAt(raw, "showSubagents"),
     showTimestamps: booleanAt(raw, "showTimestamps"),
+    showTarget: booleanAt(raw, "showTarget"),
+    showScope: booleanAt(raw, "showScope"),
     density: enumAt(raw, "density"),
     composerStyle: enumAt(raw, "composerStyle"),
     allowSubagentPeerMessaging: booleanAt(raw, "allowSubagentPeerMessaging"),
@@ -537,6 +594,8 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     showCost: booleanAt(raw, "showCost"),
     showContextMeter: booleanAt(raw, "showContextMeter"),
     modelDisplay: enumAt(raw, "modelDisplay"),
+    logoAnimation: enumAt(raw, "logoAnimation"),
+    reduceMotion: booleanAt(raw, "reduceMotion"),
   };
 }
 
