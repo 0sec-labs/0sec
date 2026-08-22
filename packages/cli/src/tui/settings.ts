@@ -27,6 +27,8 @@ import { dirname, join } from "node:path";
 
 import { homeStateDir } from "@0sec/shared";
 
+import { THEME_NAMES, type ThemeName } from "./themes.js";
+
 export type SettingKind = "boolean" | "enum";
 
 export interface SettingDef<T = unknown> {
@@ -70,8 +72,8 @@ export interface TuiSettings {
   roleLabelStyle: "full" | "short" | "glyph" | "off";
   /** How a tool/subagent call is drawn (failures always show). */
   toolCardStyle: "rail" | "inline" | "compact" | "hidden";
-  /** Colour palette. */
-  theme: "dark" | "light" | "high-contrast" | "ansi";
+  /** Colour palette. One of the ids in the theme registry (themes.ts). */
+  theme: ThemeName;
   /** Let the model add tools to its own session (off by default). */
   allowModelSelfExtension: boolean;
 }
@@ -235,10 +237,11 @@ const DEFS: readonly TuiSettingDef[] = [
   {
     key: "theme",
     label: "Theme",
-    description: "Colour palette: dark (default), light, high-contrast or ansi (16-colour terminals).",
+    description:
+      "Colour palette. Carbon (dark, default) and Standard/Paper (light), plus Contrast, Midnight, Slate, Mono Dim and ANSI 16 for 16-colour terminals.",
     kind: "enum",
     default: "dark",
-    choices: ["dark", "light", "high-contrast", "ansi"],
+    choices: [...THEME_NAMES],
     group: "Display",
   },
   {
