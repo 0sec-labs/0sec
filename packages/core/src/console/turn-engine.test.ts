@@ -1,12 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { buildConsoleSystemPrompt, createConsoleSession } from "./turn-engine.js";
+import type {
+  ConsoleLocalScopeRequest,
+  ConsoleScopeRequest,
+  ConsoleUsageReport,
+} from "./turn-engine.js";
 import type {
   NativeMessage,
   NativeRuntime,
   NativeRuntimeResult,
+  NativeStreamCallbacks,
   NativeToolDef,
 } from "../runtime/types.js";
+import { ScopePolicy } from "../scope/scope.js";
+
 
 /**
  * A scripted NativeRuntime: replays a queue of pre-baked results so the turn
@@ -49,6 +60,27 @@ describe("buildConsoleSystemPrompt", () => {
   it("notes when no target is set", () => {
     const p = buildConsoleSystemPrompt({ scanId: "console-y" });
     expect(p).toContain("No target is set yet");
+  });
+
+  it("includes standard-mode instruction by default", () => {
+    const p = buildConsoleSystemPrompt({ scanId: "s1" });
+    expect(p).toContain("Standard mode");
+    expect(p).not.toContain("Co-pilot mode");
+    expect(p).not.toContain("YOLO mode");
+  });
+
+  it("includes copilot-mode instruction when requested", () => {
+    const p = buildConsoleSystemPrompt({ scanId: "s2", autonomyMode: "copilot" });
+    expect(p).toContain("Co-pilot mode");
+    expect(p).not.toContain("Standard mode");
+    expect(p).not.toContain("YOLO mode");
+  });
+
+  it("includes yolo-mode instruction when requested", () => {
+    const p = buildConsoleSystemPrompt({ scanId: "s3", autonomyMode: "yolo" });
+    expect(p).toContain("YOLO mode");
+    expect(p).not.toContain("Co-pilot mode");
+    expect(p).not.toContain("Standard mode");
   });
 });
 
@@ -145,5 +177,1386 @@ describe("createConsoleSession", () => {
     expect(outcome.stopReason).toBe("max_tool_iterations");
     expect(outcome.toolCalls).toHaveLength(3);
     expect(notices).toHaveLength(1);
+  });
+});
+
+// ── Console autonomy / scope-resolution contract tests ──
+
+describe("Console autonomy — scope resolution", () => {
+  it("requests scope for network-capable tools when scope is absent and denies on null", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://outofscope.test/api" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Scope denied."),
+    ]);
+
+    const requests: ConsoleScopeRequest[] = [];
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async (req) => {
+        requests.push(req);
+        return null; // deny
+      },
+    });
+
+    const outcome = await session.send("probe the target");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].call.name).toBe("http_request");
+    expect(requests[0].requestedUrls).toContain("https://outofscope.test/api");
+    expect(requests[0].target).toBe("");
+    expect(requests[0].currentScope).toBeUndefined();
+
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("denied");
+    expect(outcome.stopReason).toBe("end_turn");
+  });
+
+  it("approves scope resolution and updates in-memory session target + scope", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://example.test/api" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+        usage: { inputTokens: 5, outputTokens: 3 },
+      },
+      endTurn("Scope approved, tool ran."),
+    ]);
+
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async () => ({
+        target: "https://example.test",
+        scope: ScopePolicy.fromJson({ in_scope: ["example.test"] }),
+      }),
+    });
+
+    await session.send("go");
+    // Scope resolution updated the in-memory session state.
+    expect(session.target).toBe("https://example.test");
+    expect(session.scope).toBeDefined();
+  });
+
+  it("does not trigger requestScope for non-network tools", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "payload_lookup", input: { name: "jsfuck_alert" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+        usage: { inputTokens: 5, outputTokens: 3 },
+      },
+      endTurn("Found it."),
+    ]);
+
+    let requestScopeCalled = false;
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async () => {
+        requestScopeCalled = true;
+        return null;
+      },
+    });
+
+    await session.send("find payload");
+    expect(requestScopeCalled).toBe(false);
+    expect(session.scope).toBeUndefined();
+  });
+
+  it("skips scope resolution when requestScope callback is absent", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://example.test" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("No scope gate → falls through to executor."),
+    ]);
+
+    const session = createConsoleSession({ runtime });
+    const outcome = await session.send("go");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.stopReason).toBe("end_turn");
+  });
+});
+
+describe("Console autonomy — copilot approval", () => {
+  it("denies non-read-only tool when approveTool returns false", async () => {
+    // Use `bash` (non-read-only, non-network-url-bearing) to avoid triggering
+    // the scope-resolution gate first.
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Not approved."),
+    ]);
+
+    const approved: string[] = [];
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "copilot",
+      approveTool: async (call) => {
+        approved.push(call.name);
+        return false;
+      },
+    });
+
+    const outcome = await session.send("run command");
+    expect(approved).toEqual(["bash"]);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("bash");
+    expect(outcome.toolCalls[0].result.error).toContain("not approved");
+  });
+
+  it("allows read-only tools without calling approveTool", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "read_file", input: { path: "/etc/hostname" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+        usage: { inputTokens: 5, outputTokens: 3 },
+      },
+      endTurn("Contents."),
+    ]);
+
+    let approveToolCalled = false;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "copilot",
+      approveTool: async () => {
+        approveToolCalled = true;
+        return false;
+      },
+    });
+
+    await session.send("read hostname");
+    expect(approveToolCalled).toBe(false);
+    expect(session.autonomyMode).toBe("copilot");
+  });
+
+  it("allows tools when approveTool callback is absent", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+        usage: { inputTokens: 5, outputTokens: 3 },
+      },
+      endTurn("Done."),
+    ]);
+
+    const session = createConsoleSession({ runtime, autonomyMode: "copilot" });
+    const outcome = await session.send("run command");
+    expect(outcome.toolCalls).toHaveLength(1);
+    // No approveTool → falls through to real executor, which runs bash.
+    expect(outcome.stopReason).toBe("end_turn");
+  });
+
+  it("skips per-tool approveTool in yolo mode", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "payload_lookup", input: { name: "jsfuck_alert" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+        usage: { inputTokens: 5, outputTokens: 3 },
+      },
+      endTurn("Running."),
+    ]);
+
+    let approveToolCalled = false;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      approveTool: async () => {
+        approveToolCalled = true;
+        return false;
+      },
+    });
+
+    await session.send("find payload");
+    expect(approveToolCalled).toBe(false);
+    expect(session.autonomyMode).toBe("yolo");
+  });
+});
+
+describe("Console autonomy — standard mode", () => {
+  it("skips per-tool approval (no approveTool gate)", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Standard auto-exec."),
+    ]);
+
+    let approveToolCalled = false;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      approveTool: async () => {
+        approveToolCalled = true;
+        return false;
+      },
+    });
+
+    const outcome = await session.send("run command");
+    expect(approveToolCalled).toBe(false);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+
+  it("uses scope-on-demand for out-of-scope network calls", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://new-target.test" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Scope approved in standard mode."),
+    ]);
+
+    const requests: ConsoleScopeRequest[] = [];
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      requestScope: async (req) => {
+        requests.push(req);
+        return { target: "https://new-target.test", scope: ScopePolicy.fromJson({ in_scope: ["new-target.test"] }) };
+      },
+    });
+
+    await session.send("go");
+    expect(requests).toHaveLength(1);
+    expect(session.target).toBe("https://new-target.test");
+    expect(session.scope).toBeDefined();
+  });
+
+  it("defaults to standard when no autonomyMode is specified", () => {
+    const session = createConsoleSession({ runtime: new ScriptedRuntime([]) });
+    expect(session.autonomyMode).toBe("standard");
+  });
+});
+
+// ── Denied-host memory: no unbounded re-prompt loop ──
+
+/** A single-tool-call turn that references `url` via http_request, then stops. */
+function httpTurn(id: string, url: string): NativeRuntimeResult {
+  return {
+    content: [{ type: "tool_use", id, name: "http_request", input: { url } }],
+    stopReason: "tool_use",
+    durationMs: 1,
+  };
+}
+
+describe("Console autonomy — denied-host memory", () => {
+  it("does not re-prompt for a host the operator already declined (requestScope called exactly once)", async () => {
+    // Two operator turns, each asking the model to hit the same out-of-scope
+    // host. The first turn's request is declined; the second must be denied
+    // from session memory WITHOUT a second prompt — otherwise the operator is
+    // stuck in the re-prompt loop this fix removes.
+    const runtime = new ScriptedRuntime([
+      httpTurn("c1", "https://blocked.test/api"),
+      endTurn("First request declined."),
+      httpTurn("c2", "https://blocked.test/other"),
+      endTurn("Second request auto-denied from memory."),
+    ]);
+
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async () => {
+        prompts += 1;
+        return null; // decline
+      },
+    });
+
+    const first = await session.send("probe blocked.test");
+    expect(first.toolCalls[0].result.success).toBe(false);
+
+    const second = await session.send("try blocked.test again");
+    expect(second.toolCalls[0].result.success).toBe(false);
+    // The declined host is remembered — the operator is prompted only once.
+    expect(prompts).toBe(1);
+    // The error tells the model it was already declined so it stops retrying.
+    expect(second.toolCalls[0].result.error).toContain("already declined");
+  });
+
+  it("denies the whole call without prompting when only some requested hosts were declined", async () => {
+    // The model bundles a previously-declined host with a fresh one. We must
+    // not silently drop the declined host and prompt for the rest — the entire
+    // call is denied without a new prompt.
+    const runtime = new ScriptedRuntime([
+      httpTurn("c1", "https://blocked.test/a"),
+      endTurn("Declined."),
+      {
+        content: [
+          {
+            type: "tool_use",
+            id: "c2",
+            name: "http_request",
+            input: { url: "https://blocked.test/a", extra: "https://fresh.test/b" },
+          },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Bundled call denied."),
+    ]);
+
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    await session.send("hit blocked.test");
+    const outcome = await session.send("hit blocked.test and fresh.test");
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    // Still only the first prompt — the bundled call short-circuits.
+    expect(prompts).toBe(1);
+    expect(outcome.toolCalls[0].result.error).toContain("blocked.test");
+  });
+
+  it("re-enables a previously-declined host once an approval covers it", async () => {
+    // Decline a.test, then approve a broadened scope (via a fresh host) that
+    // also covers a.test. A later a.test call must succeed from scope coverage
+    // and never re-prompt — approval clears the stale denial.
+    const runtime = new ScriptedRuntime([
+      httpTurn("c1", "https://a.test/x"),
+      endTurn("a.test declined."),
+      httpTurn("c2", "https://b.test/y"),
+      endTurn("b.test approved."),
+      httpTurn("c3", "https://a.test/z"),
+      endTurn("a.test now allowed."),
+    ]);
+
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async (req) => {
+        prompts += 1;
+        // Decline the first request (a.test); approve the second with a scope
+        // covering both hosts.
+        if (req.requestedUrls.some((u) => u.includes("a.test")) && prompts === 1) return null;
+        return { target: "https://b.test", scope: ScopePolicy.fromJson({ in_scope: ["a.test", "b.test"] }) };
+      },
+    });
+
+    const denied = await session.send("hit a.test");
+    expect(denied.toolCalls[0].result.success).toBe(false);
+    expect(denied.toolCalls[0].result.error).toContain("declined");
+
+    // The approval passes the scope gate (whether the real http_request then
+    // succeeds over the network is irrelevant here — assert only that it was
+    // not blocked by scope).
+    await session.send("hit b.test");
+    expect(session.scope?.match("https://a.test/z").allowed).toBe(true);
+
+    const reused = await session.send("hit a.test again");
+    // a.test is now covered by the broadened scope, so the scope gate lets it
+    // through: it is neither re-prompted nor auto-denied from stale memory.
+    expect(reused.toolCalls[0].result.error ?? "").not.toContain("already declined");
+    // Two prompts total: the initial decline and the approval. The final
+    // a.test call is served from scope with no third prompt.
+    expect(prompts).toBe(2);
+  });
+
+  it("does not poison the denied set with an unparseable URL", async () => {
+    // A network-capable tool whose args carry a non-parseable pseudo-URL must
+    // not add anything to the denied set (fail safe). We verify the operator is
+    // still prompted on a second attempt rather than being auto-denied from a
+    // corrupted memory entry.
+    const runtime = new ScriptedRuntime([
+      {
+        content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "https://" } }],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("First declined."),
+      {
+        content: [{ type: "tool_use", id: "c2", name: "http_request", input: { url: "https://" } }],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Second declined."),
+    ]);
+
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    await session.send("hit the bad url");
+    await session.send("hit the bad url again");
+    // "https://" has no parseable host, so nothing is remembered and the
+    // operator is prompted both times (current behaviour preserved).
+    expect(prompts).toBe(2);
+  });
+
+  it("does not consult denied-host memory in yolo mode (behaviour unchanged)", async () => {
+    // YOLO hard-denies out-of-scope network calls before requestScope and the
+    // denied-host gate; this must remain a pure scope decision that never
+    // prompts, regardless of any prior denials in other modes.
+    const runtime = new ScriptedRuntime([
+      httpTurn("c1", "https://offscope.test/a"),
+      endTurn("Yolo denial 1."),
+      httpTurn("c2", "https://offscope.test/b"),
+      endTurn("Yolo denial 2."),
+    ]);
+
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    const first = await session.send("go");
+    const second = await session.send("go again");
+    expect(prompts).toBe(0); // yolo never prompts
+    expect(first.toolCalls[0].result.error).toContain("YOLO mode");
+    expect(second.toolCalls[0].result.error).toContain("YOLO mode");
+  });
+});
+
+describe("Console autonomy — yolo still enforces scope", () => {
+  it("hard-denies out-of-scope network calls without invoking requestScope", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://offscope.test" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Scope still matters in yolo."),
+    ]);
+
+    let requestScopeCalled = false;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      requestScope: async () => {
+        requestScopeCalled = true;
+        return null;
+      },
+      approveTool: async () => {
+        throw new Error("approveTool should not be called in yolo mode");
+      },
+    });
+
+    const outcome = await session.send("go");
+    expect(requestScopeCalled).toBe(false);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("YOLO mode");
+  });
+
+  it("allows tools in yolo mode when scope is preconfigured", async () => {
+    // Use bash (network-capable per NETWORK_CAPABLE_TOOLS) with no URLs in
+    // args — when sessionTarget is empty the scope gate skips because
+    // extractToolUrls returns empty. This verifies that tools run in yolo
+    // with a scope present, without triggering requestScope.
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo scope-ok" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+        usage: { inputTokens: 5, outputTokens: 3 },
+      },
+      endTurn("Allowed in yolo."),
+    ]);
+
+    let requestScopeCalled = false;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
+      requestScope: async () => {
+        requestScopeCalled = true;
+        throw new Error("requestScope should not be called in yolo when scope already covers");
+      },
+    });
+
+    const outcome = await session.send("go");
+    expect(requestScopeCalled).toBe(false);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+
+  it("hard-denies in yolo mode even when requestScope callback is absent", async () => {
+    // YOLO scope enforcement runs before the `!requestScope` early-return
+    // check, so out-of-scope network calls are denied even when no
+    // requestScope callback is configured.
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://unknown.test" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("YOLO denials hold without requestScope."),
+    ]);
+
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      // No requestScope configured, no scope configured.
+    });
+
+    const outcome = await session.send("go");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("YOLO mode");
+  });
+});
+
+describe("Console autonomy — approval integrity", () => {
+  it("rejects a scope resolution that does not cover the requested URL", async () => {
+    const runtime = new ScriptedRuntime([
+      {
+        content: [
+          { type: "tool_use", id: "c1", name: "http_request", input: { url: "https://uncovered.test/api" } },
+        ],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("Scope was invalid."),
+    ]);
+
+    const session = createConsoleSession({
+      runtime,
+      requestScope: async () => ({
+        target: "https://uncovered.test",
+        scope: ScopePolicy.fromJson({ in_scope: ["different.test"] }),
+      }),
+    });
+
+    const outcome = await session.send("probe it");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.error).toContain("does not cover");
+    expect(session.scope).toBeUndefined();
+  });
+
+  it("transitions through all three modes while preserving conversation and updating the system prompt", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo copilot" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Copilot done."),
+      { content: [{ type: "tool_use", id: "c2", name: "bash", input: { command: "echo standard" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Standard done."),
+      { content: [{ type: "tool_use", id: "c3", name: "bash", input: { command: "echo yolo" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Yolo done."),
+    ]);
+    let approvals = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "copilot",
+      approveTool: async () => {
+        approvals += 1;
+        return false; // always deny in copilot
+      },
+    });
+
+    // ── Copilot: tool denied by approveTool ──
+    expect(session.systemPrompt).toContain("Co-pilot mode");
+    let outcome = await session.send("copilot turn");
+    expect(approvals).toBe(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+
+    // ── Switch to standard: tool auto-executes without approval ──
+    session.setAutonomyMode("standard");
+    expect(session.autonomyMode).toBe("standard");
+    expect(session.systemPrompt).toContain("Standard mode");
+
+    outcome = await session.send("standard turn");
+    expect(approvals).toBe(1); // approveTool not called
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+
+    // ── Switch to yolo: tool auto-executes without approval ──
+    session.setAutonomyMode("yolo");
+    expect(session.autonomyMode).toBe("yolo");
+    expect(session.systemPrompt).toContain("YOLO mode");
+
+    outcome = await session.send("yolo turn");
+    expect(approvals).toBe(1); // approveTool still not called
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+
+    // Conversation preserved across all transitions.
+    expect(session.messages.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("clearConversation", () => {
+  it("clears messages while preserving session identity and configuration", () => {
+    const runtime = new ScriptedRuntime([endTurn("first reply"), endTurn("second reply")]);
+    const session = createConsoleSession({
+      runtime,
+      scanId: "test-scan",
+      target: "https://example.test",
+      autonomyMode: "yolo",
+    });
+
+    // Baseline state before any messages.
+    expect(session.messages).toHaveLength(0);
+    expect(session.scanId).toBe("test-scan");
+    expect(session.target).toBe("https://example.test");
+    expect(session.autonomyMode).toBe("yolo");
+  });
+
+  it("removes all accumulated messages after a turn", async () => {
+    const runtime = new ScriptedRuntime([endTurn("first")]);
+    const session = createConsoleSession({ runtime });
+
+    await session.send("hello");
+    expect(session.messages).toHaveLength(2);
+
+    session.clearConversation();
+    expect(session.messages).toHaveLength(0);
+  });
+
+  it("does not affect session identity, target, scope, autonomy mode, or tools", async () => {
+    const runtime = new ScriptedRuntime([endTurn("hi")]);
+    const session = createConsoleSession({
+      runtime,
+      scanId: "my-scan",
+      target: "https://target.test",
+      autonomyMode: "copilot",
+    });
+
+    await session.send("hello");
+    expect(session.messages).toHaveLength(2);
+
+    // Capture pre-clear state of preserved fields.
+    const scanId = session.scanId;
+    const target = session.target;
+    const mode = session.autonomyMode;
+    const tools = session.tools;
+    const sysPrompt = session.systemPrompt;
+
+    session.clearConversation();
+    expect(session.messages).toHaveLength(0);
+
+    // Everything else untouched.
+    expect(session.scanId).toBe(scanId);
+    expect(session.target).toBe(target);
+    expect(session.autonomyMode).toBe(mode);
+    expect(session.tools).toBe(tools);
+    expect(session.systemPrompt).toBe(sysPrompt);
+  });
+
+  it("starts fresh on the next send after clearConversation", async () => {
+    const calls: string[][] = [];
+    class RecordingRuntime implements NativeRuntime {
+      readonly type = "api" as const;
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+      async executeNative(
+        _system: string,
+        messages: NativeMessage[],
+        _tools: NativeToolDef[],
+      ): Promise<NativeRuntimeResult> {
+        calls.push(messages.map((m) => m.role));
+        return { content: [{ type: "text", text: "ok" }], stopReason: "end_turn", durationMs: 1 };
+      }
+    }
+
+    const session = createConsoleSession({ runtime: new RecordingRuntime() });
+
+    await session.send("first"); // messages=[user, assistant]; 1 recorded call
+    expect(session.messages).toHaveLength(2);
+    expect(calls[0]).toEqual(["user"]);
+
+    session.clearConversation();
+    expect(session.messages).toHaveLength(0);
+
+    await session.send("second"); // runtime sees only the new user message
+    expect(session.messages).toHaveLength(2);
+    expect(calls[1]).toEqual(["user"]);
+  });
+});
+
+// ── Seeded history (initialMessages) — model-switch / session-rebuild contract ──
+
+describe("createConsoleSession — seeded history (initialMessages)", () => {
+  // A small prior conversation a caller would replay when rebuilding the
+  // session around a different runtime (the `/model` switch scenario).
+  function priorHistory(): NativeMessage[] {
+    return [
+      { role: "user", content: [{ type: "text", text: "recon example.com" }] },
+      { role: "assistant", content: [{ type: "text", text: "Found two subdomains." }] },
+    ];
+  }
+
+  it("reports seeded messages on .messages before any send", () => {
+    const session = createConsoleSession({
+      runtime: new ScriptedRuntime([]),
+      initialMessages: priorHistory(),
+    });
+    // Engagement context is present immediately — no send() required.
+    expect(session.messages).toHaveLength(2);
+    expect(session.messages[0].role).toBe("user");
+    expect(session.messages[1].role).toBe("assistant");
+    expect(session.messages[1].content[0]).toEqual({ type: "text", text: "Found two subdomains." });
+  });
+
+  it("appends a new turn to the seeded history rather than replacing it", async () => {
+    const runtime = new ScriptedRuntime([endTurn("continuing where we left off")]);
+    const session = createConsoleSession({ runtime, initialMessages: priorHistory() });
+
+    await session.send("now scan them");
+
+    // 2 seeded + user + assistant — the prior context survives the send.
+    expect(session.messages).toHaveLength(4);
+    expect(session.messages[0].content[0]).toEqual({ type: "text", text: "recon example.com" });
+    expect(session.messages[2].role).toBe("user");
+    expect(session.messages[3].role).toBe("assistant");
+    // The runtime saw the seeded turns replayed ahead of the new user message.
+    expect(runtime.calls[0].messages).toHaveLength(3);
+    expect(runtime.calls[0].messages[0].content[0]).toEqual({ type: "text", text: "recon example.com" });
+  });
+
+  it("takes a defensive copy — mutating the caller's array does not affect the session", async () => {
+    const caller = priorHistory();
+    const runtime = new ScriptedRuntime([endTurn("ok")]);
+    const session = createConsoleSession({ runtime, initialMessages: caller });
+
+    // The caller keeps poking at its own array after construction.
+    caller.push({ role: "user", content: [{ type: "text", text: "leaked injection" }] });
+    caller[0].content[0] = { type: "text", text: "mutated in place" };
+
+    // Neither the array-level push nor the in-place element edit reaches the session.
+    expect(session.messages).toHaveLength(2);
+    expect(session.messages[0].content[0]).toEqual({ type: "text", text: "recon example.com" });
+
+    // And a real send() still only appends the session's own turns.
+    await session.send("go");
+    expect(session.messages).toHaveLength(4);
+    expect(session.messages.some((m) => m.content.some((b) => b.type === "text" && b.text === "leaked injection"))).toBe(false);
+  });
+
+  it("clearConversation empties a seeded history", () => {
+    const session = createConsoleSession({
+      runtime: new ScriptedRuntime([]),
+      initialMessages: priorHistory(),
+    });
+    expect(session.messages).toHaveLength(2);
+
+    session.clearConversation();
+    expect(session.messages).toHaveLength(0);
+  });
+
+  it("still starts empty when initialMessages is absent (no regression)", () => {
+    const session = createConsoleSession({ runtime: new ScriptedRuntime([]) });
+    expect(session.messages).toHaveLength(0);
+  });
+});
+
+// ── Local filesystem scope-on-demand (mirror of the network scope flow) ──
+
+describe("Console autonomy — local filesystem scope-on-demand", () => {
+  const tmpRoots: string[] = [];
+
+  afterEach(() => {
+    while (tmpRoots.length > 0) {
+      const dir = tmpRoots.pop();
+      if (dir) {
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    }
+  });
+
+  /** Create an isolated temp tree and return its symlink-resolved real path. */
+  function makeTmpRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), "0sec-localscope-"));
+    tmpRoots.push(root);
+    return realpathSync(root);
+  }
+
+  /** A single-tool-call runtime turn requesting `name` with `input`. */
+  function toolTurn(id: string, name: string, input: Record<string, unknown>): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id, name, input }],
+      stopReason: "tool_use",
+      durationMs: 1,
+      usage: { inputTokens: 3, outputTokens: 2 },
+    };
+  }
+
+  it("triggers requestLocalScope once and succeeds after the operator approves a directory", async () => {
+    const root = makeTmpRoot();
+    mkdirSync(join(root, "src"), { recursive: true });
+    const filePath = join(root, "src", "app.ts");
+    writeFileSync(filePath, "export const x = 1;\nexport const y = 2;\n");
+
+    const runtime = new ScriptedRuntime([
+      toolTurn("c1", "read_file", { path: filePath }),
+      // Second in-scope read of another file in the same approved subtree.
+      toolTurn("c2", "read_file", { path: filePath }),
+      endTurn("Read the file."),
+    ]);
+
+    let calls = 0;
+    let seenRequestedPath = "";
+    const session = createConsoleSession({
+      runtime,
+      requestLocalScope: async (req: ConsoleLocalScopeRequest) => {
+        calls += 1;
+        seenRequestedPath = req.requestedPath;
+        return { scopePath: root };
+      },
+    });
+
+    const outcome = await session.send("review src/app.ts");
+
+    // Callback invoked exactly once; the second in-scope read reused the scope.
+    expect(calls).toBe(1);
+    expect(seenRequestedPath).toBe(realpathSync(filePath));
+    expect(outcome.toolCalls).toHaveLength(2);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    expect(outcome.toolCalls[1].result.success).toBe(true);
+    expect(session.localScopePath).toBe(root);
+  });
+
+  it("denies on decline, mentions the operator declined, and does NOT re-prompt for the same path", async () => {
+    const root = makeTmpRoot();
+    const filePath = join(root, "secret.ts");
+    writeFileSync(filePath, "const s = 1;\n");
+
+    const runtime = new ScriptedRuntime([
+      toolTurn("c1", "read_file", { path: filePath }),
+      toolTurn("c2", "read_file", { path: filePath }), // identical retry
+      endTurn("Giving up."),
+    ]);
+
+    let calls = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestLocalScope: async () => {
+        calls += 1;
+        return null; // operator declines
+      },
+    });
+
+    const outcome = await session.send("read secret.ts");
+
+    expect(calls).toBe(1); // second identical call did NOT re-prompt
+    expect(outcome.toolCalls).toHaveLength(2);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("operator declined");
+    expect(outcome.toolCalls[1].result.success).toBe(false);
+    expect(outcome.toolCalls[1].result.error).toContain("already declined");
+    expect(session.localScopePath).toBeUndefined();
+  });
+
+  it("approving /a/b does not authorize /a, /a/c, or the /a/bc prefix sibling", async () => {
+    const root = makeTmpRoot();
+    const aB = join(root, "a", "b");
+    const aBnested = join(aB, "nested");
+    const aC = join(root, "a", "c");
+    const aBc = join(root, "a", "bc");
+    const aRoot = join(root, "a");
+    for (const dir of [aBnested, aC, aBc]) mkdirSync(dir, { recursive: true });
+    const fileInB = join(aB, "in-b.ts");
+    const fileInBNested = join(aBnested, "deep.ts");
+    const fileInC = join(aC, "in-c.ts");
+    const fileInBc = join(aBc, "in-bc.ts");
+    const fileInA = join(aRoot, "in-a.ts");
+    for (const f of [fileInB, fileInBNested, fileInC, fileInBc, fileInA]) writeFileSync(f, "x\n");
+
+    const runtime = new ScriptedRuntime([
+      toolTurn("c1", "read_file", { path: fileInB }), // approve /a/b
+      toolTurn("c2", "read_file", { path: fileInBNested }), // inside /a/b → covered
+      toolTurn("c3", "read_file", { path: fileInBc }), // /a/bc sibling → NOT covered
+      toolTurn("c4", "read_file", { path: fileInC }), // /a/c → NOT covered
+      toolTurn("c5", "read_file", { path: fileInA }), // /a parent → NOT covered
+      endTurn("Done probing scope edges."),
+    ]);
+
+    let calls = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestLocalScope: async (req: ConsoleLocalScopeRequest) => {
+        calls += 1;
+        // Approve only the first request (/a/b); deny every re-prompt so the
+        // "not covered" cases surface as denials rather than silent grants.
+        return calls === 1 ? { scopePath: aB } : null;
+      },
+    });
+
+    const outcome = await session.send("probe the tree");
+
+    // /a/b approved once, then /a/bc, /a/c, /a each re-prompted (not covered).
+    // The nested read inside /a/b did NOT re-prompt.
+    expect(calls).toBe(4);
+    expect(session.localScopePath).toBe(realpathSync(aB));
+    expect(outcome.toolCalls[0].result.success).toBe(true); // /a/b
+    expect(outcome.toolCalls[1].result.success).toBe(true); // /a/b/nested (covered)
+    expect(outcome.toolCalls[2].result.success).toBe(false); // /a/bc
+    expect(outcome.toolCalls[3].result.success).toBe(false); // /a/c
+    expect(outcome.toolCalls[4].result.success).toBe(false); // /a
+  });
+
+  it("rejects an approval whose directory does not cover the requested path", async () => {
+    const root = makeTmpRoot();
+    const aB = join(root, "a", "b");
+    const aC = join(root, "a", "c");
+    mkdirSync(aB, { recursive: true });
+    mkdirSync(aC, { recursive: true });
+    const fileInB = join(aB, "target.ts");
+    writeFileSync(fileInB, "x\n");
+
+    const runtime = new ScriptedRuntime([
+      toolTurn("c1", "read_file", { path: fileInB }),
+      endTurn("Rejected."),
+    ]);
+
+    const session = createConsoleSession({
+      runtime,
+      // Approve a sibling directory that does NOT contain the requested file.
+      requestLocalScope: async () => ({ scopePath: aC }),
+    });
+
+    const outcome = await session.send("read target.ts");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("does not cover");
+    expect(session.localScopePath).toBeUndefined();
+  });
+
+  it("refuses the filesystem root without prompting", async () => {
+    const runtime = new ScriptedRuntime([
+      toolTurn("c1", "read_file", { path: "/" }),
+      endTurn("Refused."),
+    ]);
+
+    let calls = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestLocalScope: async () => {
+        calls += 1;
+        return { scopePath: "/" };
+      },
+    });
+
+    const outcome = await session.send("read /");
+    expect(calls).toBe(0); // never even offered for approval
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("protected root");
+  });
+
+  it("refuses the user's home directory itself without prompting", async () => {
+    const runtime = new ScriptedRuntime([
+      toolTurn("c1", "list_files", { path: homedir() }),
+      endTurn("Refused."),
+    ]);
+
+    let calls = 0;
+    const session = createConsoleSession({
+      runtime,
+      requestLocalScope: async () => {
+        calls += 1;
+        return { scopePath: homedir() };
+      },
+    });
+
+    const outcome = await session.send("list my home");
+    expect(calls).toBe(0);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("protected root");
+  });
+
+  it("leaves behaviour unchanged when no requestLocalScope callback is configured", async () => {
+    const runtime = new ScriptedRuntime([
+      toolTurn("c1", "list_files", {}),
+      endTurn("No scope."),
+    ]);
+
+    // No requestLocalScope, no scope — exactly the legacy readline console.
+    const session = createConsoleSession({ runtime });
+
+    const outcome = await session.send("list files");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain(
+      "requires a scoped local directory",
+    );
+    expect(session.localScopePath).toBeUndefined();
+  });
+});
+
+// ── Per-turn cost guards: token budget (primary) + iteration backstop ──
+
+/**
+ * The guards exist because a real console turn reported 779,532 input tokens
+ * across 30 tool calls: every iteration resends the whole conversation, so cost
+ * grows superlinearly with tool count while a round COUNT says nothing about
+ * spend. These tests pin the two guards as independent, separately
+ * configurable, and — crucially — resumable rather than dead ends.
+ */
+describe("Console turn budget — token guard and iteration backstop", () => {
+  /** A turn that always asks for one cheap tool, with scripted usage numbers. */
+  function toolCallWithUsage(usage?: { inputTokens: number; outputTokens: number }): NativeRuntimeResult {
+    return {
+      content: [{ type: "tool_use", id: "c", name: "payload_lookup", input: { name: "jsfuck_alert" } }],
+      stopReason: "tool_use",
+      durationMs: 1,
+      ...(usage ? { usage } : {}),
+    };
+  }
+
+  it("stops with max_turn_tokens and reports used vs limit when the budget is overrun", async () => {
+    // One round costs 150 tokens against a 100-token budget.
+    const runtime = new ScriptedRuntime(
+      Array.from({ length: 10 }, () => toolCallWithUsage({ inputTokens: 120, outputTokens: 30 })),
+    );
+    const session = createConsoleSession({
+      runtime,
+      maxTurnTokens: 100,
+      maxToolIterations: 50, // high ceiling — the budget must be what trips
+    });
+
+    const notices: string[] = [];
+    const outcome = await session.send("audit this repo", { onNotice: (m) => notices.push(m) });
+
+    expect(outcome.stopReason).toBe("max_turn_tokens");
+    expect(outcome.toolCalls).toHaveLength(1);
+    // The outcome carries the numbers the operator needs to decide.
+    expect(outcome.budget.tokensUsed).toBe(150);
+    expect(outcome.budget.tokenBudget).toBe(100);
+    expect(outcome.budget.iterations).toBe(1);
+    expect(outcome.budget.maxToolIterations).toBe(50);
+    expect(outcome.usage).toEqual({ inputTokens: 120, outputTokens: 30 });
+    // The notice is honest about spend, not a bare "cap reached".
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("150");
+    expect(notices[0]).toContain("100");
+  });
+
+  it("stops before a model call that would demonstrably overrun the budget", async () => {
+    // Each round costs 400 (300 in / 100 out) against a 1000 budget. After two
+    // rounds 800 is spent; a third call costs at least another 300 input, which
+    // would land at 1100 — so the turn stops at 800 rather than overshooting.
+    const runtime = new ScriptedRuntime(
+      Array.from({ length: 10 }, () => toolCallWithUsage({ inputTokens: 300, outputTokens: 100 })),
+    );
+    const session = createConsoleSession({ runtime, maxTurnTokens: 1000, maxToolIterations: 50 });
+
+    const outcome = await session.send("keep going");
+    expect(outcome.stopReason).toBe("max_turn_tokens");
+    expect(outcome.budget.iterations).toBe(2);
+    expect(outcome.budget.tokensUsed).toBe(800);
+    expect(outcome.budget.tokensUsed).toBeLessThanOrEqual(outcome.budget.tokenBudget);
+  });
+
+  it("stops with max_tool_iterations when the backstop trips first (guards are independent)", async () => {
+    // Generous budget, tiny ceiling → the runaway backstop is what stops it.
+    const runtime = new ScriptedRuntime(
+      Array.from({ length: 10 }, () => toolCallWithUsage({ inputTokens: 5, outputTokens: 1 })),
+    );
+    const session = createConsoleSession({
+      runtime,
+      maxTurnTokens: 1_000_000,
+      maxToolIterations: 3,
+    });
+
+    const outcome = await session.send("go");
+    expect(outcome.stopReason).toBe("max_tool_iterations");
+    expect(outcome.budget.iterations).toBe(3);
+    expect(outcome.budget.maxToolIterations).toBe(3);
+    expect(outcome.budget.tokenBudget).toBe(1_000_000);
+    expect(outcome.budget.tokensUsed).toBe(18); // nowhere near the budget
+  });
+
+  it("trips the iteration backstop when rounds cost nothing measurable", async () => {
+    // A runtime that reports no usage at all cannot move the token budget, so
+    // the backstop is the ONLY thing that can end this turn. This is exactly
+    // the pathological case the iteration ceiling is retained for.
+    const runtime = new ScriptedRuntime(Array.from({ length: 20 }, () => toolCallWithUsage()));
+    const session = createConsoleSession({ runtime, maxTurnTokens: 5_000_000, maxToolIterations: 4 });
+
+    const outcome = await session.send("go");
+    expect(outcome.stopReason).toBe("max_tool_iterations");
+    expect(outcome.budget.tokensUsed).toBe(0);
+    expect(outcome.budget.iterations).toBe(4);
+  });
+
+  it("honours an explicit maxToolIterations exactly and never overrides it with the new default", async () => {
+    const runtime = new ScriptedRuntime(
+      Array.from({ length: 30 }, () => toolCallWithUsage({ inputTokens: 1, outputTokens: 1 })),
+    );
+    const session = createConsoleSession({ runtime, maxToolIterations: 7 });
+
+    const outcome = await session.send("go");
+    expect(outcome.stopReason).toBe("max_tool_iterations");
+    // Exactly 7 rounds — not the raised default, not a clamped value.
+    expect(outcome.toolCalls).toHaveLength(7);
+    expect(outcome.budget.iterations).toBe(7);
+    expect(outcome.budget.maxToolIterations).toBe(7);
+  });
+
+  it("honours an explicit maxTurnTokens independently of the iteration ceiling", async () => {
+    const runtime = new ScriptedRuntime(
+      Array.from({ length: 30 }, () => toolCallWithUsage({ inputTokens: 100, outputTokens: 0 })),
+    );
+    // Budget allows 5 rounds (5*100 = 500, and a 6th would need 100 more);
+    // the ceiling is far away.
+    const session = createConsoleSession({ runtime, maxTurnTokens: 500, maxToolIterations: 1000 });
+
+    const outcome = await session.send("go");
+    expect(outcome.stopReason).toBe("max_turn_tokens");
+    expect(outcome.toolCalls).toHaveLength(5);
+    expect(outcome.budget.tokensUsed).toBe(500);
+  });
+
+  it("completes normally with end_turn when well inside both guards", async () => {
+    const runtime = new ScriptedRuntime([
+      toolCallWithUsage({ inputTokens: 40, outputTokens: 10 }),
+      { ...endTurn("All done — nothing else to check."), usage: { inputTokens: 60, outputTokens: 20 } },
+    ]);
+    const session = createConsoleSession({ runtime, maxTurnTokens: 100_000, maxToolIterations: 50 });
+
+    const notices: string[] = [];
+    const outcome = await session.send("quick question", { onNotice: (m) => notices.push(m) });
+
+    expect(outcome.stopReason).toBe("end_turn");
+    expect(notices).toHaveLength(0);
+    // The budget block is present on the happy path too, so a surface can show
+    // consumption on every turn rather than only on a stop.
+    expect(outcome.budget.tokensUsed).toBe(130);
+    expect(outcome.budget.tokenBudget).toBe(100_000);
+    expect(outcome.budget.iterations).toBe(1);
+  });
+
+  it("uses generous defaults: the observed 780k / 30-round audit does not trip either guard", async () => {
+    // Replay the shape of the real session that motivated this change: 30 tool
+    // rounds totalling ~780k tokens. With the defaults it must run to a natural
+    // end_turn instead of being dead-ended.
+    const perRound = { inputTokens: 26_000, outputTokens: 0 }; // 30 * 26k = 780k
+    const runtime = new ScriptedRuntime([
+      ...Array.from({ length: 30 }, () => toolCallWithUsage(perRound)),
+      endTurn("Audit complete."),
+    ]);
+    const session = createConsoleSession({ runtime }); // no explicit limits
+
+    const outcome = await session.send("audit this repo");
+    expect(outcome.stopReason).toBe("end_turn");
+    expect(outcome.toolCalls).toHaveLength(30);
+    expect(outcome.budget.tokensUsed).toBe(780_000);
+    // Defaults: a 2M token budget with a 100-round runaway backstop.
+    expect(outcome.budget.tokenBudget).toBe(2_000_000);
+    expect(outcome.budget.maxToolIterations).toBe(100);
+  });
+
+  it("fires onUsage per model call, not only at turn end, with running totals against the budget", async () => {
+    const runtime = new ScriptedRuntime([
+      toolCallWithUsage({ inputTokens: 10, outputTokens: 2 }),
+      toolCallWithUsage({ inputTokens: 20, outputTokens: 3 }),
+      { ...endTurn("done"), usage: { inputTokens: 30, outputTokens: 5 } },
+    ]);
+    const session = createConsoleSession({ runtime, maxTurnTokens: 100_000, maxToolIterations: 50 });
+
+    const samples: ConsoleUsageReport[] = [];
+    const outcome = await session.send("go", { onUsage: (u) => samples.push(u) });
+
+    // One sample per model call — a UI can watch the number climb mid-turn.
+    expect(samples).toHaveLength(3);
+    expect(samples.length).toBeGreaterThan(1);
+    // Per-call deltas.
+    expect(samples.map((s) => s.inputTokens)).toEqual([10, 20, 30]);
+    // Running turn totals, monotonically increasing, measured against the budget.
+    expect(samples.map((s) => s.turnTokensUsed)).toEqual([12, 35, 70]);
+    expect(samples.every((s) => s.turnTokenBudget === 100_000)).toBe(true);
+    // Rounds COMPLETED at the time of each sample.
+    expect(samples.map((s) => s.iterations)).toEqual([0, 1, 2]);
+    expect(samples[samples.length - 1].turnTokensUsed).toBe(outcome.budget.tokensUsed);
+  });
+
+  it("counts usage a runtime reports only through the stream callback, without double-counting", async () => {
+    // Some provider wires surface usage on the return value, some only through
+    // `callbacks.onUsage`. Both must land in the budget exactly once.
+    class CallbackOnlyUsageRuntime implements NativeRuntime {
+      readonly type = "api" as const;
+      turn = 0;
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+      async executeNative(
+        _system: string,
+        _messages: NativeMessage[],
+        _tools: NativeToolDef[],
+        callbacks?: NativeStreamCallbacks,
+      ): Promise<NativeRuntimeResult> {
+        // Usage arrives ONLY via the callback — never on the result.
+        callbacks?.onUsage?.({ inputTokens: 100, outputTokens: 10 });
+        this.turn += 1;
+        if (this.turn === 1) {
+          return {
+            content: [{ type: "tool_use", id: "c1", name: "payload_lookup", input: { name: "jsfuck_alert" } }],
+            stopReason: "tool_use",
+            durationMs: 1,
+          };
+        }
+        return endTurn("done");
+      }
+    }
+
+    const samples: ConsoleUsageReport[] = [];
+    const session = createConsoleSession({ runtime: new CallbackOnlyUsageRuntime() });
+    const outcome = await session.send("go", { onUsage: (u) => samples.push(u) });
+
+    expect(outcome.stopReason).toBe("end_turn");
+    // Two calls at 110 each, counted once apiece — not 440 from double-counting.
+    expect(outcome.budget.tokensUsed).toBe(220);
+    expect(outcome.usage).toEqual({ inputTokens: 200, outputTokens: 20 });
+    // And the engine emitted exactly one authoritative sample per model call.
+    expect(samples).toHaveLength(2);
+  });
+
+  it("resumes cleanly from the existing history after a budget stop, re-running nothing", async () => {
+    // Turn 1 is cut off by the budget mid-investigation. Turn 2 must continue
+    // from the SAME conversation: the model sees the prior tool results, no
+    // tool is dispatched again, and nothing auto-continued in between.
+    const runtime = new ScriptedRuntime([
+      toolCallWithUsage({ inputTokens: 400, outputTokens: 0 }), // turn 1: spends the budget
+      { ...endTurn("Continuing: here is the summary."), usage: { inputTokens: 50, outputTokens: 10 } }, // turn 2
+    ]);
+    const session = createConsoleSession({ runtime, maxTurnTokens: 300, maxToolIterations: 50 });
+
+    const first = await session.send("audit this repo");
+    expect(first.stopReason).toBe("max_turn_tokens");
+    expect(first.toolCalls).toHaveLength(1);
+
+    // History is well-formed at the stop: the assistant's tool_use has its
+    // matching tool_result, so the conversation is resumable as-is.
+    const toolUseIds = session.messages.flatMap((m) =>
+      m.content.flatMap((b) => (b.type === "tool_use" ? [b.id] : [])),
+    );
+    const toolResultIds = session.messages.flatMap((m) =>
+      m.content.flatMap((b) => (b.type === "tool_result" ? [b.tool_use_id] : [])),
+    );
+    expect(toolUseIds).toEqual(toolResultIds);
+    const messagesAfterFirst = session.messages.length;
+
+    // The operator decides to continue — a plain message, no special API.
+    const second = await session.send("continue");
+
+    expect(second.stopReason).toBe("end_turn");
+    // No tool was re-dispatched on the resumed turn.
+    expect(second.toolCalls).toHaveLength(0);
+    // The resumed turn was sent the FULL prior history, tool results included.
+    const resumedMessages = runtime.calls[runtime.calls.length - 1].messages;
+    expect(resumedMessages.length).toBe(messagesAfterFirst + 1);
+    expect(
+      resumedMessages.some((m) => m.content.some((b) => b.type === "tool_result")),
+    ).toBe(true);
+    // History only grew; the earlier turn was not replayed or rewritten.
+    expect(session.messages.length).toBeGreaterThan(messagesAfterFirst);
+    // Budget accounting is per-turn: the fresh turn starts from zero.
+    expect(second.budget.tokensUsed).toBe(60);
+    expect(second.budget.iterations).toBe(0);
+  });
+});
+
+describe("monotonic guard floor", () => {
+  it("denies a tool this build does not recognize instead of running it", async () => {
+    // The gates are keyed on tool-NAME membership in static maps, so a name in
+    // none of them is the least-dangerous class by omission. The guard floor is
+    // what turns that silent trust into a refusal.
+    const runtime = new ScriptedRuntime([
+      {
+        content: [{ type: "tool_use", id: "g1", name: "acme_exfil", input: {} }],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("done"),
+    ]);
+    const session = createConsoleSession({ runtime, autonomyMode: "yolo" });
+
+    const outcome = await session.send("run it");
+
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("unresolved capability flags");
+  });
+
+  it("still dispatches a recognized tool through the same path", async () => {
+    // The floor must be inert for known tools, or it is just an outage.
+    const runtime = new ScriptedRuntime([
+      {
+        content: [{ type: "tool_use", id: "g2", name: "bash", input: { command: "echo ok" } }],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("done"),
+    ]);
+    const session = createConsoleSession({ runtime, autonomyMode: "yolo" });
+
+    const outcome = await session.send("run it");
+
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0].result.error ?? "").not.toContain("unresolved capability");
+  });
+
+  it("closes the copilot fail-open corner when no approval mechanism exists", async () => {
+    // maybeApproveTool allows everything when `approveTool` is absent. In
+    // copilot mode that is a fail-open path; the guard refuses instead.
+    const runtime = new ScriptedRuntime([
+      {
+        content: [{ type: "tool_use", id: "g3", name: "bash", input: { command: "echo ok" } }],
+        stopReason: "tool_use",
+        durationMs: 1,
+      },
+      endTurn("done"),
+    ]);
+    const session = createConsoleSession({ runtime, autonomyMode: "copilot" });
+
+    const outcome = await session.send("run it");
+
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("no approval mechanism is available");
   });
 });
