@@ -64,6 +64,16 @@ export interface TuiSettings {
   allowSubagentPeerMessaging: boolean;
   /** Let a subagent send a message to the operator's transcript (child→operator). */
   allowSubagentOperatorMessaging: boolean;
+  /** How a conversation turn is framed. */
+  transcriptStyle: "rail" | "bubble" | "plain" | "compact" | "document";
+  /** How the speaker label is drawn. */
+  roleLabelStyle: "full" | "short" | "glyph" | "off";
+  /** How a tool/subagent call is drawn (failures always show). */
+  toolCardStyle: "rail" | "inline" | "compact" | "hidden";
+  /** Colour palette. */
+  theme: "dark" | "light" | "high-contrast" | "ansi";
+  /** Let the model add tools to its own session (off by default). */
+  allowModelSelfExtension: boolean;
 }
 
 /** Keys of `TuiSettings` whose value is a boolean. */
@@ -88,7 +98,14 @@ interface EnumSettingDef<K extends EnumKey = EnumKey> extends SettingDef<TuiSett
   choices: readonly TuiSettings[K][];
 }
 
-type TuiSettingDef = BooleanSettingDef | EnumSettingDef<"density"> | EnumSettingDef<"composerStyle">;
+type TuiSettingDef =
+  | BooleanSettingDef
+  | EnumSettingDef<"density">
+  | EnumSettingDef<"composerStyle">
+  | EnumSettingDef<"transcriptStyle">
+  | EnumSettingDef<"roleLabelStyle">
+  | EnumSettingDef<"toolCardStyle">
+  | EnumSettingDef<"theme">;
 
 /**
  * The narrowly-typed table. `SETTING_DEFS` re-exports it under the public,
@@ -188,6 +205,51 @@ const DEFS: readonly TuiSettingDef[] = [
     default: true,
     group: "Security",
   },
+  {
+    key: "transcriptStyle",
+    label: "Transcript style",
+    description: "How a conversation turn is framed: rail, bubble, plain, compact or document.",
+    kind: "enum",
+    default: "rail",
+    choices: ["rail", "bubble", "plain", "compact", "document"],
+    group: "Display",
+  },
+  {
+    key: "roleLabelStyle",
+    label: "Role label",
+    description: 'How the speaker label is drawn: full ("\u258c operator"), short ("op"), glyph ("\u258c") or off.',
+    kind: "enum",
+    default: "full",
+    choices: ["full", "short", "glyph", "off"],
+    group: "Display",
+  },
+  {
+    key: "toolCardStyle",
+    label: "Tool card",
+    description: "How a tool or subagent call is drawn: rail, inline, compact or hidden (failures always show).",
+    kind: "enum",
+    default: "rail",
+    choices: ["rail", "inline", "compact", "hidden"],
+    group: "Display",
+  },
+  {
+    key: "theme",
+    label: "Theme",
+    description: "Colour palette: dark (default), light, high-contrast or ansi (16-colour terminals).",
+    kind: "enum",
+    default: "dark",
+    choices: ["dark", "light", "high-contrast", "ansi"],
+    group: "Display",
+  },
+  {
+    key: "allowModelSelfExtension",
+    label: "Model self-extension",
+    description:
+      "Enabling this lets the model add tools to its own session, and a prompt-injected model can therefore author tools you did not write.",
+    kind: "boolean",
+    default: false,
+    group: "Security",
+  },
 ];
 
 export const SETTING_DEFS: readonly SettingDef[] = DEFS;
@@ -206,6 +268,11 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   composerStyle: "border",
   allowSubagentPeerMessaging: true,
   allowSubagentOperatorMessaging: true,
+  transcriptStyle: "rail",
+  roleLabelStyle: "full",
+  toolCardStyle: "rail",
+  theme: "dark",
+  allowModelSelfExtension: false,
 };
 
 /** Basename of the settings file inside the 0sec state directory. */
@@ -267,6 +334,11 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     composerStyle: enumAt(raw, "composerStyle"),
     allowSubagentPeerMessaging: booleanAt(raw, "allowSubagentPeerMessaging"),
     allowSubagentOperatorMessaging: booleanAt(raw, "allowSubagentOperatorMessaging"),
+    transcriptStyle: enumAt(raw, "transcriptStyle"),
+    roleLabelStyle: enumAt(raw, "roleLabelStyle"),
+    toolCardStyle: enumAt(raw, "toolCardStyle"),
+    theme: enumAt(raw, "theme"),
+    allowModelSelfExtension: booleanAt(raw, "allowModelSelfExtension"),
   };
 }
 
