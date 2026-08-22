@@ -291,142 +291,87 @@ describe("Console autonomy — scope resolution", () => {
   });
 });
 
-describe("Console autonomy — copilot approval", () => {
-  it("denies non-read-only tool when approveTool returns false", async () => {
-    // Use `bash` (non-read-only, non-network-url-bearing) to avoid triggering
-    // the scope-resolution gate first.
+describe("Console autonomy — standard mode (per-action approval)", () => {
+  it("prompts the operator before EACH effectful action and denies on a no", async () => {
+    // Two effectful actions dispatched in one round: standard must put BOTH to
+    // the operator (the most-prompting mode), and deny each one the operator
+    // refuses — approval is per action, never once-per-turn.
     const runtime = new ScriptedRuntime([
       {
         content: [
-          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } },
+          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo one" } },
+          { type: "tool_use", id: "c2", name: "run_command", input: { command: "echo two" } },
         ],
         stopReason: "tool_use",
         durationMs: 1,
       },
-      endTurn("Not approved."),
+      endTurn("Both actions were put to the operator."),
     ]);
 
     const approved: string[] = [];
     const session = createConsoleSession({
       runtime,
-      autonomyMode: "copilot",
+      autonomyMode: "standard",
       approveTool: async (call) => {
         approved.push(call.name);
-        return false;
+        return false; // deny each action
       },
     });
 
-    const outcome = await session.send("run command");
-    expect(approved).toEqual(["bash"]);
-    expect(outcome.toolCalls).toHaveLength(1);
+    const outcome = await session.send("run both");
+    // Every effectful action was put to the operator — one prompt per action.
+    expect(approved).toEqual(["bash", "run_command"]);
+    expect(outcome.toolCalls).toHaveLength(2);
     expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("bash");
-    expect(outcome.toolCalls[0].result.error).toContain("not approved");
+    expect(outcome.toolCalls[0].result.error).toContain("not approved by the operator in standard mode");
+    expect(outcome.toolCalls[1].result.success).toBe(false);
   });
 
-  it("allows read-only tools without calling approveTool", async () => {
+  it("dispatches the action only on an explicit operator yes (approval never assumed)", async () => {
     const runtime = new ScriptedRuntime([
-      {
-        content: [
-          { type: "tool_use", id: "c1", name: "read_file", input: { path: "/etc/hostname" } },
-        ],
-        stopReason: "tool_use",
-        durationMs: 1,
-        usage: { inputTokens: 5, outputTokens: 3 },
-      },
-      endTurn("Contents."),
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo hi" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Approved, so it ran."),
     ]);
-
-    let approveToolCalled = false;
-    const session = createConsoleSession({
-      runtime,
-      autonomyMode: "copilot",
-      approveTool: async () => {
-        approveToolCalled = true;
-        return false;
-      },
-    });
-
-    await session.send("read hostname");
-    expect(approveToolCalled).toBe(false);
-    expect(session.autonomyMode).toBe("copilot");
-  });
-
-  it("allows tools when approveTool callback is absent", async () => {
-    const runtime = new ScriptedRuntime([
-      {
-        content: [
-          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } },
-        ],
-        stopReason: "tool_use",
-        durationMs: 1,
-        usage: { inputTokens: 5, outputTokens: 3 },
-      },
-      endTurn("Done."),
-    ]);
-
-    const session = createConsoleSession({ runtime, autonomyMode: "copilot" });
-    const outcome = await session.send("run command");
-    expect(outcome.toolCalls).toHaveLength(1);
-    // No approveTool → falls through to real executor, which runs bash.
-    expect(outcome.stopReason).toBe("end_turn");
-  });
-
-  it("skips per-tool approveTool in yolo mode", async () => {
-    const runtime = new ScriptedRuntime([
-      {
-        content: [
-          { type: "tool_use", id: "c1", name: "payload_lookup", input: { name: "jsfuck_alert" } },
-        ],
-        stopReason: "tool_use",
-        durationMs: 1,
-        usage: { inputTokens: 5, outputTokens: 3 },
-      },
-      endTurn("Running."),
-    ]);
-
-    let approveToolCalled = false;
-    const session = createConsoleSession({
-      runtime,
-      autonomyMode: "yolo",
-      approveTool: async () => {
-        approveToolCalled = true;
-        return false;
-      },
-    });
-
-    await session.send("find payload");
-    expect(approveToolCalled).toBe(false);
-    expect(session.autonomyMode).toBe("yolo");
-  });
-});
-
-describe("Console autonomy — standard mode", () => {
-  it("skips per-tool approval (no approveTool gate)", async () => {
-    const runtime = new ScriptedRuntime([
-      {
-        content: [
-          { type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } },
-        ],
-        stopReason: "tool_use",
-        durationMs: 1,
-      },
-      endTurn("Standard auto-exec."),
-    ]);
-
-    let approveToolCalled = false;
+    let prompted = 0;
     const session = createConsoleSession({
       runtime,
       autonomyMode: "standard",
       approveTool: async () => {
-        approveToolCalled = true;
+        prompted += 1;
+        return true;
+      },
+    });
+    const outcome = await session.send("run it");
+    expect(prompted).toBe(1);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+
+  it("exempts read-only tools from the per-action prompt", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "payload_lookup", input: { name: "jsfuck_alert" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Read-only ran without a prompt."),
+    ]);
+    let prompted = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "standard",
+      approveTool: async () => {
+        prompted += 1;
         return false;
       },
     });
+    const outcome = await session.send("look up a payload");
+    expect(prompted).toBe(0); // READ_ONLY_TOOLS grant no authority → no prompt
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
 
+  it("falls through when no approveTool channel is wired (headless/legacy embedder)", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Ran without an approval channel."),
+    ]);
+    const session = createConsoleSession({ runtime, autonomyMode: "standard" });
     const outcome = await session.send("run command");
-    expect(approveToolCalled).toBe(false);
-    expect(outcome.toolCalls).toHaveLength(1);
     expect(outcome.toolCalls[0].result.success).toBe(true);
   });
 
@@ -461,6 +406,97 @@ describe("Console autonomy — standard mode", () => {
   it("defaults to standard when no autonomyMode is specified", () => {
     const session = createConsoleSession({ runtime: new ScriptedRuntime([]) });
     expect(session.autonomyMode).toBe("standard");
+  });
+});
+
+describe("Console autonomy — copilot (no per-action prompts; in-engagement auto-expand)", () => {
+  it("never calls approveTool — copilot has no per-action prompt", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Ran with full in-engagement autonomy."),
+    ]);
+    let approveToolCalled = false;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "copilot",
+      approveTool: async () => {
+        approveToolCalled = true;
+        return false;
+      },
+    });
+    const outcome = await session.send("run command");
+    expect(approveToolCalled).toBe(false);
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+  });
+
+  it("auto-expands scope to an in-engagement target WITHOUT prompting, and records it", async () => {
+    // Target is the apex example.test; the model reaches the sub-domain
+    // api.example.test — in-engagement, so copilot expands scope with no prompt.
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "https://api.example.test/v1" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Auto-expanded and reached the sub-domain."),
+    ]);
+    let prompts = 0;
+    const notices: string[] = [];
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "copilot",
+      target: "https://example.test",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    await session.send("hit the api host", { onNotice: (m) => notices.push(m) });
+
+    // No operator prompt for an in-engagement host…
+    expect(prompts).toBe(0);
+    // …the scope grew to cover it (the recorded expansion, observable as state)…
+    expect(session.scope?.match("https://api.example.test/v1").allowed).toBe(true);
+    // …and the expansion was announced (the recorded expansion, as an audit note).
+    expect(notices.some((n) => n.includes("auto-expanded") && n.includes("api.example.test"))).toBe(true);
+  });
+
+  it("does NOT auto-authorize a foreign host — it defers to the operator prompt", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "https://unrelated.test/x" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Foreign host needed an operator decision."),
+    ]);
+    const requests: ConsoleScopeRequest[] = [];
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "copilot",
+      target: "https://app.example.test",
+      requestScope: async (req) => {
+        requests.push(req);
+        return null; // operator declines the foreign host
+      },
+    });
+
+    const outcome = await session.send("hit an unrelated host");
+    // The foreign host was NOT auto-expanded — the operator was asked.
+    expect(requests).toHaveLength(1);
+    expect(requests[0].requestedUrls.some((u) => u.includes("unrelated.test"))).toBe(true);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    // And the engagement scope was not silently broadened to it.
+    expect(session.scope?.match("https://unrelated.test/x").allowed ?? false).toBe(false);
+  });
+
+  it("refuses a foreign host when no scope-approval channel is available (no fall-open)", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "https://unrelated.test/x" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Refused, no channel."),
+    ]);
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "copilot",
+      target: "https://app.example.test",
+      // No requestScope wired.
+    });
+    const outcome = await session.send("hit an unrelated host");
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("outside the current engagement");
   });
 });
 
@@ -780,46 +816,43 @@ describe("Console autonomy — approval integrity", () => {
 
   it("transitions through all three modes while preserving conversation and updating the system prompt", async () => {
     const runtime = new ScriptedRuntime([
-      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo copilot" } }], stopReason: "tool_use", durationMs: 1 },
-      endTurn("Copilot done."),
-      { content: [{ type: "tool_use", id: "c2", name: "bash", input: { command: "echo standard" } }], stopReason: "tool_use", durationMs: 1 },
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo standard" } }], stopReason: "tool_use", durationMs: 1 },
       endTurn("Standard done."),
+      { content: [{ type: "tool_use", id: "c2", name: "bash", input: { command: "echo copilot" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("Copilot done."),
       { content: [{ type: "tool_use", id: "c3", name: "bash", input: { command: "echo yolo" } }], stopReason: "tool_use", durationMs: 1 },
       endTurn("Yolo done."),
     ]);
     let approvals = 0;
     const session = createConsoleSession({
       runtime,
-      autonomyMode: "copilot",
-      // A scope is REQUIRED for the yolo leg of this test: yolo now means
-      // "no prompts inside an authorized scope", and the engine-level
-      // `guardNetworkRequiresScope` denies every network-capable tool (`bash`
-      // included) when a yolo session has no scope at all. The scope covers a
-      // host none of these commands touch — its only job here is to establish
-      // that the session IS scoped, which is the precondition yolo asserts.
-      scope: ScopePolicy.fromJson({ in_scope: ["mode-transitions.test"] }),
+      // Standard is the approval mode now: every effectful action is put to the
+      // operator. Copilot and yolo run prompt-free. No scope is configured —
+      // these `echo` commands reach no network destination, so all three modes
+      // (yolo included, with no preconfigured scope) run them.
+      autonomyMode: "standard",
       approveTool: async () => {
         approvals += 1;
-        return false; // always deny in copilot
+        return false; // always deny in standard
       },
     });
 
-    // ── Copilot: tool denied by approveTool ──
-    expect(session.systemPrompt).toContain("Co-pilot mode");
-    let outcome = await session.send("copilot turn");
+    // ── Standard: the effectful action is put to the operator and denied ──
+    expect(session.systemPrompt).toContain("Standard mode");
+    let outcome = await session.send("standard turn");
     expect(approvals).toBe(1);
     expect(outcome.toolCalls[0].result.success).toBe(false);
 
-    // ── Switch to standard: tool auto-executes without approval ──
-    session.setAutonomyMode("standard");
-    expect(session.autonomyMode).toBe("standard");
-    expect(session.systemPrompt).toContain("Standard mode");
+    // ── Switch to copilot: tool auto-executes without a per-action prompt ──
+    session.setAutonomyMode("copilot");
+    expect(session.autonomyMode).toBe("copilot");
+    expect(session.systemPrompt).toContain("Co-pilot mode");
 
-    outcome = await session.send("standard turn");
-    expect(approvals).toBe(1); // approveTool not called
+    outcome = await session.send("copilot turn");
+    expect(approvals).toBe(1); // approveTool not called in copilot
     expect(outcome.toolCalls[0].result.success).toBe(true);
 
-    // ── Switch to yolo: tool auto-executes without approval ──
+    // ── Switch to yolo: tool auto-executes without approval or scope ──
     session.setAutonomyMode("yolo");
     expect(session.autonomyMode).toBe("yolo");
     expect(session.systemPrompt).toContain("YOLO mode");
@@ -1549,9 +1582,12 @@ describe("monotonic guard floor", () => {
     expect(outcome.toolCalls[0].result.error ?? "").not.toContain("unresolved capability");
   });
 
-  it("closes the copilot fail-open corner when no approval mechanism exists", async () => {
-    // maybeApproveTool allows everything when `approveTool` is absent. In
-    // copilot mode that is a fail-open path; the guard refuses instead.
+  it("does not deny a known effectful tool in copilot with no approval channel (no approval requirement)", async () => {
+    // Under the current model copilot has NO per-action approval, so an absent
+    // approveTool is not a fail-open corner — there is nothing to approve. A
+    // recognized effectful tool with no network reach runs. (The obsolete
+    // guardApprovalUnavailable, which used to refuse this, is intentionally not
+    // wired — see WIRED_GUARDS.)
     const runtime = new ScriptedRuntime([
       {
         content: [{ type: "tool_use", id: "g3", name: "bash", input: { command: "echo ok" } }],
@@ -1564,8 +1600,8 @@ describe("monotonic guard floor", () => {
 
     const outcome = await session.send("run it");
 
-    expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("no approval mechanism is available");
+    expect(outcome.toolCalls[0].result.success).toBe(true);
+    expect(outcome.toolCalls[0].result.error ?? "").not.toContain("approval mechanism");
   });
 });
 
@@ -1712,14 +1748,15 @@ describe("Console scope gate — the false-positive line", () => {
       let prompts = 0;
       const session = createConsoleSession({
         runtime,
-        autonomyMode: "copilot",
+        // Standard's per-action approval denies before dispatch, so nothing is
+        // actually executed; the assertion of interest is that the SCOPE gate
+        // never fired for a purely local command.
+        autonomyMode: "standard",
         target: "https://engagement.test",
         requestScope: async () => {
           prompts += 1;
           return null;
         },
-        // Copilot denies before dispatch, so nothing is actually executed; the
-        // assertion of interest is that the SCOPE gate never fired.
         approveTool: async () => false,
       });
       const outcome = await session.send("work");
@@ -1765,10 +1802,10 @@ describe("Console scope gate — schemeless hosts against a real scope", () => {
     let prompts = 0;
     const session = createConsoleSession({
       runtime,
-      // Copilot with a denying approveTool: the copilot gate stops the command
-      // from actually reaching the network, so passing the SCOPE gate is
+      // Standard with a denying approveTool: the per-action gate stops the
+      // command from actually reaching the network, so passing the SCOPE gate is
       // observable as "no scope prompt, denied by approval instead".
-      autonomyMode: "copilot",
+      autonomyMode: "standard",
       scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
       requestScope: async () => {
         prompts += 1;
@@ -1941,13 +1978,11 @@ describe("Console scope gate — unresolvable shell destinations", () => {
   });
 });
 
-describe("Console autonomy — yolo requires a configured scope (engine-level)", () => {
-  it("hard-denies a network-capable tool in yolo with no scope, without prompting", async () => {
-    // The TUI refuses `/mode yolo` without a scope, but a session can be
-    // CONSTRUCTED in that state directly. The invariant is enforced here so it
-    // does not depend on a UI check: `bash` is network-capable, and a yolo
-    // session with no scope has no authorized scope for "no prompts inside an
-    // authorized scope" to be relative to.
+describe("Console autonomy — yolo: no preconfigured scope, but the target still anchors it", () => {
+  it("runs a network-capable local command in yolo with NO scope and NO prompt", async () => {
+    // The previous model refused this ("configure a scope first"). The new yolo
+    // drops that requirement: `bash echo hello` reaches no network destination,
+    // so it runs with no scope configured and no prompt of any kind.
     const runtime = new ScriptedRuntime([
       { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } }], stopReason: "tool_use", durationMs: 1 },
       endTurn("done"),
@@ -1968,11 +2003,106 @@ describe("Console autonomy — yolo requires a configured scope (engine-level)",
     const outcome = await session.send("go");
     expect(prompts).toBe(0);
     expect(outcome.toolCalls).toHaveLength(1);
-    expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("no scope is configured");
+    expect(outcome.toolCalls[0].result.success).toBe(true);
   });
 
-  it("lets the same call through once a scope is configured", async () => {
+  it("reaches the launch target in yolo with no preconfigured scope, without prompting", async () => {
+    // No scope object, just a launch target. yolo auto-expands to the target
+    // host itself (the anchor) — no prompt — and the call passes the scope gate.
+    // (The subsequent real network fetch is irrelevant; we assert it was not
+    // blocked by the scope gate and that the scope now covers the target.)
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "https://target.test/health" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      target: "https://target.test",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    await session.send("hit the target");
+    expect(prompts).toBe(0);
+    expect(session.scope?.match("https://target.test/health").allowed).toBe(true);
+  });
+
+  it("REFUSES a host outside the target anchor — not auto-authorized — with no prompt", async () => {
+    // The authorization anchor bounds yolo: a host that is neither the launch
+    // target nor a sub-domain of it is refused outright, never auto-expanded,
+    // and never prompted.
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "https://unrelated.test/x" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      target: "https://target.test",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    const outcome = await session.send("try to pivot off-target");
+    expect(prompts).toBe(0);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("outside the yolo authorization anchor");
+    // The unrelated host was NOT quietly added to scope.
+    expect(session.scope?.match("https://unrelated.test/x").allowed ?? false).toBe(false);
+  });
+
+  it("REFUSES a network destination it cannot even resolve, with no prompt", async () => {
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: `curl "$TARGET"` } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    let prompts = 0;
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      target: "https://target.test",
+      requestScope: async () => {
+        prompts += 1;
+        return null;
+      },
+    });
+
+    const outcome = await session.send("run an opaque fetch");
+    expect(prompts).toBe(0);
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    expect(outcome.toolCalls[0].result.error).toContain("cannot resolve");
+  });
+
+  it("the SSRF / private-network rail STILL blocks in yolo, even for an in-scope local host", async () => {
+    // The SSRF rail sits ABOVE scope in the executor: an in-scope host that
+    // resolves to a private/metadata address is refused regardless of mode. Here
+    // yolo's scope covers the metadata IP (so the console gate approves it), yet
+    // the executor's validateTargetUrl still blocks it. No mode bypasses this.
+    const runtime = new ScriptedRuntime([
+      { content: [{ type: "tool_use", id: "c1", name: "http_request", input: { url: "http://169.254.169.254/latest/meta-data/" } }], stopReason: "tool_use", durationMs: 1 },
+      endTurn("done"),
+    ]);
+    const session = createConsoleSession({
+      runtime,
+      autonomyMode: "yolo",
+      target: "https://target.test", // a public base target
+      scope: ScopePolicy.fromJson({ in_scope: ["169.254.169.254", "target.test"] }),
+    });
+
+    const outcome = await session.send("try SSRF to the metadata endpoint");
+    expect(outcome.toolCalls[0].result.success).toBe(false);
+    // The executor's absolute private-network rail, not the scope gate, blocked it.
+    expect(outcome.toolCalls[0].result.error).toContain("Local/internal http_request blocked");
+  });
+
+  it("lets an in-scope call through in yolo when a scope is configured", async () => {
     const runtime = new ScriptedRuntime([
       { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: "echo hello" } }], stopReason: "tool_use", durationMs: 1 },
       endTurn("done"),

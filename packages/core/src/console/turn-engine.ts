@@ -16,14 +16,12 @@ import { ToolExecutor, getToolsForRole } from "../agent/tools.js";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
   evaluateGuards,
-  guardApprovalUnavailable,
-  guardNetworkRequiresScope,
   guardUnresolvedCapabilities,
   type GuardContext,
   type ToolGuard,
 } from "../plugins/guards.js";
 import type { AgentRole, ScopedAuditEscalationRequest, ToolCall, ToolContext, ToolDefinition, ToolResult } from "../agent/types.js";
-import type { ScopePolicy } from "../scope/scope.js";
+import { ScopePolicy } from "../scope/scope.js";
 
 /**
  * Unified interactive chat console — engine-side turn driver.
@@ -106,16 +104,33 @@ export interface ConsoleUsageReport {
 // ── Console autonomy / scope resolution (0sec console) ──
 
 /**
- * Operator engagement mode for the console.
- * - `"standard"` (default): automatic tool execution inside known scope;
- *   scope-on-demand may request a narrow session-only extension when a
- *   network-capable tool references URLs outside the current scope. No
- *   per-tool approval prompts.
- * - `"copilot"`: same scope-on-demand as standard, plus requires per-tool
- *   approval for every non-read-only operation via `approveTool`.
- * - `"yolo"`: prompt-free execution only inside an explicit, nonempty
- *   preconfigured scope. It MUST NOT invoke scope approval or silently
- *   extend scope. Any missing or out-of-scope target is a hard denial.
+ * Operator engagement mode for the console. This is a FRICTION model, not an
+ * authorization-removal model: the launch TARGET is the authorization anchor in
+ * every mode, and the executor's own target/scope boundary plus the absolute
+ * SSRF/private-network rail run underneath all three regardless of mode.
+ *
+ * - `"standard"` (default): the MOST-PROMPTING mode. Every effectful
+ *   (non-read-only) action is put to the operator via `approveTool` before it
+ *   runs and is dispatched only on an explicit yes — approval is never assumed.
+ *   Out-of-scope network targets still go through scope-on-demand
+ *   (`requestScope`), and uncovered local paths through `requestLocalScope`.
+ * - `"copilot"`: full autonomy WITHIN the engagement. No per-action prompts.
+ *   Scope-on-demand is AUTO-APPROVED for newly-discovered targets that belong
+ *   to the engagement (the launch target's host / its sub-domains, or paths
+ *   adjacent to an established local scope) — the scope grows without asking,
+ *   and the expansion is recorded. A target OUTSIDE the established engagement
+ *   is not auto-authorized: it defers to the operator (`requestScope`) or, with
+ *   no approval channel, is refused. Copilot only ever operates against the
+ *   target/scope the operator established.
+ * - `"yolo"`: no prompts of any kind, and NO preconfigured scope required. It
+ *   proceeds on the operator's launch TARGET and hosts that belong to it,
+ *   auto-expanding scope to them without asking, and auto-grants local scope for
+ *   the paths it touches. yolo drops only the interactive prompting and the
+ *   "configure a scope first" requirement — it does NOT drop the target anchor:
+ *   a host that is neither the launch target nor reachable-from-it, and any
+ *   network destination this gate cannot even resolve, is still refused. The
+ *   dangerous-local-root refusal, the denied-decision memory, the executor's
+ *   target/scope boundary and the absolute SSRF rail all still apply.
  */
 export type ConsoleAutonomyMode = "standard" | "copilot" | "yolo";
 
@@ -369,11 +384,12 @@ export interface ConsoleSessionConfig {
   /** System-prompt override. Defaults to {@link buildConsoleSystemPrompt}. */
   systemPrompt?: string;
   /**
-   * Engagement mode: `"standard"` (default) automatically executes tools
-   * inside known scope but uses scope-on-demand for out-of-scope network-
-   * capable calls; `"copilot"` adds per-tool approval for non-read-only
-   * operations; `"yolo"` requires a nonempty preconfigured scope and hard-
-   * denies anything outside it without calling scope approval.
+   * Engagement mode (see {@link ConsoleAutonomyMode}): `"standard"` (default)
+   * prompts the operator to approve EACH effectful action before it runs and
+   * uses scope-on-demand for out-of-scope network calls; `"copilot"` runs
+   * without per-action prompts and AUTO-EXPANDS scope to in-engagement targets
+   * without asking; `"yolo"` runs prompt-free with no preconfigured scope
+   * required, anchored to the launch target and what belongs to it.
    */
   autonomyMode?: ConsoleAutonomyMode;
   /**
@@ -406,10 +422,12 @@ export interface ConsoleSessionConfig {
    */
   requestLocalScope?: (req: ConsoleLocalScopeRequest) => Promise<ConsoleLocalScopeResolution | null>;
   /**
-   * Callback invoked before every non-read-only tool call in `"copilot"` mode.
-   * Return true to allow the call, false to block with a "denied" result.
-   * Ignored in `"yolo"` mode. When absent, non-read-only tools proceed without
-   * confirmation (equivalent to `"yolo"` for the approval gate).
+   * Per-action approval callback for `"standard"` mode — the most-prompting
+   * mode. Invoked before every non-read-only tool call; return true to allow,
+   * false to block with a "denied" result. Ignored in `"copilot"` and `"yolo"`
+   * (neither prompts per action). When absent, the gate falls through (the
+   * engine cannot invent an operator to ask), mirroring every other gate's
+   * "no callback → defer to the layers beneath" contract.
    */
   approveTool?: (call: ToolCall) => Promise<boolean>;
   /**
@@ -522,10 +540,10 @@ export function buildConsoleSystemPrompt(opts: {
   autonomyMode?: ConsoleAutonomyMode;
 }): string {
   const autonomyInstruction = opts.autonomyMode === "yolo"
-    ? "YOLO mode: execute required in-scope tool calls without per-tool approval. Only targets within the explicit preconfigured scope are authorized; do not request scope extensions — out-of-scope targets are denied."
+    ? "YOLO mode: run without any approval prompts and without a preconfigured scope. You are anchored to the launch target — the target and hosts that belong to it (its sub-domains) are reached automatically; a host unrelated to the target, and any network destination whose address cannot be determined, is refused. Do not attempt to pivot to unrelated hosts."
     : opts.autonomyMode === "copilot"
-    ? "Co-pilot mode: explain each non-read-only action and wait for the operator approval gate before it runs."
-    : "Standard mode: execute tools automatically within the current scope. When a target is not authorized, request a narrow scope extension and wait for the operator's decision.";
+    ? "Co-pilot mode: act with full autonomy within the engagement — no per-action approval prompts. Scope expands automatically to newly-discovered targets that belong to the engagement; a target outside the established engagement still needs the operator's decision."
+    : "Standard mode: the operator approves each action before it runs. Take one concrete step, wait for approval, and when a target is not authorized request a narrow scope extension and wait for the operator's decision.";
   return [
     "You are the 0sec operator console — an interactive security assistant with",
     "direct access to the full 0sec tool registry (reconnaissance, web pentest,",
@@ -762,6 +780,94 @@ function hostOf(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The host of the engagement anchor (the launch/session target), lowercased, or
+ * null when no usable target is set. Accepts both a full URL and a bare
+ * `host[:port]`, so a target configured either way yields the same anchor host.
+ */
+function anchorHostFromTarget(target: string): string | null {
+  const trimmed = target.trim();
+  if (!trimmed) return null;
+  return hostOf(trimmed) ?? hostOf(`https://${trimmed}`);
+}
+
+/**
+ * Whether `host` belongs to the current engagement — the conservative predicate
+ * that decides what copilot may AUTO-EXPAND to, and what stays inside the yolo
+ * TARGET ANCHOR. A host belongs when it is:
+ *   - already authorized by the established scope, OR
+ *   - the anchor host itself, OR
+ *   - a sub-domain of the anchor host (matched on the dot boundary, so
+ *     `notexample.com` is NOT a sub-domain of `example.com`, and
+ *     `example.com.evil.com` is not one either).
+ * Deliberately narrow: a host related only by some looser measure is treated as
+ * foreign so it can NEVER be auto-authorized — the operator (standard/copilot
+ * prompt) or a hard denial (yolo) decides instead. This is the friction-model
+ * guarantee that neither copilot nor yolo silently reaches an unrelated host.
+ */
+function hostBelongsToEngagement(
+  host: string | null,
+  anchorHost: string | null,
+  scope: ScopePolicy | undefined,
+): boolean {
+  if (!host) return false;
+  if (scope?.match(`https://${host}`).allowed) return true;
+  if (!anchorHost) return false;
+  if (host === anchorHost) return true;
+  return anchorHost.includes(".") && host.endsWith(`.${anchorHost}`);
+}
+
+/**
+ * The nearest existing directory at or above `p` (an absolute real path). Used
+ * to ground an AUTO-GRANTED local scope on a directory that actually exists,
+ * even when the tool asked for a not-yet-created file. Walks up to a mount/drive
+ * root at worst.
+ */
+function nearestExistingDir(p: string): string {
+  let current = p;
+  for (;;) {
+    try {
+      if (statSync(current).isDirectory()) return current;
+    } catch {
+      // does not exist / not stat-able — climb.
+    }
+    const parent = dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+}
+
+/**
+ * The directory subtree to auto-grant so a filesystem-scoped tool call can touch
+ * `requestedPath` (an absolute real path): the path itself when it is a
+ * directory, otherwise its containing directory — grounded on the nearest
+ * directory that exists so the grant is always a real subtree covering the
+ * request.
+ */
+function directoryToGrantFor(requestedPath: string): string {
+  try {
+    if (statSync(requestedPath).isDirectory()) return requestedPath;
+  } catch {
+    // Missing (e.g. a file to be created) — grant its parent instead.
+  }
+  return nearestExistingDir(dirname(requestedPath));
+}
+
+/**
+ * Whether `requestedPath` belongs to the engagement whose established local
+ * scope is `scopePath`: it lies within the PARENT of the established scope
+ * (a sibling/descendant subtree of the same project root), provided that parent
+ * is not a dangerous root. Returns false when no local scope is established yet
+ * (the first local root is an operator decision, never auto-expanded) or when
+ * broadening to the parent would reach the filesystem/home root.
+ */
+function pathBelongsToEngagement(requestedPath: string, scopePath: string | undefined): boolean {
+  if (!scopePath) return false;
+  const parent = dirname(scopePath);
+  if (isDangerousLocalRoot(parent)) return false;
+  return isWithinDir(requestedPath, parent);
 }
 
 // ── Target extraction from tool arguments ──
@@ -1389,13 +1495,64 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     ? structuredClone(config.initialMessages)
     : [];
 
+  // AUTO-EXPAND the in-memory engagement scope to cover `uncoveredUrls`, used by
+  // copilot (in-engagement targets) and yolo (target-anchored hosts) to grow
+  // scope WITHOUT prompting. Adds each host as an EXACT-host rule (never a
+  // wildcard — no silent broadening) on top of whatever scope already exists.
+  // The out_of_scope deny-list is preserved and still WINS: a host the operator
+  // explicitly excluded is refused even here, so auto-expansion can only ever
+  // add hosts the anchor already vouches for, never override a deny. Never
+  // written to disk; the expansion is announced via `notify` so it is auditable.
+  function autoExpandScope(
+    uncoveredUrls: string[],
+    notify: ((message: string) => void) | undefined,
+    modeLabel: string,
+  ): "approved" | ToolResult {
+    const hosts = [
+      ...new Set(
+        uncoveredUrls.map((url) => hostOf(url)).filter((h): h is string => h !== null),
+      ),
+    ];
+    const base = sessionScope?.raw ?? {};
+    const expanded = ScopePolicy.fromJson({
+      ...base,
+      in_scope: [...(base.in_scope ?? []), ...hosts],
+    });
+    // Deny-wins floor: an explicitly out-of-scope host is never authorized by
+    // auto-expansion, and an unparseable pseudo-URL never becomes "covered".
+    const stillUncovered = uncoveredUrls.filter((url) => !expanded.match(url).allowed);
+    if (stillUncovered.length > 0) {
+      return {
+        success: false,
+        output: null,
+        error: `${modeLabel} mode: ${stillUncovered.join(", ")} is explicitly out of scope and was not auto-expanded.`,
+      };
+    }
+    sessionScope = expanded;
+    toolContext.scope = expanded;
+    if (!customSystemPrompt) {
+      systemPrompt = buildConsoleSystemPrompt({ target: sessionTarget, scanId, autonomyMode });
+    }
+    notify?.(
+      `${modeLabel} mode: auto-expanded engagement scope to ${hosts.join(", ")} without prompting (in-engagement target).`,
+    );
+    return "approved";
+  }
+
   // Resolve scope for a network-capable tool call, or return a "denied"
-  // ToolResult. In yolo mode, missing/uncovered scope is a hard denial
-  // without invoking requestScope. When requestScope is absent, fall
-  // through — the existing validateTargetUrl inside ToolExecutor governs
-  // (no scope → same-origin OK).
+  // ToolResult. Per-mode friction (see ConsoleAutonomyMode):
+  //   - standard: prompt the operator (requestScope) for anything uncovered.
+  //   - copilot: auto-expand for in-engagement targets; defer the rest to the
+  //     operator (or refuse when no prompt channel exists).
+  //   - yolo: no prompts and no preconfigured-scope requirement — auto-expand
+  //     to target-anchored hosts and REFUSE anything outside the anchor (an
+  //     unrelated host, or a destination this gate cannot even resolve).
+  // In EVERY mode the executor's own validateTargetUrl (target/scope boundary +
+  // the absolute SSRF rail) still runs underneath, and the denied-decision
+  // memory below is never cleared or skipped by a mode.
   async function maybeResolveScope(
     call: ToolCall,
+    notify?: (message: string) => void,
   ): Promise<"approved" | ToolResult> {
     if (!NETWORK_CAPABLE_TOOLS[call.name]) return "approved";
 
@@ -1405,7 +1562,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // reaches the network in a way this gate could not read. This is the branch
     // that keeps `bash echo hello`, `read_file`, and every other ordinary local
     // call prompt-free — the escalation below is driven by evidence of network
-    // reach, never by mere membership in NETWORK_CAPABLE_TOOLS.
+    // reach, never by mere membership in NETWORK_CAPABLE_TOOLS. It is also what
+    // lets yolo run a local shell command with NO scope configured.
     if (urls.length === 0 && unresolved.length === 0) return "approved";
 
     // Check if every extracted URL is already covered by the current scope. An
@@ -1414,34 +1572,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     const allCovered = urls.every((url) => sessionScope?.match(url).allowed);
     if (allCovered && unresolved.length === 0) return "approved";
 
-    // In yolo mode, missing or out-of-scope targets are a hard denial
-    // without invoking requestScope — enforced even when no requestScope
-    // callback is configured. An unreadable destination is denied on the same
-    // principle: yolo means "no prompts INSIDE an authorized scope", and a
-    // destination nobody can name is not inside anything.
-    if (autonomyMode === "yolo") {
-      const reason = !sessionScope
-        ? `YOLO mode: no scope configured — tool "${call.name}" cannot run without an explicit preconfigured scope.`
-        : allCovered
-        ? `YOLO mode: tool "${call.name}" reaches the network with a destination this gate cannot resolve (${unresolved.join("; ")}) — denied.`
-        : `YOLO mode: target ${urls.join(", ")} is outside the configured scope — tool "${call.name}" denied.`;
-      return {
-        success: false,
-        output: null,
-        error: reason,
-      };
-    }
-
-    // For standard/copilot modes: if no requestScope callback is configured,
-    // fall through to the executor's own validateTargetUrl (no scope →
-    // same-origin OK).
-    const requestScope = config.requestScope;
-    if (!requestScope) return "approved";
-
-    // A shell payload the operator already refused must not re-prompt — the
-    // same unbounded-re-prompt guard `deniedHosts` provides for named hosts.
-    // Keyed on the exact payload text because an unresolved destination has no
-    // host to key on.
+    // ── Denied-decision memory (ALL modes; never cleared or skipped by a mode) ──
+    // A previously-declined opaque payload or host is denied outright — without a
+    // fresh prompt and without auto-expansion — in standard, copilot AND yolo.
+    // Keyed on the exact payload text for unresolved destinations (no host to
+    // key on) and on the hostname for named ones.
     if (unresolved.length > 0) {
       const refused = shellPayloads.find((payload) => deniedShellPayloads.has(payload));
       if (refused !== undefined) {
@@ -1452,14 +1587,10 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         };
       }
     }
-
-    // Hosts the operator already declined this session must not trigger a fresh
-    // prompt — that re-prompt loop is exactly the bug this guards against. Only
-    // URLs not already covered by the current scope are candidates for a new
-    // request; of those, if ANY host was previously declined we deny the whole
-    // call without prompting rather than silently dropping the declined host
-    // from a call the model explicitly asked for. Unparseable URLs yield a null
-    // host and are ignored here so they can't be mistaken for a declined one.
+    // Only URLs not already covered by the current scope are candidates; of
+    // those, if ANY host was previously declined we deny the whole call rather
+    // than silently dropping the declined host from a call the model asked for.
+    // Unparseable URLs yield a null host and are ignored (fail safe).
     const uncoveredUrls = urls.filter((url) => !sessionScope?.match(url).allowed);
     const previouslyDenied = uncoveredUrls.filter((url) => {
       const host = hostOf(url);
@@ -1471,6 +1602,66 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         output: null,
         error: `Scope request for tool "${call.name}" denied — ${previouslyDenied.join(", ")} was already declined by the operator this session; not prompting again.`,
       };
+    }
+
+    // Partition the uncovered destinations by the TARGET ANCHOR: those that
+    // belong to the engagement (target host / its sub-domains / already scoped)
+    // versus foreign ones. This split drives copilot's auto-expand and yolo's
+    // anchor enforcement.
+    const anchorHost = anchorHostFromTarget(sessionTarget);
+    const foreign = uncoveredUrls.filter(
+      (url) => !hostBelongsToEngagement(hostOf(url), anchorHost, sessionScope),
+    );
+
+    // ── yolo: no prompts, no preconfigured-scope requirement, TARGET-anchored ──
+    // yolo drops the interactive prompt and the "configure a scope first" gate,
+    // but the launch TARGET stays the authorization anchor: reach the target and
+    // hosts that belong to it, and REFUSE everything else. A destination this
+    // gate cannot resolve cannot be proven in-anchor, so it is refused too. The
+    // executor's SSRF rail and target/scope boundary still run underneath.
+    if (autonomyMode === "yolo") {
+      if (unresolved.length > 0) {
+        return {
+          success: false,
+          output: null,
+          error: `YOLO mode: tool "${call.name}" reaches the network with a destination this gate cannot resolve (${unresolved.join("; ")}); the launch target anchors yolo, so an unnameable destination is refused.`,
+        };
+      }
+      if (foreign.length > 0) {
+        return {
+          success: false,
+          output: null,
+          error: `YOLO mode: ${foreign.join(", ")} is not the launch target and is not reachable from it — outside the yolo authorization anchor; refused.`,
+        };
+      }
+      return autoExpandScope(uncoveredUrls, notify, "YOLO");
+    }
+
+    // ── copilot: full autonomy WITHIN the engagement ──
+    // When the WHOLE call stays in-engagement, expand scope automatically with
+    // no prompt. Anything foreign or unreadable is an engagement-boundary
+    // decision, so it falls through to the operator prompt below (or a hard
+    // refusal when no prompt channel exists) — copilot never silently authorizes
+    // a target outside the established engagement.
+    if (autonomyMode === "copilot" && foreign.length === 0 && unresolved.length === 0) {
+      return autoExpandScope(uncoveredUrls, notify, "Co-pilot");
+    }
+
+    // ── standard (and copilot's foreign/unreadable remainder): ask the operator ──
+    const requestScope = config.requestScope;
+    if (!requestScope) {
+      if (autonomyMode === "copilot") {
+        // Copilot must not fall open on a foreign/unreadable target with no
+        // operator channel — refuse rather than defer to same-origin luck.
+        return {
+          success: false,
+          output: null,
+          error: `Co-pilot mode: tool "${call.name}" targets ${foreign.join(", ") || "an unresolved destination"} outside the current engagement and no scope-approval channel is available; refused.`,
+        };
+      }
+      // standard, no callback → the executor's own validateTargetUrl governs
+      // (no scope → same-origin only). Unchanged from the legacy console.
+      return "approved";
     }
 
     // URLs are not covered — ask the operator for approval.
@@ -1537,26 +1728,61 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     return "approved";
   }
 
+  // AUTO-GRANT a local filesystem scope covering `requestedPath` WITHOUT
+  // prompting, used by yolo (any non-dangerous path) and copilot (paths that
+  // belong to the engagement). Grants the requested path's directory subtree
+  // (grounded on a directory that exists), re-checks the dangerous-root floor on
+  // the directory actually granted, and applies it to the in-memory tool context
+  // (never persisted). The expansion is announced via `notify` for auditability.
+  function autoGrantLocalScope(
+    call: ToolCall,
+    requestedPath: string,
+    notify: ((message: string) => void) | undefined,
+    modeLabel: string,
+  ): "approved" | ToolResult {
+    const grantDir = directoryToGrantFor(requestedPath);
+    if (isDangerousLocalRoot(grantDir)) {
+      return {
+        success: false,
+        output: null,
+        error: `Local scope for tool "${call.name}" refused — granting ${grantDir} would expose a protected root (filesystem root or home directory).`,
+      };
+    }
+    if (!isWithinDir(requestedPath, grantDir)) {
+      return {
+        success: false,
+        output: null,
+        error: `Local scope for tool "${call.name}" could not be auto-granted for ${requestedPath}.`,
+      };
+    }
+    sessionScopePath = grantDir;
+    toolContext.scopePath = grantDir;
+    notify?.(
+      `${modeLabel} mode: auto-granted local scope ${grantDir} for ${requestedPath} without prompting.`,
+    );
+    return "approved";
+  }
+
   // Resolve LOCAL filesystem scope for a filesystem-scoped tool call, or return
-  // a "denied" ToolResult. Mirrors maybeResolveScope (the network flow) as
-  // closely as possible so the two behave consistently:
-  //   - tools not in LOCAL_SCOPE_TOOLS pass straight through;
-  //   - a requested path already inside the approved subtree passes through;
-  //   - with no requestLocalScope callback configured, fall through unchanged so
-  //     the executor returns its own "requires a scoped local directory" error
-  //     (legacy readline console / test behaviour is identical to today);
-  //   - a previously-declined path is denied without re-prompting;
-  //   - dangerous roots are refused without ever prompting;
-  //   - on approval, the operator-approved directory is applied to the in-memory
-  //     tool context (never persisted) after re-canonicalizing and confirming it
-  //     still covers the requested path.
+  // a "denied" ToolResult. Per-mode friction:
+  //   - standard: prompt the operator (requestLocalScope) for uncovered paths.
+  //   - copilot: auto-grant paths that belong to the engagement (adjacent to an
+  //     established local scope); defer the rest to the operator prompt.
+  //   - yolo: auto-grant any path (no prompt), subject only to the floors below.
+  // Floors that hold in ALL modes: tools not in LOCAL_SCOPE_TOOLS pass straight
+  // through; a path already inside the approved subtree passes through; dangerous
+  // roots (filesystem/home root) are refused without ever prompting or granting;
+  // a previously-declined path is denied without re-prompting. On the operator
+  // prompt path, the approved directory is re-canonicalized and confirmed to
+  // cover the requested path before it is applied (never persisted).
   async function maybeResolveLocalScope(
     call: ToolCall,
+    notify?: (message: string) => void,
   ): Promise<"approved" | ToolResult> {
     if (!LOCAL_SCOPE_TOOLS[call.name]) return "approved";
 
     // Resolve the concrete path the tool wants to touch to an absolute,
-    // symlink-resolved real path — the exact value the approval is made against.
+    // symlink-resolved real path — the exact value the decision is made against.
     let requestedPath: string;
     try {
       requestedPath = canonicalizeRealPath(extractLocalPath(call));
@@ -1572,12 +1798,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       return "approved";
     }
 
-    // No callback wired (legacy readline console / tests): behave exactly as
-    // today — fall through so the executor returns its own scope error.
-    const requestLocalScope = config.requestLocalScope;
-    if (!requestLocalScope) return "approved";
-
-    // Refuse obviously dangerous roots outright — never even offer approval.
+    // ── Floors that apply in EVERY mode, before any prompt or auto-grant ──
+    // Refuse obviously dangerous roots outright — never prompt, never grant.
     if (isDangerousLocalRoot(requestedPath)) {
       return {
         success: false,
@@ -1585,9 +1807,8 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         error: `Local scope request for tool "${call.name}" refused — ${requestedPath} is a protected root (filesystem root or home directory) and cannot be authorized as a scan scope.`,
       };
     }
-
-    // A path already covered by an earlier denial must not trigger a fresh
-    // prompt — that re-prompt loop is exactly the bug this guards against.
+    // A path covered by an earlier denial must not trigger a fresh prompt or a
+    // silent grant — the denied-decision memory is honoured in every mode.
     for (const denied of deniedLocalPaths) {
       if (isWithinDir(requestedPath, denied)) {
         return {
@@ -1597,6 +1818,23 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         };
       }
     }
+
+    // ── yolo: auto-grant the path's subtree, no prompt (floors above still ran) ──
+    if (autonomyMode === "yolo") {
+      return autoGrantLocalScope(call, requestedPath, notify, "YOLO");
+    }
+
+    // ── copilot: auto-grant when the path belongs to the engagement ──
+    // (adjacent to an established local scope); otherwise defer to the operator.
+    if (autonomyMode === "copilot" && pathBelongsToEngagement(requestedPath, sessionScopePath)) {
+      return autoGrantLocalScope(call, requestedPath, notify, "Co-pilot");
+    }
+
+    // ── standard (and copilot's out-of-engagement remainder): ask the operator ──
+    // No callback wired (legacy readline console / tests): behave exactly as
+    // today — fall through so the executor returns its own scope error.
+    const requestLocalScope = config.requestLocalScope;
+    if (!requestLocalScope) return "approved";
 
     const resolution = await requestLocalScope({
       call,
@@ -1679,37 +1917,40 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     return "approved";
   }
 
-  // In copilot mode, prompt the operator before non-read-only tool dispatch.
-  // In standard and yolo modes, skip this per-tool gate. When approveTool is
-  // absent, always allow.
   /**
-   * The guards actually wired into dispatch — equivalent to `BUILTIN_GUARDS`,
-   * listed explicitly so the wiring states its own policy rather than
-   * inheriting whatever a shared default happens to contain.
+   * The guards actually wired into dispatch — the deny-only monotonic floor that
+   * runs LAST, after every per-mode gate above has already approved. Listed
+   * explicitly so the wiring states its own policy rather than inheriting a
+   * shared default.
    *
-   * `guardNetworkRequiresScope` is the load-bearing addition, and it IS a
-   * deliberate product decision rather than a wiring detail: yolo mode means
-   * "no prompts INSIDE an authorized scope", not "unrestricted". A yolo session
-   * with no scope object has no authorized scope, so there is nothing for the
-   * absence of prompts to be safe relative to. The TUI already refuses
-   * `/mode yolo` without a configured scope; wiring the guard makes that
-   * invariant hold in the ENGINE, so a session constructed directly against
-   * `createConsoleSession` (a script, a test harness, an embedder) cannot end
-   * up in the state the UI forbids.
+   * ONLY `guardUnresolvedCapabilities` is wired, and it is mode-agnostic: it
+   * refuses any tool whose capability flags could not be resolved from a known
+   * source (the danger-by-omission class), which is always correct regardless of
+   * autonomy mode. The deny-only pattern is preserved intact — "allow" remains
+   * inexpressible, and adding guards can only narrow access.
    *
-   * The cost is real and is accepted knowingly: `bash echo hello` in yolo with
-   * no scope is now denied, because `bash` is network-capable and this layer
-   * cannot prove a shell command is local. The remedy is one step — configure a
-   * scope, or use standard mode — and the failure is a clear message rather
-   * than an unbounded egress.
-   *
-   * Guards remain a deny-only floor: adding one can only ever narrow access,
-   * and it runs last, after every gate above has already approved.
+   * The two OTHER built-ins in `plugins/guards.ts` are DELIBERATELY NOT wired
+   * here, because each encodes the PREVIOUS mode semantics that this engine no
+   * longer implements, and wiring them would contradict the current model:
+   *   - `guardNetworkRequiresScope` denies a network-capable tool in yolo when
+   *     no scope is configured. The new yolo intentionally drops the
+   *     require-preconfigured-scope gate: it is anchored to the launch target,
+   *     not to a scope object. That anchor is now enforced precisely by
+   *     `maybeResolveScope` (target-relatedness) plus the executor's own
+   *     same-origin/scope boundary and the absolute SSRF rail — a stronger,
+   *     mode-correct check than a blanket "needs a scope". Wiring this guard
+   *     would wrongly re-deny scopeless yolo (even `bash echo hello`).
+   *   - `guardApprovalUnavailable` denies a non-read-only tool in COPILOT when
+   *     no approval channel exists. Under the new model copilot has NO
+   *     per-action approval at all (standard is the approval mode), so this
+   *     guard would deny every effectful copilot action whenever `approveTool`
+   *     is absent — the normal copilot configuration — breaking the mode.
+   * (Both functions still exist and are exported from `plugins/guards.ts` for
+   * their own unit tests and any other consumer; only the CONSOLE wiring omits
+   * them.)
    */
   const WIRED_GUARDS: readonly ToolGuard[] = [
     guardUnresolvedCapabilities,
-    guardNetworkRequiresScope,
-    guardApprovalUnavailable,
   ];
 
   /**
@@ -1737,8 +1978,18 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     };
   }
 
+  // Per-action operator approval — the STANDARD-mode friction. Standard is the
+  // most-prompting mode: every effectful (non-read-only) action is put to the
+  // operator via `approveTool` and dispatched ONLY on an explicit yes; approval
+  // is never assumed. Copilot and yolo skip this gate entirely (copilot
+  // auto-proceeds within the engagement; yolo runs prompt-free). READ_ONLY_TOOLS
+  // (reads, findings queries, the `done` control signal) grant no authority and
+  // change nothing, so they are exempt in every mode. When no `approveTool`
+  // channel is wired (headless/legacy embedder) the gate falls through — the
+  // engine cannot invent an operator to ask, and this mirrors every other gate's
+  // "no callback → defer to the layers beneath" contract.
   async function maybeApproveTool(call: ToolCall): Promise<"approved" | ToolResult> {
-    if (autonomyMode !== "copilot") return "approved";
+    if (autonomyMode !== "standard") return "approved";
     const approveTool = config.approveTool;
     if (!approveTool) return "approved";
     if (READ_ONLY_TOOLS[call.name]) return "approved";
@@ -1748,7 +1999,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       return {
         success: false,
         output: null,
-        error: `Tool "${call.name}" was not approved by the operator in copilot mode.`,
+        error: `Tool "${call.name}" was not approved by the operator in standard mode.`,
       };
     }
     return "approved";
@@ -1945,7 +2196,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         }
 
         // ── Scope resolution gate (network-capable tools) ──
-        const scopeVerdict = await maybeResolveScope(call);
+        const scopeVerdict = await maybeResolveScope(call, callbacks?.onNotice);
         if (scopeVerdict !== "approved") {
           callbacks?.onToolStart?.(call);
           callbacks?.onToolResult?.(call, scopeVerdict);
@@ -1960,7 +2211,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         }
 
         // ── Local filesystem scope-on-demand gate (filesystem-scoped tools) ──
-        const localScopeVerdict = await maybeResolveLocalScope(call);
+        const localScopeVerdict = await maybeResolveLocalScope(call, callbacks?.onNotice);
         if (localScopeVerdict !== "approved") {
           callbacks?.onToolStart?.(call);
           callbacks?.onToolResult?.(call, localScopeVerdict);
