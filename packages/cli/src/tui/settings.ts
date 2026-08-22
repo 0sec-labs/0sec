@@ -60,6 +60,11 @@ export interface TuiSettings {
   density: "comfortable" | "compact";
   /** How the composer frame is drawn. */
   composerStyle: "border" | "rail" | "plain";
+  /**
+   * Let sibling subagents message each other directly (child↔child channel).
+   * Off by default because it is a lateral-movement path.
+   */
+  allowSubagentPeerMessaging: boolean;
 }
 
 /** Keys of `TuiSettings` whose value is a boolean. */
@@ -166,6 +171,15 @@ const DEFS: readonly TuiSettingDef[] = [
     choices: ["border", "rail", "plain"],
     group: "Display",
   },
+  {
+    key: "allowSubagentPeerMessaging",
+    label: "Subagent peer messaging",
+    description:
+      "Allow sibling subagents to message each other directly — a lateral-movement path, since one compromised subagent could then steer another's context.",
+    kind: "boolean",
+    default: false,
+    group: "Security",
+  },
 ];
 
 export const SETTING_DEFS: readonly SettingDef[] = DEFS;
@@ -182,6 +196,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showTimestamps: false,
   density: "comfortable",
   composerStyle: "border",
+  allowSubagentPeerMessaging: false,
 };
 
 /** Basename of the settings file inside the 0sec state directory. */
@@ -241,6 +256,7 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     showTimestamps: booleanAt(raw, "showTimestamps"),
     density: enumAt(raw, "density"),
     composerStyle: enumAt(raw, "composerStyle"),
+    allowSubagentPeerMessaging: booleanAt(raw, "allowSubagentPeerMessaging"),
   };
 }
 

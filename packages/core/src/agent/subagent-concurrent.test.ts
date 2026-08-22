@@ -259,10 +259,18 @@ describe("spawn_agents — concurrent subagent dispatch", () => {
 
     expect(h.configs).toHaveLength(1);
     const toolNames = (h.configs[0].tools as Array<{ name: string }>).map((t) => t.name);
-    // Base three plus the child-only, non-privileged `report_status` status
-    // channel (progress-events change). The nesting guard is unchanged: the
-    // spawn tools remain excluded, so a child still cannot spawn children.
-    expect(toolNames).toEqual(["bash", "save_finding", "done", "report_status"]);
+    // Base three plus the child-only, non-privileged coordination channels:
+    // `report_status` (progress), and `send_message` / `check_messages` (peer
+    // messaging). The nesting guard is unchanged: the spawn tools remain
+    // excluded, so a child still cannot spawn children.
+    expect(toolNames).toEqual([
+      "bash",
+      "save_finding",
+      "done",
+      "report_status",
+      "send_message",
+      "check_messages",
+    ]);
     expect(toolNames).not.toContain("spawn_agent");
     expect(toolNames).not.toContain("spawn_agents");
   });
