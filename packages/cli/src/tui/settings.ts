@@ -61,6 +61,8 @@ export interface TuiSettings {
   showTurnSummary: boolean;
   /** Show the active subagent list while workers run. */
   showSubagents: boolean;
+  /** Right sidebar in the chat view listing the active agents (wide terminals). */
+  showAgentRail: boolean;
   /** Relative timestamps on transcript entries. */
   showTimestamps: boolean;
   /** Header "target: …" segment (chat-screen gates the header target on this). */
@@ -213,6 +215,15 @@ const DEFS: readonly TuiSettingDef[] = [
     kind: "boolean",
     default: true,
     group: "Transcript",
+  },
+  {
+    key: "showAgentRail",
+    label: "Agent rail",
+    description:
+      "Right sidebar in the chat view listing the active agents (task, status, turns, findings). Hidden on narrow terminals.",
+    kind: "boolean",
+    default: false,
+    group: "Display",
   },
   {
     key: "showTimestamps",
@@ -395,6 +406,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showRuntimeNotices: true,
   showTurnSummary: false,
   showSubagents: true,
+  showAgentRail: false,
   showTimestamps: false,
   showTarget: true,
   showScope: true,
@@ -597,6 +609,7 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     showRuntimeNotices: booleanAt(raw, "showRuntimeNotices"),
     showTurnSummary: booleanAt(raw, "showTurnSummary"),
     showSubagents: booleanAt(raw, "showSubagents"),
+    showAgentRail: booleanAt(raw, "showAgentRail"),
     showTimestamps: booleanAt(raw, "showTimestamps"),
     showTarget: booleanAt(raw, "showTarget"),
     showScope: booleanAt(raw, "showScope"),

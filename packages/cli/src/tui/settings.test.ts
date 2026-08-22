@@ -381,6 +381,30 @@ describe("subagent messaging settings", () => {
   });
 });
 
+describe("agent rail setting", () => {
+  it("ships OFF by default", () => {
+    expect(DEFAULT_SETTINGS.showAgentRail).toBe(false);
+  });
+
+  it("is a Display boolean", () => {
+    const def = SETTING_DEFS.find((d) => d.key === "showAgentRail");
+    expect(def?.group).toBe("Display");
+    expect(def?.kind).toBe("boolean");
+  });
+
+  it("toggles on and back off", () => {
+    const on = toggleSetting(DEFAULT_SETTINGS, "showAgentRail");
+    expect(on.showAgentRail).toBe(true);
+    expect(toggleSetting(on, "showAgentRail").showAgentRail).toBe(false);
+  });
+
+  it("round-trips an enabled rail through save and load", () => {
+    const home = makeHome();
+    expect(saveSettings({ ...DEFAULT_SETTINGS, showAgentRail: true }, home)).toBe(true);
+    expect(loadSettings(home).showAgentRail).toBe(true);
+  });
+});
+
 describe("telemetry settings", () => {
   // The four telemetry knobs ship OFF/neutral by default: token counts, cost
   // and a context meter are noise until an operator asks for them, and the model

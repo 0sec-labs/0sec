@@ -265,6 +265,13 @@ export interface LedgerRowsInput {
   subagentRows: number;
   /** Rows taken by an open approval panel, including its border. */
   approvalRows: number;
+  /**
+   * Extra flexShrink={0} rows pinned below the composer (e.g. the agent-nav
+   * hint line). Defaults to 0 so existing callers are unaffected; when a hint
+   * row is rendered the transcript must give up exactly that row or the column
+   * over-subscribes and the row paints through the status bar.
+   */
+  hintRows?: number;
 }
 
 /**
@@ -283,6 +290,7 @@ export function computeLedgerRows({
   menuRows,
   subagentRows,
   approvalRows,
+  hintRows = 0,
 }: LedgerRowsInput): number {
   const chrome =
     ROOT_PADDING_ROWS +
@@ -290,9 +298,129 @@ export function computeLedgerRows({
     COMPOSER_ROWS +
     (menuRows > 0 ? menuRows + MENU_MARGIN_ROWS : 0) +
     subagentRows +
-    approvalRows;
+    approvalRows +
+    Math.max(0, Math.trunc(hintRows) || 0);
   return Math.max(0, height - chrome);
 }
 
 /** Rows the empty-state hero needs: the block mark plus its three captions. */
 export const LEDGER_MARK_ROWS = 5 + 3 + 3;
+
+// ---------------------------------------------------------------------------
+// Agent rail (chat right sidebar) + active-subagent navigation
+// ---------------------------------------------------------------------------
+
+/**
+ * Below this TERMINAL width the rail is hidden even when the setting is on:
+ * a sidebar that leaves the transcript too narrow to read is worse than no
+ * sidebar, and a chat is transcript-first.
+ */
+export const AGENT_RAIL_MIN_TERMINAL_WIDTH = 100;
+const AGENT_RAIL_MIN_WIDTH = 22;
+const AGENT_RAIL_MAX_WIDTH = 34;
+const AGENT_RAIL_WIDTH_SHARE = 0.28;
+/** The transcript must keep at least this many text cells beside the rail. */
+const AGENT_RAIL_MIN_TRANSCRIPT = 44;
+
+export interface AgentRailLayoutInput {
+  /** Raw terminal width, gated against {@link AGENT_RAIL_MIN_TERMINAL_WIDTH}. */
+  width: number;
+  /** The screen's padded content column width (from {@link computeChatLayout}). */
+  contentWidth: number;
+  compact: boolean;
+  /** The `showAgentRail` setting. */
+  showAgentRail: boolean;
+}
+
+export interface AgentRailLayout {
+  /** The rail is actually painted this frame. */
+  visible: boolean;
+  /** Outer cells the rail occupies in the row. 0 when hidden. */
+  railWidth: number;
+  /** Text cells inside the rail (after its divider + padding). 0 when hidden. */
+  railInnerWidth: number;
+  /** Gap cells between the transcript column and the rail. 0 when hidden. */
+  gap: number;
+  /**
+   * Text-wrap width for transcript entries. Equal to the full-width transcript
+   * inner width when the rail is hidden, and the shrunken width beside the rail
+   * when it is shown, so a caller passes ONE number to `renderEntry` either way.
+   */
+  transcriptWidth: number;
+}
+
+/**
+ * Budget the chat body between the transcript column and the optional agent
+ * rail. Pure, and total over any geometry: a narrow terminal, a cleared toggle,
+ * or a rail that would starve the transcript all collapse to the hidden result
+ * (rail 0, transcript full-width), so the caller never has to special-case the
+ * off state. The rail is a fixed-share column clamped to a sane band; the two
+ * cells of divider + padding it spends on chrome come off its inner width, and
+ * the transcript keeps the same paddingX (`compact ? 2 : 4`) it has without the
+ * rail. Widths never exceed `contentWidth` — swept in the tests.
+ */
+export function computeAgentRailLayout({
+  width,
+  contentWidth,
+  compact,
+  showAgentRail,
+}: AgentRailLayoutInput): AgentRailLayout {
+  const cw = Math.max(0, Math.trunc(Number.isFinite(contentWidth) ? contentWidth : 0));
+  const pad = compact ? 2 : 4;
+  const fullTranscript = Math.max(8, cw - pad);
+  const hidden: AgentRailLayout = {
+    visible: false,
+    railWidth: 0,
+    railInnerWidth: 0,
+    gap: 0,
+    transcriptWidth: fullTranscript,
+  };
+  if (!showAgentRail) return hidden;
+  const terminalWidth = Math.max(0, Math.trunc(Number.isFinite(width) ? width : 0));
+  if (terminalWidth < AGENT_RAIL_MIN_TERMINAL_WIDTH) return hidden;
+
+  const gap = 1;
+  const railWidth = Math.min(
+    AGENT_RAIL_MAX_WIDTH,
+    Math.max(AGENT_RAIL_MIN_WIDTH, Math.floor(cw * AGENT_RAIL_WIDTH_SHARE)),
+  );
+  const transcriptOuter = cw - railWidth - gap;
+  const transcriptWidth = transcriptOuter - pad;
+  if (transcriptWidth < AGENT_RAIL_MIN_TRANSCRIPT) return hidden;
+
+  // One divider cell + one padding cell inside the rail.
+  const railInnerWidth = Math.max(1, railWidth - 2);
+  return {
+    visible: true,
+    railWidth,
+    railInnerWidth,
+    gap,
+    transcriptWidth: Math.max(8, transcriptWidth),
+  };
+}
+
+/**
+ * Clamp a selection index onto a list of `count` items, or -1 when the list is
+ * empty. The pure core of the active-subagent navigation: the list reshuffles
+ * as agents spawn and finish, so a stored index must be pulled back onto a
+ * valid row (or dropped) every render.
+ */
+export function clampAgentSelection(count: number, index: number): number {
+  const total = Math.max(0, Math.trunc(Number.isFinite(count) ? count : 0));
+  if (total <= 0) return -1;
+  const i = Math.trunc(Number.isFinite(index) ? index : 0);
+  return Math.min(Math.max(i, 0), total - 1);
+}
+
+/**
+ * Move the active-subagent selection by `delta`, wrapping at both ends. Returns
+ * -1 for an empty list so the caller drops out of nav mode. Pure — mirrors the
+ * herd list's `moveHerdSelection` but over a flat index (no headings to skip).
+ */
+export function moveAgentSelection(count: number, index: number, delta: number): number {
+  const total = Math.max(0, Math.trunc(Number.isFinite(count) ? count : 0));
+  if (total <= 0) return -1;
+  const cur = clampAgentSelection(total, index);
+  const step = Math.trunc(Number.isFinite(delta) ? delta : 0);
+  return (((cur + step) % total) + total) % total;
+}

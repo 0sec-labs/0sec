@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AGENT_RAIL_MIN_TERMINAL_WIDTH,
+  clampAgentSelection,
   commandMenuBoxHeight,
   commandMenuWindowStart,
+  computeAgentRailLayout,
   computeChatLayout,
   computeCommandMenuHeight,
   computeCommandMenuLayout,
+  moveAgentSelection,
 } from "./chat-layout.js";
 
 /** Terminal sizes worth caring about, plus a dense sweep for invariants. */
@@ -238,5 +242,96 @@ describe("commandMenuWindowStart", () => {
     expect(commandMenuWindowStart(3, 0, 10)).toBe(0);
     expect(commandMenuWindowStart(3, 4, 0)).toBe(0);
     expect(commandMenuWindowStart(-5, 4, 10)).toBe(0);
+  });
+});
+
+describe("computeAgentRailLayout", () => {
+  it("is hidden and full-width when the setting is off", () => {
+    for (const width of WIDTHS) {
+      const layout = computeChatLayout({ width, height: 40, statusTextLength: 24 });
+      const rail = computeAgentRailLayout({
+        width,
+        contentWidth: layout.contentWidth,
+        compact: layout.compact,
+        showAgentRail: false,
+      });
+      expect(rail.visible).toBe(false);
+      expect(rail.railWidth).toBe(0);
+      expect(rail.transcriptWidth).toBe(Math.max(8, layout.contentWidth - (layout.compact ? 2 : 4)));
+    }
+  });
+
+  it("hides on narrow terminals even when enabled", () => {
+    for (const width of WIDTHS.filter((w) => w < AGENT_RAIL_MIN_TERMINAL_WIDTH)) {
+      const layout = computeChatLayout({ width, height: 40, statusTextLength: 24 });
+      const rail = computeAgentRailLayout({
+        width,
+        contentWidth: layout.contentWidth,
+        compact: layout.compact,
+        showAgentRail: true,
+      });
+      expect(rail.visible).toBe(false);
+      expect(rail.railWidth).toBe(0);
+    }
+  });
+
+  it("never overspends the content width, and keeps the transcript readable", () => {
+    for (const width of WIDTHS) {
+      for (const height of HEIGHTS) {
+        const layout = computeChatLayout({ width, height, statusTextLength: 24 });
+        const rail = computeAgentRailLayout({
+          width,
+          contentWidth: layout.contentWidth,
+          compact: layout.compact,
+          showAgentRail: true,
+        });
+        if (!rail.visible) continue;
+        const pad = layout.compact ? 2 : 4;
+        // transcript outer + gap + rail must fit the content column.
+        const transcriptOuter = rail.transcriptWidth + pad;
+        expect(
+          transcriptOuter + rail.gap + rail.railWidth,
+          `rail overflowed at ${width}x${height}`,
+        ).toBeLessThanOrEqual(layout.contentWidth);
+        expect(rail.railInnerWidth).toBeGreaterThan(0);
+        expect(rail.railInnerWidth).toBeLessThan(rail.railWidth);
+        expect(rail.transcriptWidth).toBeGreaterThanOrEqual(8);
+      }
+    }
+  });
+
+  it("shrinks the transcript when it becomes visible at 120 cols", () => {
+    const layout = computeChatLayout({ width: 120, height: 40, statusTextLength: 24 });
+    const off = computeAgentRailLayout({
+      width: 120,
+      contentWidth: layout.contentWidth,
+      compact: layout.compact,
+      showAgentRail: false,
+    });
+    const on = computeAgentRailLayout({
+      width: 120,
+      contentWidth: layout.contentWidth,
+      compact: layout.compact,
+      showAgentRail: true,
+    });
+    expect(on.visible).toBe(true);
+    expect(on.transcriptWidth).toBeLessThan(off.transcriptWidth);
+  });
+});
+
+describe("agent selection navigation", () => {
+  it("clamps onto a valid row or -1 when empty", () => {
+    expect(clampAgentSelection(0, 3)).toBe(-1);
+    expect(clampAgentSelection(4, -2)).toBe(0);
+    expect(clampAgentSelection(4, 9)).toBe(3);
+    expect(clampAgentSelection(4, 2)).toBe(2);
+  });
+
+  it("moves with wrap and drops out on an empty list", () => {
+    expect(moveAgentSelection(0, 0, 1)).toBe(-1);
+    expect(moveAgentSelection(3, 0, 1)).toBe(1);
+    expect(moveAgentSelection(3, 2, 1)).toBe(0); // wrap forward
+    expect(moveAgentSelection(3, 0, -1)).toBe(2); // wrap back
+    expect(moveAgentSelection(3, 5, 0)).toBe(2); // clamps a stale index first
   });
 });

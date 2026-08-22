@@ -589,6 +589,50 @@ function themeBlocks(width: number): PreviewBlock[] {
   return [swatch, sample];
 }
 
+/**
+ * The agent-rail sample: an on/off chip when OFF; a faithful mini-sidebar when
+ * ON so the operator sees the sidebar they are enabling — a dim AGENTS heading
+ * over a couple of agent rows (status glyph, short label, turns), the same
+ * shape the chat rail paints. Red is reserved for a failure glyph, exactly as
+ * the live rail reserves it.
+ */
+function agentRailBlocks(value: boolean, width: number): PreviewBlock[] {
+  if (!value) return stateChipBlocks(false, width);
+  return [
+    line("rail-title", width, "AGENTS 2", (t) => t.MUTED),
+    {
+      key: "rail-a",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { content: "◉", fg: theme.ACCENT, key: "glyph" },
+            { flex: 1, min: 1, text: "recon web tier", fg: theme.TEXT, key: "task" },
+            { content: "3/8", fg: theme.MUTED, key: "turns" },
+          ]}
+        />
+      ),
+    },
+    {
+      key: "rail-b",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { content: "✓", fg: theme.SUCCESS, key: "glyph" },
+            { flex: 1, min: 1, text: "auth fuzzing", fg: theme.MUTED, key: "task" },
+            { content: "5/5", fg: theme.MUTED, key: "turns" },
+          ]}
+        />
+      ),
+    },
+  ];
+}
+
 /** Booleans and any non-visual setting: an on/off state chip, no faked sample. */
 function stateChipBlocks(value: boolean, width: number): PreviewBlock[] {
   return [
@@ -664,6 +708,9 @@ export function previewBlocks({ def, value, width, settings }: PreviewInput): Pr
       break;
     case "showContextMeter":
       body = contextMeterBlocks(value === true, w);
+      break;
+    case "showAgentRail":
+      body = agentRailBlocks(value === true, w);
       break;
     case "theme":
       body = themeBlocks(w);

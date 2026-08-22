@@ -93,13 +93,31 @@ import {
 } from "./composer-queue.js";
 import {
   LEDGER_MARK_ROWS,
+  clampAgentSelection,
   commandMenuBoxHeight,
   commandMenuWindowStart,
+  computeAgentRailLayout,
   computeChatLayout,
   computeCommandMenuHeight,
   computeCommandMenuLayout,
   computeLedgerRows,
+  moveAgentSelection,
 } from "./chat-layout.js";
+import {
+  applySubagentLifecycle,
+  applySubagentProgress,
+  clipDetailLines,
+  computeHerdFocusLayout,
+  focusHeaderLines,
+  herdFocusTranscriptTitle,
+  renderFocusActivity,
+  shellChromeRows,
+  subagentPeers,
+  windowFocusTail,
+  HERD_FOCUS_EMPTY_TEXT,
+  type HerdDetailTone,
+  type HerdSubagentMap,
+} from "./herd-layout.js";
 import {
   computeLogoFrame,
   logoAnimationFrameCount,
@@ -310,6 +328,28 @@ function modeColorFor(mode: ConsoleAutonomyMode, theme: Theme): string {
   if (mode === "copilot") return theme.BRAND;
   if (mode === "yolo") return theme.ERROR;
   return theme.TEXT;
+}
+
+/**
+ * Map a herd focus line's tone onto the theme — the same mapping `herd-screen`
+ * uses for its focus panes, mirrored here so the INLINE focus view drilled into
+ * from the chat renders identically. Red (ERROR) is never produced from a tone;
+ * WARNING carries a failed status, so the "red = errors" invariant holds.
+ */
+function herdToneColor(theme: Theme, tone: HerdDetailTone): string {
+  switch (tone) {
+    case "title":
+      return theme.PRIMARY;
+    case "accent":
+      return theme.ACCENT;
+    case "warn":
+      return theme.WARNING;
+    case "muted":
+    case "blank":
+      return theme.MUTED;
+    default:
+      return theme.TEXT;
+  }
 }
 
 function completionFor(command: SlashCommand, args = ""): string {
@@ -1702,6 +1742,27 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
    */
   const [operatorState, setOperatorState] = useState<OperatorQuestionState | null>(null);
   const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
+  /**
+   * The richer live-subagent model the herd view is built on: latest snapshot
+   * plus a bounded activity ring per agent, keyed by `agent_id`, fed by the SAME
+   * pure reducers herd-layout exposes. This is the single source for BOTH the
+   * right rail and the inline focus view, so neither reimplements the plumbing.
+   */
+  const [herdAgents, setHerdAgents] = useState<HerdSubagentMap>({});
+  /**
+   * Active-subagent navigation from the composer. -1 means the composer has
+   * focus; >= 0 selects a row in the ACTIVE SUBAGENTS block. Entered with Down
+   * on an empty composer (only when agents are running), left with Left/Esc.
+   */
+  const [agentNavIndex, setAgentNavIndex] = useState(-1);
+  /**
+   * The subagent the operator drilled INTO, or null in list/composer mode. When
+   * set, the transcript region is replaced by the inline focus view (the same
+   * live meta + activity panes the herd screen's focus mode renders).
+   */
+  const [focusAgentId, setFocusAgentId] = useState<string | null>(null);
+  /** How far the inline focus transcript is scrolled back from its tail. */
+  const [focusScrollOffset, setFocusScrollOffset] = useState(0);
   const { width, height } = useTerminalDimensions();
   const alive = useRef(true);
   const turn = useRef(0);
@@ -2061,21 +2122,130 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     };
   }, []);
 
-  // Subscribe to subagent lifecycle events from the core event bus.
-  // Filter by this session's scanId; remove active entries on terminal state.
+  // Subscribe to subagent lifecycle + progress events from the core event bus.
+  // Filter by this session's scanId. `activeSubagents` drives the compact
+  // ACTIVE SUBAGENTS block (terminal states removed); `herdAgents` is the
+  // richer model the rail and the inline focus view read — fed by the SAME pure
+  // reducers the herd screen uses, and KEEPING terminal records so a completed
+  // agent's summary/error stays readable in focus and its ✓/× glyph in the rail.
   useEffect(() => {
     if (!session) return;
     const scanId = session.scanId;
     const unsub = eventBus.subscribe({
       emit: (type, payload) => {
-        if (type !== "subagent_lifecycle") return;
-        const event = payload as unknown as SubagentLifecyclePayload;
-        if (event.parent_scan_id !== scanId) return;
-        setActiveSubagents((prev) => reduceActiveSubagents(prev, event));
+        if (type === "subagent_lifecycle") {
+          const event = payload as unknown as SubagentLifecyclePayload;
+          if (event.parent_scan_id !== scanId) return;
+          setActiveSubagents((prev) => reduceActiveSubagents(prev, event));
+          setHerdAgents((prev) =>
+            applySubagentLifecycle(prev, payload as Record<string, unknown>, Date.now()),
+          );
+        } else if (type === "subagent_progress") {
+          if ((payload as Record<string, unknown>)["parent_scan_id"] !== scanId) return;
+          setHerdAgents((prev) =>
+            applySubagentProgress(prev, payload as Record<string, unknown>, Date.now()),
+          );
+        }
       },
     });
     return unsub;
   }, [session]);
+
+  // A focused agent that leaves the live map (never observed, or the session
+  // reset) drops focus rather than staring at a stale record.
+  useEffect(() => {
+    if (focusAgentId && !herdAgents[focusAgentId]) {
+      setFocusAgentId(null);
+      setFocusScrollOffset(0);
+    }
+  }, [focusAgentId, herdAgents]);
+
+  // List navigation ends the moment there is nothing left to navigate — an
+  // empty selection is never shown.
+  useEffect(() => {
+    if (agentNavIndex < 0) return;
+    const count = settings.showSubagents ? Object.keys(activeSubagents).length : 0;
+    if (count === 0) setAgentNavIndex(-1);
+  }, [agentNavIndex, activeSubagents, settings.showSubagents]);
+
+  // Capture / preview seed ONLY. Guarded by an env var and never populated in a
+  // normal session: it plants a deterministic set of sample agents so the right
+  // rail, the list navigation and the inline focus view can be captured without
+  // a live `spawn_agents` fan-out — the same discipline `OSEC_TRANSCRIPT_STYLE`
+  // uses to pin a style for a render capture.
+  useEffect(() => {
+    if (!process.env["OSEC_TUI_DEMO_AGENTS"]) return;
+    const now = Date.now();
+    setHerdAgents({
+      "agent-recon": {
+        agentId: "agent-recon",
+        parentScanId: "demo",
+        task: "recon web tier",
+        status: "running",
+        maxTurns: 8,
+        turn: 3,
+        findings: 1,
+        tool: "http_probe",
+        note: "enumerating /api endpoints",
+        lastSeen: now,
+        activity: [
+          { kind: "lifecycle", ts: now - 8000, status: "queued" },
+          { kind: "lifecycle", ts: now - 7000, status: "running" },
+          { kind: "progress", ts: now - 5000, turn: 1, maxTurns: 8, tool: "dns_lookup" },
+          { kind: "progress", ts: now - 3000, turn: 2, maxTurns: 8, tool: "http_probe", note: "200 on /api" },
+          { kind: "progress", ts: now - 1000, turn: 3, maxTurns: 8, tool: "http_probe", note: "enumerating /api endpoints" },
+        ],
+      },
+      "agent-authz": {
+        agentId: "agent-authz",
+        parentScanId: "demo",
+        task: "auth & session fuzzing",
+        status: "running",
+        maxTurns: 8,
+        turn: 2,
+        findings: 0,
+        tool: "replay",
+        lastSeen: now,
+        activity: [
+          { kind: "lifecycle", ts: now - 6000, status: "running" },
+          { kind: "progress", ts: now - 2000, turn: 2, maxTurns: 8, tool: "replay", note: "cookie tampering" },
+        ],
+      },
+      "agent-secrets": {
+        agentId: "agent-secrets",
+        parentScanId: "demo",
+        task: "secret scanning",
+        status: "completed",
+        maxTurns: 5,
+        turns: 5,
+        findings: 2,
+        summary: "2 leaked API keys in JS bundles",
+        lastSeen: now,
+        activity: [
+          { kind: "lifecycle", ts: now - 9000, status: "running" },
+          { kind: "lifecycle", ts: now - 500, status: "completed", turns: 5, findings: 2 },
+        ],
+      },
+    });
+    setActiveSubagents({
+      "agent-recon": {
+        agent_id: "agent-recon",
+        parent_scan_id: "demo",
+        status: "running",
+        task: "recon web tier",
+        max_turns: 8,
+        turns: 3,
+      },
+      "agent-authz": {
+        agent_id: "agent-authz",
+        parent_scan_id: "demo",
+        status: "running",
+        task: "auth & session fuzzing",
+        max_turns: 8,
+        turns: 2,
+      },
+    });
+  }, []);
 
   const resolveScope = useCallback((approved: boolean) => {
     const pending = pendingScope;
@@ -3281,6 +3451,74 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       onExit();
       return;
     }
+    // ── Inline subagent focus view (modal) ─────────────────────────────────────
+    // Drilled into ONE subagent: the live meta + activity panes replace the
+    // transcript. Read-only — Up/Down (and PageUp/PageDown) scroll the activity
+    // back from its tail; Left or Esc returns to the agents list. Swallows every
+    // other key so a keystroke cannot leak into the composer behind it.
+    if (focusAgentId) {
+      if (key.name === "escape" || key.name === "left") {
+        setFocusAgentId(null);
+        setFocusScrollOffset(0);
+        setAgentNavIndex(0);
+        return;
+      }
+      if (key.name === "up") {
+        setFocusScrollOffset((offset) => offset + 1);
+        return;
+      }
+      if (key.name === "down") {
+        setFocusScrollOffset((offset) => Math.max(0, offset - 1));
+        return;
+      }
+      if (key.name === "pageup") {
+        setFocusScrollOffset((offset) => offset + 5);
+        return;
+      }
+      if (key.name === "pagedown") {
+        setFocusScrollOffset((offset) => Math.max(0, offset - 5));
+        return;
+      }
+      return;
+    }
+    // ── Active-subagent list navigation (modal) ────────────────────────────────
+    // Selection has moved out of the composer and INTO the ACTIVE SUBAGENTS
+    // block. Up/Down move (wrapping) within the visible rows; Enter drills into
+    // the highlighted agent; Left or Esc returns focus to the composer. The list
+    // is the block's own visible subset, so the highlight is always on screen.
+    if (agentNavIndex >= 0) {
+      const navList = (settings.showSubagents ? Object.values(activeSubagents) : []).slice(
+        0,
+        SUBAGENT_MAX_VISIBLE,
+      );
+      if (navList.length === 0) {
+        setAgentNavIndex(-1);
+        return;
+      }
+      if (key.name === "escape" || key.name === "left") {
+        setAgentNavIndex(-1);
+        return;
+      }
+      if (key.name === "up") {
+        setAgentNavIndex((index) => moveAgentSelection(navList.length, index, -1));
+        return;
+      }
+      if (key.name === "down") {
+        setAgentNavIndex((index) => moveAgentSelection(navList.length, index, 1));
+        return;
+      }
+      if (key.name === "return") {
+        const selected = clampAgentSelection(navList.length, agentNavIndex);
+        const agent = selected >= 0 ? navList[selected] : undefined;
+        if (agent) {
+          setFocusAgentId(agent.agent_id);
+          setFocusScrollOffset(0);
+          setAgentNavIndex(-1);
+        }
+        return;
+      }
+      return;
+    }
     // Transcript scrolling lives on PageUp/PageDown (and Ctrl+Up/Ctrl+Down
     // where the terminal distinguishes them), NOT on plain Up/Down — those
     // recall composer history. The box is non-focusable, so it never grabs the
@@ -3485,13 +3723,20 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       return;
     }
     // Idle composer (nothing typed yet): Up recalls the most recent submission
-    // into the composer; Down is a no-op until browsing has begun. Neither
-    // scrolls the transcript.
+    // into the composer; Down moves INTO the active-subagents list when workers
+    // are running, otherwise recalls history. The trigger sits in the idle branch
+    // only, so it never fights the multiline composer, history browsing or the
+    // slash menu (all of which own Down while composing).
     if (key.name === "up") {
       recallComposerHistory("up");
       return;
     }
     if (key.name === "down") {
+      const navList = settings.showSubagents ? Object.values(activeSubagents) : [];
+      if (navList.length > 0) {
+        setAgentNavIndex(0);
+        return;
+      }
       recallComposerHistory("down");
       return;
     }
@@ -3606,9 +3851,28 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // not chosen — but it gets the same treatment that stops a panel from
   // collapsing: four content lines plus two border rows, stated explicitly.
   const SECRET_PANEL_HEIGHT = 6;
+  // The live focus subject: the drilled-into agent's rich record and its roster
+  // peer, both looked up from the SAME herd map. `focused` gates the inline
+  // focus view and suppresses the rail / subagent block while it is open.
+  const nowMs = Date.now();
+  const focusRecord = focusAgentId ? herdAgents[focusAgentId] : undefined;
+  const focusPeer = focusAgentId
+    ? subagentPeers(herdAgents, nowMs).find((peer) => peer.id === focusAgentId)
+    : undefined;
+  const focused = focusAgentId != null && focusRecord != null && focusPeer != null;
+  // The right rail's budget: hidden while focused, on a narrow terminal, or when
+  // the setting is off — all folded into `computeAgentRailLayout`, which then
+  // also hands back the transcript's text-wrap width for the frame it leaves.
+  const rail = computeAgentRailLayout({
+    width,
+    contentWidth,
+    compact,
+    showAgentRail: settings.showAgentRail && !focused,
+  });
   // Usable width INSIDE the transcript panel: the ledger box adds its own
-  // paddingX, which an entry's own border must live within.
-  const transcriptWidth = Math.max(8, contentWidth - (compact ? 2 : 4));
+  // paddingX (folded into the rail layout), which an entry's own border must
+  // live within. Shrinks to make room when the rail is shown.
+  const transcriptWidth = rail.transcriptWidth;
   // "0sec" is 4 cells; the mode label is right-sized to its own text so
   // the engagement summary gets every remaining cell.
   const headerModeWidth = Math.min(10, Math.max(1, contentWidth - 8));
@@ -3697,7 +3961,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // pressure Yoga collapsed it and its rows painted into each other and
   // into the title. Cap what is shown, state the overflow, and reserve
   // EXACTLY what is rendered.
-  const subagentEntries = settings.showSubagents ? Object.values(activeSubagents) : [];
+  // The compact ACTIVE SUBAGENTS block is suppressed while a subagent is
+  // focused — the focus view IS the detail — so it neither reserves rows nor
+  // competes for the arrows.
+  const subagentEntries = settings.showSubagents && !focused ? Object.values(activeSubagents) : [];
   const subagentVisible = subagentEntries.slice(0, SUBAGENT_MAX_VISIBLE);
   const subagentOverflow = subagentEntries.length - subagentVisible.length;
   const subagentOverflowRow = subagentOverflow > 0 ? 1 : 0;
@@ -3705,6 +3972,15 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const subagentBlockRows = subagentVisible.length > 0
     ? 1 + subagentVisible.length + subagentOverflowRow
     : 0;
+  // Selection within the block while navigating into it. Clamped every render so
+  // an index left dangling by a finished agent lands back on a live row.
+  const agentNavSelected =
+    agentNavIndex >= 0 ? clampAgentSelection(subagentVisible.length, agentNavIndex) : -1;
+  // The agent-nav hint sits one flexShrink={0} row below the composer, so it is
+  // reserved in the ledger budget exactly when it renders: whenever there are
+  // agents to reach (the affordance), while navigating them, or while focused.
+  const showAgentNavHint =
+    settings.showComposerHints && !empty && (focused || subagentVisible.length > 0);
 
   // Every other region in the column is flexShrink={0}, so the transcript
   // absorbs all the pressure. Compute what it actually has left: a
@@ -3728,6 +4004,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     approvalRows: (approvalPrompt ? approvalBoxHeight + 1 : 0)
       + (secretPrompt ? SECRET_PANEL_HEIGHT + 1 : 0)
       + (operatorQuestionOpen ? operatorBoxHeight + 1 : 0),
+    // The agent-nav hint row (+ its marginTop) below the composer.
+    hintRows: showAgentNavHint ? 2 : 0,
   });
   // Optional empty-state lines are dropped from the bottom up rather than
   // overprinted. The mark needs the most room, so it goes first.
@@ -4133,19 +4411,28 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       <box width={contentWidth} flexShrink={0} minWidth={0}>
         <text fg={MUTED}>{fitTuiText(`ACTIVE SUBAGENTS · ${subagentEntries.length}`, contentWidth)}</text>
       </box>
-      {subagentVisible.map((sa) => {
+      {subagentVisible.map((sa, index) => {
         const running = sa.status === "running";
+        const selected = index === agentNavSelected;
+        const background = selected ? PANEL_ALT : undefined;
         const turnsInfo = sa.turns !== undefined ? ` (${sa.turns}/${sa.max_turns})` : "";
         const labelWidth = Math.max(1, contentWidth - 2 - turnsInfo.length);
         return (
-          <box key={sa.agent_id} flexDirection="row" width={contentWidth} flexShrink={0} minWidth={0}>
-            <text width={1} flexShrink={0} fg={running ? PRIMARY : WARNING}>{running ? "◉" : "◌"}</text>
-            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-              <text fg={TEXT}>{fitTuiText(sa.task, labelWidth)}</text>
+          <box
+            key={sa.agent_id}
+            flexDirection="row"
+            width={contentWidth}
+            flexShrink={0}
+            minWidth={0}
+            backgroundColor={background}
+          >
+            <text width={1} flexShrink={0} fg={running ? PRIMARY : WARNING} bg={background}>{running ? "◉" : "◌"}</text>
+            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1} backgroundColor={background}>
+              <text fg={TEXT} bg={background}>{fitTuiText(sa.task, labelWidth)}</text>
             </box>
             {turnsInfo ? (
-              <box width={turnsInfo.length} flexShrink={0} minWidth={0}>
-                <text fg={MUTED}>{turnsInfo}</text>
+              <box width={turnsInfo.length} flexShrink={0} minWidth={0} backgroundColor={background}>
+                <text fg={MUTED} bg={background}>{turnsInfo}</text>
               </box>
             ) : null}
           </box>
@@ -4156,6 +4443,218 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           <text fg={MUTED}>{fitTuiText(`  +${subagentOverflow} more · /agents to list them`, contentWidth)}</text>
         </box>
       ) : null}
+    </box>
+  ) : null;
+
+  // ── The right agent rail ───────────────────────────────────────────────────
+  // One condensed row per live agent — status glyph, task, turns/max, findings —
+  // read from the SAME herd map the focus view uses. Clean and minimal (dim
+  // labels, one accent); ERROR is spent ONLY on a failed glyph, never a label.
+  // Bounded to the rows the conversation region actually has, with a "+N" tail,
+  // so it can never overflow or fuse. The whole rail is flexShrink={0}.
+  const railRecords = Object.values(herdAgents);
+  const railBodyBudget = Math.max(0, ledgerRows - 1); // minus the AGENTS title row
+  const railCapacity =
+    railRecords.length > railBodyBudget ? Math.max(0, railBodyBudget - 1) : railBodyBudget;
+  const railVisible = railRecords.slice(0, railCapacity);
+  const railOverflow = railRecords.length - railVisible.length;
+  const railGlyph = (status: string): { glyph: string; color: string } => {
+    if (status === "failed") return { glyph: "×", color: ERROR };
+    if (status === "completed") return { glyph: "✓", color: SUCCESS };
+    if (status === "running") return { glyph: "◉", color: ACCENT };
+    return { glyph: "◌", color: MUTED };
+  };
+  const railNode = rail.visible ? (
+    <box
+      flexDirection="row"
+      width={rail.railWidth}
+      flexShrink={0}
+      minWidth={0}
+      alignSelf="stretch"
+      marginLeft={rail.gap}
+    >
+      <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={BORDER} />
+      <box flexDirection="column" flexGrow={1} minWidth={0} paddingLeft={1} backgroundColor={PANEL}>
+        <box width={rail.railInnerWidth} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(`AGENTS ${railRecords.length}`, rail.railInnerWidth)}</text>
+        </box>
+        {railVisible.length === 0 ? (
+          <box width={rail.railInnerWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText("no active agents", rail.railInnerWidth)}</text>
+          </box>
+        ) : (
+          railVisible.map((rec) => {
+            const { glyph, color } = railGlyph(rec.status);
+            const turnValue =
+              typeof rec.turn === "number"
+                ? rec.turn
+                : typeof rec.turns === "number"
+                  ? rec.turns
+                  : undefined;
+            const meta: string[] = [];
+            if (typeof turnValue === "number") {
+              meta.push(rec.maxTurns > 0 ? `${turnValue}/${rec.maxTurns}` : `t${turnValue}`);
+            }
+            if (typeof rec.findings === "number") meta.push(`${rec.findings}f`);
+            const metaText = meta.join(" · ");
+            const labelWidth = Math.max(1, rail.railInnerWidth - 2 - metaText.length);
+            return (
+              <box
+                key={rec.agentId}
+                flexDirection="row"
+                width={rail.railInnerWidth}
+                flexShrink={0}
+                minWidth={0}
+              >
+                <text width={1} flexShrink={0} fg={color}>{glyph}</text>
+                <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
+                  <text fg={TEXT}>{fitTuiText(rec.task || rec.agentId, labelWidth)}</text>
+                </box>
+                {metaText ? (
+                  <box width={metaText.length} flexShrink={0} minWidth={0}>
+                    <text fg={MUTED}>{metaText}</text>
+                  </box>
+                ) : null}
+              </box>
+            );
+          })
+        )}
+        {railOverflow > 0 ? (
+          <box width={rail.railInnerWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(`+${railOverflow} more`, rail.railInnerWidth)}</text>
+          </box>
+        ) : null}
+      </box>
+    </box>
+  ) : null;
+
+  // ── The inline focus view ──────────────────────────────────────────────────
+  // Reuses the herd focus PLUMBING verbatim — computeHerdFocusLayout for the
+  // vertical meta/transcript split, focusHeaderLines + renderFocusActivity for
+  // the tone-tagged lines, windowFocusTail for the scroll-back window — but
+  // wears the chat's own minimal skin: a PANEL-backed region (no bordered
+  // boxes) exactly like the transcript it replaces, so there is no border to
+  // paint a line through and no exact-fit fragility. The meta header is a
+  // flexShrink={0} block; the live transcript flexGrows to fill the rest.
+  const focusLayout = computeHerdFocusLayout({
+    width,
+    height: ledgerRows + shellChromeRows(width),
+    noticeRows: 0,
+  });
+  // The panes render inside the PANEL region's own paddingX, so the wrap width
+  // is the transcript's full-width value (the rail is always hidden in focus).
+  const focusInner = Math.max(8, contentWidth - (compact ? 2 : 4));
+  const focusMetaLines = focused
+    ? clipDetailLines(
+        focusHeaderLines(focusPeer, focusRecord, focusInner, nowMs, { compact: true }),
+        Math.max(1, focusLayout.meta.bodyRows),
+        focusInner,
+      )
+    : [];
+  const focusActivityLines =
+    focused && focusRecord ? renderFocusActivity(focusRecord.activity, focusInner) : [];
+  // Rows left for the live transcript once the meta header (title + its lines)
+  // and the transcript's own title row have taken theirs, out of the region's
+  // `ledgerRows` budget.
+  const focusMetaRows = focusMetaLines.length + 1;
+  const focusTranscriptCap = Math.max(1, ledgerRows - focusMetaRows - 2);
+  const focusTail = windowFocusTail(
+    focusActivityLines.length,
+    focusTranscriptCap,
+    focusScrollOffset,
+  );
+  const focusVisibleActivity = focusActivityLines.slice(focusTail.start, focusTail.end);
+  const focusViewNode = (
+    <box
+      flexDirection="column"
+      flexGrow={1}
+      minHeight={0}
+      width="100%"
+      minWidth={0}
+      backgroundColor={PANEL}
+      paddingX={compact ? 1 : 2}
+      paddingY={1}
+    >
+      <box flexDirection="column" flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText("FOCUS", focusInner)}</text>
+        {focusMetaLines.map((line, index) => (
+          <text key={`focus-meta-${index}`} fg={herdToneColor(theme, line.tone)}>
+            {fitTuiText(line.text, focusInner)}
+          </text>
+        ))}
+      </box>
+      <box flexDirection="column" flexGrow={1} minHeight={0} minWidth={0} marginTop={1}>
+        <text fg={MUTED}>{fitTuiText(herdFocusTranscriptTitle(focusActivityLines.length), focusInner)}</text>
+        {focusVisibleActivity.length === 0 ? (
+          <text fg={MUTED}>{fitTuiText(HERD_FOCUS_EMPTY_TEXT, focusInner)}</text>
+        ) : (
+          focusVisibleActivity.map((line, index) => (
+            <text key={`focus-live-${focusTail.start + index}`} fg={herdToneColor(theme, line.tone)}>
+              {fitTuiText(line.text, focusInner)}
+            </text>
+          ))
+        )}
+      </box>
+    </box>
+  );
+
+  // ── The conversation region ────────────────────────────────────────────────
+  // Either the drilled-in focus view, or the transcript column beside the
+  // optional rail. The transcript column flexGrows; the rail is flexShrink={0}
+  // and only present when the layout found room for it, so with the rail hidden
+  // the transcript takes the full width exactly as before.
+  const conversationRegion = focused ? (
+    focusViewNode
+  ) : (
+    <box flexDirection="row" flexGrow={1} minHeight={0} width="100%" minWidth={0}>
+      <box
+        flexDirection="column"
+        flexGrow={1}
+        minHeight={0}
+        minWidth={0}
+        backgroundColor={PANEL}
+        paddingX={compact ? 1 : 2}
+        paddingY={1}
+      >
+        <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
+          <box flexDirection="column" width="100%">
+            {planTranscript(entries, entryDisplay.transcriptDetail).map((item) =>
+              item.type === "fold"
+                ? renderFold(item, transcriptWidth, entryDisplay, theme)
+                : renderEntry(item.entry, transcriptWidth, entryDisplay, theme),
+            )}
+            {workingIndicator}
+            {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
+          </box>
+        </scrollbox>
+      </box>
+      {railNode}
+    </box>
+  );
+
+  // ── The agent-nav / focus hint row (below the composer) ─────────────────────
+  // Keys white, labels muted (KeyHints). Contextual: the down-into-agents
+  // affordance when idle, the list keys while navigating, the scroll keys while
+  // focused. Reserved in the ledger via `hintRows` exactly when it renders.
+  const agentNavHintPairs: KeyHint[] = focused
+    ? [
+        { key: "↑↓", label: "scroll" },
+        { key: "esc", label: "back" },
+      ]
+    : agentNavIndex >= 0
+      ? [
+          { key: "↑↓", label: "move" },
+          { key: "enter", label: "open" },
+          { key: "esc", label: "back" },
+        ]
+      : [{ key: "↓", label: "agents" }];
+  const agentNavHintNode = showAgentNavHint ? (
+    <box flexDirection="row" width="100%" minWidth={0} flexShrink={0} marginTop={1}>
+      {keyHintsLength(agentNavHintPairs, " · ") <= contentWidth ? (
+        <KeyHints pairs={agentNavHintPairs} theme={theme} />
+      ) : (
+        <text fg={MUTED}>{fitTuiText(agentNavHintPairs.map((p) => `${p.key} ${p.label}`).join(" · "), contentWidth)}</text>
+      )}
     </box>
   ) : null;
 
@@ -4350,19 +4849,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         </box>
       ) : (
         <>
-          <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" backgroundColor={PANEL} paddingX={compact ? 1 : 2} paddingY={1}>
-            <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
-              <box flexDirection="column" width="100%">
-                {planTranscript(entries, entryDisplay.transcriptDetail).map((item) =>
-                  item.type === "fold"
-                    ? renderFold(item, transcriptWidth, entryDisplay, theme)
-                    : renderEntry(item.entry, transcriptWidth, entryDisplay, theme),
-                )}
-                {workingIndicator}
-                {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
-              </box>
-            </scrollbox>
-          </box>
+          {/*
+            * The conversation region: the drilled-in focus view, or the
+            * transcript column beside the optional agent rail. The transcript
+            * flexGrows; the rail is flexShrink={0} and sized by chat-layout.
+            */}
+          {conversationRegion}
 
           {/*
             * Explicit height AND flexShrink={0}. Without both, opentui defaults
@@ -4374,6 +4866,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           {overlaysNode}
           {stickyNode}
           {composerNode}
+          {agentNavHintNode}
         </>
       )}
 
