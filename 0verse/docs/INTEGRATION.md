@@ -1,4 +1,4 @@
-# Integration — how 0verse, foxguard, and pwnkit fit together
+# Integration — how 0verse, foxguard, and the managed platform fit together
 
 > Status: 2026-08-20. Scope frozen under 0sec ADR-066: 0verse is an
 > evidence-producer/notary, not a generic dispatch engine. This document
@@ -8,7 +8,7 @@
 ## The product line
 
 ```
-  0cloud             MANAGED PLATFORM (private operations)
+  managed            MANAGED PLATFORM (private operations)
                      signed Hyper-V evidence import today · generic PoV seam planned ·
                      labeled dataset · trained triage · disclosure routing
           ▲
@@ -24,11 +24,12 @@
 ```
 
 Three projects, three roles: **foxguard** = source/decompiled-C static analysis;
-**0verse** = no-source binary RE + evidence production/notarization; **pwnkit /
-0cloud** = the closed platform. Today its wired 0verse seam imports signed
-Hyper-V evidence; a provider-neutral PoV importer remains planned and gated.
-foxguard is reused *inside* 0verse. pwnkit's oracle *concepts* are reimplemented
-in 0verse; pwnkit's *learned/tuned/private-state* versions stay the moat.
+**0verse** = no-source binary RE + evidence production/notarization; **the
+managed platform (proprietary)** = the closed platform. Today its wired 0verse
+seam imports signed Hyper-V evidence; a provider-neutral PoV importer remains
+planned and gated. foxguard is reused *inside* 0verse. The source-side engine's
+oracle *concepts* are reimplemented in 0verse; its *learned/tuned/private-state*
+versions stay the moat.
 
 The generic binary job type, engine template, and agent-callable binary tool are
 **parked** until the blind known-CVE stripped-ELF gate passes. The machine
@@ -74,23 +75,24 @@ triage + dynamic confirmation like any other hypothesis.
 
 ---
 
-## pwnkit oracles — concepts reimplemented openly; learned versions stay the moat
+## Source-side engine oracles — concepts reimplemented openly; learned versions stay the moat
 
-pwnkit's source is public in `0sec-labs/0sec`; 0cloud's managed operations,
-trained models, and dataset stay private. 0verse reimplements from **concepts
-only — never copy tuned prompt text or learned state.** The split (from reading pwnkit's `packages/core`
-triage/oracle code and the `services/` gates):
+The source-side engine is public in `0sec-labs/0sec`; the managed platform's
+managed operations, trained models, and dataset stay private. 0verse reimplements
+from **concepts only — never copy tuned prompt text or learned state.** The split
+(from reading the source-side engine's `packages/core` triage/oracle code and the
+`services/` gates):
 
 ### 0verse builds OPEN — this is the core value of a verify-before-report tool
 - **Differential crash oracle / PoV verifier** — crash the target under a
   sanitizer (ASan/UBSan/MSan) and confirm clean behavior on a control; verdict
   driven by an *external deterministic check* (signal, sanitizer abort, marker),
-  **never LLM self-grading**. (pwnkit analog: `cybergym-runner`, `verify-verdict.ts`.)
+  **never LLM self-grading**. (source-side engine analog: `cybergym-runner`, `verify-verdict.ts`.)
 - **Canary-marker capability oracle** — mint a unique per-run token, compile it
   into the PoC, credit a capability only on the token-bound marker line, and close
   the five false-confirmation vectors: stale/replay, echoed-intent,
   capability-without-witness, sprayed-but-didn't-land, privilege-from-privilege.
-  This is 0verse's headline open differentiator. (pwnkit analog: `exploit/oracle.ts`.)
+  This is 0verse's headline open differentiator. (source-side engine analog: `exploit/oracle.ts`.)
 - **Dedup** — stack-trace + content-token (Jaccard) + CWE-class, against **public**
   CVE/GHSA/OSV. (ClusterFuzz-style crash bucketing from Buttercup transfers verbatim.)
 - **Exploitability heuristics** — deterministic regex reachability labels
@@ -99,9 +101,9 @@ triage/oracle code and the `services/` gates):
 - **Gate composition discipline** — cheap filter → expensive prover; explicit
   fail-OPEN for reachability vs fail-CLOSED for the last gate before "confirmed".
 - **An open handcrafted feature vector** (VulnBERT-style *idea*) — but our own names,
-  not pwnkit's exact registry.
+  not the source-side engine's exact registry.
 
-### Stays pwnkit's MOAT — 0verse must NOT replicate; cloud wraps it
+### Stays the managed platform's MOAT — 0verse must NOT replicate; cloud wraps it
 - The **labeled dataset**: `(finding, attempted-PoC, ground-truth, feature-vector)`
   rows from paid scans at scale (the closed feedback loop). *0verse should emit its
   oracle verdicts in a clean capturable shape so the cloud can build a dataset — but
@@ -291,8 +293,8 @@ the cloud completion marker.
 
 ### Machine contract and reference cloud adapter (#28)
 
-The versioned NDJSON contract can be consumed by a scan platform, and
-`examples/pwnkit_cloud_lane.py` demonstrates parsing and promotion rules. This is
+The versioned NDJSON contract can be consumed by a managed scan platform, and a
+reference managed-lane example demonstrates parsing and promotion rules. This is
 **implemented contract scaffolding**, not a registered binary job type or an
 operational platform lane.
 

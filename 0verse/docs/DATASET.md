@@ -4,7 +4,7 @@
 > labeled record. Produced by `zeroverse.dataset` (and, opt-in, by every
 > `api.scan()` when `ZEROVERSE_DATASET_PATH` is set). **The OSS ships the capture
 > mechanism, not the corpus.** See [INTEGRATION.md](INTEGRATION.md) for why the
-> labeled dataset is pwnkit-cloud's moat and 0verse's job is to emit clean,
+> labeled dataset is the managed platform's moat and 0verse's job is to emit clean,
 > capturable rows.
 
 ## What a record is

@@ -30,7 +30,7 @@ Architecture per [docs/DESIGN-NOTES.md](docs/DESIGN-NOTES.md): deterministic sch
 - [x] **angr concolic**: slice-scoped `call_state` reachability — concretizes a witness, prunes UNSAT hypotheses, timeboxes/falls-through on choke; wired before the oracle (`stage:dynamic`, `backend:angr`)
 - [x] **Crash oracle (no sanitizers)**: native signal classification (SIGSEGV-write/SIGABRT), optional QEMU/Valgrind; document blind spots (`stage:dynamic`, `oracle`)
 - [x] **Deterministic PoV verifier**: re-run blob → classify crash signal → **stack-trace dedup** (`stage:poc`)
-- [x] **Open oracles** (reimplemented from pwnkit *concepts*, not code): differential crash oracle (target crashes / control clean); **canary-marker capability oracle** + 5 false-confirm guards; dedup vs **public** CVE/GHSA/OSV (`stage:poc`, `oracle`)
+- [x] **Open oracles** (reimplemented from prior *concepts*, not code): differential crash oracle (target crashes / control clean); **canary-marker capability oracle** + 5 false-confirm guards; dedup vs **public** CVE/GHSA/OSV (`stage:poc`, `oracle`)
 - [x] **PoV emitter**: crashing stdin/argv + crash class via pwntools (`stage:poc`)
 - [x] **Report**: markdown + SARIF + JSON finding with embedded PoV; NDJSON streaming headless contract (`stage:report`)
 - [x] Green on a corpus of known-vuln binaries; CI gate on PoV reproduction (`benchmark`) — cmdi + overflow + heap_overflow all confirmed end-to-end (3/3); Docker `benchmark-gate` workflow + `make benchmark`; angr proof in `benchmarks/angr_proof.py`
@@ -146,11 +146,11 @@ hypotheses (`src/zeroverse/bugclasses.py`, `benchmarks/m4_proof.py`).
   (`integration:mcp`) (#29) — `python -m zeroverse.mcp`: stdio MCP server exposing
   `scan_binary`/`list_findings`/`get_pov`/`get_report` over the embeddable API;
   official MCP SDK when installed, JSON-RPC-over-stdio stub otherwise
-- [x] pwnkit/0cloud evidence contract and reference adapter (`integration:pwnkit`)
+- [x] managed evidence contract and reference adapter (`integration:managed`)
   (#28) — embeddable `zeroverse.api.scan()` + `0verse scan --format
   ndjson|sarif|json` with a **versioned** machine contract
-  (`docs/RESULT-CONTRACT.md`, PoV-is-truth); reference adapter
-  `examples/pwnkit_cloud_lane.py`. This is implemented contract scaffolding, not a
+  (`docs/RESULT-CONTRACT.md`, PoV-is-truth); a reference managed-lane example.
+  This is implemented contract scaffolding, not a
   platform lane. Under ADR-066, generic cloud dispatch is **parked** and
   operationally **unsupported** until the blind stripped-ELF gate passes.
 - [ ] Rust (PyO3) fast-path for ingest/triage of large blobs (`perf`) — **deferred**
@@ -250,7 +250,7 @@ in-tree and covered by tests or a proof harness.
 
 ## Scope freeze after M7
 
-The current 0verse role is an evidence-producer/notary. Generic pwnkit/0cloud
+The current 0verse role is an evidence-producer/notary. Generic managed
 dispatch remains parked until 0verse blindly confirms a known-CVE stripped
 x86-64 ELF and the result is recorded. Windows execution, browser execution, and
 Mach-O dynamic-execution expansion are also parked. Existing code, tests, and

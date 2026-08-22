@@ -2,7 +2,7 @@
 
 > Status: 2026-07-25. Living document.
 
-> The versioned, embeddable seam a scan platform (pwnkit-cloud) or an external
+> The versioned, embeddable seam a managed scan platform or an external
 > agent ingests. Produced by `zeroverse.api.scan()` and the CLI
 > `0verse scan <binary> --format json|ndjson|sarif`. The internal
 > `serialize.finding_dict` shape is free to evolve; **this** contract is the
