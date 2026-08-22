@@ -1,0 +1,8 @@
+# Cloudflare Pages config for the 0sec docs site → docs.0.security.
+# Mirrors the 0sec-www setup (parent-company landing) so the two deploy the
+# same way. Project name matches the actual CF Pages project; build output is
+# Astro's `dist`. Deploy from this dir with:
+#   pnpm --filter @0sec/docs build && npx wrangler pages deploy dist
+name = "0sec-docs"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-05-15"
