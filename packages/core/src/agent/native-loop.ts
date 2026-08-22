@@ -773,8 +773,10 @@ export async function runNativeAgentLoop(
   const unregisterSignalCleanup = registerSignalCleanup(signalCleanup);
 
   // ── Coordinator rails (multi-agent supervisor) ──
-  // Additive, feature-flagged (0SEC_FEATURE_COORDINATOR_RAILS, default ON /
-  // opt-OUT). Set the env var to "0"/"false" to disable. When on, this loop's
+  // Additive, feature-flagged (0SEC_FEATURE_COORDINATOR_RAILS, default OFF /
+  // opt-IN). Set the env var to "1"/"true" to enable. Default off so the
+  // supervisor's nudge/intervention events never surface as transcript noise
+  // unless the operator opts in. When on, this loop's
   // spawned sub-agents (spawn_agent/spawn_agents) are observed via the eventBus
   // and the pure rails in `coordinator-rails.ts` (stall watchdog on
   // idle-since-last-output, kill-vs-escalate policy, anti-solo-takeover gate,
@@ -792,8 +794,8 @@ export async function runNativeAgentLoop(
   // nothing subscribes and the supervise step is skipped, so behavior is
   // byte-identical to the legacy path.
   const coordinatorRailsEnabled =
-    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] !== "0" &&
-    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] !== "false";
+    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] === "1" ||
+    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] === "true";
   let coordinatorState: CoordinatorState = {};
   // Log each (agent, kind, action) transition once so a persistent condition
   // does not spam the diagnostics channel every turn.

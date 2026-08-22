@@ -2508,16 +2508,19 @@ describe("runNativeAgentLoop — hunt memory integration", () => {
   });
 });
 
-// ── Coordinator rails enforcement (now default ON / opt-out) ──
+// ── Coordinator rails enforcement (opt-in via 0SEC_FEATURE_COORDINATOR_RAILS) ──
 
 describe("runNativeAgentLoop — coordinator rails enforcement", () => {
   beforeEach(() => {
-    // Keep the real hunt-memory store untouched here (file-level hook already
-    // disabled it), and ensure the coordinator flag is at its new default (ON).
+    // Rails are default OFF (opt-in) so they never surface as transcript noise
+    // unless enabled; enable them explicitly to exercise the enforcement path.
+    process.env["0SEC_FEATURE_COORDINATOR_RAILS"] = "1";
+  });
+  afterEach(() => {
     delete process.env["0SEC_FEATURE_COORDINATOR_RAILS"];
   });
 
-  it("nudges a spinning subagent by default (no flag set) via a coordinator_action event", async () => {
+  it("nudges a spinning subagent when enabled via a coordinator_action event", async () => {
     const events: Array<[string, Record<string, unknown>]> = [];
     let turn = 0;
     const runtime: NativeRuntime = {
