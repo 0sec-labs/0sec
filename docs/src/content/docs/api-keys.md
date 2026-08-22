@@ -84,14 +84,43 @@ nor `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is exported, the runtime reads
 inside it. Override that path with `0SEC_CHATGPT_AUTH_FILE`. An account id, if
 present, is picked up from `0SEC_CHATGPT_ACCOUNT_ID` or from the same file.
 
-This creates one known false negative in credential detection. The
-`/providers` view and the `0sec doctor` checks only inspect environment
-variables — they never stat the filesystem — so an operator whose only
-credential is `~/.codex/auth.json` is reported as **not configured** for
-ChatGPT Codex even though a real scan authenticates and runs. If you rely on
-the file, treat the "not configured" line as a display limitation, not a
-broken setup; export `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` if you want the status
-view to agree with reality.
+`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling of the same override. The
+CLI still accepts it as a fallback, but only when `0SEC_CHATGPT_AUTH_FILE` is
+unset, and the engine's own file read does not honour it at all — so use
+`0SEC_CHATGPT_AUTH_FILE`.
+
+### How a codex-login file reaches the status views
+
+Every `0sec` (or `0`) invocation loads the auth file into the environment
+before any subcommand runs: the CLI entrypoint reads
+`~/.codex/auth.json` (or your override) and copies its tokens into
+`0SEC_CHATGPT_ACCESS_TOKEN` / `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`. That load is
+a no-op if either variable is already exported — an explicit export always
+wins — and it fails soft if the file is missing, unreadable or malformed.
+
+Because of that startup load, a codex-login file **is** detected on the normal
+CLI paths:
+
+- **The interactive console** (`0`, or `0sec console`). By the time
+  `/providers` inspects the environment the tokens are already in it, so
+  ChatGPT Codex shows as `configured via 0SEC_CHATGPT_ACCESS_TOKEN` rather
+  than "not configured".
+- **`0sec doctor`.** It runs the same startup load, and its "API runtime" line
+  additionally comes from the engine's provider detection, which reads the
+  auth file directly. Both routes agree: the API runtime reports `ok
+  ChatGPT Codex`.
+- **Scans, reviews and audits.** These authenticate from the file even without
+  the startup load, since provider detection reads it itself.
+
+The remaining limitation is narrower than "the status views cannot see the
+file". The provider table behind `/providers` is a pure function of an
+environment you hand it — it never stats the filesystem — so it reports
+ChatGPT Codex as **not configured** for any caller that consults it *without*
+the CLI's startup load: embedding that table in your own tool, or querying it
+against a synthetic environment. On those paths, and only those, treat "not
+configured" as a display limitation rather than a broken setup, or export
+`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` so the answer no longer depends on who
+loaded the file.
 
 ## Console credential store
 
