@@ -42,3 +42,30 @@ describe("allowlistedChildEnv", () => {
     expect(env["0SEC_CLOUD_TOKEN"]).toBeUndefined();
   });
 });
+
+describe("newly covered credential shapes", () => {
+  // These names are read by the runtime/intel/verify lanes but were absent from
+  // SENSITIVE_ENV_PATTERNS. The allowlist already dropped them from the parent
+  // copy; this pins the `extras` path too, so a caller cannot reintroduce one.
+  it.each([
+    ["QWEN_API_KEY", "qwen-secret"],
+    ["NVD_API_KEY", "nvd-secret"],
+    ["E2B_API_KEY", "e2b-secret"],
+    ["0SEC_LLM_TARGET_KEY", "target-secret"],
+  ])("screens %s out of caller extras", (name, value) => {
+    const env = allowlistedChildEnv({ [name]: value }, { PATH: "/bin" });
+    expect(env[name]).toBeUndefined();
+    expect(env.PATH).toBe("/bin");
+  });
+
+  it("does not carry them from the parent environment either", () => {
+    const env = allowlistedChildEnv({}, {
+      PATH: "/bin",
+      QWEN_API_KEY: "q",
+      NVD_API_KEY: "n",
+      E2B_API_KEY: "e",
+      "0SEC_LLM_TARGET_KEY": "t",
+    });
+    expect(Object.keys(env)).toEqual(["PATH"]);
+  });
+});

@@ -28,6 +28,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { MAX_CONCURRENT_SESSIONS, IDLE_TIMEOUT_MS } from "./pty-session.js";
+import { allowlistedChildEnv } from "./sanitized-env.js";
 
 /** One length-prefixed JSON response frame from the kernel. */
 export interface KernelFrame {
@@ -354,10 +355,18 @@ export class PythonKernelManager {
 
   private spawnKernel(): ChildProcess {
     return spawn("python3", ["-u", "-c", REPL_SERVER], {
-      env: {
-        ...process.env,
+      // The kernel executes MODEL-AUTHORED Python, so it is the last place that
+      // should see the harness's own credentials: anything in this env is
+      // readable with one `os.environ` call, and the code that reads it can be
+      // steered by prompt injection in scanned content. Inheriting
+      // `process.env` wholesale exposed every provider key, GITHUB_TOKEN and
+      // 0SEC_CLOUD_TOKEN to that code. The allowlist keeps the handful of
+      // variables a Python REPL legitimately needs (PATH, HOME, TMPDIR, LANG …)
+      // and drops the rest; extras are screened so the block-net flag cannot
+      // smuggle a secret shape back in.
+      env: allowlistedChildEnv({
         "0SEC_KERNEL_BLOCK_NET": this.blockNetworking ? "1" : "0",
-      },
+      }),
       stdio: ["pipe", "pipe", "pipe"],
     });
   }
