@@ -1164,56 +1164,6 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     };
   }, []);
 
-  // <<<TEMP-RENDER-HARNESS>>>
-  useEffect(() => {
-    const which = process.env.ZEROSEC_TUI_DEBUG_PROMPT;
-    if (!which) return;
-    const longName = "run_source_audit_with_extended_capabilities";
-    const longReason = "the scoped source audit needs the process-action containment tool to inspect packages/core/src/disclose/poc-runtime.ts and packages/cli/src/commands/verify.ts for additional evidence";
-    if (which === "escalation") {
-      setPendingEscalation({
-        request: { call: { name: longName, arguments: {} }, reason: longReason } as never,
-        resolve: () => {},
-      });
-    } else if (which === "scope") {
-      setPendingScope({
-        request: {
-          call: { name: "http_request", arguments: {} },
-          requestedUrls: ["https://api.staging.example.com/v2/accounts", "https://cdn.staging.example.com"],
-          target: "example.com",
-          currentScope: undefined,
-        } as never,
-        resolve: () => {},
-      });
-    } else if (which === "local") {
-      setPendingLocalScope({
-        request: { call: { name: "read_file", arguments: {} }, requestedPath: "/home/dev/coding/0sec-labs/0sec/packages/core/src/disclose" } as never,
-        resolve: () => {},
-      });
-    } else if (which === "copilot") {
-      setPendingToolApproval({
-        call: { name: "run_command", arguments: { command: "pnpm --filter 0sec-cli exec vitest run src/tui/", cwd: "/home/dev/coding/0sec-labs/0sec" } } as never,
-        resolve: () => {},
-      });
-    } else if (which === "secret") {
-      setSecretPrompt({ providerId: "openai", label: "OpenAI", envVar: "OPENAI_API_KEY", value: "sk-abcdef" });
-    } else if (which === "subagents") {
-      const tasks = [
-        "Source review this TypeScript/Node monorepo for command injection and unsafe shell execution across every package",
-        "Dependency audit for this Node/pnpm monorepo. Inspect package.json files and pnpm-lock.yaml, query advisories",
-        "Inspect packages/core/src/disclose/poc-runtime.ts and packages/cli/src/commands/verify.ts for additional process-action containment gaps",
-        "Enumerate authentication and session handling in the console runtime and report any missing authorization checks",
-        "Fifth agent doing extra work that must not be painted",
-        "Sixth agent doing extra work that must not be painted",
-      ];
-      const map: Record<string, unknown> = {};
-      tasks.forEach((task, index) => {
-        map[`a${index}`] = { agent_id: `a${index}`, task, status: index < 4 ? "running" : "queued", turns: index, max_turns: 12 };
-      });
-      setActiveSubagents(map as never);
-    }
-  }, []);
-
   // Subscribe to subagent lifecycle events from the core event bus.
   // Filter by this session's scanId; remove active entries on terminal state.
   useEffect(() => {
@@ -1471,8 +1421,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     : null;
   const stepApproval = useCallback((action: "up" | "down") => {
     setApprovalCursor((current) => {
-      if (!approvalPrompt || !approvalState) return current;
-      return { owner: approvalPrompt.owner, state: reduceSelector(approvalState, { type: action }) };
+      if (!approvalPrompt) return current;
+      // Prefer the queued state over the rendered one, so two arrow presses
+      // delivered in the same tick step twice instead of collapsing to one.
+      const base = current && current.owner === approvalPrompt.owner ? current.state : approvalState;
+      if (!base) return current;
+      return { owner: approvalPrompt.owner, state: reduceSelector(base, { type: action }) };
     });
   }, [approvalPrompt, approvalState]);
 
