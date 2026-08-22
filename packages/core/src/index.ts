@@ -1005,6 +1005,7 @@ export type {
   ToolCall,
   ToolResult,
   ToolContext,
+  ScopedAuditEscalationRequest,
   AgentLoopOptions,
   NativeAgentConfig,
   NativeAgentLoopOptions,
@@ -1684,9 +1685,67 @@ export {
   maybeSubscribeCloudEventSink,
   isCloudEventSinkActive,
 } from "./events/bus.js";
+// herdr pane-state sink. Reports only 0sec's coarse working/idle state and
+// non-identifying counters to the local herdr socket, so a 0sec pane stops
+// showing as "unknown" in herdr's sidebar. Inert unless HERDR_ENV=1 with a
+// socket and pane id present. Never carries engagement content — the socket
+// is readable by any process running as this user.
+export { HerdrEventSink, createHerdrEventSink } from "./integrations/herdr.js";
+// Structured diagnostics. Defaults to stderr so non-interactive runs never
+// lose a quota or retry notice; the TUI claims the channel at mount so the
+// same messages land in the transcript instead of over the framebuffer.
+export * from "./diagnostics/channel.js";
+// Agent coordination hub: peer roster + a crash-safe local message spool.
+// Messages are inert prose by construction — nothing in one can grant scope,
+// approve a tool, or alter another session's authorization state.
+export {
+  BROADCAST_ID,
+  MAX_BODY_CHARS,
+  MAX_INBOX_MESSAGES,
+  decodeMessage,
+  drainInbox,
+  encodeMessage,
+  hubDir,
+  isValidPeerId,
+  newMessageId,
+  peekInbox,
+  sendMessage,
+  stripUnsafeText,
+} from "./hub/mailbox.js";
+export type { HubMessage, SendResult, SendFailure } from "./hub/mailbox.js";
+// Plugin manifest + capability model. Capabilities translate into the SAME
+// gate maps the built-in tools use, so a plugin tool cannot acquire a
+// second, weaker authorization path. Fail-closed: an undeclared or unknown
+// capability set yields the most restrictive treatment, never read-only.
+export {
+  validatePluginManifest,
+  gateFlagsFor,
+  PLUGIN_CAPABILITIES,
+  type PluginCapability,
+  type PluginToolManifest,
+  type PluginManifest,
+  type ValidationResult,
+} from "./plugins/manifest.js";
+// Monotonic, deny-only guard layer beneath the name-keyed gates. Guards can
+// only ever narrow what is permitted: there is no value a guard can return
+// that means "allow", so composing more guards cannot loosen policy and a
+// plugin cannot suppress the authorization chain.
+export {
+  evaluateGuards,
+  composeGuards,
+  sanitizeReason,
+  guardNetworkRequiresScope,
+  guardApprovalUnavailable,
+  guardUnresolvedCapabilities,
+  BUILTIN_GUARDS,
+  type ToolGuard,
+  type GuardContext,
+  type GuardVerdict,
+} from "./plugins/guards.js";
 export type {
   CostBreakdownEntry,
   ScanCompletedPayload,
+  SubagentLifecyclePayload,
 } from "./events/bus.js";
 export { ScanCostLedger } from "./agent/cost-ledger.js";
 
@@ -1717,6 +1776,19 @@ export type {
   ReplayStatus,
   VerificationResult,
 } from "./verification-spec/index.js";
+
+// Source fix-and-retest workflow. Generates a scoped local patch only for an
+// already reproduced finding, validates it in an isolated Git worktree, then
+// optionally applies the same patch after the source contract and test command
+// both pass.
+export { runSourceFix } from "./fix/index.js";
+export type {
+  SourceFixAttempt,
+  SourceFixOptions,
+  SourceFixResult,
+  SourceFixStatus,
+  SourceFixTestResult,
+} from "./fix/index.js";
 
 // Deterministic replay runner skeleton (0sec#193). Consumes a finding's
 // `pocSteps`, sequentially executes them via a pluggable runner (local
@@ -1909,6 +1981,13 @@ export type {
   ConsoleRenderCallbacks,
   ConsoleTurnOutcome,
   ConsoleStopReason,
+  ConsoleAutonomyMode,
+  ConsoleScopeRequest,
+  ConsoleScopeResolution,
+  ConsoleLocalScopeRequest,
+  ConsoleLocalScopeResolution,
+  ConsoleTurnBudget,
+  ConsoleUsageReport,
 } from "./console/index.js";
 
 // ── Recon mode: domain surface enumeration (0sec#769) ──

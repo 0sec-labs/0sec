@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "@0sec/shared";
 import { features } from "../agent/features.js";
+import { diag } from "../diagnostics/channel.js";
 import {
   MESSAGE_CACHE_BREAKPOINTS,
   planMessageBreakpoints,
@@ -523,26 +524,27 @@ export async function logProviderStartup(
 
   if (provider !== "azure") {
     // Non-Azure: brief banner, no region probe.
-    console.error(
-      `[0sec] ${providerLabel} provider initialized\n` +
-      `  endpoint: ${baseUrl}\n` +
-      `  model: ${model}`,
-    );
+    diag.info("provider_initialized", `${providerLabel} provider initialized`, {
+      provider,
+      endpoint: baseUrl,
+      model,
+    });
     return;
   }
 
   const region = await probeAzureRegion(baseUrl, apiKey, fetchImpl);
-  const regionLine = region === "unknown"
-    ? "  region: unknown (x-ms-region header absent or probe failed)"
-    : `  region: ${region} (probed via x-ms-region header)`;
 
-  console.error(
-    `[0sec] Azure OpenAI provider initialized\n` +
-    `  endpoint: ${baseUrl}\n` +
-    `  model: ${model}\n` +
-    `${regionLine}\n` +
-    `  wire api: ${wireApi}`,
-  );
+  diag.info("provider_initialized", "Azure OpenAI provider initialized", {
+    provider,
+    endpoint: baseUrl,
+    model,
+    region,
+    // Distinguishes "the header said westeurope" from "the probe could not
+    // tell us", which matters when someone is debugging a data-residency
+    // requirement and `region=unknown` is not the same as `region` missing.
+    region_source: region === "unknown" ? "probe-failed" : "x-ms-region",
+    wire_api: wireApi,
+  });
 }
 
 /** Reset the startup-banner guard. Test-only. */
@@ -562,7 +564,22 @@ const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
  *  separate meters. */
 const QWEN_TOKEN_PLAN_DEEPSEEK_MODEL = "deepseek-v4-flash-0731";
 
-type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen";
+// ── xAI Grok ───────────────────────────────────────────────────────────
+//
+// xAI ships an OpenAI-compatible `/v1/chat/completions` endpoint (Bearer +
+// standard body), so xai rides the same wire the openai/deepseek/qwen
+// providers use — it is NOT on the Anthropic Messages path z-ai/kimi take.
+// Override base URL via XAI_BASE_URL, model via 0SEC_MODEL / --model.
+//
+// Added so the cross-family refuter roster can reach a fifth model family:
+// Grok scored the highest run-to-run CONSISTENCY of any model in Aikido's
+// Aug-2026 CVE-rediscovery benchmark (21/32 stable across all three runs vs
+// DeepSeek V4 Pro's 10/32), which is the property a refuter wants — a
+// skeptic that flip-flops between runs is worse than no skeptic.
+const XAI_DEFAULT_BASE_URL = "https://api.x.ai/v1";
+const XAI_DEFAULT_MODEL = "grok-4.6";
+
+type ApiProvider = "openrouter" | "anthropic" | "openai" | "azure" | "deepseek" | "chatgpt-codex" | "z-ai" | "kimi" | "qwen" | "xai";
 type WireApi = "chat_completions" | "responses";
 /**
  * Azure Foundry deployment ids used by 0cloud. The worker can inject both
@@ -610,24 +627,36 @@ export function parseLlmFallbackChain(): FallbackEntry[] {
   const entries: FallbackEntry[] = [];
   const VALID_PROVIDERS: Record<string, true> = {
     openrouter: true, anthropic: true, openai: true, azure: true, deepseek: true,
-    "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true,
+    "chatgpt-codex": true, "z-ai": true, kimi: true, qwen: true, xai: true,
   };
   for (const part of raw.split(",")) {
     const trimmed = part.trim();
     if (!trimmed) continue;
     const colonIdx = trimmed.indexOf(":");
     if (colonIdx < 1 || colonIdx === trimmed.length - 1) {
-      process.stderr.write(`[0sec] 0SEC_LLM_FALLBACK: malformed entry "${trimmed}" (expected provider:model)\n`);
+      diag.warn(
+        "fallback_chain_malformed_entry",
+        `0SEC_LLM_FALLBACK: malformed entry "${trimmed}" (expected provider:model)`,
+        { entry: trimmed, expected: "provider:model" },
+      );
       continue;
     }
     const provider = trimmed.slice(0, colonIdx) as ApiProvider;
     const model = trimmed.slice(colonIdx + 1).trim();
     if (!VALID_PROVIDERS[provider]) {
-      process.stderr.write(`[0sec] 0SEC_LLM_FALLBACK: unknown provider "${provider}" in "${trimmed}"\n`);
+      diag.warn(
+        "fallback_chain_unknown_provider",
+        `0SEC_LLM_FALLBACK: unknown provider "${provider}" in "${trimmed}"`,
+        { entry: trimmed, provider },
+      );
       continue;
     }
     if (!model) {
-      process.stderr.write(`[0sec] 0SEC_LLM_FALLBACK: empty model in "${trimmed}"\n`);
+      diag.warn(
+        "fallback_chain_empty_model",
+        `0SEC_LLM_FALLBACK: empty model in "${trimmed}"`,
+        { entry: trimmed, provider },
+      );
       continue;
     }
     entries.push({ provider, model });
@@ -691,6 +720,11 @@ export function resolveFailoverProvider(
       const key = process.env.QWEN_API_KEY;
       if (!key) return undefined;
       return { apiKey: key, baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, wireApi: "chat_completions" };
+    }
+    case "xai": {
+      const key = process.env.XAI_API_KEY;
+      if (!key) return undefined;
+      return { apiKey: key, baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, wireApi: "chat_completions" };
     }
   }
 }
@@ -1160,6 +1194,10 @@ function providerForModel(model: string | undefined): ApiProvider | undefined {
   if (m.startsWith("qwen")) {
     return process.env.QWEN_API_KEY ? "qwen" : undefined;
   }
+  // xAI Grok. Matches bare ids ("grok-4.6") and the vendor-prefixed form.
+  if (m.startsWith("grok") || m.startsWith("xai/") || m.startsWith("x-ai/")) {
+    return process.env.XAI_API_KEY ? "xai" : undefined;
+  }
   // OpenAI GPT-5 / o-series → ChatGPT-Codex subscription if present, else OpenAI.
   if (/^gpt-|^o[1-4](?:[-_]|$)/.test(m)) {
     if (process.env["0SEC_CHATGPT_ACCESS_TOKEN"] || process.env["0SEC_CHATGPT_OAUTH_REFRESH_TOKEN"]) return "chatgpt-codex";
@@ -1259,6 +1297,7 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
       "z-ai",
       "kimi",
       "qwen",
+      "xai",
     ];
     if (!supported.includes(pinnedProviderRaw as ApiProvider)) {
       throw new Error(`${source} is unsupported: ${pinnedProviderRaw}`);
@@ -1320,6 +1359,9 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     case "qwen":
       return { provider: "qwen", apiKey: process.env.QWEN_API_KEY as string,
         baseUrl: process.env.QWEN_BASE_URL ?? QWEN_DEFAULT_BASE_URL, defaultModel: QWEN_DEFAULT_MODEL, wireApi: "chat_completions" };
+    case "xai":
+      return { provider: "xai", apiKey: process.env.XAI_API_KEY as string,
+        baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL, defaultModel: XAI_DEFAULT_MODEL, wireApi: "chat_completions" };
     case "chatgpt-codex":
       return { provider: "chatgpt-codex", apiKey: "", baseUrl: CODEX_API_ENDPOINT,
         defaultModel: process.env["0SEC_MODEL"] ?? CODEX_DEFAULT_MODEL, wireApi: "responses" };
@@ -1474,6 +1516,19 @@ function detectProvider(configApiKey?: string, preferredModel?: string): {
     };
   }
 
+  // xAI Grok — OpenAI-compatible wire, same explicit-opt-in treatment as
+  // z-ai/kimi/qwen, still before the Anthropic final fallback.
+  const xaiKey = process.env.XAI_API_KEY;
+  if (xaiKey) {
+    return {
+      provider: "xai",
+      apiKey: xaiKey,
+      baseUrl: process.env.XAI_BASE_URL ?? XAI_DEFAULT_BASE_URL,
+      defaultModel: XAI_DEFAULT_MODEL,
+      wireApi: "chat_completions",
+    };
+  }
+
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
@@ -1611,6 +1666,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.provider === "azure" ||
       this.provider === "deepseek" ||
       this.provider === "qwen" ||
+      this.provider === "xai" ||
       // chatgpt-codex always speaks Responses API; treat it as
       // OpenAI-compat for body-shape branching purposes (the Responses
       // wire-API code paths below already key on `wireApi === "responses"`
@@ -1811,10 +1867,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
     const hitRate = usage.inputTokens > 0
       ? Math.round((read / usage.inputTokens) * 100)
       : 0;
-    console.error(
-      `[0sec] prompt-cache ${this.providerLabel}: read=${read} write=${write} ` +
-      `uncached=${usage.inputTokens - read - write} total_in=${usage.inputTokens} hit=${hitRate}%`,
-    );
+    diag.info("prompt_cache_usage", `prompt-cache ${this.providerLabel}`, {
+      provider: this.providerLabel,
+      read,
+      write,
+      uncached: usage.inputTokens - read - write,
+      total_in: usage.inputTokens,
+      hit_pct: hitRate,
+    });
   }
 
   /** Friendly provider name for error messages. */
@@ -1829,6 +1889,7 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       case "z-ai": return "Z.ai (GLM)";
       case "kimi": return "Kimi (Moonshot)";
       case "qwen": return "Qwen (Alibaba Model Studio)";
+      case "xai": return "xAI (Grok)";
     }
   }
 
@@ -1843,7 +1904,8 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       "  export OPENAI_API_KEY=sk-...           (OpenAI — direct GPT access)\n" +
       "  export Z_AI_API_KEY=...                (Z.ai GLM — flat-rate Coding Plan, Anthropic-compatible)\n" +
       "  export KIMI_API_KEY=...                (Moonshot Kimi K3 — flat-rate coding, Anthropic-compatible)\n" +
-      "  export QWEN_API_KEY=...                (Alibaba Qwen — Token Plan sub, OpenAI-compatible)"
+      "  export QWEN_API_KEY=...                (Alibaba Qwen — Token Plan sub, OpenAI-compatible)\n" +
+      "  export XAI_API_KEY=...                 (xAI Grok — OpenAI-compatible)"
     );
   }
 
@@ -1951,8 +2013,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.fallbackIndex++;
       const cfg = resolveFailoverProvider(entry.provider, entry.model);
       if (!cfg) {
-        process.stderr.write(
-          `[0sec] 0SEC_LLM_FALLBACK: skipping ${entry.provider} (auth env missing)\n`,
+        diag.warn(
+          "failover_provider_skipped",
+          `0SEC_LLM_FALLBACK: skipping ${entry.provider} (auth env missing)`,
+          { provider: entry.provider, model: entry.model, cause: "auth-env-missing" },
         );
         continue;
       }
@@ -1961,8 +2025,10 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
       this.apiKey = cfg.apiKey;
       this.baseUrl = cfg.baseUrl;
       this.wireApi = cfg.wireApi;
-      process.stderr.write(
-        `[0sec] ${reason} — failover to ${entry.provider} (${entry.model})\n`,
+      diag.warn(
+        "failover_engaged",
+        `${reason} — failover to ${entry.provider} (${entry.model})`,
+        { reason, provider: entry.provider, model: entry.model },
       );
       return true;
     }
@@ -2024,9 +2090,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
           attempt < maxRetries &&
           waitedOtherMs + delay <= maxWaitMs
         ) {
-          process.stderr.write(
-            `[0sec] ${this.providerLabel} transport ${causeCode} — backoff ${delay}ms ` +
-              `(retry ${attempt + 1}/${maxRetries})\n`,
+          diag.warn(
+            "transport_retry",
+            `${this.providerLabel} transport ${causeCode} — backoff ${delay}ms`,
+            {
+              provider: this.providerLabel,
+              cause_code: causeCode,
+              delay_ms: delay,
+              attempt: attempt + 1,
+              max_retries: maxRetries,
+            },
           );
           waitedOtherMs += delay;
           await sleepWithAbort(delay, signal);
@@ -2067,10 +2140,16 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             resetsAtMs: quota.resetsAtMs ?? null,
           });
           const quotaKind = quota.quotaKind ?? "quota_exhausted";
-          process.stderr.write(
-            `[0sec] ${this.providerLabel} ${quotaKind} — plan quota ` +
-              `exhausted (plan=${quota.planType ?? "unknown"}, ` +
-              `resets_at=${resetsAtIso}); skipping retry\n`,
+          diag.error(
+            "quota_exhausted",
+            `${this.providerLabel} ${quotaKind} — plan quota exhausted; skipping retry`,
+            {
+              provider: this.providerLabel,
+              quota_kind: quotaKind,
+              plan: quota.planType ?? "unknown",
+              resets_at: resetsAtIso,
+              status: res.status,
+            },
           );
           const quotaError = new QuotaExhaustedError(
             `${this.providerLabel} ${quotaKind}: plan quota exhausted ` +
@@ -2143,9 +2222,19 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
         delayMs: delay,
         retryAfterHonored: retryAfter != null,
       });
-      process.stderr.write(
-        `[0sec] ${this.providerLabel} HTTP ${res.status} — backoff ${delay}ms ` +
-          `(retry ${attempt + 1}/${maxRetries}, budget ${waitedMs}/${maxWaitMs}ms used)\n`,
+      diag.warn(
+        "retry_backoff",
+        `${this.providerLabel} HTTP ${res.status} — backoff ${delay}ms`,
+        {
+          provider: this.providerLabel,
+          status: res.status,
+          delay_ms: delay,
+          attempt: attempt + 1,
+          max_retries: maxRetries,
+          budget_used_ms: waitedMs,
+          budget_max_ms: maxWaitMs,
+          retry_after_honored: retryAfter != null,
+        },
       );
       if (is429) {
         waited429Ms += delay;
@@ -3111,8 +3200,14 @@ export class LlmApiRuntime implements Runtime, NativeRuntime {
             /* best-effort — the stream is already broken */
           }
           const secs = Math.round(idleTimeoutMs / 1000);
-          process.stderr.write(
-            `[0sec] ${this.providerLabel} stream stalled — no SSE events for ${secs}s (server hold; aborting call)\n`,
+          diag.warn(
+            "stream_stalled",
+            `${this.providerLabel} stream stalled — no SSE events for ${secs}s (server hold; aborting call)`,
+            {
+              provider: this.providerLabel,
+              idle_timeout_ms: idleTimeoutMs,
+              idle_timeout_s: secs,
+            },
           );
           return {
             content: [{ type: "text", text: "" }],

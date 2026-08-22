@@ -32,8 +32,9 @@ import {
   buildAccessControlPromptBlock,
 } from "./agent/prompts.js";
 import { resolveIdentities } from "@0sec/shared";
-import type { RuntimeMode } from "@0sec/shared";
+import type { RuntimeMode, PipelineEvent } from "@0sec/shared";
 import { features } from "./agent/features.js";
+import { diag } from "./diagnostics/channel.js";
 import type { ScanEvent, ScanListener } from "./scanner.js";
 import type { NativeRuntime, NativeMessage, NativeContentBlock } from "./runtime/types.js";
 import type { ToolCall } from "./agent/types.js";
@@ -43,7 +44,154 @@ import { runLlmIpiAudit } from "./llm-ipi-audit.js";
 import { z } from "zod";
 import { layerVerdictArraySchema, formatZodError } from "./schemas.js";
 import { createScanContext, finalize } from "./context.js";
-import { generateRemediation } from "./remediation.js";
+import { generateRemediation, generateRemediationWithLLM } from "./remediation.js";
+import { assessImpact, parseImpactAssessment } from "./triage/impact-assessment.js";
+import type { RemediationObservation } from "./remediation.js";
+import { mapWithConcurrency } from "./concurrency.js";
+
+/**
+ * How many model-written remediation calls may be in flight at once.
+ *
+ * The static knowledge-base path is a synchronous map lookup, so the call sites
+ * are plain `for` loops. Swapping in an LLM call would turn those into one
+ * sequential round-trip per finding — a 50-finding scan would serialise 50
+ * model calls at report-assembly time, after the user already believes the scan
+ * is done. Bounded fan-out keeps the wall-clock flat without letting a noisy
+ * scan open an unbounded number of sessions. Override with
+ * `0SEC_REMEDIATION_CONCURRENCY`.
+ */
+const REMEDIATION_CONCURRENCY = 4;
+
+function remediationConcurrency(): number {
+  const raw = process.env["0SEC_REMEDIATION_CONCURRENCY"];
+  if (raw !== undefined) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return REMEDIATION_CONCURRENCY;
+}
+
+/**
+ * Attach remediation guidance to every finding that should carry it.
+ *
+ * Default path is the static knowledge base — a synchronous category lookup,
+ * byte-identical to the behaviour before the LLM path was wired. When
+ * `0SEC_FEATURE_LLM_REMEDIATION` is on AND a live runtime is actually
+ * reachable, each finding instead gets model-written guidance that can cite its
+ * own evidence rather than a generic category snippet.
+ *
+ * Two properties this function is responsible for:
+ *
+ *  - **Never regress on a keyless run.** `generateRemediationWithLLM` is
+ *    fail-open: with no credentials it quietly returns the KB answer for every
+ *    finding, which looks identical to success. So availability is checked here
+ *    rather than discovered per-call, and the outcome is logged — a 100%
+ *    fallback rate is a misconfiguration, and it must be visible as one.
+ *  - **Do not spend silently.** The LLM path bills tokens that the scan's
+ *    stage-level cost accounting does not see, so the observed usage is summed
+ *    and logged explicitly instead of vanishing.
+ *
+ * `select` decides which findings are eligible; callers differ on that.
+ */
+async function attachRemediation(
+  findings: Finding[],
+  select: (f: Finding) => boolean,
+  deps: {
+    llmEnabled: boolean;
+    runtime: NativeRuntime | null;
+    // Structural rather than the file's usual `db: any` — this helper needs
+    // exactly one method, and using the real event type keeps the payload
+    // shape checked instead of silently accepting a malformed event.
+    db: { logEvent: (event: Omit<PipelineEvent, "id">) => unknown } | null;
+    scanId: string;
+    stage: string;
+  },
+): Promise<void> {
+  const targets = findings.filter(select);
+  if (targets.length === 0) return;
+
+  if (!deps.llmEnabled || !deps.runtime) {
+    for (const finding of targets) finding.remediation = generateRemediation(finding);
+    return;
+  }
+
+  let llmCount = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const fallbackReasons: Record<string, number> = {};
+
+  await mapWithConcurrency(targets, remediationConcurrency(), async (finding) => {
+    const onObservation = (observation: RemediationObservation): void => {
+      if (observation.source === "llm") llmCount++;
+      else if (observation.fallbackReason) {
+        fallbackReasons[observation.fallbackReason] =
+          (fallbackReasons[observation.fallbackReason] ?? 0) + 1;
+      }
+      inputTokens += observation.usage?.inputTokens ?? 0;
+      outputTokens += observation.usage?.outputTokens ?? 0;
+    };
+    // Never let an enrichment failure take down report assembly: the finding
+    // is already confirmed, and shipping it with KB guidance beats losing it.
+    try {
+      finding.remediation = await generateRemediationWithLLM(finding, deps.runtime!, { onObservation });
+    } catch {
+      finding.remediation = generateRemediation(finding);
+      fallbackReasons["error"] = (fallbackReasons["error"] ?? 0) + 1;
+    }
+  });
+
+  deps.db?.logEvent({
+    scanId: deps.scanId,
+    stage: deps.stage,
+    eventType: "llm_remediation",
+    payload: {
+      findings: targets.length,
+      llm: llmCount,
+      baseline: targets.length - llmCount,
+      fallbackReasons,
+      inputTokens,
+      outputTokens,
+    },
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Populate `finding.impactAssessment` for eligible findings.
+ *
+ * Gated on `0SEC_FEATURE_IMPACT_ASSESSMENT` and a reachable runtime. `assessImpact`
+ * is total (never throws; falls back to the deterministic heuristic when no
+ * model is available), so the only failure mode to guard here is the wave
+ * itself. Bounded fan-out shares the remediation concurrency knob — both are
+ * per-finding report-time LLM calls with the same cost profile.
+ */
+async function attachImpactAssessment(
+  findings: Finding[],
+  select: (f: Finding) => boolean,
+  deps: { enabled: boolean; runtime: NativeRuntime | null; db: { logEvent: (event: Omit<PipelineEvent, "id">) => unknown } | null; scanId: string; stage: string },
+): Promise<void> {
+  if (!deps.enabled || !deps.runtime) return;
+  const targets = findings.filter(select);
+  if (targets.length === 0) return;
+
+  await mapWithConcurrency(targets, remediationConcurrency(), async (finding) => {
+    try {
+      finding.impactAssessment = await assessImpact(finding, { runtime: deps.runtime! });
+    } catch {
+      // assessImpact is already total; this is belt-and-suspenders so a
+      // surprise never takes down report assembly for a confirmed finding.
+    }
+  });
+
+  const assessed = targets.filter((f) => f.impactAssessment).length;
+  deps.db?.logEvent({
+    scanId: deps.scanId,
+    stage: deps.stage,
+    eventType: "impact_assessment",
+    payload: { findings: targets.length, assessed },
+    timestamp: Date.now(),
+  });
+}
 import { parseApiSpec } from "./api-spec.js";
 import { raceWithDefaults } from "./racing.js";
 import type { RaceResult } from "./racing.js";
@@ -1427,9 +1575,9 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
         });
       } catch (err) {
         // Pre-pass must never break the scan.
-        console.error(
-          `[web-recon-prepass] failed: ${err instanceof Error ? err.message : err}`,
-        );
+        diag.warn("web_recon_prepass_failed", "web recon pre-pass failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -3219,12 +3367,33 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
       const dbFindings = db.getFindings(scanId);
       allFindings = dbFindings.map(dbFindingToFinding);
 
+      // Assess impact first: it feeds the CVSS vector, the advisory Impact
+      // section, and can inform remediation prose — so it must land on the
+      // finding before those are derived or persisted.
+      await attachImpactAssessment(
+        allFindings,
+        (f) => f.status !== "false-positive",
+        {
+          enabled: features.impactAssessment,
+          runtime: nativeApiAvailable || cliNativeRuntime ? nativeRuntime : null,
+          db,
+          scanId,
+          stage: "verify",
+        },
+      );
+
       // Attach remediation guidance to confirmed/verified findings
-      for (const finding of allFindings) {
-        if (finding.status !== "false-positive") {
-          finding.remediation = generateRemediation(finding);
-        }
-      }
+      await attachRemediation(
+        allFindings,
+        (f) => f.status !== "false-positive",
+        {
+          llmEnabled: features.llmRemediation,
+          runtime: nativeApiAvailable || cliNativeRuntime ? nativeRuntime : null,
+          db,
+          scanId,
+          stage: "verify",
+        },
+      );
 
       db.logEvent({
         scanId,
@@ -3259,11 +3428,19 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     }
 
     // ── Remediation: ensure all non-false-positive findings have guidance ──
-    for (const finding of allFindings) {
-      if (!finding.remediation && finding.status !== "false-positive") {
-        finding.remediation = generateRemediation(finding);
-      }
-    }
+    // Only findings site C did not already cover reach this, so on the normal
+    // path it is a no-op rather than a second round of model calls.
+    await attachRemediation(
+      allFindings,
+      (f) => !f.remediation && f.status !== "false-positive",
+      {
+        llmEnabled: features.llmRemediation,
+        runtime: nativeApiAvailable || cliNativeRuntime ? nativeRuntime : null,
+        db,
+        scanId,
+        stage: "report",
+      },
+    );
 
     // ── Stage 4: Report ──
     // Extracted to `agentic/stages/report.ts` (0sec#1285) — the terminal
@@ -3605,9 +3782,9 @@ async function runNativeAttack(
       }
     } catch (err) {
       // Pre-recon must never break the scan
-      console.error(
-        `[pre-recon-cve] failed: ${err instanceof Error ? err.message : err}`,
-      );
+      diag.warn("pre_recon_cve_failed", "pre-recon CVE check failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -3641,9 +3818,9 @@ async function runNativeAttack(
         }
       }
     } catch (err) {
-      console.error(
-        `[pre-recon-wp] failed: ${err instanceof Error ? err.message : err}`,
-      );
+      diag.warn("pre_recon_wordpress_failed", "pre-recon WordPress probe failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -3662,6 +3839,7 @@ async function runNativeAttack(
         "read_file",
         "run_command",
         "spawn_agent",
+        "spawn_agents",
         "save_finding",
         "done",
       ]
@@ -3673,6 +3851,7 @@ async function runNativeAttack(
         ...(features.mongoObjectIdForge ? ["mongo_objectid"] : []),
         ...(features.jitSkills ? ["list_skills", "load_skill"] : []),
         "spawn_agent",
+        "spawn_agents",
         "save_finding",
         "done",
       ];
@@ -4307,6 +4486,7 @@ function dbFindingToFinding(dbf: {
   evidenceAnalysis: string | null;
   pocSteps?: string | null;
   layerVerdicts?: string | null;
+  impactAssessment?: string | null;
   semanticDedupe?: string | null;
   findingRank?: number | null;
   timestamp: number;
@@ -4327,12 +4507,20 @@ function dbFindingToFinding(dbf: {
       // Corrupt or legacy row — drop the field rather than crashing the
       // hydration. The triage stage will repopulate on the next scan.
       if (err instanceof z.ZodError) {
-        console.warn(
-          `[agentic-scanner] dropping layerVerdicts for finding ${dbf.id}: ${formatZodError(err, "layerVerdicts")}`,
+        diag.warn(
+          "layer_verdicts_dropped",
+          `dropping layerVerdicts for finding ${dbf.id}`,
+          {
+            finding_id: dbf.id,
+            cause: "schema-mismatch",
+            detail: formatZodError(err, "layerVerdicts"),
+          },
         );
       } else if (err instanceof SyntaxError) {
-        console.warn(
-          `[agentic-scanner] dropping layerVerdicts for finding ${dbf.id}: invalid JSON (${err.message})`,
+        diag.warn(
+          "layer_verdicts_dropped",
+          `dropping layerVerdicts for finding ${dbf.id}`,
+          { finding_id: dbf.id, cause: "invalid-json", detail: err.message },
         );
       }
     }
@@ -4380,6 +4568,13 @@ function dbFindingToFinding(dbf: {
       // Corrupt post-process metadata must not prevent a resume.
     }
   }
+  let impactAssessment: Finding["impactAssessment"];
+  if (dbf.impactAssessment) {
+    // Reuse the module's own validated parser so a corrupt or legacy row
+    // (e.g. an out-of-vocabulary reachability tier) degrades to "drop the
+    // field" rather than leaking a malformed assessment into the Finding.
+    impactAssessment = parseImpactAssessment(dbf.impactAssessment) ?? undefined;
+  }
   const persistedFindingRank = dbf.findingRank;
   const findingRank =
     typeof persistedFindingRank === "number" &&
@@ -4406,6 +4601,7 @@ function dbFindingToFinding(dbf: {
     ...(pocSteps ? { pocSteps } : {}),
     ...(layerVerdicts ? { layerVerdicts } : {}),
     ...(pocSteps ? { pocSteps } : {}),
+    ...(impactAssessment ? { impactAssessment } : {}),
     ...(semanticDedupe ? { semanticDedupe } : {}),
     ...(findingRank !== undefined ? { findingRank } : {}),
     timestamp: dbf.timestamp,
