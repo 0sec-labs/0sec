@@ -20,6 +20,7 @@ import { ChatScreen, type ChatScreenOptions } from "./chat-screen.js";
 import { HerdScreen } from "./herd-screen.js";
 import { SettingsScreen } from "./settings-screen.js";
 import { ModelScreen } from "./model-screen.js";
+import { MarketScreen } from "./market-screen.js";
 import { createSessionCloseGate } from "./session-close-gate.js";
 import { installTuiOutputGuard } from "./output-guard.js";
 import { appendFeedback, submitFeedback } from "./feedback.js";
@@ -63,6 +64,7 @@ type ConsoleRoute =
   | { type: "replay"; dbPath?: string; scanId?: string }
   | { type: "settings" }
   | { type: "herd" }
+  | { type: "market" }
   | { type: "models"; chatOptions?: ChatScreenOptions }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onClose: () => void };
 
@@ -101,6 +103,12 @@ interface ShellNav {
    * directory. Empty by default until the roster producer is wired.
    */
   openHerd: () => void;
+  /**
+   * Opens the full-screen marketplace browser: plugins and themes from the
+   * configured registry. No endpoint ships by default, so it opens on an honest
+   * empty state until `$0SEC_REGISTRY_URL` points at a registry the operator trusts.
+   */
+  openMarket: () => void;
 }
 
 interface HomeOption {
@@ -3766,6 +3774,32 @@ function ModelRoute({
   );
 }
 
+/**
+ * Routes the marketplace browser, supplying the console shell around it.
+ *
+ * Like `SettingsRoute` and `ModelRoute`, the command palette is deliberately not
+ * mounted here: every printable key on this screen filters the list, so a second
+ * `useKeyboard` competing for those keystrokes would fight the filter. The
+ * registry URL, install action and installed-state read are left at their
+ * defaults — `MarketScreen` resolves `$0SEC_REGISTRY_URL` (empty by default) and
+ * reuses the core install APIs — so this route is pure wiring and stays honest
+ * with no endpoint configured.
+ */
+function MarketRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+  return (
+    <MarketScreen
+      onBack={() => leaveCurrentScreen(shell, onExit)}
+      onExit={onExit}
+      frame={({ body, hint }) => (
+        <ShellFrame view="marketplace">
+          {body}
+          <FooterBar hint={hint} />
+        </ShellFrame>
+      )}
+    />
+  );
+}
+
 type AppMode =
   | { type: "home"; onResolve: (selection: HomeSelection) => void; onExit: () => void }
   | { type: "ops"; dbPath?: string; refreshMs: number; onExit: () => void }
@@ -3832,6 +3866,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     openSettings: () => navigate({ type: "settings" }),
     openModels: (chatOpts) => navigate({ type: "models", chatOptions: chatOpts ?? chatOptionsRef.current }),
     openHerd: () => navigate({ type: "herd" }),
+    openMarket: () => navigate({ type: "market" }),
   };
 
   const launchSelection = async (selection: HomeSelection) => {
@@ -3991,6 +4026,14 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             shell.openHerd();
             return;
           }
+          // `market` is not in `ChatDestination` yet (chat-screen owns that
+          // union and this change does not touch it); the cast-guard keeps
+          // run.tsx compiling and the route reachable, and the branch starts
+          // routing the moment the coordinator's one-line chat-screen change lands.
+          if ((destination as string) === "market") {
+            shell.openMarket();
+            return;
+          }
           switch (destination) {
             case "launcher":
               shell.openLauncher();
@@ -4073,6 +4116,8 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     overlay = <ModelRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "herd") {
     overlay = <HerdRoute onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "market") {
+    overlay = <MarketRoute onExit={onExit} shell={shell} />;
   }
 
   return (
