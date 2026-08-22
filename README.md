@@ -100,19 +100,32 @@ Full reference: **[0.security](https://0.security)**.
   DeepSeek, Z.ai GLM, Moonshot Kimi, Qwen, a ChatGPT-Codex subscription, or local
   Ollama — plus per-stage `auto` routing and a cross-session cost ledger.
 
-## Benchmarks
+## Found in the wild
 
-Condition-specific measurements, not operational guarantees. Single-attempt CTF
-scores vary run to run; we track a per-attempt rate with a 95% Wilson CI.
+We care more about real vulnerabilities than benchmark leaderboards. 0sec's
+research loop has disclosed **40+ vulnerabilities and 19 assigned CVEs** in the
+Linux kernel and widely-used open source — every one public and verifiable, with
+maintainer review from Intel, NVIDIA, Red Hat, Google, Meta, Qualcomm, Arm, and
+others.
 
-| Benchmark | Result | Conditions |
-| --- | --- | --- |
-| **XBOW** (104 web-vuln challenges) | 93/95 = **97.9%** black-box · 102/104 white-box | `gpt-5.4`, single-shot, 3 retries · ~$5.20/flag |
-| **Cybench** (40 CTF) | 36/40 = **90.0%** | `gpt-5.4`, single-config · ~$14.89 |
-| **npm audit** (81 packages) | **F1 0.973**, 100% recall | FPR 0.11–0.19 by profile |
+| Target | Vulnerability | CVE / advisory | Status |
+| --- | --- | --- | --- |
+| **Linux kernel · MCTP** | RX buffer overflow on zero-length serial frames | CVE-2026-68124 (9.6 critical) | merged upstream |
+| **Linux kernel · Bluetooth** | Use-after-free in LE Audio CIG/CIS setup | CVE-2026-63944 | merged upstream |
+| **Linux kernel · TIPC** | Slab use-after-free in AEAD decrypt | CVE-2026-63801 | merged upstream |
+| **Linux kernel · mlx5e** | Use-after-free in MACsec offload RX | CVE-2026-72072 | merged upstream |
+| **jsonata** | Arbitrary code execution via crafted expressions | CVE-2026-77413 | published |
+| **node-forge** | Certificate-chain validation bypass | CVE-2026-33896 | published |
+| **Wireshark** | Heap out-of-bounds write in ciscodump | CVE-2026-15164 | published |
+| **Uptime Kuma** | Template injection → arbitrary file read | CVE-2026-33130 | published |
 
-Methodology, per-challenge tables, caveats, and the competitive comparison:
-[benchmark docs](docs/src/content/docs/benchmark.md) ·
+Full track record — kernel.org threads, advisories, and per-finding status —
+lives at **[0.security](https://0.security)**.
+
+We do also run the public CTF benchmarks, and 0sec scores near the top
+(XBOW ~97.9%, Cybench 90%) — but those are single-model, condition-specific
+numbers we treat as secondary evidence, with the caveats spelled out in the
+[benchmark docs](docs/src/content/docs/benchmark.md) and
 [XBOW analysis](docs/src/content/docs/research/xbow-analysis.md).
 
 ## Two engines, one repo
