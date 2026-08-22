@@ -202,6 +202,13 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     tuiOnly: true,
   },
   {
+    name: "market",
+    aliases: ["marketplace"],
+    category: "navigation",
+    description: "Browse the extension marketplace",
+    tuiOnly: true,
+  },
+  {
     name: "back",
     aliases: [],
     category: "navigation",

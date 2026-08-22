@@ -22,7 +22,7 @@ function styled(spans: readonly MdSpan[]): Array<[string, string]> {
 function allSpans(blocks: readonly MdBlock[]): MdSpan[] {
   const out: MdSpan[] = [];
   for (const block of blocks) {
-    if (block.kind === "rule" || block.kind === "code") continue;
+    if (block.kind === "rule" || block.kind === "code" || block.kind === "table") continue;
     for (const line of block.lines) out.push(...line);
   }
   return out;
@@ -534,5 +534,62 @@ describe("renderMarkdown end to end", () => {
       lines: [[{ text: "Report", style: "text" }]],
     });
     expect(blocks[6]).toEqual({ kind: "code", language: "ts", lines: ["if (!user) return;"] });
+  });
+});
+
+describe("tables", () => {
+  const TABLE = ["| Color | Meaning |", "|---|---|", "| Red | Error |", "| Green | Success |"].join("\n");
+
+  it("parses a GFM pipe table into a table block", () => {
+    const [block] = renderMarkdown(TABLE, 80);
+    expect(block?.kind).toBe("table");
+    if (block?.kind !== "table") throw new Error("expected a table");
+    expect(block.header.map(spansToText)).toEqual(["Color", "Meaning"]);
+    expect(block.rows.map((row) => row.map(spansToText))).toEqual([
+      ["Red", "Error"],
+      ["Green", "Success"],
+    ]);
+  });
+
+  it("reads per-column alignment from the delimiter colons", () => {
+    const src = ["| a | b | c |", "|:--|:-:|--:|", "| 1 | 2 | 3 |"].join("\n");
+    const [block] = renderMarkdown(src, 80);
+    if (block?.kind !== "table") throw new Error("expected a table");
+    expect(block.align).toEqual(["left", "center", "right"]);
+  });
+
+  it("parses inline markup inside cells and measures the DISPLAY width", () => {
+    const src = ["| Sev | Note |", "|---|---|", "| **High** | `x` |"].join("\n");
+    const [block] = renderMarkdown(src, 80);
+    if (block?.kind !== "table") throw new Error("expected a table");
+    // The bold marker is stripped: the cell is a bold span reading "High".
+    expect(block.rows[0]![0]).toEqual([{ text: "High", style: "bold" }]);
+    expect(block.rows[0]![1]).toEqual([{ text: "x", style: "code" }]);
+    // Column 0 is 4 cells wide ("High"), not 8 ("**High**").
+    expect(block.widths[0]).toBe(4);
+  });
+
+  it("normalises rows to the header's column count", () => {
+    const src = ["| a | b | c |", "|---|---|---|", "| 1 | 2 |", "| 1 | 2 | 3 | 4 |"].join("\n");
+    const [block] = renderMarkdown(src, 80);
+    if (block?.kind !== "table") throw new Error("expected a table");
+    expect(block.rows[0]!.length).toBe(3);
+    expect(block.rows[1]!.length).toBe(3);
+    expect(spansToText(block.rows[0]![2]!)).toBe("");
+  });
+
+  it("keeps the whole row within the content width when a cell overflows", () => {
+    const src = ["| k | v |", "|---|---|", "| id | " + "x".repeat(100) + " |"].join("\n");
+    const [block] = renderMarkdown(src, 20);
+    if (block?.kind !== "table") throw new Error("expected a table");
+    const gap = 3; // " │ " between the two columns
+    expect(block.widths[0]! + block.widths[1]! + gap).toBeLessThanOrEqual(20);
+    // The overflowing cell was truncated with an ellipsis.
+    expect(spansToText(block.rows[0]![1]!).endsWith("…")).toBe(true);
+  });
+
+  it("does not treat a lone pipe line as a table", () => {
+    const [block] = renderMarkdown("a | b without a delimiter row", 80);
+    expect(block?.kind).toBe("paragraph");
   });
 });

@@ -43,12 +43,24 @@ export interface MdSpan {
  * reason paragraphs do — a model heading regularly exceeds a narrow pane, and
  * silently truncating it loses content the user asked for.
  */
+export type TableAlign = "left" | "right" | "center";
+
 export type MdBlock =
   | { kind: "paragraph"; lines: MdSpan[][] }
   | { kind: "heading"; level: number; lines: MdSpan[][] }
   | { kind: "listItem"; marker: string; indent: number; lines: MdSpan[][] }
   | { kind: "code"; language?: string; lines: string[] }
   | { kind: "quote"; lines: MdSpan[][] }
+  /**
+   * A GFM pipe table. Each cell is a parsed inline-span run, so `**bold**`,
+   * `*italic*` and `` `code` `` inside a cell render styled — exactly as they do
+   * in a paragraph — rather than showing their literal markers. After wrapping,
+   * `widths` holds the display width (marker-stripped) chosen for each column
+   * and every cell's spans are truncated to fit it; the renderer pads to those
+   * widths and joins columns with a fixed separator. `align` is per-column,
+   * from the delimiter row's colons.
+   */
+  | { kind: "table"; align: TableAlign[]; widths: number[]; header: MdSpan[][]; rows: MdSpan[][][] }
   | { kind: "rule" };
 
 export type MdListItemBlock = Extract<MdBlock, { kind: "listItem" }>;
@@ -58,6 +70,11 @@ export const QUOTE_GUTTER_WIDTH = 2;
 
 /** Cells one level of list nesting adds, regardless of the source indent. */
 export const LIST_INDENT_WIDTH = 2;
+
+/** Cells between two table columns: space, bar, space. Kept in sync with the renderer. */
+export const TABLE_COLUMN_GAP = " │ ";
+/** The separator-row glyph that sits where a `TABLE_COLUMN_GAP` bar sits. */
+export const TABLE_JOIN_GLYPH = "─┼─";
 
 /** Deepest list nesting that still earns indentation; beyond this it flattens. */
 const MAX_LIST_DEPTH = 6;
@@ -680,6 +697,63 @@ function matchListItem(line: string): ListMatch | null {
   };
 }
 
+/**
+ * Split a table row into trimmed cell texts.
+ *
+ * A single leading and trailing pipe is chrome, not a cell, so `| a | b |`
+ * yields two cells rather than four. Interior pipes escaped with a backslash
+ * stay part of the cell. Linear in the line, no backtracking.
+ */
+function splitTableCells(line: string): string[] {
+  const trimmed = line.trim();
+  const cells: string[] = [];
+  let current = "";
+  for (let j = 0; j < trimmed.length; j += 1) {
+    const ch = trimmed[j];
+    if (ch === "\\" && trimmed[j + 1] === "|") {
+      current += "|";
+      j += 1;
+      continue;
+    }
+    if (ch === "|") {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current);
+  // Drop the empty cells produced by a leading / trailing pipe.
+  if (cells.length > 1 && cells[0]!.trim() === "") cells.shift();
+  if (cells.length > 1 && cells[cells.length - 1]!.trim() === "") cells.pop();
+  return cells.map((cell) => cell.trim());
+}
+
+/**
+ * A GFM delimiter row: every cell is dashes with optional leading/trailing
+ * colons for alignment. Returns the per-column alignment, or null.
+ */
+function matchTableDelimiter(line: string): TableAlign[] | null {
+  if (leadingSpaces(line) > 3) return null;
+  if (!line.includes("-") || !line.includes("|")) return null;
+  const cells = splitTableCells(line);
+  if (cells.length === 0) return null;
+  const align: TableAlign[] = [];
+  for (const cell of cells) {
+    if (!/^:?-+:?$/.test(cell)) return null;
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    align.push(left && right ? "center" : right ? "right" : "left");
+  }
+  return align;
+}
+
+/** A row that could be a table header: has a pipe and is not a delimiter itself. */
+function looksLikeTableRow(line: string): boolean {
+  if (leadingSpaces(line) > 3) return false;
+  return line.includes("|") && matchTableDelimiter(line) === null;
+}
+
 /** True when a line would open a block of its own, ending any paragraph run. */
 function startsBlock(line: string): boolean {
   return (
@@ -793,6 +867,44 @@ export function parseMarkdownBlocks(source: string): MdBlock[] {
       continue;
     }
 
+    // A GFM table: a header row of cells, then a delimiter row, then zero or
+    // more body rows. Detected here — before the paragraph fallback — because a
+    // header row on its own looks exactly like a line of prose; only the
+    // delimiter on the NEXT line proves it is a table.
+    if (looksLikeTableRow(line)) {
+      const align = i + 1 < lines.length ? matchTableDelimiter(lines[i + 1] as string) : null;
+      if (align) {
+        listStack = [];
+        const header = splitTableCells(line);
+        i += 2;
+        const rows: string[][] = [];
+        while (i < lines.length && looksLikeTableRow(lines[i] as string) && !isBlank(lines[i] as string)) {
+          rows.push(splitTableCells(lines[i] as string));
+          i += 1;
+        }
+        // Normalise every row to the header's column count: pad short rows with
+        // empty cells and drop cells past the header so the grid stays square.
+        const cols = Math.max(header.length, align.length);
+        const fit = (cells: string[]): string[] => {
+          const out = cells.slice(0, cols);
+          while (out.length < cols) out.push("");
+          return out;
+        };
+        const alignFull: TableAlign[] = [];
+        for (let c = 0; c < cols; c += 1) alignFull.push(align[c] ?? "left");
+        // Each cell is parsed as inline markup so bold/italic/code inside a
+        // cell render styled, just like a paragraph.
+        blocks.push({
+          kind: "table",
+          align: alignFull,
+          widths: [],
+          header: fit(header).map((cell) => parseInline(cell)),
+          rows: rows.map((row) => fit(row).map((cell) => parseInline(cell))),
+        });
+        continue;
+      }
+    }
+
     listStack = [];
     const parts: string[] = [line.trim()];
     i += 1;
@@ -804,6 +916,80 @@ export function parseMarkdownBlocks(source: string): MdBlock[] {
   }
 
   return blocks;
+}
+
+/** Display width of a span run in cells (markers already stripped by the parser). */
+function spanWidth(spans: readonly MdSpan[]): number {
+  return cellCount(spansToText(spans));
+}
+
+/**
+ * Truncate a cell's spans to `width` display cells, marking a cut with `…`.
+ *
+ * Spans keep their style, so a bold run that is only partly cut stays bold up
+ * to the cut. The `…` inherits the style of the span it interrupts.
+ */
+function truncateSpans(spans: readonly MdSpan[], width: number): MdSpan[] {
+  if (width <= 0) return [];
+  if (spanWidth(spans) <= width) return spans.map((s) => ({ ...s }));
+  const budget = width - 1; // leave a cell for the ellipsis
+  const out: MdSpan[] = [];
+  let used = 0;
+  for (const span of spans) {
+    if (used >= budget) {
+      pushSpan(out, CODE_TRUNCATION_MARK, span.style);
+      return out;
+    }
+    const chars = Array.from(span.text);
+    if (used + chars.length <= budget) {
+      pushSpan(out, span.text, span.style);
+      used += chars.length;
+    } else {
+      const take = budget - used;
+      pushSpan(out, chars.slice(0, take).join(""), span.style);
+      pushSpan(out, CODE_TRUNCATION_MARK, span.style);
+      return out;
+    }
+  }
+  return out;
+}
+
+/**
+ * Choose a width for every column so the row fits `width` cells.
+ *
+ * Widths are measured on DISPLAY text — the inline markers are already gone —
+ * so `**Red**` budgets three cells, not seven, and the columns stay aligned
+ * once the cell renders bold. Natural widths are the widest cell in each
+ * column; when they overflow the budget the columns are shrunk largest-first,
+ * one cell at a time, so a table of one long column and several short ones
+ * sacrifices the long column rather than squeezing every column to nothing.
+ */
+function tableColumnWidths(
+  header: readonly MdSpan[][],
+  rows: readonly MdSpan[][][],
+  width: number,
+): number[] {
+  const cols = header.length;
+  if (cols === 0) return [];
+  const natural = header.map((cell) => Math.max(1, spanWidth(cell)));
+  for (const row of rows) {
+    for (let c = 0; c < cols; c += 1) {
+      natural[c] = Math.max(natural[c]!, spanWidth(row[c] ?? []));
+    }
+  }
+  const gap = cellCount(TABLE_COLUMN_GAP) * (cols - 1);
+  const budget = Math.max(cols, width - gap); // at least one cell per column
+  const widths = natural.slice();
+  let total = widths.reduce((a, b) => a + b, 0);
+  // Shrink the widest column repeatedly until the row fits.
+  while (total > budget) {
+    let widest = 0;
+    for (let c = 1; c < cols; c += 1) if (widths[c]! > widths[widest]!) widest = c;
+    if (widths[widest]! <= 1) break;
+    widths[widest]! -= 1;
+    total -= 1;
+  }
+  return widths;
 }
 
 function wrapBlock(block: MdBlock, width: number): MdBlock {
@@ -832,6 +1018,18 @@ function wrapBlock(block: MdBlock, width: number): MdBlock {
       };
     case "paragraph":
       return { kind: "paragraph", lines: wrapSpans(joinLines(block.lines), width) };
+    case "table": {
+      const widths = tableColumnWidths(block.header, block.rows, width);
+      const clip = (cells: readonly MdSpan[][]): MdSpan[][] =>
+        cells.map((cell, c) => truncateSpans(cell, widths[c] ?? 1));
+      return {
+        kind: "table",
+        align: block.align,
+        widths,
+        header: clip(block.header),
+        rows: block.rows.map((row) => clip(row)),
+      };
+    }
   }
 }
 

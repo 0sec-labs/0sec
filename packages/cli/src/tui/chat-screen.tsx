@@ -19,6 +19,7 @@ import {
   type ToolCall,
   type ToolResult,
 } from "@0sec/core";
+import { TextAttributes } from "@opentui/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useSettings } from "./settings-store.js";
 import { useTheme, type Theme } from "./theme-context.js";
@@ -45,8 +46,15 @@ import {
   saveSession,
 } from "./session-store.js";
 import { reportOperatorGate } from "../herdr-state.js";
-import { listItemGutterWidth, renderMarkdown, type MdBlock, type MdSpan } from "./markdown.js";
-import { GLYPH_CELLS, frameAt, frameIntervalMs, type AnimationKind } from "./animation.js";
+import {
+  listItemGutterWidth,
+  renderMarkdown,
+  TABLE_COLUMN_GAP,
+  TABLE_JOIN_GLYPH,
+  type MdBlock,
+  type MdSpan,
+} from "./markdown.js";
+import { GLYPH_CELLS, formatElapsed, frameAt, frameIntervalMs, type AnimationKind } from "./animation.js";
 import { PROVIDERS, providerStates } from "./provider-status.js";
 import {
   credentialEnvPatch,
@@ -112,7 +120,7 @@ import {
   type TranscriptStyle,
 } from "./transcript-style.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market";
 
 
 export interface ChatScreenOptions {
@@ -151,8 +159,19 @@ type ChatEntry = {
   subagentSummary?: string;
   subagentError?: string;
   panel?: PanelData;
+  /**
+   * A concise, human one-liner of the call's arguments (from `formatToolArgs`),
+   * so a compact tool card can read `run_command · npm test · ok` instead of
+   * just the bare tool name.
+   */
+  toolArgs?: string;
   /** Epoch ms the entry was appended, for relative timestamps. */
   at?: number;
+  /**
+   * Wall-clock duration of the turn this assistant answer belongs to, stamped
+   * when the turn ends. Rendered as the elapsed in the AI turn's footer.
+   */
+  durationMs?: number;
   /**
    * How many consecutive identical entries this row stands for; see
    * `appendTranscriptEntry`. Rendered as a trailing "(xN)".
@@ -222,7 +241,20 @@ function logoCellRuns(row: string): LogoCellRun[] {
 
 function modeLabel(mode: ConsoleAutonomyMode): string {
   if (mode === "standard") return "Standard";
+  if (mode === "recon") return "Recon";
   return mode === "copilot" ? "Co-pilot" : "YOLO";
+}
+
+/**
+ * Colour for an autonomy mode, shared by the header indicator and any other
+ * place the mode is shown: Standard=white (neutral), Recon=blue (passive),
+ * Co-pilot=purple (the brand accent), YOLO=red (no prompts).
+ */
+function modeColorFor(mode: ConsoleAutonomyMode, theme: Theme): string {
+  if (mode === "recon") return theme.INFO;
+  if (mode === "copilot") return theme.BRAND;
+  if (mode === "yolo") return theme.ERROR;
+  return theme.TEXT;
 }
 
 function completionFor(command: SlashCommand, args = ""): string {
@@ -358,6 +390,32 @@ interface EntryDisplay {
   roleLabelStyle: RoleLabelStyle;
   /** How a tool / subagent call is drawn (rail / inline / compact / hidden). */
   toolCardStyle: ToolCardStyle;
+  /** Current autonomy mode label, for the AI turn footer ("Standard · …"). */
+  mode: string;
+  /** Resolved model id, for the AI turn footer ("… · gpt-…"). */
+  model: string;
+}
+
+/**
+ * Terminal text ATTRIBUTES for a markdown span — the real weight, not just a
+ * colour. A bold run gets TextAttributes.BOLD so it renders visibly heavier;
+ * italic gets ITALIC, strike gets STRIKETHROUGH, and a muted run is dimmed.
+ * Applied by every inline renderer (paragraphs, list items, table cells) so
+ * `**bold**` looks bold wherever it appears.
+ */
+function spanAttributes(style: MdSpan["style"]): number | undefined {
+  switch (style) {
+    case "bold":
+      return TextAttributes.BOLD;
+    case "italic":
+      return TextAttributes.ITALIC;
+    case "strike":
+      return TextAttributes.STRIKETHROUGH;
+    case "muted":
+      return TextAttributes.DIM;
+    default:
+      return undefined;
+  }
 }
 
 /** Map a markdown span style onto the theme. */
@@ -382,11 +440,52 @@ function spanColor(style: MdSpan["style"], theme: Theme, tone?: string): string 
  * overflowing its row.
  */
 function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Theme, tone?: string) {
-  const { MUTED, ACCENT, PRIMARY } = theme;
+  const { MUTED, ACCENT, PRIMARY, TEXT } = theme;
   return blocks.map((block, index) => {
     const id = `${key}-b${index}`;
     if (block.kind === "rule") {
       return <text key={id} fg={tone ?? MUTED}>{"─".repeat(8)}</text>;
+    }
+    if (block.kind === "table") {
+      // Each cell is a styled inline-span run (bold/italic/code render just as
+      // they do in a paragraph). Every column is a fixed-width box, so the
+      // separators line up regardless of the cell content, and alignment inside
+      // a column is done with leading/trailing padding spans. Widths were chosen
+      // by `renderMarkdown` from the marker-stripped display text, so the whole
+      // row fits the content column.
+      const { widths } = block;
+      const renderRow = (cells: readonly MdSpan[][], rowKey: string, header: boolean) => (
+        <box key={rowKey} flexDirection="row" minWidth={0}>
+          {cells.map((cell, c) => {
+            const w = widths[c] ?? 1;
+            const disp = cell.reduce((n, s) => n + Array.from(s.text).length, 0);
+            const pad = Math.max(0, w - disp);
+            const align = block.align[c] ?? "left";
+            const lead = align === "right" ? pad : align === "center" ? Math.floor(pad / 2) : 0;
+            const trail = pad - lead;
+            return (
+              <React.Fragment key={`${rowKey}-c${c}`}>
+                {c > 0 ? <text flexShrink={0} fg={MUTED}>{TABLE_COLUMN_GAP}</text> : null}
+                <box width={w} flexShrink={0} minWidth={0} flexDirection="row">
+                  {lead > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(lead)}</text> : null}
+                  {cell.map((span, j) => (
+                    <text key={`${rowKey}-c${c}-s${j}`} flexShrink={0} fg={spanColor(span.style, theme, header ? (tone ?? PRIMARY) : tone)} attributes={spanAttributes(span.style) ?? (header ? TextAttributes.BOLD : undefined)}>{span.text}</text>
+                  ))}
+                  {trail > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(trail)}</text> : null}
+                </box>
+              </React.Fragment>
+            );
+          })}
+        </box>
+      );
+      const separatorLine = widths.map((w) => "─".repeat(Math.max(1, w))).join(TABLE_JOIN_GLYPH);
+      return (
+        <box key={id} flexDirection="column" minWidth={0}>
+          {renderRow(block.header, `${id}-h`, true)}
+          <text fg={MUTED}>{separatorLine}</text>
+          {block.rows.map((row, i) => renderRow(row, `${id}-r${i}`, false))}
+        </box>
+      );
     }
     if (block.kind === "code") {
       return (
@@ -401,7 +500,7 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Th
       return (
         <box key={id} flexDirection="column" minWidth={0}>
           {block.lines.map((line, i) => (
-            <text key={`${id}-${i}`} fg={tone ?? PRIMARY}>{line.map((span) => span.text).join("")}</text>
+            <text key={`${id}-${i}`} fg={tone ?? PRIMARY} attributes={TextAttributes.BOLD}>{line.map((span) => span.text).join("")}</text>
           ))}
         </box>
       );
@@ -417,7 +516,7 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Th
             {block.lines.map((line, i) => (
               <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
                 {line.map((span, j) => (
-                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, tone)}>{span.text}</text>
+                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, tone)} attributes={spanAttributes(span.style)}>{span.text}</text>
                 ))}
               </box>
             ))}
@@ -433,7 +532,7 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Th
         {block.lines.map((line, i) => (
           <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
             {line.map((span, j) => (
-              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)}>{span.text}</text>
+              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)} attributes={spanAttributes(span.style)}>{span.text}</text>
             ))}
           </box>
         ))}
@@ -443,7 +542,7 @@ function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Th
 }
 
 function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, theme: Theme) {
-  const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER, PANEL_ALT } = theme;
+  const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER, PANEL_ALT, BRAND } = theme;
   const detailWidth = Math.max(20, maxWidth - 8);
   const { transcriptStyle, roleLabelStyle, toolCardStyle } = display;
   // A row that stands for several collapsed repeats says so. The count is
@@ -455,11 +554,11 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
     const isUser = entry.kind === "user";
     // Frame accents (a bubble border, the inline label gap) stay in the
     // speaker's own tone. The LABEL, however, carries the brand: the assistant
-    // "0sec" label renders in the slash red (theme.ERROR); the operator label
+    // "0sec" label renders in the brand purple (theme.BRAND); the operator label
     // stays the neutral accent. Body text is never tinted by this — it keeps
     // TEXT / PRIMARY via renderMarkdownBlocks below.
     const tone = isUser ? ACCENT : PRIMARY;
-    const labelTone = isUser ? ACCENT : ERROR;
+    const labelTone = isUser ? ACCENT : BRAND;
     const frame = speechFrame(transcriptStyle, entry.kind, maxWidth);
     const marginTop = display.spacing + frame.extraMarginTop;
     const age = display.showTimestamps ? relativeAge(entry.at, display.now) : "";
@@ -483,6 +582,43 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
         <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={tone} backgroundColor={PANEL_ALT} paddingX={1}>
           {label ? <text fg={labelTone}>{label}</text> : null}
           {body}
+        </box>
+      );
+    }
+
+    // The clean DEFAULT look (transcriptStyle "rail"): the two voices are told
+    // apart by their frame, not by a tinted label. The OPERATOR turn is drawn
+    // like the input that produced it — a thin accent rail down the left plus a
+    // faint panel background, so it reads as "what you said" the same way the
+    // composer reads as "what you're saying". The AI turn is PLAIN body text
+    // followed by a compact muted footer (a red brand marker, then mode · model
+    // · elapsed), so the answer itself is unadorned and the provenance sits
+    // quietly beneath it.
+    if (transcriptStyle === "rail") {
+      if (isUser) {
+        return (
+          <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} backgroundColor={PANEL_ALT}>
+            <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ACCENT} />
+            <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
+              {body}
+            </box>
+          </box>
+        );
+      }
+      const modeModel = `${display.mode}${display.model ? ` · ${display.model}` : ""}`;
+      const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
+      const footer = `${modeModel}${elapsed ? ` · ${elapsed}` : ""}`;
+      return (
+        <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
+          {body}
+          <box flexDirection="row" minWidth={0}>
+            <box width={2} flexShrink={0} minWidth={0}>
+              <text fg={ERROR}>▪ </text>
+            </box>
+            <box flexGrow={1} minWidth={0}>
+              <text fg={MUTED}>{fitTuiText(footer, Math.max(1, maxWidth - 2))}</text>
+            </box>
+          </box>
         </box>
       );
     }
@@ -518,11 +654,19 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
     if (!frame.render) return null;
     const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);
 
-    // compact / hidden: a single summary line, detail only when it failed.
+    // compact / hidden: a single clean summary line — no rail, mono palette,
+    // the colour carried only by the icon. The concise args ride on the name
+    // (`run_command · npm test · complete`) so the operator sees WHAT ran, not
+    // just that something did; `toolCompactLine` drops the state first and then
+    // truncates from the tail, so the tool's identity always survives. Detail
+    // (the result summary) is shown only on failure, where the reason matters.
     if (frame.singleLine) {
+      const compactName = entry.toolArgs
+        ? `${entry.text}${repeat} · ${entry.toolArgs}`
+        : `${entry.text}${repeat}`;
       return (
         <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
-          <text fg={tone}>{toolCompactLine(icon, `${entry.text}${repeat}`, state, frame.contentWidth)}</text>
+          <text fg={tone}>{toolCompactLine(icon, compactName, state, frame.contentWidth)}</text>
           {frame.showDetail && entry.detail ? (
             <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text>
           ) : null}
@@ -582,7 +726,8 @@ function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, 
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
           <box flexDirection="row">
             <text fg={tone}>{ok ? "✓" : "×"}</text>
-            <text fg={MUTED}> evidence / subagent · {ok ? "completed" : "failed"}</text>
+            <text fg={BRAND}> evidence / subagent</text>
+            <text fg={MUTED}> · {ok ? "completed" : "failed"}</text>
           </box>
           {frame.showDetail && statusLine ? <text fg={MUTED}>{fitTuiText(statusLine, subDetailWidth)}</text> : null}
           {frame.showDetail && entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, subDetailWidth)}</text> : null}
@@ -726,33 +871,81 @@ function ComposerFrame({
   style,
   active,
   theme,
+  padY = 0,
   children,
 }: {
   style: TuiSettings["composerStyle"];
   active: boolean;
   theme: Theme;
+  /**
+   * Extra rows of vertical padding inside the frame. Used ONLY by the centered
+   * hero composer, so the start-screen input reads as a comfortable card rather
+   * than a thin sliver; the pinned chat composer leaves it at 0 so its height
+   * matches the COMPOSER_ROWS the column reserves.
+   */
+  padY?: number;
   children: React.ReactNode;
 }) {
-  const { MUTED, BORDER, PANEL_ALT } = theme;
+  const { PRIMARY, MUTED, BORDER, PANEL_ALT } = theme;
   if (style === "border") {
     return (
-      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? MUTED : BORDER} backgroundColor={PANEL_ALT} paddingX={1}>
+      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? PRIMARY : BORDER} backgroundColor={PANEL_ALT} paddingX={1} paddingTop={padY} paddingBottom={padY}>
         {children}
       </box>
     );
   }
   if (style === "rail") {
     return (
-      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} marginLeft={1} backgroundColor={PANEL_ALT}>
+      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} marginLeft={1} backgroundColor={PANEL_ALT} paddingTop={padY} paddingBottom={padY}>
         {children}
       </box>
     );
   }
   return (
-    <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0}>
+    <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} paddingTop={padY} paddingBottom={padY}>
       {children}
     </box>
   );
+}
+
+interface KeyHint {
+  key: string;
+  label: string;
+}
+
+/** Plain rendered length of a key-hint row, for a fits-the-column guard. */
+function keyHintsLength(pairs: readonly KeyHint[], sep: string): number {
+  let n = 0;
+  pairs.forEach((p, i) => {
+    if (i > 0) n += sep.length;
+    n += p.key.length + 1 + p.label.length;
+  });
+  return n;
+}
+
+/**
+ * A keybind hint row: the KEY glyphs render in TEXT (white) and the labels in
+ * MUTED, so `shift+tab mode · ctrl+p palette` reads as chords, not prose. Each
+ * segment is flexShrink={0}, so the caller must only render this where it fits
+ * (see keyHintsLength); a squeezed row of siblings overpaints in this TUI.
+ */
+function KeyHints({
+  pairs,
+  theme,
+  sep = " · ",
+}: {
+  pairs: readonly KeyHint[];
+  theme: Theme;
+  sep?: string;
+}) {
+  const { TEXT, MUTED } = theme;
+  const nodes: React.ReactNode[] = [];
+  pairs.forEach((p, i) => {
+    if (i > 0) nodes.push(<text key={`sep-${i}`} flexShrink={0} fg={MUTED}>{sep}</text>);
+    nodes.push(<text key={`key-${i}`} flexShrink={0} fg={TEXT}>{p.key}</text>);
+    nodes.push(<text key={`lbl-${i}`} flexShrink={0} fg={MUTED}>{` ${p.label}`}</text>);
+  });
+  return <box flexDirection="row" minWidth={0} flexShrink={0}>{nodes}</box>;
 }
 
 /**
@@ -923,6 +1116,27 @@ function SelectorPanel({
 }
 
 /**
+ * Turn a tool call's arguments into readable `key: value` lines — one per row,
+ * so the approval card can show WHAT is being authorized instead of a truncated
+ * one-line JSON blob. A scalar becomes its own line; a nested object/array is
+ * compacted to JSON on that key's line (still readable, still one row). The
+ * per-row truncation happens at render time against the panel width, which is
+ * what keeps the card's height predictable.
+ */
+function argumentSummaryLines(args: unknown): string[] {
+  if (args === undefined || args === null) return [];
+  if (typeof args !== "object") return [sanitizeTuiText(String(args))];
+  const entries = Array.isArray(args)
+    ? args.map((value, index) => [String(index), value] as const)
+    : Object.entries(args as Record<string, unknown>);
+  if (entries.length === 0) return [];
+  return entries.map(([key, value]) => {
+    const rendered = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+    return sanitizeTuiText(`${key}: ${rendered}`);
+  });
+}
+
+/**
  * One pending authorization decision, projected onto the selector.
  *
  * The pending promise itself stays in the `pending*` state it always lived
@@ -940,6 +1154,15 @@ type ApprovalPrompt = {
   title: string;
   /** What is being decided — tool name, hosts, path, reason. */
   context: string;
+  /** The subject of the decision, shown prominently (e.g. the tool name). */
+  subject?: string;
+  /**
+   * Readable, one-per-row detail lines (pretty-printed `key: value` arguments,
+   * or a short human summary) — never a truncated single-line JSON blob. Each
+   * line is truncated (not wrapped) to the panel width so the card's height
+   * stays predictable.
+   */
+  bodyLines?: string[];
   items: SelectorItem[];
   borderColor: string;
   titleColor: string;
@@ -951,6 +1174,137 @@ type ApprovalPrompt = {
    */
   decline: () => void;
 };
+
+/**
+ * Total rows an {@link ApprovalCard} occupies for the content it will render.
+ *
+ * The card is a rail + background block (no top/bottom border and no vertical
+ * padding), so its height is exactly its content rows. Stating it as a pure
+ * function lets the column reserve precisely what the card paints — the same
+ * anti-collapse contract every other stacked panel obeys.
+ */
+function approvalCardRows({
+  hasSubject,
+  bodyRows,
+  choiceRows,
+}: {
+  hasSubject: boolean;
+  bodyRows: number;
+  choiceRows: number;
+}): number {
+  return 1 /* title */
+    + (hasSubject ? 1 : 0)
+    + (bodyRows > 0 ? bodyRows + 1 /* blank spacer under the args */ : 0)
+    + 1 /* blank spacer above the choices */
+    + Math.max(1, choiceRows)
+    + 1 /* hint */;
+}
+
+/**
+ * A pending authorization decision, drawn as a prominent-but-calm card.
+ *
+ * This replaces the old cramped bordered picker for approvals: it keeps the
+ * SAME selector reducer, dispatch and key bindings (the caller owns those),
+ * and only changes the surface. A decision is an important moment, so the tool
+ * name and its arguments are shown READABLY — one `key: value` row each, each
+ * truncated (never wrapped) so the card's height is exactly what was reserved —
+ * and the two choices read as clean rows with a single accent on the selected
+ * one, its consequence aligned to the right. The framing is the same thin
+ * accent rail + faint panel background as the composer and the operator's own
+ * turns, not a heavy four-sided box; `red` stays reserved for errors.
+ */
+function ApprovalCard({
+  title,
+  progress,
+  subject,
+  body,
+  choices,
+  activeIndex,
+  hint,
+  accent,
+  contentWidth,
+  height,
+  theme,
+}: {
+  title: string;
+  progress: string;
+  subject?: string;
+  /** Already-sliced, render-ready detail rows (may end in a "+N more" line). */
+  body: string[];
+  choices: SelectorItem[];
+  activeIndex: number;
+  hint: string;
+  /** The card's tone — WARNING for scope gates, INFO for the co-pilot gate. */
+  accent: string;
+  contentWidth: number;
+  height: number;
+  theme: Theme;
+}) {
+  const { PANEL_ALT, MUTED, TEXT, PRIMARY } = theme;
+  // Conservative inner width: rail (1) + paddingX (1 each side) = 3 cells of
+  // chrome, rounded up to 4 so every explicit allocation clears the edge.
+  const innerWidth = Math.max(1, contentWidth - 4);
+  const progressWidth = Math.min(innerWidth, progress.length);
+  const titleGap = progressWidth > 0 && innerWidth - progressWidth > 1 ? 1 : 0;
+  const titleWidth = Math.max(1, innerWidth - progressWidth - titleGap);
+  const labelWidth = Math.max(1, Math.min(Math.max(1, innerWidth - 2), Math.floor(innerWidth * 0.5)));
+  const afterLabel = innerWidth - 2 - labelWidth;
+  const metaGap = afterLabel > 1 ? 1 : 0;
+  const metaWidth = Math.max(0, afterLabel - metaGap);
+
+  return (
+    <box flexDirection="row" width={contentWidth} minWidth={0} height={height} flexShrink={0} marginTop={1} backgroundColor={PANEL_ALT}>
+      <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={accent} />
+      <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
+        <box flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
+          <box width={titleWidth} flexShrink={0} minWidth={0}>
+            <text fg={accent}>{fitTuiText(title, titleWidth)}</text>
+          </box>
+          {progressWidth > 0 ? (
+            <box width={progressWidth} flexShrink={0} minWidth={0} marginLeft={titleGap}>
+              <text fg={MUTED}>{fitTuiText(progress, progressWidth, { mode: "middle" })}</text>
+            </box>
+          ) : null}
+        </box>
+        {subject ? (
+          <box width={innerWidth} flexShrink={0} minWidth={0}>
+            <text fg={TEXT}>{fitTuiText(subject, innerWidth)}</text>
+          </box>
+        ) : null}
+        {body.length > 0 ? (
+          <>
+            {body.map((line, index) => (
+              <box key={`body-${index}`} width={innerWidth} flexShrink={0} minWidth={0}>
+                <text fg={MUTED}>{fitTuiText(line, innerWidth, { mode: "middle" })}</text>
+              </box>
+            ))}
+            <text fg={MUTED}> </text>
+          </>
+        ) : null}
+        <text fg={MUTED}> </text>
+        {choices.map((item, offset) => {
+          const active = offset === activeIndex;
+          return (
+            <box key={item.id} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
+              <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
+              <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
+                <text fg={active ? PRIMARY : TEXT}>{fitTuiText(item.label, labelWidth)}</text>
+              </box>
+              {metaWidth > 0 ? (
+                <box width={metaWidth} flexShrink={0} minWidth={0} marginLeft={metaGap}>
+                  <text fg={MUTED}>{fitTuiText(item.meta ?? "", metaWidth, { mode: "middle" })}</text>
+                </box>
+              ) : null}
+            </box>
+          );
+        })}
+        <box width={innerWidth} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(hint, innerWidth)}</text>
+        </box>
+      </box>
+    </box>
+  );
+}
 
 /** The item id that grants. Everything else declines. */
 const APPROVAL_GRANT_ID = "grant";
@@ -1502,8 +1856,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       const owner = pendingScope;
       return {
         owner,
-        title: "AUTHORIZE SESSION SCOPE",
+        title: "Authorize session scope",
         context: `${owner.request.call.name} requests ${owner.request.requestedUrls.join(", ")}`,
+        subject: owner.request.call.name,
+        bodyLines: owner.request.requestedUrls.map((url) => `requests: ${url}`),
         borderColor: WARNING,
         titleColor: WARNING,
         items: [
@@ -1528,8 +1884,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       const owner = pendingLocalScope;
       return {
         owner,
-        title: "AUTHORIZE LOCAL DIRECTORY",
+        title: "Authorize local directory",
         context: `${owner.request.call.name} wants to read ${owner.request.requestedPath}`,
+        subject: owner.request.call.name,
+        bodyLines: [`wants to read: ${owner.request.requestedPath}`],
         borderColor: WARNING,
         titleColor: WARNING,
         items: [
@@ -1554,8 +1912,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       const owner = pendingEscalation;
       return {
         owner,
-        title: "ENABLE ADDITIONAL TOOL",
+        title: "Enable additional tool",
         context: `${owner.request.call.name} — ${owner.request.reason}`,
+        subject: owner.request.call.name,
+        bodyLines: [owner.request.reason],
         borderColor: WARNING,
         titleColor: WARNING,
         items: [
@@ -1580,8 +1940,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       const owner = pendingToolApproval;
       return {
         owner,
-        title: "CO-PILOT APPROVAL",
+        title: `${modeLabel(modeRef.current)} approval`,
         context: `${owner.call.name} ${JSON.stringify(owner.call.arguments)}`,
+        subject: owner.call.name,
+        bodyLines: argumentSummaryLines(owner.call.arguments),
         borderColor: INFO,
         titleColor: INFO,
         items: [
@@ -1833,18 +2195,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
             setModelId(built.model);
             if (previous) void previous.cleanup();
             turn.current = 0;
-            const restored = entriesFromStoredMessages(stored.messages);
-            setEntries(restored);
-            appendEntry({
-              kind: "notice",
-              text: restored.length > 0
-                ? `— end of resumed session ${id} · new messages continue below —`
-                : `resumed session ${id}`,
-              detail: restored.length > 0
-                ? `${stored.messageCount} prior message(s) restored. Everything above is replayed history, not new activity.`
-                : `${stored.messageCount} prior message(s) restored, but none could be rendered. The model still has the history.`,
-              turn: turn.current,
-            });
+            // Rehydrate the transcript silently: the restored messages ARE the
+            // context, and a banner announcing "this is replayed history" was
+            // just noise stacked on top of the conversation it described.
+            setEntries(entriesFromStoredMessages(stored.messages));
           },
         });
         return true;
@@ -2004,15 +2358,22 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
             {
               id: "standard",
               label: "Standard",
-              meta: "automatic in scope",
-              detail: "Runs automatically inside scope; asks only to extend it.",
+              meta: "approve each action",
+              detail: "You approve each action before it runs; asks to extend scope.",
               current: mode === "standard",
+            },
+            {
+              id: "recon",
+              label: "Recon",
+              meta: "passive, read-only",
+              detail: "Passive, in-scope reconnaissance only; effectful tools are refused.",
+              current: mode === "recon",
             },
             {
               id: "copilot",
               label: "Co-pilot",
-              meta: "approve each action",
-              detail: "Asks before every non-read-only tool call.",
+              meta: "autonomous in scope",
+              detail: "Full autonomy inside the engagement; scope expands to discovered targets.",
               current: mode === "copilot",
             },
             {
@@ -2032,11 +2393,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           });
           return true;
         }
-        if (modeArg !== "standard" && modeArg !== "copilot" && modeArg !== "yolo") {
+        if (modeArg !== "standard" && modeArg !== "recon" && modeArg !== "copilot" && modeArg !== "yolo") {
           appendEntry({
             kind: "notice",
             text: "invalid mode",
-            detail: "Use /mode standard, /mode copilot, or /mode yolo.",
+            detail: "Use /mode standard, /mode recon, /mode copilot, or /mode yolo.",
             turn: turn.current,
           });
           return true;
@@ -2063,16 +2424,20 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         }
         const next: ConsoleAutonomyMode = modeArg === "standard"
           ? "standard"
-          : modeArg === "copilot"
-            ? "copilot"
-            : "yolo";
+          : modeArg === "recon"
+            ? "recon"
+            : modeArg === "copilot"
+              ? "copilot"
+              : "yolo";
         session.setAutonomyMode(next);
         setMode(next);
         const modeMeaning = next === "standard"
           ? "0sec asks you to approve each action before it runs."
-          : next === "copilot"
-            ? "0sec runs autonomously inside scope and expands scope to in-engagement hosts without asking."
-            : "0sec runs with no prompts on your target and everything reachable from it — still bounded to that target.";
+          : next === "recon"
+            ? "0sec runs passive, in-scope reconnaissance only — read-only and passive-recon tools; effectful and exploitation tools are refused, and scope is never auto-expanded."
+            : next === "copilot"
+              ? "0sec runs autonomously inside scope and expands scope to in-engagement hosts without asking."
+              : "0sec runs with no prompts on your target and everything reachable from it — still bounded to that target.";
         appendEntry({
           kind: "notice",
           text: `Mode: ${modeLabel(next)}`,
@@ -2123,6 +2488,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       case "ops":
         onNavigate("ops");
         return true;
+      case "market":
+        // run.tsx already routes the "market" destination to the marketplace
+        // screen; chat just needs the nav entry (mirrors "/ops"/"/settings").
+        onNavigate("market");
+        return true;
       case "history":
         onNavigate("history");
         return true;
@@ -2171,6 +2541,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     if (busy || !session) return;
 
     const currentTurn = ++turn.current;
+    const turnStartedAt = Date.now();
     setBusy(true);
     appendEntry({ kind: "user", text, turn: currentTurn });
     let assistantText = "";
@@ -2227,6 +2598,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           kind: "tool",
           text: call.name,
           detail: formatToolArgs(call),
+          toolArgs: formatToolArgs(call),
           turn: currentTurn,
           });
         },
@@ -2257,6 +2629,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
             kind: "tool",
             text: call.name,
             detail: formatToolResult(call, result),
+            toolArgs: formatToolArgs(call),
             success: result.success,
             turn: currentTurn,
           });
@@ -2352,6 +2725,19 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       // turn that has already returned.
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
+      // Stamp the turn's wall-clock duration onto its assistant answer(s) so
+      // the AI footer can show a real elapsed. Done once the turn has settled,
+      // and only for entries that do not already carry one, so a later repaint
+      // never re-times an old answer.
+      const turnDuration = Date.now() - turnStartedAt;
+      setEntries((current) => current.some(
+        (e) => e.kind === "assistant" && e.turn === currentTurn && e.durationMs === undefined,
+      )
+        ? current.map((e) =>
+            e.kind === "assistant" && e.turn === currentTurn && e.durationMs === undefined
+              ? { ...e, durationMs: turnDuration }
+              : e)
+        : current);
       // Persist in `finally`, not in the success path and not in `catch`:
       // a turn that failed is exactly the one an operator wants to resume,
       // and this previously sat inside `catch`, so a SUCCESSFUL turn saved
@@ -2529,7 +2915,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     // is skipped entirely when no scope is configured, so the cycle degrades to
     // a two-state toggle instead of stopping on a mode it cannot enter.
     if (key.name === "tab" && key.shift) {
-      const cycle: ConsoleAutonomyMode[] = ["standard", "copilot", "yolo"];
+      const cycle: ConsoleAutonomyMode[] = ["standard", "copilot", "yolo", "recon"];
       const at = cycle.indexOf(mode);
       const next = cycle[(at + 1) % cycle.length] ?? "standard";
       routeSlashCommand(`/mode ${next}`);
@@ -2586,6 +2972,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       }
       if (key.name === "down") {
         recallComposerHistory("down");
+        return;
+      }
+      // Shift+Enter inserts a newline; plain Enter submits. Terminals that
+      // cannot distinguish the two (no kitty keyboard protocol) fall through to
+      // submit, which is the safe default. The multi-line composer renders the
+      // newlines and grows to fit.
+      if (key.name === "return" && key.shift) {
+        setComposerText(`${composerRef.current}\n`);
         return;
       }
       if (key.name === "return") {
@@ -2741,19 +3135,26 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const pickerRows = pickerVisible.slice(pickerWindow.start, pickerWindow.end);
   const pickerBoxHeight = selectorPanelHeight(pickerRows.length, false, pickerPlan.showDetail);
 
-  const approvalDetail = approvalState ? highlighted(approvalState)?.detail ?? "" : "";
-  const approvalPlan = selectorPanelBudget({
-    budget: selectorBudget,
-    hasContext: Boolean(approvalPrompt?.context),
-    hasDetail: Boolean(approvalDetail),
-  });
-  const approvalVisible = approvalState ? visibleItems(approvalState) : [];
-  const approvalWindow = approvalState
-    ? windowFor(approvalState, approvalPlan.maxItemRows)
-    : { start: 0, end: 0 };
-  const approvalItemRows = approvalVisible.slice(approvalWindow.start, approvalWindow.end);
+  // The approval card shows its choices in full (there are only ever two) and
+  // spends the rest of its budget on READABLE argument rows. A long arg list is
+  // truncated with a "+N more" tail rather than wrapped, so the card's height is
+  // exactly what the column reserves for it.
+  const approvalItems = approvalPrompt?.items ?? [];
+  const approvalHasSubject = Boolean(approvalPrompt?.subject);
+  const approvalBodyAll = approvalPrompt?.bodyLines ?? [];
+  const approvalMaxBody = compact ? 2 : 5;
+  const approvalBodyShown = approvalBodyAll.length > approvalMaxBody
+    ? [
+        ...approvalBodyAll.slice(0, Math.max(0, approvalMaxBody - 1)),
+        `+${approvalBodyAll.length - Math.max(0, approvalMaxBody - 1)} more`,
+      ]
+    : approvalBodyAll;
   const approvalBoxHeight = approvalPrompt
-    ? selectorPanelHeight(approvalItemRows.length, approvalPlan.showContext, approvalPlan.showDetail)
+    ? approvalCardRows({
+        hasSubject: approvalHasSubject,
+        bodyRows: approvalBodyShown.length,
+        choiceRows: approvalItems.length,
+      })
     : 0;
   // The masked credential panel stays a typed field — a secret is entered,
   // not chosen — but it gets the same treatment that stops a panel from
@@ -2780,6 +3181,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     transcriptStyle: transcriptStyleSettings.transcriptStyle,
     roleLabelStyle: transcriptStyleSettings.roleLabelStyle,
     toolCardStyle: transcriptStyleSettings.toolCardStyle,
+    mode: modeLabel(mode),
+    model: modelId ?? "",
   };
   // One animation kind per real state. `awaiting-operator` is deliberately
   // NOT a busy spinner: when the human is the bottleneck the surface should
@@ -2902,7 +3305,326 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const commandHeaderTitleWidth = menu.headerTitleWidth;
   const commandHeaderQueryWidth = menu.headerQueryWidth;
   const commandHeaderGap = menu.headerGap;
-  const modeColor = mode === "yolo" ? SUCCESS : mode === "copilot" ? INFO : PRIMARY;
+  const modeColor = modeColorFor(mode, theme);
+
+  // ── The single working / waiting indicator ────────────────────────────────
+  // There must be exactly ONE. It used to render in the composer placeholder
+  // AND in the transcript tail (and, after the hero rework, in both the
+  // centered and the scrollbox branches), so a running turn showed the spinner
+  // twice. It now lives in one place per state — the centered hero when empty,
+  // the scrollbox tail when not — and never in the composer. And when a
+  // reasoning ("thinking") entry is the tail it is suppressed entirely: that
+  // entry already prints "thinking" while it streams, so a second "thinking"
+  // spinner beside it is the double-label the operator reported.
+  const tailKind = entries.length > 0 ? entries[entries.length - 1]?.kind : undefined;
+  const workingAnimation = animation && tailKind !== "reasoning" ? animation : null;
+  const workingGlyphColor = animationKind === "awaiting-operator" ? WARNING : ACCENT;
+  // Glyph in its own fixed GLYPH_CELLS cell so motion never shifts the label;
+  // label + elapsed + any queue note collapse into ONE muted, fitted line so
+  // two siblings can never fuse under width pressure. Calm mono palette —
+  // neutral accent for work, WARNING only for "your move", red never here.
+  const workingLine = workingAnimation
+    ? `${workingAnimation.label}${workingAnimation.elapsedLabel ? `  ${workingAnimation.elapsedLabel}` : ""}${queueLabel ? ` · ${queueLabel}` : ""}`
+    : "";
+  const workingIndicator = workingAnimation ? (
+    <box flexDirection="row" minWidth={0} marginTop={1} gap={1}>
+      <box width={GLYPH_CELLS} flexShrink={0}>
+        <text fg={workingGlyphColor}>{workingAnimation.glyph}</text>
+      </box>
+      <box flexGrow={1} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText(workingLine, Math.max(1, contentWidth - GLYPH_CELLS - 1))}</text>
+      </box>
+    </box>
+  ) : null;
+
+  // ── The composer, single-sourced ──────────────────────────────────────────
+  // ONE element, rendered in the centered hero when empty and pinned above the
+  // status bar otherwise; the keyboard handler (composer text, submit, history,
+  // slash menu) is the module-level `useKeyboard` above and does not move, so
+  // the input wiring is identical in both positions — only this frame's
+  // placement changes. The clean left-rail is the effective default in BOTH the
+  // centered hero AND the pinned chat state (the start-screen look the operator
+  // asked for everywhere): the stored "border" resolves to "rail", while an
+  // explicit "plain" — or any deliberate non-border choice — is still honoured.
+  const composerStyle: TuiSettings["composerStyle"] =
+    settings.composerStyle === "border" ? "rail" : settings.composerStyle;
+  const composerActive = composing || commandMenuVisible;
+  // Real operator input is TEXT-bright; the placeholder and the parked-message
+  // note are MUTED so neither reads as something typed. The working spinner is
+  // deliberately NOT here — it lives once, in the transcript/hero — so the
+  // composer never double-prints it.
+  //
+  // While composing, the input is MULTI-LINE: it splits on the newlines that
+  // Shift+Enter inserts and grows downward, up to COMPOSER_MAX_ROWS rows, after
+  // which it shows the last rows (an internal scroll that keeps the cursor in
+  // view). The block cursor sits at the end of the LAST row.
+  const COMPOSER_MAX_ROWS = 8;
+  const composerInput = (textWidth: number) => {
+    if (composing) {
+      const lines = composer.split("\n");
+      const visible = lines.length > COMPOSER_MAX_ROWS
+        ? lines.slice(lines.length - COMPOSER_MAX_ROWS)
+        : lines;
+      return (
+        <box flexDirection="column" minWidth={0}>
+          {visible.map((line, i) => {
+            const isLast = i === visible.length - 1;
+            const shown = fitTuiText(line, Math.max(1, textWidth - (isLast ? 1 : 0)));
+            return <text key={`composer-line-${i}`} fg={TEXT}>{isLast ? `${shown}█` : shown}</text>;
+          })}
+        </box>
+      );
+    }
+    return startupError ? (
+      <text fg={ERROR}>{fitTuiText("runtime unavailable", textWidth)}</text>
+    ) : queueLabel ? (
+      <text fg={MUTED}>{fitTuiText(queueLabel, textWidth)}</text>
+    ) : (
+      <text fg={MUTED}>{fitTuiText("type to chat or / for commands", textWidth)}</text>
+    );
+  };
+  // ONE composer builder, two call sites: full-width at the bottom of a chat,
+  // and a constrained, centered card under the hero logo. `outerWidth` omitted
+  // means width:"100%" (the pinned chat composer); a number gives the hero its
+  // fixed card width. `textWidth` is always budgeted against that outer width so
+  // the input can never overrun the frame. The keyboard handler is untouched by
+  // either — placement is the only thing that changes.
+  const buildComposer = ({
+    textWidth,
+    outerWidth,
+    padY = 0,
+  }: {
+    textWidth: number;
+    outerWidth?: number;
+    padY?: number;
+  }) => (
+    <box flexDirection="row" width={outerWidth ?? "100%"} flexShrink={0} marginTop={1} minWidth={0}>
+      {composerStyle === "rail" ? (
+        <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={composerActive ? PRIMARY : BORDER} />
+      ) : null}
+      <ComposerFrame style={composerStyle} active={composerActive} theme={theme} padY={padY}>
+        <box flexDirection="row" width="100%" minWidth={0}>
+          <text width={1} flexShrink={0} fg={composing ? PRIMARY : MUTED}>›</text>
+          <text width={1} flexShrink={0} fg={MUTED}> </text>
+          <box width={textWidth} flexShrink={0} minWidth={0}>
+            {composerInput(textWidth)}
+          </box>
+        </box>
+      </ComposerFrame>
+    </box>
+  );
+  const composerNode = buildComposer({ textWidth: composerTextWidth });
+  // The hero composer is a centered card, not a full-bleed bar: ~60% of the
+  // content column, clamped to a comfortable 40..72 cells and never wider than
+  // the column itself. Four cells of chrome (rail + its gap + the "› " prefix)
+  // come off the width for the input field.
+  const heroComposerWidth = Math.min(contentWidth, Math.max(40, Math.min(72, Math.floor(contentWidth * 0.6))));
+  const heroComposerTextWidth = Math.max(8, heroComposerWidth - 4);
+  const heroComposerNode = buildComposer({
+    textWidth: heroComposerTextWidth,
+    outerWidth: heroComposerWidth,
+    padY: 1,
+  });
+  // A FIXED bottom spacer (not a flexGrow) is what actually anchors the hero
+  // composer: with it fixed and the region above it flexGrow, the composer's
+  // distance from the bottom never changes, so opening the slash menu (which
+  // grows upward in the region above) cannot move the composer. Sized to put the
+  // composer near the vertical centre when the menu is closed — roughly the same
+  // number of rows sit below it as the composer/hint block spends.
+  // The space ABOVE the composer must hold the tallest the command menu can get
+  // (not the current filtered count — that changes as the query narrows, and the
+  // composer must not move), so an open overlay grows into that space instead of
+  // overflowing upward into the header. Reserve for the stable max menu height
+  // plus the composer card, hint and header chrome, then centre what is left.
+  const heroMenuMaxRows = commandMenuBoxHeight(commandMenuLimit, commandRowsPerCommand);
+  const heroBottomSpacer = Math.max(
+    1,
+    Math.min(Math.floor((height - 6) / 2), height - 12 - heroMenuMaxRows),
+  );
+
+  // ── Overlays that share the slot directly above the composer ───────────────
+  // Extracted so the SAME nodes render whether the composer is centered (hero)
+  // or pinned (chat). Each is already height-budgeted and flexShrink={0}.
+  // ONE command-menu builder, sized by whichever CommandMenuLayout it is handed:
+  // the full-width `menu` for the pinned chat composer, and a narrower layout for
+  // the hero so the menu aligns to the centered composer card above it. `boxWidth`
+  // matches the layout — "100%" in chat, the card width in the hero.
+  const buildCommandMenu = (ml: typeof menu, boxWidth: number | "100%") => (
+    <box flexDirection="column" width={boxWidth} minWidth={0} height={commandMenuHeight} flexShrink={0} marginTop={1} border borderColor={BORDER} backgroundColor={PANEL_ALT} paddingX={1}>
+      <box flexDirection="row" width={ml.innerWidth} minWidth={0} gap={ml.headerGap}>
+        <box width={ml.headerTitleWidth} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText("COMMANDS", ml.headerTitleWidth)}</text>
+        </box>
+        {ml.headerQueryWidth > 0 ? (
+          <box width={ml.headerQueryWidth} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(slashQuery ? `/${slashQuery}` : "all commands", ml.headerQueryWidth, { mode: "middle" })}</text>
+          </box>
+        ) : null}
+      </box>
+      {menuCommands.length > 0 ? menuCommands.map((command, index) => {
+        const active = index === slashSelected;
+        const meta = command.aliases.length > 0
+          ? command.aliases.map((alias) => `/${alias}`).join(" ")
+          : command.category;
+        return (
+          <box key={command.name} flexDirection="row" width={ml.innerWidth} minWidth={0}>
+            <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
+            <box flexDirection="column" width={ml.rowWidth} flexGrow={0} flexShrink={0} minWidth={0} marginLeft={1}>
+              <box flexDirection="row" width={ml.rowWidth} minWidth={0} gap={1}>
+                <box width={ml.nameWidth} flexShrink={0} minWidth={0}>
+                  <text fg={active ? PRIMARY : TEXT}>{fitTuiText(`/${command.name}`, ml.nameWidth)}</text>
+                </box>
+                {ml.metaWidth > 0 ? (
+                  <box width={ml.metaWidth} flexShrink={0} minWidth={0}>
+                    <text fg={MUTED}>{fitTuiText(meta, ml.metaWidth)}</text>
+                  </box>
+                ) : null}
+              </box>
+              {!compact ? (
+                <box width={ml.rowWidth} minWidth={0}>
+                  <text fg={MUTED} wrapMode="word">{fitTuiText(command.description, ml.rowWidth)}</text>
+                </box>
+              ) : null}
+            </box>
+          </box>
+        );
+      }) : (
+        <box width={ml.innerWidth} flexShrink={0} minWidth={0}>
+          <text fg={ERROR}>{fitTuiText(`No command matches /${slashQuery}`, Math.max(1, ml.innerWidth))}</text>
+        </box>
+      )}
+      <box width={ml.innerWidth} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText("↑↓ select · tab complete · enter run · esc close", Math.max(1, ml.innerWidth))}</text>
+      </box>
+    </box>
+  );
+  const commandMenuNode = commandMenuVisible ? buildCommandMenu(menu, "100%") : null;
+  // The hero menu is sized so its box is exactly the composer card's width: the
+  // layout's inner width is `boxWidth - chrome`, so we ask computeCommandMenuLayout
+  // for a width that yields the same inner span the card border/padding leaves.
+  const heroMenu = computeCommandMenuLayout({ width: heroComposerWidth + (compact ? 4 : 6), compact });
+  const heroCommandMenuNode = commandMenuVisible ? buildCommandMenu(heroMenu, heroComposerWidth) : null;
+
+  const secretNode = secretPrompt ? (
+    <box flexDirection="column" width="100%" minWidth={0} height={SECRET_PANEL_HEIGHT} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
+      <box width={approvalWidth} flexShrink={0} minWidth={0}>
+        <text fg={WARNING}>{fitTuiText(`${secretPrompt.label} credential`, approvalWidth)}</text>
+      </box>
+      <box width={approvalWidth} flexShrink={0} minWidth={0}>
+        <text fg={TEXT}>{fitTuiText(`${"•".repeat(Math.min(secretPrompt.value.length, 40))}█`, approvalWidth)}</text>
+      </box>
+      <box width={approvalWidth} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText(`Stored owner-only in your 0sec state dir and exported as ${secretPrompt.envVar}. Never transmitted by 0sec.`, approvalWidth, { mode: "middle" })}</text>
+      </box>
+      <box width={approvalWidth} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText("enter save · esc cancel", approvalWidth)}</text>
+      </box>
+    </box>
+  ) : null;
+
+  const pickerNode = picker ? (
+    <SelectorPanel
+      title={picker.state.title}
+      subtitle={picker.state.query ? picker.state.query : `${pickerVisible.length} available`}
+      rows={pickerRows}
+      windowStart={pickerWindow.start}
+      activeIndex={picker.state.index}
+      detail={pickerPlan.showDetail ? pickerDetail : undefined}
+      hint="↑↓ select · type to filter · enter apply · esc cancel"
+      emptyText={`no match for "${picker.state.query}"`}
+      borderColor={MUTED}
+      titleColor={PRIMARY}
+      contentWidth={contentWidth}
+      height={pickerBoxHeight}
+      theme={theme}
+    />
+  ) : null;
+
+  const approvalNode = approvalPrompt && approvalState ? (
+    <ApprovalCard
+      title={approvalPrompt.title}
+      progress={`${approvalState.index + 1}/${approvalItems.length}`}
+      subject={approvalPrompt.subject}
+      body={approvalBodyShown}
+      choices={approvalItems}
+      activeIndex={approvalState.index}
+      hint="↑↓ choose · enter confirm · esc decline"
+      accent={approvalPrompt.borderColor}
+      contentWidth={contentWidth}
+      height={approvalBoxHeight}
+      theme={theme}
+    />
+  ) : null;
+
+  const overlaysNode = (
+    <>
+      {commandMenuNode}
+      {secretNode}
+      {pickerNode}
+      {approvalNode}
+    </>
+  );
+  // The hero overlays match the centered composer's width (the slash menu) and
+  // sit in the anchored region directly above it, so opening the menu never
+  // shifts the composer or the logo group.
+  const heroOverlaysNode = (
+    <>
+      {heroCommandMenuNode}
+      {secretNode}
+      {pickerNode}
+      {approvalNode}
+    </>
+  );
+
+  const subagentNode = subagentBlockRows > 0 ? (
+    <box flexDirection="column" width="100%" minWidth={0} height={subagentBlockRows} flexShrink={0} marginTop={1}>
+      <box width={contentWidth} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText(`ACTIVE SUBAGENTS · ${subagentEntries.length}`, contentWidth)}</text>
+      </box>
+      {subagentVisible.map((sa) => {
+        const running = sa.status === "running";
+        const turnsInfo = sa.turns !== undefined ? ` (${sa.turns}/${sa.max_turns})` : "";
+        const labelWidth = Math.max(1, contentWidth - 2 - turnsInfo.length);
+        return (
+          <box key={sa.agent_id} flexDirection="row" width={contentWidth} flexShrink={0} minWidth={0}>
+            <text width={1} flexShrink={0} fg={running ? PRIMARY : WARNING}>{running ? "◉" : "◌"}</text>
+            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
+              <text fg={TEXT}>{fitTuiText(sa.task, labelWidth)}</text>
+            </box>
+            {turnsInfo ? (
+              <box width={turnsInfo.length} flexShrink={0} minWidth={0}>
+                <text fg={MUTED}>{turnsInfo}</text>
+              </box>
+            ) : null}
+          </box>
+        );
+      })}
+      {subagentOverflowRow > 0 ? (
+        <box width={contentWidth} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(`  +${subagentOverflow} more · /agents to list them`, contentWidth)}</text>
+        </box>
+      ) : null}
+    </box>
+  ) : null;
+
+  // The compact dim hint under the hero composer — keybind chords only. The
+  // "type to chat · / commands" half is dropped: the composer placeholder above
+  // already says it. Keys render white, labels muted (see KeyHints).
+  const heroHintPairs: KeyHint[] = [
+    { key: "shift+tab", label: "mode" },
+    { key: "ctrl+p", label: "palette" },
+  ];
+  // The contextual keys shown in the bottom bar while composing plain text.
+  const composeHintPairs: KeyHint[] = [
+    { key: "enter", label: "send" },
+    { key: "esc", label: "cancel" },
+  ];
+  // Any overlay open in the hero (slash menu, picker, an approval, the secret
+  // prompt): the masthead is hidden so the tall menu + logo cannot overflow
+  // upward into the header. The composer stays put — it is anchored by the
+  // fixed bottom spacer regardless of what the region above it holds.
+  const heroOverlayOpen = commandMenuVisible || Boolean(picker) || Boolean(approvalPrompt) || Boolean(secretPrompt);
+  const showMasthead = !heroOverlayOpen;
 
   return (
     <box flexDirection="column" width="100%" height="100%" paddingLeft={compact ? 1 : 2} paddingRight={compact ? 1 : 2} paddingTop={1} backgroundColor={CANVAS}>
@@ -2931,278 +3653,113 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         </box>
       </box>
 
-      <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" backgroundColor={PANEL} paddingX={compact ? 1 : 2} paddingY={1}>
-        {empty ? (
-          // Minimal start screen: the mark and its captions sit centered in the
-          // whole transcript area (a sticky-bottom scrollbox can't center, so
-          // the empty state is its own flexGrow box, not the scrollbox).
-          <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" minWidth={0} justifyContent="center" alignItems="center">
-            {showTerminalMark ? (
-              <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
-                {/*
-                  * 0sec brand mark: a slashed zero — a white "0" outline with a
-                  * red diagonal slash through its hollow — then white "SEC".
-                  * Each row is a sequence of same-colour runs (logoCellRuns)
-                  * with explicit widths summing to TERMINAL_BLOCK_LOGO_WIDTH, so
-                  * no run overflows and the slash keeps its own colour.
-                  * Rendered verbatim — never through fitTuiText, which trims.
-                  */}
-                {TERMINAL_BLOCK_LOGO.map((line, index) => (
-                  <box key={`logo-${index}`} flexDirection="row" width={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0} minWidth={0}>
-                    {logoCellRuns(line).map((run, runIndex) => (
-                      <text
-                        key={`logo-${index}-${runIndex}`}
-                        width={run.text.length}
-                        flexShrink={0}
-                        fg={run.kind === "/" ? ERROR : TEXT}
-                      >{run.text}</text>
-                    ))}
-                  </box>
-                ))}
-              </box>
-            ) : (
-              <box flexDirection="row" flexShrink={0}>
-                <text fg={TEXT}>0SEC · OPERATOR CONSOLE</text>
-              </box>
-            )}
-            {showEmptyStateTagline ? <text fg={TEXT} marginTop={2}>evidence-first autonomous cybersecurity research</text> : null}
-            {showTerminalMark ? <text fg={MUTED} marginTop={1}>{fitTuiText("the Swiss 🇨🇭 Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text> : null}
-            {animation ? (
-              <box flexDirection="row" minWidth={0} marginTop={2} gap={1}>
-                <box width={GLYPH_CELLS} flexShrink={0}>
-                  <text fg={animationKind === "awaiting-operator" ? WARNING : PRIMARY}>{animation.glyph}</text>
-                </box>
-                <text fg={MUTED}>{animation.label}</text>
-                {animation.elapsedLabel ? <text fg={MUTED}>{animation.elapsedLabel}</text> : null}
-              </box>
-            ) : null}
-            {startupError ? <text fg={ERROR} marginTop={1}>{fitTuiText(startupError, contentWidth)}</text> : null}
-          </box>
-        ) : (
-          <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
-            <box flexDirection="column" width="100%">
-              {entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay, theme))}
-              {animation ? (
-                <box flexDirection="row" minWidth={0} marginTop={entryDisplay.spacing} gap={1}>
-                  {/* Rendered verbatim in a fixed-width cell: fitTuiText trims,
-                      and every frame is exactly GLYPH_CELLS wide by contract. */}
-                  <box width={GLYPH_CELLS} flexShrink={0}>
-                    <text fg={animationKind === "awaiting-operator" ? WARNING : PRIMARY}>{animation.glyph}</text>
-                  </box>
-                  <text fg={MUTED}>{animation.label}</text>
-                  {animation.elapsedLabel ? <text fg={MUTED}>{animation.elapsedLabel}</text> : null}
-                </box>
-              ) : null}
-              {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
-            </box>
-          </scrollbox>
-        )}
-      </box>
-
-      {/*
-        * Explicit height AND flexShrink={0}. Without both, opentui defaults
-        * flexShrink to 1 for any box with no numeric width or height (see
-        * setupYogaProperties), so a squeezed column collapsed this block to
-        * a single row while its children kept painting — which is how two
-        * subagent tasks became one line of interleaved characters.
-        * `subagentBlockRows` is the same count the ledger reserved.
-        */}
-      {subagentBlockRows > 0 ? (
-        <box flexDirection="column" width="100%" minWidth={0} height={subagentBlockRows} flexShrink={0} marginTop={1}>
-          <box width={contentWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText(`ACTIVE SUBAGENTS · ${subagentEntries.length}`, contentWidth)}</text>
-          </box>
-          {subagentVisible.map((sa) => {
-            const running = sa.status === "running";
-            const turnsInfo = sa.turns !== undefined ? ` (${sa.turns}/${sa.max_turns})` : "";
-            // Budget against the marker cell, its gap and the counter text.
-            const labelWidth = Math.max(1, contentWidth - 2 - turnsInfo.length);
-            return (
-              <box key={sa.agent_id} flexDirection="row" width={contentWidth} flexShrink={0} minWidth={0}>
-                <text width={1} flexShrink={0} fg={running ? PRIMARY : WARNING}>{running ? "◉" : "◌"}</text>
-                <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-                  <text fg={TEXT}>{fitTuiText(sa.task, labelWidth)}</text>
-                </box>
-                {turnsInfo ? (
-                  <box width={turnsInfo.length} flexShrink={0} minWidth={0}>
-                    <text fg={MUTED}>{turnsInfo}</text>
-                  </box>
-                ) : null}
-              </box>
-            );
-          })}
-          {subagentOverflowRow > 0 ? (
-            <box width={contentWidth} flexShrink={0} minWidth={0}>
-              <text fg={MUTED}>{fitTuiText(`  +${subagentOverflow} more · /agents to list them`, contentWidth)}</text>
-            </box>
-          ) : null}
-        </box>
-      ) : null}
-
-      {commandMenuVisible ? (
-        <box flexDirection="column" width="100%" minWidth={0} height={commandMenuHeight} flexShrink={0} marginTop={1} border borderColor={MUTED} backgroundColor={PANEL_ALT} paddingX={1}>
-          <box flexDirection="row" width={commandMenuInnerWidth} minWidth={0} gap={commandHeaderGap}>
-            <box width={commandHeaderTitleWidth} flexShrink={0} minWidth={0}>
-              <text fg={PRIMARY}>{fitTuiText("COMMANDS", commandHeaderTitleWidth)}</text>
-            </box>
-            {commandHeaderQueryWidth > 0 ? (
-              <box width={commandHeaderQueryWidth} flexShrink={0} minWidth={0}>
-                <text fg={MUTED}>{fitTuiText(slashQuery ? `/${slashQuery}` : "all commands", commandHeaderQueryWidth, { mode: "middle" })}</text>
-              </box>
-            ) : null}
-          </box>
-          {menuCommands.length > 0 ? menuCommands.map((command, index) => {
-            const active = index === slashSelected;
-            const meta = command.aliases.length > 0
-              ? command.aliases.map((alias) => `/${alias}`).join(" ")
-              : command.category;
-            return (
-              <box key={command.name} flexDirection="row" width={commandMenuInnerWidth} minWidth={0}>
-                <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
-                <box flexDirection="column" width={commandRowWidth} flexGrow={0} flexShrink={0} minWidth={0} marginLeft={1}>
-                  <box flexDirection="row" width={commandRowWidth} minWidth={0} gap={1}>
-                    <box width={commandNameWidth} flexShrink={0} minWidth={0}>
-                      <text fg={active ? TEXT : MUTED}>{fitTuiText(`/${command.name}`, commandNameWidth)}</text>
-                    </box>
-                    {commandMetaWidth > 0 ? (
-                      <box width={commandMetaWidth} flexShrink={0} minWidth={0}>
-                        <text fg={active ? ACCENT : MUTED}>{fitTuiText(meta, commandMetaWidth)}</text>
-                      </box>
-                    ) : null}
-                  </box>
-                  {!compact ? (
-                    <box width={commandRowWidth} minWidth={0}>
-                      <text fg={active ? ACCENT : MUTED} wrapMode="word">{fitTuiText(command.description, commandRowWidth)}</text>
-                    </box>
-                  ) : null}
-                </box>
-              </box>
-            );
-          }) : (
-            <box width={commandMenuInnerWidth} flexShrink={0} minWidth={0}>
-              <text fg={ERROR}>{fitTuiText(`No command matches /${slashQuery}`, Math.max(1, commandMenuInnerWidth))}</text>
-            </box>
-          )}
-          <box width={commandMenuInnerWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText("↑↓ select · tab complete · enter run · esc close", Math.max(1, commandMenuInnerWidth))}</text>
-          </box>
-        </box>
-      ) : null}
-
-      {/*
-        * The masked credential field is the ONE prompt that stays a typed
-        * panel: a secret is entered, not chosen from a list. It gets the
-        * same anti-collapse treatment as everything else in this column —
-        * an explicit height matching its four content lines plus the two
-        * border rows, flexShrink disabled, and every child budgeted to a
-        * fixed cell width so no line can reach the border.
-        */}
-      {secretPrompt ? (
-        <box flexDirection="column" width="100%" minWidth={0} height={SECRET_PANEL_HEIGHT} flexShrink={0} marginTop={1} border borderColor={WARNING} backgroundColor={PANEL_ALT} paddingX={1}>
-          <box width={approvalWidth} flexShrink={0} minWidth={0}>
-            <text fg={WARNING}>{fitTuiText(`${secretPrompt.label} credential`, approvalWidth)}</text>
-          </box>
-          <box width={approvalWidth} flexShrink={0} minWidth={0}>
-            <text fg={TEXT}>{fitTuiText(`${"•".repeat(Math.min(secretPrompt.value.length, 40))}█`, approvalWidth)}</text>
-          </box>
-          <box width={approvalWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText(`Stored owner-only in your 0sec state dir and exported as ${secretPrompt.envVar}. Never transmitted by 0sec.`, approvalWidth, { mode: "middle" })}</text>
-          </box>
-          <box width={approvalWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText("enter save · esc cancel", approvalWidth)}</text>
-          </box>
-        </box>
-      ) : null}
-
-      {picker ? (
-        <SelectorPanel
-          title={picker.state.title}
-          subtitle={picker.state.query ? picker.state.query : `${pickerVisible.length} available`}
-          rows={pickerRows}
-          windowStart={pickerWindow.start}
-          activeIndex={picker.state.index}
-          detail={pickerPlan.showDetail ? pickerDetail : undefined}
-          hint="↑↓ select · type to filter · enter apply · esc cancel"
-          emptyText={`no match for "${picker.state.query}"`}
-          borderColor={MUTED}
-          titleColor={PRIMARY}
-          contentWidth={contentWidth}
-          height={pickerBoxHeight}
-          theme={theme}
-        />
-      ) : null}
-
-      {/*
-        * Authorization prompts live directly above the composer rather than
-        * as a centered overlay. The operator's eyes are already on the input
-        * line, the answer is given there, and an in-flow panel cannot cover
-        * the transcript evidence the decision is based on.
-        *
-        * All four prompts — session scope, local directory, scoped-audit
-        * escalation and the Co-pilot tool gate — render through the SAME
-        * component and the SAME selector reducer as /model and /mode. One
-        * decision surface, one code path, one set of key bindings. Esc
-        * always declines; it can never grant.
-        */}
-      {approvalPrompt && approvalState ? (
-        <SelectorPanel
-          title={approvalPrompt.title}
-          subtitle={`${approvalState.index + 1}/${approvalVisible.length}`}
-          context={approvalPlan.showContext ? approvalPrompt.context : undefined}
-          contextColor={TEXT}
-          rows={approvalItemRows}
-          windowStart={approvalWindow.start}
-          activeIndex={approvalState.index}
-          detail={approvalPlan.showDetail ? approvalDetail : undefined}
-          hint="↑↓ choose · enter confirm · esc decline"
-          emptyText="no choice available"
-          borderColor={approvalPrompt.borderColor}
-          titleColor={approvalPrompt.titleColor}
-          contentWidth={contentWidth}
-          height={approvalBoxHeight}
-          theme={theme}
-        />
-      ) : null}
-
-      {/*
-        * The composer frame is a preference, not a hardcode: "border" draws
-        * the box, "rail" replaces it with a single accent column, "plain"
-        * drops the chrome entirely for operators who want maximum rows.
-        */}
-      <box flexDirection="row" width="100%" flexShrink={0} marginTop={1} minWidth={0}>
-        {settings.composerStyle === "rail" ? (
-          <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={composing ? PRIMARY : BORDER} />
-        ) : null}
-      {/*
-        * Two separate elements rather than `border={...}` on one: opentui
-        * draws the frame whenever the `border` prop is present, so
-        * `border={false}` still renders a box. Branching on the element
-        * keeps "no chrome" actually meaning no chrome.
-        */}
-      <ComposerFrame style={settings.composerStyle} active={composing || commandMenuVisible} theme={theme}>
-        <box flexDirection="row" width="100%" minWidth={0}>
-          <text width={1} flexShrink={0} fg={composing ? PRIMARY : MUTED}>›</text>
-          <text width={1} flexShrink={0} fg={MUTED}> </text>
+      {empty ? (
+        /*
+         * The centered start screen: logo + captions + the COMPOSER + a dim
+         * hint line render as ONE vertically-centered group (OpenCode's clean
+         * hero). The composer here is the very same `composerNode` used at the
+         * bottom in a real conversation — only its placement moves; the input
+         * wiring is single-sourced in the module-level keyboard handler. Any
+         * open overlay (slash menu, picker, an approval) sits directly above it,
+         * exactly where it sits above the pinned composer. The bottom status bar
+         * stays pinned below, outside this group.
+         */
+        <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" minWidth={0} alignItems="center">
           {/*
-            * Real operator input is TEXT-bright; everything else the composer
-            * shows — the empty-state placeholder, the working animation, the
-            * unavailable notice — is MUTED, so a placeholder never reads as
-            * something the operator typed. This is the grey-placeholder look.
+            * Region A holds everything above the composer and is BOTTOM-anchored
+            * (justifyContent flex-end). Region A and Region B both flexGrow={1},
+            * so they split the vertical slack equally and the composer card sits
+            * at the centre — a fixed position that does NOT move when the slash
+            * menu opens: the menu is the last child of this bottom-anchored
+            * region, so it appears directly above the composer and grows UPWARD
+            * into the empty space, pushing the logo up rather than the composer
+            * down. No layout jump on open/close.
             */}
-          <box width={composerTextWidth} flexShrink={0} minWidth={0}>
-            {composing ? (
-              <text fg={TEXT}>{`${fitTuiText(composer || " ", composerTextWidth - 1, { mode: "middle" })}█`}</text>
-            ) : startupError ? (
-              <text fg={ERROR}>{fitTuiText("runtime unavailable", composerTextWidth)}</text>
-            ) : animation ? (
-              <text fg={MUTED}>{fitTuiText(`${animation.glyph} ${animation.label}${animation.elapsedLabel ? ` ${animation.elapsedLabel}` : ""}${queueLabel ? ` · ${queueLabel}` : ""}`, composerTextWidth)}</text>
+          <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" minWidth={0} justifyContent="flex-end" alignItems="center">
+            {/*
+              * The masthead: a muted EYEBROW (the lab name) sits ABOVE the block
+              * mark, then the mark, then the tagline. Hidden entirely while an
+              * overlay is open in the hero so the tall menu + logo cannot
+              * overflow upward into the header (the composer stays anchored by
+              * the fixed bottom spacer regardless).
+              */}
+            {showMasthead && showTerminalMark ? (
+              <text fg={MUTED} marginBottom={1}>{fitTuiText("Swiss Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text>
+            ) : null}
+            {showMasthead ? (
+              showTerminalMark ? (
+                <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
+                  {/*
+                    * 0sec brand mark: a slashed zero — a white "0" outline with a
+                    * red diagonal slash through its hollow — then white "SEC".
+                    * Each row is a sequence of same-colour runs (logoCellRuns)
+                    * with explicit widths summing to TERMINAL_BLOCK_LOGO_WIDTH, so
+                    * no run overflows and the slash keeps its own colour.
+                    * Rendered verbatim — never through fitTuiText, which trims.
+                    */}
+                  {TERMINAL_BLOCK_LOGO.map((line, index) => (
+                    <box key={`logo-${index}`} flexDirection="row" width={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0} minWidth={0}>
+                      {logoCellRuns(line).map((run, runIndex) => (
+                        <text
+                          key={`logo-${index}-${runIndex}`}
+                          width={run.text.length}
+                          flexShrink={0}
+                          fg={run.kind === "/" ? ERROR : TEXT}
+                        >{run.text}</text>
+                      ))}
+                    </box>
+                  ))}
+                </box>
+              ) : (
+                <box flexDirection="row" flexShrink={0}>
+                  <text fg={TEXT}>0SEC · OPERATOR CONSOLE</text>
+                </box>
+              )
+            ) : null}
+            {showMasthead && showEmptyStateTagline ? (
+              <text fg={TEXT} marginTop={1}>{fitTuiText("The open, extensible & self-evolving cybersecurity harness", contentWidth, { mode: "middle" })}</text>
+            ) : null}
+            {workingIndicator}
+            {startupError ? <text fg={ERROR} marginTop={1}>{fitTuiText(startupError, contentWidth)}</text> : null}
+            {heroOverlaysNode}
+          </box>
+          {/* The composer card — fixed vertical centre; the menu above never shifts it. */}
+          <box flexDirection="column" width={heroComposerWidth} minWidth={0} flexShrink={0}>
+            {heroComposerNode}
+          </box>
+          <box flexShrink={0} minWidth={0} marginTop={1}>
+            {keyHintsLength(heroHintPairs, " · ") <= contentWidth ? (
+              <KeyHints pairs={heroHintPairs} theme={theme} />
             ) : (
-              <text fg={MUTED}>{fitTuiText("type to chat or / for commands", composerTextWidth)}</text>
+              <text fg={MUTED}>{fitTuiText("shift+tab mode · ctrl+p palette", contentWidth, { mode: "middle" })}</text>
             )}
           </box>
+          {/* Region B: a FIXED spacer, so the composer's position is constant. */}
+          <box height={heroBottomSpacer} flexShrink={0} minWidth={0} />
         </box>
-      </ComposerFrame>
-      </box>
+      ) : (
+        <>
+          <box flexDirection="column" flexGrow={1} minHeight={0} width="100%" backgroundColor={PANEL} paddingX={compact ? 1 : 2} paddingY={1}>
+            <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
+              <box flexDirection="column" width="100%">
+                {entries.map((entry) => renderEntry(entry, transcriptWidth, entryDisplay, theme))}
+                {workingIndicator}
+                {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
+              </box>
+            </scrollbox>
+          </box>
+
+          {/*
+            * Explicit height AND flexShrink={0}. Without both, opentui defaults
+            * flexShrink to 1 for any box with no numeric width or height, so a
+            * squeezed column collapsed this block to a single row while its
+            * children kept painting. `subagentBlockRows` is the reserved count.
+            */}
+          {subagentNode}
+          {overlaysNode}
+          {composerNode}
+        </>
+      )}
 
       {/*
         * The bottom bar is its own row BELOW the composer, not a second
@@ -3216,7 +3773,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       {settings.showStatusBar ? (
         <box flexDirection="row" width="100%" minWidth={0} flexShrink={0} gap={statusGap}>
           <box width={controlsWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText(showContextualKeys ? controls : statusBarText, controlsWidth)}</text>
+            {showContextualKeys && keyHintsLength(composeHintPairs, " · ") <= controlsWidth ? (
+              <KeyHints pairs={composeHintPairs} theme={theme} />
+            ) : (
+              <text fg={MUTED}>{fitTuiText(showContextualKeys ? controls : statusBarText, controlsWidth)}</text>
+            )}
           </box>
           {statusWidth > 0 ? (
             <box width={statusWidth} flexShrink={0} minWidth={0}>
