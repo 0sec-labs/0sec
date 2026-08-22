@@ -7,6 +7,7 @@ import {
   CHROME_TOKENS,
   CONTRAST_WAIVERS,
   DEFAULT_THEME_NAME,
+  LAYER_TOKENS,
   MIN_CHROME_CONTRAST,
   MIN_SEMANTIC_CONTRAST,
   MIN_TEXT_CONTRAST,
@@ -41,7 +42,13 @@ import {
 } from "./themes.js";
 
 /**
- * The palette as it exists in `ui/theme.ts` today, transcribed by hand.
+ * The default palette, transcribed by hand.
+ *
+ * The twelve text/background/chrome tokens are byte-for-byte the values
+ * `ui/theme.ts` exports (white highlight, neutral accent — no orange). The four
+ * `LAYER_TOKENS` (`background`/`surface`/`surfaceAlt`/`overlay`) are the theme
+ * system's own additions, not present in `ui/theme.ts`; for the default they
+ * mirror `CANVAS`/`PANEL`/`PANEL_ALT` with an `overlay` a step past the rest.
  *
  * Deliberately *not* imported from `../ui/theme.js`: importing it would make
  * this assertion tautological the moment somebody edits that file, which is
@@ -56,12 +63,16 @@ const SHIPPED_PALETTE: Record<string, string> = {
   BORDER: "#25201D",
   TEXT: "#F3EEE9",
   MUTED: "#8A7D73",
-  PRIMARY: "#E28553",
-  ACCENT: "#F0B08D",
+  PRIMARY: "#FFFFFF",
+  ACCENT: "#F3EEE9",
   SUCCESS: "#22C55E",
   WARNING: "#EAB308",
   ERROR: "#DC2626",
-  INFO: "#C99A7A",
+  INFO: "#B8AFA6",
+  background: "#080808",
+  surface: "#111111",
+  surfaceAlt: "#171515",
+  overlay: "#1C1A18",
 };
 
 const allThemes = (): { name: ThemeName; palette: Theme }[] =>
@@ -71,12 +82,12 @@ const allThemes = (): { name: ThemeName; palette: Theme }[] =>
 
 describe("token coverage", () => {
   it("splits every token into exactly one role", () => {
-    const roles = [...BACKGROUND_TOKENS, ...TEXT_TOKENS, ...CHROME_TOKENS];
+    const roles = [...BACKGROUND_TOKENS, ...TEXT_TOKENS, ...CHROME_TOKENS, ...LAYER_TOKENS];
     expect([...roles].sort()).toEqual([...THEME_TOKENS].sort());
     expect(new Set(roles).size).toBe(roles.length);
   });
 
-  it("covers exactly the tokens ui/theme.ts exports", () => {
+  it("covers exactly the tokens the default palette defines", () => {
     expect([...THEME_TOKENS].sort()).toEqual(Object.keys(SHIPPED_PALETTE).sort());
   });
 
@@ -281,9 +292,13 @@ describe("contrast sweep", () => {
     );
     expect(worst).toEqual({
       dark: 3.77,
-      light: 4.71,
+      light: 5.24,
       "high-contrast": 7.75,
       ansi: 5.25,
+      midnight: 5.17,
+      slate: 5.16,
+      paper: 5.16,
+      "mono-dim": 4.5,
     });
   });
 });
@@ -394,13 +409,17 @@ describe("semantic colours survive colour blindness", () => {
     );
     expect(achieved).toEqual({
       dark: 1.188,
-      light: 1.269,
+      light: 1.254,
       "high-contrast": 1.319,
       ansi: 1.278,
+      midnight: 1.313,
+      slate: 1.212,
+      paper: 1.162,
+      "mono-dim": 1.165,
     });
-    // The preserved default is the binding constraint on the threshold.
-    expect(achieved.dark).toBe(Math.min(...Object.values(achieved)));
-    expect(achieved.dark).toBeGreaterThanOrEqual(MIN_SEMANTIC_CONTRAST);
+    // Every theme clears the floor; paper is the tightest of the set.
+    expect(Math.min(...Object.values(achieved))).toBe(achieved.paper);
+    expect(Math.min(...Object.values(achieved))).toBeGreaterThanOrEqual(MIN_SEMANTIC_CONTRAST);
   });
 });
 

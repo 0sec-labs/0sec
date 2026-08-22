@@ -77,16 +77,40 @@ export const TEXT_TOKENS = [
  */
 export const CHROME_TOKENS = ["BORDER"] as const;
 
+/**
+ * Semantic background-layering tokens, added on top of the original
+ * `CANVAS`/`PANEL`/`PANEL_ALT` trio to give consumers role-named surfaces:
+ *
+ *   - `background`  the root/app background (mirrors `CANVAS`)
+ *   - `surface`     the background of a bordered section/panel (mirrors `PANEL`)
+ *   - `surfaceAlt`  a slightly offset surface for nested/alternating blocks
+ *                   (mirrors `PANEL_ALT`)
+ *   - `overlay`     the background for a full-screen overlay (settings/model
+ *                   screens, pickers) — a step past `surfaceAlt` so a floating
+ *                   panel reads as "on top" of the transcript beneath it.
+ *
+ * On *light* themes `surface` is a few percent darker than `background` and
+ * `surfaceAlt` darker still, so a low-contrast hairline still reads as a
+ * section edge; on *dark* themes the step goes the other way (each surface a
+ * touch lighter). These are painted-behind tokens, never text, and every value
+ * sits inside the luminance band the text tokens are already validated against,
+ * so they are checked for completeness and well-formedness but not swept for
+ * text contrast (that sweep runs against `BACKGROUND_TOKENS`, which they mirror).
+ */
+export const LAYER_TOKENS = ["background", "surface", "surfaceAlt", "overlay"] as const;
+
 export type BackgroundToken = (typeof BACKGROUND_TOKENS)[number];
 export type TextToken = (typeof TEXT_TOKENS)[number];
 export type ChromeToken = (typeof CHROME_TOKENS)[number];
-export type ThemeToken = BackgroundToken | TextToken | ChromeToken;
+export type LayerToken = (typeof LAYER_TOKENS)[number];
+export type ThemeToken = BackgroundToken | TextToken | ChromeToken | LayerToken;
 
 /** Every token, in a stable order, for iteration and validation. */
 export const THEME_TOKENS: readonly ThemeToken[] = [
   ...BACKGROUND_TOKENS,
   ...TEXT_TOKENS,
   ...CHROME_TOKENS,
+  ...LAYER_TOKENS,
 ];
 
 /**
@@ -178,10 +202,10 @@ export const AAA_TEXT_CONTRAST = 7;
  * red-green, and green-yellow is the classic residual confusion. Requiring a
  * luminance step means the three read as three even in greyscale.
  *
- * The value is a floor, not a target. It is set here by the one palette that
- * cannot be changed — the preserved default measures 1.19:1 across its
- * `SUCCESS`/`WARNING` pair, the tightest of any theme. The three designed
- * themes all clear 1.26:1. If the default is ever allowed to move, raise this.
+ * The value is a floor, not a target. The preserved default measures 1.19:1
+ * across its `SUCCESS`/`WARNING` pair; the tightest of the designed themes is
+ * `paper` at 1.16:1. Every theme clears the 1.15:1 floor. If any theme is ever
+ * allowed to drop below it, raise the offending palette rather than this bar.
  */
 export const MIN_SEMANTIC_CONTRAST = 1.15;
 
@@ -203,39 +227,52 @@ const DARK: Theme = {
   BORDER: "#25201D",
   TEXT: "#F3EEE9",
   MUTED: "#8A7D73",
-  PRIMARY: "#E28553",
-  ACCENT: "#F0B08D",
+  PRIMARY: "#FFFFFF",
+  ACCENT: "#F3EEE9",
   SUCCESS: "#22C55E",
   WARNING: "#EAB308",
   ERROR: "#DC2626",
-  INFO: "#C99A7A",
+  INFO: "#B8AFA6",
+  background: "#080808",
+  surface: "#111111",
+  surfaceAlt: "#171515",
+  overlay: "#1C1A18",
 };
 
 /**
- * `Paper` — for terminals on a light background.
+ * `Standard` — the light theme, built so bordered sections are separable.
  *
- * Not an inversion of the dark palette. On paper the usable foreground
- * luminance band is roughly [0, 0.13]: anything lighter than L≈0.13 cannot
- * reach 4.5:1 against the darkest surface (`PANEL_ALT`). Every foreground here
- * is therefore a *dark* colour, and the palette's expressive range is hue and
- * saturation rather than brightness. The brand orange survives as a burnt
- * `PRIMARY`; `INFO` moves from the dark theme's tan to a slate blue, because a
- * light tan on paper is invisible and blue is the one strongly-separated hue
- * the warm palette was not already using.
+ * The complaint this answers is that a light console reads as one flat sheet:
+ * borders are near-invisible and every panel is the same white. So the three
+ * background layers are deliberately *stepped* — `background` (near-white),
+ * `surface` a few percent darker, `surfaceAlt` darker still — and `BORDER` is a
+ * mid slate-grey that clears the 3:1 non-text bar on all three. A section now
+ * reads as a section by fill even before the border is drawn.
+ *
+ * Neutral, not warm: the highlight (`PRIMARY`/`ACCENT`) is a near-black grey,
+ * never orange — the mono-chrome discipline the dark theme keeps with white.
+ * Foregrounds are all dark (anything lighter than L≈0.13 cannot reach 4.5:1
+ * against `surfaceAlt`), so the semantic trio is separated by *darkness*:
+ * `SUCCESS` mid, `WARNING` darker, `ERROR` darkest. `INFO` is a slate blue,
+ * the one strongly-separated hue not used for a semantic.
  */
 const LIGHT: Theme = {
-  CANVAS: "#FDFBF7",
-  PANEL: "#F3EEE5",
-  PANEL_ALT: "#E7E0D3",
-  BORDER: "#837767",
-  TEXT: "#1C1713",
-  MUTED: "#564C43",
-  PRIMARY: "#903F0E",
-  ACCENT: "#8B5429",
-  SUCCESS: "#1A6934",
-  WARNING: "#654700",
-  ERROR: "#750E0E",
-  INFO: "#17456B",
+  CANVAS: "#FCFCFD",
+  PANEL: "#EFF1F4",
+  PANEL_ALT: "#E2E5EA",
+  BORDER: "#7A828F",
+  TEXT: "#191C22",
+  MUTED: "#565D68",
+  PRIMARY: "#111318",
+  ACCENT: "#2E333B",
+  SUCCESS: "#136B31",
+  WARNING: "#654A00",
+  ERROR: "#74130B",
+  INFO: "#1F4E7A",
+  background: "#FCFCFD",
+  surface: "#EFF1F4",
+  surfaceAlt: "#E2E5EA",
+  overlay: "#D7DBE1",
 };
 
 /**
@@ -254,12 +291,16 @@ const HIGH_CONTRAST: Theme = {
   BORDER: "#B3B3B3",
   TEXT: "#FFFFFF",
   MUTED: "#BCBCBC",
-  PRIMARY: "#F89E4B",
-  ACCENT: "#FCCFA6",
+  PRIMARY: "#FFFFFF",
+  ACCENT: "#E6E6E6",
   SUCCESS: "#3AE483",
   WARNING: "#FFE635",
   ERROR: "#FC8979",
   INFO: "#82DAFF",
+  background: "#000000",
+  surface: "#0B0B0B",
+  surfaceAlt: "#161616",
+  overlay: "#1E1E1E",
 };
 
 /**
@@ -288,20 +329,143 @@ const ANSI: Theme = {
   BORDER: "#808080",
   TEXT: "#FFFFFF",
   MUTED: "#808080",
-  PRIMARY: "#00FFFF",
-  ACCENT: "#FF00FF",
+  PRIMARY: "#FFFFFF",
+  ACCENT: "#C0C0C0",
   SUCCESS: "#00FF00",
   WARNING: "#FFFF00",
   ERROR: "#FF0000",
   INFO: "#C0C0C0",
+  background: "#000000",
+  surface: "#000000",
+  surfaceAlt: "#000000",
+  overlay: "#000000",
+};
+
+/**
+ * `Midnight` — a deep blue-black dark theme.
+ *
+ * Cool where `dark` is warm: the surfaces carry a faint blue cast and step up
+ * in luminance so panels separate. Highlight is white, accents near-white — no
+ * cyan, no orange. The semantic trio is muted (a soft green, a gold, a rose
+ * red) but held apart by luminance for colour-blind separation.
+ */
+const MIDNIGHT: Theme = {
+  CANVAS: "#0A0E14",
+  PANEL: "#121824",
+  PANEL_ALT: "#1B2333",
+  BORDER: "#6B7688",
+  TEXT: "#E8ECF2",
+  MUTED: "#93A0B5",
+  PRIMARY: "#FFFFFF",
+  ACCENT: "#DDE3EC",
+  SUCCESS: "#57BE86",
+  WARNING: "#E2C14E",
+  ERROR: "#F0686C",
+  INFO: "#8FB4E0",
+  background: "#0A0E14",
+  surface: "#121824",
+  surfaceAlt: "#1B2333",
+  overlay: "#232D40",
+};
+
+/**
+ * `Slate` — a neutral grey dark theme.
+ *
+ * No hue in the chrome at all: pure grey surfaces, a grey border, a white
+ * highlight. The most restrained of the dark themes; the only colour is in the
+ * semantic trio, kept muted and luminance-separated.
+ */
+const SLATE: Theme = {
+  CANVAS: "#141516",
+  PANEL: "#1D1F21",
+  PANEL_ALT: "#26292C",
+  BORDER: "#6E7379",
+  TEXT: "#E9EAEC",
+  MUTED: "#9A9EA4",
+  PRIMARY: "#FFFFFF",
+  ACCENT: "#D8DADD",
+  SUCCESS: "#5BC088",
+  WARNING: "#DEBB4E",
+  ERROR: "#EB767A",
+  INFO: "#9FB3C8",
+  background: "#141516",
+  surface: "#1D1F21",
+  surfaceAlt: "#26292C",
+  overlay: "#303438",
+};
+
+/**
+ * `Paper` — a warm off-white light theme.
+ *
+ * The counterpart to `Standard` for readers who prefer a warm page. Surfaces
+ * are a stepped warm off-white so sections separate; the highlight is a warm
+ * near-black, never orange. Foregrounds are dark, the semantic trio separated
+ * by darkness.
+ */
+const PAPER: Theme = {
+  CANVAS: "#FBF7EF",
+  PANEL: "#F1EADC",
+  PANEL_ALT: "#EAE1CF",
+  BORDER: "#7C7158",
+  TEXT: "#201C15",
+  MUTED: "#5A5140",
+  PRIMARY: "#1A1712",
+  ACCENT: "#3A342A",
+  SUCCESS: "#155E2C",
+  WARNING: "#78560E",
+  ERROR: "#8A2015",
+  INFO: "#2A5578",
+  background: "#FBF7EF",
+  surface: "#F1EADC",
+  surfaceAlt: "#EAE1CF",
+  overlay: "#DACFB8",
+};
+
+/**
+ * `Mono Dim` — a very low-contrast dark theme for long sessions.
+ *
+ * Minimalist and quiet: the whole palette sits in a narrow grey band so nothing
+ * shouts. Every text token still clears AA (4.5:1) — "low contrast" means muted,
+ * not illegible — and the border still clears the 3:1 non-text bar so sections
+ * remain separable. Semantics are desaturated but luminance-separated.
+ */
+const MONO_DIM: Theme = {
+  CANVAS: "#161616",
+  PANEL: "#1E1E1E",
+  PANEL_ALT: "#262626",
+  BORDER: "#787878",
+  TEXT: "#C9C9C9",
+  MUTED: "#8C8C8C",
+  PRIMARY: "#E4E4E4",
+  ACCENT: "#B8B8B8",
+  SUCCESS: "#63AE7B",
+  WARNING: "#C9B25E",
+  ERROR: "#D47878",
+  INFO: "#93A7BC",
+  background: "#161616",
+  surface: "#1E1E1E",
+  surfaceAlt: "#262626",
+  overlay: "#2E2E2E",
 };
 
 /* ----------------------------------------------------------------- registry */
 
-export const THEME_NAMES = ["dark", "light", "high-contrast", "ansi"] as const;
+export const THEME_NAMES = [
+  "dark",
+  "light",
+  "high-contrast",
+  "ansi",
+  "midnight",
+  "slate",
+  "paper",
+  "mono-dim",
+] as const;
 export type ThemeName = (typeof THEME_NAMES)[number];
 
 export const DEFAULT_THEME_NAME: ThemeName = "dark";
+
+/** Whether a theme is meant for a dark or a light terminal — for picker grouping. */
+export type ThemeMode = "dark" | "light";
 
 export interface ThemeEntry {
   readonly name: ThemeName;
@@ -309,33 +473,67 @@ export interface ThemeEntry {
   readonly label: string;
   /** One line explaining who this theme is for. */
   readonly description: string;
+  /** Dark- or light-terminal theme, so a picker can group and preview them. */
+  readonly mode: ThemeMode;
   readonly palette: Theme;
 }
 
 export const THEMES: Readonly<Record<ThemeName, ThemeEntry>> = {
   dark: {
     name: "dark",
-    label: "0sec Dark",
-    description: "The shipped palette. Warm dark surfaces, brand orange. Default.",
+    label: "Carbon",
+    description: "The shipped default. Warm dark surfaces, neutral white highlight.",
+    mode: "dark",
     palette: DARK,
   },
   light: {
     name: "light",
-    label: "Paper",
-    description: "For terminals on a light background. Dark foregrounds on warm paper.",
+    label: "Standard",
+    description: "Light theme with clearly stepped section surfaces. Neutral highlight.",
+    mode: "light",
     palette: LIGHT,
   },
   "high-contrast": {
     name: "high-contrast",
     label: "Contrast",
     description: "Pure black canvas, every text colour at WCAG AAA (7:1) or better.",
+    mode: "dark",
     palette: HIGH_CONTRAST,
   },
   ansi: {
     name: "ansi",
     label: "ANSI 16",
     description: "Only the 16 standard terminal colours. For terminals without truecolor.",
+    mode: "dark",
     palette: ANSI,
+  },
+  midnight: {
+    name: "midnight",
+    label: "Midnight",
+    description: "Deep blue-black dark. Cool stepped surfaces, white highlight.",
+    mode: "dark",
+    palette: MIDNIGHT,
+  },
+  slate: {
+    name: "slate",
+    label: "Slate",
+    description: "Neutral grey dark. No hue in the chrome, white highlight.",
+    mode: "dark",
+    palette: SLATE,
+  },
+  paper: {
+    name: "paper",
+    label: "Paper",
+    description: "Warm off-white light. Stepped paper surfaces, warm near-black highlight.",
+    mode: "light",
+    palette: PAPER,
+  },
+  "mono-dim": {
+    name: "mono-dim",
+    label: "Mono Dim",
+    description: "Very low-contrast dark, minimalist. Muted but still AA-legible.",
+    mode: "dark",
+    palette: MONO_DIM,
   },
 };
 
