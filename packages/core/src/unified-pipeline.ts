@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
+import { mapWithConcurrency } from "./concurrency.js";
 import type {
   ScanDepth,
   OutputFormat,
@@ -18,6 +19,7 @@ import type {
   ScanConfig,
 } from "@0sec/shared";
 import type { InferSelectModel } from "drizzle-orm";
+import { restoreFindingReviewFields } from "@0sec/db";
 import type { osecDB } from "@0sec/db";
 import type * as dbSchema from "@0sec/db";
 import type { ScanListener } from "./scanner.js";
@@ -45,6 +47,7 @@ import { runNpmDynamicDiscovery } from "./stages/npm-dynamic-discovery.js";
 import { createSandboxPackageRunner } from "./stages/npm-detectors/sandbox-probe.js";
 import type { NpmPackageRunner } from "./stages/npm-detectors/sandbox-probe.js";
 import { resolveNovelty } from "./triage/index.js";
+import { parseImpactAssessment } from "./triage/impact-assessment.js";
 import { runSelectedStaticScan, selectedStaticScanner } from "./shared-analysis.js";
 import { collectScopeFiles, countScopeFilesUpTo } from "./source-files.js";
 import { features as agentFeatures } from "./agent/features.js";
@@ -87,6 +90,42 @@ function reviewMaxFiles(): number {
   }
   return REVIEW_MAX_FILES;
 }
+
+/**
+ * How many blind-verify agents may be in flight at once.
+ *
+ * The verify wave used to be a bare `Promise.all` over EVERY finding, so the
+ * agent count was whatever the research phase happened to emit. That is fine at
+ * a dozen findings and pathological at hundreds: a high-recall / low-precision
+ * model (the profile a cheap-model-pooling strategy deliberately buys) can hand
+ * this stage a very large candidate list, and each entry spawns its own agent
+ * session. The only backstop was the dollar ceiling, which stops the run but
+ * does nothing about the burst of concurrent sessions that precedes it —
+ * provider 429s, socket exhaustion, and memory all bite first.
+ *
+ * 8 matches the hunt finder pool's default, the other place this codebase fans
+ * agents out. This bounds the RATE only: every finding is still verified, in
+ * input order, with identical verdicts. Override via
+ * `0SEC_VERIFY_CONCURRENCY`.
+ */
+const VERIFY_CONCURRENCY = 8;
+
+/** Resolve the verify fan-out limit, honoring `0SEC_VERIFY_CONCURRENCY`. */
+function verifyConcurrency(): number {
+  const raw = process.env["0SEC_VERIFY_CONCURRENCY"];
+  if (raw !== undefined) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return VERIFY_CONCURRENCY;
+}
+
+// `mapWithConcurrency` moved to the leaf module `./concurrency.js` so the
+// agent's concurrent subagent fan-out (`spawn_agents`) can share it without
+// importing this pipeline module. Re-exported here (not just imported) so the
+// existing `unified-pipeline.verify-concurrency.test.ts` import keeps working
+// and the package's public surface is unchanged.
+export { mapWithConcurrency };
 
 // ── Public types ──
 
@@ -709,11 +748,15 @@ type PersistedFindingRow = InferSelectModel<typeof dbSchema.findings>;
  */
 type RestorablePersistedFindingRow = Omit<
   PersistedFindingRow,
-  "verificationSpec" | "pocSteps" | "layerVerdicts" | "pocExecution" | "semanticDedupe"
+  "verificationSpec" | "pocSteps" | "layerVerdicts" | "impactAssessment" | "pocExecution" | "semanticDedupe"
+  | "verificationResult" | "reviewAnnotation"
 > & {
+  verificationResult?: PersistedFindingRow["verificationResult"] | Finding["verification_result"];
+  reviewAnnotation?: PersistedFindingRow["reviewAnnotation"] | Record<string, unknown>;
   verificationSpec: PersistedFindingRow["verificationSpec"] | Finding["verificationSpec"];
   pocSteps: PersistedFindingRow["pocSteps"] | Finding["pocSteps"];
   layerVerdicts: PersistedFindingRow["layerVerdicts"] | Finding["layerVerdicts"];
+  impactAssessment: PersistedFindingRow["impactAssessment"] | Finding["impactAssessment"];
   pocExecution: PersistedFindingRow["pocExecution"] | Finding["pocExecution"];
   semanticDedupe: PersistedFindingRow["semanticDedupe"] | Finding["semanticDedupe"];
 };
@@ -737,6 +780,21 @@ function parseJsonColumn<T>(value: string | T | null | undefined): T | undefined
   }
   // Already-parsed object handed in by a shim/test double.
   return value;
+}
+
+/**
+ * Rehydrate the `impactAssessment` JSON column through the module's own
+ * validated parser, so an out-of-vocabulary tier or a legacy row degrades to
+ * `undefined` rather than leaking a malformed assessment into the Finding.
+ * Accepts both the DB string form and an already-parsed object (test shims).
+ */
+function parseImpactAssessmentColumn(
+  value: RestorablePersistedFindingRow["impactAssessment"],
+): Finding["impactAssessment"] {
+  if (value == null) return undefined;
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (text.length === 0) return undefined;
+  return parseImpactAssessment(text) ?? undefined;
 }
 
 function parseSemanticDedupe(
@@ -798,6 +856,7 @@ export function restorePersistedFinding(row: RestorablePersistedFindingRow): Fin
   // compile here instead of being dropped.
   const pocSteps = parseJsonColumn<PocStep[]>(row.pocSteps);
   const layerVerdicts = parseJsonColumn<LayerVerdict[]>(row.layerVerdicts);
+  const impactAssessment = parseImpactAssessmentColumn(row.impactAssessment);
   const pocExecution = parseJsonColumn<Finding["pocExecution"]>(row.pocExecution);
   const semanticDedupe = parseSemanticDedupe(row.semanticDedupe);
   const persistedFindingRank = row.findingRank;
@@ -834,11 +893,20 @@ export function restorePersistedFinding(row: RestorablePersistedFindingRow): Fin
       analysis: row.evidenceAnalysis ?? undefined,
     },
     layerVerdicts,
+    ...(impactAssessment ? { impactAssessment } : {}),
     pocSteps,
     verificationSpec,
     pocExecution,
     ...(semanticDedupe ? { semanticDedupe } : {}),
     ...(findingRank !== undefined ? { findingRank } : {}),
+    // 0sec#420 — `verification_result` and `reviewAnnotation` are the two
+    // inputs the source-fix eligibility check reads. They were persisted
+    // by the writer but had no columns until now; without threading them
+    // back here every reloaded finding reports "not reproduced" and the
+    // fix action can never run. `restoreFindingReviewFields` omits a key
+    // entirely when absent, so nothing becomes a truthy empty object that
+    // could be mistaken for a real verification result.
+    ...restoreFindingReviewFields(row),
     timestamp: row.timestamp,
   };
 }
@@ -2215,8 +2283,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
         logPipelineEvent("verify", "stage_skipped", { reason: "cost_ceiling" });
       } else {
       try {
-        const verifyResults = await Promise.all(
-          findings.map(async (finding) => {
+        const verifyResults = await mapWithConcurrency(
+          findings,
+          verifyConcurrency(),
+          async (finding) => {
             // Extract file path from evidence_request field
             const filePath = finding.evidence.request || "";
             // Extract PoC from evidence_response (the PoC code)
@@ -2327,7 +2397,7 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineReport
               };
               return { finding, verdict, verifiedFinding: null };
             }
-          }),
+          },
         );
 
         // Emit results and filter

@@ -35,7 +35,9 @@ export interface PriorScanLoader {
     title: string;
     category: string;
     description: string;
-    reviewAnnotation?: { path?: string; startLine?: number } | null;
+    // Persisted as serialized JSON (see @0sec/db findings.reviewAnnotation);
+    // accepted in both forms for the same reason semanticDedupe is.
+    reviewAnnotation?: { path?: string; startLine?: number } | string | null;
     semanticDedupe?: { isCanonical?: boolean } | string | null;
   }>;
 }
@@ -68,6 +70,28 @@ function toDedupeItem(f: Finding): DedupeItem {
     location: loc,
     description: f.description ?? "",
   };
+}
+
+/**
+ * The review annotation is stored as serialized JSON, so a row read
+ * straight from the database hands it over as a string. Parse defensively:
+ * a malformed payload must degrade to "no location", never throw during a
+ * scan post-process pass.
+ */
+function parseReviewAnnotation(
+  value: { path?: string; startLine?: number } | string | null | undefined,
+): { path?: string; startLine?: number } | null {
+  if (value == null) return null;
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  return parsed as { path?: string; startLine?: number };
 }
 
 function isPersistedDuplicate(
@@ -117,8 +141,9 @@ export async function loadPriorScanAnchors(
     // anchor. Do not bloat later prompts or let it compete as a second anchor.
     if (isPersistedDuplicate(f.semanticDedupe)) continue;
     if (items.length >= limit) break;
-    const loc = f.reviewAnnotation
-      ? `${f.reviewAnnotation.path ?? "unknown"}:${f.reviewAnnotation.startLine ?? 0}`
+    const annotation = parseReviewAnnotation(f.reviewAnnotation);
+    const loc = annotation
+      ? `${annotation.path ?? "unknown"}:${annotation.startLine ?? 0}`
       : "unknown";
     items.push({
       id: f.id,
