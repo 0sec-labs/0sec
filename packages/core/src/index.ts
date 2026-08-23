@@ -933,6 +933,14 @@ export type { ParseSeedFindingsOptions } from "./seed-findings.js";
 
 // Agent system
 export { runAgentLoop, runNativeAgentLoop, ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, features, estimateCost } from "./agent/index.js";
+export { ToolHealthTracker } from "./agent/index.js";
+export type {
+  ToolHealthCategory,
+  ToolHealthEvent,
+  ToolHealthRecordInput,
+  ToolHealthSummary,
+  ToolHealthTrackerOptions,
+} from "./agent/index.js";
 // Named bundles of 0SEC_FEATURE_* vars — the documented way to enable the
 // full FP moat for an A/B run. See `agent/feature-presets.ts`.
 export {

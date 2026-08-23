@@ -9,6 +9,14 @@ export {
 } from "./xml-dispatch.js";
 export type { XmlDispatchParse } from "./xml-dispatch.js";
 export { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
+export { ToolHealthTracker } from "./tool-health.js";
+export type {
+  ToolHealthCategory,
+  ToolHealthEvent,
+  ToolHealthRecordInput,
+  ToolHealthSummary,
+  ToolHealthTrackerOptions,
+} from "./tool-health.js";
 export { discoveryPrompt, attackPrompt, verifyPrompt, reportPrompt, sourceVerifyPrompt, researchPrompt, blindVerifyPrompt } from "./prompts.js";
 export { features } from "./features.js";
 export {

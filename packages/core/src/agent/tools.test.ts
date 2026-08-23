@@ -3045,21 +3045,26 @@ describe("ToolExecutor — structured scanner wrappers (0sec#555)", () => {
     expect(result.error).toMatch(/FUZZ/);
   });
 
-  it("run_sqlmap reports a clear error when the binary is missing", async () => {
+  it("gracefully skips run_sqlmap when the binary is missing (0sec#tool-reliability)", async () => {
     // allowScanners + in-scope target → preflight passes and we attempt to
-    // spawn `sqlmap`. On a runner without sqlmap installed this surfaces as a
-    // structured ENOENT error (never an unbounded hang). If sqlmap IS present
-    // the run completes structured; either way success is well-defined.
+    // spawn `sqlmap`. On a runner without sqlmap installed this is now a
+    // GRACEFUL skip (success:true + { skipped:true }) rather than a hard
+    // failure, and a missing-binary tool-health event is recorded. If sqlmap
+    // IS present the run completes structured; either way success is true.
     const ctx = await makeCtx({ allowScanners: true });
     const ex = new ToolExecutor(ctx, null);
     const result = await ex.execute({
       name: "run_sqlmap",
       arguments: { url: "https://api.example.com/?id=1", timeout: 2 },
     });
-    if (!result.success) {
-      expect(result.error).toMatch(/run_sqlmap (failed|)/);
+    expect(result.success).toBe(true);
+    const output = result.output as { skipped?: boolean; result?: { tool: string } };
+    if (output.skipped) {
+      // Missing binary → graceful skip + health classification.
+      expect(ex.toolHealthSummary().missing).toContain("sqlmap");
+      expect(ex.toolHealthSummary().byCategory["missing-binary"]).toBeGreaterThanOrEqual(1);
     } else {
-      expect((result.output as { result: { tool: string } }).result.tool).toBe("sqlmap");
+      expect(output.result?.tool).toBe("sqlmap");
     }
   });
 });

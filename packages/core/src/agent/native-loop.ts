@@ -18,6 +18,8 @@ import type { EngagementPosture } from "../scope/engagement-profile.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
+import { ToolHealthTracker } from "./tool-health.js";
+import type { ToolHealthSummary } from "./tool-health.js";
 import { features } from "./features.js";
 import { LootLedger } from "./loot.js";
 import { TaskLedger } from "./task-ledger.js";
@@ -384,6 +386,13 @@ export interface NativeAgentState {
    * `finding.inlineValidation` so EGATS and the batch triage can read it.
    */
   inlineValidations: InlineValidationOutcome[];
+  /**
+   * Tool-health roll-up for this run (0sec#tool-reliability): the deduped set
+   * of tool skips / failures (missing binary, buffer limit, wrong lockfile,
+   * policy/scope denial) with a concise `line` the CLI can surface as
+   * "N tool issues (missing: semgrep; …)". `total: 0` when nothing degraded.
+   */
+  toolHealth?: ToolHealthSummary;
 }
 
 /**
@@ -515,6 +524,20 @@ export async function runNativeAgentLoop(
     costLedger: config.costLedger,
     costCeilingUsd: config.costCeilingUsd,
     costModel: config.costModel,
+    // Tool-health aggregator (0sec#tool-reliability). Shared across the scan so
+    // the end-of-run summary sees every tool skip/failure; each NEW distinct
+    // event also fans out on the bus as `tool_health`.
+    toolHealth: new ToolHealthTracker({
+      emit: (event) => {
+        eventBus.emit("tool_health", {
+          tool: event.tool,
+          category: event.category,
+          message: event.message,
+          ...(event.remedy ? { remedy: event.remedy } : {}),
+          count: event.count,
+        });
+      },
+    }),
   };
 
   const executor = new ToolExecutor(toolCtx, db);
@@ -2350,6 +2373,31 @@ export async function runNativeAgentLoop(
       },
       timestamp: Date.now(),
     });
+  }
+
+  // Tool-health roll-up (0sec#tool-reliability): attach the deduped summary to
+  // the returned state and log a concise "N tool issues" line so the operator
+  // sees WHY a tool didn't run. Non-blocking / fail-soft.
+  try {
+    const toolHealth = executor.toolHealthSummary();
+    state.toolHealth = toolHealth;
+    if (toolHealth.total > 0 && db) {
+      db.logEvent({
+        scanId: config.scanId,
+        stage: "attack",
+        eventType: "tool_health_summary",
+        payload: {
+          total: toolHealth.total,
+          occurrences: toolHealth.occurrences,
+          byCategory: toolHealth.byCategory,
+          missing: toolHealth.missing,
+          line: toolHealth.line,
+        },
+        timestamp: Date.now(),
+      });
+    }
+  } catch {
+    // Reporting is best-effort; never fail a completed run over it.
   }
 
   // Clean up per-scan external memory file

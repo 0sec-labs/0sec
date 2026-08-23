@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, existsSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve, join } from "node:path";
 import { isIP } from "node:net";
 import type {
   Finding,
@@ -147,6 +147,8 @@ import {
 } from "./skills/index.js";
 import { eventBus } from "../events/bus.js";
 import type { SubagentProgressPayload } from "../events/bus.js";
+import { ToolHealthTracker } from "./tool-health.js";
+import type { ToolHealthRecordInput, ToolHealthSummary } from "./tool-health.js";
 import {
   drainInbox,
   isValidPeerId,
@@ -401,7 +403,15 @@ const ALLOWED_COMMANDS = new Set([
   "jq",
   "file",
   "stat",
+  // Package managers — dependency-audit / read-only inspection only. Each is
+  // subcommand-scoped in `isCommandAllowed` to the SAME read/audit allowlist
+  // (`audit`, `view`, `ls`, `list`) so adding pnpm/yarn cannot run install,
+  // scripts, publish, or any state-mutating subcommand. pnpm/yarn are here so
+  // a repo whose lockfile is pnpm-lock.yaml / yarn.lock can still be audited
+  // (npm audit ENOLOCKs on those) — see resolveDependencyAuditCommand.
   "npm",
+  "pnpm",
+  "yarn",
   // Text-mangling utilities the audit agent frequently reaches for to
   // post-process grep / rg output (sort + uniq for top-N counts, sed
   // for line-trimming, awk for field extraction, cut/tr for cleanup,
@@ -425,7 +435,12 @@ const ALLOWED_COMMANDS = new Set([
 
 // Block dangerous shell chars. Piping is handled manually without invoking a shell.
 const DISALLOWED_SHELL_CHARS = /[;&<>`$\n\r]/;
+// Read-only / audit subcommands the package managers are scoped to. Shared by
+// npm, pnpm, and yarn — no install/add/run/publish/exec, so widening the
+// allowlist to pnpm/yarn cannot mutate state or execute arbitrary scripts.
 const ALLOWED_NPM_SUBCOMMANDS = new Set(["audit", "view", "ls", "list"]);
+// Package-manager executables that are subcommand-scoped to ALLOWED_NPM_SUBCOMMANDS.
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn"]);
 
 // A scoped source audit processes attacker-controlled package contents. Do not
 // offer generic process, network, or write capability inside that trust boundary.
@@ -894,13 +909,103 @@ function tokenizeCommand(command: string): string[] {
   return tokens;
 }
 
+// ── Dependency-audit lockfile detection (0sec#tool-reliability) ──────────────
+//
+// `npm audit` requires a package-lock.json and ENOLOCKs ("requires an existing
+// lockfile") on a pnpm/yarn repo. We detect the package manager from the
+// lockfile present in the audit cwd and run the MATCHING audit instead, so an
+// agent that reflexively reaches for `npm audit` still gets a real result.
+
+export type DetectedPackageManager = "pnpm" | "yarn" | "npm";
+
+/** Lockfile → owning package manager, in detection-precedence order. */
+const LOCKFILE_TO_PM: Array<{ file: string; pm: DetectedPackageManager }> = [
+  { file: "pnpm-lock.yaml", pm: "pnpm" },
+  { file: "yarn.lock", pm: "yarn" },
+  { file: "package-lock.json", pm: "npm" },
+  { file: "npm-shrinkwrap.json", pm: "npm" },
+];
+
+/**
+ * Detect the package manager owning `cwd` by the lockfile present. Returns null
+ * when no recognized lockfile exists (⇒ no dependency audit is runnable).
+ * Pure + exported for unit testing.
+ */
+export function detectPackageManager(cwd: string): DetectedPackageManager | null {
+  for (const { file, pm } of LOCKFILE_TO_PM) {
+    try {
+      if (existsSync(join(cwd, file))) return pm;
+    } catch {
+      // Unreadable dir entry — treat as absent and keep scanning.
+    }
+  }
+  return null;
+}
+
+export type DependencyAuditResolution =
+  | { kind: "not-audit" }
+  | { kind: "run"; tokens: string[]; note?: string; redirectedFrom?: DetectedPackageManager }
+  | { kind: "skip"; requested: DetectedPackageManager; message: string; remedy: string };
+
+/**
+ * Given already-tokenized command segments and the resolved audit cwd, decide
+ * how a package-manager `audit` invocation should run:
+ *   - `not-audit`  — not a `<pm> audit` command; run unchanged.
+ *   - `run`        — run these tokens; `redirectedFrom` set when we swapped the
+ *                    requested PM for the one the lockfile actually belongs to.
+ *   - `skip`       — no lockfile for any PM in cwd; audit can't run. Non-fatal.
+ *
+ * Only rewrites the executable (tokens[0]); every other token (flags like
+ * `--json`, `--audit-level`) is preserved. Single-segment pipelines only —
+ * a piped audit (`npm audit | jq`) is left untouched (kind "not-audit").
+ * Pure + exported for unit testing.
+ */
+export function resolveDependencyAuditCommand(
+  segments: string[][],
+  cwd: string,
+): DependencyAuditResolution {
+  if (segments.length !== 1) return { kind: "not-audit" };
+  const tokens = segments[0];
+  const exe = tokens[0];
+  const sub = tokens[1];
+  if (!PACKAGE_MANAGERS.has(exe) || sub !== "audit") return { kind: "not-audit" };
+
+  const requested = exe as DetectedPackageManager;
+  const detected = detectPackageManager(cwd);
+
+  if (!detected) {
+    return {
+      kind: "skip",
+      requested,
+      message: `no ${requested} lockfile found in the audit directory — skipping dependency audit.`,
+      remedy:
+        "run the audit where a lockfile (pnpm-lock.yaml / yarn.lock / package-lock.json) exists, or generate one first.",
+    };
+  }
+
+  if (detected === requested) {
+    return { kind: "run", tokens };
+  }
+
+  // Mismatch: requested one PM, lockfile belongs to another. Swap the
+  // executable so the audit actually runs against the present lockfile.
+  const rewritten = [detected, ...tokens.slice(1)];
+  return {
+    kind: "run",
+    tokens: rewritten,
+    redirectedFrom: requested,
+    note: `[note: '${requested} audit' redirected to '${detected} audit' — the repo carries a ${detected} lockfile, not a ${requested} one.]`,
+  };
+}
+
 function isCommandAllowed(tokens: string[]): boolean {
   const executable = tokens[0];
   if (!executable || !ALLOWED_COMMANDS.has(executable)) {
     return false;
   }
 
-  if (executable === "npm") {
+  // npm / pnpm / yarn are all scoped to the same read-only audit subcommands.
+  if (PACKAGE_MANAGERS.has(executable)) {
     const subcommand = tokens[1];
     return !!subcommand && ALLOWED_NPM_SUBCOMMANDS.has(subcommand);
   }
@@ -919,24 +1024,102 @@ function validateCommandTokens(tokens: string[]): void {
   }
 }
 
+// run_command subprocess stdout/stderr ceiling. The old 1 MiB limit made a
+// broad `rg`/`grep` sweep over a large repo abort with `spawnSync … ENOBUFS`
+// (stdout buffer reached maxBuffer size limit) instead of returning results.
+// 64 MiB comfortably holds a wide sweep; on the rare overflow we now return
+// the partial capture with a truncation note rather than crashing.
+const MAX_COMMAND_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Install-hint for optional binaries the audit agent can drive through
+ * run_command. Used to turn a raw ENOENT spawn failure into an actionable
+ * "not installed — skipping (install: …)" message + tool-health event.
+ */
+const OPTIONAL_BINARY_INSTALL_HINTS: Record<string, string> = {
+  semgrep: "pip install semgrep  (or: brew install semgrep)",
+  codeql: "https://github.com/github/codeql-cli-binaries/releases",
+  foxguard: "internal tool — provision on the runner image",
+  jq: "brew install jq  (or: apt-get install jq)",
+};
+
+/**
+ * Install hints for the structured external scanners (run_sqlmap / run_nmap /
+ * run_ffuf / run_nuclei). Used to turn an ENOENT (binary absent) into a
+ * graceful, actionable skip instead of a raw spawn error.
+ */
+const SCANNER_INSTALL_HINTS: Record<string, string> = {
+  sqlmap: "apt-get install sqlmap  (or: pip install sqlmap)",
+  nmap: "apt-get install nmap  (or: brew install nmap)",
+  ffuf: "go install github.com/ffuf/ffuf/v2@latest  (or: brew install ffuf)",
+  nuclei: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest  (or: brew install nuclei)",
+};
+
 function executePipeline(
   segments: string[][],
   cwd: string,
   timeout: number,
+  onHealth?: (input: ToolHealthRecordInput) => void,
 ): ToolResult {
   let stdin: string | Buffer | undefined;
 
   for (const tokens of segments) {
-    const result = spawnSync(tokens[0], tokens.slice(1), {
+    const bin = tokens[0];
+    const result = spawnSync(bin, tokens.slice(1), {
       cwd,
       timeout,
       input: stdin,
-      maxBuffer: 1024 * 1024,
+      maxBuffer: MAX_COMMAND_BUFFER,
       env: sanitizedEnv(),
       encoding: "utf-8",
     });
 
     if (result.error) {
+      const err = result.error as NodeJS.ErrnoException;
+
+      // ENOBUFS — output exceeded even the raised ceiling. Return the partial
+      // capture (spawnSync fills stdout up to maxBuffer before aborting) with a
+      // clear truncation note rather than a hard crash. Classify as a
+      // buffer-limit tool-health event so the operator sees WHY it was clipped.
+      if (err.code === "ENOBUFS") {
+        onHealth?.({
+          tool: "run_command",
+          category: "buffer-limit",
+          message: `'${bin}' output exceeded the ${Math.round(MAX_COMMAND_BUFFER / (1024 * 1024))}MB buffer; returning partial results.`,
+          remedy: "Narrow the query (add a path filter, -m/--max-count, or --max-filesize) or pipe through head.",
+        });
+        const partial = typeof result.stdout === "string" ? result.stdout : "";
+        const note = `\n[truncated: '${bin}' output exceeded the ${Math.round(MAX_COMMAND_BUFFER / (1024 * 1024))}MB buffer — results are PARTIAL. Narrow the search (path filter / -m / --max-filesize) for the full set.]`;
+        // Continue the pipeline with the partial stdout as the next stdin so a
+        // trailing `| head`/`| wc` still produces a bounded, useful result.
+        stdin = partial;
+        if (segments[segments.length - 1] === tokens) {
+          return { success: true, output: partial.slice(0, 10_000) + note };
+        }
+        continue;
+      }
+
+      // ENOENT — the binary isn't installed on this runner (semgrep/codeql/…).
+      // Graceful skip: a clear "not installed — skipping" result that does NOT
+      // read as a hard crash, plus a missing-binary tool-health event.
+      if (err.code === "ENOENT") {
+        const hint = OPTIONAL_BINARY_INSTALL_HINTS[bin];
+        onHealth?.({
+          tool: bin,
+          category: "missing-binary",
+          message: `'${bin}' is not installed on this runner — skipping.`,
+          ...(hint ? { remedy: `install: ${hint}` } : {}),
+        });
+        return {
+          success: true,
+          output: {
+            skipped: true,
+            reason: `'${bin}' not installed — skipping.`,
+            ...(hint ? { install: hint } : {}),
+          },
+        };
+      }
+
       throw result.error;
     }
 
@@ -2233,6 +2416,14 @@ export class ToolExecutor {
    */
   private _idFactory: () => string;
 
+  /**
+   * Tool-health recorder (0sec#tool-reliability). Uses the shared tracker on
+   * the ToolContext when the caller wired one (so the run summary sees the same
+   * events), else a private per-executor tracker so recording is always safe.
+   * Either way, new distinct events fan out on the event bus as `tool_health`.
+   */
+  private _toolHealth: ToolHealthTracker;
+
   constructor(
     ctx: ToolContext,
     db: osecDB | null = null,
@@ -2241,6 +2432,40 @@ export class ToolExecutor {
     this.ctx = ctx;
     this.db = db;
     this._idFactory = idFactory;
+    this._toolHealth =
+      ctx.toolHealth ??
+      new ToolHealthTracker({
+        emit: (event) => {
+          eventBus.emit("tool_health", {
+            tool: event.tool,
+            category: event.category,
+            message: event.message,
+            ...(event.remedy ? { remedy: event.remedy } : {}),
+            count: event.count,
+          });
+        },
+      });
+  }
+
+  /**
+   * Record a structured tool-failure / skip event (missing binary, buffer
+   * limit, wrong lockfile, policy/scope denial). Fail-soft — never throws.
+   * Exposed so the four reliability fixes classify their degraded paths.
+   */
+  private recordToolHealth(input: ToolHealthRecordInput): void {
+    try {
+      this._toolHealth.record(input);
+    } catch {
+      // Reporting is best-effort; never let it break a tool call.
+    }
+  }
+
+  /**
+   * Concise roll-up of tool-health events recorded by this executor, for the
+   * per-run "N tool issues" line and the CLI /doctor path.
+   */
+  toolHealthSummary(): ToolHealthSummary {
+    return this._toolHealth.summary();
   }
 
   /** Check if playwright is installed (cached). */
@@ -5842,6 +6067,12 @@ export class ToolExecutor {
       }
 
       if (!isCommandAllowed(tokens)) {
+        this.recordToolHealth({
+          tool: "run_command",
+          category: "policy-denied",
+          message: `command '${tokens[0]}${tokens[1] ? ` ${tokens[1]}` : ""}' is not on the run_command allowlist.`,
+          remedy: `permitted: ${[...ALLOWED_COMMANDS].join(", ")} (package managers are audit/read-only scoped).`,
+        });
         return {
           success: false,
           output: null,
@@ -5864,10 +6095,53 @@ export class ToolExecutor {
     const timeout = (args.timeout as number) ?? 30_000;
     const cwd = resolveScopedPath(this.ctx.scopePath, requestedCwd ?? ".");
 
+    // Dependency-audit lockfile reconciliation (0sec#tool-reliability): an
+    // `npm audit` on a pnpm/yarn repo ENOLOCKs. Detect the real package
+    // manager from the lockfile and either redirect to the matching audit or
+    // skip non-fatally when no lockfile exists.
+    let auditNote: string | undefined;
+    const auditResolution = resolveDependencyAuditCommand(tokenizedSegments, cwd);
+    if (auditResolution.kind === "skip") {
+      this.recordToolHealth({
+        tool: "run_command",
+        category: "wrong-lockfile",
+        message: auditResolution.message,
+        remedy: auditResolution.remedy,
+      });
+      return {
+        success: true,
+        output: { skipped: true, reason: auditResolution.message },
+      };
+    }
+    if (auditResolution.kind === "run") {
+      tokenizedSegments[0] = auditResolution.tokens;
+      if (auditResolution.redirectedFrom) {
+        auditNote = auditResolution.note;
+        this.recordToolHealth({
+          tool: "run_command",
+          category: "wrong-lockfile",
+          message: `'${auditResolution.redirectedFrom} audit' redirected to '${auditResolution.tokens[0]} audit' (repo lockfile is ${auditResolution.tokens[0]}).`,
+          remedy: `run '${auditResolution.tokens[0]} audit' directly to match the repo's lockfile.`,
+        });
+      }
+    }
+
     try {
-      return executePipeline(tokenizedSegments, cwd, timeout);
+      const result = executePipeline(tokenizedSegments, cwd, timeout, (input) =>
+        this.recordToolHealth(input),
+      );
+      // Prepend the redirect note so the agent sees WHY the executable changed.
+      if (auditNote && result.success && typeof result.output === "string") {
+        return { ...result, output: `${auditNote}\n${result.output}` };
+      }
+      return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      this.recordToolHealth({
+        tool: "run_command",
+        category: "error",
+        message: `'${tokenizedSegments[0]?.[0] ?? "command"}' failed: ${msg.slice(0, 200)}`,
+      });
       return { success: false, output: null, error: msg.slice(0, 2_000) };
     }
   }
@@ -6377,6 +6651,12 @@ export class ToolExecutor {
     });
     if (!verdict.allowed) {
       if (verdict.countsAsBlocked) this.ctx.enforcement?.noteOutOfScopeBlocked();
+      this.recordToolHealth({
+        tool,
+        category: "scope-denied",
+        message: verdict.reason,
+        remedy: "confirm the target is in the engagement scope and run with --allow-scanners.",
+      });
       return { success: false, output: null, error: verdict.reason };
     }
     if (this.ctx.rateLimiter) await this.ctx.rateLimiter.acquire(scopeUrl);
@@ -6414,15 +6694,40 @@ export class ToolExecutor {
         error: outcome.message,
         durationMs: outcome.durationMs,
       });
-      // ENOENT → the binary isn't installed on this runner. Surface a clear,
-      // actionable error rather than a cryptic spawn failure.
-      const hint = /ENOENT/.test(outcome.message)
-        ? ` (is '${binary}' installed on the runner?)`
-        : "";
+      // ENOENT → the binary isn't installed on this runner. Graceful skip: a
+      // clear "not installed — skipping (install: …)" result that does NOT
+      // count as a hard failure, plus a missing-binary tool-health event, so
+      // the operator sees WHY the scanner didn't run and how to fix it.
+      if (/ENOENT|not found/i.test(outcome.message)) {
+        const install = SCANNER_INSTALL_HINTS[binary];
+        this.recordToolHealth({
+          // Attribute to the missing BINARY (what the operator installs), so the
+          // summary reads "missing: nuclei, sqlmap" rather than the tool name.
+          tool: binary,
+          category: "missing-binary",
+          message: `'${binary}' is not installed on this runner — skipping ${tool}.`,
+          ...(install ? { remedy: `install: ${install}` } : {}),
+        });
+        return {
+          success: true,
+          output: {
+            skipped: true,
+            scanner: tool,
+            reason: `'${binary}' not installed — skipping.`,
+            ...(install ? { install } : {}),
+          },
+        };
+      }
+      // Any other spawn failure is a genuine error.
+      this.recordToolHealth({
+        tool,
+        category: "error",
+        message: `${tool} failed: ${outcome.message}`.slice(0, 300),
+      });
       return {
         success: false,
         output: null,
-        error: `${tool} failed: ${outcome.message}${hint}`,
+        error: `${tool} failed: ${outcome.message}`,
       };
     }
 

@@ -10,6 +10,7 @@ import type { OastCollaborator } from "../oast/types.js";
 import type { SessionEngine } from "./session.js";
 import type { WafDetector } from "../scope/waf-detect.js";
 import type { ScanCostLedger } from "./cost-ledger.js";
+import type { ToolHealthTracker } from "./tool-health.js";
 
 // ── Agent Roles ──
 
@@ -473,6 +474,17 @@ export interface ToolContext {
    * their ledger contributions price identically to the parent.
    */
   costModel?: string;
+  /**
+   * Tool-health recorder (0sec#tool-reliability). When present, the executor
+   * routes structured tool-failure / skip events (missing binary, buffer
+   * limit, wrong lockfile, policy/scope denial) into it so the run can surface
+   * a concise "N tool issues" summary and the CLI /doctor path can explain WHY
+   * a tool didn't run. Absent for callers that don't care — the executor then
+   * creates its own private tracker so recording is always safe; only the
+   * shared summary is unavailable. Fail-soft: recording never aborts a tool
+   * call.
+   */
+  toolHealth?: ToolHealthTracker;
 }
 
 // ── Dispatch Mode (0sec#232) ──

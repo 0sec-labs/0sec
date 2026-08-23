@@ -542,6 +542,27 @@ export interface SubagentProgressPayload {
   [k: string]: unknown;
 }
 
+/**
+ * A single tool-health event (a tool failed or was skipped, and why).
+ * Emitted by the ToolExecutor's {@link ToolHealthTracker} sink so a UI /
+ * diagnostics consumer can surface "N tool issues" without polling the
+ * executor. Mirrors the `ToolHealthEvent` shape in agent/tool-health.ts;
+ * declared structurally here to avoid an events→agent import cycle.
+ */
+export interface ToolHealthPayload {
+  /** Tool / command name the issue is attributed to. */
+  tool: string;
+  /** Coarse taxonomy: missing-binary | buffer-limit | wrong-lockfile | policy-denied | scope-denied | error. */
+  category: string;
+  /** Operator-facing description of what happened. */
+  message: string;
+  /** Optional actionable remedy hint. */
+  remedy?: string;
+  /** Dedup count for this (tool, category, message) triple at emit time. */
+  count: number;
+  [k: string]: unknown;
+}
+
 /** Discriminated union of all events flowing through the bus. */
 export type osecEvent =
   | { type: "step_started"; payload: StepStartedPayload }
@@ -566,7 +587,8 @@ export type osecEvent =
   | { type: "phase_started"; payload: PhaseStartedPayload }
   | { type: "phase_completed"; payload: PhaseCompletedPayload }
   | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload }
-  | { type: "subagent_progress"; payload: SubagentProgressPayload };
+  | { type: "subagent_progress"; payload: SubagentProgressPayload }
+  | { type: "tool_health"; payload: ToolHealthPayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = osecEvent["type"];
