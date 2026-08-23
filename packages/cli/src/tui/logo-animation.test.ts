@@ -5,6 +5,7 @@ import {
   finalLogoFrame,
   logoAnimationFrameCount,
   logoAnimationLoops,
+  logoHalfBlockRows,
   logoRowRuns,
   type LogoAnimStyle,
   type LogoFrame,
@@ -386,6 +387,63 @@ describe("logoRowRuns", () => {
     // A mid-strike frame reveals some slash cells: an "error" run must appear.
     const frame = computeLogoFrame(LOGO, "strike", logoAnimationFrameCount("strike") - 1);
     const tones = new Set(frame.flatMap((row) => logoRowRuns(row).map((r) => r.tone)));
+    expect(tones.has("error")).toBe(true);
+    expect(tones.has("text")).toBe(true);
+  });
+});
+
+describe("logoHalfBlockRows", () => {
+  const width = LOGO.reduce((w, row) => Math.max(w, row.length), 0);
+
+  it("halves the row count (ceil of the source height)", () => {
+    const rows = logoHalfBlockRows(finalLogoFrame(LOGO));
+    expect(rows.length).toBe(Math.ceil(LOGO.length / 2));
+    expect(rows.length).toBe(3); // 5 source rows -> 3 half-block rows
+  });
+
+  it("run lengths across every packed row sum to the grid width (no overflow)", () => {
+    for (const style of ["off", "glitch", "rainbow", "shimmer", "strike"] as LogoAnimStyle[]) {
+      const frame = computeLogoFrame(LOGO, style, logoAnimationFrameCount(style) - 1);
+      for (const row of logoHalfBlockRows(frame)) {
+        expect(row.reduce((n, r) => n + r.length, 0)).toBe(width);
+      }
+    }
+  });
+
+  it("coalesces adjacent cells sharing (glyph, fgTone, bgTone)", () => {
+    for (const row of logoHalfBlockRows(finalLogoFrame(LOGO))) {
+      for (let i = 1; i < row.length; i += 1) {
+        const same =
+          row[i]!.glyph === row[i - 1]!.glyph &&
+          row[i]!.fgTone === row[i - 1]!.fgTone &&
+          row[i]!.bgTone === row[i - 1]!.bgTone;
+        expect(same).toBe(false);
+      }
+    }
+  });
+
+  it("blank runs carry no tones; lit runs carry a foreground tone", () => {
+    for (const row of logoHalfBlockRows(finalLogoFrame(LOGO))) {
+      for (const run of row) {
+        if (run.glyph === " ") {
+          expect(run.fgTone).toBeNull();
+          expect(run.bgTone).toBeNull();
+        } else {
+          expect(run.fgTone).not.toBeNull();
+        }
+      }
+    }
+  });
+
+  it("uses █/▀/▄ glyphs and keeps the red slash tone (final frame)", () => {
+    const rows = logoHalfBlockRows(finalLogoFrame(LOGO));
+    const glyphs = new Set(rows.flatMap((row) => row.map((r) => r.glyph)));
+    expect(glyphs.has("█")).toBe(true); // solid where both source cells are lit
+    // The slash spans single source rows, so it surfaces as a half block whose
+    // foreground (or two-tone background) carries the "error" tone.
+    const tones = new Set(
+      rows.flatMap((row) => row.flatMap((r) => [r.fgTone, r.bgTone])),
+    );
     expect(tones.has("error")).toBe(true);
     expect(tones.has("text")).toBe(true);
   });
