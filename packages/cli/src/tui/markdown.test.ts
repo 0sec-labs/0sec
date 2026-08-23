@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CODE_BLOCK_PAD,
   LIST_INDENT_WIDTH,
   QUOTE_GUTTER_WIDTH,
   listItemGutterWidth,
@@ -12,6 +13,19 @@ import {
   type MdBlock,
   type MdSpan,
 } from "./markdown.js";
+import { highlightCode } from "./syntax-style.js";
+
+/** Concatenated token texts must equal the input — the highlighter never edits. */
+function tokenText(line: string, language?: string): string {
+  return highlightCode(line, language)
+    .map((token) => token.text)
+    .join("");
+}
+
+/** The kinds a line's tokens carry, in order. */
+function tokenKinds(line: string, language?: string): string[] {
+  return highlightCode(line, language).map((token) => token.kind);
+}
 
 const ESC = "\u001b";
 
@@ -367,10 +381,22 @@ describe("code blocks", () => {
     expect(block?.kind).toBe("code");
     const lines = (block as { lines: string[] }).lines;
     expect(lines).toHaveLength(1);
-    // Exactly the leading 19 cells of the source line plus a one-cell mark:
-    // the prefix is verbatim, never re-flowed.
-    expect(lines[0]).toBe("const message = 'a …");
-    expect(lines[0]!.length).toBe(20);
+    // The code surface reserves CODE_BLOCK_PAD cells for its padded gutter, so
+    // a line is truncated to width - CODE_BLOCK_PAD: the leading 17 cells of
+    // the source (verbatim, never re-flowed) plus a one-cell mark.
+    expect(lines[0]).toBe("const message = '…");
+    expect(lines[0]!.length).toBe(20 - CODE_BLOCK_PAD);
+  });
+
+  it("keeps a padded code line within the content column", () => {
+    // A full-width source line must leave room for the surface's two gutter
+    // cells so the rendered block cannot overflow the content column.
+    const src = "```\n" + "x".repeat(200) + "\n```";
+    for (const width of [10, 20, 40, 80, 120]) {
+      const [block] = renderMarkdown(src, width);
+      const lines = (block as { lines: string[] }).lines;
+      expect(lines[0]!.length).toBeLessThanOrEqual(width - CODE_BLOCK_PAD);
+    }
   });
 
   it("leaves a short code line untouched", () => {
@@ -386,6 +412,84 @@ describe("code blocks", () => {
   it("expands tabs instead of emitting a cursor-moving tab", () => {
     const [block] = renderMarkdown("```\n\tindented\n```", 40);
     expect((block as { lines: string[] }).lines).toEqual(["    indented"]);
+  });
+});
+
+describe("code highlighting", () => {
+  it("parses a fence with a language as a code block, not literal text", () => {
+    const [block] = renderMarkdown("```bash\nnmap -sV target\n```", 80);
+    expect(block?.kind).toBe("code");
+    const lines = (block as { language?: string; lines: string[] }).lines;
+    // No fence backticks survive into the rendered lines.
+    for (const line of lines) expect(line).not.toContain("```");
+    expect((block as { language?: string }).language).toBe("bash");
+  });
+
+  it("never rewrites the source: token texts rejoin to the line", () => {
+    const samples: Array<[string, string]> = [
+      ["ts", "const x: number = 0x1F; // hex"],
+      ["bash", 'echo "$HOME" | grep -i foo # note'],
+      ["json", '{ "id": 1, "ok": true }'],
+      ["python", "def f(): return 1  # unknown lang stays plain"],
+      ["ts", "    indented();"],
+    ];
+    for (const [lang, line] of samples) expect(tokenText(line, lang)).toBe(line);
+  });
+
+  it("highlights bash comments, strings, keywords and variables", () => {
+    expect(tokenKinds("echo hi # comment", "bash")).toContain("comment");
+    expect(tokenKinds('x="value"', "bash")).toContain("string");
+    expect(tokenKinds("if true; then", "bash")).toContain("keyword");
+    expect(tokenKinds('echo "$HOME"', "bash")).toContain("string");
+    expect(tokenKinds("echo $HOME", "bash")).toContain("variable");
+  });
+
+  it("highlights ts keywords, strings, numbers and comments", () => {
+    const kinds = tokenKinds("const n = 42; // c", "ts");
+    expect(kinds).toContain("keyword");
+    expect(kinds).toContain("number");
+    expect(kinds).toContain("comment");
+    expect(tokenKinds("let s = 'hi'", "js")).toContain("string");
+    expect(tokenKinds("foo(bar)", "ts")).toContain("function");
+    expect(tokenKinds("interface X {}", "ts")).toContain("keyword");
+  });
+
+  it("highlights json keys as properties and literals as constants", () => {
+    expect(tokenKinds('"key": 1', "json")).toContain("property");
+    expect(tokenKinds('"v": true', "json")).toContain("constant");
+    expect(tokenKinds('"v": -3.5', "json")).toContain("number");
+    // A bare string value is a string, not a property.
+    expect(tokenKinds('"only a value"', "json")).toEqual(["string"]);
+  });
+
+  it("leaves an unknown or absent language as a single plain token", () => {
+    expect(highlightCode("anything at all", "rustlang")).toEqual([
+      { text: "anything at all", kind: "plain" },
+    ]);
+    expect(highlightCode("anything at all")).toEqual([
+      { text: "anything at all", kind: "plain" },
+    ]);
+  });
+
+  it("preserves interior indentation as leading plain whitespace", () => {
+    const tokens = highlightCode("    return 1", "ts");
+    expect(tokens[0]!.text.startsWith("    ")).toBe(true);
+    expect(tokens.map((t) => t.text).join("")).toBe("    return 1");
+  });
+
+  it("stays linear on pathological code lines", () => {
+    const cases = [
+      "`".repeat(5000),
+      "$".repeat(5000),
+      "/".repeat(5000),
+      '"'.repeat(5000),
+      "a ".repeat(2500),
+    ];
+    const start = Date.now();
+    for (const line of cases) {
+      for (const lang of ["bash", "ts", "js", "json"]) highlightCode(line, lang);
+    }
+    expect(Date.now() - start).toBeLessThan(1000);
   });
 });
 

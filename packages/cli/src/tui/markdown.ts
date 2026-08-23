@@ -71,6 +71,14 @@ export const QUOTE_GUTTER_WIDTH = 2;
 /** Cells one level of list nesting adds, regardless of the source indent. */
 export const LIST_INDENT_WIDTH = 2;
 
+/**
+ * Cells the renderer reserves around a code block's lines: one column of
+ * horizontal padding on each side of the tinted code surface. Code lines are
+ * truncated to `width - CODE_BLOCK_PAD` so the padded surface never overflows
+ * the content column. Kept in sync with the renderer's `paddingX`.
+ */
+export const CODE_BLOCK_PAD = 2;
+
 /** Cells between two table columns: space, bar, space. Kept in sync with the renderer. */
 export const TABLE_COLUMN_GAP = " │ ";
 /** The separator-row glyph that sits where a `TABLE_COLUMN_GAP` bar sits. */
@@ -997,7 +1005,8 @@ function wrapBlock(block: MdBlock, width: number): MdBlock {
     case "rule":
       return block;
     case "code": {
-      const lines = block.lines.map((line) => truncateCodeLine(line, width));
+      const inner = Math.max(1, width - CODE_BLOCK_PAD);
+      const lines = block.lines.map((line) => truncateCodeLine(line, inner));
       return block.language
         ? { kind: "code", language: block.language, lines }
         : { kind: "code", lines };

@@ -9,6 +9,23 @@ import {
   type MdSpan,
 } from "../markdown.js";
 import type { Theme } from "../theme-context.js";
+import { codeTokenStyle, highlightCode, type CodeTokenStyle } from "../syntax-style.js";
+
+/** Combine a token's weight flags into a single TextAttributes bitmask. */
+function codeTokenAttributes(style: CodeTokenStyle): number | undefined {
+  let attributes = 0;
+  if (style.bold) attributes |= TextAttributes.BOLD;
+  if (style.italic) attributes |= TextAttributes.ITALIC;
+  if (style.dim) attributes |= TextAttributes.DIM;
+  return attributes === 0 ? undefined : attributes;
+}
+
+/** Display width of a string in cells (code points), matching markdown.ts. */
+function codeLineWidth(line: string): number {
+  let n = 0;
+  for (const _ of line) n += 1;
+  return n;
+}
 
 /**
  * Terminal text ATTRIBUTES for a markdown span — the real weight, not just a
@@ -54,7 +71,7 @@ export function spanColor(style: MdSpan["style"], theme: Theme, tone?: string): 
  * overflowing its row.
  */
 export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Theme, tone?: string) {
-  const { MUTED, ACCENT, PRIMARY, TEXT } = theme;
+  const { MUTED, PRIMARY, TEXT } = theme;
   return blocks.map((block, index) => {
     const id = `${key}-b${index}`;
     if (block.kind === "rule") {
@@ -102,11 +119,41 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
       );
     }
     if (block.kind === "code") {
+      // A fenced block renders as a DISTINCT surface — a subtle tinted
+      // background with a one-cell gutter on each side (reserved by
+      // CODE_BLOCK_PAD when the lines were truncated, so it never overflows the
+      // content column) — not as indented prose. Each line is tokenised and
+      // painted per token, so keywords/strings/comments/numbers carry theme
+      // colour and real weight. Every row is padded to the block's widest line
+      // so the tinted surface reads as a clean rectangle regardless of how the
+      // parent sizes the box, and whitespace/indentation is preserved verbatim
+      // because a line's token texts concatenate back to the source line.
+      const { surfaceAlt } = theme;
+      const lang = block.language;
+      const langWidth = lang ? codeLineWidth(lang) : 0;
+      const maxWidth = block.lines.reduce((w, line) => Math.max(w, codeLineWidth(line)), langWidth);
       return (
-        <box key={id} flexDirection="column" marginLeft={2}>
-          {block.lines.map((line, i) => (
-            <text key={`${id}-${i}`} fg={ACCENT}>{line}</text>
-          ))}
+        <box key={id} flexDirection="column" flexShrink={0} minWidth={0} paddingX={1} backgroundColor={surfaceAlt}>
+          {lang ? (
+            <text fg={MUTED} attributes={TextAttributes.DIM}>
+              {lang + " ".repeat(Math.max(0, maxWidth - langWidth))}
+            </text>
+          ) : null}
+          {block.lines.map((line, i) => {
+            const tokens = highlightCode(line, lang);
+            const pad = Math.max(0, maxWidth - codeLineWidth(line));
+            return (
+              <box key={`${id}-${i}`} flexDirection="row" flexShrink={0} minWidth={0}>
+                {tokens.map((token, j) => {
+                  const style = codeTokenStyle(token.kind, theme);
+                  return (
+                    <text key={`${id}-${i}-${j}`} flexShrink={0} fg={style.fg} attributes={codeTokenAttributes(style)}>{token.text}</text>
+                  );
+                })}
+                {pad > 0 ? <text flexShrink={0} fg={theme.TEXT}>{" ".repeat(pad)}</text> : null}
+              </box>
+            );
+          })}
         </box>
       );
     }
