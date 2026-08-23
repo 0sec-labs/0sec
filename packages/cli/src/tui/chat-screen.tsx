@@ -437,9 +437,10 @@ export interface ChatScreenProps {
   /**
    * The shell-level plugin-host manager, if the shell wired one. Its `current()`
    * host is handed to the console session so ENABLED marketplace plugins'
-   * tools are available in chat. The shell bumps the chat's remount key on the
-   * manager's onChanged, so a plugin enabled in the market takes effect on the
-   * rebuilt session. Absent → no plugin tools (the default).
+   * tools are available in chat. This screen subscribes to the manager's
+   * onChanged and rebuilds its session IN PLACE — carrying the transcript, like
+   * /model — so a plugin enabled in the market takes effect WITHOUT wiping the
+   * live engagement. Absent → no plugin tools (the default).
    */
   pluginHostManager?: SessionPluginHostManager;
 }
@@ -861,6 +862,15 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   const [focusScrollOffset, setFocusScrollOffset] = useState(0);
   const { width, height } = useTerminalDimensions();
   const alive = useRef(true);
+  // Mirror the latest render values so the plugin-host effect can rebuild the
+  // session in place without re-subscribing on every state change.
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const modelIdRef = useRef(modelId);
+  modelIdRef.current = modelId;
+  const pendingHostRebuild = useRef(false);
   const turn = useRef(0);
   // The bottom bar's right cell (a "N turns · M tools" counter + sidebar toggle
   // glyphs) was removed: the counter was noise and the closed-state toggle
@@ -1100,7 +1110,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     // provider detection — not necessarily what was requested — so it is
     // the only value honest enough to display.
     return { session: created, model: runtime.resolvedModel() };
-  }, [options]);
+  }, [options, pluginHostManager]);
 
   useEffect(() => {
     let created: ConsoleSession | null = null;
@@ -1151,6 +1161,51 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       void created?.cleanup();
     };
   }, []);
+
+  // ── Marketplace → live console ────────────────────────────────────────────
+  // Enabling/disabling a plugin in the market RECONSTRUCTS the shared host (a
+  // new object) and fires onChanged; a session that captured the old host is
+  // stale. Rebuild the session IN PLACE carrying the transcript — exactly as
+  // /model does — rather than remounting the chat, which would wipe the
+  // engagement. Deferred while a turn is running and flushed at the boundary.
+  const rebuildForHost = useCallback(() => {
+    const previous = sessionRef.current;
+    if (!previous) return; // the mount effect will build with the current host
+    if (busyRef.current) {
+      pendingHostRebuild.current = true;
+      return;
+    }
+    let built: { session: ConsoleSession; model: string };
+    try {
+      built = buildSession({
+        model: modelIdRef.current ?? undefined,
+        initialMessages: previous.messages,
+      });
+    } catch {
+      return; // a failed rebuild leaves the operator exactly where they were
+    }
+    setSession(built.session);
+    setModelId(built.model);
+    void previous.cleanup();
+  }, [buildSession]);
+
+  useEffect(() => {
+    const mgr = pluginHostManager;
+    if (!mgr) return;
+    // Cold start: the manager may have primed its host AFTER this chat mounted,
+    // and priming does not fire onChanged — so adopt the current host once now
+    // (this effect re-runs when the async manager first becomes available).
+    rebuildForHost();
+    return mgr.onChanged(rebuildForHost);
+  }, [pluginHostManager, rebuildForHost]);
+
+  // Flush a rebuild that was deferred because a turn was in flight.
+  useEffect(() => {
+    if (!busy && pendingHostRebuild.current) {
+      pendingHostRebuild.current = false;
+      rebuildForHost();
+    }
+  }, [busy, rebuildForHost]);
 
   /**
    * Claim the structured diagnostics channel while the console is mounted.

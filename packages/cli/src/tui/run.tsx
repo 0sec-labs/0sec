@@ -3912,7 +3912,16 @@ function MarketRoute({ onExit, shell, pluginHostManager }: { onExit: () => void;
     // market is modal (no chat turn runs while it is up), so isTurnActive is
     // false and enable/run apply immediately. Without a manager it falls back
     // to the service's own overlay host (unchanged).
-    () => createPluginService({ registryUrl, pluginHostManager, isTurnActive: () => false }),
+    () =>
+      createPluginService({
+        registryUrl,
+        pluginHostManager,
+        isTurnActive: () => false,
+        // Same reserved set the manager loads with, so the market's own
+        // list/enable rejects a built-in-shadowing plugin instead of showing it
+        // "enabled" for a plugin the host will refuse to load.
+        reservedToolNames: Object.keys(TOOL_DEFINITIONS),
+      }),
     [registryUrl, pluginHostManager],
   );
   return (
@@ -4114,10 +4123,10 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   // The shell-level plugin-host manager (marketplace → live console). Created
   // async (it loads any already-enabled plugins on start); stays null until
   // ready, and stays null if creation fails — the chat/market then run without
-  // a shared host, exactly as before this feature. When the market enables or
-  // disables a plugin the manager reconstructs and fires onChanged, which bumps
-  // the chat generation so the console session rebuilds with the new host (the
-  // same remount mechanism a model switch uses).
+  // a shared host, exactly as before this feature. ChatScreen subscribes to the
+  // manager's onChanged itself and rebuilds its session IN PLACE (carrying the
+  // transcript), so enabling a plugin in the market no longer remounts/wipes the
+  // live console.
   const [pluginHostManager, setPluginHostManager] = useState<SessionPluginHostManager | null>(null);
   useEffect(() => {
     let disposed = false;
@@ -4130,7 +4139,6 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
         }
         created = mgr;
         setPluginHostManager(mgr);
-        mgr.onChanged(() => setChatGeneration((g) => g + 1));
       })
       .catch(() => {
         /* fail-soft: no shared plugin host; chat + market work unchanged */
