@@ -83,6 +83,17 @@ export interface StoredSessionMeta {
   messageCount: number;
   /** First operator message, trimmed, for a human-readable listing. */
   preview: string;
+  /**
+   * A short "what this engagement was about / did" objective, supplied by the
+   * caller (chat-screen passes the session objective at save time). Unlike
+   * `preview` — which is mechanically the first operator message — this is an
+   * intent line the resume UI can show so a row says what the session was
+   * *for*, not merely how it opened. Optional: absent when the caller had no
+   * objective to record, and sanitised exactly like `preview` (single line,
+   * control-stripped, length-capped) since it is rendered into the terminal
+   * from a file a hostile local process could have rewritten.
+   */
+  summary?: string;
 }
 
 /** A full transcript: the listing metadata plus the messages to replay. */
@@ -116,6 +127,13 @@ export const DEFAULT_PRUNE_KEEP = 20;
 
 /** Longest preview retained; a listing row is one terminal line, not a page. */
 const PREVIEW_MAX_LENGTH = 120;
+
+/**
+ * Longest summary retained. Held to the same one-line budget as the preview:
+ * the objective shares the listing row with the preview, and a summary that ran
+ * to a paragraph would defeat the point of a scannable resume picker.
+ */
+const SUMMARY_MAX_LENGTH = 120;
 
 /**
  * Ids are used as filenames, so this pattern is a security boundary, not a
@@ -180,12 +198,26 @@ const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]+/g;
  * session they are about to resume). Whitespace collapses for the same reason:
  * one entry is one line.
  */
-function sanitizePreview(value: unknown): string {
+function sanitizeLine(value: unknown, maxLength: number): string {
   if (typeof value !== "string") return "";
   const flattened = value.replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim();
-  return flattened.length > PREVIEW_MAX_LENGTH
-    ? `${flattened.slice(0, PREVIEW_MAX_LENGTH - 1)}…`
-    : flattened;
+  return flattened.length > maxLength ? `${flattened.slice(0, maxLength - 1)}…` : flattened;
+}
+
+function sanitizePreview(value: unknown): string {
+  return sanitizeLine(value, PREVIEW_MAX_LENGTH);
+}
+
+/**
+ * A sanitised summary, or undefined. Runs the same control-stripping and
+ * length cap as the preview, but collapses a blank/non-string/absent value to
+ * `undefined` rather than `""` so an unset objective is an *omitted* field — the
+ * listing distinguishes "no objective recorded" from an empty one, and a
+ * corrupt or oversized value on disk normalises down instead of throwing.
+ */
+function sanitizeSummary(value: unknown): string | undefined {
+  const flattened = sanitizeLine(value, SUMMARY_MAX_LENGTH);
+  return flattened.length > 0 ? flattened : undefined;
 }
 
 /**
@@ -203,6 +235,7 @@ function toMeta(id: string, raw: unknown, messageCount: number): StoredSessionMe
   const target = optionalString(raw, "target");
   const model = optionalString(raw, "model");
   const mode = optionalString(raw, "mode");
+  const summary = sanitizeSummary(rawValue(raw, "summary"));
   return {
     id,
     savedAt: typeof savedAt === "number" && Number.isFinite(savedAt) ? savedAt : 0,
@@ -212,6 +245,7 @@ function toMeta(id: string, raw: unknown, messageCount: number): StoredSessionMe
     cwd: typeof cwd === "string" ? cwd : "",
     messageCount,
     preview: sanitizePreview(rawValue(raw, "preview")),
+    ...(summary !== undefined ? { summary } : {}),
   };
 }
 
@@ -253,7 +287,9 @@ function parseSession(id: string, text: string): StoredSession | null {
  *
  * `messageCount` and `preview` are recomputed from the payload rather than
  * trusted from the caller, so a listing can never claim a size the stored
- * transcript does not have.
+ * transcript does not have. A caller-supplied `summary` (on the `StoredSession`)
+ * is carried through `toMeta`, which sanitises it to a single capped line and
+ * drops it when blank — the field is persisted only when there is one to keep.
  */
 export function saveSession(session: StoredSession, homeDir?: string): boolean {
   try {

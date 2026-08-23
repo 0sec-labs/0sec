@@ -110,6 +110,81 @@ describe("save/load round-trip", () => {
   });
 });
 
+describe("summary", () => {
+  it("round-trips a summary through save → list → load", () => {
+    const home = makeHome();
+    saveSession(makeSession({ summary: "auth bypass on the admin console" }), home);
+
+    expect(loadSession("console-1111", home)?.summary).toBe("auth bypass on the admin console");
+    expect(listSessions(home)[0]?.summary).toBe("auth bypass on the admin console");
+  });
+
+  it("omits the field entirely when the caller supplies no summary", () => {
+    const home = makeHome();
+    // makeSession() carries no summary, so a saved-then-loaded session must not
+    // grow an empty one: absent stays absent, not "".
+    saveSession(makeSession(), home);
+
+    const loaded = loadSession("console-1111", home);
+    expect(loaded).not.toBeNull();
+    expect(loaded).not.toHaveProperty("summary");
+    expect(listSessions(home)[0]).not.toHaveProperty("summary");
+  });
+
+  it("drops a blank or whitespace-only summary rather than storing an empty line", () => {
+    const home = makeHome();
+    saveSession(makeSession({ summary: "   \n\t  " }), home);
+
+    expect(loadSession("console-1111", home)).not.toHaveProperty("summary");
+  });
+
+  it("caps an oversized summary to one line with an ellipsis", () => {
+    const home = makeHome();
+    saveSession(makeSession({ summary: "x".repeat(500) }), home);
+
+    const summary = loadSession("console-1111", home)?.summary ?? "";
+    expect(summary.length).toBe(120);
+    expect(summary.endsWith("…")).toBe(true);
+  });
+
+  it("strips control characters from a summary before it reaches the terminal", () => {
+    const home = makeHome();
+    const dir = sessionsDir(home);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "console-evil.json"),
+      JSON.stringify({
+        savedAt: 1,
+        cwd: "/w",
+        summary: "safe\u001B[2Jwiped\nline",
+        messages: [],
+      }),
+    );
+
+    expect(listSessions(home)[0]?.summary).toBe("safe [2Jwiped line");
+  });
+
+  it.each([
+    ["a number", 12],
+    ["an object", { text: "nope" }],
+    ["an array", ["nope"]],
+    ["null", null],
+    ["a boolean", true],
+  ])("drops a non-string summary (%s) instead of throwing", (_label, value) => {
+    const home = makeHome();
+    const dir = sessionsDir(home);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "console-odd.json"),
+      JSON.stringify({ savedAt: 1, cwd: "/w", summary: value, messages: [{ role: "user" }] }),
+    );
+
+    const loaded = loadSession("console-odd", home);
+    expect(loaded).not.toBeNull();
+    expect(loaded).not.toHaveProperty("summary");
+  });
+});
+
 describe("permissions", () => {
   it("creates the directory 0700 and the file 0600", () => {
     const home = makeHome();
