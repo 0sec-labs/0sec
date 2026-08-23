@@ -250,7 +250,7 @@ describe("shimmer (comet gradient)", () => {
     }
   });
 
-  it("sweeps a symmetric glow band, brightest at the head, fading both sides", () => {
+  it("sweeps a symmetric DARK band, darkest at the head, brightening both sides", () => {
     const f = 10;
     const frame = computeLogoFrame(LOGO, "shimmer", f);
     const colored = new Map<number, string>();
@@ -258,19 +258,19 @@ describe("shimmer (comet gradient)", () => {
       for (const [c, cell] of row.entries()) if (isHex(cell.tone)) colored.set(c, cell.tone);
     }
     const cols = [...colored.keys()];
-    // Several columns lit; the head (sweep col) is lit and the BRIGHTEST cell.
+    // The mark is white; shimmer is a dark band. The head is lit and DARKEST.
     expect(cols.length).toBeGreaterThan(2);
     expect(colored.has(f)).toBe(true);
-    const brightest = [...colored.entries()].reduce((a, b) => (greyLevel(b[1]) > greyLevel(a[1]) ? b : a));
-    expect(brightest[0]).toBe(f);
-    // The glow fades on BOTH sides of the head, not just one.
+    const darkest = [...colored.entries()].reduce((a, b) => (greyLevel(b[1]) < greyLevel(a[1]) ? b : a));
+    expect(darkest[0]).toBe(f);
+    // The band brightens back toward white on BOTH sides of the head.
     expect(Math.min(...cols)).toBeLessThan(f);
     expect(Math.max(...cols)).toBeGreaterThan(f);
-    expect(greyLevel(colored.get(f)!)).toBeGreaterThan(greyLevel(colored.get(Math.min(...cols))!));
-    expect(greyLevel(colored.get(f)!)).toBeGreaterThan(greyLevel(colored.get(Math.max(...cols))!));
+    expect(greyLevel(colored.get(f)!)).toBeLessThan(greyLevel(colored.get(Math.min(...cols))!));
+    expect(greyLevel(colored.get(f)!)).toBeLessThan(greyLevel(colored.get(Math.max(...cols))!));
   });
 
-  it("clips the left half at column 0 — head brightest with a right-side glow", () => {
+  it("clips the left half at column 0 — head darkest with a right-side band", () => {
     const frame = computeLogoFrame(LOGO, "shimmer", 0);
     const colored = new Map<number, string>();
     for (const row of frame) {
@@ -278,9 +278,9 @@ describe("shimmer (comet gradient)", () => {
     }
     const cols = [...colored.keys()];
     expect(Math.min(...cols)).toBe(0); // nothing left of column 0
-    expect(cols.length).toBeGreaterThan(1); // right-side glow present
-    const brightest = [...colored.entries()].reduce((a, b) => (greyLevel(b[1]) > greyLevel(a[1]) ? b : a));
-    expect(brightest[0]).toBe(0);
+    expect(cols.length).toBeGreaterThan(1); // right-side band present
+    const darkest = [...colored.entries()].reduce((a, b) => (greyLevel(b[1]) < greyLevel(a[1]) ? b : a));
+    expect(darkest[0]).toBe(0);
   });
 
   it("loops seamlessly (frame and frame+period are identical)", () => {
@@ -578,10 +578,10 @@ describe("pulse", () => {
 describe("shimmer comet tail brightness", () => {
   const greyLevel = (t: string): number => parseInt(t.slice(1, 3), 16);
 
-  it("fades monotonically on both sides of the head", () => {
+  it("brightens monotonically on both sides of the head", () => {
     const head = 12;
     const frame = computeLogoFrame(LOGO, "shimmer", head);
-    // Collect the (col -> grey level) of the glow, one entry per lit column.
+    // Collect the (col -> grey level) of the band, one entry per lit column.
     const byCol = new Map<number, number>();
     for (const row of frame) {
       for (const [c, cell] of row.entries()) {
@@ -590,15 +590,15 @@ describe("shimmer comet tail brightness", () => {
     }
     const cols = [...byCol.keys()];
     expect(cols.length).toBeGreaterThan(2);
-    // Brightness never increases as we walk AWAY from the head in either
-    // direction (symmetric band, not a one-sided comet).
+    // Brightness never DECREASES as we walk AWAY from the (darkest) head in
+    // either direction — white -> black -> white.
     const left = cols.filter((c) => c <= head).sort((a, b) => b - a); // head -> left
     const right = cols.filter((c) => c >= head).sort((a, b) => a - b); // head -> right
     for (let i = 1; i < left.length; i += 1) {
-      expect(byCol.get(left[i]!)!).toBeLessThanOrEqual(byCol.get(left[i - 1]!)!);
+      expect(byCol.get(left[i]!)!).toBeGreaterThanOrEqual(byCol.get(left[i - 1]!)!);
     }
     for (let i = 1; i < right.length; i += 1) {
-      expect(byCol.get(right[i]!)!).toBeLessThanOrEqual(byCol.get(right[i - 1]!)!);
+      expect(byCol.get(right[i]!)!).toBeGreaterThanOrEqual(byCol.get(right[i - 1]!)!);
     }
   });
 });

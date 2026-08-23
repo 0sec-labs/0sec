@@ -685,10 +685,11 @@ function shimmerFrame(grid: readonly string[], frame: number, width: number): Lo
   for (let offset = -SHIMMER_TAIL; offset <= SHIMMER_TAIL; offset += 1) {
     const col = idx + offset;
     if (col < 0 || col >= width) continue;
-    // Head (offset 0) brightest; the glow fades SYMMETRICALLY on BOTH sides
-    // by distance from the head, so it reads as a band, not a one-sided comet.
+    // The mark is white, so shimmer is a DARK band sweeping across it: the
+    // head (offset 0) is DARKEST and it brightens back toward white
+    // SYMMETRICALLY on BOTH sides — white -> black -> white, not the inverse.
     const dist = Math.abs(offset);
-    const l = 0.95 - (dist / SHIMMER_TAIL) * 0.62;
+    const l = 0.33 + (dist / SHIMMER_TAIL) * 0.62;
     const tone = greyHex(l);
     for (let r = 0; r < grid.length; r += 1) {
       const cell = out[r]![col]!;
