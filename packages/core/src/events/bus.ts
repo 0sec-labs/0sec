@@ -582,6 +582,35 @@ export interface TodosPayload {
   [k: string]: unknown;
 }
 
+/**
+ * The current "what am I working on" objective for a console session — a short,
+ * Title-Case label the TUI renders in a pill on the bottom bar (OMP-style). It
+ * is DISPLAY-ONLY: it never enters model-facing context (like {@link TodosPayload}
+ * it is a UI signal, not a tool result), and it updates IN PLACE — the instant
+ * heuristic arrives first (`refined: false`), and the optional model-refined
+ * rewrite replaces it later if it succeeds (`refined: true`).
+ *
+ * `scanId` matches {@link ConsoleSession.scanId}, so a renderer with more than
+ * one session on the bus can filter to its own (mirroring the subagent events).
+ * An empty `objective` means "no objective" and the TUI hides the pill.
+ */
+export interface SessionObjectivePayload {
+  /** Console session id this objective belongs to (ConsoleSession.scanId). */
+  scanId: string;
+  /**
+   * The short objective title (<= ~48 chars, ~3-6 words, Title Case). Empty
+   * string ⇒ the renderer hides the pill.
+   */
+  objective: string;
+  /**
+   * `false` for the instant heuristic derived from the operator's first
+   * message; `true` once the optional one-shot model refinement has replaced it.
+   * A renderer can use this to know the pill may still change once more.
+   */
+  refined: boolean;
+  [k: string]: unknown;
+}
+
 /** Discriminated union of all events flowing through the bus. */
 export type osecEvent =
   | { type: "step_started"; payload: StepStartedPayload }
@@ -608,7 +637,8 @@ export type osecEvent =
   | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload }
   | { type: "subagent_progress"; payload: SubagentProgressPayload }
   | { type: "tool_health"; payload: ToolHealthPayload }
-  | { type: "todos"; payload: TodosPayload };
+  | { type: "todos"; payload: TodosPayload }
+  | { type: "session_objective"; payload: SessionObjectivePayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = osecEvent["type"];

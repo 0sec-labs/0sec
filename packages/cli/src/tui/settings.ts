@@ -74,6 +74,11 @@ export interface TuiSettings {
   showLeftSidebar: boolean;
   /** Relative timestamps on transcript entries. */
   showTimestamps: boolean;
+  /**
+   * Bottom-bar "objective" pill: a short "what am I working on" title derived
+   * from the session's first message (chat-screen gates the pill on this).
+   */
+  showObjective: boolean;
   /** Header "target: …" segment (chat-screen gates the header target on this). */
   showTarget: boolean;
   /** Header "scope: …" segment (chat-screen gates the header scope on this). */
@@ -278,6 +283,15 @@ const DEFS: readonly TuiSettingDef[] = [
     group: "Transcript",
   },
   {
+    key: "showObjective",
+    label: "Objective",
+    description:
+      'Bottom-bar "objective" pill: a short "what am I working on" title derived from the session\'s first message.',
+    kind: "boolean",
+    default: true,
+    group: "Display",
+  },
+  {
     key: "showTarget",
     label: "Target",
     description: 'Header "target: …" segment naming the host or app under assessment.',
@@ -369,10 +383,10 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "transcriptDetail",
     label: "Transcript detail",
     description:
-      "Collapsed folds each turn's successful tool calls and reasoning into one-line summaries; expanded shows every detail (failures always show).",
+      "Expanded shows every step (thinking, tool calls + their output) inline — the default; collapsed folds each turn's successful steps into one-line summaries (failures always show). Ctrl+R toggles it live.",
     kind: "enum",
-    default: "collapsed",
-    choices: ["collapsed", "expanded"],
+    default: "expanded",
+    choices: ["expanded", "collapsed"],
     group: "Transcript",
   },
   {
@@ -476,6 +490,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showLeftSidebar: false,
   showRightSidebar: false,
   showTimestamps: false,
+  showObjective: true,
   showTarget: true,
   showScope: true,
   density: "comfortable",
@@ -486,7 +501,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   roleLabelStyle: "full",
   toolCardStyle: "compact",
   richToolCards: true,
-  transcriptDetail: "collapsed",
+  transcriptDetail: "expanded",
   theme: "dark",
   allowModelSelfExtension: false,
   showTokenUsage: false,
@@ -696,6 +711,7 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     // context strip and a left twin. A pre-rename file keeps its choice.
     showRightSidebar: booleanWithLegacy(raw, "showRightSidebar", "showAgentRail"),
     showTimestamps: booleanAt(raw, "showTimestamps"),
+    showObjective: booleanAt(raw, "showObjective"),
     showTarget: booleanAt(raw, "showTarget"),
     showScope: booleanAt(raw, "showScope"),
     density: enumAt(raw, "density"),

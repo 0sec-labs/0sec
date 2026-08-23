@@ -1947,6 +1947,7 @@ export type {
   CostBreakdownEntry,
   ScanCompletedPayload,
   SubagentLifecyclePayload,
+  SessionObjectivePayload,
 } from "./events/bus.js";
 export { ScanCostLedger } from "./agent/cost-ledger.js";
 
@@ -2175,6 +2176,10 @@ export {
   createConsoleSession,
   createConsoleRuntime,
   buildConsoleSystemPrompt,
+  deriveObjectiveHeuristic,
+  createSessionObjectiveService,
+  MAX_OBJECTIVE_CHARS,
+  MAX_OBJECTIVE_WORDS,
 } from "./console/index.js";
 export type {
   ConsoleSession,
@@ -2189,6 +2194,8 @@ export type {
   ConsoleLocalScopeResolution,
   ConsoleTurnBudget,
   ConsoleUsageReport,
+  SessionObjectiveService,
+  SessionObjectiveServiceConfig,
 } from "./console/index.js";
 
 // ── Recon mode: domain surface enumeration (0sec#769) ──

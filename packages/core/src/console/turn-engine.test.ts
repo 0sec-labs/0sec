@@ -1932,24 +1932,35 @@ describe("Console scope gate — unresolvable shell destinations", () => {
     }
   });
 
-  it("denies an unreadable network destination in yolo, even inside a scope, without prompting", async () => {
-    const runtime = new ScriptedRuntime([bashTurn("c1", `curl "$TARGET"`), endTurn("done")]);
-    let prompts = 0;
-    const session = createConsoleSession({
-      runtime,
-      autonomyMode: "yolo",
-      scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
-      requestScope: async () => {
-        prompts += 1;
-        return null;
-      },
-    });
+  it("RUNS an unreadable local command in yolo without prompting (operator opted into full autonomy)", async () => {
+    // `base64 --decode` is flagged unresolvable by the shell scanner (it hides
+    // its payload), but it is a LOCAL command with no network reach. YOLO is the
+    // operator's explicit full-autonomy opt-in, so the scope gate no longer
+    // refuses an unreadable command — it runs (the executor's SSRF rail still
+    // governs any real egress beneath). Only a FOREIGN NAMED host stays refused.
+    const prevRequireScope = process.env["0SEC_REQUIRE_SCOPE"];
+    delete process.env["0SEC_REQUIRE_SCOPE"];
+    try {
+      const runtime = new ScriptedRuntime([bashTurn("c1", `echo aGk= | base64 -d`), endTurn("done")]);
+      let prompts = 0;
+      const session = createConsoleSession({
+        runtime,
+        autonomyMode: "yolo",
+        scope: ScopePolicy.fromJson({ in_scope: ["allowed.test"] }),
+        requestScope: async () => {
+          prompts += 1;
+          return null;
+        },
+      });
 
-    const outcome = await session.send("go");
-    expect(prompts).toBe(0);
-    expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("YOLO mode");
-    expect(outcome.toolCalls[0].result.error).toContain("cannot resolve");
+      const outcome = await session.send("go");
+      expect(prompts).toBe(0);
+      expect(outcome.toolCalls[0].result.success).toBe(true);
+      expect(outcome.toolCalls[0].result.error ?? "").not.toContain("cannot resolve");
+      expect(outcome.toolCalls[0].result.error ?? "").not.toContain("YOLO mode");
+    } finally {
+      if (prevRequireScope !== undefined) process.env["0SEC_REQUIRE_SCOPE"] = prevRequireScope;
+    }
   });
 
   it("remembers a declined opaque command instead of re-prompting for it", async () => {
@@ -2071,26 +2082,35 @@ describe("Console autonomy — yolo: no preconfigured scope, but the target stil
     expect(session.scope?.match("https://unrelated.test/x").allowed ?? false).toBe(false);
   });
 
-  it("REFUSES a network destination it cannot even resolve, with no prompt", async () => {
-    const runtime = new ScriptedRuntime([
-      { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: `curl "$TARGET"` } }], stopReason: "tool_use", durationMs: 1 },
-      endTurn("done"),
-    ]);
-    let prompts = 0;
-    const session = createConsoleSession({
-      runtime,
-      autonomyMode: "yolo",
-      target: "https://target.test",
-      requestScope: async () => {
-        prompts += 1;
-        return null;
-      },
-    });
+  it("RUNS a command it cannot statically resolve in yolo, with no prompt", async () => {
+    // Previously yolo refused any command whose destination it couldn't read.
+    // That blocked legitimate local work, so yolo now RUNS it (SSRF rail still
+    // governs real egress beneath); only a foreign NAMED host stays refused.
+    const prevRequireScope = process.env["0SEC_REQUIRE_SCOPE"];
+    delete process.env["0SEC_REQUIRE_SCOPE"];
+    try {
+      const runtime = new ScriptedRuntime([
+        { content: [{ type: "tool_use", id: "c1", name: "bash", input: { command: `echo aGk= | base64 -d` } }], stopReason: "tool_use", durationMs: 1 },
+        endTurn("done"),
+      ]);
+      let prompts = 0;
+      const session = createConsoleSession({
+        runtime,
+        autonomyMode: "yolo",
+        target: "https://target.test",
+        requestScope: async () => {
+          prompts += 1;
+          return null;
+        },
+      });
 
-    const outcome = await session.send("run an opaque fetch");
-    expect(prompts).toBe(0);
-    expect(outcome.toolCalls[0].result.success).toBe(false);
-    expect(outcome.toolCalls[0].result.error).toContain("cannot resolve");
+      const outcome = await session.send("run an opaque local command");
+      expect(prompts).toBe(0);
+      expect(outcome.toolCalls[0].result.success).toBe(true);
+      expect(outcome.toolCalls[0].result.error ?? "").not.toContain("cannot resolve");
+    } finally {
+      if (prevRequireScope !== undefined) process.env["0SEC_REQUIRE_SCOPE"] = prevRequireScope;
+    }
   });
 
   it("the SSRF / private-network rail STILL blocks in yolo, even for an in-scope local host", async () => {

@@ -23,6 +23,8 @@ import {
 } from "../plugins/guards.js";
 import type { AgentRole, OperatorQuestionAnswer, OperatorQuestionRequest, ScopedAuditEscalationRequest, ToolCall, ToolContext, ToolDefinition, ToolResult } from "../agent/types.js";
 import { ScopePolicy } from "../scope/scope.js";
+import { eventBus } from "../events/bus.js";
+import { createSessionObjectiveService } from "./session-objective.js";
 
 /**
  * Unified interactive chat console — engine-side turn driver.
@@ -480,6 +482,15 @@ export interface ConsoleSessionConfig {
    * `agent/agent-messaging.ts`; importing it here would invert the layering.
    */
   agentMessaging?: unknown;
+  /**
+   * Whether to run the ONE-shot model refinement of the session objective (the
+   * OMP-style "what am I working on" pill). Default `true`. The instant
+   * heuristic is always emitted regardless; this only governs whether the
+   * runtime is asked to rewrite it into a crisper label. Fully fail-soft and
+   * off the turn's critical path — see `console/session-objective.ts`. Set
+   * `false` to keep the heuristic only (e.g. to avoid any extra model spend).
+   */
+  refineObjective?: boolean;
 }
 
 /** A live console session: persistent history + a `send()` per operator line. */
@@ -1563,6 +1574,20 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     ? structuredClone(config.initialMessages)
     : [];
 
+  // Session objective ("what am I working on" pill). DISPLAY-ONLY: it never
+  // enters model-facing context. The heuristic is emitted synchronously on the
+  // first operator message; the optional one-shot refinement (default on)
+  // reuses this session's runtime and is deferred off the turn's critical path.
+  // Published on the SAME event bus the TUI already watches for todos/subagents,
+  // keyed by scanId so a renderer can filter to its own session.
+  const objectiveService = createSessionObjectiveService({
+    runtime: config.runtime,
+    refine: config.refineObjective,
+    emit: (objective, refined) => {
+      eventBus.emit("session_objective", { scanId, objective, refined });
+    },
+  });
+
   // AUTO-EXPAND the in-memory engagement scope to cover `uncoveredUrls`, used by
   // copilot (in-engagement targets) and yolo (target-anchored hosts) to grow
   // scope WITHOUT prompting. Adds each host as an EXACT-host rule (never a
@@ -1688,13 +1713,15 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // gate cannot resolve cannot be proven in-anchor, so it is refused too. The
     // executor's SSRF rail and target/scope boundary still run underneath.
     if (autonomyMode === "yolo") {
-      if (unresolved.length > 0) {
-        return {
-          success: false,
-          output: null,
-          error: `YOLO mode: tool "${call.name}" reaches the network with a destination this gate cannot resolve (${unresolved.join("; ")}); the launch target anchors yolo, so an unnameable destination is refused.`,
-        };
-      }
+      // A command this gate cannot fully READ — a piped interpreter, base64 -d,
+      // a $VAR URL, a local file op like `ls ~/.ssh` — is NOT proof of a foreign
+      // target. YOLO is the operator's explicit full-autonomy opt-in on their
+      // own machine; refusing every unreadable command just blocks legitimate
+      // local work (the operator kept hitting this). Allow unnameable
+      // destinations — the executor's SSRF rail (private/internal-network block)
+      // still runs beneath every call. Only a FOREIGN NAMED host outside the
+      // launch-target anchor stays refused: yolo is target-anchored, not
+      // "attack anything, anywhere".
       if (foreign.length > 0) {
         return {
           success: false,
@@ -2132,6 +2159,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
 
     messages.push({ role: "user", content: [{ type: "text", text: userText }] });
 
+    // Derive/emit the session objective from the first message (no-op on later
+    // turns once seeded). Synchronous + cheap for the heuristic; the optional
+    // refinement is deferred and fire-and-forget, so this never blocks the turn.
+    objectiveService.noteUserMessage(userText);
+
     const runCalls: Array<{ call: ToolCall; result: ToolResult }> = [];
     const usage = { inputTokens: 0, outputTokens: 0 };
     let assistantText = "";
@@ -2174,6 +2206,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // Turn cycle: plan → run tools → feed results back → repeat until the model
     // stops requesting tools (end_turn), the turn's token budget is spent, or
     // the runaway iteration backstop trips.
+    //
+    // Mark the turn active (synchronously, before any await) so the objective
+    // refinement's deferred model call never runs concurrently with this turn.
+    objectiveService.turnStarted();
+    try {
     for (;;) {
       // Checkpoint — between rounds / before issuing the next model call. On the
       // first iteration this is redundant with the pre-abort check above and
@@ -2437,6 +2474,12 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         return { assistantText, toolCalls: runCalls, usage, budget: budgetSnapshot(), stopReason: "max_tool_iterations" };
       }
     }
+    } finally {
+      // Turn over. Once no turn is active this lets the one-shot objective
+      // refinement fire — deferred and rescheduled while any turn runs, so its
+      // model call never races the turn's own. Fire-and-forget, fully fail-soft.
+      objectiveService.turnEnded();
+    }
   }
 
   return {
@@ -2461,6 +2504,9 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       messages.length = 0;
     },
     send,
-    cleanup: () => executor.cleanup(),
+    cleanup: () => {
+      objectiveService.dispose();
+      return executor.cleanup();
+    },
   };
 }
