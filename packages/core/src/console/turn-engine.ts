@@ -1936,6 +1936,11 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         error: `Local scope approval for tool "${call.name}" points to a path that does not exist: ${resolution.scopePath}.`,
       };
     }
+    // A local scope is a DIRECTORY subtree. If the approved path is a FILE
+    // (e.g. the exact read_file/search_files target the operator confirmed),
+    // grant its containing directory instead of erroring — mirrors the
+    // auto-grant path (directoryToGrantFor) so standard mode behaves the same.
+    approvedDir = directoryToGrantFor(approvedDir);
 
     // Re-apply the dangerous-root guard to the approved directory.
     if (isDangerousLocalRoot(approvedDir)) {
