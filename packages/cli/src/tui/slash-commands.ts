@@ -145,7 +145,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "providers",
-    aliases: ["login", "auth"],
+    aliases: [],
     category: "info",
     description: "Show which model providers have credentials on this machine",
     usage: "/providers",
@@ -206,6 +206,14 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     aliases: ["marketplace"],
     category: "navigation",
     description: "Browse the extension marketplace",
+    tuiOnly: true,
+  },
+  {
+    name: "connect",
+    aliases: ["login", "auth"],
+    category: "navigation",
+    description: "Connect a model provider: add an API key or subscription sign-in",
+    usage: "/connect",
     tuiOnly: true,
   },
   {

@@ -21,6 +21,7 @@ import { HerdScreen } from "./herd-screen.js";
 import { SettingsScreen } from "./settings-screen.js";
 import { ModelScreen } from "./model-screen.js";
 import { MarketScreen } from "./market-screen.js";
+import { ConnectScreen } from "./connect-screen.js";
 import { createSessionCloseGate } from "./session-close-gate.js";
 import { installTuiOutputGuard } from "./output-guard.js";
 import { appendFeedback, submitFeedback } from "./feedback.js";
@@ -65,6 +66,7 @@ type ConsoleRoute =
   | { type: "settings" }
   | { type: "herd" }
   | { type: "market" }
+  | { type: "connect" }
   | { type: "models"; chatOptions?: ChatScreenOptions }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onClose: () => void };
 
@@ -109,6 +111,13 @@ interface ShellNav {
    * empty state until `$0SEC_REGISTRY_URL` points at a registry the operator trusts.
    */
   openMarket: () => void;
+  /**
+   * Opens the full-screen provider connect / login screen: the write side of
+   * `/providers`, where an operator connects a model provider by pasting an API
+   * key or completing a subscription sign-in. Credentials go only to the
+   * existing credential store.
+   */
+  openConnect: () => void;
 }
 
 interface HomeOption {
@@ -835,6 +844,13 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       keybind: "0",
       suggested: true,
       action: shell.openHerd,
+    },
+    {
+      id: "nav-connect",
+      title: "Connect a provider",
+      category: "Navigate",
+      description: "Add an API key or subscription sign-in for a model provider",
+      action: shell.openConnect,
     },
     {
       id: "nav-back",
@@ -3800,6 +3816,31 @@ function MarketRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }
   );
 }
 
+/**
+ * Routes the provider connect / login screen, supplying the console shell.
+ *
+ * Pure wiring, like `ModelRoute` and `MarketRoute`: `ConnectScreen` reads and
+ * writes credentials through the existing credential store on its own, so this
+ * route hands it only a frame and the two ways out. The command palette is
+ * deliberately not mounted here — every printable key on this screen filters
+ * the provider list (or, in the input sub-step, is part of a pasted key), so a
+ * second `useKeyboard` would fight it.
+ */
+function ConnectRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+  return (
+    <ConnectScreen
+      onBack={() => leaveCurrentScreen(shell, onExit)}
+      onExit={onExit}
+      frame={({ body, hint }) => (
+        <ShellFrame view="connect">
+          {body}
+          <FooterBar hint={hint} />
+        </ShellFrame>
+      )}
+    />
+  );
+}
+
 type AppMode =
   | { type: "home"; onResolve: (selection: HomeSelection) => void; onExit: () => void }
   | { type: "ops"; dbPath?: string; refreshMs: number; onExit: () => void }
@@ -3867,6 +3908,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     openModels: (chatOpts) => navigate({ type: "models", chatOptions: chatOpts ?? chatOptionsRef.current }),
     openHerd: () => navigate({ type: "herd" }),
     openMarket: () => navigate({ type: "market" }),
+    openConnect: () => navigate({ type: "connect" }),
   };
 
   const launchSelection = async (selection: HomeSelection) => {
@@ -4034,6 +4076,15 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             shell.openMarket();
             return;
           }
+          // `connect` is not in `ChatDestination` yet (chat-screen owns that
+          // union and this change does not touch it); the cast-guard keeps
+          // run.tsx compiling and the route reachable, and the branch starts
+          // routing the moment the one-line chat-screen change lands (a
+          // `case "connect": onNavigate("connect")` beside the "/model" case).
+          if ((destination as string) === "connect") {
+            shell.openConnect();
+            return;
+          }
           switch (destination) {
             case "launcher":
               shell.openLauncher();
@@ -4118,6 +4169,8 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     overlay = <HerdRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "market") {
     overlay = <MarketRoute onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "connect") {
+    overlay = <ConnectRoute onExit={onExit} shell={shell} />;
   }
 
   return (
