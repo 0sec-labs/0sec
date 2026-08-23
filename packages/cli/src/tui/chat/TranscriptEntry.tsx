@@ -553,8 +553,10 @@ export function renderEntry(
     // turn settles (or on a past turn's reasoning) it renders static/muted.
     // Gated on BOTH `activeTurn` matching and a numeric `shimmerFrame`, so
     // reduceMotion / settled turns keep the flat label.
+    // Only the LIVE TAIL reasoning shimmers — not every past thinking block in
+    // the working turn — so a turn shows one shimmering "thinking", not many.
     const shimmerThinking =
-      entry.turn === display.activeTurn && typeof display.shimmerFrame === "number";
+      entry.id === display.activeEntryId && typeof display.shimmerFrame === "number";
     return finish(
       <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
         <box width={1} flexShrink={0} alignSelf="stretch">

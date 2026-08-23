@@ -3193,10 +3193,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     // tool/subagent rows shimmer in phase with the thinking indicator and render
     // static the instant they settle.
     shimmerFrame: shimmerActive ? shimmerFrame : undefined,
-    // The turn currently in flight, so a reasoning row or a collapsed fold for
-    // the WORKING turn shimmers while every past turn's stays static. Undefined
-    // when idle (nothing matches, so nothing shimmers).
+    // The turn currently in flight, so a collapsed fold for the WORKING turn
+    // shimmers while every past turn's stays static. Undefined when idle.
     activeTurn: busy ? turn.current : undefined,
+    // The live tail entry — only its reasoning row shimmers, so a working turn
+    // shows ONE shimmering "thinking", not every past thinking block at once.
+    activeEntryId: busy ? entries[entries.length - 1]?.id : undefined,
   };
   const animation = animationKind
     ? frameAt(animationKind, Date.now() - activitySince.current, {

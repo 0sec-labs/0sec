@@ -141,6 +141,14 @@ export interface EntryDisplay {
    * `shimmerFrame` is a number, so reduceMotion / settled turns stay static.
    */
   activeTurn?: number;
+  /**
+   * Id of the transcript's LAST (tail) entry while a turn is in flight, else
+   * `undefined`. A reasoning row shimmers only when it is this live tail — so a
+   * working turn shows ONE shimmering "thinking", not every past thinking block
+   * in the turn lighting up at once. (Folds still key on `activeTurn`; they only
+   * appear collapsed and there is at most one for the active turn.)
+   */
+  activeEntryId?: string;
 }
 
 export interface KeyHint {
