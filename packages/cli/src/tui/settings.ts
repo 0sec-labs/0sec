@@ -29,6 +29,7 @@ import { homeStateDir } from "@0sec/shared";
 
 import {
   THEME_NAMES,
+  allThemeNames,
   ensureInstalledThemesLoaded,
   isKnownTheme,
   type ThemeName,
@@ -201,6 +202,29 @@ type TuiSettingDef =
   | EnumSettingDef<"modelDisplay">
   | EnumSettingDef<"logoAnimation">
   | EnumSettingDef<"theme">;
+
+/**
+ * Selectable values for the `theme` setting: the built-ins, plus any user
+ * themes discovered on disk. Mutable *in place* on purpose — the `theme` def
+ * below holds this exact array reference, and `syncThemeChoices` rewrites its
+ * contents (never the reference) once the user-theme cache is populated, so the
+ * settings screen and the enum cycler pick up user themes without the def table
+ * being rebuilt. `THEME_NAMES[0]` (the default, "dark") always leads, so
+ * `choices[0]` stays the default as the enum contract requires.
+ */
+const THEME_CHOICES: string[] = [...THEME_NAMES];
+
+/**
+ * Refresh `THEME_CHOICES` to the full resolvable set (built-ins first, then
+ * discovered user themes). Loads the user-theme cache if needed, then mutates
+ * the array in place. Called on the settings load path (before the console
+ * renders), so a user theme is listed in the picker and cyclable by the time
+ * any screen reads `choices`.
+ */
+export function syncThemeChoices(homeDir?: string): void {
+  ensureInstalledThemesLoaded(homeDir);
+  THEME_CHOICES.splice(0, THEME_CHOICES.length, ...allThemeNames(homeDir));
+}
 
 /**
  * The narrowly-typed table. `SETTING_DEFS` re-exports it under the public,
@@ -393,10 +417,10 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "theme",
     label: "Theme",
     description:
-      "Colour palette. Carbon (dark, default) and Standard/Paper (light), plus Contrast, Midnight, Slate, Mono Dim and ANSI 16 for 16-colour terminals.",
+      "Colour palette. Carbon (dark, default) and Standard/Paper (light), plus Contrast, Midnight, Slate, Mono Dim and ANSI 16 for 16-colour terminals. Drop validated palettes in ~/.0sec/themes to add your own.",
     kind: "enum",
     default: "dark",
-    choices: [...THEME_NAMES],
+    choices: THEME_CHOICES,
     group: "Display",
   },
   {
@@ -634,7 +658,7 @@ export function resolveLayeredSettings(globalRaw: unknown, projectRaw: unknown):
  * first so an installed theme id in either layer validates rather than resetting.
  */
 export function loadLayeredSettings(opts: { homeDir?: string; projectDir?: string } = {}): LayeredSettings {
-  ensureInstalledThemesLoaded(opts.homeDir);
+  syncThemeChoices(opts.homeDir);
   const globalRaw = readRawSettingsFile(settingsFilePath(opts.homeDir));
   const projectRaw = readRawSettingsFile(projectSettingsFilePath(opts.projectDir));
   return resolveLayeredSettings(globalRaw, projectRaw);
@@ -751,7 +775,7 @@ export function loadSettings(homeDir?: string, projectDir?: string): TuiSettings
  * theme id validates rather than resetting.
  */
 export function loadGlobalSettings(homeDir?: string): TuiSettings {
-  ensureInstalledThemesLoaded(homeDir);
+  syncThemeChoices(homeDir);
   return normalizeSettings(readRawSettingsFile(settingsFilePath(homeDir)));
 }
 

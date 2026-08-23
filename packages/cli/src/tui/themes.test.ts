@@ -913,3 +913,38 @@ describe("writeInstalledTheme / removeInstalledTheme", () => {
     expect(removeInstalledTheme("acme.midnight", home).ok).toBe(false); // already gone
   });
 });
+
+/**
+ * Live theme hot-swap, at the resolver the React provider uses.
+ *
+ * `theme-context.ts`'s `paletteFor` maps the current `theme` setting to a palette
+ * with `getTheme(name)` on every render, and re-renders when the setting changes
+ * (it subscribes to the settings store). So "switching the theme applies live" is,
+ * at the resolver level, exactly: feeding `getTheme`/`getThemeEntry` a new name
+ * returns the new palette immediately — no restart, no cached previous palette.
+ * These assert that for built-ins AND for a loaded user theme.
+ */
+describe("live hot-swap resolution (getTheme follows the setting name)", () => {
+  it("returns the new palette the instant the name changes, across built-ins", () => {
+    // Simulate the setting flipping between palettes on successive renders.
+    let name: string = "dark";
+    expect(getTheme(name)).toBe(THEMES.dark.palette);
+    name = "high-contrast";
+    expect(getTheme(name)).toBe(THEMES["high-contrast"].palette);
+    name = "light";
+    expect(getTheme(name)).toBe(THEMES.light.palette);
+  });
+
+  it("resolves a loaded user theme live, then swaps back to a built-in", () => {
+    const home = makeThemeHome();
+    seedInstalledTheme(home, "acme.midnight");
+    reloadInstalledThemes(home); // the load path populates the cache before render
+
+    // Setting points at the user theme -> its palette resolves.
+    expect(getTheme("acme.midnight")).toEqual(GOOD_PALETTE);
+    expect(getThemeEntry("acme.midnight").name).toBe("acme.midnight");
+
+    // Setting flips to a built-in -> the built-in resolves, no stale user palette.
+    expect(getTheme("light")).toBe(THEMES.light.palette);
+  });
+});

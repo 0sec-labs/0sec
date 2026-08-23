@@ -43,12 +43,13 @@
  * the pure functions above it never call into it.
  */
 
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { homeStateDir } from "@0sec/shared";
 
 import type { SettingDef } from "./settings.js";
+import { loadUserThemes } from "./user-themes.js";
 
 /* ------------------------------------------------------------------ tokens */
 
@@ -1137,29 +1138,19 @@ export function installedThemeEntryFromFile(id: string, raw: unknown): ThemeEntr
   return { name: id, label, description, mode, palette: palette as Theme };
 }
 
-/** Read + validate every installed theme file. Total, fail-soft. */
+/**
+ * Read + validate every installed theme file. Total, fail-soft.
+ *
+ * Delegates the scan and per-file validation to the pure `loadUserThemes`
+ * loader, then keeps only its `valid` entries — so the resolvable set is
+ * *exactly* the set that loader accepts, and its `rejected` diagnostics (used by
+ * `theme list`/settings) describe the same files this cache silently drops.
+ * There is one reader of the themes dir, not two.
+ */
 function readInstalledThemes(homeDir?: string): Map<string, ThemeEntry> {
   const out = new Map<string, ThemeEntry>();
-  let files: string[];
-  try {
-    files = readdirSync(installedThemesDir(homeDir));
-  } catch {
-    return out; // no dir yet, or unreadable — no installed themes
-  }
-  for (const file of files) {
-    if (!file.endsWith(".json")) continue;
-    const id = file.slice(0, -".json".length);
-    if (!isSafeThemeId(id)) continue;
-    // A built-in name is never shadowed by an installed file.
-    if (isThemeName(id)) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(installedThemeFilePath(id, homeDir), "utf8"));
-    } catch {
-      continue;
-    }
-    const entry = installedThemeEntryFromFile(id, parsed);
-    if (entry) out.set(id, entry);
+  for (const entry of loadUserThemes(installedThemesDir(homeDir)).valid) {
+    out.set(entry.name, entry);
   }
   return out;
 }
