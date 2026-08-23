@@ -813,6 +813,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // Empty ("") hides the pill; the session-objective service replaces it in
   // place (heuristic first, model-refined when/if it lands).
   const [objective, setObjective] = useState<string>("");
+  // Read the latest objective from `send`'s finally (which is a useCallback and
+  // would otherwise close over a stale value) without re-subscribing it.
+  const objectiveRef = useRef(objective);
+  objectiveRef.current = objective;
   /**
    * The richer live-subagent model the herd view is built on: latest snapshot
    * plus a bounded activity ring per agent, keyed by `agent_id`, fed by the SAME
@@ -2460,6 +2464,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           cwd: process.cwd(),
           messageCount: session.messages.length,
           preview: firstUser?.text ?? "",
+          // The async objective ("what am I working on") is stored as the
+          // session summary so the resume browser can say what each chat was
+          // FOR, not just how it opened. Empty until the objective service
+          // emits; session-store drops a blank one.
+          summary: objectiveRef.current || undefined,
           messages: session.messages as unknown[],
         });
         pruneSessions();
