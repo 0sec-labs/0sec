@@ -93,6 +93,30 @@ export function enqueueComposerInput(
   return { queue: [...queue, input], accepted: true };
 }
 
+
+export interface FlushQueuedInputParams {
+  /** Raw composer input submitted with Enter. */
+  input: string;
+  /** Whether a turn is currently in flight. */
+  busy: boolean;
+  /** Whether a session exists to send against. */
+  hasSession: boolean;
+  /** Number of parked messages. */
+  queuedCount: number;
+}
+
+/**
+ * Decide whether an empty Enter should flush the next queued message now.
+ *
+ * This is the manual escape hatch for the operator-visible queue: if a message
+ * is parked and the console is idle, pressing Enter on an empty composer sends
+ * the front queued message immediately instead of doing nothing. Busy turns stay
+ * single-flight; while busy, Enter still cannot race a second model call.
+ */
+export function shouldFlushQueuedInput(params: FlushQueuedInputParams): boolean {
+  return !params.input.trim() && !params.busy && params.hasSession && params.queuedCount > 0;
+}
+
 /** The result of taking the next parked message. */
 export interface DequeueResult {
   /** The front message, or undefined when the queue was empty. */

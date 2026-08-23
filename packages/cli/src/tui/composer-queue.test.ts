@@ -6,6 +6,7 @@ import {
   composerQueueLabel,
   dequeueComposerInput,
   enqueueComposerInput,
+  shouldFlushQueuedInput,
 } from "./composer-queue.js";
 
 describe("classifyComposerInput", () => {
@@ -111,5 +112,25 @@ describe("composerQueueLabel", () => {
 
   it("pluralizes more than one", () => {
     expect(composerQueueLabel(4)).toBe("4 queued");
+  });
+});
+
+
+describe("shouldFlushQueuedInput", () => {
+  it("flushes a queued message on empty Enter when idle with a session", () => {
+    expect(shouldFlushQueuedInput({ input: "", busy: false, hasSession: true, queuedCount: 1 }))
+      .toBe(true);
+  });
+
+  it("does not flush while busy because turns are single-flight", () => {
+    expect(shouldFlushQueuedInput({ input: "", busy: true, hasSession: true, queuedCount: 1 }))
+      .toBe(false);
+  });
+
+  it("does not flush non-empty composer input or an empty queue", () => {
+    expect(shouldFlushQueuedInput({ input: "new message", busy: false, hasSession: true, queuedCount: 1 }))
+      .toBe(false);
+    expect(shouldFlushQueuedInput({ input: "", busy: false, hasSession: true, queuedCount: 0 }))
+      .toBe(false);
   });
 });
