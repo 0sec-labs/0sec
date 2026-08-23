@@ -191,7 +191,7 @@ synthetic or authorized test material. Report vulnerabilities privately via
 
 ## Supported by
 
-0sec Labs is supported by these startup and research programs:
+With special thanks to the startup and research programs supporting our work:
 
 <p align="center">
   <a href="https://aws.amazon.com/startups/" title="AWS Startups">
