@@ -344,6 +344,14 @@ const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
 const HOURS_PER_DAY = 24;
 const DAYS_PER_WEEK = 7;
+/**
+ * How far into the future a `savedAt` may sit and still read as `0s` rather
+ * than blank. A save and its render happen on the same clock moments apart, so
+ * a few tens of seconds of disagreement is benign skew; beyond this the
+ * timestamp is corrupt (a restored backup, a mis-set clock) and `relativeAge`
+ * blanks it rather than fabricating an age.
+ */
+const FUTURE_SKEW_MS = 60_000;
 
 /**
  * A compact "last used" age — `12s`, `5m`, `3h`, `2d`, `6w` — for the resume
@@ -361,10 +369,15 @@ const DAYS_PER_WEEK = 7;
  * A non-positive `savedAt` returns "" rather than a fabricated age: it is the
  * store's "unorderable / no timestamp" sentinel (see `toMeta`), and the caller
  * omits the separator entirely rather than printing a dangling "· ". A future
- * `savedAt` (clock skew, a restored backup) clamps to `0s`, never a negative.
+ * `savedAt` within a small skew margin ({@link FUTURE_SKEW_MS}) clamps to `0s`
+ * — a few seconds of clock disagreement between save and render is normal — but
+ * a `savedAt` further ahead than that is a corrupt or clock-skewed timestamp
+ * (a restored backup dated in the future), so it also returns "": the picker
+ * omits the age rather than claiming a misleading "0s" for a future session.
  */
 export function relativeAge(savedAt: number, now: number): string {
   if (!Number.isFinite(savedAt) || savedAt <= 0) return "";
+  if (savedAt > now + FUTURE_SKEW_MS) return "";
   const seconds = Math.max(0, Math.floor((now - savedAt) / 1000));
   if (seconds < SECONDS_PER_MINUTE) return `${seconds}s`;
   const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);

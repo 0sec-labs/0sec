@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
+import { TextAttributes } from "@opentui/core";
 import { fitTuiText } from "../text.js";
 import { commandMenuBoxHeight } from "../chat-layout.js";
 import type { SelectorItem } from "../selector.js";
@@ -102,7 +103,7 @@ export function SelectorPanel({
   height: number;
   theme: Theme;
 }) {
-  const { PANEL_ALT, MUTED, TEXT, PRIMARY, ACCENT, ERROR } = theme;
+  const { CANVAS, PANEL_ALT, MUTED, TEXT, PRIMARY, ACCENT, ERROR } = theme;
   // Deliberately conservative: the real inner width is 2 (compact) to 4
   // (wide) cells more than this, so every explicit allocation below fits
   // with room to spare and can never reach the border.
@@ -123,10 +124,10 @@ export function SelectorPanel({
     <box flexDirection="column" width="100%" minWidth={0} height={height} flexShrink={0} marginTop={1} border borderColor={borderColor} backgroundColor={PANEL_ALT} paddingX={1}>
       <box flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
         <box width={headerTitleWidth} flexShrink={0} minWidth={0}>
-          <text fg={titleColor}>{fitTuiText(title, headerTitleWidth)}</text>
+          <text fg={titleColor} attributes={TextAttributes.BOLD}>{fitTuiText(title, headerTitleWidth)}</text>
         </box>
         {headerSubtitleWidth > 0 ? (
-          <box width={headerSubtitleWidth} flexShrink={0} minWidth={0} marginLeft={headerGap}>
+          <box width={headerSubtitleWidth} flexShrink={0} minWidth={0} marginLeft={headerGap} alignItems="flex-end">
             <text fg={MUTED}>{fitTuiText(subtitle, headerSubtitleWidth, { mode: "middle" })}</text>
           </box>
         ) : null}
@@ -142,15 +143,25 @@ export function SelectorPanel({
       {rows.length > 0 ? rows.map((item, offset) => {
         const index = windowStart + offset;
         const active = index === activeIndex;
+        // Mirror DialogSelectBody's row language: the active row is a
+        // full-inner-width PRIMARY highlight with its text in the readable
+        // inverse (CANVAS) and BOLD; inactive rows stay flat on PANEL_ALT.
+        // The `●` current-value dot lives in the leading gutter cell (no
+        // caret — DialogSelectBody identifies the active row by the bg
+        // highlight alone), CANVAS on the highlight so it stays visible.
+        const rowBg = active ? PRIMARY : undefined;
+        const dotFg = active ? CANVAS : ACCENT;
+        const labelFg = active ? CANVAS : item.disabled ? MUTED : TEXT;
+        const metaFg = active ? CANVAS : MUTED;
         return (
-          <box key={item.id} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
-            <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
-            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-              <text fg={item.disabled ? MUTED : active ? TEXT : MUTED}>{fitTuiText(`${item.current ? "● " : "  "}${item.label}`, labelWidth)}</text>
+          <box key={item.id} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0} backgroundColor={rowBg}>
+            <text width={1} flexShrink={0} fg={dotFg} bg={rowBg}>{item.current ? "●" : " "}</text>
+            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1} backgroundColor={rowBg}>
+              <text fg={labelFg} bg={rowBg} attributes={active ? TextAttributes.BOLD : undefined}>{fitTuiText(item.label, labelWidth)}</text>
             </box>
             {metaWidth > 0 ? (
-              <box width={metaWidth} flexShrink={0} minWidth={0} marginLeft={metaGap}>
-                <text fg={active ? ACCENT : MUTED}>{fitTuiText(item.meta ?? "", metaWidth, { mode: "middle" })}</text>
+              <box width={metaWidth} flexShrink={0} minWidth={0} marginLeft={metaGap} backgroundColor={rowBg}>
+                <text fg={metaFg} bg={rowBg}>{fitTuiText(item.meta ?? "", metaWidth, { mode: "middle" })}</text>
               </box>
             ) : null}
           </box>

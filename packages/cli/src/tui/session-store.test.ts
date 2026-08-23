@@ -403,8 +403,18 @@ describe("relativeAge", () => {
     expect(relativeAge(savedAt, NOW)).toBe(expected);
   });
 
-  it("clamps a future savedAt (clock skew) to 0s rather than going negative", () => {
+  it("clamps a small future savedAt (benign clock skew) to 0s, not negative", () => {
     expect(relativeAge(NOW + 10 * S, NOW)).toBe("0s");
+    // The boundary itself is still within the skew margin.
+    expect(relativeAge(NOW + 60 * S, NOW)).toBe("0s");
+  });
+
+  it("blanks a future savedAt beyond the skew margin rather than claiming 0s", () => {
+    // A corrupt or clock-skewed timestamp dated well ahead of now (e.g. a
+    // restored backup) omits the age instead of showing a misleading "0s".
+    expect(relativeAge(NOW + 61 * S, NOW)).toBe("");
+    expect(relativeAge(NOW + 5 * H, NOW)).toBe("");
+    expect(relativeAge(NOW + 3 * D, NOW)).toBe("");
   });
 
   it("returns '' for the unorderable sentinel and non-finite input", () => {
