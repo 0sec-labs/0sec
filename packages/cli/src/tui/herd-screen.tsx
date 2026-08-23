@@ -30,6 +30,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { TextAttributes } from "@opentui/core";
 import { eventBus, peekInbox, sendOperatorMessage, type MessagingRuntime } from "@0sec/core";
 
 import { useTheme, type Theme } from "./theme-context.js";
@@ -54,14 +55,16 @@ import {
   herdFocusFooterHint,
   herdFocusTranscriptTitle,
   herdFooterHint,
-  herdListTitle,
+  herdListHeading,
   herdRowLabelText,
+  paneTitleColumns,
   herdRowStatusText,
   herdStatusLabel,
   mergeSubagentRoster,
   moveHerdSelection,
   renderFocusActivity,
   subagentPeers,
+  subagentStatusLabel,
   windowFocusTail,
   type HerdDetailTone,
   type HerdInboxMessage,
@@ -174,21 +177,32 @@ function Pane({
   pane,
   bordered,
   title,
-  titleFg,
+  meta,
   children,
 }: {
   pane: HerdPane;
   bordered: boolean;
   title: string;
-  titleFg: string;
+  /** Right-aligned muted summary on the title row (count/window). */
+  meta?: string;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
   if (pane.width <= 0 || pane.height <= 0) return null;
+  // Title row: bold primary title left, right-aligned muted meta — the OMP
+  // header the console reuses. The columns sum to the inner width so the two
+  // can never fuse under pressure.
+  const cols = paneTitleColumns(pane.innerWidth, (meta ?? "").length);
   const titleRow = pane.hasTitle ? (
-    <Cells width={pane.innerWidth} fg={titleFg}>
-      {title}
-    </Cells>
+    <box flexDirection="row" width={pane.innerWidth} flexShrink={0} minWidth={0}>
+      <Cells width={cols.titleWidth} fg={theme.PRIMARY} attributes={TextAttributes.BOLD}>
+        {title}
+      </Cells>
+      <Cells width={cols.gap}>{""}</Cells>
+      <Cells width={cols.metaWidth} align="right" fg={theme.MUTED}>
+        {meta ?? ""}
+      </Cells>
+    </box>
   ) : null;
   return (
     <box
@@ -571,6 +585,11 @@ export function HerdScreen({
       visible.map((entry, offset) => {
         const index = window.start + offset;
         if (entry.kind === "heading") {
+          // Status group header: a small status-coloured, bold label left with
+          // the group count right-aligned in muted — a section header, not a
+          // wall of text. The columns sum to the row width.
+          const count = String(entry.count);
+          const cols = paneTitleColumns(row.width, count.length);
           return (
             <box
               key={`heading-${entry.status}`}
@@ -579,8 +598,16 @@ export function HerdScreen({
               flexShrink={0}
               minWidth={0}
             >
-              <Cells width={row.width} fg={statusColor(theme, entry.status)}>
-                {`${herdStatusLabel(entry.status)} ${entry.count}`}
+              <Cells
+                width={cols.titleWidth}
+                fg={statusColor(theme, entry.status)}
+                attributes={TextAttributes.BOLD}
+              >
+                {herdStatusLabel(entry.status)}
+              </Cells>
+              <Cells width={cols.gap}>{""}</Cells>
+              <Cells width={cols.metaWidth} align="right" fg={theme.MUTED}>
+                {count}
               </Cells>
             </box>
           );
@@ -588,6 +615,12 @@ export function HerdScreen({
 
         const active = index === cursor;
         const background = active ? theme.PANEL_ALT : undefined;
+        // The marker column doubles as a selection caret and a live-status dot,
+        // exactly like the shared agent row: a selected row shows an accent "▸",
+        // otherwise a status-coloured "●". The highlighted row's label is accent
+        // + bold; other rows are muted.
+        const markerGlyph = active ? "▸" : "●";
+        const markerFg = active ? theme.ACCENT : statusColor(theme, entry.status);
         return (
           <box
             key={`peer-${entry.peer.id}`}
@@ -597,13 +630,18 @@ export function HerdScreen({
             minWidth={0}
             onMouseDown={() => setSelected(index)}
           >
-            <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
-              {active ? ">" : ""}
+            <Cells width={row.markerWidth} fg={markerFg} bg={background}>
+              {row.markerWidth > 0 ? markerGlyph : ""}
             </Cells>
             <Cells width={row.markerGap} bg={background}>
               {""}
             </Cells>
-            <Cells width={row.labelWidth} fg={active ? theme.TEXT : theme.MUTED} bg={background}>
+            <Cells
+              width={row.labelWidth}
+              fg={active ? theme.ACCENT : theme.TEXT}
+              bg={background}
+              attributes={active ? TextAttributes.BOLD : undefined}
+            >
               {herdRowLabelText(entry.peer)}
             </Cells>
             <Cells width={row.statusGap} bg={background}>
@@ -666,14 +704,19 @@ export function HerdScreen({
         flexShrink={0}
         minWidth={0}
       >
-        <Pane pane={layout.list} bordered={layout.bordered} title={herdListTitle(window)} titleFg={theme.MUTED}>
+        <Pane
+          pane={layout.list}
+          bordered={layout.bordered}
+          title={herdListHeading(window).title}
+          meta={herdListHeading(window).meta}
+        >
           {listBody}
         </Pane>
         <Pane
           pane={layout.detail}
           bordered={layout.bordered}
-          title={activePeer ? "DETAIL" : "DETAIL -"}
-          titleFg={theme.MUTED}
+          title="DETAIL"
+          meta={activeRow?.kind === "peer" ? herdStatusLabel(activeRow.status) : "—"}
         >
           {detailBody}
         </Pane>
@@ -714,7 +757,7 @@ export function HerdScreen({
           pane={focusLayout.meta}
           bordered={focusLayout.bordered}
           title="FOCUS"
-          titleFg={theme.MUTED}
+          meta={focusRecord ? subagentStatusLabel(focusRecord.status) : undefined}
         >
           {focusMetaLines.map((line, index) => (
             <Cells
@@ -730,7 +773,6 @@ export function HerdScreen({
           pane={focusLayout.transcript}
           bordered={focusLayout.bordered}
           title={herdFocusTranscriptTitle(focusActivityLines.length)}
-          titleFg={theme.MUTED}
         >
           {focusVisibleActivity.length === 0 ? (
             <Cells width={focusLayout.transcript.innerWidth} fg={theme.MUTED}>

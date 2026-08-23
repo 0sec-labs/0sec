@@ -838,6 +838,48 @@ export function herdListTitle(window: HerdWindow): string {
 }
 
 /**
+ * The list pane's header, split into a bold title and a right-aligned summary
+ * meta — the OMP-style "AGENTS … N" header the console reuses. The title is a
+ * stable label; the meta counts the roster (peers, not headings) or names the
+ * visible window when the list is scrolled, so an operator always knows how
+ * many agents there are and how much is off-screen.
+ */
+export function herdListHeading(window: HerdWindow): { title: string; meta: string } {
+  if (window.total === 0) return { title: "HERD", meta: "empty" };
+  if (!window.hasAbove && !window.hasBelow) {
+    return { title: "HERD", meta: `${window.total}` };
+  }
+  return { title: "HERD", meta: `${window.start + 1}-${window.end} / ${window.total}` };
+}
+
+/**
+ * Split a pane's single title row into a left title column and a right,
+ * right-aligned meta column. The columns plus the gap always sum to EXACTLY
+ * `innerWidth`, so the header can never overflow or fuse under pressure — the
+ * same row-budget invariant the list rows obey. The meta never takes more than
+ * half the row and the title always keeps at least one cell.
+ */
+export interface PaneTitleColumns {
+  /** Left title column cells. */
+  titleWidth: number;
+  /** Gap between title and meta. 0 when there is no meta. */
+  gap: number;
+  /** Right meta column cells. 0 when there is no meta or no room for one. */
+  metaWidth: number;
+}
+
+export function paneTitleColumns(innerWidth: number, metaLength: number): PaneTitleColumns {
+  const width = cells(innerWidth);
+  if (width <= 0) return { titleWidth: 0, gap: 0, metaWidth: 0 };
+  const wantMeta = cells(metaLength);
+  const metaWidth =
+    wantMeta > 0 ? Math.min(wantMeta, Math.max(0, width - 2), Math.floor(width / 2)) : 0;
+  const gap = metaWidth > 0 && width > metaWidth ? 1 : 0;
+  const titleWidth = Math.max(0, width - metaWidth - gap);
+  return { titleWidth, gap, metaWidth };
+}
+
+/**
  * The honest empty-state line. The roster has no producer yet, so an empty
  * roster is the NORMAL state today — this says so plainly rather than implying
  * something is broken.
@@ -845,7 +887,7 @@ export function herdListTitle(window: HerdWindow): string {
 export const HERD_EMPTY_TEXT = "no other agents in this project";
 
 export function herdFooterHint(): string {
-  return ["up/down move", "m message", "esc back", "ctrl+c exit"].join(" · ");
+  return ["↑/↓ move", "enter focus", "m message", "esc back", "ctrl+c exit"].join(" · ");
 }
 
 /** The footer hint while the steering composer is open. */
@@ -1401,7 +1443,7 @@ export function computeHerdFocusLayout({
 
 /** Footer hint while a subagent is focused (navigation, not composing). */
 export function herdFocusFooterHint(): string {
-  return ["up/down scroll", "m steer", "esc back to list", "ctrl+c exit"].join(" · ");
+  return ["↑/↓ scroll", "m steer", "esc back to list", "ctrl+c exit"].join(" · ");
 }
 
 /** Title for the transcript pane: `LIVE 12` (entry count) or `LIVE`. */

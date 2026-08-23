@@ -32,6 +32,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { TextAttributes } from "@opentui/core";
 import type { Finding } from "@0sec/shared";
 import { renderPlatformReport, renderCvssSection, redactSensitiveHeaders } from "@0sec/core";
 
@@ -45,6 +46,7 @@ import {
   findingDetailFooterHint,
   findingDetailTitle,
   maxScrollOffset,
+  paneTitleColumns,
   type FindingAction,
   type FindingDetailLayout,
   type FindingDetailPane,
@@ -106,7 +108,9 @@ function toneColor(theme: Theme, tone: FindingDetailTone | undefined): string | 
     case "title":
       return theme.PRIMARY;
     case "heading":
-      return theme.ACCENT;
+      // Section labels (Location, Evidence, Remediation…) are small muted
+      // headers, not accent shouts — the console's section-header house style.
+      return theme.MUTED;
     case "accent":
       return theme.ACCENT;
     case "ok":
@@ -177,7 +181,7 @@ function Pane({
     >
       {pane.hasTitle ? (
         <box flexDirection="row" width={inner} flexShrink={0} minWidth={0}>
-          <Cells width={leftWidth} fg={titleFg}>
+          <Cells width={leftWidth} fg={titleFg} attributes={TextAttributes.BOLD}>
             {title}
           </Cells>
           <Cells width={gap}>{""}</Cells>
@@ -211,7 +215,40 @@ function DetailRow({
     );
   }
 
-  if (row.kind === "heading" || row.kind === "text") {
+  if (row.kind === "header") {
+    // Two-column strong header: bold title left, severity badge right (a leading
+    // "●" then the severity word, coloured by tone — red only for high/critical).
+    const badgeText = row.badge ? `● ${row.badge}` : "";
+    const cols = paneTitleColumns(inner, badgeText.length);
+    return (
+      <box flexDirection="row" width={inner} flexShrink={0} minWidth={0}>
+        <Cells width={cols.titleWidth} fg={theme.PRIMARY} attributes={TextAttributes.BOLD}>
+          {row.title}
+        </Cells>
+        <Cells width={cols.gap}>{""}</Cells>
+        <Cells
+          width={cols.metaWidth}
+          align="right"
+          fg={toneColor(theme, row.badgeTone)}
+          attributes={TextAttributes.BOLD}
+        >
+          {badgeText}
+        </Cells>
+      </box>
+    );
+  }
+
+  if (row.kind === "heading") {
+    // A section label — small, muted and bold, with vertical rhythm from the
+    // blank rows the builder inserts around it.
+    return (
+      <Cells width={inner} fg={toneColor(theme, row.tone)} attributes={TextAttributes.BOLD}>
+        {row.text}
+      </Cells>
+    );
+  }
+
+  if (row.kind === "text") {
     return (
       <Cells width={inner} fg={toneColor(theme, row.tone)}>
         {row.text}
@@ -419,7 +456,7 @@ export function FindingDetailScreen({
         pane={layout.pane}
         bordered={layout.bordered}
         title={findingDetailTitle(finding)}
-        titleFg={theme.MUTED}
+        titleFg={theme.PRIMARY}
         titleRight={titleRight}
         titleRightFg={titleRightFg}
       >

@@ -90,6 +90,18 @@ export type FindingDetailTone =
  */
 export type FindingDetailRow =
   | { kind: "blank" }
+  | {
+      /**
+       * The strong finding header: the title paired with a severity badge on
+       * one row. Rendered as a two-column line (bold title left, coloured badge
+       * right), so a finding leads with its headline and its severity at a
+       * glance rather than a wall of key/value rows.
+       */
+      kind: "header";
+      title: string;
+      badge: string;
+      badgeTone: FindingDetailTone;
+    }
   | { kind: "heading"; text: string; tone: FindingDetailTone }
   | { kind: "text"; text: string; tone: FindingDetailTone }
   | { kind: "kv"; label: string; value: string; tone: FindingDetailTone };
@@ -206,17 +218,18 @@ export function buildFindingRows(
   const blank = () => rows.push({ kind: "blank" });
   const heading = (text: string) => rows.push({ kind: "heading", text, tone: "heading" });
 
-  // Title
-  pushWrapped(rows, finding.title || EM_DASH, width, "title");
+  // Strong header: title + severity badge on one row. The severity lives in the
+  // badge (red for critical/high only) rather than a key/value row, so the
+  // finding leads with its headline and severity instead of a meta table.
+  rows.push({
+    kind: "header",
+    title: findingText(finding.title || EM_DASH),
+    badge: finding.severity ? String(finding.severity).toUpperCase() : EM_DASH,
+    badgeTone: severityDetailTone(finding.severity),
+  });
   blank();
 
   // Meta — key/value rows the component renders in two columns.
-  rows.push({
-    kind: "kv",
-    label: "Severity",
-    value: finding.severity ? String(finding.severity).toUpperCase() : EM_DASH,
-    tone: severityDetailTone(finding.severity),
-  });
   rows.push({
     kind: "kv",
     label: "Category",
@@ -583,6 +596,33 @@ export function computeFindingDetailLayout({
 export function findingDetailTitle(finding?: Finding): string {
   if (finding?.id) return `FINDING · ${finding.id}`;
   return "FINDING";
+}
+
+/**
+ * Split a row into a left title column and a right, right-aligned column
+ * (badge, meta or caption). The columns plus the gap always sum to EXACTLY
+ * `innerWidth`, so the header can never overflow or fuse under pressure — the
+ * same row-budget invariant the key/value rows obey. The right column never
+ * takes more than half the row and the title always keeps at least one cell.
+ */
+export interface PaneTitleColumns {
+  /** Left title column cells. */
+  titleWidth: number;
+  /** Gap between title and the right column. 0 when there is no right column. */
+  gap: number;
+  /** Right column cells. 0 when there is no right text or no room for one. */
+  metaWidth: number;
+}
+
+export function paneTitleColumns(innerWidth: number, metaLength: number): PaneTitleColumns {
+  const width = cells(innerWidth);
+  if (width <= 0) return { titleWidth: 0, gap: 0, metaWidth: 0 };
+  const wantMeta = cells(metaLength);
+  const metaWidth =
+    wantMeta > 0 ? Math.min(wantMeta, Math.max(0, width - 2), Math.floor(width / 2)) : 0;
+  const gap = metaWidth > 0 && width > metaWidth ? 1 : 0;
+  const titleWidth = Math.max(0, width - metaWidth - gap);
+  return { titleWidth, gap, metaWidth };
 }
 
 export interface FindingFooterHintInput {

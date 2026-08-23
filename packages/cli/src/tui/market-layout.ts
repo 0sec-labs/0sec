@@ -955,6 +955,50 @@ export function marketListTitle(window: MarketWindow): string {
   return `MARKETPLACE ${window.start + 1}-${window.end}/${window.total}`;
 }
 
+/**
+ * The list pane's header, split into a bold title and a right-aligned summary
+ * meta — the OMP-style "NAME … count" header the console reuses (mirrors the
+ * dialog picker's "Resume a session … 20 available"). The title is a stable
+ * label; the meta counts the roster, or names the visible window when the list
+ * is scrolled, so an operator always knows how much is off-screen.
+ */
+export function marketListHeading(window: MarketWindow): { title: string; meta: string } {
+  if (window.total === 0) return { title: "MARKETPLACE", meta: "empty" };
+  if (!window.hasAbove && !window.hasBelow) {
+    const n = window.total;
+    return { title: "MARKETPLACE", meta: `${n} item${n === 1 ? "" : "s"}` };
+  }
+  return { title: "MARKETPLACE", meta: `${window.start + 1}-${window.end} / ${window.total}` };
+}
+
+/**
+ * Split a pane's single title row into a left title column and a right,
+ * right-aligned meta column. The columns plus the gap always sum to EXACTLY
+ * `innerWidth`, so the header can never overflow or fuse under pressure — the
+ * same row-budget invariant the list rows obey. The meta never takes more than
+ * half the row and the title always keeps at least one cell, so a long meta can
+ * never squeeze the title out entirely.
+ */
+export interface PaneTitleColumns {
+  /** Left title column cells. */
+  titleWidth: number;
+  /** Gap between title and meta. 0 when there is no meta. */
+  gap: number;
+  /** Right meta column cells. 0 when there is no meta or no room for one. */
+  metaWidth: number;
+}
+
+export function paneTitleColumns(innerWidth: number, metaLength: number): PaneTitleColumns {
+  const width = cells(innerWidth);
+  if (width <= 0) return { titleWidth: 0, gap: 0, metaWidth: 0 };
+  const wantMeta = cells(metaLength);
+  const metaWidth =
+    wantMeta > 0 ? Math.min(wantMeta, Math.max(0, width - 2), Math.floor(width / 2)) : 0;
+  const gap = metaWidth > 0 && width > metaWidth ? 1 : 0;
+  const titleWidth = Math.max(0, width - metaWidth - gap);
+  return { titleWidth, gap, metaWidth };
+}
+
 export type MarketMode = "browse" | "filter" | "confirm";
 
 /**

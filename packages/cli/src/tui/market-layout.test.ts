@@ -15,7 +15,9 @@ import {
   marketDetailLines,
   marketEmptyLines,
   marketFooterHint,
+  marketListHeading,
   marketListTitle,
+  paneTitleColumns,
   moveSelection,
   stateTag,
   type MarketItem,
@@ -723,5 +725,56 @@ describe("hints and keys", () => {
     expect(isFilterKey("\r")).toBe(false);
     expect(isFilterKey("ab")).toBe(false);
     expect(isFilterKey(undefined)).toBe(false);
+  });
+});
+
+describe("paneTitleColumns", () => {
+  it("splits a header into title + meta whose cells sum to the inner width", () => {
+    for (let width = 0; width <= 200; width++) {
+      for (const metaLen of [0, 1, 3, 8, 20, 999]) {
+        const cols = paneTitleColumns(width, metaLen);
+        const claimed = cols.titleWidth + cols.gap + cols.metaWidth;
+        // Every field is a non-negative integer.
+        for (const [name, value] of [
+          ["titleWidth", cols.titleWidth],
+          ["gap", cols.gap],
+          ["metaWidth", cols.metaWidth],
+        ] as const) {
+          expect(Number.isInteger(value) && value >= 0, `${name} was ${value} at ${width}`).toBe(true);
+        }
+        // The columns claim EXACTLY the inner width — never more (overlap), never
+        // less (a gap the border paints through).
+        expect(claimed, `claimed ${claimed} of ${width} with meta ${metaLen}`).toBe(Math.max(0, width));
+        // The meta never eats the whole row: the title keeps a cell whenever there is one.
+        if (width > 0) expect(cols.titleWidth, `title squeezed out at ${width}`).toBeGreaterThan(0);
+        // The meta gets a gap iff it is rendered.
+        expect(cols.gap === 0 || cols.metaWidth > 0).toBe(true);
+      }
+    }
+  });
+
+  it("drops the meta entirely rather than overflow a tiny row", () => {
+    expect(paneTitleColumns(0, 5)).toEqual({ titleWidth: 0, gap: 0, metaWidth: 0 });
+    expect(paneTitleColumns(2, 5)).toEqual({ titleWidth: 2, gap: 0, metaWidth: 0 });
+    // No meta requested: the whole row is the title.
+    expect(paneTitleColumns(40, 0)).toEqual({ titleWidth: 40, gap: 0, metaWidth: 0 });
+  });
+});
+
+describe("marketListHeading", () => {
+  it("names the pane and counts the roster, or the window when scrolled", () => {
+    const whole = computeMarketWindow({ rows: ROWS, selected: 1, visible: ROWS.length });
+    expect(marketListHeading(whole)).toEqual({
+      title: "MARKETPLACE",
+      meta: `${ROWS.length} items`,
+    });
+    const scrolled = computeMarketWindow({ rows: ROWS, selected: 4, visible: 2, anchor: 3 });
+    const heading = marketListHeading(scrolled);
+    expect(heading.title).toBe("MARKETPLACE");
+    expect(heading.meta).toMatch(/^\d+-\d+ \/ \d+$/);
+    expect(marketListHeading(computeMarketWindow({ rows: [], selected: -1, visible: 4 }))).toEqual({
+      title: "MARKETPLACE",
+      meta: "empty",
+    });
   });
 });

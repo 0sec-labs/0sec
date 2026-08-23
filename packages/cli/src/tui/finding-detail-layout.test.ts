@@ -12,6 +12,7 @@ import {
   findingDetailFooterHint,
   findingDetailTitle,
   maxScrollOffset,
+  paneTitleColumns,
   severityDetailTone,
   type FindingDetailLayout,
 } from "./finding-detail-layout.js";
@@ -259,16 +260,26 @@ describe("buildFindingRows", () => {
   it("renders the full finding as tone-tagged rows", () => {
     const rows = buildFindingRows(SAMPLE, 60);
     const flat = rows
-      .map((r) => (r.kind === "kv" ? `${r.label}: ${r.value}` : r.kind === "blank" ? "" : r.text))
+      .map((r) =>
+        r.kind === "kv"
+          ? `${r.label}: ${r.value}`
+          : r.kind === "header"
+            ? `${r.title} ${r.badge}`
+            : r.kind === "blank"
+              ? ""
+              : r.text,
+      )
       .join("\n");
     expect(flat).toContain("Reflected XSS");
-    expect(flat).toContain("Severity: HIGH");
+    // Severity is carried by the header badge, not a key/value row.
+    expect(flat).toContain("HIGH");
     expect(flat).toContain("src/search.ts:12-18");
     expect(flat).toContain("CVSS");
     expect(flat).toContain("https://owasp.org/xss");
-    // Severity row is painted red for a high finding.
-    const severityRow = rows.find((r) => r.kind === "kv" && r.label === "Severity");
-    expect(severityRow && severityRow.kind === "kv" && severityRow.tone).toBe("error");
+    // The header badge is painted red for a high finding.
+    const headerRow = rows.find((r) => r.kind === "header");
+    expect(headerRow && headerRow.kind === "header" && headerRow.badgeTone).toBe("error");
+    expect(headerRow && headerRow.kind === "header" && headerRow.badge).toBe("HIGH");
   });
 
   it("routes raw evidence through the injected redactor", () => {
@@ -294,7 +305,15 @@ describe("buildFindingRows", () => {
     const sparse = { id: "F-0", title: "Bare finding", severity: "low" } as Finding;
     const rows = buildFindingRows(sparse, 60);
     const flat = rows
-      .map((r) => (r.kind === "kv" ? `${r.label}: ${r.value}` : r.kind === "text" ? r.text : ""))
+      .map((r) =>
+        r.kind === "kv"
+          ? `${r.label}: ${r.value}`
+          : r.kind === "header"
+            ? r.title
+            : r.kind === "text"
+              ? r.text
+              : "",
+      )
       .join("\n");
     expect(flat).toContain("—");
     expect(flat).toContain("Bare finding");
@@ -303,5 +322,47 @@ describe("buildFindingRows", () => {
   it("returns a placeholder row when no finding is supplied", () => {
     const rows = buildFindingRows(undefined, 60);
     expect(rows).toEqual([{ kind: "text", text: "No finding selected.", tone: "muted" }]);
+  });
+});
+
+describe("paneTitleColumns (finding-detail)", () => {
+  it("splits a header into title + right column whose cells sum to the inner width", () => {
+    for (let width = 0; width <= 200; width++) {
+      for (const metaLen of [0, 1, 3, 10, 24, 999]) {
+        const cols = paneTitleColumns(width, metaLen);
+        const claimed = cols.titleWidth + cols.gap + cols.metaWidth;
+        for (const [name, value] of [
+          ["titleWidth", cols.titleWidth],
+          ["gap", cols.gap],
+          ["metaWidth", cols.metaWidth],
+        ] as const) {
+          expect(isInteger(value), `${name} was ${value} at ${width}`).toBe(true);
+        }
+        expect(claimed, `claimed ${claimed} of ${width} with meta ${metaLen}`).toBe(Math.max(0, width));
+        if (width > 0) expect(cols.titleWidth, `title squeezed out at ${width}`).toBeGreaterThan(0);
+        expect(cols.gap === 0 || cols.metaWidth > 0).toBe(true);
+      }
+    }
+  });
+});
+
+describe("buildFindingRows — the strong header", () => {
+  it("leads with a header row carrying the title and a severity badge", () => {
+    const rows = buildFindingRows(SAMPLE, 60);
+    expect(rows[0].kind).toBe("header");
+    const header = rows[0];
+    if (header.kind !== "header") throw new Error("expected a header row");
+    expect(header.title).toContain("Reflected XSS");
+    expect(header.badge).toBe("HIGH");
+    expect(header.badgeTone).toBe("error"); // red reserved for critical/high
+    // Severity is no longer duplicated as a key/value row.
+    expect(rows.some((r) => r.kind === "kv" && r.label === "Severity")).toBe(false);
+  });
+
+  it("shows an em-dash badge for a finding with no severity", () => {
+    const rows = buildFindingRows({ id: "F-1", title: "No sev" } as Finding, 60);
+    const header = rows[0];
+    if (header.kind !== "header") throw new Error("expected a header row");
+    expect(header.badge).toBe("—");
   });
 });

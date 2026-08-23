@@ -37,6 +37,7 @@ import { join } from "node:path";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { TextAttributes } from "@opentui/core";
 
 import { useTheme, type Theme } from "./theme-context.js";
 import { useSettings } from "./settings-store.js";
@@ -60,7 +61,8 @@ import {
   marketDetailLines,
   marketEmptyLines,
   marketFooterHint,
-  marketListTitle,
+  marketListHeading,
+  paneTitleColumns,
   moveSelection,
   stateTag,
   type MarketDetailTone,
@@ -332,21 +334,32 @@ function Pane({
   pane,
   bordered,
   title,
-  titleFg,
+  meta,
   children,
 }: {
   pane: MarketPane;
   bordered: boolean;
   title: string;
-  titleFg: string;
+  /** Right-aligned muted summary on the title row (count/window/version). */
+  meta?: string;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
   if (pane.width <= 0 || pane.height <= 0) return null;
+  // Title row: bold primary title left, right-aligned muted meta — the OMP
+  // header the console reuses. The columns sum to the inner width, so the two
+  // can never fuse under pressure.
+  const cols = paneTitleColumns(pane.innerWidth, (meta ?? "").length);
   const titleRow = pane.hasTitle ? (
-    <Cells width={pane.innerWidth} fg={titleFg}>
-      {title}
-    </Cells>
+    <box flexDirection="row" width={pane.innerWidth} flexShrink={0} minWidth={0}>
+      <Cells width={cols.titleWidth} fg={theme.PRIMARY} attributes={TextAttributes.BOLD}>
+        {title}
+      </Cells>
+      <Cells width={cols.gap}>{""}</Cells>
+      <Cells width={cols.metaWidth} align="right" fg={theme.MUTED}>
+        {meta ?? ""}
+      </Cells>
+    </box>
   ) : null;
   return (
     <box
@@ -589,7 +602,11 @@ export function MarketScreen({
           flexShrink={0}
           minWidth={0}
         >
-          <Cells width={heading.labelWidth} fg={theme.PRIMARY}>
+          <Cells
+            width={heading.labelWidth}
+            fg={theme.MUTED}
+            attributes={TextAttributes.BOLD}
+          >
             {entry.group.label.toUpperCase()}
           </Cells>
           <Cells width={heading.gap}>{""}</Cells>
@@ -602,6 +619,14 @@ export function MarketScreen({
 
     const selectedRow = index === cursor;
     const background = selectedRow ? theme.PANEL_ALT : undefined;
+    // The marker column doubles as a selection caret and an installed-state
+    // dot, exactly like the shared agent row: a selected row shows an accent
+    // "▸", an installed/enabled/active item a state-coloured "●", and an
+    // available one nothing. The highlighted row's label is accent + bold.
+    const installed = entry.state !== "available";
+    const markerGlyph = selectedRow ? "▸" : installed ? "●" : "";
+    const markerFg = selectedRow ? theme.ACCENT : stateColor(theme, entry.state);
+    const labelFg = selectedRow ? theme.ACCENT : installed ? theme.TEXT : theme.MUTED;
     return (
       <box
         key={`item-${entry.item.kind}-${entry.item.id}`}
@@ -610,16 +635,17 @@ export function MarketScreen({
         flexShrink={0}
         minWidth={0}
       >
-        <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
-          {selectedRow ? ">" : ""}
+        <Cells width={row.markerWidth} fg={markerFg} bg={background}>
+          {markerGlyph}
         </Cells>
         <Cells width={row.markerGap} bg={background}>
           {""}
         </Cells>
         <Cells
           width={row.labelWidth}
-          fg={selectedRow ? theme.TEXT : theme.MUTED}
+          fg={labelFg}
           bg={background}
+          attributes={selectedRow ? TextAttributes.BOLD : undefined}
         >
           {entry.item.name}
         </Cells>
@@ -703,6 +729,11 @@ export function MarketScreen({
       ? "PLUGIN"
       : "THEME"
     : "MARKETPLACE";
+  // The detail header's right meta names the artifact's install state (for a
+  // selected item) or nothing (empty/error state), so the pane header agrees
+  // with the state tag in the list row and the sentence in the body.
+  const detailMeta = activeItem && activeState ? stateTag(activeState) : "";
+  const listHeading = marketListHeading(window);
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
@@ -715,8 +746,8 @@ export function MarketScreen({
         <Pane
           pane={layout.list}
           bordered={layout.bordered}
-          title={marketListTitle(window)}
-          titleFg={theme.MUTED}
+          title={listHeading.title}
+          meta={listHeading.meta}
         >
           {rows.length === 0 ? (
             <Cells width={row.width} fg={theme.MUTED}>
@@ -730,7 +761,7 @@ export function MarketScreen({
           pane={layout.detail}
           bordered={layout.bordered}
           title={detailTitle}
-          titleFg={theme.MUTED}
+          meta={detailMeta}
         >
           {detailBody}
         </Pane>

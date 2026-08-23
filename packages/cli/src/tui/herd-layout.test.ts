@@ -24,7 +24,9 @@ import {
   herdDetailLines,
   herdFocusFooterHint,
   herdFocusTranscriptTitle,
+  herdListHeading,
   herdListTitle,
+  paneTitleColumns,
   herdRowLabelText,
   herdRowStatusText,
   herdStatusOf,
@@ -836,5 +838,47 @@ describe("computeHerdFocusLayout — the sweep", () => {
     const short = computeHerdFocusLayout({ width: 120, height: 9 });
     expect(short.transcript.height).toBeGreaterThan(0);
     expect(short.meta.height).toBe(0);
+  });
+});
+
+describe("paneTitleColumns (herd)", () => {
+  it("splits a header into title + meta whose cells sum to the inner width", () => {
+    for (let width = 0; width <= 200; width++) {
+      for (const metaLen of [0, 1, 3, 8, 20, 999]) {
+        const cols = paneTitleColumns(width, metaLen);
+        const claimed = cols.titleWidth + cols.gap + cols.metaWidth;
+        for (const [name, value] of [
+          ["titleWidth", cols.titleWidth],
+          ["gap", cols.gap],
+          ["metaWidth", cols.metaWidth],
+        ] as const) {
+          expect(isInteger(value), `${name} was ${value} at ${width}`).toBe(true);
+        }
+        expect(claimed, `claimed ${claimed} of ${width} with meta ${metaLen}`).toBe(Math.max(0, width));
+        if (width > 0) expect(cols.titleWidth, `title squeezed out at ${width}`).toBeGreaterThan(0);
+        expect(cols.gap === 0 || cols.metaWidth > 0).toBe(true);
+      }
+    }
+  });
+});
+
+describe("herdListHeading", () => {
+  it("names the pane and counts the roster, or the window when scrolled", () => {
+    const grouped = buildHerdRows(
+      [peer("a"), peer("b", { activity: { phase: "working" } })],
+      NOW,
+    );
+    const whole = computeHerdWindow({ rows: grouped, selected: 1, visible: grouped.length });
+    const heading = herdListHeading(whole);
+    expect(heading.title).toBe("HERD");
+    expect(heading.meta).toBe(`${whole.total}`);
+    expect(herdListHeading(computeHerdWindow({ rows: [], selected: -1, visible: 4 }))).toEqual({
+      title: "HERD",
+      meta: "empty",
+    });
+    const scrolled = computeHerdWindow({ rows: grouped, selected: 3, visible: 2, anchor: 2 });
+    if (scrolled.hasAbove || scrolled.hasBelow) {
+      expect(herdListHeading(scrolled).meta).toMatch(/^\d+-\d+ \/ \d+$/);
+    }
   });
 });
