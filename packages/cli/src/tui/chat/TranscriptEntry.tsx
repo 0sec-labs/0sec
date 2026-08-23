@@ -23,6 +23,22 @@ import type { Theme } from "../theme-context.js";
 import type { ChatEntry, EntryDisplay } from "./types.js";
 
 /**
+ * Mouse affordances for a clickable transcript row (a collapsed fold, or a
+ * collapsible step inside an expanded turn). Entirely optional: when omitted,
+ * the row renders exactly as before with no handlers, so keyboard-only use and
+ * restored transcripts are untouched. Chat-screen supplies these only for the
+ * rows that participate in per-turn expand/collapse.
+ */
+export interface TranscriptRowInteraction {
+  /** True when this row's turn is currently hover-highlighted. */
+  hovered?: boolean;
+  /** Toggle this turn between folded and fully expanded. */
+  onToggle?: () => void;
+  /** Report pointer enter (true) / leave (false) for this row's turn. */
+  onHover?: (hovering: boolean) => void;
+}
+
+/**
  * Normalize a reasoning stream for display.
  *
  * Reasoning summaries arrive as a sequence of bold headers with no
@@ -91,8 +107,41 @@ function formatTurnCost(model: string, inputTokens: number, outputTokens: number
   return `$${usd.toFixed(2)}`;
 }
 
-export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, theme: Theme) {
+export function renderEntry(
+  entry: ChatEntry,
+  maxWidthOuter: number,
+  display: EntryDisplay,
+  theme: Theme,
+  interaction?: TranscriptRowInteraction,
+) {
   const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER, PANEL_ALT, BRAND } = theme;
+  // Interaction is only ever handed to the collapsible kinds (tool / subagent /
+  // reasoning) of an EXPANDED turn. When present we reserve a two-cell
+  // disclosure gutter and shrink the content budget so the wrapped row still
+  // fits its column — the 80-col invariant holds exactly as the fold's does.
+  const interactive = Boolean(interaction);
+  const maxWidth = interactive ? Math.max(8, maxWidthOuter - 2) : maxWidthOuter;
+  const finish = (node: React.ReactNode): React.ReactNode => {
+    if (!interaction) return node;
+    return (
+      <box
+        key={entry.id}
+        flexDirection="row"
+        minWidth={0}
+        backgroundColor={interaction.hovered ? PANEL_ALT : undefined}
+        onMouseDown={interaction.onToggle}
+        onMouseOver={interaction.onHover ? () => interaction.onHover?.(true) : undefined}
+        onMouseOut={interaction.onHover ? () => interaction.onHover?.(false) : undefined}
+      >
+        <box width={2} flexShrink={0} minWidth={0} marginTop={display.spacing}>
+          <text fg={MUTED}>▾ </text>
+        </box>
+        <box flexDirection="column" flexGrow={1} minWidth={0}>
+          {node}
+        </box>
+      </box>
+    );
+  };
   const detailWidth = Math.max(20, maxWidth - 8);
   const { transcriptStyle, roleLabelStyle, toolCardStyle } = display;
   // A row that stands for several collapsed repeats says so. The count is
@@ -226,13 +275,13 @@ export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDi
       const compactName = entry.toolArgs
         ? `${entry.text}${repeat} · ${entry.toolArgs}`
         : `${entry.text}${repeat}`;
-      return (
+      return finish(
         <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
           <text fg={tone}>{toolCompactLine(icon, compactName, state, frame.contentWidth)}</text>
           {frame.showDetail && entry.detail ? (
             <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text>
           ) : null}
-        </box>
+        </box>,
       );
     }
 
@@ -251,11 +300,11 @@ export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDi
         {frame.showDetail && entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, toolDetail)}</text> : null}
       </box>
     );
-    return (
+    return finish(
       <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
         {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
         {header}
-      </box>
+      </box>,
     );
   }
 
@@ -272,17 +321,17 @@ export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDi
     const statusLine = statusParts.length > 0 ? statusParts.join(" · ") : null;
 
     if (frame.singleLine) {
-      return (
+      return finish(
         <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
           <text fg={tone}>{toolCompactLine(ok ? "✓" : "×", "subagent", ok ? "completed" : "failed", frame.contentWidth)}</text>
           {frame.showDetail && entry.subagentError ? (
             <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, frame.contentWidth)}</text>
           ) : null}
-        </box>
+        </box>,
       );
     }
 
-    return (
+    return finish(
       <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
         {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
@@ -295,7 +344,7 @@ export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDi
           {frame.showDetail && entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, subDetailWidth)}</text> : null}
           {entry.subagentError ? <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, subDetailWidth)}</text> : null}
         </box>
-      </box>
+      </box>,
     );
   }
 
@@ -329,7 +378,7 @@ export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDi
   if (entry.kind === "reasoning") {
     // Thinking is deliberately quieter than the answer: a dotted rail and
     // muted text, so it reads as working-out rather than a conclusion.
-    return (
+    return finish(
       <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
         <box width={1} flexShrink={0} alignSelf="stretch">
           <text fg={MUTED}>┊</text>
@@ -343,7 +392,7 @@ export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDi
             MUTED,
           )}
         </box>
-      </box>
+      </box>,
     );
   }
 
@@ -412,8 +461,9 @@ export function renderFold(
   maxWidth: number,
   display: EntryDisplay,
   theme: Theme,
+  interaction?: TranscriptRowInteraction,
 ) {
-  const { MUTED } = theme;
+  const { MUTED, PANEL_ALT } = theme;
   const key = `fold-${item.entries[0]?.id ?? item.turn}`;
   // `toolCardStyle: "hidden"` means "don't show me successful tool activity";
   // honour it inside a fold too by dropping the tool/subagent steps from the
@@ -424,8 +474,23 @@ export function renderFold(
       : item.entries;
   if (shown.length === 0) return null;
   const summary = shown.length === item.entries.length ? item.summary : foldSummary(shown);
+  // A collapsed fold is clickable: mousing down toggles its turn into the
+  // expanded set (chat-screen owns that state), and hovering tints the row so
+  // the disclosure reads as interactive. Handlers are wired only when
+  // chat-screen supplies `interaction`; keyboard-only use (Ctrl+R) is
+  // unaffected. The ▸ glyph is the "collapsed" affordance; an expanded turn
+  // instead renders its steps with the ▾ affordance (see renderEntry).
   return (
-    <box key={key} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+    <box
+      key={key}
+      flexDirection="row"
+      marginTop={display.spacing}
+      minWidth={0}
+      backgroundColor={interaction?.hovered ? PANEL_ALT : undefined}
+      onMouseDown={interaction?.onToggle}
+      onMouseOver={interaction?.onHover ? () => interaction.onHover?.(true) : undefined}
+      onMouseOut={interaction?.onHover ? () => interaction.onHover?.(false) : undefined}
+    >
       <box width={2} flexShrink={0} minWidth={0}>
         <text fg={MUTED}>▸ </text>
       </box>

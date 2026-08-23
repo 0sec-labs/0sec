@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import {
   useKeyboard,
+  useRenderer,
   useTerminalDimensions,
 } from "@opentui/react";
 import {
@@ -170,6 +171,13 @@ import {
   planTranscript,
   resolveTranscriptStyleSettings,
 } from "./transcript-style.js";
+import { useSelectionCopy, type SelectionCopyFn } from "./use-selection-copy.js";
+import { useToast, Toast } from "./toast.js";
+import {
+  copyToClipboard,
+  defaultSpawn,
+  defaultWhich,
+} from "./clipboard.js";
 import type {
   ChatEntry,
   EntryDisplay,
@@ -409,6 +417,72 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     CANVAS,
     BORDER,
   } = theme;
+  // The OpenTUI renderer, for the OSC-52 clipboard path (copy-on-highlight).
+  // OpenTUI owns the framebuffer, so the terminal's native mouse-selection is
+  // off; we re-add copy-on-highlight ourselves and must never touch raw stdout.
+  const renderer = useRenderer();
+  // The transient "Copied N bytes" pill. reduceMotion collapses its fade to a
+  // single appear/dismiss (the toast module honours the flag).
+  const { showToast, frame: toastFrame } = useToast({ reduceMotion: settings.reduceMotion });
+  /**
+   * Clipboard writer for copy-on-highlight.
+   *
+   * The renderer exposes `copyToClipboardOSC52(text)` — its own SAFE OSC-52
+   * writer: it builds the escape sequence AND writes it through the renderer's
+   * output path (never process.stdout), returning whether the terminal
+   * accepted it. That is a different shape from clipboard.ts's `emit` (which
+   * takes a PRE-BUILT sequence and returns void), so we adapt it as a `copy`
+   * instead: OSC-52 via the renderer when supported, otherwise the platform
+   * subprocess (defaultSpawn/defaultWhich, forwarded by the hook). Every branch
+   * is feature-detected and swallows failure, so a renderer without the API —
+   * or a host with no clipboard tool — degrades to "no copy", never a crash.
+   */
+  const copySelection = useCallback<SelectionCopyFn>((text, opts) => {
+    const bytes = Buffer.byteLength(text, "utf8");
+    try {
+      if (
+        renderer &&
+        typeof renderer.isOsc52Supported === "function" &&
+        renderer.isOsc52Supported() &&
+        typeof renderer.copyToClipboardOSC52 === "function" &&
+        renderer.copyToClipboardOSC52(text)
+      ) {
+        return Promise.resolve({ ok: true, method: "osc52", bytes });
+      }
+    } catch {
+      // Fall through to the subprocess path below.
+    }
+    return copyToClipboard(text, {
+      spawn: opts?.spawn,
+      which: opts?.which,
+      platform: opts?.platform,
+      osc52: opts?.osc52,
+    });
+  }, [renderer]);
+  useSelectionCopy({
+    copy: copySelection,
+    spawn: defaultSpawn,
+    which: defaultWhich,
+    onCopied: ({ bytes }) => showToast(`Copied ${bytes} bytes`),
+  });
+  /**
+   * Per-turn transcript expansion. In collapsed mode each turn's successful
+   * tool/reasoning steps fold to one ▸ line; clicking that line adds the turn
+   * here so `planTranscript` renders it in full (and the steps show a ▾
+   * affordance whose click removes it again). Independent of the global Ctrl+R
+   * detail toggle, which flips every turn at once via the settings store.
+   */
+  const [expandedTurns, setExpandedTurns] = useState<Set<number>>(() => new Set());
+  /** The turn currently under the mouse, for the subtle hover highlight. */
+  const [hoveredTurn, setHoveredTurn] = useState<number | null>(null);
+  const toggleTurnExpanded = useCallback((turn: number) => {
+    setExpandedTurns((prev) => {
+      const next = new Set(prev);
+      if (next.has(turn)) next.delete(turn);
+      else next.add(turn);
+      return next;
+    });
+  }, []);
   // The output-guard subscription is registered once; a ref lets it read
   // the live setting without tearing down and re-adding the listener.
   const settingsRef = useRef(settings);
@@ -3284,11 +3358,38 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       >
         <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
           <box flexDirection="column" width="100%">
-            {planTranscript(entries, entryDisplay.transcriptDetail).map((item) =>
-              item.type === "fold"
-                ? renderFold(item, transcriptWidth, entryDisplay, theme)
-                : renderEntry(item.entry, transcriptWidth, entryDisplay, theme),
-            )}
+            {planTranscript(entries, entryDisplay.transcriptDetail, expandedTurns).map((item) => {
+              if (item.type === "fold") {
+                // A collapsed fold: click to expand its turn, hover to tint.
+                return renderFold(item, transcriptWidth, entryDisplay, theme, {
+                  hovered: hoveredTurn === item.turn,
+                  onToggle: () => toggleTurnExpanded(item.turn),
+                  onHover: (h) => setHoveredTurn(h ? item.turn : null),
+                });
+              }
+              const entry = item.entry;
+              // Only the collapsible kinds of a turn the operator has expanded
+              // are clickable (to re-collapse) and hoverable; everything else
+              // renders exactly as before, so keyboard-only use is untouched.
+              const collapsible =
+                entry.kind === "tool" ||
+                entry.kind === "subagent" ||
+                entry.kind === "reasoning";
+              const interactive = collapsible && expandedTurns.has(entry.turn);
+              return renderEntry(
+                entry,
+                transcriptWidth,
+                entryDisplay,
+                theme,
+                interactive
+                  ? {
+                      hovered: hoveredTurn === entry.turn,
+                      onToggle: () => toggleTurnExpanded(entry.turn),
+                      onHover: (h) => setHoveredTurn(h ? entry.turn : null),
+                    }
+                  : undefined,
+              );
+            })}
             {workingIndicator}
             {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
           </box>
@@ -3527,6 +3628,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           ) : null}
         </box>
       ) : null}
+      {/*
+        * The copy-on-highlight toast. Positioned absolutely with a high
+        * zIndex (see toast.tsx), so it floats over the transcript without
+        * participating in — or shifting — the column layout above.
+        */}
+      <Toast frame={toastFrame} />
     </box>
   );
 }
