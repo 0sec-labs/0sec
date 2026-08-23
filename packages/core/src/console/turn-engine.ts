@@ -12,15 +12,22 @@ import type {
   NativeToolDef,
   RuntimeConfig,
 } from "../runtime/types.js";
-import { ToolExecutor, getToolsForRole } from "../agent/tools.js";
+import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "../agent/tools.js";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
+  BUILTIN_GUARDS,
   evaluateGuards,
   guardApprovalUnavailable,
   guardUnresolvedCapabilities,
   type GuardContext,
   type ToolGuard,
 } from "../plugins/guards.js";
+import { SelfExtensionRegistry } from "../plugins/self-extension.js";
+import type {
+  RegisteredExtensionTool,
+  SelfExtensionEvent,
+} from "../plugins/self-extension.js";
+import type { PluginHost } from "../plugins/loader.js";
 import type { AgentRole, OperatorQuestionAnswer, OperatorQuestionRequest, ScopedAuditEscalationRequest, ToolCall, ToolContext, ToolDefinition, ToolResult } from "../agent/types.js";
 import { ScopePolicy } from "../scope/scope.js";
 import { eventBus } from "../events/bus.js";
@@ -491,6 +498,37 @@ export interface ConsoleSessionConfig {
    * `false` to keep the heuristic only (e.g. to avoid any extra model spend).
    */
   refineObjective?: boolean;
+  /**
+   * Model self-extension (the "it builds itself" capability) for THIS console
+   * session. OFF BY DEFAULT and load-bearing: only an explicit `true` builds an
+   * ENABLED per-session {@link SelfExtensionRegistry}, injects the `self_extend`
+   * tool into the model-facing set, and unions any model-registered tools in at
+   * each turn boundary. When false/omitted no registry is constructed,
+   * `self_extend` is absent, and the session's model-facing tool set + tool
+   * context are byte-for-byte what they were before this field existed. Mirrors
+   * the same-named field on {@link NativeAgentConfig} in the scan loop (same
+   * baseGuards/reservedToolNames), and the operator setting
+   * `allowModelSelfExtension`. The registry is session-scoped (in-memory, never
+   * persisted) and additive-only; it enforces every limit in
+   * plugins/self-extension.ts. A registered tool has no in-process body — even a
+   * guard-approved call returns an honest "no executable implementation" result.
+   */
+  allowModelSelfExtension?: boolean;
+  /**
+   * Live plugin host for THIS session (0sec plugin system). Optional; absent =
+   * today's behaviour exactly (no plugin tools are exposed or dispatched). When
+   * provided, the tools of ENABLED/loaded plugins are unioned into the
+   * model-facing tool set at each turn boundary and their calls are dispatched
+   * through the host — but ONLY tools the host actually owns (the loader already
+   * enforces enablement; this console never bypasses it). Every existing
+   * per-call console gate (recon capability, scope, local-scope, standard
+   * approval, and the deny-only guard floor) still applies to a plugin tool,
+   * using the host's own resolved gate flags so a plugin tool lands in the SAME
+   * gate maps as the built-ins. The host's lifecycle (load/reload/unload) is the
+   * caller's responsibility; the console only reads its registry at turn
+   * boundaries, which is the loader's turn-boundary safety contract.
+   */
+  pluginHost?: PluginHost;
 }
 
 /** A live console session: persistent history + a `send()` per operator line. */
@@ -642,10 +680,51 @@ function toNativeToolDef(tool: ToolDefinition): NativeToolDef {
   };
 }
 
+/**
+ * Convert a model-REGISTERED extension tool (self-extension) into the runtime's
+ * native tool schema. Mirrors native-loop's helper of the same name: unlike a
+ * registry `ToolDefinition`, a registered tool already carries a validated,
+ * frozen JSON-schema `parameters` properties bag, so it is passed through
+ * directly as `input_schema.properties`.
+ */
+function toNativeExtensionToolDef(tool: RegisteredExtensionTool): NativeToolDef {
+  return {
+    name: tool.name,
+    description: tool.description,
+    input_schema: {
+      type: "object",
+      properties: { ...tool.parameters },
+      required: tool.required ? [...tool.required] : [],
+    },
+  };
+}
+
 /** Serialize a tool result into the string content of a `tool_result` block. */
 function stringifyToolResult(result: ToolResult): string {
   if (!result.success) return result.error ?? "tool execution failed";
   return typeof result.output === "string" ? result.output : JSON.stringify(result.output);
+}
+
+/**
+ * Dispatch one plugin-owned tool call through the {@link PluginHost} and adapt
+ * its {@link import("../plugins/loader.js").PluginCallResult} to the engine's
+ * {@link ToolResult}. The host NEVER throws and never bypasses the gates (the
+ * caller has already run them); a dead/hung/unavailable plugin resolves to a
+ * `{ ok: false }` transport error, and a plugin that ran but reported failure
+ * comes back as `{ ok: true, failed: true }`. Both surface as `success: false`
+ * with the reason as the tool result, so the turn continues with a tool error
+ * rather than a crash — the framed/sanitized content is safe for model context.
+ */
+async function dispatchPluginTool(host: PluginHost, call: ToolCall): Promise<ToolResult> {
+  const res = await host.call(call.name, call.arguments ?? {});
+  if (!res.ok) {
+    return { success: false, output: null, error: res.error };
+  }
+  return {
+    success: !res.failed,
+    output: res.content,
+    ...(res.failed ? { error: res.content } : {}),
+  };
 }
 
 // ── Console autonomy helpers ──
@@ -1445,7 +1524,11 @@ interface ToolTargets {
  * command validated a host the command was never going to contact, which made
  * the gate look like it had done its job when it had not.
  */
-function extractToolTargets(call: ToolCall, target: string): ToolTargets {
+function extractToolTargets(
+  call: ToolCall,
+  target: string,
+  networkCapable: boolean = NETWORK_CAPABLE_TOOLS[call.name] === true,
+): ToolTargets {
   const urls = new Set<string>();
   const unresolved = new Set<string>();
   const shellPayloads: string[] = [];
@@ -1476,7 +1559,7 @@ function extractToolTargets(call: ToolCall, target: string): ToolTargets {
     urls.size === 0 &&
     unresolved.size === 0 &&
     target.trim() &&
-    NETWORK_CAPABLE_TOOLS[call.name]
+    networkCapable
   ) {
     urls.add(target);
   }
@@ -1546,13 +1629,140 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     agentMessaging: config.agentMessaging,
   };
 
+  // ── Model self-extension (session-scoped, additive-only) ──
+  // OFF by default: only an explicit `allowModelSelfExtension === true` builds an
+  // ENABLED registry. Constructed exactly like native-loop's — the deny-only
+  // built-in guard floor as the base guards, and the built-in tool names as
+  // reserved so a model-registered tool can never shadow a built-in — and it
+  // enforces every per-session limit itself. It lives only in this closure
+  // (session-scoped, never persisted) and is attached to the tool context so the
+  // shared executor routes `self_extend` and every model-registered-tool call
+  // through THIS session's registry. When disabled the registry is not
+  // constructed at all and nothing is attached, so the tool context is
+  // byte-for-byte what it was before this feature existed. Every registration
+  // attempt (success OR rejection) is surfaced on the event bus for the TUI.
+  // The active turn's operator notify hook, set at the top of each `send()` and
+  // cleared when it returns. The self-extension registry's `onEvent` (below)
+  // fires DURING a turn — when the model calls `self_extend` — so routing its
+  // audit line here delivers it to the console's notify surface (the same
+  // `onNotice` channel the scope/local-scope auto-expansion notices use).
+  let activeNotify: ((message: string) => void) | undefined;
+
+  const selfExtensionEnabled = config.allowModelSelfExtension === true;
+  const selfExtension = selfExtensionEnabled
+    ? new SelfExtensionRegistry({
+        enabled: true,
+        baseGuards: BUILTIN_GUARDS,
+        reservedToolNames: Object.keys(TOOL_DEFINITIONS),
+        onEvent: (event: SelfExtensionEvent) => {
+          const names = event.tools.map((t) => t.name).join(", ");
+          const line =
+            event.kind === "registered"
+              ? `self-extension: registered ${event.tools.length} tool(s)` +
+                (names ? ` (${names})` : "") +
+                (event.pluginName ? ` from "${event.pluginName}"` : "")
+              : event.kind === "revoked"
+                ? `self-extension: revoked registration ${event.registrationId ?? ""}`.trim()
+                : `self-extension: registration rejected${
+                    event.errors && event.errors.length > 0
+                      ? `: ${event.errors.join("; ")}`
+                      : ""
+                  }`;
+          activeNotify?.(line);
+        },
+      })
+    : undefined;
+  if (selfExtension) {
+    // Attach via the same cast pattern the messaging runtime / native-loop use,
+    // so the executor's `selfExtend` handler and its `_dispatchExtensionTool`
+    // both resolve THIS session's registry.
+    (toolContext as ToolContext & { selfExtension?: SelfExtensionRegistry }).selfExtension =
+      selfExtension;
+  }
+
   // The real dispatcher over the real registry. `db = null` → no persistence
   // this pass (findings live in `toolContext.findings` for the session).
   const executor = new ToolExecutor(toolContext);
 
   const tools =
     config.tools ?? getToolsForRole(role, { allowScanners: config.allowScanners });
-  const nativeTools = tools.map(toNativeToolDef);
+  const baseNativeTools = tools.map(toNativeToolDef);
+
+  // `self_extend` is never advertised by getToolsForRole; inject it into the
+  // model-facing set ONLY when enabled (and only if not already present), so the
+  // default (disabled) native tool set is byte-identical to before.
+  const selfExtendDef = TOOL_DEFINITIONS.self_extend;
+  const selfExtendNativeDef =
+    selfExtensionEnabled && selfExtendDef && !tools.some((t) => t.name === "self_extend")
+      ? toNativeToolDef(selfExtendDef)
+      : undefined;
+
+  // Session-local gate maps. They START as copies of the static built-in maps
+  // and, at every turn boundary, are re-merged with the CURRENT plugin-host +
+  // self-extension tool flags so an injected tool is gated by the SAME maps as a
+  // built-in (this is exactly what loader.ts's `gateMaps()` is designed for).
+  // When both self-extension and a plugin host are absent these stay plain
+  // copies of the module consts, so every gate reads identical values to before.
+  let networkCapableTools: Record<string, true> = { ...NETWORK_CAPABLE_TOOLS };
+  let localScopeTools: Record<string, true> = { ...LOCAL_SCOPE_TOOLS };
+  let readOnlyTools: Record<string, true> = { ...READ_ONLY_TOOLS };
+
+  /**
+   * Rebuild the model-facing tool set and the session-local gate maps as
+   * (built-ins) ∪ (self_extend + the registry's live model-registered tools) ∪
+   * (the plugin host's currently-registered tools). Idempotent and
+   * session-scoped, and safe to call only at a TURN BOUNDARY (never mid-turn):
+   * plugin reload and self-extension registration are only safe between turns,
+   * so this is invoked at the top of each model-call round, not inside one. A
+   * disabled registry / absent host contribute nothing.
+   */
+  const refreshInjectedTools = (): void => {
+    const net: Record<string, true> = { ...NETWORK_CAPABLE_TOOLS };
+    const loc: Record<string, true> = { ...LOCAL_SCOPE_TOOLS };
+    const ro: Record<string, true> = { ...READ_ONLY_TOOLS };
+    const extras: NativeToolDef[] = [];
+
+    if (selfExtendNativeDef) extras.push(selfExtendNativeDef);
+
+    if (selfExtension) {
+      for (const t of selfExtension.tools()) {
+        extras.push(toNativeExtensionToolDef(t));
+        // Gate flags come from the tool's DECLARED capabilities (via the
+        // registry's manifest translation) — never a lighter class.
+        if (t.gateFlags.networkCapable) net[t.name] = true;
+        if (t.gateFlags.localScope) loc[t.name] = true;
+        if (t.gateFlags.readOnly) ro[t.name] = true;
+      }
+    }
+
+    if (config.pluginHost) {
+      // ONLY tools the host actually owns (enabled/loaded plugins). The loader
+      // is the single source of truth for what a plugin contributed and for its
+      // resolved gate flags; the console never re-derives or bypasses that.
+      for (const def of config.pluginHost.toolDefinitions()) extras.push(toNativeToolDef(def));
+      const gm = config.pluginHost.gateMaps();
+      Object.assign(net, gm.networkCapable);
+      Object.assign(loc, gm.localScope);
+      Object.assign(ro, gm.readOnly);
+    }
+
+    networkCapableTools = net;
+    localScopeTools = loc;
+    readOnlyTools = ro;
+    nativeTools = extras.length > 0 ? [...baseNativeTools, ...extras] : baseNativeTools;
+  };
+
+  // Whether ANY injected-tool source is wired for this session. When neither is,
+  // `refreshInjectedTools` is never called, so `nativeTools` stays exactly
+  // `baseNativeTools` and the gate maps stay plain copies of the module consts —
+  // byte-for-byte the pre-feature behaviour.
+  const injectableToolsPresent = selfExtensionEnabled || config.pluginHost !== undefined;
+
+  // `nativeTools` is a `let`: the base (built-in) portion is captured in
+  // `baseNativeTools`, and the union of injected tools is refreshed at each turn
+  // boundary (see `refreshInjectedTools`). Seed it once so it is never undefined.
+  let nativeTools: NativeToolDef[] = baseNativeTools;
+  if (injectableToolsPresent) refreshInjectedTools();
 
   const customSystemPrompt = config.systemPrompt;
   let systemPrompt = customSystemPrompt ??
@@ -1648,9 +1858,13 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     call: ToolCall,
     notify?: (message: string) => void,
   ): Promise<"approved" | ToolResult> {
-    if (!NETWORK_CAPABLE_TOOLS[call.name]) return "approved";
+    if (!networkCapableTools[call.name]) return "approved";
 
-    const { urls, unresolved, shellPayloads } = extractToolTargets(call, sessionTarget);
+    const { urls, unresolved, shellPayloads } = extractToolTargets(
+      call,
+      sessionTarget,
+      networkCapableTools[call.name] === true,
+    );
 
     // Nothing to decide about: no destination was named AND nothing in the call
     // reaches the network in a way this gate could not read. This is the branch
@@ -1875,7 +2089,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     call: ToolCall,
     notify?: (message: string) => void,
   ): Promise<"approved" | ToolResult> {
-    if (!LOCAL_SCOPE_TOOLS[call.name]) return "approved";
+    if (!localScopeTools[call.name]) return "approved";
 
     // Resolve the concrete path the tool wants to touch to an absolute,
     // symlink-resolved real path — the exact value the decision is made against.
@@ -2070,13 +2284,23 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   function guardContextFor(call: ToolCall): GuardContext {
     return {
       toolName: call.name,
-      networkCapable: NETWORK_CAPABLE_TOOLS[call.name] === true,
-      localScope: LOCAL_SCOPE_TOOLS[call.name] === true,
-      readOnly: READ_ONLY_TOOLS[call.name] === true,
+      networkCapable: networkCapableTools[call.name] === true,
+      localScope: localScopeTools[call.name] === true,
+      readOnly: readOnlyTools[call.name] === true,
       autonomyMode,
       hasScope: sessionScope !== undefined,
       approvalAvailable: config.approveTool !== undefined,
-      capabilitiesResolved: Object.prototype.hasOwnProperty.call(TOOL_DISPATCH, call.name),
+      // `capabilitiesResolved` is true only for a tool this session actually
+      // knows: a built-in with a dispatch entry, a plugin tool the host owns
+      // (flags resolved by the loader's manifest translation), or a
+      // model-registered tool the registry owns (flags resolved by the
+      // registry's manifest translation). An unrecognized name still resolves to
+      // false and is denied by `guardUnresolvedCapabilities` rather than
+      // inheriting the least-dangerous class by omission.
+      capabilitiesResolved:
+        Object.prototype.hasOwnProperty.call(TOOL_DISPATCH, call.name) ||
+        config.pluginHost?.ownsTool(call.name) === true ||
+        selfExtension?.tool(call.name) !== undefined,
     };
   }
 
@@ -2094,7 +2318,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     if (autonomyMode !== "standard") return "approved";
     const approveTool = config.approveTool;
     if (!approveTool) return "approved";
-    if (READ_ONLY_TOOLS[call.name]) return "approved";
+    if (readOnlyTools[call.name]) return "approved";
 
     const ok = await approveTool(call);
     if (!ok) {
@@ -2121,7 +2345,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   // other mode this gate is a no-op.
   function maybeAllowReconCapability(call: ToolCall): "approved" | ToolResult {
     if (autonomyMode !== "recon") return "approved";
-    if (READ_ONLY_TOOLS[call.name] || RECON_PASSIVE_NETWORK_TOOLS[call.name]) {
+    if (readOnlyTools[call.name] || RECON_PASSIVE_NETWORK_TOOLS[call.name]) {
       return "approved";
     }
     return {
@@ -2211,8 +2435,18 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     // Mark the turn active (synchronously, before any await) so the objective
     // refinement's deferred model call never runs concurrently with this turn.
     objectiveService.turnStarted();
+    // Route self-extension audit lines to THIS turn's operator notify hook.
+    activeNotify = callbacks?.onNotice;
     try {
     for (;;) {
+      // ── Turn-boundary refresh of injected tools (self-extension + plugins) ──
+      // Rebuild the model-facing tool set and gate maps HERE, at the top of each
+      // model-call round, so a tool the model registered via `self_extend` on a
+      // previous round (and any plugin (re)loaded by the caller between turns)
+      // becomes callable on the NEXT round — never mid-round, honouring the
+      // loader's turn-boundary contract. A no-op when neither source is wired.
+      if (injectableToolsPresent) refreshInjectedTools();
+
       // Checkpoint — between rounds / before issuing the next model call. On the
       // first iteration this is redundant with the pre-abort check above and
       // harmless; on later iterations it is what stops the loop AFTER a round
@@ -2421,7 +2655,17 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
         }
 
         callbacks?.onToolStart?.(call);
-        const toolResult = await executor.execute(call);
+        // Dispatch. A tool the plugin host OWNS is routed through the host (its
+        // out-of-process `call_tool`); the host's `call` is deliberately
+        // downstream of the gates above, which have already run. Everything else
+        // goes through the real ToolExecutor — including `self_extend` (a
+        // built-in handler) and any model-registered tool, which the executor
+        // routes through THIS session's attached self-extension registry (guard-
+        // evaluated under its declared gate flags, and — having no in-process
+        // body — returning an honest "no executable implementation" result).
+        const toolResult = config.pluginHost?.ownsTool(call.name)
+          ? await dispatchPluginTool(config.pluginHost, call)
+          : await executor.execute(call);
         callbacks?.onToolResult?.(call, toolResult);
         runCalls.push({ call, result: toolResult });
         toolResultBlocks.push({
@@ -2480,6 +2724,7 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
       // refinement fire — deferred and rescheduled while any turn runs, so its
       // model call never races the turn's own. Fire-and-forget, fully fail-soft.
       objectiveService.turnEnded();
+      activeNotify = undefined;
     }
   }
 
