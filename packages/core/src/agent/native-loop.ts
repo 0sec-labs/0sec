@@ -17,7 +17,13 @@ import type { AttributionConfig } from "../scope/attribution.js";
 import type { EngagementPosture } from "../scope/engagement-profile.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import { WafDetector } from "../scope/waf-detect.js";
-import { ToolExecutor, getToolsForRole } from "./tools.js";
+import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
+import { SelfExtensionRegistry } from "../plugins/self-extension.js";
+import type {
+  RegisteredExtensionTool,
+  SelfExtensionEvent,
+} from "../plugins/self-extension.js";
+import { BUILTIN_GUARDS } from "../plugins/guards.js";
 import { ToolHealthTracker } from "./tool-health.js";
 import type { ToolHealthSummary } from "./tool-health.js";
 import { TodoTracker, buildTodosPayload } from "./todos.js";
@@ -300,6 +306,17 @@ export interface NativeAgentConfig {
    * `trust-graph-runtime.ts` for the full contract.
    */
   trustGraph?: TrustGraphConfig;
+  /**
+   * Model self-extension (the "it builds itself" capability). OFF BY DEFAULT and
+   * load-bearing: only an explicit `true` constructs an ENABLED
+   * `SelfExtensionRegistry` for the session and injects the `self_extend` tool
+   * into the model-facing tool set. When false/omitted the registry is inert,
+   * `self_extend` is absent from the tool set, and any call to it refuses. The
+   * registry is session-scoped (in-memory, never persisted) and additive-only;
+   * it enforces every limit in plugins/self-extension.ts. Mirrors the operator
+   * setting `allowModelSelfExtension` (SELF_EXTENSION_SETTING_DEF).
+   */
+  allowModelSelfExtension?: boolean;
 }
 
 export interface NativeAgentLoopOptions {
@@ -497,6 +514,42 @@ export async function runNativeAgentLoop(
   const session =
     config.session ?? (identities.length > 0 ? new SessionEngine(identities) : undefined);
 
+  // ── Model self-extension (session-scoped, additive-only) ──
+  // OFF by default: only an explicit `allowModelSelfExtension === true` builds an
+  // ENABLED registry. The registry is constructed with the deny-only built-in
+  // guard floor and the built-in tool names as reserved (so a model-registered
+  // tool can never shadow a built-in), and enforces every per-session limit
+  // itself. It lives only in this closure — session-scoped, never persisted, and
+  // discarded when the loop returns. Every registration attempt (success OR
+  // rejection) is surfaced via `onEvent` so the TUI/journal can show what the
+  // model registered.
+  const selfExtensionEnabled = config.allowModelSelfExtension === true;
+  const selfExtension = new SelfExtensionRegistry({
+    enabled: selfExtensionEnabled,
+    baseGuards: BUILTIN_GUARDS,
+    reservedToolNames: Object.keys(TOOL_DEFINITIONS),
+    onEvent: (event: SelfExtensionEvent) => {
+      onEvent?.("self_extension", {
+        kind: event.kind,
+        at: event.at,
+        registrationId: event.registrationId,
+        origin: event.origin,
+        pluginId: event.pluginId,
+        pluginName: event.pluginName,
+        version: event.version,
+        tools: event.tools.map((t) => ({
+          name: t.name,
+          capabilities: [...t.capabilities],
+          gateFlags: { ...t.gateFlags },
+        })),
+        guardCount: event.guardCount,
+        manifestBytes: event.manifestBytes,
+        ...(event.errors ? { errors: [...event.errors] } : {}),
+        role: config.role,
+      });
+    },
+  });
+
   const toolCtx: ToolContext = {
     target: config.target,
     scanId: config.scanId,
@@ -559,11 +612,43 @@ export async function runNativeAgentLoop(
     }),
   };
 
-  const executor = new ToolExecutor(toolCtx, db);
-  const tools = config.tools.length > 0 ? config.tools : getToolsForRole(config.role, { hasScope: !!config.scopePath, allowScanners: config.allowScanners });
+  // Attach the self-extension registry to the tool context (via the same cast
+  // pattern the messaging runtime uses) so the `self_extend` handler and the
+  // model-registered-tool dispatcher both resolve THIS session's registry.
+  (toolCtx as ToolContext & { selfExtension?: SelfExtensionRegistry }).selfExtension =
+    selfExtension;
 
-  // Convert ToolDefinitions to native API format
-  const nativeTools: NativeToolDef[] = tools.map(toNativeToolDef);
+  const executor = new ToolExecutor(toolCtx, db);
+  const baseTools = config.tools.length > 0 ? config.tools : getToolsForRole(config.role, { hasScope: !!config.scopePath, allowScanners: config.allowScanners });
+
+  // `self_extend` is never advertised by getToolsForRole; inject it into the
+  // model-facing set ONLY when enabled, and strip it out otherwise (defence in
+  // depth against a caller passing it in `config.tools`). Default OFF ⇒ absent.
+  const selfExtendDef = TOOL_DEFINITIONS.self_extend;
+  const tools: ToolDefinition[] = selfExtensionEnabled
+    ? baseTools.some((t) => t.name === "self_extend") || !selfExtendDef
+      ? baseTools
+      : [...baseTools, selfExtendDef]
+    : baseTools.filter((t) => t.name !== "self_extend");
+
+  // Convert ToolDefinitions to native API format. `nativeTools` is a `let` and
+  // the base (built-in) portion is captured separately: after a successful
+  // `self_extend` the model-registered tools are unioned back in each turn so
+  // they become callable on subsequent turns (see `syncExtensionTools`).
+  const baseNativeTools: NativeToolDef[] = tools.map(toNativeToolDef);
+  let nativeTools: NativeToolDef[] = baseNativeTools;
+
+  /**
+   * Rebuild the model-facing tool set as base tools ∪ the registry's currently
+   * live model-registered tools. Idempotent and session-scoped: it only ever
+   * reflects what the model registered THIS session, and a disabled registry
+   * contributes nothing.
+   */
+  const syncExtensionTools = (): void => {
+    if (!selfExtensionEnabled) return;
+    const extTools = selfExtension.tools().map(toNativeExtensionToolDef);
+    nativeTools = extTools.length > 0 ? [...baseNativeTools, ...extTools] : baseNativeTools;
+  };
 
   // Initialize or restore state
   const sessionId = config.sessionId ?? randomUUID();
@@ -1948,6 +2033,12 @@ export async function runNativeAgentLoop(
     // Append tool results as user message
     state.messages.push({ role: "user", content: toolResultBlocks });
 
+    // If the model registered new tools this turn via `self_extend`, union them
+    // into the model-facing tool set so they are callable on the NEXT turn.
+    // Idempotent: a no-op unless self-extension is enabled and something new was
+    // registered.
+    syncExtensionTools();
+
     // ── Collect tool result text for playbook detection + skill triggers ──
     // Feed the shared recentToolResultTexts buffer whenever dynamic
     // playbooks need them (pre-injection) OR JIT skills are enabled
@@ -3174,6 +3265,24 @@ function toNativeToolDef(tool: ToolDefinition): NativeToolDef {
       type: "object",
       properties,
       required: tool.required ?? [],
+    },
+  };
+}
+
+/**
+ * Convert a model-REGISTERED extension tool into the native API tool shape.
+ * Unlike {@link toNativeToolDef}, a registered tool already carries a raw
+ * JSON-schema `parameters` properties bag (validated + frozen by the registry),
+ * so it is passed through directly as `input_schema.properties`.
+ */
+function toNativeExtensionToolDef(tool: RegisteredExtensionTool): NativeToolDef {
+  return {
+    name: tool.name,
+    description: tool.description,
+    input_schema: {
+      type: "object",
+      properties: { ...tool.parameters },
+      required: tool.required ? [...tool.required] : [],
     },
   };
 }

@@ -72,6 +72,8 @@ const EXPECTED_ROUTING: Record<string, string> = {
   // Structured full-state plan (TodoWrite shape); `write_todos` is an alias.
   update_todos: "updateTodos",
   write_todos: "updateTodos",
+  // Model self-extension front door (gated on `allowModelSelfExtension`).
+  self_extend: "selfExtend",
 };
 
 describe("TOOL_DISPATCH (0sec#614)", () => {

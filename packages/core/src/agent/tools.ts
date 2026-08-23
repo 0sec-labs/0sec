@@ -211,7 +211,85 @@ import { executeStartScan } from "./tools/orchestrator.js";
 // tool no longer edits a shared dispatch chokepoint.
 import { TOOL_DISPATCH } from "./tools/dispatch.js";
 
+// Model self-extension (session-scoped, additive-only registry). The registry
+// itself lives in ../plugins/self-extension.ts (validation + policy + limits);
+// `self_extend` is a thin, Zod-validated front door to its `register`, and the
+// dispatcher routes calls to model-registered tools through the same registry so
+// they are guard-evaluated under their DECLARED capability gate flags.
+import { z } from "zod";
+import type { SelfExtensionRegistry } from "../plugins/self-extension.js";
+import type { GuardContext } from "../plugins/guards.js";
+
 export { sanitizedEnv } from "./sanitized-env.js";
+
+// ── Model self-extension: the `self_extend` front door ────────────────────────
+//
+// AIxCC T9 structured-output discipline (mirrors kernel_run): the tool-call
+// payload is parsed against an explicit Zod schema and REJECTED on a mismatch
+// before any side effect — a malformed submission never reaches the registry, so
+// it can neither register a tool nor consume a budget slot.
+//
+// The schema is deliberately a THIN envelope: it accepts only `{ manifest }` and
+// `.strip()`s every other top-level key. This is security-relevant, not
+// cosmetic — it means the model can NEVER smuggle a `guards` array (deny-only
+// guard FUNCTIONS are not expressible over JSON anyway) or forge an `origin`;
+// the handler pins `origin: "model"`. The authoritative deep validation
+// (capabilities mandatory + fail-closed, name charset, no built-in shadowing,
+// every per-session limit) stays in the registry's `register`, which is the ONE
+// validator — this front door never re-implements or relaxes it.
+const selfExtendArgsSchema = z
+  .object({
+    manifest: z
+      .record(z.string(), z.unknown(), {
+        required_error:
+          "self_extend: 'manifest' is required and must be a JSON object naming the tools to register",
+        invalid_type_error:
+          "self_extend: 'manifest' must be a JSON object naming the tools to register",
+      })
+      .refine((m) => m !== null && typeof m === "object" && !Array.isArray(m), {
+        message: "self_extend: 'manifest' must be a JSON object naming the tools to register",
+      }),
+  })
+  .strip();
+
+/** Validated `self_extend` payload after the Zod envelope check. */
+export interface SelfExtendArgs {
+  manifest: Record<string, unknown>;
+}
+
+/**
+ * Validate a raw `self_extend` tool-call argument bag. Discriminated union so the
+ * handler branches without losing the rejection reason (kernel_run discipline).
+ * A rejection here has NO side effect — the registry is never touched.
+ */
+export function validateSelfExtendArgs(
+  raw: unknown,
+): { ok: true; args: SelfExtendArgs } | { ok: false; error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "self_extend: arguments must be an object with a `manifest`" };
+  }
+  const parsed = selfExtendArgsSchema.safeParse(raw);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return { ok: false, error: first?.message ?? "self_extend: invalid arguments" };
+  }
+  return { ok: true, args: { manifest: parsed.data.manifest } };
+}
+
+/**
+ * Read the session's self-extension registry off the tool context WITHOUT
+ * widening the shared `ToolContext` type (owned elsewhere) — the same cast
+ * pattern `messagingRuntimeOf` uses. native-loop constructs the registry
+ * (enabled iff `allowModelSelfExtension`), attaches it here, and reads back the
+ * same instance to inject registered tools into the model-facing tool set.
+ * Absent for every non-console/non-native caller — the tool then refuses.
+ */
+interface SelfExtensionCtx {
+  selfExtension?: SelfExtensionRegistry;
+}
+export function selfExtensionRegistryOf(ctx: ToolContext): SelfExtensionRegistry | undefined {
+  return (ctx as ToolContext & SelfExtensionCtx).selfExtension;
+}
 
 /**
  * Normalize a recon target/origin/URL into the host used as the
@@ -2825,6 +2903,12 @@ export class ToolExecutor {
           >)[methodName]
         : undefined;
       if (typeof handler !== "function") {
+        // Not a built-in: it may be a tool the model registered THIS session via
+        // `self_extend`. Route it through the registry so it is guard-evaluated
+        // under its DECLARED capability gate flags (a self-authored tool can
+        // never reach capability its declared+approved guards deny).
+        const ext = this._dispatchExtensionTool(call);
+        if (ext) return ext;
         return { success: false, output: null, error: `Unknown tool: ${call.name}` };
       }
       return await handler.call(this, call.arguments);
@@ -2832,6 +2916,133 @@ export class ToolExecutor {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: msg };
     }
+  }
+
+  /**
+   * The `self_extend` handler — a thin, Zod-validated front door to the session's
+   * `SelfExtensionRegistry.register`.
+   *
+   * Discipline (mirrors kernel_run): the payload is validated against
+   * {@link selfExtendArgsSchema} and a malformed/unshaped submission is rejected
+   * as an `is_error` result BEFORE the registry is touched — so it registers
+   * nothing and consumes no budget slot. A well-shaped submission is handed to
+   * the registry, which is the ONE authoritative validator: it enforces mandatory
+   * fail-closed capabilities, name charset, no built-in shadowing, and EVERY
+   * per-session limit, and it audits every outcome. This method never relaxes or
+   * re-implements any of that.
+   *
+   * GATING: refuses unless a registry is wired AND `allowModelSelfExtension` is
+   * enabled (the registry's `isEnabled()`), so the capability is OFF by default
+   * even if the tool were somehow reachable.
+   */
+  private selfExtend(args: Record<string, unknown>): ToolResult {
+    const registry = selfExtensionRegistryOf(this.ctx);
+    if (!registry || !registry.isEnabled()) {
+      return {
+        success: false,
+        output: null,
+        error:
+          "self_extend is unavailable: model self-extension is disabled. Enable `allowModelSelfExtension` to permit model-authored tools.",
+      };
+    }
+
+    // Validate-then-reject: no side effect on a malformed submission.
+    const parsed = validateSelfExtendArgs(args);
+    if (!parsed.ok) {
+      return { success: false, output: null, error: parsed.error };
+    }
+
+    // The registry is the single validator + limits enforcer. `origin` is pinned
+    // to "model" (the model is the caller); `guards` are intentionally not
+    // accepted from the model — deny-only guard functions are not expressible
+    // over a JSON tool call, and the front door must never turn model text into a
+    // function.
+    const result = registry.register({ manifest: parsed.args.manifest, origin: "model" });
+    if (!result.ok) {
+      return {
+        success: false,
+        output: null,
+        error: `self_extend rejected: ${result.errors.join("; ")}`,
+      };
+    }
+
+    const rec = result.record;
+    return {
+      success: true,
+      output: {
+        registered: true,
+        registrationId: rec.registrationId,
+        pluginId: rec.pluginId,
+        pluginName: rec.pluginName,
+        version: rec.version,
+        tools: rec.tools.map((t) => ({
+          name: t.name,
+          capabilities: [...t.capabilities],
+          gateFlags: { ...t.gateFlags },
+        })),
+        message: `Registered ${rec.tools.length} tool(s) into this session; they are now callable on subsequent turns, gated by their declared capabilities.`,
+      },
+    };
+  }
+
+  /**
+   * Dispatch a call to a tool the model REGISTERED this session (via
+   * `self_extend`). Returns `null` when `call.name` is not a live registered tool
+   * (so the caller falls back to "Unknown tool"), or a `ToolResult` otherwise.
+   *
+   * A registered tool is authorized through the SAME deny-only guard floor
+   * everything else uses: a {@link GuardContext} is built from the tool's
+   * DECLARED capability gate flags (never a lighter class) and evaluated against
+   * the registry's guard set (`BUILTIN_GUARDS` + any contributed guards). A
+   * denial short-circuits to an `is_error` result.
+   *
+   * Registration is NOT execution: the registry governs policy, not tool bodies,
+   * and it never accepts a runtime implementation (see the "OUT OF SCOPE"
+   * section in plugins/self-extension.ts). So even a guard-approved call has no
+   * body to run in-process — it returns an explicit "no executable
+   * implementation" result. This is the security crux: a model-authored tool
+   * cannot reach ANY capability, whatever it declares.
+   */
+  private _dispatchExtensionTool(call: ToolCall): ToolResult | null {
+    const registry = selfExtensionRegistryOf(this.ctx);
+    if (!registry || !registry.isEnabled()) return null;
+    const tool = registry.tool(call.name);
+    if (!tool) return null;
+
+    const gate = tool.gateFlags;
+    const guardCtx: GuardContext = {
+      toolName: tool.name,
+      networkCapable: gate.networkCapable,
+      localScope: gate.localScope,
+      readOnly: gate.readOnly,
+      autonomyMode: this.ctx.autonomyMode ?? "standard",
+      hasScope:
+        !!this.ctx.scope ||
+        (typeof this.ctx.scopePath === "string" && this.ctx.scopePath.length > 0),
+      approvalAvailable:
+        typeof this.ctx.escalateScopedAudit === "function" ||
+        typeof this.ctx.askOperator === "function",
+      // Resolved from a validated manifest — a known source, not danger-by-omission.
+      capabilitiesResolved: true,
+    };
+
+    const verdict = registry.evaluate(guardCtx);
+    if (!verdict.allowed) {
+      return {
+        success: false,
+        output: null,
+        error: `Tool "${call.name}" was denied by the guard floor: ${verdict.reasons.join("; ")}`,
+      };
+    }
+
+    return {
+      success: false,
+      output: null,
+      error:
+        `Tool "${call.name}" is registered (capabilities: ${tool.capabilities.join(", ") || "none"}) ` +
+        "and passed its declared guards, but has no executable implementation in this session — " +
+        "model-authored tool bodies are not run in-process.",
+    };
   }
 
   private async httpRequest(args: Record<string, unknown>): Promise<ToolResult> {
@@ -7806,7 +8017,12 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     && (featureFlags.zeroverse || !BINARY_TOOL_NAMES.includes(name as (typeof BINARY_TOOL_NAMES)[number]))
     // `write_todos` is a dispatchable ALIAS of `update_todos` — keep it out of
     // the audit/review "everything" set so only one plan tool is advertised.
-    && name !== "write_todos",
+    && name !== "write_todos"
+    // `self_extend` is registered + dispatchable, but is NEVER advertised by
+    // role. It is a runtime-gated capability (`allowModelSelfExtension`, default
+    // OFF), not a feature flag, so native-loop injects it into the model-facing
+    // tool set explicitly when enabled — it must never leak in by omission here.
+    && name !== "self_extend",
   );
   const scopedSourceTools = Object.keys(SCOPED_SOURCE_AUDIT_TOOLS).filter((name) =>
     featureFlags.zeroverse || name !== "analyze_binary",

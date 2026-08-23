@@ -178,6 +178,32 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     required: ["tasks"],
   },
 
+  self_extend: {
+    name: "self_extend",
+    description:
+      "Register NEW model-authored tools into THIS session (the 'it builds itself' capability). " +
+      "Additive-only and session-scoped: registered tools live in memory for this session, are never " +
+      "written to disk, and never affect another session. Off unless the operator enabled " +
+      "`allowModelSelfExtension` — when disabled this tool is absent or refuses. " +
+      "Submit a plugin `manifest` naming the tools to add. Each tool MUST declare `capabilities` " +
+      "(non-empty; one or more of: network, filesystem-read, filesystem-write, process-exec, findings-write) — " +
+      "those declared capabilities become the tool's authorization gate, so a self-authored tool can never " +
+      "grant itself more capability than it declares. A tool name may not shadow a built-in. Per-session limits " +
+      "apply (at most 8 extensions, 8 tools per extension, 32 tools total, 16KiB per manifest); an over-limit or " +
+      "malformed submission is rejected with an error and registers nothing.",
+    parameters: {
+      manifest: {
+        type: "object",
+        description:
+          "The plugin manifest. Shape: { id: string (lowercase dotted id, e.g. \"scan.sqli-pack\"), " +
+          "name: string, version: string (\"MAJOR.MINOR.PATCH\"), tools: [ { name: string (lowercase [a-z0-9_], " +
+          "no built-in collision), description: string, parameters: object (JSON-schema properties bag), " +
+          "required?: string[], capabilities: string[] (non-empty) } ] }.",
+      },
+    },
+    required: ["manifest"],
+  },
+
   pty_session: {
     name: "pty_session",
     description:
@@ -212,4 +238,5 @@ export const systemDispatch: Record<string, string> = {
   spawn_agents: "spawnAgents",
   pty_session: "ptySession",
   plan: "planTool",
+  self_extend: "selfExtend",
 };

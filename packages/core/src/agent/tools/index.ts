@@ -118,6 +118,11 @@ const TOOL_REGISTRY_ORDER = [
   "ask_operator",
   "update_todos",
   "write_todos",
+  // Model self-extension front door (0sec self-extension). In the registry so it
+  // is a first-class, dispatchable, tested tool — but deliberately kept OUT of
+  // every getToolsForRole set; native-loop injects it into the model-facing tool
+  // set only when the operator enabled `allowModelSelfExtension` (default OFF).
+  "self_extend",
 ] as const;
 
 export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = Object.fromEntries(
