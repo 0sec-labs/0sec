@@ -20,6 +20,8 @@ import { ChatScreen, type ChatScreenOptions } from "./chat-screen.js";
 import { HerdScreen } from "./herd-screen.js";
 import { SettingsScreen } from "./settings-screen.js";
 import { ModelScreen } from "./model-screen.js";
+import { ResumeScreen } from "./resume-screen.js";
+import { listSessions, loadSession, deleteSession } from "./session-store.js";
 import { MarketScreen } from "./market-screen.js";
 import { createPluginService } from "./plugin-service.js";
 import { ConnectScreen } from "./connect-screen.js";
@@ -72,6 +74,7 @@ type ConsoleRoute =
   | { type: "market" }
   | { type: "connect" }
   | { type: "models"; chatOptions?: ChatScreenOptions }
+  | { type: "resume"; chatOptions?: ChatScreenOptions }
   | { type: "usage"; chatOptions?: ChatScreenOptions }
   | { type: "finding"; findingId?: string; finding?: Finding; chatOptions?: ChatScreenOptions }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onClose: () => void };
@@ -106,6 +109,7 @@ interface ShellNav {
    * a fresh one instead.
    */
   openModels: (chatOptions?: ChatScreenOptions) => void;
+  openResume: (chatOptions?: ChatScreenOptions) => void;
   /**
    * Opens the agent-herd overview: the roster of peers working this project
    * directory. Empty by default until the roster producer is wired.
@@ -3831,6 +3835,54 @@ function ModelRoute({
 }
 
 /**
+ * Routes the full-screen resume browser. Unlike ModelRoute it does NOT add a
+ * FooterBar — ResumeScreen renders its own footer/status lines — so ShellFrame
+ * supplies only the header + canvas. Picking a session reopens the chat around
+ * that stored transcript (openChat's initialMessages → ChatScreen mount-restore);
+ * delete removes the file (the screen hides the row locally).
+ */
+function ResumeRoute({
+  chatOptions,
+  onExit,
+  shell,
+}: {
+  chatOptions?: ChatScreenOptions;
+  onExit: () => void;
+  shell?: ShellNav;
+}) {
+  const theme = useTheme();
+  const sessions = listSessions(undefined, { limit: 50 });
+  return (
+    <ShellFrame view="resume">
+      <ResumeScreen
+        sessions={sessions}
+        currentId={undefined}
+        now={Date.now()}
+        theme={theme}
+        onResume={(id) => {
+          const stored = loadSession(id);
+          if (!stored || !shell) {
+            onExit();
+            return;
+          }
+          shell.openChat({
+            ...chatOptions,
+            model: stored.model ?? chatOptions?.model,
+            target: stored.target ?? chatOptions?.target,
+            initialMessages: stored.messages as ChatScreenOptions["initialMessages"],
+          });
+        }}
+        onDelete={(id) => {
+          deleteSession(id);
+        }}
+        onBack={() => leaveCurrentScreen(shell, onExit)}
+        onExit={onExit}
+      />
+    </ShellFrame>
+  );
+}
+
+/**
  * Routes the marketplace browser, supplying the console shell around it.
  *
  * Like `SettingsRoute` and `ModelRoute`, the command palette is deliberately not
@@ -4089,6 +4141,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     openReplay: (scanId) => navigate({ type: "replay", scanId }),
     openSettings: () => navigate({ type: "settings" }),
     openModels: (chatOpts) => navigate({ type: "models", chatOptions: chatOpts ?? chatOptionsRef.current }),
+    openResume: (chatOpts) => navigate({ type: "resume", chatOptions: chatOpts ?? chatOptionsRef.current }),
     openHerd: () => navigate({ type: "herd" }),
     openMarket: () => navigate({ type: "market" }),
     openConnect: () => navigate({ type: "connect" }),
@@ -4315,6 +4368,9 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             case "models":
               shell.openModels(chatOptions);
               return;
+            case "resume":
+              shell.openResume(chatOptions);
+              return;
           }
         }}
         onExit={onExit}
@@ -4370,6 +4426,8 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     overlay = <SettingsRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "models") {
     overlay = <ModelRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "resume") {
+    overlay = <ResumeRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "herd") {
     overlay = <HerdRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "market") {

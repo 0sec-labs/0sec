@@ -245,7 +245,7 @@ import {
   type AgentRowView,
 } from "./chat/AgentRow.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect" | "finding";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect" | "finding" | "resume";
 
 /**
  * Map a status pill's semantic colour role onto the live palette. Kept theme-
@@ -413,6 +413,13 @@ export interface ChatScreenOptions {
   maxToolIterations?: number;
   allowScanners?: boolean;
   autonomyMode?: ConsoleAutonomyMode;
+  /**
+   * A stored session's transcript to resume into on mount — the full-screen
+   * resume browser (run.tsx ResumeRoute) opens the chat with these, so the new
+   * ChatScreen builds its console around the restored history and rehydrates the
+   * transcript. Absent for a fresh chat.
+   */
+  initialMessages?: NativeMessage[];
 }
 
 export interface ChatScreenProps {
@@ -1087,10 +1094,20 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     alive.current = true;
 
     try {
-      const built = buildSession();
+      // Resume: when the full-screen browser opened this chat with a stored
+      // transcript, build the console around it and rehydrate the transcript
+      // silently (the restored messages ARE the context — see the /resume
+      // in-place path, which does the same).
+      const resumeMessages = options?.initialMessages;
+      const built = buildSession(
+        resumeMessages && resumeMessages.length > 0 ? { initialMessages: resumeMessages } : {},
+      );
       created = built.session;
       setModelId(built.model);
       setSession(created);
+      if (resumeMessages && resumeMessages.length > 0) {
+        setEntries(entriesFromStoredMessages(resumeMessages));
+      }
     } catch (error) {
       setStartupError(error instanceof Error ? error.message : String(error));
     }
@@ -1757,81 +1774,15 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         return true;
       }
       case "resume": {
-        // Every project, not just this directory: an operator moving between
-        // checkouts still wants the session they were in.
-        const here = process.cwd();
-        // listSessions already returns newest-first (by savedAt). Keep that
-        // order — the operator asked for the most recent sessions at the top —
-        // rather than re-grouping by cwd, which buried a just-used session under
-        // older ones from this directory. "this project" stays a per-row marker.
-        const saved = listSessions(undefined, { limit: 50 });
-        const now = Date.now();
-        if (saved.length === 0) {
-          appendEntry({
-            kind: "notice",
-            text: "no saved sessions yet",
-            detail: "A session is stored after each turn; this list appears once you have run one.",
-            turn: turn.current,
-          });
-          return true;
-        }
         if (busy) {
           appendEntry({ kind: "notice", text: "wait for the active turn before resuming", turn: turn.current });
           return true;
         }
-        const items: SelectorItem[] = saved.map((meta) => {
-          const age = relativeAge(meta.savedAt, now);
-          return {
-            id: meta.id,
-            label: meta.preview || "(no prompt recorded)",
-            // Lead with "last used" (relative) so the newest reads at a glance,
-            // then message count and model. Age is omitted when unknown.
-            meta: `${age ? `${age} · ` : ""}${meta.messageCount} msg${meta.messageCount === 1 ? "" : "s"}${meta.model ? ` · ${meta.model}` : ""}`,
-            detail: `${meta.cwd === here ? "this project" : meta.cwd} · ${meta.target ? `target ${meta.target} · ` : ""}saved ${new Date(meta.savedAt).toISOString()}`,
-            current: session?.scanId === meta.id,
-          };
-        });
-        setPicker({
-          state: createSelectorState("Resume a session", items),
-          commit: (id) => {
-            const stored = loadSession(id);
-            if (!stored) {
-              appendEntry({
-                kind: "error",
-                text: "could not read that session",
-                detail: "The file is missing or unreadable; nothing was changed.",
-                turn: turn.current,
-              });
-              return;
-            }
-            const previous = session;
-            let built: { session: ConsoleSession; model: string };
-            try {
-              // Rebuild around the stored transcript. A failed rebuild must
-              // leave the operator exactly where they were.
-              built = buildSession({
-                initialMessages: stored.messages as never,
-                model: stored.model,
-              });
-            } catch (error) {
-              appendEntry({
-                kind: "error",
-                text: "could not resume that session",
-                detail: error instanceof Error ? error.message : String(error),
-                turn: turn.current,
-              });
-              return;
-            }
-            setSession(built.session);
-            setModelId(built.model);
-            if (previous) void previous.cleanup();
-            turn.current = 0;
-            // Rehydrate the transcript silently: the restored messages ARE the
-            // context, and a banner announcing "this is replayed history" was
-            // just noise stacked on top of the conversation it described.
-            setEntries(entriesFromStoredMessages(stored.messages));
-          },
-        });
+        // The full-screen resume BROWSER (run.tsx ResumeRoute) owns listing with
+        // per-chat summaries, search and delete; picking one reopens the chat
+        // around that stored transcript (via openChat's initialMessages →
+        // mount-restore above). Replaces the old cramped overlay picker.
+        onNavigate("resume");
         return true;
       }
       case "providers": {
