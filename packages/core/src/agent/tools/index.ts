@@ -74,6 +74,7 @@ const TOOL_REGISTRY_ORDER = [
   "read_file",
   "list_files",
   "search_files",
+  "str_replace",
   "apply_patch",
   "run_command",
   "update_target",

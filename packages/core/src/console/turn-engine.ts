@@ -767,6 +767,7 @@ const LOCAL_SCOPE_TOOLS: Record<string, true> = {
   list_files: true,
   search_files: true,
   apply_patch: true,
+  str_replace: true,
   run_command: true,
   analyze_binary: true,
 };

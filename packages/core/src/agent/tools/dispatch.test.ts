@@ -23,6 +23,7 @@ const EXPECTED_ROUTING: Record<string, string> = {
   read_file: "readFile",
   list_files: "listFiles",
   search_files: "searchFiles",
+  str_replace: "strReplace",
   apply_patch: "applyPatch",
   run_command: "runCommand",
   update_target: "updateTarget",

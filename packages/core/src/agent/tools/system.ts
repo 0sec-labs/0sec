@@ -54,6 +54,24 @@ export const systemToolDefinitions: Record<string, ToolDefinition> = {
     required: ["query"],
   },
 
+  str_replace: {
+    name: "str_replace",
+    description:
+      "PREFER THIS for editing a single existing file: replace one exact string with another. " +
+      "`old_string` must match the file contents EXACTLY — including all whitespace and indentation — and must be UNIQUE (appear once), " +
+      "so include a few surrounding lines when a bare snippet would be ambiguous. Set `replace_all: true` to replace every occurrence instead. " +
+      "This has no fragile context hunks, so it avoids the context-mismatch failures of apply_patch. " +
+      "Errors are explicit and self-correctable (not found / N matches not unique). " +
+      "Use apply_patch instead only for multi-file patches or creating/deleting whole files. Path must be within the scoped directory.",
+    parameters: {
+      path: { type: "string", description: "File path (relative to scope root or absolute) of an existing file to edit" },
+      old_string: { type: "string", description: "Exact text to find, matching the file byte-for-byte including whitespace/indentation. Must be unique unless replace_all is set." },
+      new_string: { type: "string", description: "Text to replace it with. May be empty to delete the matched text." },
+      replace_all: { type: "boolean", description: "Replace every occurrence instead of requiring a unique match (default false)." },
+    },
+    required: ["path", "old_string", "new_string"],
+  },
+
   run_command: {
     name: "run_command",
     description:
@@ -186,6 +204,7 @@ export const systemDispatch: Record<string, string> = {
   read_file: "readFile",
   list_files: "listFiles",
   search_files: "searchFiles",
+  str_replace: "strReplace",
   run_command: "runCommand",
   update_target: "updateTarget",
   bash: "shellExec",

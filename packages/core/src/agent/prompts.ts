@@ -87,6 +87,15 @@ const SKILL_TOOL_HINT = `
 
 If you need deeper guidance on a specific technique or vulnerability class, call \`list_skills\` to see available methodology guides, then \`load_skill\` to pull one into your context. Skills provide targeted exploitation playbooks that can help when standard approaches stall.`;
 
+// File-editing guidance. When both edit tools are offered, steer the model to
+// the exact-string tool for single edits: it has no fragile context hunks, so
+// it sidesteps the "context mismatch" churn that makes apply_patch retry.
+export const FILE_EDIT_TOOL_HINT = `
+
+## Editing files
+
+To change an existing file, PREFER \`str_replace\`: give the exact \`old_string\` to find (matching the file byte-for-byte, whitespace and indentation included) and the \`new_string\` to put in its place. Include enough surrounding context that \`old_string\` is unique, or set \`replace_all\` to change every occurrence. Reserve \`apply_patch\` for multi-file patches or creating/deleting whole files — its context hunks are what cause "context mismatch" failures on single edits.`;
+
 const EXTERNAL_MEMORY_INSTRUCTION = `
 
 ## Working Memory
@@ -887,7 +896,7 @@ export function shellPentestPrompt(target: string, repoPath?: string, opts?: { h
 ## White-box mode
 
 You have access to the application source code at: ${repoPath}
-Use read_file and run_command to analyze the code BEFORE attacking.
+Use read_file and run_command to analyze the code BEFORE attacking.${FILE_EDIT_TOOL_HINT}
 
 **Phase 0 — Source analysis (2-3 turns):**
 1. Read the main entry point (package.json, app.py, index.php, etc.)

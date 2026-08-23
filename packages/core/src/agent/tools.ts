@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, statSync, existsSync } from "node:fs";
+import { readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { isAbsolute, resolve, join } from "node:path";
 import { isIP } from "node:net";
@@ -1181,6 +1181,34 @@ function buildEditCardMeta(
     added,
     removed,
     diff: diffLines.join("\n").trim(),
+  };
+}
+
+/**
+ * Build the display-only edit-card {@link ToolResultMeta} for a `str_replace`
+ * result — the same `kind:"edit"` card `apply_patch` emits, so the TUI renders
+ * one edit card for either tool. Added/removed are the new/old block line
+ * counts multiplied by the number of replacements; the diff body shows the
+ * removed block (`-`) then the inserted block (`+`). Pure; never throws.
+ */
+function buildStrReplaceMeta(
+  logicalPath: string,
+  oldString: string,
+  newString: string,
+  replacements: number,
+): ToolResultMeta {
+  const oldLines = oldString.split("\n");
+  const newLines = newString.split("\n");
+  const diff = [
+    ...oldLines.map((l) => `-${l}`),
+    ...newLines.map((l) => `+${l}`),
+  ].join("\n");
+  return {
+    kind: "edit",
+    path: logicalPath,
+    added: newLines.length * replacements,
+    removed: oldLines.length * replacements,
+    diff,
   };
 }
 
@@ -6161,6 +6189,138 @@ export class ToolExecutor {
     }
   }
 
+  /**
+   * str_replace — exact-string file edit (Claude text_editor `str_replace`
+   * contract). More reliable than `apply_patch` for single edits: there are no
+   * fragile context hunks to mismatch — `old_string` must match the file byte
+   * for byte (whitespace and indentation included) and, unless `replace_all` is
+   * set, UNIQUELY. Same gate as `apply_patch`/`run_command`: refuses without a
+   * `scopePath` and resolves the path through `resolveScopedPath` so the edit
+   * can never escape the audit directory. Fail-soft — every error is a clear,
+   * self-correctable message, never a thrown exception or a silent no-op.
+   */
+  private strReplace(args: Record<string, unknown>): ToolResult {
+    if (!this.ctx.scopePath) {
+      return {
+        success: false,
+        output: null,
+        error: "str_replace requires a scoped local directory and is not available for remote target scanning",
+      };
+    }
+
+    const rawPath = args.path;
+    if (typeof rawPath !== "string" || rawPath.trim().length === 0) {
+      return {
+        success: false,
+        output: null,
+        error: "str_replace: `path` argument must be a non-empty string",
+      };
+    }
+    if (typeof args.old_string !== "string") {
+      return {
+        success: false,
+        output: null,
+        error: "str_replace: `old_string` argument must be a string",
+      };
+    }
+    if (typeof args.new_string !== "string") {
+      return {
+        success: false,
+        output: null,
+        error: "str_replace: `new_string` argument must be a string",
+      };
+    }
+    const oldString = args.old_string;
+    const newString = args.new_string;
+    const replaceAll = args.replace_all === true;
+
+    if (oldString.length === 0) {
+      return {
+        success: false,
+        output: null,
+        error: "str_replace: `old_string` must not be empty; to create a new file use apply_patch",
+      };
+    }
+    if (oldString === newString) {
+      return {
+        success: false,
+        output: null,
+        error: "str_replace: `old_string` and `new_string` are identical; nothing to change",
+      };
+    }
+
+    let abs: string;
+    try {
+      abs = resolveScopedPath(this.ctx.scopePath, rawPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: msg };
+    }
+
+    if (!existsSync(abs)) {
+      return {
+        success: false,
+        output: null,
+        error: `str_replace: file does not exist: ${rawPath}`,
+      };
+    }
+
+    let original: string;
+    try {
+      original = readFileSync(abs, "utf-8");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `str_replace: could not read ${rawPath}: ${msg}` };
+    }
+
+    // Count exact (byte-for-byte) occurrences of old_string.
+    let occurrences = 0;
+    let searchFrom = 0;
+    for (;;) {
+      const hit = original.indexOf(oldString, searchFrom);
+      if (hit === -1) break;
+      occurrences += 1;
+      searchFrom = hit + oldString.length;
+    }
+
+    if (occurrences === 0) {
+      return {
+        success: false,
+        output: null,
+        error: `str_replace: old_string not found in ${rawPath}. It must match the file contents exactly, including whitespace and indentation.`,
+      };
+    }
+    if (occurrences > 1 && !replaceAll) {
+      return {
+        success: false,
+        output: null,
+        error: `str_replace: old_string matches ${occurrences} locations in ${rawPath}; not unique. Add more surrounding context to make it unique, or set replace_all: true to replace every occurrence.`,
+      };
+    }
+
+    // We only reach here when occurrences === 1, or replace_all is set. In both
+    // cases replacing every occurrence yields the intended result. split/join
+    // avoids String.prototype.replace's special `$` handling in the replacement.
+    const replacements = replaceAll ? occurrences : 1;
+    const updated = replaceAll
+      ? original.split(oldString).join(newString)
+      : original.replace(oldString, () => newString);
+
+    try {
+      writeFileSync(abs, updated, "utf-8");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, output: null, error: `str_replace: could not write ${rawPath}: ${msg}` };
+    }
+
+    const editMeta = buildStrReplaceMeta(rawPath, oldString, newString, replacements);
+    return {
+      success: true,
+      output: { path: rawPath, replacements },
+      meta: editMeta,
+    };
+  }
+
   private async runCommand(args: Record<string, unknown>): Promise<ToolResult> {
     // YOLO is the operator's explicit "run anything" mode. Route run_command
     // through the SAME full-shell path as the `bash` tool — shell operators
@@ -7605,7 +7765,7 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     "update_target",
     ...common,
   ];
-  const fileTools = ["read_file", "apply_patch", "run_command", ...binaryTools];
+  const fileTools = ["read_file", "str_replace", "apply_patch", "run_command", ...binaryTools];
   const allEnabledTools = Object.keys(TOOL_DEFINITIONS).filter((name) =>
     (featureFlags.jitSkills || (name !== "list_skills" && name !== "load_skill"))
     // Keep use_loot out of the audit/review "everything" set when the loot
