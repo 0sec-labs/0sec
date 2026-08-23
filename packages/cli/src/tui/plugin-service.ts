@@ -156,16 +156,42 @@ interface CoreInstalledView {
   capabilities: string[];
 }
 
-interface CoreLoadResult {
+export interface CoreLoadResult {
   ok: boolean;
   pluginId: string;
   tools?: string[];
   errors?: string[];
 }
 
-/** The one method of `PluginHost` this bridge uses. */
+/**
+ * The slice of `PluginHost` this bridge (and {@link session-plugin-host}) drive.
+ * `load` is the only method the market path calls; `shutdown`/`unload` are
+ * OPTIONAL so a load-only fake host still satisfies the type, while the real
+ * core host — which the session manager disposes on a swap — supplies them.
+ */
 export interface PluginHostLike {
   load(pluginId: string): Promise<CoreLoadResult>;
+  unload?(pluginId: string): void;
+  shutdown?(): void;
+}
+
+/**
+ * The slice of the shell-level {@link SessionPluginHostManager} this bridge
+ * drives when one is injected. Structural on purpose: it breaks the import
+ * cycle (the manager imports this module's core/host types) and lets a test
+ * inject a trivial fake. When present, ENABLE triggers a turn-boundary-safe
+ * {@link refresh} and RUN loads through {@link runPlugin} — both operating on
+ * the ONE host the live console session also reads.
+ */
+export interface PluginHostManagerLike {
+  /**
+   * Reconcile the on-disk enabled set into the live host, reconstructing it when
+   * that set changed (enablement is readonly on a host). Safe only at a turn
+   * boundary — the caller owns that half of the contract.
+   */
+  refresh(): Promise<void>;
+  /** Ensure one enabled plugin is loaded into the live host; reports the load. */
+  runPlugin(pluginId: string): Promise<CoreLoadResult>;
 }
 
 /** Everything this bridge imports from `@0sec/core`. Injected for tests. */
@@ -251,6 +277,15 @@ export interface PluginServiceDeps {
     reservedToolNames?: readonly string[];
     coreVersion?: string;
   }) => PluginHostLike;
+  /**
+   * The shell-level session plugin-host manager. When provided, ENABLE and RUN
+   * operate through the ONE host the live console session reads, instead of this
+   * bridge's own overlay-scoped host: `enable` writes the record then asks the
+   * manager to refresh, and `run`/`flushDeferred` load through
+   * {@link PluginHostManagerLike.runPlugin}. Absent (the standalone market
+   * overlay), the bridge keeps its own `hostFactory` host exactly as before.
+   */
+  pluginHostManager?: PluginHostManagerLike;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +355,7 @@ export function createPluginService(deps: PluginServiceDeps = {}): PluginService
   const applyTheme = deps.applyTheme ?? defaultApplyTheme;
   const reservedToolNames = deps.reservedToolNames;
   const registryUrl = (deps.registryUrl ?? "").trim();
+  const manager = deps.pluginHostManager;
 
   // One host per service instance, so repeat loads dedupe and the child persists
   // for the life of the overlay rather than re-spawning on every keystroke.
@@ -512,6 +548,17 @@ export function createPluginService(deps: PluginServiceDeps = {}): PluginService
           capabilities: [],
         };
       }
+      // The record on disk is the source of truth; ask the session manager to
+      // reconcile it into the live host. Reconstruction is only safe at a turn
+      // boundary, so we skip it while a turn is in flight — the shell's own
+      // boundary refresh (which reads the same disk record) will pick it up.
+      if (manager && !isTurnActive()) {
+        try {
+          await manager.refresh();
+        } catch {
+          // Fail-soft: a refresh failure never blocks recording the approval.
+        }
+      }
       const capText = capabilities.length > 0 ? capabilities.join(", ") : "no capabilities";
       return {
         ok: true,
@@ -529,6 +576,23 @@ export function createPluginService(deps: PluginServiceDeps = {}): PluginService
   }
 
   async function loadEnabled(c: CorePluginApi, pluginId: string): Promise<PluginRunResult> {
+    // When a shell-level manager is wired, load through the ONE host the live
+    // console session reads — never this bridge's own overlay host. The manager
+    // reconstructs from the on-disk enabled set (so a just-enabled id becomes
+    // loadable) and refuses anything not loadable, exactly as `PluginHost.load`
+    // does.
+    if (manager) {
+      const result = await manager.runPlugin(pluginId);
+      if (result.ok) {
+        const tools = result.tools ?? [];
+        const toolText = tools.length > 0 ? `tools: ${tools.join(", ")}` : "no tools";
+        return { ok: true, message: `Loaded ${pluginId} (${toolText}).`, state: "enabled" };
+      }
+      return {
+        ok: false,
+        message: `Could not load ${pluginId}: ${result.errors?.join("; ") ?? "unknown error"}`,
+      };
+    }
     if (!host) {
       // Enabled ids the host will accept: recomputed so a just-enabled plugin is
       // loadable and a since-widened one is not.
