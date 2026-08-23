@@ -50,6 +50,38 @@ export type ChatEntry = {
    * `appendTranscriptEntry`. Rendered as a trailing "(xN)".
    */
   repeat?: number;
+  /**
+   * Rich tool-card fields, mirroring `ToolResult.meta` (core). Populated for a
+   * bash / run_command / apply_patch tool entry so both a LIVE turn and a
+   * RESTORED/serialized turn can render a bordered card. All optional: a tool
+   * entry without them renders as the existing rail/compact line.
+   *
+   * `metaKind` selects the card: "command" (a `$ cmd` + output + wall/exit
+   * footer) or "edit" (a `✎ Edit: path (+A/-R)` header + diff).
+   */
+  metaKind?: "command" | "edit";
+  // ── command card ──
+  /** The command that was run (header `$ <command>`). */
+  command?: string;
+  /** The command's combined stdout/stderr, for the card body. */
+  commandOutput?: string;
+  /** Process exit code; `null`/undefined when unknown (timed out / signal). */
+  exitCode?: number | null;
+  /** Wall-clock duration of the call, in milliseconds. */
+  wallMs?: number;
+  /** The timeout ceiling that was applied, in milliseconds. */
+  timeoutMs?: number;
+  /** True when the call was killed by the wallclock timeout. */
+  timedOut?: boolean;
+  // ── edit card ──
+  /** Path(s) edited (header `✎ Edit: <path>`). */
+  editPath?: string;
+  /** Lines added by the edit. */
+  editAdded?: number;
+  /** Lines removed by the edit. */
+  editRemoved?: number;
+  /** A diff body (hunk lines) for the edit card, when available. */
+  editDiff?: string;
 };
 
 export interface EntryDisplay {
@@ -63,6 +95,14 @@ export interface EntryDisplay {
   roleLabelStyle: RoleLabelStyle;
   /** How a tool / subagent call is drawn (rail / inline / compact / hidden). */
   toolCardStyle: ToolCardStyle;
+  /**
+   * Draw bash / run_command / apply_patch results as rich bordered cards (a
+   * `$ cmd` + output + wall/exit footer, or a `✎ Edit` header + diff) instead
+   * of the plain rail/compact line. Optional and defaults to ON when undefined,
+   * so a caller that does not set it still gets the cards. `toolCardStyle:
+   * "hidden"` still hides a SUCCESSFUL card (a failure always shows).
+   */
+  richToolCards?: boolean;
   /** Current autonomy mode label, for the AI turn footer ("Standard · …"). */
   mode: string;
   /**

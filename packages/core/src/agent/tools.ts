@@ -15,7 +15,7 @@ import type {
   NamedIdentity,
 } from "@0sec/shared";
 import { resolveIdentities, compareRoles } from "@0sec/shared";
-import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
+import type { ToolDefinition, ToolCall, ToolResult, ToolResultMeta, ToolContext, AgentRole } from "./types.js";
 import type {
   OperatorQuestion,
   OperatorQuestionOption,
@@ -1144,6 +1144,43 @@ function executePipeline(
   return {
     success: true,
     output: typeof stdin === "string" ? stdin.slice(0, 10_000) : "",
+  };
+}
+
+/**
+ * Build the display-only edit-card {@link ToolResultMeta} for an `apply_patch`
+ * result. Counts added/removed lines and extracts a hunk diff body from the
+ * patch envelope, and names the path(s) the ops touched. Pure; never throws
+ * (a display sidecar must never take down a successful edit).
+ */
+function buildEditCardMeta(
+  patchInput: string,
+  applied: ReadonlyArray<{ kind: string; path: string }>,
+): ToolResultMeta {
+  let added = 0;
+  let removed = 0;
+  const diffLines: string[] = [];
+  for (const line of patchInput.split("\n")) {
+    // Envelope control lines: `*** Begin Patch`, `*** Update File: …`, `@@ …`.
+    if (line.startsWith("*** ") || line.startsWith("@@")) continue;
+    if (line.startsWith("+")) {
+      added += 1;
+      diffLines.push(line);
+    } else if (line.startsWith("-")) {
+      removed += 1;
+      diffLines.push(line);
+    } else {
+      diffLines.push(line);
+    }
+  }
+  const paths = Array.from(new Set(applied.map((a) => a.path)));
+  const path = paths.length > 0 ? paths.join(", ") : "(patch)";
+  return {
+    kind: "edit",
+    path,
+    added,
+    removed,
+    diff: diffLines.join("\n").trim(),
   };
 }
 
@@ -4717,7 +4754,12 @@ export class ToolExecutor {
 
     const env = { ...sanitizedEnv(), TARGET: this.ctx.target, ...this.buildAuthEnvVars() };
 
+    // The command the OPERATOR asked for (the value may have been rewritten by
+    // auth-header injection above; the card shows the model's original intent).
+    const displayCommand = (args.command as string).trim();
+    const startedAt = Date.now();
     const outcome = await runBashWithWallclock(command, { timeoutMs, ceilingMs, env });
+    const durationMs = Date.now() - startedAt;
 
     if (outcome.kind === "timeout") {
       this.persistToolArtifact("bash", {
@@ -4726,15 +4768,40 @@ export class ToolExecutor {
         timedOut: true,
         timeoutMs,
       });
+      const partial = formatTruncated(outcome.partial);
       return {
         success: false,
         output: null,
         error: `bash tool timed out after ${Math.round(timeoutMs / 1000)}s (0SEC_BASH_TIMEOUT_MS=${ceilingMs})`,
+        // Display-only card sidecar (never seen by the model): the partial
+        // output plus the wall clock, so a timed-out run still renders a card.
+        meta: {
+          kind: "command",
+          command: displayCommand,
+          exitCode: null,
+          durationMs,
+          timeoutMs,
+          timedOut: true,
+          stdout: partial,
+        },
       };
     }
 
     if (outcome.kind === "error") {
-      return { success: false, output: null, error: outcome.message.slice(0, 2_000) };
+      return {
+        success: false,
+        output: null,
+        error: outcome.message.slice(0, 2_000),
+        meta: {
+          kind: "command",
+          command: displayCommand,
+          exitCode: null,
+          durationMs,
+          timeoutMs,
+          timedOut: false,
+          stdout: "",
+        },
+      };
     }
 
     // Middle-out under the shared tool-output policy. The old head-only
@@ -4744,19 +4811,29 @@ export class ToolExecutor {
 
     // Many pentesting tools exit non-zero on findings — if we got output,
     // surface it as success regardless of exit code (preserves prior behaviour).
+    const commandMeta = {
+      kind: "command" as const,
+      command: displayCommand,
+      exitCode: outcome.exitCode,
+      durationMs,
+      timeoutMs,
+      timedOut: false,
+      stdout: combined,
+    };
     if (outcome.exitCode === 0 || combined.length > 0) {
       this.persistToolArtifact("bash", {
         command: command.slice(0, 500),
         output: combined.slice(0, 2_000),
         ...(outcome.exitCode !== 0 ? { exitCode: outcome.exitCode } : {}),
       });
-      return { success: true, output: combined };
+      return { success: true, output: combined, meta: commandMeta };
     }
 
     return {
       success: false,
       output: null,
       error: `bash exited with code ${outcome.exitCode}`,
+      meta: commandMeta,
     };
   }
 
@@ -6072,7 +6149,12 @@ export class ToolExecutor {
     try {
       const ops = parsePatch(patchInput);
       const result = applyPatchOps(ops, (logical) => resolveScopedPath(scopePath, logical));
-      return { success: true, output: { applied: result.applied } };
+      // Display-only edit-card sidecar (never seen by the model): the edited
+      // path(s), +/- line counts and a hunk diff body derived from the patch
+      // envelope. The `*** …` op markers and `@@` anchors are dropped; the
+      // remaining ` `/`+`/`-` lines are the diff the operator wants to see.
+      const editMeta = buildEditCardMeta(patchInput, result.applied);
+      return { success: true, output: { applied: result.applied }, meta: editMeta };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: msg };
@@ -6187,14 +6269,41 @@ export class ToolExecutor {
     }
 
     try {
+      const startedAt = Date.now();
       const result = executePipeline(tokenizedSegments, cwd, timeout, (input) =>
         this.recordToolHealth(input),
       );
+      const durationMs = Date.now() - startedAt;
+      // Display-only command-card sidecar (never seen by the model). Only when
+      // there is a textual body to show: a `skipped`/object output stays a
+      // plain tool line rather than an empty card.
+      const stdout =
+        typeof result.output === "string"
+          ? result.output
+          : result.success
+            ? undefined
+            : result.error;
+      const commandMeta =
+        stdout !== undefined
+          ? {
+              kind: "command" as const,
+              command,
+              exitCode: result.success ? 0 : 1,
+              durationMs,
+              timeoutMs: timeout,
+              timedOut: false,
+              stdout,
+            }
+          : undefined;
       // Prepend the redirect note so the agent sees WHY the executable changed.
       if (auditNote && result.success && typeof result.output === "string") {
-        return { ...result, output: `${auditNote}\n${result.output}` };
+        return {
+          ...result,
+          output: `${auditNote}\n${result.output}`,
+          ...(commandMeta ? { meta: { ...commandMeta, stdout: `${auditNote}\n${result.output}` } } : {}),
+        };
       }
-      return result;
+      return commandMeta ? { ...result, meta: commandMeta } : result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.recordToolHealth({

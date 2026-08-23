@@ -250,6 +250,112 @@ export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doc
  * ever produced is YOLO's, honouring the "red = errors/failures" invariant — a
  * dirty tree is WARNING (amber), not red.
  */
+/**
+ * The display-only `ToolResult.meta` sidecar (never seen by the model) a tool
+ * may attach — bash / run_command → a command card, apply_patch → an edit card.
+ * Typed structurally so this module needs no extra core-type import.
+ */
+interface ToolCardMeta {
+  kind?: "command" | "edit";
+  command?: string;
+  exitCode?: number | null;
+  durationMs?: number;
+  timeoutMs?: number;
+  timedOut?: boolean;
+  stdout?: string;
+  path?: string;
+  added?: number;
+  removed?: number;
+  diff?: string;
+}
+
+/**
+ * Map a tool result's display-only `meta` sidecar onto the rich-card fields of
+ * a `ChatEntry`, for BOTH a live turn and a restored one. Returns an empty
+ * object when there is no card to draw, so a spread leaves the entry untouched.
+ */
+function toolCardFieldsFromMeta(meta: ToolCardMeta | undefined): Partial<ChatEntry> {
+  if (!meta || (meta.kind !== "command" && meta.kind !== "edit")) return {};
+  if (meta.kind === "command") {
+    return {
+      metaKind: "command",
+      command: meta.command,
+      commandOutput: meta.stdout,
+      exitCode: meta.exitCode ?? null,
+      wallMs: meta.durationMs,
+      timeoutMs: meta.timeoutMs,
+      timedOut: meta.timedOut,
+    };
+  }
+  return {
+    metaKind: "edit",
+    editPath: meta.path,
+    editAdded: meta.added,
+    editRemoved: meta.removed,
+    editDiff: meta.diff,
+  };
+}
+
+/**
+ * Reconstruct a rich card's `ChatEntry` fields from a SERIALIZED tool result
+ * (a restored session). The display-only `meta` is gone (it never reached the
+ * model transcript), so a command card recovers only its command + output, and
+ * an edit card its path / +/- counts / hunk diff from the patch envelope. No
+ * wall or timeout footer survives a restore.
+ */
+function restoredToolCardFields(
+  name: string,
+  input: unknown,
+  content: unknown,
+  success: boolean,
+): Partial<ChatEntry> {
+  const args = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  if (name === "bash" || name === "run_command") {
+    const command = typeof args.command === "string" ? args.command.trim() : undefined;
+    if (!command) return {};
+    return {
+      metaKind: "command",
+      command,
+      commandOutput: typeof content === "string" ? content : undefined,
+      exitCode: success ? 0 : 1,
+      timedOut: false,
+    };
+  }
+  if (name === "apply_patch") {
+    const patch = typeof args.patch === "string" ? args.patch : undefined;
+    if (!patch) return {};
+    let added = 0;
+    let removed = 0;
+    const diffLines: string[] = [];
+    const paths: string[] = [];
+    for (const line of patch.split("\n")) {
+      const fileMatch = /^\*\*\* (?:Update|Add|Delete|Replace) File: (.+)$/.exec(line);
+      if (fileMatch) {
+        if (!paths.includes(fileMatch[1])) paths.push(fileMatch[1]);
+        continue;
+      }
+      if (line.startsWith("*** ") || line.startsWith("@@")) continue;
+      if (line.startsWith("+")) {
+        added += 1;
+        diffLines.push(line);
+      } else if (line.startsWith("-")) {
+        removed += 1;
+        diffLines.push(line);
+      } else {
+        diffLines.push(line);
+      }
+    }
+    return {
+      metaKind: "edit",
+      editPath: paths.length > 0 ? paths.join(", ") : "(patch)",
+      editAdded: added,
+      editRemoved: removed,
+      editDiff: diffLines.join("\n").trim(),
+    };
+  }
+  return {};
+}
+
 function statusRoleColor(
   role: StatusColorRole,
   theme: Theme,
@@ -408,6 +514,12 @@ export function entriesFromStoredMessages(messages: readonly unknown[]): ChatEnt
           toolArgs: formatToolArgs({ name, arguments: call?.input }),
           success,
           turn: 0,
+          // Rebuild the rich-card fields from the serialized transcript. The
+          // display-only `meta` was never serialized (it never reaches the
+          // model), so a restored card carries only what the model transcript
+          // holds — the command + its output, or the patch envelope — and no
+          // wall/timeout footer.
+          ...restoredToolCardFields(name, call?.input, b.content, success),
         });
       }
     }
@@ -2087,6 +2199,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           // A counted summary ("4 matches in 3 files") beats a truncated JSON
           // blob: the operator needs to know what happened, and the raw
           // payload is already in the model's context, not theirs.
+          //
+          // A rich card's display-only `result.meta` sidecar (never seen by the
+          // model) rides onto the entry so TranscriptEntry can draw a bordered
+          // command / edit card. Absent meta, the entry renders as before.
           appendEntry({
             kind: "tool",
             text: call.name,
@@ -2094,6 +2210,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             toolArgs: formatToolArgs(call),
             success: result.success,
             turn: currentTurn,
+            ...toolCardFieldsFromMeta(result.meta),
           });
         },
         onUsage: (usage) => {
@@ -2945,6 +3062,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     transcriptStyle: transcriptStyleSettings.transcriptStyle,
     roleLabelStyle: transcriptStyleSettings.roleLabelStyle,
     toolCardStyle: transcriptStyleSettings.toolCardStyle,
+    richToolCards: settings.richToolCards,
     mode: modeLabel(mode),
     modeColor: modeColorFor(mode, theme),
     model: modelId ?? "",

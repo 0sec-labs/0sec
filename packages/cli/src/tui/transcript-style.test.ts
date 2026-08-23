@@ -22,6 +22,10 @@ import {
   toolGlyphState,
   toolHeaderColumns,
   toolHeaderPrefix,
+  commandCardFrame,
+  editCardFrame,
+  commandCardFooter,
+  foldBodyLines,
   type CollapseEntryLike,
   type SpeechKind,
   type ToolCardStyle,
@@ -485,5 +489,94 @@ describe("transcript detail — the collapse contract", () => {
     ];
     const plan = planTranscript(entries, "collapsed", new Set([1]));
     expect(plan.map((item) => item.type)).toEqual(["entry", "entry"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rich command / edit cards
+// ---------------------------------------------------------------------------
+
+describe("commandCardFrame / editCardFrame", () => {
+  it("never lets a card's inner or outer width exceed the pane, across the sweep", () => {
+    for (const width of WIDTHS) {
+      for (const frame of [commandCardFrame(width), editCardFrame(width)]) {
+        expect(isWidth(frame.outerWidth)).toBe(true);
+        expect(isWidth(frame.innerWidth)).toBe(true);
+        // A rendered card fits its pane; a non-rendered one claims no cells.
+        if (frame.render) {
+          expect(frame.outerWidth).toBeLessThanOrEqual(width);
+          // outer = inner + border(2) + padding(2)
+          expect(frame.innerWidth).toBe(frame.outerWidth - 4);
+          expect(frame.innerWidth).toBeGreaterThanOrEqual(1);
+        } else {
+          expect(frame.outerWidth).toBe(0);
+          expect(frame.innerWidth).toBe(0);
+        }
+      }
+    }
+  });
+
+  it("renders at the two reference terminal widths (80 and 120 content cols)", () => {
+    // The content column is the pane minus the screen's own padding; both are
+    // comfortably above the chrome cost, so the card renders with room to spare.
+    for (const width of [72, 112]) {
+      const frame = commandCardFrame(width);
+      expect(frame.render).toBe(true);
+      expect(frame.innerWidth).toBe(width - 4);
+    }
+  });
+
+  it("degrades (does not render) below the border chrome + minimum", () => {
+    expect(commandCardFrame(4).render).toBe(false);
+    expect(commandCardFrame(0).render).toBe(false);
+  });
+});
+
+describe("commandCardFooter", () => {
+  it("renders the full footer when every datum is present", () => {
+    expect(
+      commandCardFooter({ wallMs: 4600, timeoutMs: 30000, exitCode: 1 }),
+    ).toBe("(Wall 4.60s | Timeout 30s | Exit: 1)");
+  });
+
+  it("marks a timed-out run and drops the exit code", () => {
+    expect(
+      commandCardFooter({ wallMs: 30000, timeoutMs: 30000, exitCode: null, timedOut: true }),
+    ).toBe("(Wall 30.00s | Timeout 30s | TIMED OUT)");
+  });
+
+  it("omits unknown segments (a restored card carries only the exit)", () => {
+    expect(commandCardFooter({ exitCode: 0 })).toBe("(Exit: 0)");
+    expect(commandCardFooter({})).toBe("");
+  });
+});
+
+describe("foldBodyLines", () => {
+  it("returns every line when within budget", () => {
+    expect(foldBodyLines("a\nb\nc", 5)).toEqual(["a", "b", "c"]);
+  });
+
+  it("folds middle-out with a count marker and keeps head + tail", () => {
+    const body = Array.from({ length: 10 }, (_, i) => `line${i}`).join("\n");
+    const out = foldBodyLines(body, 5);
+    expect(out.length).toBe(5);
+    expect(out[0]).toBe("line0");
+    expect(out.some((l) => l.startsWith("… ") && l.includes("more line"))).toBe(true);
+    expect(out.at(-1)).toBe("line9");
+  });
+
+  it("never emits more than maxLines and always keeps the marker plural math right", () => {
+    // A fold always hides at least two lines (it drops one real line for the
+    // marker plus the overflow), so the count is accurate and never exceeds.
+    const three = Array.from({ length: 3 }, (_, i) => `l${i}`).join("\n");
+    expect(foldBodyLines(three, 2)).toEqual(["l0", "… 2 more lines"]);
+    // 2 lines into maxLines 2 is within budget — no fold.
+    expect(foldBodyLines("l0\nl1", 2)).toEqual(["l0", "l1"]);
+    // The output length is capped at maxLines and the count is exact.
+    const twenty = Array.from({ length: 20 }, (_, i) => `l${i}`).join("\n");
+    const out = foldBodyLines(twenty, 6);
+    expect(out.length).toBe(6);
+    const marker = out.find((l) => l.startsWith("… "));
+    expect(marker).toBe("… 15 more lines");
   });
 });

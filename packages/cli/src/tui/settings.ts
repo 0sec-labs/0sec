@@ -93,6 +93,13 @@ export interface TuiSettings {
   /** How a tool/subagent call is drawn (failures always show). */
   toolCardStyle: "rail" | "inline" | "compact" | "hidden";
   /**
+   * Draw bash / run_command / apply_patch results as rich bordered cards (a
+   * `$ cmd` + output + wall/exit footer, or a `✎ Edit` header + diff) instead
+   * of the plain tool line. On by default; `toolCardStyle: "hidden"` still
+   * hides a SUCCESSFUL card (a failure always renders).
+   */
+  richToolCards: boolean;
+  /**
    * Transcript detail. "collapsed" folds each turn's successful tool calls and
    * reasoning into one-line summaries so the transcript reads as input + answer;
    * "expanded" shows every detail. Failures are never folded. Consumed by
@@ -350,6 +357,15 @@ const DEFS: readonly TuiSettingDef[] = [
     group: "Display",
   },
   {
+    key: "richToolCards",
+    label: "Rich tool cards",
+    description:
+      "Draw bash/run_command output and apply_patch edits as bordered cards (command + output + wall/exit footer, or an edit header + diff) instead of a plain line.",
+    kind: "boolean",
+    default: true,
+    group: "Transcript",
+  },
+  {
     key: "transcriptDetail",
     label: "Transcript detail",
     description:
@@ -469,6 +485,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   transcriptStyle: "rail",
   roleLabelStyle: "full",
   toolCardStyle: "compact",
+  richToolCards: true,
   transcriptDetail: "collapsed",
   theme: "dark",
   allowModelSelfExtension: false,
@@ -688,6 +705,7 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     transcriptStyle: enumAt(raw, "transcriptStyle"),
     roleLabelStyle: enumAt(raw, "roleLabelStyle"),
     toolCardStyle: enumAt(raw, "toolCardStyle"),
+    richToolCards: booleanAt(raw, "richToolCards"),
     transcriptDetail: enumAt(raw, "transcriptDetail"),
     theme: themeAt(raw),
     allowModelSelfExtension: booleanAt(raw, "allowModelSelfExtension"),

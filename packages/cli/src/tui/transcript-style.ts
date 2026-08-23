@@ -659,3 +659,96 @@ export function toolCompactLine(
     : cleanName;
   return `${prefix}${trimmed}`.slice(0, w);
 }
+
+// ---------------------------------------------------------------------------
+// Rich command / edit cards (OMP-style bordered tool cards)
+// ---------------------------------------------------------------------------
+
+/**
+ * Geometry for a bordered rich tool card (command or edit). Mirrors the
+ * `bubble` speech-frame discipline: the card is a bordered box that spends
+ * {@link BORDER_CHROME} cells on chrome (two borders + one pad each side), so
+ * its INNER width is `maxWidth - 4`, floored at 0. Below the chrome cost the
+ * card cannot render and degrades to the caller's fallback (the plain line).
+ *
+ * `outerWidth` is the explicit width the bordered box MUST be given (with
+ * `flexShrink={0}`), and `innerWidth` is the budget every child text must be
+ * fitted to so the row never overruns the border.
+ */
+export interface CardFrame {
+  /** Whether the card can render at this width (false → caller falls back). */
+  render: boolean;
+  /** Explicit outer width for the bordered box (needs flexShrink=0). */
+  outerWidth: number;
+  /** Usable inner width for every child (outer - border - padding). */
+  innerWidth: number;
+}
+
+/** Minimum inner width below which a card is not worth drawing (degrades to a line). */
+const MIN_CARD_INNER = 8;
+
+function cardFrame(maxWidth: number): CardFrame {
+  const width = clampWidth(maxWidth);
+  const inner = clampWidth(width - BORDER_CHROME);
+  if (inner < MIN_CARD_INNER) {
+    return { render: false, outerWidth: 0, innerWidth: 0 };
+  }
+  return { render: true, outerWidth: width, innerWidth: inner };
+}
+
+/** Geometry for a command card (`$ cmd` / output / footer). */
+export function commandCardFrame(maxWidth: number): CardFrame {
+  return cardFrame(maxWidth);
+}
+
+/** Geometry for an edit card (`✎ Edit: path` / diff). */
+export function editCardFrame(maxWidth: number): CardFrame {
+  return cardFrame(maxWidth);
+}
+
+/**
+ * The footer line for a command card: `(Wall Xs | Timeout Ys | Exit: N)`.
+ * Segments are omitted when their datum is unknown so a restored card (which
+ * carries only the exit code) still renders a clean footer. Pure; fitted by
+ * the caller to the card inner width.
+ */
+export function commandCardFooter(opts: {
+  wallMs?: number;
+  timeoutMs?: number;
+  exitCode?: number | null;
+  timedOut?: boolean;
+}): string {
+  const parts: string[] = [];
+  if (typeof opts.wallMs === "number" && Number.isFinite(opts.wallMs)) {
+    parts.push(`Wall ${(Math.max(0, opts.wallMs) / 1000).toFixed(2)}s`);
+  }
+  if (typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)) {
+    parts.push(`Timeout ${Math.round(opts.timeoutMs / 1000)}s`);
+  }
+  if (opts.timedOut) {
+    parts.push("TIMED OUT");
+  } else if (typeof opts.exitCode === "number") {
+    parts.push(`Exit: ${opts.exitCode}`);
+  }
+  return parts.length > 0 ? `(${parts.join(" | ")})` : "";
+}
+
+/**
+ * Split a body into at most `maxLines` display lines with a middle-out fold:
+ * the head and tail survive and the elided middle collapses to a single
+ * `… N more lines` marker, matching the transcript's existing fold idiom. Pure.
+ */
+export function foldBodyLines(body: string, maxLines: number): string[] {
+  const lines = body.replace(/\n+$/, "").split("\n");
+  if (maxLines <= 0) return [];
+  if (lines.length <= maxLines) return lines;
+  // Reserve one line for the fold marker; split the rest head/tail.
+  const budget = Math.max(1, maxLines - 1);
+  const head = Math.ceil(budget / 2);
+  const tail = budget - head;
+  const hidden = lines.length - head - tail;
+  const out = lines.slice(0, head);
+  out.push(`… ${hidden} more line${hidden === 1 ? "" : "s"}`);
+  if (tail > 0) out.push(...lines.slice(lines.length - tail));
+  return out;
+}

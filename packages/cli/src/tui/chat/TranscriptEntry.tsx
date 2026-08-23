@@ -9,6 +9,10 @@ import { formatElapsed } from "../animation.js";
 import { repeatSuffix } from "../transcript.js";
 import { panelColumns } from "../panels.js";
 import {
+  commandCardFooter,
+  commandCardFrame,
+  editCardFrame,
+  foldBodyLines,
   foldSummary,
   roleLabelText,
   speechFrame,
@@ -51,6 +55,11 @@ export interface TranscriptRowInteraction {
 function normalizeReasoning(text: string): string {
   return text.replace(/\*\*\*\*/g, "**\n\n**");
 }
+
+/** Max output lines a command card shows before the middle-out fold kicks in. */
+const COMMAND_CARD_MAX_LINES = 14;
+/** Max diff lines an edit card shows before the middle-out fold kicks in. */
+const EDIT_CARD_MAX_LINES = 20;
 
 /** Compact relative age, e.g. "12s" / "4m" / "2h". */
 function relativeAge(at: number | undefined, now: number): string {
@@ -278,6 +287,117 @@ export function renderEntry(
     const running = entry.success === undefined;
     const tone = failed ? ERROR : entry.success ? SUCCESS : PRIMARY;
     const { icon, state } = toolGlyphState(entry.success);
+
+    // ── Rich cards (OMP-style): a bordered command / edit card. Gated on the
+    // richToolCards display flag (defaults ON when unset) and the presence of
+    // the meta the tool attached. `toolCardStyle: "hidden"` still drops a
+    // SUCCESSFUL card — a failure always renders. A pane too narrow for the
+    // border chrome falls through to the plain line below. ──
+    const richCards = display.richToolCards !== false;
+    const cardFailed =
+      entry.success === false ||
+      entry.timedOut === true ||
+      (typeof entry.exitCode === "number" && entry.exitCode !== 0);
+    const hideSuccessCard = toolCardStyle === "hidden" && !cardFailed;
+
+    if (richCards && entry.metaKind === "command" && typeof entry.command === "string" && !hideSuccessCard) {
+      const cardFrame = commandCardFrame(maxWidth);
+      if (cardFrame.render) {
+        const cardTone = cardFailed ? ERROR : BORDER;
+        const footer = commandCardFooter({
+          wallMs: entry.wallMs,
+          timeoutMs: entry.timeoutMs,
+          exitCode: entry.exitCode ?? undefined,
+          timedOut: entry.timedOut,
+        });
+        // The header `$ ` + command; the command is fitted to whatever the
+        // inner width can pay for after the two-cell prompt.
+        const cmdText = fitTuiText(entry.command, Math.max(1, cardFrame.innerWidth - 2));
+        const body = entry.commandOutput ?? "";
+        const bodyLines = body.trim().length > 0 ? foldBodyLines(body, COMMAND_CARD_MAX_LINES) : [];
+        return finish(
+          <box
+            key={entry.id}
+            flexDirection="column"
+            width={cardFrame.outerWidth}
+            flexShrink={0}
+            minWidth={0}
+            marginTop={display.spacing}
+            border
+            borderColor={cardTone}
+            paddingX={1}
+          >
+            <box flexDirection="row" minWidth={0}>
+              <text fg={MUTED}>$ </text>
+              <text fg={PRIMARY} attributes={TextAttributes.BOLD}>{cmdText}</text>
+            </box>
+            {bodyLines.length > 0 ? (
+              <box flexDirection="column" minWidth={0} marginTop={1}>
+                <text fg={MUTED}>Output</text>
+                {bodyLines.map((line, i) => (
+                  <text key={`o-${i}`} fg={line.startsWith("… ") ? MUTED : TEXT}>
+                    {fitTuiText(line, cardFrame.innerWidth)}
+                  </text>
+                ))}
+              </box>
+            ) : null}
+            {footer ? (
+              <box minWidth={0} marginTop={bodyLines.length > 0 ? 1 : 0}>
+                <text fg={cardFailed ? ERROR : MUTED}>{fitTuiText(footer, cardFrame.innerWidth)}</text>
+              </box>
+            ) : null}
+          </box>,
+        );
+      }
+    }
+
+    if (richCards && entry.metaKind === "edit" && typeof entry.editPath === "string" && !hideSuccessCard) {
+      const cardFrame = editCardFrame(maxWidth);
+      if (cardFrame.render) {
+        const cardTone = cardFailed ? ERROR : BORDER;
+        const added = entry.editAdded ?? 0;
+        const removed = entry.editRemoved ?? 0;
+        const header = `✎ Edit: ${entry.editPath} (+${added}/-${removed})`;
+        const diff = entry.editDiff ?? "";
+        const diffLines = diff.trim().length > 0 ? foldBodyLines(diff, EDIT_CARD_MAX_LINES) : [];
+        return finish(
+          <box
+            key={entry.id}
+            flexDirection="column"
+            width={cardFrame.outerWidth}
+            flexShrink={0}
+            minWidth={0}
+            marginTop={display.spacing}
+            border
+            borderColor={cardTone}
+            paddingX={1}
+          >
+            <box minWidth={0}>
+              <text fg={PRIMARY} attributes={TextAttributes.BOLD}>{fitTuiText(header, cardFrame.innerWidth)}</text>
+            </box>
+            {diffLines.length > 0 ? (
+              <box flexDirection="column" minWidth={0} marginTop={1}>
+                {diffLines.map((line, i) => {
+                  const diffTone = line.startsWith("+")
+                    ? SUCCESS
+                    : line.startsWith("-")
+                      ? ERROR
+                      : line.startsWith("… ")
+                        ? MUTED
+                        : TEXT;
+                  return (
+                    <text key={`d-${i}`} fg={diffTone}>
+                      {fitTuiText(line, cardFrame.innerWidth)}
+                    </text>
+                  );
+                })}
+              </box>
+            ) : null}
+          </box>,
+        );
+      }
+    }
+
     const frame = toolFrame(toolCardStyle, maxWidth, entry.success);
     if (!frame.render) return null;
     const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);

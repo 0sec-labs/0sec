@@ -48,6 +48,50 @@ export interface ToolResult {
   success: boolean;
   output: unknown;
   error?: string;
+  /**
+   * OPTIONAL display-only sidecar for a rich UI (the TUI command/edit cards).
+   *
+   * This field is NEVER serialized back into the model's `tool_result` content:
+   * both loop serializers read only `output`/`error` — `native-loop.ts` does
+   * `JSON.stringify(toolResult.output)` (or `Error: ${error}`) and the console
+   * `turn-engine.ts`'s `stringifyToolResult` likewise touches only
+   * `output`/`error`. `meta` therefore cannot change what the model sees; it
+   * exists purely so the operator-facing surface can draw a richer card than
+   * the model-facing string carries. Every existing caller is unaffected
+   * because the field is optional.
+   */
+  meta?: ToolResultMeta;
+}
+
+/**
+ * Display-only metadata a tool may attach to its {@link ToolResult} so the TUI
+ * can render a rich card. NOT seen by the model (see {@link ToolResult.meta}).
+ */
+export interface ToolResultMeta {
+  /** Which card the UI should draw. `command` → bash/run_command; `edit` → apply_patch. */
+  kind?: "command" | "edit";
+  // ── command card ──
+  /** The command that was executed (header line `$ <command>`). */
+  command?: string;
+  /** Process exit code; `null` when unknown (timed out / killed by signal). */
+  exitCode?: number | null;
+  /** Wall-clock duration of the call, in milliseconds. */
+  durationMs?: number;
+  /** The timeout ceiling applied to the call, in milliseconds. */
+  timeoutMs?: number;
+  /** True when the call was terminated by the wallclock timeout. */
+  timedOut?: boolean;
+  /** The (possibly truncated) combined stdout/stderr, for the card body. */
+  stdout?: string;
+  // ── edit card ──
+  /** Path(s) edited (header line `✎ Edit: <path>`). */
+  path?: string;
+  /** Lines added by the edit. */
+  added?: number;
+  /** Lines removed by the edit. */
+  removed?: number;
+  /** A diff body (hunk lines) for the card, when available. */
+  diff?: string;
 }
 
 // ── Console autonomy (scoped source-audit gate) ──
