@@ -29,7 +29,17 @@ jobs:
       - name: Type-check
         run: pnpm lint
       - name: Smoke CLI
-        run: node dist/0sec.js --help
+        # The bundle keeps react/@opentui/* (and the native tree-sitter,
+        # node-sqlite3-wasm, drizzle) EXTERNAL so it never ships a second React
+        # instance beside OpenTUI's. Those externals live in the generated
+        # dist/package.json but are not hoisted to the repo root, so the raw
+        # bundle can't resolve them until we install them next to it. Mirror the
+        # installed-tarball layout by installing the bundle's own deps into dist/
+        # before smoking. Use `npm install --omit=dev` (not `npm ci`) so a lock
+        # that lags the current react/@opentui versions can't fail the smoke.
+        run: |
+          (cd dist && npm install --omit=dev --no-audit --no-fund)
+          node dist/0sec.js --help
       - name: Run tests
         run: pnpm test:public
         env:
