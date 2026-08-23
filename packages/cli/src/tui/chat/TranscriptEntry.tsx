@@ -1,0 +1,437 @@
+/** @jsxImportSource @opentui/react */
+import React from "react";
+import { MODEL_PRICING, type ModelRates } from "@0sec/shared";
+import { fitTuiText, sanitizeTuiText } from "../text.js";
+import { renderMarkdown } from "../markdown.js";
+import { formatElapsed } from "../animation.js";
+import { repeatSuffix } from "../transcript.js";
+import { panelColumns } from "../panels.js";
+import {
+  foldSummary,
+  roleLabelText,
+  speechFrame,
+  toolCompactLine,
+  toolDetailWidth,
+  toolFrame,
+  toolGlyphState,
+  toolHeaderColumns,
+  toolHeaderPrefix,
+  type TranscriptPlanItem,
+} from "../transcript-style.js";
+import { renderMarkdownBlocks } from "./markdown-blocks.js";
+import type { Theme } from "../theme-context.js";
+import type { ChatEntry, EntryDisplay } from "./types.js";
+
+/**
+ * Normalize a reasoning stream for display.
+ *
+ * Reasoning summaries arrive as a sequence of bold headers with no
+ * separator between them, so the raw text reads `**A****B****C**`. Four
+ * adjacent asterisks are never a single intended run — it is always one
+ * bold closing and the next opening — so split them onto their own lines.
+ */
+function normalizeReasoning(text: string): string {
+  return text.replace(/\*\*\*\*/g, "**\n\n**");
+}
+
+/** Compact relative age, e.g. "12s" / "4m" / "2h". */
+function relativeAge(at: number | undefined, now: number): string {
+  // Restored entries carry no timestamp; return empty so the caller can omit
+  // the separator entirely rather than rendering a dangling "0sec ·".
+  if (!at) return "";
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h`;
+}
+
+/**
+ * Priced rate rows by lower-cased model id, mirroring status-bar.ts. "default"
+ * is excluded on purpose: it is shared's fallback for an UNKNOWN model, and
+ * pricing an unrecognised id at it would put a fabricated figure on screen.
+ * Kept local (rather than importing status-bar's private map) so the footer's
+ * cost estimate never routes through shared's `estimateCost`, which
+ * `console.warn`s on an unknown id — forbidden inside a TUI that owns stdout.
+ */
+const FOOTER_RATES_BY_LOWER: ReadonlyMap<string, ModelRates> = new Map(
+  Object.entries(MODEL_PRICING)
+    .filter(([key]) => key !== "default")
+    .map(([key, rates]) => [key.toLowerCase(), rates]),
+);
+
+const FOOTER_VENDOR_PREFIXES = [
+  "openai/", "anthropic/", "google/", "deepseek/", "meta/", "mistral/",
+  "z-ai/", "zai/", "kimi/", "moonshot/", "openrouter/", "xai/", "x-ai/",
+];
+
+function footerRates(model: string): ModelRates | undefined {
+  const lower = model.toLowerCase();
+  const direct = FOOTER_RATES_BY_LOWER.get(lower);
+  if (direct) return direct;
+  for (const prefix of FOOTER_VENDOR_PREFIXES) {
+    if (lower.startsWith(prefix)) return FOOTER_RATES_BY_LOWER.get(lower.slice(prefix.length));
+  }
+  return undefined;
+}
+
+/**
+ * A quiet per-turn cost string for the AI footer, or "$—" when the model's rate
+ * is unknown (never a figure at a rate the model was not billed). Mirrors the
+ * status-bar's arithmetic and formatting.
+ */
+function formatTurnCost(model: string, inputTokens: number, outputTokens: number): string {
+  const rates = model ? footerRates(model) : undefined;
+  if (!rates) return "$—";
+  const usd =
+    (Math.max(0, inputTokens) / 1_000_000) * rates.input +
+    (Math.max(0, outputTokens) / 1_000_000) * rates.output;
+  if (!Number.isFinite(usd) || usd <= 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+
+export function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, theme: Theme) {
+  const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER, PANEL_ALT, BRAND } = theme;
+  const detailWidth = Math.max(20, maxWidth - 8);
+  const { transcriptStyle, roleLabelStyle, toolCardStyle } = display;
+  // A row that stands for several collapsed repeats says so. The count is
+  // appended at render time and never written into `entry.text`, so the next
+  // repeat still compares equal and keeps collapsing.
+  const repeat = repeatSuffix(entry.repeat);
+
+  if (entry.kind === "user" || entry.kind === "assistant") {
+    const isUser = entry.kind === "user";
+    // Frame accents (a bubble border, the inline label gap) stay in the
+    // speaker's own tone. The LABEL, however, carries the brand: the assistant
+    // "0sec" label renders in the brand purple (theme.BRAND); the operator label
+    // stays the neutral accent. Body text is never tinted by this — it keeps
+    // TEXT / PRIMARY via renderMarkdownBlocks below.
+    const tone = isUser ? ACCENT : PRIMARY;
+    const labelTone = isUser ? ACCENT : BRAND;
+    const frame = speechFrame(transcriptStyle, entry.kind, maxWidth);
+    const marginTop = display.spacing + frame.extraMarginTop;
+    const age = display.showTimestamps ? relativeAge(entry.at, display.now) : "";
+    const label = roleLabelText(isUser ? "user" : "assistant", roleLabelStyle, age);
+    // With the old full-height rail gone, an unbordered turn hands the whole
+    // pane to its body: the two cells the rail and its gap used to spend are
+    // reclaimed for text. A bordered turn still wraps to its inner width.
+    const bodyWidth = frame.bordered ? frame.markdownWidth : Math.max(8, maxWidth);
+    // Body: raw text for the operator, rendered markdown for the model.
+    const body = isUser
+      ? <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
+      : renderMarkdownBlocks(renderMarkdown(entry.text, bodyWidth), entry.id, theme);
+
+    if (frame.bordered) {
+      // The grouped style: a subtle surface plus a border frames the turn,
+      // never a tall left bar. A bordered turn MUST carry an explicit numeric
+      // width plus flexShrink=0: width="100%" leaves flexShrink at 1, so under
+      // column pressure the box collapses and paints its own border through the
+      // message (PRIMITIVES.md).
+      return (
+        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={tone} backgroundColor={PANEL_ALT} paddingX={1}>
+          {label ? <text fg={labelTone}>{label}</text> : null}
+          {body}
+        </box>
+      );
+    }
+
+    // The clean DEFAULT look (transcriptStyle "rail"): the two voices are told
+    // apart by their frame, not by a tinted label. The OPERATOR turn is drawn
+    // like the input that produced it — a thin accent rail down the left plus a
+    // faint panel background, so it reads as "what you said" the same way the
+    // composer reads as "what you're saying". The AI turn is PLAIN body text
+    // followed by a compact muted footer (a red brand marker, then mode · model
+    // · elapsed), so the answer itself is unadorned and the provenance sits
+    // quietly beneath it.
+    if (transcriptStyle === "rail") {
+      if (isUser) {
+        return (
+          <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} backgroundColor={PANEL_ALT}>
+            <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ACCENT} />
+            <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
+              {body}
+            </box>
+          </box>
+        );
+      }
+      // The footer is composed from the mode plus whatever telemetry the
+      // operator opted into: the model only when `modelDisplay` routes it here
+      // (otherwise it lives in the bottom bar), the per-turn tokens under
+      // `showTokenUsage`, the per-turn cost under `showCost`, and the elapsed.
+      const footerParts: string[] = [display.mode];
+      if (display.modelInFooter && display.model) footerParts.push(display.model);
+      if (display.showTokenUsage && entry.usageInput !== undefined) {
+        footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
+      }
+      if (display.showCost && entry.usageInput !== undefined) {
+        footerParts.push(formatTurnCost(display.model, entry.usageInput, entry.usageOutput ?? 0));
+      }
+      const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
+      if (elapsed) footerParts.push(elapsed);
+      const footer = footerParts.join(" · ");
+      return (
+        <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
+          {body}
+          <box flexDirection="row" minWidth={0}>
+            <box width={2} flexShrink={0} minWidth={0}>
+              <text fg={ERROR}>▪ </text>
+            </box>
+            <box flexGrow={1} minWidth={0}>
+              <text fg={MUTED}>{fitTuiText(footer, Math.max(1, maxWidth - 2))}</text>
+            </box>
+          </box>
+        </box>
+      );
+    }
+
+    // compact inlines a one-line operator message next to its label.
+    if (!frame.labelOwnRow && isUser) {
+      return (
+        <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
+          {label ? <box flexShrink={0}><text fg={labelTone}>{label}</text></box> : null}
+          <box flexGrow={1} minWidth={0} marginLeft={label ? 1 : 0}>
+            {body}
+          </box>
+        </box>
+      );
+    }
+
+    // The default separation, OpenCode-style: consecutive turns are set apart
+    // by whitespace (marginTop) and a compact coloured speaker label on its own
+    // row — NOT a full-height rail down the left of every message. The body
+    // then takes every cell of the pane, flush left.
+    return (
+      <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
+        {label ? <text fg={labelTone}>{label}</text> : null}
+        {body}
+      </box>
+    );
+  }
+
+  if (entry.kind === "tool") {
+    const tone = entry.success === false ? ERROR : entry.success ? SUCCESS : PRIMARY;
+    const { icon, state } = toolGlyphState(entry.success);
+    const frame = toolFrame(toolCardStyle, maxWidth, entry.success);
+    if (!frame.render) return null;
+    const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);
+
+    // compact / hidden: a single clean summary line — no rail, mono palette,
+    // the colour carried only by the icon. The concise args ride on the name
+    // (`run_command · npm test · complete`) so the operator sees WHAT ran, not
+    // just that something did; `toolCompactLine` drops the state first and then
+    // truncates from the tail, so the tool's identity always survives. Detail
+    // (the result summary) is shown only on failure, where the reason matters.
+    if (frame.singleLine) {
+      const compactName = entry.toolArgs
+        ? `${entry.text}${repeat} · ${entry.toolArgs}`
+        : `${entry.text}${repeat}`;
+      return (
+        <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
+          <text fg={tone}>{toolCompactLine(icon, compactName, state, frame.contentWidth)}</text>
+          {frame.showDetail && entry.detail ? (
+            <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text>
+          ) : null}
+        </box>
+      );
+    }
+
+    // rail / inline: icon, muted prefix and name are siblings on one row; the
+    // name is budgeted against the prefix's real length or the row overruns its
+    // container and the renderer paints the columns into each other.
+    const toolPrefix = toolHeaderPrefix(state);
+    const cols = toolHeaderColumns(frame.contentWidth, toolPrefix.length, toolDetail);
+    const header = (
+      <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
+        <box flexDirection="row" minWidth={0}>
+          <text fg={tone}>{icon}</text>
+          <text fg={MUTED}>{toolPrefix}</text>
+          <text fg={TEXT}>{fitTuiText(`${entry.text}${repeat}`, cols.nameWidth)}</text>
+        </box>
+        {frame.showDetail && entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, toolDetail)}</text> : null}
+      </box>
+    );
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
+        {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
+        {header}
+      </box>
+    );
+  }
+
+  if (entry.kind === "subagent") {
+    const outcome = entry.subagentOutcome ?? "failed";
+    const ok = outcome === "completed";
+    const tone = ok ? SUCCESS : ERROR;
+    const frame = toolFrame(toolCardStyle, maxWidth, ok);
+    if (!frame.render) return null;
+    const subDetailWidth = toolDetailWidth(frame.contentWidth, maxWidth);
+    const statusParts: string[] = [];
+    if (entry.subagentTurns !== undefined) statusParts.push(`turns ${entry.subagentTurns}`);
+    if (entry.subagentFindings !== undefined) statusParts.push(`findings ${entry.subagentFindings}`);
+    const statusLine = statusParts.length > 0 ? statusParts.join(" · ") : null;
+
+    if (frame.singleLine) {
+      return (
+        <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
+          <text fg={tone}>{toolCompactLine(ok ? "✓" : "×", "subagent", ok ? "completed" : "failed", frame.contentWidth)}</text>
+          {frame.showDetail && entry.subagentError ? (
+            <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, frame.contentWidth)}</text>
+          ) : null}
+        </box>
+      );
+    }
+
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
+        {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
+          <box flexDirection="row">
+            <text fg={tone}>{ok ? "✓" : "×"}</text>
+            <text fg={BRAND}> evidence / subagent</text>
+            <text fg={MUTED}> · {ok ? "completed" : "failed"}</text>
+          </box>
+          {frame.showDetail && statusLine ? <text fg={MUTED}>{fitTuiText(statusLine, subDetailWidth)}</text> : null}
+          {frame.showDetail && entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, subDetailWidth)}</text> : null}
+          {entry.subagentError ? <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, subDetailWidth)}</text> : null}
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "error") {
+    // Failures get the same rail treatment as speech, in the error tone: an
+    // operator must be able to see at a glance that the turn did not produce an
+    // answer, and why. `bubble` frames it as a bordered ERROR block instead.
+    const frame = speechFrame(transcriptStyle, "error", maxWidth);
+    const marginTop = display.spacing + frame.extraMarginTop;
+    if (frame.bordered) {
+      return (
+        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={ERROR} paddingX={1}>
+          <text fg={ERROR}>{fitTuiText(`${entry.text}${repeat}`, frame.contentWidth)}</text>
+          {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text> : null}
+        </box>
+      );
+    }
+    // A failed turn reads as speech in the error tone: a compact red marker and
+    // label, the body beneath it, and the same whitespace separation as any
+    // other turn — no full-height bar.
+    return (
+      <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
+        <text fg={ERROR}>{fitTuiText(`▌ ${entry.text}${repeat}`, Math.max(1, maxWidth))}</text>
+        {entry.detail ? (
+          <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text>
+        ) : null}
+      </box>
+    );
+  }
+
+  if (entry.kind === "reasoning") {
+    // Thinking is deliberately quieter than the answer: a dotted rail and
+    // muted text, so it reads as working-out rather than a conclusion.
+    return (
+      <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+        <box width={1} flexShrink={0} alignSelf="stretch">
+          <text fg={MUTED}>┊</text>
+        </box>
+        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+          <text fg={MUTED}>thinking</text>
+          {renderMarkdownBlocks(
+            renderMarkdown(normalizeReasoning(entry.text), Math.max(8, maxWidth - 2)),
+            entry.id,
+            theme,
+            MUTED,
+          )}
+        </box>
+      </box>
+    );
+  }
+
+  if (entry.kind === "panel" && entry.panel) {
+    // Command output is not dialogue, so it gets a bordered block with
+    // aligned columns instead of one muted bullet per line. Column widths
+    // come from panelColumns so the two columns can never overspend the
+    // panel and paint into each other.
+    const panel = entry.panel;
+    // Two border cells plus one padding cell on each side.
+    const innerWidth = Math.max(1, maxWidth - 4);
+    const columns = panelColumns(panel.rows, innerWidth);
+    return (
+      <box key={entry.id} flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={display.spacing} border borderColor={BORDER} paddingX={1}>
+        <box flexDirection="row" width="100%" minWidth={0}>
+          <text fg={PRIMARY}>{fitTuiText(panel.title, innerWidth)}</text>
+        </box>
+        {panel.subtitle ? (
+          <text fg={MUTED}>{fitTuiText(panel.subtitle, innerWidth)}</text>
+        ) : null}
+        {panel.rows.map((row, index) => {
+          if (row.heading) {
+            return (
+              <text key={`h-${index}`} fg={ACCENT}>{fitTuiText(row.value, innerWidth)}</text>
+            );
+          }
+          if (!row.label || columns.labelWidth === 0) {
+            return (
+              <text key={`r-${index}`} fg={TEXT} wrapMode="word">{fitTuiText(row.value, innerWidth)}</text>
+            );
+          }
+          return (
+            <box key={`r-${index}`} flexDirection="row" width="100%" minWidth={0} gap={columns.gap}>
+              <box width={columns.labelWidth} flexShrink={0} minWidth={0}>
+                <text fg={TEXT}>{fitTuiText(row.label, columns.labelWidth)}</text>
+              </box>
+              <box width={columns.valueWidth} flexShrink={0} minWidth={0}>
+                <text fg={MUTED}>{fitTuiText(row.value, columns.valueWidth)}</text>
+              </box>
+            </box>
+          );
+        })}
+      </box>
+    );
+  }
+
+  return (
+    <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+      <text fg={MUTED}>·</text>
+      <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
+        <text fg={MUTED} wrapMode="word">{fitTuiText(`${entry.text}${repeat}`, maxWidth - 2)}</text>
+        {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, maxWidth - 2)}</text> : null}
+      </box>
+    </box>
+  );
+}
+
+/**
+ * A folded run of collapsed detail: one quiet line, a ▸ disclosure glyph then
+ * the summary. The planner never folds a failure into a run, so the muted tone
+ * is always correct — every entry behind this line succeeded (or is reasoning).
+ * Expanding the transcript (Ctrl+R) restores the full cards.
+ */
+export function renderFold(
+  item: Extract<TranscriptPlanItem<ChatEntry>, { type: "fold" }>,
+  maxWidth: number,
+  display: EntryDisplay,
+  theme: Theme,
+) {
+  const { MUTED } = theme;
+  const key = `fold-${item.entries[0]?.id ?? item.turn}`;
+  // `toolCardStyle: "hidden"` means "don't show me successful tool activity";
+  // honour it inside a fold too by dropping the tool/subagent steps from the
+  // summary (reasoning still folds). A fold left with nothing renders nothing.
+  const shown =
+    display.toolCardStyle === "hidden"
+      ? item.entries.filter((entry) => entry.kind !== "tool" && entry.kind !== "subagent")
+      : item.entries;
+  if (shown.length === 0) return null;
+  const summary = shown.length === item.entries.length ? item.summary : foldSummary(shown);
+  return (
+    <box key={key} flexDirection="row" marginTop={display.spacing} minWidth={0}>
+      <box width={2} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>▸ </text>
+      </box>
+      <box flexGrow={1} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText(summary, Math.max(1, maxWidth - 2))}</text>
+      </box>
+    </box>
+  );
+}

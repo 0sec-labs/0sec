@@ -1,6 +1,15 @@
 /** @jsxImportSource @opentui/react */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  useKeyboard,
+  useTerminalDimensions,
+} from "@opentui/react";
 import {
   ScopePolicy,
   createConsoleRuntime,
@@ -19,16 +28,23 @@ import {
   type OperatorQuestionAnswer,
   type SubagentLifecyclePayload,
   type ToolCall,
-  type ToolResult,
 } from "@0sec/core";
-import { TextAttributes } from "@opentui/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
-import { useSettings, updateSetting } from "./settings-store.js";
-import { useTheme, type Theme } from "./theme-context.js";
-import { MODEL_PRICING, modelProvider, type ModelRates } from "@0sec/shared";
+import {
+  useSettings,
+  updateSetting,
+} from "./settings-store.js";
+import { useTheme } from "./theme-context.js";
+import { modelProvider } from "@0sec/shared";
 import { homedir } from "node:os";
-import { readGitStatus, type GitStatus } from "./git-status.js";
-import { buildStatusSegments, fitStatusSegments } from "./status-bar.js";
+import {
+  readGitStatus,
+  type GitStatus,
+} from "./git-status.js";
+import {
+  buildStatusSegments,
+  fitStatusSegments,
+} from "./status-bar.js";
 import {
   createSelectorState,
   highlighted,
@@ -38,9 +54,11 @@ import {
   type SelectorItem,
   type SelectorState,
 } from "./selector.js";
-import { modelSelectorItems } from "./model-catalog.js";
 import { appendFeedback } from "./feedback.js";
-import { formatToolArgs, formatToolResult, toolResultDetail } from "./tool-format.js";
+import {
+  formatToolArgs,
+  formatToolResult,
+} from "./tool-format.js";
 import {
   listSessions,
   loadSession,
@@ -49,15 +67,15 @@ import {
 } from "./session-store.js";
 import { reportOperatorGate } from "../herdr-state.js";
 import {
-  listItemGutterWidth,
-  renderMarkdown,
-  TABLE_COLUMN_GAP,
-  TABLE_JOIN_GLYPH,
-  type MdBlock,
-  type MdSpan,
-} from "./markdown.js";
-import { GLYPH_CELLS, formatElapsed, frameAt, frameIntervalMs, type AnimationKind } from "./animation.js";
-import { PROVIDERS, providerStates } from "./provider-status.js";
+  GLYPH_CELLS,
+  frameAt,
+  frameIntervalMs,
+  type AnimationKind,
+} from "./animation.js";
+import {
+  PROVIDERS,
+  providerStates,
+} from "./provider-status.js";
 import {
   credentialEnvPatch,
   loadCredentials,
@@ -66,23 +84,24 @@ import {
 } from "./credential-store.js";
 import { VERSION } from "@0sec/shared";
 import {
-  SETTING_DEFS,
-  describeSetting,
-  saveSettings,
-  toggleSetting,
   type TuiSettings,
 } from "./settings.js";
-import { pushHistory, recallNext, recallPrev } from "./composer-history.js";
+import {
+  pushHistory,
+  recallNext,
+  recallPrev,
+} from "./composer-history.js";
 import {
   buildHelpPanel,
   buildScopePanel,
   buildStatusPanel,
   buildToolsPanel,
-  panelColumns,
-  type PanelData,
 } from "./panels.js";
-import { fitTuiText, sanitizeTuiText } from "./text.js";
-import { parseSubagentCard, reduceActiveSubagents } from "./subagent-card.js";
+import { fitTuiText } from "./text.js";
+import {
+  parseSubagentCard,
+  reduceActiveSubagents,
+} from "./subagent-card.js";
 import { onTuiOutputLine } from "./output-guard.js";
 import {
   COMPOSER_QUEUE_LIMIT,
@@ -115,15 +134,12 @@ import {
   subagentPeers,
   windowFocusTail,
   HERD_FOCUS_EMPTY_TEXT,
-  type HerdDetailTone,
   type HerdSubagentMap,
 } from "./herd-layout.js";
 import {
   computeLogoFrame,
   logoAnimationFrameCount,
   logoAnimationLoops,
-  logoRowRuns,
-  type LogoCellTone,
 } from "./logo-animation.js";
 import {
   buildOperatorAnswer,
@@ -145,26 +161,58 @@ import {
   findCommand,
   type SlashCommand,
 } from "./slash-commands.js";
-import { deletePreviousWord, deleteToLineStart } from "./composer-edit.js";
-import { appendTranscriptEntry, repeatSuffix } from "./transcript.js";
 import {
-  foldSummary,
+  deletePreviousWord,
+  deleteToLineStart,
+} from "./composer-edit.js";
+import { appendTranscriptEntry } from "./transcript.js";
+import {
   planTranscript,
   resolveTranscriptStyleSettings,
-  roleLabelText,
-  speechFrame,
-  toolCompactLine,
-  toolDetailWidth,
-  toolFrame,
-  toolGlyphState,
-  toolHeaderColumns,
-  toolHeaderPrefix,
-  type RoleLabelStyle,
-  type ToolCardStyle,
-  type TranscriptDetail,
-  type TranscriptPlanItem,
-  type TranscriptStyle,
 } from "./transcript-style.js";
+import type {
+  ChatEntry,
+  EntryDisplay,
+  KeyHint,
+} from "./chat/types.js";
+import {
+  TERMINAL_BLOCK_LOGO,
+  TERMINAL_BLOCK_LOGO_WIDTH,
+  LOGO_FRAME_INTERVAL_MS,
+} from "./chat/logo.js";
+import {
+  modeLabel,
+  modeColorFor,
+  herdToneColor,
+  completionFor,
+  commandMatchesPrefix,
+  buildScopeResolution,
+} from "./chat/helpers.js";
+import {
+  renderEntry,
+  renderFold,
+} from "./chat/TranscriptEntry.js";
+import { ComposerFrame } from "./chat/Composer.js";
+import {
+  KeyHints,
+  keyHintsLength,
+} from "./chat/KeyHints.js";
+import {
+  SelectorPanel,
+  selectorPanelBudget,
+  selectorPanelHeight,
+} from "./chat/SelectorPanel.js";
+import {
+  ApprovalCard,
+  approvalCardRows,
+  argumentSummaryLines,
+  APPROVAL_GRANT_ID,
+  APPROVAL_DENY_ID,
+  type ApprovalPrompt,
+} from "./chat/ApprovalCard.js";
+import { OperatorQuestionCard } from "./chat/OperatorQuestionCard.js";
+import { Masthead } from "./chat/Masthead.js";
+import { CommandMenu } from "./chat/CommandMenu.js";
 
 export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market";
 
@@ -186,51 +234,6 @@ export interface ChatScreenProps {
   onExit: () => void;
 }
 
-type ChatEntry = {
-  id: string;
-  /**
-   * The transcript speaks in distinct voices, because a slash-command
-   * listing is not conversation and reasoning is not an answer. Rendering
-   * them all as the same muted bullet is what made command output read as
-   * an undifferentiated dump.
-   */
-  kind: "user" | "assistant" | "reasoning" | "tool" | "subagent" | "notice" | "panel" | "error";
-  text: string;
-  detail?: string;
-  success?: boolean;
-  turn: number;
-  subagentOutcome?: "completed" | "failed";
-  subagentTurns?: number;
-  subagentFindings?: number;
-  subagentSummary?: string;
-  subagentError?: string;
-  panel?: PanelData;
-  /**
-   * A concise, human one-liner of the call's arguments (from `formatToolArgs`),
-   * so a compact tool card can read `run_command · npm test · ok` instead of
-   * just the bare tool name.
-   */
-  toolArgs?: string;
-  /** Epoch ms the entry was appended, for relative timestamps. */
-  at?: number;
-  /**
-   * Wall-clock duration of the turn this assistant answer belongs to, stamped
-   * when the turn ends. Rendered as the elapsed in the AI turn's footer.
-   */
-  durationMs?: number;
-  /**
-   * Per-turn model usage, stamped onto the turn's assistant answer(s) when the
-   * turn settles. Drives the optional in→out token and cost segments on the AI
-   * footer (gated by `showTokenUsage` / `showCost`).
-   */
-  usageInput?: number;
-  usageOutput?: number;
-  /**
-   * How many consecutive identical entries this row stands for; see
-   * `appendTranscriptEntry`. Rendered as a trailing "(xN)".
-   */
-  repeat?: number;
-};
 
 type PendingScope = {
   request: ConsoleScopeRequest;
@@ -263,118 +266,6 @@ type PendingOperatorQuestion = {
   resolve: (answer: OperatorQuestionAnswer | null) => void;
 };
 
-/**
- * The 0sec block mark as a per-cell colour grid, one string per row over a
- * three-letter alphabet: ' ' is an empty cell, '#' a white (`theme.TEXT`)
- * block, '/' a red (`theme.ERROR`) block. The "0" is drawn wider than the
- * other letters so its interior has room for a two-cell-thick red diagonal
- * slash — lower-left to upper-right — that clears the white outline on both
- * sides: a slashed zero. "SEC" stays white. This grid is the fixed base the
- * intro animation reveals: `computeLogoFrame` (logo-animation.ts) turns it into
- * a per-cell frame and `logoRowRuns` coalesces each row into same-tone runs the
- * render draws as explicitly-sized `<text>`s (widths sum to exactly
- * `TERMINAL_BLOCK_LOGO_WIDTH`), which keeps a row's segments from overflowing.
- */
-const TERMINAL_BLOCK_LOGO = [
-  " ######   #######  #######   ######",
-  "##  //##  ##       ##       ##     ",
-  "## // ##  #######  #####    ##     ",
-  "##//  ##       ##  ##       ##     ",
-  " ######   #######  #######   ######",
-] as const;
-const TERMINAL_BLOCK_LOGO_WIDTH = 35;
-
-/**
- * Milliseconds between logo intro frames. One rate for every style — the frame
- * *counts* differ (see logo-animation.ts), so a shorter style simply settles
- * sooner; shimmer loops at this cadence. ~14 Hz reads as motion without the
- * repaint cost of the busy spinners.
- */
-const LOGO_FRAME_INTERVAL_MS = 70;
-
-/**
- * How a computed logo frame's per-cell `tone` maps onto the theme (and DIM):
- *   text  -> TEXT             error -> ERROR
- *   dim   -> TEXT + DIM       muted -> MUTED
- * A hidden cell renders as spaces (the caller picks the glyph), so this is only
- * consulted for visible runs; the fg is harmless on a space run regardless.
- */
-function logoRunStyle(tone: LogoCellTone, theme: Theme): { fg: string; attributes?: number } {
-  switch (tone) {
-    case "error":
-      return { fg: theme.ERROR };
-    case "muted":
-      return { fg: theme.MUTED };
-    case "dim":
-      return { fg: theme.TEXT, attributes: TextAttributes.DIM };
-    default:
-      return { fg: theme.TEXT };
-  }
-}
-
-function modeLabel(mode: ConsoleAutonomyMode): string {
-  if (mode === "standard") return "Standard";
-  if (mode === "recon") return "Recon";
-  return mode === "copilot" ? "Co-pilot" : "YOLO";
-}
-
-/**
- * Colour for an autonomy mode, shared by the header indicator and any other
- * place the mode is shown: Standard=white (neutral), Recon=blue (passive),
- * Co-pilot=purple (the brand accent), YOLO=red (no prompts).
- */
-function modeColorFor(mode: ConsoleAutonomyMode, theme: Theme): string {
-  if (mode === "recon") return theme.INFO;
-  if (mode === "copilot") return theme.BRAND;
-  if (mode === "yolo") return theme.ERROR;
-  return theme.TEXT;
-}
-
-/**
- * Map a herd focus line's tone onto the theme — the same mapping `herd-screen`
- * uses for its focus panes, mirrored here so the INLINE focus view drilled into
- * from the chat renders identically. Red (ERROR) is never produced from a tone;
- * WARNING carries a failed status, so the "red = errors" invariant holds.
- */
-function herdToneColor(theme: Theme, tone: HerdDetailTone): string {
-  switch (tone) {
-    case "title":
-      return theme.PRIMARY;
-    case "accent":
-      return theme.ACCENT;
-    case "warn":
-      return theme.WARNING;
-    case "muted":
-    case "blank":
-      return theme.MUTED;
-    default:
-      return theme.TEXT;
-  }
-}
-
-function completionFor(command: SlashCommand, args = ""): string {
-  const base = `/${command.name}`;
-  if (args) return `${base} ${args}`;
-  return command.usage?.includes(" ") ? `${base} ` : base;
-}
-
-function commandMatchesPrefix(command: SlashCommand, rawName: string): boolean {
-  return rawName.length === 0
-    || command.name.startsWith(rawName)
-    || command.aliases.some((alias) => alias.startsWith(rawName));
-}
-
-/**
- * Normalize a reasoning stream for display.
- *
- * Reasoning summaries arrive as a sequence of bold headers with no
- * separator between them, so the raw text reads `**A****B****C**`. Four
- * adjacent asterisks are never a single intended run — it is always one
- * bold closing and the next opening — so split them onto their own lines.
- */
-function normalizeReasoning(text: string): string {
-  return text.replace(/\*\*\*\*/g, "**\n\n**");
-}
 
 /**
  * Rebuild visible transcript entries from a stored conversation.
@@ -462,1177 +353,6 @@ export function entriesFromStoredMessages(messages: readonly unknown[]): ChatEnt
   return out;
 }
 
-/** Compact relative age, e.g. "12s" / "4m" / "2h". */
-function relativeAge(at: number | undefined, now: number): string {
-  // Restored entries carry no timestamp; return empty so the caller can omit
-  // the separator entirely rather than rendering a dangling "0sec ·".
-  if (!at) return "";
-  const seconds = Math.max(0, Math.floor((now - at) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h`;
-}
-
-interface EntryDisplay {
-  /** "comfortable" separates entries with a blank line; "compact" does not. */
-  spacing: number;
-  showTimestamps: boolean;
-  now: number;
-  /** Framing of a speaking turn (rail / bubble / plain / compact / document). */
-  transcriptStyle: TranscriptStyle;
-  /** How the "who said this" label is drawn (full / short / glyph / off). */
-  roleLabelStyle: RoleLabelStyle;
-  /** How a tool / subagent call is drawn (rail / inline / compact / hidden). */
-  toolCardStyle: ToolCardStyle;
-  /** Current autonomy mode label, for the AI turn footer ("Standard · …"). */
-  mode: string;
-  /** Resolved model id, for the AI turn footer ("… · gpt-…"). */
-  model: string;
-  /** Show the model name on the AI footer (settings.modelDisplay === "message"). */
-  modelInFooter: boolean;
-  /** Show the per-turn "in→out tok" segment on the AI footer. */
-  showTokenUsage: boolean;
-  /** Show the estimated per-turn dollar cost on the AI footer. */
-  showCost: boolean;
-  /** How the transcript folds turn detail; drives the fold planner. */
-  transcriptDetail: TranscriptDetail;
-}
-
-/**
- * Priced rate rows by lower-cased model id, mirroring status-bar.ts. "default"
- * is excluded on purpose: it is shared's fallback for an UNKNOWN model, and
- * pricing an unrecognised id at it would put a fabricated figure on screen.
- * Kept local (rather than importing status-bar's private map) so the footer's
- * cost estimate never routes through shared's `estimateCost`, which
- * `console.warn`s on an unknown id — forbidden inside a TUI that owns stdout.
- */
-const FOOTER_RATES_BY_LOWER: ReadonlyMap<string, ModelRates> = new Map(
-  Object.entries(MODEL_PRICING)
-    .filter(([key]) => key !== "default")
-    .map(([key, rates]) => [key.toLowerCase(), rates]),
-);
-
-const FOOTER_VENDOR_PREFIXES = [
-  "openai/", "anthropic/", "google/", "deepseek/", "meta/", "mistral/",
-  "z-ai/", "zai/", "kimi/", "moonshot/", "openrouter/", "xai/", "x-ai/",
-];
-
-function footerRates(model: string): ModelRates | undefined {
-  const lower = model.toLowerCase();
-  const direct = FOOTER_RATES_BY_LOWER.get(lower);
-  if (direct) return direct;
-  for (const prefix of FOOTER_VENDOR_PREFIXES) {
-    if (lower.startsWith(prefix)) return FOOTER_RATES_BY_LOWER.get(lower.slice(prefix.length));
-  }
-  return undefined;
-}
-
-/**
- * A quiet per-turn cost string for the AI footer, or "$—" when the model's rate
- * is unknown (never a figure at a rate the model was not billed). Mirrors the
- * status-bar's arithmetic and formatting.
- */
-function formatTurnCost(model: string, inputTokens: number, outputTokens: number): string {
-  const rates = model ? footerRates(model) : undefined;
-  if (!rates) return "$—";
-  const usd =
-    (Math.max(0, inputTokens) / 1_000_000) * rates.input +
-    (Math.max(0, outputTokens) / 1_000_000) * rates.output;
-  if (!Number.isFinite(usd) || usd <= 0) return "$0.00";
-  if (usd < 0.01) return "<$0.01";
-  return `$${usd.toFixed(2)}`;
-}
-
-/**
- * Terminal text ATTRIBUTES for a markdown span — the real weight, not just a
- * colour. A bold run gets TextAttributes.BOLD so it renders visibly heavier;
- * italic gets ITALIC, strike gets STRIKETHROUGH, and a muted run is dimmed.
- * Applied by every inline renderer (paragraphs, list items, table cells) so
- * `**bold**` looks bold wherever it appears.
- */
-function spanAttributes(style: MdSpan["style"]): number | undefined {
-  switch (style) {
-    case "bold":
-      return TextAttributes.BOLD;
-    case "italic":
-      return TextAttributes.ITALIC;
-    case "strike":
-      return TextAttributes.STRIKETHROUGH;
-    case "muted":
-      return TextAttributes.DIM;
-    default:
-      return undefined;
-  }
-}
-
-/** Map a markdown span style onto the theme. */
-function spanColor(style: MdSpan["style"], theme: Theme, tone?: string): string {
-  const { ACCENT, INFO, MUTED, TEXT } = theme;
-  // A tone override keeps a whole block in one voice (e.g. reasoning stays
-  // muted) while still honouring structure like code and links.
-  if (tone && style !== "code" && style !== "link") return tone;
-  if (style === "code") return ACCENT;
-  if (style === "link") return INFO;
-  if (style === "muted" || style === "strike") return MUTED;
-  return TEXT;
-}
-
-/**
- * Render parsed markdown blocks.
- *
- * Models emit markdown constantly, and showing `**bold**` literally is the
- * single most visible way a terminal agent looks unfinished. Every line is
- * pre-wrapped to an exact width by `renderMarkdown`, so nothing here needs
- * to guess at widths — which is also what keeps a long span from
- * overflowing its row.
- */
-function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Theme, tone?: string) {
-  const { MUTED, ACCENT, PRIMARY, TEXT } = theme;
-  return blocks.map((block, index) => {
-    const id = `${key}-b${index}`;
-    if (block.kind === "rule") {
-      return <text key={id} fg={tone ?? MUTED}>{"─".repeat(8)}</text>;
-    }
-    if (block.kind === "table") {
-      // Each cell is a styled inline-span run (bold/italic/code render just as
-      // they do in a paragraph). Every column is a fixed-width box, so the
-      // separators line up regardless of the cell content, and alignment inside
-      // a column is done with leading/trailing padding spans. Widths were chosen
-      // by `renderMarkdown` from the marker-stripped display text, so the whole
-      // row fits the content column.
-      const { widths } = block;
-      const renderRow = (cells: readonly MdSpan[][], rowKey: string, header: boolean) => (
-        <box key={rowKey} flexDirection="row" minWidth={0}>
-          {cells.map((cell, c) => {
-            const w = widths[c] ?? 1;
-            const disp = cell.reduce((n, s) => n + Array.from(s.text).length, 0);
-            const pad = Math.max(0, w - disp);
-            const align = block.align[c] ?? "left";
-            const lead = align === "right" ? pad : align === "center" ? Math.floor(pad / 2) : 0;
-            const trail = pad - lead;
-            return (
-              <React.Fragment key={`${rowKey}-c${c}`}>
-                {c > 0 ? <text flexShrink={0} fg={MUTED}>{TABLE_COLUMN_GAP}</text> : null}
-                <box width={w} flexShrink={0} minWidth={0} flexDirection="row">
-                  {lead > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(lead)}</text> : null}
-                  {cell.map((span, j) => (
-                    <text key={`${rowKey}-c${c}-s${j}`} flexShrink={0} fg={spanColor(span.style, theme, header ? (tone ?? PRIMARY) : tone)} attributes={spanAttributes(span.style) ?? (header ? TextAttributes.BOLD : undefined)}>{span.text}</text>
-                  ))}
-                  {trail > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(trail)}</text> : null}
-                </box>
-              </React.Fragment>
-            );
-          })}
-        </box>
-      );
-      const separatorLine = widths.map((w) => "─".repeat(Math.max(1, w))).join(TABLE_JOIN_GLYPH);
-      return (
-        <box key={id} flexDirection="column" minWidth={0}>
-          {renderRow(block.header, `${id}-h`, true)}
-          <text fg={MUTED}>{separatorLine}</text>
-          {block.rows.map((row, i) => renderRow(row, `${id}-r${i}`, false))}
-        </box>
-      );
-    }
-    if (block.kind === "code") {
-      return (
-        <box key={id} flexDirection="column" marginLeft={2}>
-          {block.lines.map((line, i) => (
-            <text key={`${id}-${i}`} fg={ACCENT}>{line}</text>
-          ))}
-        </box>
-      );
-    }
-    if (block.kind === "heading") {
-      return (
-        <box key={id} flexDirection="column" minWidth={0}>
-          {block.lines.map((line, i) => (
-            <text key={`${id}-${i}`} fg={tone ?? PRIMARY} attributes={TextAttributes.BOLD}>{line.map((span) => span.text).join("")}</text>
-          ))}
-        </box>
-      );
-    }
-    if (block.kind === "listItem") {
-      const gutter = listItemGutterWidth(block);
-      return (
-        <box key={id} flexDirection="row" minWidth={0}>
-          <box width={gutter} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{`${" ".repeat(block.indent)}${block.marker}`}</text>
-          </box>
-          <box flexDirection="column" flexGrow={1} minWidth={0}>
-            {block.lines.map((line, i) => (
-              <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
-                {line.map((span, j) => (
-                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, tone)} attributes={spanAttributes(span.style)}>{span.text}</text>
-                ))}
-              </box>
-            ))}
-          </box>
-        </box>
-      );
-    }
-    // paragraph | quote — a quote is always muted, otherwise inherit the
-    // caller's tone override (if any).
-    const blockTone = block.kind === "quote" ? MUTED : tone;
-    return (
-      <box key={id} flexDirection="column" minWidth={0} marginLeft={block.kind === "quote" ? 2 : 0}>
-        {block.lines.map((line, i) => (
-          <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
-            {line.map((span, j) => (
-              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)} attributes={spanAttributes(span.style)}>{span.text}</text>
-            ))}
-          </box>
-        ))}
-      </box>
-    );
-  });
-}
-
-function renderEntry(entry: ChatEntry, maxWidth: number, display: EntryDisplay, theme: Theme) {
-  const { ACCENT, PRIMARY, TEXT, MUTED, ERROR, SUCCESS, BORDER, PANEL_ALT, BRAND } = theme;
-  const detailWidth = Math.max(20, maxWidth - 8);
-  const { transcriptStyle, roleLabelStyle, toolCardStyle } = display;
-  // A row that stands for several collapsed repeats says so. The count is
-  // appended at render time and never written into `entry.text`, so the next
-  // repeat still compares equal and keeps collapsing.
-  const repeat = repeatSuffix(entry.repeat);
-
-  if (entry.kind === "user" || entry.kind === "assistant") {
-    const isUser = entry.kind === "user";
-    // Frame accents (a bubble border, the inline label gap) stay in the
-    // speaker's own tone. The LABEL, however, carries the brand: the assistant
-    // "0sec" label renders in the brand purple (theme.BRAND); the operator label
-    // stays the neutral accent. Body text is never tinted by this — it keeps
-    // TEXT / PRIMARY via renderMarkdownBlocks below.
-    const tone = isUser ? ACCENT : PRIMARY;
-    const labelTone = isUser ? ACCENT : BRAND;
-    const frame = speechFrame(transcriptStyle, entry.kind, maxWidth);
-    const marginTop = display.spacing + frame.extraMarginTop;
-    const age = display.showTimestamps ? relativeAge(entry.at, display.now) : "";
-    const label = roleLabelText(isUser ? "user" : "assistant", roleLabelStyle, age);
-    // With the old full-height rail gone, an unbordered turn hands the whole
-    // pane to its body: the two cells the rail and its gap used to spend are
-    // reclaimed for text. A bordered turn still wraps to its inner width.
-    const bodyWidth = frame.bordered ? frame.markdownWidth : Math.max(8, maxWidth);
-    // Body: raw text for the operator, rendered markdown for the model.
-    const body = isUser
-      ? <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
-      : renderMarkdownBlocks(renderMarkdown(entry.text, bodyWidth), entry.id, theme);
-
-    if (frame.bordered) {
-      // The grouped style: a subtle surface plus a border frames the turn,
-      // never a tall left bar. A bordered turn MUST carry an explicit numeric
-      // width plus flexShrink=0: width="100%" leaves flexShrink at 1, so under
-      // column pressure the box collapses and paints its own border through the
-      // message (PRIMITIVES.md).
-      return (
-        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={tone} backgroundColor={PANEL_ALT} paddingX={1}>
-          {label ? <text fg={labelTone}>{label}</text> : null}
-          {body}
-        </box>
-      );
-    }
-
-    // The clean DEFAULT look (transcriptStyle "rail"): the two voices are told
-    // apart by their frame, not by a tinted label. The OPERATOR turn is drawn
-    // like the input that produced it — a thin accent rail down the left plus a
-    // faint panel background, so it reads as "what you said" the same way the
-    // composer reads as "what you're saying". The AI turn is PLAIN body text
-    // followed by a compact muted footer (a red brand marker, then mode · model
-    // · elapsed), so the answer itself is unadorned and the provenance sits
-    // quietly beneath it.
-    if (transcriptStyle === "rail") {
-      if (isUser) {
-        return (
-          <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} backgroundColor={PANEL_ALT}>
-            <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ACCENT} />
-            <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
-              {body}
-            </box>
-          </box>
-        );
-      }
-      // The footer is composed from the mode plus whatever telemetry the
-      // operator opted into: the model only when `modelDisplay` routes it here
-      // (otherwise it lives in the bottom bar), the per-turn tokens under
-      // `showTokenUsage`, the per-turn cost under `showCost`, and the elapsed.
-      const footerParts: string[] = [display.mode];
-      if (display.modelInFooter && display.model) footerParts.push(display.model);
-      if (display.showTokenUsage && entry.usageInput !== undefined) {
-        footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
-      }
-      if (display.showCost && entry.usageInput !== undefined) {
-        footerParts.push(formatTurnCost(display.model, entry.usageInput, entry.usageOutput ?? 0));
-      }
-      const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
-      if (elapsed) footerParts.push(elapsed);
-      const footer = footerParts.join(" · ");
-      return (
-        <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
-          {body}
-          <box flexDirection="row" minWidth={0}>
-            <box width={2} flexShrink={0} minWidth={0}>
-              <text fg={ERROR}>▪ </text>
-            </box>
-            <box flexGrow={1} minWidth={0}>
-              <text fg={MUTED}>{fitTuiText(footer, Math.max(1, maxWidth - 2))}</text>
-            </box>
-          </box>
-        </box>
-      );
-    }
-
-    // compact inlines a one-line operator message next to its label.
-    if (!frame.labelOwnRow && isUser) {
-      return (
-        <box key={entry.id} flexDirection="row" marginTop={marginTop} minWidth={0}>
-          {label ? <box flexShrink={0}><text fg={labelTone}>{label}</text></box> : null}
-          <box flexGrow={1} minWidth={0} marginLeft={label ? 1 : 0}>
-            {body}
-          </box>
-        </box>
-      );
-    }
-
-    // The default separation, OpenCode-style: consecutive turns are set apart
-    // by whitespace (marginTop) and a compact coloured speaker label on its own
-    // row — NOT a full-height rail down the left of every message. The body
-    // then takes every cell of the pane, flush left.
-    return (
-      <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
-        {label ? <text fg={labelTone}>{label}</text> : null}
-        {body}
-      </box>
-    );
-  }
-
-  if (entry.kind === "tool") {
-    const tone = entry.success === false ? ERROR : entry.success ? SUCCESS : PRIMARY;
-    const { icon, state } = toolGlyphState(entry.success);
-    const frame = toolFrame(toolCardStyle, maxWidth, entry.success);
-    if (!frame.render) return null;
-    const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);
-
-    // compact / hidden: a single clean summary line — no rail, mono palette,
-    // the colour carried only by the icon. The concise args ride on the name
-    // (`run_command · npm test · complete`) so the operator sees WHAT ran, not
-    // just that something did; `toolCompactLine` drops the state first and then
-    // truncates from the tail, so the tool's identity always survives. Detail
-    // (the result summary) is shown only on failure, where the reason matters.
-    if (frame.singleLine) {
-      const compactName = entry.toolArgs
-        ? `${entry.text}${repeat} · ${entry.toolArgs}`
-        : `${entry.text}${repeat}`;
-      return (
-        <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
-          <text fg={tone}>{toolCompactLine(icon, compactName, state, frame.contentWidth)}</text>
-          {frame.showDetail && entry.detail ? (
-            <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text>
-          ) : null}
-        </box>
-      );
-    }
-
-    // rail / inline: icon, muted prefix and name are siblings on one row; the
-    // name is budgeted against the prefix's real length or the row overruns its
-    // container and the renderer paints the columns into each other.
-    const toolPrefix = toolHeaderPrefix(state);
-    const cols = toolHeaderColumns(frame.contentWidth, toolPrefix.length, toolDetail);
-    const header = (
-      <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
-        <box flexDirection="row" minWidth={0}>
-          <text fg={tone}>{icon}</text>
-          <text fg={MUTED}>{toolPrefix}</text>
-          <text fg={TEXT}>{fitTuiText(`${entry.text}${repeat}`, cols.nameWidth)}</text>
-        </box>
-        {frame.showDetail && entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, toolDetail)}</text> : null}
-      </box>
-    );
-    return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
-        {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
-        {header}
-      </box>
-    );
-  }
-
-  if (entry.kind === "subagent") {
-    const outcome = entry.subagentOutcome ?? "failed";
-    const ok = outcome === "completed";
-    const tone = ok ? SUCCESS : ERROR;
-    const frame = toolFrame(toolCardStyle, maxWidth, ok);
-    if (!frame.render) return null;
-    const subDetailWidth = toolDetailWidth(frame.contentWidth, maxWidth);
-    const statusParts: string[] = [];
-    if (entry.subagentTurns !== undefined) statusParts.push(`turns ${entry.subagentTurns}`);
-    if (entry.subagentFindings !== undefined) statusParts.push(`findings ${entry.subagentFindings}`);
-    const statusLine = statusParts.length > 0 ? statusParts.join(" · ") : null;
-
-    if (frame.singleLine) {
-      return (
-        <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
-          <text fg={tone}>{toolCompactLine(ok ? "✓" : "×", "subagent", ok ? "completed" : "failed", frame.contentWidth)}</text>
-          {frame.showDetail && entry.subagentError ? (
-            <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, frame.contentWidth)}</text>
-          ) : null}
-        </box>
-      );
-    }
-
-    return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
-        {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
-          <box flexDirection="row">
-            <text fg={tone}>{ok ? "✓" : "×"}</text>
-            <text fg={BRAND}> evidence / subagent</text>
-            <text fg={MUTED}> · {ok ? "completed" : "failed"}</text>
-          </box>
-          {frame.showDetail && statusLine ? <text fg={MUTED}>{fitTuiText(statusLine, subDetailWidth)}</text> : null}
-          {frame.showDetail && entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, subDetailWidth)}</text> : null}
-          {entry.subagentError ? <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, subDetailWidth)}</text> : null}
-        </box>
-      </box>
-    );
-  }
-
-  if (entry.kind === "error") {
-    // Failures get the same rail treatment as speech, in the error tone: an
-    // operator must be able to see at a glance that the turn did not produce an
-    // answer, and why. `bubble` frames it as a bordered ERROR block instead.
-    const frame = speechFrame(transcriptStyle, "error", maxWidth);
-    const marginTop = display.spacing + frame.extraMarginTop;
-    if (frame.bordered) {
-      return (
-        <box key={entry.id} flexDirection="column" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} border borderColor={ERROR} paddingX={1}>
-          <text fg={ERROR}>{fitTuiText(`${entry.text}${repeat}`, frame.contentWidth)}</text>
-          {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text> : null}
-        </box>
-      );
-    }
-    // A failed turn reads as speech in the error tone: a compact red marker and
-    // label, the body beneath it, and the same whitespace separation as any
-    // other turn — no full-height bar.
-    return (
-      <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
-        <text fg={ERROR}>{fitTuiText(`▌ ${entry.text}${repeat}`, Math.max(1, maxWidth))}</text>
-        {entry.detail ? (
-          <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, detailWidth)}</text>
-        ) : null}
-      </box>
-    );
-  }
-
-  if (entry.kind === "reasoning") {
-    // Thinking is deliberately quieter than the answer: a dotted rail and
-    // muted text, so it reads as working-out rather than a conclusion.
-    return (
-      <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
-        <box width={1} flexShrink={0} alignSelf="stretch">
-          <text fg={MUTED}>┊</text>
-        </box>
-        <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={MUTED}>thinking</text>
-          {renderMarkdownBlocks(
-            renderMarkdown(normalizeReasoning(entry.text), Math.max(8, maxWidth - 2)),
-            entry.id,
-            theme,
-            MUTED,
-          )}
-        </box>
-      </box>
-    );
-  }
-
-  if (entry.kind === "panel" && entry.panel) {
-    // Command output is not dialogue, so it gets a bordered block with
-    // aligned columns instead of one muted bullet per line. Column widths
-    // come from panelColumns so the two columns can never overspend the
-    // panel and paint into each other.
-    const panel = entry.panel;
-    // Two border cells plus one padding cell on each side.
-    const innerWidth = Math.max(1, maxWidth - 4);
-    const columns = panelColumns(panel.rows, innerWidth);
-    return (
-      <box key={entry.id} flexDirection="column" width="100%" minWidth={0} flexShrink={0} marginTop={display.spacing} border borderColor={BORDER} paddingX={1}>
-        <box flexDirection="row" width="100%" minWidth={0}>
-          <text fg={PRIMARY}>{fitTuiText(panel.title, innerWidth)}</text>
-        </box>
-        {panel.subtitle ? (
-          <text fg={MUTED}>{fitTuiText(panel.subtitle, innerWidth)}</text>
-        ) : null}
-        {panel.rows.map((row, index) => {
-          if (row.heading) {
-            return (
-              <text key={`h-${index}`} fg={ACCENT}>{fitTuiText(row.value, innerWidth)}</text>
-            );
-          }
-          if (!row.label || columns.labelWidth === 0) {
-            return (
-              <text key={`r-${index}`} fg={TEXT} wrapMode="word">{fitTuiText(row.value, innerWidth)}</text>
-            );
-          }
-          return (
-            <box key={`r-${index}`} flexDirection="row" width="100%" minWidth={0} gap={columns.gap}>
-              <box width={columns.labelWidth} flexShrink={0} minWidth={0}>
-                <text fg={TEXT}>{fitTuiText(row.label, columns.labelWidth)}</text>
-              </box>
-              <box width={columns.valueWidth} flexShrink={0} minWidth={0}>
-                <text fg={MUTED}>{fitTuiText(row.value, columns.valueWidth)}</text>
-              </box>
-            </box>
-          );
-        })}
-      </box>
-    );
-  }
-
-  return (
-    <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
-      <text fg={MUTED}>·</text>
-      <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-        <text fg={MUTED} wrapMode="word">{fitTuiText(`${entry.text}${repeat}`, maxWidth - 2)}</text>
-        {entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, maxWidth - 2)}</text> : null}
-      </box>
-    </box>
-  );
-}
-
-/**
- * A folded run of collapsed detail: one quiet line, a ▸ disclosure glyph then
- * the summary. The planner never folds a failure into a run, so the muted tone
- * is always correct — every entry behind this line succeeded (or is reasoning).
- * Expanding the transcript (Ctrl+R) restores the full cards.
- */
-function renderFold(
-  item: Extract<TranscriptPlanItem<ChatEntry>, { type: "fold" }>,
-  maxWidth: number,
-  display: EntryDisplay,
-  theme: Theme,
-) {
-  const { MUTED } = theme;
-  const key = `fold-${item.entries[0]?.id ?? item.turn}`;
-  // `toolCardStyle: "hidden"` means "don't show me successful tool activity";
-  // honour it inside a fold too by dropping the tool/subagent steps from the
-  // summary (reasoning still folds). A fold left with nothing renders nothing.
-  const shown =
-    display.toolCardStyle === "hidden"
-      ? item.entries.filter((entry) => entry.kind !== "tool" && entry.kind !== "subagent")
-      : item.entries;
-  if (shown.length === 0) return null;
-  const summary = shown.length === item.entries.length ? item.summary : foldSummary(shown);
-  return (
-    <box key={key} flexDirection="row" marginTop={display.spacing} minWidth={0}>
-      <box width={2} flexShrink={0} minWidth={0}>
-        <text fg={MUTED}>▸ </text>
-      </box>
-      <box flexGrow={1} minWidth={0}>
-        <text fg={MUTED}>{fitTuiText(summary, Math.max(1, maxWidth - 2))}</text>
-      </box>
-    </box>
-  );
-}
-
-function buildScopeResolution(request: ConsoleScopeRequest): ConsoleScopeResolution | null {
-  const raw = request.currentScope?.raw ?? {};
-  const inScope = new Set(raw.in_scope ?? []);
-  let target = request.target.trim();
-
-  for (const requestedUrl of request.requestedUrls) {
-    try {
-      const url = new URL(requestedUrl);
-      inScope.add(url.hostname);
-      if (!target) target = url.origin;
-    } catch {
-      return null;
-    }
-  }
-
-  if (!target || inScope.size === 0) return null;
-  const scope = ScopePolicy.fromJson({ ...raw, in_scope: [...inScope] });
-  if (request.requestedUrls.some((url) => !scope.match(url).allowed)) return null;
-  return { target, scope };
-}
-
-/**
- * Composer chrome, selected by the `composerStyle` setting.
- *
- * Deliberately three distinct elements instead of one box with toggled
- * props: opentui renders a frame whenever `border` is present at all, so a
- * falsy value does not remove it.
- */
-function ComposerFrame({
-  style,
-  active,
-  theme,
-  padY = 0,
-  children,
-}: {
-  style: TuiSettings["composerStyle"];
-  active: boolean;
-  theme: Theme;
-  /**
-   * Extra rows of vertical padding inside the frame. Used ONLY by the centered
-   * hero composer, so the start-screen input reads as a comfortable card rather
-   * than a thin sliver; the pinned chat composer leaves it at 0 so its height
-   * matches the COMPOSER_ROWS the column reserves.
-   */
-  padY?: number;
-  children: React.ReactNode;
-}) {
-  const { PRIMARY, MUTED, BORDER, PANEL_ALT } = theme;
-  if (style === "border") {
-    return (
-      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} border borderColor={active ? PRIMARY : BORDER} backgroundColor={PANEL_ALT} paddingX={1} paddingTop={padY} paddingBottom={padY}>
-        {children}
-      </box>
-    );
-  }
-  if (style === "rail") {
-    return (
-      <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} marginLeft={1} backgroundColor={PANEL_ALT} paddingTop={padY} paddingBottom={padY}>
-        {children}
-      </box>
-    );
-  }
-  return (
-    <box flexDirection="column" flexGrow={1} minWidth={0} flexShrink={0} paddingTop={padY} paddingBottom={padY}>
-      {children}
-    </box>
-  );
-}
-
-interface KeyHint {
-  key: string;
-  label: string;
-}
-
-/** Plain rendered length of a key-hint row, for a fits-the-column guard. */
-function keyHintsLength(pairs: readonly KeyHint[], sep: string): number {
-  let n = 0;
-  pairs.forEach((p, i) => {
-    if (i > 0) n += sep.length;
-    n += p.key.length + 1 + p.label.length;
-  });
-  return n;
-}
-
-/**
- * A keybind hint row: the KEY glyphs render in TEXT (white) and the labels in
- * MUTED, so `shift+tab mode · ctrl+p palette` reads as chords, not prose. Each
- * segment is flexShrink={0}, so the caller must only render this where it fits
- * (see keyHintsLength); a squeezed row of siblings overpaints in this TUI.
- */
-function KeyHints({
-  pairs,
-  theme,
-  sep = " · ",
-}: {
-  pairs: readonly KeyHint[];
-  theme: Theme;
-  sep?: string;
-}) {
-  const { TEXT, MUTED } = theme;
-  const nodes: React.ReactNode[] = [];
-  pairs.forEach((p, i) => {
-    if (i > 0) nodes.push(<text key={`sep-${i}`} flexShrink={0} fg={MUTED}>{sep}</text>);
-    nodes.push(<text key={`key-${i}`} flexShrink={0} fg={TEXT}>{p.key}</text>);
-    nodes.push(<text key={`lbl-${i}`} flexShrink={0} fg={MUTED}>{` ${p.label}`}</text>);
-  });
-  return <box flexDirection="row" minWidth={0} flexShrink={0}>{nodes}</box>;
-}
-
-/**
- * How many rows a selector panel may spend, and on what.
- *
- * The panel is a bordered box stacked above the composer with an EXPLICIT
- * height, so whatever it claims here is exactly what it paints. `budget` is
- * the number of content rows the column can spare (from
- * `computeCommandMenuHeight`, which already reserves the composer, the
- * header and a minimum transcript).
- *
- * The optional lines are bought in priority order out of that budget rather
- * than added on top of it: at least one item row always survives, then the
- * context line (which says WHAT is being decided), then the detail line for
- * the highlighted item. A panel that cannot afford them drops them instead
- * of growing past its budget and over-subscribing the column — which is the
- * exact failure that painted four `<text>` children onto one another and
- * through the box border.
- */
-function selectorPanelBudget({
-  budget,
-  hasContext,
-  hasDetail,
-}: {
-  budget: number;
-  hasContext: boolean;
-  hasDetail: boolean;
-}): { maxItemRows: number; showContext: boolean; showDetail: boolean } {
-  const total = Math.max(1, budget);
-  let remaining = total - 1; // one item row is non-negotiable
-  const showContext = hasContext && remaining > 0;
-  if (showContext) remaining -= 1;
-  const showDetail = hasDetail && remaining > 0;
-  if (showDetail) remaining -= 1;
-  return { maxItemRows: 1 + remaining, showContext, showDetail };
-}
-
-/**
- * Total rows a selector panel occupies for the rows it actually renders.
- * `commandMenuBoxHeight` covers the two border rows, the header and the
- * hint footer; the optional lines are added explicitly.
- */
-function selectorPanelHeight(itemRows: number, showContext: boolean, showDetail: boolean): number {
-  return commandMenuBoxHeight(Math.max(itemRows, 1), 1)
-    + (showContext ? 1 : 0)
-    + (showDetail ? 1 : 0);
-}
-
-/**
- * THE decision surface.
- *
- * `/model`, `/mode`, `/settings`, `/providers`, `/resume` and every
- * authorization prompt render through this one component, driven by the same
- * `SelectorState` reducer and the same key bindings. Approvals used to be
- * four bespoke bordered boxes of loose `<text>` children; opentui defaults
- * `flexShrink` to 1 for any box without a numeric width/height, so under
- * column pressure Yoga collapsed those boxes while their children kept their
- * intrinsic size — every line, and the border, painted onto one row.
- *
- * Two properties prevent that here and are the reason approvals were moved
- * onto this component rather than patched in place:
- *   - an explicit `height` plus `flexShrink={0}`, so the box is clipped by
- *     the layout rather than squeezed under its own contents;
- *   - every child given an explicit cell width, so no row can overspend the
- *     panel's inner width and paint into the border.
- */
-function SelectorPanel({
-  title,
-  subtitle,
-  context,
-  contextColor,
-  rows,
-  windowStart,
-  activeIndex,
-  detail,
-  hint,
-  emptyText,
-  borderColor,
-  titleColor,
-  contentWidth,
-  height,
-  theme,
-}: {
-  title: string;
-  subtitle: string;
-  context?: string;
-  contextColor?: string;
-  rows: SelectorItem[];
-  windowStart: number;
-  activeIndex: number;
-  detail?: string;
-  hint: string;
-  emptyText: string;
-  borderColor: string;
-  titleColor: string;
-  contentWidth: number;
-  height: number;
-  theme: Theme;
-}) {
-  const { PANEL_ALT, MUTED, TEXT, PRIMARY, ACCENT, ERROR } = theme;
-  // Deliberately conservative: the real inner width is 2 (compact) to 4
-  // (wide) cells more than this, so every explicit allocation below fits
-  // with room to spare and can never reach the border.
-  const innerWidth = Math.max(1, contentWidth - 4);
-  const headerGap = innerWidth > 12 ? 1 : 0;
-  const headerTitleWidth = Math.max(1, Math.min(innerWidth - headerGap, Math.floor(innerWidth * 0.55)));
-  const headerSubtitleWidth = Math.max(0, innerWidth - headerTitleWidth - headerGap);
-  // Marker cell + its gap, then label, then whatever is left for the meta
-  // column. Widths and margins sum to exactly `innerWidth`; the old picker
-  // used `gap={1}` on top of widths that already spent the full row, which
-  // overspent it by two cells.
-  const labelWidth = Math.max(1, Math.min(Math.max(1, innerWidth - 2), Math.floor(innerWidth * 0.45)));
-  const afterLabel = innerWidth - 2 - labelWidth;
-  const metaGap = afterLabel > 1 ? 1 : 0;
-  const metaWidth = Math.max(0, afterLabel - metaGap);
-
-  return (
-    <box flexDirection="column" width="100%" minWidth={0} height={height} flexShrink={0} marginTop={1} border borderColor={borderColor} backgroundColor={PANEL_ALT} paddingX={1}>
-      <box flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
-        <box width={headerTitleWidth} flexShrink={0} minWidth={0}>
-          <text fg={titleColor}>{fitTuiText(title, headerTitleWidth)}</text>
-        </box>
-        {headerSubtitleWidth > 0 ? (
-          <box width={headerSubtitleWidth} flexShrink={0} minWidth={0} marginLeft={headerGap}>
-            <text fg={MUTED}>{fitTuiText(subtitle, headerSubtitleWidth, { mode: "middle" })}</text>
-          </box>
-        ) : null}
-      </box>
-      {context ? (
-        <box width={innerWidth} flexShrink={0} minWidth={0}>
-          {/* Truncated, never wrapped: a wrapping line has an unpredictable
-              height, and an unpredictable height is what over-subscribes the
-              column in the first place. */}
-          <text fg={contextColor ?? TEXT}>{fitTuiText(context, innerWidth, { mode: "middle" })}</text>
-        </box>
-      ) : null}
-      {rows.length > 0 ? rows.map((item, offset) => {
-        const index = windowStart + offset;
-        const active = index === activeIndex;
-        return (
-          <box key={item.id} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
-            <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
-            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-              <text fg={item.disabled ? MUTED : active ? TEXT : MUTED}>{fitTuiText(`${item.current ? "● " : "  "}${item.label}`, labelWidth)}</text>
-            </box>
-            {metaWidth > 0 ? (
-              <box width={metaWidth} flexShrink={0} minWidth={0} marginLeft={metaGap}>
-                <text fg={active ? ACCENT : MUTED}>{fitTuiText(item.meta ?? "", metaWidth, { mode: "middle" })}</text>
-              </box>
-            ) : null}
-          </box>
-        );
-      }) : (
-        <box width={innerWidth} flexShrink={0} minWidth={0}>
-          <text fg={ERROR}>{fitTuiText(emptyText, innerWidth)}</text>
-        </box>
-      )}
-      {detail ? (
-        <box width={innerWidth} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{fitTuiText(detail, innerWidth, { mode: "middle" })}</text>
-        </box>
-      ) : null}
-      <box width={innerWidth} flexShrink={0} minWidth={0}>
-        <text fg={MUTED}>{fitTuiText(hint, innerWidth)}</text>
-      </box>
-    </box>
-  );
-}
-
-/**
- * Turn a tool call's arguments into readable `key: value` lines — one per row,
- * so the approval card can show WHAT is being authorized instead of a truncated
- * one-line JSON blob. A scalar becomes its own line; a nested object/array is
- * compacted to JSON on that key's line (still readable, still one row). The
- * per-row truncation happens at render time against the panel width, which is
- * what keeps the card's height predictable.
- */
-function argumentSummaryLines(args: unknown): string[] {
-  if (args === undefined || args === null) return [];
-  if (typeof args !== "object") return [sanitizeTuiText(String(args))];
-  const entries = Array.isArray(args)
-    ? args.map((value, index) => [String(index), value] as const)
-    : Object.entries(args as Record<string, unknown>);
-  if (entries.length === 0) return [];
-  return entries.map(([key, value]) => {
-    const rendered = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
-    return sanitizeTuiText(`${key}: ${rendered}`);
-  });
-}
-
-/**
- * One pending authorization decision, projected onto the selector.
- *
- * The pending promise itself stays in the `pending*` state it always lived
- * in — this is only a presentation + dispatch view over it, so the unmount
- * cleanup that resolves every outstanding prompt to a DENIAL keeps working
- * untouched.
- */
-type ApprovalPrompt = {
-  /**
-   * The pending record this prompt speaks for. Object identity, so a new
-   * request gets a fresh selector position and a repeat of an identical
-   * request is still its own decision.
-   */
-  owner: object;
-  title: string;
-  /** What is being decided — tool name, hosts, path, reason. */
-  context: string;
-  /** The subject of the decision, shown prominently (e.g. the tool name). */
-  subject?: string;
-  /**
-   * Readable, one-per-row detail lines (pretty-printed `key: value` arguments,
-   * or a short human summary) — never a truncated single-line JSON blob. Each
-   * line is truncated (not wrapped) to the panel width so the card's height
-   * stays predictable.
-   */
-  bodyLines?: string[];
-  items: SelectorItem[];
-  borderColor: string;
-  titleColor: string;
-  /** Applies the chosen item. Guarded to run at most once per `owner`. */
-  decide: (id: string) => void;
-  /**
-   * Esc / dismissal. ALWAYS the declining outcome: an operator must never be
-   * able to grant authority by walking away from the prompt.
-   */
-  decline: () => void;
-};
-
-/**
- * Total rows an {@link ApprovalCard} occupies for the content it will render.
- *
- * The card is a rail + background block (no top/bottom border and no vertical
- * padding), so its height is exactly its content rows. Stating it as a pure
- * function lets the column reserve precisely what the card paints — the same
- * anti-collapse contract every other stacked panel obeys.
- */
-function approvalCardRows({
-  hasSubject,
-  bodyRows,
-  choiceRows,
-}: {
-  hasSubject: boolean;
-  bodyRows: number;
-  choiceRows: number;
-}): number {
-  return 1 /* title */
-    + (hasSubject ? 1 : 0)
-    + (bodyRows > 0 ? bodyRows + 1 /* blank spacer under the args */ : 0)
-    + 1 /* blank spacer above the choices */
-    + Math.max(1, choiceRows)
-    + 1 /* hint */;
-}
-
-/**
- * A pending authorization decision, drawn as a prominent-but-calm card.
- *
- * This replaces the old cramped bordered picker for approvals: it keeps the
- * SAME selector reducer, dispatch and key bindings (the caller owns those),
- * and only changes the surface. A decision is an important moment, so the tool
- * name and its arguments are shown READABLY — one `key: value` row each, each
- * truncated (never wrapped) so the card's height is exactly what was reserved —
- * and the two choices read as clean rows with a single accent on the selected
- * one, its consequence aligned to the right. The framing is the same thin
- * accent rail + faint panel background as the composer and the operator's own
- * turns, not a heavy four-sided box; `red` stays reserved for errors.
- */
-function ApprovalCard({
-  title,
-  progress,
-  subject,
-  body,
-  choices,
-  activeIndex,
-  hint,
-  accent,
-  contentWidth,
-  height,
-  theme,
-}: {
-  title: string;
-  progress: string;
-  subject?: string;
-  /** Already-sliced, render-ready detail rows (may end in a "+N more" line). */
-  body: string[];
-  choices: SelectorItem[];
-  activeIndex: number;
-  hint: string;
-  /** The card's tone — WARNING for scope gates, INFO for the co-pilot gate. */
-  accent: string;
-  contentWidth: number;
-  height: number;
-  theme: Theme;
-}) {
-  const { PANEL_ALT, MUTED, TEXT, PRIMARY } = theme;
-  // Conservative inner width: rail (1) + paddingX (1 each side) = 3 cells of
-  // chrome, rounded up to 4 so every explicit allocation clears the edge.
-  const innerWidth = Math.max(1, contentWidth - 4);
-  const progressWidth = Math.min(innerWidth, progress.length);
-  const titleGap = progressWidth > 0 && innerWidth - progressWidth > 1 ? 1 : 0;
-  const titleWidth = Math.max(1, innerWidth - progressWidth - titleGap);
-  const labelWidth = Math.max(1, Math.min(Math.max(1, innerWidth - 2), Math.floor(innerWidth * 0.5)));
-  const afterLabel = innerWidth - 2 - labelWidth;
-  const metaGap = afterLabel > 1 ? 1 : 0;
-  const metaWidth = Math.max(0, afterLabel - metaGap);
-
-  return (
-    <box flexDirection="row" width={contentWidth} minWidth={0} height={height} flexShrink={0} marginTop={1} backgroundColor={PANEL_ALT}>
-      <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={accent} />
-      <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
-        <box flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
-          <box width={titleWidth} flexShrink={0} minWidth={0}>
-            <text fg={accent}>{fitTuiText(title, titleWidth)}</text>
-          </box>
-          {progressWidth > 0 ? (
-            <box width={progressWidth} flexShrink={0} minWidth={0} marginLeft={titleGap}>
-              <text fg={MUTED}>{fitTuiText(progress, progressWidth, { mode: "middle" })}</text>
-            </box>
-          ) : null}
-        </box>
-        {subject ? (
-          <box width={innerWidth} flexShrink={0} minWidth={0}>
-            <text fg={TEXT}>{fitTuiText(subject, innerWidth)}</text>
-          </box>
-        ) : null}
-        {body.length > 0 ? (
-          <>
-            {body.map((line, index) => (
-              <box key={`body-${index}`} width={innerWidth} flexShrink={0} minWidth={0}>
-                <text fg={MUTED}>{fitTuiText(line, innerWidth, { mode: "middle" })}</text>
-              </box>
-            ))}
-            <text fg={MUTED}> </text>
-          </>
-        ) : null}
-        <text fg={MUTED}> </text>
-        {choices.map((item, offset) => {
-          const active = offset === activeIndex;
-          return (
-            <box key={item.id} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
-              <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
-              <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-                <text fg={active ? PRIMARY : TEXT}>{fitTuiText(item.label, labelWidth)}</text>
-              </box>
-              {metaWidth > 0 ? (
-                <box width={metaWidth} flexShrink={0} minWidth={0} marginLeft={metaGap}>
-                  <text fg={MUTED}>{fitTuiText(item.meta ?? "", metaWidth, { mode: "middle" })}</text>
-                </box>
-              ) : null}
-            </box>
-          );
-        })}
-        <box width={innerWidth} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{fitTuiText(hint, innerWidth)}</text>
-        </box>
-      </box>
-    </box>
-  );
-}
-
-/**
- * The `ask_operator` question modal.
- *
- * The model paused mid-turn to put a STRUCTURED question to the operator. This
- * renders each question's header + prose and its answerable rows — options
- * (with a `(Recommended)` badge, a radio for single-select and a checkbox for
- * multi-select) and, when the question allows it, a small free-text field — and
- * lets the operator move/toggle/type. It AUTHORIZES NOTHING; it only collects an
- * answer, so its voice is the brand purple (never the red/amber of a gate).
- *
- * The body lives in a fixed-height `<scrollbox>` so any number of questions fits
- * the reserved rows without overflow; the caller scrolls the active row into
- * view. Every child carries an explicit cell width so no row reaches the border.
- */
-function OperatorQuestionCard({
-  rows,
-  cursor,
-  hintPairs,
-  bodyViewportRows,
-  scrollRef,
-  contentWidth,
-  height,
-  theme,
-}: {
-  rows: OperatorDisplayRow[];
-  cursor: number;
-  hintPairs: KeyHint[];
-  bodyViewportRows: number;
-  scrollRef: React.RefObject<ScrollBoxRenderable | null>;
-  contentWidth: number;
-  height: number;
-  theme: Theme;
-}) {
-  const { PANEL_ALT, MUTED, TEXT, PRIMARY, ACCENT, INFO, BRAND } = theme;
-  const innerWidth = Math.max(1, contentWidth - 4);
-  const hintLen = keyHintsLength(hintPairs, " · ");
-  return (
-    <box flexDirection="column" width="100%" minWidth={0} height={height} flexShrink={0} marginTop={1} border borderColor={BRAND} backgroundColor={PANEL_ALT} paddingX={1}>
-      <box width={innerWidth} flexShrink={0} minWidth={0}>
-        <text fg={BRAND} attributes={TextAttributes.BOLD}>{fitTuiText("0sec has a question for you", innerWidth)}</text>
-      </box>
-      <scrollbox
-        ref={scrollRef}
-        focusable={false}
-        scrollX={false}
-        width={innerWidth}
-        height={bodyViewportRows}
-        flexShrink={0}
-        scrollbarOptions={{ visible: false }}
-      >
-        <box flexDirection="column" width={innerWidth} minWidth={0}>
-          {rows.map((row, index) => {
-            const key = `oq-${row.questionIndex}-${row.type}-${index}`;
-            if (row.type === "header") {
-              return (
-                <box key={key} width={innerWidth} flexShrink={0} minWidth={0}>
-                  <text fg={ACCENT} attributes={TextAttributes.BOLD}>{fitTuiText(row.text ?? "", innerWidth)}</text>
-                </box>
-              );
-            }
-            if (row.type === "prose") {
-              return (
-                <box key={key} width={innerWidth} flexShrink={0} minWidth={0}>
-                  <text fg={MUTED}>{fitTuiText(row.text ?? "", innerWidth, { mode: "middle" })}</text>
-                </box>
-              );
-            }
-            const active = row.navIndex === cursor;
-            const marker = active ? "›" : " ";
-            if (row.type === "custom") {
-              const fieldWidth = Math.max(1, innerWidth - 2);
-              const value = row.customText ?? "";
-              const isEmpty = value.length === 0 && !active;
-              // Keep the tail (where the cursor sits) visible as the field grows.
-              const full = `${value}${active ? "█" : ""}`;
-              const body = isEmpty
-                ? "type a free-text answer…"
-                : full.length > fieldWidth ? full.slice(full.length - fieldWidth) : full;
-              const bodyColor = isEmpty ? MUTED : TEXT;
-              return (
-                <box key={key} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
-                  <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{marker}</text>
-                  <box width={fieldWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-                    <text fg={bodyColor}>{fitTuiText(body, fieldWidth)}</text>
-                  </box>
-                </box>
-              );
-            }
-            // option
-            const boxGlyph = row.multiSelect
-              ? row.selected ? "[x]" : "[ ]"
-              : row.selected ? "(•)" : "( )";
-            const indicatorCells = 1 /* marker */ + 1 /* gap */ + 3 /* box */ + 1 /* gap */;
-            const badge = "(Recommended)";
-            const badgeWidth = row.recommended
-              ? Math.min(badge.length, Math.max(0, innerWidth - indicatorCells - 8))
-              : 0;
-            const badgeGap = badgeWidth > 0 ? 1 : 0;
-            const labelWidth = Math.max(1, innerWidth - indicatorCells - badgeWidth - badgeGap);
-            return (
-              <box key={key} flexDirection="row" width={innerWidth} flexShrink={0} minWidth={0}>
-                <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{marker}</text>
-                <box width={3} flexShrink={0} minWidth={0} marginLeft={1}>
-                  <text fg={row.selected ? ACCENT : MUTED}>{boxGlyph}</text>
-                </box>
-                <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-                  <text fg={active ? PRIMARY : TEXT}>{fitTuiText(row.label ?? "", labelWidth)}</text>
-                </box>
-                {badgeWidth > 0 ? (
-                  <box width={badgeWidth} flexShrink={0} minWidth={0} marginLeft={badgeGap}>
-                    <text fg={INFO}>{fitTuiText(badge, badgeWidth)}</text>
-                  </box>
-                ) : null}
-              </box>
-            );
-          })}
-        </box>
-      </scrollbox>
-      <box width={innerWidth} flexShrink={0} minWidth={0}>
-        {hintLen <= innerWidth ? (
-          <KeyHints pairs={hintPairs} theme={theme} />
-        ) : (
-          <text fg={MUTED}>{fitTuiText(hintPairs.map((p) => `${p.key} ${p.label}`).join(" · "), innerWidth)}</text>
-        )}
-      </box>
-    </box>
-  );
-}
-
-/** The item id that grants. Everything else declines. */
-const APPROVAL_GRANT_ID = "grant";
-const APPROVAL_DENY_ID = "deny";
 
 /**
  * Most subagent rows the ACTIVE SUBAGENTS block will paint.
@@ -4245,73 +2965,19 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // the hero so the menu aligns to the centered composer card above it. `boxWidth`
   // matches the layout — "100%" in chat, the card width in the hero.
   const buildCommandMenu = (ml: typeof menu, boxWidth: number | "100%") => (
-    <box flexDirection="column" width={boxWidth} minWidth={0} height={commandMenuHeight} flexShrink={0} marginTop={1} border borderColor={BORDER} backgroundColor={PANEL_ALT} paddingX={1}>
-      <box flexDirection="row" width={ml.innerWidth} minWidth={0} gap={ml.headerGap}>
-        <box width={ml.headerTitleWidth} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{fitTuiText("COMMANDS", ml.headerTitleWidth)}</text>
-        </box>
-        {ml.headerQueryWidth > 0 ? (
-          <box width={ml.headerQueryWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText(slashQuery ? `/${slashQuery}` : "all commands", ml.headerQueryWidth, { mode: "middle" })}</text>
-          </box>
-        ) : null}
-      </box>
-      {menuCommands.length > 0 ? (
-        // The rows live in a fixed-height scrollbox: the box shows a window of
-        // `visibleCommandRows` entries and the selection is scrolled into view
-        // (the effect below drives scrollTop), so every match is reachable while
-        // the box height, budget and no-overflow contract are unchanged. The
-        // scrollbar is hidden and the box is not focusable — navigation stays
-        // with the module keyboard handler.
-        <scrollbox
-          ref={commandMenuScrollRef}
-          focusable={false}
-          scrollX={false}
-          width={ml.innerWidth}
-          height={visibleCommandRows * commandRowsPerCommand}
-          flexShrink={0}
-          scrollbarOptions={{ visible: false }}
-        >
-          <box flexDirection="column" width={ml.innerWidth} minWidth={0}>
-            {menuCommands.map((command, index) => {
-              const active = index === slashSelected;
-              const meta = command.aliases.length > 0
-                ? command.aliases.map((alias) => `/${alias}`).join(" ")
-                : command.category;
-              return (
-                <box key={command.name} flexDirection="row" width={ml.innerWidth} flexShrink={0} minWidth={0}>
-                  <text width={1} flexShrink={0} fg={active ? PRIMARY : MUTED}>{active ? "›" : " "}</text>
-                  <box flexDirection="column" width={ml.rowWidth} flexGrow={0} flexShrink={0} minWidth={0} marginLeft={1}>
-                    <box flexDirection="row" width={ml.rowWidth} minWidth={0} gap={1}>
-                      <box width={ml.nameWidth} flexShrink={0} minWidth={0}>
-                        <text fg={active ? PRIMARY : TEXT}>{fitTuiText(`/${command.name}`, ml.nameWidth)}</text>
-                      </box>
-                      {ml.metaWidth > 0 ? (
-                        <box width={ml.metaWidth} flexShrink={0} minWidth={0}>
-                          <text fg={MUTED}>{fitTuiText(meta, ml.metaWidth)}</text>
-                        </box>
-                      ) : null}
-                    </box>
-                    {!compact ? (
-                      <box width={ml.rowWidth} minWidth={0}>
-                        <text fg={MUTED} wrapMode="word">{fitTuiText(command.description, ml.rowWidth)}</text>
-                      </box>
-                    ) : null}
-                  </box>
-                </box>
-              );
-            })}
-          </box>
-        </scrollbox>
-      ) : (
-        <box width={ml.innerWidth} flexShrink={0} minWidth={0}>
-          <text fg={ERROR}>{fitTuiText(`No command matches /${slashQuery}`, Math.max(1, ml.innerWidth))}</text>
-        </box>
-      )}
-      <box width={ml.innerWidth} flexShrink={0} minWidth={0}>
-        <text fg={MUTED}>{fitTuiText("↑↓ select · tab complete · enter run · esc close", Math.max(1, ml.innerWidth))}</text>
-      </box>
-    </box>
+    <CommandMenu
+      layout={ml}
+      boxWidth={boxWidth}
+      height={commandMenuHeight}
+      scrollRef={commandMenuScrollRef}
+      commands={menuCommands}
+      selectedIndex={slashSelected}
+      visibleRows={visibleCommandRows}
+      rowsPerCommand={commandRowsPerCommand}
+      query={slashQuery}
+      compact={compact}
+      theme={theme}
+    />
   );
   const commandMenuNode = commandMenuVisible ? buildCommandMenu(menu, "100%") : null;
   // The hero menu is sized so its box is exactly the composer card's width: the
@@ -4786,48 +3452,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
               * overflow upward into the header (the composer stays anchored by
               * the fixed bottom spacer regardless).
               */}
-            {showMasthead && showTerminalMark ? (
-              <text fg={MUTED} marginBottom={1}>{fitTuiText("Swiss Applied AI Cybersecurity Research Lab", contentWidth, { mode: "middle" })}</text>
-            ) : null}
             {showMasthead ? (
-              showTerminalMark ? (
-                <box flexDirection="column" width={TERMINAL_BLOCK_LOGO_WIDTH} minWidth={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0}>
-                  {/*
-                    * 0sec brand mark: a slashed zero — a white "0" outline with a
-                    * red diagonal slash through its hollow — then white "SEC".
-                    * The per-cell frame comes from computeLogoFrame (the intro
-                    * animation, or the settled final frame under reduceMotion/"off");
-                    * logoRowRuns coalesces each row into (tone,visible) runs whose
-                    * widths sum to TERMINAL_BLOCK_LOGO_WIDTH, so no run overflows and
-                    * each tone keeps its own token. Rendered verbatim — the row
-                    * widths are exact, so no fitTuiText/trim is needed.
-                    */}
-                  {logoFrameGrid.map((row, index) => (
-                    <box key={`logo-${index}`} flexDirection="row" width={TERMINAL_BLOCK_LOGO_WIDTH} flexShrink={0} minWidth={0}>
-                      {logoRowRuns(row).map((run, runIndex) => {
-                        const style = logoRunStyle(run.tone, theme);
-                        const glyph = run.visible ? "█" : " ";
-                        return (
-                          <text
-                            key={`logo-${index}-${runIndex}`}
-                            width={run.length}
-                            flexShrink={0}
-                            fg={style.fg}
-                            attributes={style.attributes}
-                          >{glyph.repeat(run.length)}</text>
-                        );
-                      })}
-                    </box>
-                  ))}
-                </box>
-              ) : (
-                <box flexDirection="row" flexShrink={0}>
-                  <text fg={TEXT}>0SEC · OPERATOR CONSOLE</text>
-                </box>
-              )
-            ) : null}
-            {showMasthead && showEmptyStateTagline ? (
-              <text fg={TEXT} marginTop={1}>{fitTuiText("The open, extensible & self-evolving cybersecurity harness", contentWidth, { mode: "middle" })}</text>
+              <Masthead
+                showTerminalMark={showTerminalMark}
+                showTagline={showEmptyStateTagline}
+                contentWidth={contentWidth}
+                logoFrameGrid={logoFrameGrid}
+                theme={theme}
+              />
             ) : null}
             {workingIndicator}
             {startupError ? <text fg={ERROR} marginTop={1}>{fitTuiText(startupError, contentWidth)}</text> : null}
