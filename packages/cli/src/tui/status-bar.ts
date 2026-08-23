@@ -514,6 +514,116 @@ export function fitStatusSegments(
   return fitTuiText(join(remaining), Math.floor(width));
 }
 
+// ── Sidebar toggle icons ──────────────────────────────────────────────────
+
+/** Which sidebar an icon toggles: left = sessions + findings, right = agents. */
+export type SidebarSide = "left" | "right";
+
+/**
+ * Semantic tone for a toggle glyph — never a theme token or an escape code, the
+ * same discipline the pills' {@link StatusColorRole} follows. The renderer maps
+ * `accent` onto the active/foreground token (the sidebar is OPEN) and `muted`
+ * onto the dim/comment token (it is CLOSED). Kept separate from
+ * `StatusColorRole` because none of the pill roles mean "dimmed", and these
+ * glyphs are chrome affordances rather than data segments.
+ */
+export type SidebarToggleTone = "accent" | "muted";
+
+/**
+ * One clickable panel-toggle affordance for the bottom bar. The glyph is a
+ * one-cell mark that shows the sidebar's side AND its open/closed state on its
+ * own — a filled edge bar when open, a hairline rule when closed — so the pair
+ * reads as two little panel toggles even before colour is applied. Everything a
+ * renderer needs to paint, place, label and wire the icon rides on the object:
+ * it maps `tone` to a token, draws `glyph`, uses `label`/`aria` for the
+ * tooltip, and binds `onClick` to the toggle named by `chord` (the same chord
+ * shown in `aria`).
+ */
+export interface SidebarToggleIcon {
+  /** Which sidebar this toggles. */
+  side: SidebarSide;
+  /** True when that sidebar is currently open. */
+  open: boolean;
+  /** One-cell glyph: a filled edge bar when open, a hairline rule when closed. */
+  glyph: string;
+  /** Tone the renderer maps to a theme token: `accent` (open) / `muted` (closed). */
+  tone: SidebarToggleTone;
+  /** Keybind chord that toggles this sidebar, for the tooltip / aria label. */
+  chord: string;
+  /** Short human label, e.g. "Sessions" / "Agents". */
+  label: string;
+  /** Full accessible description, e.g. "Left sidebar (sessions) — open · ctrl+b to hide". */
+  aria: string;
+}
+
+/**
+ * Glyphs per side and state. The half-block edge bars (`▌`/`▐`) point at the
+ * side they live on; the one-eighth rules (`▏`/`▕`) are the same edge drawn as a
+ * hairline, so a closed toggle still reads as *that* side rather than a generic
+ * empty box. Every glyph is a single BMP code point, i.e. exactly one cell under
+ * `fitTuiText`'s width model.
+ */
+const SIDEBAR_GLYPH: Record<SidebarSide, { open: string; closed: string }> = {
+  left: { open: "▌", closed: "▏" },
+  right: { open: "▐", closed: "▕" },
+};
+
+/** Keybind chord that toggles each sidebar (matches settings.ts / the composer hint). */
+const SIDEBAR_CHORD: Record<SidebarSide, string> = {
+  left: "ctrl+b",
+  right: "ctrl+l",
+};
+
+/** Short label naming what each sidebar holds. */
+const SIDEBAR_LABEL: Record<SidebarSide, string> = {
+  left: "Sessions",
+  right: "Agents",
+};
+
+/** Longer parenthetical for the aria/tooltip, spelling out the sidebar's contents. */
+const SIDEBAR_CONTENTS: Record<SidebarSide, string> = {
+  left: "sessions & findings",
+  right: "agents & findings",
+};
+
+/**
+ * Build the two panel-toggle affordances for the bottom bar, one per sidebar,
+ * left first. Pure: booleans in, value objects out — no theme import, mirroring
+ * the rest of this module, so the renderer resolves the tone to a token exactly
+ * as it resolves a pill's colour role.
+ *
+ * Each icon is a filled/accent glyph when its sidebar is OPEN and a
+ * hairline/muted glyph when it is CLOSED, so the state is legible from the shape
+ * alone and reinforced by colour. Output order and content are stable for a
+ * given input, which is what the renderer's cell allocation relies on.
+ */
+export function sidebarToggleIcons(input: { showLeft: boolean; showRight: boolean }): SidebarToggleIcon[] {
+  const make = (side: SidebarSide, open: boolean): SidebarToggleIcon => ({
+    side,
+    open,
+    glyph: open ? SIDEBAR_GLYPH[side].open : SIDEBAR_GLYPH[side].closed,
+    tone: open ? "accent" : "muted",
+    chord: SIDEBAR_CHORD[side],
+    label: SIDEBAR_LABEL[side],
+    aria: `${side === "left" ? "Left" : "Right"} sidebar (${SIDEBAR_CONTENTS[side]}) — ${
+      open ? "open" : "closed"
+    } · ${SIDEBAR_CHORD[side]} to ${open ? "hide" : "show"}`,
+  });
+  return [make("left", input.showLeft), make("right", input.showRight)];
+}
+
+/**
+ * Rendered width, in cells, of the toggle cluster when drawn as glyphs joined by
+ * single spaces (`▌ ▐`). One cell per glyph plus one space between each — for the
+ * two sidebars that is a fixed 3 cells. The renderer reserves this off the right
+ * edge BEFORE it fits the pills (`fitStatusPills(width - sidebarIconsWidth(...))`)
+ * so the always-present toggles never compete with the droppable data pills.
+ */
+export function sidebarIconsWidth(icons: SidebarToggleIcon[]): number {
+  if (icons.length === 0) return 0;
+  return icons.length + (icons.length - 1);
+}
+
 /**
  * The full text one pill occupies, INCLUDING its leading glyph: `"◆ gpt-5"`, or
  * just the text for an icon-less segment. Both the width arithmetic in

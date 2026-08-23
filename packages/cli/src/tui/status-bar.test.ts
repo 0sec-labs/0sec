@@ -7,6 +7,8 @@ import {
   fitStatusPills,
   pillText,
   formatTokenCount,
+  sidebarToggleIcons,
+  sidebarIconsWidth,
   type StatusBarInput,
   type StatusSegment,
   type StatusSegmentKind,
@@ -501,5 +503,71 @@ describe("fitStatusPills", () => {
 
   it("returns nothing for a non-positive width", () => {
     expect(fitStatusPills(buildStatusSegments(RICH_INPUT), 0)).toEqual([]);
+  });
+});
+
+describe("sidebarToggleIcons", () => {
+  it("returns the two sidebars, left first, in a stable order", () => {
+    const icons = sidebarToggleIcons({ showLeft: false, showRight: false });
+    expect(icons.map((i) => i.side)).toEqual(["left", "right"]);
+  });
+
+  it("gives an open sidebar a distinct glyph and tone from a closed one", () => {
+    const [openLeft] = sidebarToggleIcons({ showLeft: true, showRight: false });
+    const [closedLeft] = sidebarToggleIcons({ showLeft: false, showRight: false });
+
+    expect(openLeft.open).toBe(true);
+    expect(closedLeft.open).toBe(false);
+    expect(openLeft.tone).toBe("accent");
+    expect(closedLeft.tone).toBe("muted");
+    expect(openLeft.glyph).not.toBe(closedLeft.glyph);
+  });
+
+  it("carries the chord, label and an aria string that names side, state and action", () => {
+    const [left, right] = sidebarToggleIcons({ showLeft: true, showRight: false });
+
+    expect(left.chord).toBe("ctrl+b");
+    expect(left.label).toBe("Sessions");
+    expect(left.aria).toContain("Left sidebar");
+    expect(left.aria).toContain("open");
+    expect(left.aria).toContain("ctrl+b to hide");
+
+    expect(right.chord).toBe("ctrl+l");
+    expect(right.label).toBe("Agents");
+    expect(right.aria).toContain("Right sidebar");
+    expect(right.aria).toContain("closed");
+    expect(right.aria).toContain("ctrl+l to show");
+  });
+
+  it("distinguishes the two sides by glyph so a closed toggle still reads as its side", () => {
+    const bothClosed = sidebarToggleIcons({ showLeft: false, showRight: false });
+    const bothOpen = sidebarToggleIcons({ showLeft: true, showRight: true });
+
+    expect(bothClosed[0].glyph).not.toBe(bothClosed[1].glyph);
+    expect(bothOpen[0].glyph).not.toBe(bothOpen[1].glyph);
+  });
+
+  it("handles all four open/closed combinations", () => {
+    const mixed = sidebarToggleIcons({ showLeft: true, showRight: false });
+    expect(mixed[0].tone).toBe("accent");
+    expect(mixed[1].tone).toBe("muted");
+
+    const other = sidebarToggleIcons({ showLeft: false, showRight: true });
+    expect(other[0].tone).toBe("muted");
+    expect(other[1].tone).toBe("accent");
+  });
+
+  it("uses one cell per glyph, so the whole cluster is cheap to reserve", () => {
+    const icons = sidebarToggleIcons({ showLeft: true, showRight: true });
+    for (const icon of icons) expect(icon.glyph.length).toBe(1);
+    // Two glyphs joined by a single space = 3 cells.
+    expect(sidebarIconsWidth(icons)).toBe(3);
+    expect(sidebarIconsWidth([])).toBe(0);
+  });
+
+  it("is a pure function: same input yields deeply equal output", () => {
+    expect(sidebarToggleIcons({ showLeft: true, showRight: false })).toEqual(
+      sidebarToggleIcons({ showLeft: true, showRight: false }),
+    );
   });
 });

@@ -49,6 +49,8 @@ import {
   fitStatusSegments,
   fitStatusPills,
   pillText,
+  sidebarToggleIcons,
+  sidebarIconsWidth,
   type StatusSegment,
   type StatusColorRole,
 } from "./status-bar.js";
@@ -4242,11 +4244,46 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
               <text fg={MUTED}>{fitTuiText(statusBarText, controlsWidth)}</text>
             )}
           </box>
-          {statusWidth > 0 ? (
-            <box width={statusWidth} flexShrink={0} minWidth={0}>
-              <text fg={MUTED}>{fitTuiText(statusText, statusWidth, { mode: "middle" })}</text>
-            </box>
-          ) : null}
+          {statusWidth > 0 ? (() => {
+            // The far-right cell: the session counter, then the sidebar TOGGLE
+            // ICONS (herd-style, ▌/▏ left, ▐/▕ right — filled+ACCENT when open,
+            // hairline+MUTED when closed, clickable to toggle). The icons take a
+            // fixed slice off this cell so the outer row width math is untouched.
+            const toggles = sidebarToggleIcons({
+              showLeft: settings.showLeftSidebar,
+              showRight: settings.showRightSidebar,
+            });
+            const togglesW = sidebarIconsWidth(toggles);
+            const showToggles = statusWidth > togglesW + 6;
+            const counterW = showToggles ? Math.max(0, statusWidth - togglesW - 1) : statusWidth;
+            return (
+              <box width={statusWidth} flexShrink={0} minWidth={0} flexDirection="row">
+                <box width={counterW} flexShrink={0} minWidth={0}>
+                  <text fg={MUTED}>{fitTuiText(statusText, counterW, { mode: "middle" })}</text>
+                </box>
+                {showToggles ? (
+                  <box flexDirection="row" flexShrink={0} minWidth={0} marginLeft={1}>
+                    {toggles.map((icon, i) => (
+                      <React.Fragment key={icon.side}>
+                        {i > 0 ? <text fg={MUTED}> </text> : null}
+                        <text
+                          fg={icon.tone === "accent" ? ACCENT : MUTED}
+                          onMouseDown={() =>
+                            updateSetting(
+                              icon.side === "left" ? "showLeftSidebar" : "showRightSidebar",
+                              icon.side === "left"
+                                ? !settingsRef.current.showLeftSidebar
+                                : !settingsRef.current.showRightSidebar,
+                            )
+                          }
+                        >{icon.glyph}</text>
+                      </React.Fragment>
+                    ))}
+                  </box>
+                ) : null}
+              </box>
+            );
+          })() : null}
         </box>
       ) : null}
       {/*
