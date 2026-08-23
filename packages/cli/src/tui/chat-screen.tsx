@@ -2179,10 +2179,39 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         },
         onToolResult: (call, result) => {
           setRunningTool(null);
+          // SETTLE the running row `onToolStart` appended IN PLACE rather than
+          // appending a second row. Without this, the running row (success
+          // undefined) never resolved, so it kept SHIMMERING until the turn
+          // ended and the settled card printed as a duplicate beneath it. We
+          // replace the last still-running tool row for this call (LIFO, matched
+          // on name + turn), preserving its id/timestamp; if somehow none is
+          // pending we append (old behaviour, so nothing is ever dropped).
+          const settleRunningTool = (settled: Omit<ChatEntry, "id">) => {
+            setEntries((current) => {
+              for (let i = current.length - 1; i >= 0; i -= 1) {
+                const e = current[i];
+                if (
+                  e.turn === currentTurn &&
+                  e.kind === "tool" &&
+                  e.success === undefined &&
+                  e.text === call.name
+                ) {
+                  const next = [...current];
+                  next[i] = { ...settled, id: e.id, at: e.at };
+                  return next;
+                }
+              }
+              return appendTranscriptEntry<ChatEntry>(current, {
+                at: Date.now(),
+                ...settled,
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              });
+            });
+          };
           if (call.name === "spawn_agent") {
             const card = parseSubagentCard(result.success, result.output, result.error);
             if (card) {
-              appendEntry({
+              settleRunningTool({
                 kind: "subagent",
                 text: call.name,
                 success: result.success,
@@ -2204,7 +2233,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           // A rich card's display-only `result.meta` sidecar (never seen by the
           // model) rides onto the entry so TranscriptEntry can draw a bordered
           // command / edit card. Absent meta, the entry renders as before.
-          appendEntry({
+          settleRunningTool({
             kind: "tool",
             text: call.name,
             detail: formatToolResult(call, result),
