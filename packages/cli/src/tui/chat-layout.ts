@@ -303,12 +303,8 @@ export function computeLedgerRows({
   return Math.max(0, height - chrome);
 }
 
-/**
- * Rows the empty-state hero needs: the half-height block mark (3 rows — five
- * source rows fused into half blocks by `logoHalfBlockRows`) plus its captions
- * (the eyebrow + its margin, the tagline + its margin).
- */
-export const LEDGER_MARK_ROWS = 3 + 3 + 3;
+/** Rows the empty-state hero needs: the block mark plus its three captions. */
+export const LEDGER_MARK_ROWS = 5 + 3 + 3;
 
 // ---------------------------------------------------------------------------
 // Agent rail (chat right sidebar) + active-subagent navigation
