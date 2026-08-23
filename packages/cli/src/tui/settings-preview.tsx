@@ -618,7 +618,7 @@ function themeBlocks(width: number): PreviewBlock[] {
  * shape the chat rail paints. Red is reserved for a failure glyph, exactly as
  * the live rail reserves it.
  */
-function agentRailBlocks(value: boolean, width: number): PreviewBlock[] {
+function rightSidebarBlocks(value: boolean, width: number): PreviewBlock[] {
   if (!value) return stateChipBlocks(false, width);
   return [
     line("rail-title", width, "AGENTS 2", (t) => t.MUTED),
@@ -648,6 +648,56 @@ function agentRailBlocks(value: boolean, width: number): PreviewBlock[] {
             { content: "✓", fg: theme.SUCCESS, key: "glyph" },
             { flex: 1, min: 1, text: "auth fuzzing", fg: theme.MUTED, key: "task" },
             { content: "5/5", fg: theme.MUTED, key: "turns" },
+          ]}
+        />
+      ),
+    },
+    line("rail-findings-title", width, "FINDINGS 2", (t) => t.MUTED),
+    {
+      key: "rail-finding",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { flex: 1, min: 1, text: "Auth bypass on /reset", fg: theme.TEXT, key: "title" },
+            { content: "high", fg: theme.ERROR, key: "sev" },
+          ]}
+        />
+      ),
+    },
+  ];
+}
+
+function leftSidebarBlocks(value: boolean, width: number): PreviewBlock[] {
+  if (!value) return stateChipBlocks(false, width);
+  return [
+    line("left-sessions-title", width, "SESSIONS", (t) => t.MUTED),
+    {
+      key: "left-session",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { content: "•", fg: theme.ACCENT, key: "glyph" },
+            { flex: 1, min: 1, text: "Audit the login flow", fg: theme.TEXT, key: "preview" },
+          ]}
+        />
+      ),
+    },
+    {
+      key: "left-session-2",
+      rows: 1,
+      render: (theme) => (
+        <Columns
+          available={width}
+          gap={1}
+          columns={[
+            { content: "•", fg: theme.MUTED, key: "glyph" },
+            { flex: 1, min: 1, text: "Deep pass for RCE", fg: theme.MUTED, key: "preview" },
           ]}
         />
       ),
@@ -731,8 +781,11 @@ export function previewBlocks({ def, value, width, settings }: PreviewInput): Pr
     case "showContextMeter":
       body = contextMeterBlocks(value === true, w);
       break;
-    case "showAgentRail":
-      body = agentRailBlocks(value === true, w);
+    case "showRightSidebar":
+      body = rightSidebarBlocks(value === true, w);
+      break;
+    case "showLeftSidebar":
+      body = leftSidebarBlocks(value === true, w);
       break;
     case "theme":
       body = themeBlocks(w);

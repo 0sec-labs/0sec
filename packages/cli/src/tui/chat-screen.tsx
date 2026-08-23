@@ -65,6 +65,7 @@ import {
   loadSession,
   pruneSessions,
   saveSession,
+  type StoredSessionMeta,
 } from "./session-store.js";
 import { reportOperatorGate } from "../herdr-state.js";
 import {
@@ -99,6 +100,7 @@ import {
   buildToolsPanel,
 } from "./panels.js";
 import { fitTuiText } from "./text.js";
+import { severityToneFor } from "./themes.js";
 import {
   parseSubagentCard,
   reduceActiveSubagents,
@@ -116,8 +118,8 @@ import {
   clampAgentSelection,
   commandMenuBoxHeight,
   commandMenuWindowStart,
-  computeAgentRailLayout,
   computeChatLayout,
+  computeSidebarsLayout,
   computeCommandMenuHeight,
   computeCommandMenuLayout,
   computeLedgerRows,
@@ -221,6 +223,13 @@ import {
 import { OperatorQuestionCard } from "./chat/OperatorQuestionCard.js";
 import { Masthead } from "./chat/Masthead.js";
 import { CommandMenu } from "./chat/CommandMenu.js";
+import {
+  AGENT_SIDEBAR_ROWS,
+  AgentSidebarRow,
+  AgentTreeRow,
+  shortAgentName,
+  type AgentRowView,
+} from "./chat/AgentRow.js";
 
 export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market";
 
@@ -340,6 +349,9 @@ export function entriesFromStoredMessages(messages: readonly unknown[]): ChatEnt
             { name, arguments: call?.input },
             { success, output, error: success ? null : String(b.content ?? "") },
           ),
+          // Carry the argument one-liner too (as a live turn does), so a
+          // restored session's `save_finding` calls feed the findings sidebar.
+          toolArgs: formatToolArgs({ name, arguments: call?.input }),
           success,
           turn: 0,
         });
@@ -361,6 +373,35 @@ export function entriesFromStoredMessages(messages: readonly unknown[]): ChatEnt
   return out;
 }
 
+/** A finding surfaced this run: a title and a normalised severity. */
+export interface RunFinding {
+  title: string;
+  severity: string;
+}
+
+/**
+ * This run's findings, read from the transcript itself: every successful
+ * `save_finding` tool call, newest last. The argument one-liner is
+ * `"<severity> <category>: <title>"` (see tool-format), so the leading word is
+ * the severity and the text after the colon is the title. Deriving from the
+ * entries the screen already holds means the right sidebar needs no new event
+ * plumbing and works identically for a live turn and a restored session.
+ */
+export function runFindingsFromEntries(entries: readonly ChatEntry[]): RunFinding[] {
+  const out: RunFinding[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== "tool" || entry.text !== "save_finding") continue;
+    if (entry.success === false) continue;
+    const raw = (entry.toolArgs ?? entry.detail ?? "").trim();
+    if (!raw) continue;
+    const colon = raw.indexOf(": ");
+    const head = colon >= 0 ? raw.slice(0, colon) : "";
+    const title = (colon >= 0 ? raw.slice(colon + 2) : raw).trim();
+    const severity = (head.split(/\s+/)[0] || "info").toLowerCase();
+    out.push({ title: title || "(untitled finding)", severity });
+  }
+  return out;
+}
 
 /**
  * Most subagent rows the ACTIVE SUBAGENTS block will paint.
@@ -543,6 +584,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
    * right rail and the inline focus view, so neither reimplements the plumbing.
    */
   const [herdAgents, setHerdAgents] = useState<HerdSubagentMap>({});
+  /**
+   * Recent resumable sessions for the LEFT sidebar's "SESSIONS" block. Loaded
+   * from the on-disk session store (a directory read), refreshed whenever the
+   * live session changes — a new turn saves the transcript, so the listing
+   * should pick the current run up once it exists.
+   */
+  const [recentSessions, setRecentSessions] = useState<StoredSessionMeta[]>([]);
   /**
    * Active-subagent navigation from the composer. -1 means the composer has
    * focus; >= 0 selects a row in the ACTIVE SUBAGENTS block. Entered with Down
@@ -944,6 +992,23 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     });
     return unsub;
   }, [session]);
+
+  // The LEFT sidebar's recent-sessions list. A disk read, so it only runs while
+  // the sidebar is actually enabled, and re-runs when the live session changes —
+  // each turn saves the transcript, so the current run appears once it is
+  // stored. Sessions from THIS working directory sort first, then by recency.
+  useEffect(() => {
+    if (!settings.showLeftSidebar) {
+      setRecentSessions([]);
+      return;
+    }
+    const here = process.cwd();
+    const saved = listSessions(undefined, { limit: 50 });
+    saved.sort(
+      (a, b) => Number(b.cwd === here) - Number(a.cwd === here) || b.savedAt - a.savedAt,
+    );
+    setRecentSessions(saved);
+  }, [settings.showLeftSidebar, session]);
 
   // A focused agent that leaves the live map (never observed, or the session
   // reset) drops focus rather than staring at a stale record.
@@ -2338,6 +2403,19 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       );
       return;
     }
+    // Ctrl+B / Ctrl+L collapse the LEFT / RIGHT chat sidebars. Both persist via
+    // the settings store (the same layer `/settings` writes), so the choice
+    // survives the session and the store's subscribers repaint immediately.
+    // Handled above the composing block so the chord never reaches the
+    // composer's text catch-all (which only appends non-ctrl sequences anyway).
+    if (key.ctrl && key.name === "b") {
+      updateSetting("showLeftSidebar", !settingsRef.current.showLeftSidebar);
+      return;
+    }
+    if (key.ctrl && key.name === "l") {
+      updateSetting("showRightSidebar", !settingsRef.current.showRightSidebar);
+      return;
+    }
     // Ctrl+Y pulls the most recently queued message back into the composer for
     // editing — which doubles as cancel: it leaves the queue, and dropping it
     // (Esc) or re-sending it (Enter, re-queued at the back while still busy) is
@@ -2423,6 +2501,21 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         return;
       }
       if (key.name === "down") {
+        // The composer is append-only: the caret always sits on the LAST line,
+        // so "Down with nothing below the cursor" is the steady state while
+        // composing. When the operator is NOT browsing history back through the
+        // draft, and workers are running, that Down drops INTO the agents list —
+        // the same affordance the empty composer offers — rather than doing
+        // nothing. While browsing history, Down still walks forward toward the
+        // live draft first.
+        const browsingHistory = historyIndexRef.current < historyRef.current.length;
+        if (!browsingHistory) {
+          const navList = settings.showSubagents ? Object.values(activeSubagents) : [];
+          if (navList.length > 0) {
+            setAgentNavIndex(0);
+            return;
+          }
+        }
         recallComposerHistory("down");
         return;
       }
@@ -2654,19 +2747,22 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     ? subagentPeers(herdAgents, nowMs).find((peer) => peer.id === focusAgentId)
     : undefined;
   const focused = focusAgentId != null && focusRecord != null && focusPeer != null;
-  // The right rail's budget: hidden while focused, on a narrow terminal, or when
-  // the setting is off — all folded into `computeAgentRailLayout`, which then
-  // also hands back the transcript's text-wrap width for the frame it leaves.
-  const rail = computeAgentRailLayout({
+  // The two sidebars' budget: each hidden while focused, on a narrow terminal,
+  // or when its setting is off — all folded into `computeSidebarsLayout`, which
+  // gives the transcript priority (it keeps its minimum width; the RIGHT
+  // sidebar wins the last column when only one fits) and hands back the
+  // transcript's text-wrap width for the frame it leaves between them.
+  const sidebars = computeSidebarsLayout({
     width,
     contentWidth,
     compact,
-    showAgentRail: settings.showAgentRail && !focused,
+    showLeft: settings.showLeftSidebar && !focused,
+    showRight: settings.showRightSidebar && !focused,
   });
   // Usable width INSIDE the transcript panel: the ledger box adds its own
-  // paddingX (folded into the rail layout), which an entry's own border must
-  // live within. Shrinks to make room when the rail is shown.
-  const transcriptWidth = rail.transcriptWidth;
+  // paddingX (folded into the sidebar layout), which an entry's own border must
+  // live within. Shrinks to make room when a sidebar is shown.
+  const transcriptWidth = sidebars.transcriptWidth;
   // "0sec" is 4 cells; the mode label is right-sized to its own text so
   // the engagement summary gets every remaining cell.
   const headerModeWidth = Math.min(10, Math.max(1, contentWidth - 8));
@@ -2770,11 +2866,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // an index left dangling by a finished agent lands back on a live row.
   const agentNavSelected =
     agentNavIndex >= 0 ? clampAgentSelection(subagentVisible.length, agentNavIndex) : -1;
-  // The agent-nav hint sits one flexShrink={0} row below the composer, so it is
-  // reserved in the ledger budget exactly when it renders: whenever there are
-  // agents to reach (the affordance), while navigating them, or while focused.
+  // The agent-nav hint sits one flexShrink={0} row below the list, so it is
+  // reserved in the ledger budget exactly when it renders. Only the ACTIVE
+  // states earn their own row now: while navigating the list, or while focused
+  // on an agent. The idle "go down into the list" affordance no longer takes a
+  // stray row — it rides on the ACTIVE SUBAGENTS header instead (below).
   const showAgentNavHint =
-    settings.showComposerHints && !empty && (focused || subagentVisible.length > 0);
+    settings.showComposerHints && !empty && (focused || agentNavIndex >= 0);
 
   // Every other region in the column is flexShrink={0}, so the transcript
   // absorbs all the pressure. Compute what it actually has left: a
@@ -2932,7 +3030,19 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   }) => (
     <box flexDirection="row" width={outerWidth ?? "100%"} flexShrink={0} marginTop={1} minWidth={0}>
       {composerStyle === "rail" ? (
-        <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={composerActive ? PRIMARY : BORDER} />
+        // A THIN light-vertical rule (OpenCode's look), not a solid block: one
+        // `│` per composer row, accent when focused / muted BORDER when not. The
+        // row count mirrors ComposerFrame's own height (input lines + padY), so
+        // the rule spans the frame exactly without an alignSelf stretch bar.
+        <box width={1} flexShrink={0} flexDirection="column" minHeight={0}>
+          {Array.from({
+            length:
+              (composing ? Math.min(COMPOSER_MAX_ROWS, Math.max(1, composer.split("\n").length)) : 1) +
+              padY * 2,
+          }).map((_unused, i) => (
+            <text key={`composer-rail-${i}`} fg={composerActive ? PRIMARY : BORDER}>│</text>
+          ))}
+        </box>
       ) : null}
       <ComposerFrame style={composerStyle} active={composerActive} theme={theme} padY={padY}>
         <box flexDirection="row" width="100%" minWidth={0}>
@@ -3148,34 +3258,51 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
 
   const subagentNode = subagentBlockRows > 0 ? (
     <box flexDirection="column" width="100%" minWidth={0} height={subagentBlockRows} flexShrink={0} marginTop={1}>
-      <box width={contentWidth} flexShrink={0} minWidth={0}>
-        <text fg={MUTED}>{fitTuiText(`ACTIVE SUBAGENTS · ${subagentEntries.length}`, contentWidth)}</text>
-      </box>
-      {subagentVisible.map((sa, index) => {
-        const running = sa.status === "running";
-        const selected = index === agentNavSelected;
-        const background = selected ? PANEL_ALT : undefined;
-        const turnsInfo = sa.turns !== undefined ? ` (${sa.turns}/${sa.max_turns})` : "";
-        const labelWidth = Math.max(1, contentWidth - 2 - turnsInfo.length);
+      {(() => {
+        // The header carries the idle "↓ select" affordance inline (key white,
+        // label muted), so the down-into-agents hint no longer costs its own
+        // row. Shown only when idle (not already navigating) and hints are on,
+        // and only when the pair actually fits beside the title.
+        const subTitle = `ACTIVE SUBAGENTS · ${subagentEntries.length}`;
+        const showSelectHint =
+          settings.showComposerHints && agentNavIndex < 0 && !focused;
+        const selectPairs: KeyHint[] = [{ key: "↓", label: "select" }];
+        const fits =
+          subTitle.length + 3 + keyHintsLength(selectPairs, " · ") <= contentWidth;
         return (
-          <box
-            key={sa.agent_id}
-            flexDirection="row"
-            width={contentWidth}
-            flexShrink={0}
-            minWidth={0}
-            backgroundColor={background}
-          >
-            <text width={1} flexShrink={0} fg={running ? PRIMARY : WARNING} bg={background}>{running ? "◉" : "◌"}</text>
-            <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1} backgroundColor={background}>
-              <text fg={TEXT} bg={background}>{fitTuiText(sa.task, labelWidth)}</text>
+          <box flexDirection="row" width={contentWidth} flexShrink={0} minWidth={0}>
+            <box flexShrink={0} minWidth={0}>
+              <text fg={MUTED}>{fitTuiText(subTitle, contentWidth)}</text>
             </box>
-            {turnsInfo ? (
-              <box width={turnsInfo.length} flexShrink={0} minWidth={0} backgroundColor={background}>
-                <text fg={MUTED} bg={background}>{turnsInfo}</text>
+            {showSelectHint && fits ? (
+              <box flexDirection="row" flexShrink={0} minWidth={0} marginLeft={3}>
+                <KeyHints pairs={selectPairs} theme={theme} />
               </box>
             ) : null}
           </box>
+        );
+      })()}
+      {subagentVisible.map((sa, index) => {
+        // A shared tree row (bold accent name : muted task, red glyph on
+        // failure), with the last row's connector closing the tree and the
+        // selected row wearing the highlight bar + accent marker.
+        const view: AgentRowView = {
+          id: sa.agent_id,
+          name: shortAgentName(sa.agent_id),
+          task: sa.task ?? "",
+          status: sa.status,
+          meta: sa.turns !== undefined ? `${sa.turns}/${sa.max_turns}` : undefined,
+        };
+        const isLast = index === subagentVisible.length - 1 && subagentOverflowRow === 0;
+        return (
+          <AgentTreeRow
+            key={sa.agent_id}
+            view={view}
+            width={contentWidth}
+            theme={theme}
+            selected={index === agentNavSelected}
+            isLast={isLast}
+          />
         );
       })}
       {subagentOverflowRow > 0 ? (
@@ -3186,45 +3313,61 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     </box>
   ) : null;
 
-  // ── The right agent rail ───────────────────────────────────────────────────
-  // One condensed row per live agent — status glyph, task, turns/max, findings —
-  // read from the SAME herd map the focus view uses. Clean and minimal (dim
-  // labels, one accent); ERROR is spent ONLY on a failed glyph, never a label.
-  // Bounded to the rows the conversation region actually has, with a "+N" tail,
-  // so it can never overflow or fuse. The whole rail is flexShrink={0}.
+  // ── The RIGHT sidebar: the current run (agents + findings) ─────────────────
+  // "What's happening now": the OMP-style AGENTS tree on top, then this run's
+  // FINDINGS (title + severity, severity-coloured — red reserved for
+  // high/critical). Each section has a small muted header and is bounded to its
+  // share of the region's rows with a "+N" tail, so nothing can overflow or
+  // fuse. Whole thing flexShrink={0}. The context strip lives in the bottom
+  // status bar, not here — no duplication.
+  const rightInner = sidebars.rightInnerWidth;
   const railRecords = Object.values(herdAgents);
-  const railBodyBudget = Math.max(0, ledgerRows - 1); // minus the AGENTS title row
+  const runFindings = runFindingsFromEntries(entries);
+  // Split the column between the two sections. Titles cost three rows total:
+  // AGENTS(1) + FINDINGS(1 + its marginTop). Agents take the larger share
+  // because their rows are two lines each.
+  const rightSectionRows = Math.max(0, ledgerRows - 3);
+  const agentsBudget = Math.max(0, Math.floor(rightSectionRows * 0.6));
+  const rightFindingsBudget = Math.max(0, rightSectionRows - agentsBudget);
+  const railMaxAgents = Math.floor(agentsBudget / AGENT_SIDEBAR_ROWS);
   const railCapacity =
-    railRecords.length > railBodyBudget ? Math.max(0, railBodyBudget - 1) : railBodyBudget;
+    railRecords.length > railMaxAgents
+      ? Math.max(0, Math.floor((agentsBudget - 1) / AGENT_SIDEBAR_ROWS))
+      : railMaxAgents;
   const railVisible = railRecords.slice(0, railCapacity);
   const railOverflow = railRecords.length - railVisible.length;
-  const railGlyph = (status: string): { glyph: string; color: string } => {
-    if (status === "failed") return { glyph: "×", color: ERROR };
-    if (status === "completed") return { glyph: "✓", color: SUCCESS };
-    if (status === "running") return { glyph: "◉", color: ACCENT };
-    return { glyph: "◌", color: MUTED };
-  };
-  const railNode = rail.visible ? (
+  const rightFindingsCap =
+    runFindings.length > rightFindingsBudget
+      ? Math.max(0, rightFindingsBudget - 1)
+      : rightFindingsBudget;
+  // Newest findings last, so show the most recent that fit.
+  const rightFindingsVisible = runFindings.slice(
+    Math.max(0, runFindings.length - rightFindingsCap),
+  );
+  const rightFindingsOverflow = runFindings.length - rightFindingsVisible.length;
+  const rightSidebarNode = sidebars.rightVisible ? (
     <box
       flexDirection="row"
-      width={rail.railWidth}
+      width={sidebars.rightWidth}
       flexShrink={0}
       minWidth={0}
       alignSelf="stretch"
-      marginLeft={rail.gap}
+      marginLeft={sidebars.rightGap}
     >
       <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={BORDER} />
-      <box flexDirection="column" flexGrow={1} minWidth={0} paddingLeft={1} backgroundColor={PANEL}>
-        <box width={rail.railInnerWidth} flexShrink={0} minWidth={0}>
-          <text fg={MUTED}>{fitTuiText(`AGENTS ${railRecords.length}`, rail.railInnerWidth)}</text>
+      <box flexDirection="column" flexGrow={1} minHeight={0} minWidth={0} paddingLeft={1} backgroundColor={PANEL}>
+        <box width={rightInner} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(`AGENTS ${railRecords.length}`, rightInner)}</text>
         </box>
         {railVisible.length === 0 ? (
-          <box width={rail.railInnerWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText("no active agents", rail.railInnerWidth)}</text>
+          <box width={rightInner} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText("no active agents", rightInner)}</text>
           </box>
         ) : (
           railVisible.map((rec) => {
-            const { glyph, color } = railGlyph(rec.status);
+            // The SAME agent-row look as the inline list, in the sidebar's
+            // two-line variant (name over task). Turns + findings ride along as
+            // the right-aligned meta; findings never colour the label.
             const turnValue =
               typeof rec.turn === "number"
                 ? rec.turn
@@ -3236,35 +3379,123 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
               meta.push(rec.maxTurns > 0 ? `${turnValue}/${rec.maxTurns}` : `t${turnValue}`);
             }
             if (typeof rec.findings === "number") meta.push(`${rec.findings}f`);
-            const metaText = meta.join(" · ");
-            const labelWidth = Math.max(1, rail.railInnerWidth - 2 - metaText.length);
+            const view: AgentRowView = {
+              id: rec.agentId,
+              name: shortAgentName(rec.agentId),
+              task: rec.task || rec.agentId,
+              status: rec.status,
+              meta: meta.length > 0 ? meta.join(" · ") : undefined,
+            };
+            return (
+              <AgentSidebarRow
+                key={rec.agentId}
+                view={view}
+                width={rightInner}
+                theme={theme}
+                selected={false}
+              />
+            );
+          })
+        )}
+        {railOverflow > 0 ? (
+          <box width={rightInner} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(`+${railOverflow} more`, rightInner)}</text>
+          </box>
+        ) : null}
+        <box width={rightInner} flexShrink={0} minWidth={0} marginTop={1}>
+          <text fg={MUTED}>{fitTuiText(`FINDINGS ${runFindings.length}`, rightInner)}</text>
+        </box>
+        {rightFindingsVisible.length === 0 ? (
+          <box width={rightInner} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText("none yet", rightInner)}</text>
+          </box>
+        ) : (
+          rightFindingsVisible.map((finding, index) => {
+            // Title left, severity right — the severity coloured by
+            // `severityToneFor` (red only for high/critical), the title in TEXT.
+            const sevColor = severityToneFor(theme, finding.severity);
+            const sevCells = Math.min(finding.severity.length, Math.max(0, rightInner - 4));
+            const titleCells = Math.max(1, rightInner - (sevCells > 0 ? sevCells + 1 : 0));
             return (
               <box
-                key={rec.agentId}
+                key={`finding-${index}`}
                 flexDirection="row"
-                width={rail.railInnerWidth}
+                width={rightInner}
                 flexShrink={0}
                 minWidth={0}
               >
-                <text width={1} flexShrink={0} fg={color}>{glyph}</text>
-                <box width={labelWidth} flexShrink={0} minWidth={0} marginLeft={1}>
-                  <text fg={TEXT}>{fitTuiText(rec.task || rec.agentId, labelWidth)}</text>
+                <box width={titleCells} flexShrink={0} minWidth={0}>
+                  <text fg={TEXT}>{fitTuiText(finding.title, titleCells)}</text>
                 </box>
-                {metaText ? (
-                  <box width={metaText.length} flexShrink={0} minWidth={0}>
-                    <text fg={MUTED}>{metaText}</text>
+                {sevCells > 0 ? (
+                  <box width={sevCells} flexShrink={0} minWidth={0} marginLeft={1}>
+                    <text fg={sevColor}>{fitTuiText(finding.severity, sevCells)}</text>
                   </box>
                 ) : null}
               </box>
             );
           })
         )}
-        {railOverflow > 0 ? (
-          <box width={rail.railInnerWidth} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText(`+${railOverflow} more`, rail.railInnerWidth)}</text>
+        {rightFindingsOverflow > 0 ? (
+          <box width={rightInner} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(`+${rightFindingsOverflow} more`, rightInner)}</text>
           </box>
         ) : null}
+        <box flexGrow={1} minHeight={0} flexShrink={1} />
       </box>
+    </box>
+  ) : null;
+
+  // ── The LEFT sidebar: history (recent sessions) ────────────────────────────
+  // "What you have": recent resumable sessions from the session store. History
+  // only — findings moved to the RIGHT sidebar (they are live output of the
+  // current run). Bounded to the region's rows with a "+N" tail so it can never
+  // overflow. Whole thing flexShrink={0}.
+  const leftInner = sidebars.leftInnerWidth;
+  const leftBodyBudget = Math.max(0, ledgerRows - 1); // one title row
+  const sessionsCap =
+    recentSessions.length > leftBodyBudget ? Math.max(0, leftBodyBudget - 1) : leftBodyBudget;
+  const sessionsVisible = recentSessions.slice(0, sessionsCap);
+  const sessionsOverflow = recentSessions.length - sessionsVisible.length;
+  const leftSidebarNode = sidebars.leftVisible ? (
+    <box
+      flexDirection="row"
+      width={sidebars.leftWidth}
+      flexShrink={0}
+      minWidth={0}
+      alignSelf="stretch"
+      marginRight={sidebars.leftGap}
+    >
+      <box flexDirection="column" flexGrow={1} minHeight={0} minWidth={0} paddingRight={1} backgroundColor={PANEL}>
+        <box width={leftInner} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(`SESSIONS ${recentSessions.length}`, leftInner)}</text>
+        </box>
+        {sessionsVisible.length === 0 ? (
+          <box width={leftInner} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText("no saved sessions", leftInner)}</text>
+          </box>
+        ) : (
+          sessionsVisible.map((meta) => {
+            const current = session?.scanId === meta.id;
+            const label = meta.preview || meta.target || "(no prompt)";
+            return (
+              <box key={meta.id} flexDirection="row" width={leftInner} flexShrink={0} minWidth={0}>
+                <text width={1} flexShrink={0} fg={current ? ACCENT : MUTED}>{current ? "◉" : "•"}</text>
+                <box width={Math.max(1, leftInner - 2)} flexShrink={0} minWidth={0} marginLeft={1}>
+                  <text fg={current ? TEXT : MUTED}>{fitTuiText(label, Math.max(1, leftInner - 2))}</text>
+                </box>
+              </box>
+            );
+          })
+        )}
+        {sessionsOverflow > 0 ? (
+          <box width={leftInner} flexShrink={0} minWidth={0}>
+            <text fg={MUTED}>{fitTuiText(`+${sessionsOverflow} more`, leftInner)}</text>
+          </box>
+        ) : null}
+        <box flexGrow={1} minHeight={0} flexShrink={1} />
+      </box>
+      <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={BORDER} />
     </box>
   ) : null;
 
@@ -3339,14 +3570,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   );
 
   // ── The conversation region ────────────────────────────────────────────────
-  // Either the drilled-in focus view, or the transcript column beside the
-  // optional rail. The transcript column flexGrows; the rail is flexShrink={0}
-  // and only present when the layout found room for it, so with the rail hidden
-  // the transcript takes the full width exactly as before.
+  // Either the drilled-in focus view, or the transcript column between the two
+  // optional sidebars: [left][transcript][right]. The transcript column
+  // flexGrows; each sidebar is flexShrink={0} and only present when the layout
+  // found room for it, so with both hidden the transcript takes the full width
+  // exactly as before.
   const conversationRegion = focused ? (
     focusViewNode
   ) : (
     <box flexDirection="row" flexGrow={1} minHeight={0} width="100%" minWidth={0}>
+      {leftSidebarNode}
       <box
         flexDirection="column"
         flexGrow={1}
@@ -3395,7 +3628,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           </box>
         </scrollbox>
       </box>
-      {railNode}
+      {rightSidebarNode}
     </box>
   );
 
@@ -3431,6 +3664,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const heroHintPairs: KeyHint[] = [
     { key: "shift+tab", label: "mode" },
     { key: "ctrl+p", label: "palette" },
+    { key: "ctrl+b", label: settings.showLeftSidebar ? "hide left" : "left" },
+    { key: "ctrl+l", label: settings.showRightSidebar ? "hide right" : "right" },
   ];
   // The contextual keys shown in the bottom bar while composing plain text.
   const composeHintPairs: KeyHint[] = [
@@ -3589,16 +3824,20 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
             */}
           {conversationRegion}
 
-          {/*
-            * Explicit height AND flexShrink={0}. Without both, opentui defaults
-            * flexShrink to 1 for any box with no numeric width or height, so a
-            * squeezed column collapsed this block to a single row while its
-            * children kept painting. `subagentBlockRows` is the reserved count.
-            */}
-          {subagentNode}
           {overlaysNode}
           {stickyNode}
           {composerNode}
+          {/*
+            * The inline ACTIVE SUBAGENTS list sits directly BELOW the composer,
+            * so pressing Down FROM the composer reads as moving DOWN into the
+            * list (the keyboard nav target). Explicit height AND flexShrink={0}:
+            * without both, opentui defaults flexShrink to 1 for any box with no
+            * numeric width/height, so a squeezed column collapsed this block to a
+            * single row while its children kept painting. `subagentBlockRows` is
+            * the reserved count, budgeted in `computeLedgerRows` regardless of
+            * where the block is painted.
+            */}
+          {subagentNode}
           {agentNavHintNode}
         </>
       )}

@@ -61,8 +61,17 @@ export interface TuiSettings {
   showTurnSummary: boolean;
   /** Show the active subagent list while workers run. */
   showSubagents: boolean;
-  /** Right sidebar in the chat view listing the active agents (wide terminals). */
-  showAgentRail: boolean;
+  /**
+   * Right sidebar in the chat view: live agents + a compact context strip
+   * (model · mode · scope · context %). Auto-hidden on narrow terminals.
+   * Formerly `showAgentRail`; that key is still honoured on load.
+   */
+  showRightSidebar: boolean;
+  /**
+   * Left sidebar in the chat view: recent resumable sessions on top, this run's
+   * findings below ("what you have"). Auto-hidden on narrow terminals.
+   */
+  showLeftSidebar: boolean;
   /** Relative timestamps on transcript entries. */
   showTimestamps: boolean;
   /** Header "target: …" segment (chat-screen gates the header target on this). */
@@ -236,10 +245,19 @@ const DEFS: readonly TuiSettingDef[] = [
     group: "Transcript",
   },
   {
-    key: "showAgentRail",
-    label: "Agent rail",
+    key: "showLeftSidebar",
+    label: "Left sidebar",
     description:
-      "Right sidebar in the chat view listing the active agents (task, status, turns, findings). Hidden on narrow terminals.",
+      "Left sidebar in the chat view: recent sessions to resume, plus this run's findings. Hidden on narrow terminals.",
+    kind: "boolean",
+    default: false,
+    group: "Display",
+  },
+  {
+    key: "showRightSidebar",
+    label: "Right sidebar",
+    description:
+      "Right sidebar in the chat view: live agents (task, status, turns, findings) plus a context strip. Hidden on narrow terminals.",
     kind: "boolean",
     default: false,
     group: "Display",
@@ -439,7 +457,8 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showRuntimeNotices: true,
   showTurnSummary: false,
   showSubagents: true,
-  showAgentRail: false,
+  showLeftSidebar: false,
+  showRightSidebar: false,
   showTimestamps: false,
   showTarget: true,
   showScope: true,
@@ -603,6 +622,19 @@ function booleanAt(raw: unknown, key: BooleanKey): boolean {
   return typeof value === "boolean" ? value : DEFAULT_SETTINGS[key];
 }
 
+/**
+ * A boolean read that falls back to a renamed-away legacy key before the
+ * default, so a setting that changed names still honours a hand-edited or
+ * previously-saved file written under the old name.
+ */
+function booleanWithLegacy(raw: unknown, key: BooleanKey, legacyKey: string): boolean {
+  const value = rawValue(raw, key);
+  if (typeof value === "boolean") return value;
+  const legacy = rawValue(raw, legacyKey);
+  if (typeof legacy === "boolean") return legacy;
+  return DEFAULT_SETTINGS[key];
+}
+
 function enumAt<K extends EnumKey>(raw: unknown, key: K): TuiSettings[K] {
   const def = DEF_BY_KEY.get(key);
   const value = rawValue(raw, key);
@@ -642,7 +674,10 @@ export function normalizeSettings(raw: unknown): TuiSettings {
     showRuntimeNotices: booleanAt(raw, "showRuntimeNotices"),
     showTurnSummary: booleanAt(raw, "showTurnSummary"),
     showSubagents: booleanAt(raw, "showSubagents"),
-    showAgentRail: booleanAt(raw, "showAgentRail"),
+    showLeftSidebar: booleanAt(raw, "showLeftSidebar"),
+    // Back-compat: the right sidebar was `showAgentRail` before it grew a
+    // context strip and a left twin. A pre-rename file keeps its choice.
+    showRightSidebar: booleanWithLegacy(raw, "showRightSidebar", "showAgentRail"),
     showTimestamps: booleanAt(raw, "showTimestamps"),
     showTarget: booleanAt(raw, "showTarget"),
     showScope: booleanAt(raw, "showScope"),

@@ -381,27 +381,49 @@ describe("subagent messaging settings", () => {
   });
 });
 
-describe("agent rail setting", () => {
-  it("ships OFF by default", () => {
-    expect(DEFAULT_SETTINGS.showAgentRail).toBe(false);
+describe("sidebar settings", () => {
+  it("both ship OFF by default", () => {
+    expect(DEFAULT_SETTINGS.showRightSidebar).toBe(false);
+    expect(DEFAULT_SETTINGS.showLeftSidebar).toBe(false);
   });
 
-  it("is a Display boolean", () => {
-    const def = SETTING_DEFS.find((d) => d.key === "showAgentRail");
-    expect(def?.group).toBe("Display");
-    expect(def?.kind).toBe("boolean");
+  it("are Display booleans", () => {
+    for (const key of ["showRightSidebar", "showLeftSidebar"] as const) {
+      const def = SETTING_DEFS.find((d) => d.key === key);
+      expect(def?.group).toBe("Display");
+      expect(def?.kind).toBe("boolean");
+    }
   });
 
-  it("toggles on and back off", () => {
-    const on = toggleSetting(DEFAULT_SETTINGS, "showAgentRail");
-    expect(on.showAgentRail).toBe(true);
-    expect(toggleSetting(on, "showAgentRail").showAgentRail).toBe(false);
+  it("toggle on and back off", () => {
+    const on = toggleSetting(DEFAULT_SETTINGS, "showRightSidebar");
+    expect(on.showRightSidebar).toBe(true);
+    expect(toggleSetting(on, "showRightSidebar").showRightSidebar).toBe(false);
+
+    const left = toggleSetting(DEFAULT_SETTINGS, "showLeftSidebar");
+    expect(left.showLeftSidebar).toBe(true);
+    expect(toggleSetting(left, "showLeftSidebar").showLeftSidebar).toBe(false);
   });
 
-  it("round-trips an enabled rail through save and load", () => {
+  it("round-trip an enabled sidebar through save and load", () => {
     const home = makeHome();
-    expect(saveSettings({ ...DEFAULT_SETTINGS, showAgentRail: true }, home)).toBe(true);
-    expect(loadSettings(home).showAgentRail).toBe(true);
+    expect(
+      saveSettings(
+        { ...DEFAULT_SETTINGS, showRightSidebar: true, showLeftSidebar: true },
+        home,
+      ),
+    ).toBe(true);
+    expect(loadSettings(home).showRightSidebar).toBe(true);
+    expect(loadSettings(home).showLeftSidebar).toBe(true);
+  });
+
+  it("honours the legacy `showAgentRail` key on load", () => {
+    // A file written before the rename carries only `showAgentRail`.
+    expect(normalizeSettings({ showAgentRail: true }).showRightSidebar).toBe(true);
+    // The new key wins when both are present.
+    expect(
+      normalizeSettings({ showAgentRail: true, showRightSidebar: false }).showRightSidebar,
+    ).toBe(false);
   });
 });
 
