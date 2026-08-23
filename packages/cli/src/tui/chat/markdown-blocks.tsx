@@ -128,16 +128,23 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
       // so the tinted surface reads as a clean rectangle regardless of how the
       // parent sizes the box, and whitespace/indentation is preserved verbatim
       // because a line's token texts concatenate back to the source line.
+      //
+      // The language is shown as a small dim CHIP — a bracketed `[bash]`
+      // right-aligned on the surface's first row — not a bare word on its own
+      // line, so it reads as a label on the block rather than as stray code.
       const { surfaceAlt } = theme;
       const lang = block.language;
-      const langWidth = lang ? codeLineWidth(lang) : 0;
-      const maxWidth = block.lines.reduce((w, line) => Math.max(w, codeLineWidth(line)), langWidth);
+      const chip = lang ? `[${lang}]` : "";
+      const chipWidth = codeLineWidth(chip);
+      const maxWidth = block.lines.reduce((w, line) => Math.max(w, codeLineWidth(line)), chipWidth);
+      const chipLead = Math.max(0, maxWidth - chipWidth);
       return (
         <box key={id} flexDirection="column" flexShrink={0} minWidth={0} paddingX={1} backgroundColor={surfaceAlt}>
-          {lang ? (
-            <text fg={MUTED} attributes={TextAttributes.DIM}>
-              {lang + " ".repeat(Math.max(0, maxWidth - langWidth))}
-            </text>
+          {chip ? (
+            <box flexDirection="row" flexShrink={0} minWidth={0}>
+              {chipLead > 0 ? <text flexShrink={0} fg={MUTED} attributes={TextAttributes.DIM}>{" ".repeat(chipLead)}</text> : null}
+              <text flexShrink={0} fg={MUTED} attributes={TextAttributes.DIM}>{chip}</text>
+            </box>
           ) : null}
           {block.lines.map((line, i) => {
             const tokens = highlightCode(line, lang);
