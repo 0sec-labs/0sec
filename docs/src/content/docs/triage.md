@@ -3,8 +3,7 @@ title: Finding Triage
 description: The multi-layer triage pipeline that sits between 0sec's research and verify agents — and what the 2026-04-11 ablation measured it doing.
 ---
 
-An autonomous pentester is only as valuable as its false-positive rate. 0sec
-runs a triage pipeline between the research agent and the blind verify agent.
+0sec runs a triage pipeline between the research agent and the blind verify agent.
 Every finding walks through a stack of independent filters; each can kill,
 downgrade, or boost it. Most are deterministic, zero-cost, and run before any
 verification token is spent.

@@ -61,8 +61,7 @@ real-target scanning:
   calls is the practical sweet spot.
 - **Concurrent subagents.** 0sec now ships `spawn_agents`: the lead agent can fan
   out focused children concurrently (bounded fan-out, default concurrency 4) and a
-  child can coordinate with its parent. This is a real capability the harness uses —
-  not a skipped one.
+  child can coordinate with its parent. This is a real capability the harness uses.
 - **White-box mode.** `--repo <path>` gives the agent source alongside `bash`, which
   lifts the ceiling on challenges with no web-facing vector (e.g. credentials
   hardcoded in source). CI runs black-box and white-box independently.

@@ -91,4 +91,4 @@ Source-level investigation into an earlier 8-challenge XBOW holdout set. Useful 
 
 ## The big picture
 
-0sec is not a template runner or a static analyzer. It is a harness for autonomous agents that think like pentesters — they work in a terminal, explore in parallel, and every finding they report is reproduced by an independent blind agent before it ships. The framework's job is to get out of the model's way and hold the process honest, so that what comes out the other end is a real, reproducible vulnerability.
+The framework runs agents in a terminal, explores in parallel, and reproduces every reported finding with an independent blind agent before it ships.

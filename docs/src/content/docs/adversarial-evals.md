@@ -47,15 +47,14 @@ That's where an attack-driven evaluator has a structural advantage.
 ## What makes it different from generic evals
 
 - attack-driven, not judge-driven
-- exploit- and evidence-based, not vibes
+- exploit- and evidence-based
 - built for repeated pressure, not one-shot scoring
 - finds real security and control-boundary failures
 
 ## Building on the wedge
 
-A dedicated adversarial-eval surface builds on the existing pentest engine — no
-separate product that ignores it, no dashboard-first abstraction, no "prompt
-tests with nicer charts." The mode still needs to define a target model for AI
+A dedicated adversarial-eval surface builds on the existing pentest engine. The
+mode still needs to define a target model for AI
 systems, an evidence- and recurrence-focused report format, and attack classes
 with success criteria tuned for agentic systems.
 
