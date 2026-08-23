@@ -24,6 +24,8 @@ import {
   toolHeaderPrefix,
   commandCardFrame,
   editCardFrame,
+  webCardFrame,
+  webSourceHost,
   commandCardFooter,
   foldBodyLines,
   type CollapseEntryLike,
@@ -529,6 +531,50 @@ describe("commandCardFrame / editCardFrame", () => {
   it("degrades (does not render) below the border chrome + minimum", () => {
     expect(commandCardFrame(4).render).toBe(false);
     expect(commandCardFrame(0).render).toBe(false);
+  });
+});
+
+describe("webCardFrame", () => {
+  it("never lets the card's inner or outer width exceed the pane, across the sweep", () => {
+    for (const width of WIDTHS) {
+      const frame = webCardFrame(width);
+      expect(isWidth(frame.outerWidth)).toBe(true);
+      expect(isWidth(frame.innerWidth)).toBe(true);
+      if (frame.render) {
+        expect(frame.outerWidth).toBeLessThanOrEqual(width);
+        // outer = inner + border(2) + padding(2)
+        expect(frame.innerWidth).toBe(frame.outerWidth - 4);
+        expect(frame.innerWidth).toBeGreaterThanOrEqual(1);
+      } else {
+        expect(frame.outerWidth).toBe(0);
+        expect(frame.innerWidth).toBe(0);
+      }
+    }
+  });
+
+  it("renders at the two reference terminal widths (80 and 120 content cols)", () => {
+    for (const width of [72, 112]) {
+      const frame = webCardFrame(width);
+      expect(frame.render).toBe(true);
+      expect(frame.innerWidth).toBe(width - 4);
+    }
+  });
+
+  it("degrades (does not render) below the border chrome + minimum", () => {
+    expect(webCardFrame(4).render).toBe(false);
+    expect(webCardFrame(0).render).toBe(false);
+  });
+});
+
+describe("webSourceHost", () => {
+  it("extracts the host and drops a leading www.", () => {
+    expect(webSourceHost("https://www.example.com/a/b?q=1")).toBe("example.com");
+    expect(webSourceHost("https://sub.example.com/path")).toBe("sub.example.com");
+  });
+
+  it("falls back to a trimmed host for a scheme-less or malformed url", () => {
+    expect(webSourceHost("example.com/foo")).toBe("example.com");
+    expect(webSourceHost("")).toBe("");
   });
 });
 

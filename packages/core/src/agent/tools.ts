@@ -6788,15 +6788,29 @@ export class ToolExecutor {
         }
       }
 
+      // Display-only sidecar (never reaches the model — the loop serializers
+      // read only `output`/`error`) so the TUI can draw a rich web-search card.
+      // DuckDuckGo's HTML endpoint returns no instant answer or per-result age,
+      // so `answer`/`age` stay absent and the card degrades gracefully.
+      const webMeta: ToolResultMeta = {
+        kind: "web",
+        provider: "DuckDuckGo",
+        query,
+        sources: results.map((r) => ({
+          ...(r.title ? { title: r.title } : {}),
+          url: r.url,
+        })),
+      };
+
       if (results.length === 0) {
-        return { success: true, output: { message: "No results found.", results: [] } };
+        return { success: true, output: { message: "No results found.", results: [] }, meta: webMeta };
       }
 
       const formatted = results
         .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
         .join("\n\n");
 
-      return { success: true, output: { message: `Top ${results.length} results:`, formatted, results } };
+      return { success: true, output: { message: `Top ${results.length} results:`, formatted, results }, meta: webMeta };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: null, error: `Web search failed: ${msg}` };

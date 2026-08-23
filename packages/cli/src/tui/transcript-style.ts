@@ -706,6 +706,29 @@ export function editCardFrame(maxWidth: number): CardFrame {
   return cardFrame(maxWidth);
 }
 
+/** Geometry for a web-search card (`⌕ Web Search` / query / answer / sources). */
+export function webCardFrame(maxWidth: number): CardFrame {
+  return cardFrame(maxWidth);
+}
+
+/**
+ * The display host for a source url — `example.com` from
+ * `https://example.com/a/b?q=1`, with a leading `www.` dropped. Pure and
+ * total: an unparseable url falls back to the raw string (trimmed of scheme)
+ * so a malformed result still shows *something* rather than nothing.
+ */
+export function webSourceHost(url: string): string {
+  const raw = (url ?? "").trim();
+  if (raw.length === 0) return "";
+  try {
+    const host = new URL(raw).host;
+    return host.replace(/^www\./, "");
+  } catch {
+    // Not an absolute url: strip any scheme and take the first path segment.
+    return raw.replace(/^[a-z]+:\/\//i, "").split(/[/?#]/)[0] ?? raw;
+  }
+}
+
 /**
  * The footer line for a command card: `(Wall Xs | Timeout Ys | Exit: N)`.
  * Segments are omitted when their datum is unknown so a restored card (which

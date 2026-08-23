@@ -68,8 +68,8 @@ export interface ToolResult {
  * can render a rich card. NOT seen by the model (see {@link ToolResult.meta}).
  */
 export interface ToolResultMeta {
-  /** Which card the UI should draw. `command` → bash/run_command; `edit` → apply_patch. */
-  kind?: "command" | "edit";
+  /** Which card the UI should draw. `command` → bash/run_command; `edit` → apply_patch; `web` → web_search. */
+  kind?: "command" | "edit" | "web";
   // ── command card ──
   /** The command that was executed (header line `$ <command>`). */
   command?: string;
@@ -92,6 +92,15 @@ export interface ToolResultMeta {
   removed?: number;
   /** A diff body (hunk lines) for the card, when available. */
   diff?: string;
+  // ── web card ──
+  /** Search provider name (header line `⌕ Web Search: <provider>`). */
+  provider?: string;
+  /** The search query that was run. */
+  query?: string;
+  /** A short answer/summary, when the provider returns one. Absent otherwise. */
+  answer?: string;
+  /** The result sources: title (optional), url, and an optional relative age. */
+  sources?: Array<{ title?: string; url: string; age?: string }>;
 }
 
 // ── Console autonomy (scoped source-audit gate) ──

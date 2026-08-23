@@ -12,6 +12,8 @@ import {
   commandCardFooter,
   commandCardFrame,
   editCardFrame,
+  webCardFrame,
+  webSourceHost,
   foldBodyLines,
   foldSummary,
   roleLabelText,
@@ -60,6 +62,10 @@ function normalizeReasoning(text: string): string {
 const COMMAND_CARD_MAX_LINES = 14;
 /** Max diff lines an edit card shows before the middle-out fold kicks in. */
 const EDIT_CARD_MAX_LINES = 20;
+/** Max answer lines a web card shows before the middle-out fold kicks in. */
+const WEB_CARD_ANSWER_MAX_LINES = 6;
+/** Max source rows a web card shows before capping with a `+N more` line. */
+const WEB_CARD_MAX_SOURCES = 6;
 
 /** Compact relative age, e.g. "12s" / "4m" / "2h". */
 function relativeAge(at: number | undefined, now: number): string {
@@ -71,6 +77,52 @@ function relativeAge(at: number | undefined, now: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h`;
+}
+
+/**
+ * Word-wrap a prose blob into at most `maxLines` lines of `width` cells, for the
+ * web card's answer block. The source is sanitized first (newlines collapse to
+ * spaces), then greedily packed; a word longer than the line is hard-split. When
+ * the text overruns the line budget the last shown line is ellipsised so the
+ * fold is visible. Every returned line is <= `width`, so the caller's per-line
+ * `fitTuiText` is a no-op safety net rather than a truncation. Pure.
+ */
+function wrapAnswerLines(text: string, width: number, maxLines: number): string[] {
+  const clean = sanitizeTuiText(text);
+  if (width <= 0 || maxLines <= 0 || clean.length === 0) return [];
+  const words = clean.split(" ").filter((w) => w.length > 0);
+  const lines: string[] = [];
+  let cur = "";
+  let overflowed = false;
+  for (const word of words) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (next.length <= width) {
+      cur = next;
+      continue;
+    }
+    if (cur) lines.push(cur);
+    if (lines.length >= maxLines) { overflowed = true; cur = ""; break; }
+    if (word.length > width) {
+      let rest = word;
+      while (rest.length > width && lines.length < maxLines) {
+        lines.push(rest.slice(0, width));
+        rest = rest.slice(width);
+      }
+      if (lines.length >= maxLines) { overflowed = rest.length > 0; cur = ""; break; }
+      cur = rest;
+    } else {
+      cur = word;
+    }
+  }
+  if (cur) {
+    if (lines.length < maxLines) lines.push(cur);
+    else overflowed = true;
+  }
+  if (overflowed && lines.length > 0) {
+    const last = lines[lines.length - 1]!;
+    lines[lines.length - 1] = last.endsWith("…") ? last : fitTuiText(`${last} …`, width);
+  }
+  return lines;
 }
 
 /**
@@ -398,6 +450,85 @@ export function renderEntry(
       }
     }
 
+    // ── Web-search card (OMP-style): a bordered card with the provider +
+    // source count header, the query, an optional answer/summary, and a bounded
+    // sources list (title + host + optional age). Display-only, driven by the
+    // web `meta` sidecar; a failed search carries no meta so this only fires on
+    // success. Degrades gracefully when answer/age/title are absent. ──
+    if (richCards && entry.metaKind === "web" && !hideSuccessCard) {
+      const cardFrame = webCardFrame(maxWidth);
+      if (cardFrame.render) {
+        const inner = cardFrame.innerWidth;
+        const cardTone = failed ? ERROR : BORDER;
+        const provider = entry.webProvider?.trim() || "web";
+        const sources = entry.webSources ?? [];
+        const query = entry.webQuery?.trim() ?? "";
+        const answer = entry.webAnswer?.trim() ?? "";
+        const answerLines = answer.length > 0 ? wrapAnswerLines(answer, inner, WEB_CARD_ANSWER_MAX_LINES) : [];
+        const shownSources = sources.slice(0, WEB_CARD_MAX_SOURCES);
+        const hiddenSources = sources.length - shownSources.length;
+        const header = `⌕ Web Search: ${provider} · ${sources.length} source${sources.length === 1 ? "" : "s"}`;
+        const QUERY_LABEL = "Query ";
+        return finish(
+          <box
+            key={entry.id}
+            flexDirection="column"
+            width={cardFrame.outerWidth}
+            flexShrink={0}
+            minWidth={0}
+            marginTop={display.spacing}
+            border
+            borderColor={cardTone}
+            paddingX={1}
+          >
+            <box minWidth={0}>
+              <text fg={PRIMARY} attributes={TextAttributes.BOLD}>{fitTuiText(header, inner)}</text>
+            </box>
+            {query ? (
+              <box flexDirection="row" minWidth={0} marginTop={1}>
+                <text fg={MUTED}>{QUERY_LABEL}</text>
+                <text fg={TEXT}>{fitTuiText(query, Math.max(1, inner - QUERY_LABEL.length))}</text>
+              </box>
+            ) : null}
+            {answerLines.length > 0 ? (
+              <box flexDirection="column" minWidth={0} marginTop={1}>
+                <text fg={MUTED}>Answer</text>
+                {answerLines.map((line, i) => (
+                  <text key={`a-${i}`} fg={line.endsWith("…") ? MUTED : TEXT}>{fitTuiText(line, inner)}</text>
+                ))}
+              </box>
+            ) : null}
+            {shownSources.length > 0 ? (
+              <box flexDirection="column" minWidth={0} marginTop={1}>
+                <text fg={MUTED}>Sources</text>
+                {shownSources.map((source, i) => {
+                  const host = webSourceHost(source.url);
+                  const title = (source.title ?? "").trim() || host || source.url;
+                  const age = source.age?.trim() ? ` · ${source.age.trim()}` : "";
+                  const titleMax = Math.max(1, Math.ceil(inner * 0.6));
+                  const fittedTitle = fitTuiText(title, titleMax);
+                  const metaBudget = Math.max(0, inner - fittedTitle.length);
+                  const metaText = metaBudget > 0 ? fitTuiText(` · ${host}${age}`, metaBudget) : "";
+                  return (
+                    <box key={`s-${i}`} flexDirection="row" minWidth={0}>
+                      <text fg={TEXT}>{fittedTitle}</text>
+                      {metaText ? <text fg={MUTED}>{metaText}</text> : null}
+                    </box>
+                  );
+                })}
+                {hiddenSources > 0 ? (
+                  <text fg={MUTED}>{fitTuiText(`+${hiddenSources} more`, inner)}</text>
+                ) : null}
+              </box>
+            ) : null}
+            <box minWidth={0} marginTop={1}>
+              <text fg={MUTED}>{fitTuiText(`(${provider})`, inner)}</text>
+            </box>
+          </box>,
+        );
+      }
+    }
+
     const frame = toolFrame(toolCardStyle, maxWidth, entry.success);
     if (!frame.render) return null;
     const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);
@@ -421,7 +552,7 @@ export function renderEntry(
       return finish(
         <box key={entry.id} flexDirection="column" minWidth={0} marginTop={display.spacing}>
           {shimmerRunning ? (
-            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
           ) : (
             <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{compactLine}</text>
           )}
@@ -444,7 +575,7 @@ export function renderEntry(
           <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{icon}</text>
           <text fg={MUTED}>{toolPrefix}</text>
           {shimmerRunning ? (
-            <ShimmerText label={toolName} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+            <ShimmerText label={toolName} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
           ) : (
             <text fg={failed ? ERROR : TEXT} attributes={failed ? TextAttributes.BOLD : undefined}>{toolName}</text>
           )}
@@ -484,7 +615,7 @@ export function renderEntry(
       return finish(
         <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
           {shimmerRunning ? (
-            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
           ) : (
             <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{compactLine}</text>
           )}
@@ -503,7 +634,7 @@ export function renderEntry(
             <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{glyph}</text>
             <text fg={MUTED}> </text>
             {shimmerRunning ? (
-              <ShimmerText label="evidence / subagent" frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+              <ShimmerText label="evidence / subagent" frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
             ) : (
               <text fg={BRAND}>evidence / subagent</text>
             )}
@@ -564,7 +695,7 @@ export function renderEntry(
         </box>
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
           {shimmerThinking ? (
-            <ShimmerText label="thinking" frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+            <ShimmerText label="thinking" frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
           ) : (
             <text fg={MUTED}>thinking</text>
           )}
@@ -646,7 +777,7 @@ export function renderFold(
   theme: Theme,
   interaction?: TranscriptRowInteraction,
 ) {
-  const { MUTED, TEXT, PANEL_ALT } = theme;
+  const { MUTED, TEXT, PANEL_ALT, ERROR } = theme;
   const key = `fold-${item.entries[0]?.id ?? item.turn}`;
   // `toolCardStyle: "hidden"` means "don't show me successful tool activity";
   // honour it inside a fold too by dropping the tool/subagent steps from the
@@ -689,7 +820,7 @@ export function renderFold(
       </box>
       <box flexGrow={1} minWidth={0}>
         {shimmerFold ? (
-          <ShimmerText label={summaryFitted} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+          <ShimmerText label={summaryFitted} frame={display.shimmerFrame!} base={MUTED} peak={ERROR} />
         ) : (
           <text fg={MUTED}>{summaryFitted}</text>
         )}

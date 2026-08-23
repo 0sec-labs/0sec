@@ -57,9 +57,10 @@ export type ChatEntry = {
    * entry without them renders as the existing rail/compact line.
    *
    * `metaKind` selects the card: "command" (a `$ cmd` + output + wall/exit
-   * footer) or "edit" (a `✎ Edit: path (+A/-R)` header + diff).
+   * footer), "edit" (a `✎ Edit: path (+A/-R)` header + diff), or "web" (a
+   * `⌕ Web Search` header + query + answer + sources list).
    */
-  metaKind?: "command" | "edit";
+  metaKind?: "command" | "edit" | "web";
   // ── command card ──
   /** The command that was run (header `$ <command>`). */
   command?: string;
@@ -82,6 +83,15 @@ export type ChatEntry = {
   editRemoved?: number;
   /** A diff body (hunk lines) for the edit card, when available. */
   editDiff?: string;
+  // ── web card ──
+  /** Search provider name (header `⌕ Web Search: <provider>`). */
+  webProvider?: string;
+  /** The search query that was run. */
+  webQuery?: string;
+  /** A short answer/summary, when the provider returns one. */
+  webAnswer?: string;
+  /** The result sources: title (optional), url, and an optional relative age. */
+  webSources?: Array<{ title?: string; url: string; age?: string }>;
 };
 
 export interface EntryDisplay {

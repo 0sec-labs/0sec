@@ -262,7 +262,7 @@ export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doc
  * Typed structurally so this module needs no extra core-type import.
  */
 interface ToolCardMeta {
-  kind?: "command" | "edit";
+  kind?: "command" | "edit" | "web";
   command?: string;
   exitCode?: number | null;
   durationMs?: number;
@@ -273,6 +273,10 @@ interface ToolCardMeta {
   added?: number;
   removed?: number;
   diff?: string;
+  provider?: string;
+  query?: string;
+  answer?: string;
+  sources?: Array<{ title?: string; url: string; age?: string }>;
 }
 
 /**
@@ -281,7 +285,7 @@ interface ToolCardMeta {
  * object when there is no card to draw, so a spread leaves the entry untouched.
  */
 function toolCardFieldsFromMeta(meta: ToolCardMeta | undefined): Partial<ChatEntry> {
-  if (!meta || (meta.kind !== "command" && meta.kind !== "edit")) return {};
+  if (!meta || (meta.kind !== "command" && meta.kind !== "edit" && meta.kind !== "web")) return {};
   if (meta.kind === "command") {
     return {
       metaKind: "command",
@@ -291,6 +295,15 @@ function toolCardFieldsFromMeta(meta: ToolCardMeta | undefined): Partial<ChatEnt
       wallMs: meta.durationMs,
       timeoutMs: meta.timeoutMs,
       timedOut: meta.timedOut,
+    };
+  }
+  if (meta.kind === "web") {
+    return {
+      metaKind: "web",
+      webProvider: meta.provider,
+      webQuery: meta.query,
+      webAnswer: meta.answer,
+      webSources: meta.sources,
     };
   }
   return {
@@ -3372,7 +3385,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       </box>
       <box flexGrow={1} minWidth={0}>
         {shimmerActive ? (
-          <ShimmerText label={workingLineFitted} frame={shimmerFrame} base={MUTED} peak={TEXT} />
+          <ShimmerText label={workingLineFitted} frame={shimmerFrame} base={MUTED} peak={ERROR} />
         ) : (
           <text fg={MUTED}>{workingLineFitted}</text>
         )}
