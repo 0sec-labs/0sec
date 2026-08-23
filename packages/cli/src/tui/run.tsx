@@ -21,6 +21,7 @@ import { HerdScreen } from "./herd-screen.js";
 import { SettingsScreen } from "./settings-screen.js";
 import { ModelScreen } from "./model-screen.js";
 import { MarketScreen } from "./market-screen.js";
+import { createPluginService } from "./plugin-service.js";
 import { ConnectScreen } from "./connect-screen.js";
 import { UsageScreen } from "./usage-screen.js";
 import { FindingDetailScreen } from "./finding-detail-screen.js";
@@ -3841,10 +3842,26 @@ function ModelRoute({
  * with no endpoint configured.
  */
 function MarketRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+  // The registry URL and the service that installs/enables/runs against it are
+  // resolved together so the screen's empty-state URL and the service's fetch
+  // target never diverge. The service is the ONE bridge to the plugin
+  // machinery: install writes bytes, enable records approval, run loads via the
+  // host, and a theme activate hands off to the theme setting. Built once so a
+  // load host persists for the life of the overlay.
+  const registryUrl = React.useMemo(
+    () => (process.env["0SEC_REGISTRY_URL"] ?? "").trim(),
+    [],
+  );
+  const service = React.useMemo(
+    () => createPluginService({ registryUrl }),
+    [registryUrl],
+  );
   return (
     <MarketScreen
       onBack={() => leaveCurrentScreen(shell, onExit)}
       onExit={onExit}
+      registryUrl={registryUrl}
+      service={service}
       frame={({ body, hint }) => (
         <ShellFrame view="marketplace">
           {body}

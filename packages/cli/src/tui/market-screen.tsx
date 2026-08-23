@@ -32,9 +32,6 @@
  * touching the network or the filesystem.
  */
 
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import React, { useEffect, useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { TextAttributes } from "@opentui/core";
@@ -43,20 +40,21 @@ import { useTheme, type Theme } from "./theme-context.js";
 import { useSettings } from "./settings-store.js";
 import { Cells } from "./primitives.js";
 import {
-  installedThemeEntries,
-  isSafeThemeId,
-  reloadInstalledThemes,
-  validateTheme,
-  writeInstalledTheme,
-  type ThemeEntry,
-} from "./themes.js";
+  createPluginService,
+  type InstalledIndex,
+  type MarketFetchResult,
+  type MarketInstallResult,
+  type PluginService,
+} from "./plugin-service.js";
 import {
+  actionForRow,
   buildMarketItems,
   buildMarketRows,
   clampSelection,
   clipMarketDetailLines,
   computeMarketLayout,
   computeMarketWindow,
+  confirmPrompt,
   isFilterKey,
   marketDetailLines,
   marketEmptyLines,
@@ -65,6 +63,7 @@ import {
   paneTitleColumns,
   moveSelection,
   stateTag,
+  type MarketAction,
   type MarketDetailTone,
   type MarketItem,
   type MarketMode,
@@ -73,186 +72,18 @@ import {
   type MarketState,
 } from "./market-layout.js";
 
+export type { InstalledIndex, MarketFetchResult, MarketInstallResult } from "./plugin-service.js";
+
 /** How many rows page-up and page-down move. */
 const PAGE_STEP = 5;
 
 // ---------------------------------------------------------------------------
-// Injected ports (real defaults lazily import @0sec/core)
+// Registry URL + service wiring
 // ---------------------------------------------------------------------------
-
-export type MarketFetchResult =
-  | { ok: true; result: MarketRegistryView }
-  | { ok: false; error: string };
-
-export interface MarketInstallResult {
-  ok: boolean;
-  /** One-line status for the notice bar. */
-  message: string;
-  /** The state to reflect inline after a successful install. */
-  state?: MarketState;
-}
-
-/** The installed/enabled state of everything on this machine, read once. */
-export interface InstalledIndex {
-  themes: Set<string>;
-  activeTheme: string;
-  plugins: Map<string, "installed" | "enabled">;
-}
-
-/** Structural view of a theme artifact's installable palette (from core). */
-interface RawThemeArtifact {
-  manifest?: {
-    theme?: {
-      label?: string;
-      description?: string;
-      mode?: "dark" | "light";
-      palette?: Record<string, string>;
-    };
-  };
-}
-
-/** Structural view of a plugin entry's installable files (from core). */
-interface RawPluginEntry {
-  id: string;
-  version: string;
-  manifest?: unknown;
-  files?: Record<string, string>;
-}
 
 /** The registry index URL: prop, then env, then the (empty) core default. */
 function resolveRegistryUrl(explicit?: string): string {
   return (explicit ?? process.env["0SEC_REGISTRY_URL"] ?? "").trim();
-}
-
-/** Default loader: fetch + validate the index through the core registry client. */
-async function defaultLoad(url: string): Promise<MarketFetchResult> {
-  try {
-    const core = (await import("@0sec/core")) as unknown as {
-      fetchRegistryIndex: (
-        u: string,
-        opts: { fetchImpl: typeof fetch; verifier: unknown },
-      ) => Promise<{ ok: true; result: MarketRegistryView } | { ok: false; error: string }>;
-      unconfiguredVerifier: unknown;
-    };
-    const fetched = await core.fetchRegistryIndex(url, {
-      fetchImpl: fetch,
-      verifier: core.unconfiguredVerifier,
-    });
-    if (!fetched.ok) return { ok: false, error: fetched.error };
-    return { ok: true, result: fetched.result };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/** Default installed-state read: installed themes here, installed/enabled plugins. */
-async function defaultReadInstalled(homeDir: string | undefined, activeTheme: string): Promise<InstalledIndex> {
-  const themes = new Set<string>();
-  try {
-    for (const entry of installedThemeEntries(homeDir)) themes.add(entry.name);
-  } catch {
-    // fail-soft: no installed themes readable
-  }
-  const plugins = new Map<string, "installed" | "enabled">();
-  try {
-    const core = (await import("@0sec/core")) as unknown as {
-      pluginsRootDir: (homeDir?: string) => string;
-      listInstalledPluginIds: (root: string) => string[];
-      readEnablement: (projectPath: string, homeDir?: string) => unknown;
-      isEnabled: (record: unknown, pluginId: string) => boolean;
-    };
-    const root = core.pluginsRootDir(homeDir);
-    const record = core.readEnablement(process.cwd(), homeDir);
-    for (const id of core.listInstalledPluginIds(root)) {
-      plugins.set(id, core.isEnabled(record, id) ? "enabled" : "installed");
-    }
-  } catch {
-    // fail-soft: no installed plugins readable
-  }
-  return { themes, activeTheme, plugins };
-}
-
-/** Default theme install: validate the palette, write the file. Runs nothing. */
-function installTheme(item: MarketItem, homeDir: string | undefined): MarketInstallResult {
-  if (!isSafeThemeId(item.id)) {
-    return { ok: false, message: `"${item.id}" is not a valid theme id; refused.` };
-  }
-  const theme = (item.raw as RawThemeArtifact)?.manifest?.theme;
-  const palette = theme?.palette;
-  if (!palette || typeof palette !== "object") {
-    return { ok: false, message: `Theme "${item.id}" is missing its palette.` };
-  }
-  if (validateTheme(palette).length > 0) {
-    return { ok: false, message: `Theme "${item.id}" has an invalid palette; refused.` };
-  }
-  const written = writeInstalledTheme(
-    {
-      id: item.id,
-      label: theme.label,
-      description: theme.description,
-      mode: theme.mode,
-      palette: palette as ThemeEntry["palette"],
-    },
-    homeDir,
-  );
-  if (!written.ok) return { ok: false, message: `Could not install "${item.id}": ${written.error}` };
-  reloadInstalledThemes(homeDir);
-  return {
-    ok: true,
-    message: `Installed theme ${item.id}. Apply with \`0sec theme apply ${item.id}\`.`,
-    state: "installed",
-  };
-}
-
-/** Default plugin install: copy the validated bytes. Never enables or executes. */
-async function installPlugin(item: MarketItem, homeDir: string | undefined): Promise<MarketInstallResult> {
-  const entry = item.raw as RawPluginEntry;
-  try {
-    const core = (await import("@0sec/core")) as unknown as {
-      isSafePluginId: (value: unknown) => boolean;
-      pluginsRootDir: (homeDir?: string) => string;
-      ensurePluginsRoot: (dir: string) => boolean;
-      PLUGIN_MANIFEST_FILE: string;
-      PLUGIN_ENTRY_FILE: string;
-      PLUGIN_DIR_MODE: number;
-      PLUGIN_FILE_MODE: number;
-    };
-    if (!core.isSafePluginId(item.id)) {
-      return { ok: false, message: `"${item.id}" is not a valid plugin id; refused.` };
-    }
-    const entryBody = entry.files?.[core.PLUGIN_ENTRY_FILE];
-    if (typeof entryBody !== "string") {
-      return { ok: false, message: `Registry entry is missing its ${core.PLUGIN_ENTRY_FILE}.` };
-    }
-    const root = core.pluginsRootDir(homeDir);
-    if (!core.ensurePluginsRoot(root)) {
-      return { ok: false, message: `Could not create the plugins root at ${root}.` };
-    }
-    // The directory is the validated id; the filenames are the loader's FIXED
-    // convention, never taken from the untrusted index — no path-traversal surface.
-    const dir = join(root, item.id);
-    mkdirSync(dir, { recursive: true, mode: core.PLUGIN_DIR_MODE });
-    chmodSync(dir, core.PLUGIN_DIR_MODE);
-    const manifestPath = join(dir, core.PLUGIN_MANIFEST_FILE);
-    writeFileSync(manifestPath, `${JSON.stringify(entry.manifest, null, 2)}\n`, {
-      mode: core.PLUGIN_FILE_MODE,
-    });
-    chmodSync(manifestPath, core.PLUGIN_FILE_MODE);
-    const entryPath = join(dir, core.PLUGIN_ENTRY_FILE);
-    writeFileSync(entryPath, entryBody, { mode: core.PLUGIN_FILE_MODE });
-    chmodSync(entryPath, core.PLUGIN_FILE_MODE);
-    return {
-      ok: true,
-      message: `Installed ${item.id}. NOT enabled — enable with \`0sec plugin enable ${item.id}\`.`,
-      state: "installed",
-    };
-  } catch (error) {
-    return { ok: false, message: `Could not install "${item.id}": ${error instanceof Error ? error.message : String(error)}` };
-  }
-}
-
-async function defaultInstall(item: MarketItem, homeDir: string | undefined): Promise<MarketInstallResult> {
-  return item.kind === "theme" ? installTheme(item, homeDir) : installPlugin(item, homeDir);
 }
 
 // ---------------------------------------------------------------------------
@@ -276,12 +107,20 @@ export interface MarketScreenProps {
   registryUrl?: string;
   /** Pre-fetched registry (tests / synchronous). When given, no fetch runs. */
   initialData?: MarketRegistryView;
-  /** Async registry loader. Injected in tests; defaults to the core client. */
+  /**
+   * The bridge to the plugin machinery. Injected by `run.tsx` (and by tests);
+   * when absent, a default service is built from `registryUrl`/`homeDir`. Every
+   * install/enable/run/activate action goes through it.
+   */
+  service?: PluginService;
+  /** Async registry loader override. Falls back to `service.fetchRegistry`. */
   load?: (url: string) => Promise<MarketFetchResult>;
-  /** Reads installed/enabled state. Injected in tests; defaults to the real dirs. */
+  /** Installed/enabled state read override. Falls back to `service.list`. */
   readInstalled?: (homeDir: string | undefined, activeTheme: string) => Promise<InstalledIndex>;
-  /** Installs the selected item. Injected in tests; defaults to the core install APIs. */
+  /** Install override. Falls back to `service.install`. */
   installItem?: (item: MarketItem, homeDir: string | undefined) => Promise<MarketInstallResult>;
+  /** True while a turn is in flight, so a run defers. Forwarded to the service. */
+  isTurnActive?: () => boolean;
   /** Home dir override for install + state reads. */
   homeDir?: string;
   /** Active theme name; defaults to the live setting. */
@@ -390,9 +229,11 @@ export function MarketScreen({
   onExit,
   registryUrl,
   initialData,
-  load = defaultLoad,
-  readInstalled = defaultReadInstalled,
-  installItem = defaultInstall,
+  service,
+  load,
+  readInstalled,
+  installItem,
+  isTurnActive,
   homeDir,
   activeThemeName,
 }: MarketScreenProps) {
@@ -402,6 +243,19 @@ export function MarketScreen({
 
   const url = useMemo(() => resolveRegistryUrl(registryUrl), [registryUrl]);
   const activeTheme = activeThemeName ?? settings.theme;
+
+  // One bridge to the plugin machinery: injected by `run.tsx`/tests, or built
+  // here from the resolved URL + home dir. The legacy `load`/`readInstalled`/
+  // `installItem` props remain as per-action test overrides on top of it.
+  const svc = useMemo<PluginService>(
+    () => service ?? createPluginService({ registryUrl: url, homeDir, isTurnActive }),
+    [service, url, homeDir, isTurnActive],
+  );
+  const doLoad = (u: string): Promise<MarketFetchResult> => (load ? load(u) : svc.fetchRegistry());
+  const doRead = (h: string | undefined, a: string): Promise<InstalledIndex> =>
+    readInstalled ? readInstalled(h, a) : svc.list(a);
+  const doInstall = (item: MarketItem, h: string | undefined): Promise<MarketInstallResult> =>
+    installItem ? installItem(item, h) : svc.install(item);
 
   const [filter, setFilter] = useState("");
   const [mode, setMode] = useState<MarketMode>("browse");
@@ -424,7 +278,7 @@ export function MarketScreen({
   useEffect(() => {
     if (initialData !== undefined || url.length === 0) return;
     let live = true;
-    void load(url).then((result) => {
+    void doLoad(url).then((result) => {
       if (!live) return;
       if (result.ok) setData(result.result);
       else setError(result.error);
@@ -433,18 +287,20 @@ export function MarketScreen({
     return () => {
       live = false;
     };
-  }, [initialData, load, url]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- doLoad is derived from svc/load, tracked below
+  }, [initialData, svc, load, url]);
 
   // Read installed/enabled state once per mount.
   useEffect(() => {
     let live = true;
-    void readInstalled(homeDir, activeTheme).then((index) => {
+    void doRead(homeDir, activeTheme).then((index) => {
       if (live) setInstalled(index);
     });
     return () => {
       live = false;
     };
-  }, [readInstalled, homeDir, activeTheme]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- doRead is derived from svc/readInstalled, tracked below
+  }, [svc, readInstalled, homeDir, activeTheme]);
 
   const stateFor = useMemo(() => {
     return (item: MarketItem): MarketState => {
@@ -495,15 +351,44 @@ export function MarketScreen({
     setAnchor(0);
   };
 
-  const runInstall = (item: MarketItem) => {
-    setNotice(`Installing ${item.name}…`);
-    void installItem(item, homeDir).then((result) => {
-      setNotice(result.message);
-      if (result.ok) {
-        // Re-read installed state so the inline tag and detail reflect the change.
-        void readInstalled(homeDir, activeTheme).then(setInstalled);
-      }
-    });
+  // The action `enter` triggers for the highlighted row: install → enable → run
+  // for plugins, install → activate for themes. `none` for a terminal state
+  // (an already-enabled plugin, the active theme).
+  const activeAction: MarketAction =
+    activeItem && activeState ? actionForRow(activeItem.kind, activeState) : "none";
+
+  // Apply a completed action's result: surface its message and, on success,
+  // re-read installed/enabled state so the row tag and detail reflect it live.
+  const applyResult = (result: { ok: boolean; message: string }) => {
+    setNotice(result.message);
+    if (result.ok) void doRead(homeDir, activeTheme).then(setInstalled);
+  };
+
+  // Each row action maps to exactly one service method. Install writes bytes and
+  // runs nothing; enable records the operator's capability approval; run loads an
+  // already-enabled plugin (deferring while a turn is in flight); activate hands
+  // a theme off to the theme setting. None is ever implied by another.
+  const dispatchAction = (action: MarketAction, item: MarketItem) => {
+    switch (action) {
+      case "install":
+        setNotice(`Installing ${item.name}…`);
+        void doInstall(item, homeDir).then(applyResult);
+        return;
+      case "enable":
+        setNotice(`Enabling ${item.name}…`);
+        void svc.enable(item).then(applyResult);
+        return;
+      case "run":
+        setNotice(`Loading ${item.name}…`);
+        void svc.run(item).then(applyResult);
+        return;
+      case "activate":
+        setNotice(`Applying ${item.name}…`);
+        void svc.activateTheme(item).then(applyResult);
+        return;
+      default:
+        return;
+    }
   };
 
   useKeyboard((key) => {
@@ -517,12 +402,12 @@ export function MarketScreen({
     // ── confirm mode ── (nothing effectful happens without a keystroke here)
     if (mode === "confirm") {
       if (seq === "y" || seq === "Y") {
-        if (activeItem && activeState === "available") runInstall(activeItem);
+        if (activeItem && activeAction !== "none") dispatchAction(activeAction, activeItem);
         setMode("browse");
         return;
       }
       if (seq === "n" || seq === "N" || key.name === "escape") {
-        setNotice("Install cancelled.");
+        setNotice("Cancelled.");
         setMode("browse");
         return;
       }
@@ -536,15 +421,16 @@ export function MarketScreen({
 
     if (key.name === "return") {
       if (!activeItem) return;
-      if (activeState === "available") {
+      if (activeAction === "none") {
+        setNotice(
+          activeItem.kind === "theme"
+            ? `${activeItem.id} is already the active theme.`
+            : `${activeItem.id} is already enabled for this project.`,
+        );
+      } else {
+        // Every effectful action is confirmed before it runs.
         setNotice("");
         setMode("confirm");
-      } else {
-        setNotice(
-          activeItem.kind === "plugin"
-            ? `${activeItem.id} is already installed — enable with \`0sec plugin enable\`.`
-            : `${activeItem.id} is already installed.`,
-        );
       }
       return;
     }
@@ -708,7 +594,7 @@ export function MarketScreen({
 
   const statusText =
     mode === "confirm" && activeItem
-      ? `Install ${activeItem.name} (${activeItem.kind})? y to confirm, n to cancel`
+      ? confirmPrompt(activeItem.name, activeItem.kind, activeAction, activeItem.capabilities)
       : mode === "filter"
         ? `filter: ${filter}_`
         : notice
@@ -775,5 +661,5 @@ export function MarketScreen({
   );
 
   const hasFilter = filter.length > 0;
-  return <>{frame({ body, hint: marketFooterHint(mode, hasFilter) })}</>;
+  return <>{frame({ body, hint: marketFooterHint(mode, hasFilter, activeAction) })}</>;
 }

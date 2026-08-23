@@ -790,10 +790,84 @@ export function actionHint(kind: MarketKind, state: MarketState): string {
   }
   if (kind === "plugin") {
     return state === "enabled"
-      ? "already enabled — manage with `0sec plugin`"
-      : "installed — enable explicitly with `0sec plugin enable`";
+      ? "enter to run — loads its tools (only an enabled plugin can load)"
+      : "enter to enable — records your approval of its capabilities (runs nothing)";
   }
-  return state === "active" ? "already the active theme" : "apply with `0sec theme apply`";
+  return state === "active" ? "already the active theme" : "enter to apply this theme";
+}
+
+// ---------------------------------------------------------------------------
+// Row actions: what `enter` does, per kind + state
+// ---------------------------------------------------------------------------
+
+/**
+ * The action the primary key (`enter`) triggers for a row, given its state. This
+ * is the UI half of the install ≠ enable ≠ run ladder:
+ *
+ *   - `available` → `install`  (write bytes; run nothing; never enable)
+ *   - plugin `installed` → `enable`   (record the operator's capability approval)
+ *   - plugin `enabled`   → `run`      (load the enabled plugin via the host)
+ *   - theme `installed`  → `activate` (apply the palette via the theme setting)
+ *   - already `enabled`/`active` in the terminal sense → `none` (nothing to do)
+ *
+ * Every non-`none` action is CONFIRMED before it runs; nothing effectful happens
+ * on a single keystroke.
+ */
+export type MarketAction = "install" | "enable" | "run" | "activate" | "none";
+
+export function actionForRow(kind: MarketKind, state: MarketState): MarketAction {
+  if (state === "available") return "install";
+  if (kind === "plugin") {
+    if (state === "installed") return "enable";
+    if (state === "enabled") return "run";
+    return "none";
+  }
+  // theme
+  return state === "installed" ? "activate" : "none";
+}
+
+/** The short verb for an action, used in the confirm footer (`y <verb>`). */
+export function actionVerb(action: MarketAction): string {
+  switch (action) {
+    case "install":
+      return "install";
+    case "enable":
+      return "enable";
+    case "run":
+      return "run";
+    case "activate":
+      return "apply";
+    default:
+      return "";
+  }
+}
+
+/**
+ * The one-line confirmation prompt for an action, naming EXACTLY what it does so
+ * the operator confirms an informed decision — the enable prompt spells out the
+ * capability set being approved (its risk surface), and the run prompt names the
+ * load. Pure so it can be asserted without a renderer.
+ */
+export function confirmPrompt(
+  name: string,
+  kind: MarketKind,
+  action: MarketAction,
+  capabilities: readonly string[] = [],
+): string {
+  switch (action) {
+    case "install":
+      return `Install ${name} (${kind})? y to confirm, n to cancel`;
+    case "enable": {
+      const caps = capabilities.length > 0 ? capabilities.join(", ") : "no capabilities declared";
+      return `Enable ${name}? Approves — ${caps}. Records approval; runs nothing. y confirm, n cancel`;
+    }
+    case "run":
+      return `Run ${name}? Loads its tools into the session. y to confirm, n to cancel`;
+    case "activate":
+      return `Apply theme ${name} as the console palette? y to confirm, n to cancel`;
+    default:
+      return "";
+  }
 }
 
 /**
@@ -1006,12 +1080,19 @@ export type MarketMode = "browse" | "filter" | "confirm";
  * printable character to the filter, install is confirmed (never silent), and
  * nothing on this screen enables a plugin.
  */
-export function marketFooterHint(mode: MarketMode, hasFilter = false): string {
+export function marketFooterHint(
+  mode: MarketMode,
+  hasFilter = false,
+  action: MarketAction = "install",
+): string {
   if (mode === "filter") return "type to filter · enter/esc done · backspace delete";
-  if (mode === "confirm") return "y install · n/esc cancel";
+  if (mode === "confirm") {
+    const verb = actionVerb(action) || "install";
+    return `y ${verb} · n/esc cancel`;
+  }
   return [
     "up/down move",
-    "enter install",
+    "enter act",
     "/ filter",
     hasFilter ? "esc clear filter" : "esc back",
     "ctrl+c exit",

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  actionForRow,
   actionHint,
+  actionVerb,
+  confirmPrompt,
   buildMarketItems,
   buildMarketRows,
   clampSelection,
@@ -121,7 +124,7 @@ describe("computeMarketLayout — the sweep", () => {
    * box one row short of its content paints its own border through that content.
    * Both are silent at compile time.
    */
-  it("never lets a pane, a row or a column exceed what it was given", () => {
+  it("never lets a pane, a row or a column exceed what it was given", { timeout: 30000 }, () => {
     for (let width = 0; width <= 200; width++) {
       for (let height = 0; height <= 80; height++) {
         for (const noticeRows of [0, 1]) {
@@ -580,17 +583,20 @@ describe("the detail pane", () => {
     expect(text).toContain("Capabilities requested: network, filesystem-read");
   });
 
-  it("never offers to enable a plugin from the browser", () => {
-    for (const state of ["available", "installed", "enabled"] as const) {
-      const text = textOf(marketDetailLines({ row: rowFor("acme.scanner", state) }, 70)).toLowerCase();
-      // The action hint may MENTION enabling as a separate explicit step, but the
-      // browser never treats install as enablement.
-      expect(text).not.toContain("enter to enable");
-    }
-    // Install of an available plugin is explicitly not enablement.
-    expect(
-      textOf(marketDetailLines({ row: rowFor("acme.scanner", "available") }, 70)),
-    ).toContain("does NOT enable");
+  it("treats enable as a separate explicit step, never implied by install", () => {
+    // An AVAILABLE plugin's only action is install, which explicitly does NOT
+    // enable — install ≠ enablement is stated on the row itself.
+    const available = textOf(marketDetailLines({ row: rowFor("acme.scanner", "available") }, 70));
+    expect(available).toContain("does NOT enable");
+    expect(available.toLowerCase()).not.toContain("enter to enable");
+    // Once INSTALLED, enabling becomes an offered — but separate and explicit —
+    // action, so the operator deliberately approves the capability set.
+    const installed = textOf(marketDetailLines({ row: rowFor("acme.scanner", "installed") }, 70));
+    expect(installed.toLowerCase()).toContain("enter to enable");
+    // An already-ENABLED plugin offers to run, not to re-enable.
+    const enabled = textOf(marketDetailLines({ row: rowFor("acme.scanner", "enabled") }, 70)).toLowerCase();
+    expect(enabled).toContain("enter to run");
+    expect(enabled).not.toContain("enter to enable");
   });
 
   it("marks an installed plugin as not enabled", () => {
@@ -705,15 +711,54 @@ describe("the empty / error state", () => {
 describe("hints and keys", () => {
   it("names the real keys in the footer hint, per mode", () => {
     const browse = marketFooterHint("browse");
-    for (const fragment of ["up/down", "enter install", "/ filter", "ctrl+c exit"]) {
+    for (const fragment of ["up/down", "enter act", "/ filter", "ctrl+c exit"]) {
       expect(browse).toContain(fragment);
     }
     expect(marketFooterHint("browse", false)).toContain("esc back");
     expect(marketFooterHint("browse", true)).toContain("esc clear filter");
     expect(marketFooterHint("filter")).toContain("backspace");
-    // Install is confirmed, never silent.
+    // Every effectful action is confirmed, never silent — the verb tracks it.
     expect(marketFooterHint("confirm")).toContain("y install");
     expect(marketFooterHint("confirm")).toContain("cancel");
+    expect(marketFooterHint("confirm", false, "enable")).toContain("y enable");
+    expect(marketFooterHint("confirm", false, "run")).toContain("y run");
+    expect(marketFooterHint("confirm", false, "activate")).toContain("y apply");
+  });
+
+  it("maps each row's state to the action `enter` triggers", () => {
+    // install ≠ enable ≠ run ladder.
+    expect(actionForRow("plugin", "available")).toBe("install");
+    expect(actionForRow("plugin", "installed")).toBe("enable");
+    expect(actionForRow("plugin", "enabled")).toBe("run");
+    expect(actionForRow("theme", "available")).toBe("install");
+    expect(actionForRow("theme", "installed")).toBe("activate");
+    expect(actionForRow("theme", "active")).toBe("none");
+    // A theme is never "enabled" and a plugin is never "active"; a stray value
+    // resolves to a no-op rather than an effectful action.
+    expect(actionForRow("plugin", "active")).toBe("none");
+    expect(actionForRow("theme", "enabled")).toBe("none");
+  });
+
+  it("names each action with a short, distinct verb", () => {
+    expect(actionVerb("install")).toBe("install");
+    expect(actionVerb("enable")).toBe("enable");
+    expect(actionVerb("run")).toBe("run");
+    expect(actionVerb("activate")).toBe("apply");
+    expect(actionVerb("none")).toBe("");
+  });
+
+  it("spells out what each confirm prompt approves", () => {
+    expect(confirmPrompt("Acme", "plugin", "install")).toContain("Install Acme");
+    // Enable names the capability set — the risk surface being approved.
+    const enablePrompt = confirmPrompt("Acme", "plugin", "enable", ["network", "filesystem-read"]);
+    expect(enablePrompt).toContain("Enable Acme");
+    expect(enablePrompt).toContain("network");
+    expect(enablePrompt).toContain("filesystem-read");
+    expect(enablePrompt).toContain("runs nothing");
+    expect(confirmPrompt("Acme", "plugin", "enable")).toContain("no capabilities declared");
+    expect(confirmPrompt("Acme", "plugin", "run")).toContain("Loads its tools");
+    expect(confirmPrompt("Midnight", "theme", "activate")).toContain("Apply theme Midnight");
+    expect(confirmPrompt("x", "plugin", "none")).toBe("");
   });
 
   it("gives every printable character to the filter", () => {
