@@ -300,6 +300,7 @@ describe("contrast sweep", () => {
       slate: 5.16,
       paper: 5.16,
       "mono-dim": 4.5,
+      swiss: 5.63,
     });
   });
 });
@@ -417,6 +418,7 @@ describe("semantic colours survive colour blindness", () => {
       slate: 1.212,
       paper: 1.162,
       "mono-dim": 1.165,
+      swiss: 1.21,
     });
     // Every theme clears the floor; paper is the tightest of the set.
     expect(Math.min(...Object.values(achieved))).toBe(achieved.paper);
@@ -946,5 +948,63 @@ describe("live hot-swap resolution (getTheme follows the setting name)", () => {
 
     // Setting flips to a built-in -> the built-in resolves, no stale user palette.
     expect(getTheme("light")).toBe(THEMES.light.palette);
+  });
+});
+
+/* ------------------------------------------------------------------- swiss */
+
+describe("swiss theme", () => {
+  it("is registered and listed in THEME_NAMES", () => {
+    expect(THEME_NAMES).toContain("swiss");
+    expect(isThemeName("swiss")).toBe(true);
+    expect(THEMES.swiss.name).toBe("swiss");
+    expect(THEMES.swiss.label).toBe("Swiss");
+    expect(THEMES.swiss.mode).toBe("dark");
+  });
+
+  it("resolves through every accessor and the settings picker choices", () => {
+    expect(getTheme("swiss")).toBe(THEMES.swiss.palette);
+    expect(getThemeEntry("swiss").name).toBe("swiss");
+    // The settings theme picker syncs its choices off THEME_NAMES.
+    expect(THEME_SETTING_DEF.choices).toContain("swiss");
+  });
+
+  it("defines every token, no extras, uppercase 6-digit hex", () => {
+    const palette = THEMES.swiss.palette as Record<string, string>;
+    expect(new Set(Object.keys(palette))).toEqual(new Set(THEME_TOKENS));
+    for (const token of THEME_TOKENS) {
+      expect(palette[token], token).toMatch(/^#[0-9A-F]{6}$/);
+    }
+  });
+
+  it("passes validateTheme with NO waiver — every contrast floor met", () => {
+    // No `name` option: validated with zero waivers, exactly as a shipped
+    // non-default theme must be.
+    expect(validateTheme(THEMES.swiss.palette)).toEqual([]);
+  });
+
+  it("holds each key contrast pair above its floor", () => {
+    const p = THEMES.swiss.palette;
+    // TEXT on CANVAS well past the 4.5:1 text bar.
+    expect(contrastRatio(p.TEXT, p.CANVAS)).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST);
+    // BORDER above the 3:1 non-text bar on every surface.
+    for (const bg of BACKGROUND_TOKENS) {
+      expect(contrastRatio(p.BORDER, p[bg]), bg).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
+    }
+    // Swiss red as ERROR is AA-legible on the canvas.
+    expect(contrastRatio(p.ERROR, p.CANVAS)).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST);
+    // Semantic trio stays separable for colour-blind readers.
+    for (const [a, b] of SEMANTIC_PAIRS) {
+      expect(contrastRatio(p[a], p[b]), `${a}/${b}`).toBeGreaterThanOrEqual(MIN_SEMANTIC_CONTRAST);
+    }
+  });
+
+  it("leans red for the highlight tokens", () => {
+    const p = THEMES.swiss.palette;
+    const red = parseHex(p.PRIMARY)!;
+    expect(red.r).toBeGreaterThan(red.g);
+    expect(red.r).toBeGreaterThan(red.b);
+    expect(p.BRAND).toBe(p.PRIMARY);
+    expect(p.ERROR).toBe(p.PRIMARY);
   });
 });

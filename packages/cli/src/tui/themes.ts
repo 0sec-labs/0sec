@@ -468,6 +468,40 @@ const MONO_DIM: Theme = {
   overlay: "#2E2E2E",
 };
 
+/**
+ * `Swiss` — a Swiss-flag palette for the Swiss Applied AI Cybersecurity
+ * Research Lab: Swiss red on crisp white over a near-black tech ground.
+ *
+ * The flag's three notes are all here — a deep near-black `CANVAS`/`PANEL`
+ * (the cybersecurity ground), a crisp near-white `TEXT`, and Swiss red as the
+ * dominant highlight: `PRIMARY`, `ACCENT` and `BRAND` are all red, so the whole
+ * console reads red-accented rather than the red living only in the logo slash.
+ * The flag's `#D52B1E` is too dark to clear 4.5:1 on a near-black surface, so
+ * the red is tuned up to `#F26257` — unmistakably the same red, now AA-legible
+ * as text on every surface. `ERROR` shares that red (red *is* the error colour
+ * here); `SUCCESS`/`WARNING` are pulled apart from it by luminance so the
+ * semantic trio still survives colour blindness, and `INFO` is the one cool hue.
+ */
+const SWISS: Theme = {
+  CANVAS: "#0B0A0A",
+  PANEL: "#151011",
+  PANEL_ALT: "#1E1618",
+  BORDER: "#8A6F72",
+  TEXT: "#F7F4F4",
+  MUTED: "#B39EA1",
+  PRIMARY: "#F26257",
+  ACCENT: "#F58379",
+  BRAND: "#F26257",
+  SUCCESS: "#4FB477",
+  WARNING: "#E0A83C",
+  ERROR: "#F26257",
+  INFO: "#8FB4E0",
+  background: "#0B0A0A",
+  surface: "#151011",
+  surfaceAlt: "#1E1618",
+  overlay: "#271D1F",
+};
+
 /* ----------------------------------------------------------------- registry */
 
 export const THEME_NAMES = [
@@ -479,6 +513,7 @@ export const THEME_NAMES = [
   "slate",
   "paper",
   "mono-dim",
+  "swiss",
 ] as const;
 export type ThemeName = (typeof THEME_NAMES)[number];
 
@@ -555,6 +590,13 @@ export const THEMES: Readonly<Record<ThemeName, ThemeEntry>> = {
     description: "Very low-contrast dark, minimalist. Muted but still AA-legible.",
     mode: "dark",
     palette: MONO_DIM,
+  },
+  swiss: {
+    name: "swiss",
+    label: "Swiss",
+    description: "Swiss-flag red on near-black, crisp white text. For the Swiss Applied AI Cybersecurity Research Lab.",
+    mode: "dark",
+    palette: SWISS,
   },
 };
 
