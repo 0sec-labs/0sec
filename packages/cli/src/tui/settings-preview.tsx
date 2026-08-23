@@ -475,17 +475,35 @@ function modelDisplayBlocks(value: string, width: number): PreviewBlock[] {
  */
 function logoAnimationBlocks(value: string, width: number): PreviewBlock[] {
   const DESCRIPTIONS: Record<string, string> = {
+    glitch: "glitch — a neon-flecked scramble that resolves (default)",
+    rainbow: "rainbow — a looping hue sweep cycling across the mark",
+    matrix: "matrix — a green matrix-rain cascade reveals the mark",
+    wave: "wave — a rippling cyan wavefront wipes the mark in",
+    neon: "neon — a neon-sign warm-up flicker, then it settles",
+    shimmer: "shimmer — a bright comet with a gradient tail sweeps",
+    pulse: "pulse — the red slash breathes red↔purple",
     strike: "strike — the red slash strikes through the 0",
-    draw: "draw — the letters draw in stroke by stroke",
+    draw: "draw — the letters draw in behind a bright pen tip",
     fade: "fade — the mark blooms in from the centre",
-    shimmer: "shimmer — an idle highlight sweeps with a comet tail",
     typein: "typein — cells reveal one by one, purple leading glow",
     sweep: "sweep — a bright bar wipes L→R revealing the mark",
-    glitch: "glitch — a scramble that resolves cell by cell",
-    pulse: "pulse — the red slash breathes red↔purple",
     off: "off — the mark is drawn static, no intro",
   };
-  const choices = ["strike", "draw", "fade", "shimmer", "typein", "sweep", "glitch", "pulse", "off"];
+  const choices = [
+    "glitch",
+    "rainbow",
+    "matrix",
+    "wave",
+    "neon",
+    "shimmer",
+    "pulse",
+    "strike",
+    "draw",
+    "fade",
+    "typein",
+    "sweep",
+    "off",
+  ];
   const description = DESCRIPTIONS[value] ?? `current: ${value}`;
   return [
     line("logo-anim-desc", width, description, (t) => t.ACCENT),

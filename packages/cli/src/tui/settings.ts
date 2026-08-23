@@ -116,23 +116,29 @@ export interface TuiSettings {
    */
   modelDisplay: "statusbar" | "message" | "off";
   /**
-   * Intro animation style for the "0SEC" logo. One-shot reveals: "strike" (a
-   * red slash strikes through the 0), "draw" (letters draw in L→R), "fade" (a
-   * centre-out brightness bloom), "typein" (per-cell reveal with a purple
-   * leading glow), "sweep" (a bright bar wipes across revealing the mark),
-   * "glitch" (a scramble that resolves). Looping idle effects: "shimmer" (a
-   * highlight column with a comet tail) and "pulse" (the slash breathes). "off"
-   * is static. Consumed by chat-screen's logo.
+   * Intro animation style for the "0SEC" logo. One-shot reveals: "glitch" (a
+   * neon-flecked scramble that resolves — the default), "matrix" (a green
+   * matrix-rain cascade), "wave" (a rippling cyan wavefront), "neon" (a
+   * neon-sign warm-up flicker), "strike" (a red slash strikes through the 0),
+   * "draw" (letters draw in L→R behind a bright pen tip), "fade" (a centre-out
+   * bloom), "typein" (per-cell reveal with a purple glow), "sweep" (a bright bar
+   * wipes across). Looping idle effects: "rainbow" (a hue sweep cycling colours
+   * across the mark), "shimmer" (a bright comet with a gradient tail) and
+   * "pulse" (the slash breathes). "off" is static. Consumed by the masthead.
    */
   logoAnimation:
+    | "glitch"
+    | "rainbow"
+    | "matrix"
+    | "wave"
+    | "neon"
+    | "shimmer"
+    | "pulse"
     | "strike"
     | "draw"
     | "fade"
-    | "shimmer"
     | "typein"
     | "sweep"
-    | "glitch"
-    | "pulse"
     | "off";
   /**
    * Master reduce-motion. When true the console keeps essential feedback but
@@ -391,10 +397,24 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "logoAnimation",
     label: "Logo animation",
     description:
-      'Intro animation for the "0SEC" logo: strike (a red slash strikes through the 0), draw (letters draw in), fade (a centre-out bloom), typein (per-cell reveal), sweep (a bright bar wipes across), glitch (a scramble that resolves), shimmer (an idle highlight sweep), pulse (the slash breathes) or off (static).',
+      'Intro animation for the "0SEC" logo: glitch (a neon-flecked scramble that resolves — the default), rainbow (a looping hue sweep), matrix (a green matrix-rain cascade), wave (a rippling cyan wavefront), neon (a neon-sign warm-up flicker), shimmer (a bright comet with a gradient tail), pulse (the slash breathes), strike (a red slash strikes through the 0), draw (letters draw in behind a pen tip), fade (a centre-out bloom), typein (per-cell reveal), sweep (a bright bar wipes across) or off (static).',
     kind: "enum",
-    default: "strike",
-    choices: ["strike", "draw", "fade", "shimmer", "typein", "sweep", "glitch", "pulse", "off"],
+    default: "glitch",
+    choices: [
+      "glitch",
+      "rainbow",
+      "matrix",
+      "wave",
+      "neon",
+      "shimmer",
+      "pulse",
+      "strike",
+      "draw",
+      "fade",
+      "typein",
+      "sweep",
+      "off",
+    ],
     group: "Motion",
   },
   {
@@ -437,7 +457,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   showCost: false,
   showContextMeter: false,
   modelDisplay: "statusbar",
-  logoAnimation: "strike",
+  logoAnimation: "glitch",
   reduceMotion: false,
 };
 

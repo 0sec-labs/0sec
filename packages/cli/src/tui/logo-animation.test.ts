@@ -19,21 +19,50 @@ const LOGO = [
   " ######   #######  #######   ######",
 ] as const;
 
-const ONE_SHOT: LogoAnimStyle[] = ["strike", "draw", "fade", "typein", "sweep", "glitch", "off"];
-const LOOPING: LogoAnimStyle[] = ["shimmer", "pulse"];
-/** One-shot reveals whose last frame settles to the final frame (excludes off). */
-const REVEALS: LogoAnimStyle[] = ["strike", "draw", "fade", "typein", "sweep", "glitch"];
-const ALL_STYLES: LogoAnimStyle[] = [
+const ONE_SHOT: LogoAnimStyle[] = [
+  "glitch",
+  "matrix",
+  "wave",
+  "neon",
   "strike",
   "draw",
   "fade",
-  "shimmer",
   "typein",
   "sweep",
-  "glitch",
-  "pulse",
   "off",
 ];
+const LOOPING: LogoAnimStyle[] = ["rainbow", "shimmer", "pulse"];
+/** One-shot reveals whose last frame settles to the final frame (excludes off). */
+const REVEALS: LogoAnimStyle[] = [
+  "glitch",
+  "matrix",
+  "wave",
+  "neon",
+  "strike",
+  "draw",
+  "fade",
+  "typein",
+  "sweep",
+];
+const ALL_STYLES: LogoAnimStyle[] = [
+  "glitch",
+  "rainbow",
+  "matrix",
+  "wave",
+  "neon",
+  "shimmer",
+  "pulse",
+  "strike",
+  "draw",
+  "fade",
+  "typein",
+  "sweep",
+  "off",
+];
+
+/** A cell's tone is legitimate if it is a named tone or an explicit #rrggbb hex. */
+const NAMED_TONES = new Set(["text", "error", "dim", "muted", "brand"]);
+const isKnownTone = (t: string): boolean => NAMED_TONES.has(t) || /^#[0-9a-fA-F]{6}$/.test(t);
 
 /** Count cells matching a predicate across a frame. */
 function count(frame: LogoFrame, pred: (c: LogoFrame[number][number]) => boolean): number {
@@ -84,7 +113,7 @@ describe("frame-count / loop metadata", () => {
     for (const s of ONE_SHOT) expect(logoAnimationLoops(s)).toBe(false);
   });
 
-  it("marks both shimmer and pulse as looping, every other style one-shot", () => {
+  it("marks rainbow, shimmer and pulse as looping, every other style one-shot", () => {
     for (const s of LOOPING) expect(logoAnimationLoops(s)).toBe(true);
     for (const s of ONE_SHOT) expect(logoAnimationLoops(s)).toBe(false);
   });
@@ -131,10 +160,11 @@ describe("strike", () => {
     expect(count(computeLogoFrame(LOGO, "strike", last), (c) => c.ch === "/" && c.visible)).toBe(slashTotal);
   });
 
-  it("slash tone is error, and hidden slash cells keep their ch", () => {
+  it("hidden slash cells stay error-toned; the struck edge flashes purple", () => {
     const f0 = computeLogoFrame(LOGO, "strike", 0);
     for (const row of f0) for (const cell of row) {
-      if (cell.ch === "/") expect(cell.tone).toBe("error");
+      if (cell.ch === "/" && !cell.visible) expect(cell.tone).toBe("error");
+      if (cell.ch === "/" && cell.visible) expect(["error", "brand"]).toContain(cell.tone);
     }
   });
 });
@@ -166,9 +196,16 @@ describe("draw", () => {
   });
 });
 
-describe("fade", () => {
+describe("fade (multi-step bloom)", () => {
   const last = logoAnimationFrameCount("fade") - 1;
-  const rank: Record<string, number> = { dim: 0, muted: 1, text: 2, error: 2 };
+  /** Brightness of a cell's tone: the channel sum of a hex bloom step, or the
+   *  maximum for a settled full tone (text/error is the brightest final state). */
+  const bright = (t: string): number => {
+    if (t.startsWith("#")) {
+      return parseInt(t.slice(1, 3), 16) + parseInt(t.slice(3, 5), 16) + parseInt(t.slice(5, 7), 16);
+    }
+    return 765;
+  };
 
   it("keeps every non-space cell visible across all frames", () => {
     for (let f = 0; f <= last; f += 1) {
@@ -178,27 +215,32 @@ describe("fade", () => {
     }
   });
 
-  it("ramps brightness dim -> full monotonically per cell", () => {
+  it("blooms brightness monotonically (the dimmest cell only brightens)", () => {
     let prevMin = -1;
     for (let f = 0; f <= last; f += 1) {
-      let minRank = Number.POSITIVE_INFINITY;
+      let minBright = Number.POSITIVE_INFINITY;
       for (const row of computeLogoFrame(LOGO, "fade", f)) {
-        for (const cell of row) if (cell.ch !== " ") minRank = Math.min(minRank, rank[cell.tone]!);
+        for (const cell of row) if (cell.ch !== " ") minBright = Math.min(minBright, bright(cell.tone));
       }
-      expect(minRank).toBeGreaterThanOrEqual(prevMin);
-      prevMin = minRank;
+      expect(minBright).toBeGreaterThanOrEqual(prevMin);
+      prevMin = minBright;
     }
   });
 
-  it("starts dim and ends at full colour", () => {
+  it("starts as a deep hex bloom and ends at the settled final frame", () => {
     const f0 = computeLogoFrame(LOGO, "fade", 0);
-    for (const row of f0) for (const cell of row) if (cell.ch !== " ") expect(cell.tone).toBe("dim");
+    for (const row of f0) for (const cell of row) {
+      if (cell.ch !== " ") expect(cell.tone.startsWith("#")).toBe(true);
+    }
     expect(framesEqual(computeLogoFrame(LOGO, "fade", last), finalFrame)).toBe(true);
   });
 });
 
-describe("shimmer", () => {
+describe("shimmer (comet gradient)", () => {
   const period = logoAnimationFrameCount("shimmer");
+  const isHex = (t: string): boolean => t.startsWith("#");
+  /** Brightness of a neutral-grey #rrggbb by its red channel (r===g===b). */
+  const greyLevel = (t: string): number => parseInt(t.slice(1, 3), 16);
 
   it("never hides a non-space cell", () => {
     for (let f = 0; f < period; f += 1) {
@@ -208,16 +250,28 @@ describe("shimmer", () => {
     }
   });
 
-  it("highlights exactly one column band as it sweeps", () => {
-    // While the sweep is over the grid (idx < width) exactly one column is muted.
-    const f = 3;
+  it("sweeps a multi-column comet with the brightest head at the sweep column", () => {
+    const f = 10;
     const frame = computeLogoFrame(LOGO, "shimmer", f);
-    const mutedCols = new Set<number>();
+    const colored = new Map<number, string>();
     for (const row of frame) {
-      for (const [c, cell] of row.entries()) if (cell.tone === "muted") mutedCols.add(c);
+      for (const [c, cell] of row.entries()) if (isHex(cell.tone)) colored.set(c, cell.tone);
     }
-    expect(mutedCols.size).toBe(1);
-    expect([...mutedCols][0]).toBe(f);
+    const cols = [...colored.keys()];
+    // Several columns lit (a comet, not a single band); the head is the sweep col.
+    expect(cols.length).toBeGreaterThan(2);
+    expect(Math.max(...cols)).toBe(f);
+    // The head column is brighter than the trailing end of the comet.
+    expect(greyLevel(colored.get(f)!)).toBeGreaterThan(greyLevel(colored.get(Math.min(...cols))!));
+  });
+
+  it("has only the head lit at column 0 (no tail yet)", () => {
+    const frame = computeLogoFrame(LOGO, "shimmer", 0);
+    const cols = new Set<number>();
+    for (const row of frame) {
+      for (const [c, cell] of row.entries()) if (isHex(cell.tone)) cols.add(c);
+    }
+    expect([...cols]).toEqual([0]);
   });
 
   it("loops seamlessly (frame and frame+period are identical)", () => {
@@ -226,9 +280,9 @@ describe("shimmer", () => {
     }
   });
 
-  it("rests (no highlight) when the sweep is past the grid width", () => {
-    const frame = computeLogoFrame(LOGO, "shimmer", 40); // 35 <= 40 < 48
-    expect(count(frame, (c) => c.tone === "muted")).toBe(0);
+  it("rests (no comet) once it has swept past the grid", () => {
+    const frame = computeLogoFrame(LOGO, "shimmer", 45); // head+tail all off-grid
+    expect(count(frame, (c) => isHex(c.tone))).toBe(0);
     expect(framesEqual(frame, finalFrame)).toBe(true);
   });
 });
@@ -272,8 +326,13 @@ describe("frame clamping / guards", () => {
     expect(() => computeLogoFrame(LOGO, "shimmer", Number.NaN)).not.toThrow();
     expect(() => computeLogoFrame(LOGO, "pulse", Number.NaN)).not.toThrow();
     expect(() => computeLogoFrame(LOGO, "glitch", Number.NaN)).not.toThrow();
+    expect(() => computeLogoFrame(LOGO, "rainbow", Number.NaN)).not.toThrow();
+    expect(() => computeLogoFrame(LOGO, "matrix", Number.NaN)).not.toThrow();
+    expect(() => computeLogoFrame(LOGO, "wave", Number.NaN)).not.toThrow();
+    expect(() => computeLogoFrame(LOGO, "neon", Number.NaN)).not.toThrow();
     // A non-finite frame for a looping style rests at its phase-0 frame.
     expect(framesEqual(computeLogoFrame(LOGO, "pulse", Number.NaN), computeLogoFrame(LOGO, "pulse", 0))).toBe(true);
+    expect(framesEqual(computeLogoFrame(LOGO, "rainbow", Number.NaN), computeLogoFrame(LOGO, "rainbow", 0))).toBe(true);
   });
 
   it("returns an empty frame for an empty grid", () => {
@@ -318,9 +377,6 @@ describe("logoRowRuns", () => {
   });
 });
 
-/** Tones a run may legitimately carry, for alphabet-conformance checks. */
-const TONES = new Set(["text", "error", "dim", "muted", "brand"]);
-
 describe("reveal styles settle to the final frame", () => {
   for (const style of REVEALS) {
     it(`${style} ends exactly at the settled final frame`, () => {
@@ -333,7 +389,7 @@ describe("reveal styles settle to the final frame", () => {
         for (const row of computeLogoFrame(LOGO, style, f)) {
           for (const cell of row) {
             if (cell.ch === " ") expect(cell.visible).toBe(false);
-            expect(TONES.has(cell.tone)).toBe(true);
+            expect(isKnownTone(cell.tone)).toBe(true);
           }
         }
       }
@@ -510,24 +566,182 @@ describe("pulse", () => {
   });
 });
 
-describe("shimmer comet tail", () => {
-  it("trails a dim column one step behind the muted head", () => {
-    const frame = computeLogoFrame(LOGO, "shimmer", 5);
-    const mutedCols = new Set<number>();
-    const dimCols = new Set<number>();
+describe("shimmer comet tail brightness", () => {
+  const greyLevel = (t: string): number => parseInt(t.slice(1, 3), 16);
+
+  it("fades monotonically from the head back along the tail", () => {
+    const frame = computeLogoFrame(LOGO, "shimmer", 12);
+    // Collect the (col -> grey level) of the comet, one entry per lit column.
+    const byCol = new Map<number, number>();
     for (const row of frame) {
       for (const [c, cell] of row.entries()) {
-        if (cell.tone === "muted") mutedCols.add(c);
-        if (cell.tone === "dim") dimCols.add(c);
+        if (cell.tone.startsWith("#")) byCol.set(c, greyLevel(cell.tone));
       }
     }
-    expect([...mutedCols]).toEqual([5]);
-    expect([...dimCols]).toEqual([4]);
+    const cols = [...byCol.keys()].sort((a, b) => b - a); // head (highest col) first
+    expect(cols.length).toBeGreaterThan(2);
+    // Brightness never increases as we walk from the head back along the tail.
+    for (let i = 1; i < cols.length; i += 1) {
+      expect(byCol.get(cols[i]!)!).toBeLessThanOrEqual(byCol.get(cols[i - 1]!)!);
+    }
+  });
+});
+
+const isHex = (t: string): boolean => t.startsWith("#");
+
+describe("rainbow", () => {
+  const period = logoAnimationFrameCount("rainbow");
+
+  it("loops (metadata) and never hides a non-space cell", () => {
+    expect(logoAnimationLoops("rainbow")).toBe(true);
+    for (let f = 0; f < period; f += 1) {
+      for (const row of computeLogoFrame(LOGO, "rainbow", f)) {
+        for (const cell of row) if (cell.ch !== " ") expect(cell.visible).toBe(true);
+      }
+    }
   });
 
-  it("has no tail at column 0 (head just entering)", () => {
-    const frame = computeLogoFrame(LOGO, "shimmer", 0);
-    expect(count(frame, (c) => c.tone === "dim")).toBe(0);
-    expect(count(frame, (c) => c.tone === "muted")).toBeGreaterThan(0);
+  it("colours every non-space cell with an explicit hex", () => {
+    const frame = computeLogoFrame(LOGO, "rainbow", 3);
+    for (const row of frame) {
+      for (const cell of row) if (cell.ch !== " ") expect(isHex(cell.tone)).toBe(true);
+    }
+  });
+
+  it("spreads many hues across the mark (a spectrum, not one colour)", () => {
+    const frame = computeLogoFrame(LOGO, "rainbow", 3);
+    const hues = new Set<string>();
+    for (const row of frame) for (const cell of row) if (cell.ch !== " ") hues.add(cell.tone);
+    expect(hues.size).toBeGreaterThan(5);
+  });
+
+  it("loops seamlessly (frame and frame+period are identical)", () => {
+    for (const f of [0, 7, 20]) {
+      expect(framesEqual(computeLogoFrame(LOGO, "rainbow", f), computeLogoFrame(LOGO, "rainbow", f + period))).toBe(true);
+    }
+  });
+});
+
+describe("matrix", () => {
+  const last = logoAnimationFrameCount("matrix") - 1;
+
+  it("reveals cells monotonically (the visible set only grows)", () => {
+    let prev = -1;
+    for (let f = 0; f <= last; f += 1) {
+      const vis = count(computeLogoFrame(LOGO, "matrix", f), (c) => c.visible);
+      expect(vis).toBeGreaterThanOrEqual(prev);
+      prev = vis;
+    }
+  });
+
+  it("starts near-empty and ends fully visible", () => {
+    expect(count(computeLogoFrame(LOGO, "matrix", 0), (c) => c.visible)).toBeLessThan(visibleNonSpace);
+    expect(framesEqual(computeLogoFrame(LOGO, "matrix", last), finalFrame)).toBe(true);
+  });
+
+  it("shows green drop colours mid-reveal that are gone by the end", () => {
+    let sawHex = false;
+    for (let f = 0; f < last; f += 1) {
+      if (count(computeLogoFrame(LOGO, "matrix", f), (c) => isHex(c.tone)) > 0) sawHex = true;
+    }
+    expect(sawHex).toBe(true);
+    expect(count(computeLogoFrame(LOGO, "matrix", last), (c) => isHex(c.tone))).toBe(0);
+  });
+
+  it("never lights a blank cell", () => {
+    for (let f = 0; f <= last; f += 1) {
+      for (const row of computeLogoFrame(LOGO, "matrix", f)) {
+        for (const cell of row) if (cell.ch === " ") expect(cell.visible).toBe(false);
+      }
+    }
+  });
+
+  it("is deterministic (same inputs -> identical output)", () => {
+    expect(framesEqual(computeLogoFrame(LOGO, "matrix", 6), computeLogoFrame(LOGO, "matrix", 6))).toBe(true);
+  });
+});
+
+describe("wave", () => {
+  const last = logoAnimationFrameCount("wave") - 1;
+
+  it("reveals cells monotonically (the visible set only grows)", () => {
+    let prev = -1;
+    for (let f = 0; f <= last; f += 1) {
+      const vis = count(computeLogoFrame(LOGO, "wave", f), (c) => c.visible);
+      expect(vis).toBeGreaterThanOrEqual(prev);
+      prev = vis;
+    }
+  });
+
+  it("starts near-empty and ends fully visible", () => {
+    expect(count(computeLogoFrame(LOGO, "wave", 0), (c) => c.visible)).toBeLessThan(visibleNonSpace);
+    expect(framesEqual(computeLogoFrame(LOGO, "wave", last), finalFrame)).toBe(true);
+  });
+
+  it("shows a cyan crest mid-reveal that has cleared the mark by the end", () => {
+    let sawHex = false;
+    for (let f = 0; f < last; f += 1) {
+      if (count(computeLogoFrame(LOGO, "wave", f), (c) => isHex(c.tone)) > 0) sawHex = true;
+    }
+    expect(sawHex).toBe(true);
+    expect(count(computeLogoFrame(LOGO, "wave", last), (c) => isHex(c.tone))).toBe(0);
+  });
+
+  it("reveals the left of the mark before the right", () => {
+    const mid = computeLogoFrame(LOGO, "wave", Math.floor(last / 4));
+    const leftCol = mid.some((row) => row[1]!.visible);
+    const rightCol = mid.some((row) => row[34]!.visible);
+    expect(leftCol).toBe(true);
+    expect(rightCol).toBe(false);
+  });
+
+  it("never lights a blank cell", () => {
+    for (let f = 0; f <= last; f += 1) {
+      for (const row of computeLogoFrame(LOGO, "wave", f)) {
+        for (const cell of row) if (cell.ch === " ") expect(cell.visible).toBe(false);
+      }
+    }
+  });
+});
+
+describe("neon", () => {
+  const last = logoAnimationFrameCount("neon") - 1;
+
+  it("flickers on with neon colours, then settles to the final frame", () => {
+    let sawHex = false;
+    for (let f = 0; f < last; f += 1) {
+      if (count(computeLogoFrame(LOGO, "neon", f), (c) => isHex(c.tone)) > 0) sawHex = true;
+    }
+    expect(sawHex).toBe(true);
+    expect(framesEqual(computeLogoFrame(LOGO, "neon", last), finalFrame)).toBe(true);
+    expect(count(computeLogoFrame(LOGO, "neon", last), (c) => isHex(c.tone))).toBe(0);
+  });
+
+  it("never lights a blank cell during the flicker", () => {
+    for (let f = 0; f <= last; f += 1) {
+      for (const row of computeLogoFrame(LOGO, "neon", f)) {
+        for (const cell of row) if (cell.ch === " ") expect(cell.visible).toBe(false);
+      }
+    }
+  });
+
+  it("is deterministic (same inputs -> identical output)", () => {
+    expect(framesEqual(computeLogoFrame(LOGO, "neon", 5), computeLogoFrame(LOGO, "neon", 5))).toBe(true);
+  });
+
+  it("grows the settled set (endpoints bracket the trend)", () => {
+    const matchFinal = (f: number): number => {
+      const frame = computeLogoFrame(LOGO, "neon", f);
+      let n = 0;
+      for (const [r, row] of frame.entries()) {
+        for (const [c, cell] of row.entries()) {
+          const target = finalFrame[r]![c]!;
+          if (cell.visible === target.visible && cell.tone === target.tone) n += 1;
+        }
+      }
+      return n;
+    };
+    expect(matchFinal(last)).toBeGreaterThan(matchFinal(0));
+    expect(matchFinal(last)).toBe(count(finalFrame, () => true));
   });
 });

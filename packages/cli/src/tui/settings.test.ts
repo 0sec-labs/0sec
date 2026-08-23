@@ -508,28 +508,32 @@ describe("motion settings", () => {
     }
   });
 
-  it("defaults logoAnimation to strike (its first choice) and reduceMotion off", () => {
-    expect(DEFAULT_SETTINGS.logoAnimation).toBe("strike");
+  it("defaults logoAnimation to glitch (its first choice) and reduceMotion off", () => {
+    expect(DEFAULT_SETTINGS.logoAnimation).toBe("glitch");
     expect(DEFAULT_SETTINGS.reduceMotion).toBe(false);
   });
 
-  it("offers logoAnimation the full style list, strike first and off last", () => {
+  it("offers logoAnimation the full style list, glitch first and off last", () => {
     const def = SETTING_DEFS.find((d) => d.key === "logoAnimation");
     expect(def?.kind).toBe("enum");
     expect(def?.choices).toEqual([
+      "glitch",
+      "rainbow",
+      "matrix",
+      "wave",
+      "neon",
+      "shimmer",
+      "pulse",
       "strike",
       "draw",
       "fade",
-      "shimmer",
       "typein",
       "sweep",
-      "glitch",
-      "pulse",
       "off",
     ]);
   });
 
-  it("cycles logoAnimation through every value and wraps back to strike", () => {
+  it("cycles logoAnimation through every value and wraps back to glitch", () => {
     const def = SETTING_DEFS.find((d) => d.key === "logoAnimation");
     const choices = def?.choices ?? [];
     let s = DEFAULT_SETTINGS;
@@ -540,11 +544,11 @@ describe("motion settings", () => {
     }
     // One full lap: the choices after the head, then the head again.
     expect(seen).toEqual([...choices.slice(1), choices[0]]);
-    expect(seen[seen.length - 1]).toBe("strike");
+    expect(seen[seen.length - 1]).toBe("glitch");
   });
 
   it("rejects an out-of-range logoAnimation value", () => {
-    expect(normalizeSettings({ logoAnimation: "slide" }).logoAnimation).toBe("strike");
+    expect(normalizeSettings({ logoAnimation: "slide" }).logoAnimation).toBe("glitch");
   });
 
   it("round-trips the motion settings through save and load", () => {
