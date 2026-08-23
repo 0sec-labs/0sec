@@ -180,6 +180,16 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md); use only
 synthetic or authorized test material. Report vulnerabilities privately via
 [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.
 
+## Supported by
+
+0sec Labs is supported by these startup and research programs:
+
+- [AWS Startups](https://aws.amazon.com/startups/)
+- [Microsoft for Startups](https://www.microsoft.com/en-us/startups)
+- [E2B for Startups](https://e2b.dev/startups)
+- [Hack Nation](https://hack-nation.ai/)
+- [NVIDIA Inception Program](https://www.nvidia.com/en-us/startups/)
+
 ## License
 
 Dual-licensed **MIT OR Apache-2.0**, at your option — see [LICENSE](LICENSE)
