@@ -50,7 +50,7 @@
  *   - `neon`    a neon-sign warm-up: cells buzz on in neon colours, then settle.
  *   - `strike`  a red slash strikes the 0 along its diagonal (purple hot edge).
  *   - `draw`    a left-to-right column reveal behind a bright pen tip.
- *   - `fade`    a centre-out brightness bloom (a purple-tinted multi-step ramp).
+ *   - `fade`    a centre-out brightness bloom (a red-tinted multi-step ramp).
  *   - `typein`  per-cell reveal in reading order with a purple leading glow.
  *   - `sweep`   a bright bar wipes L→R revealing the mark behind it.
  * Looping idle effects run forever (the caller wraps the frame modulo the count):
@@ -447,13 +447,13 @@ function fadeFrame(grid: readonly string[], frame: number, width: number): LogoF
       const local = progress * (1 + SPREAD) - dist * SPREAD;
       let tone: LogoCellTone;
       if (local < 1 / 3 - EPS) {
-        // Deep purple bloom deepening toward the dim step.
+        // Deep red bloom deepening toward the dim step — on brand.
         const t = clamp01(local / (1 / 3));
-        tone = hslToHex(262, 0.6, 0.14 + t * 0.24);
+        tone = hslToHex(0, 0.72, 0.14 + t * 0.24);
       } else if (local < 2 / 3 - EPS) {
-        // Brightening lilac toward the muted step.
+        // Brightening red toward the muted step.
         const t = clamp01((local - 1 / 3) / (1 / 3));
-        tone = hslToHex(280, 0.5, 0.42 + t * 0.2);
+        tone = hslToHex(4, 0.78, 0.42 + t * 0.2);
       } else {
         tone = finalTone(ch);
       }
