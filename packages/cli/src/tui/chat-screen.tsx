@@ -593,6 +593,9 @@ export function runFindingsFromEntries(entries: readonly ChatEntry[]): RunFindin
  */
 const SUBAGENT_MAX_VISIBLE = 4;
 
+/** Window after a first Ctrl+C in which a second Ctrl+C confirms the quit. */
+const EXIT_CONFIRM_MS = 3000;
+
 export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle }: ChatScreenProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const entriesRef = useRef<ChatEntry[]>([]);
@@ -765,6 +768,30 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
    */
   const [operatorState, setOperatorState] = useState<OperatorQuestionState | null>(null);
   const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
+  /**
+   * Two-press quit. Ctrl+C used to exit immediately; now the first press ARMS
+   * (a toast warns, noting any running subagents that would be stopped) and a
+   * second Ctrl+C within the window actually quits. Ref-based so the many
+   * keyboard branches can call it without re-subscribing the handler.
+   */
+  const exitArmedRef = useRef(0);
+  const requestExit = useCallback((cleanup?: () => void) => {
+    const now = Date.now();
+    if (now - exitArmedRef.current < EXIT_CONFIRM_MS) {
+      cleanup?.();
+      onExit();
+      return;
+    }
+    exitArmedRef.current = now;
+    const running = Object.keys(activeSubagents).length;
+    showToast(
+      running > 0
+        ? `Press Ctrl+C again to quit — ${running} subagent${running === 1 ? "" : "s"} will be stopped`
+        : "Press Ctrl+C again to quit",
+    );
+  }, [onExit, showToast, activeSubagents]);
+  const requestExitRef = useRef(requestExit);
+  requestExitRef.current = requestExit;
   /** Latest plan snapshot from the `update_todos` tool (the `todos` bus event). */
   const [todos, setTodos] = useState<TodosEventPayload | null>(null);
   // The OMP-style "what am I working on" objective for the bottom-bar pill.
@@ -2482,8 +2509,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     // Ctrl+C still exits, resolving null first so the awaiting turn is released.
     if (pendingOperatorQuestion) {
       if (key.ctrl && key.name === "c") {
-        pendingOperatorQuestion.resolve(null);
-        onExit();
+        requestExitRef.current(() => pendingOperatorQuestion.resolve(null));
         return;
       }
       if (key.name === "escape") {
@@ -2525,8 +2551,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     // declining path on the way out rather than dropping the promise.
     if (approvalPrompt) {
       if (key.ctrl && key.name === "c") {
-        approvalPrompt.decline();
-        onExit();
+        requestExitRef.current(() => approvalPrompt.decline());
         return;
       }
       if (key.name === "escape") {
@@ -2551,7 +2576,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     // Ctrl+C still exits, because a modal must never trap the operator.
     if (secretPrompt) {
       if (key.ctrl && key.name === "c") {
-        onExit();
+        requestExitRef.current();
         return;
       }
       if (key.name === "escape") {
@@ -2595,7 +2620,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     }
     if (picker) {
       if (key.ctrl && key.name === "c") {
-        onExit();
+        requestExitRef.current();
         return;
       }
       if (key.name === "escape") {
@@ -2629,7 +2654,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       return;
     }
     if (key.ctrl && key.name === "c") {
-      onExit();
+      requestExitRef.current();
       return;
     }
     // ── Inline subagent focus view (modal) ─────────────────────────────────────
