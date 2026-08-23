@@ -48,15 +48,15 @@
  *               column, each leaving the settled mark behind it.
  *   - `wave`    a rippling RED wavefront (a sine-bent edge) wipes the mark in.
  *   - `neon`    a neon-sign warm-up: cells buzz on in neon colours, then settle.
- *   - `strike`  a red slash strikes the 0 along its diagonal (purple hot edge).
+ *   - `strike`  a red slash strikes the 0 along its diagonal (bright-red hot edge).
  *   - `draw`    a left-to-right column reveal behind a bright pen tip.
  *   - `fade`    a centre-out brightness bloom (a red-tinted multi-step ramp).
- *   - `typein`  per-cell reveal in reading order with a purple leading glow.
+ *   - `typein`  per-cell reveal in reading order with a bright-red leading glow.
  *   - `sweep`   a bright bar wipes L→R revealing the mark behind it.
  * Looping idle effects run forever (the caller wraps the frame modulo the count):
  *   - `rainbow` a hue sweep cycling the spectrum across the mark, forever.
  *   - `shimmer` a bright comet (a multi-step grey gradient tail) sweeps across.
- *   - `pulse`   the red slash breathes dim→red→purple.
+ *   - `pulse`   the red slash breathes dim→red→bright red.
  * `off` is the static settled mark.
  */
 export type LogoAnimStyle =
@@ -351,15 +351,23 @@ const MATRIX_REDS: readonly string[] = ["#ffe3e3", "#ff6b6b", "#e5484d", "#5c1a1
 /** Wave crest gradient, lead (brightest) -> trailing (deep red) — on brand. */
 const WAVE_REDS: readonly string[] = ["#fff0f0", "#ff9a9a", "#ff3b3b", "#7a1616"];
 
-/** Draw pen-tip gradient, tip (white) -> trailing (light purple). */
-const DRAW_TIP: readonly string[] = ["#ffffff", "#c4b5fd"];
+/** Draw pen-tip gradient, tip (white) -> trailing (light red) — on brand. */
+const DRAW_TIP: readonly string[] = ["#ffffff", "#ffb3b3"];
+
+/**
+ * The "hot edge" tone for the reveal styles (strike/typein/sweep) and the pulse
+ * peak. A bright RED — brighter than the settled `error` red — so a leading edge
+ * still reads as hotter than the mark behind it, WITHOUT the purple that belongs
+ * to the 0sec voice rather than the logo.
+ */
+const HOT_RED = "#ff6a6a";
 
 /**
  * strike: the SEC outline and the "0" white cells are visible from frame 0; the
  * red slash ("/") cells reveal progressively along the diagonal from the
  * lower-left corner to the upper-right, striking through the zero. Ordering is by
  * the anti-diagonal key `col - row` (lower-left is the smallest key). The
- * just-struck leading edge flashes purple ("brand") and settles to red ("error")
+ * just-struck leading edge flashes bright red (HOT_RED) and settles to red ("error")
  * behind it — the snappy easeOutCubic threshold gives the strike a decisive
  * snap. At the final frame the flash is gone, so every slash cell is red and the
  * frame equals `finalLogoFrame`.
@@ -391,7 +399,7 @@ function strikeFrame(grid: readonly string[], frame: number, width: number): Log
         const key = c - r;
         const reached = key <= threshold + EPS;
         const hot = reached && threshold - key < hotBand;
-        out[r]![c] = { ch, visible: reached, tone: hot ? "brand" : "error" };
+        out[r]![c] = { ch, visible: reached, tone: hot ? HOT_RED : "error" };
       }
     }
   }
@@ -466,7 +474,7 @@ function fadeFrame(grid: readonly string[], frame: number, width: number): LogoF
 /**
  * typein: non-space cells reveal one after another in reading order (row-major,
  * left to right), like a cursor typing the mark out. The most-recently revealed
- * cells carry a short purple "brand" glow that trails the leading edge and
+ * cells carry a short bright-red (HOT_RED) glow that trails the leading edge and
  * settles to their final tone behind it; at the final frame every cell has
  * settled so the mark equals `finalLogoFrame`.
  */
@@ -487,13 +495,13 @@ function typeinFrame(grid: readonly string[], frame: number, width: number): Log
     const { r, c } = order[i]!;
     const ch = out[r]![c]!.ch;
     const isLeadingEdge = i >= revealed - GLOW;
-    out[r]![c] = { ch, visible: true, tone: isLeadingEdge ? "brand" : finalTone(ch) };
+    out[r]![c] = { ch, visible: true, tone: isLeadingEdge ? HOT_RED : finalTone(ch) };
   }
   return out;
 }
 
 /**
- * sweep: a two-column bright "brand" bar wipes left to right; everything behind
+ * sweep: a two-column bright RED (HOT_RED) bar wipes left to right; everything behind
  * the bar is revealed at its final tone, the bar itself glows purple, and
  * everything ahead is still hidden. The bar travels one bar-width past the right
  * edge by the final frame, so it has cleared the mark and the last frame equals
@@ -510,7 +518,7 @@ function sweepFrame(grid: readonly string[], frame: number, width: number): Logo
       if (c <= lead - BAR - EPS) {
         out[r]![c] = { ch, visible: true, tone: finalTone(ch) };
       } else if (c <= lead + EPS) {
-        out[r]![c] = { ch, visible: true, tone: "brand" };
+        out[r]![c] = { ch, visible: true, tone: HOT_RED };
       }
     }
   }
@@ -715,7 +723,7 @@ function pulseFrame(grid: readonly string[], frame: number, width: number): Logo
   const period = FRAME_COUNTS.pulse;
   const idx = ((frame % period) + period) % period;
   const v = (1 - Math.cos((2 * Math.PI * idx) / period)) / 2;
-  const slashTone: LogoCellTone = v < 1 / 3 - EPS ? "dim" : v < 2 / 3 - EPS ? "error" : "brand";
+  const slashTone: LogoCellTone = v < 1 / 3 - EPS ? "dim" : v < 2 / 3 - EPS ? "error" : HOT_RED;
   for (let r = 0; r < grid.length; r += 1) {
     for (let c = 0; c < width; c += 1) {
       const cell = out[r]![c]!;

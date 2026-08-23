@@ -160,11 +160,15 @@ describe("strike", () => {
     expect(count(computeLogoFrame(LOGO, "strike", last), (c) => c.ch === "/" && c.visible)).toBe(slashTotal);
   });
 
-  it("hidden slash cells stay error-toned; the struck edge flashes purple", () => {
+  it("hidden slash cells stay error-toned; the struck edge flashes red", () => {
     const f0 = computeLogoFrame(LOGO, "strike", 0);
     for (const row of f0) for (const cell of row) {
       if (cell.ch === "/" && !cell.visible) expect(cell.tone).toBe("error");
-      if (cell.ch === "/" && cell.visible) expect(["error", "brand"]).toContain(cell.tone);
+      // The struck edge is either the settled red ("error") or the brighter
+      // HOT_RED hot-edge hex — never purple.
+      if (cell.ch === "/" && cell.visible) {
+        expect(cell.tone === "error" || (isHex(cell.tone) && isRedDominant(cell.tone))).toBe(true);
+      }
     }
   });
 });
@@ -433,13 +437,15 @@ describe("typein", () => {
     expect(framesEqual(computeLogoFrame(LOGO, "typein", last), finalFrame)).toBe(true);
   });
 
-  it("shows a purple leading glow mid-reveal that is gone by the end", () => {
-    let sawBrand = false;
+  it("shows a red leading glow mid-reveal that is gone by the end", () => {
+    let sawGlow = false;
     for (let f = 0; f < last; f += 1) {
-      if (count(computeLogoFrame(LOGO, "typein", f), (c) => c.tone === "brand") > 0) sawBrand = true;
+      for (const row of computeLogoFrame(LOGO, "typein", f)) {
+        for (const cell of row) if (isHex(cell.tone) && isRedDominant(cell.tone)) sawGlow = true;
+      }
     }
-    expect(sawBrand).toBe(true);
-    expect(count(computeLogoFrame(LOGO, "typein", last), (c) => c.tone === "brand")).toBe(0);
+    expect(sawGlow).toBe(true);
+    expect(count(computeLogoFrame(LOGO, "typein", last), (c) => isHex(c.tone))).toBe(0);
   });
 
   it("reveals top-left before bottom-right (reading order)", () => {
@@ -469,13 +475,15 @@ describe("sweep", () => {
     expect(framesEqual(computeLogoFrame(LOGO, "sweep", last), finalFrame)).toBe(true);
   });
 
-  it("shows a purple bar mid-sweep that has cleared the mark by the end", () => {
+  it("shows a red bar mid-sweep that has cleared the mark by the end", () => {
     let sawBar = false;
     for (let f = 0; f < last; f += 1) {
-      if (count(computeLogoFrame(LOGO, "sweep", f), (c) => c.tone === "brand") > 0) sawBar = true;
+      for (const row of computeLogoFrame(LOGO, "sweep", f)) {
+        for (const cell of row) if (isHex(cell.tone) && isRedDominant(cell.tone)) sawBar = true;
+      }
     }
     expect(sawBar).toBe(true);
-    expect(count(computeLogoFrame(LOGO, "sweep", last), (c) => c.tone === "brand")).toBe(0);
+    expect(count(computeLogoFrame(LOGO, "sweep", last), (c) => isHex(c.tone))).toBe(0);
   });
 
   it("reveals the left of the mark before the right", () => {
@@ -550,19 +558,21 @@ describe("pulse", () => {
           if (cell.ch === "/") slashTones.add(cell.tone);
         }
       }
-      // All slash cells share exactly one breathing tone this frame.
+      // All slash cells share exactly one breathing tone this frame: dim
+      // (trough), error (mid), or the brighter HOT_RED hex (peak) — no purple.
       expect(slashTones.size).toBe(1);
-      expect(["dim", "error", "brand"]).toContain([...slashTones][0]);
+      const t = [...slashTones][0]!;
+      expect(t === "dim" || t === "error" || (isHex(t) && isRedDominant(t))).toBe(true);
     }
   });
 
-  it("passes through the purple peak and the dim trough over a cycle", () => {
+  it("passes through the red peak and the dim trough over a cycle", () => {
     const seen = new Set<string>();
     for (let f = 0; f < period; f += 1) {
       const frame = computeLogoFrame(LOGO, "pulse", f);
       for (const row of frame) for (const cell of row) if (cell.ch === "/") seen.add(cell.tone);
     }
-    expect(seen.has("brand")).toBe(true); // peak
+    expect([...seen].some((t) => isHex(t) && isRedDominant(t))).toBe(true); // bright-red peak
     expect(seen.has("dim")).toBe(true); // trough
     expect(seen.has("error")).toBe(true); // mid
   });
