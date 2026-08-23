@@ -180,6 +180,14 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     usage: "/settings",
   },
   {
+    name: "theme",
+    aliases: ["themes"],
+    category: "system",
+    description: "Switch the colour theme — live preview as you arrow, enter to keep",
+    usage: "/theme [name]",
+    tuiOnly: true,
+  },
+  {
     name: "model",
     aliases: ["models"],
     category: "mode",

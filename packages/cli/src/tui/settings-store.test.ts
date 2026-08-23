@@ -9,6 +9,7 @@ import {
   __resetSettingsStoreForTests,
   configureSettingsStore,
   getSettings,
+  previewSetting,
   reloadSettings,
   setSettings,
   subscribeSettings,
@@ -337,5 +338,25 @@ describe("store: write target", () => {
     updateSetting("density", "compact", { scope: "project" });
     expect(readProjectOverrides(project)).toEqual({ density: "compact" });
     expect(loadGlobalSettings(home).density).toBe(DEFAULT_SETTINGS.density);
+  });
+});
+
+describe("previewSetting", () => {
+  it("updates memory and notifies subscribers WITHOUT persisting to disk", () => {
+    const home = makeHome();
+    configureSettingsStore({ homeDir: home });
+    const original = getSettings().theme;
+    let notified = 0;
+    const unsub = subscribeSettings(() => {
+      notified += 1;
+    });
+
+    previewSetting("theme", "light");
+    expect(getSettings().theme).toBe("light");
+    expect(notified).toBe(1);
+
+    // Not durable: a fresh read from disk restores the original theme.
+    expect(reloadSettings().theme).toBe(original);
+    unsub();
   });
 });

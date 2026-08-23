@@ -36,6 +36,8 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import {
   useSettings,
   updateSetting,
+  previewSetting,
+  reloadSettings,
 } from "./settings-store.js";
 import { useTheme, type Theme } from "./theme-context.js";
 import { modelProvider } from "@0sec/shared";
@@ -110,7 +112,7 @@ import {
   buildToolsPanel,
 } from "./panels.js";
 import { fitTuiText } from "./text.js";
-import { severityToneFor } from "./themes.js";
+import { severityToneFor, THEME_NAMES, getThemeEntry, isThemeName } from "./themes.js";
 import {
   parseSubagentCard,
   reduceActiveSubagents,
@@ -755,8 +757,23 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
    * /mode and anything added later.
    */
   const [picker, setPicker] = useState<
-    { state: SelectorState; commit: (id: string) => void } | null
+    {
+      state: SelectorState;
+      commit: (id: string) => void;
+      // Live preview as the highlight moves (e.g. /theme repaints the console);
+      // onCancel reverts a preview when the picker is dismissed with Esc.
+      onHighlight?: (id: string) => void;
+      onCancel?: () => void;
+    } | null
   >(null);
+  const pickerRef = useRef(picker);
+  pickerRef.current = picker;
+  // Fire onHighlight whenever the highlighted row changes (incl. on open), so a
+  // picker can preview the highlighted choice without committing it.
+  const pickerHighlightId = picker ? highlighted(picker.state)?.id : undefined;
+  useEffect(() => {
+    if (pickerHighlightId) pickerRef.current?.onHighlight?.(pickerHighlightId);
+  }, [pickerHighlightId]);
   const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 });
   /** Live turn-budget consumption, updated per model call. */
   const [turnBudget, setTurnBudget] = useState<{ used: number; limit: number } | null>(null);
@@ -1942,6 +1959,44 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         // list squeezed above the composer.
         onNavigate("settings");
         return true;
+      case "theme": {
+        const current = settingsRef.current.theme;
+        const arg = args.trim().toLowerCase();
+        if (arg) {
+          if (!isThemeName(arg)) {
+            appendEntry({
+              kind: "notice",
+              text: "unknown theme",
+              detail: `Run /theme with no argument to pick from ${THEME_NAMES.length}.`,
+              turn: turn.current,
+            });
+            return true;
+          }
+          updateSetting("theme", arg);
+          appendEntry({ kind: "notice", text: `Theme: ${getThemeEntry(arg).label}`, turn: turn.current });
+          return true;
+        }
+        const items: SelectorItem[] = THEME_NAMES.map((name) => {
+          const entry = getThemeEntry(name);
+          return {
+            id: name,
+            label: entry.label,
+            meta: entry.mode,
+            detail: entry.description,
+            current: name === current,
+          };
+        });
+        setPicker({
+          state: createSelectorState("Theme · live preview", items, current),
+          // Preview in memory as the operator arrows — no disk write per row.
+          onHighlight: (id) => { if (isThemeName(id)) previewSetting("theme", id); },
+          // Enter keeps the highlighted theme (persist it).
+          commit: (id) => { if (isThemeName(id)) updateSetting("theme", id); },
+          // Esc restores the theme that was active before the picker opened.
+          onCancel: () => { reloadSettings(); },
+        });
+        return true;
+      }
       case "model": {
         const requested = args.trim();
         if (!requested) {
@@ -2674,6 +2729,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         return;
       }
       if (key.name === "escape") {
+        picker.onCancel?.();
         setPicker(null);
         return;
       }

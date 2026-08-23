@@ -194,6 +194,18 @@ export function updateSetting<K extends keyof TuiSettings>(
 }
 
 /**
+ * Preview a single setting IN MEMORY ONLY: update the cached value and notify
+ * subscribers WITHOUT writing to disk. For live UI preview (the /theme picker
+ * repaints the whole console as you arrow through themes). NOT durable — revert
+ * with `reloadSettings()` (restores disk truth) or persist with `updateSetting`.
+ */
+export function previewSetting<K extends keyof TuiSettings>(key: K, value: TuiSettings[K]): void {
+  if (cached === null) cached = loadLayered();
+  cached = { settings: { ...cached.settings, [key]: value }, sources: cached.sources };
+  notify(cached.settings);
+}
+
+/**
  * Subscribe to settings changes. Returns an unsubscribe function; calling it
  * more than once is harmless. Subscribers fire synchronously inside
  * `setSettings`/`updateSetting`/`reloadSettings`, never on a plain read.
