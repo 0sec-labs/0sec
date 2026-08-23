@@ -966,7 +966,7 @@ describe("mcp-server — engagement hardening profile", () => {
     });
     await runCli([...baseArgs, "--engagement-profile", "conservative"]);
     expect(serverConnectMock).toHaveBeenCalledOnce();
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+    expect(errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n")).toMatch(
       /could not persist engagement posture/,
     );
   });
@@ -977,7 +977,7 @@ describe("mcp-server — engagement hardening profile", () => {
     });
     await runCli([...baseArgs, "--engagement-profile", "stealth"]);
     expect(tracker.firstCode).toBe(2); // same code `0sec scan` uses
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+    expect(errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n")).toMatch(
       /Unknown engagement profile/,
     );
     expect(dbCtorCalls).toHaveLength(0);

@@ -182,7 +182,7 @@ describe("runUnified — runtime gating", () => {
       // process.exit throws by design — swallow
     }
     expect(tracker.firstCode).toBe(2);
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+    expect(errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n")).toMatch(
       /Unknown runtime/,
     );
   });
@@ -206,7 +206,7 @@ describe("runUnified — runtime gating", () => {
     }
     expect(createRuntimeMock).toHaveBeenCalledWith({ type: "claude", timeout: 30000 });
     expect(tracker.firstCode).toBe(2);
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+    expect(errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n")).toMatch(
       /Runtime 'claude' not available/,
     );
   });
@@ -499,7 +499,7 @@ describe("runUnified — exit codes", () => {
       // expected
     }
     expect(tracker.firstCode).toBe(4);
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+    expect(errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n")).toMatch(
       /cost ceiling exceeded/i,
     );
   });
@@ -520,7 +520,7 @@ describe("runUnified — exit codes", () => {
       // expected
     }
     expect(tracker.firstCode).toBe(2);
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+    expect(errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n")).toMatch(
       /kaboom/,
     );
   });
@@ -568,7 +568,7 @@ describe("runUnified — emitResultLine env gate", () => {
       timeout: 30000,
       verbose: false,
     });
-    const all = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const all = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(all).not.toMatch(/0SEC_RESULT=/);
   });
 
@@ -585,8 +585,8 @@ describe("runUnified — emitResultLine env gate", () => {
       verbose: false,
     });
     const line = logSpy.mock.calls
-      .map((c) => String(c[0]))
-      .find((s) => s.startsWith("0SEC_RESULT="));
+      .map((c: unknown[]) => String(c[0]))
+      .find((s: string) => s.startsWith("0SEC_RESULT="));
     expect(line).toBeTruthy();
     const payload = JSON.parse(line!.slice("0SEC_RESULT=".length));
     expect(payload.ok).toBe(true);
@@ -618,8 +618,8 @@ describe("runUnified — emitResultLine env gate", () => {
       // expected — process.exit(1) is mocked to throw
     }
     const line = logSpy.mock.calls
-      .map((c) => String(c[0]))
-      .find((s) => s.startsWith("0SEC_RESULT="));
+      .map((c: unknown[]) => String(c[0]))
+      .find((s: string) => s.startsWith("0SEC_RESULT="));
     expect(line).toBeTruthy();
     const payload = JSON.parse(line!.slice("0SEC_RESULT=".length));
     expect(payload.exitCode).toBe(1);
@@ -673,7 +673,7 @@ describe("runUnified — cost summary (0sec#231)", () => {
       timeout: 30000,
       verbose: false,
     });
-    const all = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const all = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     // chalk.gray wraps with ANSI; strip for matching.
     // eslint-disable-next-line no-control-regex
     const plain = all.replace(/\x1b\[\d+m/g, "");
@@ -704,7 +704,7 @@ describe("runUnified — cost summary (0sec#231)", () => {
       timeout: 30000,
       verbose: false,
     });
-    const all = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const all = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     // eslint-disable-next-line no-control-regex
     const plain = all.replace(/\x1b\[\d+m/g, "");
     expect(plain).toMatch(/cost: \$0\.10/);
@@ -723,7 +723,7 @@ describe("runUnified — cost summary (0sec#231)", () => {
       timeout: 30000,
       verbose: false,
     });
-    const all = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const all = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     // eslint-disable-next-line no-control-regex
     const plain = all.replace(/\x1b\[\d+m/g, "");
     expect(plain).not.toMatch(/cost: \$/);

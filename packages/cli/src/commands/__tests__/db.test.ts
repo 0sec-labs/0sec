@@ -208,7 +208,7 @@ describe("db reset — destructive happy path", () => {
     expect(dbState.closed).toBe(true);
 
     // 5) The summary line surfaces the seed counts for relay consumers.
-    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(out).toMatch(/db reset/);
     expect(out).toMatch(/seed: verification/);
     expect(out).toMatch(/scans: 4/);
@@ -227,7 +227,7 @@ describe("db reset — destructive happy path", () => {
     expect(callsByMethod("saveFinding")).toHaveLength(0);
     expect(callsByMethod("addVerdict")).toHaveLength(0);
 
-    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(out).toMatch(/seed: empty/);
     expect(out).toMatch(/scans: 0/);
   });
@@ -300,7 +300,7 @@ describe("db repair", () => {
     expect(repairOsecDatabaseMock).toHaveBeenCalledOnce();
     expect(repairOsecDatabaseMock).toHaveBeenCalledWith(undefined);
 
-    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(out).toMatch(/db repair/);
     expect(out).toMatch(/\/fake\/0sec\.db/);
     // No backupPath means no `backup:` line.
@@ -315,7 +315,7 @@ describe("db repair", () => {
     const err = await runCli(["db", "repair"]);
     expect(err).toBeNull();
 
-    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(out).toMatch(/backup: \/fake\/0sec\.db\.corrupt-2026-05-13/);
   });
 

@@ -266,7 +266,7 @@ describe("findings list — read surface", () => {
     const err = await runCli(["findings", "list"]);
     expect(err).toBeUndefined();
 
-    const empty = logSpy.mock.calls.find((c) => /No findings found\./.test(String(c[0])));
+    const empty = logSpy.mock.calls.find((c: unknown[]) => /No findings found\./.test(String(c[0])));
     expect(empty).toBeTruthy();
     // listFindings was called exactly once, close() always fires.
     expect(callsByMethod("listFindings")).toHaveLength(1);
@@ -285,7 +285,7 @@ describe("findings list — read surface", () => {
     expect(err).toBeUndefined();
 
     // Header should mention "finding groups (2)" — two distinct fingerprints.
-    const header = logSpy.mock.calls.find((c) => /finding groups \(2\)/.test(String(c[0])));
+    const header = logSpy.mock.calls.find((c: unknown[]) => /finding groups \(2\)/.test(String(c[0])));
     expect(header).toBeTruthy();
     // close() always fires.
     expect(callsByMethod("close")).toHaveLength(1);
@@ -299,7 +299,7 @@ describe("findings list — read surface", () => {
     const err = await runCli(["findings", "--all"]);
     expect(err).toBeUndefined();
 
-    const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const allOutput = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(allOutput).not.toMatch(/finding groups/);
     // Raw rendering: both row ids should appear (one block per row).
     expect(allOutput).toContain("row-1");
@@ -323,7 +323,7 @@ describe("findings list — read surface", () => {
     const err = await runCli(["findings", "list", "--all"]);
     expect(err).toBeUndefined();
 
-    const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const allOutput = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     // Raw row rendering: header says "findings (N)" not "finding groups (N)".
     expect(allOutput).not.toMatch(/finding groups/);
     expect(allOutput).toMatch(/findings \(4\)/);
@@ -343,7 +343,7 @@ describe("findings list — read surface", () => {
     const err = await runCli(["findings", "list"]);
     expect(err).toBeUndefined();
 
-    const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const allOutput = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(allOutput).toMatch(/finding groups \(2\)/);
     expect(allOutput).not.toMatch(/findings \(2\)/);
   });
@@ -353,7 +353,7 @@ describe("findings list — read surface", () => {
     const err = await runCli(["findings", "--all", "list"]);
     expect(err).toBeUndefined();
 
-    const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const allOutput = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(allOutput).not.toMatch(/finding groups/);
     expect(allOutput).toContain("row-leading");
   });
@@ -367,7 +367,7 @@ describe("findings list — read surface", () => {
     const err = await runCli(["findings", "--limit", "1", "list"]);
     expect(err).toBeUndefined();
 
-    const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const allOutput = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(allOutput).toContain("row-limit-1");
     expect(allOutput).not.toContain("row-limit-2");
   });
@@ -430,11 +430,11 @@ describe("findings show — detail view", () => {
 
     // The detail block leads with title; the id appears verbatim in the
     // "ID:" line; score is printed when non-null.
-    const titleLine = logSpy.mock.calls.find((c) =>
+    const titleLine = logSpy.mock.calls.find((c: unknown[]) =>
       /Reflected XSS in \/search/.test(String(c[0])),
     );
-    const idLine = logSpy.mock.calls.find((c) => String(c[0]).includes(id));
-    const scoreLine = logSpy.mock.calls.find((c) => /87\/100/.test(String(c[0])));
+    const idLine = logSpy.mock.calls.find((c: unknown[]) => String(c[0]).includes(id));
+    const scoreLine = logSpy.mock.calls.find((c: unknown[]) => /87\/100/.test(String(c[0])));
     expect(titleLine).toBeTruthy();
     expect(idLine).toBeTruthy();
     expect(scoreLine).toBeTruthy();
@@ -447,7 +447,7 @@ describe("findings show — detail view", () => {
     dbState.rows.push(makeRow({ id: full, title: "Unique prefix target" }));
     const err = await runCli(["findings", "show", "feedface"]);
     expect(err).toBeUndefined();
-    const titleLine = logSpy.mock.calls.find((c) =>
+    const titleLine = logSpy.mock.calls.find((c: unknown[]) =>
       /Unique prefix target/.test(String(c[0])),
     );
     expect(titleLine).toBeTruthy();
@@ -466,7 +466,7 @@ describe("findings show — detail view", () => {
     expect((err as ProcessExitError).code).toBe(1);
 
     // Error message routed through console.error.
-    const ambiguous = errSpy.mock.calls.find((c) =>
+    const ambiguous = errSpy.mock.calls.find((c: unknown[]) =>
       /ambiguous/i.test(String(c[0])),
     );
     expect(ambiguous).toBeTruthy();
@@ -479,7 +479,7 @@ describe("findings show — detail view", () => {
     const err = await runCli(["findings", "show", "no-such-id"]);
     expect(err).toBeInstanceOf(ProcessExitError);
 
-    const notFound = errSpy.mock.calls.find((c) => /not found/i.test(String(c[0])));
+    const notFound = errSpy.mock.calls.find((c: unknown[]) => /not found/i.test(String(c[0])));
     expect(notFound).toBeTruthy();
     expect(callsByMethod("close")).toHaveLength(1);
   });
@@ -496,7 +496,7 @@ describe("findings show — detail view", () => {
     const err = await runCli(["findings", "show", id]);
     expect(err).toBeUndefined();
 
-    const related = logSpy.mock.calls.find((c) =>
+    const related = logSpy.mock.calls.find((c: unknown[]) =>
       /Related Findings/.test(String(c[0])),
     );
     expect(related).toBeTruthy();
@@ -609,7 +609,7 @@ describe("findings accept/suppress/reopen — triage transitions", () => {
     expect(err).toBeUndefined();
 
     // The CLI prints "Updated <N> findings in family ..." — N = related rows.
-    const updateLog = logSpy.mock.calls.find((c) =>
+    const updateLog = logSpy.mock.calls.find((c: unknown[]) =>
       /Updated.*findings in family/.test(String(c[0])),
     );
     expect(updateLog).toBeTruthy();
@@ -626,7 +626,7 @@ describe("findings accept/suppress/reopen — triage transitions", () => {
     // Source slices the fingerprint to 10 chars in the success banner —
     // we assert on the visible prefix so any regression in the formatter
     // (e.g. dropping the fp display) is caught.
-    const banner = logSpy.mock.calls.find((c) =>
+    const banner = logSpy.mock.calls.find((c: unknown[]) =>
       String(c[0]).includes("fp:fp-success"),
     );
     expect(banner).toBeTruthy();

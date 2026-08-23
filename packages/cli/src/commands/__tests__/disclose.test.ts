@@ -273,7 +273,7 @@ describe("disclose — H1-readiness gate (AGENTS.md /disclose pipeline)", () => 
   it("empty DB: emits 'No findings' message and exits clean (no renderer calls)", async () => {
     dbState.rows = [];
     await runCli(["disclose", "--dry-run"]);
-    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(out).toMatch(/No findings/i);
     expect(renderAdvisoryMarkdownMock).not.toHaveBeenCalled();
   });
@@ -281,7 +281,7 @@ describe("disclose — H1-readiness gate (AGENTS.md /disclose pipeline)", () => 
   it("all rows filtered: emits 'No findings at or above severity ...' message", async () => {
     dbState.rows = [makeRow({ severity: "low", status: "verified" })];
     await runCli(["disclose", "--severity-floor", "high", "--dry-run"]);
-    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(out).toMatch(/No findings at or above severity 'high'/);
     expect(renderAdvisoryMarkdownMock).not.toHaveBeenCalled();
   });

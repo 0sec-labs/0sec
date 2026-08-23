@@ -158,7 +158,7 @@ let home: string;
 let project: string;
 let out: string[];
 let err: string[];
-let spawnSpy: ReturnType<typeof vi.fn>;
+let spawnSpy: ReturnType<typeof vi.fn<(...args: unknown[]) => unknown>>;
 
 beforeEach(async () => {
   core = await realCorePort();
@@ -166,7 +166,7 @@ beforeEach(async () => {
   project = mkdtempSync(join(tmpdir(), "0sec-plugincmd-proj-"));
   out = [];
   err = [];
-  spawnSpy = vi.fn();
+  spawnSpy = vi.fn<(...args: unknown[]) => unknown>();
   process.exitCode = 0;
 });
 afterEach(() => {
