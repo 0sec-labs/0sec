@@ -611,6 +611,39 @@ export interface SessionObjectivePayload {
   [k: string]: unknown;
 }
 
+/**
+ * Aggregate multi-modal cross-validation summary (0sec FoxGuard cross-validation,
+ * Phase 3). Emitted ONCE per scan, after the per-finding triage loop, when the
+ * multi-modal agreement layer ran (`0SEC_FEATURE_MULTIMODAL=1` + white-box) and
+ * at least one finding reached `both_fire` agreement — i.e. both the 0sec agent
+ * AND the foxguard pattern scanner fired on the same file. Lets the console / TUI
+ * / cloud show "both scanners agree on N findings" without re-deriving it from
+ * per-finding `multi_modal_agreement` DB events.
+ *
+ * PURELY OBSERVATIONAL — this is a summary of decisions already made by
+ * `fuseTriageSignals`; emitting it does NOT change any triage decision, verdict,
+ * or the multi-modal default gate.
+ */
+export interface CrossValidatedLeadEntry {
+  /** Engine finding id — matches CloudSinkFinding.id → findings.engine_finding_id. */
+  findingId: string;
+  title: string;
+  severity: string;
+  category?: string;
+  /** foxguard × 0sec agreement confidence in [0,1] from the multi-modal check. */
+  confidence: number;
+  /** Number of foxguard SARIF findings that matched this finding's file. */
+  foxguardMatches: number;
+}
+
+export interface CrossValidatedLeadsPayload {
+  /** Number of findings both scanners agreed on (multi-modal agreement === both_fire). */
+  count: number;
+  /** The agreeing findings, in triage order. */
+  leads: CrossValidatedLeadEntry[];
+  [k: string]: unknown;
+}
+
 /** Discriminated union of all events flowing through the bus. */
 export type osecEvent =
   | { type: "step_started"; payload: StepStartedPayload }
@@ -638,7 +671,8 @@ export type osecEvent =
   | { type: "subagent_progress"; payload: SubagentProgressPayload }
   | { type: "tool_health"; payload: ToolHealthPayload }
   | { type: "todos"; payload: TodosPayload }
-  | { type: "session_objective"; payload: SessionObjectivePayload };
+  | { type: "session_objective"; payload: SessionObjectivePayload }
+  | { type: "cross_validated_leads"; payload: CrossValidatedLeadsPayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = osecEvent["type"];

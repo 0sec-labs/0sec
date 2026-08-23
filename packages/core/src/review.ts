@@ -20,7 +20,7 @@ import { runAnalysisAgent } from "./agent-runner.js";
 import { features } from "./agent/features.js";
 import { runSelectedStaticScan } from "./shared-analysis.js";
 import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
-import { rankAndDedupeFoxguardLeads } from "./review/foxguard-leads.js";
+import { rankAndDedupeFoxguardLeads, toCrossValidatedLeads } from "./review/foxguard-leads.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
 import { xnuReReviewAgentPrompt } from "./review/xnu-re-profile.js";
@@ -652,6 +652,13 @@ export async function sourceReview(
     // a no-op for the non-kernel profiles where `foxguardFindings` stays empty.
     foxguardFindings = rankAndDedupeFoxguardLeads(foxguardFindings);
 
+    // Project the same ranked/deduped leads into a typed result surfaced on the
+    // report (Phase 2). Additive: the prompt injection below is unchanged; this
+    // exposes the SAME leads as structured data so downstream (console / TUI /
+    // cloud) can read them instead of parsing the prompt text. Empty for the
+    // non-kernel profiles where `foxguardFindings` stays empty.
+    const crossValidatedLeads = toCrossValidatedLeads(foxguardFindings);
+
     // Step 3: AI agent review
     const agentResult = await runReviewAgent(
       repoPath,
@@ -696,6 +703,7 @@ export async function sourceReview(
       semgrepFindings: semgrepFindings.length,
       summary,
       findings,
+      crossValidatedLeads,
       usage: agentResult.usage,
       estimatedCostUsd: agentResult.estimatedCostUsd,
     };

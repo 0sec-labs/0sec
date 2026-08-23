@@ -82,6 +82,18 @@ export type { PackageAuditOptions } from "./audit.js";
 // Source code review
 export { sourceReview } from "./review.js";
 export type { SourceReviewOptions } from "./review.js";
+// FoxGuard cross-validation: ranked/deduped lead helpers + the typed result
+// surfaced on the review report (0sec FoxGuard cross-validation, Phase 2).
+export {
+  rankAndDedupeFoxguardLeads,
+  toCrossValidatedLeads,
+  foxguardLeadSource,
+} from "./review/foxguard-leads.js";
+export type {
+  CrossValidatedLead,
+  CrossValidatedLeads,
+  CrossValidatedLeadSource,
+} from "@0sec/shared";
 export {
   buildTier1Harness,
   scaffoldTier1Harness,

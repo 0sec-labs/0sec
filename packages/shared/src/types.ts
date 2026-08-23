@@ -335,7 +335,7 @@ export interface TargetInfo {
 
 // ── Findings ──
 
-export type FindingStatus = "discovered" | "verified" | "confirmed" | "scored" | "reported" | "false-positive";
+export type FindingStatus = "discovered" | "verified" | "confirmed" | "scored" | "reported" | "fixed" | "false-positive";
 export type FindingTriageStatus = "new" | "accepted" | "suppressed";
 export type FindingWorkflowStatus =
   | "backlog"
@@ -1652,6 +1652,48 @@ export interface SeedFinding {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Which cross-validating hunt produced a foxguard lead. The two lead sources on
+ * the linux-kernel review path are the foxguard SARIF variant-hunt
+ * (`runKernelVariantHunt` → `kernel-variant-*`) and the incomplete-fix sibling
+ * hunt (`huntIncompleteFixSiblings` → `incfix:*`); `unknown` is the fail-soft
+ * fallback when neither marker is present.
+ */
+export type CrossValidatedLeadSource =
+  | "foxguard-variant-hunt"
+  | "incomplete-fix"
+  | "unknown";
+
+/**
+ * One ranked/deduped cross-validated foxguard lead, exposed as structured data.
+ * Mirrors the fields the review prompt's "investigate FIRST" block renders as
+ * text, so downstream consumers (console / TUI / cloud) can read the leads
+ * directly instead of parsing them back out of the prompt string.
+ */
+export interface CrossValidatedLead {
+  title: string;
+  severity: Severity;
+  /** Producer-assessed confidence in [0,1]; absent when the hunt set none. */
+  confidence?: number;
+  /** Stable dedupe key when the producing hunt set one (`kernel-variant-*` / `incfix:*`). */
+  fingerprint?: string;
+  /** Which hunt produced the lead. */
+  source: CrossValidatedLeadSource;
+}
+
+/**
+ * Structured view of the ranked/deduped foxguard leads that also feed the review
+ * prompt (0sec FoxGuard cross-validation, Phase 2). Additive: the prompt
+ * injection is unchanged; this surfaces the SAME leads as typed data. Populated
+ * (possibly empty) on the linux-kernel review path; empty for other profiles.
+ */
+export interface CrossValidatedLeads {
+  /** Ranked (severity → confidence) + deduped leads, highest-priority first. */
+  leads: CrossValidatedLead[];
+  /** Total ranked/deduped lead count (may exceed what the prompt slice shows). */
+  total: number;
+}
+
 export interface ReviewReport {
   repo: string;
   startedAt: string;
@@ -1660,6 +1702,13 @@ export interface ReviewReport {
   semgrepFindings: number;
   summary: ReportSummary;
   findings: Finding[];
+  /**
+   * Ranked/deduped cross-validated foxguard leads surfaced as structured data,
+   * in ADDITION to the review-prompt injection (0sec FoxGuard cross-validation,
+   * Phase 2). Present (possibly empty) on the linux-kernel review path so
+   * downstream consumers can read the leads instead of parsing prompt text.
+   */
+  crossValidatedLeads?: CrossValidatedLeads;
   /** LLM token usage (input + output). Undefined when no LLM agent ran. */
   usage?: TokenUsage;
   /** Estimated USD cost from token usage at the configured model rates. */

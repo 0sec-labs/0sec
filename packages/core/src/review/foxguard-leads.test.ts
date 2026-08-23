@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { Finding, Severity } from "@0sec/shared";
 
-import { rankAndDedupeFoxguardLeads } from "./foxguard-leads.js";
+import {
+  rankAndDedupeFoxguardLeads,
+  toCrossValidatedLeads,
+  foxguardLeadSource,
+} from "./foxguard-leads.js";
 
 function lead(overrides: Partial<Finding> & { title: string }): Finding {
   return {
@@ -93,5 +97,79 @@ describe("rankAndDedupeFoxguardLeads", () => {
     const snapshot = input.map((f) => f.title);
     rankAndDedupeFoxguardLeads(input);
     expect(input.map((f) => f.title)).toEqual(snapshot);
+  });
+});
+
+describe("foxguardLeadSource", () => {
+  it("classifies incomplete-fix leads by fingerprint", () => {
+    expect(
+      foxguardLeadSource(lead({ title: "a", fingerprint: "incfix:fs/x.c:decrypt:abc123" })),
+    ).toBe("incomplete-fix");
+  });
+
+  it("classifies incomplete-fix leads by templateId when fingerprint absent", () => {
+    expect(
+      foxguardLeadSource(lead({ title: "a", templateId: "kernel-incomplete-fix-abc-decrypt" })),
+    ).toBe("incomplete-fix");
+  });
+
+  it("classifies variant-hunt leads by templateId", () => {
+    expect(
+      foxguardLeadSource(lead({ title: "a", templateId: "kernel-variant-copy-fail-rule" })),
+    ).toBe("foxguard-variant-hunt");
+  });
+
+  it("falls back to unknown when no marker matches", () => {
+    expect(foxguardLeadSource(lead({ title: "a", templateId: "tpl-a" }))).toBe("unknown");
+  });
+});
+
+describe("toCrossValidatedLeads", () => {
+  it("returns an empty result for empty input (non-kernel profiles)", () => {
+    expect(toCrossValidatedLeads([])).toEqual({ leads: [], total: 0 });
+  });
+
+  it("projects title/severity/confidence/fingerprint/source, preserving order", () => {
+    const ranked = [
+      lead({
+        title: "variant lead",
+        severity: "critical",
+        confidence: 0.85,
+        fingerprint: "kv-1",
+        templateId: "kernel-variant-copy-fail-rule",
+      }),
+      lead({
+        title: "incfix lead",
+        severity: "high",
+        fingerprint: "incfix:fs/x.c:decrypt:abc",
+        templateId: "kernel-incomplete-fix-abc-decrypt",
+      }),
+    ];
+    const result = toCrossValidatedLeads(ranked);
+    expect(result.total).toBe(2);
+    expect(result.leads).toEqual([
+      {
+        title: "variant lead",
+        severity: "critical",
+        confidence: 0.85,
+        fingerprint: "kv-1",
+        source: "foxguard-variant-hunt",
+      },
+      {
+        title: "incfix lead",
+        severity: "high",
+        fingerprint: "incfix:fs/x.c:decrypt:abc",
+        source: "incomplete-fix",
+      },
+    ]);
+  });
+
+  it("omits confidence and fingerprint when unset (no blank fingerprint)", () => {
+    const [entry] = toCrossValidatedLeads([
+      lead({ title: "bare", severity: "medium", fingerprint: "  " }),
+    ]).leads;
+    expect(entry).toEqual({ title: "bare", severity: "medium", source: "unknown" });
+    expect(entry).not.toHaveProperty("confidence");
+    expect(entry).not.toHaveProperty("fingerprint");
   });
 });

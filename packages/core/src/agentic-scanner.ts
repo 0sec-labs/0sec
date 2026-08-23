@@ -230,7 +230,7 @@ import {
 } from "./agent/static-poc-gen.js";
 import { getCloudSinkConfig, postFinding, postFinalReport } from "./cloud-sink.js";
 import { eventBus } from "./events/bus.js";
-import type { CostBreakdownEntry } from "./events/bus.js";
+import type { CostBreakdownEntry, CrossValidatedLeadEntry } from "./events/bus.js";
 import { modelProvider, splitCost } from "./agent/cost.js";
 import { loadScope, ScopePolicy } from "./scope/scope.js";
 import { RateLimiter, parseRateLimitFlag } from "./scope/rate-limit.js";
@@ -2015,6 +2015,11 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     // can (a) gate layer execution below and (b) emit `routing-trace.jsonl`
     // at scan teardown for offline learned-router training.
     const routingDecisions = new Map<string, RoutingDecision>();
+    // Phase 3: accumulate cross-validated leads (findings the multi-modal layer
+    // scored `both_fire` — 0sec AND foxguard agree) so we can surface ONE
+    // aggregate summary event after the loop. Purely observational: reading the
+    // already-computed `mm` result here does NOT change any triage decision.
+    const crossValidatedLeadEntries: CrossValidatedLeadEntry[] = [];
     for (const finding of allFindings) {
       // Always run isHoldingItWrong + extractFeatures for telemetry, but
       // only enforce the rejection when the feature flags are enabled.
@@ -2566,6 +2571,20 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
             },
             timestamp: Date.now(),
           });
+
+          // Phase 3 summary accumulation (observational only — does not affect
+          // the fused decision below): record findings where both scanners fired.
+          if (mm.agreement === "both_fire") {
+            const entry: CrossValidatedLeadEntry = {
+              findingId: finding.id,
+              title: finding.title,
+              severity: finding.severity,
+              category: finding.category,
+              confidence: mm.confidence,
+              foxguardMatches: mm.foxguardFindings.length,
+            };
+            crossValidatedLeadEntries.push(entry);
+          }
 
           const fused = fuseTriageSignals({
             multiModal: mm,
@@ -3232,6 +3251,18 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
 
       db.saveFinding?.(scanId, finding);
       verifyCandidates.push(finding);
+    }
+
+    // Phase 3: one aggregate cross-validation summary for the whole triage pass.
+    // Emitted only when the multi-modal layer actually found agreement, so the
+    // console / TUI can show "both scanners agree on N findings" without
+    // re-deriving it from per-finding events. Additive + fail-soft; the event
+    // bus swallows sink exceptions so this can never abort the scan.
+    if (crossValidatedLeadEntries.length > 0) {
+      eventBus.emit("cross_validated_leads", {
+        count: crossValidatedLeadEntries.length,
+        leads: crossValidatedLeadEntries,
+      });
     }
 
     // ── Stage 3: Verification Agent ──
