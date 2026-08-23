@@ -121,6 +121,14 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     tuiOnly: true,
   },
   {
+    name: "finding",
+    aliases: ["finding-detail"],
+    category: "session",
+    description: "Open one finding in full detail to read and act on it",
+    usage: "/finding [id]",
+    tuiOnly: true,
+  },
+  {
     name: "replay",
     aliases: [],
     category: "session",

@@ -23,6 +23,8 @@ import { ModelScreen } from "./model-screen.js";
 import { MarketScreen } from "./market-screen.js";
 import { ConnectScreen } from "./connect-screen.js";
 import { UsageScreen } from "./usage-screen.js";
+import { FindingDetailScreen } from "./finding-detail-screen.js";
+import { copyToClipboard, defaultSpawn, defaultWhich } from "./clipboard.js";
 import { createSessionCloseGate } from "./session-close-gate.js";
 import { installTuiOutputGuard } from "./output-guard.js";
 import { appendFeedback, submitFeedback } from "./feedback.js";
@@ -70,6 +72,7 @@ type ConsoleRoute =
   | { type: "connect" }
   | { type: "models"; chatOptions?: ChatScreenOptions }
   | { type: "usage"; chatOptions?: ChatScreenOptions }
+  | { type: "finding"; findingId?: string; finding?: Finding; chatOptions?: ChatScreenOptions }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onClose: () => void };
 
 interface ShellNav {
@@ -130,6 +133,16 @@ interface ShellNav {
    * zero).
    */
   openUsage: (chatOptions?: ChatScreenOptions) => void;
+  /**
+   * Opens the full-screen finding-detail view for one finding: its full body
+   * (severity, location, description, redacted evidence, remediation, CVSS,
+   * references) plus the fix / copy-report / status actions. The chat route's
+   * options are carried through so a fix request can re-enter chat with the same
+   * target and model. The finding itself may be passed directly (the sidebar /
+   * inline click hands its own record across) or by id, resolved lazily from
+   * the findings store.
+   */
+  openFindingDetail: (findingId?: string, finding?: Finding, chatOptions?: ChatScreenOptions) => void;
 }
 
 interface HomeOption {
@@ -870,6 +883,13 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       category: "Navigate",
       description: "Context window, token totals, cost, model and tool health",
       action: () => shell.openUsage(),
+    },
+    {
+      id: "nav-finding",
+      title: "Open finding detail",
+      category: "Navigate",
+      description: "Open a finding to read its full body and act on it (fix, copy report)",
+      action: () => shell.openFindingDetail(),
     },
     {
       id: "nav-back",
@@ -3897,6 +3917,87 @@ function UsageRoute({
   );
 }
 
+/**
+ * Routes the finding-detail view, supplying the console shell around it.
+ *
+ * Two ways in: the click-wiring hands the finding record across directly (the
+ * common path once the sidebar / inline findings are clickable), or only an id
+ * arrives and the finding is resolved lazily from the findings store here — the
+ * same `@0sec/db` read `FindingsScreen` performs, so the overlay never imports
+ * the DB into the screen module. `onCopyReport` is wired to the shared
+ * `copyToClipboard` (subprocess path — no safe OSC 52 emitter is reachable from
+ * this overlay), so the copy action works on the host and degrades to a note
+ * when no clipboard tool is on PATH. `onFix` and `onSetStatus` are deliberately
+ * left unwired: the fix intent must ride the normal agent turn (the coordinator
+ * wires it to the composer / steer path), and status transitions await the
+ * store's write API — until then the screen offers only the fix and copy
+ * actions and never shows a control that does nothing.
+ */
+function FindingDetailRoute({
+  findingId,
+  finding,
+  chatOptions,
+  onExit,
+  shell,
+}: {
+  findingId?: string;
+  finding?: Finding;
+  chatOptions?: ChatScreenOptions;
+  onExit: () => void;
+  shell?: ShellNav;
+}) {
+  const [resolved, setResolved] = useState<Finding | undefined>(finding);
+
+  useEffect(() => {
+    if (finding) {
+      setResolved(finding);
+      return;
+    }
+    if (!findingId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { osecDB } = await import("@0sec/db");
+        const db = new osecDB();
+        try {
+          const row = db.getFinding(findingId);
+          if (alive && row) {
+            setResolved({
+              ...(row as unknown as Finding),
+              ...db.getFindingReviewFields(findingId),
+            });
+          }
+        } finally {
+          db.close();
+        }
+      } catch {
+        // Leave unresolved; the screen shows its honest empty state.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [finding, findingId]);
+
+  return (
+    <FindingDetailScreen
+      finding={resolved}
+      findingId={findingId}
+      onCopyReport={(_finding, markdown) => {
+        void copyToClipboard(markdown, { spawn: defaultSpawn, which: defaultWhich });
+      }}
+      onBack={() => leaveCurrentScreen(shell, onExit)}
+      onExit={onExit}
+      frame={({ body, hint }) => (
+        <ShellFrame view="finding">
+          {body}
+          <FooterBar hint={hint} />
+        </ShellFrame>
+      )}
+    />
+  );
+}
+
 type AppMode =
   | { type: "home"; onResolve: (selection: HomeSelection) => void; onExit: () => void }
   | { type: "ops"; dbPath?: string; refreshMs: number; onExit: () => void }
@@ -3966,6 +4067,8 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     openMarket: () => navigate({ type: "market" }),
     openConnect: () => navigate({ type: "connect" }),
     openUsage: (chatOpts) => navigate({ type: "usage", chatOptions: chatOpts ?? chatOptionsRef.current }),
+    openFindingDetail: (findingId, finding, chatOpts) =>
+      navigate({ type: "finding", findingId, finding, chatOptions: chatOpts ?? chatOptionsRef.current }),
   };
 
   const launchSelection = async (selection: HomeSelection) => {
@@ -4152,6 +4255,18 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             shell.openUsage(chatOptions);
             return;
           }
+          // `finding` is not in `ChatDestination` yet (chat-screen owns that
+          // union and this change does not touch it); the cast-guard keeps
+          // run.tsx compiling and the route reachable, and the branch starts
+          // routing the moment chat-screen makes a finding clickable — a
+          // `onNavigate("finding", id)` beside the "/model" case. Until the
+          // union carries an id the finding is resolved by that id from the
+          // store; the click-wiring can also pass the record through
+          // `shell.openFindingDetail(id, finding)` directly.
+          if ((destination as string) === "finding") {
+            shell.openFindingDetail(undefined, undefined, chatOptions);
+            return;
+          }
           switch (destination) {
             case "launcher":
               shell.openLauncher();
@@ -4240,6 +4355,16 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     overlay = <ConnectRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "usage") {
     overlay = <UsageRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "finding") {
+    overlay = (
+      <FindingDetailRoute
+        findingId={currentRoute.findingId}
+        finding={currentRoute.finding}
+        chatOptions={currentRoute.chatOptions}
+        onExit={onExit}
+        shell={shell}
+      />
+    );
   }
 
   return (
