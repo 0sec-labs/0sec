@@ -308,3 +308,131 @@ export function toastLifetimeFrames(holdFrames: number = TOAST_HOLD_FRAMES): num
   const hold = Number.isFinite(holdFrames) ? Math.max(0, Math.trunc(holdFrames)) : TOAST_HOLD_FRAMES;
   return TOAST_ENTER_FRAMES + hold + TOAST_EXIT_FRAMES;
 }
+
+// ---------------------------------------------------------------------------
+// Text shimmer (a sweeping dim band for running LOADING/RUNNING labels)
+// ---------------------------------------------------------------------------
+
+/**
+ * A skeleton-loader shimmer for a running *line of text* — the thinking
+ * indicator, a running tool-call row, a running subagent row. The label sits at
+ * a DIM/MUTED base, and a BRIGHT band sweeps left to right across it: each
+ * character brightens to full as the band's head passes and falls back to muted
+ * behind it, then the whole label rests at the muted base for a gap and the
+ * sweep loops. This reads as "alive while working", the same feel as oh-my-pi's
+ * loading shimmer.
+ *
+ * Note the polarity is the OPPOSITE of the logo comet (`shimmerFrame` in
+ * logo-animation.ts), which is a DARK band on a WHITE mark: here the base is dim
+ * and the head is the peak. The shared piece is only the sweep geometry (head
+ * enters off-screen-left, marches right, symmetric band of half-width `tail`,
+ * loops with a rest gap).
+ *
+ * Like every helper here it is pure and theme-free: it returns a per-character
+ * *intensity* in [0,1] (0 = the muted base, 1 = the bright peak at the head) and
+ * never touches a colour. The CALLER maps intensity to a tone — blend from
+ * `theme.MUTED` (intensity 0) up to `theme.TEXT` (intensity 1) — so a bright
+ * highlight sweeps across muted text; it paints the label as runs of adjacent
+ * equal-intensity characters (coalesce like `logoRowRuns`). Drive it with one
+ * frame ticker at `SHIMMER_TEXT_INTERVAL_MS`, passing the label's character count
+ * as `length`; re-render the running label each tick.
+ */
+
+/**
+ * Band half-width: the bright head eases back down to the muted base over this
+ * many characters on EACH side (band spans `2*tail + 1` chars).
+ */
+export const SHIMMER_TEXT_TAIL = 5;
+
+/**
+ * Repaint cadence for the text-shimmer ticker (~12.5 Hz), matching oh-my-pi's
+ * loader/spinner cadence so the sweep reads at the same speed.
+ */
+export const SHIMMER_TEXT_INTERVAL_MS = 80;
+
+/** Default rest-gap frames (whole label flat at the muted base) between sweeps. */
+const SHIMMER_TEXT_REST_GAP = 6;
+
+/** Options for the text shimmer. Omitted numeric fields fall back to the constants. */
+export interface ShimmerTextOptions extends UiAnimationOptions {
+  /** Band half-width in characters (default `SHIMMER_TEXT_TAIL`); min 1. */
+  tail?: number;
+  /** Flat-base frames between sweeps (default `SHIMMER_TEXT_REST_GAP`); min 0. */
+  restGap?: number;
+}
+
+/** Resolve the band half-width from opts (>= 1). */
+function shimmerTail(opts?: ShimmerTextOptions): number {
+  const t = opts?.tail;
+  if (t === undefined || !Number.isFinite(t)) return SHIMMER_TEXT_TAIL;
+  return Math.max(1, Math.trunc(t));
+}
+
+/** Resolve the rest-gap length from opts (>= 0). */
+function shimmerRestGap(opts?: ShimmerTextOptions): number {
+  const g = opts?.restGap;
+  if (g === undefined || !Number.isFinite(g)) return SHIMMER_TEXT_REST_GAP;
+  return Math.max(0, Math.trunc(g));
+}
+
+/** Normalise a possibly non-finite/negative length into a whole number >= 0. */
+function shimmerLength(length: number): number {
+  if (!Number.isFinite(length)) return 0;
+  const n = Math.trunc(length);
+  return n < 0 ? 0 : n;
+}
+
+/**
+ * Loop period for a shimmer over `length` characters: the sweep span (the head
+ * travelling from off-screen-left at col `-tail` to off-screen-right past the
+ * last char) plus the rest gap. `shimmerText(length, frame)` and
+ * `shimmerText(length, frame + period)` are identical. Zero-length labels have a
+ * pure rest-gap period (there is nothing to sweep).
+ */
+export function shimmerTextPeriod(length: number, opts?: ShimmerTextOptions): number {
+  const len = shimmerLength(length);
+  return len + 2 * shimmerTail(opts) + shimmerRestGap(opts);
+}
+
+/**
+ * Per-character intensities for one frame of a text shimmer of `length` chars.
+ *
+ * Returns an array of length `length` where each entry is in [0,1]: 0 is the
+ * muted base and 1 is the bright peak. A bright band sweeps across the label
+ * — its head (brightest, intensity 1) enters off-screen-left at column
+ * `-tail`, marches one column per frame to off-screen-right, then the label rests
+ * flat at the muted base for `restGap` frames before repeating. Within the band
+ * the intensity eases (smoothstep) symmetrically DOWN from the head to 0 at both
+ * edges, so `intensity[head - d] === intensity[head + d]`; characters outside the
+ * band are 0 (base).
+ *
+ * Deterministic in `frame` (wrapped modulo `shimmerTextPeriod`); non-finite or
+ * negative frames are treated as 0. `length <= 0` returns `[]`. Under
+ * `reduceMotion` every entry is 0 (no shimmer, flat muted base).
+ */
+export function shimmerText(length: number, frame: number, opts?: ShimmerTextOptions): number[] {
+  const len = shimmerLength(length);
+  if (len <= 0) return [];
+  const out = new Array<number>(len).fill(0);
+  if (opts?.reduceMotion) return out;
+
+  const tail = shimmerTail(opts);
+  const rest = shimmerRestGap(opts);
+  const period = len + 2 * tail + rest;
+  const sweep = len + 2 * tail;
+  const idx = ((safeFrame(frame) % period) + period) % period;
+  if (idx >= sweep) return out; // rest gap: whole label flat at the muted base
+
+  // The bright head begins OFF-SCREEN LEFT at col -tail so the band visibly
+  // sweeps IN from the left edge, then marches right one column per frame.
+  const head = idx - tail;
+  for (let offset = -tail; offset <= tail; offset += 1) {
+    const col = head + offset;
+    if (col < 0 || col >= len) continue;
+    // Brightest (1) at the head; easing symmetrically DOWN to the base (0) at the
+    // band edges. Only |offset| matters, so the band is symmetric.
+    const intensity = 1 - smoothstep(Math.abs(offset) / tail);
+    if (intensity > out[col]!) out[col] = intensity;
+  }
+  return out;
+}

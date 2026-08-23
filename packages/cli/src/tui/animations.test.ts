@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SHIMMER_TEXT_INTERVAL_MS,
+  SHIMMER_TEXT_TAIL,
   SPINNER_FRAMES,
   UI_ANIMATIONS,
   UI_ANIMATION_INTERVAL_MS,
@@ -11,6 +13,8 @@ import {
   hump,
   lerp,
   modeSwitchStep,
+  shimmerText,
+  shimmerTextPeriod,
   smoothstep,
   spinnerFrame,
   spinnerGlyph,
@@ -316,6 +320,123 @@ describe("toastEnvelope", () => {
   });
 });
 
+describe("shimmerText", () => {
+  const LEN = 20;
+  const tail = SHIMMER_TEXT_TAIL;
+  const period = shimmerTextPeriod(LEN);
+  const sweep = LEN + 2 * tail; // rest gap begins here
+
+  /** Index of the max-intensity char (the bright head), -1 if all base. */
+  function argMax(a: number[]): number {
+    let idx = -1;
+    let max = 0;
+    for (let i = 0; i < a.length; i += 1) {
+      if (a[i]! > max) {
+        max = a[i]!;
+        idx = i;
+      }
+    }
+    return idx;
+  }
+
+  it("interval matches oh-my-pi's ~12.5 Hz loader cadence", () => {
+    expect(SHIMMER_TEXT_INTERVAL_MS).toBeGreaterThan(0);
+    expect(SHIMMER_TEXT_INTERVAL_MS).toBeLessThanOrEqual(200);
+    expect(SHIMMER_TEXT_INTERVAL_MS).toBe(80);
+  });
+
+  it("period is the sweep span plus the rest gap", () => {
+    // default rest gap is 6 -> 20 + 2*5 + 6
+    expect(period).toBe(LEN + 2 * tail + 6);
+    expect(shimmerTextPeriod(LEN, { tail: 3, restGap: 4 })).toBe(LEN + 2 * 3 + 4);
+  });
+
+  it("returns one intensity per char, all within [0,1]", () => {
+    for (let f = 0; f < period; f += 1) {
+      const a = shimmerText(LEN, f);
+      expect(a).toHaveLength(LEN);
+      for (const v of a) {
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("the head is the brightest char and eases down symmetrically on both sides", () => {
+    // idx 15 -> head at col 10, comfortably interior with a full band each side.
+    const a = shimmerText(LEN, 15);
+    const head = argMax(a);
+    expect(head).toBe(10);
+    expect(a[head]).toBeCloseTo(1, 6); // brightest peak at the head
+    for (let d = 1; d <= tail; d += 1) {
+      // symmetric about the head
+      expect(a[head - d]).toBeCloseTo(a[head + d]!, 10);
+      // strictly dimmer than the char one step closer to the head
+      expect(a[head - d]!).toBeLessThan(a[head - d + 1]!);
+    }
+    // band edges fall all the way back to the muted base
+    expect(a[head - tail]).toBeCloseTo(0, 6);
+    expect(a[head + tail]).toBeCloseTo(0, 6);
+  });
+
+  it("sweeps left to right: the head index increases every frame", () => {
+    let prev = -1;
+    // idx tail..LEN-1+tail keeps the head on-screen (col 0..LEN-1).
+    for (let f = tail; f <= LEN - 1 + tail; f += 1) {
+      const head = argMax(shimmerText(LEN, f));
+      expect(head).toBe(f - tail); // head marches one column per frame
+      expect(head).toBeGreaterThan(prev);
+      prev = head;
+    }
+  });
+
+  it("enters from the left: an early frame only brightens the left chars", () => {
+    const a = shimmerText(LEN, tail); // head just arrived at col 0
+    expect(argMax(a)).toBe(0);
+    // the entire right half is still at the muted base
+    for (let i = Math.floor(LEN / 2); i < LEN; i += 1) expect(a[i]).toBe(0);
+  });
+
+  it("loops: frame and frame+period are identical", () => {
+    for (const f of [0, 3, tail, 15, sweep, sweep + 2]) {
+      expect(shimmerText(LEN, f)).toEqual(shimmerText(LEN, f + period));
+      expect(shimmerText(LEN, f)).toEqual(shimmerText(LEN, f + period * 4));
+    }
+  });
+
+  it("has a rest gap: a whole-label flat-base frame exists", () => {
+    const rest = shimmerText(LEN, sweep); // first frame of the rest gap
+    expect(rest.every((v) => v === 0)).toBe(true);
+    // and the sweep is genuinely active elsewhere (a nonzero peak exists)
+    expect(Math.max(...shimmerText(LEN, tail))).toBeCloseTo(1, 6);
+  });
+
+  it("collapses to a flat muted base (all 0) under reduceMotion", () => {
+    for (const f of [0, tail, 15, sweep]) {
+      expect(shimmerText(LEN, f, { reduceMotion: true }).every((v) => v === 0)).toBe(true);
+    }
+  });
+
+  it("honours custom tail and restGap", () => {
+    const a = shimmerText(LEN, 3 + 15, { tail: 3 }); // head at col 15, half-width 3
+    const head = argMax(a);
+    expect(head).toBe(15);
+    expect(a[head - 3]).toBeCloseTo(0, 6);
+    expect(a[head - 4] ?? 0).toBe(0); // outside the narrower band
+  });
+
+  it("guards length 0/1 and non-finite/negative inputs", () => {
+    expect(shimmerText(0, 5)).toEqual([]);
+    expect(shimmerText(-3, 5)).toEqual([]);
+    expect(shimmerText(Number.NaN, 5)).toEqual([]);
+    expect(shimmerText(1, tail)).toEqual([1]); // single-char label, head over it
+    // non-finite / negative frames rest at frame 0
+    expect(shimmerText(LEN, Number.NaN)).toEqual(shimmerText(LEN, 0));
+    expect(shimmerText(LEN, -5)).toEqual(shimmerText(LEN, 0));
+    expect(() => shimmerText(LEN, Number.POSITIVE_INFINITY)).not.toThrow();
+  });
+});
+
 describe("determinism", () => {
   it("every helper is a pure function of its inputs", () => {
     expect(spinnerFrame(5)).toBe(spinnerFrame(5));
@@ -323,5 +444,6 @@ describe("determinism", () => {
     expect(findingFlashStep(3)).toBe(findingFlashStep(3));
     expect(subagentPulseStep(7)).toBe(subagentPulseStep(7));
     expect(toastEnvelope(9)).toEqual(toastEnvelope(9));
+    expect(shimmerText(12, 6)).toEqual(shimmerText(12, 6));
   });
 });
