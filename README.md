@@ -59,9 +59,8 @@ export ANTHROPIC_API_KEY=...          # or OpenAI, Azure, OpenRouter, Ollama, �
 0 console --scope ./scope.json        # interactive operator console; type / for commands
 ```
 
-Inside the Bun console, `/` opens the local command menu. Start with `/status`,
-`/scope`, `/mode yolo`, `/clear`, and `/help`; commands never bypass the
-scope-on-demand and approval flow.
+In the console, `/` opens the command menu (`/status`, `/scope`, `/mode`,
+`/help`); commands never bypass scope and approval.
 
 Add `--cost-ceiling 5` for a hard spend cap, `--race` for best-of-N strategy
 racing, `--format sarif` for the GitHub Security tab. Every command has its own
@@ -112,17 +111,15 @@ Full reference: **[0.security](https://0.security)**.
 
 ## Found in the wild
 
-We care more about real vulnerabilities than benchmark leaderboards. 0sec's
-research loop has disclosed real bugs in the **Linux kernel** — with maintainer
+0sec's research loop has disclosed real bugs in the **Linux kernel** — with maintainer
 review from Intel, NVIDIA, Red Hat, Google, Meta, Qualcomm, and Arm — and in
 widely-used open source. The running, verified track record (kernel.org threads,
 CVEs, and advisories) lives on the site:
 
 **→ [0.security](https://0.security)**
 
-We also run the public CTF benchmarks and score near the top, but treat those as
-secondary, condition-specific evidence — caveats in the
-[benchmark docs](docs/src/content/docs/benchmark.md).
+We run the public CTF benchmarks too, but treat them as secondary evidence —
+caveats in the [benchmark docs](docs/src/content/docs/benchmark.md).
 
 ## Binary analysis (no source)
 
@@ -150,8 +147,6 @@ top of this CLI and container image through published contracts. It is not part
 of this repository, and nothing here depends on it.
 
 ## Honest limitations
-
-We publish the misses next to the wins.
 
 - **Kernel/IOKit findings stay hypotheses** until a real oracle reproduces them;
   the `linux-kernel` review profile is static and doesn't compile or boot.
