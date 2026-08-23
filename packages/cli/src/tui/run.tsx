@@ -22,6 +22,7 @@ import { SettingsScreen } from "./settings-screen.js";
 import { ModelScreen } from "./model-screen.js";
 import { MarketScreen } from "./market-screen.js";
 import { ConnectScreen } from "./connect-screen.js";
+import { UsageScreen } from "./usage-screen.js";
 import { createSessionCloseGate } from "./session-close-gate.js";
 import { installTuiOutputGuard } from "./output-guard.js";
 import { appendFeedback, submitFeedback } from "./feedback.js";
@@ -68,6 +69,7 @@ type ConsoleRoute =
   | { type: "market" }
   | { type: "connect" }
   | { type: "models"; chatOptions?: ChatScreenOptions }
+  | { type: "usage"; chatOptions?: ChatScreenOptions }
   | { type: "session"; initialState: SessionState; subscribe: (listener: (state: SessionState) => void) => () => void; queueUserMessage?: (text: string) => void; onClose: () => void };
 
 interface ShellNav {
@@ -118,6 +120,16 @@ interface ShellNav {
    * existing credential store.
    */
   openConnect: () => void;
+  /**
+   * Opens the full-screen session-usage report: context window, token totals,
+   * estimated cost, active model and tool-health issues. The chat route's
+   * options are carried through so the report can name the model in force; the
+   * live token counts live in `ChatScreen` and reach the screen only once the
+   * one-line chat-composer `case "usage"` hands them across, so until then the
+   * palette route shows the model and `—` for the counts (never a fabricated
+   * zero).
+   */
+  openUsage: (chatOptions?: ChatScreenOptions) => void;
 }
 
 interface HomeOption {
@@ -851,6 +863,13 @@ function createShellCommands(shell?: ShellNav): PaletteCommand[] {
       category: "Navigate",
       description: "Add an API key or subscription sign-in for a model provider",
       action: shell.openConnect,
+    },
+    {
+      id: "nav-usage",
+      title: "Open usage report",
+      category: "Navigate",
+      description: "Context window, token totals, cost, model and tool health",
+      action: () => shell.openUsage(),
     },
     {
       id: "nav-back",
@@ -3841,6 +3860,43 @@ function ConnectRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav 
   );
 }
 
+/**
+ * Routes the session-usage report, supplying the console shell around it.
+ *
+ * Pure wiring, like `ModelRoute` and `ConnectRoute`. The snapshot is built from
+ * the chat options the router already holds — today only the active model, which
+ * lets the report name the model and provider and price the session against it.
+ * The live token / context counts live in `ChatScreen`'s own state and are not
+ * reachable from this overlay (`ConsoleApp` renders one route at a time and the
+ * chat is deaf beneath it), so they are left `undefined` and the screen shows
+ * `—` for them rather than a fabricated zero — the same honesty rule the status
+ * bar obeys. The one-line chat-composer `case "usage"` (see the follow-up note)
+ * is what will later hand the real counts across at navigation time.
+ */
+function UsageRoute({
+  chatOptions,
+  onExit,
+  shell,
+}: {
+  chatOptions?: ChatScreenOptions;
+  onExit: () => void;
+  shell?: ShellNav;
+}) {
+  return (
+    <UsageScreen
+      usage={{ model: chatOptions?.model }}
+      onBack={() => leaveCurrentScreen(shell, onExit)}
+      onExit={onExit}
+      frame={({ body, hint }) => (
+        <ShellFrame view="usage">
+          {body}
+          <FooterBar hint={hint} />
+        </ShellFrame>
+      )}
+    />
+  );
+}
+
 type AppMode =
   | { type: "home"; onResolve: (selection: HomeSelection) => void; onExit: () => void }
   | { type: "ops"; dbPath?: string; refreshMs: number; onExit: () => void }
@@ -3909,6 +3965,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     openHerd: () => navigate({ type: "herd" }),
     openMarket: () => navigate({ type: "market" }),
     openConnect: () => navigate({ type: "connect" }),
+    openUsage: (chatOpts) => navigate({ type: "usage", chatOptions: chatOpts ?? chatOptionsRef.current }),
   };
 
   const launchSelection = async (selection: HomeSelection) => {
@@ -4085,6 +4142,16 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             shell.openConnect();
             return;
           }
+          // `usage` is not in `ChatDestination` yet (chat-screen owns that
+          // union and this change does not touch it); the cast-guard keeps
+          // run.tsx compiling and the route reachable, and the branch starts
+          // routing the moment the one-line chat-screen change lands (a
+          // `case "usage": onNavigate("usage")` beside the "/model" case). The
+          // chat can pass its live token snapshot through at that point.
+          if ((destination as string) === "usage") {
+            shell.openUsage(chatOptions);
+            return;
+          }
           switch (destination) {
             case "launcher":
               shell.openLauncher();
@@ -4171,6 +4238,8 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
     overlay = <MarketRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "connect") {
     overlay = <ConnectRoute onExit={onExit} shell={shell} />;
+  } else if (currentRoute.type === "usage") {
+    overlay = <UsageRoute chatOptions={currentRoute.chatOptions} onExit={onExit} shell={shell} />;
   }
 
   return (

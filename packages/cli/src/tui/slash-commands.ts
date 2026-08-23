@@ -217,6 +217,14 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     tuiOnly: true,
   },
   {
+    name: "usage",
+    aliases: ["cost", "tokens"],
+    category: "navigation",
+    description: "Show token, cost and context usage for this session",
+    usage: "/usage",
+    tuiOnly: true,
+  },
+  {
     name: "back",
     aliases: [],
     category: "navigation",
