@@ -127,6 +127,14 @@ export const MAX_TOOLS_PER_SESSION = 32;
 export const MAX_GUARDS_PER_EXTENSION = 16;
 /** Maximum serialized size, in UTF-8 bytes, of a submitted manifest. */
 export const MAX_MANIFEST_BYTES = 16 * 1024;
+/**
+ * Ring-buffer cap on the in-memory audit log. Rejections consume no live slot
+ * (they never touch `live`), so a model submitting well-shaped-but-invalid
+ * manifests could otherwise append events unbounded within a session. Keep the
+ * most recent N so the registry is self-bounding independent of the caller's
+ * per-turn loop cap.
+ */
+export const MAX_AUDIT_LOG_EVENTS = 1000;
 
 // ── Public shapes ────────────────────────────────────────────────────────────
 
@@ -683,6 +691,9 @@ export class SelfExtensionRegistry {
   private emit(event: SelfExtensionEvent): void {
     const frozen = Object.freeze(event);
     this.auditLog.push(frozen);
+    if (this.auditLog.length > MAX_AUDIT_LOG_EVENTS) {
+      this.auditLog.splice(0, this.auditLog.length - MAX_AUDIT_LOG_EVENTS);
+    }
     if (!this.onEvent) return;
     try {
       this.onEvent(frozen);

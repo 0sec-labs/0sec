@@ -8,6 +8,7 @@ import {
   MAX_TOOLS_PER_SESSION,
   MAX_GUARDS_PER_EXTENSION,
   MAX_MANIFEST_BYTES,
+  MAX_AUDIT_LOG_EVENTS,
   type ExtensionSubmission,
   type SelfExtensionEvent,
 } from "./self-extension.js";
@@ -242,6 +243,16 @@ describe("name collisions", () => {
     expect(res.errors.join(" ")).toMatch(/collides with a built-in/);
     // And crucially: nothing was registered, so no shadow exists.
     expect(r.tool("run_command")).toBeUndefined();
+  });
+
+  it("bounds the audit log to a ring buffer under repeated rejections", () => {
+    const r = registry();
+    // First submission accepts; every duplicate-id submission after it rejects
+    // (rejections consume no live slot, so without the cap they'd grow forever).
+    for (let i = 0; i < MAX_AUDIT_LOG_EVENTS + 50; i++) {
+      r.register({ manifest: manifest() });
+    }
+    expect(r.events().length).toBeLessThanOrEqual(MAX_AUDIT_LOG_EVENTS);
   });
 
   it("rejects a second extension colliding with an already-contributed name", () => {

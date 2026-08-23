@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   ToolExecutor,
   TOOL_DEFINITIONS,
+  SELF_EXTENSION_RESERVED_TOOL_NAMES,
   validateSelfExtendArgs,
   selfExtensionRegistryOf,
 } from "./tools.js";
@@ -51,7 +52,7 @@ function enabledRegistry(): SelfExtensionRegistry {
   return new SelfExtensionRegistry({
     enabled: true,
     baseGuards: BUILTIN_GUARDS,
-    reservedToolNames: Object.keys(TOOL_DEFINITIONS),
+    reservedToolNames: SELF_EXTENSION_RESERVED_TOOL_NAMES,
   });
 }
 
@@ -196,6 +197,26 @@ describe("self_extend tool handler", () => {
     expect(res.error).toMatch(/built-in/i);
     expect(registry.tools()).toHaveLength(0);
   });
+
+  // Regression: the reserved set must cover child-only dispatch routes
+  // (report_status / send_message / check_messages) that live in
+  // CHILD_LOCAL_DISPATCH but NOT in TOOL_DEFINITIONS. Reserving only
+  // TOOL_DEFINITIONS let a contributed tool shadow these dispatchable built-ins
+  // and, in the console, flip their operator-approval gate.
+  it.each(["send_message", "check_messages", "report_status"])(
+    "refuses a contributed tool that shadows the child-dispatch built-in %s",
+    async (name) => {
+      const registry = enabledRegistry();
+      const { exec } = executorWith(registry);
+      const res = await exec.execute({
+        name: "self_extend",
+        arguments: { manifest: manifestWith("scan.shadow", [name]) },
+      });
+      expect(res.success).toBe(false);
+      expect(res.error).toMatch(/built-in/i);
+      expect(registry.tools()).toHaveLength(0);
+    },
+  );
 });
 
 // ── Malformed → rejected with NO side effect and NO budget slot ───────────────
@@ -315,7 +336,7 @@ describe("self_extend gating on allowModelSelfExtension", () => {
     const disabled = new SelfExtensionRegistry({
       enabled: false,
       baseGuards: BUILTIN_GUARDS,
-      reservedToolNames: Object.keys(TOOL_DEFINITIONS),
+      reservedToolNames: SELF_EXTENSION_RESERVED_TOOL_NAMES,
     });
     const { exec } = executorWith(disabled);
     const res = await exec.execute({

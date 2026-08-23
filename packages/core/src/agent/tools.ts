@@ -2130,6 +2130,24 @@ const CHILD_LOCAL_DISPATCH: Record<string, string> = {
   check_messages: "checkPeerMessages",
 };
 
+/**
+ * Names a model-contributed (self-extension) tool must never take: every name
+ * the engine already dispatches. Reserving only `TOOL_DEFINITIONS` (as the
+ * wiring long did) missed the child-only routes in {@link CHILD_LOCAL_DISPATCH}
+ * (report_status / send_message / check_messages) — which are absent from
+ * `TOOL_DEFINITIONS` — letting a contributed tool shadow a dispatchable built-in
+ * and, in the console, flip its operator-approval gate via refreshInjectedTools.
+ * Callers with extra gate maps (the console's read-only / network / local sets)
+ * union those on top. See SELF-EXTENSION.md §5.2.
+ */
+export const SELF_EXTENSION_RESERVED_TOOL_NAMES: readonly string[] = Array.from(
+  new Set([
+    ...Object.keys(TOOL_DEFINITIONS),
+    ...Object.keys(TOOL_DISPATCH),
+    ...Object.keys(CHILD_LOCAL_DISPATCH),
+  ]),
+);
+
 // ── Child peer messaging (subagent coordination) ────────────────────────────
 //
 // Two child-only tools that let a subagent talk to its parent (always) and, when

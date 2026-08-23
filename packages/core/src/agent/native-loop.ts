@@ -17,7 +17,7 @@ import type { AttributionConfig } from "../scope/attribution.js";
 import type { EngagementPosture } from "../scope/engagement-profile.js";
 import type { EnforcementTracker } from "../scope/enforcement.js";
 import { WafDetector } from "../scope/waf-detect.js";
-import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "./tools.js";
+import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "./tools.js";
 import { SelfExtensionRegistry } from "../plugins/self-extension.js";
 import type {
   RegisteredExtensionTool,
@@ -527,7 +527,7 @@ export async function runNativeAgentLoop(
   const selfExtension = new SelfExtensionRegistry({
     enabled: selfExtensionEnabled,
     baseGuards: BUILTIN_GUARDS,
-    reservedToolNames: Object.keys(TOOL_DEFINITIONS),
+    reservedToolNames: SELF_EXTENSION_RESERVED_TOOL_NAMES,
     onEvent: (event: SelfExtensionEvent) => {
       onEvent?.("self_extension", {
         kind: event.kind,

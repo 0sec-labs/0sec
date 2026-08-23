@@ -12,7 +12,7 @@ import type {
   NativeToolDef,
   RuntimeConfig,
 } from "../runtime/types.js";
-import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS } from "../agent/tools.js";
+import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "../agent/tools.js";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
   BUILTIN_GUARDS,
@@ -1653,7 +1653,12 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
     ? new SelfExtensionRegistry({
         enabled: true,
         baseGuards: BUILTIN_GUARDS,
-        reservedToolNames: Object.keys(TOOL_DEFINITIONS),
+        reservedToolNames: [
+          ...SELF_EXTENSION_RESERVED_TOOL_NAMES,
+          ...Object.keys(NETWORK_CAPABLE_TOOLS),
+          ...Object.keys(READ_ONLY_TOOLS),
+          ...Object.keys(LOCAL_SCOPE_TOOLS),
+        ],
         onEvent: (event: SelfExtensionEvent) => {
           const names = event.tools.map((t) => t.name).join(", ");
           const line =
