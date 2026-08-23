@@ -141,6 +141,7 @@ export type SettingsRow =
 export function buildSettingsRows(
   defs: readonly SettingDef[] = SETTING_DEFS,
   filter = "",
+  activeGroup?: string,
 ): SettingsRow[] {
   const terms = sanitizeTuiText(filter).toLowerCase().split(" ").filter(Boolean);
 
@@ -171,12 +172,149 @@ export function buildSettingsRows(
     byGroup.get(group)?.push(def);
   }
 
+  // Tabbed mode: with no filter and a chosen tab, the body shows only that one
+  // group — the tab bar is what tells the operator which group they are in, so
+  // the screen no longer stacks every group into one scroll. A live filter
+  // overrides the tabs (search is a cross-group operation), so `activeGroup` is
+  // ignored the moment there is a term to match, and every surviving group is
+  // returned exactly as before.
+  const groupsToRender =
+    terms.length === 0 && typeof activeGroup === "string"
+      ? order.filter((group) => group === activeGroup)
+      : order;
+
   const rows: SettingsRow[] = [];
-  for (const group of order) {
+  for (const group of groupsToRender) {
     rows.push({ kind: "heading", group });
     for (const def of byGroup.get(group) ?? []) rows.push({ kind: "setting", group, def });
   }
   return rows;
+}
+
+/**
+ * The tab list: every group in first-appearance order.
+ *
+ * This is the row model's group order without its rows — the tab bar shows one
+ * tab per group, in the order their first def appears in `SETTING_DEFS`, so the
+ * author of a def still controls where its group lands and a new group needs no
+ * edit here.
+ */
+export function settingsGroups(defs: readonly SettingDef[] = SETTING_DEFS): string[] {
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const def of defs) {
+    if (!def || typeof def.key !== "string") continue;
+    const group = typeof def.group === "string" && def.group.length > 0 ? def.group : "Other";
+    if (seen.has(group)) continue;
+    seen.add(group);
+    order.push(group);
+  }
+  return order;
+}
+
+/**
+ * The set of groups that have at least one setting surviving `filter`.
+ *
+ * Used by the tab bar in search mode to dim the tabs a query cannot reach.
+ * Derived from `buildSettingsRows`, which already only emits a heading for a
+ * group with matches, so the two can never disagree about what matched.
+ */
+export function groupsWithMatches(
+  defs: readonly SettingDef[] = SETTING_DEFS,
+  filter = "",
+): Set<string> {
+  return new Set(
+    buildSettingsRows(defs, filter)
+      .filter((row): row is Extract<SettingsRow, { kind: "heading" }> => row.kind === "heading")
+      .map((row) => row.group),
+  );
+}
+
+/** Cells the tab bar leaves between two adjacent tabs. */
+export const SETTINGS_TAB_GAP = 2;
+
+export interface SettingsTab {
+  readonly group: string;
+  /** The label as rendered, uppercased and already fitted to `width` cells. */
+  readonly label: string;
+  /** Cells this tab occupies. The bar never sums past the width it was given. */
+  readonly width: number;
+  /** The tab the body is currently showing. */
+  readonly active: boolean;
+  /** In search mode, whether this group has any rows matching the filter. */
+  readonly matched: boolean;
+}
+
+/**
+ * Lays the tab bar out to a fixed cell budget.
+ *
+ * Every width the bar renders with is decided here rather than in the
+ * component, for the reason the rest of this module exists: two `<text>` nodes
+ * that together want more cells than the row has are painted over each other by
+ * Yoga rather than clipped. The tabs plus their `SETTINGS_TAB_GAP` separators
+ * are guaranteed to sum to at most `width`. When every group fits, each tab
+ * keeps its full label; when the row is too narrow even to hold one cell per
+ * group plus the gaps, the bar shows a window of tabs around the active one
+ * rather than overflowing — and inside that window, once the labels no longer
+ * fit, the room left after the gaps is split evenly (the earliest tabs taking
+ * the remainder) and each label is hard-truncated to its share.
+ *
+ * `matched` marks, in search mode, which groups a query can still reach; pass
+ * `null` in tabbed mode and every tab reads as matched. Pass `""` as
+ * `activeGroup` to render no active tab (search overrides the tab selection).
+ */
+export function settingsTabBar(
+  groups: readonly string[],
+  activeGroup: string,
+  width: number,
+  matched?: ReadonlySet<string> | null,
+): SettingsTab[] {
+  const clean = groups.filter((group) => typeof group === "string" && group.length > 0);
+  const total = cells(width);
+  if (clean.length === 0 || total <= 0) return [];
+
+  // How many tabs can share the row with one cell of label apiece and a gap
+  // between each. `fits(1)` is always true when total >= 1, so at least the
+  // active tab is shown. Below this the bar would paint its own gaps over the
+  // edge of the row, which is the overlap this module exists to prevent.
+  const fits = (k: number): boolean => k >= 1 && k + SETTINGS_TAB_GAP * (k - 1) <= total;
+  let count = clean.length;
+  while (count > 1 && !fits(count)) count -= 1;
+
+  // Window the shown tabs around the active one so it is never the tab that got
+  // dropped. In search mode (activeGroup === "") the window opens at the start.
+  const activeIndex = Math.max(0, clean.indexOf(activeGroup));
+  const start = Math.max(0, Math.min(activeIndex - Math.floor(count / 2), clean.length - count));
+  const shown = clean.slice(start, start + count);
+  const labels = shown.map((group) => sanitizeTuiText(group).toUpperCase());
+
+  const gaps = SETTINGS_TAB_GAP * (shown.length - 1);
+  const room = Math.max(0, total - gaps);
+  const natural = labels.reduce((sum, label) => sum + label.length, 0);
+
+  let budgets: number[];
+  if (natural <= room) {
+    budgets = labels.map((label) => label.length);
+  } else {
+    const base = Math.floor(room / shown.length);
+    let remainder = room - base * shown.length;
+    budgets = labels.map(() => {
+      const bonus = remainder > 0 ? 1 : 0;
+      if (remainder > 0) remainder -= 1;
+      return base + bonus;
+    });
+  }
+
+  return shown.map((group, index) => {
+    const budget = budgets[index] ?? 0;
+    return {
+      group,
+      label: (labels[index] ?? "").slice(0, budget),
+      width: budget,
+      active: group === activeGroup,
+      matched: matched ? matched.has(group) : true,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -344,8 +482,8 @@ export function settingsFooterHint(mode: SettingsMode, hasFilter = false): strin
     default:
       return [
         "up/down move",
+        "tab or left/right group",
         "enter/space change",
-        "left/right cycle",
         "/ filter",
         "r reset",
         "shift+r reset all",

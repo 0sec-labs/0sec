@@ -40,6 +40,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { TextAttributes } from "@opentui/core";
 
 import { Cells } from "./primitives.js";
 import { setSettings, useSettings } from "./settings-store.js";
@@ -51,9 +52,11 @@ import {
   moveDialogSelection,
 } from "./dialog-select-layout.js";
 import {
+  SETTINGS_TAB_GAP,
   buildSettingsRows,
   clipDetailLines,
   cycleSetting,
+  groupsWithMatches,
   isFilterKey,
   isSettingModified,
   resetAllSettings,
@@ -62,6 +65,8 @@ import {
   settingValueLabel,
   settingsDetailLines,
   settingsFooterHint,
+  settingsGroups,
+  settingsTabBar,
   shellChromeRows,
   type SettingsDetailTone,
   type SettingsMode,
@@ -74,6 +79,8 @@ import { SettingsPreview, previewRowCount } from "./settings-preview.js";
 const PAGE_STEP = 5;
 /** Rows kept for the setting's prose before any preview is lent room. */
 const MIN_TEXT_ROWS = 3;
+/** Rows the tab bar spends above the body. */
+const TAB_BAR_ROWS = 1;
 
 export interface SettingsFrameInput {
   /** The settings body, already sized to the rows the frame left it. */
@@ -140,6 +147,14 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   const [pending, setPending] = useState<PendingReset | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
+  // The tab bar: one tab per group, in the table's first-appearance order. A
+  // live filter is a cross-group search, so it overrides the tabs — `searchMode`
+  // is the single switch between "the body shows the active tab" and "the body
+  // shows every match".
+  const groups = useMemo(() => settingsGroups(SETTING_DEFS), []);
+  const [activeGroup, setActiveGroup] = useState<string>(() => groups[0] ?? "");
+  const searchMode = filter.length > 0;
+
   // `buildSettingsRows` does the domain work — grouping by the table's group,
   // first-appearance order, and the AND-over-terms filter across key, label,
   // group, description and choices. The screen keeps only its selectable
@@ -148,7 +163,10 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   // is the right-aligned meta, and a setting that differs from its default
   // carries the current-value dot — the migration of the old accent-coloured
   // value into the picker's gutter.
-  const settingsRows = useMemo(() => buildSettingsRows(SETTING_DEFS, filter), [filter]);
+  const settingsRows = useMemo(
+    () => buildSettingsRows(SETTING_DEFS, filter, searchMode ? undefined : activeGroup),
+    [filter, searchMode, activeGroup],
+  );
   const items = useMemo<DialogItem[]>(
     () =>
       settingsRows
@@ -208,7 +226,10 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   const statusTone = pending ? theme.WARNING : notice?.tone === "error" ? theme.ERROR : theme.MUTED;
 
   const contentWidth = Math.max(0, width - 4);
-  const bodyRows = Math.max(0, height - shellChromeRows(width) - (statusText ? 1 : 0));
+  const bodyRows = Math.max(
+    0,
+    height - shellChromeRows(width) - TAB_BAR_ROWS - (statusText ? 1 : 0),
+  );
   const panel = computeDialogPanel({
     width: contentWidth,
     height,
@@ -217,6 +238,21 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     withDetail: true,
     bodyRows,
   });
+
+  // The tab bar spans the same inner width the body column does. In search mode
+  // no tab is "active" (the filter owns the body) and the groups a query cannot
+  // reach are dimmed; in tabbed mode the active group is highlighted and every
+  // tab reads as reachable.
+  const matchedGroups = useMemo(
+    () => (searchMode ? groupsWithMatches(SETTING_DEFS, filter) : null),
+    [searchMode, filter],
+  );
+  const tabs = settingsTabBar(
+    groups,
+    searchMode ? "" : activeGroup,
+    panel.innerWidth,
+    matchedGroups,
+  );
 
   /**
    * Applies a change and writes it through the store.
@@ -258,6 +294,16 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     setSelected(0);
   };
 
+  // Switch the active tab and reset the cursor to the new group's first setting,
+  // so the selection is always valid for the group on screen.
+  const switchTab = (dir: 1 | -1) => {
+    if (groups.length === 0) return;
+    const at = Math.max(0, groups.indexOf(activeGroup));
+    const next = ((at + dir) % groups.length + groups.length) % groups.length;
+    setActiveGroup(groups[next] ?? activeGroup);
+    setSelected(0);
+  };
+
   useKeyboard((key) => {
     const seq = typeof key.sequence === "string" ? key.sequence : "";
     const isSpace = key.name === "space" || seq === " ";
@@ -279,12 +325,12 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       return;
     }
 
+    // Up/down and paging move the selection in every non-confirm mode, filter
+    // capture included, so the list can be walked while a query is being typed.
     if (key.name === "up") return move(-1);
     if (key.name === "down") return move(1);
     if (key.name === "pageup") return move(-PAGE_STEP);
     if (key.name === "pagedown") return move(PAGE_STEP);
-    if (key.name === "left") return change(-1);
-    if (key.name === "right") return change(1);
 
     // ── filter mode ──
     // Every printable character types here, `r` and `R` included; that is the
@@ -302,6 +348,23 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       if (seq.length === 1 && seq.charCodeAt(0) >= 0x20 && seq.charCodeAt(0) !== 0x7f) {
         setQuery(filter + seq);
       }
+      return;
+    }
+
+    // ── tab switching ──
+    // Tab / Shift-Tab and Left / Right move between group tabs, but only in
+    // tabbed mode: a live filter owns the body, so its tab bar is inert and the
+    // arrows fall through to nothing.
+    if (key.name === "tab") {
+      if (!searchMode) switchTab(key.shift ? -1 : 1);
+      return;
+    }
+    if (key.name === "left") {
+      if (!searchMode) switchTab(-1);
+      return;
+    }
+    if (key.name === "right") {
+      if (!searchMode) switchTab(1);
       return;
     }
 
@@ -397,8 +460,32 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     );
   };
 
+  const tabBar =
+    tabs.length > 0 ? (
+      <box flexDirection="row" width={panel.innerWidth} flexShrink={0} minWidth={0}>
+        {tabs.map((tab, index) => (
+          <React.Fragment key={tab.group}>
+            {index > 0 ? (
+              <Cells width={SETTINGS_TAB_GAP} bg={undefined}>
+                {""}
+              </Cells>
+            ) : null}
+            <Cells
+              width={tab.width}
+              bg={tab.active ? theme.PRIMARY : undefined}
+              fg={tab.active ? theme.CANVAS : tab.matched ? theme.TEXT : theme.MUTED}
+              attributes={tab.active ? TextAttributes.BOLD : undefined}
+            >
+              {tab.label}
+            </Cells>
+          </React.Fragment>
+        ))}
+      </box>
+    ) : null;
+
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
+      {tabBar}
       <DialogSelectBody
         items={items}
         cursor={cursor}

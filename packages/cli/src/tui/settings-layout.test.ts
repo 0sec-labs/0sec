@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SETTINGS_TAB_GAP,
   buildSettingsRows,
   clipDetailLines,
   cycleSetting,
+  groupsWithMatches,
   isFilterKey,
   isSettingModified,
   resetAllSettings,
@@ -12,7 +14,10 @@ import {
   settingValueLabel,
   settingsDetailLines,
   settingsFooterHint,
+  settingsGroups,
+  settingsTabBar,
   wrapCells,
+  type SettingsRow,
 } from "./settings-layout.js";
 import {
   DEFAULT_SETTINGS,
@@ -192,6 +197,120 @@ describe("buildSettingsRows", () => {
     const rows = buildSettingsRows(SETTING_DEFS, "zzzzz");
     expect(rows).toEqual([]);
   });
+
+  // ── tabbed mode (activeGroup) ──
+  it("with an activeGroup and no filter, returns only that group's rows", () => {
+    for (const group of GROUPS) {
+      const rows = buildSettingsRows(SETTING_DEFS, "", group);
+      // Exactly one heading, and it is the requested group.
+      const headings = rows.filter((row) => row.kind === "heading");
+      expect(headings, `activeGroup ${group} produced the wrong headings`).toHaveLength(1);
+      expect(rows[0]).toEqual({ kind: "heading", group });
+      // Every setting row belongs to that group, and it is every def in it.
+      const settingRows = rows.filter(
+        (row): row is Extract<SettingsRow, { kind: "setting" }> => row.kind === "setting",
+      );
+      for (const row of settingRows) expect(row.def.group).toBe(group);
+      expect(settingRows.map((row) => row.def.key).sort()).toEqual(
+        SETTING_DEFS.filter((def) => def.group === group)
+          .map((def) => def.key)
+          .sort(),
+      );
+    }
+  });
+
+  it("returns an empty list for an activeGroup that no def declares", () => {
+    expect(buildSettingsRows(SETTING_DEFS, "", "NoSuchGroup")).toEqual([]);
+  });
+
+  it("ignores activeGroup while a filter is active — search overrides tabs", () => {
+    // A term that reaches more than one group, so the override is observable.
+    const withActive = buildSettingsRows(SETTING_DEFS, "show", GROUPS[0]);
+    const withoutActive = buildSettingsRows(SETTING_DEFS, "show");
+    expect(withActive).toEqual(withoutActive);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("settingsGroups", () => {
+  it("lists every group once, in first-appearance order", () => {
+    const expected = [...new Set(SETTING_DEFS.map((def) => def.group))];
+    expect(settingsGroups()).toEqual(expected);
+  });
+
+  it("matches the heading order buildSettingsRows renders", () => {
+    const headings = buildSettingsRows()
+      .filter((row) => row.kind === "heading")
+      .map((row) => row.group);
+    expect(settingsGroups()).toEqual(headings);
+  });
+
+  it("picks up a def added to a brand-new group", () => {
+    expect(settingsGroups([...SETTING_DEFS, PROBE_DEF]).at(-1)).toBe("Experimental");
+  });
+});
+
+describe("groupsWithMatches", () => {
+  it("returns every group when the filter is empty", () => {
+    expect([...groupsWithMatches(SETTING_DEFS, "")].sort()).toEqual([...GROUPS].sort());
+  });
+
+  it("returns only the group a key-filter reaches", () => {
+    for (const def of SETTING_DEFS) {
+      const matched = groupsWithMatches(SETTING_DEFS, def.key);
+      expect(matched.has(def.group), `filtering ${def.key} lost its group`).toBe(true);
+      // The key is unique, so it reaches exactly the one group it lives in.
+      expect(matched.size).toBe(1);
+    }
+  });
+
+  it("returns no group when nothing matches", () => {
+    expect(groupsWithMatches(SETTING_DEFS, "zzzzz").size).toBe(0);
+  });
+});
+
+describe("settingsTabBar", () => {
+  const GROUP_LIST = settingsGroups();
+
+  it("renders one tab per group, uppercased, with the active one marked", () => {
+    const active = GROUP_LIST[1] ?? GROUP_LIST[0];
+    const tabs = settingsTabBar(GROUP_LIST, active, 200);
+    expect(tabs.map((tab) => tab.group)).toEqual(GROUP_LIST);
+    expect(tabs.map((tab) => tab.label)).toEqual(GROUP_LIST.map((g) => g.toUpperCase()));
+    expect(tabs.filter((tab) => tab.active)).toHaveLength(1);
+    expect(tabs.find((tab) => tab.active)?.group).toBe(active);
+  });
+
+  it("never sums its tabs and gaps past the width it was given", () => {
+    for (let width = 0; width <= 120; width += 1) {
+      const tabs = settingsTabBar(GROUP_LIST, GROUP_LIST[0], width);
+      const gaps = tabs.length > 0 ? SETTINGS_TAB_GAP * (tabs.length - 1) : 0;
+      const total = tabs.reduce((sum, tab) => sum + tab.width, 0) + gaps;
+      expect(total, `tab bar overflowed ${width} cells`).toBeLessThanOrEqual(Math.max(0, width));
+      // A label is never wider than the cell budget the bar handed it.
+      for (const tab of tabs) expect(tab.label.length).toBeLessThanOrEqual(tab.width);
+    }
+  });
+
+  it("returns nothing when there is no room or no groups", () => {
+    expect(settingsTabBar(GROUP_LIST, GROUP_LIST[0], 0)).toEqual([]);
+    expect(settingsTabBar([], "Display", 100)).toEqual([]);
+  });
+
+  it("marks matched groups and dims the rest in search mode", () => {
+    const matched = new Set([GROUP_LIST[0]]);
+    // Empty activeGroup: search owns the body, so no tab is active.
+    const tabs = settingsTabBar(GROUP_LIST, "", 200, matched);
+    expect(tabs.every((tab) => !tab.active)).toBe(true);
+    expect(tabs.find((tab) => tab.group === GROUP_LIST[0])?.matched).toBe(true);
+    for (const tab of tabs.slice(1)) expect(tab.matched).toBe(false);
+  });
+
+  it("treats every tab as matched when no match set is given", () => {
+    const tabs = settingsTabBar(GROUP_LIST, GROUP_LIST[0], 200);
+    expect(tabs.every((tab) => tab.matched)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -294,7 +413,17 @@ describe("text", () => {
 
   it("names the real keys in the footer hint", () => {
     const browse = settingsFooterHint("browse");
-    for (const fragment of ["up/down", "enter/space", "left/right", "/ filter", "r reset", "shift+r"]) {
+    // "tab" joins the browse hint now that tab / shift-tab (and left/right)
+    // switch group tabs; the value change moved onto enter/space alone.
+    for (const fragment of [
+      "up/down",
+      "enter/space",
+      "left/right",
+      "tab",
+      "/ filter",
+      "r reset",
+      "shift+r",
+    ]) {
       expect(browse).toContain(fragment);
     }
     expect(settingsFooterHint("browse", false)).toContain("esc back");
