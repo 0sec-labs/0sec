@@ -210,7 +210,7 @@ import {
   renderFold,
 } from "./chat/TranscriptEntry.js";
 import { Todos } from "./chat/Todos.js";
-import { ComposerFrame, ComposerInput, composerRailRows } from "./chat/Composer.js";
+import { ComposerFrame, ComposerInput } from "./chat/Composer.js";
 import {
   KeyHints,
   keyHintsLength,
@@ -3309,19 +3309,6 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     padY?: number;
   }) => (
     <box flexDirection="row" width={outerWidth ?? "100%"} flexShrink={0} marginTop={1} minWidth={0}>
-      {composerStyle === "rail" ? (
-        // A THIN light-vertical rule (OpenCode's look), not a solid block: one
-        // `│` per composer row, accent when focused / muted BORDER when not. The
-        // row count mirrors ComposerFrame's own height (input lines + padY), so
-        // the rule spans the frame exactly without an alignSelf stretch bar.
-        <box width={1} flexShrink={0} flexDirection="column" minHeight={0}>
-          {Array.from({
-            length: composerRailRows(composer, textWidth, composing) + padY * 2,
-          }).map((_unused, i) => (
-            <text key={`composer-rail-${i}`} fg={composerActive ? PRIMARY : BORDER}>│</text>
-          ))}
-        </box>
-      ) : null}
       <ComposerFrame style={composerStyle} active={composerActive} theme={theme} padY={padY}>
         <box flexDirection="row" width="100%" minWidth={0}>
           <text width={1} flexShrink={0} fg={composing ? PRIMARY : MUTED}>›</text>
@@ -3336,34 +3323,17 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   const composerNode = buildComposer({ textWidth: composerTextWidth });
 
   // ── Sticky context above the composer ──────────────────────────────────────
-  // Two things must stay on screen while the transcript scrolls and the agent
-  // works: the request currently being answered, and anything the operator has
-  // parked for the next round. Both live in a flexShrink={0} block pinned
-  // directly above the composer, so the transcript (flexGrow) absorbs the rows
-  // and nothing overflows. Bounded on purpose — the parked list caps at a few
-  // rows with a "+N more" tail — so it can never crowd out the transcript.
-  const lastUserRequest = (() => {
-    for (let i = entries.length - 1; i >= 0; i -= 1) {
-      if (entries[i].kind === "user") return entries[i].text;
-    }
-    return "";
-  })();
+  // Only messages the operator has PARKED for the next round stay pinned
+  // directly above the composer (flexShrink={0}), so the transcript (flexGrow)
+  // absorbs the scroll and nothing overflows. Bounded on purpose — capped at a
+  // few rows with a "+N more" tail — so it can never crowd out the transcript.
+  // The "request · …" echo of the in-flight turn used to sit here too, but it
+  // just restated the transcript's own last user turn, so it was removed.
   const STICKY_QUEUE_ROWS = 3;
   const stickyWidth = Math.max(1, contentWidth - 2);
-  const showStickyRequest = busy && Boolean(lastUserRequest);
   const stickyNode =
-    showStickyRequest || queuedMessages.length > 0 ? (
+    queuedMessages.length > 0 ? (
       <box flexDirection="column" width="100%" flexShrink={0} minWidth={0} marginTop={1}>
-        {showStickyRequest ? (
-          <box flexDirection="row" minWidth={0}>
-            <box width={2} flexShrink={0} minWidth={0}>
-              <text fg={ACCENT}>▎</text>
-            </box>
-            <box flexGrow={1} minWidth={0}>
-              <text fg={MUTED}>{fitTuiText(`request · ${lastUserRequest}`, stickyWidth)}</text>
-            </box>
-          </box>
-        ) : null}
         {queuedMessages.length > 0 ? (
           <box flexDirection="column" minWidth={0}>
             <text fg={WARNING}>
@@ -3948,11 +3918,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // The compact dim hint under the hero composer — keybind chords only. The
   // "type to chat · / commands" half is dropped: the composer placeholder above
   // already says it. Keys render white, labels muted (see KeyHints).
+  // The empty start screen has no transcript, no sessions and no agents yet, so
+  // the sidebar toggles (ctrl+b / ctrl+l) have nothing to reveal — they'd only
+  // read as noise before the first turn. The hero keeps just the two chords that
+  // matter here (switch mode, open the palette); the sidebar affordances live in
+  // the bottom bar once a conversation exists.
   const heroHintPairs: KeyHint[] = [
     { key: "shift+tab", label: "mode" },
     { key: "ctrl+p", label: "palette" },
-    { key: "ctrl+b", label: settings.showLeftSidebar ? "hide left" : "left" },
-    { key: "ctrl+l", label: settings.showRightSidebar ? "hide right" : "right" },
   ];
   // The contextual keys shown in the bottom bar while composing plain text.
   const composeHintPairs: KeyHint[] = [

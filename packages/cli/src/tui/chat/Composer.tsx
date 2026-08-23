@@ -1,8 +1,12 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
+import type { BorderSides } from "@opentui/core";
 import type { Theme } from "../theme-context.js";
 import type { TuiSettings } from "../settings.js";
 import { fitTuiText } from "../text.js";
+
+/** The composer rail draws a single LEFT border (OpenCode's look). */
+const RAIL_SIDES: BorderSides[] = ["left"];
 
 /**
  * A comfortable empty composer is a small card, not a single cramped line:
@@ -201,14 +205,32 @@ export function ComposerFrame({
     );
   }
   if (style === "rail") {
-    // A floor on the frame height so an empty composer is a comfortable card,
-    // not a single cramped line; content grows past it (up to
-    // COMPOSER_MAX_ROWS) and shrinks back to it. Kept in step with the rail
-    // rule via `composerRailRows`. The extra rows land INSIDE the padding, so
-    // the card is COMPOSER_MIN_ROWS of body regardless of `padY`.
-    const minHeight = COMPOSER_MIN_ROWS + padY * 2;
+    // OpenCode's composer: a single LEFT-border rail — one connected accent
+    // rule, not a stack of `│` glyphs — over a subtle element background, with
+    // the input padded off the rail (paddingLeft) and a row of breathing room
+    // above and below (paddingTop/Bottom) so an EMPTY composer reads as a
+    // comfortable card instead of a top-anchored cavern. The bordered box grows
+    // with the wrapped input on its own, so there is no manual rail-row count to
+    // keep in sync. Rail accents to PRIMARY when focused, BORDER when not.
     return (
-      <box flexDirection="column" flexGrow={1} minWidth={0} minHeight={minHeight} flexShrink={0} marginLeft={1} backgroundColor={PANEL_ALT} paddingTop={padY} paddingBottom={padY}>
+      <box
+        flexDirection="column"
+        flexGrow={1}
+        minWidth={0}
+        flexShrink={0}
+        border={RAIL_SIDES}
+        borderColor={active ? PRIMARY : BORDER}
+        backgroundColor={PANEL_ALT}
+        // Chrome from the outer edge to the input text is border(1)+padLeft(1)+
+        // the "› " prefix(2) = 4 cells — exactly the old rail(1)+margin(1)+
+        // prefix(2) budget — so the existing composerTextWidth math still holds
+        // and the input can't overrun. No right padding: the input box is
+        // explicitly width-sized, so a right pad would only steal a column.
+        paddingLeft={1}
+        paddingRight={0}
+        paddingTop={1 + padY}
+        paddingBottom={1 + padY}
+      >
         {children}
       </box>
     );
