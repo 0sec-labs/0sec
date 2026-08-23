@@ -25,6 +25,7 @@
  */
 
 import React, { useMemo } from "react";
+import { TextAttributes } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
 import { useTheme, type Theme } from "./theme-context.js";
@@ -33,10 +34,12 @@ import {
   buildUsageReport,
   clipUsageRows,
   computeUsageLayout,
+  computeUsageTitleLayout,
   readCurrentUsage,
   usageFooterHint,
   usageMeterBar,
   usageTitle,
+  usageTitleMeta,
   type UsageLayout,
   type UsagePane,
   type UsageReportRow,
@@ -106,13 +109,12 @@ function Pane({
   pane,
   bordered,
   title,
-  titleFg,
   children,
 }: {
   pane: UsagePane;
   bordered: boolean;
-  title: string;
-  titleFg: string;
+  /** The header row node, already fitted to the pane's inner width. */
+  title: React.ReactNode;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
@@ -130,12 +132,35 @@ function Pane({
       backgroundColor={bordered ? theme.PANEL : undefined}
       paddingX={bordered ? 1 : undefined}
     >
-      {pane.hasTitle ? (
-        <Cells width={pane.innerWidth} fg={titleFg}>
-          {title}
-        </Cells>
-      ) : null}
+      {pane.hasTitle ? title : null}
       {children}
+    </box>
+  );
+}
+
+/**
+ * The pane header: a bold, primary-toned title on the left and a right-aligned
+ * summary meta on the right (the priced session cost, else the model). Widths
+ * come off `computeUsageTitleLayout`, so the row claims exactly the pane's inner
+ * width and the title survives when the header is too narrow for both.
+ */
+function TitleRow({ innerWidth, title, meta }: { innerWidth: number; title: string; meta: string }) {
+  const theme = useTheme();
+  const columns = computeUsageTitleLayout(innerWidth, meta.length);
+  if (columns.width <= 0) return null;
+  return (
+    <box flexDirection="row" width={columns.width} flexShrink={0} minWidth={0}>
+      <Cells width={columns.titleWidth} fg={theme.PRIMARY} attributes={TextAttributes.BOLD}>
+        {title}
+      </Cells>
+      {columns.metaWidth > 0 ? (
+        <>
+          <Cells width={columns.gap}>{""}</Cells>
+          <Cells width={columns.metaWidth} align="right" fg={theme.MUTED}>
+            {meta}
+          </Cells>
+        </>
+      ) : null}
     </box>
   );
 }
@@ -162,7 +187,7 @@ function ReportRow({
 
   if (row.kind === "heading") {
     return (
-      <Cells width={inner} fg={toneColor(theme, row.tone)}>
+      <Cells width={inner} fg={toneColor(theme, row.tone)} attributes={TextAttributes.BOLD}>
         {row.label ?? ""}
       </Cells>
     );
@@ -231,9 +256,14 @@ export function UsageScreen({ frame, usage, onBack, onExit }: UsageScreenProps) 
     }
   });
 
+  const meta = usageTitleMeta(snapshot);
+  const titleRow = (
+    <TitleRow innerWidth={layout.pane.innerWidth} title={usageTitle()} meta={meta} />
+  );
+
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
-      <Pane pane={layout.pane} bordered={layout.bordered} title={usageTitle()} titleFg={theme.MUTED}>
+      <Pane pane={layout.pane} bordered={layout.bordered} title={titleRow}>
         {visible.map((row, index) => (
           <ReportRow key={`usage-${index}`} row={row} layout={layout} theme={theme} />
         ))}

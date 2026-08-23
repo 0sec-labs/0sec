@@ -32,6 +32,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
+import { TextAttributes } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
 import { useTheme, type Theme } from "./theme-context.js";
@@ -48,11 +49,15 @@ import {
   clampSelection,
   clipConnectDetailLines,
   computeConnectLayout,
+  computeConnectTitleLayout,
   computeConnectWindow,
   connectDetailLines,
+  connectDetailTitleLabel,
+  connectDetailTitleMeta,
   connectFooterHint,
   connectInputMask,
-  connectListTitle,
+  connectListMeta,
+  connectListTitleLabel,
   connectStatusLine,
   firstSelectableIndex,
   hasAnyConnection,
@@ -126,22 +131,17 @@ function Pane({
   pane,
   bordered,
   title,
-  titleFg,
   children,
 }: {
   pane: ConnectPane;
   bordered: boolean;
-  title: string;
-  titleFg: string;
+  /** The header row node, already fitted to the pane's inner width. */
+  title: React.ReactNode;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
   if (pane.width <= 0 || pane.height <= 0) return null;
-  const titleRow = pane.hasTitle ? (
-    <Cells width={pane.innerWidth} fg={titleFg}>
-      {title}
-    </Cells>
-  ) : null;
+  const titleRow = pane.hasTitle ? title : null;
   return (
     <box
       flexDirection="column"
@@ -157,6 +157,44 @@ function Pane({
     >
       {titleRow}
       {children}
+    </box>
+  );
+}
+
+/**
+ * A pane header: a bold, primary-toned title on the left and a right-aligned
+ * summary meta on the right. Widths come off `computeConnectTitleLayout`, so the
+ * row claims exactly the pane's inner width and the title survives when the
+ * header is too narrow for both. `metaFg` lets the caller colour the meta (the
+ * detail header greens a connected provider).
+ */
+function TitleRow({
+  innerWidth,
+  title,
+  meta,
+  metaFg,
+}: {
+  innerWidth: number;
+  title: string;
+  meta: string;
+  metaFg: string;
+}) {
+  const theme = useTheme();
+  const columns = computeConnectTitleLayout(innerWidth, meta.length);
+  if (columns.width <= 0) return null;
+  return (
+    <box flexDirection="row" width={columns.width} flexShrink={0} minWidth={0}>
+      <Cells width={columns.titleWidth} fg={theme.PRIMARY} attributes={TextAttributes.BOLD}>
+        {title}
+      </Cells>
+      {columns.metaWidth > 0 ? (
+        <>
+          <Cells width={columns.gap}>{""}</Cells>
+          <Cells width={columns.metaWidth} align="right" fg={metaFg}>
+            {meta}
+          </Cells>
+        </>
+      ) : null}
     </box>
   );
 }
@@ -355,7 +393,7 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
           flexShrink={0}
           minWidth={0}
         >
-          <Cells width={heading.labelWidth} fg={theme.PRIMARY}>
+          <Cells width={heading.labelWidth} fg={theme.MUTED} attributes={TextAttributes.BOLD}>
             {entry.group.label.toUpperCase()}
           </Cells>
           <Cells width={heading.gap}>{""}</Cells>
@@ -394,8 +432,8 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
         flexShrink={0}
         minWidth={0}
       >
-        <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
-          {selectedRow ? ">" : ""}
+        <Cells width={row.markerWidth} fg={theme.ACCENT} bg={background}>
+          {selectedRow ? "▸" : ""}
         </Cells>
         <Cells width={row.markerGap} bg={background}>
           {""}
@@ -408,7 +446,7 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
         </Cells>
         <Cells
           width={row.labelWidth}
-          fg={provider.connected ? theme.SUCCESS : selectedRow ? theme.TEXT : theme.MUTED}
+          fg={provider.connected ? theme.SUCCESS : selectedRow ? theme.ACCENT : theme.MUTED}
           bg={background}
         >
           {provider.label}
@@ -458,8 +496,14 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
         <Pane
           pane={layout.list}
           bordered={layout.bordered}
-          title={connectListTitle(window)}
-          titleFg={theme.MUTED}
+          title={
+            <TitleRow
+              innerWidth={layout.list.innerWidth}
+              title={connectListTitleLabel()}
+              meta={connectListMeta(window)}
+              metaFg={theme.MUTED}
+            />
+          }
         >
           {rows.length === 0 ? (
             <Cells width={row.width} fg={theme.MUTED}>
@@ -472,8 +516,14 @@ export function ConnectScreen({ frame, onBack, onExit, env, homeDir }: ConnectSc
         <Pane
           pane={layout.detail}
           bordered={layout.bordered}
-          title={activeProvider ? "PROVIDER" : "PROVIDER -"}
-          titleFg={theme.MUTED}
+          title={
+            <TitleRow
+              innerWidth={layout.detail.innerWidth}
+              title={connectDetailTitleLabel()}
+              meta={connectDetailTitleMeta(activeRow)}
+              metaFg={activeProvider?.connected ? theme.SUCCESS : theme.MUTED}
+            />
+          }
         >
           {detailBody}
         </Pane>

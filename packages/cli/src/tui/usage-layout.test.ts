@@ -8,6 +8,7 @@ import {
   computeKvLayout,
   computeMeterLayout,
   computeUsageLayout,
+  computeUsageTitleLayout,
   costUsd,
   formatCost,
   formatTokenCount,
@@ -17,6 +18,7 @@ import {
   usageFooterHint,
   usageMeterBar,
   usageTitle,
+  usageTitleMeta,
   type UsageLayout,
   type UsageReportRow,
   type UsageSnapshot,
@@ -444,14 +446,77 @@ describe("clipUsageRows", () => {
 
 // ---------------------------------------------------------------------------
 
+describe("computeUsageTitleLayout — the header sweep", () => {
+  it("splits the header into a title and meta that sum to the width", () => {
+    for (let inner = 0; inner <= 120; inner++) {
+      for (const metaLength of [0, 1, 4, 12, 30, 200]) {
+        const title = computeUsageTitleLayout(inner, metaLength);
+        const at = `inner ${inner}, meta ${metaLength}`;
+        expect(title.width, `header wider than the pane at ${at}`).toBe(Math.max(0, inner));
+        expect(
+          title.titleWidth + title.gap + title.metaWidth,
+          `header claimed ${title.titleWidth + title.gap + title.metaWidth} of ${title.width} at ${at}`,
+        ).toBe(title.width);
+        expect(title.metaWidth).toBeLessThanOrEqual(Math.max(0, metaLength));
+        if (title.metaWidth > 0) {
+          expect(title.gap, `meta had no gap at ${at}`).toBe(1);
+          expect(title.titleWidth, `title squeezed out at ${at}`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("gives the meta its own cells on a wide header and drops it on a narrow one", () => {
+    const wide = computeUsageTitleLayout(60, 12);
+    expect(wide.metaWidth).toBe(12);
+    expect(wide.titleWidth).toBeGreaterThan(0);
+    expect(wide.gap).toBe(1);
+    const narrow = computeUsageTitleLayout(6, 12);
+    expect(narrow.metaWidth).toBe(0);
+    expect(narrow.gap).toBe(0);
+    expect(narrow.titleWidth).toBe(6);
+  });
+});
+
+describe("usageTitleMeta", () => {
+  it("prices a session summary against the active model", () => {
+    const meta = usageTitleMeta({
+      model: "claude-sonnet-4-6",
+      session: { inputTokens: 1_000_000, outputTokens: 0 },
+    });
+    expect(meta).toMatch(/^\$\d.* session$/);
+  });
+
+  it("falls back to the model name when the session is unpriced or empty", () => {
+    expect(usageTitleMeta({ model: "some-unlisted-model", session: { inputTokens: 1 } })).toBe(
+      "some-unlisted-model",
+    );
+    expect(usageTitleMeta({ model: "claude-sonnet-4-6" })).toBe("claude-sonnet-4-6");
+    expect(usageTitleMeta({})).toBe("");
+  });
+
+  it("sums a per-model total when every model is priced", () => {
+    const meta = usageTitleMeta({
+      perModel: [
+        { model: "claude-sonnet-4-6", inputTokens: 1_000_000, outputTokens: 0 },
+        { model: "claude-haiku-4-5", inputTokens: 1_000_000, outputTokens: 0 },
+      ],
+    });
+    expect(meta).toMatch(/^\$\d.* session$/);
+  });
+});
+
 describe("titles and hints", () => {
   it("titles the pane", () => {
     expect(usageTitle()).toBe("SESSION USAGE");
   });
 
-  it("names the real keys in the footer hint", () => {
+  it("names only the keys this read-only screen actually handles", () => {
     const hint = usageFooterHint();
     for (const fragment of ["esc back", "ctrl+c exit"]) expect(hint).toContain(fragment);
+    // The screen's keyboard only handles esc and ctrl+c, so it must not name a
+    // history binding it does not implement.
+    expect(hint).not.toContain("history");
   });
 
   it("accepts a fully-typed snapshot", () => {

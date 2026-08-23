@@ -720,6 +720,41 @@ export function clipConnectDetailLines(
 }
 
 // ---------------------------------------------------------------------------
+// Title row (pane header: bold title left, right-aligned summary meta)
+// ---------------------------------------------------------------------------
+
+/** The title never shrinks below this; the meta gives way first. */
+const TITLE_MIN_WIDTH = 6;
+
+/** A pane header split into a left title and a right-aligned meta column. */
+export interface ConnectTitleLayout {
+  /** Total cells the header row occupies; equals the pane's inner width. */
+  width: number;
+  titleWidth: number;
+  gap: number;
+  /** Right-aligned summary column. 0 when the row cannot spare it. */
+  metaWidth: number;
+}
+
+/**
+ * Splits a pane header into a left title and a right-aligned summary meta. The
+ * title outranks the meta: on a narrow header the meta gives way whole rather
+ * than crushing the title, and the two columns always sum to exactly the pane's
+ * inner width so the header claims every cell it was given and never one more.
+ * The separator is a real gap, never a padded literal — `sanitizeTuiText`
+ * trims, so a literal space would fuse the two.
+ */
+export function computeConnectTitleLayout(innerWidth: number, metaLength: number): ConnectTitleLayout {
+  const width = cells(innerWidth);
+  if (width <= 0) return { width: 0, titleWidth: 0, gap: 0, metaWidth: 0 };
+  const wanted = cells(metaLength);
+  const metaWidth = Math.min(wanted, Math.max(0, width - TITLE_MIN_WIDTH - 1));
+  const gap = metaWidth > 0 ? 1 : 0;
+  const titleWidth = Math.max(0, width - metaWidth - gap);
+  return { width, titleWidth, gap, metaWidth };
+}
+
+// ---------------------------------------------------------------------------
 // Status line, titles, hints and keys
 // ---------------------------------------------------------------------------
 
@@ -740,9 +775,35 @@ export function connectStatusLine(rows: readonly ConnectRow[]): string {
 
 /** `PROVIDERS 4-15/20`, or `PROVIDERS 20` when the whole list is on screen. */
 export function connectListTitle(window: ConnectWindow): string {
-  if (window.total === 0) return "PROVIDERS 0";
-  if (!window.hasAbove && !window.hasBelow) return `PROVIDERS ${window.total}`;
-  return `PROVIDERS ${window.start + 1}-${window.end}/${window.total}`;
+  const meta = connectListMeta(window);
+  return meta ? `${connectListTitleLabel()} ${meta}` : connectListTitleLabel();
+}
+
+/** The list pane's stable, left-aligned header label. */
+export function connectListTitleLabel(): string {
+  return "PROVIDERS";
+}
+
+/** The right-aligned header meta: total count, or the on-screen window range. */
+export function connectListMeta(window: ConnectWindow): string {
+  if (window.total === 0) return "0";
+  if (!window.hasAbove && !window.hasBelow) return String(window.total);
+  return `${window.start + 1}-${window.end}/${window.total}`;
+}
+
+/** The detail pane's stable, left-aligned header label. */
+export function connectDetailTitleLabel(): string {
+  return "PROVIDER";
+}
+
+/**
+ * The detail header's right-aligned summary for the highlighted provider:
+ * "connected" when a credential exists, "not connected" when it does not, and
+ * "" when nothing is highlighted. Colour is the component's to choose.
+ */
+export function connectDetailTitleMeta(row: ConnectRow | undefined): string {
+  if (!row || row.kind !== "provider") return "";
+  return row.provider.connected ? "connected" : "not connected";
 }
 
 export type ConnectMode = "browse" | "filter" | "input";
@@ -764,7 +825,7 @@ export function connectFooterHint(mode: ConnectMode, hasFilter = false): string 
   if (mode === "input") return "paste credential · enter save · esc cancel";
   if (mode === "filter") return "type to filter · enter connect · esc done · backspace delete";
   return [
-    "up/down move",
+    "↑↓ select",
     "enter connect",
     "/ filter",
     hasFilter ? "esc clear filter" : "esc back",

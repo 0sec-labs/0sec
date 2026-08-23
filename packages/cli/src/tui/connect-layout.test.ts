@@ -8,11 +8,16 @@ import {
   clampSelection,
   clipConnectDetailLines,
   computeConnectLayout,
+  computeConnectTitleLayout,
   computeConnectWindow,
   connectDetailLines,
+  connectDetailTitleLabel,
+  connectDetailTitleMeta,
   connectFooterHint,
   connectInputMask,
+  connectListMeta,
   connectListTitle,
+  connectListTitleLabel,
   connectStatusLine,
   firstSelectableIndex,
   hasAnyConnection,
@@ -217,6 +222,66 @@ describe("computeConnectLayout — the sweep", () => {
 });
 
 // ---------------------------------------------------------------------------
+
+describe("computeConnectTitleLayout — the header sweep", () => {
+  it("splits a header into a title and meta that sum to the width", () => {
+    for (let inner = 0; inner <= 120; inner++) {
+      for (const metaLength of [0, 1, 3, 12, 30, 200]) {
+        const title = computeConnectTitleLayout(inner, metaLength);
+        const at = `inner ${inner}, meta ${metaLength}`;
+        expect(title.width, `header wider than the pane at ${at}`).toBe(Math.max(0, inner));
+        expect(
+          title.titleWidth + title.gap + title.metaWidth,
+          `header claimed ${title.titleWidth + title.gap + title.metaWidth} of ${title.width} at ${at}`,
+        ).toBe(title.width);
+        expect(title.metaWidth).toBeLessThanOrEqual(Math.max(0, metaLength));
+        if (title.metaWidth > 0) {
+          expect(title.gap, `meta had no gap at ${at}`).toBe(1);
+          expect(title.titleWidth, `title squeezed out at ${at}`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("gives the meta its own cells on a wide header and drops it on a narrow one", () => {
+    const wide = computeConnectTitleLayout(60, 12);
+    expect(wide.metaWidth).toBe(12);
+    expect(wide.titleWidth).toBeGreaterThan(0);
+    expect(wide.gap).toBe(1);
+    const narrow = computeConnectTitleLayout(6, 12);
+    expect(narrow.metaWidth).toBe(0);
+    expect(narrow.gap).toBe(0);
+    expect(narrow.titleWidth).toBe(6);
+  });
+});
+
+describe("pane header labels and meta", () => {
+  const rows = buildConnectRows({ states: LIT });
+
+  it("keeps a stable left label and a count/window meta for the list header", () => {
+    expect(connectListTitleLabel()).toBe("PROVIDERS");
+    const whole = computeConnectWindow({ rows, selected: 1, visible: rows.length });
+    expect(connectListMeta(whole)).toBe(String(rows.length));
+    // The label and meta recombine into the single-string title callers use.
+    expect(connectListTitle(whole)).toBe(`PROVIDERS ${rows.length}`);
+    const scrolled = computeConnectWindow({ rows, selected: 5, visible: 4, anchor: 3 });
+    expect(connectListMeta(scrolled)).toMatch(/^\d+-\d+\/\d+$/);
+    expect(connectListMeta(computeConnectWindow({ rows: [], selected: -1, visible: 4 }))).toBe("0");
+  });
+
+  it("summarises the highlighted provider's connection state for the detail header", () => {
+    expect(connectDetailTitleLabel()).toBe("PROVIDER");
+    const connected = rows.find(
+      (r) => r.kind === "provider" && r.provider.id === LIT_PROVIDER?.id,
+    );
+    expect(connectDetailTitleMeta(connected)).toBe("connected");
+    const dark = rows.find((r) => r.kind === "provider" && !r.provider.connected);
+    expect(connectDetailTitleMeta(dark)).toBe("not connected");
+    // No provider highlighted -> no meta.
+    expect(connectDetailTitleMeta(rows.find((r) => r.kind === "heading"))).toBe("");
+    expect(connectDetailTitleMeta(undefined)).toBe("");
+  });
+});
 
 describe("buildConnectRows", () => {
   it("puts a Popular group first, then All providers, with disjoint membership", () => {
@@ -516,6 +581,7 @@ describe("connected reporting, masks and hints", () => {
 
   it("names the real keys in the footer hints", () => {
     expect(connectFooterHint("browse")).toContain("enter connect");
+    expect(connectFooterHint("browse")).toContain("↑↓ select");
     expect(connectFooterHint("browse", false)).toContain("esc back");
     expect(connectFooterHint("browse", true)).toContain("esc clear filter");
     expect(connectFooterHint("filter")).toContain("backspace");
