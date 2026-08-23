@@ -116,11 +116,24 @@ export interface TuiSettings {
    */
   modelDisplay: "statusbar" | "message" | "off";
   /**
-   * Intro animation style for the "0SEC" logo: "strike" (a red slash strikes
-   * through the 0), "draw" (letters draw in), "fade" (fade-in), "shimmer" (a
-   * subtle idle shimmer) or "off" (static). Consumed by chat-screen's logo.
+   * Intro animation style for the "0SEC" logo. One-shot reveals: "strike" (a
+   * red slash strikes through the 0), "draw" (letters draw in L→R), "fade" (a
+   * centre-out brightness bloom), "typein" (per-cell reveal with a purple
+   * leading glow), "sweep" (a bright bar wipes across revealing the mark),
+   * "glitch" (a scramble that resolves). Looping idle effects: "shimmer" (a
+   * highlight column with a comet tail) and "pulse" (the slash breathes). "off"
+   * is static. Consumed by chat-screen's logo.
    */
-  logoAnimation: "strike" | "draw" | "fade" | "shimmer" | "off";
+  logoAnimation:
+    | "strike"
+    | "draw"
+    | "fade"
+    | "shimmer"
+    | "typein"
+    | "sweep"
+    | "glitch"
+    | "pulse"
+    | "off";
   /**
    * Master reduce-motion. When true the console keeps essential feedback but
    * disables decorative animations (logo intro, shimmers, sweeps).
@@ -378,10 +391,10 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "logoAnimation",
     label: "Logo animation",
     description:
-      'Intro animation for the "0SEC" logo: strike (a red slash strikes through the 0), draw (letters draw in), fade (fade-in), shimmer (a subtle idle shimmer) or off (static).',
+      'Intro animation for the "0SEC" logo: strike (a red slash strikes through the 0), draw (letters draw in), fade (a centre-out bloom), typein (per-cell reveal), sweep (a bright bar wipes across), glitch (a scramble that resolves), shimmer (an idle highlight sweep), pulse (the slash breathes) or off (static).',
     kind: "enum",
     default: "strike",
-    choices: ["strike", "draw", "fade", "shimmer", "off"],
+    choices: ["strike", "draw", "fade", "shimmer", "typein", "sweep", "glitch", "pulse", "off"],
     group: "Motion",
   },
   {

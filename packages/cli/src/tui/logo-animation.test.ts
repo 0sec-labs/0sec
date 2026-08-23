@@ -19,8 +19,21 @@ const LOGO = [
   " ######   #######  #######   ######",
 ] as const;
 
-const ONE_SHOT: LogoAnimStyle[] = ["strike", "draw", "fade", "off"];
-const ALL_STYLES: LogoAnimStyle[] = ["strike", "draw", "fade", "shimmer", "off"];
+const ONE_SHOT: LogoAnimStyle[] = ["strike", "draw", "fade", "typein", "sweep", "glitch", "off"];
+const LOOPING: LogoAnimStyle[] = ["shimmer", "pulse"];
+/** One-shot reveals whose last frame settles to the final frame (excludes off). */
+const REVEALS: LogoAnimStyle[] = ["strike", "draw", "fade", "typein", "sweep", "glitch"];
+const ALL_STYLES: LogoAnimStyle[] = [
+  "strike",
+  "draw",
+  "fade",
+  "shimmer",
+  "typein",
+  "sweep",
+  "glitch",
+  "pulse",
+  "off",
+];
 
 /** Count cells matching a predicate across a frame. */
 function count(frame: LogoFrame, pred: (c: LogoFrame[number][number]) => boolean): number {
@@ -69,6 +82,15 @@ describe("frame-count / loop metadata", () => {
     expect(logoAnimationFrameCount("shimmer")).toBeGreaterThan(35); // period > grid width
     expect(logoAnimationLoops("shimmer")).toBe(true);
     for (const s of ONE_SHOT) expect(logoAnimationLoops(s)).toBe(false);
+  });
+
+  it("marks both shimmer and pulse as looping, every other style one-shot", () => {
+    for (const s of LOOPING) expect(logoAnimationLoops(s)).toBe(true);
+    for (const s of ONE_SHOT) expect(logoAnimationLoops(s)).toBe(false);
+  });
+
+  it("gives every reveal at least two frames so a reveal actually reveals", () => {
+    for (const s of REVEALS) expect(logoAnimationFrameCount(s)).toBeGreaterThanOrEqual(2);
   });
 
   it("off has a single static frame", () => {
@@ -231,7 +253,7 @@ describe("reduceMotion", () => {
 
 describe("frame clamping / guards", () => {
   it("clamps one-shot frames past the end to the final frame", () => {
-    for (const style of ["strike", "draw", "fade"] as LogoAnimStyle[]) {
+    for (const style of REVEALS) {
       const last = logoAnimationFrameCount(style) - 1;
       expect(framesEqual(computeLogoFrame(LOGO, style, 9999), finalFrame)).toBe(true);
       expect(framesEqual(computeLogoFrame(LOGO, style, 9999), computeLogoFrame(LOGO, style, last))).toBe(true);
@@ -239,7 +261,7 @@ describe("frame clamping / guards", () => {
   });
 
   it("clamps negative frames to frame 0", () => {
-    for (const style of ["strike", "draw", "fade"] as LogoAnimStyle[]) {
+    for (const style of REVEALS) {
       expect(framesEqual(computeLogoFrame(LOGO, style, -5), computeLogoFrame(LOGO, style, 0))).toBe(true);
     }
   });
@@ -248,6 +270,10 @@ describe("frame clamping / guards", () => {
     expect(() => computeLogoFrame(LOGO, "strike", Number.NaN)).not.toThrow();
     expect(framesEqual(computeLogoFrame(LOGO, "draw", Number.POSITIVE_INFINITY), finalFrame)).toBe(true);
     expect(() => computeLogoFrame(LOGO, "shimmer", Number.NaN)).not.toThrow();
+    expect(() => computeLogoFrame(LOGO, "pulse", Number.NaN)).not.toThrow();
+    expect(() => computeLogoFrame(LOGO, "glitch", Number.NaN)).not.toThrow();
+    // A non-finite frame for a looping style rests at its phase-0 frame.
+    expect(framesEqual(computeLogoFrame(LOGO, "pulse", Number.NaN), computeLogoFrame(LOGO, "pulse", 0))).toBe(true);
   });
 
   it("returns an empty frame for an empty grid", () => {
@@ -289,5 +315,219 @@ describe("logoRowRuns", () => {
     const tones = new Set(frame.flatMap((row) => logoRowRuns(row).map((r) => r.tone)));
     expect(tones.has("error")).toBe(true);
     expect(tones.has("text")).toBe(true);
+  });
+});
+
+/** Tones a run may legitimately carry, for alphabet-conformance checks. */
+const TONES = new Set(["text", "error", "dim", "muted", "brand"]);
+
+describe("reveal styles settle to the final frame", () => {
+  for (const style of REVEALS) {
+    it(`${style} ends exactly at the settled final frame`, () => {
+      const last = logoAnimationFrameCount(style) - 1;
+      expect(framesEqual(computeLogoFrame(LOGO, style, last), finalFrame)).toBe(true);
+    });
+    it(`${style} never lights a blank cell and only ever uses known tones`, () => {
+      const last = logoAnimationFrameCount(style) - 1;
+      for (let f = 0; f <= last; f += 1) {
+        for (const row of computeLogoFrame(LOGO, style, f)) {
+          for (const cell of row) {
+            if (cell.ch === " ") expect(cell.visible).toBe(false);
+            expect(TONES.has(cell.tone)).toBe(true);
+          }
+        }
+      }
+    });
+    it(`${style} never carries the transient 'brand' tone into the final frame`, () => {
+      const last = logoAnimationFrameCount(style) - 1;
+      const brandAtEnd = count(computeLogoFrame(LOGO, style, last), (c) => c.tone === "brand");
+      expect(brandAtEnd).toBe(0);
+    });
+  }
+});
+
+describe("typein", () => {
+  const last = logoAnimationFrameCount("typein") - 1;
+
+  it("reveals cells monotonically in reading order", () => {
+    let prev = -1;
+    for (let f = 0; f <= last; f += 1) {
+      const vis = count(computeLogoFrame(LOGO, "typein", f), (c) => c.visible);
+      expect(vis).toBeGreaterThanOrEqual(prev);
+      prev = vis;
+    }
+  });
+
+  it("starts empty and ends fully visible", () => {
+    expect(count(computeLogoFrame(LOGO, "typein", 0), (c) => c.visible)).toBe(0);
+    expect(framesEqual(computeLogoFrame(LOGO, "typein", last), finalFrame)).toBe(true);
+  });
+
+  it("shows a purple leading glow mid-reveal that is gone by the end", () => {
+    let sawBrand = false;
+    for (let f = 0; f < last; f += 1) {
+      if (count(computeLogoFrame(LOGO, "typein", f), (c) => c.tone === "brand") > 0) sawBrand = true;
+    }
+    expect(sawBrand).toBe(true);
+    expect(count(computeLogoFrame(LOGO, "typein", last), (c) => c.tone === "brand")).toBe(0);
+  });
+
+  it("reveals top-left before bottom-right (reading order)", () => {
+    // A frame partway through the reveal.
+    const mid = computeLogoFrame(LOGO, "typein", Math.floor(last / 2));
+    const topLeft = mid[0]!.some((c) => c.visible);
+    const bottomRight = mid[4]![34]!.visible;
+    expect(topLeft).toBe(true);
+    expect(bottomRight).toBe(false);
+  });
+});
+
+describe("sweep", () => {
+  const last = logoAnimationFrameCount("sweep") - 1;
+
+  it("reveals cells monotonically left to right", () => {
+    let prev = -1;
+    for (let f = 0; f <= last; f += 1) {
+      const vis = count(computeLogoFrame(LOGO, "sweep", f), (c) => c.visible);
+      expect(vis).toBeGreaterThanOrEqual(prev);
+      prev = vis;
+    }
+  });
+
+  it("starts near-empty and ends fully visible", () => {
+    expect(count(computeLogoFrame(LOGO, "sweep", 0), (c) => c.visible)).toBeLessThan(visibleNonSpace);
+    expect(framesEqual(computeLogoFrame(LOGO, "sweep", last), finalFrame)).toBe(true);
+  });
+
+  it("shows a purple bar mid-sweep that has cleared the mark by the end", () => {
+    let sawBar = false;
+    for (let f = 0; f < last; f += 1) {
+      if (count(computeLogoFrame(LOGO, "sweep", f), (c) => c.tone === "brand") > 0) sawBar = true;
+    }
+    expect(sawBar).toBe(true);
+    expect(count(computeLogoFrame(LOGO, "sweep", last), (c) => c.tone === "brand")).toBe(0);
+  });
+
+  it("reveals the left of the mark before the right", () => {
+    const mid = computeLogoFrame(LOGO, "sweep", Math.floor(last / 3));
+    const leftCol = mid.some((row) => row[1]!.visible);
+    const rightCol = mid.some((row) => row[34]!.visible);
+    expect(leftCol).toBe(true);
+    expect(rightCol).toBe(false);
+  });
+});
+
+describe("glitch", () => {
+  const last = logoAnimationFrameCount("glitch") - 1;
+
+  it("is deterministic (same inputs -> identical output)", () => {
+    expect(framesEqual(computeLogoFrame(LOGO, "glitch", 4), computeLogoFrame(LOGO, "glitch", 4))).toBe(true);
+    expect(framesEqual(computeLogoFrame(LOGO, "glitch", 7), computeLogoFrame(LOGO, "glitch", 7))).toBe(true);
+  });
+
+  it("never lights a blank cell during the scramble", () => {
+    for (let f = 0; f <= last; f += 1) {
+      for (const row of computeLogoFrame(LOGO, "glitch", f)) {
+        for (const cell of row) if (cell.ch === " ") expect(cell.visible).toBe(false);
+      }
+    }
+  });
+
+  it("scrambles before it resolves, then settles to the final frame", () => {
+    // An early frame is not yet the settled mark.
+    expect(framesEqual(computeLogoFrame(LOGO, "glitch", 0), finalFrame)).toBe(false);
+    expect(framesEqual(computeLogoFrame(LOGO, "glitch", last), finalFrame)).toBe(true);
+  });
+
+  it("grows the settled set: cells matching the final frame trend upward", () => {
+    const matchFinal = (f: number): number => {
+      const frame = computeLogoFrame(LOGO, "glitch", f);
+      let n = 0;
+      for (const [r, row] of frame.entries()) {
+        for (const [c, cell] of row.entries()) {
+          const target = finalFrame[r]![c]!;
+          if (cell.visible === target.visible && cell.tone === target.tone) n += 1;
+        }
+      }
+      return n;
+    };
+    // Not strictly monotonic frame-to-frame (scramble noise can coincide with
+    // the final tone), but the endpoints bracket the trend: far more cells
+    // match the final frame late than at the very start.
+    expect(matchFinal(last)).toBeGreaterThan(matchFinal(0));
+    expect(matchFinal(last)).toBe(count(finalFrame, () => true));
+  });
+});
+
+describe("pulse", () => {
+  const period = logoAnimationFrameCount("pulse");
+
+  it("never hides a non-space cell", () => {
+    for (let f = 0; f < period; f += 1) {
+      for (const row of computeLogoFrame(LOGO, "pulse", f)) {
+        for (const cell of row) if (cell.ch !== " ") expect(cell.visible).toBe(true);
+      }
+    }
+  });
+
+  it("holds the white cells at text while the slash breathes", () => {
+    for (const f of [0, 4, 8, 12, 18]) {
+      const frame = computeLogoFrame(LOGO, "pulse", f);
+      const slashTones = new Set<string>();
+      for (const row of frame) {
+        for (const cell of row) {
+          if (cell.ch === "#") expect(cell.tone).toBe("text");
+          if (cell.ch === "/") slashTones.add(cell.tone);
+        }
+      }
+      // All slash cells share exactly one breathing tone this frame.
+      expect(slashTones.size).toBe(1);
+      expect(["dim", "error", "brand"]).toContain([...slashTones][0]);
+    }
+  });
+
+  it("passes through the purple peak and the dim trough over a cycle", () => {
+    const seen = new Set<string>();
+    for (let f = 0; f < period; f += 1) {
+      const frame = computeLogoFrame(LOGO, "pulse", f);
+      for (const row of frame) for (const cell of row) if (cell.ch === "/") seen.add(cell.tone);
+    }
+    expect(seen.has("brand")).toBe(true); // peak
+    expect(seen.has("dim")).toBe(true); // trough
+    expect(seen.has("error")).toBe(true); // mid
+  });
+
+  it("starts at the dim trough (loop seam)", () => {
+    const f0 = computeLogoFrame(LOGO, "pulse", 0);
+    const slash = f0.flatMap((row) => row.filter((c) => c.ch === "/"));
+    for (const cell of slash) expect(cell.tone).toBe("dim");
+  });
+
+  it("loops seamlessly (frame and frame+period are identical)", () => {
+    for (const f of [0, 3, 9, 17]) {
+      expect(framesEqual(computeLogoFrame(LOGO, "pulse", f), computeLogoFrame(LOGO, "pulse", f + period))).toBe(true);
+    }
+  });
+});
+
+describe("shimmer comet tail", () => {
+  it("trails a dim column one step behind the muted head", () => {
+    const frame = computeLogoFrame(LOGO, "shimmer", 5);
+    const mutedCols = new Set<number>();
+    const dimCols = new Set<number>();
+    for (const row of frame) {
+      for (const [c, cell] of row.entries()) {
+        if (cell.tone === "muted") mutedCols.add(c);
+        if (cell.tone === "dim") dimCols.add(c);
+      }
+    }
+    expect([...mutedCols]).toEqual([5]);
+    expect([...dimCols]).toEqual([4]);
+  });
+
+  it("has no tail at column 0 (head just entering)", () => {
+    const frame = computeLogoFrame(LOGO, "shimmer", 0);
+    expect(count(frame, (c) => c.tone === "dim")).toBe(0);
+    expect(count(frame, (c) => c.tone === "muted")).toBeGreaterThan(0);
   });
 });

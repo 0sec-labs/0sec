@@ -477,11 +477,15 @@ function logoAnimationBlocks(value: string, width: number): PreviewBlock[] {
   const DESCRIPTIONS: Record<string, string> = {
     strike: "strike — the red slash strikes through the 0",
     draw: "draw — the letters draw in stroke by stroke",
-    fade: "fade — the mark fades in",
-    shimmer: "shimmer — a subtle idle shimmer over the mark",
+    fade: "fade — the mark blooms in from the centre",
+    shimmer: "shimmer — an idle highlight sweeps with a comet tail",
+    typein: "typein — cells reveal one by one, purple leading glow",
+    sweep: "sweep — a bright bar wipes L→R revealing the mark",
+    glitch: "glitch — a scramble that resolves cell by cell",
+    pulse: "pulse — the red slash breathes red↔purple",
     off: "off — the mark is drawn static, no intro",
   };
-  const choices = ["strike", "draw", "fade", "shimmer", "off"];
+  const choices = ["strike", "draw", "fade", "shimmer", "typein", "sweep", "glitch", "pulse", "off"];
   const description = DESCRIPTIONS[value] ?? `current: ${value}`;
   return [
     line("logo-anim-desc", width, description, (t) => t.ACCENT),

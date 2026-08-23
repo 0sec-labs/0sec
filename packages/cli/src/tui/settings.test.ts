@@ -513,20 +513,34 @@ describe("motion settings", () => {
     expect(DEFAULT_SETTINGS.reduceMotion).toBe(false);
   });
 
-  it("offers logoAnimation exactly strike / draw / fade / shimmer / off", () => {
+  it("offers logoAnimation the full style list, strike first and off last", () => {
     const def = SETTING_DEFS.find((d) => d.key === "logoAnimation");
     expect(def?.kind).toBe("enum");
-    expect(def?.choices).toEqual(["strike", "draw", "fade", "shimmer", "off"]);
+    expect(def?.choices).toEqual([
+      "strike",
+      "draw",
+      "fade",
+      "shimmer",
+      "typein",
+      "sweep",
+      "glitch",
+      "pulse",
+      "off",
+    ]);
   });
 
-  it("cycles logoAnimation through all five values and wraps", () => {
+  it("cycles logoAnimation through every value and wraps back to strike", () => {
+    const def = SETTING_DEFS.find((d) => d.key === "logoAnimation");
+    const choices = def?.choices ?? [];
     let s = DEFAULT_SETTINGS;
     const seen: string[] = [];
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < choices.length; i += 1) {
       s = toggleSetting(s, "logoAnimation");
       seen.push(s.logoAnimation);
     }
-    expect(seen).toEqual(["draw", "fade", "shimmer", "off", "strike"]);
+    // One full lap: the choices after the head, then the head again.
+    expect(seen).toEqual([...choices.slice(1), choices[0]]);
+    expect(seen[seen.length - 1]).toBe("strike");
   });
 
   it("rejects an out-of-range logoAnimation value", () => {
