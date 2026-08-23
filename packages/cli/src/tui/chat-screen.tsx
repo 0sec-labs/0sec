@@ -78,6 +78,7 @@ import {
   saveSession,
   type StoredSessionMeta,
 } from "./session-store.js";
+import type { SessionPluginHostManager } from "./session-plugin-host.js";
 import { reportOperatorGate } from "../herdr-state.js";
 import {
   GLYPH_CELLS,
@@ -435,6 +436,14 @@ export interface ChatScreenProps {
    * reaching into core tools. Null while the chat is unmounted.
    */
   submitHandle?: React.MutableRefObject<((text: string) => void) | null>;
+  /**
+   * The shell-level plugin-host manager, if the shell wired one. Its `current()`
+   * host is handed to the console session so ENABLED marketplace plugins'
+   * tools are available in chat. The shell bumps the chat's remount key on the
+   * manager's onChanged, so a plugin enabled in the market takes effect on the
+   * rebuilt session. Absent → no plugin tools (the default).
+   */
+  pluginHostManager?: SessionPluginHostManager;
 }
 
 
@@ -618,7 +627,7 @@ const SUBAGENT_MAX_VISIBLE = 4;
 /** Window after a first Ctrl+C in which a second Ctrl+C confirms the quit. */
 const EXIT_CONFIRM_MS = 3000;
 
-export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle }: ChatScreenProps) {
+export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle, pluginHostManager }: ChatScreenProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const entriesRef = useRef<ChatEntry[]>([]);
   entriesRef.current = entries;
@@ -1013,6 +1022,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       // ConsoleSessionConfig field — is a documented follow-up: it needs a
       // shell-level host whose lifecycle spans the chat↔market screen swap.)
       allowModelSelfExtension: settingsRef.current.allowModelSelfExtension,
+      // Marketplace → live console: the shell's plugin-host manager hands its
+      // current host so ENABLED plugins' tools are in the console's tool set.
+      // Undefined when the shell wired no manager (the default) — no plugin
+      // tools, exactly as before. The console reads the host at turn boundaries.
+      pluginHost: pluginHostManager?.current(),
       // The LAUNCH mode is only the seed. Rebuilds trigger on /model and on
       // resume, and reseeding from options there would drop the operator back
       // to standard while the header kept showing the mode they chose.

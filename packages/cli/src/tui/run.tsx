@@ -24,6 +24,8 @@ import { ResumeScreen } from "./resume-screen.js";
 import { listSessions, loadSession, deleteSession } from "./session-store.js";
 import { MarketScreen } from "./market-screen.js";
 import { createPluginService } from "./plugin-service.js";
+import { createSessionPluginHostManager, type SessionPluginHostManager } from "./session-plugin-host.js";
+import { TOOL_DEFINITIONS } from "@0sec/core";
 import { ConnectScreen } from "./connect-screen.js";
 import { UsageScreen } from "./usage-screen.js";
 import { FindingDetailScreen } from "./finding-detail-screen.js";
@@ -3893,7 +3895,7 @@ function ResumeRoute({
  * reuses the core install APIs — so this route is pure wiring and stays honest
  * with no endpoint configured.
  */
-function MarketRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }) {
+function MarketRoute({ onExit, shell, pluginHostManager }: { onExit: () => void; shell?: ShellNav; pluginHostManager?: SessionPluginHostManager }) {
   // The registry URL and the service that installs/enables/runs against it are
   // resolved together so the screen's empty-state URL and the service's fetch
   // target never diverge. The service is the ONE bridge to the plugin
@@ -3905,8 +3907,13 @@ function MarketRoute({ onExit, shell }: { onExit: () => void; shell?: ShellNav }
     [],
   );
   const service = React.useMemo(
-    () => createPluginService({ registryUrl }),
-    [registryUrl],
+    // Route ENABLE/RUN through the shell's plugin-host manager (when present) so
+    // a plugin loaded here lands in the SAME host the live console reads. The
+    // market is modal (no chat turn runs while it is up), so isTurnActive is
+    // false and enable/run apply immediately. Without a manager it falls back
+    // to the service's own overlay host (unchanged).
+    () => createPluginService({ registryUrl, pluginHostManager, isTurnActive: () => false }),
+    [registryUrl, pluginHostManager],
   );
   return (
     <MarketScreen
@@ -4103,6 +4110,36 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   const [chatGeneration, setChatGeneration] = useState(0);
   const chatOptionsRef = useRef(chatOptions);
   chatOptionsRef.current = chatOptions;
+
+  // The shell-level plugin-host manager (marketplace → live console). Created
+  // async (it loads any already-enabled plugins on start); stays null until
+  // ready, and stays null if creation fails — the chat/market then run without
+  // a shared host, exactly as before this feature. When the market enables or
+  // disables a plugin the manager reconstructs and fires onChanged, which bumps
+  // the chat generation so the console session rebuilds with the new host (the
+  // same remount mechanism a model switch uses).
+  const [pluginHostManager, setPluginHostManager] = useState<SessionPluginHostManager | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    let created: SessionPluginHostManager | undefined;
+    createSessionPluginHostManager({ reservedToolNames: Object.keys(TOOL_DEFINITIONS) })
+      .then((mgr) => {
+        if (disposed) {
+          mgr.dispose();
+          return;
+        }
+        created = mgr;
+        setPluginHostManager(mgr);
+        mgr.onChanged(() => setChatGeneration((g) => g + 1));
+      })
+      .catch(() => {
+        /* fail-soft: no shared plugin host; chat + market work unchanged */
+      });
+    return () => {
+      disposed = true;
+      created?.dispose();
+    };
+  }, []);
   // Populated by the always-mounted ChatScreen with its operator-submit path, so
   // an overlay (the finding-detail "Fix" action) can route a request through a
   // normal chat turn without importing the chat's internals or core tools.
@@ -4298,6 +4335,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
         key={`chat-${chatGeneration}`}
         options={chatOptions}
         submitHandle={chatSubmitRef}
+        pluginHostManager={pluginHostManager ?? undefined}
         onGoBack={shell.goBack}
         onNavigate={(destination, id) => {
           // `herd` is not in `ChatDestination` yet (chat-screen owns that union
@@ -4431,7 +4469,7 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   } else if (currentRoute.type === "herd") {
     overlay = <HerdRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "market") {
-    overlay = <MarketRoute onExit={onExit} shell={shell} />;
+    overlay = <MarketRoute onExit={onExit} shell={shell} pluginHostManager={pluginHostManager ?? undefined} />;
   } else if (currentRoute.type === "connect") {
     overlay = <ConnectRoute onExit={onExit} shell={shell} />;
   } else if (currentRoute.type === "usage") {
