@@ -4,7 +4,12 @@ import { TextAttributes } from "@opentui/core";
 import type { TodosEventPayload, TodoStatus } from "@0sec/core";
 import { fitTuiText } from "../text.js";
 import type { Theme } from "../theme-context.js";
-import { budgetSidebarRows, todoTextWidth } from "./todos-sidebar-layout.js";
+import {
+  budgetWrappedRows,
+  todoTextWidth,
+  wrapCells,
+  DEFAULT_WRAP_LINES,
+} from "./todos-sidebar-layout.js";
 
 /**
  * The live plan tree from the `update_todos` tool (the `todos` bus event). It
@@ -122,11 +127,13 @@ export const TODOS_SIDEBAR_HEADER_ROWS = 1;
  * The RIGHT-sidebar variant of the plan: a compact section that sits beneath
  * the AGENTS / FINDINGS sections in the same narrow column and reads as their
  * sibling. A muted `PLAN done/total` header, then each todo as ONE fitted row —
- * a status glyph + text truncated with `fitTuiText` so it can never wrap or
- * overflow the column. The in-progress item wears the accent tone; completed is
- * a muted check; pending a muted dot. Visible rows are bounded by `rows` via
- * {@link budgetSidebarRows}, with the remainder folded into a "+N more" tail, so
- * the plan can never grow unbounded in the sidebar.
+ * a status glyph + text WRAPPED across up to two rows (via {@link wrapCells}) so
+ * a long title reads in full rather than being clipped, while the glyph sits on
+ * the first line and continuation lines indent to align under the text. The
+ * in-progress item wears the accent tone; completed is a muted check; pending a
+ * muted dot. Visible ITEMS are bounded by `rows` via {@link budgetWrappedRows}
+ * — each item costing 1..2 rows — with the remainder folded into a "+N more"
+ * tail, so the plan can never grow unbounded in the sidebar.
  *
  * `rows` is the WHOLE section's row budget (header included). `width` is the
  * sidebar's inner content width (`sidebars.rightInnerWidth`). Renders nothing
@@ -148,29 +155,51 @@ export function TodosSidebar({
   if (rows < TODOS_SIDEBAR_HEADER_ROWS + 1) return null;
 
   const itemRows = Math.max(0, rows - TODOS_SIDEBAR_HEADER_ROWS);
-  const { visible, overflow } = budgetSidebarRows(payload.todos.length, itemRows);
-  const shown = payload.todos.slice(0, visible);
   const textCells = todoTextWidth(width);
+  // Wrap every title first so the budgeter knows each item's true row cost
+  // (1..DEFAULT_WRAP_LINES); items are then admitted whole so a title never
+  // shows a dangling half.
+  const wrapped = payload.todos.map((item) =>
+    wrapCells(item.content, textCells, DEFAULT_WRAP_LINES),
+  );
+  const { visible, overflow } = budgetWrappedRows(
+    wrapped.map((lines) => lines.length),
+    itemRows,
+  );
+  const shown = payload.todos.slice(0, visible);
 
   return (
     <box flexDirection="column" flexShrink={0} minWidth={0} marginTop={1}>
       <box width={width} flexShrink={0} minWidth={0}>
         <text fg={MUTED}>{fitTuiText(`PLAN ${payload.done}/${payload.total}`, width)}</text>
       </box>
-      {shown.map((item) => {
+      {shown.map((item, itemIdx) => {
         const glyph = SIDEBAR_STATUS_GLYPH[item.status] ?? SIDEBAR_STATUS_GLYPH.pending;
         const done = item.status === "completed";
         const active = item.status === "in_progress";
         const glyphColor = done ? SUCCESS : active ? ACCENT : MUTED;
         const textColor = active ? TEXT : MUTED;
+        const lines = wrapped[itemIdx];
         return (
-          <box key={item.id} flexDirection="row" width={width} flexShrink={0} minWidth={0}>
-            <text width={1} flexShrink={0} fg={glyphColor}>{glyph}</text>
-            <box width={textCells} flexShrink={0} minWidth={0} marginLeft={1}>
-              <text fg={textColor} attributes={active ? TextAttributes.BOLD : undefined}>
-                {fitTuiText(item.content, textCells)}
-              </text>
-            </box>
+          <box key={item.id} flexDirection="column" width={width} flexShrink={0} minWidth={0}>
+            {lines.map((line, lineIdx) => (
+              <box
+                key={lineIdx}
+                flexDirection="row"
+                width={width}
+                flexShrink={0}
+                minWidth={0}
+              >
+                <text width={1} flexShrink={0} fg={glyphColor}>
+                  {lineIdx === 0 ? glyph : " "}
+                </text>
+                <box width={textCells} flexShrink={0} minWidth={0} marginLeft={1}>
+                  <text fg={textColor} attributes={active ? TextAttributes.BOLD : undefined}>
+                    {line}
+                  </text>
+                </box>
+              </box>
+            ))}
           </box>
         );
       })}

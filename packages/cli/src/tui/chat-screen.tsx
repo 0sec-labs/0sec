@@ -213,6 +213,7 @@ import {
   renderFold,
 } from "./chat/TranscriptEntry.js";
 import { Todos, TodosSidebar } from "./chat/Todos.js";
+import { FindingsSidebar, FINDINGS_SIDEBAR_HEADER_ROWS } from "./chat/FindingsSidebar.js";
 import { ComposerFrame, ComposerInput } from "./chat/Composer.js";
 import {
   KeyHints,
@@ -3689,15 +3690,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       : railMaxAgents;
   const railVisible = railRecords.slice(0, railCapacity);
   const railOverflow = railRecords.length - railVisible.length;
-  const rightFindingsCap =
-    runFindings.length > rightFindingsBudget
-      ? Math.max(0, rightFindingsBudget - 1)
-      : rightFindingsBudget;
-  // Newest findings last, so show the most recent that fit.
-  const rightFindingsVisible = runFindings.slice(
-    Math.max(0, runFindings.length - rightFindingsCap),
-  );
-  const rightFindingsOverflow = runFindings.length - rightFindingsVisible.length;
+  // FINDINGS rendering (wrapping to ≤2 lines, budget, "+N more") now lives in
+  // the FindingsSidebar component; it owns its 1-row header, so it is handed the
+  // item budget PLUS that header row.
   const rightSidebarNode = sidebars.rightVisible ? (
     <box
       flexDirection="row"
@@ -3755,51 +3750,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             <text fg={MUTED}>{fitTuiText(`+${railOverflow} more`, rightInner)}</text>
           </box>
         ) : null}
-        <box width={rightInner} flexShrink={0} minWidth={0} marginTop={1}>
-          <text fg={MUTED}>{fitTuiText(`FINDINGS ${runFindings.length}`, rightInner)}</text>
-        </box>
-        {rightFindingsVisible.length === 0 ? (
-          <box width={rightInner} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText("none yet", rightInner)}</text>
-          </box>
-        ) : (
-          rightFindingsVisible.map((finding, index) => {
-            // Title left, severity right — the severity coloured by
-            // `severityToneFor` (red only for high/critical), the title in TEXT.
-            const sevColor = severityToneFor(theme, finding.severity);
-            const sevCells = Math.min(finding.severity.length, Math.max(0, rightInner - 4));
-            const titleCells = Math.max(1, rightInner - (sevCells > 0 ? sevCells + 1 : 0));
-            // Clickable when the persisted id is known: a mouse-down opens the
-            // full-screen detail view (run.tsx routes "finding" via its
-            // cast-guard + ShellNav.openFindingDetail). Guarded exactly like the
-            // transcript's toggle handlers — the prop is simply omitted when
-            // there is no id, so keyboard-only operators are unaffected.
-            return (
-              <box
-                key={`finding-${index}`}
-                flexDirection="row"
-                width={rightInner}
-                flexShrink={0}
-                minWidth={0}
-                onMouseDown={finding.id ? () => onNavigate("finding", finding.id) : undefined}
-              >
-                <box width={titleCells} flexShrink={0} minWidth={0}>
-                  <text fg={TEXT}>{fitTuiText(finding.title, titleCells)}</text>
-                </box>
-                {sevCells > 0 ? (
-                  <box width={sevCells} flexShrink={0} minWidth={0} marginLeft={1}>
-                    <text fg={sevColor}>{fitTuiText(finding.severity, sevCells)}</text>
-                  </box>
-                ) : null}
-              </box>
-            );
-          })
-        )}
-        {rightFindingsOverflow > 0 ? (
-          <box width={rightInner} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{fitTuiText(`+${rightFindingsOverflow} more`, rightInner)}</text>
-          </box>
-        ) : null}
+        <FindingsSidebar
+          findings={runFindings}
+          width={rightInner}
+          rows={rightFindingsBudget + FINDINGS_SIDEBAR_HEADER_ROWS}
+          theme={theme}
+          onOpenFinding={(id) => onNavigate("finding", id)}
+        />
         {hasPlan ? (
           <TodosSidebar payload={todos!} width={rightInner} rows={rightPlanBudget} theme={theme} />
         ) : null}
