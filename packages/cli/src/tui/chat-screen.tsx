@@ -2008,25 +2008,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
               : "yolo";
         session.setAutonomyMode(next);
         setMode(next);
-        const modeMeaning = next === "standard"
-          ? "0sec asks you to approve each action before it runs."
-          : next === "recon"
-            ? "0sec runs passive, in-scope reconnaissance only — read-only and passive-recon tools; effectful and exploitation tools are refused, and scope is never auto-expanded."
-            : next === "copilot"
-              ? "0sec runs autonomously inside scope and expands scope to in-engagement hosts without asking."
-              : "0sec runs with no prompts on your target and everything reachable from it — still bounded to that target.";
-        appendEntry({
-          kind: "notice",
-          text: `Mode: ${modeLabel(next)}`,
-          // Changed mid-turn, the new mode governs the NEXT tool call. It
-          // does not reach back into work already dispatched, and saying so
-          // is the difference between an honest notice and a claim that it
-          // stopped something.
-          detail: busy
-            ? `Applies from the next tool call in the turn already running; work already dispatched is unaffected. ${modeMeaning}`
-            : modeMeaning,
-          turn: turn.current,
-        });
+        // A mode switch is transient STATE, not conversation. The operator
+        // cycles modes constantly with Shift+Tab, and the current mode is
+        // already shown (coloured) in the bottom bar — appending a persistent
+        // "Mode: X" notice for every flip just spammed the transcript. Confirm
+        // the switch with an ephemeral toast instead; mid-turn it still only
+        // governs the NEXT tool call, so say so briefly.
+        showToast(`${modeLabel(next)} mode${busy ? " · from the next tool call" : ""}`);
         return true;
       }
       case "tools": {
@@ -3115,10 +3103,20 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // paddingX (folded into the sidebar layout), which an entry's own border must
   // live within. Shrinks to make room when a sidebar is shown.
   const transcriptWidth = sidebars.transcriptWidth;
-  // "0sec" is 4 cells; the mode label is right-sized to its own text so
-  // the engagement summary gets every remaining cell.
+  // "0sec" is 4 cells; the mode label is right-sized to its own text. The
+  // OMP-style OBJECTIVE (the async "what am I working on" summary) sits at the
+  // TOP-RIGHT, just left of the mode, taking up to ~45% of the header when
+  // present; the engagement summary gets whatever remains.
   const headerModeWidth = Math.min(10, Math.max(1, contentWidth - 8));
-  const headerEngagementWidth = Math.max(1, contentWidth - 4 - headerModeWidth - 2);
+  const headerObjective = !compact && settings.showObjective ? objective.trim() : "";
+  const headerObjectiveWidth = headerObjective
+    ? Math.max(0, Math.min(headerObjective.length, Math.floor((contentWidth - 4 - headerModeWidth) * 0.45)))
+    : 0;
+  const headerGapCells = headerObjectiveWidth > 0 ? 3 : 2;
+  const headerEngagementWidth = Math.max(
+    1,
+    contentWidth - 4 - headerModeWidth - headerObjectiveWidth - headerGapCells,
+  );
   // Relative ages need a clock, but the transcript must not repaint every
   // second just to age a label. Tick only while timestamps are enabled, and
   // only at the granularity the format actually shows.
@@ -4126,6 +4124,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         <box width={headerEngagementWidth} flexShrink={0} minWidth={0}>
           <text fg={MUTED}>{fitTuiText(headerEngagement, headerEngagementWidth, { mode: "middle" })}</text>
         </box>
+        {headerObjectiveWidth > 0 ? (
+          // The async AI objective summary, right-aligned at the top-right in the
+          // 0sec voice (BRAND). Empty/compact hides it and the engagement
+          // summary reclaims the cells.
+          <box width={headerObjectiveWidth} flexShrink={0} minWidth={0} flexDirection="row" justifyContent="flex-end">
+            <text fg={BRAND}>{fitTuiText(headerObjective, headerObjectiveWidth, { mode: "end" })}</text>
+          </box>
+        ) : null}
         <box width={headerModeWidth} flexShrink={0} minWidth={0}>
           <text fg={modeColor}>{fitTuiText(modeLabel(mode), headerModeWidth)}</text>
         </box>
@@ -4253,17 +4259,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             )}
           </box>
           {statusWidth > 0 ? (
-            // The right cell is the OMP-style OBJECTIVE pill — a short "what am I
-            // working on" title in the 0sec voice (BRAND), right-aligned — when
-            // one exists and the setting is on; otherwise the session counter.
-            // The objective replaces the counter rather than fighting it for the
-            // narrow right cell.
-            <box width={statusWidth} flexShrink={0} minWidth={0} flexDirection="row" justifyContent="flex-end">
-              {settings.showObjective && objective.trim() ? (
-                <text fg={BRAND}>{fitTuiText(objective.trim(), statusWidth, { mode: "end" })}</text>
-              ) : (
-                <text fg={MUTED}>{fitTuiText(statusText, statusWidth, { mode: "middle" })}</text>
-              )}
+            <box width={statusWidth} flexShrink={0} minWidth={0}>
+              <text fg={MUTED}>{fitTuiText(statusText, statusWidth, { mode: "middle" })}</text>
             </box>
           ) : null}
         </box>
