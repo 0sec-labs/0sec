@@ -1,8 +1,10 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
+import { TextAttributes } from "@opentui/core";
 import type { TodosEventPayload, TodoStatus } from "@0sec/core";
 import { fitTuiText } from "../text.js";
 import type { Theme } from "../theme-context.js";
+import { budgetSidebarRows, todoTextWidth } from "./todos-sidebar-layout.js";
 
 /**
  * The live plan tree from the `update_todos` tool (the `todos` bus event). It
@@ -97,6 +99,86 @@ export function Todos({
           </box>
         );
       })}
+    </box>
+  );
+}
+
+/**
+ * Narrow, one-line-per-item glyphs for the sidebar variant. Unlike the panel's
+ * ☐/◐/☑ checkboxes, the sidebar reads as a sibling of the AGENTS/FINDINGS
+ * sections: a muted dot for pending, an accent half-circle for the active item,
+ * a muted check for done — the "empty / active / done" reading in one cell.
+ */
+const SIDEBAR_STATUS_GLYPH: Record<TodoStatus, string> = {
+  pending: "·",
+  in_progress: "◐",
+  completed: "✓",
+};
+
+/** Rows the sidebar section spends on its header (the "PLAN done/total" line). */
+export const TODOS_SIDEBAR_HEADER_ROWS = 1;
+
+/**
+ * The RIGHT-sidebar variant of the plan: a compact section that sits beneath
+ * the AGENTS / FINDINGS sections in the same narrow column and reads as their
+ * sibling. A muted `PLAN done/total` header, then each todo as ONE fitted row —
+ * a status glyph + text truncated with `fitTuiText` so it can never wrap or
+ * overflow the column. The in-progress item wears the accent tone; completed is
+ * a muted check; pending a muted dot. Visible rows are bounded by `rows` via
+ * {@link budgetSidebarRows}, with the remainder folded into a "+N more" tail, so
+ * the plan can never grow unbounded in the sidebar.
+ *
+ * `rows` is the WHOLE section's row budget (header included). `width` is the
+ * sidebar's inner content width (`sidebars.rightInnerWidth`). Renders nothing
+ * when the plan is empty or the budget leaves no room for the header.
+ */
+export function TodosSidebar({
+  payload,
+  width,
+  rows,
+  theme,
+}: {
+  payload: TodosEventPayload;
+  width: number;
+  rows: number;
+  theme: Theme;
+}) {
+  const { MUTED, TEXT, ACCENT, SUCCESS } = theme;
+  if (payload.total <= 0) return null;
+  if (rows < TODOS_SIDEBAR_HEADER_ROWS + 1) return null;
+
+  const itemRows = Math.max(0, rows - TODOS_SIDEBAR_HEADER_ROWS);
+  const { visible, overflow } = budgetSidebarRows(payload.todos.length, itemRows);
+  const shown = payload.todos.slice(0, visible);
+  const textCells = todoTextWidth(width);
+
+  return (
+    <box flexDirection="column" flexShrink={0} minWidth={0} marginTop={1}>
+      <box width={width} flexShrink={0} minWidth={0}>
+        <text fg={MUTED}>{fitTuiText(`PLAN ${payload.done}/${payload.total}`, width)}</text>
+      </box>
+      {shown.map((item) => {
+        const glyph = SIDEBAR_STATUS_GLYPH[item.status] ?? SIDEBAR_STATUS_GLYPH.pending;
+        const done = item.status === "completed";
+        const active = item.status === "in_progress";
+        const glyphColor = done ? SUCCESS : active ? ACCENT : MUTED;
+        const textColor = active ? TEXT : MUTED;
+        return (
+          <box key={item.id} flexDirection="row" width={width} flexShrink={0} minWidth={0}>
+            <text width={1} flexShrink={0} fg={glyphColor}>{glyph}</text>
+            <box width={textCells} flexShrink={0} minWidth={0} marginLeft={1}>
+              <text fg={textColor} attributes={active ? TextAttributes.BOLD : undefined}>
+                {fitTuiText(item.content, textCells)}
+              </text>
+            </box>
+          </box>
+        );
+      })}
+      {overflow > 0 ? (
+        <box width={width} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText(`+${overflow} more`, width)}</text>
+        </box>
+      ) : null}
     </box>
   );
 }

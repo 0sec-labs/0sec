@@ -209,7 +209,7 @@ import {
   renderEntry,
   renderFold,
 } from "./chat/TranscriptEntry.js";
-import { Todos } from "./chat/Todos.js";
+import { Todos, TodosSidebar } from "./chat/Todos.js";
 import { ComposerFrame, ComposerInput } from "./chat/Composer.js";
 import {
   KeyHints,
@@ -3575,8 +3575,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // AGENTS(1) + FINDINGS(1 + its marginTop). Agents take the larger share
   // because their rows are two lines each.
   const rightSectionRows = Math.max(0, ledgerRows - 3);
-  const agentsBudget = Math.max(0, Math.floor(rightSectionRows * 0.6));
-  const rightFindingsBudget = Math.max(0, rightSectionRows - agentsBudget);
+  // A PLAN (todos) section joins AGENTS + FINDINGS in this column when a plan
+  // exists: it takes a modest share off the top, then agents/findings split the
+  // rest. Each section self-bounds with a "+N more" tail, so none can overflow.
+  const hasPlan = Boolean(todos && todos.total > 0);
+  const rightPlanBudget = hasPlan
+    ? Math.min(rightSectionRows, Math.max(2, Math.floor(rightSectionRows * 0.25)))
+    : 0;
+  const rightBodyRows = Math.max(0, rightSectionRows - rightPlanBudget);
+  const agentsBudget = Math.max(0, Math.floor(rightBodyRows * 0.6));
+  const rightFindingsBudget = Math.max(0, rightBodyRows - agentsBudget);
   const railMaxAgents = Math.floor(agentsBudget / AGENT_SIDEBAR_ROWS);
   const railCapacity =
     railRecords.length > railMaxAgents
@@ -3694,6 +3702,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           <box width={rightInner} flexShrink={0} minWidth={0}>
             <text fg={MUTED}>{fitTuiText(`+${rightFindingsOverflow} more`, rightInner)}</text>
           </box>
+        ) : null}
+        {hasPlan ? (
+          <TodosSidebar payload={todos!} width={rightInner} rows={rightPlanBudget} theme={theme} />
         ) : null}
         <box flexGrow={1} minHeight={0} flexShrink={1} />
       </box>
@@ -3877,7 +3888,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
                   : undefined,
               );
             })}
-            {todos && todos.total > 0 ? (
+            {/* The plan lives in the RIGHT sidebar now; this inline card is only
+                a fallback for when that sidebar is hidden, so the todos are
+                always visible somewhere. */}
+            {!sidebars.rightVisible && todos && todos.total > 0 ? (
               <Todos payload={todos} width={transcriptWidth} theme={theme} />
             ) : null}
             {workingIndicator}
