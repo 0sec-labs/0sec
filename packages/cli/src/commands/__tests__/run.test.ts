@@ -730,6 +730,91 @@ describe("runUnified — cost summary (0sec#231)", () => {
   });
 });
 
+describe("runUnified — cross-validated leads (FoxGuard Phase 4)", () => {
+  let exitSpy: { mockRestore: () => void };
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    agenticScanMock.mockReset();
+    runPipelineMock.mockReset();
+    createRuntimeMock.mockReset();
+    eventBusListener = null;
+    tracker = {};
+    exitSpy = makeExitMock(tracker);
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  function plainLog(): string {
+    // eslint-disable-next-line no-control-regex
+    return logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n").replace(/\x1b\[\d+m/g, "");
+  }
+
+  it("prints the cross-validated-leads block when the bus event fires", async () => {
+    agenticScanMock.mockImplementationOnce(async () => {
+      eventBusListener?.emit("cross_validated_leads", {
+        count: 2,
+        leads: [
+          { findingId: "f-1", title: "SQLi in login", severity: "high", confidence: 0.82, foxguardMatches: 3 },
+          { findingId: "f-2", title: "XSS in search", severity: "medium", confidence: 0.5, foxguardMatches: 1 },
+        ],
+      });
+      return cleanReport();
+    });
+    await runUnified({
+      target: "https://example.com",
+      targetType: "url",
+      depth: "default",
+      format: "json",
+      runtime: "auto",
+      timeout: 30000,
+      verbose: false,
+    });
+    const plain = plainLog();
+    expect(plain).toMatch(/Cross-validated leads — 2 findings both scanners agree on \(investigate first\)/);
+    expect(plain).toMatch(/\[HIGH\] SQLi in login · 3 foxguard matches · 82% confidence/);
+    expect(plain).toMatch(/\[MEDIUM\] XSS in search · 1 foxguard match · 50% confidence/);
+  });
+
+  it("prints nothing new when no cross-validated-leads event fires", async () => {
+    agenticScanMock.mockResolvedValueOnce(cleanReport());
+    await runUnified({
+      target: "https://example.com",
+      targetType: "url",
+      depth: "default",
+      format: "json",
+      runtime: "auto",
+      timeout: 30000,
+      verbose: false,
+    });
+    expect(plainLog()).not.toMatch(/Cross-validated leads/);
+  });
+
+  it("does not crash the scan on a malformed cross-validated-leads payload", async () => {
+    agenticScanMock.mockImplementationOnce(async () => {
+      eventBusListener?.emit("cross_validated_leads", { count: 1, leads: "not-an-array" });
+      return cleanReport();
+    });
+    await runUnified({
+      target: "https://example.com",
+      targetType: "url",
+      depth: "default",
+      format: "json",
+      runtime: "auto",
+      timeout: 30000,
+      verbose: false,
+    });
+    expect(plainLog()).not.toMatch(/Cross-validated leads/);
+  });
+});
+
 describe("runUnified — resume / branch (0sec#374)", () => {
   let exitSpy: { mockRestore: () => void };
   let errSpy: ReturnType<typeof vi.spyOn>;

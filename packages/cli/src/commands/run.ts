@@ -10,6 +10,7 @@ import type { ScanDepth, OutputFormat, RuntimeMode, ScanMode, AuthConfig, ScanRe
 import type { CostBreakdownEntry } from "@0sec/core";
 import { formatAuditReport, formatReviewReport, formatReport, generatePdfReport } from "../formatters/index.js";
 import { buildShareUrl, checkRuntimeAvailability, getRuntimeAvailability } from "../utils.js";
+import { formatCrossValidatedLeads, type CrossValidatedLeadsSummary } from "./cross-validated-leads.js";
 
 interface ScanCompletedCost {
   cost_usd: number;
@@ -345,6 +346,40 @@ function printCostSummary(cost: ScanCompletedCost): void {
   console.log(chalk.gray(line));
 }
 
+/** Severity → chalk styler, matching the palette used elsewhere in the CLI. */
+function crossValidatedSeverityColor(severity: string): (text: string) => string {
+  switch (severity) {
+    case "critical":
+      return chalk.red.bold;
+    case "high":
+      return chalk.redBright;
+    case "medium":
+      return chalk.yellow;
+    case "low":
+      return chalk.blue;
+    case "info":
+      return chalk.gray;
+    default:
+      return chalk.white;
+  }
+}
+
+/**
+ * Print the cross-validated-leads highlight block (0sec FoxGuard Phase 4).
+ * Purely additive end-of-scan output: a scan with no agreeing leads never
+ * reaches here, and this never touches exit codes or the result line.
+ */
+function printCrossValidatedLeads(summary: CrossValidatedLeadsSummary): void {
+  console.log("");
+  console.log(chalk.cyan.bold(summary.header));
+  for (const line of summary.lines) {
+    console.log(`  ${crossValidatedSeverityColor(line.severity)(line.text)}`);
+  }
+  if (summary.moreCount > 0) {
+    console.log(chalk.gray(`  +${summary.moreCount} more`));
+  }
+}
+
 async function postFinalResultToCloud(report: unknown): Promise<void> {
   const config = getCloudFinalSinkConfig();
   if (!config) return;
@@ -407,10 +442,25 @@ export async function runUnified(opts: RunOptions): Promise<void> {
   // Capture the scanner's canonical scan_completed cost payload. Reports
   // do not carry the per-model in/out/cache split.
   let scanCompletedCost: ScanCompletedCost | null = null;
+  // FoxGuard cross-validation (Phase 4): captured off the same subscription so
+  // it's printed after the report / TUI exits, alongside the cost summary.
+  // Parsing is fail-soft (formatCrossValidatedLeads never throws), and the
+  // extra guard here keeps a malformed payload from ever aborting the scan.
+  let crossValidatedLeads: CrossValidatedLeadsSummary | null = null;
   const unsubscribeCost = core.eventBus.subscribe({
     emit(type, payload) {
-      if (type !== "scan_completed") return;
-      scanCompletedCost = readScanCompletedCost(payload);
+      if (type === "scan_completed") {
+        scanCompletedCost = readScanCompletedCost(payload);
+        return;
+      }
+      if (type === "cross_validated_leads") {
+        try {
+          crossValidatedLeads = formatCrossValidatedLeads(payload);
+        } catch {
+          crossValidatedLeads = null;
+        }
+        return;
+      }
     },
   });
 
@@ -606,6 +656,9 @@ export async function runUnified(opts: RunOptions): Promise<void> {
       console.log("");
     }
 
+    if (crossValidatedLeads) {
+      printCrossValidatedLeads(crossValidatedLeads);
+    }
     if (scanCompletedCost) {
       printCostSummary(scanCompletedCost);
     }
