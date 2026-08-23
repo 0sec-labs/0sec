@@ -4,6 +4,8 @@ import {
   abbreviateHomePath,
   buildStatusSegments,
   fitStatusSegments,
+  fitStatusPills,
+  pillText,
   formatTokenCount,
   type StatusBarInput,
   type StatusSegment,
@@ -432,5 +434,72 @@ describe("fitStatusSegments", () => {
       previous = present;
     }
     expect(previous.size).toBe(segments.length);
+  });
+});
+
+describe("segment colour role + icon (OMP pills)", () => {
+  it("attaches a colour role and a single-cell icon to every segment", () => {
+    for (const segment of buildStatusSegments(RICH_INPUT)) {
+      expect(segment.colorRole, `role for ${segment.kind}`).toBeTruthy();
+      // Icons are one column each (or empty); never a runaway multi-char string.
+      expect(segment.icon.length).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("routes the mode segment onto its own role so the renderer can colour it", () => {
+    const [mode] = buildStatusSegments({ mode: "Co-pilot" });
+    expect(mode.colorRole).toBe("mode");
+  });
+
+  it("shares one colour role between the plain percent and the visual meter", () => {
+    const plain = buildStatusSegments({ contextWindow: 1_000_000, contextUsed: 500_000 });
+    const meter = buildStatusSegments({
+      contextWindow: 1_000_000,
+      contextUsed: 500_000,
+      showContextMeter: true,
+    });
+    expect(plain.find((s) => s.kind === "context")?.colorRole).toBe("context");
+    expect(meter.find((s) => s.kind === "meter")?.colorRole).toBe("context");
+  });
+});
+
+describe("fitStatusPills", () => {
+  it("keeps every segment when the row is wide enough", () => {
+    const segments = buildStatusSegments(RICH_INPUT);
+    const pills = fitStatusPills(segments, 1000);
+    expect(pills.map((s) => s.kind)).toEqual(segments.map((s) => s.kind));
+  });
+
+  it("never lets the rendered pill row exceed the width, at any width", () => {
+    const segments = buildStatusSegments(RICH_INPUT);
+    const sep = " · ";
+    for (let width = 1; width <= 160; width += 1) {
+      const pills = fitStatusPills(segments, width);
+      const rendered =
+        pills.length === 0
+          ? 0
+          : pills.reduce((sum, s) => sum + pillText(s).length, 0) + sep.length * (pills.length - 1);
+      expect(rendered, `overflow at width ${width}`).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it("sheds the least important segment first, keeping the model longest", () => {
+    const segments = buildStatusSegments(RICH_INPUT);
+    // A width that forces several drops but not all of them.
+    const pills = fitStatusPills(segments, 40);
+    expect(pills.some((s) => s.kind === "model")).toBe(true);
+    expect(pills.some((s) => s.kind === "cwd")).toBe(false);
+  });
+
+  it("truncates the undroppable model's label but keeps its glyph when alone", () => {
+    const segments = buildStatusSegments({ model: "a-very-long-model-identifier-x" });
+    const pills = fitStatusPills(segments, 10);
+    expect(pills).toHaveLength(1);
+    expect(pillText(pills[0]).length).toBeLessThanOrEqual(10);
+    expect(pills[0].icon.length).toBeGreaterThan(0);
+  });
+
+  it("returns nothing for a non-positive width", () => {
+    expect(fitStatusPills(buildStatusSegments(RICH_INPUT), 0)).toEqual([]);
   });
 });

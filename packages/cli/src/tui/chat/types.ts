@@ -65,6 +65,12 @@ export interface EntryDisplay {
   toolCardStyle: ToolCardStyle;
   /** Current autonomy mode label, for the AI turn footer ("Standard · …"). */
   mode: string;
+  /**
+   * The autonomy mode's colour (from `modeColorFor`), so the AI turn footer can
+   * paint the mode name in the SAME colour as the header and the status bar
+   * instead of a flat muted grey.
+   */
+  modeColor: string;
   /** Resolved model id, for the AI turn footer ("… · gpt-…"). */
   model: string;
   /** Show the model name on the AI footer (settings.modelDisplay === "message"). */
@@ -75,6 +81,14 @@ export interface EntryDisplay {
   showCost: boolean;
   /** How the transcript folds turn detail; drives the fold planner. */
   transcriptDetail: TranscriptDetail;
+  /**
+   * The shared shimmer frame for RUNNING rows (tool / subagent still in flight),
+   * driven by chat-screen's `SHIMMER_TEXT_INTERVAL_MS` ticker. A number means
+   * "shimmer running rows this frame"; `undefined` means render them static
+   * (settled, failed, or reduceMotion) — the pre-shimmer behaviour, so existing
+   * callers are unaffected.
+   */
+  shimmerFrame?: number;
 }
 
 export interface KeyHint {

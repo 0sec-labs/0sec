@@ -48,11 +48,44 @@ export type StatusSegmentKind =
  *  default), and drops it for "message" (chat-screen draws it) and "off". */
 export type ModelDisplay = "statusbar" | "message" | "off";
 
+/**
+ * A SEMANTIC colour role for a segment — never a theme token or an escape code.
+ * This module is pure and theme-free (the renderer owns colour, see the file
+ * comment), so a segment carries its *role* and the OMP-style pill renderer in
+ * chat-screen maps it onto the live palette. `mode` is deliberately its own role
+ * so the renderer can resolve it through `modeColorFor`, keeping the mode colour
+ * identical to the header and the turn footer. The two context forms (plain
+ * percent and the visual meter) share one role — they are the same reading.
+ */
+export type StatusColorRole =
+  | "model"
+  | "effort"
+  | "mode"
+  | "cwd"
+  | "branch"
+  | "dirty"
+  | "tokens"
+  | "cost"
+  | "context"
+  | "plan";
+
 export interface StatusSegment {
   kind: StatusSegmentKind;
   text: string;
   /** Lower drops first when the bar does not fit. 0 = never drop. */
   priority: number;
+  /**
+   * Semantic colour role the pill renderer maps onto a theme token. Additive
+   * and back-compatible: string joiners (`fitStatusSegments`) ignore it, so a
+   * caller that only wants the plain bar is unaffected.
+   */
+  colorRole: StatusColorRole;
+  /**
+   * A small single-cell glyph shown before the pill's text, or "" for none.
+   * Additive: it never appears in the plain `fitStatusSegments` string, only in
+   * the pill renderer's per-segment cells (`fitStatusPills`).
+   */
+  icon: string;
 }
 
 export interface StatusBarInput {
@@ -152,6 +185,41 @@ const ORDER: StatusSegmentKind[] = [
   "meter",
   "plan",
 ];
+
+/**
+ * The pill glyph for each segment, one cell each (measured as one column by
+ * `fitTuiText`, which counts JS characters — the whole TUI's width model). "" is
+ * a segment the renderer draws with no leading glyph. Kept beside `ORDER` so a
+ * new kind is a compile error until it has both an icon and a colour role.
+ */
+const ICON: Record<StatusSegmentKind, string> = {
+  model: "◆",
+  effort: "◇",
+  mode: "●",
+  cwd: "▸",
+  branch: "⎇",
+  dirty: "±",
+  tokens: "◈",
+  cost: "$",
+  context: "◔",
+  meter: "◔",
+  plan: "◦",
+};
+
+/** Semantic colour role per kind; the meter shares the plain percent's role. */
+const COLOR_ROLE: Record<StatusSegmentKind, StatusColorRole> = {
+  model: "model",
+  effort: "effort",
+  mode: "mode",
+  cwd: "cwd",
+  branch: "branch",
+  dirty: "dirty",
+  tokens: "tokens",
+  cost: "cost",
+  context: "context",
+  meter: "context",
+  plan: "plan",
+};
 
 const DEFAULT_SEPARATOR = " · ";
 
@@ -383,7 +451,15 @@ export function buildStatusSegments(input: StatusBarInput): StatusSegment[] {
   const segments: StatusSegment[] = [];
   for (const kind of ORDER) {
     const text = texts.get(kind);
-    if (text) segments.push({ kind, text, priority: PRIORITY[kind] });
+    if (text) {
+      segments.push({
+        kind,
+        text,
+        priority: PRIORITY[kind],
+        colorRole: COLOR_ROLE[kind],
+        icon: ICON[kind],
+      });
+    }
   }
   return segments;
 }
@@ -436,4 +512,68 @@ export function fitStatusSegments(
   }
 
   return fitTuiText(join(remaining), Math.floor(width));
+}
+
+/**
+ * The full text one pill occupies, INCLUDING its leading glyph: `"◆ gpt-5"`, or
+ * just the text for an icon-less segment. Both the width arithmetic in
+ * {@link fitStatusPills} and the renderer read the label off `segment.text`, so
+ * a pill's on-screen width is exactly `pillText(segment).length`.
+ */
+export function pillText(segment: StatusSegment): string {
+  return segment.icon ? `${segment.icon} ${segment.text}` : segment.text;
+}
+
+/** Rendered width of a pill row: every pill plus a separator between each. */
+function pillsWidth(list: StatusSegment[], separatorLength: number): number {
+  if (list.length === 0) return 0;
+  const pills = list.reduce((sum, segment) => sum + pillText(segment).length, 0);
+  return pills + separatorLength * (list.length - 1);
+}
+
+/**
+ * The OMP-style counterpart to {@link fitStatusSegments}: instead of one joined
+ * string it returns the SEGMENTS that survive at `width`, so the renderer can
+ * paint each as its own coloured pill (with its glyph) and a separator between.
+ *
+ * The drop order is identical — {@link nextVictim} sheds the least important
+ * segment until the pill row (glyphs + text + separators) fits — so the two
+ * renderers degrade the same way under pressure. When a single undroppable
+ * segment (the model) is still wider than the row, its TEXT is truncated with an
+ * ellipsis while its glyph is kept, so the row never overflows: an overflowing
+ * OpenTUI row overprints its siblings rather than clipping (see chat-layout.ts).
+ */
+export function fitStatusPills(
+  segments: StatusSegment[],
+  width: number,
+  separator: string = DEFAULT_SEPARATOR,
+): StatusSegment[] {
+  if (!Number.isFinite(width) || width <= 0) return [];
+  const sepLen = separator.length;
+  const remaining = segments
+    .filter((segment) => segment.text.length > 0)
+    .map((segment) => ({ ...segment }));
+
+  while (remaining.length > 0) {
+    if (pillsWidth(remaining, sepLen) <= width) return remaining;
+    const victim = nextVictim(remaining);
+    if (victim < 0) break;
+    remaining.splice(victim, 1);
+  }
+
+  // One undroppable segment still too wide: keep its glyph and truncate its
+  // label — unless the row is so narrow the glyph itself would not fit, in which
+  // case the glyph is dropped too so the text alone can never overflow.
+  if (remaining.length === 1) {
+    const only = remaining[0];
+    const w = Math.max(0, Math.floor(width));
+    const iconCost = only.icon ? only.icon.length + 1 : 0;
+    if (iconCost >= w) {
+      only.icon = "";
+      only.text = fitTuiText(only.text, w);
+    } else {
+      only.text = fitTuiText(only.text, w - iconCost);
+    }
+  }
+  return remaining;
 }

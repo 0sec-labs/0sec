@@ -28,6 +28,7 @@ import {
   type OperatorQuestionRequest,
   type OperatorQuestionAnswer,
   type SubagentLifecyclePayload,
+  type TodosEventPayload,
   type ToolCall,
 } from "@0sec/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
@@ -35,7 +36,7 @@ import {
   useSettings,
   updateSetting,
 } from "./settings-store.js";
-import { useTheme } from "./theme-context.js";
+import { useTheme, type Theme } from "./theme-context.js";
 import { modelProvider } from "@0sec/shared";
 import { homedir } from "node:os";
 import {
@@ -45,7 +46,13 @@ import {
 import {
   buildStatusSegments,
   fitStatusSegments,
+  fitStatusPills,
+  pillText,
+  type StatusSegment,
+  type StatusColorRole,
 } from "./status-bar.js";
+import { SHIMMER_TEXT_INTERVAL_MS } from "./animations.js";
+import { ShimmerText } from "./chat/shimmer.js";
 import {
   createSelectorState,
   highlighted,
@@ -202,6 +209,7 @@ import {
   renderEntry,
   renderFold,
 } from "./chat/TranscriptEntry.js";
+import { Todos } from "./chat/Todos.js";
 import { ComposerFrame } from "./chat/Composer.js";
 import {
   KeyHints,
@@ -231,7 +239,45 @@ import {
   type AgentRowView,
 } from "./chat/AgentRow.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect";
+
+/**
+ * Map a status pill's semantic colour role onto the live palette. Kept theme-
+ * aware here (status-bar.ts is pure/theme-free): each band gets its own colour so
+ * the bar reads as segmented OMP-style pills. `mode` resolves through
+ * `modeColorFor` so the mode colour is IDENTICAL to the header and the turn
+ * footer (Co-pilot purple, YOLO red, Recon blue, Standard neutral). The only red
+ * ever produced is YOLO's, honouring the "red = errors/failures" invariant — a
+ * dirty tree is WARNING (amber), not red.
+ */
+function statusRoleColor(
+  role: StatusColorRole,
+  theme: Theme,
+  mode: ConsoleAutonomyMode,
+): string {
+  switch (role) {
+    case "model":
+      return theme.PRIMARY;
+    case "mode":
+      return modeColorFor(mode, theme);
+    case "cwd":
+      return theme.INFO;
+    case "branch":
+      return theme.BRAND;
+    case "dirty":
+      return theme.WARNING;
+    case "tokens":
+      return theme.INFO;
+    case "cost":
+      return theme.SUCCESS;
+    case "context":
+      return theme.ACCENT;
+    case "effort":
+    case "plan":
+    default:
+      return theme.MUTED;
+  }
+}
 
 
 export interface ChatScreenOptions {
@@ -423,6 +469,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const [git, setGit] = useState<GitStatus | null>(null);
   const [clockTick, setClockTick] = useState(() => Date.now());
   const [animTick, setAnimTick] = useState(0);
+  /**
+   * One shared frame counter for the loading shimmer, ticked at
+   * `SHIMMER_TEXT_INTERVAL_MS` while a turn is running (see the effect below).
+   * The thinking indicator and every running tool/subagent row read the SAME
+   * frame, so their sweeps stay in phase; it is only advanced when there is
+   * something to shimmer, so an idle console costs no repaints.
+   */
+  const [shimmerFrame, setShimmerFrame] = useState(0);
   /** Frame counter for the empty-state logo intro; driven by the ticker below. */
   const [logoFrame, setLogoFrame] = useState(0);
   /** When the current busy/blocked state began, for elapsed display. */
@@ -453,6 +507,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     SUCCESS,
     INFO,
     ACCENT,
+    BRAND,
     PANEL,
     PANEL_ALT,
     CANVAS,
@@ -577,6 +632,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
    */
   const [operatorState, setOperatorState] = useState<OperatorQuestionState | null>(null);
   const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
+  /** Latest plan snapshot from the `update_todos` tool (the `todos` bus event). */
+  const [todos, setTodos] = useState<TodosEventPayload | null>(null);
   /**
    * The richer live-subagent model the herd view is built on: latest snapshot
    * plus a bounded activity ring per agent, keyed by `agent_id`, fed by the SAME
@@ -987,6 +1044,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           setHerdAgents((prev) =>
             applySubagentProgress(prev, payload as Record<string, unknown>, Date.now()),
           );
+        } else if (type === "todos") {
+          // The plan is the main agent's, not a subagent's, so it carries no
+          // scanId to filter on; the latest snapshot simply replaces the tree.
+          setTodos(payload as unknown as TodosEventPayload);
         }
       },
     });
@@ -1486,6 +1547,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         entriesRef.current = [];
         turn.current = 0;
         setTurnBudget(null);
+        // The live plan tree belongs to the conversation being emptied.
+        setTodos(null);
         appendEntry({
           kind: "notice",
           text: "conversation cleared",
@@ -1854,6 +1917,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         // run.tsx already routes the "market" destination to the marketplace
         // screen; chat just needs the nav entry (mirrors "/ops"/"/settings").
         onNavigate("market");
+        return true;
+      case "usage":
+        // run.tsx routes "usage" to the usage screen (with the live token
+        // snapshot); this nav entry turns the registered "/usage" command from a
+        // palette-only stub into a working route.
+        onNavigate("usage");
+        return true;
+      case "connect":
+        // Likewise for "/connect": run.tsx already routes the destination.
+        onNavigate("connect");
         return true;
       case "history":
         onNavigate("history");
@@ -2646,32 +2719,36 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // Built at every width now: the bottom bar is the only place this state
   // appears, so a compact terminal still gets the degraded version rather
   // than nothing (fitStatusSegments drops low-priority segments to fit).
-  const statusBarText = fitStatusSegments(
-    buildStatusSegments({
-      model: modelId ?? undefined,
-      mode: modeLabel(mode),
-      cwd: process.cwd(),
-      home: homedir(),
-      branch: git?.isRepo ? git.branch ?? git.detachedSha : undefined,
-      modified: git?.modified,
-      untracked: git?.untracked,
-      inputTokens: sessionTokens.input,
-      outputTokens: sessionTokens.output,
-      // The per-turn token budget, shown only while a turn is actually
-      // running. This is the turn budget, NOT a model context window —
-      // nothing in the codebase knows context-window sizes.
-      contextWindow: turnBudget?.limit,
-      contextUsed: turnBudget?.used,
-      // Telemetry toggles: where the model name is surfaced, whether the
-      // context reading renders as a visual meter, and whether an estimated
-      // dollar cost is appended. status-bar.ts honours each and invents no
-      // number it was not given.
-      modelDisplay: settings.modelDisplay,
-      showContextMeter: settings.showContextMeter,
-      showCost: settings.showCost,
-    }),
-    contentWidth,
-  );
+  const statusSegments = buildStatusSegments({
+    model: modelId ?? undefined,
+    mode: modeLabel(mode),
+    cwd: process.cwd(),
+    home: homedir(),
+    branch: git?.isRepo ? git.branch ?? git.detachedSha : undefined,
+    modified: git?.modified,
+    untracked: git?.untracked,
+    inputTokens: sessionTokens.input,
+    outputTokens: sessionTokens.output,
+    // The per-turn token budget, shown only while a turn is actually
+    // running. This is the turn budget, NOT a model context window —
+    // nothing in the codebase knows context-window sizes.
+    contextWindow: turnBudget?.limit,
+    contextUsed: turnBudget?.used,
+    // Telemetry toggles: where the model name is surfaced, whether the
+    // context reading renders as a visual meter, and whether an estimated
+    // dollar cost is appended. status-bar.ts honours each and invents no
+    // number it was not given.
+    modelDisplay: settings.modelDisplay,
+    showContextMeter: settings.showContextMeter,
+    showCost: settings.showCost,
+  });
+  // The OMP-style pill row: the SAME segments, kept/dropped at the bar's real
+  // width, each painted as its own coloured glyph+text with a subtle separator
+  // between (rendered below via `renderStatusPills`). `statusBarText` remains as
+  // the plain single-string fallback the bar degrades to if pills ever cannot
+  // be drawn.
+  const statusPills = fitStatusPills(statusSegments, controlsWidth);
+  const statusBarText = fitStatusSegments(statusSegments, controlsWidth);
   // The picker reuses the menu's vertical budget: it occupies the same slot
   // above the composer, so it must obey the same "leave the transcript real
   // rows" rule rather than growing to the size of the model catalogue.
@@ -2774,23 +2851,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // separately and are orthogonal to it. An env override lets a style be pinned
   // for a preview or a capture without touching the settings file.
   const transcriptStyleSettings = resolveTranscriptStyleSettings(settings, process.env);
-  const entryDisplay: EntryDisplay = {
-    spacing: settings.density === "compact" ? 0 : 1,
-    showTimestamps: settings.showTimestamps,
-    now: clockTick,
-    transcriptStyle: transcriptStyleSettings.transcriptStyle,
-    roleLabelStyle: transcriptStyleSettings.roleLabelStyle,
-    toolCardStyle: transcriptStyleSettings.toolCardStyle,
-    mode: modeLabel(mode),
-    model: modelId ?? "",
-    modelInFooter: settings.modelDisplay === "message",
-    showTokenUsage: settings.showTokenUsage,
-    showCost: settings.showCost,
-    transcriptDetail: settings.transcriptDetail,
-  };
   // One animation kind per real state. `awaiting-operator` is deliberately
   // NOT a busy spinner: when the human is the bottleneck the surface should
-  // look expectant, not like it is grinding.
+  // look expectant, not like it is grinding. Derived above `entryDisplay` so the
+  // shimmer frame it carries can be gated on the same running-state read.
   const gateOpen = Boolean(pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval || secretPrompt || operatorQuestionOpen);
   const animationKind: AnimationKind | null = gateOpen
     ? "awaiting-operator"
@@ -2805,6 +2869,31 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
           : null;
   // animTick is read only to make the frame recompute on each interval.
   void animTick;
+  // The loading shimmer is alive only while a turn is genuinely WORKING —
+  // thinking, streaming, connecting or running a tool. `awaiting-operator` is
+  // the human's turn, not the machine's, so it stays static (expectant, not
+  // grinding); an idle console has nothing to shimmer. reduceMotion stills it.
+  const shimmerActive =
+    !settings.reduceMotion && animationKind !== null && animationKind !== "awaiting-operator";
+  const entryDisplay: EntryDisplay = {
+    spacing: settings.density === "compact" ? 0 : 1,
+    showTimestamps: settings.showTimestamps,
+    now: clockTick,
+    transcriptStyle: transcriptStyleSettings.transcriptStyle,
+    roleLabelStyle: transcriptStyleSettings.roleLabelStyle,
+    toolCardStyle: transcriptStyleSettings.toolCardStyle,
+    mode: modeLabel(mode),
+    modeColor: modeColorFor(mode, theme),
+    model: modelId ?? "",
+    modelInFooter: settings.modelDisplay === "message",
+    showTokenUsage: settings.showTokenUsage,
+    showCost: settings.showCost,
+    transcriptDetail: settings.transcriptDetail,
+    // A number only while a turn is working (and reduceMotion is off), so running
+    // tool/subagent rows shimmer in phase with the thinking indicator and render
+    // static the instant they settle.
+    shimmerFrame: shimmerActive ? shimmerFrame : undefined,
+  };
   const animation = animationKind
     ? frameAt(animationKind, Date.now() - activitySince.current, {
         label: animationKind === "tool" ? runningTool ?? undefined : undefined,
@@ -2826,6 +2915,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   useEffect(() => {
     activitySince.current = Date.now();
   }, [animationKind]);
+
+  // One shared ticker for every shimmering label, at the shimmer cadence. Only
+  // runs while `shimmerActive`, so a settled or idle surface costs no repaints.
+  useEffect(() => {
+    if (!shimmerActive) return;
+    const timer = setInterval(() => setShimmerFrame((n) => n + 1), SHIMMER_TEXT_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [shimmerActive]);
 
   const menu = computeCommandMenuLayout({ width, compact });
   // Height is stated explicitly so the border is drawn where the content
@@ -2956,13 +3053,21 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   const workingLine = workingAnimation
     ? `${workingAnimation.label}${workingAnimation.elapsedLabel ? `  ${workingAnimation.elapsedLabel}` : ""}${queueLabel ? ` · ${queueLabel}` : ""}`
     : "";
+  // While the turn is working the label SHIMMERS (a bright sweep over the muted
+  // base, MUTED->TEXT); the instant the state settles — or under reduceMotion,
+  // or while awaiting the operator — it renders as the calm static muted line.
+  const workingLineFitted = fitTuiText(workingLine, Math.max(1, contentWidth - GLYPH_CELLS - 1));
   const workingIndicator = workingAnimation ? (
     <box flexDirection="row" minWidth={0} marginTop={1} gap={1}>
       <box width={GLYPH_CELLS} flexShrink={0}>
         <text fg={workingGlyphColor}>{workingAnimation.glyph}</text>
       </box>
       <box flexGrow={1} minWidth={0}>
-        <text fg={MUTED}>{fitTuiText(workingLine, Math.max(1, contentWidth - GLYPH_CELLS - 1))}</text>
+        {shimmerActive ? (
+          <ShimmerText label={workingLineFitted} frame={shimmerFrame} base={MUTED} peak={TEXT} />
+        ) : (
+          <text fg={MUTED}>{workingLineFitted}</text>
+        )}
       </box>
     </box>
   ) : null;
@@ -3623,6 +3728,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                   : undefined,
               );
             })}
+            {todos && todos.total > 0 ? (
+              <Todos payload={todos} width={transcriptWidth} theme={theme} />
+            ) : null}
             {workingIndicator}
             {startupError ? <text fg={ERROR}>{fitTuiText(startupError, contentWidth)}</text> : null}
           </box>
@@ -3854,10 +3962,29 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       {settings.showStatusBar ? (
         <box flexDirection="row" width="100%" minWidth={0} flexShrink={0} gap={statusGap}>
           <box width={controlsWidth} flexShrink={0} minWidth={0}>
-            {showContextualKeys && keyHintsLength(composeHintPairs, " · ") <= controlsWidth ? (
-              <KeyHints pairs={composeHintPairs} theme={theme} />
+            {showContextualKeys ? (
+              keyHintsLength(composeHintPairs, " · ") <= controlsWidth ? (
+                <KeyHints pairs={composeHintPairs} theme={theme} />
+              ) : (
+                <text fg={MUTED}>{fitTuiText(controls, controlsWidth)}</text>
+              )
+            ) : statusPills.length > 0 ? (
+              // OMP-style coloured pills: each segment its own glyph+text in its
+              // role colour, a subtle muted dot between. Widths come from
+              // `fitStatusPills`, so the row's children sum to <= controlsWidth
+              // and never overprint (chat-layout invariant).
+              <box flexDirection="row" flexShrink={0} minWidth={0}>
+                {statusPills.map((segment, index) => (
+                  <React.Fragment key={segment.kind}>
+                    {index > 0 ? <text fg={MUTED}> · </text> : null}
+                    <text fg={statusRoleColor(segment.colorRole, theme, mode)}>
+                      {pillText(segment)}
+                    </text>
+                  </React.Fragment>
+                ))}
+              </box>
             ) : (
-              <text fg={MUTED}>{fitTuiText(showContextualKeys ? controls : statusBarText, controlsWidth)}</text>
+              <text fg={MUTED}>{fitTuiText(statusBarText, controlsWidth)}</text>
             )}
           </box>
           {statusWidth > 0 ? (

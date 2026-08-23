@@ -1,7 +1,9 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
+import { TextAttributes } from "@opentui/core";
 import { MODEL_PRICING, type ModelRates } from "@0sec/shared";
 import { fitTuiText, sanitizeTuiText } from "../text.js";
+import { ShimmerText } from "./shimmer.js";
 import { renderMarkdown } from "../markdown.js";
 import { formatElapsed } from "../animation.js";
 import { repeatSuffix } from "../transcript.js";
@@ -218,7 +220,19 @@ export function renderEntry(
       }
       const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
       if (elapsed) footerParts.push(elapsed);
-      const footer = footerParts.join(" · ");
+      // The MODE name carries its own colour (matching the header and the status
+      // bar) so the autonomy state is legible at a glance; the rest of the
+      // provenance (model · tok · cost · time) stays quietly muted. Both halves
+      // are budgeted against the same cells so the row never overflows.
+      const footerBudget = Math.max(1, maxWidth - 2);
+      const modeFitted = fitTuiText(display.mode, footerBudget);
+      // The " · " lead is prepended AFTER fitting the rest's content, because
+      // `fitTuiText` trims leading whitespace — fitting `" · 4s"` would eat the
+      // separator's space and fuse the mode into it ("Co-pilot· 4s").
+      const restContent = footerParts.slice(1).join(" · ");
+      const restFitted = restContent
+        ? fitTuiText(restContent, Math.max(0, footerBudget - modeFitted.length - 3))
+        : "";
       return (
         <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
           {body}
@@ -226,8 +240,9 @@ export function renderEntry(
             <box width={2} flexShrink={0} minWidth={0}>
               <text fg={ERROR}>▪ </text>
             </box>
-            <box flexGrow={1} minWidth={0}>
-              <text fg={MUTED}>{fitTuiText(footer, Math.max(1, maxWidth - 2))}</text>
+            <box flexGrow={1} minWidth={0} flexDirection="row">
+              <text fg={display.modeColor} flexShrink={0}>{modeFitted}</text>
+              {restFitted ? <text fg={MUTED}>{` · ${restFitted}`}</text> : null}
             </box>
           </box>
         </box>
@@ -259,11 +274,18 @@ export function renderEntry(
   }
 
   if (entry.kind === "tool") {
-    const tone = entry.success === false ? ERROR : entry.success ? SUCCESS : PRIMARY;
+    const failed = entry.success === false;
+    const running = entry.success === undefined;
+    const tone = failed ? ERROR : entry.success ? SUCCESS : PRIMARY;
     const { icon, state } = toolGlyphState(entry.success);
     const frame = toolFrame(toolCardStyle, maxWidth, entry.success);
     if (!frame.render) return null;
     const toolDetail = toolDetailWidth(frame.contentWidth, maxWidth);
+    // A running row SHIMMERS its label (bright sweep over the muted base) while
+    // the call is in flight; the moment it settles or fails it renders static.
+    // A failed row is loud: a bold ERROR header and a READABLE (non-muted)
+    // detail line, so the reason is legible rather than dimmed into the chrome.
+    const shimmerRunning = running && typeof display.shimmerFrame === "number";
 
     // compact / hidden: a single clean summary line — no rail, mono palette,
     // the colour carried only by the icon. The concise args ride on the name
@@ -275,11 +297,16 @@ export function renderEntry(
       const compactName = entry.toolArgs
         ? `${entry.text}${repeat} · ${entry.toolArgs}`
         : `${entry.text}${repeat}`;
+      const compactLine = toolCompactLine(icon, compactName, state, frame.contentWidth);
       return finish(
-        <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
-          <text fg={tone}>{toolCompactLine(icon, compactName, state, frame.contentWidth)}</text>
+        <box key={entry.id} flexDirection="column" minWidth={0} marginTop={display.spacing}>
+          {shimmerRunning ? (
+            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+          ) : (
+            <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{compactLine}</text>
+          )}
           {frame.showDetail && entry.detail ? (
-            <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text>
+            <text fg={failed ? TEXT : MUTED} wrapMode="word">{fitTuiText(entry.detail, frame.contentWidth)}</text>
           ) : null}
         </box>,
       );
@@ -290,14 +317,19 @@ export function renderEntry(
     // container and the renderer paints the columns into each other.
     const toolPrefix = toolHeaderPrefix(state);
     const cols = toolHeaderColumns(frame.contentWidth, toolPrefix.length, toolDetail);
+    const toolName = fitTuiText(`${entry.text}${repeat}`, cols.nameWidth);
     const header = (
       <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
         <box flexDirection="row" minWidth={0}>
-          <text fg={tone}>{icon}</text>
+          <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{icon}</text>
           <text fg={MUTED}>{toolPrefix}</text>
-          <text fg={TEXT}>{fitTuiText(`${entry.text}${repeat}`, cols.nameWidth)}</text>
+          {shimmerRunning ? (
+            <ShimmerText label={toolName} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+          ) : (
+            <text fg={failed ? ERROR : TEXT} attributes={failed ? TextAttributes.BOLD : undefined}>{toolName}</text>
+          )}
         </box>
-        {frame.showDetail && entry.detail ? <text fg={MUTED} wrapMode="word">{fitTuiText(entry.detail, toolDetail)}</text> : null}
+        {frame.showDetail && entry.detail ? <text fg={failed ? TEXT : MUTED} wrapMode="word">{fitTuiText(entry.detail, toolDetail)}</text> : null}
       </box>
     );
     return finish(
@@ -309,10 +341,17 @@ export function renderEntry(
   }
 
   if (entry.kind === "subagent") {
-    const outcome = entry.subagentOutcome ?? "failed";
-    const ok = outcome === "completed";
-    const tone = ok ? SUCCESS : ERROR;
-    const frame = toolFrame(toolCardStyle, maxWidth, ok);
+    // A subagent still in flight (no recorded outcome) reads as RUNNING — a
+    // shimmering label over the muted base — rather than being defaulted to a
+    // red "failed" it never was. Terminal records keep their rendering.
+    const running = entry.subagentOutcome === undefined;
+    const ok = entry.subagentOutcome === "completed";
+    const failed = entry.subagentOutcome === "failed";
+    const tone = running ? PRIMARY : ok ? SUCCESS : ERROR;
+    const glyph = running ? "◌" : ok ? "✓" : "×";
+    const stateWord = running ? "running" : ok ? "completed" : "failed";
+    const shimmerRunning = running && typeof display.shimmerFrame === "number";
+    const frame = toolFrame(toolCardStyle, maxWidth, running ? undefined : ok);
     if (!frame.render) return null;
     const subDetailWidth = toolDetailWidth(frame.contentWidth, maxWidth);
     const statusParts: string[] = [];
@@ -321,9 +360,14 @@ export function renderEntry(
     const statusLine = statusParts.length > 0 ? statusParts.join(" · ") : null;
 
     if (frame.singleLine) {
+      const compactLine = toolCompactLine(glyph, "subagent", stateWord, frame.contentWidth);
       return finish(
         <box key={entry.id} flexDirection="column" marginTop={display.spacing} minWidth={0}>
-          <text fg={tone}>{toolCompactLine(ok ? "✓" : "×", "subagent", ok ? "completed" : "failed", frame.contentWidth)}</text>
+          {shimmerRunning ? (
+            <ShimmerText label={compactLine} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+          ) : (
+            <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{compactLine}</text>
+          )}
           {frame.showDetail && entry.subagentError ? (
             <text fg={ERROR} wrapMode="word">{fitTuiText(entry.subagentError, frame.contentWidth)}</text>
           ) : null}
@@ -335,10 +379,15 @@ export function renderEntry(
       <box key={entry.id} flexDirection="row" marginTop={display.spacing} marginLeft={frame.outerMarginLeft} minWidth={0}>
         {frame.railKind === "solid" ? <box width={1} alignSelf="stretch" backgroundColor={tone} /> : null}
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={frame.contentGap}>
-          <box flexDirection="row">
-            <text fg={tone}>{ok ? "✓" : "×"}</text>
-            <text fg={BRAND}> evidence / subagent</text>
-            <text fg={MUTED}> · {ok ? "completed" : "failed"}</text>
+          <box flexDirection="row" minWidth={0}>
+            <text fg={tone} attributes={failed ? TextAttributes.BOLD : undefined}>{glyph}</text>
+            <text fg={MUTED}> </text>
+            {shimmerRunning ? (
+              <ShimmerText label="evidence / subagent" frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+            ) : (
+              <text fg={BRAND}>evidence / subagent</text>
+            )}
+            <text fg={MUTED}> · {stateWord}</text>
           </box>
           {frame.showDetail && statusLine ? <text fg={MUTED}>{fitTuiText(statusLine, subDetailWidth)}</text> : null}
           {frame.showDetail && entry.subagentSummary ? <text fg={TEXT} wrapMode="word">{fitTuiText(entry.subagentSummary, subDetailWidth)}</text> : null}
