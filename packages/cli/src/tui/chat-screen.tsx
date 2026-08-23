@@ -119,6 +119,7 @@ import {
   composerQueueLabel,
   dequeueComposerInput,
   enqueueComposerInput,
+  shouldFlushQueuedInput,
 } from "./composer-queue.js";
 import {
   LEDGER_MARK_ROWS,
@@ -2305,6 +2306,34 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       // turn that has already returned.
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
+      // The turn is over: stop the tool spinner and SETTLE any tool/subagent
+      // rows still in flight when it ended (interrupt, error, or a budget stop).
+      // `animationKind` reads `runningTool` BEFORE `busy`, so a stale runningTool
+      // would keep the shimmer alive after the turn; and an unsettled row
+      // (success/outcome undefined) reads as "running" forever. Clearing both
+      // stops the shimmer the instant the turn exits. No-op on a clean turn —
+      // onToolResult has already settled every row.
+      setRunningTool(null);
+      setEntries((current) =>
+        current.some(
+          (e) =>
+            e.turn === currentTurn &&
+            ((e.kind === "tool" && e.success === undefined) ||
+              (e.kind === "subagent" && e.subagentOutcome === undefined)),
+        )
+          ? current.map((e) =>
+              e.turn === currentTurn && e.kind === "tool" && e.success === undefined
+                ? { ...e, success: false, detail: e.detail || "interrupted before it returned" }
+                : e.turn === currentTurn && e.kind === "subagent" && e.subagentOutcome === undefined
+                  ? {
+                      ...e,
+                      subagentOutcome: "failed" as const,
+                      subagentError: e.subagentError || "interrupted before it returned",
+                    }
+                  : e,
+            )
+          : current,
+      );
       // Stamp the turn's wall-clock duration onto its assistant answer(s) so
       // the AI footer can show a real elapsed. Done once the turn has settled,
       // and only for entries that do not already carry one, so a later repaint
@@ -2790,6 +2819,21 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         const input = useSelectedCommand && selectedSlashCommand
           ? completionFor(selectedSlashCommand, parsed.args)
           : currentComposer;
+        if (shouldFlushQueuedInput({
+          input,
+          busy,
+          hasSession: Boolean(session),
+          queuedCount: queuedRef.current.length,
+        })) {
+          const { next, rest } = dequeueComposerInput(queuedRef.current);
+          queuedRef.current = rest;
+          setQueuedMessages(rest);
+          composingRef.current = false;
+          setComposerText("");
+          setComposing(false);
+          if (next !== undefined) void send(next);
+          return;
+        }
         if (!input.trim()) {
           composingRef.current = false;
           setComposerText("");
@@ -3074,6 +3118,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     // tool/subagent rows shimmer in phase with the thinking indicator and render
     // static the instant they settle.
     shimmerFrame: shimmerActive ? shimmerFrame : undefined,
+    // The turn currently in flight, so a reasoning row or a collapsed fold for
+    // the WORKING turn shimmers while every past turn's stays static. Undefined
+    // when idle (nothing matches, so nothing shimmers).
+    activeTurn: busy ? turn.current : undefined,
   };
   const animation = animationKind
     ? frameAt(animationKind, Date.now() - activitySince.current, {

@@ -129,6 +129,18 @@ export interface EntryDisplay {
    * callers are unaffected.
    */
   shimmerFrame?: number;
+  /**
+   * The turn number that is CURRENTLY in flight, or `undefined` when the console
+   * is idle. Rows that have no per-entry "settled" marker of their own — a
+   * reasoning ("thinking") row and a collapsed FOLD — use this to tell whether
+   * they belong to the working turn: a reasoning row or a fold whose turn equals
+   * `activeTurn` shimmers (in phase with `shimmerFrame`), while every past turn's
+   * reasoning/fold stays static. Tool and subagent rows do NOT need this: they
+   * carry their own running state (`success`/`subagentOutcome` undefined). Paired
+   * with `shimmerFrame`: shimmer only when BOTH `activeTurn` matches and
+   * `shimmerFrame` is a number, so reduceMotion / settled turns stay static.
+   */
+  activeTurn?: number;
 }
 
 export interface KeyHint {

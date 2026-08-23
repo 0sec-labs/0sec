@@ -546,14 +546,26 @@ export function renderEntry(
 
   if (entry.kind === "reasoning") {
     // Thinking is deliberately quieter than the answer: a dotted rail and
-    // muted text, so it reads as working-out rather than a conclusion.
+    // muted text, so it reads as working-out rather than a conclusion. While the
+    // reasoning belongs to the turn STILL IN FLIGHT the "thinking" label shimmers
+    // (a bright sweep over the muted base) so a working turn always reads as
+    // alive — even when its answer hasn't started streaming yet; the instant the
+    // turn settles (or on a past turn's reasoning) it renders static/muted.
+    // Gated on BOTH `activeTurn` matching and a numeric `shimmerFrame`, so
+    // reduceMotion / settled turns keep the flat label.
+    const shimmerThinking =
+      entry.turn === display.activeTurn && typeof display.shimmerFrame === "number";
     return finish(
       <box key={entry.id} flexDirection="row" marginTop={display.spacing} minWidth={0}>
         <box width={1} flexShrink={0} alignSelf="stretch">
           <text fg={MUTED}>┊</text>
         </box>
         <box flexDirection="column" flexGrow={1} minWidth={0} marginLeft={1}>
-          <text fg={MUTED}>thinking</text>
+          {shimmerThinking ? (
+            <ShimmerText label="thinking" frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+          ) : (
+            <text fg={MUTED}>thinking</text>
+          )}
           {renderMarkdownBlocks(
             renderMarkdown(normalizeReasoning(entry.text), Math.max(8, maxWidth - 2)),
             entry.id,
@@ -632,7 +644,7 @@ export function renderFold(
   theme: Theme,
   interaction?: TranscriptRowInteraction,
 ) {
-  const { MUTED, PANEL_ALT } = theme;
+  const { MUTED, TEXT, PANEL_ALT } = theme;
   const key = `fold-${item.entries[0]?.id ?? item.turn}`;
   // `toolCardStyle: "hidden"` means "don't show me successful tool activity";
   // honour it inside a fold too by dropping the tool/subagent steps from the
@@ -643,6 +655,16 @@ export function renderFold(
       : item.entries;
   if (shown.length === 0) return null;
   const summary = shown.length === item.entries.length ? item.summary : foldSummary(shown);
+  // A fold standing for the turn STILL IN FLIGHT must read as active even though
+  // its steps are collapsed to one line: shimmer the summary (bright sweep over
+  // the muted base) so a working-but-collapsed turn — e.g. "▸ 12 steps ·
+  // thinking, run_command" — still signals "running". A completed/past fold
+  // (its turn is not `activeTurn`) stays static muted, exactly as before. Gated
+  // on BOTH the turn match and a numeric `shimmerFrame`, so reduceMotion /
+  // settled turns keep the flat summary.
+  const summaryFitted = fitTuiText(summary, Math.max(1, maxWidth - 2));
+  const shimmerFold =
+    item.turn === display.activeTurn && typeof display.shimmerFrame === "number";
   // A collapsed fold is clickable: mousing down toggles its turn into the
   // expanded set (chat-screen owns that state), and hovering tints the row so
   // the disclosure reads as interactive. Handlers are wired only when
@@ -664,7 +686,11 @@ export function renderFold(
         <text fg={MUTED}>▸ </text>
       </box>
       <box flexGrow={1} minWidth={0}>
-        <text fg={MUTED}>{fitTuiText(summary, Math.max(1, maxWidth - 2))}</text>
+        {shimmerFold ? (
+          <ShimmerText label={summaryFitted} frame={display.shimmerFrame!} base={MUTED} peak={TEXT} />
+        ) : (
+          <text fg={MUTED}>{summaryFitted}</text>
+        )}
       </box>
     </box>
   );
