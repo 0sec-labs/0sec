@@ -995,6 +995,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       role: options?.role,
       maxToolIterations: options?.maxToolIterations,
       allowScanners: options?.allowScanners,
+      // Self-evolving: when the operator has opted in, the interactive console
+      // turn loop builds the gated self-extension registry and offers self_extend
+      // (default OFF). Read from the live settings ref so a /settings toggle
+      // applies on the next session build. (pluginHost — the other injectable
+      // ConsoleSessionConfig field — is a documented follow-up: it needs a
+      // shell-level host whose lifecycle spans the chat↔market screen swap.)
+      allowModelSelfExtension: settingsRef.current.allowModelSelfExtension,
       // The LAUNCH mode is only the seed. Rebuilds trigger on /model and on
       // resume, and reseeding from options there would drop the operator back
       // to standard while the header kept showing the mode they chose.
