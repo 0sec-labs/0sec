@@ -184,11 +184,43 @@ synthetic or authorized test material. Report vulnerabilities privately via
 
 0sec Labs is supported by these startup and research programs:
 
-- [AWS Startups](https://aws.amazon.com/startups/)
-- [Microsoft for Startups](https://www.microsoft.com/en-us/startups)
-- [E2B for Startups](https://e2b.dev/startups)
-- [Hack Nation](https://hack-nation.ai/)
-- [NVIDIA Inception Program](https://www.nvidia.com/en-us/startups/)
+<p align="center">
+  <a href="https://aws.amazon.com/startups/" title="AWS Startups">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/aws-startups-dark.png">
+      <img alt="AWS Startups" height="28" src="docs/assets/supported-by/aws-startups-light.png">
+    </picture>
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.microsoft.com/en-us/startups" title="Microsoft for Startups">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/microsoft-for-startups-dark.png">
+      <img alt="Microsoft for Startups" height="28" src="docs/assets/supported-by/microsoft-for-startups-light.png">
+    </picture>
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://e2b.dev/startups" title="E2B for Startups">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/e2b-dark.svg">
+      <img alt="E2B for Startups" height="26" src="docs/assets/supported-by/e2b-light.svg">
+    </picture>
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://hack-nation.ai/" title="Hack Nation">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/hacknation-dark.png">
+      <img alt="Hack Nation" height="26" src="docs/assets/supported-by/hacknation-light.png">
+    </picture>
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.nvidia.com/en-us/startups/" title="NVIDIA Inception Program">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/nvidia-inception-dark.svg">
+      <img alt="NVIDIA Inception Program" height="44" src="docs/assets/supported-by/nvidia-inception-light.svg">
+    </picture>
+  </a>
+  
+</p>
 
 ## License
 
