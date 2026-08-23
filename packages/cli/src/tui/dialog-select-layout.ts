@@ -274,6 +274,13 @@ const MIN_PANEL_WIDTH = 20;
 
 /** Non-list rows inside the panel: title, search, footer, top+bottom border. */
 const VERTICAL_CHROME = 5;
+/**
+ * Rows the inline body spends on its own chrome: the search line, and nothing
+ * else. Unlike the overlay it draws no title, footer or border — the frame that
+ * hosts it (a full-screen route) owns all of that — so the list keeps every
+ * other row the frame lent it.
+ */
+const INLINE_CHROME = 1;
 /** Fraction of the terminal height the panel's top edge sits at (upper third). */
 const TOP_ANCHOR = 0.15;
 /** Never fewer than this many body rows, even on a very short terminal. */
@@ -312,6 +319,20 @@ export interface DialogPanelInput {
    * split silently falls back to list-only (`showDetail: false`).
    */
   withDetail?: boolean;
+  /**
+   * Inline (non-overlay) mode: render the same list+detail body inside a
+   * host frame — a full-screen route — instead of a centred, scrimmed panel.
+   *
+   * When set, this is the number of rows the whole picker body may occupy
+   * inside the frame (the search line plus the list). The panel then drops the
+   * overlay's top anchor (`top: 0`), spends no width on a border or padding
+   * (`innerWidth === panelWidth === width`, since the frame supplies the
+   * chrome), and sizes the list from this budget rather than from `height` and
+   * the overlay's own five rows of chrome. The width split and column budgeting
+   * are identical to overlay mode, so a body swept as an overlay is swept
+   * inline too. `width` is the frame's content width, not the terminal width.
+   */
+  bodyRows?: number;
 }
 
 interface DetailSplit {
@@ -384,23 +405,45 @@ export function computeDialogPanel({
   size = "medium",
   totalRows,
   withDetail = false,
+  bodyRows,
 }: DialogPanelInput): DialogPanel {
   const w = cells(width);
   const h = cells(height);
   const total = cells(totalRows);
+  const inline = bodyRows != null;
 
-  const available = Math.max(1, w - H_MARGIN * 2);
-  // A detail column needs room for two panes, so it promotes the width band to
-  // at least `large`; the clamp against `available` still keeps a narrow
-  // terminal from overflowing, and there the split degrades to list-only.
-  const maxWidth = withDetail ? Math.max(PANEL_MAX_WIDTH[size], PANEL_MAX_WIDTH.large) : PANEL_MAX_WIDTH[size];
-  const panelWidth = clamp(Math.min(maxWidth, available), Math.min(MIN_PANEL_WIDTH, w), Math.max(1, w));
-  const left = Math.max(0, Math.floor((w - panelWidth) / 2));
-  const top = Math.max(0, Math.floor(h * TOP_ANCHOR));
+  let panelWidth: number;
+  let left: number;
+  let top: number;
+  let innerWidth: number;
+  let availableHeight: number;
 
-  const innerWidth = Math.max(1, panelWidth - PANEL_CHROME);
+  if (inline) {
+    // Inline: the host frame supplies the border, padding and position, so the
+    // body spends none of its own width on chrome — the whole content column is
+    // the inner width — and it is not offset (the frame places it). The list
+    // height comes off the row budget the frame handed down, less the one row
+    // the search line costs.
+    panelWidth = Math.max(1, w);
+    left = 0;
+    top = 0;
+    innerWidth = panelWidth;
+    availableHeight = Math.max(1, cells(bodyRows) - INLINE_CHROME);
+  } else {
+    const available = Math.max(1, w - H_MARGIN * 2);
+    // A detail column needs room for two panes, so it promotes the width band
+    // to at least `large`; the clamp against `available` still keeps a narrow
+    // terminal from overflowing, and there the split degrades to list-only.
+    const maxWidth = withDetail
+      ? Math.max(PANEL_MAX_WIDTH[size], PANEL_MAX_WIDTH.large)
+      : PANEL_MAX_WIDTH[size];
+    panelWidth = clamp(Math.min(maxWidth, available), Math.min(MIN_PANEL_WIDTH, w), Math.max(1, w));
+    left = Math.max(0, Math.floor((w - panelWidth) / 2));
+    top = Math.max(0, Math.floor(h * TOP_ANCHOR));
+    innerWidth = Math.max(1, panelWidth - PANEL_CHROME);
+    availableHeight = Math.max(1, h - top - VERTICAL_CHROME);
+  }
 
-  const availableHeight = Math.max(1, h - top - VERTICAL_CHROME);
   const capacityRows = Math.max(MIN_LIST_ROWS, availableHeight);
   const scrolls = total > capacityRows;
   const visibleRows = Math.max(1, Math.min(capacityRows, Math.max(1, total)));

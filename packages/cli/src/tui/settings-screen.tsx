@@ -7,66 +7,73 @@
  * highlighted. That shape competed with the transcript for the only scarce
  * resource a TUI has — rows — and it left no room for the thing a settings
  * screen is actually for, which is telling you what a setting *does* before
- * you change it. It also had nowhere to put grouping, so a security-relevant
- * toggle sat in the same undifferentiated list as "show the logo".
+ * you change it.
  *
- * This screen is the replacement. Two panes: the grouped list on the left, the
- * highlighted setting's full description, current value, default and allowed
- * values on the right; stacked when the terminal is too narrow to hold both.
+ * This screen is the replacement, and it is now a projection of the one shared
+ * picker body, `DialogSelectBody`: the grouped, windowed list on the left and
+ * the highlighted setting's detail plus a LIVE PREVIEW on the right, driven
+ * inline (no scrim, no floating panel) inside the console shell. The same body
+ * serves the modal `DialogSelect` overlay and the model screen; this file
+ * supplies only the domain — which settings exist, how they group, what each
+ * one's detail and preview say — and its own keyboard, which unlike a plain
+ * picker edits a value in place rather than selecting and closing.
  *
  * Three properties are load-bearing:
  *
  * 1. **Nothing here knows the settings.** The row model is derived from
  *    `SETTING_DEFS` on every render, so a def added to that table appears with
- *    its group heading, its detail text and its keybindings without this file
+ *    its group heading, its detail text and its preview without this file
  *    changing. There is no list, no group order and no row count written down.
  *
  * 2. **This component does no arithmetic.** Every width, height, row count and
- *    window boundary comes off `settings-layout.ts`, where it is swept across
- *    widths 0..200 and heights 0..80 by a test. The reason is in
- *    `PRIMITIVES.md`: Yoga shrinks siblings rather than clipping them, so a
- *    row that claims one cell too many paints two strings on top of each
- *    other, and a bordered box one row short of its content paints its own
- *    border through that content. Both are invisible until someone resizes a
- *    terminal, which is why the arithmetic lives somewhere a sweep can reach.
+ *    window boundary comes off `dialog-select-layout.ts` via
+ *    `computeDialogPanel`, where it is swept across widths and heights by a
+ *    test. The reason is in `PRIMITIVES.md`: Yoga shrinks siblings rather than
+ *    clipping them, so a row that claims one cell too many paints two strings
+ *    on top of each other, and a bordered box one row short of its content
+ *    paints its own border through that content.
  *
  * 3. **Every change is persisted immediately, and a failed write is
  *    reported.** A settings screen that silently drops changes on a read-only
  *    `$HOME` is worse than one that refuses to open.
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
 import { Cells } from "./primitives.js";
 import { setSettings, useSettings } from "./settings-store.js";
 import { useTheme, type Theme } from "./theme-context.js";
+import { DialogSelectBody, type DialogItem } from "./dialog-select.js";
+import {
+  clampDialogSelection,
+  computeDialogPanel,
+  moveDialogSelection,
+} from "./dialog-select-layout.js";
 import {
   buildSettingsRows,
-  clampSelection,
   clipDetailLines,
-  computeSettingsLayout,
-  computeSettingsWindow,
   cycleSetting,
   isFilterKey,
   isSettingModified,
-  moveSelection,
   resetAllSettings,
   resetSetting,
   settingValue,
   settingValueLabel,
   settingsDetailLines,
   settingsFooterHint,
-  settingsListTitle,
+  shellChromeRows,
   type SettingsDetailTone,
   type SettingsMode,
-  type SettingsPane,
+  type SettingsRow,
 } from "./settings-layout.js";
-import { SETTING_DEFS, type TuiSettings } from "./settings.js";
+import { SETTING_DEFS, type SettingDef, type TuiSettings } from "./settings.js";
 import { SettingsPreview, previewRowCount } from "./settings-preview.js";
 
 /** How many rows page-up and page-down move. */
 const PAGE_STEP = 5;
+/** Rows kept for the setting's prose before any preview is lent room. */
+const MIN_TEXT_ROWS = 3;
 
 export interface SettingsFrameInput {
   /** The settings body, already sized to the rows the frame left it. */
@@ -118,58 +125,6 @@ function toneColor(tone: SettingsDetailTone, theme: Theme): string | undefined {
   }
 }
 
-/**
- * A pane that states its own height.
- *
- * `height` includes the borders, and `flexShrink={0}` stops the column
- * squeezing the box behind its content's back — the two halves of the
- * `-/clear--------/new-` corruption. When the layout could not find room for
- * the pane it reports zero and nothing renders at all, which is the correct
- * degradation: a missing pane is missing information, a pane one row short of
- * its content is a frame that looks like a crash.
- */
-function Pane({
-  pane,
-  bordered,
-  title,
-  titleFg,
-  children,
-}: {
-  pane: SettingsPane;
-  bordered: boolean;
-  title: string;
-  titleFg: string;
-  children: React.ReactNode;
-}) {
-  const theme = useTheme();
-  if (pane.width <= 0 || pane.height <= 0) return null;
-  // `hasTitle` is the layout's decision, not the caller's: the row it costs
-  // was either budgeted for or it was not, and rendering a title the budget
-  // did not include is exactly how a box grows one row past its own border.
-  const titleRow = pane.hasTitle ? (
-    <Cells width={pane.innerWidth} fg={titleFg}>
-      {title}
-    </Cells>
-  ) : null;
-  return (
-    <box
-      flexDirection="column"
-      width={pane.width}
-      height={pane.height}
-      flexShrink={0}
-      flexGrow={0}
-      minWidth={0}
-      border={bordered || undefined}
-      borderColor={bordered ? theme.BORDER : undefined}
-      backgroundColor={bordered ? theme.PANEL : undefined}
-      paddingX={bordered ? 1 : undefined}
-    >
-      {titleRow}
-      {children}
-    </box>
-  );
-}
-
 export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   const { width, height } = useTerminalDimensions();
   const theme = useTheme();
@@ -177,23 +132,60 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   // The live settings, read from the process-wide store. This screen is the
   // writer: `setSettings` (the store's, imported above) persists AND notifies
   // every other subscribed screen synchronously, so a change here takes effect
-  // on the chat screen without a remount. Reading a snapshot via
-  // `useState(loadSettings())` is exactly the stale-copy bug the store fixes.
+  // on the chat screen without a remount.
   const settings = useSettings();
   const [filter, setFilter] = useState("");
   const [filtering, setFiltering] = useState(false);
   const [selected, setSelected] = useState(0);
-  const [anchor, setAnchor] = useState(0);
   const [pending, setPending] = useState<PendingReset | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
-  const rows = useMemo(() => buildSettingsRows(SETTING_DEFS, filter), [filter]);
-  // The highlighted row can vanish from under the cursor between keystrokes as
-  // the filter narrows, so the rendered cursor is always the clamped one and
-  // the stored index catches up afterwards.
-  const cursor = clampSelection(rows, selected);
-  const activeRow = cursor >= 0 ? rows[cursor] : undefined;
-  const activeDef = activeRow?.kind === "setting" ? activeRow.def : undefined;
+  // `buildSettingsRows` does the domain work — grouping by the table's group,
+  // first-appearance order, and the AND-over-terms filter across key, label,
+  // group, description and choices. The screen keeps only its selectable
+  // setting rows and projects them onto `DialogItem`s: the group is the
+  // category (so the shared body draws a heading per group), the current value
+  // is the right-aligned meta, and a setting that differs from its default
+  // carries the current-value dot — the migration of the old accent-coloured
+  // value into the picker's gutter.
+  const settingsRows = useMemo(() => buildSettingsRows(SETTING_DEFS, filter), [filter]);
+  const items = useMemo<DialogItem[]>(
+    () =>
+      settingsRows
+        .filter((row): row is Extract<SettingsRow, { kind: "setting" }> => row.kind === "setting")
+        .map((row) => ({
+          id: row.def.key,
+          label: row.def.label,
+          meta: settingValueLabel(row.def, settingValue(settings, row.def)),
+          category: row.group,
+          current: isSettingModified(settings, row.def),
+        })),
+    [settingsRows, settings],
+  );
+  const defByKey = useMemo(() => {
+    const map = new Map<string, SettingDef>();
+    for (const def of SETTING_DEFS) map.set(def.key, def);
+    return map;
+  }, []);
+  // Display rows (headings interleaved) drive the panel's scroll/height math.
+  const totalRows = useMemo(() => {
+    let count = 0;
+    let group = "";
+    for (const item of items) {
+      if (item.category && item.category !== group) {
+        group = item.category;
+        count += 1;
+      }
+      count += 1;
+    }
+    return count;
+  }, [items]);
+
+  // The highlighted row can vanish from under the cursor as the filter narrows,
+  // so the rendered cursor is always the clamped one.
+  const cursor = clampDialogSelection(items, selected);
+  const activeItem = items.length > 0 ? items[cursor] : undefined;
+  const activeDef = activeItem ? defByKey.get(activeItem.id) : undefined;
 
   const mode: SettingsMode = pending
     ? pending.kind === "all"
@@ -203,49 +195,37 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       ? "filter"
       : "browse";
 
-  // The status line under the panes carries the filter, the confirm prompt and
-  // any save failure. It costs a row, so the layout is told whether it exists.
+  // The status line under the list carries the confirm prompt and any save
+  // failure. The filter now lives in the shared body's search line, so it no
+  // longer competes for this row. The line costs a row only when it has text.
   const statusText = pending
     ? pending.kind === "all"
       ? "Reset ALL settings to their defaults? y confirm / n cancel"
       : `Reset "${pending.label}" to ${pending.value}? y confirm / n cancel`
     : notice
       ? notice.text
-      : filtering
-        ? `filter: ${filter}_`
-        : filter
-          ? `filter: ${filter}`
-          : "";
+      : "";
   const statusTone = pending ? theme.WARNING : notice?.tone === "error" ? theme.ERROR : theme.MUTED;
 
-  const layout = computeSettingsLayout({
-    width,
+  const contentWidth = Math.max(0, width - 4);
+  const bodyRows = Math.max(0, height - shellChromeRows(width) - (statusText ? 1 : 0));
+  const panel = computeDialogPanel({
+    width: contentWidth,
     height,
-    noticeRows: statusText ? 1 : 0,
+    size: "large",
+    totalRows,
+    withDetail: true,
+    bodyRows,
   });
-  const window = computeSettingsWindow({
-    rows,
-    selected: cursor,
-    visible: layout.visibleRows,
-    anchor,
-  });
-
-  useEffect(() => {
-    if (window.start !== anchor) setAnchor(window.start);
-  }, [window.start, anchor]);
-  useEffect(() => {
-    if (cursor >= 0 && cursor !== selected) setSelected(cursor);
-  }, [cursor, selected]);
 
   /**
    * Applies a change and writes it through the store.
    *
-   * The store's `setSettings` persists, updates the in-memory copy AND notifies
-   * every subscriber (this screen and chat included) synchronously, then reports
-   * whether the disk write succeeded as its return value rather than throwing —
-   * because a read-only `$HOME` must not take the console down. What it must
-   * also not do is look like it worked: the change stays live for the session
-   * and the status line says so.
+   * `setSettings` persists, updates the in-memory copy AND notifies every
+   * subscriber synchronously, then reports whether the disk write succeeded as
+   * its return value rather than throwing — because a read-only `$HOME` must not
+   * take the console down. What it must also not do is look like it worked: the
+   * change stays live for the session and the status line says so.
    */
   const commit = (next: TuiSettings) => {
     setPending(null);
@@ -266,14 +246,16 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
   };
 
   const move = (delta: number) => {
-    const next = moveSelection(rows, cursor, delta);
-    if (next >= 0) setSelected(next);
+    if (items.length === 0) return;
+    const dir: 1 | -1 = delta >= 0 ? 1 : -1;
+    let next = cursor;
+    for (let i = 0; i < Math.abs(delta); i += 1) next = moveDialogSelection(items, next, dir);
+    setSelected(next);
   };
 
   const setQuery = (next: string) => {
     setFilter(next);
     setSelected(0);
-    setAnchor(0);
   };
 
   useKeyboard((key) => {
@@ -297,30 +279,12 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       return;
     }
 
-    if (key.name === "up") {
-      move(-1);
-      return;
-    }
-    if (key.name === "down") {
-      move(1);
-      return;
-    }
-    if (key.name === "pageup") {
-      move(-PAGE_STEP);
-      return;
-    }
-    if (key.name === "pagedown") {
-      move(PAGE_STEP);
-      return;
-    }
-    if (key.name === "left") {
-      change(-1);
-      return;
-    }
-    if (key.name === "right") {
-      change(1);
-      return;
-    }
+    if (key.name === "up") return move(-1);
+    if (key.name === "down") return move(1);
+    if (key.name === "pageup") return move(-PAGE_STEP);
+    if (key.name === "pagedown") return move(PAGE_STEP);
+    if (key.name === "left") return change(-1);
+    if (key.name === "right") return change(1);
 
     // ── filter mode ──
     // Every printable character types here, `r` and `R` included; that is the
@@ -344,8 +308,6 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     // ── browse mode ──
     if (key.name === "escape") {
       // Esc unwinds one step at a time: clear the filter first, leave second.
-      // Dropping straight out of a filtered screen loses the filter and the
-      // screen in one keystroke, and only one of those was asked for.
       if (filter) {
         setQuery("");
         return;
@@ -353,10 +315,7 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
       onBack();
       return;
     }
-    if (key.name === "return" || isSpace) {
-      change(1);
-      return;
-    }
+    if (key.name === "return" || isSpace) return change(1);
     if (key.name === "backspace") {
       if (filter) setQuery(filter.slice(0, -1));
       return;
@@ -386,141 +345,73 @@ export function SettingsScreen({ frame, onBack, onExit }: SettingsScreenProps) {
     }
   });
 
-  const row = layout.row;
-  const visible = rows.slice(window.start, window.end);
-
-  const listBody = visible.map((entry, offset) => {
-    const index = window.start + offset;
-    if (entry.kind === "heading") {
-      return (
-        <box
-          key={`heading-${entry.group}`}
-          flexDirection="row"
-          width={row.width}
-          flexShrink={0}
-          minWidth={0}
-        >
-          <Cells width={row.width} fg={theme.PRIMARY}>
-            {entry.group.toUpperCase()}
-          </Cells>
-        </box>
-      );
+  /**
+   * The detail pane: the setting's prose, then — when the pane can spare the
+   * rows — a live visual PREVIEW of its current value.
+   *
+   * The preview reserves rows first, but never so many that the description
+   * loses its footing: at least `MIN_TEXT_ROWS` stay with the prose, and the
+   * preview only appears when it can show its header plus real content. The
+   * width and the total row budget come off the shared body's `pane`; this is
+   * the one split the screen performs on top, and the preview physically cannot
+   * paint more rows than it is lent.
+   */
+  const renderDetail = (item: DialogItem, pane: { width: number; height: number }) => {
+    const def = defByKey.get(item.id);
+    const value = settingValue(settings, def);
+    const desired =
+      def && pane.width > 0
+        ? previewRowCount({ def, value, width: pane.width, settings })
+        : 0;
+    let previewRows = 0;
+    if (desired >= 2 && pane.height >= MIN_TEXT_ROWS + 2) {
+      previewRows = Math.min(desired, pane.height - MIN_TEXT_ROWS);
+      if (previewRows < 2) previewRows = 0;
     }
+    const textRows = pane.height - previewRows;
+    const compact = pane.height < 12;
 
-    const active = index === cursor;
-    const value = settingValue(settings, entry.def);
-    const modified = isSettingModified(settings, entry.def);
-    const background = active ? theme.PANEL_ALT : undefined;
-    return (
-      <box
-        key={`setting-${entry.def.key}`}
-        flexDirection="row"
-        width={row.width}
-        flexShrink={0}
-        minWidth={0}
-      >
-        <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
-          {active ? ">" : ""}
-        </Cells>
-        <Cells width={row.markerGap} bg={background}>
-          {""}
-        </Cells>
-        <Cells width={row.labelWidth} fg={active ? theme.TEXT : theme.MUTED} bg={background}>
-          {entry.def.label}
-        </Cells>
-        <Cells width={row.valueGap} bg={background}>
-          {""}
-        </Cells>
-        <Cells
-          width={row.valueWidth}
-          align="right"
-          fg={modified ? theme.ACCENT : theme.MUTED}
-          bg={background}
-        >
-          {settingValueLabel(entry.def, value)}
-        </Cells>
-      </box>
+    const detailLines = clipDetailLines(
+      settingsDetailLines(def, value, pane.width, { compact }),
+      textRows,
+      pane.width,
     );
-  });
-
-  // The detail pane's rows are shared between the textual metadata and a live
-  // visual PREVIEW of the highlighted setting. The preview reserves rows first,
-  // but never so many that the description loses its footing: at least
-  // `MIN_TEXT_ROWS` stay with the prose, and the preview only appears when it
-  // can show its header plus real content. Every width and the total row budget
-  // still come off `settings-layout`; this is the one split the screen performs
-  // on top, and the preview physically cannot paint more rows than it is lent.
-  const activeValue = settingValue(settings, activeDef);
-  const detailInner = layout.detail.innerWidth;
-  const detailRows = layout.detail.bodyRows;
-  const MIN_TEXT_ROWS = 3;
-  const desiredPreview =
-    activeDef && detailInner > 0
-      ? previewRowCount({ def: activeDef, value: activeValue, width: detailInner, settings })
-      : 0;
-  let previewRows = 0;
-  if (desiredPreview >= 2 && detailRows >= MIN_TEXT_ROWS + 2) {
-    previewRows = Math.min(desiredPreview, detailRows - MIN_TEXT_ROWS);
-    if (previewRows < 2) previewRows = 0;
-  }
-  const textRows = detailRows - previewRows;
-
-  const detailBody = clipDetailLines(
-    settingsDetailLines(activeDef, activeValue, detailInner, {
-      compact: layout.detailCompact,
-    }),
-    textRows,
-    detailInner,
-  ).map((line, index) => (
-    <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(line.tone, theme)}>
-      {line.text}
-    </Cells>
-  ));
+    return (
+      <>
+        {detailLines.map((line, index) => (
+          <Cells key={`detail-${index}`} width={pane.width} fg={toneColor(line.tone, theme)}>
+            {line.text}
+          </Cells>
+        ))}
+        {previewRows > 0 ? (
+          <SettingsPreview
+            def={def}
+            value={value}
+            width={pane.width}
+            settings={settings}
+            rowBudget={previewRows}
+            theme={theme}
+          />
+        ) : null}
+      </>
+    );
+  };
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
-      <box
-        flexDirection={layout.stacked ? "column" : "row"}
-        gap={layout.paneGap}
-        flexShrink={0}
-        minWidth={0}
-      >
-        <Pane
-          pane={layout.list}
-          bordered={layout.bordered}
-          title={settingsListTitle(window)}
-          titleFg={theme.MUTED}
-        >
-          {rows.length === 0 ? (
-            <Cells width={row.width} fg={theme.MUTED}>
-              no settings match this filter
-            </Cells>
-          ) : (
-            listBody
-          )}
-        </Pane>
-        <Pane
-          pane={layout.detail}
-          bordered={layout.bordered}
-          title={activeDef ? "DETAIL" : "DETAIL -"}
-          titleFg={theme.MUTED}
-        >
-          {detailBody}
-          {previewRows > 0 ? (
-            <SettingsPreview
-              def={activeDef}
-              value={activeValue}
-              width={detailInner}
-              settings={settings}
-              rowBudget={previewRows}
-              theme={theme}
-            />
-          ) : null}
-        </Pane>
-      </box>
+      <DialogSelectBody
+        items={items}
+        cursor={cursor}
+        panel={panel}
+        query={filter}
+        placeholder="type to filter settings"
+        isCurrent={(item) => item.current === true}
+        renderDetail={renderDetail}
+        emptyText="no settings match this filter"
+      />
       {statusText ? (
         <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
-          <Cells width={layout.contentWidth} fg={statusTone}>
+          <Cells width={contentWidth} fg={statusTone}>
             {statusText}
           </Cells>
         </box>

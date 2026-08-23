@@ -271,6 +271,108 @@ describe("panel / column sweep", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Inline (bodyRows) mode: the same body hosted in a full-screen frame
+// ---------------------------------------------------------------------------
+
+describe("inline panel", () => {
+  it("spends no width on chrome and is not offset, for every size and shape", () => {
+    // `width` here is the frame's content column, so the whole of it is the
+    // inner width; the frame owns the border, padding and position.
+    for (let width = 0; width <= 200; width += 3) {
+      for (const bodyRows of [0, 1, 5, 20, 60]) {
+        for (const size of SIZES) {
+          for (const total of [0, 1, 40, 500]) {
+            for (const withDetail of [false, true]) {
+              const panel = computeDialogPanel({
+                width,
+                height: 40,
+                size,
+                totalRows: total,
+                withDetail,
+                bodyRows,
+              });
+
+              expect(panel.top).toBe(0);
+              expect(panel.left).toBe(0);
+              expect(panel.panelWidth).toBe(Math.max(1, width));
+              expect(panel.innerWidth).toBe(panel.panelWidth);
+              expect(panel.visibleRows).toBeGreaterThanOrEqual(1);
+              expect(panel.visibleRows).toBeLessThanOrEqual(panel.capacityRows);
+
+              // The split still fills the inner width exactly, or falls back to
+              // list-only on a narrow frame — identical discipline to overlay.
+              expect(panel.rowWidth).toBeGreaterThanOrEqual(1);
+              expect(panel.rowWidth).toBeLessThanOrEqual(panel.listWidth);
+              expect(panel.listWidth + panel.detailGap + panel.detailWidth).toBeLessThanOrEqual(
+                panel.innerWidth,
+              );
+              if (panel.showDetail) {
+                expect(panel.detailWidth).toBeGreaterThanOrEqual(30);
+                expect(panel.listWidth + panel.detailGap + panel.detailWidth).toBe(panel.innerWidth);
+              } else {
+                expect(panel.detailWidth).toBe(0);
+                expect(panel.listWidth).toBe(panel.innerWidth);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("sizes the list from the row budget, less the one search-line row", () => {
+    // A tall frame with more rows than content shows exactly `bodyRows - 1`.
+    const roomy = computeDialogPanel({
+      width: 120,
+      height: 40,
+      totalRows: 500,
+      withDetail: true,
+      bodyRows: 30,
+    });
+    expect(roomy.capacityRows).toBe(29);
+    expect(roomy.visibleRows).toBe(29);
+    expect(roomy.scrolls).toBe(true);
+
+    // A short list never claims more rows than it has.
+    const few = computeDialogPanel({ width: 120, height: 40, totalRows: 3, bodyRows: 30 });
+    expect(few.visibleRows).toBe(3);
+    expect(few.scrolls).toBe(false);
+  });
+
+  it("keeps the body inside the frame it was given at 80x24 and 120x40", () => {
+    for (const [w, h] of [
+      [76, 15], // 80-wide terminal after shell padding, a plausible bodyRows
+      [116, 31], // 120-wide terminal after shell padding
+    ]) {
+      const panel = computeDialogPanel({
+        width: w,
+        height: 40,
+        totalRows: 100,
+        withDetail: true,
+        bodyRows: h,
+      });
+      // Search line + list never exceed the frame's row budget.
+      expect(1 + panel.visibleRows).toBeLessThanOrEqual(h);
+      // Every column stays within the content width.
+      expect(panel.listWidth + panel.detailGap + panel.detailWidth).toBeLessThanOrEqual(w);
+    }
+  });
+
+  it("hides the detail column on a frame too narrow to hold both", () => {
+    const narrow = computeDialogPanel({
+      width: 52,
+      height: 40,
+      totalRows: 40,
+      withDetail: true,
+      bodyRows: 20,
+    });
+    expect(narrow.showDetail).toBe(false);
+    expect(narrow.detailWidth).toBe(0);
+    expect(narrow.listWidth).toBe(narrow.innerWidth);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Sweep: the window always contains the selection
 // ---------------------------------------------------------------------------
 

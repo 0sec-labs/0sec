@@ -10,9 +10,13 @@
  * A turn started against a dark provider dies with zero tokens and a message
  * about a key nobody knew they needed.
  *
- * This screen is the replacement, and it mirrors `settings-screen.tsx` in
- * shape: the grouped list on the left, the highlighted model's detail on the
- * right, stacked when the terminal is too narrow to hold both.
+ * This screen is the replacement, and it is now a projection of the one shared
+ * picker body, `DialogSelectBody`: the grouped, windowed list on the left and
+ * the highlighted model's detail on the right, driven inline (no scrim, no
+ * floating panel) inside the console shell. The same body serves the modal
+ * `DialogSelect` overlay and the settings screen; this file supplies only the
+ * domain — which models exist, how they group, what their detail says — and its
+ * own keyboard.
  *
  * Three properties are load-bearing:
  *
@@ -24,12 +28,12 @@
  *    without this file changing.
  *
  * 2. **This component does no arithmetic.** Every width, height, row count and
- *    window boundary comes off `model-layout.ts`, where it is swept across
- *    widths 0..200 and heights 0..80 by a test. The reason is in
- *    `PRIMITIVES.md`: Yoga shrinks siblings rather than clipping them, so a
- *    row that claims one cell too many paints two strings on top of each
- *    other, and a bordered box one row short of its content paints its own
- *    border through that content.
+ *    window boundary comes off `dialog-select-layout.ts` via
+ *    `computeDialogPanel`, where it is swept across widths and heights by a
+ *    test. The reason is in `PRIMITIVES.md`: Yoga shrinks siblings rather than
+ *    clipping them, so a row that claims one cell too many paints two strings
+ *    on top of each other, and a bordered box one row short of its content
+ *    paints its own border through that content.
  *
  * 3. **Credential state is reported per provider, never per model.** A
  *    previous attempt annotated each row "no credentials" using the provider
@@ -40,40 +44,41 @@
  *    export). Those disagree — an OpenAI-named model can in fact be served by
  *    the ChatGPT/Codex backend — so a per-row verdict flags working models as
  *    broken. What this screen states is what it can verify: which providers
- *    hold credentials, on the group headings, in the status line and in the
- *    detail pane. The operator judges.
+ *    hold credentials, in the status line and in the detail pane. The operator
+ *    judges.
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
 import { useTheme, type Theme } from "./theme-context.js";
 import { Cells } from "./primitives.js";
+import { DialogSelectBody, type DialogItem } from "./dialog-select.js";
+import {
+  clampDialogSelection,
+  computeDialogPanel,
+  moveDialogSelection,
+} from "./dialog-select-layout.js";
 import {
   buildModelRows,
-  clampSelection,
   clipModelDetailLines,
-  computeModelLayout,
-  computeModelWindow,
   configuredProviderLabels,
-  credentialLabel,
   credentialSummary,
-  indexOfModel,
   isFilterKey,
   modelDetailLines,
   modelFooterHint,
-  modelListTitle,
-  moveSelection,
+  shellChromeRows,
   type ModelDetailTone,
   type ModelMode,
-  type ModelPane,
-  type ProviderCredential,
+  type ModelRow,
 } from "./model-layout.js";
 import { buildModelCatalog } from "./model-catalog.js";
 import { providerStates } from "./provider-status.js";
 
 /** How many rows page-up and page-down move. */
 const PAGE_STEP = 5;
+/** The status line under the list always states which providers are lit. */
+const STATUS_ROWS = 1;
 
 export interface ModelFrameInput {
   /** The screen body, already sized to the rows the frame left it. */
@@ -126,71 +131,6 @@ function toneColor(theme: Theme, tone: ModelDetailTone): string | undefined {
   }
 }
 
-function credentialColor(theme: Theme, credential: ProviderCredential): string {
-  switch (credential) {
-    case "ready":
-      return theme.SUCCESS;
-    case "missing":
-      return theme.WARNING;
-    default:
-      return theme.MUTED;
-  }
-}
-
-/**
- * A pane that states its own height.
- *
- * `height` includes the borders, and `flexShrink={0}` stops the column
- * squeezing the box behind its content's back — `width="100%"` would not do
- * it, because `@opentui/core` only clears `flexShrink` for an explicit
- * *numeric* width or height and a percentage string is not a number. When the
- * layout could not find room for the pane it reports zero and nothing renders
- * at all, which is the correct degradation: a missing pane is missing
- * information, a pane one row short of its content is a frame that looks like
- * a crash.
- */
-function Pane({
-  pane,
-  bordered,
-  title,
-  titleFg,
-  children,
-}: {
-  pane: ModelPane;
-  bordered: boolean;
-  title: string;
-  titleFg: string;
-  children: React.ReactNode;
-}) {
-  const theme = useTheme();
-  if (pane.width <= 0 || pane.height <= 0) return null;
-  // `hasTitle` is the layout's decision, not the caller's: the row it costs
-  // was either budgeted for or it was not, and rendering a title the budget
-  // did not include is exactly how a box grows one row past its own border.
-  const titleRow = pane.hasTitle ? (
-    <Cells width={pane.innerWidth} fg={titleFg}>
-      {title}
-    </Cells>
-  ) : null;
-  return (
-    <box
-      flexDirection="column"
-      width={pane.width}
-      height={pane.height}
-      flexShrink={0}
-      flexGrow={0}
-      minWidth={0}
-      border={bordered || undefined}
-      borderColor={bordered ? theme.BORDER : undefined}
-      backgroundColor={bordered ? theme.PANEL : undefined}
-      paddingX={bordered ? 1 : undefined}
-    >
-      {titleRow}
-      {children}
-    </box>
-  );
-}
-
 export function ModelScreen({
   frame,
   currentModel,
@@ -204,7 +144,6 @@ export function ModelScreen({
 
   const [filter, setFilter] = useState("");
   const [filtering, setFiltering] = useState(false);
-  const [anchor, setAnchor] = useState(0);
 
   // Read once per mount. Credentials are process-level and cannot change
   // under a screen that has no way to set them; re-deriving them on every
@@ -213,62 +152,90 @@ export function ModelScreen({
   const configured = useMemo(() => configuredProviderLabels(states), [states]);
   const catalog = useMemo(() => buildModelCatalog(currentModel), [currentModel]);
 
-  const rows = useMemo(
+  // `buildModelRows` does all the domain work — grouping by provider, credential
+  // lookup, credential-band ordering, floating the active model first, and the
+  // AND-over-terms filter. The screen keeps only its selectable model rows and
+  // projects them onto `DialogItem`s: the provider label is the category (so the
+  // shared body draws a heading per provider), the price is the right-aligned
+  // meta, and the running model carries the current-value dot.
+  const modelRows = useMemo(
     () => buildModelRows({ catalog, states, filter, activeModel: currentModel }),
     [catalog, states, filter, currentModel],
   );
+  const items = useMemo<DialogItem[]>(
+    () =>
+      modelRows
+        .filter((row): row is Extract<ModelRow, { kind: "model" }> => row.kind === "model")
+        .map((row) => ({
+          id: row.model.id,
+          label: row.model.id,
+          meta: row.model.price,
+          category: row.group.label,
+          current: row.active,
+        })),
+    [modelRows],
+  );
+  // id -> ModelRow, so the detail renderer can reach the full provider/credential
+  // facts the flat `DialogItem` does not carry.
+  const rowById = useMemo(() => {
+    const map = new Map<string, ModelRow>();
+    for (const row of modelRows) if (row.kind === "model") map.set(row.model.id, row);
+    return map;
+  }, [modelRows]);
+  // Display rows (headings interleaved) drive the panel's scroll/height math.
+  const totalRows = useMemo(() => {
+    let count = 0;
+    let group = "";
+    for (const item of items) {
+      if (item.category && item.category !== group) {
+        group = item.category;
+        count += 1;
+      }
+      count += 1;
+    }
+    return count;
+  }, [items]);
 
-  // The screen opens on the running model rather than on row zero: the most
-  // common reason to open it is to confirm or step off what is already set.
-  const [selected, setSelected] = useState(() => {
-    const rowsAtMount = buildModelRows({ catalog, states, activeModel: currentModel });
-    const at = indexOfModel(rowsAtMount, currentModel);
-    return at >= 0 ? at : 0;
+  // Open on the running model rather than on row zero: the most common reason to
+  // open the screen is to confirm or step off what is already set. The stored
+  // index then catches up as the operator moves or filters.
+  const [selected, setSelected] = useState(() =>
+    Math.max(0, items.findIndex((item) => item.current)),
+  );
+  // The highlighted row can vanish from under the cursor as the filter narrows,
+  // so the rendered cursor is always the clamped one.
+  const cursor = clampDialogSelection(items, selected);
+  const activeItem = cursor >= 0 ? items[cursor] : undefined;
+
+  const contentWidth = Math.max(0, width - 4);
+  const bodyRows = Math.max(0, height - shellChromeRows(width) - STATUS_ROWS);
+  const panel = computeDialogPanel({
+    width: contentWidth,
+    height,
+    size: "large",
+    totalRows,
+    withDetail: true,
+    bodyRows,
   });
-
-  // The highlighted row can vanish from under the cursor between keystrokes as
-  // the filter narrows, so the rendered cursor is always the clamped one and
-  // the stored index catches up afterwards.
-  const cursor = clampSelection(rows, selected);
-  const activeRow = cursor >= 0 ? rows[cursor] : undefined;
-
-  const layout = computeModelLayout({ width, height, noticeRows: 1 });
-  const window = computeModelWindow({
-    rows,
-    selected: cursor,
-    visible: layout.visibleRows,
-    anchor,
-  });
-
-  useEffect(() => {
-    if (window.start !== anchor) setAnchor(window.start);
-  }, [window.start, anchor]);
-  useEffect(() => {
-    if (cursor >= 0 && cursor !== selected) setSelected(cursor);
-  }, [cursor, selected]);
 
   const mode: ModelMode = filtering ? "filter" : "browse";
-
-  // The status row is unconditional, and it carries the one statement of fact
-  // this screen can always make. It matters most for the operator whose only
-  // credential is ChatGPT Codex: the catalogue has no chatgpt-codex models to
-  // group under, so every heading reads "no credentials" and without this line
-  // that would read as "nothing here works".
-  const statusText = filtering
-    ? `filter: ${filter}_`
-    : filter
-      ? `filter: ${filter} · ${credentialSummary(states)}`
-      : credentialSummary(states);
+  // The always-on status line carries the one statement this screen can always
+  // make. It matters most for the operator whose only credential is ChatGPT
+  // Codex: the catalogue has no chatgpt-codex models to group under, so no
+  // heading names them, and without this line that reads as "nothing works".
+  const statusText = credentialSummary(states);
 
   const move = (delta: number) => {
-    const next = moveSelection(rows, cursor, delta);
-    if (next >= 0) setSelected(next);
+    if (items.length === 0) return;
+    const dir: 1 | -1 = delta >= 0 ? 1 : -1;
+    let next = cursor < 0 ? 0 : cursor;
+    for (let i = 0; i < Math.abs(delta); i += 1) next = moveDialogSelection(items, next, dir);
+    setSelected(next);
   };
 
   const setQuery = (next: string) => {
     setFilter(next);
     setSelected(0);
-    setAnchor(0);
   };
 
   useKeyboard((key) => {
@@ -279,26 +246,14 @@ export function ModelScreen({
       return;
     }
 
-    if (key.name === "up") {
-      move(-1);
-      return;
-    }
-    if (key.name === "down") {
-      move(1);
-      return;
-    }
-    if (key.name === "pageup") {
-      move(-PAGE_STEP);
-      return;
-    }
-    if (key.name === "pagedown") {
-      move(PAGE_STEP);
-      return;
-    }
+    if (key.name === "up") return move(-1);
+    if (key.name === "down") return move(1);
+    if (key.name === "pageup") return move(-PAGE_STEP);
+    if (key.name === "pagedown") return move(PAGE_STEP);
     if (key.name === "return") {
       // Enter selects from either mode: while filtering, the whole point of
       // typing four characters is to reach one row and take it.
-      if (activeRow?.kind === "model") onSelect(activeRow.model.id);
+      if (activeItem) onSelect(activeItem.id);
       return;
     }
 
@@ -319,8 +274,6 @@ export function ModelScreen({
     // ── browse mode ──
     if (key.name === "escape") {
       // Esc unwinds one step at a time: clear the filter first, leave second.
-      // Dropping straight out of a filtered screen loses the filter and the
-      // screen in one keystroke, and only one of those was asked for.
       if (filter) {
         setQuery("");
         return;
@@ -346,121 +299,42 @@ export function ModelScreen({
     }
   });
 
-  const row = layout.row;
-  const heading = layout.heading;
-  const visible = rows.slice(window.start, window.end);
-
-  const listBody = visible.map((entry, offset) => {
-    const index = window.start + offset;
-    if (entry.kind === "heading") {
-      return (
-        <box
-          key={`heading-${entry.group.id}`}
-          flexDirection="row"
-          width={heading.width}
-          flexShrink={0}
-          minWidth={0}
-        >
-          <Cells width={heading.labelWidth} fg={theme.PRIMARY}>
-            {entry.group.label.toUpperCase()}
-          </Cells>
-          <Cells width={heading.gap}>{""}</Cells>
-          <Cells
-            width={heading.stateWidth}
-            align="right"
-            fg={credentialColor(theme, entry.group.credential)}
-          >
-            {credentialLabel(entry.group.credential)}
-          </Cells>
-        </box>
-      );
-    }
-
-    const selectedRow = index === cursor;
-    const background = selectedRow ? theme.PANEL_ALT : undefined;
-    return (
-      <box
-        key={`model-${entry.model.id}`}
-        flexDirection="row"
-        width={row.width}
-        flexShrink={0}
-        minWidth={0}
-      >
-        <Cells width={row.markerWidth} fg={theme.PRIMARY} bg={background}>
-          {selectedRow ? ">" : ""}
-        </Cells>
-        <Cells width={row.markerGap} bg={background}>
-          {""}
-        </Cells>
-        <Cells width={row.activeWidth} fg={theme.ACCENT} bg={background}>
-          {entry.active ? "*" : ""}
-        </Cells>
-        <Cells width={row.activeGap} bg={background}>
-          {""}
-        </Cells>
-        <Cells
-          width={row.labelWidth}
-          fg={entry.active ? theme.ACCENT : selectedRow ? theme.TEXT : theme.MUTED}
-          bg={background}
-        >
-          {entry.model.id}
-        </Cells>
-        <Cells width={row.priceGap} bg={background}>
-          {""}
-        </Cells>
-        <Cells width={row.priceWidth} align="right" fg={theme.MUTED} bg={background}>
-          {entry.model.price}
-        </Cells>
-      </box>
+  // The detail pane shows the highlighted model's full provider/credential
+  // story, fitted to the exact box the shared body hands it.
+  const renderDetail = (item: DialogItem, pane: { width: number; height: number }) => {
+    const row = rowById.get(item.id);
+    const compact = pane.height < 12;
+    const lines = clipModelDetailLines(
+      modelDetailLines({ row, configured, compact }, pane.width),
+      pane.height,
+      pane.width,
     );
-  });
-
-  const detailBody = clipModelDetailLines(
-    modelDetailLines(
-      { row: activeRow, configured, compact: layout.detailCompact },
-      layout.detail.innerWidth,
-    ),
-    layout.detail.bodyRows,
-    layout.detail.innerWidth,
-  ).map((line, index) => (
-    <Cells key={`detail-${index}`} width={layout.detail.innerWidth} fg={toneColor(theme, line.tone)}>
-      {line.text}
-    </Cells>
-  ));
+    return (
+      <>
+        {lines.map((line, index) => (
+          <Cells key={`detail-${index}`} width={pane.width} fg={toneColor(theme, line.tone)}>
+            {line.text}
+          </Cells>
+        ))}
+      </>
+    );
+  };
 
   const body = (
     <box flexDirection="column" width="100%" flexGrow={1} minWidth={0}>
-      <box
-        flexDirection={layout.stacked ? "column" : "row"}
-        gap={layout.paneGap}
-        flexShrink={0}
-        minWidth={0}
-      >
-        <Pane
-          pane={layout.list}
-          bordered={layout.bordered}
-          title={modelListTitle(window)}
-          titleFg={theme.MUTED}
-        >
-          {rows.length === 0 ? (
-            <Cells width={row.width} fg={theme.MUTED}>
-              no models match this filter
-            </Cells>
-          ) : (
-            listBody
-          )}
-        </Pane>
-        <Pane
-          pane={layout.detail}
-          bordered={layout.bordered}
-          title={activeRow ? "MODEL" : "MODEL -"}
-          titleFg={theme.MUTED}
-        >
-          {detailBody}
-        </Pane>
-      </box>
+      <DialogSelectBody
+        items={items}
+        cursor={cursor}
+        panel={panel}
+        query={filter}
+        placeholder="type to filter models"
+        gutter
+        isCurrent={(item) => item.current === true}
+        renderDetail={renderDetail}
+        emptyText="no models match this filter"
+      />
       <box flexDirection="row" width="100%" flexShrink={0} minWidth={0}>
-        <Cells width={layout.contentWidth} fg={theme.MUTED}>
+        <Cells width={contentWidth} fg={theme.MUTED}>
           {statusText}
         </Cells>
       </box>
