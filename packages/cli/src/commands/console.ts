@@ -26,9 +26,67 @@ interface ConsoleOptions {
   scope?: string;
   model?: string;
   role?: string;
+  mode?: string;
+  yolo?: boolean;
   autonomy?: string;
   maxToolCalls?: string;
   allowScanners?: boolean;
+}
+
+/** Launch autonomy modes accepted by `--mode` / `--autonomy`. */
+export const CONSOLE_AUTONOMY_MODES = ["standard", "recon", "copilot", "yolo"] as const;
+
+function isConsoleAutonomyMode(value: string): value is ConsoleAutonomyMode {
+  return (CONSOLE_AUTONOMY_MODES as readonly string[]).includes(value);
+}
+
+export type ConsoleAutonomyResolution =
+  | { ok: true; mode: ConsoleAutonomyMode }
+  | { ok: false; error: string };
+
+/**
+ * Resolve the console's launch autonomy mode from the three surfaces that set
+ * it, so the founder's discoverability gap ("how do I start in YOLO?") is
+ * covered without changing what any mode permits:
+ *   --mode <mode>     canonical, discoverable option
+ *   --yolo            convenience shortcut, equivalent to --mode yolo
+ *   --autonomy <mode> retained alias (documented in docs/commands.md)
+ *
+ * Precedence: --mode > --yolo > --autonomy > default "standard". A conflicting
+ * `--mode <x> --yolo` (x !== yolo) is a clear error rather than a silent pick.
+ * This only chooses the initial mode; the target/scope anchor and SSRF rail are
+ * unchanged, and YOLO still requires a configured scope (enforced downstream).
+ */
+export function resolveConsoleAutonomyMode(opts: {
+  mode?: string;
+  yolo?: boolean;
+  autonomy?: string;
+}): ConsoleAutonomyResolution {
+  const choices = CONSOLE_AUTONOMY_MODES.join(", ");
+
+  if (opts.mode !== undefined) {
+    if (!isConsoleAutonomyMode(opts.mode)) {
+      return { ok: false, error: `Invalid --mode '${opts.mode}': expected one of ${choices}.` };
+    }
+    if (opts.yolo && opts.mode !== "yolo") {
+      return {
+        ok: false,
+        error: `Conflicting flags: --yolo with --mode ${opts.mode}. Pass only one (use --mode yolo, or drop --yolo).`,
+      };
+    }
+    return { ok: true, mode: opts.mode };
+  }
+
+  if (opts.yolo) return { ok: true, mode: "yolo" };
+
+  if (opts.autonomy !== undefined) {
+    if (!isConsoleAutonomyMode(opts.autonomy)) {
+      return { ok: false, error: `Invalid --autonomy '${opts.autonomy}': expected one of ${choices}.` };
+    }
+    return { ok: true, mode: opts.autonomy };
+  }
+
+  return { ok: true, mode: "standard" };
 }
 
 /**
@@ -51,7 +109,9 @@ export function registerConsoleCommand(program: Command): void {
     .option("--scope <file>", "Initial authorization scope; required for the Node fallback (optional otherwise)")
     .option("--model <id>", "Override the LLM model id (else provider default)")
     .option("--role <role>", "Tool set to expose: audit|review|discovery|attack|verify (default audit = every tool)")
-    .option("--autonomy <mode>", "Execution policy: standard|copilot|yolo|recon (default standard)", "standard")
+    .option("--mode <mode>", "Autonomy mode to start in: standard|recon|copilot|yolo (default standard). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab.")
+    .option("--yolo", "Shortcut for --mode yolo — start the console in YOLO autonomy (no per-action prompts; still target-anchored and SSRF-railed).")
+    .option("--autonomy <mode>", "Alias of --mode (standard|copilot|yolo|recon); --mode/--yolo take precedence.", "standard")
     .option("--max-tool-calls <n>", "Safety cap on tool-call rounds per operator message", "20")
     .option("--allow-scanners", "Expose generic-scanner tool wrappers (sqlmap/nikto/…); default off")
     .action(async (opts: ConsoleOptions) => {
@@ -78,15 +138,17 @@ export function registerConsoleCommand(program: Command): void {
         role = opts.role as ConsoleRole;
       }
 
-      let autonomyMode: ConsoleAutonomyMode = "standard";
-      if (opts.autonomy !== undefined) {
-        if (opts.autonomy !== "standard" && opts.autonomy !== "copilot" && opts.autonomy !== "yolo" && opts.autonomy !== "recon") {
-          console.error(chalk.red(`Invalid --autonomy '${opts.autonomy}': expected standard, copilot, yolo, or recon.`));
-          process.exitCode = 2;
-          return;
-        }
-        autonomyMode = opts.autonomy;
+      const autonomyResolution = resolveConsoleAutonomyMode({
+        mode: opts.mode,
+        yolo: opts.yolo,
+        autonomy: opts.autonomy,
+      });
+      if (!autonomyResolution.ok) {
+        console.error(chalk.red(autonomyResolution.error));
+        process.exitCode = 2;
+        return;
       }
+      const autonomyMode: ConsoleAutonomyMode = autonomyResolution.mode;
 
       let scope;
       if (opts.scope) {
