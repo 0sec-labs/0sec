@@ -6161,7 +6161,20 @@ export class ToolExecutor {
     }
   }
 
-  private runCommand(args: Record<string, unknown>): ToolResult {
+  private async runCommand(args: Record<string, unknown>): Promise<ToolResult> {
+    // YOLO is the operator's explicit "run anything" mode. Route run_command
+    // through the SAME full-shell path as the `bash` tool — shell operators
+    // (&&, ;, |), package-manager exec, absolute paths, and everything the
+    // scoped-audit allow-list below refuses. The tokenized allow-list exists
+    // for the read-only SOURCE-AUDIT modes (auditing someone's codebase with
+    // grep/find), NOT for an operator who has deliberately opted into full
+    // autonomy on their own machine. The bash path still runs network egress
+    // through the scope guards / auth injection, so the SSRF/network rails are
+    // unchanged; only the command-SYNTAX restrictions are lifted here.
+    if (this.ctx.autonomyMode === "yolo") {
+      return this.shellExec(args);
+    }
+
     if (!this.ctx.scopePath) {
       return {
         success: false,

@@ -2111,6 +2111,46 @@ describe("containsUnquotedShellChars", () => {
   });
 });
 
+// ── run_command: YOLO lifts the scoped-audit command policy ─────────
+//
+// The tokenized allow-list (no shell operators, no PM exec, scoped paths) is
+// for the read-only SOURCE-AUDIT modes. In YOLO the operator has opted into
+// full autonomy on their own machine, so run_command runs full shell via the
+// same path as the `bash` tool. These pin that the syntax gate is lifted ONLY
+// under yolo and stays enforced otherwise.
+describe("run_command autonomy gating", () => {
+  const scopedCtx = (autonomyMode?: "yolo" | "standard"): ToolContext =>
+    ({
+      target: "https://target.test",
+      scanId: "run-command-yolo-test",
+      findings: [],
+      attackResults: [],
+      targetInfo: {},
+      scopePath: mkdtempSync(join(tmpdir(), "0sec-runcmd-")),
+      ...(autonomyMode ? { autonomyMode } : {}),
+    }) as ToolContext;
+
+  it("blocks unquoted shell operators outside yolo (scoped-audit policy)", async () => {
+    const exec = new ToolExecutor(scopedCtx("standard"), null);
+    const r = await exec.execute({ name: "run_command", arguments: { command: "echo a && echo b" } });
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/Shell operators/i);
+  });
+
+  it("runs full shell (&&, pipes) in yolo via the bash path", async () => {
+    const prev = process.env["0SEC_REQUIRE_SCOPE"];
+    delete process.env["0SEC_REQUIRE_SCOPE"];
+    try {
+      const exec = new ToolExecutor(scopedCtx("yolo"), null);
+      const r = await exec.execute({ name: "run_command", arguments: { command: "echo a && echo b | cat" } });
+      expect(r.success).toBe(true);
+      expect(String((r as { output: unknown }).output)).toMatch(/a[\s\S]*b/);
+    } finally {
+      if (prev !== undefined) process.env["0SEC_REQUIRE_SCOPE"] = prev;
+    }
+  });
+});
+
 // ── splitOnTopLevelPipes ───────────────────────────────────────────
 //
 // The naive `command.split("|")` corrupts any `|` that lives inside a
