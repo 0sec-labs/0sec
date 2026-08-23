@@ -300,7 +300,7 @@ describe("contrast sweep", () => {
       slate: 5.16,
       paper: 5.16,
       "mono-dim": 4.5,
-      swiss: 5.63,
+      swiss: 5.74,
     });
   });
 });

@@ -469,26 +469,29 @@ const MONO_DIM: Theme = {
 };
 
 /**
- * `Swiss` — a Swiss-flag palette for the Swiss Applied AI Cybersecurity
- * Research Lab: Swiss red on crisp white over a near-black tech ground.
+ * `Swiss` — a red-forward Swiss-flag palette for the Swiss Applied AI
+ * Cybersecurity Research Lab: Swiss red framing crisp white over a near-black
+ * red-tinted ground.
  *
- * The flag's three notes are all here — a deep near-black `CANVAS`/`PANEL`
- * (the cybersecurity ground), a crisp near-white `TEXT`, and Swiss red as the
- * dominant highlight: `PRIMARY`, `ACCENT` and `BRAND` are all red, so the whole
- * console reads red-accented rather than the red living only in the logo slash.
- * The flag's `#D52B1E` is too dark to clear 4.5:1 on a near-black surface, so
- * the red is tuned up to `#F26257` — unmistakably the same red, now AA-legible
- * as text on every surface. `ERROR` shares that red (red *is* the error colour
- * here); `SUCCESS`/`WARNING` are pulled apart from it by luminance so the
- * semantic trio still survives colour blindness, and `INFO` is the one cool hue.
+ * Red is structural here, not just an accent. `BORDER` is a mid Swiss red, so
+ * every bordered box — frame, cards, panels, sidebars — reads red at rest; the
+ * `CANVAS`/`PANEL`/surface grounds are near-black but tinted red rather than
+ * neutral grey, and even `MUTED` (secondary text) is a dusty rose red. `TEXT`
+ * stays a crisp near-white, and the highlight — `PRIMARY`, `ACCENT`, `BRAND`
+ * and `ERROR` — is strong Swiss red. The flag's `#D52B1E` is too dark to clear
+ * 4.5:1 on a near-black surface, so the highlight red is tuned up to `#F26257`
+ * — unmistakably the same red, now AA-legible as text on every surface. `ERROR`
+ * shares that red (red *is* the error colour here); `SUCCESS`/`WARNING` are
+ * pulled apart from it by luminance so the semantic trio still survives colour
+ * blindness, and `INFO` is the one cool hue.
  */
 const SWISS: Theme = {
-  CANVAS: "#0B0A0A",
-  PANEL: "#151011",
-  PANEL_ALT: "#1E1618",
-  BORDER: "#8A6F72",
-  TEXT: "#F7F4F4",
-  MUTED: "#B39EA1",
+  CANVAS: "#120809",
+  PANEL: "#1C0C0E",
+  PANEL_ALT: "#260F12",
+  BORDER: "#D9534C",
+  TEXT: "#FBF3F3",
+  MUTED: "#D69B9E",
   PRIMARY: "#F26257",
   ACCENT: "#F58379",
   BRAND: "#F26257",
@@ -496,10 +499,10 @@ const SWISS: Theme = {
   WARNING: "#E0A83C",
   ERROR: "#F26257",
   INFO: "#8FB4E0",
-  background: "#0B0A0A",
-  surface: "#151011",
-  surfaceAlt: "#1E1618",
-  overlay: "#271D1F",
+  background: "#120809",
+  surface: "#1C0C0E",
+  surfaceAlt: "#260F12",
+  overlay: "#301418",
 };
 
 /* ----------------------------------------------------------------- registry */
