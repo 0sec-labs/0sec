@@ -339,6 +339,43 @@ export function listSessions(
   return out;
 }
 
+/** Boundaries for {@link relativeAge}, kept named so the thresholds are legible. */
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+const DAYS_PER_WEEK = 7;
+
+/**
+ * A compact "last used" age — `12s`, `5m`, `3h`, `2d`, `6w` — for the resume
+ * picker to render beside a row. Pure by contract: `now` is a parameter, never
+ * an ambient `Date.now()`, so a listing renders identically under test and the
+ * whole store stays deterministic.
+ *
+ * The thresholds and the clock-skew clamp mirror the transcript's own
+ * `relativeAge` (chat/TranscriptEntry.tsx) so the two age strings on screen read
+ * the same, and this one simply carries the ladder further: seconds → minutes →
+ * hours → days → weeks, since a resumable engagement can be far older than a
+ * message inside the current turn. Weeks is the top rung on purpose — a resume
+ * list that has drifted into months is a pruning problem, not a formatting one.
+ *
+ * A non-positive `savedAt` returns "" rather than a fabricated age: it is the
+ * store's "unorderable / no timestamp" sentinel (see `toMeta`), and the caller
+ * omits the separator entirely rather than printing a dangling "· ". A future
+ * `savedAt` (clock skew, a restored backup) clamps to `0s`, never a negative.
+ */
+export function relativeAge(savedAt: number, now: number): string {
+  if (!Number.isFinite(savedAt) || savedAt <= 0) return "";
+  const seconds = Math.max(0, Math.floor((now - savedAt) / 1000));
+  if (seconds < SECONDS_PER_MINUTE) return `${seconds}s`;
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  if (minutes < MINUTES_PER_HOUR) return `${minutes}m`;
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  if (hours < HOURS_PER_DAY) return `${hours}h`;
+  const days = Math.floor(hours / HOURS_PER_DAY);
+  if (days < DAYS_PER_WEEK) return `${days}d`;
+  return `${Math.floor(days / DAYS_PER_WEEK)}w`;
+}
+
 /**
  * Loads one transcript, or null. Never throws: a nonexistent id, a rejected id,
  * an unreadable file and a malformed one are all the same answer to the caller

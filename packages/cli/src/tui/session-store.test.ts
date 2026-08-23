@@ -11,6 +11,7 @@ import {
   listSessions,
   loadSession,
   pruneSessions,
+  relativeAge,
   saveSession,
   sessionsDir,
   type StoredSession,
@@ -372,6 +373,51 @@ describe("pruneSessions", () => {
 
   it("returns 0 on an empty store instead of throwing", () => {
     expect(pruneSessions(makeHome(), { keep: 1 })).toBe(0);
+  });
+});
+
+describe("relativeAge", () => {
+  const NOW = 10_000_000_000; // a fixed, arbitrary "now" so every case is exact.
+  const S = 1_000;
+  const M = 60 * S;
+  const H = 60 * M;
+  const D = 24 * H;
+  const W = 7 * D;
+
+  it.each([
+    ["seconds just after saving", NOW - 0, "0s"],
+    ["seconds", NOW - 5 * S, "5s"],
+    ["the last second before a minute", NOW - 59 * S, "59s"],
+    ["the minute boundary", NOW - 60 * S, "1m"],
+    ["minutes", NOW - 45 * M, "45m"],
+    ["the last minute before an hour", NOW - 59 * M, "59m"],
+    ["the hour boundary", NOW - 60 * M, "1h"],
+    ["hours", NOW - 5 * H, "5h"],
+    ["the last hour before a day", NOW - 23 * H, "23h"],
+    ["the day boundary", NOW - 24 * H, "1d"],
+    ["days", NOW - 3 * D, "3d"],
+    ["the last day before a week", NOW - 6 * D, "6d"],
+    ["the week boundary", NOW - 7 * D, "1w"],
+    ["weeks", NOW - 5 * W, "5w"],
+  ])("formats %s as %s", (_label, savedAt, expected) => {
+    expect(relativeAge(savedAt, NOW)).toBe(expected);
+  });
+
+  it("clamps a future savedAt (clock skew) to 0s rather than going negative", () => {
+    expect(relativeAge(NOW + 10 * S, NOW)).toBe("0s");
+  });
+
+  it("returns '' for the unorderable sentinel and non-finite input", () => {
+    // savedAt 0 is `toMeta`'s fallback for a file with no usable timestamp; the
+    // picker omits the separator rather than printing a fabricated age.
+    expect(relativeAge(0, NOW)).toBe("");
+    expect(relativeAge(-1, NOW)).toBe("");
+    expect(relativeAge(Number.NaN, NOW)).toBe("");
+    expect(relativeAge(Number.POSITIVE_INFINITY, NOW)).toBe("");
+  });
+
+  it("is pure: the same inputs always yield the same string", () => {
+    expect(relativeAge(NOW - 3 * H, NOW)).toBe(relativeAge(NOW - 3 * H, NOW));
   });
 });
 

@@ -72,6 +72,7 @@ import {
   listSessions,
   loadSession,
   pruneSessions,
+  relativeAge,
   saveSession,
   type StoredSessionMeta,
 } from "./session-store.js";
@@ -1705,8 +1706,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         // Every project, not just this directory: an operator moving between
         // checkouts still wants the session they were in.
         const here = process.cwd();
+        // listSessions already returns newest-first (by savedAt). Keep that
+        // order — the operator asked for the most recent sessions at the top —
+        // rather than re-grouping by cwd, which buried a just-used session under
+        // older ones from this directory. "this project" stays a per-row marker.
         const saved = listSessions(undefined, { limit: 50 });
-        saved.sort((a, b) => Number(b.cwd === here) - Number(a.cwd === here));
+        const now = Date.now();
         if (saved.length === 0) {
           appendEntry({
             kind: "notice",
@@ -1720,13 +1725,18 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           appendEntry({ kind: "notice", text: "wait for the active turn before resuming", turn: turn.current });
           return true;
         }
-        const items: SelectorItem[] = saved.map((meta) => ({
-          id: meta.id,
-          label: meta.preview || "(no prompt recorded)",
-          meta: `${meta.messageCount} msg${meta.messageCount === 1 ? "" : "s"}${meta.model ? ` · ${meta.model}` : ""}`,
-          detail: `${meta.cwd === here ? "this project" : meta.cwd} · ${meta.target ? `target ${meta.target} · ` : ""}saved ${new Date(meta.savedAt).toISOString()}`,
-          current: session?.scanId === meta.id,
-        }));
+        const items: SelectorItem[] = saved.map((meta) => {
+          const age = relativeAge(meta.savedAt, now);
+          return {
+            id: meta.id,
+            label: meta.preview || "(no prompt recorded)",
+            // Lead with "last used" (relative) so the newest reads at a glance,
+            // then message count and model. Age is omitted when unknown.
+            meta: `${age ? `${age} · ` : ""}${meta.messageCount} msg${meta.messageCount === 1 ? "" : "s"}${meta.model ? ` · ${meta.model}` : ""}`,
+            detail: `${meta.cwd === here ? "this project" : meta.cwd} · ${meta.target ? `target ${meta.target} · ` : ""}saved ${new Date(meta.savedAt).toISOString()}`,
+            current: session?.scanId === meta.id,
+          };
+        });
         setPicker({
           state: createSelectorState("Resume a session", items),
           commit: (id) => {
