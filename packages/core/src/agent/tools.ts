@@ -149,6 +149,8 @@ import { eventBus } from "../events/bus.js";
 import type { SubagentProgressPayload } from "../events/bus.js";
 import { ToolHealthTracker } from "./tool-health.js";
 import type { ToolHealthRecordInput, ToolHealthSummary } from "./tool-health.js";
+import { TodoTracker, validateUpdateTodosArgs, buildTodosPayload } from "./todos.js";
+import type { TodoSnapshot } from "./todos.js";
 import {
   drainInbox,
   isValidPeerId,
@@ -459,6 +461,10 @@ const SCOPED_SOURCE_AUDIT_TOOLS: Record<string, true> = {
   save_finding: true,
   update_finding: true,
   done: true,
+  // Structured full-state plan (TodoWrite shape). Mutates only the run's plan
+  // tracker, authorizes nothing, grants no capability — safe inside the scoped
+  // source-audit trust boundary.
+  update_todos: true,
   // Explicitly opt-in; the handler confines the path, strips credentials, and
   // leaves dynamic target execution disabled unless 0verse itself is configured.
   analyze_binary: true,
@@ -2424,6 +2430,15 @@ export class ToolExecutor {
    */
   private _toolHealth: ToolHealthTracker;
 
+  /**
+   * Structured full-state plan tracker for `update_todos` / `write_todos`.
+   * Uses the shared tracker on the ToolContext when the caller wired one (so
+   * the run-level snapshot sees the same plan), else a private per-executor
+   * tracker so the tool always works. Either way, a plan CHANGE fans out on the
+   * event bus as `todos`.
+   */
+  private _todos: TodoTracker;
+
   constructor(
     ctx: ToolContext,
     db: osecDB | null = null,
@@ -2443,6 +2458,13 @@ export class ToolExecutor {
             ...(event.remedy ? { remedy: event.remedy } : {}),
             count: event.count,
           });
+        },
+      });
+    this._todos =
+      ctx.todos ??
+      new TodoTracker({
+        emit: (snap) => {
+          eventBus.emit("todos", buildTodosPayload(snap));
         },
       });
   }
@@ -2466,6 +2488,44 @@ export class ToolExecutor {
    */
   toolHealthSummary(): ToolHealthSummary {
     return this._toolHealth.summary();
+  }
+
+  /**
+   * `update_todos` / `write_todos` — REPLACE the entire task plan (TodoWrite
+   * shape). The raw payload is validated against `updateTodosArgsSchema` and a
+   * rejection is fed straight back as an `is_error` tool result so the model
+   * self-corrects (agent/CLAUDE.md §1). Only after validation does the tracker
+   * change; a change fans out on the bus as `todos`. It authorizes nothing and
+   * grants no capability — it records only the declared plan.
+   */
+  private updateTodos(args: Record<string, unknown>): ToolResult {
+    const validated = validateUpdateTodosArgs(args);
+    if (!validated.ok) {
+      return { success: false, output: null, error: validated.error };
+    }
+    const snap = this._todos.set(validated.todos);
+    return {
+      success: true,
+      output: {
+        message: `plan: ${snap.progress.total} tasks, ${snap.progress.done} done`,
+        // Echo the full plan back so the model's next decision sees the whole
+        // state it just declared, not just a confirmation.
+        todos: snap.todos,
+        groups: snap.groups.map((g) => ({
+          group: g.group,
+          done: g.done,
+          total: g.total,
+        })),
+        done: snap.progress.done,
+        total: snap.progress.total,
+        line: snap.summaryLine,
+      },
+    };
+  }
+
+  /** Current full-state plan snapshot recorded by this executor (for run end). */
+  todosSnapshot(): TodoSnapshot {
+    return this._todos.snapshot();
   }
 
   /** Check if playwright is installed (cached). */
@@ -7362,7 +7422,11 @@ export class ToolExecutor {
 // ── Helper: get tools for a specific agent role ──
 
 export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMode?: boolean; hasBrowser?: boolean; allowScanners?: boolean }): ToolDefinition[] {
-  const common = ["query_findings", "done"];
+  // `update_todos` (structured full-state plan) is offered to every role: it
+  // authorizes nothing and only records the model's declared plan. The
+  // `write_todos` alias stays registered/dispatchable but out of the advertised
+  // sets so only one name is offered (see allEnabledTools filter below).
+  const common = ["query_findings", "update_todos", "done"];
   const browserTools = opts?.hasBrowser ? ["browser"] : [];
   const webSearchTools = featureFlags.webSearch ? ["web_search"] : [];
   const ptyTools = featureFlags.ptySession ? ["pty_session"] : [];
@@ -7443,7 +7507,10 @@ export function getToolsForRole(role: string, opts?: { hasScope?: boolean; webMo
     // Phase-0 python_exec stays out unless pythonExec is on.
     && (featureFlags.pythonExec || name !== "python_exec")
     // 0verse execution is opt-in and path-confined by the executor.
-    && (featureFlags.zeroverse || !BINARY_TOOL_NAMES.includes(name as (typeof BINARY_TOOL_NAMES)[number])),
+    && (featureFlags.zeroverse || !BINARY_TOOL_NAMES.includes(name as (typeof BINARY_TOOL_NAMES)[number]))
+    // `write_todos` is a dispatchable ALIAS of `update_todos` — keep it out of
+    // the audit/review "everything" set so only one plan tool is advertised.
+    && name !== "write_todos",
   );
   const scopedSourceTools = Object.keys(SCOPED_SOURCE_AUDIT_TOOLS).filter((name) =>
     featureFlags.zeroverse || name !== "analyze_binary",

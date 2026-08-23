@@ -17,6 +17,27 @@ export type {
   ToolHealthSummary,
   ToolHealthTrackerOptions,
 } from "./tool-health.js";
+export {
+  TodoTracker,
+  validateUpdateTodosArgs,
+  updateTodosArgsSchema,
+  todoInputSchema,
+  buildTodosPayload,
+  MAX_TODOS,
+  MAX_CONTENT_LEN,
+  MAX_GROUP_LEN,
+} from "./todos.js";
+export type {
+  TodoItem,
+  TodoStatus,
+  TodoGroup,
+  TodoProgress,
+  TodoSnapshot,
+  TodoInput,
+  TodoTrackerOptions,
+  TodosEventPayload,
+  UpdateTodosValidation,
+} from "./todos.js";
 export { discoveryPrompt, attackPrompt, verifyPrompt, reportPrompt, sourceVerifyPrompt, researchPrompt, blindVerifyPrompt } from "./prompts.js";
 export { features } from "./features.js";
 export {

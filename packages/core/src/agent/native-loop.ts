@@ -20,6 +20,8 @@ import { WafDetector } from "../scope/waf-detect.js";
 import { ToolExecutor, getToolsForRole } from "./tools.js";
 import { ToolHealthTracker } from "./tool-health.js";
 import type { ToolHealthSummary } from "./tool-health.js";
+import { TodoTracker, buildTodosPayload } from "./todos.js";
+import type { TodoSnapshot } from "./todos.js";
 import { features } from "./features.js";
 import { LootLedger } from "./loot.js";
 import { TaskLedger } from "./task-ledger.js";
@@ -393,6 +395,14 @@ export interface NativeAgentState {
    * "N tool issues (missing: semgrep; …)". `total: 0` when nothing degraded.
    */
   toolHealth?: ToolHealthSummary;
+  /**
+   * Final structured full-state plan for this run (TodoWrite shape): the last
+   * plan the model declared via `update_todos`, with per-phase groups and
+   * overall done/total counts. Empty (`progress.total: 0`) when the model never
+   * declared a plan. Live updates fan out on the event bus as `todos`; this is
+   * the end-of-run snapshot attached to the returned state.
+   */
+  todos?: TodoSnapshot;
 }
 
 /**
@@ -536,6 +546,15 @@ export async function runNativeAgentLoop(
           ...(event.remedy ? { remedy: event.remedy } : {}),
           count: event.count,
         });
+      },
+    }),
+    // Structured full-state plan tracker (TodoWrite shape). One per run, shared
+    // across the scan so the end-of-run snapshot reflects the final plan; every
+    // plan CHANGE fans out on the bus as `todos` so the TUI repaints its live
+    // task tree. Additive and authority-free — records only the declared plan.
+    todos: new TodoTracker({
+      emit: (snap) => {
+        eventBus.emit("todos", buildTodosPayload(snap));
       },
     }),
   };
@@ -2392,6 +2411,36 @@ export async function runNativeAgentLoop(
           byCategory: toolHealth.byCategory,
           missing: toolHealth.missing,
           line: toolHealth.line,
+        },
+        timestamp: Date.now(),
+      });
+    }
+  } catch {
+    // Reporting is best-effort; never fail a completed run over it.
+  }
+
+  // Structured full-state plan (TodoWrite shape): attach the final snapshot to
+  // the returned state and log it once so the plan the model ended on is part
+  // of the run record. Non-blocking / fail-soft — a plan is working state, and
+  // never worth failing a completed run over.
+  try {
+    const todos = executor.todosSnapshot();
+    state.todos = todos;
+    if (todos.progress.total > 0 && db) {
+      db.logEvent({
+        scanId: config.scanId,
+        stage: "attack",
+        eventType: "todos_summary",
+        payload: {
+          done: todos.progress.done,
+          total: todos.progress.total,
+          line: todos.summaryLine,
+          revision: todos.revision,
+          groups: todos.groups.map((g) => ({
+            group: g.group,
+            done: g.done,
+            total: g.total,
+          })),
         },
         timestamp: Date.now(),
       });

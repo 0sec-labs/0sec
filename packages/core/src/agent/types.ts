@@ -11,6 +11,7 @@ import type { SessionEngine } from "./session.js";
 import type { WafDetector } from "../scope/waf-detect.js";
 import type { ScanCostLedger } from "./cost-ledger.js";
 import type { ToolHealthTracker } from "./tool-health.js";
+import type { TodoTracker } from "./todos.js";
 
 // ── Agent Roles ──
 
@@ -485,6 +486,16 @@ export interface ToolContext {
    * call.
    */
   toolHealth?: ToolHealthTracker;
+  /**
+   * Structured full-state plan tracker for the `update_todos` / `write_todos`
+   * tools (TodoWrite shape). When present, the handler REPLACES the plan on
+   * each write and the tracker fans a snapshot out on the event bus as `todos`
+   * so the TUI can repaint its live task tree. Absent for callers that don't
+   * care — the executor then creates its own private tracker so the tool always
+   * works; only the shared run-level snapshot is unavailable. It authorizes
+   * nothing and grants no capability: it records only the declared plan.
+   */
+  todos?: TodoTracker;
 }
 
 // ── Dispatch Mode (0sec#232) ──

@@ -563,6 +563,25 @@ export interface ToolHealthPayload {
   [k: string]: unknown;
 }
 
+/**
+ * A full-state plan snapshot from the `update_todos` tool (TodoWrite shape).
+ * Emitted once per CHANGE (not on idempotent re-writes) so the TUI can repaint
+ * its live task tree. `line` is the "Todos · done/total" header.
+ */
+export interface TodosPayload {
+  /** The complete plan at this revision, in declared order. */
+  todos: Array<{ id: string; content: string; status: string; group?: string }>;
+  /** Overall completed count. */
+  done: number;
+  /** Overall task count. */
+  total: number;
+  /** One-line header, e.g. "Todos · 1/3" ("" when the plan is empty). */
+  line: string;
+  /** Monotonic revision; bumps only when the plan actually changed. */
+  revision: number;
+  [k: string]: unknown;
+}
+
 /** Discriminated union of all events flowing through the bus. */
 export type osecEvent =
   | { type: "step_started"; payload: StepStartedPayload }
@@ -588,7 +607,8 @@ export type osecEvent =
   | { type: "phase_completed"; payload: PhaseCompletedPayload }
   | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload }
   | { type: "subagent_progress"; payload: SubagentProgressPayload }
-  | { type: "tool_health"; payload: ToolHealthPayload };
+  | { type: "tool_health"; payload: ToolHealthPayload }
+  | { type: "todos"; payload: TodosPayload };
 
 /** Narrow the event type string to the known vocabulary. */
 export type EventType = osecEvent["type"];

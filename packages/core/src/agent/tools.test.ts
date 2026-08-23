@@ -162,6 +162,7 @@ describe("getToolsForRole", () => {
         "save_finding",
         "update_finding",
         "done",
+        "update_todos",
       ]);
     }
   });

@@ -98,6 +98,7 @@ describe("runAnalysisAgent — scoped source runtime boundary", () => {
       "save_finding",
       "update_finding",
       "done",
+      "update_todos",
     ]);
   });
 });

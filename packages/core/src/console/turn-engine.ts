@@ -695,6 +695,11 @@ const READ_ONLY_TOOLS: Record<string, true> = {
   // approval, no capability — so, like check_messages, it grants no authority
   // and is exempt from the copilot/standard approval gate.
   ask_operator: true,
+  // update_todos/write_todos mutate only the run's plan (TodoWrite-style
+  // full-state write) — no scope, no capability, grants nothing — so, like
+  // ask_operator, they are exempt from the copilot/standard approval gate.
+  update_todos: true,
+  write_todos: true,
   done: true,
 };
 

@@ -941,6 +941,20 @@ export type {
   ToolHealthSummary,
   ToolHealthTrackerOptions,
 } from "./agent/index.js";
+export {
+  TodoTracker,
+  validateUpdateTodosArgs,
+  buildTodosPayload,
+} from "./agent/index.js";
+export type {
+  TodoItem,
+  TodoStatus,
+  TodoGroup,
+  TodoProgress,
+  TodoSnapshot,
+  TodoInput,
+  TodosEventPayload,
+} from "./agent/index.js";
 // Named bundles of 0SEC_FEATURE_* vars — the documented way to enable the
 // full FP moat for an A/B run. See `agent/feature-presets.ts`.
 export {
