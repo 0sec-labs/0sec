@@ -3,7 +3,8 @@ title: API Keys
 description: Supported LLM providers, environment variables, and model routing.
 ---
 
-0sec's `api` runtime (the default) makes direct HTTP calls to an LLM provider. You need to set provider credentials as environment variables.
+The default `api` runtime makes direct HTTP calls to a provider. Set credentials
+as environment variables.
 
 ## Supported providers
 
@@ -20,16 +21,14 @@ description: Supported LLM providers, environment variables, and model routing.
 | **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | Azure-hosted OpenAI models. See [Azure configuration](#azure-openai-configuration) below for additional settings. |
 | **OpenAI** | `OPENAI_API_KEY` | Direct access to GPT models. Endpoint override: `OPENAI_BASE_URL`. |
 
-These ten providers are exactly the ones the runtime can detect from the
-environment. A model whose family maps to a vendor with no direct runtime path
-(for example Google, Meta, or Mistral in the pricing table) is not configurable
-here; reach those through OpenRouter instead.
+These ten are the only providers the runtime detects from the environment. Model
+families with no direct path (Google, Meta, Mistral) are reachable through
+OpenRouter instead.
 
 ## Model routing
 
-Set `--model <id>` or `0SEC_MODEL=<id>` when more than one provider
-credential is present. 0sec routes recognized model families to the provider
-whose credentials are configured:
+Set `--model <id>` or `0SEC_MODEL=<id>` when more than one credential is present.
+0sec routes recognized families to the configured provider:
 
 - `glm-*` / `z-ai/*` → Z.ai
 - `qwen*` → Alibaba Qwen
@@ -39,8 +38,8 @@ whose credentials are configured:
 - `gpt-*` / `o*` → ChatGPT Codex subscription when configured, otherwise
   OpenAI
 
-Without an explicit model, 0sec selects an available provider fallback. Pin a
-model rather than relying on ambient credential order.
+Without an explicit model, 0sec picks an available fallback. Pin a model rather
+than relying on ambient credential order.
 
 ## Setting your key
 
@@ -64,115 +63,72 @@ export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..."
 
 ### GitHub Actions
 
-Add the key as a repository secret, then reference it in your workflow:
+Add the key as a repository secret and pass it as `env` on the step. The dedicated
+composite action is still [planned](/ci/github-action/), so today you invoke the
+CLI through the container image:
 
 ```yaml
-- uses: 0sec-labs/0sec@main
-  with:
-    mode: review
-    path: .
+- run: |
+    docker run --rm -v "$PWD:/work" -w /work \
+      -e OPENROUTER_API_KEY \
+      ghcr.io/0sec-labs/0sec:latest review .
   env:
     OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
 ## ChatGPT Codex authentication
 
-ChatGPT Codex is the only provider that can authenticate from a file on disk
-instead of an environment variable. When neither `0SEC_CHATGPT_ACCESS_TOKEN`
-nor `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is exported, the runtime reads
-`~/.codex/auth.json` — the file `codex login` writes — and uses the tokens
-inside it. Override that path with `0SEC_CHATGPT_AUTH_FILE`. An account id, if
-present, is picked up from `0SEC_CHATGPT_ACCOUNT_ID` or from the same file.
+ChatGPT Codex is the only provider that can authenticate from a file instead of an
+env var. When neither `0SEC_CHATGPT_ACCESS_TOKEN` nor
+`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` is exported, the runtime reads the tokens from
+`~/.codex/auth.json` (the file `codex login` writes). Override the path with
+`0SEC_CHATGPT_AUTH_FILE`; an account id comes from `0SEC_CHATGPT_ACCOUNT_ID` or the
+same file. (`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling — prefer
+`0SEC_CHATGPT_AUTH_FILE`.)
 
-`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling of the same override. The
-CLI still accepts it as a fallback, but only when `0SEC_CHATGPT_AUTH_FILE` is
-unset, and the engine's own file read does not honour it at all — so use
-`0SEC_CHATGPT_AUTH_FILE`.
-
-### How a codex-login file reaches the status views
-
-Every `0sec` (or `0`) invocation loads the auth file into the environment
-before any subcommand runs: the CLI entrypoint reads
-`~/.codex/auth.json` (or your override) and copies its tokens into
-`0SEC_CHATGPT_ACCESS_TOKEN` / `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`. That load is
-a no-op if either variable is already exported — an explicit export always
-wins — and it fails soft if the file is missing, unreadable or malformed.
-
-Because of that startup load, a codex-login file **is** detected on the normal
-CLI paths:
-
-- **The interactive console** (`0`, or `0sec console`). By the time
-  `/providers` inspects the environment the tokens are already in it, so
-  ChatGPT Codex shows as `configured via 0SEC_CHATGPT_ACCESS_TOKEN` rather
-  than "not configured".
-- **`0sec doctor`.** It runs the same startup load, and its "API runtime" line
-  additionally comes from the engine's provider detection, which reads the
-  auth file directly. Both routes agree: the API runtime reports `ok
-  ChatGPT Codex`.
-- **Scans, reviews and audits.** These authenticate from the file even without
-  the startup load, since provider detection reads it itself.
-
-The remaining limitation is narrower than "the status views cannot see the
-file". The provider table behind `/providers` is a pure function of an
-environment you hand it — it never stats the filesystem — so it reports
-ChatGPT Codex as **not configured** for any caller that consults it *without*
-the CLI's startup load: embedding that table in your own tool, or querying it
-against a synthetic environment. On those paths, and only those, treat "not
-configured" as a display limitation rather than a broken setup, or export
-`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` so the answer no longer depends on who
-loaded the file.
+Every `0sec` invocation loads that file into the environment before any subcommand
+runs, so a codex-login file is detected everywhere — the console `/providers`
+view, `0sec doctor`, and scans/reviews/audits. An explicit export always wins, and
+a missing or malformed file fails soft. The one gap: the `/providers` table never
+stats the filesystem, so a caller that consults it *without* the CLI's startup
+load (e.g. embedding it in your own tool) sees "not configured" — a display
+limitation, not a broken setup.
 
 ## Console credential store
 
-The interactive console can hold provider keys for you so you do not have to
-re-export them in every shell. In the console, run `/providers` to see which
-providers actually hold credentials on the current machine, then select one to
-paste its key. The status line for each provider reflects the real
-environment: it shows `configured via <VAR>` when a key is found and
-`not configured` otherwise.
+The console can hold provider keys so you don't re-export them each shell. Run
+`/providers` to see which providers hold credentials, then select one to paste its
+key. Each line shows `configured via <VAR>` or `not configured`, reflecting the
+real environment.
 
-Keys entered this way are written to `credentials.json` in the 0sec state
-directory (`~/.0sec/` by default — see
-[Configuration](/configuration/#state-directory) for how that path is
-resolved). The file and its parent directory are created and re-tightened to
-owner-only permissions (`0600` file, `0700` directory) on every save.
+Keys are written to `credentials.json` in the [state
+directory](/configuration/#state-directory) (`~/.0sec/` by default), re-tightened
+to owner-only (`0600` file, `0700` dir) on every save.
 
-**An explicitly exported shell environment variable always wins over the
-stored value.** The store only fills a provider's variable when the
-environment does not already carry a credential for it — an `export` in your
-shell is never overridden. This precedence is deliberate: an `export` is an
-explicit, deliberate choice, and a stored key silently shadowing it would make
-"which key did that run use?" unanswerable — exactly the question you need
-answered when a request returns 401 or a metered key runs up unexpected spend.
+**An exported shell variable always wins over the stored value** — the store only
+fills a variable the environment doesn't already carry. This keeps "which key did
+that run use?" answerable when a request 401s or a metered key overspends.
 
-**Stored credentials are not encrypted at rest.** They are plaintext in
-`credentials.json`, protected only by file permissions (`0600`) and your
-account's control of the home directory. There is no passphrase and no
-key-management layer. Anything with read access to your home directory can read
-the keys, so treat that file the same way you would treat an exported secret in
-a shell profile.
+**Stored credentials are not encrypted.** They're plaintext, protected only by
+file permissions. Treat `credentials.json` like an exported secret in a shell
+profile.
 
-A model whose provider holds no credentials — neither in the environment nor in
-the store — does not fail at startup. The `/model` picker is built from the
-pricing table, which lists every model 0sec knows how to price, not every model
-it can currently call. Selecting an uncredentialed model succeeds; the request
-then fails at request time (typically a turn that consumes zero tokens and
-reports a missing key). Run `/providers` first to confirm the provider is lit.
+Selecting a model whose provider has no credentials doesn't fail at startup — the
+`/model` picker lists every model 0sec can price, not every one it can call. The
+request fails later (a zero-token turn reporting a missing key). Run `/providers`
+first to confirm the provider is lit.
 
 ## When to use OpenRouter
 
-OpenRouter is useful when you want to select a model family that is not
-available through a direct provider credential. It is not required for Z.ai
-GLM, Alibaba Qwen, Moonshot Kimi, Anthropic, OpenAI, Azure, or DeepSeek.
+Use OpenRouter to reach a model family with no direct provider credential. It's
+not required for Z.ai GLM, Alibaba Qwen, Moonshot Kimi, Anthropic, OpenAI, Azure,
+or DeepSeek.
 
 ## Azure OpenAI configuration
 
-Azure OpenAI is stricter than the other providers. The API key alone is not enough. 0sec needs:
-
-- an Azure base URL
-- an Azure deployment/model name
-
-You can provide those explicitly via env vars, or let 0sec reuse them from `~/.codex/config.toml` when Codex is already configured against Azure.
+Azure is stricter — the API key alone isn't enough. 0sec needs an Azure base URL
+and a deployment/model name, either from env vars or reused from
+`~/.codex/config.toml` when Codex is already configured against Azure.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -188,11 +144,14 @@ export AZURE_OPENAI_MODEL="gpt-4o"
 export AZURE_OPENAI_WIRE_API="responses"
 ```
 
-If you rely on Codex config instead of env vars, make sure `~/.codex/config.toml` points at Azure and contains a usable Azure base URL plus model/deployment. If the selected Azure runtime is incomplete, 0sec stops immediately with a configuration error instead of silently falling through to a broken scan.
+If you rely on Codex config, make sure `~/.codex/config.toml` points at Azure with
+a usable base URL and model/deployment. Incomplete Azure config stops with a
+configuration error rather than a broken scan.
 
 ## Alternative: CLI runtimes
 
-If you prefer not to use API keys at all, you can use CLI runtimes for supported workflows. Claude can run live target scans through its native subscription loop. Codex and Gemini are source-review oriented CLI runtimes:
+To skip API keys entirely, use CLI runtimes. Claude runs live scans through its
+subscription loop; Codex and Gemini are source-review oriented:
 
 ```bash
 # Use Claude Code CLI for an authorized live target
@@ -204,4 +163,6 @@ If you prefer not to use API keys at all, you can use CLI runtimes for supported
 0sec review ./my-repo --runtime gemini
 ```
 
-No API key environment variable is needed for source-review CLI runtimes because authentication is handled by the respective CLI tool. Codex live target scans use the direct ChatGPT Codex provider, so they require `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` rather than the Codex CLI wrapper.
+Source-review CLI runtimes need no API key — the CLI handles auth. Codex live
+scans use the direct ChatGPT Codex provider, so they need
+`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN` rather than the Codex CLI.

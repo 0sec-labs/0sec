@@ -3,11 +3,15 @@ title: Agent Loop
 description: How 0sec's autonomous agent loop works — system prompt, LLM calls, tool execution, budget-aware reflection, and debugging.
 ---
 
-0sec runs security assessments by putting an LLM in a loop with tools. There is no hard-coded playbook. The agent receives a system prompt describing the target and available tools, reasons about what to try, executes tools, reads the results, and decides what to do next. This page explains the loop in detail.
+0sec runs assessments by putting an LLM in a loop with tools. There is no
+hard-coded playbook. The agent reads a system prompt, reasons, calls tools,
+reads the results, and decides what to do next.
 
 ## Loop overview
 
-The core loop lives in `packages/core/src/agent/native-loop.ts` (`runNativeAgentLoop`). It uses Claude's native Messages API with structured `tool_use` blocks rather than parsing text output. Here is the simplified flow:
+The core loop is `runNativeAgentLoop` in
+`packages/core/src/agent/native-loop.ts`. It uses Claude's native Messages API
+with structured `tool_use` blocks rather than parsing text.
 
 ```mermaid
 flowchart TD
@@ -47,112 +51,115 @@ flowchart TD
     style W fill:#10b981,stroke:#059669,color:#fff
 ```
 
-Each iteration of this loop is one **turn**. The agent has a configurable turn budget (`maxTurns`), typically 15-100 depending on scan depth and mode. The loop exits when the agent calls the `done` tool, produces a text-only response after enough turns, or exhausts its budget.
+Each iteration is one **turn**. The agent has a configurable budget (`maxTurns`,
+typically 15-100). The loop exits when the agent calls `done`, produces a
+text-only response after enough turns, or runs out of budget.
 
 ## What the agent sees
 
-### System prompt
+**System prompt** — the most important input. It says what the agent is, what
+tools it has, and how to approach the target. 0sec assembles a different prompt
+per mode:
 
-The system prompt is the single most important input. It tells the agent what it is, what tools it has, and how to approach the target. 0sec assembles different prompts depending on the scan mode:
+- `shellPentestPrompt` (web) — gives `bash`, `save_finding`, `done` and tells
+  the agent to probe with curl/python3/CLI tools. No structured HTTP tools.
+- `discoveryPrompt` / `attackPrompt` (LLM/AI) — probing endpoints, extracting
+  system prompts, testing jailbreaks.
+- `researchPrompt` (source) — map the codebase, trace input → sink, write PoCs.
 
-- **`shellPentestPrompt`** (web targets) -- A concise prompt that gives the agent `bash`, `save_finding`, and `done`. It tells the agent to use curl, python3, and standard CLI tools to probe the target, find auth, test injection points, and extract flags. No structured HTTP tools -- just a shell.
-- **`discoveryPrompt`** / **`attackPrompt`** (LLM/AI targets) -- Role-specific prompts for probing AI endpoints, extracting system prompts, and testing jailbreaks.
-- **`researchPrompt`** (source code) -- Instructs the agent to map a codebase, trace data flow from inputs to dangerous sinks, and write proof-of-concept exploits.
+The prompt includes concrete target details: URL, known endpoints, detected
+features, and (for attack agents) discovery results.
 
-The prompt includes concrete target details: the URL, any known endpoints, detected features, and (for attack agents) results from the discovery phase.
+**Tool results** — after each call, stdout/stderr, HTTP bodies, or structured
+tool output is appended as a `tool_result` message. The agent reasons about
+actual server responses, not hypothetical ones.
 
-### Tool results
+**Budget-aware reflection** — when the agent replies with text but no tool call
+(thinking out loud instead of acting), the loop injects a continue prompt that
+escalates with budget spent:
 
-After each tool call, the result is appended to the conversation as a `tool_result` message. The agent sees the full stdout/stderr from bash commands, HTTP response bodies, or structured output from tools like `save_finding`. This gives it ground truth to reason about -- actual server responses, not hypothetical ones.
-
-### Budget-aware reflection prompts
-
-When the agent responds with text but no tool calls (meaning it is "thinking out loud" instead of acting), the loop injects a continue prompt that varies based on how much budget remains:
-
-| Budget used | Prompt tone |
+| Budget used | Prompt |
 |---|---|
-| < 30% | "Use your tools. Start by sending requests to the target." |
-| 30-50% | "Summarize what you have learned. What is your top hypothesis?" |
-| 50-70% | "HALFWAY. List every approach tried. What is the most promising untested vector?" |
-| 70-85% | "URGENCY. If current approach is not working, SWITCH NOW." |
-| 85-100% | "FINAL PUSH. Go for the highest-confidence exploit path ONLY." |
+| < 30% | "Use your tools. Start sending requests." |
+| 30-50% | "Summarize what you learned. Top hypothesis?" |
+| 50-70% | "HALFWAY. List every approach tried. Most promising untested vector?" |
+| 70-85% | "URGENCY. If the current approach isn't working, SWITCH NOW." |
+| 85-100% | "FINAL PUSH. Highest-confidence exploit path ONLY." |
 
-These checkpoints prevent the agent from spending all its turns on a single dead-end approach. They are inspired by budget-aware scheduling from the Cyber-AutoAgent paper.
+These checkpoints stop the agent from spending every turn on one dead end.
 
 ## Tool execution
 
-The `ToolExecutor` class in `packages/core/src/agent/tools.ts` handles all tool calls. The three tools that matter most for web pentesting:
+`ToolExecutor` in `packages/core/src/agent/tools.ts` handles all calls. The
+three that matter most for web:
 
-### `bash`
+- **`bash`** — runs a shell command, returns stdout/stderr. Used for everything:
+  curl, Python exploits, `jq`, enumeration. `TARGET` env var is set to the
+  target URL. Timeout is configurable (default 30s, max 120).
+- **`save_finding`** — persists a finding (title, severity, category, evidence)
+  to SQLite. It survives across stages, so the verify agent can confirm or
+  reject it later.
+- **`done`** — signals completion with a summary; sets `state.done = true` and
+  exits.
 
-Runs an arbitrary shell command and returns stdout and stderr. The agent uses this for everything: `curl` requests, Python exploit scripts, `jq` parsing, file enumeration. The `TARGET` environment variable is set to the target URL. Commands have a configurable timeout (default 30 seconds, max 120).
+Other tools by mode: `http_request`/`submit_form` (structured HTTP),
+`send_prompt` (LLM), `read_file`/`run_command` (source), `crawl` (spidering),
+`browser` (Playwright). `spawn_agent` creates one sub-agent with fresh context
+for deep exploitation of a specific vuln; `spawn_agents` fans the lead agent out
+into a bounded batch of such sub-agents that run **concurrently**, each with its
+own turn budget. Sub-agents can't spawn their own sub-agents.
 
-### `save_finding`
+## How it decides
 
-Persists a vulnerability finding to the database. Takes a title, severity, category, and evidence (the request that triggered it, the response proving it, and analysis). Findings are stored in SQLite and survive across scan stages -- the verification agent can later confirm or reject them.
-
-### `done`
-
-Signals that the agent has finished its task. Takes a summary string. When the loop sees a successful `done` call, it sets `state.done = true` and exits.
-
-Other tools exist for specific modes: `http_request` and `submit_form` for structured HTTP, `send_prompt` for LLM targets, `read_file` and `run_command` for source analysis, `crawl` for web spidering, and `browser` for Playwright-driven headless browser automation. The `spawn_agent` tool lets the agent create a sub-agent with fresh context for deep exploitation of a specific vulnerability.
-
-## How it decides what to do
-
-The agent is an LLM. It reads the system prompt, sees the target, and reasons about what to try. There are no decision trees or hard-coded attack sequences. The system prompt provides a framework ("recon first, then auth, then attack each input"), but the agent decides:
-
-- Which endpoints to probe first
-- Whether a response indicates a vulnerability worth pursuing
-- When to switch from one attack class to another
-- How to chain findings (login -> escalate -> extract)
-- When to write a multi-step Python script vs. use simple curl commands
-
-This is why the shell-first approach works well: bash gives the agent maximum flexibility to compose tools, write scripts, and chain commands in ways that no finite set of structured tools can anticipate.
+The agent is an LLM — no decision trees, no hard-coded attack sequences. The
+system prompt gives a framework ("recon, then auth, then attack each input"),
+but the agent decides which endpoints to probe, whether a response is worth
+pursuing, when to switch attack class, and how to chain findings (login →
+escalate → extract). This is why shell-first works: `bash` lets the agent
+compose and script in ways no fixed tool set can anticipate.
 
 ## Walk-through: IDOR exploitation
 
-Here is an annotated example of what a typical web pentest session looks like. The agent is targeting a vulnerable web app at `http://target:8080`.
+Targeting a vulnerable app at `http://target:8080`:
 
-**Turn 1 -- Reconnaissance.** The agent calls `bash` with `curl -i http://target:8080/`. It reads the response: an HTML page with a login form, a nav bar linking to `/dashboard` and `/profile`, and a footer mentioning "Demo credentials: demo / demo".
+1. **Recon.** `curl -i http://target:8080/` returns a login form and a footer:
+   "Demo credentials: demo / demo".
+2. **Auth.** `curl -c /tmp/jar -b /tmp/jar -d 'username=demo&password=demo' -L
+   .../login` → 302 to `/dashboard` with a session cookie.
+3. **Enumerate.** `/profile` loads `/api/users/1`, showing `"id": 1, "username":
+   "demo"`.
+4. **IDOR probe.** `curl -b /tmp/jar .../api/users/2` returns another user:
+   `"id": 2, "username": "admin", …, "flag": "FLAG{idor_1a2b3c}"`.
+5. **Save + finish.** `save_finding` with the request, the leaking response, and
+   analysis; then `done`.
 
-**Turn 2 -- Authentication.** The agent spots the credentials in the response text. It runs `curl -c /tmp/jar -b /tmp/jar -d 'username=demo&password=demo' -L http://target:8080/login`. The response is a 302 redirect to `/dashboard` with a `Set-Cookie` header. The agent now has a session.
-
-**Turn 3 -- Authenticated enumeration.** With the session cookie, the agent curls `/dashboard` and `/profile`. The profile page loads `/api/users/1` and shows the current user's data, including `"id": 1, "username": "demo", "email": "demo@example.com"`.
-
-**Turn 4 -- IDOR probe.** The agent changes the ID: `curl -b /tmp/jar http://target:8080/api/users/2`. The response returns a different user's data: `"id": 2, "username": "admin", "email": "admin@corp.com", "flag": "FLAG{idor_1a2b3c}"`.
-
-**Turn 5 -- Save and finish.** The agent calls `save_finding` with the IDOR evidence (the request to `/api/users/2`, the response containing another user's data and the flag, and analysis explaining that the endpoint lacks authorization checks). Then it calls `done`.
-
-The entire session took 5 turns. The agent recognized the credentials hint on the page, authenticated, found an ID-parameterized endpoint, tested access control by changing the ID, and extracted the flag. No playbook told it to do this in this order -- it reasoned through it.
+Five turns. No playbook told it to do this — it reasoned through recon → auth →
+ID-parameterized endpoint → access-control test → flag.
 
 ## Debugging
 
-### `--verbose` flag
+**`--verbose`** prints the full conversation: system prompt, each tool call and
+args, tool results, continuation prompts, per-turn and cumulative token usage,
+and the final summary and finding count.
 
-Run 0sec with `--verbose` to see the full agent conversation. This prints:
+Common patterns:
 
-- The system prompt sent to the LLM
-- Each tool call name and arguments
-- Tool results (stdout/stderr from bash, HTTP responses)
-- Budget-aware continuation prompts when they fire
-- Token usage per turn and cumulative totals
-- The final summary and finding count
+- **Loops on one payload** — budget prompts should force a switch at 50-70%. If
+  it keeps repeating, the system prompt may need work.
+- **"API returned empty response"** — rate limiting or model unavailability;
+  check your API key and limits.
+- **Exits too early** — the loop requires at least 4 turns (or `maxTurns` if
+  smaller) before a text-only exit. Finishing in 2-3 turns means a premature
+  `done`.
+- **No findings saved** — the agent may be finding vulns but not calling
+  `save_finding`. Check verbose output.
 
-### Interpreting agent output
-
-Common patterns to watch for:
-
-- **Agent loops on the same payload** -- The budget prompts should force a switch after 50-70% of turns. If it keeps repeating, the system prompt may need adjustment.
-- **"API returned empty response"** -- Rate limiting or model unavailability. Check your API key and usage limits.
-- **Agent exits too early** -- The loop requires at least 4 turns (or `maxTurns` if smaller) before allowing a text-only exit. If the agent is finishing in 2-3 turns, it is likely calling `done` prematurely.
-- **No findings saved** -- The agent may be detecting vulnerabilities but not calling `save_finding`. Check verbose output for tool calls.
-
-### Event log
-
-Every tool call, error, and stage transition is logged to SQLite via `db.logEvent`. You can query the event log for a scan to reconstruct exactly what happened:
+**Event log** — every tool call, error, and stage transition is logged to SQLite
+(`db.logEvent`). Reconstruct a scan with:
 
 ```bash
 0sec history <scan-id> --events
 ```
 
-Session state is persisted every 2 turns, so interrupted scans can be resumed with `--resume <scan-id>`.
+Session state is persisted every 2 turns, so interrupted scans resume with
+`--resume <scan-id>`.

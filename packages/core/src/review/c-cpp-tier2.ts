@@ -28,7 +28,7 @@
 
 import { readFile, readdir, stat, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { buildTier1Harness, type FunctionSignature } from "./c-cpp-profile.js";
 
 export type BuildSystem = "autotools" | "cmake" | "meson" | "auto";
@@ -114,6 +114,9 @@ export async function buildTier2Harness(
   const suspectSourceFile = opts.suspectSourceFile
     ? resolve(sourceRoot, opts.suspectSourceFile)
     : await locateSuspectSource(sourceRoot, opts.suspectFunction.functionName);
+  if (!isPathInsideRoot(suspectSourceFile, sourceRoot)) {
+    throw new Error(`Tier-2: suspect source file escapes source root: ${opts.suspectSourceFile}`);
+  }
 
   const linkedObjects = await discoverObjectSubset({
     sourceRoot,
@@ -320,7 +323,7 @@ async function augmentFromBuildSystem(args: {
   // the same directory.
   const visited = new Set<string>();
   let cursor = dirname(suspectSourceFile);
-  while (cursor.startsWith(sourceRoot) && !visited.has(cursor)) {
+  while (isPathInsideRoot(cursor, sourceRoot) && !visited.has(cursor)) {
     visited.add(cursor);
     for (const name of fileNames) {
       const candidate = join(cursor, name);
@@ -345,10 +348,16 @@ async function augmentFromBuildSystem(args: {
     const buildDir = dirname(buildFile);
     for (const token of tokens) {
       const absolute = isAbsolute(token) ? token : resolve(buildDir, token);
-      if (existsSync(absolute)) collected.add(absolute);
+      if (existsSync(absolute) && isPathInsideRoot(absolute, sourceRoot)) collected.add(absolute);
     }
   }
   return Array.from(collected);
+}
+
+function isPathInsideRoot(candidate: string, root: string): boolean {
+  const resolvedRoot = resolve(root);
+  const resolvedCandidate = resolve(candidate);
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${sep}`);
 }
 
 function buildSystemFileNames(buildSystem: Exclude<BuildSystem, "auto">): string[] {
@@ -374,7 +383,7 @@ async function findSiblingSource(
   // Try the literal sibling first.
   for (const ext of SOURCE_EXTENSIONS) {
     const candidate = resolve(suspectDir, `${stem}${ext}`);
-    if (existsSync(candidate) && candidate.startsWith(sourceRoot)) return candidate;
+    if (existsSync(candidate) && isPathInsideRoot(candidate, sourceRoot)) return candidate;
   }
 
   // Then look anywhere under sourceRoot for a matching basename.

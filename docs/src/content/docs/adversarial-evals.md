@@ -3,93 +3,75 @@ title: Adversarial evals
 description: How 0sec extends its pentest wedge into attack-driven adversarial evaluation for AI systems.
 ---
 
-`0sec` already behaves like an adversarial evaluator in practice.
-It attacks systems, attempts exploitation, and only reports what it can support with evidence.
+0sec already behaves like an adversarial evaluator: it attacks systems, attempts
+exploitation, and reports only what it can back with evidence. This page makes
+that category explicit.
 
-This document makes that category explicit.
+## What's shipped
 
-## What is already shipped
+This isn't hypothetical. The benchmark package ships concrete, deterministic
+adversarial-eval harnesses:
 
-The category is not hypothetical anymore.
+- **Tool misuse** through attacker-controlled tool parameters
+  (`packages/benchmark/src/adversarial-tool-misuse-*`).
+- **Indirect prompt injection** through untrusted tool output
+  (`packages/benchmark/src/adversarial-indirect-prompt-injection-*`).
 
-Today the benchmark package already includes concrete adversarial-eval
-artifacts for:
+The `agent-assure` CLI command runs the shipped primitive end-to-end: it drives
+an agent endpoint, an MCP endpoint, and an oracle under a scoped policy, then
+writes a replayable evidence bundle. It's the scope-bound, externally observed
+action primitive behind agent-action assurance.
 
-- tool misuse through attacker-controlled tool parameters
-- indirect prompt injection through untrusted tool output
+The harnesses are synthetic and deterministic on purpose — a repeatable way to
+score whether the scanner catches realistic agent-control failures before the
+surface widens.
 
-Those harnesses are synthetic and deterministic on purpose. They give
-`0sec` a repeatable way to score whether the scanner catches realistic
-agent-control failures before we widen the surface further.
+## Why it matters
 
-## Why this matters
+Most AI eval tooling asks: did the model produce the expected output? Did a judge
+score it well? Did the trace stay within policy? Useful — but not enough for
+high-stakes systems. The harder question:
 
-Most AI eval tooling answers:
+> Can this system be pushed into unsafe or unauthorized behavior under realistic
+> pressure?
 
-- did the model produce the expected output?
-- did a judge model score the answer well?
-- did the trace stay within policy?
-
-Those are useful questions.
-They are not enough for high-stakes AI systems.
-
-The harder question is:
-
-> can this system be pushed into unsafe or unauthorized behavior under realistic pressure?
-
-That is where `0sec` has a structural advantage.
+That's where an attack-driven evaluator has a structural advantage.
 
 ## Target classes
-
-An adversarial eval mode should focus on:
 
 - LLM / agent HTTP APIs
 - MCP servers
 - tool-using agent backends
-- authenticated staging applications with AI features enabled
+- authenticated staging apps with AI features enabled
 
-## What makes this different from generic evals
+## What makes it different from generic evals
 
 - attack-driven, not judge-driven
-- exploit/evidence based, not vibes
+- exploit- and evidence-based, not vibes
 - built for repeated pressure, not one-shot scoring
-- capable of finding real security and control-boundary failures
+- finds real security and control-boundary failures
 
-## Proposed surface
+## Building on the wedge
 
-The dedicated adversarial eval surface still builds on the existing wedge.
+A dedicated adversarial-eval surface builds on the existing pentest engine — no
+separate product that ignores it, no dashboard-first abstraction, no "prompt
+tests with nicer charts." The mode still needs to define a target model for AI
+systems, an evidence- and recurrence-focused report format, and attack classes
+with success criteria tuned for agentic systems.
 
-That means:
+## Report differences from a pentest
 
-- no separate product that ignores the pentest engine
-- no generic dashboard-first abstraction
-- no degradation into “prompt tests with nicer charts”
-
-Instead, the mode should define:
-
-- a target model for AI systems
-- a report format that emphasizes evidence and recurrence
-- attack classes and success criteria tuned for agentic systems
-
-## Output differences from a traditional pentest
-
-A traditional vuln report centers on exploitability and severity.
-
-An adversarial eval report should also capture:
+A vuln report centers on exploitability and severity. An adversarial-eval report
+should also capture:
 
 - target class and environment
 - attack objective
 - recurrence across runs
 - whether the failure is specific to agent/tool composition
-- whether the issue reflects authorization, tool-use, or instruction-hijack failure
+- whether it's an authorization, tool-use, or instruction-hijack failure
 
 ## Relationship to 0sec cloud
 
-`0sec` is the public execution wedge.
-
-`0sec cloud` is the managed orchestration and recurring-run surface.
-
-The adversarial eval category should be legible on both:
-
-- locally and in CI through `0sec`
-- as a managed recurring product through `0sec cloud`
+0sec is the public execution wedge; 0sec cloud is the managed orchestration and
+recurring-run surface. The category should be legible on both — locally and in CI
+through `0sec`, and as a managed recurring product through `0sec cloud`.

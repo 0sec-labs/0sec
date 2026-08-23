@@ -1,6 +1,6 @@
 import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
 
-// ── Finding status pipeline: discovered → verified → confirmed → scored → reported ──
+// ── Finding status pipeline: discovered → verified → confirmed → scored → reported → fixed ──
 
 export const findingStatuses = [
   "discovered",
@@ -8,6 +8,7 @@ export const findingStatuses = [
   "confirmed",
   "scored",
   "reported",
+  "fixed",
   "false-positive",
 ] as const;
 export type FindingStatusDB = (typeof findingStatuses)[number];

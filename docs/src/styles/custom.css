@@ -1,4 +1,4 @@
-/* 0sec docs — dark theme with crimson accents matching pwnkit.com */
+/* 0sec docs — dark theme with crimson accents, matching 0.security */
 
 /* Starlight accent colors — used for links, active states, highlights */
 :root,
@@ -122,4 +122,106 @@ starlight-menu-button button {
 }
 .card:hover {
   border-color: rgba(220, 38, 38, 0.3) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Premium splash / hero — the landing should feel like the product.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Radial crimson glow behind the hero, plus a faint grid. */
+.hero {
+  position: relative;
+  padding-block: clamp(3rem, 8vw, 6rem);
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10% auto -10%;
+  height: 130%;
+  z-index: -1;
+  background:
+    radial-gradient(60% 55% at 50% 0%, rgba(220, 38, 38, 0.16), transparent 70%),
+    radial-gradient(40% 40% at 85% 10%, rgba(220, 38, 38, 0.08), transparent 70%);
+  pointer-events: none;
+}
+
+/* Big, tight hero title. */
+.hero h1 {
+  font-size: clamp(3rem, 9vw, 5.5rem) !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.04em !important;
+  line-height: 0.95 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #d4d4d8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero .tagline {
+  font-size: clamp(1.05rem, 2.2vw, 1.35rem) !important;
+  line-height: 1.55 !important;
+  max-width: 46ch;
+  color: #b6b6bd !important;
+}
+
+/* Action buttons: primary crimson with glow, clean secondary/minimal. */
+.hero .actions a {
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.hero .actions a[class*="primary"] {
+  background: #DC2626 !important;
+  border-color: #DC2626 !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 30px -8px rgba(220, 38, 38, 0.6);
+}
+.hero .actions a[class*="primary"]:hover {
+  background: #ef4444 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 36px -8px rgba(220, 38, 38, 0.7);
+}
+.hero .actions a[class*="secondary"] {
+  border-color: rgba(220, 38, 38, 0.4) !important;
+  color: #f4f4f5 !important;
+}
+.hero .actions a[class*="secondary"]:hover {
+  border-color: #DC2626 !important;
+  background: rgba(220, 38, 38, 0.08) !important;
+  transform: translateY(-1px);
+}
+.hero .actions a[class*="minimal"]:hover {
+  color: #ef4444 !important;
+}
+
+/* ── Splash cards: gradient surface, crimson icon, lift on hover ── */
+.card {
+  background: linear-gradient(180deg, #161616 0%, #101010 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  border-radius: 14px !important;
+  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(220, 38, 38, 0.45) !important;
+  box-shadow: 0 16px 40px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(220, 38, 38, 0.15);
+}
+.card .icon {
+  color: #ef4444 !important;
+  background: none !important;
+  border: none !important;
+  font-size: 2rem !important;
+  opacity: 1;
+}
+.card .title {
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+  color: #fafafa !important;
+}
+
+/* Tighten the splash content-below-hero spacing. */
+.sl-markdown-content h2 {
+  margin-top: 2.75rem !important;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }

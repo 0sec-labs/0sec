@@ -1,4 +1,5 @@
 ---
+draft: true
 title: "Journal-Loop A/B Ablation ({{DATE}})"
 description: "Measured A/B results for the journal-driven orchestrator loop vs. the existing native loop, across XBOW black-box, XBOW white-box, and npm-bench. Drives the promotion decision for 0SEC_FEATURE_JOURNAL_LOOP."
 ---

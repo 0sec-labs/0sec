@@ -140,6 +140,15 @@ cd 0verse && uv sync --frozen && uv run --frozen 0verse triage ./target-binary
 See the [0verse README](0verse/README.md) for the full binary pipeline, backends,
 and honest limits.
 
+## Public engine vs. managed service
+
+This repository is the **public engine and CLI** — run it locally or in CI, with
+the provider and runtime you choose. The **managed service** that operates the
+harder parts (authorized external testing on isolated workers, scheduling,
+evidence handling, and an accountable delivery workflow) is run separately, on
+top of this CLI and container image through published contracts. It is not part
+of this repository, and nothing here depends on it.
+
 ## Honest limitations
 
 We publish the misses next to the wins.

@@ -3,42 +3,27 @@ title: 0sec cloud
 description: How the managed 0sec cloud layer relates to the OSS agent and docs site.
 ---
 
-`0sec cloud` is the managed recurring-run surface built on top of the
-public `0sec` engine.
+:::note
+**Managed offering — separate from the open-source CLI.** Everything below is the
+paid managed layer, not the OSS `0sec` engine documented in the rest of this site.
+:::
 
-The split is intentional:
+`0sec cloud` is the managed recurring-run surface built on top of the public
+`0sec` engine. It uses no private fork — the scanner, benchmarks, and
+verification logic all stay in the OSS repo.
 
-- `0sec` is the OSS execution wedge: CLI, benchmarks, verification
-  pipeline, and the public docs in this repo.
-- `0sec cloud` is the managed layer: recurring scans, authenticated
-  targets, operator review, artifact bundles, and orchestration around
-  the same engine.
+**OSS (`0sec`):** CLI scanning, benchmarks and methodology, blind verification,
+triage and reporting primitives, and these docs.
 
-Nothing about the cloud product depends on a private fork of the agent.
-The scanner, benchmarks, and core verification logic remain in the OSS
-repo.
+**Managed (`0sec cloud`) adds:** recurring scans, orchestration across
+protected/authenticated targets, an operator triage workflow, customer-facing
+evidence bundles, and managed storage and scheduling.
 
-## What the cloud layer adds
+This split is why the marketing site cites public benchmark receipts while the
+managed layer sells reliability, continuity, and operations.
 
-- recurring scans instead of one-off local runs
-- orchestration across protected or authenticated targets
-- operator workflow for triage and review
-- customer-facing evidence packaging
-- managed storage and scheduling around the public engine
+## Read next
 
-## What stays public and OSS
-
-- CLI scanning
-- benchmarks and methodology
-- blind verification
-- triage and reporting primitives
-- docs for the public engine
-
-This is why the marketing site can cite public benchmark receipts while
-the managed layer sells reliability, continuity, and operations.
-
-## Where to read next
-
-- [Adversarial Evals](/adversarial-evals/) for the category framing
-- [Architecture](/architecture/) for the public execution model
-- [Benchmark](/benchmark/) for public performance and methodology
+- [Architecture](/architecture/) — the public execution model
+- [Benchmark](/benchmark/) — public performance and methodology
+- [Adversarial Evals](/adversarial-evals/) — category framing

@@ -3,16 +3,16 @@ title: Commands
 description: Complete reference for all 0sec CLI commands.
 ---
 
-All commands are available via `0sec <command>`. You can also skip the subcommand and let auto-detect figure it out (see [Getting Started](/getting-started/)).
+Run any command as `0sec <command>` (or `0`). Skip the subcommand to let
+auto-detect pick one (see [Getting Started](/getting-started/)).
 
 ## scan
 
-Probe AI/LLM apps, web apps, or MCP servers for vulnerabilities. A REST API is
-scanned as a web target; `--api-spec` pre-loads its endpoints (see below).
+Probe AI/LLM apps, web apps, or MCP servers. A REST API is scanned as a web
+target; `--api-spec` pre-loads its endpoints.
 
-Live network targets require `--scope <file>`. The CLI refuses an unscoped live
-target before making a request. Local source review and package audit commands
-do not need a network-target scope.
+Live targets require `--scope <file>` — the CLI refuses an unscoped live target
+before making a request. Local source review and package audits don't.
 
 ```bash
 # Scan an LLM API
@@ -69,12 +69,12 @@ do not need a network-target scope.
 | `--egats` | Evidence-Gated Attack Tree Search (beam search over hypothesis tree) | `false` |
 | `--cost-ceiling <usd>` | Hard USD ceiling; aborts cleanly with partial findings preserved if exceeded | (none) |
 | `--db-path <path>` | Path to SQLite database | `~/.0sec/0sec.db` |
-| `--verbose` | Show animated attack replay and detailed agent reasoning | `false` |
+| `--verbose` | Show detailed output | `false` |
 | `--replay` | Replay the last scan's results without re-running | `false` |
 
 ### `--auth` credential formats
 
-The `--auth` flag accepts either an inline JSON string or a path to a JSON file. Four credential types are supported:
+Pass inline JSON or a path to a JSON file. Four types:
 
 ```bash
 # Bearer token
@@ -95,7 +95,9 @@ The `--auth` flag accepts either an inline JSON string or a path to a JSON file.
 
 ### `--api-spec` — OpenAPI / Swagger import
 
-Point `--api-spec` at an OpenAPI 3.x or Swagger 2.0 document (JSON or YAML). 0sec will parse the spec, extract all endpoints with their parameter schemas and auth requirements, and seed the recon phase with that knowledge so the agent starts pentesting with full endpoint awareness instead of having to crawl.
+Point at an OpenAPI 3.x or Swagger 2.0 doc (JSON or YAML). 0sec parses every
+endpoint, its parameter schema, and auth requirements, then seeds recon so the
+agent starts with full endpoint awareness instead of crawling.
 
 ```bash
 0sec scan --target https://api.example.com --scope ./scope.json --api-spec ./openapi.yaml
@@ -103,38 +105,39 @@ Point `--api-spec` at an OpenAPI 3.x or Swagger 2.0 document (JSON or YAML). 0se
 
 ### `--race` — best-of-N strategy racing
 
-With `--race`, 0sec spawns 5 attack strategies in parallel against the same target. The first agent to confirm a finding wins; the others are terminated. Ideal for hard targets where a single linear attack plan gets stuck.
+Spawns 5 attack strategies in parallel; the first to confirm a finding wins, the
+rest are killed. For hard targets where a linear plan gets stuck.
 
 ### `--egats` — Evidence-Gated Attack Tree Search
 
-EGATS performs a beam search over a tree of attack hypotheses, pruning branches that fail evidence checks. Slower than `--race` but much more thorough.
+Beam search over a tree of attack hypotheses, pruning branches that fail evidence
+checks. Slower than `--race`, more thorough.
 
 ### `--cost-ceiling` — hard spend guardrail
 
-Set a hard per-scan USD ceiling:
+Set a per-scan USD ceiling. If estimated spend exceeds it, 0sec preserves
+findings so far, exits with code `4`, and emits `exit_reason:
+"cost_ceiling_exceeded"` in the machine-readable result line. The flag overrides
+`0SEC_COST_CEILING_USD`.
 
 ```bash
 0sec scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
 ```
 
-If cumulative estimated spend exceeds the ceiling, 0sec:
-
-- preserves findings collected so far
-- exits with status code `4`
-- emits `exit_reason: "cost_ceiling_exceeded"` in the machine-readable result line
-
-The CLI flag overrides `0SEC_COST_CEILING_USD`.
-
 ### `--export github:owner/repo`
 
-Pushes every confirmed finding to a GitHub repo as an issue, with severity labels, evidence blocks, and reproduction steps. Requires `GITHUB_TOKEN` in the environment with `repo` scope.
+Pushes each confirmed finding to a GitHub repo as an issue with severity labels,
+evidence, and repro steps. Requires `GITHUB_TOKEN` with `repo` scope.
 
 ## audit
 
-Install and security-audit a package with static analysis and AI review.
+Install and security-audit a package with static analysis and AI review. The
+package is installed into a temp dir (never executed), scanned, checked against
+dependency advisories, then reviewed by an agent that traces data flow for
+supply-chain issues.
 
 ```bash
-0sec audit express --version 4.18.2
+0sec audit express --package-version 4.18.2
 0sec audit requests --ecosystem pypi
 0sec audit serde --ecosystem cargo
 0sec audit alpine:3.20 --ecosystem oci
@@ -142,15 +145,13 @@ Install and security-audit a package with static analysis and AI review.
 0sec audit left-pad --format html
 ```
 
-The package is installed in a sandbox, scanned with the selected static scanner, checked against dependency advisories, and then reviewed by an AI agent that traces data flow and looks for supply-chain vulnerabilities.
-
 **Key flags:**
 
 | Flag | Description | Default |
 |------|-------------|---------|
 | `<package>` | Package name | (required) |
 | `--ecosystem <e>` | Package ecosystem: `npm`, `pypi`, `cargo`, `oci` | `npm` |
-| `--version <v>` | Specific version to audit | `latest` |
+| `--package-version <v>` | Specific version to audit (aliases: `--ver`, `--pkg-version`) | `latest` |
 | `--depth <d>` | Audit depth: `quick`, `default`, `deep` | `default` |
 | `--runtime <rt>` | Runtime: `auto`, `api`, `claude`, `codex`, `gemini` | `auto` |
 | `--format <fmt>` | Output format: `terminal`, `json`, `md`, `html`, `sarif`, `pdf` | `terminal` |
@@ -206,30 +207,45 @@ Deep source code security review of a local repo or GitHub URL.
 
 ### Review profiles
 
-The `--target` alias selects the review workflow while preserving the older `--profile` flag for scripts. `--target app` and `--target default` both map to the default application profile. If both flags are present, they must select the same workflow. The default profile is for application code (web / JS / TS / Python / Go business logic) and is what you want for an AI app, an SaaS backend, or a typical npm package.
+`--target` selects the workflow; the older `--profile` flag still works for
+scripts. `--target app` and `--target default` both mean the default application
+profile — for AI apps, SaaS backends, and typical packages (web / JS / TS /
+Python / Go). If both flags are set they must agree.
 
-**`c-library` — userspace C/C++ memory-safety review.** Tunes the agent toward integer-overflow on allocation paths, signed/unsigned conversion at memcpy length args, off-by-one parser bounds checks, use-after-free across error paths, format-string sinks. Pairs with the tier-1/2/3 harness ladder: a single-function libFuzzer harness compiled with `-fsanitize=address,undefined` is the baseline validator; tier-2 (multi-component link) and tier-3 (QEMU full-stack) escalate when reachability requires it. Every finding must be backed by a sanitizer log from a harness that actually trips — static reasoning alone is recorded as a hypothesis, not a finding.
+**`c-library`** — userspace C/C++ memory-safety review: integer overflow on alloc
+paths, signed/unsigned at memcpy lengths, off-by-one bounds, UAF across error
+paths, format-string sinks. Pairs with the tier-1/2/3 harness ladder (libFuzzer
++ ASan/UBSan baseline, escalating to multi-component link and QEMU full-stack).
+Every finding needs a sanitizer log from a harness that actually trips; static
+reasoning alone is a hypothesis, not a finding.
 
-**`linux-kernel` — kernel-aware static review.** Tunes the agent toward kernel-specific failure modes: missing `copy_from_user` length validation, signed/unsigned int comparison on user-controlled length, UAF across `__free_pages`/`kfree_skb` error paths, refcount races (`get_task_struct` without matching `put_task_struct`), TOCTOU on `inode->i_*` fields, unsafe `unsafe_get_user`/`unsafe_put_user` outside a `user_access_begin`/`user_access_end` block, and skb cow/share violations (the Dirty Frag class — in-place AEAD/cipher on a shared frag without `skb_cow_data` / `skb_unshare`). The agent first verifies the tree is actually a kernel tree (`MAINTAINERS`, `Kconfig`, `KERNELRELEASE`, `arch/`) and refuses if not. Findings are tagged with the same subsystem labels (`fs/nfsd`, `net/tcp`, `mm`, …) used by the kernel-crash ingest pipeline so the two streams line up.
+**`linux-kernel`** — kernel-aware static review: missing `copy_from_user` length
+checks, signed/unsigned on user-controlled lengths, UAF across error paths,
+refcount races, TOCTOU on `inode->i_*`, unsafe user-access outside
+`user_access_begin/end`, and skb cow/share violations (the Dirty Frag class). The
+agent verifies the tree is really a kernel tree and refuses otherwise. Findings
+carry the same subsystem labels (`fs/nfsd`, `net/tcp`, `mm`, …) as the crash
+ingest pipeline.
 
-> **Non-goal: this is static review, not exploit reproduction.** The `linux-kernel` profile produces hypothesis-grade findings grounded at file:line and accompanied by a syzkaller-program or C-syscall reproducer SHAPE — it does not compile or boot the kernel. A libFuzzer harness does not apply (kernel state isn't reachable from a libFuzzer process). For machine-checkable verification, see issues #271 (kernel oracle) and #272 (syzkaller harness scaffold). Static-only findings are flagged `confidence: 0.4` with `hypothesis: true` until the verification phase lands.
+> **Static review, not exploit reproduction.** This profile produces
+> hypothesis-grade findings at file:line with a reproducer *shape* — it doesn't
+> compile or boot the kernel. Static-only findings are flagged `confidence: 0.4`,
+> `hypothesis: true`. Machine-checkable verification is tracked in #271 (kernel
+> oracle) and #272 (syzkaller harness scaffold).
 
 ## fix
 
-Generate a narrowly-scoped patch for one independently reproduced local source
-finding, validate it in an isolated Git worktree, and optionally apply it.
-
-The command is intentionally stricter than remediation guidance:
+Generate a narrow patch for one independently reproduced local source finding,
+validate it in an isolated Git worktree, and optionally apply it. Stricter than
+remediation guidance:
 
 - `<repo>` must be the clean root of a local Git worktree;
-- the finding or `--verification-result` input must establish
-  `verification_result.status: "reproduced"`;
-- the finding must have a code-only `verificationSpec` that describes the
-  vulnerable source state;
+- the finding (or `--verification-result`) must be `status: "reproduced"`;
+- the finding needs a code-only `verificationSpec`;
 - `--test-command` is required and runs after every candidate patch;
-- by default the original checkout is unchanged;
-- `--apply` modifies the original checkout only after the candidate invalidates
-  the vulnerable-source contract and the regression command succeeds.
+- the original checkout stays untouched unless `--apply` is set — and `--apply`
+  only lands a patch that invalidates the vulnerable-source contract and passes
+  the regression run.
 
 ```bash
 # Generate and validate a candidate; keep the original checkout unchanged.
@@ -247,10 +263,9 @@ The command is intentionally stricter than remediation guidance:
   --apply
 ```
 
-`fix` currently supports source-only verification contracts. A live behavioral
-re-test needs a provisioned target and remains outside this command's contract;
-do not treat a source fix as proof that an unrelated deployed target has already
-been remediated.
+`fix` supports source-only verification contracts. A live behavioral re-test
+needs a provisioned target and is out of scope — don't treat a source fix as
+proof that a deployed target is remediated.
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -282,7 +297,10 @@ Run foxguard-backed kernel advisory variant hunting against a Linux source tree.
 0sec kernel variant-hunt --tree ./linux --sarif-input ./foxguard.sarif
 ```
 
-This command is orchestration only: foxguard owns the structural rules, and 0sec maps SARIF hits into normal `Finding` objects with kernel subsystem labels, confidence, evidence text, and SARIF/JSON/terminal output. A hit is a variant-hunt candidate, not a confirmed crash; use kernel triage, Coccinelle/CodeQL, fuzzing, or `0sec ingest --verify` when crash evidence exists.
+Orchestration only: foxguard owns the structural rules; 0sec maps SARIF hits into
+`Finding` objects with subsystem labels, confidence, and evidence. A hit is a
+candidate, not a confirmed crash — use `0sec ingest --verify` (or triage /
+Coccinelle / CodeQL / fuzzing) when crash evidence exists.
 
 **Key flags:**
 
@@ -305,20 +323,17 @@ Mine and adversarially rerank syzbot's abandoned queue:
 0sec kernel syzbot-mine --subsystems net,xfrm,crypto,vsock,nfc --limit 30 --details 15 --detail-delay 750
 ```
 
-`--details` bounds the detail/reproducer enrichment pass. 0sec records the
-requested sandbox and harness setup. It also inspects the syz program for
-mounts, TUN/qdisc/XFRM administration, synthetic devices, BPF setup, and
-call-level fault injection before reranking privileged, one-shot, stale, and
-incomplete leads. Missing enrichment is explicit; it is never treated as
-evidence of unprivileged reachability. `--detail-delay` paces requests to the
-public dashboard; HTTP throttling still fails closed.
+`--details` bounds the reproducer-enrichment pass; `--detail-delay` paces
+requests to the public dashboard (throttling fails closed). 0sec inspects each
+syz program for mounts, TUN/qdisc/XFRM setup, synthetic devices, BPF, and fault
+injection before reranking privileged, one-shot, stale, and incomplete leads.
+Missing enrichment is recorded explicitly, never treated as evidence of
+unprivileged reachability.
 
-Treat syzkaller campaign lanes separately: `sandbox=none` is privileged
-discovery, while `sandbox=setuid` is only zero-cap-plausible configuration
-evidence. Neither proves zero-cap reachability. That label requires runtime
-attestation showing non-root real and effective UIDs and an empty effective
-capability set for the reproducing execution, bound to a hashed artifact.
-The execution boundary must also attest `no_new_privs`.
+`sandbox=none` is privileged discovery; `sandbox=setuid` is only
+zero-cap-plausible config evidence. Neither proves zero-cap reachability — that
+needs runtime attestation (non-root real/effective UIDs, empty effective
+capability set, `no_new_privs`) bound to a hashed artifact.
 
 ## ingest
 
@@ -335,32 +350,30 @@ Import kernel crash reports and optionally verify them against attached reproduc
 0sec ingest ./crashes --verify --output json
 
 # Run a standalone C reproducer through the kernel VM oracle
-0sec ingest --reproducer ./poc.c --kernel-tree ~/src/linux --config kasan --output json
+0sec ingest --reproducer ./poc.c --kernel-tree ~/src/linux --kernel-config kasan --output json
 
 # Run a raw syzkaller program when the guest image provides syz-execprog
-0sec ingest --syz ./program.syz --kernel-tree ~/src/linux --config kasan --output json
+0sec ingest --syz ./program.syz --kernel-tree ~/src/linux --kernel-config kasan --output json
 
 # Pivot each known-subsystem crash into source review for sibling bugs
 0sec ingest ./crashes --review-subsystem --tree ~/src/linux --output json
 ```
 
-For directory ingest, reproducers are attached by matching filename prefix:
+For directory ingest, reproducers attach by filename prefix (`crash001.log` +
+`crash001.c`, `bug-42.report` + `bug-42.syz`).
 
-- `crash001.log` + `crash001.c`
-- `bug-42.report` + `bug-42.syz`
+`--verify` returns a richer per-crash object (`sourcePath`, `reproducerPath`,
+`finding`, `verification`). Without a configured kernel VM, verification falls
+back to static consistency and reproducer analysis only.
 
-When `--verify` is enabled, the command returns a richer result object per crash:
+`--reproducer` or `--syz` skips crash-report parsing and runs the program
+directly through the kernel VM oracle. `--kernel-tree` resolves a KASAN VM
+build/cache entry; prebuilt `0SEC_KERNEL_QEMU_KERNEL`/`0SEC_KERNEL_QEMU_DISK`
+artifacts are reused as the fastest cache hit.
 
-- `sourcePath`
-- `reproducerPath`
-- `finding`
-- `verification`
-
-Without a configured kernel VM, verification falls back to static consistency and reproducer analysis only.
-
-When `--reproducer` or `--syz` is used, `ingest` skips crash-report parsing and runs that program directly through the kernel VM oracle. `--kernel-tree` resolves a KASAN VM build/cache entry; if `0SEC_KERNEL_QEMU_KERNEL` and `0SEC_KERNEL_QEMU_DISK` already point at built artifacts, those are reused as the fastest cache hit.
-
-When `--review-subsystem` is enabled, ingest keeps the original crash finding and appends review-derived sibling findings. Each sibling finding carries `relatedFindingId` pointing back to the crash finding that triggered the source hunt. Crashes with `unknown` subsystem, or subsystems that do not resolve under `--tree`, are reported in the JSON `skipped` list.
+`--review-subsystem` keeps the crash finding and appends review-derived siblings,
+each carrying `relatedFindingId` back to the crash. Crashes with `unknown` or
+unresolved subsystems land in the JSON `skipped` list.
 
 **Key flags:**
 
@@ -373,8 +386,9 @@ When `--review-subsystem` is enabled, ingest keeps the original crash finding an
 | `--reproducer <path>` | Run a standalone C reproducer through the kernel VM oracle | (none) |
 | `--syz <path>` | Run a standalone syzkaller `.syz` program through the kernel VM oracle | (none) |
 | `--kernel-tree <path>` | Linux source tree for kernel VM build/cache resolution | (none) |
-| `--config <profile>` | Kernel VM config profile for `--kernel-tree`; currently `kasan` | `kasan` |
-| `--kernel-cache-dir <path>` | Override kernel VM build cache directory | `~/.cache/0sec/kernel-vm` |
+| `--kernel-config <name>` | Kernel build config for `--kernel-tree`, e.g. `kasan`, `defconfig+kasan` (deprecated alias: `--config`) | (none) |
+| `--expected-signature <pattern>` | Expected dmesg signature substring for verify | (none) |
+| `--kernel-cache-dir <path>` | Override kernel build cache directory | `~/.0sec/kernel-cache` |
 | `--force-kernel-build` | Rebuild kernel VM artifacts even if a cache entry exists | `false` |
 | `--review-subsystem` | Run linux-kernel source review against each crash subsystem | `false` |
 | `--tree <path>` | Linux source tree required by `--review-subsystem` | (none) |
@@ -418,21 +432,23 @@ If the VM is not configured, 0sec does **not** claim a reproduced crash; it repo
 
 ## triage
 
-Triage findings and manage learned false-positive memories. Every time you mark a finding as a false positive, 0sec stores a pattern that future verify passes will consult — think Semgrep's `nosemgrep` but learned automatically.
+Triage findings and manage learned false-positive memories. Mark a finding as a
+false positive and 0sec stores a pattern future verify passes consult — like
+Semgrep's `nosemgrep`, learned automatically.
 
 ```bash
 # Create a memory from an existing finding
-0sec-cli triage memory add --finding NF-001 --reason "test fixture, not reachable in prod"
+0sec triage memory add --finding NF-001 --reason "test fixture, not reachable in prod"
 
 # List all memories
-0sec-cli triage memory list
-0sec-cli triage memory list --scope target --category xss
+0sec triage memory list
+0sec triage memory list --scope target --category xss
 
 # Delete a memory
-0sec-cli triage memory remove <memory-id>
+0sec triage memory remove <memory-id>
 
 # Mark a finding as FP and auto-create a memory
-0sec-cli triage mark-fp NF-042 --reason "known sandbox echo endpoint"
+0sec triage mark-fp NF-042 --reason "known sandbox echo endpoint"
 ```
 
 **`triage memory add`**
@@ -465,6 +481,182 @@ Triage findings and manage learned false-positive memories. Every time you mark 
 
 Enable memory injection into the verify pipeline with `0SEC_FEATURE_TRIAGE_MEMORIES=1` (see [Configuration](/configuration/#feature-flags)).
 
+## console
+
+The interactive operator console — one chat surface that drives the whole tool
+registry (recon, web pentest, source/package scan, variant hunt, verify,
+patch-gen). Running the binary with no arguments launches it; you can also invoke
+it explicitly.
+
+```bash
+# Full console — bare invocation launches straight into chat
+0sec
+0
+
+# Explicit, with an engagement target and a scope file
+0sec console --target https://api.example.com --scope ./scope.json
+
+# Start in Co-pilot: approve every non-read-only tool call
+0sec console --autonomy copilot --scope ./scope.json
+
+# Expose the generic-scanner wrappers (sqlmap/nikto/…)
+0sec console --scope ./scope.json --allow-scanners
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--target <url>` | Engagement target the tools operate against; can also be named in chat | (none) |
+| `--scope <file>` | Initial authorization scope. Required for YOLO and for the Node fallback | (none) |
+| `--model <id>` | Override the LLM model id | provider default |
+| `--role <role>` | Tool set to expose: `audit`, `review`, `discovery`, `attack`, `verify` (`audit` = every tool) | `audit` |
+| `--autonomy <mode>` | `standard`, `copilot`, or `yolo` | `standard` |
+| `--max-tool-calls <n>` | Safety cap on tool-call rounds per operator message | `20` |
+| `--allow-scanners` | Expose generic-scanner tool wrappers | off |
+
+Two front-ends. Under Bun with a TTY on stdin and stdout you get the full OpenTUI
+console below. Otherwise it falls back to a plain readline REPL, which
+**requires `--scope`** — it has no approval surface, so it can't grant
+session-only scope extensions and denies them outright.
+
+### Slash commands
+
+Anything starting with `/` is handled locally and never reaches the model
+(unrecognised ones produce a local notice). Everything else is sent to the engine
+as an operator message.
+
+| Command | Aliases | Behaviour |
+|---------|---------|-----------|
+| `/help [command]` | `/?`, `/commands` | Renders the command list as a panel, grouped by category. An argument filters by name/alias prefix. |
+| `/status` | — | Panel: model and provider, mode, target, scope rules (or `scope on demand`), tool count, turns, cumulative input→output tokens. |
+| `/tools` | — | Panel listing the tool names registered for this session's role. |
+| `/agents` | — | Notice listing the subagents running *right now*, or "No active subagents". It is a live view, not a catalogue. |
+| `/scope` | — | Panel: target, mode, and the in-scope rules. With no scope it says so explicitly rather than reading as permissive. |
+| `/mode [standard\|copilot\|yolo]` | — | With no argument, **opens a picker**. With an argument, switches directly. Refused while a turn is in flight; YOLO is refused — and shown greyed in the picker — when no scope is configured. |
+| `/model [id]` | `/models` | With no argument, **opens a model picker** whose header names the providers that currently hold credentials. With an id, rebuilds the session on that model and carries the conversation across; a failed rebuild leaves you on the old one. Refused mid-turn. |
+| `/providers` | `/login`, `/auth` | **Opens a picker** of the providers 0sec can detect, each marked configured (and via which env var) or not, with the exact env var to set. Selecting one prompts for a key, which is stored `0600` in `~/.0sec/credentials.json` and exported into the running process. The value is never echoed back into the transcript. |
+| `/settings` | `/config`, `/prefs` | **Opens a picker** of console display settings. Enter flips a boolean or cycles an enum, then reopens against the new values. Persisted to `~/.0sec/tui-settings.json`. |
+| `/resume` | `/sessions` | **Opens a picker** of saved transcripts for the current working directory (newest first, up to 30). See [Session persistence](#session-persistence). Refused mid-turn. |
+| `/explain [topic]` | `/eli5` | Sends a real turn asking for a plain-language explanation of the previous result, or of `topic`. It is a normal model call and costs tokens. |
+| `/feedback <message>` | — | Appends the message, with a timestamp, version, model and mode, to `~/.0sec/feedback.md`. **Nothing is transmitted anywhere.** |
+| `/clear` | `/new` | Clears the conversation. Readline fallback only — see the caveat below. |
+| `/history` | — | Opens the scan-history screen. |
+| `/findings` | `/finds` | Opens the findings screen. |
+| `/replay` | — | Opens the replay screen. |
+| `/ops` | `/runs` | Opens mission control (active and recent operations). |
+| `/launcher` | `/home` | Opens the home screen. |
+| `/doctor` | — | Opens the diagnostics screen. |
+| `/chat` | — | No-op from the chat view; it reports that chat is already active. |
+| `/back` | — | Returns to the previous screen. |
+| `/exit` | `/quit` | Ends the session and returns to the shell. |
+
+**Front-end coverage.** `/agents`, `/scope`, `/chat`, `/back`, `/launcher`,
+`/ops`, `/history`, `/findings`, `/replay` and `/doctor` are TUI-only; the
+readline fallback recognises them and tells you the Bun TUI is needed. Of the
+rest, the fallback implements `/help`, `/status`, `/tools`, `/clear`, `/mode`
+and `/exit`. `/model`, `/resume`, `/providers`, `/settings`, `/explain` and
+`/feedback` are parsed there but currently do nothing — no output, no error.
+
+**`/clear` caveat.** It is registered, offered by the TUI's command menu and
+listed by `/help`, but the TUI's command router has no handler for it, so
+typing it there reports `unknown command: /clear`. It works in the readline
+fallback, where it calls `clearConversation()`.
+
+### Keybindings
+
+| Key | Action |
+|-----|--------|
+| `/` | Typing a leading `/` opens the command menu inline under the composer; it filters as you type. |
+| `Ctrl+P` / `Ctrl+K` | Puts a `/` in the composer, which opens the same command menu. On the non-chat screens (mission control, doctor, history, findings, replay, home) the same chord toggles that screen's own command palette. |
+| `↑` / `↓` | Move the selection in the command menu or in an open picker. |
+| `Tab` | Completes the highlighted command into the composer, appending a space when the command takes an argument. |
+| `Enter` | Runs the highlighted command, or sends the composer text. In a picker, commits the highlighted row. At an approval prompt, approves. |
+| `Shift+Tab` | Cycles the autonomy mode. It routes through `/mode`, so it inherits the same refusals, and it skips YOLO entirely when no scope is configured. |
+| `Esc` | Closes the command menu if it is open; otherwise discards the draft and leaves the composer; otherwise goes back a screen. In a picker it closes the picker; at an approval prompt it rejects. |
+| `Ctrl+C` | Exits, from anywhere — including modals and approval prompts. |
+
+Typing while a turn is running does not block. A plain message is parked (up to
+50) and delivered in order, one per idle transition, once the turn ends. Slash
+commands are never queued — they run against the console immediately, and the
+handlers that cannot safely act mid-turn (`/mode`, `/model`, `/resume`,
+`/explain`) say so instead.
+
+### Autonomy modes
+
+The mode governs which gates prompt you. It can be set at launch with
+`--autonomy`, changed live with `/mode`, and cycled with `Shift+Tab`.
+
+| Mode | What it gates |
+|------|---------------|
+| **Standard** (default) | Tools run automatically. A network-capable call whose destination is outside the current scope — or whose destination cannot be read at all, e.g. `curl "$H"` or a piped `\| sh` — triggers a scope prompt. A filesystem-scoped tool reaching outside the approved subtree triggers a local-directory prompt. No per-tool prompts. |
+| **Co-pilot** | Everything Standard does, plus an approval prompt before every non-read-only tool call. Read-only tools (`read_file`, `search_files`, `list_files`, `query_findings`, the `intel_*` lookups, `payload_lookup`, `list_skills`, `load_skill`, `done`) are exempt. |
+| **YOLO** | No prompts *inside an already-configured scope*. It is not "no rules": it requires a non-empty preconfigured scope, and anything outside it is a hard denial rather than a prompt. A destination the gate cannot resolve is denied on the same principle. Scope is never silently extended. |
+
+YOLO refuses to engage without a scope — the console blocks `/mode yolo` and the
+engine enforces the same floor for API sessions. It lifts the scoped-source-audit
+allow-list without prompting, but never the network-scope check, the
+local-filesystem check, or per-handler tool guards.
+
+0sec does not sandbox tool execution. The gates below are approval gates, not
+containment.
+
+### Approval prompts
+
+Four prompts can interrupt a turn. Each is answered with `Enter` (approve) or
+`Esc` (reject), and each grant is in-memory and session-scoped — **none of them
+is written to a scope file or to disk**.
+
+| Prompt | Trigger | What approving grants |
+|--------|---------|-----------------------|
+| **Authorize session scope** | A network-capable tool references a URL outside the current scope, or a shell construct whose destination cannot be resolved. | The exact hostnames from the requested URLs are added to the in-memory scope for this session. Existing deny rules still win, and the extension is rejected outright if the resulting policy would not actually cover the request. |
+| **Authorize local directory** | `read_file`, `list_files`, `search_files`, `apply_patch`, `run_command` or `analyze_binary` touches a path no approved local scope covers. | That directory **subtree only**, for this session. The path shown is already absolute and symlink-resolved, and the engine re-canonicalises it on apply, so a symlink swapped between the prompt and the apply cannot widen the grant. Filesystem root and your home directory are refused outright — never even offered. |
+| **Co-pilot approval** | Any non-read-only tool call while in Co-pilot. | That one call. The next call prompts again. |
+| **Enable additional tool** | During a scoped source audit (role `audit`/`review` with a local scope), the model calls a tool outside the source-audit allow-list. | That one tool name, for the rest of the session. It lifts *only* the allow-list; network scope, local scope and the Co-pilot gate all still apply to it. |
+
+Rejections stick. A declined host, shell payload, directory (and anything beneath
+it), or tool is denied without re-prompting for the rest of the session, so a
+retrying model can't turn a "no" into a prompt loop.
+
+### Session persistence
+
+Console transcripts are stored one JSON file per session under
+`~/.0sec/console-sessions/`, `0600` inside a `0700` directory, re-applied on
+every write. Nothing is transmitted anywhere.
+
+The file holds the session's **entire** message array — every prompt, reply, and
+tool call with its full result. On a security tool that means target hostnames,
+approved scope, untriaged findings, and raw requests/responses including any
+cookies or tokens seen on the wire. It's deliberately **not** scrubbed (a partial
+scrub advertises a guarantee it can't keep), so treat these files as engagement
+evidence. Deletion is supported; the store keeps the 20 most recent.
+
+`/resume` lists transcripts whose recorded working directory matches the current
+one, newest first. Picking one rebuilds the session around the stored messages
+and model — the on-screen transcript starts empty and the turn counter resets,
+but the model keeps the full history.
+
+**Current limitation.** The save is wired into the turn's error path only, so a
+transcript is written when a turn throws, not after one that completes normally.
+In practice `/resume` only offers sessions that hit an exception. Save-after-every-turn
+is the intent, not today's behaviour.
+
+### Console settings
+
+`/settings` toggles chrome; values persist to `~/.0sec/tui-settings.json`. A
+hand-edited or corrupt file degrades to defaults rather than failing the
+session.
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `showStatusBar` | Bottom bar with model, working directory, git state and token counters | `true` |
+| `showComposerHints` | Keyboard-hint line under the input box | `true` |
+| `showLogo` | Block "0SEC" mark on an empty transcript | `true` |
+| `showRuntimeNotices` | Surface runtime stdout/stderr as transcript notices | `true` |
+| `showTurnSummary` | Per-turn "N tool calls · in→out tok" line | `true` |
+| `showSubagents` | List active subagents while workers run | `true` |
+| `showTimestamps` | Relative timestamps on transcript entries | `false` |
+| `density` | `comfortable` (blank line between entries) or `compact` | `comfortable` |
+| `composerStyle` | `border`, `rail`, or `plain` | `border` |
+
 ## resume
 
 Resume a persisted review or audit scan by its scan ID.
@@ -475,16 +667,18 @@ Resume a persisted review or audit scan by its scan ID.
 
 Useful when a long-running deep scan was interrupted or when you want to continue where a previous run left off.
 
+This is unrelated to the console's `/resume`, which restores a saved chat
+transcript rather than a scan.
+
 ## dashboard
 
-Open the local verification workbench for board-based triage, evidence review, and scan provenance.
+Local verification workbench: a Kanban board for triaging findings, reviewing
+evidence, and tracking active scans. Runs entirely locally.
 
 ```bash
 0sec dashboard
 0sec dashboard --port 48123
 ```
-
-The dashboard provides a Kanban-style board for triaging findings, reviewing evidence, and tracking active scans. It runs entirely locally.
 
 **Key flags:**
 
@@ -598,11 +792,10 @@ result as a clean tenant. See [Authorized Engagements](/engagements/).
 
 ## findings
 
-Query, filter, and inspect verified findings. Fresh scans keep local findings
-in `~/.0sec/runs/<scan-id>/state.db`; `0sec findings list` aggregates local
-run databases, while `--scan <scan-id>` or `--db-path <path>` selects one run
-for detailed inspection and triage. Managed findings are queried through the
-managed control plane, not this local store.
+Query, filter, and inspect verified findings. Fresh scans store findings in
+`~/.0sec/runs/<scan-id>/state.db`; `findings list` aggregates all local runs,
+while `--scan <scan-id>` or `--db-path <path>` selects one. Managed findings live
+in the control plane, not this local store.
 
 ```bash
 # List all findings
@@ -657,10 +850,9 @@ schema.
 ```
 
 The `cli-path-traversal` fixture starts a malicious local API and runs the
-caller-supplied CLI command against a temp export directory. The harness does
-not implement export behavior itself; it only supplies `{{apiUrl}}`,
-`{{exportDir}}`, records stdout/stderr, and checks that a marker file escapes
-the selected export root while staying inside the sandbox.
+supplied CLI command against a temp export dir. It only supplies `{{apiUrl}}` and
+`{{exportDir}}`, records stdout/stderr, and checks whether a marker file escapes
+the export root while staying inside the sandbox.
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -733,16 +925,13 @@ variant-hunt context.
 0sec intel target-history --repo-path ./my-project --json
 ```
 
-Audit and review agents also get `intel_build_dossier`,
+Audit and review agents get the same lookups as tools (`intel_build_dossier`,
 `intel_search_target_history`, `intel_search_advisories`, `intel_lookup_cve`,
-and `intel_search_similar` tools. They should use these before citing CVEs/GHSAs from memory; intel
-results are leads unless backed by deterministic package/version evidence or
-local verification. Target-history and dossier results include
-prior-vulnerability playbooks plus an `auditGraph` that turns matching
-historical bug shapes into ordered source/sink/guard/verification steps and
-expected-evidence nodes. In source-review contexts, `intel_search_target_history`
-can infer repository/package/product hints from the scoped repo path before
-querying live advisory sources.
+`intel_search_similar`) and should use them before citing CVEs from memory. Intel
+results are leads until backed by deterministic package/version evidence or local
+verification. Dossier and target-history results carry prior-vulnerability
+playbooks plus an `auditGraph` that turns historical bug shapes into ordered
+source/sink/guard/verification steps.
 
 **Subcommands:**
 

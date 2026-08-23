@@ -1,23 +1,20 @@
 ---
 title: Finding Triage
-description: The multi-layer triage pipeline that sits between 0sec's research and verify agents — and what the 2026-04-11 ablation actually measured it doing.
+description: The multi-layer triage pipeline that sits between 0sec's research and verify agents — and what the 2026-04-11 ablation measured it doing.
 ---
 
-Autonomous pentesters are only as valuable as their false-positive rate.
-0sec ships a triage pipeline between the research agent and the blind
-verify agent. Every finding walks through a stack of independent
-filters, each of which can kill, downgrade, or boost it. Most filters are
-deterministic, zero-cost, and run before any LLM verification token is
-spent.
+An autonomous pentester is only as valuable as its false-positive rate. 0sec
+runs a triage pipeline between the research agent and the blind verify agent.
+Every finding walks through a stack of independent filters; each can kill,
+downgrade, or boost it. Most are deterministic, zero-cost, and run before any
+verification token is spent.
 
-> **Status (2026-04-11):** The effect of this pipeline has now been
-> measured end-to-end. See the [FP Reduction Moat](/research/fp-reduction-moat/)
-> page for the numbers and [the 2026-04-11 ablation results log](/research/2026-04-11-ablation/)
-> for the narrative. Short version: the stack strictly dominates the
-> no-triage baseline on XBOW black-box, is a Pareto tradeoff on XBOW
-> white-box (costs 2 flags at limit=50 for 63% fewer findings), and is
-> a no-op on npm-bench. Layer 11 (EGATS) is the one broken layer and
-> is opt-in only — see 0sec#116.
+> **What the ablation measured (2026-04-11).** The stack strictly beats the
+> no-triage baseline on XBOW black-box, is a Pareto tradeoff on white-box (2
+> flags at limit=50 for 63% fewer findings), and is a no-op on npm-bench. Layer
+> 11 (EGATS) is the one broken layer and is opt-in only ([0sec#116](https://github.com/0sec-labs/0sec/issues/116)).
+> Numbers: [FP Reduction Moat](/research/fp-reduction-moat/); narrative:
+> [2026-04-11 ablation](/research/2026-04-11-ablation/).
 
 ## Pipeline overview
 
@@ -72,168 +69,118 @@ flowchart TD
     style S11 fill:#533483,stroke:#e94560,color:#fff
 ```
 
-Each stage is independently configurable via environment variables and
-surfaced through `packages/core/src/triage/`.
+Each stage is configurable via env vars and lives under
+`packages/core/src/triage/`.
 
 ## 1. Holding-it-wrong filter
 
-**Module:** `triage/holding-it-wrong.ts` (always on)
-
-Kills findings where the "vulnerability" is literally the documented
-behavior of the sink. Classic examples: reporting `fs.writeFile` as an
-arbitrary-file-write vuln, `vm.compileFunction` as code execution, or
-`toFunction(cb)` as callback injection. The filter downgrades the
-finding to `info` and skips downstream verification.
+`triage/holding-it-wrong.ts` — always on. Kills findings where the
+"vulnerability" is the documented behavior of the sink: `fs.writeFile` as
+arbitrary file write, `vm.compileFunction` as code execution, `toFunction(cb)`
+as callback injection. Downgrades to `info` and skips downstream verification.
 
 ## 2. 45-feature extractor
 
-**Module:** `triage/feature-extractor.ts` (always available)
-
-Extracts a 45-element numeric vector per finding: response shape
-(status, size, reflection, error markers), payload signals (encoding,
-sink class, parameter location), and category priors. Inspired by
-VulnBERT's hybrid architecture — handcrafted features alone achieve
-~77% recall / 16% FPR, and the same vector fuses cleanly with neural
-embeddings for downstream ML.
-
-See `FEATURE_NAMES` in the module for the full ordered feature list.
-
-For a complete reference, use [Feature Extractor](/research/feature-extractor/).
-For the labeled JSONL pipeline that carries this vector into model training,
-use [Triage Dataset](/research/triage-dataset/).
+`triage/feature-extractor.ts` — always available. Builds a 45-element numeric
+vector per finding: response shape (status, size, reflection, error markers),
+payload signals (encoding, sink class, parameter location), and category priors.
+Handcrafted features alone hit ~77% recall / 16% FPR, and the vector fuses with
+neural embeddings for downstream ML. See `FEATURE_NAMES` for the full list, or
+[Feature Extractor](/research/feature-extractor/) and
+[Triage Dataset](/research/triage-dataset/).
 
 ## 3. Per-class oracles
 
-**Module:** `triage/oracles.ts` (always on for supported categories)
-
-Deterministic, category-specific verification oracles. No exploit, no
-report.
+`triage/oracles.ts` — always on for supported categories. Deterministic,
+category-specific verification. If the oracle proves the exploit, accept with no
+LLM call.
 
 | Category | Oracle | Proof |
 |----------|--------|-------|
 | SQLi | `verifySqli` | SQL error signatures + timing delta under sleep payloads |
 | Reflected XSS | `verifyReflectedXss` | Unique token reflected in an executable context |
-| SSRF | `verifySsrf` | Out-of-band callback (spins a local listener on demand) |
-| RCE | `verifyRce` | Command output round-trip through the response |
+| SSRF | `verifySsrf` | Out-of-band callback (spins a local listener) |
+| RCE | `verifyRce` | Command output round-trips through the response |
 | Path traversal | `verifyPathTraversal` | `/etc/passwd` signature (or Windows equivalent) |
 | IDOR | `verifyIdor` | Differential response across identities |
 
-Call `verifyOracleByCategory(finding, target)` to dispatch by category.
+Dispatch by category with `verifyOracleByCategory(finding, target)`.
 
 ## 4. Reachability gate
 
-**Module:** `triage/reachability.ts`
-**Flag:** `0SEC_FEATURE_REACHABILITY_GATE=1`
+`triage/reachability.ts` — `0SEC_FEATURE_REACHABILITY_GATE=1`. When source is
+available, walks imports, route mounts, and framework entry points to check
+whether the sink is reachable from an HTTP handler, CLI main, or user-facing
+API. Dead code and test-only paths are suppressed before LLM tokens are spent.
 
-When a source tree is available, walks imports, route mounts, and
-framework entry points to check whether the vulnerable sink is
-actually reachable from an HTTP handler, CLI main, or user-facing API.
-Dead code and test-only paths are suppressed before we spend LLM
-tokens verifying them.
-
-This is a zero-dependency grep/pattern pass today and is deliberately
-conservative: when it cannot make a confident call it returns
-`reachable: true` with low confidence so later stages still get a
-chance. A tree-sitter-based interprocedural upgrade is planned.
+Today it's a zero-dependency grep/pattern pass and deliberately conservative:
+when it can't make a confident call it returns `reachable: true` with low
+confidence so later stages still run. A tree-sitter interprocedural upgrade is
+planned.
 
 ## 5. Multi-modal agreement (foxguard × 0sec)
 
-**Module:** `triage/multi-modal.ts`
-**Flag:** `0SEC_FEATURE_MULTIMODAL=1`
+`triage/multi-modal.ts` — `0SEC_FEATURE_MULTIMODAL=1`. When both source and the
+[foxguard](https://github.com/0sec-labs/foxguard) binary are present, 0sec runs
+foxguard on the same code and cross-checks each finding against its SARIF:
 
-When both a source tree and the [foxguard](https://github.com/0sec-labs/foxguard)
-binary are available, 0sec runs foxguard against the same code and
-cross-checks every finding against foxguard's SARIF output.
-
-- **Both scanners fire on the same file / category** → auto-accepted
-  with high confidence.
-- **Only 0sec fires, foxguard scanned the file cleanly** →
-  down-weighted or auto-rejected.
-- **foxguard didn't scan the file** → no signal either way.
+- **Both fire on the same file/category** → auto-accept, high confidence.
+- **Only 0sec fires, foxguard scanned the file cleanly** → down-weight or
+  auto-reject.
+- **foxguard didn't scan the file** → no signal.
 
 ```bash
 export 0SEC_FEATURE_MULTIMODAL=1
 0sec scan --target https://example.com --repo ./source
 ```
 
-This is the opensoar-hq trinity validation pattern: 0sec detects,
-foxguard cross-checks, opensoar responds.
-
 ## 6. PoV generation gate
 
-**Module:** `triage/pov-gate.ts`
-**Flag:** `0SEC_FEATURE_POV_GATE=1`
-
-Backed by the empirical ground truth from *All You Need Is A Fuzzing
-Brain* (arXiv:2509.07225): if an agent can't build a working PoC in N
+`triage/pov-gate.ts` — `0SEC_FEATURE_POV_GATE=1`. Grounded in *All You Need Is A
+Fuzzing Brain* (arXiv:2509.07225): if an agent can't build a working PoC in N
 turns, the finding is almost certainly a false positive.
 
-Spins up a narrowly-scoped mini agent loop whose only job is to
-produce a concrete, executable exploit that demonstrably works. No
-speculation, no "would-be" payloads — the exploit must run and the
-response must contain category-specific proof of exploitation.
-
-- `hasPov: true` → boost confidence, attach the artifact to
-  `finding.evidence`.
-- `hasPov: false` → downgrade severity to `info` and set
-  `triageNote = "no_pov"`.
+Spins up a narrowly-scoped mini agent loop whose only job is a concrete,
+executable exploit that actually runs and whose response contains
+category-specific proof. `hasPov: true` boosts confidence and attaches the
+artifact; `hasPov: false` downgrades to `info` and sets `triageNote = "no_pov"`.
 
 ## 7. Structured 4-step verify pipeline
 
-**Module:** `triage/verify-pipeline.ts` (default when a runtime is available)
+`triage/structured-verify.ts` — default when a runtime is available. The
+single-shot blind verify is split into four focused subtasks, each with
+category-specific prompts:
 
-Inspired by GitHub Security Lab's taskflow-agent approach, the single-shot
-blind verify is decomposed into four focused subtasks, each with domain-
-specific prompts and category-specific addendums:
+1. **Reachability** — can external input trigger the vuln?
+2. **Payload validation** — does the PoC demonstrate the claim?
+3. **Impact assessment** — what's the real-world impact?
+4. **Exploit confirmation** — reproduce with only the PoC and target path.
 
-1. **Reachability analysis** — can the vuln be triggered from external
-   input?
-2. **Payload validation** — does the PoC actually demonstrate the claim?
-3. **Impact assessment** — what is the real-world security impact?
-4. **Exploit confirmation** — independently reproduce with only the PoC
-   and the target path.
-
-Any step failure marks the finding as a false positive.
+Any step failure marks the finding a false positive.
 
 ## 8. Self-consistency voting
 
-**Flag:** `0SEC_FEATURE_CONSENSUS_VERIFY=1`
-
-Runs the structured verify pipeline N times (different sampling seeds)
-and takes the majority vote. Trades tokens for confidence — useful on
-ambiguous findings where a single verify pass is noisy.
+`0SEC_FEATURE_CONSENSUS_VERIFY=1`. Runs the structured verify N times (different
+seeds) and takes the majority vote via `runSelfConsistencyVerify`. Trades tokens
+for confidence on ambiguous findings.
 
 ## 9. Assistant memories
 
-**Module:** `triage/memories.ts`
-**CLI:** `0sec-cli triage ...`
-**Flag:** `0SEC_FEATURE_TRIAGE_MEMORIES=1`
+`triage/memories.ts` — `0SEC_FEATURE_TRIAGE_MEMORIES=1`. Semgrep-style per-target
+FP context that learns from human triage. When a user marks a finding FP (and
+says why), the reason is stored as a `TriageMemory`. On later scans, memories are
+injected as few-shot examples into the verify prompt, and a strong match
+auto-rejects without a verify call.
 
-Semgrep-style per-target persistent FP context that learns from human
-triage decisions. When a user marks a finding as a false positive (and
-says why), the reason is stored as a `TriageMemory`. On future scans
-the memories are injected as few-shot examples into the verify prompt,
-and a sufficiently strong match auto-rejects the finding without
-spending a verify call.
-
-Scope hierarchy:
-
-- `global` — applies to every scan.
-- `package` — applies to findings whose target starts with a given
-  package identifier (npm name, repo prefix).
-- `target` — applies only to an exact target URL or path.
-
-Relevance is currently a lightweight token-overlap heuristic; an
-embedding-backed ranker can replace `scoreMemory` without touching the
-public API.
-
-### `0sec-cli triage` commands
+Scope hierarchy: `global` (every scan), `package` (targets under a package
+prefix), `target` (exact URL or path). Relevance is a token-overlap heuristic
+today; an embedding ranker can replace `scoreMemory` without API changes.
 
 ```bash
-# Mark a finding as a false positive and remember why
+# Mark a finding FP and remember why
 0sec-cli triage mark-fp <finding-id> --reason "test fixture, not prod"
 
-# Add a standalone memory (without a backing finding)
+# Add a standalone memory
 0sec-cli triage memory add --finding <id> --reason "sink is harmless helper" \
   --scope package --scope-value my-pkg
 
@@ -243,38 +190,24 @@ public API.
 
 ## 10. Adversarial debate
 
-**Status: planned — not implemented.** There is no `triage/adversarial.ts` module
-and no `0SEC_FEATURE_DEBATE` flag in the engine today; the design below is the
-intent, kept here because it is still the plan. The error-decorrelation goal it
-targets is partly served in the meantime by the **cross-family refuter**
+**Planned — not implemented.** There is no `triage/adversarial.ts` module and no
+`0SEC_FEATURE_DEBATE` flag in the engine. The intent: a prosecutor (finding is
+real) and a defender (it's an FP) argue from fresh contexts, and a skeptical
+judge picks the winner — each seeing only the other's written arguments, never
+the research agent's chain of thought. The open-source read of Anthropic's debate
+paper (arXiv:2402.06782); the point is error decorrelation.
+
+Its goal is partly served today by the **cross-family refuter**
 (`stages/hunt-cross-family.ts`, on by default on the hunt path), which forces the
-refute pass onto a model family different from the finder's.
-
-Two fresh-context agents argue opposing positions — a prosecutor makes the
-case that the finding is real, a defender makes the case that it is a
-false positive — and a third, deliberately skeptical judge picks the
-winner. Each agent sees only the other side's written arguments, never
-the original research agent's chain of thought.
-
-This is the open-source implementation of Anthropic's debate paper
-(arXiv:2402.06782). The point is error decorrelation: single-pass verify
-shares priors with the discovery agent (same model, same prompt family),
-so their mistakes line up. Adversarial agents with opposing instructions
-have uncorrelated error modes and catch cases that a single verifier
-misses.
+refute pass onto a different model family than the finder.
 
 ## 11. EGATS — Evidence-Gated Attack Tree Search
 
-**Flag:** `--egats` or `0SEC_FEATURE_EGATS=1`
-
-Beam-search over an explicit hypothesis tree. The agent proposes attack
-branches, each with required evidence, and only expands branches where
-prior evidence is observed. Dead hypotheses are pruned aggressively,
-which keeps the budget focused on exploitable paths.
-
-EGATS is the highest-variance stage in the pipeline — use it when you
-need breadth (e.g. unknown-class vulnerabilities) rather than depth on
-a known lead.
+`--egats` or `0SEC_FEATURE_EGATS=1`. Beam-search over an explicit hypothesis
+tree: the agent proposes attack branches with required evidence and only expands
+branches where prior evidence is observed; dead hypotheses are pruned. Highest
+variance in the pipeline — use it for breadth (unknown-class vulns), not depth on
+a known lead. Removed from the default aliases after the ablation ([0sec#116](https://github.com/0sec-labs/0sec/issues/116)).
 
 ## Configuration cheat-sheet
 
@@ -291,58 +224,45 @@ a known lead.
 | `0SEC_FEATURE_LEARNED_ROUTER` | off | router |
 | `0SEC_FEATURE_DYNAMIC_TRIAGE` | off | router |
 
-`0SEC_FEATURE_TRIAGE_MEMORIES`, `0SEC_FEATURE_DEBATE`, and
-`0SEC_FEATURE_EGATS` appeared in earlier versions of this table but no
-longer exist in the codebase — `egats` was removed from the default
-aliases after the ablation measured it regressing the hardest slice
-([0sec#116](https://github.com/0sec-labs/0sec/issues/116)). Sections
-9-11 above describe layers that are no longer separately toggleable.
-
-See [Features](/features/) for the complete env-var inventory.
+`0SEC_FEATURE_TRIAGE_MEMORIES`, `_DEBATE`, and `_EGATS` were in earlier versions
+of this table but no longer exist as separate toggles — `egats` was removed from
+the default aliases after the ablation ([0sec#116](https://github.com/0sec-labs/0sec/issues/116)).
+See [Features](/features/) for the full env-var inventory.
 
 ## Enabling the whole moat at once
 
-Turning the moat on is a measurement, not an upgrade. The
-[2026-04-11 ablation](/research/2026-04-11-ablation/) found its effect is
-slice-dependent: a strict win on XBOW black-box, a 0-2 flag cost on
-white-box (inside run noise after the broken `egats` layer was removed),
-and a no-op on npm-bench. The large number people remember — roughly 60%
-fewer findings — is the moat working as intended; the flag count, which
-is the ground-truth-correct outcome, stayed roughly flat. Enable it to
-re-measure, not because it is expected to score better.
+Turning the moat on is a **measurement, not an upgrade.** Its effect is
+slice-dependent: a win on XBOW black-box, a 0-2 flag cost on white-box, a no-op
+on npm-bench. The "~60% fewer findings" number people remember is the moat
+working as intended; the flag count (the ground-truth-correct outcome) stayed
+roughly flat. Enable it to re-measure, not to score better.
 
-Every gate above is off by default, so measuring what the moat is worth
-means setting six variables and getting all six right. `fp-moat` is a
-preset that names the set:
+Every gate is off by default. `fp-moat` names the set:
 
 ```bash
 0sec scan --features fp-moat --target https://example.com
-# or, for CI where the command line is templated:
+# or, for templated CI:
 0SEC_FEATURE_PRESET=fp-moat 0sec scan --target https://example.com
 ```
 
-It expands to `0SEC_FEATURE_REACHABILITY_GATE`, `_MULTIMODAL`,
-`_PUBLISHABILITY_GATE`, `_POV_GATE`, `_POC_GEN_STATIC`, and
-`_CONSENSUS_VERIFY`. The membership lives in
+It expands to `REACHABILITY_GATE`, `MULTIMODAL`, `PUBLISHABILITY_GATE`,
+`POV_GATE`, `POC_GEN_STATIC`, and `CONSENSUS_VERIFY`. Membership lives in
 `packages/core/src/agent/feature-presets.ts` and is pinned by test.
 
-A flag you set yourself always wins, so you can ablate one layer out of
-an otherwise-full moat:
+A flag you set yourself always wins, so you can ablate one layer:
 
 ```bash
 0SEC_FEATURE_POV_GATE=0 0sec scan --features fp-moat …
 ```
 
-The preset deliberately leaves out `0SEC_FEATURE_LEARNED_ROUTER` and
-`0SEC_FEATURE_DYNAMIC_TRIAGE`. Those decide which layers to *skip* per
-finding, so enabling them alongside the moat would let the router
-suppress the layers you are trying to measure.
+The preset deliberately omits `LEARNED_ROUTER` and `DYNAMIC_TRIAGE` — those
+decide which layers to *skip* per finding, so enabling them alongside the moat
+would suppress the layers you're trying to measure.
 
 ## Checking which layers actually ran
 
-Turning layers on is only half of a defensible claim. Each layer records
-a verdict on the finding as it executes, and `findings show` renders that
-record:
+Each layer records a verdict on the finding as it runs. `findings show` renders
+it:
 
 ```bash
 0sec findings show <id>
@@ -358,27 +278,25 @@ record:
     …
 ```
 
-Three things worth knowing about how to read this:
+Three things to know:
 
-- It is derived from the verdicts stored **on the finding**, never from
-  your current environment. A finding produced by a default scan still
-  reports the moat as not engaged even if you have every flag exported in
-  your shell — otherwise re-reading an old finding could silently
-  overstate what it went through.
-- `skipped` and `unrecorded` are different. `skipped` means the layer
-  recorded that it stood down, and the reason names the flag or the
-  missing precondition. `unrecorded` means no verdict exists at all.
-- Three layers are permanently `unrecorded`: `structured_verify`,
-  `consensus`, and `kernel_oracle` emit no verdict anywhere in the
-  engine, so their execution cannot be observed today. They are listed in
-  `UNINSTRUMENTED_LAYERS` and reported with an explicit
-  "no instrumentation" reason rather than being quietly counted as
-  skipped. Until that changes, they cannot back an FP-moat claim.
+- It's derived from verdicts stored **on the finding**, not your current shell. A
+  default-scan finding reports the moat as not engaged even if you've exported
+  every flag — otherwise re-reading an old finding could overstate what it went
+  through.
+- `skipped` ≠ `unrecorded`. `skipped` means the layer recorded that it stood
+  down (with the flag or missing precondition named); `unrecorded` means no
+  verdict exists at all.
+- Three layers are permanently `unrecorded`: `structured_verify`, `consensus`,
+  and `kernel_oracle` emit no verdict, so their execution can't be observed.
+  They're listed in `UNINSTRUMENTED_LAYERS` and reported with an explicit reason,
+  not quietly counted as skipped. Until that changes, they can't back an FP-moat
+  claim.
 
 ## Further reading
 
 - [Agent Loop](/agent-loop/) — how the research agent drives `bash`
-- [Blind Verification](/blind-verification/) — how step 7 isolates the
-  verify agent from the research agent's reasoning
-- [Research: Finding Triage ML](/research/finding-triage-ml/) — the
-  longer-form synthesis behind this pipeline
+- [Blind Verification](/blind-verification/) — how step 7 isolates the verify
+  agent from the research agent's reasoning
+- [Research: Finding Triage ML](/research/finding-triage-ml/) — the longer
+  synthesis behind this pipeline

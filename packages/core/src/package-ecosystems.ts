@@ -415,14 +415,26 @@ function extractSingleArchive(archivePath: string, outputDir: string): void {
     ["-c", `
 import pathlib, tarfile, zipfile, sys
 archive = pathlib.Path(sys.argv[1])
-out = pathlib.Path(sys.argv[2])
+out = pathlib.Path(sys.argv[2]).resolve()
 out.mkdir(parents=True, exist_ok=True)
+
+def ensure_within_output(member_name):
+    target = (out / member_name).resolve()
+    if target != out and out not in target.parents:
+        raise RuntimeError(f"unsafe archive member path: {member_name}")
+
 name = archive.name
 if name.endswith((".whl", ".zip")):
     with zipfile.ZipFile(archive) as zf:
+        for member in zf.infolist():
+            ensure_within_output(member.filename)
         zf.extractall(out)
 else:
     with tarfile.open(archive) as tf:
+        for member in tf.getmembers():
+            ensure_within_output(member.name)
+            if member.issym() or member.islnk():
+                raise RuntimeError(f"unsafe archive link member: {member.name}")
         tf.extractall(out)
 `, archivePath, outputDir],
     { stdio: "pipe", timeout: 60_000 },
@@ -768,12 +780,21 @@ function extractDockerArchiveLayers(archivePath: string, rootfsDir: string): voi
 import json, pathlib, tarfile, sys
 
 archive = pathlib.Path(sys.argv[1])
-rootfs = pathlib.Path(sys.argv[2])
-work = archive.parent / "docker-archive"
+rootfs = pathlib.Path(sys.argv[2]).resolve()
+work = (archive.parent / "docker-archive").resolve()
 work.mkdir(parents=True, exist_ok=True)
 rootfs.mkdir(parents=True, exist_ok=True)
 
+def ensure_within(root, member_name):
+    target = (root / member_name).resolve()
+    if target != root and root not in target.parents:
+        raise RuntimeError(f"unsafe archive member path: {member_name}")
+
 with tarfile.open(archive) as image_tar:
+    for member in image_tar.getmembers():
+        ensure_within(work, member.name)
+        if member.issym() or member.islnk():
+            raise RuntimeError(f"unsafe docker archive link member: {member.name}")
     image_tar.extractall(work)
 
 manifest_path = work / "manifest.json"
@@ -790,8 +811,10 @@ for layer in layers:
             name = pathlib.PurePosixPath(member.name)
             if any(part.startswith(".wh.") for part in name.parts):
                 continue
+            if member.issym() or member.islnk():
+                continue
             target = (rootfs / name).resolve()
-            if not str(target).startswith(str(rootfs.resolve())):
+            if target != rootfs and rootfs not in target.parents:
                 continue
             layer_tar.extract(member, rootfs)
 `;

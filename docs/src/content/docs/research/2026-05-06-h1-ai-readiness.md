@@ -3,6 +3,8 @@ title: "2026-05-06 HackerOne Program Audit: AI-Tool Readiness at the Code-of-Con
 description: "Aggregate analysis of 590 HackerOne programs visible to a researcher account, scored on automation policy, scope shape, and Gold Standard Safe Harbor. The conclusion: AI-tool-ready surface is much smaller than the leaderboard chase suggests."
 ---
 
+> **Historical research log (2026-05-06).** A dated lab note kept for transparency. It reflects the HackerOne policy landscape at the time and is not current legal or operational guidance.
+
 *Published 2026-05-06. Aggregate statistics only — no program names, handles, or paraphrased identifiers appear anywhere on this page. The underlying intel is private and is never committed to the repo.*
 
 ## Lead

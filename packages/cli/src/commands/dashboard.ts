@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { URL } from "node:url";
 import type { Command } from "commander";
@@ -221,7 +221,7 @@ function inferWorkflowStatus(row: {
   status?: string | null;
   triageStatus?: string | null;
 }): FindingWorkflowStatus {
-  if (row.triageStatus === "accepted" || row.status === "reported") return "done";
+  if (row.triageStatus === "accepted" || row.status === "reported" || row.status === "fixed") return "done";
   if (row.triageStatus === "suppressed" || row.status === "false-positive") return "cancelled";
   if (row.status && ["verified", "confirmed", "scored"].includes(row.status)) return "human_review";
   return "backlog";
@@ -439,7 +439,7 @@ function buildWorkflowSummary(
     else consensus = "disputed";
   } else if (latest.status === "false-positive") {
     consensus = "false-positive";
-  } else if (["verified", "confirmed", "scored", "reported"].includes(latest.status)) {
+  } else if (["verified", "confirmed", "scored", "reported", "fixed"].includes(latest.status)) {
     consensus = "verified";
   }
 
@@ -451,7 +451,7 @@ function buildWorkflowSummary(
 
   const persistedStatus = normalizeWorkflowStatus(latest.workflowStatus, latest);
   const evidenceSignal =
-    consensus === "verified" || latest.status === "reported" || latest.status === "scored"
+    consensus === "verified" || latest.status === "reported" || latest.status === "scored" || latest.status === "fixed"
       ? "strong"
       : consensus === "disputed" || verdictCounts.total > 0 || (latest.confidence ?? 0) >= 0.7
         ? "medium"
@@ -462,7 +462,7 @@ function buildWorkflowSummary(
       ? "in_progress"
       : consensus === "disputed" || verdictCounts.total > 0
         ? "agent_review"
-        : consensus === "verified" || consensus === "false-positive" || ["verified", "confirmed", "scored", "reported", "false-positive"].includes(latest.status)
+        : consensus === "verified" || consensus === "false-positive" || ["verified", "confirmed", "scored", "reported", "fixed", "false-positive"].includes(latest.status)
           ? "human_review"
           : persistedStatus;
 
@@ -514,7 +514,7 @@ function deriveReviewGate(
   if (
     consensus === "verified"
     || consensus === "false-positive"
-    || ["verified", "confirmed", "scored", "reported", "false-positive"].includes(latestStatus)
+    || ["verified", "confirmed", "scored", "reported", "fixed", "false-positive"].includes(latestStatus)
   ) {
     return "human_review";
   }
@@ -1003,10 +1003,20 @@ function resolveDashboardAssetDir(): string {
 
 function resolveAssetPath(assetDir: string, pathname: string): string | null {
   const trimmed = pathname === "/" ? "/index.html" : pathname;
-  const candidate = normalize(join(assetDir, trimmed));
-  if (!candidate.startsWith(assetDir)) return null;
+  const assetRoot = resolve(assetDir);
+  const candidate = resolve(assetRoot, `.${trimmed}`);
+  if (candidate !== assetRoot && !candidate.startsWith(`${assetRoot}${sep}`)) return null;
   if (!existsSync(candidate)) return null;
   return candidate;
+}
+
+function requireControlToken(req: IncomingMessage, res: ServerResponse, controlToken: string): boolean {
+  const provided = req.headers["x-0sec-control-token"];
+  if (provided !== controlToken) {
+    json(res, 403, { error: "Invalid or missing control token" });
+    return false;
+  }
+  return true;
 }
 
 async function handleApiRequest(
@@ -1028,9 +1038,7 @@ async function handleApiRequest(
     // Require a per-session token on all state-changing control endpoints.
     // The token is injected into the dashboard HTML at serve time and sent
     // back as a header, preventing CSRF and cross-origin abuse.
-    const provided = req.headers["x-0sec-control-token"];
-    if (provided !== controlToken) {
-      json(res, 403, { error: "Invalid or missing control token" });
+    if (!requireControlToken(req, res, controlToken)) {
       return true;
     }
 
@@ -1327,6 +1335,9 @@ async function handleApiRequest(
     const db = new osecDB(dbPath);
     try {
       if (req.method === "POST" && familyPath.action === "triage") {
+        if (!requireControlToken(req, res, controlToken)) {
+          return true;
+        }
         const body = (await readJson(req)) as { triageStatus?: string; triageNote?: string };
         db.updateFindingTriageByFingerprint(
           familyPath.fingerprint,
@@ -1338,6 +1349,9 @@ async function handleApiRequest(
       }
 
       if (req.method === "POST" && familyPath.action === "workflow") {
+        if (!requireControlToken(req, res, controlToken)) {
+          return true;
+        }
         const body = (await readJson(req)) as { workflowStatus?: string; workflowAssignee?: string };
         db.updateFindingWorkflowByFingerprint(
           familyPath.fingerprint,

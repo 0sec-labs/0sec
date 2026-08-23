@@ -3,6 +3,8 @@ title: "2026-05-08 Cost per Flag: A Missing Axis in Autonomous-Pentest Reporting
 description: "Most autonomous-pentest agents publish a percentage. Few publish a dollar amount. The percentage answers whether the agent CAN find the bug; the cost answers whether you can afford to run it. 0sec publishes both — at $0.48 per scan run and $5.20 per flag on XBOW — and argues that $/flag is the most-disclosable, most-comparable cost axis the field has."
 ---
 
+> **Historical research log (2026-05-08).** A dated lab note kept for transparency. Dollar figures reflect the benchmark ledger at the time; see the [Benchmarks](/benchmark/) page for current numbers.
+
 *Published 2026-05-08. Numbers come from the canonical [benchmark ledger](https://github.com/0sec-labs/0sec/blob/main/packages/benchmark/results/benchmark-ledger.json) and are recomputed on every CI consolidation run.*
 
 ## Lead

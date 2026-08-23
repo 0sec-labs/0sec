@@ -79,11 +79,11 @@ Tested Azure gpt-5.4 with `reasoning_effort: "high"` (previously running on defa
 
 **Verdict: high reasoning doesn't help.** Same results on easy challenges, same failures on hard ones. Just slower and more expensive.
 
-### Sub-agent spawning
+### Concurrent subagents
 
-Added a `spawn_agent` tool for delegating deep exploitation to a fresh context.
+The lead agent can spawn concurrent subagents via `spawn_agents` to fan out across independent hypotheses or endpoints, each in a fresh context, and merge their results back.
 
-**Verdict: agent never uses it.** It prefers to keep working in bash. The tool adds complexity without benefit.
+**Verdict: shipped.** An early single-shot `spawn_agent` prototype went unused because the agent preferred to stay in bash, so we reworked it into a concurrent fan-out primitive. In that form it earns its keep on targets with a broad attack surface, where exploring branches in parallel beats a single linear run. See the [Agent Techniques](/research/agent-techniques/) and [XBOW analysis](/research/xbow-analysis/) pages for how the fan-out is used alongside compaction, loop detection, and retry/handoff.
 
 ### Tool router hook
 

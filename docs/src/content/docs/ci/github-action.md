@@ -1,14 +1,40 @@
 ---
 title: GitHub Action — PR scans
-description: Diff-scoped agentic security scanning for pull requests with the 0sec composite action.
+description: Diff-scoped agentic security scanning for pull requests with the 0sec composite action (planned, not yet shipped).
 ---
 
-The `0sec-scan` composite action runs a diff-scoped security review on every
-PR. Confirmed findings are posted as inline review comments anchored to the
-changed lines; unconfirmed hypotheses are rolled up into a single summary
-comment so the PR isn't spammed.
+:::caution[Planned — not yet shipped]
+The `0sec-labs/0sec/.github/actions/0sec-scan` composite action does **not**
+exist yet (there is no `.github/actions/` directory), and 0sec is **not**
+published to npm. This page describes the intended design only — a roadmap item
+(see [Diff-aware PR scanning](/roadmap/)). Until it ships, run PR scans by
+invoking the CLI directly against the release binary or the
+`ghcr.io/0sec-labs/0sec` container image.
+:::
 
-## Quick start
+## Intended design
+
+A `0sec-scan` composite action that runs a diff-scoped security review on each
+PR: confirmed findings posted as inline review comments on the changed lines,
+unconfirmed hypotheses rolled into one summary comment.
+
+**Planned inputs:** `mode` (`pr` = changed files via `git diff base...HEAD`,
+`full` = whole tree), `profile` (`web`, `c-cpp`, `linux-kernel`),
+`comment-on-pr`, `fail-on-confirmed` (exit non-zero on a confirmed finding),
+`0sec-version`, `github-token`, `working-directory`.
+
+**Planned outputs:** `findings-confirmed`, `findings-hypothesis`, and
+`results-file` (path to `0sec-results.json`, also uploaded as an artifact).
+
+Diff scoping requires the PR base commit in the local object DB, so a checkout
+with `fetch-depth: 0` would be needed.
+
+## Use the CLI today
+
+Until the action ships, call the CLI from a workflow step. Provider credentials
+go in as `env:` from repository secrets — one of `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `AZURE_OPENAI_API_KEY`
+(+ `AZURE_OPENAI_BASE_URL` + `AZURE_OPENAI_MODEL`). See [API Keys](/api-keys/).
 
 ```yaml
 # .github/workflows/0sec.yml
@@ -24,120 +50,21 @@ permissions:
 jobs:
   0sec:
     runs-on: ubuntu-latest
+    container: ghcr.io/0sec-labs/0sec:latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
-        with:
-          mode: pr
-          profile: web
+      - run: |
+          0sec review . \
+            --diff-base "${{ github.event.pull_request.base.sha }}" \
+            --changed-only \
+            --format sarif > 0sec-results.sarif
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-That's it. Open a PR; the action will scan the changed files and comment.
-
-## Inputs
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `mode` | `pr` | `pr` scopes the scan to changed files via `git diff base...HEAD`; `full` scans the whole working tree. |
-| `profile` | `web` | Review profile: `web`, `linux-kernel`, or `c-cpp`. |
-| `comment-on-pr` | `true` | Post confirmed findings as inline review comments and hypotheses as a rolled-up summary. |
-| `fail-on-confirmed` | `true` | Exit non-zero (failing the job) when one or more confirmed findings are produced. |
-| `0sec-version` | `latest` | `0sec-cli` version installed via `npm install --global`. Pin for reproducible runs. |
-| `github-token` | `${{ github.token }}` | Token used for comment posting. |
-| `working-directory` | `${{ github.workspace }}` | Repository root to scan. |
-
-## Outputs
-
-| Name | Description |
-|------|-------------|
-| `findings-confirmed` | Count of confirmed findings. |
-| `findings-hypothesis` | Count of hypothesis-only findings. |
-| `results-file` | Absolute path to `0sec-results.json`. Also uploaded as an artifact named `0sec-results`. |
-
-## How diff-scoping works
-
-In `mode: pr` the action computes the diff against the PR base SHA:
-
-```bash
-git diff --name-only --diff-filter=ACMRTUXB "$BASE_SHA"...HEAD
-```
-
-The PR base commit must be in the local object database. **Set
-`fetch-depth: 0` on your checkout step** to make the whole git graph available.
-If the base SHA isn't present, the action attempts a defensive
-`git fetch --depth=1 origin <BASE>` before computing the diff. If that fails
-too, it falls back to `HEAD~1..HEAD` and emits a warning; if no diff can be
-computed at all, the action degrades to `mode: full`.
-
-`mode: full` skips the diff step and scans the entire working tree.
-
-## Gating merges
-
-Set `fail-on-confirmed: true` (the default) to block merges when 0sec
-reports a confirmed finding:
-
-```yaml
-- uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
-  with:
-    mode: pr
-    fail-on-confirmed: true
-```
-
-Hypothesis-only findings never fail the job; they only inform reviewers.
-
-## Provider credentials
-
-`0sec-cli` runs against an LLM provider. Wire one of the supported providers
-via repository secrets and pass them through as `env:` on the action step:
-
-- `ANTHROPIC_API_KEY`
-- `OPENAI_API_KEY`
-- `OPENROUTER_API_KEY`
-- `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` + `AZURE_OPENAI_MODEL`
-
-See [API Keys](/api-keys/) for the full matrix.
-
-## Profiles
-
-| Profile | Use when |
-|---------|----------|
-| `web` (default) | TypeScript/JavaScript, Python, Go, Ruby web apps. Maps to the CLI `default` review profile. |
-| `c-cpp` | C/C++ memory-safety review. Maps to the CLI `c-library` profile (tier-1/2/3 harness). |
-| `linux-kernel` | Linux kernel sources. Maps to the CLI `linux-kernel` profile. |
-
-## Pinning versions
-
-For reproducible scans pin the `0sec-cli` version:
-
-```yaml
-- uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
-  with:
-    0sec-version: "0.7.0"
-```
-
-## Outputs in downstream steps
-
-```yaml
-- id: 0sec
-  uses: 0sec-labs/0sec/.github/actions/0sec-scan@v1
-  with:
-    mode: pr
-    fail-on-confirmed: false
-- run: echo "Found ${{ steps.0sec.outputs.findings-confirmed }} confirmed, ${{ steps.0sec.outputs.findings-hypothesis }} hypothesis"
-```
-
-## Self-hosted runners
-
-The action only requires Node.js (auto-installed via `actions/setup-node`),
-`git`, and `npm`. No Docker, no kernel modules — it's safe on locked-down
-self-hosted runners.
-
 ## See also
 
-- [White-Box Mode](/white-box-mode/) — what the source review actually does.
+- [White-Box Mode](/white-box-mode/) — what the source review does.
 - [API Keys](/api-keys/) — provider configuration.
-- The action source: [`.github/actions/0sec-scan/`](https://github.com/0sec-labs/0sec/tree/main/.github/actions/0sec-scan)

@@ -3,11 +3,13 @@ title: Configuration
 description: Runtime modes, scan modes, depth settings, and environment options.
 ---
 
-0sec is designed for zero-config usage, but every default can be overridden via CLI flags or environment variables.
+0sec runs zero-config, but every default can be overridden via CLI flags or
+environment variables.
 
 ## Runtime modes
 
-Models help 0sec propose and explore. Scoped tools, evidence capture, and verification decide what is retained. The `--runtime` flag selects the LLM backend.
+Models propose and explore; scoped tools, evidence, and verification decide what
+counts. `--runtime` selects the LLM backend.
 
 | Runtime | Flag | Description |
 |---------|------|-------------|
@@ -19,7 +21,7 @@ Models help 0sec propose and explore. Scoped tools, evidence capture, and verifi
 
 ### API runtime
 
-The default `api` runtime makes direct HTTP calls to an LLM provider. It requires one of these environment variables:
+The default `api` runtime makes direct HTTP calls to a provider. Set one of:
 
 ```bash
 export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..." # ChatGPT/Codex subscription auth
@@ -31,16 +33,19 @@ export OPENAI_API_KEY="sk-..."
 
 See [API Keys](/api-keys/) for the full priority order and provider details.
 
-If you use Azure, also set `AZURE_OPENAI_BASE_URL` and `AZURE_OPENAI_MODEL` unless 0sec can read them from a valid Azure-backed `~/.codex/config.toml`. For the Responses API, the base URL should include `/openai/v1`. 0sec fails fast on incomplete Azure config instead of attempting a scan with guessed defaults.
+For Azure, also set `AZURE_OPENAI_BASE_URL` and `AZURE_OPENAI_MODEL` unless 0sec
+can read them from an Azure-backed `~/.codex/config.toml`. For the Responses API,
+the base URL must include `/openai/v1`. 0sec fails fast on incomplete Azure config
+rather than guessing defaults.
 
-For ChatGPT Codex subscription auth, run `codex login`, then provide the
-refresh token from `~/.codex/auth.json` as `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`.
-When that variable is set it takes provider priority over API-key based
-providers.
+For ChatGPT Codex, run `codex login`, then export the refresh token from
+`~/.codex/auth.json` as `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`. When set, it takes
+priority over API-key providers.
 
 ### CLI runtimes (claude, codex, gemini)
 
-These runtimes spawn the respective CLI tool as a subprocess. You must have the CLI installed and authenticated:
+These spawn the respective CLI as a subprocess — install and authenticate it
+first:
 
 ```bash
 # Claude Code CLI
@@ -60,9 +65,8 @@ Then use them:
 0sec review ./my-repo --runtime codex --depth deep
 ```
 
-The Codex CLI is not used as a live target wrapper. That MCP-backed path was
-removed because it added a target-interaction bottleneck. To use your Codex
-subscription for live scans, configure the direct provider:
+The Codex CLI isn't used as a live-target wrapper. For live scans on a Codex
+subscription, configure the direct provider instead:
 
 ```bash
 export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..."
@@ -71,13 +75,11 @@ export 0SEC_CHATGPT_OAUTH_REFRESH_TOKEN="..."
 
 ### Codex runtime parity matrix
 
-`--runtime codex` works across every 0sec entry point as long as
-either the local `codex` CLI binary is installed OR the direct ChatGPT
-Codex provider is configured via `0SEC_CHATGPT_ACCESS_TOKEN` /
-`0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`. When the binary is absent and the
-subscription env is set, 0sec routes the request through the API
-runtime against `chatgpt.com/backend-api/codex/responses` (the same
-endpoint the upstream `codex` CLI uses).
+`--runtime codex` works across every entry point as long as either the local
+`codex` binary is installed or the direct ChatGPT Codex provider is configured
+(`0SEC_CHATGPT_ACCESS_TOKEN` / `0SEC_CHATGPT_OAUTH_REFRESH_TOKEN`). With no binary
+but subscription env set, 0sec routes through the API runtime against
+`chatgpt.com/backend-api/codex/responses`.
 
 | Surface                                | Command                                                      | Supported via direct provider |
 |----------------------------------------|--------------------------------------------------------------|--------------------------------|
@@ -90,16 +92,12 @@ endpoint the upstream `codex` CLI uses).
 | Linux kernel review                    | `0sec review ./linux --profile linux-kernel --runtime codex` | yes                          |
 | C/C++ library review                   | `0sec review ./lib --profile c-library --runtime codex`    | yes                            |
 
-Before 0sec#402 only the web / URL scan path honoured the direct
-provider — the other surfaces aborted with
-`Requested runtime 'codex' is not available` whenever the codex CLI
-binary was missing, even with subscription auth configured. Cloud
-sandbox dispatch (the managed worker-controller) still gates codex on
-`target_ecosystem === "web"` and is tracked as a separate follow-up.
+(Cloud sandbox dispatch still gates codex on `target_ecosystem === "web"`, tracked
+as a separate follow-up.)
 
 ## Scan modes
 
-The `--mode` flag controls what kind of target is being scanned.
+`--mode` controls what kind of target is scanned.
 
 | Mode | Description |
 |------|-------------|
@@ -118,7 +116,7 @@ The `--mode` flag controls what kind of target is being scanned.
 
 ## Depth settings
 
-The `--depth` flag controls how thorough the scan is.
+`--depth` controls how thorough the scan is.
 
 | Depth | Test Cases | Typical Time | Best For |
 |-------|-----------|-------------|----------|
@@ -134,7 +132,7 @@ The `--depth` flag controls how thorough the scan is.
 
 ## Output formats
 
-0sec supports multiple output formats:
+Set with `--format`:
 
 | Format | Description |
 |--------|-------------|
@@ -157,17 +155,16 @@ In CI (GitHub Action), set `format: sarif` to populate the Security tab:
 
 ## Diff-aware review
 
-For PR workflows, review only changed files against a base branch:
+Review only changed files against a base branch — handy in CI to skip scanning
+the whole codebase on every PR:
 
 ```bash
 0sec review ./my-repo --diff-base origin/main --changed-only
 ```
 
-This is particularly useful in CI to avoid scanning the entire codebase on every PR.
-
 ## Verbose output
 
-Use `--verbose` to see the animated attack replay and detailed agent reasoning:
+`--verbose` shows detailed agent output:
 
 ```bash
 0sec scan --target https://api.example.com/chat --verbose
@@ -175,20 +172,16 @@ Use `--verbose` to see the animated attack replay and detailed agent reasoning:
 
 ## State directory
 
-Per-user 0sec state — the scan database, journals, caches, stored provider
-credentials, console display settings, and console session transcripts — lives
-in a single directory resolved by the shared `homeStateDir` helper. Today that
-is `~/.0sec` (i.e. `.0sec` under your home directory); everything else that
-references a state file joins onto that one root, so a future relocation or an
-`$XDG_STATE_HOME` migration would move all of it together rather than leaving
-stragglers behind. Paths below are written relative to that root.
+All per-user state — scan database, journals, caches, stored credentials, console
+settings, and session transcripts — lives under `~/.0sec`. Everything joins onto
+that one root, so a future relocation (e.g. `$XDG_STATE_HOME`) moves it all
+together. Paths below are relative to it.
 
 ## Console display settings
 
-The interactive console persists its display preferences to
-`tui-settings.json` in the [state directory](#state-directory). You normally
-change these from the console (`/settings`), but the file is plain JSON and
-safe to hand-edit. Every key, its type, its allowed values, and its default:
+The console persists display preferences to `tui-settings.json` in the [state
+directory](#state-directory). Change them from `/settings`, or hand-edit the
+plain JSON:
 
 | Key | Type | Values | Default |
 |-----|------|--------|---------|
@@ -202,45 +195,33 @@ safe to hand-edit. Every key, its type, its allowed values, and its default:
 | `density` | enum | `comfortable`, `compact` | `comfortable` |
 | `composerStyle` | enum | `border`, `rail`, `plain` | `border` |
 
-The file cannot break the console. On load it is normalised against the table
-above: an unknown key is dropped, and a value of the wrong type or outside an
-enum's allowed set falls back to that key's default rather than raising. A
-missing, unreadable, or corrupt file simply yields the full set of defaults.
-Saving rewrites the file from the normalised object, so a stale or misspelled
-key you added by hand does not survive the next write.
+A missing, corrupt, or hand-broken file can't break the console: on load it's
+normalised against the table above (unknown keys dropped, bad values reset to
+defaults), and saving rewrites it from the normalised object.
 
 ## Session persistence
 
-The interactive console stores its transcripts as one JSON file per session in
-a `console-sessions/` subdirectory of the [state directory](#state-directory),
-so you can close the console and resume an engagement later. Each transcript
-and the directory are owner-only (`0600` file, `0700` directory), re-applied on
-every save. Listings and resume are filtered to the current working directory,
-so each project sees its own sessions. History is bounded: the store keeps the
-20 most-recent sessions across all projects and prunes older ones
-automatically.
+The console stores transcripts as one JSON file per session in
+`console-sessions/` under the [state directory](#state-directory), so you can
+close it and resume later. Files are owner-only (`0600` file, `0700` dir),
+filtered per working directory, capped at the 20 most recent.
 
-A transcript is the full engagement record — the entire native message array:
-operator prompts, model replies, and every tool call together with its result.
-In practice that means **target hostnames and approved scope, findings before
-triage, and raw request/response bodies** captured as evidence — which can
-include session cookies, bearer tokens, and anything a tool echoed.
+A transcript is the full engagement record — every operator prompt, model reply,
+and tool call with its result. That means **target hostnames, approved scope,
+untriaged findings, and raw request/response bodies**, which can include cookies,
+bearer tokens, and anything a tool echoed.
 
-**Secrets are deliberately not scrubbed from transcripts.** This is a decision,
-not an omission: a scrubber over free-form tool output cannot be complete (it
-would catch an `Authorization:` header and miss the same token inside a JSON
-body, a JWT in a URL, or a password in a stack trace), and a partial scrub is
-worse than none — it advertises a guarantee it cannot keep, so the file gets
-treated as safe to paste into a ticket or a shared host when it is not. A scrub
-would also corrupt the very evidence a resumed session needs. As with stored
-credentials, transcripts are **not encrypted**; their protection is filesystem
-permissions plus your ability to delete them (the console exposes deletion, and
-the 20-session prune caps how much accumulates). Nothing here is transmitted
-anywhere — this is local disk only.
+**Secrets are deliberately not scrubbed.** A scrubber over free-form tool output
+can't be complete, and a partial scrub is worse than none — it advertises a
+guarantee it can't keep, and would corrupt the evidence a resume needs.
+Transcripts are **not encrypted**; protection is filesystem permissions plus your
+ability to delete them. Nothing is transmitted anywhere — local disk only.
 
 ## Feature flags
 
-0sec ships a set of agent-improvement features behind environment-variable flags so you can A/B test them and opt in/out per run. Every flag is read at process start; set `<FLAG>=0` or `<FLAG>=false` to disable, anything else to enable.
+Agent-improvement features sit behind environment-variable flags so you can A/B
+test and opt in/out per run. Each is read at process start: set `<FLAG>=0` or
+`<FLAG>=false` to disable, anything else to enable.
 
 | Flag | Default | What it enables |
 |------|---------|-----------------|
@@ -265,17 +246,18 @@ anywhere — this is local disk only.
 | `0SEC_FEATURE_MULTIMODAL` | off | Cross-validates findings against foxguard (Rust pattern scanner). |
 | `0SEC_FEATURE_REACHABILITY_GATE` | off | Suppresses findings whose sink is not reachable from an application entry point. |
 | `0SEC_FEATURE_POV_GATE` | off | Requires a working executable PoC per finding, otherwise downgrades to `info`. |
-| `0SEC_FEATURE_TRIAGE_MEMORIES` | off | Injects Semgrep-style per-target persistent FP memories into the verify pipeline. Pairs with `0sec-cli triage`. |
+| `0SEC_FEATURE_TRIAGE_MEMORIES` | off | Injects Semgrep-style per-target persistent FP memories into the verify pipeline. Pairs with `0sec triage`. |
 
 ## Static analyzer selection
 
-`0sec review`, source-code pipeline scans, and package source scans use Foxguard by default for pre-agent static leads. Set `0SEC_STATIC=semgrep` to route those static leads through Semgrep instead. Diff-aware `--changed-only` source reviews preserve the same changed-file narrowing with either scanner. Dependency advisory checks (`npm audit`, OSV, and OCI package inventory) remain separate and still run for package targets.
+Source reviews and package source scans use Foxguard by default for pre-agent
+static leads. Set `0SEC_STATIC=semgrep` to route them through Semgrep instead;
+`--changed-only` narrowing works with either. Dependency advisory checks (`npm
+audit`, OSV, OCI inventory) run separately for package targets regardless.
 
 ```bash
 0SEC_STATIC=semgrep 0sec review ./repo --depth quick
 ```
-
-Semgrep remains available as an explicit compatibility and comparison path while Foxguard carries the default static lead role.
 
 ### Docker executor overrides
 
@@ -297,34 +279,26 @@ Bootstrap rules:
 
 Networking rules:
 
-- default is `bridge` — the executor container gets its own network stack.
-  This is the safe default (no exposure of the host's localhost services
-  to the container) and is fine for public targets.
-- set `0SEC_DOCKER_NETWORK=host` when the scan target is served from
-  the same host, e.g. local XBOW challenges on `localhost:<port>` or a
-  `docker-compose` target on the default bridge. The container needs to
-  reach `host.docker.internal` / `localhost` to hit the service.
-- any valid `docker run --network <name>` value works — pass a custom
-  compose network name to land the executor on the same network as the
-  target stack.
+- `bridge` (default) gives the container its own network stack — safe, and fine
+  for public targets.
+- `0SEC_DOCKER_NETWORK=host` when the target runs on the same host (local XBOW
+  challenges, a `docker-compose` service), so the container can reach
+  `host.docker.internal` / `localhost`.
+- any valid `docker run --network <name>` value works — e.g. a compose network
+  name to land the executor on the target stack's network.
 
 ### Cost ceiling
 
-You can bound API spend per scan, audit, or review:
+Bound API spend per scan, audit, or review. If exceeded, 0sec preserves partial
+findings and exits with code `4`. The `--cost-ceiling` flag overrides the env var.
 
 ```bash
 export 0SEC_COST_CEILING_USD=5
 0sec scan --target https://example.com --mode web
-```
 
-Or override it per command:
-
-```bash
 0sec audit lodash --cost-ceiling 2
 0sec review ./my-repo --cost-ceiling 10
 ```
-
-If the ceiling is exceeded, 0sec preserves partial findings and exits with code `4`.
 
 ### LLM runtime resilience
 
@@ -332,15 +306,19 @@ The runtime layers that keep a provider failure from silently corrupting a scan:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `0SEC_LLM_STREAM_IDLE_TIMEOUT_MS` | `120000` | **SSE stream idle watchdog.** Streaming (ChatGPT Codex backend / Azure Responses) calls disarm the overall call timer once response headers arrive; if the server then holds the stream open without emitting a single byte (queue/hold), the call aborts after this window and is classified as a transient error (bounded retry, then a loud failure). An idle window with no bytes at all is never legitimate progress on a healthy stream — without this, a held stream hung the whole scan silently until the outer sandbox timeout (the "$0 cost, zero output" failure shape). |
-| `0SEC_LLM_MAX_RETRIES` | `6` | Max retries after the initial attempt for retryable HTTP statuses (429 + transient 5xx), with exponential backoff and `Retry-After` honored. |
-| `0SEC_LLM_MAX_RETRY_WAIT_MS` | `60000` | Cumulative backoff cap (ms) for the same wire-layer retry loop. |
+| `0SEC_LLM_STREAM_IDLE_TIMEOUT_MS` | `120000` | SSE idle watchdog. Streaming calls disarm the overall timer once headers arrive; if the server then holds the stream open emitting no bytes, the call aborts after this window as a transient error (bounded retry, then loud failure). Prevents a held stream hanging the scan silently. |
+| `0SEC_LLM_MAX_RETRIES` | `6` | Max retries for retryable statuses (429 + transient 5xx), with exponential backoff and `Retry-After` honored. |
+| `0SEC_LLM_MAX_RETRY_WAIT_MS` | `60000` | Cumulative backoff cap (ms) for the wire-layer retry loop. |
 
-Auth-class errors (**401/403**) are never retried at the wire layer: the agent loop exits immediately via `errorExit`, which the pipeline surfaces as an **honest failure** — `warnings[]` carries the provider error and the report marks the run failed, never a clean "0 findings". Package audits add a per-file circuit breaker: 3 consecutive identical-signature failures abort the remaining per-file sessions with one aggregated error (file-specific errors keep full tolerance). A dead provider therefore stops a scan loudly in seconds instead of either hanging or degrading to a false-clean report.
+Auth errors (**401/403**) are never retried: the agent loop exits immediately, and
+the pipeline surfaces an **honest failure** — `warnings[]` carries the provider
+error and the run is marked failed, never a clean "0 findings". Package audits add
+a per-file circuit breaker (3 identical-signature failures abort the rest). A dead
+provider stops a scan loudly in seconds instead of degrading to a false clean.
 
 ### Cloud sink
 
-If you want to stream findings and the final report to an orchestration layer:
+Stream findings and the final report to an orchestration layer:
 
 ```bash
 export 0SEC_CLOUD_SINK=https://api.example.com
@@ -348,40 +326,20 @@ export 0SEC_CLOUD_SCAN_ID=scan_123
 export 0SEC_CLOUD_TOKEN=secret-token
 ```
 
-When set, 0sec posts:
-
-- each finding as `{ "finding": ... }`
-- the final report as `{ "report": ..., "final": true }`
-
-to:
-
-```text
-${0SEC_CLOUD_SINK}/scans/${0SEC_CLOUD_SCAN_ID}/findings
-```
-
-Set `0SEC_FEATURE_CLOUD_SINK=0` to disable this behavior even when the env vars are present.
+0sec then POSTs each finding as `{ "finding": ... }` and the final report as
+`{ "report": ..., "final": true }` to
+`${0SEC_CLOUD_SINK}/scans/${0SEC_CLOUD_SCAN_ID}/findings`. Set
+`0SEC_FEATURE_CLOUD_SINK=0` to disable even when the env vars are present.
 
 ### Machine-readable result line
 
-Set:
-
-```bash
-export 0SEC_EMIT_RESULT_LINE=1
-```
-
-to make the CLI print one final `0SEC_RESULT=...` JSON line summarizing:
-
-- success/failure
-- exit code and exit reason
-- target type
-- finding counts
-- estimated cost and token usage when available
-
-This is useful for wrappers, CI parsers, and the cloud orchestration path.
+Set `0SEC_EMIT_RESULT_LINE=1` to print one final `0SEC_RESULT=...` JSON line with
+success/failure, exit code and reason, target type, finding counts, and estimated
+cost/token usage. Useful for wrappers, CI parsers, and the cloud path.
 
 ### Example: maximum-accuracy pentest
 
-Turn on every false-positive reduction feature for a client-ready scan:
+Every false-positive reduction feature on, for a client-ready scan:
 
 ```bash
 export 0SEC_FEATURE_CONSENSUS_VERIFY=1

@@ -1,55 +1,61 @@
 ---
 title: 0sec
-description: One harness. Two evidence engines.
+description: The open cybersecurity harness — a team of AI agents that finds, proves, and reports vulnerabilities. Evidence-first.
 template: splash
 hero:
-  tagline: 0sec investigates source and live targets. 0verse produces evidence for compiled programs without source. Models propose and explore; reproducing evidence decides what is real.
+  tagline: The open cybersecurity harness. A team of AI agents explores your target in parallel, chains exploits, and a separate agent reproduces every finding before it counts.
   actions:
     - text: Get Started
       link: /getting-started/
       icon: right-arrow
-    - text: View on GitHub
-      link: https://github.com/0sec-labs/0sec
-      variant: minimal
+      variant: primary
+    - text: CVEs found in the wild
+      link: https://0.security
       icon: external
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/0sec-labs/0sec
+      icon: external
+      variant: minimal
 ---
 
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
 <CardGrid>
-  <Card title="Source and live targets" icon="rocket">
-    0sec investigates repositories, packages, web applications, AI endpoints, and MCP servers within an explicit scope.
-  </Card>
-  <Card title="Compiled programs without source" icon="document">
-    0verse is a separate evidence producer. 0sec accepts only its versioned, verified receipts.
+  <Card title="A team of AI agents" icon="rocket">
+    A lead agent fans out into parallel strategies and focused subagents against web apps, APIs, source, packages, and MCP servers — inside an explicit scope, enforced on every tool call.
   </Card>
   <Card title="Reproduce before trusting" icon="approve-check-circle">
-    Models can propose and explore. Findings become real only when retained evidence and verification support them.
+    A separate, blind agent re-exploits each finding seeing only the PoC. Anything it can't reproduce is dropped — never shipped as "low confidence."
   </Card>
-  <Card title="Use the model host you need" icon="setting">
-    Run the native loop or use a narrow MCP boundary with an optional compatible host.
+  <Card title="Real CVEs, not leaderboards" icon="star">
+    0sec's research loop has disclosed real bugs in the Linux kernel and widely-used open source, with maintainer review from Intel, NVIDIA, Red Hat, Google, and more. The live track record lives at <a href="https://0.security">0.security</a>.
+  </Card>
+  <Card title="Binary analysis, no source" icon="document">
+    When there's only a compiled binary, the in-repo <a href="https://github.com/0sec-labs/0sec/tree/main/0verse">0verse</a> engine runs a find → prove → patch → verify loop and confirms a bug only with a reproducing proof-of-vulnerability.
+  </Card>
+  <Card title="Bring your own model" icon="setting">
+    Anthropic, OpenAI, Azure (EU regions), OpenRouter, DeepSeek, Z.ai GLM, Moonshot Kimi, Qwen, a ChatGPT-Codex subscription, or local Ollama — with a hard per-run cost ceiling.
+  </Card>
+  <Card title="Evidence you can inspect" icon="list-format">
+    Every run keeps its own SQLite state, an append-only journal, and artifacts under <code>~/.0sec/runs/</code> — so you can <code>resume</code>, <code>replay</code>, or <code>disclose</code> it later.
   </Card>
 </CardGrid>
 
-## Explore the docs
+## Start here
 
-### How it works
+- [Getting Started](/getting-started/) — install, define a scope, run your first scan
+- [Commands](/commands/) — the full CLI reference (48 commands)
+- [Configuration](/configuration/) & [API Keys](/api-keys/) — models, providers, and cost ceilings
 
-- [Architecture](/architecture/) — the 5-stage pipeline, runtime adapters, and MCP integration
-- [Agent Loop](/agent-loop/) — how the autonomous loop thinks, calls tools, reflects, and stops
-- [Improvement Plane](/improvement-plane/) — how future worker artifacts are evaluated without mutating a live engagement
-- [Finding Triage](/triage/) — the multi-layer pipeline between research and verify agents
+## How it works
+
+- [Architecture](/architecture/) — the pipeline, runtime adapters, and MCP integration
+- [Agent Loop](/agent-loop/) — how the agents plan, act, reflect, and stop
 - [Blind Verification](/blind-verification/) — why findings are re-exploited before they count
-- [Adversarial Evals](/adversarial-evals/) — how 0sec extends beyond classic pentesting into attack-driven evaluation of AI systems
+- [Finding Triage](/triage/) — the layers that cut false positives between research and verify
 
-### For enterprise buyers
+## Proof
 
-- [Enterprise readiness](/enterprise/) — SSO, BYOK, deployment options, data residency, audit, SLA, and compliance posture. The single source of truth for enterprise capability claims.
-
-### Research and benchmark analysis
-
-- [Research overview](/research/) — the index of design notes and experiments
-- [FP Reduction Moat](/research/fp-reduction-moat/) — the full false-positive reduction stack
-- [Finding Triage ML](/research/finding-triage-ml/) — the shipped triage layers and why they exist
-- [XBOW Analysis](/research/xbow-analysis/) — what moved the score and what still blocks the remaining challenges
-- [Benchmark](/benchmark/) — current results, caveats, and historical context
+- [Found in the wild](https://0.security) — the running, verified CVE track record
+- [Benchmarks](/benchmark/) — where 0sec sits on public CTF benchmarks, with honest caveats (we treat these as secondary to real disclosures)

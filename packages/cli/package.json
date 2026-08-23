@@ -18,7 +18,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@opentui/core": "0.5.4",
     "@opentui/react": "0.5.4",
     "@0sec/benchmark": "workspace:*",
@@ -41,7 +41,7 @@
     "@types/pdfkit": "^0.13.9",
     "@types/react": "^19.2.14",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.9",
+    "vitest": "^4.1.11",
     "yaml": "^2.4.0"
   }
 }

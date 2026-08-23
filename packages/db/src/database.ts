@@ -667,7 +667,7 @@ export class osecDB {
     const reviewGate =
       workflowStatus === "agent_review" || workflowStatus === "human_review"
         ? workflowStatus
-        : latest.status === "verified" || latest.status === "confirmed" || latest.status === "scored" || latest.status === "reported" || latest.status === "false-positive"
+        : latest.status === "verified" || latest.status === "confirmed" || latest.status === "scored" || latest.status === "reported" || latest.status === "fixed" || latest.status === "false-positive"
           ? "human_review"
           : "none";
 
@@ -707,14 +707,14 @@ export class osecDB {
         ? "blocked"
         : runningRoles.has("verify")
           ? "in_progress"
-          : hasVerifierVotes || ["verified", "confirmed", "scored", "reported", "false-positive"].includes(latest.status)
+          : hasVerifierVotes || ["verified", "confirmed", "scored", "reported", "fixed", "false-positive"].includes(latest.status)
             ? "done"
             : pocBuildStatus === "done"
               ? "todo"
               : "backlog";
 
     const consensusStatus: WorkItemRecord["status"] =
-      workflowStatus === "done" || workflowStatus === "cancelled" || ["verified", "confirmed", "scored", "reported", "false-positive"].includes(latest.status)
+      workflowStatus === "done" || workflowStatus === "cancelled" || ["verified", "confirmed", "scored", "reported", "fixed", "false-positive"].includes(latest.status)
         ? "done"
         : reviewGate === "agent_review"
           ? hasVerifierVotes
@@ -1548,7 +1548,7 @@ export class osecDB {
       .all();
   }
 
-  // ── Status Pipeline: discovered → verified → scored → reported ──
+  // ── Status Pipeline: discovered → verified → confirmed → scored → reported → fixed ──
 
   transitionFindingStatus(findingId: string, newStatus: FindingStatusDB): void {
     const finding = this.getFinding(findingId);
@@ -2717,7 +2717,7 @@ function normalizeWorkflowStatus(
     return value as FindingWorkflowStatusDB;
   }
 
-  if (fallback?.triageStatus === "accepted" || fallback?.status === "reported") {
+  if (fallback?.triageStatus === "accepted" || fallback?.status === "reported" || fallback?.status === "fixed") {
     return "done";
   }
   if (fallback?.triageStatus === "suppressed" || fallback?.status === "false-positive") {

@@ -3,6 +3,8 @@ title: "Strix Agent: Technical Implementation Comparison"
 description: "Code-level comparison of the open-source Strix pentesting agent (Apache-2.0, github.com/usestrix/strix, v0.8.3) against 0sec's own architecture. Covers agent loop, prompts, tools, planning, context compression, finding verification, isolation, telemetry, and CI. Closes 0sec#404."
 ---
 
+> **Historical research log (2026-05-23).** A code-level competitor teardown kept for transparency. It reflects a specific commit of an external project and 0sec's architecture at the time; both have moved since.
+
 Read of `usestrix/strix@HEAD` (Apache-2.0, ~18.7k LOC Python) on 2026-05-23, mapped against `0sec-labs/0sec@research/strix-comparison`. Every claim below is anchored to a `strix/<path>:<line>` or `0sec packages/<path>:<line>` reference; sections marked "not observed in public repo" are exactly that.
 
 ## 1. Executive summary

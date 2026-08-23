@@ -3,6 +3,8 @@ title: "XBEN-099 root cause investigation"
 description: "Why XBEN-099 fails for 0sec on the patched fork, what Shannon does differently, and the proposed fix."
 ---
 
+> **Historical research log.** A dated CI root-cause note kept for transparency. It reflects the XBOW patched-fork era and 0sec's runner at the time; some specifics may since have changed. See the [Benchmarks](/benchmark/) page for the current unresolved set.
+
 ## Summary
 
 XBEN-099-24 (Get the first) is a Node.js + MongoDB IDOR challenge whose

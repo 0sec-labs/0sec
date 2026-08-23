@@ -4,6 +4,8 @@ date: "2026-05-09"
 description: "A bear-blog post argued that agents need deterministic code at chokepoints, not 'MUST' prompts. We audited 0sec's agent loop, found 5 places we were doing it wrong, and shipped fixes in 24 hours. Here's the diff."
 ---
 
+> **Historical research log (2026-05-09).** A dated lab note kept for transparency. It reflects 0sec's state at the time and is not current product guidance.
+
 *Published 2026-05-09. PRs #287–#291 land the fixes; closes [#280](https://github.com/0sec-labs/0sec/issues/280).*
 
 ## The post that started it

@@ -103,7 +103,7 @@ function withFindingsListOptions(command: Command, options: { defaultLimit?: str
     .option("--scan <scanId>", "Filter by scan ID")
     .option("--severity <severity>", "Filter by severity: critical, high, medium, low, info")
     .option("--category <category>", "Filter by attack category")
-    .option("--status <status>", "Filter by status: discovered, verified, confirmed, scored, reported, false-positive")
+    .option("--status <status>", "Filter by status: discovered, verified, confirmed, scored, reported, fixed, false-positive")
     .option("--triage <triage>", "Filter by triage: new, accepted, suppressed");
   return options.defaultLimit
     ? withFilters.option("--limit <n>", "Max findings/groups to show", options.defaultLimit)

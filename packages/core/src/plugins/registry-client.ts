@@ -62,6 +62,15 @@ import { aggregateCapabilities } from "./enablement.js";
  */
 export const DEFAULT_REGISTRY_URL = "";
 
+/** Hard cap on a fetched registry index body. The registry is the most
+ * untrusted input in this subsystem — bound it like every sibling layer
+ * (manifest 256 KiB, enablement 1 MiB, protocol frames 1 MiB). */
+export const MAX_REGISTRY_INDEX_BYTES = 4 * 1024 * 1024; // 4 MiB
+/** Abort a registry fetch that has not completed within this window. */
+export const REGISTRY_FETCH_TIMEOUT_MS = 15_000;
+/** Cap on entries processed from one index (memory-amplification bound). */
+export const MAX_REGISTRY_ENTRIES = 5_000;
+
 // ── Wire shapes (all untrusted) ──────────────────────────────────────────────
 
 /**
@@ -492,6 +501,10 @@ export function parseRegistryIndex(raw: unknown, opts: ParseOptions = {}): Regis
   const artifacts: InstallableArtifact[] = [];
   const dropped: DroppedEntry[] = [];
   for (const rawEntry of list) {
+    if (entries.length + artifacts.length + dropped.length >= MAX_REGISTRY_ENTRIES) {
+      dropped.push({ reason: `registry index truncated at ${MAX_REGISTRY_ENTRIES} entries` });
+      break;
+    }
     const manifest = isPlainObject(rawEntry) ? rawEntry.manifest : undefined;
     const kind = manifestKindOf(manifest);
     if (kind === "theme" || kind === "config") {
@@ -514,6 +527,37 @@ export function parseRegistryIndex(raw: unknown, opts: ParseOptions = {}): Regis
 export interface FetchRegistryOptions extends ParseOptions {
   /** Injected fetch. Tests NEVER supply the real one. */
   fetchImpl: typeof fetch;
+  /** Hard cap on the fetched index body in bytes. Default {@link MAX_REGISTRY_INDEX_BYTES}. */
+  maxIndexBytes?: number;
+  /** Abort the fetch after this many ms. Default {@link REGISTRY_FETCH_TIMEOUT_MS}. */
+  timeoutMs?: number;
+}
+
+/**
+ * Read a response body as JSON without buffering an unbounded stream. When the
+ * injected fetch exposes a byte stream (real `fetch`), read it chunk-by-chunk
+ * and abort past `maxBytes`; otherwise fall back to the mock's `.json()`.
+ */
+async function readBoundedJson(res: Response, maxBytes: number): Promise<unknown> {
+  const reader = (res as { body?: { getReader?: () => ReadableStreamDefaultReader<Uint8Array> } }).body?.getReader?.();
+  if (!reader) return res.json();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { await reader.cancel(); } catch { /* best effort */ }
+      throw new RangeError(`registry index exceeds ${maxBytes} byte cap`);
+    }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return JSON.parse(new TextDecoder().decode(buf));
 }
 
 export type FetchRegistryResult =
@@ -552,18 +596,45 @@ export async function fetchRegistryIndex(
     };
   }
 
+  const maxBytes = opts.maxIndexBytes ?? MAX_REGISTRY_INDEX_BYTES;
+  const timeoutMs = opts.timeoutMs ?? REGISTRY_FETCH_TIMEOUT_MS;
   let body: unknown;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await opts.fetchImpl(trimmed, {
       method: "GET",
       headers: { Accept: "application/json" },
+      // The https-only guard above covers only the INITIAL url. Follow no
+      // redirect: a 30x to http:// or an internal host would reintroduce the
+      // cleartext-downgrade / SSRF we just refused. Fail closed.
+      redirect: "manual",
+      signal: controller.signal,
     });
+    if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
+      return {
+        ok: false,
+        error: `registry URL redirected (HTTP ${res.status || "opaque"}); refusing to follow (a redirect can downgrade to http or point at an internal host)`,
+      };
+    }
     if (!res.ok) {
       return { ok: false, error: `registry fetch failed: HTTP ${res.status}` };
     }
-    body = await res.json();
+    const declared = Number(res.headers?.get?.("content-length") ?? "");
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      return { ok: false, error: `registry index too large: ${declared} bytes exceeds ${maxBytes} cap` };
+    }
+    body = await readBoundedJson(res, maxBytes);
   } catch (err) {
-    return { ok: false, error: `registry fetch failed: ${err instanceof Error ? err.message : String(err)}` };
+    const timedOut = err instanceof Error && err.name === "AbortError";
+    return {
+      ok: false,
+      error: timedOut
+        ? `registry fetch timed out after ${timeoutMs}ms`
+        : `registry fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  } finally {
+    clearTimeout(timer);
   }
 
   return { ok: true, result: parseRegistryIndex(body, opts) };

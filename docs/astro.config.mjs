@@ -6,6 +6,8 @@ export default defineConfig({
   output: "static",
   outDir: "./dist",
   site: "https://docs.0.security",
+  // Allow previewing the dev server over Tailscale (dev-only; ignored by the static build).
+  vite: { server: { allowedHosts: [".ts.net"] } },
   markdown: {
     // Render ```mermaid code blocks as SVG at build time
     syntaxHighlight: { type: "shiki", excludeLangs: ["mermaid"] },
@@ -16,11 +18,17 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "0sec",
+      favicon: "/favicon.svg",
+      head: [
+        { tag: "link", attrs: { rel: "icon", href: "/favicon.ico", sizes: "32x32" } },
+        { tag: "link", attrs: { rel: "apple-touch-icon", href: "/apple-touch-icon.png" } },
+      ],
       description:
         "Open-source security research harness for authorized targets. The technical project and CLI are named 0sec.",
       logo: {
         src: "./src/assets/0sec-aperture-white.svg",
         alt: "0sec",
+        replacesTitle: true,
       },
       social: [
         {
@@ -51,8 +59,7 @@ export default defineConfig({
             { label: "API Keys", slug: "api-keys" },
             { label: "Cloud", slug: "cloud" },
             { label: "Authorized Engagements", slug: "engagements" },
-            { label: "GitHub Action (PR scans)", slug: "ci/github-action" },
-            { label: "Enterprise readiness", slug: "enterprise" },
+            { label: "GitHub Action (PR scans, planned)", slug: "ci/github-action" },
           ],
         },
         {
@@ -109,8 +116,6 @@ export default defineConfig({
                 { label: "2026-05-08 Cost per Flag", slug: "research/2026-05-08-cost-per-flag" },
                 { label: "2026-05-06 H1 Program Audit", slug: "research/2026-05-06-h1-ai-readiness" },
                 { label: "2026-04-11 Ablation", slug: "research/2026-04-11-ablation" },
-                { label: "XBEN-099 Investigation", slug: "research/xben-099-investigation" },
-                { label: "Unsolved Eight Investigation", slug: "research/unsolved-eight-investigation" },
               ],
             },
           ],
