@@ -682,11 +682,13 @@ function shimmerFrame(grid: readonly string[], frame: number, width: number): Lo
   const out = finalLogoFrame(grid);
   const period = FRAME_COUNTS.shimmer;
   const idx = ((frame % period) + period) % period;
-  for (let offset = 0; offset <= SHIMMER_TAIL; offset += 1) {
-    const col = idx - offset;
+  for (let offset = -SHIMMER_TAIL; offset <= SHIMMER_TAIL; offset += 1) {
+    const col = idx + offset;
     if (col < 0 || col >= width) continue;
-    // Head (offset 0) brightest; tail fades toward the base mark.
-    const l = 0.95 - (offset / SHIMMER_TAIL) * 0.62;
+    // Head (offset 0) brightest; the glow fades SYMMETRICALLY on BOTH sides
+    // by distance from the head, so it reads as a band, not a one-sided comet.
+    const dist = Math.abs(offset);
+    const l = 0.95 - (dist / SHIMMER_TAIL) * 0.62;
     const tone = greyHex(l);
     for (let r = 0; r < grid.length; r += 1) {
       const cell = out[r]![col]!;
