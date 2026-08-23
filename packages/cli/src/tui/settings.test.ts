@@ -551,6 +551,7 @@ describe("motion settings", () => {
       "fade",
       "typein",
       "sweep",
+      "swiss",
       "off",
     ]);
   });

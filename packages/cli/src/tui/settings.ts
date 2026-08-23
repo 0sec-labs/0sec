@@ -161,6 +161,7 @@ export interface TuiSettings {
     | "fade"
     | "typein"
     | "sweep"
+    | "swiss"
     | "off";
   /**
    * Master reduce-motion. When true the console keeps essential feedback but
@@ -485,6 +486,7 @@ const DEFS: readonly TuiSettingDef[] = [
       "fade",
       "typein",
       "sweep",
+      "swiss",
       "off",
     ],
     group: "Motion",

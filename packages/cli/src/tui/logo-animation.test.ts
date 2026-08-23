@@ -29,6 +29,7 @@ const ONE_SHOT: LogoAnimStyle[] = [
   "fade",
   "typein",
   "sweep",
+  "swiss",
   "off",
 ];
 const LOOPING: LogoAnimStyle[] = ["rainbow", "shimmer", "pulse"];
@@ -57,6 +58,7 @@ const ALL_STYLES: LogoAnimStyle[] = [
   "fade",
   "typein",
   "sweep",
+  "swiss",
   "off",
 ];
 
@@ -492,6 +494,34 @@ describe("sweep", () => {
     const rightCol = mid.some((row) => row[34]!.visible);
     expect(leftCol).toBe(true);
     expect(rightCol).toBe(false);
+  });
+});
+
+describe("swiss", () => {
+  const last = logoAnimationFrameCount("swiss") - 1;
+
+  it("settles: frame 0 and the last frame are the plain mark (no flash at the ends)", () => {
+    expect(framesEqual(computeLogoFrame(LOGO, "swiss", 0), finalFrame)).toBe(true);
+    expect(framesEqual(computeLogoFrame(LOGO, "swiss", last), finalFrame)).toBe(true);
+  });
+
+  it("flashes a RED swiss cross mid-intro over the fully-visible mark", () => {
+    const mid = computeLogoFrame(LOGO, "swiss", Math.floor(last / 2));
+    let sawRedCross = false;
+    for (const row of mid) for (const cell of row) {
+      if (isHex(cell.tone) && isRedDominant(cell.tone)) sawRedCross = true;
+    }
+    expect(sawRedCross).toBe(true);
+    // An overlay flash, not a reveal: the mark stays fully visible throughout.
+    expect(count(mid, (c) => c.visible)).toBe(visibleNonSpace);
+  });
+
+  it("never lights a blank cell", () => {
+    for (let f = 0; f <= last; f += 1) {
+      for (const row of computeLogoFrame(LOGO, "swiss", f)) {
+        for (const cell of row) if (cell.ch === " ") expect(cell.visible).toBe(false);
+      }
+    }
   });
 });
 

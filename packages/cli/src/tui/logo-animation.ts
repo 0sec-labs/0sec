@@ -72,6 +72,7 @@ export type LogoAnimStyle =
   | "fade"
   | "typein"
   | "sweep"
+  | "swiss"
   | "off";
 
 /** The logo alphabet: empty, white block, red-slash block. */
@@ -158,6 +159,7 @@ const FRAME_COUNTS: Record<LogoAnimStyle, number> = {
   fade: 16,
   typein: 28,
   sweep: 20,
+  swiss: 24,
   off: 1,
 };
 
@@ -175,6 +177,7 @@ const LOOPS: Record<LogoAnimStyle, boolean> = {
   fade: false,
   typein: false,
   sweep: false,
+  swiss: false,
   off: false,
 };
 
@@ -733,6 +736,47 @@ function pulseFrame(grid: readonly string[], frame: number, width: number): Logo
   return out;
 }
 
+/** Official Swiss-flag red for the `swiss` cross intro. */
+const SWISS_RED = { r: 213, g: 43, b: 30 } as const;
+
+/**
+ * swiss: a nod to the lab's Swiss identity. The mark sits at its final tone
+ * throughout while a red SWISS CROSS — a central vertical bar (±2 cols) and the
+ * centre horizontal row — blends from white toward SWISS_RED and back on a sine
+ * that peaks mid-intro and is EXACTLY 0 at both ends, so frame 0 and the last
+ * frame are the settled plain mark (red-on-white, so the cross reads clearly).
+ * One-shot; `reduceMotion`/`off` show the static mark with no flash.
+ */
+function swissFrame(grid: readonly string[], frame: number, width: number): LogoFrame {
+  const out = blankFrame(grid, width);
+  const rows = grid.length;
+  const cx = (width - 1) / 2;
+  const cy = (rows - 1) / 2;
+  const glow = Math.sin(progressOf(frame, FRAME_COUNTS.swiss) * Math.PI); // 0 → 1 → 0
+  const COL_HALF = 2; // vertical bar half-width (a 5-cell-wide bar)
+  const ROW_HALF = 0; // horizontal bar: the centre row only
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < width; c += 1) {
+      const ch = out[r]![c]!.ch;
+      if (ch === " ") continue;
+      const onCross = Math.abs(c - cx) <= COL_HALF || Math.abs(r - cy) <= ROW_HALF;
+      let tone: LogoCellTone;
+      if (onCross && glow > EPS) {
+        // Blend the block's white toward Swiss red by the current glow.
+        tone = rgbHex(
+          255 + (SWISS_RED.r - 255) * glow,
+          255 + (SWISS_RED.g - 255) * glow,
+          255 + (SWISS_RED.b - 255) * glow,
+        );
+      } else {
+        tone = finalTone(ch);
+      }
+      out[r]![c] = { ch, visible: true, tone };
+    }
+  }
+  return out;
+}
+
 /**
  * Compute the per-cell render state for one frame of the logo intro.
  *
@@ -786,6 +830,8 @@ export function computeLogoFrame(
       return typeinFrame(grid, clamped, width);
     case "sweep":
       return sweepFrame(grid, clamped, width);
+    case "swiss":
+      return swissFrame(grid, clamped, width);
     default:
       return finalLogoFrame(grid);
   }
