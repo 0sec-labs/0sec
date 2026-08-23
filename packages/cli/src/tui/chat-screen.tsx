@@ -210,7 +210,7 @@ import {
   renderFold,
 } from "./chat/TranscriptEntry.js";
 import { Todos } from "./chat/Todos.js";
-import { ComposerFrame } from "./chat/Composer.js";
+import { ComposerFrame, ComposerInput, composerRailRows } from "./chat/Composer.js";
 import {
   KeyHints,
   keyHintsLength,
@@ -239,7 +239,7 @@ import {
   type AgentRowView,
 } from "./chat/AgentRow.js";
 
-export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect";
+export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect" | "finding";
 
 /**
  * Map a status pill's semantic colour role onto the live palette. Kept theme-
@@ -293,8 +293,16 @@ export interface ChatScreenOptions {
 export interface ChatScreenProps {
   options?: ChatScreenOptions;
   onGoBack: () => void;
-  onNavigate: (destination: ChatDestination) => void;
+  onNavigate: (destination: ChatDestination, id?: string) => void;
   onExit: () => void;
+  /**
+   * A handle the coordinator populates with a function that submits an operator
+   * message into the SAME composer-submit path a typed message takes (queue if a
+   * turn is in flight, otherwise send). Used by the finding-detail overlay's
+   * "Fix" action to route the fix intent through a normal agent turn without
+   * reaching into core tools. Null while the chat is unmounted.
+   */
+  submitHandle?: React.MutableRefObject<((text: string) => void) | null>;
 }
 
 
@@ -419,10 +427,14 @@ export function entriesFromStoredMessages(messages: readonly unknown[]): ChatEnt
   return out;
 }
 
-/** A finding surfaced this run: a title and a normalised severity. */
+/** A finding surfaced this run: a title, a normalised severity, and — when the
+ * `save_finding` result reported one — the persisted finding id so the sidebar
+ * row can open the full detail view. */
 export interface RunFinding {
   title: string;
   severity: string;
+  /** Persisted finding id, when the tool result carried one. */
+  id?: string;
 }
 
 /**
@@ -444,7 +456,12 @@ export function runFindingsFromEntries(entries: readonly ChatEntry[]): RunFindin
     const head = colon >= 0 ? raw.slice(0, colon) : "";
     const title = (colon >= 0 ? raw.slice(colon + 2) : raw).trim();
     const severity = (head.split(/\s+/)[0] || "info").toLowerCase();
-    out.push({ title: title || "(untitled finding)", severity });
+    // The formatted result one-liner is "saved <id>" (see tool-format.ts), so
+    // the persisted id can be recovered without new event plumbing. Missing on
+    // a restored session whose result text was not stored — the row then falls
+    // back to a non-clickable entry.
+    const idMatch = (entry.detail ?? "").match(/^saved\s+(\S+)/);
+    out.push({ title: title || "(untitled finding)", severity, id: idMatch?.[1] });
   }
   return out;
 }
@@ -460,7 +477,7 @@ export function runFindingsFromEntries(entries: readonly ChatEntry[]): RunFindin
  */
 const SUBAGENT_MAX_VISIBLE = 4;
 
-export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreenProps) {
+export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle }: ChatScreenProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const entriesRef = useRef<ChatEntry[]>([]);
   entriesRef.current = entries;
@@ -1934,6 +1951,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
       case "findings":
         onNavigate("findings");
         return true;
+      case "finding":
+        // `/finding [id]` opens the full-screen detail view. run.tsx routes the
+        // "finding" destination via its cast-guard + ShellNav.openFindingDetail;
+        // an id (when the operator typed one) is resolved from the store there.
+        onNavigate("finding", args || undefined);
+        return true;
       case "doctor":
         onNavigate("doctor");
         return true;
@@ -2209,6 +2232,46 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
     }
   }, [appendEntry, busy, routeSlashCommand, session, settings.showTurnSummary]);
   submitRef.current = send;
+
+  // The programmatic operator-submit path, exposed to the coordinator via
+  // `submitHandle` (the finding-detail "Fix" action rides this). It takes the
+  // EXACT disposition a typed Enter takes — a slash command routes, a message
+  // sent while a turn is in flight is parked in the same queue, and an idle
+  // console sends immediately — so a fix request never reaches into core tools
+  // and never races the running turn. Not wired to composer history: it is not
+  // something the operator typed.
+  const submitOperatorMessage = useCallback((raw: string) => {
+    const input = raw.trim();
+    if (!input) return;
+    const disposition = classifyComposerInput({
+      input,
+      isSlash: findCommand(input).isSlash,
+      busy,
+      hasSession: Boolean(session),
+    });
+    if (disposition === "queue") {
+      const { queue, accepted } = enqueueComposerInput(queuedRef.current, input);
+      queuedRef.current = queue;
+      setQueuedMessages(queue);
+      appendEntry({
+        kind: accepted ? "notice" : "error",
+        text: accepted
+          ? `queued — will send when the current turn ends: ${input}`
+          : `queue is full (${COMPOSER_QUEUE_LIMIT} messages); not queued: ${input}`,
+        turn: turn.current,
+      });
+    } else if (disposition === "send") {
+      void send(input);
+    }
+  }, [appendEntry, busy, send, session]);
+
+  useEffect(() => {
+    if (!submitHandle) return;
+    submitHandle.current = submitOperatorMessage;
+    return () => {
+      submitHandle.current = null;
+    };
+  }, [submitHandle, submitOperatorMessage]);
 
   // Deliver one parked message per idle transition. One at a time rather than a
   // loop: delivering makes the console busy again, so the NEXT idle drains the
@@ -3089,33 +3152,27 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
   // deliberately NOT here — it lives once, in the transcript/hero — so the
   // composer never double-prints it.
   //
-  // While composing, the input is MULTI-LINE: it splits on the newlines that
-  // Shift+Enter inserts and grows downward, up to COMPOSER_MAX_ROWS rows, after
-  // which it shows the last rows (an internal scroll that keeps the cursor in
-  // view). The block cursor sits at the end of the LAST row.
-  const COMPOSER_MAX_ROWS = 8;
+  // While composing, the input is MULTI-LINE and SOFT-WRAPS: `ComposerInput`
+  // (chat/Composer.tsx) wraps the buffer on word boundaries to `textWidth`
+  // cells and grows downward up to COMPOSER_MAX_ROWS, then scrolls the oldest
+  // rows out to keep the tail cursor in view. The block cursor is FILLED when
+  // the composer is focused (`composerActive`) and HOLLOW when it is not.
   const composerInput = (textWidth: number) => {
-    if (composing) {
-      const lines = composer.split("\n");
-      const visible = lines.length > COMPOSER_MAX_ROWS
-        ? lines.slice(lines.length - COMPOSER_MAX_ROWS)
-        : lines;
-      return (
-        <box flexDirection="column" minWidth={0}>
-          {visible.map((line, i) => {
-            const isLast = i === visible.length - 1;
-            const shown = fitTuiText(line, Math.max(1, textWidth - (isLast ? 1 : 0)));
-            return <text key={`composer-line-${i}`} fg={TEXT}>{isLast ? `${shown}█` : shown}</text>;
-          })}
-        </box>
-      );
-    }
-    return startupError ? (
-      <text fg={ERROR}>{fitTuiText("runtime unavailable", textWidth)}</text>
-    ) : queueLabel ? (
-      <text fg={MUTED}>{fitTuiText(queueLabel, textWidth)}</text>
-    ) : (
-      <text fg={MUTED}>{fitTuiText("type to chat or / for commands", textWidth)}</text>
+    const placeholder = startupError
+      ? "runtime unavailable"
+      : queueLabel
+        ? queueLabel
+        : "type to chat or / for commands";
+    return (
+      <ComposerInput
+        composing={composing}
+        active={composerActive}
+        text={composer}
+        textWidth={textWidth}
+        placeholder={placeholder}
+        placeholderTone={startupError ? ERROR : MUTED}
+        theme={theme}
+      />
     );
   };
   // ONE composer builder, two call sites: full-width at the bottom of a chat,
@@ -3141,9 +3198,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
         // the rule spans the frame exactly without an alignSelf stretch bar.
         <box width={1} flexShrink={0} flexDirection="column" minHeight={0}>
           {Array.from({
-            length:
-              (composing ? Math.min(COMPOSER_MAX_ROWS, Math.max(1, composer.split("\n").length)) : 1) +
-              padY * 2,
+            length: composerRailRows(composer, textWidth, composing) + padY * 2,
           }).map((_unused, i) => (
             <text key={`composer-rail-${i}`} fg={composerActive ? PRIMARY : BORDER}>│</text>
           ))}
@@ -3521,6 +3576,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
             const sevColor = severityToneFor(theme, finding.severity);
             const sevCells = Math.min(finding.severity.length, Math.max(0, rightInner - 4));
             const titleCells = Math.max(1, rightInner - (sevCells > 0 ? sevCells + 1 : 0));
+            // Clickable when the persisted id is known: a mouse-down opens the
+            // full-screen detail view (run.tsx routes "finding" via its
+            // cast-guard + ShellNav.openFindingDetail). Guarded exactly like the
+            // transcript's toggle handlers — the prop is simply omitted when
+            // there is no id, so keyboard-only operators are unaffected.
             return (
               <box
                 key={`finding-${index}`}
@@ -3528,6 +3588,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit }: ChatScreen
                 width={rightInner}
                 flexShrink={0}
                 minWidth={0}
+                onMouseDown={finding.id ? () => onNavigate("finding", finding.id) : undefined}
               >
                 <box width={titleCells} flexShrink={0} minWidth={0}>
                   <text fg={TEXT}>{fitTuiText(finding.title, titleCells)}</text>

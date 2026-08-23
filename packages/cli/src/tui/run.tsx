@@ -3927,23 +3927,27 @@ function UsageRoute({
  * the DB into the screen module. `onCopyReport` is wired to the shared
  * `copyToClipboard` (subprocess path — no safe OSC 52 emitter is reachable from
  * this overlay), so the copy action works on the host and degrades to a note
- * when no clipboard tool is on PATH. `onFix` and `onSetStatus` are deliberately
- * left unwired: the fix intent must ride the normal agent turn (the coordinator
- * wires it to the composer / steer path), and status transitions await the
- * store's write API — until then the screen offers only the fix and copy
- * actions and never shows a control that does nothing.
+ * when no clipboard tool is on PATH. `onFix` rides the normal agent turn: the
+ * coordinator threads it to the always-mounted chat's operator-submit path
+ * (`chatSubmitRef`), so "Fix" submits a fix request as a chat turn and returns
+ * the operator to chat — it never reaches into core tools. `onSetStatus` stays
+ * unwired until the store's write API lands, so the screen never shows a control
+ * that does nothing.
  */
 function FindingDetailRoute({
   findingId,
   finding,
   chatOptions,
   onExit,
+  onFix,
   shell,
 }: {
   findingId?: string;
   finding?: Finding;
   chatOptions?: ChatScreenOptions;
   onExit: () => void;
+  /** Route a fix request through the normal chat turn, then return to chat. */
+  onFix?: (finding: Finding) => void;
   shell?: ShellNav;
 }) {
   const [resolved, setResolved] = useState<Finding | undefined>(finding);
@@ -3983,6 +3987,7 @@ function FindingDetailRoute({
     <FindingDetailScreen
       finding={resolved}
       findingId={findingId}
+      onFix={onFix}
       onCopyReport={(_finding, markdown) => {
         void copyToClipboard(markdown, { spawn: defaultSpawn, which: defaultWhich });
       }}
@@ -4029,6 +4034,10 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
   const [chatGeneration, setChatGeneration] = useState(0);
   const chatOptionsRef = useRef(chatOptions);
   chatOptionsRef.current = chatOptions;
+  // Populated by the always-mounted ChatScreen with its operator-submit path, so
+  // an overlay (the finding-detail "Fix" action) can route a request through a
+  // normal chat turn without importing the chat's internals or core tools.
+  const chatSubmitRef = useRef<((text: string) => void) | null>(null);
 
   const navigate = (route: ConsoleRoute) => {
     setRoutes((current) => {
@@ -4218,8 +4227,9 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
       <ChatScreen
         key={`chat-${chatGeneration}`}
         options={chatOptions}
+        submitHandle={chatSubmitRef}
         onGoBack={shell.goBack}
-        onNavigate={(destination) => {
+        onNavigate={(destination, id) => {
           // `herd` is not in `ChatDestination` yet (chat-screen owns that union
           // and this change does not touch it); the cast-guard keeps run.tsx
           // compiling and the route reachable, and the branch starts routing the
@@ -4255,16 +4265,12 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
             shell.openUsage(chatOptions);
             return;
           }
-          // `finding` is not in `ChatDestination` yet (chat-screen owns that
-          // union and this change does not touch it); the cast-guard keeps
-          // run.tsx compiling and the route reachable, and the branch starts
-          // routing the moment chat-screen makes a finding clickable — a
-          // `onNavigate("finding", id)` beside the "/model" case. Until the
-          // union carries an id the finding is resolved by that id from the
-          // store; the click-wiring can also pass the record through
-          // `shell.openFindingDetail(id, finding)` directly.
-          if ((destination as string) === "finding") {
-            shell.openFindingDetail(undefined, undefined, chatOptions);
+          // `finding` opens the full-screen detail view. chat-screen passes the
+          // id (from a clickable sidebar finding, or `/finding <id>`); the
+          // record is resolved lazily from the store inside FindingDetailRoute.
+          // A bare `/finding` (no id) opens the view's honest empty state.
+          if (destination === "finding") {
+            shell.openFindingDetail(id, undefined, chatOptions);
             return;
           }
           switch (destination) {
@@ -4362,6 +4368,15 @@ function ConsoleApp({ initialRoute, onResolve, onExit }: { initialRoute: Console
         finding={currentRoute.finding}
         chatOptions={currentRoute.chatOptions}
         onExit={onExit}
+        onFix={(finding) => {
+          // Route the fix intent through the SAME operator-submit path a typed
+          // message takes (queue-or-send), then drop the overlay back to chat so
+          // the operator watches the turn run. Never touches core tools.
+          leaveCurrentScreen(shell, onExit);
+          chatSubmitRef.current?.(
+            `Generate and apply a fix for finding ${finding.id}: ${finding.title}`,
+          );
+        }}
         shell={shell}
       />
     );
