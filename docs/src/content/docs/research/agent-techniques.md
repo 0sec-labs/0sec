@@ -103,7 +103,7 @@ A catalog of every technique we have evaluated for improving 0sec's autonomous p
 
 **Source:** CurriculumPT; Cyber-AutoAgent's self-rewriting prompts (this is the simpler cousin).
 
-**Impact:** Measured on 0sec's XBOW runs, the XSS playbook alone cracked previously impossible XBEN-011 and XBEN-018.
+**Impact:** Measured on 0sec's XBOW runs, the XSS playbook alone cracked previously-unsolved XBEN-011 and XBEN-018.
 
 **Implementation:** `packages/core/src/agent/playbooks.ts` — exports `PLAYBOOKS` (keyed by vuln type), `detectPlaybooks(toolResultTexts)` (pattern matcher, caps at 3 playbooks to avoid prompt bloat), and `buildPlaybookInjection(types)`. Feature flag: `0SEC_FEATURE_DYNAMIC_PLAYBOOKS`.
 

@@ -101,7 +101,7 @@ as a separate follow-up.)
 
 | Mode | Description |
 |------|-------------|
-| `deep` | Full autonomous pentest. Runs the research + verify agents with the full 40-turn budget. **Default** when the target is an `https://` URL. |
+| `deep` | Full agentic pentest. Runs the research + verify agents with the full 40-turn budget. **Default** when the target is an `https://` URL. |
 | `probe` | Lightweight surface scan — recon and fingerprinting without deep exploitation. |
 | `web` | Shell-first autonomous pentesting for web applications. The agent uses `bash` (curl, python3, bash) as its primary tool to probe for CORS, headers, exposed files, SSRF, XSS, SQLi, SSTI, and more. |
 | `mcp` | Scan MCP (Model Context Protocol) servers for tool poisoning and schema abuse. **Default** when the target starts with `mcp://`. |

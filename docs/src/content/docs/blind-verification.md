@@ -7,8 +7,8 @@ Most scanners report what they find. 0sec kills what it can't prove.
 
 Every finding that survives the attack stage enters blind verification: a second
 agent tries to reproduce the vulnerability with **zero access to the original
-reasoning.** If it can't reproduce it, the finding is killed. This is the biggest
-difference between 0sec's output and the noise other tools produce.
+reasoning.** If it can't reproduce it, the finding is killed. Verification is what separates
+a confirmed finding from an unproven one.
 
 ## What it is
 
@@ -27,7 +27,7 @@ refuses, blocks, or behaves differently → killed.
 
 ## Why it matters
 
-**Confirmation bias is the root cause of false positives in AI security tools.**
+**Confirmation bias is a major source of false positives in AI security tools.**
 An attack agent that just spent turns building an exploit has every incentive to
 read an ambiguous response as a win. The verify agent has none of that context.
 If the response is ambiguous, it has no reason to interpret it favorably. Default

@@ -126,7 +126,7 @@ A blocklist-driven filter that rejects findings where the "vulnerability" is sim
 
 ### Layer 1.75: Reachability Gate ("Endor Labs moat") — SHIPPED
 
-For every finding, check whether the vulnerable sink is actually reachable from an application entry point (HTTP handler, CLI main, user-facing API). Dead code and test-only paths are not exploitable. Endor Labs' 95% FP elimination rate depends on their proprietary "Code API" for this signal; 0sec implements it open-source.
+For every finding, check whether the vulnerable sink is actually reachable from an application entry point (HTTP handler, CLI main, user-facing API). Dead code and test-only paths are not exploitable. Endor Labs' 95% FP elimination rate depends on their proprietary "Code API" for this signal; 0sec implements an open-source approximation.
 
 **Implementation:** `packages/core/src/triage/reachability.ts` — zero-dependency grep/pattern-based first pass. Conservative: when uncertain it returns `reachable: true` with low confidence so the rest of the pipeline still runs. Public API: `checkReachability(finding, repoPath)` returning a `ReachabilityResult`.
 
@@ -140,7 +140,7 @@ Deterministic, category-specific exploit oracles: SQLi, reflected XSS, SSRF, RCE
 
 Cross-validate every 0sec finding against [foxguard](https://github.com/0sec-labs/foxguard), the Rust pattern scanner. If foxguard fires on the same file (and ideally the same category) → strong signal the finding is real. If foxguard scanned the file but was silent → likely false positive. This is the open-source mirror of Endor Labs' "neural + rules must agree" architecture.
 
-**Implementation:** `packages/core/src/triage/multi-modal.ts` — `checkMultiModalAgreement`, `fuseTriageSignals`, `parseFoxguardSarif`, `detectFoxguard`. **Unique to 0sec: no other open-source agent runs a second, independent scanner for cross-validation.**
+**Implementation:** `packages/core/src/triage/multi-modal.ts` — `checkMultiModalAgreement`, `fuseTriageSignals`, `parseFoxguardSarif`, `detectFoxguard`. We don't know of another open-source agent that runs a second, independent scanner for cross-validation.
 
 ### Layer 2: Neural Classification (CodeBERT)
 
