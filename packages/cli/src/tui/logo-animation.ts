@@ -44,9 +44,9 @@
  * One-shot reveals play once and settle to `finalLogoFrame`:
  *   - `glitch`  a deterministic scramble (now with neon flashes) that resolves
  *               cell by cell — the DEFAULT.
- *   - `matrix`  a matrix-rain reveal: staggered green drops fall column by
+ *   - `matrix`  a matrix-rain reveal: staggered RED drops fall column by
  *               column, each leaving the settled mark behind it.
- *   - `wave`    a rippling cyan wavefront (a sine-bent edge) wipes the mark in.
+ *   - `wave`    a rippling RED wavefront (a sine-bent edge) wipes the mark in.
  *   - `neon`    a neon-sign warm-up: cells buzz on in neon colours, then settle.
  *   - `strike`  a red slash strikes the 0 along its diagonal (purple hot edge).
  *   - `draw`    a left-to-right column reveal behind a bright pen tip.
@@ -345,11 +345,11 @@ const SCRAMBLE_TONES: readonly LogoCellTone[] = [
 /** Neon palette for the `neon` warm-up flicker (pink, cyan, purple, amber, white). */
 const NEON_TONES: readonly string[] = ["#ff2d95", "#00e5ff", "#b388ff", "#fde74c", "#ffffff"];
 
-/** Matrix-rain drop gradient, head (brightest) -> tail (deep green). */
-const MATRIX_GREENS: readonly string[] = ["#b9f6ca", "#69f0ae", "#00c853", "#1b5e20"];
+/** Matrix-rain drop gradient, head (hot white-red) -> tail (deep red) — on brand. */
+const MATRIX_REDS: readonly string[] = ["#ffe3e3", "#ff6b6b", "#e5484d", "#5c1a1a"];
 
-/** Wave crest gradient, lead (brightest) -> trailing (deep cyan). */
-const WAVE_CYANS: readonly string[] = ["#e0ffff", "#7cf9ff", "#29d3e6", "#1197a6"];
+/** Wave crest gradient, lead (brightest) -> trailing (deep red) — on brand. */
+const WAVE_REDS: readonly string[] = ["#fff0f0", "#ff9a9a", "#ff3b3b", "#7a1616"];
 
 /** Draw pen-tip gradient, tip (white) -> trailing (light purple). */
 const DRAW_TIP: readonly string[] = ["#ffffff", "#c4b5fd"];
@@ -550,9 +550,9 @@ function glitchFrame(grid: readonly string[], frame: number, width: number): Log
 
 /**
  * matrix: a matrix-rain reveal. Each column has a hashed start delay, so drops
- * fall in a staggered cascade. Within a column a falling "drop" (a short green
+ * fall in a staggered cascade. Within a column a falling "drop" (a short red
  * gradient, head brightest) descends top to bottom; cells the drop has passed
- * are settled to their final tone, cells under the drop glow green, cells below
+ * are settled to their final tone, cells under the drop glow red, cells below
  * are still hidden. The drop front runs one trail-length past the bottom by the
  * final frame, so every cell has settled and the frame equals `finalLogoFrame`.
  */
@@ -560,7 +560,7 @@ function matrixFrame(grid: readonly string[], frame: number, width: number): Log
   const out = blankFrame(grid, width);
   const rows = grid.length;
   const progress = smoothstep(progressOf(frame, FRAME_COUNTS.matrix));
-  const TRAIL = MATRIX_GREENS.length - 1;
+  const TRAIL = MATRIX_REDS.length - 1;
   const DELAY = 0.55;
   for (let c = 0; c < width; c += 1) {
     const delay = ((hash3(c, 0, 7) % 1000) / 1000) * DELAY;
@@ -575,7 +575,7 @@ function matrixFrame(grid: readonly string[], frame: number, width: number): Log
         out[r]![c] = { ch, visible: true, tone: finalTone(ch) };
       } else if (r <= front + EPS) {
         const depth = Math.min(TRAIL, Math.max(0, Math.round(front - r)));
-        out[r]![c] = { ch, visible: true, tone: MATRIX_GREENS[depth]! };
+        out[r]![c] = { ch, visible: true, tone: MATRIX_REDS[depth]! };
       }
     }
   }
@@ -586,7 +586,7 @@ function matrixFrame(grid: readonly string[], frame: number, width: number): Log
  * wave: a rippling wavefront wipes the mark in left to right. The reveal edge is
  * bent by a sine over the rows, so it advances as a travelling ripple rather
  * than a straight bar. Cells behind the crest are settled to their final tone;
- * the crest itself is a short cyan gradient (lead brightest). The crest clears
+ * the crest itself is a short red gradient (lead brightest). The crest clears
  * the right edge by the final frame, so the last frame equals `finalLogoFrame`.
  */
 function waveFrame(grid: readonly string[], frame: number, width: number): LogoFrame {
@@ -594,7 +594,7 @@ function waveFrame(grid: readonly string[], frame: number, width: number): LogoF
   const rows = grid.length;
   const progress = smoothstep(progressOf(frame, FRAME_COUNTS.wave));
   const AMP = 2.2;
-  const CREST = WAVE_CYANS.length;
+  const CREST = WAVE_REDS.length;
   const K = (2 * Math.PI) / Math.max(1, rows);
   // Base sweeps far enough that at p=1 the crest has cleared the mark entirely.
   const base = progress * (width + 2 * AMP + CREST + 1);
@@ -607,7 +607,7 @@ function waveFrame(grid: readonly string[], frame: number, width: number): LogoF
         out[r]![c] = { ch, visible: true, tone: finalTone(ch) };
       } else if (c <= front + EPS) {
         const depth = Math.min(CREST - 1, Math.max(0, Math.round(front - c)));
-        out[r]![c] = { ch, visible: true, tone: WAVE_CYANS[depth]! };
+        out[r]![c] = { ch, visible: true, tone: WAVE_REDS[depth]! };
       }
     }
   }

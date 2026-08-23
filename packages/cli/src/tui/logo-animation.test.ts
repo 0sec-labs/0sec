@@ -609,6 +609,13 @@ describe("shimmer comet tail brightness", () => {
 });
 
 const isHex = (t: string): boolean => t.startsWith("#");
+/** True when a #rrggbb tone is red-dominant (red channel above both others). */
+const isRedDominant = (t: string): boolean => {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(t);
+  if (!m) return false;
+  const r = parseInt(m[1]!, 16), g = parseInt(m[2]!, 16), b = parseInt(m[3]!, 16);
+  return r > g && r > b;
+};
 
 describe("rainbow", () => {
   const period = logoAnimationFrameCount("rainbow");
@@ -660,12 +667,14 @@ describe("matrix", () => {
     expect(framesEqual(computeLogoFrame(LOGO, "matrix", last), finalFrame)).toBe(true);
   });
 
-  it("shows green drop colours mid-reveal that are gone by the end", () => {
-    let sawHex = false;
+  it("shows RED drop colours mid-reveal that are gone by the end", () => {
+    let sawRedHex = false;
     for (let f = 0; f < last; f += 1) {
-      if (count(computeLogoFrame(LOGO, "matrix", f), (c) => isHex(c.tone)) > 0) sawHex = true;
+      for (const row of computeLogoFrame(LOGO, "matrix", f)) {
+        for (const cell of row) if (isHex(cell.tone) && isRedDominant(cell.tone)) sawRedHex = true;
+      }
     }
-    expect(sawHex).toBe(true);
+    expect(sawRedHex).toBe(true);
     expect(count(computeLogoFrame(LOGO, "matrix", last), (c) => isHex(c.tone))).toBe(0);
   });
 
@@ -699,12 +708,14 @@ describe("wave", () => {
     expect(framesEqual(computeLogoFrame(LOGO, "wave", last), finalFrame)).toBe(true);
   });
 
-  it("shows a cyan crest mid-reveal that has cleared the mark by the end", () => {
-    let sawHex = false;
+  it("shows a RED crest mid-reveal that has cleared the mark by the end", () => {
+    let sawRedHex = false;
     for (let f = 0; f < last; f += 1) {
-      if (count(computeLogoFrame(LOGO, "wave", f), (c) => isHex(c.tone)) > 0) sawHex = true;
+      for (const row of computeLogoFrame(LOGO, "wave", f)) {
+        for (const cell of row) if (isHex(cell.tone) && isRedDominant(cell.tone)) sawRedHex = true;
+      }
     }
-    expect(sawHex).toBe(true);
+    expect(sawRedHex).toBe(true);
     expect(count(computeLogoFrame(LOGO, "wave", last), (c) => isHex(c.tone))).toBe(0);
   });
 
