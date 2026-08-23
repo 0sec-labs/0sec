@@ -3,8 +3,6 @@ import React from "react";
 import { TextAttributes } from "@opentui/core";
 import {
   listItemGutterWidth,
-  TABLE_COLUMN_GAP,
-  TABLE_JOIN_GLYPH,
   type MdBlock,
   type MdSpan,
 } from "../markdown.js";
@@ -30,9 +28,10 @@ function codeLineWidth(line: string): number {
 /**
  * Terminal text ATTRIBUTES for a markdown span — the real weight, not just a
  * colour. A bold run gets TextAttributes.BOLD so it renders visibly heavier;
- * italic gets ITALIC, strike gets STRIKETHROUGH, and a muted run is dimmed.
- * Applied by every inline renderer (paragraphs, list items, table cells) so
- * `**bold**` looks bold wherever it appears.
+ * italic gets ITALIC, strike gets STRIKETHROUGH, a link is UNDERLINEd so it
+ * reads as a link even in themes where ACCENT sits close to body text, and a
+ * muted run is dimmed. Applied by every inline renderer (paragraphs, list
+ * items, table cells) so `**bold**` looks bold wherever it appears.
  */
 export function spanAttributes(style: MdSpan["style"]): number | undefined {
   switch (style) {
@@ -42,6 +41,8 @@ export function spanAttributes(style: MdSpan["style"]): number | undefined {
       return TextAttributes.ITALIC;
     case "strike":
       return TextAttributes.STRIKETHROUGH;
+    case "link":
+      return TextAttributes.UNDERLINE;
     case "muted":
       return TextAttributes.DIM;
     default:
@@ -51,14 +52,41 @@ export function spanAttributes(style: MdSpan["style"]): number | undefined {
 
 /** Map a markdown span style onto the theme. */
 export function spanColor(style: MdSpan["style"], theme: Theme, tone?: string): string {
-  const { ACCENT, INFO, MUTED, TEXT } = theme;
+  const { ACCENT, MUTED, TEXT } = theme;
   // A tone override keeps a whole block in one voice (e.g. reasoning stays
   // muted) while still honouring structure like code and links.
   if (tone && style !== "code" && style !== "link") return tone;
-  if (style === "code") return ACCENT;
-  if (style === "link") return INFO;
+  // Inline code and links both carry the accent hue — code as coloured text on
+  // a subtle chip (see spanBackground), a link as underlined accent text.
+  if (style === "code" || style === "link") return ACCENT;
   if (style === "muted" || style === "strike") return MUTED;
   return TEXT;
+}
+
+/**
+ * Optional background for a span. Only inline `code` gets one: a subtle tinted
+ * chip (the same offset surface a fenced block uses) so `` `code` `` reads as a
+ * distinct token mid-sentence rather than as differently-coloured prose. A tone
+ * override (e.g. a wholly muted reasoning block) drops the chip so the run stays
+ * one flat voice.
+ */
+export function spanBackground(style: MdSpan["style"], theme: Theme, tone?: string): string | undefined {
+  if (tone) return undefined;
+  return style === "code" ? theme.surfaceAlt : undefined;
+}
+
+/**
+ * Colour a heading by its level so the outline reads at a glance: H1 is the
+ * loudest (PRIMARY), H2 carries the brand hue, H3 the accent, and H4+ step down
+ * to a muted-but-bold label. A tone override (a block pinned to one voice) wins
+ * over the level colour. Every level is rendered BOLD by the caller.
+ */
+export function headingColor(level: number, theme: Theme, tone?: string): string {
+  if (tone) return tone;
+  if (level <= 1) return theme.PRIMARY;
+  if (level === 2) return theme.BRAND;
+  if (level === 3) return theme.ACCENT;
+  return theme.MUTED;
 }
 
 /**
@@ -71,22 +99,29 @@ export function spanColor(style: MdSpan["style"], theme: Theme, tone?: string): 
  * overflowing its row.
  */
 export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Theme, tone?: string) {
-  const { MUTED, PRIMARY, TEXT } = theme;
+  const { ACCENT, BORDER, MUTED, PRIMARY } = theme;
   return blocks.map((block, index) => {
     const id = `${key}-b${index}`;
     if (block.kind === "rule") {
       return <text key={id} fg={tone ?? MUTED}>{"─".repeat(8)}</text>;
     }
     if (block.kind === "table") {
-      // Each cell is a styled inline-span run (bold/italic/code render just as
-      // they do in a paragraph). Every column is a fixed-width box, so the
-      // separators line up regardless of the cell content, and alignment inside
-      // a column is done with leading/trailing padding spans. Widths were chosen
-      // by `renderMarkdown` from the marker-stripped display text, so the whole
-      // row fits the content column.
+      // Rendered as a real BORDERED GRID: an outer box-drawing frame, a heavier
+      // rule under the emphasised header, and a `│` between every column. Each
+      // column is a fixed-width box padded per its parsed alignment, so the bars
+      // line up regardless of cell content. Every border segment spans the
+      // column's width PLUS the one pad cell on each side of it, so the `┬`/`┼`/
+      // `┴` junctions sit exactly over the `│` bars. Widths were chosen by
+      // `renderMarkdown` with TABLE_FRAME_WIDTH reserved for this frame, so the
+      // whole grid — bars and all — stays inside the content column.
       const { widths } = block;
+      // A horizontal rule: `<lc>` + one segment per column joined by `<mc>` +
+      // `<rc>`. A segment covers the cell width and its two pad cells.
+      const rule = (lc: string, mc: string, rc: string): string =>
+        lc + widths.map((w) => "─".repeat(Math.max(1, w) + 2)).join(mc) + rc;
       const renderRow = (cells: readonly MdSpan[][], rowKey: string, header: boolean) => (
-        <box key={rowKey} flexDirection="row" minWidth={0}>
+        <box key={rowKey} flexDirection="row" flexShrink={0} minWidth={0}>
+          <text flexShrink={0} fg={BORDER}>{"│ "}</text>
           {cells.map((cell, c) => {
             const w = widths[c] ?? 1;
             const disp = cell.reduce((n, s) => n + Array.from(s.text).length, 0);
@@ -96,25 +131,27 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
             const trail = pad - lead;
             return (
               <React.Fragment key={`${rowKey}-c${c}`}>
-                {c > 0 ? <text flexShrink={0} fg={MUTED}>{TABLE_COLUMN_GAP}</text> : null}
+                {c > 0 ? <text flexShrink={0} fg={BORDER}>{" │ "}</text> : null}
                 <box width={w} flexShrink={0} minWidth={0} flexDirection="row">
                   {lead > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(lead)}</text> : null}
                   {cell.map((span, j) => (
-                    <text key={`${rowKey}-c${c}-s${j}`} flexShrink={0} fg={spanColor(span.style, theme, header ? (tone ?? PRIMARY) : tone)} attributes={spanAttributes(span.style) ?? (header ? TextAttributes.BOLD : undefined)}>{span.text}</text>
+                    <text key={`${rowKey}-c${c}-s${j}`} flexShrink={0} fg={spanColor(span.style, theme, header ? (tone ?? PRIMARY) : tone)} bg={spanBackground(span.style, theme, tone)} attributes={spanAttributes(span.style) ?? (header ? TextAttributes.BOLD : undefined)}>{span.text}</text>
                   ))}
                   {trail > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(trail)}</text> : null}
                 </box>
               </React.Fragment>
             );
           })}
+          <text flexShrink={0} fg={BORDER}>{" │"}</text>
         </box>
       );
-      const separatorLine = widths.map((w) => "─".repeat(Math.max(1, w))).join(TABLE_JOIN_GLYPH);
       return (
-        <box key={id} flexDirection="column" minWidth={0}>
+        <box key={id} flexDirection="column" flexShrink={0} minWidth={0}>
+          <text flexShrink={0} fg={BORDER}>{rule("┌", "┬", "┐")}</text>
           {renderRow(block.header, `${id}-h`, true)}
-          <text fg={MUTED}>{separatorLine}</text>
+          <text flexShrink={0} fg={BORDER}>{rule("├", "┼", "┤")}</text>
           {block.rows.map((row, i) => renderRow(row, `${id}-r${i}`, false))}
+          <text flexShrink={0} fg={BORDER}>{rule("└", "┴", "┘")}</text>
         </box>
       );
     }
@@ -129,9 +166,10 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
       // parent sizes the box, and whitespace/indentation is preserved verbatim
       // because a line's token texts concatenate back to the source line.
       //
-      // The language is shown as a small dim CHIP — a bracketed `[bash]`
-      // right-aligned on the surface's first row — not a bare word on its own
-      // line, so it reads as a label on the block rather than as stray code.
+      // The language is shown as a small CHIP — a bracketed `[bash]` in the
+      // accent hue, right-aligned on the surface's first row — not a bare word
+      // on its own line, so it reads as a label on the block rather than as
+      // stray code.
       const { surfaceAlt } = theme;
       const lang = block.language;
       const chip = lang ? `[${lang}]` : "";
@@ -142,8 +180,8 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
         <box key={id} flexDirection="column" flexShrink={0} minWidth={0} paddingX={1} backgroundColor={surfaceAlt}>
           {chip ? (
             <box flexDirection="row" flexShrink={0} minWidth={0}>
-              {chipLead > 0 ? <text flexShrink={0} fg={MUTED} attributes={TextAttributes.DIM}>{" ".repeat(chipLead)}</text> : null}
-              <text flexShrink={0} fg={MUTED} attributes={TextAttributes.DIM}>{chip}</text>
+              {chipLead > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(chipLead)}</text> : null}
+              <text flexShrink={0} fg={ACCENT} attributes={TextAttributes.BOLD}>{chip}</text>
             </box>
           ) : null}
           {block.lines.map((line, i) => {
@@ -165,26 +203,36 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
       );
     }
     if (block.kind === "heading") {
+      // Coloured by level (see headingColor) and always bold, so the outline
+      // stands out from body text. Wrapping/width were already handled upstream.
+      const fg = headingColor(block.level, theme, tone);
       return (
         <box key={id} flexDirection="column" minWidth={0}>
           {block.lines.map((line, i) => (
-            <text key={`${id}-${i}`} fg={tone ?? PRIMARY} attributes={TextAttributes.BOLD}>{line.map((span) => span.text).join("")}</text>
+            <text key={`${id}-${i}`} fg={fg} attributes={TextAttributes.BOLD}>{line.map((span) => span.text).join("")}</text>
           ))}
         </box>
       );
     }
     if (block.kind === "listItem") {
+      // The marker is coloured (accent) and bold so it separates cleanly from
+      // the body; unordered bullets render as `•` regardless of the source glyph
+      // (`-`/`*`/`+`, all one cell, so the gutter arithmetic is unchanged).
+      // Continuation rows sit in the body column, aligning under the text.
       const gutter = listItemGutterWidth(block);
+      const ordered = /\d/.test(block.marker);
+      const marker = ordered ? block.marker : "•";
       return (
         <box key={id} flexDirection="row" minWidth={0}>
-          <box width={gutter} flexShrink={0} minWidth={0}>
-            <text fg={MUTED}>{`${" ".repeat(block.indent)}${block.marker}`}</text>
+          <box width={gutter} flexShrink={0} minWidth={0} flexDirection="row">
+            {block.indent > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(block.indent)}</text> : null}
+            <text flexShrink={0} fg={tone ?? ACCENT} attributes={TextAttributes.BOLD}>{marker}</text>
           </box>
           <box flexDirection="column" flexGrow={1} minWidth={0}>
             {block.lines.map((line, i) => (
               <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
                 {line.map((span, j) => (
-                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, tone)} attributes={spanAttributes(span.style)}>{span.text}</text>
+                  <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, tone)} bg={spanBackground(span.style, theme, tone)} attributes={spanAttributes(span.style)}>{span.text}</text>
                 ))}
               </box>
             ))}
@@ -200,7 +248,7 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
         {block.lines.map((line, i) => (
           <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
             {line.map((span, j) => (
-              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)} attributes={spanAttributes(span.style)}>{span.text}</text>
+              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)} bg={spanBackground(span.style, theme, blockTone)} attributes={spanAttributes(span.style)}>{span.text}</text>
             ))}
           </box>
         ))}

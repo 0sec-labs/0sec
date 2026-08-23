@@ -84,6 +84,15 @@ export const TABLE_COLUMN_GAP = " │ ";
 /** The separator-row glyph that sits where a `TABLE_COLUMN_GAP` bar sits. */
 export const TABLE_JOIN_GLYPH = "─┼─";
 
+/**
+ * Cells the renderer's outer table frame consumes on top of the inter-column
+ * gaps: the left edge (`│ ` = bar + pad) and the right edge (` │` = pad + bar).
+ * Column widths are chosen with this reserved so a fully bordered grid — outer
+ * rule, header rule and column bars — never pushes the row past the pane. Kept
+ * in sync with the renderer's border builder.
+ */
+export const TABLE_FRAME_WIDTH = 4;
+
 /** Deepest list nesting that still earns indentation; beyond this it flattens. */
 const MAX_LIST_DEPTH = 6;
 
@@ -986,7 +995,10 @@ function tableColumnWidths(
     }
   }
   const gap = cellCount(TABLE_COLUMN_GAP) * (cols - 1);
-  const budget = Math.max(cols, width - gap); // at least one cell per column
+  // Reserve the outer frame too: the bordered grid draws a left and right edge
+  // the old bare-column layout did not, so the columns must give those cells
+  // back or the whole row overflows the pane.
+  const budget = Math.max(cols, width - gap - TABLE_FRAME_WIDTH); // >= one cell per column
   const widths = natural.slice();
   let total = widths.reduce((a, b) => a + b, 0);
   // Shrink the widest column repeatedly until the row fits.

@@ -4,6 +4,8 @@ import {
   CODE_BLOCK_PAD,
   LIST_INDENT_WIDTH,
   QUOTE_GUTTER_WIDTH,
+  TABLE_COLUMN_GAP,
+  TABLE_FRAME_WIDTH,
   listItemGutterWidth,
   parseInline,
   parseMarkdownBlocks,
@@ -14,6 +16,35 @@ import {
   type MdSpan,
 } from "./markdown.js";
 import { highlightCode } from "./syntax-style.js";
+import {
+  headingColor,
+  spanAttributes,
+  spanBackground,
+  spanColor,
+} from "./chat/markdown-blocks.js";
+import { TextAttributes } from "@opentui/core";
+import type { Theme } from "./theme-context.js";
+
+/** A stub theme whose every token is its own name, so a mapping is legible. */
+const THEME = {
+  CANVAS: "canvas",
+  PANEL: "panel",
+  PANEL_ALT: "panel_alt",
+  BORDER: "border",
+  TEXT: "text",
+  MUTED: "muted",
+  PRIMARY: "primary",
+  ACCENT: "accent",
+  BRAND: "brand",
+  SUCCESS: "success",
+  WARNING: "warning",
+  ERROR: "error",
+  INFO: "info",
+  background: "background",
+  surface: "surface",
+  surfaceAlt: "surface_alt",
+  overlay: "overlay",
+} as const satisfies Theme;
 
 /** Concatenated token texts must equal the input — the highlighter never edits. */
 function tokenText(line: string, language?: string): string {
@@ -695,5 +726,75 @@ describe("tables", () => {
   it("does not treat a lone pipe line as a table", () => {
     const [block] = renderMarkdown("a | b without a delimiter row", 80);
     expect(block?.kind).toBe("paragraph");
+  });
+
+  it("reserves the bordered-grid frame so the whole row fits the pane", () => {
+    // A wide table: every column wants far more than the pane can give. The
+    // rendered row is `│ ` + cells joined by ` │ ` + ` │`, so its cell width
+    // must fit width minus the inter-column gaps AND the outer frame.
+    const gapCells = Array.from(TABLE_COLUMN_GAP).length; // " │ " = 3
+    const src = [
+      "| a | b | c |",
+      "|---|---|---|",
+      "| " + "x".repeat(60) + " | " + "y".repeat(60) + " | " + "z".repeat(60) + " |",
+    ].join("\n");
+    for (const width of [20, 40, 80, 120]) {
+      const [block] = renderMarkdown(src, width);
+      if (block?.kind !== "table") throw new Error("expected a table");
+      const cols = block.widths.length;
+      const rowCells =
+        block.widths.reduce((a, b) => a + b, 0) + gapCells * (cols - 1) + TABLE_FRAME_WIDTH;
+      expect(rowCells).toBeLessThanOrEqual(width);
+    }
+  });
+});
+
+describe("span styling (renderer helpers)", () => {
+  it("gives bold real weight, not a colour", () => {
+    expect(spanColor("bold", THEME)).toBe(THEME.TEXT);
+    expect(spanAttributes("bold")).toBe(TextAttributes.BOLD);
+  });
+
+  it("paints inline code as accent text on a subtle chip", () => {
+    expect(spanColor("code", THEME)).toBe(THEME.ACCENT);
+    expect(spanBackground("code", THEME)).toBe(THEME.surfaceAlt);
+  });
+
+  it("shows a link as underlined accent text", () => {
+    expect(spanColor("link", THEME)).toBe(THEME.ACCENT);
+    expect(spanAttributes("link")).toBe(TextAttributes.UNDERLINE);
+  });
+
+  it("honours a tone override for prose but not for code or links", () => {
+    expect(spanColor("text", THEME, "tone")).toBe("tone");
+    expect(spanColor("bold", THEME, "tone")).toBe("tone");
+    expect(spanColor("code", THEME, "tone")).toBe(THEME.ACCENT);
+    expect(spanColor("link", THEME, "tone")).toBe(THEME.ACCENT);
+    // A toned block drops the code chip so the run stays one flat voice.
+    expect(spanBackground("code", THEME, "tone")).toBeUndefined();
+  });
+
+  it("maps italic, strike and muted onto their attributes", () => {
+    expect(spanAttributes("italic")).toBe(TextAttributes.ITALIC);
+    expect(spanAttributes("strike")).toBe(TextAttributes.STRIKETHROUGH);
+    expect(spanAttributes("muted")).toBe(TextAttributes.DIM);
+    expect(spanAttributes("text")).toBeUndefined();
+    expect(spanBackground("text", THEME)).toBeUndefined();
+  });
+});
+
+describe("heading colours", () => {
+  it("colours each level distinctly and steps down past H3", () => {
+    expect(headingColor(1, THEME)).toBe(THEME.PRIMARY);
+    expect(headingColor(2, THEME)).toBe(THEME.BRAND);
+    expect(headingColor(3, THEME)).toBe(THEME.ACCENT);
+    expect(headingColor(4, THEME)).toBe(THEME.MUTED);
+    expect(headingColor(6, THEME)).toBe(THEME.MUTED);
+  });
+
+  it("lets a tone override win over the level colour", () => {
+    for (const level of [1, 2, 3, 4]) {
+      expect(headingColor(level, THEME, "tone")).toBe("tone");
+    }
   });
 });
