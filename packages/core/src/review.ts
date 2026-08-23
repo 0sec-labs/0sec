@@ -20,6 +20,7 @@ import { runAnalysisAgent } from "./agent-runner.js";
 import { features } from "./agent/features.js";
 import { runSelectedStaticScan } from "./shared-analysis.js";
 import { cppReviewAgentPrompt } from "./review/c-cpp-profile.js";
+import { rankAndDedupeFoxguardLeads } from "./review/foxguard-leads.js";
 import { kernelReviewAgentPrompt } from "./review/linux-kernel-profile.js";
 import { xnuKernelReviewAgentPrompt } from "./review/xnu-kernel-profile.js";
 import { xnuReReviewAgentPrompt } from "./review/xnu-re-profile.js";
@@ -644,6 +645,12 @@ export async function sourceReview(
         message: `Operator hypothesis seeded: ${config.hypothesis.slice(0, 200)}`,
       });
     }
+
+    // Rank + dedupe the assembled variant-hunt / incomplete-fix cross-validated
+    // leads so the fixed-size slice the review prompts take (`.slice(0, 30)`)
+    // keeps the highest-severity, non-duplicate leads first. Pure and safe:
+    // a no-op for the non-kernel profiles where `foxguardFindings` stays empty.
+    foxguardFindings = rankAndDedupeFoxguardLeads(foxguardFindings);
 
     // Step 3: AI agent review
     const agentResult = await runReviewAgent(
