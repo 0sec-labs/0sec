@@ -250,37 +250,42 @@ describe("shimmer (comet gradient)", () => {
     }
   });
 
+  const headCol = (frame: number): number => {
+    const f2 = computeLogoFrame(LOGO, "shimmer", frame);
+    const colored = new Map<number, number>();
+    for (const row of f2) {
+      for (const [c, cell] of row.entries()) if (isHex(cell.tone)) colored.set(c, greyLevel(cell.tone));
+    }
+    return [...colored.entries()].reduce((a, b) => (b[1] < a[1] ? b : a))[0];
+  };
+
   it("sweeps a symmetric DARK band, darkest at the head, brightening both sides", () => {
-    const f = 10;
-    const frame = computeLogoFrame(LOGO, "shimmer", f);
+    const frame = computeLogoFrame(LOGO, "shimmer", 20); // mid-sweep, fully on-screen
     const colored = new Map<number, string>();
     for (const row of frame) {
       for (const [c, cell] of row.entries()) if (isHex(cell.tone)) colored.set(c, cell.tone);
     }
     const cols = [...colored.keys()];
-    // The mark is white; shimmer is a dark band. The head is lit and DARKEST.
+    // The mark is white; shimmer is a dark band whose head (darkest cell) has
+    // lit cols on both sides, each brighter than the head.
     expect(cols.length).toBeGreaterThan(2);
-    expect(colored.has(f)).toBe(true);
-    const darkest = [...colored.entries()].reduce((a, b) => (greyLevel(b[1]) < greyLevel(a[1]) ? b : a));
-    expect(darkest[0]).toBe(f);
-    // The band brightens back toward white on BOTH sides of the head.
-    expect(Math.min(...cols)).toBeLessThan(f);
-    expect(Math.max(...cols)).toBeGreaterThan(f);
-    expect(greyLevel(colored.get(f)!)).toBeLessThan(greyLevel(colored.get(Math.min(...cols))!));
-    expect(greyLevel(colored.get(f)!)).toBeLessThan(greyLevel(colored.get(Math.max(...cols))!));
+    const head = [...colored.entries()].reduce((a, b) => (greyLevel(b[1]) < greyLevel(a[1]) ? b : a))[0];
+    expect(Math.min(...cols)).toBeLessThan(head);
+    expect(Math.max(...cols)).toBeGreaterThan(head);
+    expect(greyLevel(colored.get(head)!)).toBeLessThan(greyLevel(colored.get(Math.min(...cols))!));
+    expect(greyLevel(colored.get(head)!)).toBeLessThan(greyLevel(colored.get(Math.max(...cols))!));
   });
 
-  it("clips the left half at column 0 — head darkest with a right-side band", () => {
-    const frame = computeLogoFrame(LOGO, "shimmer", 0);
-    const colored = new Map<number, string>();
-    for (const row of frame) {
-      for (const [c, cell] of row.entries()) if (isHex(cell.tone)) colored.set(c, cell.tone);
+  it("enters from the left edge and sweeps rightward (not popping in at the 0)", () => {
+    // Frame 0: only the band's leading edge has reached column 0.
+    const start = computeLogoFrame(LOGO, "shimmer", 0);
+    const startCols = new Set<number>();
+    for (const row of start) {
+      for (const [c, cell] of row.entries()) if (isHex(cell.tone)) startCols.add(c);
     }
-    const cols = [...colored.keys()];
-    expect(Math.min(...cols)).toBe(0); // nothing left of column 0
-    expect(cols.length).toBeGreaterThan(1); // right-side band present
-    const darkest = [...colored.entries()].reduce((a, b) => (greyLevel(b[1]) < greyLevel(a[1]) ? b : a));
-    expect(darkest[0]).toBe(0);
+    expect([...startCols]).toEqual([0]); // hugs the far left, hasn't reached the 0's body yet
+    // The (darkest) head marches rightward as the animation advances.
+    expect(headCol(20)).toBeGreaterThan(headCol(10));
   });
 
   it("loops seamlessly (frame and frame+period are identical)", () => {
@@ -579,8 +584,7 @@ describe("shimmer comet tail brightness", () => {
   const greyLevel = (t: string): number => parseInt(t.slice(1, 3), 16);
 
   it("brightens monotonically on both sides of the head", () => {
-    const head = 12;
-    const frame = computeLogoFrame(LOGO, "shimmer", head);
+    const frame = computeLogoFrame(LOGO, "shimmer", 20); // mid-sweep, fully on-screen
     // Collect the (col -> grey level) of the band, one entry per lit column.
     const byCol = new Map<number, number>();
     for (const row of frame) {
@@ -589,6 +593,7 @@ describe("shimmer comet tail brightness", () => {
       }
     }
     const cols = [...byCol.keys()];
+    const head = [...byCol.entries()].reduce((a, b) => (b[1] < a[1] ? b : a))[0];
     expect(cols.length).toBeGreaterThan(2);
     // Brightness never DECREASES as we walk AWAY from the (darkest) head in
     // either direction — white -> black -> white.

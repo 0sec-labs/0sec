@@ -682,8 +682,12 @@ function shimmerFrame(grid: readonly string[], frame: number, width: number): Lo
   const out = finalLogoFrame(grid);
   const period = FRAME_COUNTS.shimmer;
   const idx = ((frame % period) + period) % period;
+  // Start the (darkest) head OFF-SCREEN LEFT so the band visibly sweeps IN from
+  // the left edge, rather than popping in already centered on the 0. The head
+  // begins at column -SHIMMER_TAIL and travels rightward off the mark.
+  const head = idx - SHIMMER_TAIL;
   for (let offset = -SHIMMER_TAIL; offset <= SHIMMER_TAIL; offset += 1) {
-    const col = idx + offset;
+    const col = head + offset;
     if (col < 0 || col >= width) continue;
     // The mark is white, so shimmer is a DARK band sweeping across it: the
     // head (offset 0) is DARKEST and it brightens back toward white
