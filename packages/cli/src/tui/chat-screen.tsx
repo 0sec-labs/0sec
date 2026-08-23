@@ -49,8 +49,6 @@ import {
   fitStatusSegments,
   fitStatusPills,
   pillText,
-  sidebarToggleIcons,
-  sidebarIconsWidth,
   type StatusSegment,
   type StatusColorRole,
 } from "./status-bar.js";
@@ -864,13 +862,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   const { width, height } = useTerminalDimensions();
   const alive = useRef(true);
   const turn = useRef(0);
-  const statusText = session
-    ? `${turn.current} turns · ${session.tools.length} tools`
-    : "connecting";
+  // The bottom bar's right cell (a "N turns · M tools" counter + sidebar toggle
+  // glyphs) was removed: the counter was noise and the closed-state toggle
+  // hairlines read as stray "| |". The sidebars stay on Ctrl+B / Ctrl+L, and the
+  // coloured state pills now take the full bar width.
   // All row/column cell budgets live in chat-layout.ts, where the
   // "a row never claims more cells than its container" invariant is
   // covered by tests instead of by inspection.
-  const layout = computeChatLayout({ width, height, statusTextLength: statusText.length });
+  const layout = computeChatLayout({ width, height, statusTextLength: 0 });
   const {
     compact,
     contentWidth,
@@ -4238,46 +4237,6 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
               <text fg={MUTED}>{fitTuiText(statusBarText, controlsWidth)}</text>
             )}
           </box>
-          {statusWidth > 0 ? (() => {
-            // The far-right cell: the session counter, then the sidebar TOGGLE
-            // ICONS (herd-style, ▌/▏ left, ▐/▕ right — filled+ACCENT when open,
-            // hairline+MUTED when closed, clickable to toggle). The icons take a
-            // fixed slice off this cell so the outer row width math is untouched.
-            const toggles = sidebarToggleIcons({
-              showLeft: settings.showLeftSidebar,
-              showRight: settings.showRightSidebar,
-            });
-            const togglesW = sidebarIconsWidth(toggles);
-            const showToggles = statusWidth > togglesW + 6;
-            const counterW = showToggles ? Math.max(0, statusWidth - togglesW - 1) : statusWidth;
-            return (
-              <box width={statusWidth} flexShrink={0} minWidth={0} flexDirection="row">
-                <box width={counterW} flexShrink={0} minWidth={0}>
-                  <text fg={MUTED}>{fitTuiText(statusText, counterW, { mode: "middle" })}</text>
-                </box>
-                {showToggles ? (
-                  <box flexDirection="row" flexShrink={0} minWidth={0} marginLeft={1}>
-                    {toggles.map((icon, i) => (
-                      <React.Fragment key={icon.side}>
-                        {i > 0 ? <text fg={MUTED}> </text> : null}
-                        <text
-                          fg={icon.tone === "accent" ? ACCENT : MUTED}
-                          onMouseDown={() =>
-                            updateSetting(
-                              icon.side === "left" ? "showLeftSidebar" : "showRightSidebar",
-                              icon.side === "left"
-                                ? !settingsRef.current.showLeftSidebar
-                                : !settingsRef.current.showRightSidebar,
-                            )
-                          }
-                        >{icon.glyph}</text>
-                      </React.Fragment>
-                    ))}
-                  </box>
-                ) : null}
-              </box>
-            );
-          })() : null}
         </box>
       ) : null}
       {/*
