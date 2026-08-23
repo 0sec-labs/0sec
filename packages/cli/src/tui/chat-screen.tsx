@@ -29,6 +29,7 @@ import {
   type OperatorQuestionAnswer,
   type SubagentLifecyclePayload,
   type TodosEventPayload,
+  type SessionObjectivePayload,
   type ToolCall,
 } from "@0sec/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
@@ -764,6 +765,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
   /** Latest plan snapshot from the `update_todos` tool (the `todos` bus event). */
   const [todos, setTodos] = useState<TodosEventPayload | null>(null);
+  // The OMP-style "what am I working on" objective for the bottom-bar pill.
+  // Empty ("") hides the pill; the session-objective service replaces it in
+  // place (heuristic first, model-refined when/if it lands).
+  const [objective, setObjective] = useState<string>("");
   /**
    * The richer live-subagent model the herd view is built on: latest snapshot
    * plus a bounded activity ring per agent, keyed by `agent_id`, fed by the SAME
@@ -1178,6 +1183,10 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           // The plan is the main agent's, not a subagent's, so it carries no
           // scanId to filter on; the latest snapshot simply replaces the tree.
           setTodos(payload as unknown as TodosEventPayload);
+        } else if (type === "session_objective") {
+          const p = payload as unknown as SessionObjectivePayload;
+          if (p.scanId !== scanId) return;
+          setObjective(p.objective);
         }
       },
     });
@@ -1679,6 +1688,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         setTurnBudget(null);
         // The live plan tree belongs to the conversation being emptied.
         setTodos(null);
+        // The objective describes the conversation being emptied; drop it so a
+        // stale title doesn't ride on the fresh session's bottom bar.
+        setObjective("");
         appendEntry({
           kind: "notice",
           text: "conversation cleared",
@@ -4231,8 +4243,17 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             )}
           </box>
           {statusWidth > 0 ? (
-            <box width={statusWidth} flexShrink={0} minWidth={0}>
-              <text fg={MUTED}>{fitTuiText(statusText, statusWidth, { mode: "middle" })}</text>
+            // The right cell is the OMP-style OBJECTIVE pill — a short "what am I
+            // working on" title in the 0sec voice (BRAND), right-aligned — when
+            // one exists and the setting is on; otherwise the session counter.
+            // The objective replaces the counter rather than fighting it for the
+            // narrow right cell.
+            <box width={statusWidth} flexShrink={0} minWidth={0} flexDirection="row" justifyContent="flex-end">
+              {settings.showObjective && objective.trim() ? (
+                <text fg={BRAND}>{fitTuiText(objective.trim(), statusWidth, { mode: "end" })}</text>
+              ) : (
+                <text fg={MUTED}>{fitTuiText(statusText, statusWidth, { mode: "middle" })}</text>
+              )}
             </box>
           ) : null}
         </box>
