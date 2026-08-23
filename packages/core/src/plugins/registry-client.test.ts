@@ -9,6 +9,7 @@ import {
   fetchRegistryIndex,
   findInstallable,
   installableFromEntry,
+  MAX_REGISTRY_ENTRIES,
   parseRegistryIndex,
   searchInstallable,
   unconfiguredVerifier,
@@ -103,11 +104,69 @@ describe("fetchRegistryIndex", () => {
     if (res.ok) return;
     expect(res.error).toMatch(/network down/);
   });
+
+  it("refuses a redirect instead of following it (no http downgrade / SSRF)", async () => {
+    const f = vi.fn(async () => ({
+      ok: false,
+      status: 302,
+      json: async () => ({ entries: [] }),
+    })) as unknown as typeof fetch;
+    const res = await fetchRegistryIndex("https://plugins.example/index.json", { fetchImpl: f });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/redirect/i);
+  });
+
+  it("rejects an index whose Content-Length exceeds the cap", async () => {
+    const f = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k.toLowerCase() === "content-length" ? "999999999" : null) },
+      json: async () => ({ entries: [] }),
+    })) as unknown as typeof fetch;
+    const res = await fetchRegistryIndex("https://plugins.example/index.json", {
+      fetchImpl: f,
+      maxIndexBytes: 1024,
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/too large/);
+  });
+
+  it("aborts a hung fetch after the timeout", async () => {
+    vi.useFakeTimers();
+    const f = vi.fn(
+      (_url: unknown, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () =>
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+          );
+        }),
+    ) as unknown as typeof fetch;
+    const pending = fetchRegistryIndex("https://plugins.example/index.json", {
+      fetchImpl: f,
+      timeoutMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(1001);
+    const res = await pending;
+    vi.useRealTimers();
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/timed out/);
+  });
 });
 
 // ── manifest validation on parse ─────────────────────────────────────────────
 
 describe("parseRegistryIndex", () => {
+  it("truncates an index past MAX_REGISTRY_ENTRIES (memory-amplification bound)", () => {
+    const many = Array.from({ length: MAX_REGISTRY_ENTRIES + 2 }, () => ({}));
+    const result = parseRegistryIndex(many);
+    const total = result.entries.length + result.artifacts.length + result.dropped.length;
+    expect(total).toBeLessThanOrEqual(MAX_REGISTRY_ENTRIES + 1);
+    expect(result.dropped.some((d) => /truncated/.test(d.reason))).toBe(true);
+  });
+
   it("drops a malformed manifest with a reason and never surfaces it as installable", () => {
     const bad = entry({ id: "acme.bad", version: "1.0.0", manifest: { id: "acme.bad" } });
     const result = parseRegistryIndex({ entries: [entry(), bad] });
