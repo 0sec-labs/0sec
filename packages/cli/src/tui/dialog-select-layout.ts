@@ -279,12 +279,73 @@ const TOP_ANCHOR = 0.15;
 /** Never fewer than this many body rows, even on a very short terminal. */
 const MIN_LIST_ROWS = 1;
 
+// -- two-column (detail) mode ------------------------------------------------
+//
+// With a detail pane the panel splits its inner width into a list column, a
+// gap, and a detail column that together sum to `innerWidth` exactly — the same
+// "the parts sum to the whole, no leaf overlaps a neighbour" discipline the row
+// columns follow. Below a minimum inner width the split cannot keep both the
+// list and the detail above their floors, so it degrades to list-only and the
+// detail is hidden rather than rendered into a column too narrow to read.
+
+/** Cells between the list column and the detail column when both are shown. */
+const DETAIL_GAP = 2;
+/** A detail column narrower than this wraps prose into confetti; hide it. */
+const DETAIL_MIN_WIDTH = 30;
+/** Past this the detail column is just whitespace; give the cells to the list. */
+const DETAIL_MAX_WIDTH = 60;
+/** The list column never shrinks below this while a detail sits beside it. */
+const DETAIL_LIST_MIN_WIDTH = 24;
+/** Share of the inner width (gap removed) the detail column asks for. */
+const DETAIL_WIDTH_SHARE = 0.42;
+
 export interface DialogPanelInput {
   width: number;
   height: number;
   size?: DialogSize;
   /** Total display rows (headers + items) the list would render. */
   totalRows: number;
+  /**
+   * Reserve a detail column beside the list. When set, the panel widens to at
+   * least the `large` band and splits its inner width into `listWidth` + gap +
+   * `detailWidth`. On a terminal too narrow to hold both above their floors the
+   * split silently falls back to list-only (`showDetail: false`).
+   */
+  withDetail?: boolean;
+}
+
+interface DetailSplit {
+  showDetail: boolean;
+  /** Cells the list column occupies (scrollbar included). */
+  listWidth: number;
+  /** Inner cells of the detail column. 0 when the detail is hidden. */
+  detailWidth: number;
+  /** Cells between the list and detail columns. 0 when the detail is hidden. */
+  detailGap: number;
+}
+
+/**
+ * Split an inner width into list · gap · detail, or fall back to list-only.
+ *
+ * When detail is off — or the inner width cannot pay the list floor, a gap and
+ * the detail floor — the list takes the whole inner width and the detail is
+ * hidden, so a narrow overlay behaves exactly as the list-only overlay does.
+ * Otherwise the detail takes a bounded share and the list keeps the rest, and
+ * `listWidth + detailGap + detailWidth === innerWidth` by construction.
+ */
+function splitDialogDetail(innerWidth: number, withDetail: boolean): DetailSplit {
+  const inner = Math.max(1, cells(innerWidth));
+  const listOnly: DetailSplit = { showDetail: false, listWidth: inner, detailWidth: 0, detailGap: 0 };
+  if (!withDetail) return listOnly;
+  if (inner < DETAIL_LIST_MIN_WIDTH + DETAIL_GAP + DETAIL_MIN_WIDTH) return listOnly;
+
+  const available = inner - DETAIL_GAP;
+  const wanted = clamp(Math.floor(available * DETAIL_WIDTH_SHARE), DETAIL_MIN_WIDTH, DETAIL_MAX_WIDTH);
+  // The list is the pane that must survive; the detail only ever gets what is
+  // left once the list is kept above its own floor.
+  const detailWidth = clamp(wanted, DETAIL_MIN_WIDTH, Math.max(DETAIL_MIN_WIDTH, available - DETAIL_LIST_MIN_WIDTH));
+  const listWidth = available - detailWidth;
+  return { showDetail: true, listWidth, detailWidth, detailGap: DETAIL_GAP };
 }
 
 export interface DialogPanel {
@@ -296,8 +357,19 @@ export interface DialogPanel {
   top: number;
   /** Inner content width: `panelWidth - PANEL_CHROME`. */
   innerWidth: number;
-  /** Cells a list row may occupy — inner width less the scrollbar column. */
+  /**
+   * Cells the list column occupies (scrollbar included). Equals `innerWidth`
+   * in list-only mode; in detail mode it is the left column of the split.
+   */
+  listWidth: number;
+  /** Cells a list row may occupy — the list column less the scrollbar column. */
   rowWidth: number;
+  /** Whether a detail column is rendered beside the list. */
+  showDetail: boolean;
+  /** Inner cells of the detail column. 0 when the detail is hidden. */
+  detailWidth: number;
+  /** Cells between the list and detail columns. 0 when the detail is hidden. */
+  detailGap: number;
   /** Body rows the list can hold given the terminal height. */
   capacityRows: number;
   /** Body rows actually rendered: `min(capacityRows, max(1, totalRows))`. */
@@ -311,13 +383,18 @@ export function computeDialogPanel({
   height,
   size = "medium",
   totalRows,
+  withDetail = false,
 }: DialogPanelInput): DialogPanel {
   const w = cells(width);
   const h = cells(height);
   const total = cells(totalRows);
 
   const available = Math.max(1, w - H_MARGIN * 2);
-  const panelWidth = clamp(Math.min(PANEL_MAX_WIDTH[size], available), Math.min(MIN_PANEL_WIDTH, w), Math.max(1, w));
+  // A detail column needs room for two panes, so it promotes the width band to
+  // at least `large`; the clamp against `available` still keeps a narrow
+  // terminal from overflowing, and there the split degrades to list-only.
+  const maxWidth = withDetail ? Math.max(PANEL_MAX_WIDTH[size], PANEL_MAX_WIDTH.large) : PANEL_MAX_WIDTH[size];
+  const panelWidth = clamp(Math.min(maxWidth, available), Math.min(MIN_PANEL_WIDTH, w), Math.max(1, w));
   const left = Math.max(0, Math.floor((w - panelWidth) / 2));
   const top = Math.max(0, Math.floor(h * TOP_ANCHOR));
 
@@ -327,9 +404,24 @@ export function computeDialogPanel({
   const capacityRows = Math.max(MIN_LIST_ROWS, availableHeight);
   const scrolls = total > capacityRows;
   const visibleRows = Math.max(1, Math.min(capacityRows, Math.max(1, total)));
-  const rowWidth = Math.max(1, innerWidth - (scrolls ? 1 : 0));
 
-  return { panelWidth, left, top, innerWidth, rowWidth, capacityRows, visibleRows, scrolls };
+  const split = splitDialogDetail(innerWidth, withDetail);
+  const rowWidth = Math.max(1, split.listWidth - (scrolls ? 1 : 0));
+
+  return {
+    panelWidth,
+    left,
+    top,
+    innerWidth,
+    listWidth: split.listWidth,
+    rowWidth,
+    showDetail: split.showDetail,
+    detailWidth: split.detailWidth,
+    detailGap: split.detailGap,
+    capacityRows,
+    visibleRows,
+    scrolls,
+  };
 }
 
 // ---------------------------------------------------------------------------

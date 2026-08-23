@@ -19,7 +19,7 @@
  * own children.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, type ReactNode } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { TextAttributes } from "@opentui/core";
 
@@ -40,6 +40,32 @@ import {
 } from "./dialog-select-layout.js";
 
 export type { DialogItem, DialogSize } from "./dialog-select-layout.js";
+
+/**
+ * The bounds the detail column hands its renderer.
+ *
+ * The renderer MUST fit its output to exactly this box — `width` cells across,
+ * `height` rows down — because OpenTUI does not clip: a taller node paints its
+ * overflow through the footer (see PRIMITIVES.md). Callers therefore size their
+ * content against these numbers and append their own truncation marker, exactly
+ * as `clipModelDetailLines` and `fitPreviewBlocks` already do. `width` is the
+ * detail pane's inner text width; `height` is the rows it may fill (it matches
+ * the list's visible-row body height).
+ */
+export interface DialogDetailPane {
+  width: number;
+  height: number;
+}
+
+/**
+ * Render the detail/preview beside the list for the highlighted row.
+ *
+ * Called with the active item on every render, so the pane re-renders as the
+ * cursor moves — this is how the model picker shows a model's detail and how a
+ * setting shows its live preview. Return content bounded to `pane`; anything
+ * taller than `pane.height` or wider than `pane.width` overflows the box.
+ */
+export type DialogRenderDetail = (item: DialogItem, pane: DialogDetailPane) => ReactNode;
 
 export interface DialogSelectProps {
   /** The rows to choose from. Pre-group by `category` if you want headings. */
@@ -65,6 +91,14 @@ export interface DialogSelectProps {
   placeholder?: string;
   /** Panel width band: small 60 / medium 88 / large 116. Default medium. */
   size?: DialogSize;
+  /**
+   * Optional detail/preview column. When given, the overlay becomes two-column
+   * — list on the left, `renderDetail(activeItem, pane)` on the right — and the
+   * panel widens to the `large` band. When absent the overlay is the plain
+   * single-column list. On a terminal too narrow to hold both columns the
+   * detail is hidden and the list takes the full width.
+   */
+  renderDetail?: DialogRenderDetail;
 }
 
 /** How many rows page-up / page-down jump. */
@@ -84,6 +118,7 @@ export function DialogSelect({
   title,
   placeholder = "type to filter",
   size = "medium",
+  renderDetail,
 }: DialogSelectProps) {
   const theme = useTheme();
   const { width, height } = useTerminalDimensions();
@@ -110,7 +145,13 @@ export function DialogSelect({
   const displayIndex = dialogDisplayIndex(rows, cursor);
 
   // ── geometry ──────────────────────────────────────────────────────────
-  const panel = computeDialogPanel({ width, height, size, totalRows: rows.length });
+  const panel = computeDialogPanel({
+    width,
+    height,
+    size,
+    totalRows: rows.length,
+    withDetail: renderDetail != null,
+  });
   const window = dialogWindow(rows, displayIndex, panel.visibleRows);
   const visible = rows.slice(window.start, window.end);
 
@@ -317,15 +358,38 @@ export function DialogSelect({
           </Cells>
         </box>
 
-        {/* List */}
-        <box flexDirection="column" width={panel.innerWidth} height={panel.visibleRows} flexShrink={0} minWidth={0}>
-          {rows.length === 0 ? (
-            <Cells width={panel.rowWidth} fg={theme.MUTED}>
-              no matches
-            </Cells>
-          ) : (
-            listBody
-          )}
+        {/* Body: list, and — when a detail renderer is given and the panel is
+            wide enough — a detail/preview column beside it. */}
+        <box flexDirection="row" width={panel.innerWidth} height={panel.visibleRows} flexShrink={0} minWidth={0}>
+          {/* List column */}
+          <box flexDirection="column" width={panel.listWidth} height={panel.visibleRows} flexShrink={0} minWidth={0}>
+            {rows.length === 0 ? (
+              <Cells width={panel.rowWidth} fg={theme.MUTED}>
+                no matches
+              </Cells>
+            ) : (
+              listBody
+            )}
+          </box>
+
+          {/* Detail column. Bounded to its own width/height; the renderer fits
+              its content to `pane` since OpenTUI will not clip an overflow. */}
+          {panel.showDetail ? (
+            <>
+              <box width={panel.detailGap} height={panel.visibleRows} flexShrink={0} />
+              <box
+                flexDirection="column"
+                width={panel.detailWidth}
+                height={panel.visibleRows}
+                flexShrink={0}
+                minWidth={0}
+              >
+                {activeItem && renderDetail
+                  ? renderDetail(activeItem, { width: panel.detailWidth, height: panel.visibleRows })
+                  : null}
+              </box>
+            </>
+          ) : null}
         </box>
 
         {/* Footer hint */}

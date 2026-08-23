@@ -151,30 +151,56 @@ describe("panel / column sweep", () => {
       for (let height = 4; height <= 80; height += 6) {
         for (const size of SIZES) {
           for (const total of [0, 1, 40, 500]) {
-            const panel = computeDialogPanel({ width, height, size, totalRows: total });
+            for (const withDetail of [false, true]) {
+              const panel = computeDialogPanel({ width, height, size, totalRows: total, withDetail });
 
-            expect(panel.panelWidth).toBeLessThanOrEqual(Math.max(1, width));
-            expect(panel.left).toBeGreaterThanOrEqual(0);
-            expect(panel.left + panel.panelWidth).toBeLessThanOrEqual(Math.max(1, width));
-            expect(panel.innerWidth).toBeLessThanOrEqual(panel.panelWidth);
-            expect(panel.rowWidth).toBeGreaterThanOrEqual(1);
-            expect(panel.rowWidth).toBeLessThanOrEqual(panel.innerWidth);
-            expect(panel.visibleRows).toBeGreaterThanOrEqual(1);
-            expect(panel.visibleRows).toBeLessThanOrEqual(panel.capacityRows);
-            expect(panel.top).toBeGreaterThanOrEqual(0);
+              expect(panel.panelWidth).toBeLessThanOrEqual(Math.max(1, width));
+              expect(panel.left).toBeGreaterThanOrEqual(0);
+              expect(panel.left + panel.panelWidth).toBeLessThanOrEqual(Math.max(1, width));
+              expect(panel.innerWidth).toBeLessThanOrEqual(panel.panelWidth);
+              expect(panel.rowWidth).toBeGreaterThanOrEqual(1);
+              expect(panel.rowWidth).toBeLessThanOrEqual(panel.innerWidth);
+              expect(panel.visibleRows).toBeGreaterThanOrEqual(1);
+              expect(panel.visibleRows).toBeLessThanOrEqual(panel.capacityRows);
+              expect(panel.top).toBeGreaterThanOrEqual(0);
 
-            for (const hasGutter of [false, true]) {
-              for (const hasDescription of [false, true]) {
-                for (const metaContentWidth of [0, 3, 40, panel.rowWidth + 10]) {
-                  const cols = dialogRowColumns({
-                    rowWidth: panel.rowWidth,
-                    hasGutter,
-                    metaContentWidth,
-                    hasDescription,
-                  });
-                  const sum = dialogColumnsWidth(cols);
-                  expect(sum).toBeLessThanOrEqual(panel.rowWidth);
-                  for (const v of Object.values(cols)) expect(v).toBeGreaterThanOrEqual(0);
+              // The list column and the detail column (plus their gap) sum to at
+              // most the inner width — no column ever overlaps its neighbour.
+              expect(panel.listWidth).toBeGreaterThanOrEqual(1);
+              expect(panel.listWidth).toBeLessThanOrEqual(panel.innerWidth);
+              expect(panel.detailWidth).toBeGreaterThanOrEqual(0);
+              expect(panel.detailGap).toBeGreaterThanOrEqual(0);
+              expect(panel.rowWidth).toBeLessThanOrEqual(panel.listWidth);
+              expect(panel.listWidth + panel.detailGap + panel.detailWidth).toBeLessThanOrEqual(
+                panel.innerWidth,
+              );
+              if (panel.showDetail) {
+                // Detail on: the split fills the inner width exactly and both
+                // columns clear their floors.
+                expect(panel.detailWidth).toBeGreaterThanOrEqual(30);
+                expect(panel.detailGap).toBeGreaterThanOrEqual(1);
+                expect(panel.listWidth + panel.detailGap + panel.detailWidth).toBe(panel.innerWidth);
+              } else {
+                // Detail off (never asked for, or hidden on a narrow terminal):
+                // the list owns the whole inner width, exactly as before.
+                expect(panel.detailWidth).toBe(0);
+                expect(panel.detailGap).toBe(0);
+                expect(panel.listWidth).toBe(panel.innerWidth);
+              }
+
+              for (const hasGutter of [false, true]) {
+                for (const hasDescription of [false, true]) {
+                  for (const metaContentWidth of [0, 3, 40, panel.rowWidth + 10]) {
+                    const cols = dialogRowColumns({
+                      rowWidth: panel.rowWidth,
+                      hasGutter,
+                      metaContentWidth,
+                      hasDescription,
+                    });
+                    const sum = dialogColumnsWidth(cols);
+                    expect(sum).toBeLessThanOrEqual(panel.rowWidth);
+                    for (const v of Object.values(cols)) expect(v).toBeGreaterThanOrEqual(0);
+                  }
                 }
               }
             }
@@ -182,6 +208,38 @@ describe("panel / column sweep", () => {
         }
       }
     }
+  });
+
+  it("shows a detail column on a wide terminal and hides it below a min width", () => {
+    // Wide: two columns, promoted to at least the large band, summing exactly.
+    const wide = computeDialogPanel({ width: 120, height: 40, size: "medium", totalRows: 40, withDetail: true });
+    expect(wide.showDetail).toBe(true);
+    expect(wide.panelWidth).toBe(116); // promoted from medium(88) to large(116)
+    expect(wide.detailWidth).toBeGreaterThanOrEqual(30);
+    expect(wide.listWidth + wide.detailGap + wide.detailWidth).toBe(wide.innerWidth);
+
+    // 80x24 still splits without overflowing.
+    const std = computeDialogPanel({ width: 80, height: 24, size: "large", totalRows: 40, withDetail: true });
+    expect(std.showDetail).toBe(true);
+    expect(std.left + std.panelWidth).toBeLessThanOrEqual(80);
+    expect(std.listWidth + std.detailGap + std.detailWidth).toBe(std.innerWidth);
+
+    // Narrow: the split cannot keep both columns above their floors, so the
+    // detail is hidden and the list takes the whole inner width.
+    const narrow = computeDialogPanel({ width: 56, height: 24, size: "large", totalRows: 40, withDetail: true });
+    expect(narrow.showDetail).toBe(false);
+    expect(narrow.detailWidth).toBe(0);
+    expect(narrow.listWidth).toBe(narrow.innerWidth);
+    expect(narrow.left + narrow.panelWidth).toBeLessThanOrEqual(56);
+  });
+
+  it("is unchanged from list-only when no detail is requested", () => {
+    const a = computeDialogPanel({ width: 120, height: 40, size: "medium", totalRows: 3 });
+    const b = computeDialogPanel({ width: 120, height: 40, size: "medium", totalRows: 3, withDetail: false });
+    expect(a).toEqual(b);
+    expect(a.showDetail).toBe(false);
+    expect(a.listWidth).toBe(a.innerWidth);
+    expect(a.rowWidth).toBe(a.innerWidth); // no scrollbar reserved for a short list
   });
 
   it("gives each size its expected max inner width on a wide terminal", () => {
