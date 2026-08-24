@@ -45,11 +45,17 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          # Node 22, not 24: tree-sitter@0.21.1's native addon fails to compile
+          # against Node 24's V8 (missing cppgc header) on linux-arm64, which has
+          # no prebuilt. Node 22 compiles it from source cleanly.
+          node-version: 22
       - run: corepack enable
       - uses: oven-sh/setup-bun@v2
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
+        # No --ignore-scripts: the native addons (tree-sitter) must build so the
+        # compiled binary has something to load at runtime, and so the docs build
+        # postinstall runs on Windows.
+        run: pnpm install --no-frozen-lockfile
       - name: Build workspace packages
         run: pnpm -r build
       - name: Compile native binary
