@@ -2571,17 +2571,27 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       const { queue, accepted } = enqueueComposerInput(queuedRef.current, input);
       queuedRef.current = queue;
       setQueuedMessages(queue);
-      appendEntry({
-        kind: accepted ? "notice" : "error",
-        text: accepted
-          ? `queued — will send when the current turn ends: ${input}`
-          : `queue is full (${COMPOSER_QUEUE_LIMIT} messages); not queued: ${input}`,
-        turn: turn.current,
-      });
+      // Enter during a running turn INTERRUPTS it, so the just-submitted message
+      // sends right away: interruptTurn() aborts the turn, the console goes idle,
+      // and the idle-drain effect delivers this queued message immediately.
+      // interruptTurn() returns false when there is nothing abortable, in which
+      // case it stays a plain queue.
+      const interrupting = accepted && interruptTurn();
+      if (!interrupting) {
+        appendEntry({
+          kind: accepted ? "notice" : "error",
+          text: accepted
+            ? `queued — will send when the current turn ends: ${input}`
+            : `queue is full (${COMPOSER_QUEUE_LIMIT} messages); not queued: ${input}`,
+          turn: turn.current,
+        });
+      }
+      // When interrupting, interruptTurn() already posts an "interrupting…"
+      // notice; the message then drains on the next idle transition.
     } else if (disposition === "send") {
       void send(input);
     }
-  }, [appendEntry, busy, send, session]);
+  }, [appendEntry, busy, send, session, interruptTurn]);
 
   useEffect(() => {
     if (!submitHandle) return;
@@ -3428,7 +3438,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   if (settings.showTarget) headerSegments.push(targetSummary);
   if (settings.showScope) headerSegments.push(scopeSummary);
   headerSegments.push(sessionState);
-  const headerEngagement = headerSegments.join(" · ");
+  // Version rides at the far left of the top bar, like the startup masthead.
+  const headerEngagement = [`v${VERSION}`, ...headerSegments].join(" · ");
 
   const controls = approvalPrompt
     ? "↑↓ choose · enter confirm · esc decline"
@@ -3894,6 +3905,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           <TodosSidebar payload={todos!} width={rightInner} rows={rightPlanBudget} theme={theme} />
         ) : null}
         <box flexGrow={1} minHeight={0} flexShrink={1} />
+        <box width={rightInner} flexShrink={0} minWidth={0}>
+          <text fg={MUTED}>{fitTuiText("ctrl+l hide", rightInner)}</text>
+        </box>
       </box>
     </box>
   ) : null;
