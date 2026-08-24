@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/0sec-demo.gif" alt="0sec — finds, proves, and reports vulnerabilities" width="840">
+  <img src="assets/demo-intro.gif" alt="0sec — finds, proves, and reports vulnerabilities" width="840">
 </p>
 
 ## Install
@@ -52,6 +52,10 @@ export ANTHROPIC_API_KEY=...        # or OpenAI, Azure, OpenRouter, Ollama, …
 0 audit lodash                      # npm / pypi / cargo / oci package
 0 console --scope ./scope.json      # interactive; type / for commands
 ```
+
+<p align="center">
+  <img src="assets/0sec-demo.gif" alt="0sec quickstart — a scan from start to finish" width="820">
+</p>
 
 ## What it covers
 
@@ -83,6 +87,11 @@ Most tools stop at the app. 0sec goes all the way down.
 
 Run `0 --help` for the rest. Full docs: **[docs.0.security](https://docs.0.security)**.
 
+<p align="center">
+  <img src="assets/demo-commands.gif" alt="0sec console command palette" width="820"><br/>
+  <sub>The interactive console — <code>/</code> opens the command palette.</sub>
+</p>
+
 ## How it works
 
 It proves the bug before it reports it.
@@ -94,45 +103,14 @@ It proves the bug before it reports it.
 
 Every run keeps its own evidence under `~/.0sec/runs/<id>/`, so you can `resume`, `replay`, or `disclose` it later.
 
-## Track record
-
-0sec has landed real, maintainer-reviewed fixes in the **mainline Linux kernel** and other open source. The verified list lives at **[0.security](https://0.security)**. Benchmarks are secondary evidence — caveats in the [benchmark docs](docs/src/content/docs/benchmark.md).
-
-## Honest limitations
-
-- Kernel/IOKit findings stay hypotheses until a real oracle reproduces them (the `linux-kernel` profile is static).
-- Verification depth varies: `verificationSpec` covers file/diff predicates; the replay runner is local-shell only (Docker/QEMU are stubs).
-- The false-positive-moat layers are off by default and slice-dependent.
-- Benchmarks are single-model/config/trial; the 10/10 AI-suite is self-authored, not independent.
-- `fix` is narrow: source-only, single-file, ≤3 attempts.
-- By design, never: network sweeps, credential spraying, persistence/C2, or stealth.
-
-## Managed service
-
-The public engine runs locally or in CI. A separate managed service runs the same engine as a governed engagement — isolated workers, scheduling, evidence handling. It's not in this repo, and nothing here depends on it.
-
-## Build from source
-
-```bash
-git clone https://github.com/0sec-labs/0sec.git && cd 0sec
-corepack enable && pnpm install --frozen-lockfile && pnpm build && node dist/0sec.js --help
-```
-
-## Contributing & security
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) — synthetic or authorized targets only. Report vulnerabilities privately via [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.
-
-## Demos
-
-<p align="center">
-  <img src="assets/demo-commands.gif" alt="0sec console command palette" width="820"><br/>
-  <sub>The interactive console — <code>/</code> opens the command palette.</sub>
-</p>
-
 <p align="center">
   <img src="assets/demo-verify.gif" alt="0sec blind verification" width="820"><br/>
   <sub>Blind verification — every finding is re-exploited before it ships.</sub>
 </p>
+
+## Track record
+
+0sec has landed real, maintainer-reviewed fixes in the **mainline Linux kernel** and other open source. The verified list lives at **[0.security](https://0.security)**. Benchmarks are secondary evidence — caveats in the [benchmark docs](docs/src/content/docs/benchmark.md).
 
 ## Supported by
 
@@ -174,6 +152,30 @@ With special thanks to the startup and research programs supporting our work:
     </picture>
   </a>
 </p>
+
+## Honest limitations
+
+- Kernel/IOKit findings stay hypotheses until a real oracle reproduces them (the `linux-kernel` profile is static).
+- Verification depth varies: `verificationSpec` covers file/diff predicates; the replay runner is local-shell only (Docker/QEMU are stubs).
+- The false-positive-moat layers are off by default and slice-dependent.
+- Benchmarks are single-model/config/trial; the 10/10 AI-suite is self-authored, not independent.
+- `fix` is narrow: source-only, single-file, ≤3 attempts.
+- By design, never: network sweeps, credential spraying, persistence/C2, or stealth.
+
+## Managed service
+
+The public engine runs locally or in CI. A separate managed service runs the same engine as a governed engagement — isolated workers, scheduling, evidence handling. It's not in this repo, and nothing here depends on it.
+
+## Build from source
+
+```bash
+git clone https://github.com/0sec-labs/0sec.git && cd 0sec
+corepack enable && pnpm install --frozen-lockfile && pnpm build && node dist/0sec.js --help
+```
+
+## Contributing & security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — synthetic or authorized targets only. Report vulnerabilities privately via [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.
 
 ## License
 
