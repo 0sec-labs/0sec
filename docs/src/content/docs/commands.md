@@ -115,14 +115,9 @@ checks. Slower than `--race`, more thorough.
 
 ### `--cost-ceiling` — hard spend guardrail
 
-Set a per-scan USD ceiling. If estimated spend exceeds it, 0sec preserves
-findings so far, exits with code `4`, and emits `exit_reason:
-"cost_ceiling_exceeded"` in the machine-readable result line. The flag overrides
-`0SEC_COST_CEILING_USD`.
-
-```bash
-0sec scan --target https://example.com --mode web --scope ./scope.json --cost-ceiling 5
-```
+Set a per-scan USD ceiling; the flag overrides `0SEC_COST_CEILING_USD`. See
+[Cost ceiling](/configuration/#cost-ceiling) for the exit code and result-line
+behaviour.
 
 ### `--export github:owner/repo`
 
@@ -618,16 +613,9 @@ retrying model can't turn a "no" into a prompt loop.
 
 ### Session persistence
 
-Console transcripts are stored one JSON file per session under
-`~/.0sec/console-sessions/`, `0600` inside a `0700` directory, re-applied on
-every write. Nothing is transmitted anywhere.
-
-The file holds the session's **entire** message array — every prompt, reply, and
-tool call with its full result. On a security tool that means target hostnames,
-approved scope, untriaged findings, and raw requests/responses including any
-cookies or tokens seen on the wire. It's deliberately **not** scrubbed (a partial
-scrub advertises a guarantee it can't keep), so treat these files as engagement
-evidence. Deletion is supported; the store keeps the 20 most recent.
+How transcripts are stored on disk, what they contain, and why secrets are
+deliberately not scrubbed is documented under
+[Session persistence](/configuration/#session-persistence).
 
 `/resume` lists transcripts whose recorded working directory matches the current
 one, newest first. Picking one rebuilds the session around the stored messages
@@ -641,21 +629,10 @@ is the intent, not today's behaviour.
 
 ### Console settings
 
-`/settings` toggles chrome; values persist to `~/.0sec/tui-settings.json`. A
-hand-edited or corrupt file degrades to defaults rather than failing the
-session.
-
-| Key | Description | Default |
-|-----|-------------|---------|
-| `showStatusBar` | Bottom bar with model, working directory, git state and token counters | `true` |
-| `showComposerHints` | Keyboard-hint line under the input box | `true` |
-| `showLogo` | Block "0SEC" mark on an empty transcript | `true` |
-| `showRuntimeNotices` | Surface runtime stdout/stderr as transcript notices | `true` |
-| `showTurnSummary` | Per-turn "N tool calls · in→out tok" line | `true` |
-| `showSubagents` | List active subagents while workers run | `true` |
-| `showTimestamps` | Relative timestamps on transcript entries | `false` |
-| `density` | `comfortable` (blank line between entries) or `compact` | `comfortable` |
-| `composerStyle` | `border`, `rail`, or `plain` | `border` |
+`/settings` opens a picker of console display settings, persisted to
+`~/.0sec/tui-settings.json`. The full table of keys, values, and defaults is
+documented under
+[Console display settings](/configuration/#console-display-settings).
 
 ## resume
 

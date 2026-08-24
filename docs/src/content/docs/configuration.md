@@ -183,17 +183,17 @@ The console persists display preferences to `tui-settings.json` in the [state
 directory](#state-directory). Change them from `/settings`, or hand-edit the
 plain JSON:
 
-| Key | Type | Values | Default |
-|-----|------|--------|---------|
-| `showStatusBar` | boolean | `true` / `false` | `true` |
-| `showComposerHints` | boolean | `true` / `false` | `true` |
-| `showLogo` | boolean | `true` / `false` | `true` |
-| `showRuntimeNotices` | boolean | `true` / `false` | `true` |
-| `showTurnSummary` | boolean | `true` / `false` | `true` |
-| `showSubagents` | boolean | `true` / `false` | `true` |
-| `showTimestamps` | boolean | `true` / `false` | `false` |
-| `density` | enum | `comfortable`, `compact` | `comfortable` |
-| `composerStyle` | enum | `border`, `rail`, `plain` | `border` |
+| Key | Type | Values | Default | Description |
+|-----|------|--------|---------|-------------|
+| `showStatusBar` | boolean | `true` / `false` | `true` | Bottom bar with model, working directory, git state and token counters |
+| `showComposerHints` | boolean | `true` / `false` | `true` | Keyboard-hint line under the input box |
+| `showLogo` | boolean | `true` / `false` | `true` | Block "0SEC" mark on an empty transcript |
+| `showRuntimeNotices` | boolean | `true` / `false` | `true` | Surface runtime stdout/stderr as transcript notices |
+| `showTurnSummary` | boolean | `true` / `false` | `true` | Per-turn "N tool calls · in→out tok" line |
+| `showSubagents` | boolean | `true` / `false` | `true` | List active subagents while workers run |
+| `showTimestamps` | boolean | `true` / `false` | `false` | Relative timestamps on transcript entries |
+| `density` | enum | `comfortable`, `compact` | `comfortable` | `comfortable` puts a blank line between entries; `compact` removes it |
+| `composerStyle` | enum | `border`, `rail`, `plain` | `border` | Input box framing style |
 
 A missing, corrupt, or hand-broken file can't break the console: on load it's
 normalised against the table above (unknown keys dropped, bad values reset to
@@ -290,7 +290,9 @@ Networking rules:
 ### Cost ceiling
 
 Bound API spend per scan, audit, or review. If exceeded, 0sec preserves partial
-findings and exits with code `4`. The `--cost-ceiling` flag overrides the env var.
+findings, exits with code `4`, and emits `exit_reason: "cost_ceiling_exceeded"`
+in the machine-readable result line. The `--cost-ceiling` flag overrides the env
+var.
 
 ```bash
 export 0SEC_COST_CEILING_USD=5
