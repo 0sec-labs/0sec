@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <sub>Created by the <strong>Swiss Applied AI Cybersecurity Research Lab</strong> · <a href="https://0.security">0.security</a></sub><br/>
+  <sub>🇨🇭 Created by the <strong>Swiss Applied AI Cybersecurity Research Lab</strong> · <a href="https://0.security">0.security</a></sub><br/>
   <sub>Beta — in active development; interfaces may change. See <a href="#honest-limitations">Honest limitations</a>.</sub>
 </p>
 
