@@ -22,7 +22,7 @@
     "dev": "pnpm -r --parallel dev",
     "lint": "pnpm --filter '!@0sec/docs' -r exec tsc --noEmit",
     "test": "pnpm test:public",
-    "test:public": "pnpm --filter @0sec/core test && pnpm --filter @0sec/test-targets test && pnpm --filter 0sec-cli exec vitest run src/commands/__tests__/scan.test.ts src/commands/__tests__/bench.test.ts src/commands/__tests__/bench-improvement-assess.test.ts src/commands/__tests__/fix.test.ts src/commands/__tests__/schemas.test.ts src/formatters/markdown.test.ts src/tui/composer-queue.test.ts src/utils/update-check.test.ts && pnpm test:docker-contract && pnpm test:runtime-lock && pnpm test:launcher && pnpm test:installer && pnpm test:public-source-export && node --test scripts/dsh-0sec-mcp.test.mjs && pnpm test:docs-pointers",
+    "test:public": "pnpm --filter @0sec/core test && pnpm --filter @0sec/test-targets test && pnpm --filter 0sec-cli test && pnpm test:docker-contract && pnpm test:runtime-lock && pnpm test:launcher && pnpm test:installer && pnpm test:public-source-export && node --test scripts/dsh-0sec-mcp.test.mjs && pnpm test:docs-pointers",
     "test:dsh-mcp:e2e": "node scripts/dsh-0sec-mcp.e2e.mjs",
     "test:docker-contract": "node --test scripts/docker-contract.test.mjs",
     "test:docs-pointers": "node --test scripts/docs-code-pointers.test.mjs",
