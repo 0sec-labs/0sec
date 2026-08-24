@@ -105,9 +105,9 @@ three that matter most for web:
 Other tools by mode: `http_request`/`submit_form` (structured HTTP),
 `send_prompt` (LLM), `read_file`/`run_command` (source), `crawl` (spidering),
 `browser` (Playwright). `spawn_agent` creates one sub-agent with fresh context
-for deep exploitation of a specific vuln; `spawn_agents` fans the lead agent out
-into a bounded batch of such sub-agents that run **concurrently**, each with its
-own turn budget. Sub-agents can't spawn their own sub-agents.
+to dig into a specific vuln; `spawn_agents` launches a bounded batch of such
+sub-agents that run **concurrently**, each with its own turn budget. Sub-agents
+can't spawn their own sub-agents.
 
 ## How it decides
 

@@ -3,9 +3,9 @@ title: Architecture
 description: "One harness, two evidence engines, and one rule: reproduce before trusting."
 ---
 
-0sec is the open cybersecurity harness. One rule holds the whole thing
-together: **reproduce before trusting.** Models propose; reproducible evidence
-decides what is real.
+0sec is an open cybersecurity harness built on one rule: **reproduce before
+trusting.** Models propose findings; only reproducible evidence decides what is
+real.
 
 Two engines produce that evidence:
 
@@ -54,10 +54,10 @@ Every result carries independent evidence dimensions:
 
 ### Reproduced is not disclosure-ready
 
-A reproduced result still has to clear separate gates before disclosure. The
-shared helper requires reproduced evidence **plus** a real novelty receipt;
-scope, publishability, redaction, and operator policy are downstream gates.
-Proof grade never implies attacker privilege.
+A reproduced result still has to clear more gates before it can be disclosed.
+Disclosure requires reproduced evidence **plus** a real novelty receipt; scope,
+publishability, redaction, and operator policy are all separate downstream
+gates. A proof grade never implies attacker privilege.
 
 Privilege claims carry their own attestation gates, and all of them **fail
 closed**:
@@ -131,7 +131,7 @@ rebuild:
 ## Interactive scan pipeline
 
 For web pentesting the agent is shell-first: `bash` (curl, python3, sqlmap, …)
-is the primary tool, not a constrained HTTP DSL. LLM and code targets get
+is the primary tool, not a fixed set of HTTP tools. LLM and code targets get
 specialized tools like `send_prompt` and `read_file`. Raw findings pass through
 triage and blind validation before they reach a report.
 
@@ -329,7 +329,7 @@ For web pentesting, 0sec gives the agent a minimal tool set — `bash`,
 `save_finding`, `done` — instead of routing it through structured tools. This
 works because the model already knows curl, bash pipelines, and standard tools
 from training. One `curl -c cookies.txt … | jq` replaces several structured
-tool calls and kills the state-threading confusion that makes agents loop.
+tool calls, and avoids the state-tracking confusion that makes agents loop.
 Structured tools stay available as options; benchmarking just favored the shell.
 
 See [Research](/research/) for the rationale and [Benchmark](/benchmark/) for

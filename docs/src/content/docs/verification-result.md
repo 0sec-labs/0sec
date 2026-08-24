@@ -3,10 +3,10 @@ title: Verification Results
 description: Stable JSON contract emitted by deterministic replay verifiers.
 ---
 
-Deterministic verification emits a `verification_result` JSON object. It is
-evidence — produced after the open-source engine runs a replay harness and
-checks concrete assertions — and it is separate from human triage and finding
-lifecycle state.
+Deterministic verification emits a `verification_result` JSON object. This
+object is evidence: the open-source engine runs a replay harness, checks
+concrete assertions, and records the outcome here. It is separate from human
+triage and a finding's lifecycle state.
 
 The schema is meant to be stored by local CI, reproduced by maintainers, and
 ingested by cloud systems without reimplementing the exploit logic.
