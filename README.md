@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>Your open-source AI cybersecurity agent.</strong><br/>
-  It hacks, proves the problem, and writes the fix. Multi-model, multi-agent — and yours to run.
+  It hacks, proves the problem, and writes the fix. Multi-model, multi-agent, but most importantly: yours.
 </p>
 
 <p align="center">
@@ -25,9 +25,7 @@
 </p>
 
 <p align="center">
-  <a href="https://0.security" title="Watch the 0sec demo">
-    <img src="assets/0sec-demo-poster.jpg" alt="▶ Watch the 0sec demo" width="840">
-  </a>
+  <img src="assets/0sec-demo.gif" alt="0sec — finds, proves, and reports vulnerabilities" width="840">
 </p>
 
 ## Install
@@ -123,6 +121,18 @@ corepack enable && pnpm install --frozen-lockfile && pnpm build && node dist/0se
 ## Contributing & security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) — synthetic or authorized targets only. Report vulnerabilities privately via [SECURITY.md](SECURITY.md) (security@0sec.ai), not public issues.
+
+## Demos
+
+<p align="center">
+  <img src="assets/demo-commands.gif" alt="0sec console command palette" width="820"><br/>
+  <sub>The interactive console — <code>/</code> opens the command palette.</sub>
+</p>
+
+<p align="center">
+  <img src="assets/demo-verify.gif" alt="0sec blind verification" width="820"><br/>
+  <sub>Blind verification — every finding is re-exploited before it ships.</sub>
+</p>
 
 ## Supported by
 
