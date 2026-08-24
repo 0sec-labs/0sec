@@ -13,6 +13,7 @@ description: What ships in 0sec and how evidence becomes a finding.
 | Source code | `review <path>` | SAST-style vulnerabilities via static analysis + AI review |
 | White-box | `scan --target <url> --repo <path>` | Source-aware scanning — reads code before attacking |
 | MCP servers | `scan --target mcp://…` | Tool poisoning and schema abuse |
+| Compiled binaries (no source) | [`0verse`](https://github.com/0sec-labs/0sec/tree/main/0verse) `triage <binary>` | Memory-safety bugs via a find → prove → patch → verify loop, confirmed with a proof-of-vulnerability |
 
 ## CLI flags (scan)
 

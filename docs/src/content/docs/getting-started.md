@@ -5,10 +5,14 @@ description: Install 0sec and run an authorized investigation.
 
 ## Install
 
-Build from source or run the public container image. npm and standalone-binary
-releases aren't published yet.
+Install the verified release binary with one command, build from source, or run
+the container image. 0sec is not published to npm.
 
 ```bash
+# Verified release binary (macOS Apple Silicon / Linux x64/arm64)
+curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
+0sec --help          # or just: 0 --help
+
 # Source
 git clone https://github.com/0sec-labs/0sec.git
 cd 0sec
