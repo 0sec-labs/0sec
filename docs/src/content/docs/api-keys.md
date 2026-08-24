@@ -86,13 +86,13 @@ env var. When neither `0SEC_CHATGPT_ACCESS_TOKEN` nor
 same file. (`0SEC_CODEX_AUTH_JSON_PATH` is a deprecated spelling — prefer
 `0SEC_CHATGPT_AUTH_FILE`.)
 
-Every `0sec` invocation loads that file into the environment before any subcommand
-runs, so a codex-login file is detected everywhere — the console `/providers`
+Every `0sec` run loads that file into the environment before any subcommand
+runs, so a codex-login file is picked up everywhere — the console `/providers`
 view, `0sec doctor`, and scans/reviews/audits. An explicit export always wins, and
-a missing or malformed file fails soft. The one gap: the `/providers` table never
-stats the filesystem, so a caller that consults it *without* the CLI's startup
-load (e.g. embedding it in your own tool) sees "not configured" — a display
-limitation, not a broken setup.
+a missing or malformed file is ignored quietly. One caveat: the `/providers` table
+never checks the filesystem, so anything that reads it *without* the CLI's startup
+load (for example, if you embed it in your own tool) shows "not configured" — a
+display quirk, not a broken setup.
 
 ## Console credential store
 
@@ -113,10 +113,10 @@ that run use?" answerable when a request 401s or a metered key overspends.
 file permissions. Treat `credentials.json` like an exported secret in a shell
 profile.
 
-Selecting a model whose provider has no credentials doesn't fail at startup — the
-`/model` picker lists every model 0sec can price, not every one it can call. The
-request fails later (a zero-token turn reporting a missing key). Run `/providers`
-first to confirm the provider is lit.
+Picking a model whose provider has no credentials won't fail at startup — the
+`/model` picker lists every model 0sec can price, not every one it can actually
+call. The request fails later instead (a zero-token turn reporting a missing key).
+Run `/providers` first to confirm the provider is configured.
 
 ## When to use OpenRouter
 

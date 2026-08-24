@@ -8,8 +8,8 @@ equivalent) is exported — see [Getting Started](/getting-started/) if not.
 
 ## Scan a REST API (OpenAPI)
 
-Point at your OpenAPI 3.x / Swagger 2.0 doc to seed recon with every endpoint,
-parameter, and auth requirement — skipping the crawl.
+Point at your OpenAPI 3.x / Swagger 2.0 doc so recon starts with every endpoint,
+parameter, and auth requirement already known — no crawl needed.
 
 ```bash
 0sec scan \
@@ -23,9 +23,10 @@ If your API requires authentication, add `--auth` (see [Scan authenticated APIs]
 
 ## Scan a WordPress site for CVEs
 
-Turn on the WordPress fingerprinter: it detects WordPress, enumerates
-plugins/themes, probes a curated vulnerable-plugin catalog, extracts versions from
-`readme.txt`/`style.css`, and returns CVE hints before the attack loop crawls.
+Turn on the WordPress fingerprinter: it detects WordPress, lists plugins and
+themes, checks them against a curated vulnerable-plugin catalog, reads versions
+from `readme.txt`/`style.css`, and returns CVE hints before the attack loop
+crawls.
 
 `wp_fingerprint` queries the no-key WPVulnerability API by slug. Set
 `WPSCAN_API_TOKEN` or `0SEC_WPSCAN_API_TOKEN` to merge WPScan API data too — still
