@@ -304,6 +304,15 @@ export function registerConsoleCommand(program: Command): void {
             return;
           }
           default: {
+            // A known, non-tuiOnly command the line-mode REPL doesn't implement
+            // (e.g. model/providers/settings/resume). Say so instead of silently
+            // ignoring it — the full set lives in the Bun TUI.
+            console.log(
+              chalk.yellow(
+                `\n/${parsed.command} isn't available in the line-mode console. ` +
+                `Use the \`0sec\` command (no flags) for the full interactive TUI.\n`,
+              ),
+            );
             rl.prompt();
             return;
           }
@@ -436,12 +445,8 @@ function printStatus(session: ConsoleSession): void {
 
 function handleModeCommand(session: ConsoleSession, args: string): void {
   const modeArg = args.trim().toLowerCase();
-  if (modeArg === "standard" || modeArg === "copilot" || modeArg === "yolo") {
-    const next: ConsoleAutonomyMode = modeArg === "standard"
-      ? "standard"
-      : modeArg === "copilot"
-        ? "copilot"
-        : "yolo";
+  if (modeArg === "standard" || modeArg === "recon" || modeArg === "copilot" || modeArg === "yolo") {
+    const next = modeArg as ConsoleAutonomyMode;
     if (next === "yolo" && !hasConfiguredScope(session.scope)) {
       console.log(chalk.yellow(`\nYOLO requires a configured non-empty scope. Mode remains ${chalk.bold(modeLabel(session.autonomyMode))}.\n`));
       return;
@@ -451,12 +456,13 @@ function handleModeCommand(session: ConsoleSession, args: string): void {
   } else if (modeArg === "") {
     console.log(chalk.dim(`\nCurrent mode: ${chalk.bold(modeLabel(session.autonomyMode))}\n`));
   } else {
-    console.log(chalk.yellow(`\nUsage: /mode [standard|copilot|yolo]. Current mode: ${modeLabel(session.autonomyMode)}\n`));
+    console.log(chalk.yellow(`\nUsage: /mode [standard|recon|copilot|yolo]. Current mode: ${modeLabel(session.autonomyMode)}\n`));
   }
 }
 
 function modeLabel(mode: ConsoleAutonomyMode): string {
   if (mode === "standard") return "Standard";
+  if (mode === "recon") return "Recon";
   return mode === "copilot" ? "Co-pilot" : "YOLO";
 }
 
