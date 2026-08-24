@@ -163,10 +163,6 @@ With special thanks to the startup and research programs supporting our work:
 - `fix` is narrow: source-only, single-file, ≤3 attempts.
 - By design, never: network sweeps, credential spraying, persistence/C2, or stealth.
 
-## Managed service
-
-The public engine runs locally or in CI. A separate managed service runs the same engine as a governed engagement — isolated workers, scheduling, evidence handling. It's not in this repo, and nothing here depends on it.
-
 ## Build from source
 
 ```bash
