@@ -1,6 +1,6 @@
 ---
 title: Benchmark
-description: How 0sec scores on public security benchmarks — a secondary, condition-specific signal. The real proof is disclosed CVEs at 0.security.
+description: How 0sec scores on public security benchmarks — a secondary, condition-specific signal.
 ---
 
 **We care about real vulnerabilities, not leaderboards.** 0sec's proof is the
@@ -50,7 +50,7 @@ subjective severity scoring.
 
 ## Related
 
-- **[0.security](https://0.security)** — the real, verified CVE track record (the headline)
+- **[0.security](https://0.security)**
 - [Methodology](/methodology/) — per-attempt rate, Wilson CI, single-model caveats
 - [XBOW Analysis](/research/xbow-analysis/) — how the XBOW score is built, and its limits
 - [Competitive Landscape](/research/competitive-landscape/) — where other agents sit, briefly

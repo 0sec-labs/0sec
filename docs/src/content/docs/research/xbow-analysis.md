@@ -89,7 +89,7 @@ Beyond XBOW, these are relevant to 0sec's capabilities and are wired or planned:
 
 ## Related
 
-- **[0.security](https://0.security)** — the real, disclosed-CVE track record
+- **[0.security](https://0.security)**
 - [Benchmark](/benchmark/) — the compact score view and caveats
 - [Methodology](/methodology/) — per-attempt rate, Wilson CI, single-model caveats
 - [Competitive Landscape](/research/competitive-landscape/) — where other agents sit

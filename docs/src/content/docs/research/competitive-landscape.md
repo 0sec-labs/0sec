@@ -1,6 +1,6 @@
 ---
 title: Competitive Landscape
-description: How 0sec sits among other autonomous pentesting agents — brief, factual context, with real disclosed CVEs as the actual proof.
+description: How 0sec sits among other autonomous pentesting agents — brief, factual context.
 ---
 
 **We don't chase vendor benchmarks.** 0sec's proof is real, disclosed CVEs in the
@@ -65,7 +65,7 @@ warrants parallel strategies.
 
 ## Related
 
-- **[0.security](https://0.security)** — the real, disclosed-CVE track record (the proof)
+- **[0.security](https://0.security)**
 - [Benchmark](/benchmark/) — 0sec's own compact score view and caveats
 - [XBOW Analysis](/research/xbow-analysis/) — how the XBOW number is built and its limits
 - [Methodology](/methodology/) — why single-config and best-of-N aren't comparable

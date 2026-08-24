@@ -126,7 +126,7 @@ not a second hand-maintained source of truth.
 
 ## Related
 
-- **[0.security](https://0.security)** — the real, disclosed-CVE track record
+- **[0.security](https://0.security)**
 - [Benchmark](/benchmark/) — the compact score view and caveats
 - [XBOW Analysis](/research/xbow-analysis/) — how the XBOW score is built and its limits
 - [Competitive Landscape](/research/competitive-landscape/) — where other agents sit
