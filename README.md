@@ -102,7 +102,7 @@ append-only journal, and artifacts — so you can `resume`, `replay`, or
 | Analyze a compiled binary (no source) | [`0verse`](0verse/README.md) |
 | Integrate | `mcp-server`, `console`, `tui`, `dashboard` |
 
-That's part of a **48-command CLI** — run `0sec --help` for the rest. Full docs:
+That's part of a **broad CLI** — run `0sec --help` for the full list. Full docs:
 **[0.security](https://0.security)**.
 
 ## Found in the wild
