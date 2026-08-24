@@ -9,11 +9,11 @@
 
 <p align="center">
   <strong>The open cybersecurity harness.</strong><br/>
-  0sec puts a team of AI agents on your target — web apps, AI/LLM endpoints,
-  source, and packages. They explore in parallel, chain exploits, and a separate
-  agent reproduces every finding before it counts. For compiled binaries with no
-  source, the companion engine <a href="0verse/README.md">0verse</a> does the
-  same job on its own toolchain.
+  Point a team of AI agents at a target — a web app, an AI/LLM endpoint, source
+  code, or a package. They work in parallel to find and exploit bugs, and a
+  separate agent reproduces every finding before it counts. No source, just a
+  binary? The companion engine <a href="0verse/README.md">0verse</a> does the
+  same on its own toolchain.
 </p>
 
 <p align="center">
@@ -34,47 +34,61 @@
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
-0sec --help          # or the shorthand: 0 --help
+0sec --help          # or just: 0 --help
 ```
 
-Downloads the verified GitHub Release binary (SHA-256 checked), installs to
-`~/.0sec/bin`, and adds `0` as a shorthand. macOS (Apple Silicon) and Linux
-(x64/arm64); on Windows grab `0sec-windows-x64.exe` from the release. Prefer a
-container? `ghcr.io/0sec-labs/0sec:latest`. Not on npm — don't install a package
+This downloads the verified release binary (checked against its SHA-256),
+installs it to `~/.0sec/bin`, and adds `0` as a short alias. It runs on macOS
+(Apple Silicon) and Linux (x64/arm64). On Windows, download
+`0sec-windows-x64.exe` from the release. Prefer Docker? Use
+`ghcr.io/0sec-labs/0sec:latest`. 0sec is **not on npm** — don't install a package
 by that name.
 
 ## Quick start
 
 ```bash
-# 1. Define what you're allowed to touch.
+# 1. Say what you're allowed to touch.
 echo '{ "in_scope": ["example.com"] }' > scope.json
 export ANTHROPIC_API_KEY=...          # or OpenAI, Azure, OpenRouter, Ollama, …
 
-# 2. Scan a live target (out-of-scope requests are refused).
+# 2. Scan a live target (anything out of scope is refused).
 0sec scan --target https://example.com --scope ./scope.json
 
-# 3. Or review code, audit a package, or open the chat console.
+# 3. Or review code, audit a package, or open the console.
 0sec review ./my-app                  # source review
-0sec audit lodash                     # npm/pypi/cargo/oci package audit
-0 console --scope ./scope.json        # interactive operator console; type / for commands
+0sec audit lodash                     # npm / pypi / cargo / oci package audit
+0 console --scope ./scope.json        # interactive console; type / for commands
 ```
 
 In the console, `/` opens the command menu (`/status`, `/scope`, `/mode`,
-`/help`); commands never bypass scope and approval.
+`/help`). Commands never skip scope or approval.
 
-Add `--cost-ceiling 5` for a hard spend cap, `--race` for best-of-N strategy
-racing, `--format sarif` for the GitHub Security tab. Every command has its own
-`--help`.
+Useful flags: `--cost-ceiling 5` sets a hard spend cap, `--race` runs several
+strategies and keeps the best, `--format sarif` writes output for the GitHub
+Security tab. Every command has its own `--help`.
 
-## What it does
+## How it works
 
-A team of agents explores the target and saves candidate findings — a lead
-agent that can fan out into parallel strategies (`--race`) and focused subagents,
-plus a separate, blind verification agent that decides which findings survive. A
-finding it can't reproduce is dropped — not shipped as "low confidence." Each run
-keeps its own evidence under
-`~/.0sec/runs/<id>/` (isolated SQLite state, an append-only journal, artifacts)
-so you can `resume`, `replay`, or `disclose` it later.
+0sec runs a team of agents against your target. A lead agent explores and can
+fan out into parallel strategies (`--race`) and focused subagents. Everything
+they find is only a *candidate* until it is proven.
+
+- **The agents decide; the guardrails contain them.** No hard-coded exploit
+  script — the models choose what to probe. Turn budgets, loop detection, and
+  compaction keep them on track, and scope is checked on every tool call.
+- **Nothing counts until it's reproduced.** A blind agent re-exploits each
+  finding from the proof-of-concept alone. Anything it can't reproduce is
+  dropped — never shipped as "low confidence."
+- **Triage cuts the noise first.** Class oracles, a reachability gate, and a
+  second scanner (foxguard) cross-check findings before verification; the
+  heavier false-positive filters are off by default.
+- **Bring your own model.** Anthropic, OpenAI, Azure (EU), OpenRouter, DeepSeek,
+  Z.ai GLM, Moonshot Kimi, Qwen, a ChatGPT-Codex subscription, or local Ollama —
+  with per-stage `auto` routing and a cross-session cost ledger.
+
+Every run keeps its own evidence in `~/.0sec/runs/<id>/` — its own database, an
+append-only journal, and artifacts — so you can `resume`, `replay`, or
+`disclose` it later.
 
 | You want to… | Command |
 | --- | --- |
@@ -88,33 +102,15 @@ so you can `resume`, `replay`, or `disclose` it later.
 | Analyze a compiled binary (no source) | [`0verse`](0verse/README.md) |
 | Integrate | `mcp-server`, `console`, `tui`, `dashboard` |
 
-That's a slice of the **48-command CLI** — run `0sec --help` for the rest.
-Full reference: **[0.security](https://0.security)**.
-
-## How it works
-
-- **Free-form agents inside deterministic guardrails.** No hard-coded exploit
-  playbook — the models decide what to probe and how to chain it, and a lead
-  agent can spawn parallel strategy racers and focused subagents. Turn budgets,
-  reflection checkpoints, loop detection, and context compaction keep them on
-  track; scope is enforced on every tool call.
-- **Reproduce before trust.** A blind verify agent re-exploits each finding
-  seeing only the PoC (never the finder's reasoning); a deterministic
-  `verificationSpec` re-checks source with no LLM; a replay runner re-runs the
-  real target and asserts on the result. Unreproduced findings are dropped.
-- **Triage before verify.** Class oracles, an open-source reachability gate, and
-  a second scanner (foxguard) cross-validate to cut noise. The heavier
-  false-positive layers are opt-in and slice-dependent.
-- **Bring your own model.** Anthropic, OpenAI, Azure (EU regions), OpenRouter,
-  DeepSeek, Z.ai GLM, Moonshot Kimi, Qwen, a ChatGPT-Codex subscription, or local
-  Ollama — plus per-stage `auto` routing and a cross-session cost ledger.
+That's part of a **48-command CLI** — run `0sec --help` for the rest. Full docs:
+**[0.security](https://0.security)**.
 
 ## Found in the wild
 
-0sec's research loop has disclosed real bugs in the **Linux kernel** — with maintainer
-review from Intel, NVIDIA, Red Hat, Google, Meta, Qualcomm, and Arm — and in
-widely-used open source. The running, verified track record (kernel.org threads,
-CVEs, and advisories) lives on the site:
+0sec's research loop has found real bugs in the **Linux kernel** — reviewed by
+maintainers from Intel, NVIDIA, Red Hat, Google, Meta, Qualcomm, and Arm — and
+in widely-used open source. The verified track record (kernel.org threads, CVEs,
+and advisories) lives on the site:
 
 **→ [0.security](https://0.security)**
 
@@ -123,28 +119,20 @@ caveats in the [benchmark docs](docs/src/content/docs/benchmark.md).
 
 ## Binary analysis (no source)
 
-When there's no source — just a compiled binary — the harness switches to its
-binary-native engine, [**0verse**](0verse/README.md). Same principle, harder
-setting (no symbols, no sanitizers): it runs a find → prove → patch → verify loop
-and confirms a bug only with a reproducing proof-of-vulnerability. It's a
-separate engine under the hood (Python + Ghidra/angr/AFL++, so it installs on its
-own toolchain), and 0sec trusts its findings only through a verified receipt.
+For compiled binaries, 0sec hands off to **[0verse](0verse/README.md)** — a
+separate Python engine (Ghidra/angr/AFL++) that runs a find → prove → patch →
+verify loop and only confirms a bug with a working proof-of-vulnerability:
 
 ```bash
 cd 0verse && uv sync --frozen && uv run --frozen 0verse triage ./target-binary
 ```
 
-See the [0verse README](0verse/README.md) for the full binary pipeline, backends,
-and honest limits.
-
 ## Public engine vs. managed service
 
-This repository is the **public engine and CLI** — run it locally or in CI, with
-the provider and runtime you choose. The **managed service** that operates the
-harder parts (authorized external testing on isolated workers, scheduling,
-evidence handling, and an accountable delivery workflow) is run separately, on
-top of this CLI and container image through published contracts. It is not part
-of this repository, and nothing here depends on it.
+This repo is the **public engine and CLI** — run it yourself, locally or in CI,
+with any model and runtime. A separate **managed service** handles authorized
+external testing on isolated workers (scheduling, evidence, delivery). It builds
+on this CLI, isn't in this repo, and nothing here depends on it.
 
 ## Honest limitations
 
@@ -175,8 +163,8 @@ corepack enable && pnpm install --frozen-lockfile && pnpm build
 node dist/0sec.js --help
 ```
 
-`pnpm lint && pnpm build && pnpm test` before a PR. The bundle embeds its build
-commit and rejects a stale run against a different checkout.
+Run `pnpm lint && pnpm build && pnpm test` before a PR. The bundle embeds its
+build commit and refuses to run against a different checkout.
 
 ## Contributing & security
 
