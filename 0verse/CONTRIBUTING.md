@@ -72,7 +72,7 @@ behavior needs a test; new engine behavior needs a `benchmarks/` proof.
 ## The extension contracts
 
 0verse is built so the common contributions are *additive* — implement an interface,
-register it, add a test. The four high-value extension points:
+register it, add a test. The four main extension points:
 
 ### Add a bug-class lens (`src/zeroverse/bugclasses.py`)
 
