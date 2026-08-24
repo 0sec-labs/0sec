@@ -19,12 +19,12 @@ adversarial-eval harnesses:
 
 The `agent-assure` CLI command runs the shipped primitive end-to-end: it drives
 an agent endpoint, an MCP endpoint, and an oracle under a scoped policy, then
-writes a replayable evidence bundle. It's the scope-bound, externally observed
-action primitive behind agent-action assurance.
+writes a replayable evidence bundle. It's the building block behind agent-action
+assurance: a scoped action, run and observed from outside the system.
 
 The harnesses are synthetic and deterministic on purpose — a repeatable way to
-score whether the scanner catches realistic agent-control failures before the
-surface widens.
+score whether the scanner catches realistic agent-control failures before they
+reach production.
 
 ## Why it matters
 
@@ -35,7 +35,7 @@ high-stakes systems. The harder question:
 > Can this system be pushed into unsafe or unauthorized behavior under realistic
 > pressure?
 
-That's where an attack-driven evaluator has a structural advantage.
+That's the question an attack-driven evaluator is built to answer.
 
 ## Target classes
 
@@ -53,10 +53,10 @@ That's where an attack-driven evaluator has a structural advantage.
 
 ## Building on the wedge
 
-A dedicated adversarial-eval surface builds on the existing pentest engine. The
-mode still needs to define a target model for AI
-systems, an evidence- and recurrence-focused report format, and attack classes
-with success criteria tuned for agentic systems.
+A dedicated adversarial-eval mode builds on the existing pentest engine. It still
+needs a few things: a target model for AI systems, a report format focused on
+evidence and recurrence, and attack classes with success criteria tuned for
+agentic systems.
 
 ## Report differences from a pentest
 
@@ -71,6 +71,6 @@ should also capture:
 
 ## Relationship to 0sec cloud
 
-0sec is the public execution wedge; 0sec cloud is the managed orchestration and
-recurring-run surface. The category should be legible on both — locally and in CI
-through `0sec`, and as a managed recurring product through `0sec cloud`.
+0sec is the public, self-run tool; 0sec cloud is the managed service for
+orchestration and recurring runs. Adversarial evals should work on both — locally
+and in CI through `0sec`, and as a managed recurring product through `0sec cloud`.

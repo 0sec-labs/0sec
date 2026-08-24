@@ -12,7 +12,7 @@ Public CTF benchmarks are a *secondary* signal. They tell you the core pipeline
 isn't broken; they don't tell you the agent finds real CVEs. CTF challenges are
 far smaller than real repos, and cross-project scores are protocol-sensitive
 (different fork, model, turn cap, retry protocol), so treat every number below as
-condition-specific rather than a matched-conditions leaderboard.
+specific to its test conditions, not a like-for-like leaderboard.
 
 ## Where 0sec stands (honest, condition-specific)
 

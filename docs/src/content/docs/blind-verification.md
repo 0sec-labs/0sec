@@ -7,8 +7,7 @@ Most scanners report what they find. 0sec kills what it can't prove.
 
 Every finding that survives the attack stage enters blind verification: a second
 agent tries to reproduce the vulnerability with **zero access to the original
-reasoning.** If it can't reproduce it, the finding is killed. Verification is what separates
-a confirmed finding from an unproven one.
+reasoning.** If it can't reproduce it, the finding is killed.
 
 ## What it is
 

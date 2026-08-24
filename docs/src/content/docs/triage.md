@@ -83,7 +83,7 @@ as callback injection. Downgrades to `info` and skips downstream verification.
 `triage/feature-extractor.ts` — always available. Builds a 45-element numeric
 vector per finding: response shape (status, size, reflection, error markers),
 payload signals (encoding, sink class, parameter location), and category priors.
-Handcrafted features alone hit ~77% recall / 16% FPR, and the vector fuses with
+Handcrafted features alone hit ~77% recall / 16% FPR, and the vector feeds into
 neural embeddings for downstream ML. See `FEATURE_NAMES` for the full list, or
 [Feature Extractor](/research/feature-extractor/) and
 [Triage Dataset](/research/triage-dataset/).
@@ -139,9 +139,9 @@ export 0SEC_FEATURE_MULTIMODAL=1
 Fuzzing Brain* (arXiv:2509.07225): if an agent can't build a working PoC in N
 turns, the finding is almost certainly a false positive.
 
-Spins up a narrowly-scoped mini agent loop whose only job is a concrete,
-executable exploit that actually runs and whose response contains
-category-specific proof. `hasPov: true` boosts confidence and attaches the
+Spins up a small, tightly-scoped agent loop with one job: build an exploit that
+actually runs and returns category-specific proof. `hasPov: true` boosts
+confidence and attaches the
 artifact; `hasPov: false` downgrades to `info` and sets `triageNote = "no_pov"`.
 
 ## 7. Structured 4-step verify pipeline
@@ -193,8 +193,9 @@ today; an embedding ranker can replace `scoreMemory` without API changes.
 `0SEC_FEATURE_DEBATE` flag in the engine. The intent: a prosecutor (finding is
 real) and a defender (it's an FP) argue from fresh contexts, and a skeptical
 judge picks the winner — each seeing only the other's written arguments, never
-the research agent's chain of thought. The open-source read of Anthropic's debate
-paper (arXiv:2402.06782); the point is error decorrelation.
+the research agent's chain of thought. The design follows the open-source read of
+Anthropic's debate paper (arXiv:2402.06782); the point is to keep the two agents'
+errors independent.
 
 Its goal is partly served today by the **cross-family refuter**
 (`stages/hunt-cross-family.ts`, on by default on the hunt path), which forces the

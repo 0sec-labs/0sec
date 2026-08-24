@@ -71,8 +71,8 @@ configurations (different models, solvers, prompts):
 
 Both are honest, but a single-config 80% and an aggregate 97% are **not comparable**;
 treating them as if they were is the trap. For XBOW, 0sec publishes both and labels
-them: the load-bearing surface is the **per-model gpt-5.4 cohort (93/95 = 97.9%)** —
-a single-config single-shot solve rate — and a wider retained-artifact aggregate is
+them: the headline is the **per-model gpt-5.4 cohort (93/95 = 97.9%)** — a
+single-config single-shot solve rate — and a wider retained-artifact aggregate is
 disclosed separately as a ceiling claim (see [Benchmark](/benchmark/) for the exact
 distinction).
 
@@ -80,8 +80,8 @@ distinction).
 
 A solve rate with no cost attached invites "how much compute did that take?" An
 agent that hits 95% at $50/run is a different product from one that hits 95% at
-$0.50/run. `$/flag` normalizes to outcomes, converts a percentage into a budget, and
-exposes when an aggregate buys its extra points by spending 10× the compute. 0sec
+$0.50/run. `$/flag` ties the score to cost: it turns a percentage into a budget, and
+shows when an aggregate buys its extra points by spending 10× the compute. 0sec
 publishes `$/flag` (currently $5.20 at $0.48/run on the gpt-5.4 XBOW cohort) as a
 first-class comparison axis, and encourages other evaluators to do the same.
 
