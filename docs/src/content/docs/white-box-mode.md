@@ -50,11 +50,11 @@ which sinks and which validation is missing.
 
 ## Benchmark results
 
-White-box consistently lifts the ceiling on challenges whose exploit path is
-clearer in source than over HTTP (e.g. XBEN-042 "Too much trust" — hardcoded SSH
-creds with no web vuln — flags in white-box, fails black-box). Some challenges
-still fail even with source (XBEN-092). The [Benchmark](/benchmark/) page owns
-the current per-challenge scores.
+White-box helps most on challenges whose exploit path is clearer in source than
+over HTTP (e.g. XBEN-042 "Too much trust" — hardcoded SSH creds with no web vuln
+— flags in white-box, fails black-box). Some challenges still fail even with
+source (XBEN-092). The [Benchmark](/benchmark/) page has the current
+per-challenge scores.
 
 ## When to use it
 
