@@ -1,8 +1,4 @@
 <p align="center">
-  <sub>🇨🇭 Swiss Applied AI Cybersecurity Research Lab · <a href="https://0.security">0.security</a></sub>
-</p>
-
-<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/0sec-aperture-white.svg">
     <img src="assets/0sec-aperture-ink.svg" alt="0sec" width="176">
@@ -12,6 +8,10 @@
 <p align="center">
   <strong>Your open-source AI cybersecurity agent.</strong><br/>
   It hacks, proves the problem, and writes the fix. Multi-model, multi-agent, but most importantly: yours.
+</p>
+
+<p align="center">
+  <sub>🇨🇭 Swiss Applied AI Cybersecurity Research Lab · <a href="https://0.security">0.security</a></sub>
 </p>
 
 <p align="center">
