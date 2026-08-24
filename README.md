@@ -1,4 +1,8 @@
 <p align="center">
+  <sub>🇨🇭 Swiss Applied AI Cybersecurity Research Lab · <a href="https://0.security">0.security</a></sub>
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/0sec-aperture-white.svg">
     <img src="assets/0sec-aperture-ink.svg" alt="0sec" width="176">
@@ -18,7 +22,6 @@
 </p>
 
 <p align="center">
-  <sub>🇨🇭 Created by the <strong>Swiss Applied AI Cybersecurity Research Lab</strong> · <a href="https://0.security">0.security</a></sub><br/>
   <sub>Beta — in active development; interfaces may change. See <a href="#honest-limitations">Honest limitations</a>.</sub>
 </p>
 
