@@ -8,7 +8,7 @@
 <h1 align="center">0verse</h1>
 
 <p align="center">
-  <strong>Evidence-first binary analysis — it produces and notarizes proof-of-vulnerability artifacts from compiled programs, and confirms a finding only when a reproducing oracle agrees.</strong>
+  <strong>Evidence-first binary analysis. It produces proof-of-vulnerability artifacts from compiled programs, and confirms a finding only when a reproducing oracle agrees.</strong>
 </p>
 
 <p align="center">
@@ -204,7 +204,7 @@ stages run standalone (`0verse triage` is just stage 1). Full design:
 
 ## Honest limitations
 
-Binary-only analysis is materially harder than the source-available setting, and
+Binary-only analysis is much harder than the source-available setting, and
 several lanes are honest degrades. We publish the misses in
 [NEGATIVE-RESULTS.md](NEGATIVE-RESULTS.md), not hidden.
 
