@@ -25,7 +25,9 @@
 </p>
 
 <p align="center">
-  <video src="https://github.com/0sec-labs/0sec/raw/main/assets/0sec-demo.mp4" controls muted playsinline width="840"></video>
+  <a href="https://0.security" title="Watch the 0sec demo">
+    <img src="assets/0sec-demo-poster.jpg" alt="▶ Watch the 0sec demo" width="840">
+  </a>
 </p>
 
 ## Install
@@ -81,7 +83,7 @@ Most tools stop at the app. 0sec goes all the way down.
 | Identity / AD (read-only) | `identity`, `adgraph`, `entragraph` |
 | Integrate | `mcp-server`, `console`, `tui`, `dashboard` |
 
-Run `0 --help` for the rest. Full docs: **[0.security](https://0.security)**.
+Run `0 --help` for the rest. Full docs: **[docs.0.security](https://docs.0.security)**.
 
 ## How it works
 
