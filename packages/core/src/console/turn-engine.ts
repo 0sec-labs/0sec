@@ -13,6 +13,7 @@ import type {
   RuntimeConfig,
 } from "../runtime/types.js";
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "../agent/tools.js";
+import { toNativeToolDef, toNativeExtensionToolDef } from "../agent/native-tooldef.js";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
   BUILTIN_GUARDS,
@@ -663,40 +664,6 @@ export function createConsoleRuntime(config?: Partial<RuntimeConfig>): LlmApiRun
     );
   }
   return runtime;
-}
-
-/** Convert a registry `ToolDefinition` to the runtime's native tool schema. */
-function toNativeToolDef(tool: ToolDefinition): NativeToolDef {
-  const properties: Record<string, unknown> = {};
-  for (const [key, param] of Object.entries(tool.parameters)) {
-    const prop: Record<string, unknown> = { type: param.type, description: param.description };
-    if (param.enum) prop.enum = param.enum;
-    properties[key] = prop;
-  }
-  return {
-    name: tool.name,
-    description: tool.description,
-    input_schema: { type: "object", properties, required: tool.required ?? [] },
-  };
-}
-
-/**
- * Convert a model-REGISTERED extension tool (self-extension) into the runtime's
- * native tool schema. Mirrors native-loop's helper of the same name: unlike a
- * registry `ToolDefinition`, a registered tool already carries a validated,
- * frozen JSON-schema `parameters` properties bag, so it is passed through
- * directly as `input_schema.properties`.
- */
-function toNativeExtensionToolDef(tool: RegisteredExtensionTool): NativeToolDef {
-  return {
-    name: tool.name,
-    description: tool.description,
-    input_schema: {
-      type: "object",
-      properties: { ...tool.parameters },
-      required: tool.required ? [...tool.required] : [],
-    },
-  };
 }
 
 /** Serialize a tool result into the string content of a `tool_result` block. */

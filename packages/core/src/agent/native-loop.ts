@@ -11,6 +11,7 @@ import type {
 import type { AuthConfig } from "@0sec/shared";
 import { resolveIdentities } from "@0sec/shared";
 import type { ToolDefinition, ToolCall, ToolResult, ToolContext, AgentRole } from "./types.js";
+import { toNativeToolDef, toNativeExtensionToolDef } from "./native-tooldef.js";
 import { SessionEngine } from "./session.js";
 import type { ScopePolicy } from "../scope/scope.js";
 import type { AttributionConfig } from "../scope/attribution.js";
@@ -3244,47 +3245,6 @@ function buildContinuePrompt(config: NativeAgentConfig, turnCount: number, memor
           ? "Continue your analysis. Use list_files to map source, search_files with literal identifiers to trace patterns, read_file for full context, and save_finding for vulnerabilities. Call done only when you have thoroughly analyzed the code."
           : "Continue your analysis. Use read_file to examine source code, run_command to search for patterns, and save_finding for any vulnerabilities. Call the done tool only when you have thoroughly analyzed the code.";
   }
-}
-
-function toNativeToolDef(tool: ToolDefinition): NativeToolDef {
-  const properties: Record<string, unknown> = {};
-  for (const [key, param] of Object.entries(tool.parameters)) {
-    const prop: Record<string, unknown> = {
-      type: param.type,
-      description: param.description,
-    };
-    if (param.enum) prop.enum = param.enum;
-    if (param.items) prop.items = param.items;
-    properties[key] = prop;
-  }
-
-  return {
-    name: tool.name,
-    description: tool.description,
-    input_schema: {
-      type: "object",
-      properties,
-      required: tool.required ?? [],
-    },
-  };
-}
-
-/**
- * Convert a model-REGISTERED extension tool into the native API tool shape.
- * Unlike {@link toNativeToolDef}, a registered tool already carries a raw
- * JSON-schema `parameters` properties bag (validated + frozen by the registry),
- * so it is passed through directly as `input_schema.properties`.
- */
-function toNativeExtensionToolDef(tool: RegisteredExtensionTool): NativeToolDef {
-  return {
-    name: tool.name,
-    description: tool.description,
-    input_schema: {
-      type: "object",
-      properties: { ...tool.parameters },
-      required: tool.required ? [...tool.required] : [],
-    },
-  };
 }
 
 function persistSession(
