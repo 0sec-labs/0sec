@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
 import { fitTuiText } from "../text.js";
+import { VERSION } from "@0sec/shared";
 import { computeLogoFrame, logoRowRuns } from "../logo-animation.js";
 import { TERMINAL_BLOCK_LOGO_WIDTH, logoRunStyle } from "./logo.js";
 import type { Theme } from "../theme-context.js";
@@ -66,7 +67,10 @@ export function Masthead({
         </box>
       )}
       {showTagline ? (
-        <text fg={TEXT} marginTop={1}>{fitTuiText("The open, extensible & self-evolving cybersecurity harness", contentWidth, { mode: "middle" })}</text>
+        <text fg={TEXT} marginTop={1}>{fitTuiText("The open, extensible cybersecurity harness", contentWidth, { mode: "middle" })}</text>
+      ) : null}
+      {showTagline ? (
+        <text fg={MUTED}>{fitTuiText(`v${VERSION}`, contentWidth, { mode: "middle" })}</text>
       ) : null}
     </>
   );
