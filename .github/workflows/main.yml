@@ -40,6 +40,7 @@ jobs:
         run: |
           (cd dist && npm install --omit=dev --no-audit --no-fund)
           node dist/0sec.js --help
+          bash scripts/smoke-cli.sh "node dist/0sec.js"
       - name: Run tests
         run: pnpm test:public
         env:

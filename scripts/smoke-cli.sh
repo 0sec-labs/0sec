@@ -48,7 +48,7 @@ fail() { printf '\033[31m[smoke] FAIL:\033[0m %s\n' "$*" >&2; exit 1; }
 # Proves the binary loads, commander is wired, and all subcommands registered.
 say "--help"
 $CLI --help > "$TMP/help.out" 2>&1 || fail "--help exited non-zero"
-grep -q "Fully autonomous" "$TMP/help.out" || fail "--help did not contain tagline"
+grep -q "security research harness" "$TMP/help.out" || fail "--help did not contain tagline"
 grep -q "scan" "$TMP/help.out" || fail "--help did not list scan subcommand"
 grep -q "mcp-server" "$TMP/help.out" || fail "--help did not list mcp-server subcommand"
 grep -q "review" "$TMP/help.out" || fail "--help did not list review subcommand"
@@ -57,7 +57,7 @@ grep -q "review" "$TMP/help.out" || fail "--help did not list review subcommand"
 # Proves runtime detection boots and doesn't crash on a bare environment.
 say "doctor"
 $CLI doctor > "$TMP/doctor.out" 2>&1 || fail "doctor exited non-zero"
-grep -q "0sec doctor" "$TMP/doctor.out" || fail "doctor did not produce the expected banner"
+grep -q "Node.js" "$TMP/doctor.out" || fail "doctor did not produce the expected banner"
 
 # ── 3. history (DB smoke) ──────────────────────────────────────────────────
 # Proves the entire SQLite stack boots end-to-end: osecDB ctor, WAL
@@ -88,7 +88,7 @@ INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersi
 # made this subtest the #1 flake source (and, because the image publish gates
 # on CI=success, it randomly blocked publishes). Retry the handshake up to 3
 # times with a generous per-attempt window before declaring it broken.
-MCP_SMOKE_TIMEOUT_SECONDS="${0SEC_MCP_SMOKE_TIMEOUT_SECONDS:-30}"
+MCP_SMOKE_TIMEOUT_SECONDS="30"
 : > "$TMP/mcp.out"
 for attempt in 1 2 3; do
   # A timed-out server can still be unwinding its SQLite/WAL handles when the
@@ -145,10 +145,14 @@ grep -q '"target"' "$TMP/review.out" || {
 # exercise the attack-template loader. The agent loop will 401 on the
 # fake key, which is fine; an empty report is still a report.
 say "scan --mode web (template loader + pipeline)"
+# Live network targets require an engagement scope (security gate); provide one
+# so the smoke exercises the pipeline rather than tripping the scope refusal.
+printf '{ "in_scope": ["example.invalid"] }' > "$TMP/scope.json"
 ANTHROPIC_API_KEY=fake $CLI scan \
     --target http://example.invalid \
     --mode web --depth quick \
     --runtime api --timeout 3000 \
+    --scope "$TMP/scope.json" \
     --format json \
     --db-path "$TMP/scan.db" \
     > "$TMP/scan.out" 2> "$TMP/scan.err" \
