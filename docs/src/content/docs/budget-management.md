@@ -38,8 +38,9 @@ exception and benefit from deep mode's 100 turns.
 ## Reflection checkpoints
 
 Turn limits stop runaway cost but not a subtler failure: burning 35 turns on a
-dead end. At four budget percentages, when the agent produces a text-only
-response, 0sec injects a budget-awareness prompt (inspired by Cyber-AutoAgent):
+dead end. At four budget checkpoints, when the agent returns a text-only
+response (no tool call), 0sec injects a budget-awareness prompt (inspired by
+Cyber-AutoAgent):
 
 | Budget consumed | Checkpoint | Prompt behavior |
 |-----------------|------------|-----------------|

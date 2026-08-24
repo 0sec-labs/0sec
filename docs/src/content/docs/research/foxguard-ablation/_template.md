@@ -76,7 +76,7 @@ conditions hold on the source-code slice**:
 1. **Confirmed findings ≥ semgrep's confirmed findings** (i.e. we
    don't lose the agent's "this was real" signal).
 2. **Wall time ≥ 2× faster** than semgrep on the same slice (the
-   speed-up Foxguard sells; anything less makes the default risky.
+   speed-up Foxguard sells; anything less makes the default risky).
 
 If either condition fails, we revert the default to Semgrep, close
 0sec#254 as **evaluated, not defaulted**, and document the failure
