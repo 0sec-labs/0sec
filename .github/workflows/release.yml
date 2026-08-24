@@ -52,12 +52,14 @@ jobs:
       - run: corepack enable
       - uses: oven-sh/setup-bun@v2
       - name: Install dependencies
-        # No --ignore-scripts: the native addons (tree-sitter) must build so the
-        # compiled binary has something to load at runtime, and so the docs build
-        # postinstall runs on Windows.
+        # No --ignore-scripts: the native addon (tree-sitter) must build so the
+        # compiled binary has a .node to load at runtime (arm64 has no prebuilt).
         run: pnpm install --no-frozen-lockfile
-      - name: Build workspace packages
-        run: pnpm -r build
+      - name: Build the CLI dependency closure
+        # Only the 0sec-cli closure is needed for the binary. Building the whole
+        # workspace (pnpm -r) also builds @0sec/docs, whose astro site 404s on
+        # Windows and has nothing to do with the release binary.
+        run: pnpm --filter "0sec-cli..." build
       - name: Compile native binary
         shell: bash
         run: bash scripts/bun-compile.sh "" "dist-bin/${{ matrix.asset }}"
