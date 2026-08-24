@@ -5,8 +5,6 @@
   </picture>
 </p>
 
-<h1 align="center">0sec</h1>
-
 <p align="center">
   <strong>Your open-source AI cybersecurity agent.</strong><br/>
   It hacks, proves the problem, and writes the fix. Multi-model, multi-agent, but most importantly: yours.
