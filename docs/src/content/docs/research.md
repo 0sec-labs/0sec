@@ -3,9 +3,9 @@ title: Research
 description: How 0sec makes its decisions, what data backs them, and the experiments behind the open cybersecurity harness.
 ---
 
-0sec is the open cybersecurity harness, built by the Swiss Applied AI Cybersecurity Research Lab. Our approach is evidence-first: a team of AI agents explores a target in parallel, and a separate blind agent reproduces every finding before it counts. This section documents the reasoning and the data behind that design.
+0sec is built by the Swiss Applied AI Cybersecurity Research Lab. Our approach is evidence-first. This section documents the reasoning and the data behind that design.
 
-The proof is in the real, disclosed CVEs at [0.security](https://0.security) — not vendor benchmarks. Most experiments here run against the [XBOW benchmark](https://github.com/xbow-engineering/validation-benchmarks) (104 Docker CTF challenges) as a reproducible harness.
+Real, disclosed CVEs at [0.security](https://0.security) — not vendor benchmarks. Most experiments here run against the [XBOW benchmark](https://github.com/xbow-engineering/validation-benchmarks) (104 Docker CTF challenges) as a reproducible harness.
 
 For benchmark scores, methodology, and competitor comparisons, see the [Benchmarks](/benchmark/) section. For product-facing mechanism docs (agent loop, triage, verification), see [Architecture](/architecture/).
 

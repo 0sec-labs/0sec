@@ -3,11 +3,6 @@ title: Features
 description: What ships in 0sec and how evidence becomes a finding.
 ---
 
-The open cybersecurity harness. A team of AI agents explores source and live
-targets in parallel and chains exploits; the in-repo `0verse` engine produces
-evidence for compiled programs without source. Models propose; reproduced
-evidence decides what is real. Bring your own model.
-
 ## Target coverage
 
 | Target | Command | What 0sec finds |

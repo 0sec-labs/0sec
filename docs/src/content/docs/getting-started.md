@@ -3,10 +3,6 @@ title: Getting Started
 description: Install 0sec and run an authorized investigation.
 ---
 
-0sec is the open cybersecurity harness. A team of AI agents explores a target in
-parallel while a separate blind agent reproduces every finding before it counts —
-models propose, reproduced evidence decides.
-
 ## Install
 
 Build from source or run the public container image. npm and standalone-binary
