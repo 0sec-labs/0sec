@@ -20,6 +20,7 @@
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3fb950" alt="license" />
   <img src="https://img.shields.io/github/v/release/0sec-labs/0sec?color=2563eb" alt="release" />
   <img src="https://img.shields.io/badge/docs-0.security-6366f1" alt="docs" />
+  <img src="https://img.shields.io/badge/status-beta-f0883e" alt="status: beta" />
 </p>
 
 <p align="center">
@@ -27,7 +28,11 @@
 </p>
 
 <p align="center">
-  <img src="assets/0sec-demo.gif" alt="0sec — a team of AI agents finds, proves, and reports vulnerabilities" width="840">
+  <sub>0sec is in active development and it's still beta. It's not stable yet, and interfaces and features are experimental and may change. See <a href="#honest-limitations">Honest limitations</a> below before you rely on it.</sub>
+</p>
+
+<p align="center">
+  <video src="https://github.com/0sec-labs/0sec/raw/main/assets/0sec-demo.mp4" poster="assets/0sec-demo-poster.jpg" width="840" controls muted playsinline></video>
 </p>
 
 ## Install
