@@ -42,6 +42,7 @@
  */
 
 import { PROVIDERS, providerStates, type ProviderState } from "./provider-status.js";
+import { computeListWindow, computePaneSplit } from "./pane-layout.js";
 import { shellChromeRows, wrapCells } from "./settings-layout.js";
 import { sanitizeTuiText } from "./text.js";
 
@@ -357,38 +358,8 @@ export interface ConnectWindow {
  * group, the window is pulled up to keep that group's heading on screen — the
  * heading is where the group's identity lives.
  */
-export function computeConnectWindow({
-  rows,
-  selected,
-  visible,
-  anchor = 0,
-}: ConnectWindowInput): ConnectWindow {
-  const total = rows.length;
-  const capacity = Math.min(cells(visible), total);
-  if (capacity <= 0) {
-    return { start: 0, end: 0, count: 0, total, hasAbove: total > 0, hasBelow: false };
-  }
-
-  const maxStart = Math.max(0, total - capacity);
-  let start = clamp(cells(anchor), 0, maxStart);
-
-  const cursor = Math.trunc(Number.isFinite(selected) ? selected : -1);
-  if (cursor >= 0 && cursor < total) {
-    const wanted = capacity >= 2 && rows[cursor - 1]?.kind === "heading" ? cursor - 1 : cursor;
-    if (cursor > start + capacity - 1) start = cursor - capacity + 1;
-    if (wanted < start) start = wanted;
-    start = clamp(start, 0, maxStart);
-  }
-
-  const end = Math.min(total, start + capacity);
-  return {
-    start,
-    end,
-    count: end - start,
-    total,
-    hasAbove: start > 0,
-    hasBelow: end < total,
-  };
+export function computeConnectWindow(input: ConnectWindowInput): ConnectWindow {
+  return computeListWindow(input);
 }
 
 // ---------------------------------------------------------------------------
@@ -465,32 +436,6 @@ export interface ConnectLayout {
   detailCompact: boolean;
 }
 
-function borderChrome(bordered: boolean): { horizontal: number; vertical: number } {
-  return bordered ? { horizontal: 4, vertical: 2 } : { horizontal: 0, vertical: 0 };
-}
-
-function makePane(
-  width: number,
-  height: number,
-  chromeH: number,
-  chromeV: number,
-  hasTitle: boolean,
-): ConnectPane {
-  const outerWidth = cells(width);
-  const outerHeight = cells(height);
-  const verticalChrome = chromeV + (hasTitle ? 1 : 0);
-  if (outerWidth <= chromeH || outerHeight <= verticalChrome) {
-    return { width: 0, innerWidth: 0, height: 0, bodyRows: 0, hasTitle };
-  }
-  return {
-    width: outerWidth,
-    innerWidth: outerWidth - chromeH,
-    height: outerHeight,
-    bodyRows: outerHeight - verticalChrome,
-    hasTitle,
-  };
-}
-
 /**
  * Splits a list row into cursor, check, label and auth columns. The auth hint
  * gives way first, then the check, then the cursor; the label always survives.
@@ -559,61 +504,23 @@ export function computeConnectLayout({
     cells(height) - shellChromeRows(terminalWidth) - Math.min(1, cells(noticeRows)),
   );
 
-  const bordered = bodyRows >= BORDERED_MIN_ROWS && contentWidth >= DETAIL_MIN_WIDTH + 4;
-  const chrome = borderChrome(bordered);
-  const listMinHeight = chrome.vertical + 1 + 1;
-  const detailMinHeight = chrome.vertical + 1;
-
-  // -- horizontal split --
-  const canSplit = contentWidth >= TWO_PANE_MIN_WIDTH;
-  const paneGap = canSplit ? 1 : 0;
-  let detailWidth = 0;
-  let listWidth = contentWidth;
-  if (canSplit) {
-    const available = contentWidth - paneGap;
-    const wanted = clamp(
-      Math.floor(available * DETAIL_WIDTH_SHARE),
-      DETAIL_MIN_WIDTH,
-      DETAIL_MAX_WIDTH,
-    );
-    detailWidth = clamp(wanted, 0, Math.max(0, available - LIST_MIN_WIDTH));
-    listWidth = available - detailWidth;
-  }
-  const stacked = detailWidth <= 0;
-  if (stacked) {
-    detailWidth = contentWidth;
-    listWidth = contentWidth;
-  }
-
-  // -- vertical split --
-  let listHeight = 0;
-  let detailHeight = 0;
-  if (bodyRows >= listMinHeight) {
-    if (stacked) {
-      const wanted = Math.min(Math.floor(bodyRows * STACKED_DETAIL_SHARE), STACKED_DETAIL_MAX_ROWS);
-      detailHeight = wanted >= detailMinHeight + 1 && bodyRows - wanted >= listMinHeight ? wanted : 0;
-      listHeight = bodyRows - detailHeight;
-    } else {
-      listHeight = bodyRows;
-      detailHeight = bodyRows >= detailMinHeight ? bodyRows : 0;
-    }
-  }
-
-  const list = makePane(listWidth, listHeight, chrome.horizontal, chrome.vertical, true);
-  const detail = makePane(detailWidth, detailHeight, chrome.horizontal, chrome.vertical, !stacked);
+  const split = computePaneSplit(contentWidth, bodyRows, {
+    twoPaneMinWidth: TWO_PANE_MIN_WIDTH,
+    detailMinWidth: DETAIL_MIN_WIDTH,
+    detailMaxWidth: DETAIL_MAX_WIDTH,
+    detailWidthShare: DETAIL_WIDTH_SHARE,
+    listMinWidth: LIST_MIN_WIDTH,
+    borderedMinRows: BORDERED_MIN_ROWS,
+    stackedDetailShare: STACKED_DETAIL_SHARE,
+    stackedDetailMaxRows: STACKED_DETAIL_MAX_ROWS,
+  });
 
   return {
-    stacked,
-    bordered,
-    contentWidth,
-    bodyRows,
-    paneGap: list.width > 0 && detail.width > 0 && !stacked ? paneGap : 0,
-    list,
-    detail,
-    row: computeRowLayout(list.innerWidth),
-    heading: computeHeadingLayout(list.innerWidth),
-    visibleRows: list.bodyRows,
-    detailCompact: !bordered,
+    ...split,
+    row: computeRowLayout(split.list.innerWidth),
+    heading: computeHeadingLayout(split.list.innerWidth),
+    visibleRows: split.list.bodyRows,
+    detailCompact: !split.bordered,
   };
 }
 

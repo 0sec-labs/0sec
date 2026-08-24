@@ -50,3 +50,37 @@ export function fitTuiText(value: unknown, maxChars: number, options: TuiTextFit
 export function fitTuiUrl(value: unknown, maxChars: number): string {
   return fitTuiText(value, maxChars, { mode: "middle" });
 }
+
+/**
+ * Greedy word-wrap of an already-sanitized string to lines of at most `width`
+ * cells. Words longer than the limit are hard-split across lines. Callers pass
+ * text they have already run through the appropriate sanitizer, keeping this
+ * helper a pure function of `(text, width)`.
+ */
+export function wrapText(text: string, width: number): string[] {
+  const limit = Math.max(0, Math.trunc(Number.isFinite(width) ? width : 0));
+  if (limit <= 0 || text.length === 0) return [];
+
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    let token = word;
+    while (token.length > limit) {
+      if (line.length > 0) {
+        lines.push(line);
+        line = "";
+      }
+      lines.push(token.slice(0, limit));
+      token = token.slice(limit);
+    }
+    if (token.length === 0) continue;
+    if (line.length === 0) line = token;
+    else if (line.length + 1 + token.length <= limit) line = `${line} ${token}`;
+    else {
+      lines.push(line);
+      line = token;
+    }
+  }
+  if (line.length > 0) lines.push(line);
+  return lines;
+}

@@ -33,6 +33,7 @@
 
 import type { Finding, Severity } from "@0sec/shared";
 
+import { computeKvSplit } from "./pane-layout.js";
 import { shellChromeRows, wrapCells } from "./settings-layout.js";
 import { sanitizeTuiText } from "./text.js";
 
@@ -512,19 +513,12 @@ function makePane(width: number, height: number, chromeH: number, chromeV: numbe
  * truncated label beside a truncated value is worse than a whole label.
  */
 export function computeFindingKvLayout(innerWidth: number): FindingKvLayout {
-  const width = cells(innerWidth);
-  if (width <= 0) return { width: 0, labelWidth: 0, gap: 0, valueWidth: 0 };
-  if (width < KV_MIN_ROOM) return { width, labelWidth: width, gap: 0, valueWidth: 0 };
-  const valueWidth = Math.min(
-    Math.max(0, width - LABEL_MIN_WIDTH - 1),
-    Math.floor(width * VALUE_WIDTH_SHARE),
-  );
-  const gap = valueWidth > 0 ? 1 : 0;
-  const labelWidth = Math.min(LABEL_MAX_WIDTH, Math.max(0, width - valueWidth - gap));
-  // Hand the label's leftovers (from the LABEL_MAX cap) back to the value so the
-  // row always claims exactly its width, never less.
-  const value = Math.max(0, width - labelWidth - gap);
-  return { width, labelWidth, gap, valueWidth: value };
+  return computeKvSplit(innerWidth, {
+    minRoom: KV_MIN_ROOM,
+    labelMinWidth: LABEL_MIN_WIDTH,
+    labelMaxWidth: LABEL_MAX_WIDTH,
+    valueWidthShare: VALUE_WIDTH_SHARE,
+  });
 }
 
 /**
@@ -598,32 +592,7 @@ export function findingDetailTitle(finding?: Finding): string {
   return "FINDING";
 }
 
-/**
- * Split a row into a left title column and a right, right-aligned column
- * (badge, meta or caption). The columns plus the gap always sum to EXACTLY
- * `innerWidth`, so the header can never overflow or fuse under pressure — the
- * same row-budget invariant the key/value rows obey. The right column never
- * takes more than half the row and the title always keeps at least one cell.
- */
-export interface PaneTitleColumns {
-  /** Left title column cells. */
-  titleWidth: number;
-  /** Gap between title and the right column. 0 when there is no right column. */
-  gap: number;
-  /** Right column cells. 0 when there is no right text or no room for one. */
-  metaWidth: number;
-}
-
-export function paneTitleColumns(innerWidth: number, metaLength: number): PaneTitleColumns {
-  const width = cells(innerWidth);
-  if (width <= 0) return { titleWidth: 0, gap: 0, metaWidth: 0 };
-  const wantMeta = cells(metaLength);
-  const metaWidth =
-    wantMeta > 0 ? Math.min(wantMeta, Math.max(0, width - 2), Math.floor(width / 2)) : 0;
-  const gap = metaWidth > 0 && width > metaWidth ? 1 : 0;
-  const titleWidth = Math.max(0, width - metaWidth - gap);
-  return { titleWidth, gap, metaWidth };
-}
+export { paneTitleColumns, type PaneTitleColumns } from "./pane-layout.js";
 
 export interface FindingFooterHintInput {
   canFix?: boolean;

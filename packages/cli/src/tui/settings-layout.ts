@@ -33,7 +33,7 @@ import {
   type SettingDef,
   type TuiSettings,
 } from "./settings.js";
-import { sanitizeTuiText } from "./text.js";
+import { sanitizeTuiText, wrapText } from "./text.js";
 
 // ---------------------------------------------------------------------------
 // Numeric hygiene
@@ -330,32 +330,7 @@ export function settingsTabBar(
  * is the horizontal overlap this module exists to prevent.
  */
 export function wrapCells(value: unknown, width: number): string[] {
-  const limit = cells(width);
-  const text = sanitizeTuiText(value);
-  if (limit <= 0 || text.length === 0) return [];
-
-  const lines: string[] = [];
-  let line = "";
-  for (const word of text.split(" ")) {
-    let token = word;
-    while (token.length > limit) {
-      if (line.length > 0) {
-        lines.push(line);
-        line = "";
-      }
-      lines.push(token.slice(0, limit));
-      token = token.slice(limit);
-    }
-    if (token.length === 0) continue;
-    if (line.length === 0) line = token;
-    else if (line.length + 1 + token.length <= limit) line = `${line} ${token}`;
-    else {
-      lines.push(line);
-      line = token;
-    }
-  }
-  if (line.length > 0) lines.push(line);
-  return lines;
+  return wrapText(sanitizeTuiText(value), width);
 }
 
 /** How a setting's current value reads in the list and the detail pane. */
