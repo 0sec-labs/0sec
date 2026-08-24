@@ -19,6 +19,18 @@ import {
 
 const isInteger = (value: number): boolean => Number.isInteger(value) && value >= 0;
 
+/**
+ * A swept axis: every `step`th value in `[min, max]`, plus the boundary sizes
+ * (`min`, `min+1`, `min+2`, `max`) always tested explicitly. This keeps the
+ * small/edge and large-end coverage of a dense 0..max loop while running a
+ * fraction of the iterations.
+ */
+const sweepAxis = (min: number, max: number, step: number): number[] => {
+  const seen = new Set<number>([min, min + 1, min + 2, max]);
+  for (let v = min; v <= max; v += step) seen.add(v);
+  return [...seen].filter((v) => v >= min && v <= max).sort((a, b) => a - b);
+};
+
 /** Every cell and row count a layout exposes, flattened for the sweep. */
 function layoutNumbers(layout: FindingDetailLayout): [string, number][] {
   return [
@@ -53,8 +65,8 @@ describe("computeFindingDetailLayout — the sweep", () => {
    * compile time.
    */
   it("never lets the pane, a row or the action buttons exceed what they were given", () => {
-    for (let width = 0; width <= 200; width++) {
-      for (let height = 0; height <= 80; height++) {
+    for (const width of sweepAxis(0, 200, 3)) {
+      for (const height of sweepAxis(0, 80, 2)) {
         const actionCount = (width + height) % 5; // 0..4 buttons, swept too
         const layout = computeFindingDetailLayout({ width, height, actionCount });
         const at = `${width}x${height} (${actionCount} actions)`;

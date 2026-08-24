@@ -1050,10 +1050,12 @@ describe("dashboard — finding-family POST handlers", () => {
   });
 
   it("POST /api/finding-family/:fp/triage normalises invalid status to 'new'", async () => {
+    const token = await getControlToken();
     const captured = await invokeHandler(
       makeRequest({
         method: "POST",
         url: "/api/finding-family/fp-1/triage",
+        headers: { "x-0sec-control-token": token },
         body: { triageStatus: "bogus-value", triageNote: "looks weird" },
       }),
     );
@@ -1064,10 +1066,12 @@ describe("dashboard — finding-family POST handlers", () => {
   });
 
   it("POST /api/finding-family/:fp/triage passes through 'accepted' verbatim", async () => {
+    const token = await getControlToken();
     await invokeHandler(
       makeRequest({
         method: "POST",
         url: "/api/finding-family/fp-2/triage",
+        headers: { "x-0sec-control-token": token },
         body: { triageStatus: "accepted" },
       }),
     );
@@ -1077,10 +1081,12 @@ describe("dashboard — finding-family POST handlers", () => {
   });
 
   it("POST /api/finding-family/:fp/workflow normalises invalid status via inferWorkflowStatus", async () => {
+    const token = await getControlToken();
     const captured = await invokeHandler(
       makeRequest({
         method: "POST",
         url: "/api/finding-family/fp-3/workflow",
+        headers: { "x-0sec-control-token": token },
         body: { workflowStatus: "bogus", workflowAssignee: "  alice  " },
       }),
     );

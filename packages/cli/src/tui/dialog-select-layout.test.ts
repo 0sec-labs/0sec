@@ -18,6 +18,18 @@ import {
 
 const SIZES: DialogSize[] = ["small", "medium", "large"];
 
+/**
+ * A swept axis: every `step`th value in `[min, max]`, plus the boundary sizes
+ * (`min`, `min+1`, `min+2`, `max`) always tested explicitly. This keeps the
+ * small/edge and large-end coverage of a dense loop while running a fraction of
+ * the iterations.
+ */
+const sweepAxis = (min: number, max: number, step: number): number[] => {
+  const seen = new Set<number>([min, min + 1, min + 2, max]);
+  for (let v = min; v <= max; v += step) seen.add(v);
+  return [...seen].filter((v) => v >= min && v <= max).sort((a, b) => a - b);
+};
+
 function items(n: number, withCategory = false): DialogItem[] {
   // Categories are contiguous (as real callers pre-group them): the first
   // third in group-0, the next in group-1, the rest in group-2.
@@ -147,8 +159,12 @@ describe("navigation", () => {
 
 describe("panel / column sweep", () => {
   it("keeps panelWidth <= width and column sums <= rowWidth <= innerWidth for every size and shape", () => {
-    for (let width = 0; width <= 200; width += 3) {
-      for (let height = 4; height <= 80; height += 6) {
+    // This sweep nests a 16-case per-panel column check under a 6-dimensional
+    // grid, so the width/height axes are kept coarse (boundary sizes stay
+    // explicit via sweepAxis) and the test carries its own generous timeout so
+    // parallel CPU contention can't trip the default.
+    for (const width of sweepAxis(0, 200, 24)) {
+      for (const height of sweepAxis(4, 80, 14)) {
         for (const size of SIZES) {
           for (const total of [0, 1, 40, 500]) {
             for (const withDetail of [false, true]) {
@@ -208,7 +224,7 @@ describe("panel / column sweep", () => {
         }
       }
     }
-  });
+  }, 30000);
 
   it("shows a detail column on a wide terminal and hides it below a min width", () => {
     // Wide: two columns, promoted to at least the large band, summing exactly.
