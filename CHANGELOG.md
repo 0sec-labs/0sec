@@ -12,7 +12,17 @@ on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-25
+
 ### Added
+
+- `/theme` switches the console colour theme with live preview (arrow to
+  preview, Enter to keep, Esc to revert).
+- `/settings` is now a tabbed screen (one tab per category) instead of one long
+  scroll; a `/shortcuts` reference lists every keybinding (also reachable from
+  settings via `?`).
+- `0sec console` gains `--yolo` / `--mode <standard|recon|copilot|yolo>` launch
+  flags (YOLO still requires `--scope`).
 
 - `bench improvement-assess` binds sealed improvement results to champion and
   challenger artifact digests, evaluates promotion gates, and writes a
@@ -34,6 +44,22 @@ on the published npm package and the GitHub Release tag.
   engine exits and posts it through the retrying, idempotent final-report path,
   so transient per-finding webhook loss cannot silently erase the completed
   scan's findings.
+
+### Changed
+
+- The console top bar shows the running version (`v<VERSION>`, auto-tracked).
+  Pressing Enter during a running turn now interrupts it and sends the message
+  immediately, rather than only queuing it. The line-mode (non-TTY) fallback
+  gained the `recon` mode and stops silently ignoring commands it can't run.
+
+### Fixed
+
+- Hardened the plugin registry fetch: refuse redirects (no http/SSRF downgrade),
+  cap body size, add a timeout, and bound processed entries.
+- Closed a self-extension reserved-name gate gap and fixed a console tool-schema
+  bug that dropped array `items` (array tool params were mis-described).
+- The full CLI test suite now gates CI (was an 8-of-114-file subset), fixing 27
+  regressions that had accumulated unseen; revived the real-binary smoke test.
 
 ## [0.13.0] - 2026-08-19
 

@@ -1,6 +1,6 @@
 {
   "name": "0sec-cli",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Open-source agentic AI pentest framework. Autonomously discover, exploit, and verify vulnerabilities in web apps, AI/LLM apps, source code, and npm/PyPI/Cargo/OCI packages.",
   "type": "module",
   "bin": {
