@@ -1,0 +1,98 @@
+name: "0sec: Release"
+
+# Build the standalone `0sec` binary natively on each target OS and publish all
+# four (+ checksums) to the GitHub Release. Native builds avoid `bun --compile`
+# cross-compilation, which cannot resolve @opentui/core's per-platform native
+# packages from a single host. Each binary is smoke-tested on its own runner
+# before it ships.
+#
+# Trigger: pushing a `v*` tag, or manually via workflow_dispatch with the tag.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build + release (e.g. v0.14.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: 0sec-darwin-arm64
+          - os: ubuntu-latest
+            asset: 0sec-linux-x64
+          - os: ubuntu-24.04-arm
+            asset: 0sec-linux-arm64
+          - os: windows-latest
+            asset: 0sec-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build workspace packages
+        run: pnpm -r build
+      - name: Compile native binary
+        shell: bash
+        run: bash scripts/bun-compile.sh "" "dist-bin/${{ matrix.asset }}"
+      - name: Smoke the binary
+        shell: bash
+        run: |
+          "dist-bin/${{ matrix.asset }}" --version
+          "dist-bin/${{ matrix.asset }}" --help | grep -q "security research harness"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist-bin/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-bin
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd dist-bin
+          sha256sum * > checksums.txt
+          cat checksums.txt
+      - name: Create / update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist-bin/* --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" dist-bin/* \
+              --repo "${{ github.repository }}" \
+              --title "0sec $TAG" \
+              --notes "Automated multi-platform release. See CHANGELOG.md for changes." \
+              --verify-tag
+          fi
