@@ -121,35 +121,35 @@ With special thanks to the startup and research programs supporting our work:
   <a href="https://aws.amazon.com/startups/" title="AWS Startups">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/aws-startups-dark.png">
-      <img alt="AWS Startups" height="30" src="docs/assets/supported-by/aws-startups-light.png">
+      <img align="middle" alt="AWS Startups" height="30" src="docs/assets/supported-by/aws-startups-light.png">
     </picture>
   </a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://www.microsoft.com/en-us/startups" title="Microsoft for Startups">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/microsoft-for-startups-dark.png">
-      <img alt="Microsoft for Startups" height="30" src="docs/assets/supported-by/microsoft-for-startups-light.png">
+      <img align="middle" alt="Microsoft for Startups" height="30" src="docs/assets/supported-by/microsoft-for-startups-light.png">
     </picture>
   </a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://e2b.dev/startups" title="E2B for Startups">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/e2b-dark.svg">
-      <img alt="E2B for Startups" height="30" src="docs/assets/supported-by/e2b-light.svg">
+      <img align="middle" alt="E2B for Startups" height="30" src="docs/assets/supported-by/e2b-light.svg">
     </picture>
   </a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://hack-nation.ai/" title="Hack Nation">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/hacknation-dark.png">
-      <img alt="Hack Nation" height="30" src="docs/assets/supported-by/hacknation-light.png">
+      <img align="middle" alt="Hack Nation" height="30" src="docs/assets/supported-by/hacknation-light.png">
     </picture>
   </a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://www.nvidia.com/en-us/startups/" title="NVIDIA Inception Program">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/nvidia-inception-dark.svg">
-      <img alt="NVIDIA Inception Program" height="30" src="docs/assets/supported-by/nvidia-inception-light.svg">
+      <img align="middle" alt="NVIDIA Inception Program" height="44" src="docs/assets/supported-by/nvidia-inception-light.svg">
     </picture>
   </a>
 </p>
