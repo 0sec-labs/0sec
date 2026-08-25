@@ -149,7 +149,7 @@ With special thanks to the startup and research programs supporting our work:
   <a href="https://www.nvidia.com/en-us/startups/" title="NVIDIA Inception Program">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/supported-by/nvidia-inception-dark.svg">
-      <img alt="NVIDIA Inception Program" height="56" src="docs/assets/supported-by/nvidia-inception-light.svg">
+      <img alt="NVIDIA Inception Program" height="30" src="docs/assets/supported-by/nvidia-inception-light.svg">
     </picture>
   </a>
 </p>
