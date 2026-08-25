@@ -6278,9 +6278,15 @@ export class ToolExecutor {
   }
 
   private queryFindings(args: Record<string, unknown>): ToolResult {
+    const allSessions = args.all_sessions === true;
+    const requestedScanId = typeof args.scan_id === "string" && args.scan_id.trim() !== ""
+      ? args.scan_id.trim()
+      : undefined;
+    const scanId = allSessions ? undefined : (requestedScanId ?? this.ctx.scanId);
+
     if (this.db) {
       const results = this.db.queryFindings({
-        scanId: this.ctx.scanId,
+        scanId,
         severity: args.severity as string | undefined,
         category: args.category as string | undefined,
         status: args.status as string | undefined,
@@ -6289,7 +6295,16 @@ export class ToolExecutor {
       return { success: true, output: results };
     }
 
-    // Fallback to in-memory
+    // Fallback to in-memory: a running agent only has the current session's
+    // in-memory findings. Cross-session queries require the persistent DB.
+    if (allSessions || requestedScanId) {
+      return {
+        success: false,
+        output: null,
+        error: "query_findings across sessions requires the persistent findings database",
+      };
+    }
+
     let results = [...this.ctx.findings];
     if (args.severity) results = results.filter((f) => f.severity === args.severity);
     if (args.category) results = results.filter((f) => f.category === args.category);

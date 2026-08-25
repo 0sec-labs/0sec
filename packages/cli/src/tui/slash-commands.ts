@@ -114,6 +114,13 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     tuiOnly: true,
   },
   {
+    name: "transcript",
+    aliases: ["review"],
+    category: "session",
+    description: "Open the virtualized transcript review",
+    tuiOnly: true,
+  },
+  {
     name: "findings",
     aliases: ["finds"],
     category: "session",

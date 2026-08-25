@@ -183,6 +183,11 @@ import {
 } from "./composer-edit.js";
 import { appendTranscriptEntry } from "./transcript.js";
 import {
+  applyStreamPatches,
+  enqueueStreamPatch,
+  type StreamPatch,
+} from "./stream-coalescer.js";
+import {
   planTranscript,
   resolveTranscriptStyleSettings,
 } from "./transcript-style.js";
@@ -215,6 +220,8 @@ import {
   renderEntry,
   renderFold,
 } from "./chat/TranscriptEntry.js";
+import { TranscriptReview } from "./chat/TranscriptReview.js";
+import type { TranscriptReviewRenderable } from "./transcript-review-renderable.js";
 import { Todos, TodosSidebar } from "./chat/Todos.js";
 import { FindingsSidebar, FINDINGS_SIDEBAR_HEADER_ROWS } from "./chat/FindingsSidebar.js";
 import { ComposerFrame, ComposerInput } from "./chat/Composer.js";
@@ -628,10 +635,48 @@ const SUBAGENT_MAX_VISIBLE = 4;
 /** Window after a first Ctrl+C in which a second Ctrl+C confirms the quit. */
 const EXIT_CONFIRM_MS = 3000;
 
+/** Upper bound for model-token publication; input and approvals stay immediate. */
+const STREAM_PRESENTATION_INTERVAL_MS = 33;
+
 export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle, pluginHostManager }: ChatScreenProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const entriesRef = useRef<ChatEntry[]>([]);
   entriesRef.current = entries;
+  const pendingStreamPatches = useRef<StreamPatch[]>([]);
+  const streamPresentationTimer = useRef<NodeJS.Timeout | undefined>(undefined);
+  const flushStreamPatches = useCallback(() => {
+    const pending = pendingStreamPatches.current;
+    if (streamPresentationTimer.current) {
+      clearTimeout(streamPresentationTimer.current);
+      streamPresentationTimer.current = undefined;
+    }
+    if (pending.length === 0) return;
+
+    pendingStreamPatches.current = [];
+    setEntries((current) => applyStreamPatches(current, pending, (patch) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      kind: patch.kind,
+      text: patch.text,
+      turn: patch.turn,
+      at: patch.at,
+    })));
+  }, []);
+  const queueStreamPatch = useCallback((patch: StreamPatch) => {
+    pendingStreamPatches.current = enqueueStreamPatch(pendingStreamPatches.current, patch);
+    if (streamPresentationTimer.current) return;
+
+    streamPresentationTimer.current = setTimeout(() => {
+      streamPresentationTimer.current = undefined;
+      flushStreamPatches();
+    }, STREAM_PRESENTATION_INTERVAL_MS);
+  }, [flushStreamPatches]);
+  const discardStreamPatches = useCallback(() => {
+    pendingStreamPatches.current = [];
+    if (!streamPresentationTimer.current) return;
+    clearTimeout(streamPresentationTimer.current);
+    streamPresentationTimer.current = undefined;
+  }, []);
+  useEffect(() => discardStreamPatches, [discardStreamPatches]);
   const [session, setSession] = useState<ConsoleSession | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
   const [git, setGit] = useState<GitStatus | null>(null);
@@ -737,6 +782,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
    * detail toggle, which flips every turn at once via the settings store.
    */
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(() => new Set());
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewRenderableRef = useRef<TranscriptReviewRenderable | null>(null);
   /** The turn currently under the mouse, for the subtle hover highlight. */
   const [hoveredTurn, setHoveredTurn] = useState<number | null>(null);
   const toggleTurnExpanded = useCallback((turn: number) => {
@@ -1009,12 +1056,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   }, [setComposerText]);
 
   const appendEntry = useCallback((entry: Omit<ChatEntry, "id">) => {
+    flushStreamPatches();
     setEntries((current) => appendTranscriptEntry<ChatEntry>(current, {
       at: Date.now(),
       ...entry,
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     }));
-  }, []);
+  }, [flushStreamPatches]);
 
   /**
    * Build a console session.
@@ -1839,6 +1887,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         // refused. `clearConversation()` empties the message array and
         // nothing else — see ConsoleSession in turn-engine.ts.
         session?.clearConversation();
+        discardStreamPatches();
         setEntries([]);
         entriesRef.current = [];
         turn.current = 0;
@@ -2196,6 +2245,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         // Likewise for "/connect": run.tsx already routes the destination.
         onNavigate("connect");
         return true;
+      case "transcript":
+        setFocusAgentId(null);
+        setAgentNavIndex(-1);
+        setReviewOpen(true);
+        return true;
       case "history":
         onNavigate("history");
         return true;
@@ -2233,6 +2287,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     appendEntry,
     busy,
     commandCatalog,
+    discardStreamPatches,
     mode,
     onExit,
     onGoBack,
@@ -2272,32 +2327,20 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         onAssistantDelta: (chunk) => {
           assistantText += chunk;
           streamingRef.current = true;
-          setEntries((current) => {
-            const last = current.at(-1);
-            if (last?.kind === "assistant" && last.turn === currentTurn) {
-              return [...current.slice(0, -1), { ...last, text: assistantText }];
-            }
-            return [...current, {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              kind: "assistant",
-              text: assistantText,
-              turn: currentTurn,
-            }];
+          queueStreamPatch({
+            kind: "assistant",
+            text: assistantText,
+            turn: currentTurn,
+            at: Date.now(),
           });
         },
         onReasoningDelta: (chunk) => {
           reasoningText += chunk;
-          setEntries((current) => {
-            const last = current.at(-1);
-            if (last?.kind === "reasoning" && last.turn === currentTurn) {
-              return [...current.slice(0, -1), { ...last, text: reasoningText }];
-            }
-            return [...current, {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              kind: "reasoning",
-              text: reasoningText,
-              turn: currentTurn,
-            }];
+          queueStreamPatch({
+            kind: "reasoning",
+            text: reasoningText,
+            turn: currentTurn,
+            at: Date.now(),
           });
         },
         onToolStart: (call) => {
@@ -2316,6 +2359,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           });
         },
         onToolResult: (call, result) => {
+          flushStreamPatches();
           setRunningTool(null);
           // SETTLE the running row `onToolStart` appended IN PLACE rather than
           // appending a second row. Without this, the running row (success
@@ -2472,6 +2516,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       // Drop the controller before clearing `busy`, so Esc can never abort a
       // turn that has already returned.
       if (abortRef.current === controller) abortRef.current = null;
+      flushStreamPatches();
       setBusy(false);
       // The turn is over: stop the tool spinner and SETTLE any tool/subagent
       // rows still in flight when it ended (interrupt, error, or a budget stop).
@@ -2548,7 +2593,15 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         pruneSessions();
       }
     }
-  }, [appendEntry, busy, routeSlashCommand, session, settings.showTurnSummary]);
+  }, [
+    appendEntry,
+    busy,
+    flushStreamPatches,
+    queueStreamPatch,
+    routeSlashCommand,
+    session,
+    settings.showTurnSummary,
+  ]);
   submitRef.current = send;
 
   // The programmatic operator-submit path, exposed to the coordinator via
@@ -2771,6 +2824,38 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     }
     if (key.ctrl && key.name === "c") {
       requestExitRef.current();
+      return;
+    }
+    if (reviewOpen) {
+      if (key.name === "escape" || (key.ctrl && key.name === "o")) {
+        setReviewOpen(false);
+        return;
+      }
+
+      const review = reviewRenderableRef.current;
+      if (!review) return;
+      const pageRows = Math.max(1, Math.floor(review.height / 2));
+      if (key.name === "pageup" || (key.ctrl && key.name === "up")) {
+        review.scrollY -= pageRows;
+        return;
+      }
+      if (key.name === "pagedown" || (key.ctrl && key.name === "down")) {
+        review.scrollY += pageRows;
+        return;
+      }
+      if (key.ctrl && key.name === "home") {
+        review.scrollY = 0;
+        return;
+      }
+      if (key.ctrl && key.name === "end") {
+        review.scrollY = review.maxScrollY;
+      }
+      return;
+    }
+    if (key.ctrl && key.name === "o") {
+      setFocusAgentId(null);
+      setAgentNavIndex(-1);
+      setReviewOpen(true);
       return;
     }
     // ── Inline subagent focus view (modal) ─────────────────────────────────────
@@ -3271,6 +3356,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // look expectant, not like it is grinding. Derived above `entryDisplay` so the
   // shimmer frame it carries can be gated on the same running-state read.
   const gateOpen = Boolean(pendingScope || pendingLocalScope || pendingEscalation || pendingToolApproval || secretPrompt || operatorQuestionOpen);
+  useEffect(() => {
+    if (reviewOpen && gateOpen) setReviewOpen(false);
+  }, [gateOpen, reviewOpen]);
   const animationKind: AnimationKind | null = gateOpen
     ? "awaiting-operator"
     : runningTool
@@ -4041,7 +4129,16 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // flexGrows; each sidebar is flexShrink={0} and only present when the layout
   // found room for it, so with both hidden the transcript takes the full width
   // exactly as before.
-  const conversationRegion = focused ? (
+  const conversationRegion = reviewOpen ? (
+    <TranscriptReview
+      entries={entries}
+      width={transcriptWidth}
+      detail={entryDisplay.transcriptDetail}
+      expandedTurns={expandedTurns}
+      theme={theme}
+      renderableRef={reviewRenderableRef}
+    />
+  ) : focused ? (
     focusViewNode
   ) : (
     <box flexDirection="row" flexGrow={1} minHeight={0} width="100%" minWidth={0}>
@@ -4146,6 +4243,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   const composeHintPairs: KeyHint[] = [
     { key: "enter", label: "send" },
     { key: "esc", label: "cancel" },
+    { key: "ctrl+o", label: "transcript" },
   ];
   // Any overlay open in the hero (slash menu, picker, an approval, the secret
   // prompt): the masthead is hidden so the tall menu + logo cannot overflow
@@ -4241,7 +4339,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         </box>
       </box>
 
-      {empty ? (
+      {empty && !reviewOpen ? (
         /*
          * The centered start screen: logo + captions + the COMPOSER + a dim
          * hint line render as ONE vertically-centered group (OpenCode's clean
@@ -4298,6 +4396,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           {/* Region B: a FIXED spacer, so the composer's position is constant. */}
           <box height={heroBottomSpacer} flexShrink={0} minWidth={0} />
         </box>
+      ) : reviewOpen ? (
+        conversationRegion
       ) : (
         <>
           {/*

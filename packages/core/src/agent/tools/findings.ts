@@ -186,8 +186,18 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
   query_findings: {
     name: "query_findings",
     description:
-      "Query existing findings from the database. Use this to check what has been found so far.",
+      "Query existing findings from the database. Defaults to the current scan/session; set all_sessions=true to search across sessions, or pass scan_id to inspect a specific prior session.",
     parameters: {
+      scan_id: {
+        type: "string",
+        description:
+          "Optional scan/session id to query. When omitted, only the current session is queried unless all_sessions=true.",
+      },
+      all_sessions: {
+        type: "boolean",
+        description:
+          "Optional: when true, query findings across all sessions/scans instead of only the current session.",
+      },
       severity: {
         type: "string",
         description: "Filter by severity",
@@ -201,7 +211,7 @@ export const findingsToolDefinitions: Record<string, ToolDefinition> = {
       },
       limit: { type: "number", description: "Max results to return (default 20)" },
     },
-  },
+  }, 
 
   // 0sec#567 — retrieve previously captured footholds for exploit chaining.
   use_loot: {

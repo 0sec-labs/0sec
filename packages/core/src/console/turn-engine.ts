@@ -14,6 +14,7 @@ import type {
 } from "../runtime/types.js";
 import { ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, SELF_EXTENSION_RESERVED_TOOL_NAMES } from "../agent/tools.js";
 import { toNativeToolDef, toNativeExtensionToolDef } from "../agent/native-tooldef.js";
+import type { osecDB } from "@0sec/db";
 import { TOOL_DISPATCH } from "../agent/tools/dispatch.js";
 import {
   BUILTIN_GUARDS,
@@ -378,6 +379,12 @@ export interface ConsoleSessionConfig {
   tools?: ToolDefinition[];
   /** Stable id for this console session (telemetry / future persistence). */
   scanId?: string;
+  /**
+   * Optional persistent findings database. When supplied, save_finding writes to
+   * it and query_findings can inspect prior scans/sessions; when absent, the
+   * console keeps its historical in-memory-only behavior.
+   */
+  db?: osecDB | null;
   /**
    * RUNAWAY BACKSTOP on tool-call rounds within a single operator turn.
    * Defaults to {@link DEFAULT_MAX_TOOL_ITERATIONS}. This is deliberately no
@@ -1653,8 +1660,10 @@ export function createConsoleSession(config: ConsoleSessionConfig): ConsoleSessi
   }
 
   // The real dispatcher over the real registry. `db = null` → no persistence
-  // this pass (findings live in `toolContext.findings` for the session).
-  const executor = new ToolExecutor(toolContext);
+  // this pass (findings live in `toolContext.findings` for the session). When
+  // the CLI/TUI provides a DB handle, save_finding persists there and
+  // query_findings can read current, prior, or all sessions.
+  const executor = new ToolExecutor(toolContext, config.db ?? null);
 
   const tools =
     config.tools ?? getToolsForRole(role, { allowScanners: config.allowScanners });

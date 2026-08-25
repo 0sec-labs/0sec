@@ -28,6 +28,13 @@ describe("SLASH_COMMANDS", () => {
     expect(exit!.aliases).toContain("quit");
   });
 
+  it("registers transcript review as a TUI-only session command", () => {
+    const transcript = getCommandByName("transcript");
+    expect(transcript?.category).toBe("session");
+    expect(transcript?.tuiOnly).toBe(true);
+    expect(getCommandByName("review")?.name).toBe("transcript");
+  });
+
   it("marks navigation commands as tuiOnly", () => {
     const navigations = SLASH_COMMANDS.filter((c) => c.category === "navigation");
     expect(navigations.length).toBeGreaterThan(0);

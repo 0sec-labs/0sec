@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/react */
 import { appendFileSync } from "node:fs";
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { createCliRenderer } from "@opentui/core";
+import { CliRenderEvents, createCliRenderer } from "@opentui/core";
 import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
 import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
@@ -175,7 +175,7 @@ const SCAN_MODE_OPTIONS: LaunchScanMode[] = ["auto", "web", "probe", "deep", "mc
 const ECOSYSTEM_OPTIONS: LaunchEcosystem[] = ["npm", "pypi", "cargo", "oci"];
 
 function appendTuiTrace(record: Record<string, unknown>): void {
-  const file = process.env["0SEC_TRACE_TUI_EVENTS"];
+  const file = process.env["0SEC_TRACE_TUI_EVENTS"] ?? process.env["0SEC_TRACE_TUI_RENDER"];
   if (!file) return;
   try {
     appendFileSync(file, `${JSON.stringify({ ts: new Date().toISOString(), ...record })}\n`, "utf8");
@@ -4531,7 +4531,29 @@ function UnifiedApp({ mode }: { mode: AppMode }) {
 
 async function mountApp(mode: AppMode): Promise<void> {
   installTuiCrashHandlers();
-  const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  const traceRender = Boolean(process.env["0SEC_TRACE_TUI_RENDER"]);
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: false,
+    // State the fullscreen contract rather than relying on OpenTUI's default:
+    // this TUI owns a virtualized alternate-screen viewport, while non-TTY
+    // command paths never construct it.
+    screenMode: "alternate-screen",
+    gatherStats: traceRender,
+  });
+  let sampledFrames = 0;
+  const traceFrame = () => {
+    if (!traceRender || ++sampledFrames % 30 !== 0) return;
+    const stats = renderer.getStats();
+    appendTuiTrace({
+      kind: "tui-render-sample",
+      frameId: renderer.frameId,
+      fps: stats.fps,
+      averageFrameTime: stats.averageFrameTime,
+      maxFrameTime: stats.maxFrameTime,
+      frameCount: stats.frameCount,
+    });
+  };
+  if (traceRender) renderer.on(CliRenderEvents.FRAME, traceFrame);
   // Claim stdout/stderr only AFTER the renderer exists. opentui saves the
   // real `stdout.write` in its constructor and emits every frame through
   // that saved reference, so installing here leaves rendering untouched
@@ -4545,6 +4567,18 @@ async function mountApp(mode: AppMode): Promise<void> {
       if (closed) return;
       closed = true;
       mode.onExit?.();
+      if (traceRender) {
+        const stats = renderer.getStats();
+        appendTuiTrace({
+          kind: "tui-render-summary",
+          frameId: renderer.frameId,
+          fps: stats.fps,
+          averageFrameTime: stats.averageFrameTime,
+          maxFrameTime: stats.maxFrameTime,
+          frameCount: stats.frameCount,
+        });
+        renderer.off(CliRenderEvents.FRAME, traceFrame);
+      }
       root.unmount();
       renderer.destroy();
       // Released after destroy(): opentui resets the stream itself, and

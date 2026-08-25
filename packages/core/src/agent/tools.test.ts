@@ -1196,6 +1196,26 @@ describe("ToolExecutor", () => {
     expect(findings[0].title).toBe("Finding A");
   });
 
+  it("query_findings can query a specific scan or all sessions from the DB", async () => {
+    const calls: unknown[] = [];
+    const dbExecutor = new ToolExecutor(ctx, {
+      queryFindings(opts: unknown) {
+        calls.push(opts);
+        return [];
+      },
+    } as any);
+
+    await dbExecutor.execute({ name: "query_findings", arguments: { severity: "high" } });
+    await dbExecutor.execute({ name: "query_findings", arguments: { scan_id: "prior-scan", limit: 50 } });
+    await dbExecutor.execute({ name: "query_findings", arguments: { all_sessions: true, category: "xss" } });
+
+    expect(calls).toEqual([
+      { scanId: "test-scan-123", severity: "high", category: undefined, status: undefined, limit: 20 },
+      { scanId: "prior-scan", severity: undefined, category: undefined, status: undefined, limit: 50 },
+      { scanId: undefined, severity: undefined, category: "xss", status: undefined, limit: 20 },
+    ]);
+  });
+
   // ── update_finding ──
 
   it("update_finding changes finding status", async () => {
