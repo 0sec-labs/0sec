@@ -31,6 +31,8 @@ import {
   type TodosEventPayload,
   type SessionObjectivePayload,
   type ToolCall,
+  sendOperatorMessage,
+  type MessagingRuntime,
 } from "@0sec/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import {
@@ -2605,6 +2607,32 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   ]);
   submitRef.current = send;
 
+  // Steer a running subagent from the chat composer while drilled into it: build
+  // an `operator` messaging runtime pinned to the live roster (so a dead id is
+  // refused) and hand it to `sendOperatorMessage`, which re-checks addressing and
+  // spools into the hub mailbox the child drains. The console session IS "Main"
+  // (the parent/operator), so `selfId` matches the parent identity children reply
+  // to. Honors the same operator-channel setting the session was built with.
+  const deliverToSubagent = useCallback(
+    (agentId: string, body: string): { ok: boolean; reason?: string } => {
+      if (!settingsRef.current.allowSubagentOperatorMessaging) {
+        return { ok: false, reason: "operator→subagent messaging is off (see /settings)" };
+      }
+      const runtime: MessagingRuntime = {
+        selfId: "Main",
+        selfRole: "operator",
+        siblingChannelEnabled: false,
+        operatorChannelEnabled: true,
+        projectPath: process.cwd(),
+        homeDir: homedir(),
+        knownPeerIds: Object.keys(activeSubagents),
+      };
+      const result = sendOperatorMessage(runtime, agentId, body.trim(), Date.now());
+      return { ok: result.ok, reason: result.reason };
+    },
+    [settingsRef, activeSubagents],
+  );
+
   // The programmatic operator-submit path, exposed to the coordinator via
   // `submitHandle` (the finding-detail "Fix" action rides this). It takes the
   // EXACT disposition a typed Enter takes — a slash command routes, a message
@@ -2861,10 +2889,14 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     }
     // ── Inline subagent focus view (modal) ─────────────────────────────────────
     // Drilled into ONE subagent: the live meta + activity panes replace the
-    // transcript. Read-only — Up/Down (and PageUp/PageDown) scroll the activity
-    // back from its tail; Left or Esc returns to the agents list. Swallows every
-    // other key so a keystroke cannot leak into the composer behind it.
-    if (focusAgentId) {
+    // transcript. While the composer is IDLE, Up/Down (and PageUp/PageDown)
+    // scroll the activity back from its tail and Left/Esc returns to the agents
+    // list. A printable key falls through to the idle→compose transition below,
+    // so the operator can type a message straight to the focused subagent
+    // (delivered on Enter by the composing block, which routes to it when
+    // `focusAgentId` is set). Once composing, this branch yields entirely so the
+    // composer owns typing/editing/Enter exactly as it does on the main screen.
+    if (focusAgentId && !composingRef.current) {
       if (key.name === "escape" || key.name === "left") {
         setFocusAgentId(null);
         setFocusScrollOffset(0);
@@ -2887,7 +2919,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         setFocusScrollOffset((offset) => Math.max(0, offset - 5));
         return;
       }
-      return;
+      // No blanket return: a printable key drops through to the compose
+      // transition so typing to the subagent Just Works.
     }
     // ── Active-subagent list navigation (modal) ────────────────────────────────
     // Selection has moved out of the composer and INTO the ACTIVE SUBAGENTS
@@ -3105,6 +3138,26 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           composingRef.current = false;
           setComposerText("");
           setComposing(false);
+          return;
+        }
+        // Drilled into a subagent: a plain message is steered straight to it via
+        // the hub mailbox, not sent to the main agent. Slash commands still run
+        // as commands (they fall through), so /agents, /settings, etc. keep
+        // working while focused.
+        if (focusAgentId && !findCommand(input).isSlash) {
+          const res = deliverToSubagent(focusAgentId, input);
+          appendEntry({
+            kind: res.ok ? "notice" : "error",
+            text: res.ok
+              ? `→ ${shortAgentName(focusAgentId)}: ${input}`
+              : res.reason ?? "could not deliver to the subagent",
+            turn: turn.current,
+          });
+          historyRef.current = pushHistory(historyRef.current, input);
+          composingRef.current = false;
+          setComposerText("");
+          setComposing(false);
+          setCommandMenuVisible(false);
           return;
         }
         // Remember every submitted message (sent or queued) for Up/Down recall.
