@@ -3459,10 +3459,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // pressure Yoga collapsed it and its rows painted into each other and
   // into the title. Cap what is shown, state the overflow, and reserve
   // EXACTLY what is rendered.
-  // The compact ACTIVE SUBAGENTS block is suppressed while a subagent is
-  // focused — the focus view IS the detail — so it neither reserves rows nor
-  // competes for the arrows.
-  const subagentEntries = settings.showSubagents && !focused ? Object.values(activeSubagents) : [];
+  // The compact ACTIVE SUBAGENTS block stays visible even while a subagent is
+  // focused, so the operator keeps sight of the whole fleet and which one they
+  // are drilled into (the focused row wears the highlight below). Its rows are
+  // reserved in the ledger via computeLedgerRows regardless of focus, so the
+  // focus transcript makes room for it.
+  const subagentEntries = settings.showSubagents ? Object.values(activeSubagents) : [];
   const subagentVisible = subagentEntries.slice(0, SUBAGENT_MAX_VISIBLE);
   const subagentOverflow = subagentEntries.length - subagentVisible.length;
   const subagentOverflowRow = subagentOverflow > 0 ? 1 : 0;
@@ -3879,7 +3881,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             view={view}
             width={contentWidth}
             theme={theme}
-            selected={index === agentNavSelected}
+            selected={index === agentNavSelected || sa.agent_id === focusAgentId}
             isLast={isLast}
           />
         );
