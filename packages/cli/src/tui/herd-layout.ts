@@ -752,6 +752,15 @@ export function herdComposerFooterHint(): string {
 }
 
 /**
+ * The footer hint shown while drilled into a subagent from the chat screen, so
+ * the operator always sees how to get back to the main agent and that they can
+ * type to message the focused subagent.
+ */
+export function chatFocusFooterHint(): string {
+  return ["type to message", "esc/← back to main", "↑/↓ scroll", "ctrl+c exit"].join(" · ");
+}
+
+/**
  * The prompt shown before the steering draft, e.g. `› `. A real prefix rather
  * than a padded literal, so its width is accounted for in
  * {@link herdComposerTextWidth} and it cannot fuse onto the draft.
@@ -1125,15 +1134,16 @@ export function focusHeaderLines(
 
   if (record) {
     push(`Status: ${subagentStatusLabel(record.status)}`, focusStatusTone(record.status));
-    const budget = record.maxTurns > 0 ? `/${record.maxTurns}` : "";
+    // Show turn progress as a plain count, not `turn/maxTurns` — the budget cap
+    // is an internal guardrail, and surfacing it here reads as an arbitrary
+    // "limit" on the subagent rather than useful progress.
     const turnValue =
       typeof record.turn === "number"
         ? record.turn
         : typeof record.turns === "number"
           ? record.turns
           : undefined;
-    if (typeof turnValue === "number") push(`Turns: ${turnValue}${budget}`, "text");
-    else if (record.maxTurns > 0) push(`Turns: 0${budget}`, "muted");
+    if (typeof turnValue === "number") push(`Turns: ${turnValue}`, "text");
     if (typeof record.findings === "number") push(`Findings: ${record.findings}`, "text");
     if (record.tool) push(`Tool: ${record.tool}`, "text");
     if (record.note) push(`Note: ${record.note}`, "text");
@@ -1152,8 +1162,7 @@ export function focusHeaderLines(
     push(`Kind: ${peer.kind === "subagent" ? "subagent" : "session"}`, "muted");
     const a = peer.activity;
     if (a && typeof a.turn === "number") {
-      const budget = typeof a.maxTurns === "number" && a.maxTurns > 0 ? `/${a.maxTurns}` : "";
-      push(`Turns: ${Math.trunc(a.turn)}${budget}`, "text");
+      push(`Turns: ${Math.trunc(a.turn)}`, "text");
     }
     if (a?.tool) push(`Tool: ${a.tool}`, "text");
     if (a?.note) push(`Note: ${a.note}`, "text");

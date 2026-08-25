@@ -678,7 +678,7 @@ describe("focus content — header and transcript", () => {
     const text = focusHeaderLines(p, rec, 60, NOW + 2).map((l) => l.text);
     expect(text.some((t) => t.includes("audit the auth flow"))).toBe(true);
     expect(text).toContain("Status: running");
-    expect(text).toContain("Turns: 3/8");
+    expect(text).toContain("Turns: 3");
     expect(text.some((t) => t.startsWith("Tool: curl"))).toBe(true);
   });
 
@@ -686,7 +686,7 @@ describe("focus content — header and transcript", () => {
     const p = peer("solo", { activity: { phase: "working", turn: 2, maxTurns: 5 } });
     const text = focusHeaderLines(p, undefined, 50, NOW).map((l) => l.text);
     expect(text).toContain("solo");
-    expect(text).toContain("Turns: 2/5");
+    expect(text).toContain("Turns: 2");
   });
 
   it("no header or transcript line ever exceeds the width", () => {

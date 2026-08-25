@@ -141,6 +141,7 @@ import {
 import {
   applySubagentLifecycle,
   applySubagentProgress,
+  chatFocusFooterHint,
   clipDetailLines,
   computeHerdFocusLayout,
   focusHeaderLines,
@@ -4082,7 +4083,8 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // and the transcript's own title row have taken theirs, out of the region's
   // `ledgerRows` budget.
   const focusMetaRows = focusMetaLines.length + 1;
-  const focusTranscriptCap = Math.max(1, ledgerRows - focusMetaRows - 2);
+  // -3 (not -2): reserve a row for the back-to-main footer hint below.
+  const focusTranscriptCap = Math.max(1, ledgerRows - focusMetaRows - 3);
   const focusTail = windowFocusTail(
     focusActivityLines.length,
     focusTranscriptCap,
@@ -4120,6 +4122,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           ))
         )}
       </box>
+      <text fg={MUTED} marginTop={1}>
+        {fitTuiText(chatFocusFooterHint(), focusInner)}
+      </text>
     </box>
   );
 
