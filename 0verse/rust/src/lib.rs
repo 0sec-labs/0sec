@@ -70,7 +70,7 @@ fn contains_any(haystack: &str, needles: Vec<String>) -> Vec<bool> {
 /// GIL is released for the scan (a 100MB+ haystack is pure byte work).
 #[pyfunction]
 fn contains_any_bytes(py: Python<'_>, haystack: &[u8], needles: Vec<Vec<u8>>) -> Vec<bool> {
-    py.allow_threads(|| presence(haystack, &needles))
+    py.detach(|| presence(haystack, &needles))
 }
 
 /// Tiny self-identifying probe so Python can confirm the native path is live.
