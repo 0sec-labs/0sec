@@ -28,6 +28,7 @@ import {
   type OperatorQuestionRequest,
   type OperatorQuestionAnswer,
   type SubagentLifecyclePayload,
+  type SubagentMessagePayload,
   type TodosEventPayload,
   type SessionObjectivePayload,
   type ToolCall,
@@ -641,6 +642,10 @@ const EXIT_CONFIRM_MS = 3000;
 /** Upper bound for model-token publication; input and approvals stay immediate. */
 const STREAM_PRESENTATION_INTERVAL_MS = 33;
 
+/** Max transcript entries retained per subagent — the tail is all the focus
+ * view can show anyway, and it bounds memory across a large child fleet. */
+const SUBAGENT_TRANSCRIPT_MAX = 300;
+
 export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle, pluginHostManager }: ChatScreenProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const entriesRef = useRef<ChatEntry[]>([]);
@@ -865,6 +870,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
    */
   const [operatorState, setOperatorState] = useState<OperatorQuestionState | null>(null);
   const [activeSubagents, setActiveSubagents] = useState<Record<string, SubagentLifecyclePayload>>({});
+  // Per-subagent live transcript (assistant prose + tool cards), assembled from
+  // `subagent_message` events. Keyed by agent_id; rendered by the focus view via
+  // the SAME planTranscript/renderEntry as the main transcript, so a drilled-in
+  // child reads exactly like the main agent. Bounded per agent (the tail is what
+  // fits on screen anyway).
+  const [subagentTranscripts, setSubagentTranscripts] = useState<Record<string, ChatEntry[]>>({});
   /**
    * Two-press quit. Ctrl+C used to exit immediately; now the first press ARMS
    * (a toast warns, noting any running subagents that would be stopped) and a
@@ -979,6 +990,9 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
    * Up/Down belong to composer history, never to scrolling.
    */
   const transcriptRef = useRef<ScrollBoxRenderable | null>(null);
+  // The drilled-in subagent's transcript scrollbox (auto-follows newest, like
+  // the main one); pageup/pagedown scroll it while focused.
+  const focusTranscriptRef = useRef<ScrollBoxRenderable | null>(null);
   /**
    * The slash-command list scrollbox, so the selected row can be scrolled into
    * view as the operator arrows past the height-clamped window. Not focusable —
@@ -1387,6 +1401,44 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           setHerdAgents((prev) =>
             applySubagentProgress(prev, payload as Record<string, unknown>, Date.now()),
           );
+        } else if (type === "subagent_message") {
+          const p = payload as unknown as SubagentMessagePayload;
+          if (p.parent_scan_id !== scanId) return;
+          // Turn the child's per-turn message into transcript entries in the SAME
+          // shape the main turn produces (assistant answer + one tool card each,
+          // formatted by the same formatToolArgs/formatToolResult), so the focus
+          // view renders them through planTranscript/renderEntry identically.
+          const fresh: ChatEntry[] = [];
+          if (p.assistant) {
+            fresh.push({
+              id: `${p.agent_id}-t${p.turn}-a`,
+              kind: "assistant",
+              text: p.assistant,
+              turn: p.turn,
+              at: p.ts,
+            });
+          }
+          (p.tools ?? []).forEach((t, i) => {
+            fresh.push({
+              id: `${p.agent_id}-t${p.turn}-x${i}`,
+              kind: "tool",
+              text: t.call.name,
+              detail: formatToolResult(t.call, t.result),
+              toolArgs: formatToolArgs(t.call),
+              success: t.result.success,
+              turn: p.turn,
+              at: p.ts,
+            });
+          });
+          if (fresh.length > 0) {
+            setSubagentTranscripts((prev) => {
+              const existing = prev[p.agent_id] ?? [];
+              return {
+                ...prev,
+                [p.agent_id]: [...existing, ...fresh].slice(-SUBAGENT_TRANSCRIPT_MAX),
+              };
+            });
+          }
         } else if (type === "todos") {
           // The plan is the main agent's, not a subagent's, so it carries no
           // scanId to filter on; the latest snapshot simply replaces the tree.
@@ -2912,11 +2964,15 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         return;
       }
       if (key.name === "pageup") {
-        setFocusScrollOffset((offset) => offset + 5);
+        // Real transcript → scroll its scrollbox (like the main transcript);
+        // activity-ring fallback → step the windowed offset.
+        if (focusTranscriptRef.current) focusTranscriptRef.current.scrollBy(-0.5, "viewport");
+        else setFocusScrollOffset((offset) => offset + 5);
         return;
       }
       if (key.name === "pagedown") {
-        setFocusScrollOffset((offset) => Math.max(0, offset - 5));
+        if (focusTranscriptRef.current) focusTranscriptRef.current.scrollBy(0.5, "viewport");
+        else setFocusScrollOffset((offset) => Math.max(0, offset - 5));
         return;
       }
       // No blanket return: a printable key drops through to the compose
@@ -4134,6 +4190,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     : [];
   const focusActivityLines =
     focused && focusRecord ? renderFocusActivity(focusRecord.activity, focusInner) : [];
+  // The focused child's REAL transcript (assistant prose + tool cards) streamed
+  // via subagent_message. When present, the focus view renders it through the
+  // SAME planTranscript/renderEntry as the main agent — so a drilled-in child
+  // reads identically. Until the first message arrives (or for a peer session
+  // with no stream), it falls back to the coarse activity ring below.
+  const focusEntries = focusAgentId ? subagentTranscripts[focusAgentId] ?? [] : [];
+  const focusHasTranscript = focused && focusEntries.length > 0;
   // Rows left for the live transcript once the meta header (title + its lines)
   // and the transcript's own title row have taken theirs, out of the region's
   // `ledgerRows` budget.
@@ -4165,18 +4228,45 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           </text>
         ))}
       </box>
-      <box flexDirection="column" flexGrow={1} minHeight={0} minWidth={0} marginTop={1}>
-        <text fg={MUTED}>{fitTuiText(herdFocusTranscriptTitle(focusActivityLines.length), focusInner)}</text>
-        {focusVisibleActivity.length === 0 ? (
-          <text fg={MUTED}>{fitTuiText(HERD_FOCUS_EMPTY_TEXT, focusInner)}</text>
-        ) : (
-          focusVisibleActivity.map((line, index) => (
-            <text key={`focus-live-${focusTail.start + index}`} fg={herdToneColor(theme, line.tone)}>
-              {fitTuiText(line.text, focusInner)}
-            </text>
-          ))
-        )}
-      </box>
+      {focusHasTranscript ? (
+        <box flexDirection="column" flexGrow={1} minHeight={0} minWidth={0} marginTop={1}>
+          <scrollbox
+            ref={focusTranscriptRef}
+            focusable={false}
+            width="100%"
+            flexGrow={1}
+            minHeight={0}
+            stickyScroll
+            stickyStart="bottom"
+          >
+            <box flexDirection="column" width="100%">
+              {planTranscript(focusEntries, entryDisplay.transcriptDetail, expandedTurns).map(
+                (item) =>
+                  item.type === "fold"
+                    ? renderFold(item, focusInner, entryDisplay, theme, {
+                        hovered: false,
+                        onToggle: () => {},
+                        onHover: () => {},
+                      })
+                    : renderEntry(item.entry, focusInner, entryDisplay, theme, undefined),
+              )}
+            </box>
+          </scrollbox>
+        </box>
+      ) : (
+        <box flexDirection="column" flexGrow={1} minHeight={0} minWidth={0} marginTop={1}>
+          <text fg={MUTED}>{fitTuiText(herdFocusTranscriptTitle(focusActivityLines.length), focusInner)}</text>
+          {focusVisibleActivity.length === 0 ? (
+            <text fg={MUTED}>{fitTuiText(HERD_FOCUS_EMPTY_TEXT, focusInner)}</text>
+          ) : (
+            focusVisibleActivity.map((line, index) => (
+              <text key={`focus-live-${focusTail.start + index}`} fg={herdToneColor(theme, line.tone)}>
+                {fitTuiText(line.text, focusInner)}
+              </text>
+            ))
+          )}
+        </box>
+      )}
       <text fg={MUTED} marginTop={1}>
         {fitTuiText(chatFocusFooterHint(), focusInner)}
       </text>

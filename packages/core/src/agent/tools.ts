@@ -146,7 +146,11 @@ import {
   loadSkillRegistry,
 } from "./skills/index.js";
 import { eventBus } from "../events/bus.js";
-import type { SubagentProgressPayload } from "../events/bus.js";
+import type {
+  SubagentProgressPayload,
+  SubagentMessagePayload,
+  SubagentToolMessage,
+} from "../events/bus.js";
 import { ToolHealthTracker } from "./tool-health.js";
 import type { ToolHealthRecordInput, ToolHealthSummary } from "./tool-health.js";
 import { TodoTracker, validateUpdateTodosArgs, buildTodosPayload } from "./todos.js";
@@ -2371,6 +2375,82 @@ export function buildSubagentProgress(
     max_turns: maxTurns,
     ...(tool !== undefined ? { tool } : {}),
     ...(note !== undefined ? { note } : {}),
+  };
+}
+
+/** Assistant prose over this cap is truncated in the subagent-message event. */
+const SUBAGENT_ASSISTANT_MAX = 8000;
+/** Tool output/error over this cap is truncated in the subagent-message event. */
+const SUBAGENT_TOOL_OUTPUT_MAX = 4000;
+
+/** Bound a value to a light display form for a subagent transcript event: a
+ * many-child fleet's retained transcripts must not hold whole tool outputs. */
+function boundSubagentOutput(out: unknown): unknown {
+  if (typeof out === "string") {
+    return out.length > SUBAGENT_TOOL_OUTPUT_MAX
+      ? `${out.slice(0, SUBAGENT_TOOL_OUTPUT_MAX)}…[truncated]`
+      : out;
+  }
+  try {
+    const s = JSON.stringify(out);
+    if (s && s.length > SUBAGENT_TOOL_OUTPUT_MAX) {
+      return `${s.slice(0, SUBAGENT_TOOL_OUTPUT_MAX)}…[truncated]`;
+    }
+    return out;
+  } catch {
+    return String(out).slice(0, SUBAGENT_TOOL_OUTPUT_MAX);
+  }
+}
+
+/**
+ * Build ONE `subagent_message` payload for a completed child turn: the child's
+ * assistant prose plus each tool it ran (name + args + bounded result), so a UI
+ * can render the child's transcript through the SAME row builder as the main
+ * agent. The meta `report_status` channel is dropped (it is not a visible tool).
+ * All content is bounded here so the bus + the UI's retained transcript stay
+ * light even with a large concurrent fleet.
+ */
+export function buildSubagentMessage(
+  base: SubagentLifecycleBase,
+  turn: number,
+  assistantText: string,
+  toolCalls: ReadonlyArray<ToolCall>,
+  toolResults: ReadonlyArray<ToolResult>,
+  now: number,
+): SubagentMessagePayload {
+  // Defensive against a caller that omits the newer args (older onTurn shape).
+  const calls = toolCalls ?? [];
+  const results = toolResults ?? [];
+  const tools: SubagentToolMessage[] = calls
+    .map((call, i) => ({ call, result: results[i] }))
+    .filter(({ call }) => call.name !== "report_status")
+    .map(({ call, result }) => ({
+      call: { name: call.name, arguments: call.arguments ?? {} },
+      result: result
+        ? {
+            success: result.success,
+            output: boundSubagentOutput(result.output),
+            ...(result.error
+              ? { error: result.error.slice(0, SUBAGENT_TOOL_OUTPUT_MAX) }
+              : {}),
+          }
+        : { success: false, output: null },
+    }));
+  const assistant = (assistantText ?? "").trim();
+  return {
+    agent_id: base.agent_id,
+    parent_scan_id: base.parent_scan_id,
+    turn,
+    ts: now,
+    ...(assistant
+      ? {
+          assistant:
+            assistant.length > SUBAGENT_ASSISTANT_MAX
+              ? `${assistant.slice(0, SUBAGENT_ASSISTANT_MAX)}…[truncated]`
+              : assistant,
+        }
+      : {}),
+    ...(tools.length > 0 ? { tools } : {}),
   };
 }
 
@@ -5481,10 +5561,17 @@ export class ToolExecutor {
         // and its per-turn tool calls, which is why the emission lives here and
         // not in the child's own tool handlers. `buildSubagentProgress` reads
         // only tool NAMES + the report_status line — never args or output.
-        onTurn: (turn, toolCalls) => {
+        onTurn: (turn, toolCalls, toolResults, assistantText) => {
           eventBus.emit(
             "subagent_progress",
             buildSubagentProgress(base, turn, maxTurns, toolCalls),
+          );
+          // The full per-turn transcript (assistant prose + tools) so the TUI
+          // can render a focused child identically to the main agent. Sibling
+          // of the coarse progress ping above; both are bounded.
+          eventBus.emit(
+            "subagent_message",
+            buildSubagentMessage(base, turn, assistantText, toolCalls, toolResults, Date.now()),
           );
         },
       });

@@ -1,4 +1,13 @@
-import type { ScanReport, AuditReport, ReviewReport, OutputFormat } from "@0sec/shared";
+import {
+  createAuditReportDocument,
+  createReviewReportDocument,
+  createScanReportDocument,
+  type AuditReport,
+  type OutputFormat,
+  type PresentationReportDocument,
+  type ReviewReport,
+  type ScanReport,
+} from "@0sec/shared";
 import { formatTerminal } from "./terminal.js";
 import { formatJson } from "./json.js";
 import { formatMarkdown } from "./markdown.js";
@@ -10,7 +19,42 @@ export type { ReplayData } from "./replay.js";
 export { formatTimeline, isTimelineFormat, TIMELINE_FORMATS } from "./timeline.js";
 export type { TimelineEntry, TimelineExport, TimelineFormat } from "./timeline.js";
 
-export function formatReport(report: ScanReport, format: OutputFormat): string {
+/**
+ * Terminal, browser, and machine-output adapters all begin with the same
+ * versioned report document. The individual formatter bytes remain unchanged.
+ */
+export function formatPresentationDocument(
+  document: PresentationReportDocument,
+  format: OutputFormat,
+): string {
+  if (format === "json" && document.documentType !== "scan-report") {
+    return JSON.stringify(document.report, null, 2);
+  }
+
+  const report: ScanReport = document.documentType === "scan-report"
+    ? document.report
+    : document.documentType === "audit-report"
+      ? {
+          target: `${document.report.package}@${document.report.version}`,
+          scanDepth: "deep",
+          startedAt: document.report.startedAt,
+          completedAt: document.report.completedAt,
+          durationMs: document.report.durationMs,
+          summary: document.report.summary,
+          findings: document.report.findings,
+          warnings: [],
+        }
+      : {
+          target: document.report.repo,
+          scanDepth: "deep",
+          startedAt: document.report.startedAt,
+          completedAt: document.report.completedAt,
+          durationMs: document.report.durationMs,
+          summary: document.report.summary,
+          findings: document.report.findings,
+          warnings: [],
+        };
+
   switch (format) {
     case "terminal":
       return formatTerminal(report);
@@ -24,9 +68,13 @@ export function formatReport(report: ScanReport, format: OutputFormat): string {
       return formatSarif(report);
     case "pdf":
       // PDF generation is async and writes directly to a file.
-      // Use generatePdfReport() instead of formatReport() for PDF output.
+      // Use generatePdfReport() instead of formatPresentationDocument() for PDF output.
       return "[PDF output requires generatePdfReport()]";
   }
+}
+
+export function formatReport(report: ScanReport, format: OutputFormat): string {
+  return formatPresentationDocument(createScanReportDocument(report), format);
 }
 
 /**
@@ -37,24 +85,7 @@ export function formatAuditReport(
   report: AuditReport,
   format: OutputFormat,
 ): string {
-  // Convert to ScanReport shape for formatters
-  const scanReport: ScanReport = {
-    target: `${report.package}@${report.version}`,
-    scanDepth: "deep",
-    startedAt: report.startedAt,
-    completedAt: report.completedAt,
-    durationMs: report.durationMs,
-    summary: report.summary,
-    findings: report.findings,
-    warnings: [],
-  };
-
-  if (format === "json") {
-    // For JSON, return the full audit report with extra fields
-    return JSON.stringify(report, null, 2);
-  }
-
-  return formatReport(scanReport, format);
+  return formatPresentationDocument(createAuditReportDocument(report), format);
 }
 
 /**
@@ -64,20 +95,5 @@ export function formatReviewReport(
   report: ReviewReport,
   format: OutputFormat,
 ): string {
-  const scanReport: ScanReport = {
-    target: report.repo,
-    scanDepth: "deep",
-    startedAt: report.startedAt,
-    completedAt: report.completedAt,
-    durationMs: report.durationMs,
-    summary: report.summary,
-    findings: report.findings,
-    warnings: [],
-  };
-
-  if (format === "json") {
-    return JSON.stringify(report, null, 2);
-  }
-
-  return formatReport(scanReport, format);
+  return formatPresentationDocument(createReviewReportDocument(report), format);
 }

@@ -35,6 +35,7 @@ import {
   ToolExecutor,
   sanitizeSubagentNote,
   buildSubagentProgress,
+  buildSubagentMessage,
 } from "./tools.js";
 import type { ToolContext } from "./types.js";
 
@@ -158,6 +159,84 @@ describe("buildSubagentProgress (Task 1 — payload shape & discipline)", () => 
     const p = buildSubagentProgress(base, 1, 10, []);
     expect(p.tool).toBeUndefined();
     expect(p.note).toBeUndefined();
+  });
+});
+
+describe("buildSubagentMessage (full per-turn transcript for the focus view)", () => {
+  const base = {
+    agent_id: "parent-scan-sub-abc",
+    parent_scan_id: "parent-scan",
+    task: "exploit the thing",
+    max_turns: 10,
+  };
+
+  it("carries the assistant prose + each tool (name, args, result) for the turn", () => {
+    const p = buildSubagentMessage(
+      base,
+      3,
+      "Found an IDOR on /orders.",
+      [{ name: "bash", arguments: { command: "curl -s https://x/orders/2" } }],
+      [{ success: true, output: "200 OK\n{\"id\":2}" }],
+      1000,
+    );
+    expect(p).toMatchObject({
+      agent_id: "parent-scan-sub-abc",
+      parent_scan_id: "parent-scan",
+      turn: 3,
+      ts: 1000,
+      assistant: "Found an IDOR on /orders.",
+    });
+    expect(p.tools).toHaveLength(1);
+    expect(p.tools?.[0]).toMatchObject({
+      call: { name: "bash", arguments: { command: "curl -s https://x/orders/2" } },
+      result: { success: true, output: "200 OK\n{\"id\":2}" },
+    });
+  });
+
+  it("drops the meta report_status channel from the visible tools", () => {
+    const p = buildSubagentMessage(
+      base,
+      2,
+      "",
+      [
+        { name: "report_status", arguments: { status: "enumerating" } },
+        { name: "bash", arguments: {} },
+      ],
+      [
+        { success: true, output: "ok" },
+        { success: true, output: "done" },
+      ],
+      5,
+    );
+    expect(p.tools).toHaveLength(1);
+    expect(p.tools?.[0].call.name).toBe("bash");
+    // report_status output must not leak into the transcript event.
+    expect(JSON.stringify(p)).not.toContain("enumerating");
+  });
+
+  it("bounds a huge tool output and huge assistant prose", () => {
+    const bigOut = "A".repeat(20_000);
+    const bigText = "B".repeat(20_000);
+    const p = buildSubagentMessage(
+      base,
+      1,
+      bigText,
+      [{ name: "bash", arguments: {} }],
+      [{ success: true, output: bigOut }],
+      1,
+    );
+    expect((p.assistant ?? "").length).toBeLessThan(bigText.length);
+    expect(p.assistant).toContain("…[truncated]");
+    const out = p.tools?.[0].result.output as string;
+    expect(out.length).toBeLessThan(bigOut.length);
+    expect(out).toContain("…[truncated]");
+  });
+
+  it("omits assistant + tools cleanly on an empty turn", () => {
+    const p = buildSubagentMessage(base, 1, "   ", [], [], 7);
+    expect(p.assistant).toBeUndefined();
+    expect(p.tools).toBeUndefined();
+    expect(p).toMatchObject({ agent_id: base.agent_id, turn: 1, ts: 7 });
   });
 });
 

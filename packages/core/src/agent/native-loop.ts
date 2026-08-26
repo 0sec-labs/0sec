@@ -324,7 +324,12 @@ export interface NativeAgentLoopOptions {
   config: NativeAgentConfig;
   runtime: NativeRuntime;
   db: osecDB | null;
-  onTurn?: (turn: number, toolCalls: ToolCall[], results: ToolResult[]) => void;
+  onTurn?: (
+    turn: number,
+    toolCalls: ToolCall[],
+    results: ToolResult[],
+    assistantText: string,
+  ) => void;
   /** Called only after a new finding has passed save_finding validation. */
   onFindingSaved?: (finding: Finding) => void | Promise<void>;
   onEvent?: (eventType: string, payload: Record<string, unknown>) => void;
@@ -2321,7 +2326,7 @@ export async function runNativeAgentLoop(
     }
 
     // Notify callback
-    onTurn?.(state.turnCount, toolCalls, toolResults);
+    onTurn?.(state.turnCount, toolCalls, toolResults, textContent);
 
     // Log tool calls
     if (db) {

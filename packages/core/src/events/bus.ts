@@ -31,6 +31,12 @@
  * e.g. `0SEC_EVENT_STEP_STARTED {"step":"recon","n":1}`.
  */
 import type { ScanEvent, ScanListener } from "../scanner.js";
+import type { ToolCall, ToolResult } from "../agent/types.js";
+import {
+  createPresentationEvent,
+  type PresentationEvent,
+  type PresentationSource,
+} from "@0sec/shared";
 
 // ── Event taxonomy ──────────────────────────────────────────────────────────
 //
@@ -542,6 +548,47 @@ export interface SubagentProgressPayload {
   [k: string]: unknown;
 }
 
+/** One tool the child ran this turn, carried so a UI can format it with the
+ * SAME `formatToolArgs`/`formatToolResult` the main transcript uses — giving a
+ * focused child's tool cards byte-identical rendering. `result.output` is
+ * bounded at emit time (see agent/tools.ts) so a many-child fleet's retained
+ * transcripts stay light. */
+export interface SubagentToolMessage {
+  call: ToolCall;
+  result: ToolResult;
+}
+
+/**
+ * A child subagent's per-turn MESSAGES — the assistant prose it wrote plus the
+ * tools it ran — so a UI can render a focused child's transcript IDENTICALLY to
+ * the main agent's (fed through the same `planTranscript`/`renderEntry`).
+ *
+ * Fires ONCE per completed child turn: turn-granular, so full messages appear
+ * per turn rather than token-by-token. This is deliberate — it keeps the
+ * child's content OFF the high-volume per-delta channel (which the parent UI
+ * still does not subscribe to), while giving the operator the real transcript
+ * instead of the coarse `subagent_progress` tool-name ping.
+ *
+ * ADDITIVE sibling of `subagent_progress` / `subagent_lifecycle`: existing
+ * subscribers are untouched. Content is bounded at emit time so neither the bus
+ * nor the UI's retained-transcript memory can be flooded by a large fleet.
+ */
+export interface SubagentMessagePayload {
+  /** Same opaque id as this child's `subagent_lifecycle`/`subagent_progress`. */
+  agent_id: string;
+  /** Scan id of the parent that called spawn_agent(s). */
+  parent_scan_id: string;
+  /** 1-based turn the child just completed (monotonic per `agent_id`). */
+  turn: number;
+  /** Epoch ms of the emit, for the transcript entry's relative timestamp. */
+  ts: number;
+  /** The child's assistant prose this turn, bounded. Absent when empty. */
+  assistant?: string;
+  /** Tools the child ran this turn (bounded results). Absent when none. */
+  tools?: SubagentToolMessage[];
+  [k: string]: unknown;
+}
+
 /**
  * A single tool-health event (a tool failed or was skipped, and why).
  * Emitted by the ToolExecutor's {@link ToolHealthTracker} sink so a UI /
@@ -669,6 +716,7 @@ export type osecEvent =
   | { type: "phase_completed"; payload: PhaseCompletedPayload }
   | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload }
   | { type: "subagent_progress"; payload: SubagentProgressPayload }
+  | { type: "subagent_message"; payload: SubagentMessagePayload }
   | { type: "tool_health"; payload: ToolHealthPayload }
   | { type: "todos"; payload: TodosPayload }
   | { type: "session_objective"; payload: SessionObjectivePayload }
@@ -692,6 +740,55 @@ export interface EventSink {
    * stderr which may itself be captured.
    */
   emit(type: EventType, payload: Record<string, unknown>): void;
+}
+
+/** Consumer of the renderer-neutral event envelope. */
+export interface PresentationEventSink {
+  emit(event: PresentationEvent): void;
+}
+
+export interface PresentationEventSinkOptions {
+  /** Producer identity carried by the canonical record. Defaults to core. */
+  source?: PresentationSource;
+  /** Injected for deterministic tests; defaults to the current UTC instant. */
+  now?: () => string;
+}
+
+/**
+ * Adapt the typed core bus to the versioned presentation stream without
+ * changing legacy cloud or ScanListener wire contracts.
+ */
+export function presentationEventSink(
+  sink: PresentationEventSink,
+  options: PresentationEventSinkOptions = {},
+): EventSink {
+  let sequence = 0;
+  const source = options.source ?? "core";
+  const now = options.now ?? (() => new Date().toISOString());
+
+  return {
+    emit(type, payload) {
+      const scanId = typeof payload["scan_id"] === "string"
+        ? payload["scan_id"]
+        : typeof payload["scanId"] === "string"
+          ? payload["scanId"]
+          : undefined;
+      const sessionId = typeof payload["session_id"] === "string"
+        ? payload["session_id"]
+        : typeof payload["sessionId"] === "string"
+          ? payload["sessionId"]
+          : undefined;
+      sink.emit(createPresentationEvent({
+        source,
+        sequence: ++sequence,
+        at: now(),
+        eventType: type,
+        payload,
+        ...(scanId ? { scanId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+      }));
+    },
+  };
 }
 
 // ── EventBus ────────────────────────────────────────────────────────────────

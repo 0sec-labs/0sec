@@ -1723,6 +1723,7 @@ export {
   cloudEventSink,
   maybeSubscribeCloudEventSink,
   isCloudEventSinkActive,
+  presentationEventSink,
 } from "./events/bus.js";
 // herdr pane-state sink. Reports only 0sec's coarse working/idle state and
 // non-identifying counters to the local herdr socket, so a 0sec pane stops
@@ -1959,7 +1960,15 @@ export type {
   CostBreakdownEntry,
   ScanCompletedPayload,
   SubagentLifecyclePayload,
+  SubagentMessagePayload,
+  SubagentToolMessage,
   SessionObjectivePayload,
+} from "./events/bus.js";
+export type {
+  EventSink,
+  EventType,
+  PresentationEventSink,
+  PresentationEventSinkOptions,
 } from "./events/bus.js";
 export { ScanCostLedger } from "./agent/cost-ledger.js";
 
