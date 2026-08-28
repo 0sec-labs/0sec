@@ -164,7 +164,7 @@ With special thanks to the startup and research programs supporting our work:
 ## Honest limitations
 
 - Kernel/IOKit findings stay hypotheses until a real oracle reproduces them (the `linux-kernel` profile is static).
-- Verification depth varies: `verificationSpec` covers file/diff predicates; the replay runner is local-shell only (Docker/QEMU are stubs).
+- Verification depth varies: `verificationSpec` covers file/diff predicates. The replay runner isolates PoCs in fresh, unprivileged, read-only Docker containers (no network by default; scoped HTTP opts into a bridge/custom network via `verify --docker-network` + `--scope`) and offline QEMU initramfs guests (`--qemu-kernel` / `--qemu-busybox`, or `0SEC_REPLAY_QEMU_*`) — but a finding still has to ship executable `pocSteps` for any of it to run; without them the finding is `skipped`.
 - The false-positive-moat layers are off by default and slice-dependent.
 - Benchmarks are single-model/config/trial; the 10/10 AI-suite is self-authored, not independent.
 - `fix` is narrow: source-only, single-file, ≤3 attempts.
