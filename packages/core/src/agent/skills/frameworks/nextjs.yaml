@@ -1,0 +1,82 @@
+id: nextjs-appsec
+name: "Next.js App-Router Security Review"
+description: "Server Actions, middleware auth bypass, route handlers, RSC data exposure, image-optimizer SSRF, and IDOR in Next.js 13+ App Router codebases"
+version: 1
+applicable_roles: [attack, audit, review]
+tags: [nextjs, react, ssr, rsc, server-actions, middleware, idor, ssrf, auth-bypass, framework]
+triggers:
+  - "next/server"
+  - "next/navigation"
+  - "\"use server\""
+  - "'use server'"
+  - "app/.*/route\\.(ts|js|tsx|jsx)"
+  - "middleware\\.(ts|js)"
+  - "getServerSideProps"
+  - "unstable_cache"
+  - "createServerAction"
+  - "next\\.config\\.(js|mjs|ts)"
+  - "NextRequest"
+  - "NextResponse"
+estimated_tokens: 950
+content: |
+  ## Next.js App-Router Security Review
+
+  Next.js blurs the client/server boundary. The recurring root cause is code
+  that *looks* server-only but is reachable, unauthenticated, from the network.
+  Review these boundaries in order.
+
+  ### 1. Server Actions (`"use server"`) — the #1 App-Router bug source
+  A `"use server"` function is a **public POST endpoint**. The `<form action={fn}>`
+  around it is decoration; anyone can invoke the action id directly with a crafted
+  request. Check every action for:
+  - **Missing authz inside the action.** Auth on the *page* that renders the form
+    does NOT protect the action. The action must independently call
+    `auth()`/`getSession()` and authorize the specific object it mutates.
+  - **IDOR:** action takes an `id`/`userId` from its args and updates it without
+    checking ownership → horizontal privilege escalation. This is the single most
+    common finding. Trace every action arg to the DB query.
+  - **Mass assignment:** action spreads `formData`/an object straight into a
+    Prisma/Drizzle `update({ data })` — attacker sets `role`, `isAdmin`, `credits`.
+  - Actions defined inline in a Client Component still compile to a server endpoint.
+
+  ### 2. Middleware (`middleware.ts`) auth bypass
+  Middleware is the usual "gate," and the usual bypass:
+  - **`matcher` gaps.** A matcher like `/dashboard/:path*` does NOT cover
+    `/dashboard` itself, and never covers `/api/*` unless listed. Enumerate the
+    matcher against the actual protected routes — missing prefixes = open routes.
+  - **Path normalization bypass:** trailing slashes, `%2e`, `//`, `/./`, and
+    `/api/../admin` may route past a naive `startsWith` check in middleware.
+  - Middleware runs on the Edge runtime — it cannot do a DB lookup for
+    fine-grained authz, so teams push authz "later" and forget. Verify the
+    downstream handler re-checks.
+  - Trusting `x-middleware-*` or forwarded headers the client can spoof.
+
+  ### 3. Route handlers (`app/**/route.ts`)
+  Each exported `GET/POST/...` is a raw API endpoint. Check: authz on every method
+  (not just POST), `params` used in DB queries without ownership checks (IDOR),
+  and dynamic segments (`[id]`) trusted verbatim.
+
+  ### 4. RSC / data-exposure through serialization
+  React Server Components serialize their props to the client. A server component
+  that fetches a full user/order row and passes it to a Client Component **ships
+  every field** — password hashes, tokens, internal flags — in the RSC payload,
+  even if the UI renders only a name. Grep for full-record fetches (`findUnique`,
+  `select *`) crossing into `"use client"` components. Inspect the `self.__next_f`
+  payload in the HTML to confirm.
+
+  ### 5. Image-optimizer & fetch SSRF
+  - `next.config` `images.domains`/`remotePatterns` set to `**` or broad wildcards
+    turns `/_next/image?url=` into an SSRF/open-proxy against internal hosts and
+    cloud metadata (`169.254.169.254`).
+  - Server-side `fetch()` of a user-supplied URL in an action/route handler.
+
+  ### 6. Misconfiguration
+  - Secrets prefixed `NEXT_PUBLIC_` are **shipped to the browser** — any
+    `NEXT_PUBLIC_*` holding a key/secret is an exposure finding.
+  - `next.config` `env` block leaking server secrets to the client bundle.
+  - Source maps or `x-powered-by` disclosing internals in production.
+
+  ### Confirming a finding
+  Reproduce the Server-Action IDOR by replaying the action POST (the
+  `Next-Action` header + form-encoded args) with victim ids and an attacker
+  session cookie. A 200 + mutated object is the proof; screenshot the response.

@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  <strong>Your open-source AI cybersecurity agent.</strong><br/>
-  It hacks, proves the problem, and writes the fix. Multi-model, multi-agent, but most importantly: yours.
+  <strong>An autonomous pentester you run yourself.</strong><br/>
+  It finds a real vulnerability, proves it with a working exploit, and writes the fix — from web apps and source code down to the kernel. Multi-model, multi-agent, and entirely yours.
 </p>
 
 <p align="center">
@@ -36,7 +36,14 @@ curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | ba
 0 --help
 ```
 
-Verified release binary (SHA-256 checked) → `~/.0sec/bin`. macOS (Apple Silicon) and Linux (x64/arm64); Windows: `0sec-windows-x64.exe` from the release; Docker: `ghcr.io/0sec-labs/0sec:latest`. Not on npm.
+Verified release binary (SHA-256 checked) → `~/.0sec/bin`. macOS (Apple Silicon) and Linux (x64/arm64); Windows: `0sec-windows-x64.exe` from the release; Docker: `ghcr.io/0sec-labs/0sec:latest`.
+
+Prefer a package manager? The npm launcher fetches the same verified binary on first run and installs the `0` command:
+
+```bash
+npx 0sec-cli --help              # one-shot, no install
+npm i -g 0sec-cli && 0 --help    # global install → `0` and `0sec`
+```
 
 ## Quick start
 

@@ -80,6 +80,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # id-token: write lets `npm publish --provenance` mint a signed
+      # provenance attestation for the launcher tarball.
+      id-token: write
+    # Surface the npm token as a job-level env var so the publish step can gate
+    # on it in an `if:` (secrets can't be referenced in `if:` directly). When
+    # NPM_TOKEN isn't configured the launcher-publish step is skipped and the
+    # GitHub Release still ships as before — publishing to npm is strictly
+    # additive and opt-in via the repo secret.
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -104,3 +114,28 @@ jobs:
               --notes "Automated multi-platform release. See CHANGELOG.md for changes." \
               --verify-tag
           fi
+
+      # ── npm launcher publish (opt-in) ────────────────────────────────────
+      # The launcher package (`0sec-cli`) downloads the just-uploaded release
+      # binary on first run, so it must publish AFTER the GitHub Release exists.
+      # Skipped entirely unless the NPM_TOKEN secret is set.
+      - name: Check out source (for the npm shim build)
+        if: ${{ env.NPM_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Set up Node with npm registry auth
+        if: ${{ env.NPM_TOKEN != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - name: Build and publish the npm launcher
+        if: ${{ env.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          node scripts/build-npm-shim.mjs
+          cd dist-npm
+          # --provenance ties the published tarball to this workflow run.
+          npm publish --access public --provenance

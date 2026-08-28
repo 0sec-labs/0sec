@@ -48,7 +48,7 @@
  *    judges.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 
 import { useTheme, type Theme } from "./theme-context.js";
@@ -72,7 +72,8 @@ import {
   type ModelMode,
   type ModelRow,
 } from "./model-layout.js";
-import { buildModelCatalog } from "./model-catalog.js";
+import { buildFullModelCatalog } from "./model-catalog.js";
+import { syncModelCatalog } from "./model-catalog-sync.js";
 import { providerStates } from "./provider-status.js";
 
 /** How many rows page-up and page-down move. */
@@ -150,7 +151,28 @@ export function ModelScreen({
   // keystroke would only make the filter slower.
   const states = useMemo(() => providerStates(env ?? process.env), [env]);
   const configured = useMemo(() => configuredProviderLabels(states), [states]);
-  const catalog = useMemo(() => buildModelCatalog(currentModel), [currentModel]);
+  // Refresh the Models.dev catalog cache in the background whenever the picker
+  // opens. Fire-and-forget: it never throws, no-ops when the cache is still
+  // fresh, and only affects the *next* open — this render reads whatever cache
+  // (or the bundled offline floor) is already on disk, so the list is instant.
+  // `catalogNonce` bumps once the refresh lands so an operator who leaves the
+  // picker open sees newly-synced models without reopening it.
+  const [catalogNonce, setCatalogNonce] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    void syncModelCatalog().then((updated) => {
+      if (alive && updated) setCatalogNonce((n) => n + 1);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const catalog = useMemo(
+    () => buildFullModelCatalog(currentModel),
+    // catalogNonce forces a re-read after a background sync writes the cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentModel, catalogNonce],
+  );
 
   // `buildModelRows` does all the domain work — grouping by provider, credential
   // lookup, credential-band ordering, floating the active model first, and the

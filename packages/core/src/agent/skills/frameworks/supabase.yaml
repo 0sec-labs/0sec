@@ -1,0 +1,83 @@
+id: supabase-appsec
+name: "Supabase / PostgREST Security Review"
+description: "Row-Level Security gaps, PostgREST exposure, RPC SECURITY DEFINER, storage bucket policies, realtime authorization, and multi-tenant isolation in Supabase apps"
+version: 1
+applicable_roles: [attack, audit, review]
+tags: [supabase, postgres, postgrest, rls, rpc, storage, realtime, tenant-isolation, idor, jwt, framework]
+triggers:
+  - "supabase"
+  - "createClient\\("
+  - "@supabase/"
+  - "SUPABASE_.*KEY"
+  - "service_role"
+  - "auth\\.uid\\(\\)"
+  - "ENABLE ROW LEVEL SECURITY"
+  - "CREATE POLICY"
+  - "SECURITY DEFINER"
+  - "\\.rpc\\("
+  - "\\.from\\(['\"]"
+  - "postgrest"
+estimated_tokens: 1000
+content: |
+  ## Supabase / PostgREST Security Review
+
+  With Supabase the database **is** the API: `supabase-js` talks straight to
+  PostgREST, so the client can issue any query the anon/authenticated JWT is
+  allowed. Almost all Supabase vulns reduce to "Row-Level Security is missing,
+  disabled, or wrong." Review in this order.
+
+  ### 1. RLS coverage — is it even on?
+  - For every table, confirm `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`. A table
+    with RLS **disabled** and a `GRANT` to `anon`/`authenticated` is fully
+    readable/writable by anyone with the (public) anon key. This is critical and
+    common.
+  - `FORCE ROW LEVEL SECURITY` matters for table owners; without it, some roles
+    bypass policies.
+  - A table with RLS enabled but **no policy** denies all — safe but often
+    "fixed" by adding a `USING (true)` policy, which re-opens it. Flag any
+    `USING (true)` / `WITH CHECK (true)`.
+
+  ### 2. Policy correctness — the tenant-isolation bug
+  - The canonical broken policy checks `SELECT` but not `INSERT/UPDATE/DELETE`,
+    or supplies `USING` (read) without `WITH CHECK` (write) — letting a user
+    write rows they can't read, or set `user_id`/`tenant_id` to a victim's.
+  - Ownership must bind to `auth.uid()` (or a tenant claim), e.g.
+    `USING (user_id = auth.uid())`. A policy comparing to a client-supplied
+    column, or to a JWT claim the client controls, is bypassable.
+  - Multi-tenant: verify `tenant_id`/`org_id` is enforced in the policy, not just
+    filtered in application code. App-layer `.eq('tenant_id', x)` is trivially
+    removed by calling PostgREST directly with a different `tenant_id`.
+
+  ### 3. RPC / `SECURITY DEFINER` functions
+  - `.rpc('fn')` calls a Postgres function. A `SECURITY DEFINER` function runs as
+    its **owner**, bypassing RLS entirely — it must re-authorize internally and
+    pin `search_path` (else search_path injection → privilege escalation).
+  - Functions that take an id/amount and mutate without an `auth.uid()` check are
+    IDOR/business-logic holes reachable by any authenticated user.
+
+  ### 4. Storage buckets
+  - A bucket set **public** exposes every object by URL (no auth). Check
+    `storage.buckets.public = true`.
+  - Storage RLS policies on `storage.objects` gate private buckets — verify path
+    ownership (e.g. name starts with `auth.uid()`), and that INSERT policies stop
+    a user overwriting another user's path.
+
+  ### 5. Realtime
+  Realtime broadcasts row changes; without RLS-aware channel authorization,
+  subscribers receive changes for rows they can't read. Confirm Realtime respects
+  RLS and that broadcast/presence channels are authorized.
+
+  ### 6. Key & JWT hygiene — check first, always
+  - **`service_role` key** bypasses RLS completely. If it appears in client code,
+    a `NEXT_PUBLIC_*`/`VITE_*` var, a mobile bundle, or anything shipped to the
+    browser → critical: full DB read/write. Grep aggressively.
+  - The **anon key is public by design** — it is not a secret; the security is
+    the RLS behind it. Do not report the anon key as a leak; report the missing
+    RLS it exposes.
+  - Custom JWT claims used in policies must be signed by Supabase, not settable by
+    the client.
+
+  ### Confirming a finding
+  Reproduce with the anon key and raw PostgREST: `GET /rest/v1/<table>?select=*`
+  and a cross-tenant `PATCH` with `Authorization: Bearer <anon-or-victim-jwt>`.
+  Rows returned/modified that belong to another tenant are the proof.

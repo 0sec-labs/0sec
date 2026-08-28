@@ -1,0 +1,85 @@
+id: python-web-appsec
+name: "Django & Flask Security Review"
+description: "ORM/raw-SQL injection, mass assignment, SSTI, auth-decorator gaps, CSRF, IDOR, insecure deserialization, and debug/secret misconfig in Django and Flask apps"
+version: 1
+applicable_roles: [attack, audit, review]
+tags: [django, flask, python, orm, ssti, mass-assignment, idor, csrf, deserialization, auth-bypass, framework]
+triggers:
+  - "from django"
+  - "import django"
+  - "from flask"
+  - "import flask"
+  - "render_template"
+  - "\\.objects\\.(filter|get|raw|extra)"
+  - "@login_required"
+  - "@app\\.route"
+  - "request\\.(GET|POST|args|form|json|data)"
+  - "SECRET_KEY"
+  - "DEBUG\\s*=\\s*True"
+  - "pickle\\.loads"
+  - "yaml\\.load\\("
+estimated_tokens: 1000
+content: |
+  ## Django & Flask Security Review
+
+  Both frameworks are safe on the happy path and dangerous exactly where the app
+  steps outside the ORM/template defaults. Hunt those deviations.
+
+  ### 1. SQL injection — where the ORM is escaped
+  - Django is parameterized *until* someone uses `.raw()`, `.extra()`,
+    `RawSQL()`, `cursor.execute(f"... {x}")`, or f-string/`%`/`.format()` inside
+    any of them. Also `extra(select=...)`, `order_by(request.GET[...])`, and
+    `annotate` with raw fragments.
+  - Flask/SQLAlchemy: `text("... " + x)`, `execute(f"...")`, string-built queries.
+  - Grep for `.raw(`, `.extra(`, `RawSQL`, `cursor.execute`, `text(`, and check
+    whether any argument derives from `request`.
+
+  ### 2. SSTI — Jinja2 and Django templates
+  - Flask/Jinja2: `render_template_string(user_input)` or a template path built
+    from user input → RCE via `{{ ''.__class__.__mro__[1].__subclasses__() }}`.
+    Any user-controlled string reaching Jinja rendering is critical.
+  - Django templates are sandboxed, but `mark_safe()`, `|safe`, `format_html`
+    with unescaped input, or `Template(user_input).render()` reintroduce
+    SSTI/XSS.
+
+  ### 3. Mass assignment / over-posting
+  - Django: `Model(**request.POST)`, `Model.objects.create(**data)`,
+    `setattr` loops, or a `ModelForm`/DRF serializer with `fields = '__all__'`
+    (or `exclude`) — attacker sets `is_staff`, `is_superuser`, `balance`,
+    `user_id`. `fields='__all__'` on a serializer is an automatic flag.
+  - Flask: `for k,v in request.json.items(): setattr(obj, k, v)`.
+
+  ### 4. Broken authz / IDOR
+  - `@login_required` proves *authentication*, not *authorization*. A view that
+    does `Model.objects.get(pk=request.GET['id'])` without filtering by the
+    current user is IDOR. The safe pattern is `get_object_or_404(Model, pk=id,
+    owner=request.user)` — flag any lookup by pk alone.
+  - Flask blueprints: missing `@login_required`/before_request on a route, or an
+    admin route guarded only by a hidden URL.
+  - DRF: `permission_classes` empty/`AllowAny` on a sensitive viewset; object
+    permissions not enforced (`get_object` without `check_object_permissions`).
+
+  ### 5. CSRF
+  - Django: `@csrf_exempt` on a state-changing view, or DRF `SessionAuthentication`
+    without CSRF, or `CSRF_TRUSTED_ORIGINS` too broad.
+  - Flask: forms/JSON endpoints with no CSRF protection (Flask has none by
+    default unless Flask-WTF/`CSRFProtect` is wired).
+
+  ### 6. Insecure deserialization / SSRF
+  - `pickle.loads`, `yaml.load` (without `SafeLoader`), `dill`, `jsonpickle`, or
+    `marshal` on request data → RCE.
+  - Django's signed cookie/session with a leaked `SECRET_KEY` → forgeable
+    sessions and, for `PickleSerializer`, RCE. A leaked `SECRET_KEY` is critical.
+  - `requests.get(request.GET['url'])` / URL-fetch views → SSRF to cloud metadata.
+
+  ### 7. Misconfiguration
+  - `DEBUG = True` in production → stack traces leak `SECRET_KEY`, env, and SQL
+    via the Werkzeug/Django debug page (Werkzeug console = RCE if PIN bypassed).
+  - `ALLOWED_HOSTS = ['*']`, permissive `CORS_ALLOW_ALL_ORIGINS`, `SECRET_KEY`
+    hard-coded/committed, `SESSION_COOKIE_SECURE`/`HttpOnly` off.
+
+  ### Confirming a finding
+  For IDOR, replay the request swapping the object id with a second account's
+  cookie — a 200 with the victim's data proves it. For SSTI, submit
+  `{{7*7}}`/`${7*7}` and confirm `49` in the response before escalating to an
+  RCE payload on an authorized target.

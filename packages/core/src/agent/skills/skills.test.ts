@@ -36,6 +36,10 @@ const EXPECTED_SKILL_IDS = [
   "llm-rag-poisoning",
   "llm-prompt-layer-write",
   "cardano-eutxo-validators",
+  // Framework-specific methodology packs (skills/frameworks/).
+  "nextjs-appsec",
+  "supabase-appsec",
+  "python-web-appsec",
 ];
 
 const VALID_ROLES = new Set(["attack", "audit", "review"]);
@@ -181,7 +185,7 @@ describe("Skill Registry", () => {
       expect(attackSkills.length).toBe(EXPECTED_SKILL_IDS.length);
 
       const reviewSkills = listSkillSummaries({ role: "review" }, registry);
-      expect(reviewSkills.length).toBe(5);
+      expect(reviewSkills.length).toBe(8);
       const reviewIds = reviewSkills.map((s) => s.id).sort();
       expect(reviewIds).toEqual([
         "blind-exploitation",
@@ -189,6 +193,10 @@ describe("Skill Registry", () => {
         "crypto-misuse",
         "graphql-introspection",
         "jwt-attacks",
+        // Framework-specific methodology packs are review-applicable.
+        "nextjs-appsec",
+        "python-web-appsec",
+        "supabase-appsec",
       ]);
     });
 

@@ -49,14 +49,21 @@ const LAUNCHER_TEMPLATE = readFileSync(
   "utf8",
 );
 const LAUNCHER = LAUNCHER_TEMPLATE.replace(/__0SEC_VERSION__/g, VERSION);
-writeFileSync(join(OUT, "bin", "0sec-cli.cjs"), LAUNCHER, { mode: 0o755 });
+writeFileSync(join(OUT, "bin", "0sec.cjs"), LAUNCHER, { mode: 0o755 });
 
 // ── package.json ────────────────────────────────────────────────────────────
+//
+// Expose the SAME command names the docs use everywhere — `0` (the primary
+// one-keystroke command) and `0sec` — alongside the historical `0sec-cli`.
+// The launcher re-execs `process.argv.slice(2)`, so the invoked name is
+// irrelevant; a single launcher.cjs backs all three symlinks. This is what
+// makes `npm i -g 0sec-cli && 0 scan …` land on the documented command
+// instead of a package-specific alias.
 const pkg = {
   name: "0sec-cli",
   version: VERSION,
-  description: "0sec-cli npm launcher — downloads and runs the standalone binary on first invocation.",
-  bin: { "0sec-cli": "bin/0sec-cli.cjs" },
+  description: "0sec npm launcher — downloads and runs the standalone binary on first invocation. Installs the `0` command.",
+  bin: { "0": "bin/0sec.cjs", "0sec": "bin/0sec.cjs", "0sec-cli": "bin/0sec.cjs" },
   files: ["bin", "README.md", "LICENSE"],
   homepage: "https://github.com/0sec-labs/0sec",
   repository: { type: "git", url: "git+https://github.com/0sec-labs/0sec.git" },
@@ -92,14 +99,15 @@ control + live scan view works even when invoked under Node via npx.
 
 ## Install paths
 
-The launcher works through any of these:
+The launcher works through any of these. A global install exposes the
+primary \`0\` command (and \`0sec\`), matching the rest of the docs:
 
 \`\`\`bash
 npx 0sec-cli scan --target https://example.com    # one-shot, no install
 bunx 0sec-cli scan --target https://example.com   # same, faster cold start
 
-npm i -g 0sec-cli   &&  0sec-cli scan ...       # global install
-bun add -g 0sec-cli &&  0sec-cli scan ...       # global install via bun
+npm i -g 0sec-cli   &&  0 scan --target https://example.com   # global install → \`0\`
+bun add -g 0sec-cli &&  0 scan --target https://example.com   # global install via bun
 \`\`\`
 
 If you'd rather skip the launcher entirely and install the binary
