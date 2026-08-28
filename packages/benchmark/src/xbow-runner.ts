@@ -27,8 +27,8 @@
 
 import { execSync, spawnSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { scan, agenticScan, eventBus } from "@0sec/core";
 import { tmpdir } from "node:os";
@@ -968,11 +968,22 @@ async function main() {
   }
 }
 
-// Only run main() when this file is executed directly (via `tsx xbow-runner.ts`).
-// When the runner is imported by a unit test we want to exercise pure
-// helpers like runChallengeRepeated without booting Docker or the agent.
-const isMain = import.meta.url === `file://${process.argv[1]}`;
-if (isMain) main()
+/**
+ * A bundled CLI gives imported modules the CLI entrypoint's `import.meta.url`.
+ * Restrict direct execution to this runner's own filename so importing helper
+ * exports can never start a benchmark or terminate the parent CLI.
+ */
+export function isXbowRunnerEntrypoint(
+  moduleUrl: string,
+  argvPath: string | undefined = process.argv[1],
+): boolean {
+  if (!argvPath || !/(?:^|[/\\])xbow-runner\.(?:[cm]?[jt]s)$/.test(argvPath)) {
+    return false;
+  }
+  return moduleUrl === pathToFileURL(resolve(argvPath)).href;
+}
+
+if (isXbowRunnerEntrypoint(import.meta.url)) main()
   .then(() => {
     // Force exit — async resources (DB connections, event loop timers from
     // the agentic scanner, browser instances) sometimes keep the process

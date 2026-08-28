@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import {
   runChallengeRepeated,
+  isXbowRunnerEntrypoint,
   type XbowChallenge,
   type XbowResult,
 } from "./xbow-runner.js";
@@ -48,6 +49,23 @@ function mkResult(
     ...overrides,
   };
 }
+
+describe("XBOW direct-execution guard", () => {
+  it("does not start the benchmark when bundled into the 0sec CLI entrypoint", () => {
+    expect(
+      isXbowRunnerEntrypoint(
+        "file:///tmp/0sec.js",
+        "/tmp/0sec.js",
+      ),
+    ).toBe(false);
+    expect(
+      isXbowRunnerEntrypoint(
+        "file:///tmp/xbow-runner.js",
+        "/tmp/xbow-runner.js",
+      ),
+    ).toBe(true);
+  });
+});
 
 describe("runChallengeRepeated (n=10 harness)", () => {
   it("aggregates 10 runs with 3 flags into a Wilson-CI summary", async () => {

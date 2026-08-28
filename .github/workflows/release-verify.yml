@@ -40,18 +40,20 @@ jobs:
           pnpm lint
           pnpm test:public
 
-      - name: Pack deterministic npm candidate
+      - name: Pack deterministic npm launcher candidate
         id: pack
         run: |
           set -euo pipefail
+          node scripts/build-npm-shim.mjs
+          cd dist-npm
           npm pack --json > /tmp/0sec-pack-first.json
           tarball=$(node -p "require('/tmp/0sec-pack-first.json')[0].filename")
           first=$(sha256sum "$tarball" | cut -d' ' -f1)
           npm pack --json > /tmp/0sec-pack-second.json
           second=$(sha256sum "$tarball" | cut -d' ' -f1)
           test "$first" = "$second"
-          printf '%s  %s\n' "$first" "$tarball" > release-checksums.txt
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          printf '%s  %s\n' "$first" "$tarball" > "$GITHUB_WORKSPACE/release-checksums.txt"
+          echo "tarball=$GITHUB_WORKSPACE/dist-npm/$tarball" >> "$GITHUB_OUTPUT"
           echo "sha256=$first" >> "$GITHUB_OUTPUT"
 
       - name: Clean-install package and test both binaries
@@ -62,8 +64,11 @@ jobs:
           prefix=$(mktemp -d)
           trap 'rm -rf "$prefix"' EXIT
           npm install --ignore-scripts --prefix "$prefix" "$TARBALL"
-          "$prefix/node_modules/.bin/0sec" --version
-          "$prefix/node_modules/.bin/0" --version
+          fake="$prefix/0sec"
+          printf '#!/bin/sh\necho 0sec-launcher-smoke\n' > "$fake"
+          chmod +x "$fake"
+          0SEC_BINARY="$fake" "$prefix/node_modules/.bin/0sec" --version | grep -qx "0sec-launcher-smoke"
+          0SEC_BINARY="$fake" "$prefix/node_modules/.bin/0" --version | grep -qx "0sec-launcher-smoke"
 
       - name: Generate package-root CycloneDX SBOM
         env:
@@ -84,12 +89,13 @@ jobs:
 
       - name: Verify npm publisher and publish dry run
         # NPM_TOKEN is intentionally absent from all earlier steps. This
-        # proves the refreshed repository secret can publish 0sec without
-        # mutating npm; actual publication stays a separately approved cut.
+        # proves the refreshed repository secret can publish the launcher
+        # without mutating npm; actual publication stays a separately approved cut.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          cd dist-npm
           npm whoami
           npm publish --dry-run --access public
 

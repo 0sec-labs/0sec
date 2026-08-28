@@ -73,8 +73,8 @@ import {
   mkdtempSync,
   rmSync,
 } from "node:fs";
-import { join, dirname, isAbsolute } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { agenticScan, CraftMemoryStore, preseedMemory, consolidateMemory, runEnsembleCraft, parseEnsembleModels, defaultCraftCandidateReviewer } from "@0sec/core";
@@ -1960,10 +1960,25 @@ async function main(): Promise<void> {
   }
 }
 
-// Only run main() when executed directly (via `tsx cybergym-runner.ts`), not
-// when imported by a unit test.
-const isMain = import.meta.url === `file://${process.argv[1]}`;
-if (isMain) {
+/**
+ * Bundlers coalesce imported modules into the CLI entrypoint, making a plain
+ * `import.meta.url === process.argv[1]` direct-execution check spuriously true.
+ * Require the executable path to be this runner's own filename as well.
+ */
+export function isCyberGymRunnerEntrypoint(
+  moduleUrl: string,
+  argvPath: string | undefined = process.argv[1],
+): boolean {
+  if (
+    !argvPath ||
+    !/(?:^|[/\\])cybergym-runner\.(?:[cm]?[jt]s)$/.test(argvPath)
+  ) {
+    return false;
+  }
+  return moduleUrl === pathToFileURL(resolve(argvPath)).href;
+}
+
+if (isCyberGymRunnerEntrypoint(import.meta.url)) {
   main()
     .then(() => process.exit(0))
     .catch((err) => {

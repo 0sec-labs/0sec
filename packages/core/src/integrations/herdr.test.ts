@@ -365,7 +365,7 @@ describe("event -> state mapping", () => {
 describe("single-flight queue", () => {
   it("collapses rapid state changes to the latest, never queueing a backlog", async () => {
     const harness = createFakeHerdr("manual");
-    const sink = makeSink(harness);
+    const sink = makeSink(harness, { attemptTimeoutMs: 1_000, retryTimeoutMs: 1_000 });
 
     // #1 goes on the wire immediately and stays in flight (manual mode).
     sink.emit("agent_turn_started", { turn: 1, max_turns: 10 });
@@ -397,7 +397,7 @@ describe("single-flight queue", () => {
 
   it("keeps at most one connection open at a time", async () => {
     const harness = createFakeHerdr("manual");
-    const sink = makeSink(harness);
+    const sink = makeSink(harness, { attemptTimeoutMs: 1_000, retryTimeoutMs: 1_000 });
 
     sink.emit("agent_turn_started", { turn: 1, max_turns: 10 });
     sink.emit("finding_ingested", {});
@@ -468,7 +468,7 @@ describe("fail-soft", () => {
 
   it("swallows a malformed response body", async () => {
     const harness = createFakeHerdr("manual");
-    const sink = makeSink(harness);
+    const sink = makeSink(harness, { attemptTimeoutMs: 1_000, retryTimeoutMs: 1_000 });
 
     sink.emit("agent_turn_started", { turn: 1, max_turns: 4 });
     await tick();
@@ -480,7 +480,7 @@ describe("fail-soft", () => {
 
   it("swallows a peer that closes without answering", async () => {
     const harness = createFakeHerdr("manual");
-    const sink = makeSink(harness);
+    const sink = makeSink(harness, { attemptTimeoutMs: 1_000, retryTimeoutMs: 1_000 });
 
     sink.emit("agent_turn_started", { turn: 1, max_turns: 4 });
     await tick();

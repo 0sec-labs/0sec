@@ -7,10 +7,10 @@
  * Run with: pnpm test:npm-shim  (root package.json)
  */
 
-import test from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +23,10 @@ execFileSync("node", [join(__dirname, "build-npm-shim.mjs")], { cwd: ROOT });
 
 const rootPkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 const pkg = JSON.parse(readFileSync(join(OUT, "package.json"), "utf8"));
+
+after(() => {
+  rmSync(OUT, { recursive: true, force: true });
+});
 
 test("package.json version tracks the root package", () => {
   assert.equal(pkg.version, rootPkg.version);

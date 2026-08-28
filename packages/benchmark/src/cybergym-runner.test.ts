@@ -42,6 +42,7 @@ import {
   cyberGymCraftDeadlineMs,
   cyberGymCraftGeneratorUid,
   cyberGymCostCeilingUsd,
+  isCyberGymRunnerEntrypoint,
   type CyberGymTask,
   type EngineRunner,
   type Submitter,
@@ -58,6 +59,23 @@ afterEach(() => {
       /* best-effort cleanup */
     }
   }
+});
+
+describe("CyberGym direct-execution guard", () => {
+  it("does not start the benchmark when bundled into the 0sec CLI entrypoint", () => {
+    expect(
+      isCyberGymRunnerEntrypoint(
+        "file:///tmp/0sec.js",
+        "/tmp/0sec.js",
+      ),
+    ).toBe(false);
+    expect(
+      isCyberGymRunnerEntrypoint(
+        "file:///tmp/cybergym-runner.js",
+        "/tmp/cybergym-runner.js",
+      ),
+    ).toBe(true);
+  });
 });
 
 /** Build a pre-generated task dir on disk (no tarball — repo-vul/ already unpacked). */

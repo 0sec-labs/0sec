@@ -74,7 +74,7 @@ beforeEach(async () => {
     "-m",
     "crypto: algif_aead - fix use-after-free in recvmsg\n\nFixes: 0123456789ab (\"crypto: algif_aead - init\")",
   ]);
-});
+}, 30_000);
 
 afterEach(() => {
   vi.clearAllMocks();
