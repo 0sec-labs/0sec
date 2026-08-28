@@ -2013,12 +2013,11 @@ export type {
   SourceFixTestResult,
 } from "./fix/index.js";
 
-// Deterministic replay runner skeleton (0sec#193). Consumes a finding's
-// `pocSteps`, sequentially executes them via a pluggable runner (local
-// shell today; docker/qemu interfaces only), and emits a canonical
-// `VerificationResult` payload matching `@0sec/shared/verification`.
-// Cloud's worker-controller can call this directly in-process without
-// shelling out to the CLI.
+// Deterministic replay runner. Consumes a finding's `pocSteps`, sequentially
+// executes them through local, Docker, or QEMU isolation, and emits a canonical
+// `VerificationResult` payload matching `@0sec/shared/verification`. Cloud's
+// worker-controller can call this directly in-process without shelling out to
+// the CLI.
 //
 // Names that would collide with existing exports (StepResult,
 // DEFAULT_STEP_TIMEOUT_MS) are re-exported under prefixed aliases so
@@ -2028,7 +2027,6 @@ export {
   LocalShellRunner,
   DockerRunner,
   QemuRunner,
-  NotImplementedError as VerifyNotImplementedError,
   argvForStep as verifyArgvForStep,
   assertionFromStepExpect,
   evaluateAssertion,
@@ -2041,13 +2039,13 @@ export {
 export type {
   AssertionInput,
   DeterministicReplayOutcome,
+  DockerRunnerOptions,
+  QemuRunnerOptions,
   ReplayRunner,
   ReplayRunnerContext,
   RunDeterministicReplayOpts,
   StepResult as VerifyStepResult,
 } from "./verify/index.js";
-
-// HackerOne hacker-API integration (read-only). `0sec h1 …` CLI lives
 // in the cli package; this surface is the programmatic entry point.
 export {
   loadH1Credentials,

@@ -1,30 +1,25 @@
 /**
- * 0sec#193 — Deterministic replay runner skeleton.
+ * 0sec#193 — Deterministic replay runner.
  *
- * This file is the SHIPPING execution path for the local-shell variant of the
- * verifier plus the contracts for the docker/qemu sandbox variants. It
- * consumes a finding's `pocSteps`, sequentially executes each one, evaluates
- * the declared assertions, and emits a `VerificationResult` matching the
- * canonical schema in `@0sec/shared/verification`.
+ * It consumes a finding's `pocSteps`, executes each through a selected local,
+ * Docker, or QEMU runner, evaluates declared assertions, and emits a
+ * `VerificationResult` matching the canonical schema in
+ * `@0sec/shared/verification`.
  *
  * Design notes:
  *
- *   • The runner is split into a pure orchestrator (`runDeterministicReplay`)
- *     and a pluggable `ReplayRunner` interface that knows how to execute a
- *     single step. The orchestrator owns the run-directory lifecycle,
- *     assertion evaluation, timing, and result assembly; the runner owns
- *     the *how* (spawn a subprocess locally vs. docker exec vs. qemu agent
- *     channel). The interface is the seam for issue-#193's follow-up
- *     sandbox-isolation work.
+ *   • The pure orchestrator (`runDeterministicReplay`) owns run-directory
+ *     lifecycle, assertion evaluation, timing, and result assembly; a narrow
+ *     `ReplayRunner` owns one step's execution boundary.
  *
- *   • `LocalShellRunner` is the only impl shipped today. It spawns each
- *     `shell`-action step under `/bin/sh -c` with the run-directory as
- *     cwd, applies a per-step wallclock timeout, and caps stdout/stderr
- *     captures at `STREAM_EXCERPT_BYTES` (8 KiB by default per #193 spec).
+ *   • `LocalShellRunner` executes shell steps under `/bin/sh -c` in the
+ *     run-directory with a per-step timeout and bounded captures.
  *
- *   • `DockerRunner` and `QemuRunner` are exported as interfaces with
- *     NotImplemented stubs. Call sites can already type against them; the
- *     concrete impls land in the sandbox-isolation slice.
+ *   • `DockerRunner` creates a fresh unprivileged, read-only container per
+ *     step. It defaults to no network; scoped declarative HTTP steps can opt
+ *     into a bridge or named network. `QemuRunner` boots an initramfs-only,
+ *     offline guest for shell PoCs when the operator supplies a kernel and
+ *     static BusyBox binary.
  *
  *   • Assertions are derived from each step's `PocStepExpect` predicate
  *     (we map `body-contains` → `string_in_output`, `exit-zero` →
@@ -37,18 +32,21 @@
  *     full payload lives on disk for forensic re-fetching.
  */
 
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
   writeFileSync,
   existsSync,
   statSync,
+  readFileSync,
+  rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
 import { arch as nodeArch, platform as nodePlatform } from "node:process";
+import { gzipSync } from "node:zlib";
 import type { Finding, PocStep, PocStepExpect } from "@0sec/shared";
 import {
   VERSION,
@@ -58,6 +56,7 @@ import {
   type VerificationCommand,
   type VerificationResult,
 } from "@0sec/shared";
+import type { ScopePolicy } from "../scope/scope.js";
 import { allowlistedChildEnv } from "../agent/sanitized-env.js";
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -82,6 +81,17 @@ export const DEFAULT_STEP_TIMEOUT_MS = 30_000;
 
 /** Maximum total bytes of stream payload captured per step (full, not excerpt). */
 export const MAX_STREAM_CAPTURE_BYTES = 1 * 1024 * 1024;
+interface PromiseResolvers<T> {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+}
+
+// Node 24 is the published runtime floor. Keep the ES2022 compiler target for
+// emitted syntax while supplying the newer standard-library declaration here.
+const promiseWithResolvers = Promise as typeof Promise & {
+  withResolvers<T>(): PromiseResolvers<T>;
+};
 
 // ── Runner interface ────────────────────────────────────────────────────────
 
@@ -104,6 +114,8 @@ export interface StepResult {
   /** Optional error message when the runner itself failed to even launch
    *  the step (e.g. no shell binary). Distinct from a non-zero exit. */
   launchError?: string;
+  /** HTTP status emitted by an HTTP-aware sandbox runner. */
+  httpStatus?: number;
 }
 
 export interface ReplayRunnerContext {
@@ -111,6 +123,11 @@ export interface ReplayRunnerContext {
   runDir: string;
   /** Per-step timeout the caller configured. */
   stepTimeoutMs: number;
+  /**
+   * Engagement scope. A Docker runner refuses networked replay without this
+   * policy and checks every declarative HTTP target before container launch.
+   */
+  scope?: ScopePolicy;
 }
 
 /**
@@ -277,35 +294,811 @@ function resolveStepCwd(cwd: string, runDir: string): string {
   return resolved;
 }
 
-// ── DockerRunner / QemuRunner stubs ─────────────────────────────────────────
+// ── DockerRunner ────────────────────────────────────────────────────────────
 //
-// These exist so cloud's worker-controller can already type against them.
-// The first call lands the SandboxIsolation slice; until then,
-// constructing one is fine, calling `exec()` is a hard NotImplemented.
+// Each executable step gets a fresh, unprivileged, read-only container. The
+// run directory is the only host bind mount, and is shared deliberately so
+// sequential PoC steps can exchange evidence. Images are never pulled by the
+// runner: an operator must provision a trusted local image before execution.
+// Network is disabled by default. The only networked mode is an explicit,
+// scope-checked declarative HTTP action; arbitrary shell/container commands
+// never receive a network-capable sandbox.
+
+export const DEFAULT_DOCKER_SHELL_IMAGE = "alpine:3.20";
+export const DEFAULT_DOCKER_HTTP_IMAGE = "curlimages/curl:8.12.1";
+
+const DOCKER_HTTP_STATUS_MARKER = "\n__0SEC_HTTP_STATUS__:";
+const CONTAINER_ID_RE = /^[a-f0-9]{12,64}$/i;
+const DOCKER_NETWORK_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+export interface DockerRunnerOptions {
+  /** Docker CLI binary. Injectable for a compatible daemon or integration test. */
+  dockerBinary?: string;
+  /** Local image used for shell steps. Must contain /bin/sh. */
+  shellImage?: string;
+  /** Local image used for declarative HTTP steps. Must contain curl. */
+  httpImage?: string;
+  /**
+   * Docker network name. Defaults to "none". "host" is intentionally refused;
+   * bridge/custom networks require a scope policy and only allow HTTP actions.
+   */
+  network?: string;
+  /** Hard memory cap applied to every container. */
+  memoryMb?: number;
+  /** Hard process cap applied to every container. */
+  pidsLimit?: number;
+  /** CPU quota applied to every container. */
+  cpus?: number;
+}
+
+interface DockerStepCommand {
+  image: string;
+  /** Docker run options which must appear before the image reference. */
+  dockerOptions?: string[];
+  /** Container argv, always placed after the image reference. */
+  command: string[];
+  parseHttpStatus: boolean;
+}
 
 export class DockerRunner implements ReplayRunner {
   readonly kind: RunnerKind = "docker";
-  async exec(_step: PocStep, _ctx: ReplayRunnerContext): Promise<StepResult> {
-    throw new NotImplementedError(
-      "DockerRunner.exec is not implemented yet; see 0sec#193 sandbox-isolation follow-up",
-    );
+  private readonly dockerBinary: string;
+  private readonly shellImage: string;
+  private readonly httpImage: string;
+  private readonly network: string;
+  private readonly memoryMb: number;
+  private readonly pidsLimit: number;
+  private readonly cpus: number;
+
+  constructor(options: DockerRunnerOptions = {}) {
+    this.dockerBinary = options.dockerBinary ?? "docker";
+    this.shellImage = options.shellImage ?? DEFAULT_DOCKER_SHELL_IMAGE;
+    this.httpImage = options.httpImage ?? DEFAULT_DOCKER_HTTP_IMAGE;
+    this.network = options.network ?? "none";
+    this.memoryMb = options.memoryMb ?? 256;
+    this.pidsLimit = options.pidsLimit ?? 128;
+    this.cpus = options.cpus ?? 1;
+
+    if (
+      !this.dockerBinary ||
+      !this.shellImage ||
+      !this.httpImage ||
+      !Number.isInteger(this.memoryMb) ||
+      this.memoryMb < 16 ||
+      !Number.isInteger(this.pidsLimit) ||
+      this.pidsLimit < 1 ||
+      !Number.isFinite(this.cpus) ||
+      this.cpus <= 0
+    ) {
+      throw new Error("invalid DockerRunner configuration");
+    }
+    if (
+      this.network !== "none" &&
+      this.network !== "bridge" &&
+      (!DOCKER_NETWORK_RE.test(this.network) || this.network === "host")
+    ) {
+      throw new Error(
+        "DockerRunner network must be none, bridge, or a simple custom network name (host is refused)",
+      );
+    }
   }
+
+  async exec(step: PocStep, ctx: ReplayRunnerContext): Promise<StepResult> {
+    const startedAt = Date.now();
+    const preflightError = this.networkPreflight(step, ctx.scope);
+    if (preflightError) {
+      return failedStep(step, startedAt, preflightError);
+    }
+
+    const command = this.commandForStep(step, ctx.stepTimeoutMs);
+    if (typeof command === "string") {
+      return failedStep(step, startedAt, command);
+    }
+
+    const safeStepId =
+      step.id.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 64) || "step";
+    const cidPath = join(
+      ctx.runDir,
+      `.0sec-docker-${safeStepId}-${randomUUID()}.cid`,
+    );
+    const args = this.dockerRunArgs(command, ctx.runDir, cidPath);
+    const result = await runDockerCommand({
+      dockerBinary: this.dockerBinary,
+      args,
+      runDir: ctx.runDir,
+      cidPath,
+      stepTimeoutMs: ctx.stepTimeoutMs,
+    });
+
+    if (!command.parseHttpStatus) return result;
+    const parsed = parseDockerHttpStatus(result.stdoutFull);
+    return {
+      ...result,
+      stdoutFull: parsed.stdout,
+      ...(parsed.httpStatus === undefined ? {} : { httpStatus: parsed.httpStatus }),
+    };
+  }
+
+  private networkPreflight(step: PocStep, scope: ScopePolicy | undefined): string | undefined {
+    if (this.network === "none") return undefined;
+    if (step.action.type !== "http") {
+      return (
+        "networked Docker replay only permits declarative HTTP steps; " +
+        "shell and docker actions always run with network=none"
+      );
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(step.action.url);
+    } catch {
+      return `invalid HTTP replay URL: ${step.action.url}`;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return `Docker HTTP replay only permits http(s) URLs, got ${parsed.protocol}`;
+    }
+    if (!scope) {
+      return "networked Docker replay requires an explicit engagement scope";
+    }
+    const scopeMatch = scope.match(step.action.url);
+    return scopeMatch.allowed
+      ? undefined
+      : `Docker replay refused ${step.action.url}: ${scopeMatch.reason}`;
+  }
+
+  private commandForStep(step: PocStep, stepTimeoutMs: number): DockerStepCommand | string {
+    switch (step.action.type) {
+      case "shell":
+        return {
+          image: this.shellImage,
+          command: ["/bin/sh", "-lc", step.action.cmd],
+          parseHttpStatus: false,
+        };
+      case "docker":
+        if (!step.action.image.trim()) return "Docker action is missing an image";
+        return {
+          image: step.action.image,
+          // These arguments come after the image and therefore cannot alter
+          // Docker's hardening flags (for example, they cannot add --privileged).
+          command: step.action.args,
+          parseHttpStatus: false,
+        };
+      case "http": {
+        const method = step.action.method.trim().toUpperCase();
+        if (!/^[A-Z]+$/.test(method)) {
+          return `invalid HTTP method for Docker replay: ${step.action.method}`;
+        }
+        const headers = Object.entries(step.action.headers ?? {});
+        if (
+          headers.some(
+            ([name, value]) =>
+              !name.trim() ||
+              /[\r\n]/.test(name) ||
+              /[\r\n]/.test(value),
+          )
+        ) {
+          return "HTTP replay headers must be non-empty single-line values";
+        }
+        const command = [
+          "--silent",
+          "--show-error",
+          "--request",
+          method,
+          "--max-time",
+          String(Math.max(1, Math.ceil(stepTimeoutMs / 1000))),
+          "--output",
+          "-",
+          "--write-out",
+          `${DOCKER_HTTP_STATUS_MARKER}%{http_code}\n`,
+        ];
+        for (const [name, value] of headers) {
+          command.push("--header", `${name}: ${value}`);
+        }
+        if (step.action.body !== undefined) {
+          command.push("--data-binary", step.action.body);
+        }
+        command.push(step.action.url);
+        return {
+          image: this.httpImage,
+          dockerOptions: ["--entrypoint", "curl"],
+          command,
+          parseHttpStatus: true,
+        };
+      }
+      case "note":
+        return `DockerRunner only executes shell, docker, and http steps; got '${step.action.type}'`;
+      default: {
+        const _exhaustive: never = step.action;
+        void _exhaustive;
+        return "unsupported Docker replay action";
+      }
+    }
+  }
+
+  private dockerRunArgs(
+    command: DockerStepCommand,
+    runDir: string,
+    cidPath: string,
+  ): string[] {
+    const args = [
+      "run",
+      "--rm",
+      "--pull",
+      "never",
+      "--init",
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges:true",
+      "--pids-limit",
+      String(this.pidsLimit),
+      "--memory",
+      `${this.memoryMb}m`,
+      "--cpus",
+      String(this.cpus),
+      "--network",
+      this.network,
+      "--workdir",
+      "/work",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,size=64m",
+      "--mount",
+      `type=bind,src=${resolve(runDir)},dst=/work`,
+      "--cidfile",
+      cidPath,
+      ...(command.dockerOptions ?? []),
+    ];
+    if (typeof process.getuid === "function" && typeof process.getgid === "function") {
+      args.push("--user", `${process.getuid()}:${process.getgid()}`);
+    }
+    args.push(command.image, ...command.command);
+    return args;
+  }
+}
+
+
+function failedStep(step: PocStep, startedAt: number, launchError: string): StepResult {
+  return {
+    argv: argvForStep(step),
+    exitCode: null,
+    stdoutFull: "",
+    stderrFull: "",
+    durationMs: Date.now() - startedAt,
+    launchError,
+  };
+}
+
+function parseDockerHttpStatus(stdout: string): {
+  stdout: string;
+  httpStatus?: number;
+} {
+  const markerIndex = stdout.lastIndexOf(DOCKER_HTTP_STATUS_MARKER);
+  if (markerIndex === -1) return { stdout };
+  const status = /^(\d{3})\r?\n?$/.exec(
+    stdout.slice(markerIndex + DOCKER_HTTP_STATUS_MARKER.length),
+  );
+  if (!status) return { stdout };
+  return {
+    stdout: stdout.slice(0, markerIndex),
+    httpStatus: Number(status[1]),
+  };
+}
+
+async function runDockerCommand(args: {
+  dockerBinary: string;
+  args: string[];
+  runDir: string;
+  cidPath: string;
+  stepTimeoutMs: number;
+}): Promise<StepResult> {
+  const startedAt = Date.now();
+  const { promise, resolve: resolveResult } =
+    promiseWithResolvers.withResolvers<StepResult>();
+  let timer: NodeJS.Timeout | undefined;
+  const argv = [args.dockerBinary, ...args.args];
+  let stdout = "";
+  let stderr = "";
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let timedOut = false;
+  let settled = false;
+  let timeoutCleanup: Promise<void> | undefined;
+  let child: ChildProcess;
+
+  const finish = async (exitCode: number | null, launchError?: string): Promise<void> => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (timeoutCleanup) await timeoutCleanup;
+    const containerStarted = existsSync(args.cidPath);
+    rmSync(args.cidPath, { force: true });
+    const startError =
+      launchError ??
+      (exitCode !== 0 && !timedOut && !containerStarted
+        ? `Docker sandbox did not start (exit ${exitCode ?? "unknown"}): ${excerpt(stderr, 512)}`
+        : undefined);
+    resolveResult({
+      argv,
+      exitCode,
+      stdoutFull: stdout,
+      stderrFull: stderr,
+      durationMs: Date.now() - startedAt,
+      ...(timedOut ? { timedOut: true } : {}),
+      ...(startError ? { launchError: startError } : {}),
+    });
+  };
+
+  try {
+    child = spawn(args.dockerBinary, args.args, {
+      cwd: args.runDir,
+      env: allowlistedChildEnv({ "0SEC_VERIFY": "1" }),
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: nodePlatform !== "win32",
+    });
+  } catch (err) {
+    void finish(null, err instanceof Error ? err.message : String(err));
+    return promise;
+  }
+
+  timer = setTimeout(() => {
+    timedOut = true;
+    timeoutCleanup = stopDockerContainer(
+      args.dockerBinary,
+      args.cidPath,
+      args.runDir,
+    ).finally(() => killProcessGroup(child));
+  }, args.stepTimeoutMs);
+
+  child.stdout?.on("data", (chunk: Buffer) => {
+    if (stdoutBytes >= MAX_STREAM_CAPTURE_BYTES) return;
+    const remaining = MAX_STREAM_CAPTURE_BYTES - stdoutBytes;
+    const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+    stdout += slice.toString("utf8");
+    stdoutBytes += slice.length;
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_STREAM_CAPTURE_BYTES) return;
+    const remaining = MAX_STREAM_CAPTURE_BYTES - stderrBytes;
+    const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+    stderr += slice.toString("utf8");
+    stderrBytes += slice.length;
+  });
+  child.on("error", (err) => {
+    void finish(null, err.message);
+  });
+  child.on("close", (code) => {
+    void finish(typeof code === "number" ? code : null);
+  });
+  return promise;
+}
+
+async function stopDockerContainer(
+  dockerBinary: string,
+  cidPath: string,
+  runDir: string,
+): Promise<void> {
+  let containerId: string | undefined;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const candidate = readFileSync(cidPath, "utf8").trim();
+      if (CONTAINER_ID_RE.test(candidate)) {
+        containerId = candidate;
+        break;
+      }
+    } catch {
+      // The Docker client may still be pulling or creating the container.
+    }
+    const { promise, resolve } = promiseWithResolvers.withResolvers<void>();
+    setTimeout(resolve, 25);
+    await promise;
+  }
+  if (!containerId) return;
+  await runDockerControl(dockerBinary, ["kill", containerId], runDir);
+  await runDockerControl(dockerBinary, ["rm", "--force", containerId], runDir);
+}
+
+function runDockerControl(
+  dockerBinary: string,
+  args: string[],
+  cwd: string,
+): Promise<void> {
+  const { promise, resolve } = promiseWithResolvers.withResolvers<void>();
+  let child: ChildProcess;
+  try {
+    child = spawn(dockerBinary, args, {
+      cwd,
+      env: allowlistedChildEnv({ "0SEC_VERIFY": "1" }),
+      stdio: "ignore",
+      detached: nodePlatform !== "win32",
+    });
+  } catch {
+    resolve();
+    return promise;
+  }
+  const timer = setTimeout(() => {
+    killProcessGroup(child);
+  }, 5_000);
+  child.once("error", () => {
+    clearTimeout(timer);
+    resolve();
+  });
+  child.once("close", () => {
+    clearTimeout(timer);
+    resolve();
+  });
+  return promise;
+}
+
+function killProcessGroup(child: ChildProcess): void {
+  try {
+    if (nodePlatform !== "win32" && child.pid) {
+      process.kill(-child.pid, "SIGKILL");
+    } else {
+      child.kill("SIGKILL");
+    }
+  } catch {
+    // The process may have completed between timeout and cleanup.
+  }
+}
+
+// ── QemuRunner ──────────────────────────────────────────────────────────────
+//
+// QEMU replays shell PoCs in a fresh initramfs-only guest. The guest has no
+// disk, no NIC, and only one writable 9p share: the replay run directory. That
+// share carries the step script and evidence back to the host; the QEMU process
+// itself runs as the invoking user, never as root.
+
+export interface QemuRunnerOptions {
+  /** QEMU system emulator. Defaults to the native architecture's emulator. */
+  qemuBinary?: string;
+  /** Kernel image for the disposable guest. */
+  kernelImage?: string;
+  /** Static BusyBox binary used to construct the initramfs. */
+  busyboxPath?: string;
+  /** Guest RAM limit. */
+  memoryMb?: number;
+  /** Guest vCPU count. */
+  cpus?: number;
+}
+
+interface QemuProcessResult {
+  exitCode: number | null;
+  stdoutFull: string;
+  stderrFull: string;
+  durationMs: number;
+  timedOut?: boolean;
+  launchError?: string;
+}
+
+interface CpioEntry {
+  name: string;
+  mode: number;
+  body: Buffer;
 }
 
 export class QemuRunner implements ReplayRunner {
   readonly kind: RunnerKind = "qemu";
-  async exec(_step: PocStep, _ctx: ReplayRunnerContext): Promise<StepResult> {
-    throw new NotImplementedError(
-      "QemuRunner.exec is not implemented yet; see 0sec#193 sandbox-isolation follow-up",
-    );
+  private readonly qemuBinary: string;
+  private readonly kernelImage: string;
+  private readonly busyboxPath: string;
+  private readonly memoryMb: number;
+  private readonly cpus: number;
+
+  constructor(options: QemuRunnerOptions = {}) {
+    this.qemuBinary =
+      options.qemuBinary ??
+      process.env["0SEC_REPLAY_QEMU_BINARY"]?.trim() ??
+      (nodeArch === "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64");
+    this.kernelImage =
+      options.kernelImage ?? process.env["0SEC_REPLAY_QEMU_KERNEL"]?.trim() ?? "";
+    this.busyboxPath =
+      options.busyboxPath ?? process.env["0SEC_REPLAY_QEMU_BUSYBOX"]?.trim() ?? "";
+    this.memoryMb = options.memoryMb ?? 512;
+    this.cpus = options.cpus ?? 1;
+
+    if (
+      !this.qemuBinary ||
+      !Number.isInteger(this.memoryMb) ||
+      this.memoryMb < 128 ||
+      !Number.isInteger(this.cpus) ||
+      this.cpus < 1
+    ) {
+      throw new Error("invalid QemuRunner configuration");
+    }
+  }
+
+  async exec(step: PocStep, ctx: ReplayRunnerContext): Promise<StepResult> {
+    const startedAt = Date.now();
+    if (!this.kernelImage || !this.busyboxPath) {
+      return failedStep(
+        step,
+        startedAt,
+        "QEMU replay requires kernelImage and busyboxPath (or 0SEC_REPLAY_QEMU_KERNEL and 0SEC_REPLAY_QEMU_BUSYBOX)",
+      );
+    }
+    if (!existsSync(this.kernelImage) || !statSync(this.kernelImage).isFile()) {
+      return failedStep(step, startedAt, `QEMU kernel image is not a file: ${this.kernelImage}`);
+    }
+    if (!existsSync(this.busyboxPath) || !statSync(this.busyboxPath).isFile()) {
+      return failedStep(step, startedAt, `QEMU BusyBox binary is not a file: ${this.busyboxPath}`);
+    }
+    if (step.action.type !== "shell") {
+      return failedStep(
+        step,
+        startedAt,
+        `QemuRunner only executes shell steps in an offline guest; got '${step.action.type}'`,
+      );
+    }
+
+    const guestCwd = qemuGuestWorkingDirectory(step.action.cwd);
+    if (!guestCwd) {
+      return failedStep(step, startedAt, "QEMU replay refuses an absolute step cwd");
+    }
+    const safeStepId =
+      step.id.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 64) || "step";
+    const workspaceName = `.0sec-qemu-${safeStepId}-${randomUUID()}`;
+    const workspace = join(ctx.runDir, workspaceName);
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, "step.sh"), step.action.cmd, "utf8");
+
+    const initrdPath = buildQemuInitramfs({
+      runDir: ctx.runDir,
+      busyboxPath: this.busyboxPath,
+      workspaceName,
+      guestCwd,
+    });
+    const args = this.qemuArgs(ctx.runDir, initrdPath);
+    const qemu = await runQemuCommand({
+      qemuBinary: this.qemuBinary,
+      args,
+      runDir: ctx.runDir,
+      stepTimeoutMs: ctx.stepTimeoutMs,
+    });
+    const stdout = readQemuCapture(join(workspace, "stdout.log"));
+    const guestStderr = readQemuCapture(join(workspace, "stderr.log"));
+    const guestExitCode = readQemuExitCode(join(workspace, "exit-code"));
+    const serial = qemu.stdoutFull
+      ? `\n[qemu serial]\n${qemu.stdoutFull}`
+      : "";
+    const stderr = `${guestStderr}${qemu.stderrFull}${serial}`;
+    const missingExitMarker =
+      !qemu.timedOut && guestExitCode === null
+        ? "QEMU guest did not write an exit marker; inspect serial evidence"
+        : undefined;
+
+    return {
+      argv: [this.qemuBinary, ...args],
+      exitCode: guestExitCode,
+      stdoutFull: stdout,
+      stderrFull: stderr,
+      durationMs: qemu.durationMs,
+      ...(qemu.timedOut ? { timedOut: true } : {}),
+      ...(qemu.launchError || missingExitMarker
+        ? { launchError: qemu.launchError ?? missingExitMarker }
+        : {}),
+    };
+  }
+
+  private qemuArgs(runDir: string, initrdPath: string): string[] {
+    return [
+      "-nodefaults",
+      "-no-reboot",
+      "-display",
+      "none",
+      "-monitor",
+      "none",
+      "-serial",
+      "stdio",
+      "-m",
+      String(this.memoryMb),
+      "-smp",
+      String(this.cpus),
+      "-kernel",
+      this.kernelImage,
+      "-initrd",
+      initrdPath,
+      "-append",
+      "console=ttyS0 rdinit=/init panic=-1",
+      "-virtfs",
+      `local,path=${resolve(runDir)},mount_tag=0sec-replay,security_model=none,id=osecshare`,
+      "-net",
+      "none",
+      "-sandbox",
+      "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny",
+    ];
   }
 }
 
-export class NotImplementedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NotImplementedError";
+function qemuGuestWorkingDirectory(cwd: string | undefined): string | undefined {
+  if (!cwd) return "/mnt/0sec";
+  if (isAbsolute(cwd)) return undefined;
+  const relative = resolve("/", cwd).slice(1);
+  return relative ? `/mnt/0sec/${relative}` : "/mnt/0sec";
+}
+
+function buildQemuInitramfs(args: {
+  runDir: string;
+  busyboxPath: string;
+  workspaceName: string;
+  guestCwd: string;
+}): string {
+  const empty = Buffer.alloc(0);
+  const init = Buffer.from(renderQemuInit(args.workspaceName, args.guestCwd), "utf8");
+  const entries: CpioEntry[] = [
+    { name: "bin", mode: 0o040755, body: empty },
+    { name: "dev", mode: 0o040755, body: empty },
+    { name: "mnt", mode: 0o040755, body: empty },
+    { name: "mnt/0sec", mode: 0o040755, body: empty },
+    { name: "proc", mode: 0o040755, body: empty },
+    { name: "sys", mode: 0o040755, body: empty },
+    { name: "tmp", mode: 0o040755, body: empty },
+    { name: "bin/busybox", mode: 0o100755, body: readFileSync(args.busyboxPath) },
+    { name: "init", mode: 0o100755, body: init },
+  ];
+  const chunks: Buffer[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    appendNewcEntry(chunks, entries[index], index + 1);
   }
+  appendNewcEntry(chunks, { name: "TRAILER!!!", mode: 0, body: empty }, 0);
+  const initrdPath = join(args.runDir, `.0sec-qemu-initrd-${randomUUID()}.cpio.gz`);
+  writeFileSync(initrdPath, gzipSync(Buffer.concat(chunks)));
+  return initrdPath;
+}
+
+function appendNewcEntry(chunks: Buffer[], entry: CpioEntry, inode: number): void {
+  const name = Buffer.from(`${entry.name}\0`, "utf8");
+  const fields = [
+    inode,
+    entry.mode,
+    0,
+    0,
+    1,
+    0,
+    entry.body.length,
+    0,
+    0,
+    0,
+    0,
+    name.length,
+    0,
+  ];
+  const header = Buffer.from(
+    `070701${fields.map((field) => field.toString(16).padStart(8, "0")).join("")}`,
+    "ascii",
+  );
+  chunks.push(header, name);
+  const headerPadding = (4 - ((header.length + name.length) % 4)) % 4;
+  if (headerPadding > 0) chunks.push(Buffer.alloc(headerPadding));
+  chunks.push(entry.body);
+  const bodyPadding = (4 - (entry.body.length % 4)) % 4;
+  if (bodyPadding > 0) chunks.push(Buffer.alloc(bodyPadding));
+}
+
+function renderQemuInit(workspaceName: string, guestCwd: string): string {
+  const workspace = `/mnt/0sec/${workspaceName}`;
+  const step = `${workspace}/step.sh`;
+  const stdout = `${workspace}/stdout.log`;
+  const stderr = `${workspace}/stderr.log`;
+  const exitCode = `${workspace}/exit-code`;
+  return [
+    "#!/bin/busybox sh",
+    "/bin/busybox mkdir -p /proc /sys /dev /tmp /mnt/0sec",
+    "/bin/busybox mount -t proc proc /proc",
+    "/bin/busybox mount -t sysfs sysfs /sys",
+    "/bin/busybox mount -t devtmpfs devtmpfs /dev 2>/dev/null || true",
+    "if ! /bin/busybox mount -t 9p -o trans=virtio,version=9p2000.L 0sec-replay /mnt/0sec; then",
+    '  echo "__0SEC_QEMU_MOUNT_FAILED__"',
+    "  /bin/busybox poweroff -f",
+    "fi",
+    `(
+      cd ${shellQuote(guestCwd)} || exit 125
+      /bin/busybox sh ${shellQuote(step)}
+    ) > ${shellQuote(stdout)} 2> ${shellQuote(stderr)}`,
+    "rc=$?",
+    `printf '%s\\n' "$rc" > ${shellQuote(exitCode)}`,
+    "/bin/busybox sync",
+    "/bin/busybox poweroff -f",
+  ].join("\n");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function readQemuCapture(path: string): string {
+  try {
+    return readFileSync(path).subarray(0, MAX_STREAM_CAPTURE_BYTES).toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function readQemuExitCode(path: string): number | null {
+  try {
+    const raw = readFileSync(path, "utf8").trim();
+    if (!/^(0|[1-9][0-9]{0,2})$/.test(raw)) return null;
+    const value = Number(raw);
+    return value <= 255 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function runQemuCommand(args: {
+  qemuBinary: string;
+  args: string[];
+  runDir: string;
+  stepTimeoutMs: number;
+}): Promise<QemuProcessResult> {
+  const startedAt = Date.now();
+  const { promise, resolve: resolveResult } =
+    promiseWithResolvers.withResolvers<QemuProcessResult>();
+  let timer: NodeJS.Timeout | undefined;
+  let stdout = "";
+  let stderr = "";
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let timedOut = false;
+  let settled = false;
+  let child: ChildProcess;
+
+  const finish = (exitCode: number | null, launchError?: string): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    resolveResult({
+      exitCode,
+      stdoutFull: stdout,
+      stderrFull: stderr,
+      durationMs: Date.now() - startedAt,
+      ...(timedOut ? { timedOut: true } : {}),
+      ...(launchError ? { launchError } : {}),
+    });
+  };
+
+  try {
+    child = spawn(args.qemuBinary, args.args, {
+      cwd: args.runDir,
+      env: allowlistedChildEnv({ "0SEC_VERIFY": "1" }),
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: nodePlatform !== "win32",
+    });
+  } catch (err) {
+    finish(null, err instanceof Error ? err.message : String(err));
+    return promise;
+  }
+
+  timer = setTimeout(() => {
+    timedOut = true;
+    killProcessGroup(child);
+  }, args.stepTimeoutMs);
+  child.stdout?.on("data", (chunk: Buffer) => {
+    if (stdoutBytes >= MAX_STREAM_CAPTURE_BYTES) return;
+    const remaining = MAX_STREAM_CAPTURE_BYTES - stdoutBytes;
+    const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+    stdout += slice.toString("utf8");
+    stdoutBytes += slice.length;
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_STREAM_CAPTURE_BYTES) return;
+    const remaining = MAX_STREAM_CAPTURE_BYTES - stderrBytes;
+    const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+    stderr += slice.toString("utf8");
+    stderrBytes += slice.length;
+  });
+  child.on("error", (err) => {
+    finish(null, err.message);
+  });
+  child.on("close", (code) => {
+    const exitCode = typeof code === "number" ? code : null;
+    finish(
+      exitCode,
+      exitCode !== 0 && !timedOut
+        ? `QEMU exited before guest completion (exit ${exitCode ?? "unknown"})`
+        : undefined,
+    );
+  });
+  return promise;
 }
 
 // ── Argv synthesis ──────────────────────────────────────────────────────────
@@ -367,17 +1160,18 @@ export function assertionFromStepExpect(
       };
     }
     case "http-status": {
-      const expected = Array.isArray(expect.status)
-        ? expect.status.join(",")
-        : expect.status;
-      // The local shell runner doesn't speak HTTP; record actual = null so
-      // a downstream consumer can tell the assertion couldn't be evaluated.
+      const expectedStatuses = Array.isArray(expect.status)
+        ? expect.status
+        : [expect.status];
+      const actual = result.httpStatus ?? null;
       return {
         kind: "http_status",
         target: step.id,
-        expected,
-        actual: null,
-        passed: false,
+        expected: Array.isArray(expect.status)
+          ? expect.status.join(",")
+          : expect.status,
+        actual,
+        passed: actual !== null && expectedStatuses.includes(actual),
       };
     }
     case "body-contains": {
@@ -442,6 +1236,7 @@ export function evaluateAssertion(
   input: AssertionInput,
   ctx: {
     lastExitCode: number | null;
+    lastHttpStatus: number | null;
     aggregatedStdout: string;
     runDir: string;
   },
@@ -476,12 +1271,15 @@ export function evaluateAssertion(
       };
     }
     case "http_status": {
-      // Local runner doesn't produce HTTP responses; ledger assertion as
-      // unevaluated. A future HTTP-aware runner overrides this.
+      const actual = ctx.lastHttpStatus;
+      const expectedStatuses = String(input.expected)
+        .split(",")
+        .map((status) => Number(status.trim()))
+        .filter((status) => Number.isInteger(status));
       return {
         ...input,
-        actual: null,
-        passed: false,
+        actual,
+        passed: actual !== null && expectedStatuses.includes(actual),
       };
     }
     default: {
@@ -550,6 +1348,8 @@ export interface RunDeterministicReplayOpts {
   stepTimeoutMs?: number;
   /** Optional free-standing assertions evaluated after the steps run. */
   assertions?: AssertionInput[];
+  /** Scope enforced by network-capable sandbox runners. */
+  scope?: ScopePolicy;
   /** Engine version stamp; defaults to the shared `VERSION` constant. */
   engineVersion?: string;
 }
@@ -614,17 +1414,16 @@ export async function runDeterministicReplay(
   }
 
   let lastExit: number | null = null;
+  let lastHttpStatus: number | null = null;
   let aggregatedStdout = "";
   let runnerLaunchError: string | null = null;
-
   for (const step of steps) {
     let stepResult: StepResult;
     try {
-      stepResult = await runner.exec(step, { runDir, stepTimeoutMs });
+      stepResult = await runner.exec(step, { runDir, stepTimeoutMs, scope: opts.scope });
     } catch (err) {
-      // Runner-level failure (e.g. DockerRunner.exec throws NotImplemented).
-      // We record it as a synthetic command + a launchError and stop the
-      // loop; the surrounding orchestrator surfaces it as `error`.
+      // Runner-level failures are recorded as a synthetic command so the
+      // canonical result remains attributable to the finding and runner.
       stepResult = {
         argv: argvForStep(step),
         exitCode: null,
@@ -638,6 +1437,10 @@ export async function runDeterministicReplay(
 
     lastExit = stepResult.exitCode;
     aggregatedStdout += stepResult.stdoutFull;
+    if (stepResult.launchError) {
+      runnerLaunchError = stepResult.launchError;
+    }
+    lastHttpStatus = stepResult.httpStatus ?? null;
 
     commands.push({
       argv: stepResult.argv,
@@ -679,6 +1482,7 @@ export async function runDeterministicReplay(
         lastExitCode: lastExit,
         aggregatedStdout,
         runDir,
+        lastHttpStatus,
       }),
     );
   }

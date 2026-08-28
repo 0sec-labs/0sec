@@ -95,7 +95,6 @@ export {
   LocalShellRunner,
   DockerRunner,
   QemuRunner,
-  NotImplementedError,
   argvForStep,
   assertionFromStepExpect,
   evaluateAssertion,
@@ -108,6 +107,8 @@ export {
 export type {
   AssertionInput,
   DeterministicReplayOutcome,
+  DockerRunnerOptions,
+  QemuRunnerOptions,
   ReplayRunner,
   ReplayRunnerContext,
   RunDeterministicReplayOpts,

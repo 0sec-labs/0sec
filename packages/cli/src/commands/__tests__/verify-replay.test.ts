@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VerificationResultSchema } from "@0sec/shared";
@@ -28,6 +28,13 @@ afterEach(() => {
 function writeFindingFixture(finding: Finding): string {
   const path = join(tmpRoot, "finding.json");
   writeFileSync(path, JSON.stringify(finding, null, 2));
+  return path;
+}
+
+function writeFakeExecutable(name: string, body: string): string {
+  const path = join(tmpRoot, name);
+  writeFileSync(path, `#!/bin/sh\n${body}`, "utf8");
+  chmodSync(path, 0o755);
   return path;
 }
 
@@ -141,30 +148,85 @@ describe("runDeterministicReplayCli — local runner", () => {
   });
 });
 
-describe("runDeterministicReplayCli — docker / qemu stubs", () => {
-  it("docker runner returns exit 4 + NotImplemented error_reason without consuming the finding", async () => {
-    const findingPath = writeFindingFixture(baseFinding);
-    const { result, exitCode } = await runDeterministicReplayCli({
-      findingPath,
-      runner: "docker",
-    });
-    expect(exitCode).toBe(4);
-    expect(result.status).toBe("error");
-    expect(result.engine_metadata.runner).toBe("docker");
-    expect(result.error_reason).toMatch(/not implemented/i);
-    // Result is still schema-valid — cloud ingest must be able to parse it.
-    expect(() => VerificationResultSchema.parse(result)).not.toThrow();
+describe("runDeterministicReplayCli — sandbox runners", () => {
+  it("runs the Docker backend through the CLI contract", async () => {
+    const docker = writeFakeExecutable(
+      "docker",
+      String.raw`
+if [ "$1" = "run" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--cidfile" ]; then
+      shift
+      printf '%s\n' 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef > "$1"
+      break
+    fi
+    shift
+  done
+  printf '%s\n' "hello"
+fi
+`,
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${tmpRoot}:${previousPath ?? ""}`;
+    try {
+      const findingPath = writeFindingFixture(baseFinding);
+      const { result, exitCode } = await runDeterministicReplayCli({
+        findingPath,
+        runner: "docker",
+      });
+      expect(exitCode).toBe(0);
+      expect(result.status).toBe("reproduced");
+      expect(result.engine_metadata.runner).toBe("docker");
+      expect(result.commands[0].argv[0]).toBe("docker");
+      expect(() => VerificationResultSchema.parse(result)).not.toThrow();
+    } finally {
+      process.env.PATH = previousPath;
+      void docker;
+    }
   });
 
-  it("qemu runner returns exit 4 + NotImplemented error_reason", async () => {
+  it("runs the QEMU backend through the CLI contract", async () => {
+    const kernelImage = join(tmpRoot, "vmlinuz");
+    const busybox = join(tmpRoot, "busybox");
+    writeFileSync(kernelImage, "synthetic kernel");
+    writeFileSync(busybox, "synthetic busybox");
+    const qemu = writeFakeExecutable(
+      "fake-qemu",
+      String.raw`
+share=
+previous=
+for arg in "$@"; do
+  if [ "$previous" = "-virtfs" ]; then
+    share="$arg"
+    break
+  fi
+  previous="$arg"
+done
+share=$(printf '%s' "$share" | sed 's/^local,path=//; s/,.*$//')
+workspace=
+for candidate in "$share"/.0sec-qemu-*; do
+  if [ -d "$candidate" ]; then
+    workspace="$candidate"
+    break
+  fi
+done
+[ -n "$workspace" ] || exit 2
+printf '%s\n' "hello" > "$workspace/stdout.log"
+printf '%s\n' "0" > "$workspace/exit-code"
+`,
+    );
     const findingPath = writeFindingFixture(baseFinding);
     const { result, exitCode } = await runDeterministicReplayCli({
       findingPath,
       runner: "qemu",
+      outDir: join(tmpRoot, "qemu-run"),
+      qemuBinary: qemu,
+      qemuKernel: kernelImage,
+      qemuBusybox: busybox,
     });
-    expect(exitCode).toBe(4);
-    expect(result.status).toBe("error");
+    expect(exitCode).toBe(0);
+    expect(result.status).toBe("reproduced");
     expect(result.engine_metadata.runner).toBe("qemu");
-    expect(result.error_reason).toMatch(/not implemented/i);
+    expect(() => VerificationResultSchema.parse(result)).not.toThrow();
   });
 });

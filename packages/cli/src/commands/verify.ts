@@ -32,7 +32,7 @@ import {
   LocalShellRunner,
   DockerRunner,
   QemuRunner,
-  VerifyNotImplementedError,
+  loadScope,
   evidenceKindForFinding,
   oracleForCategory,
   type PocExecutionReport,
@@ -502,15 +502,20 @@ interface VerifyOpts {
   kernelConfig?: string;
   attempts?: string;
   wallClock?: string;
-  /**
-   * 0sec#193 — runner selection. `local` (default) uses the in-process
-   * shell runner; `docker` / `qemu` are sandbox-isolation stubs that
-   * print a NotImplemented error JSON and exit non-zero so cloud-side
-   * dispatchers can detect engine capability without parsing prose.
-   */
+  /** 0sec#193 runner selection. */
   runner?: string;
-  /** 0sec#193 — run directory for the deterministic-replay runner. */
+  /** 0sec#193 run directory for the deterministic-replay runner. */
   out?: string;
+  /** Engagement scope required for networked Docker HTTP replay. */
+  scope?: string;
+  /** Docker network; defaults to a fully disconnected container. */
+  dockerNetwork?: string;
+  /** QEMU emulator path for --runner qemu. */
+  qemuBinary?: string;
+  /** Guest kernel image for --runner qemu. */
+  qemuKernel?: string;
+  /** Static BusyBox binary for --runner qemu. */
+  qemuBusybox?: string;
 }
 
 function readJson<T>(path: string, kind: string): T {
@@ -808,10 +813,9 @@ export async function runVerify(opts: {
 // ── #193 deterministic replay path ──────────────────────────────────────────
 //
 // When `--runner` is supplied (or a positional finding path is used), we
-// route to the #193 deterministic-replay runner skeleton. The legacy
-// --finding/--fixture path above now emits the same canonical
-// shared-schema `VerificationResult`, so every verify entry point shares
-// one JSON contract.
+// route to the deterministic-replay runner. The legacy --finding/--fixture
+// path emits the same canonical shared-schema `VerificationResult`, so every
+// verify entry point shares one JSON contract.
 
 export type ReplayRunnerKind = "local" | "docker" | "qemu";
 
@@ -824,25 +828,19 @@ export function parseRunnerKind(raw: string | undefined): ReplayRunnerKind {
 }
 
 /**
- * Run the #193 deterministic-replay path. Returns a result + the exit code
- * the CLI should bubble out. Distinct exit codes per status so cloud's
- * worker-controller can branch without re-parsing the JSON:
- *
- *   0 → reproduced
- *   1 → not_reproduced
- *   2 → skipped (e.g. no pocSteps)
- *   3 → error
- *   4 → runner not yet implemented (docker/qemu)
+ * Run the deterministic-replay path and return its result plus the process
+ * exit code: 0 reproduced, 1 not reproduced, 2 skipped, 3 execution error.
  */
 export async function runDeterministicReplayCli(args: {
   findingPath: string;
   runner: ReplayRunnerKind;
   outDir?: string;
+  scopeFile?: string;
+  dockerNetwork?: string;
+  qemuBinary?: string;
+  qemuKernel?: string;
+  qemuBusybox?: string;
 }): Promise<{ result: SharedVerificationResult; exitCode: number }> {
-  // Always load the finding first so the result references it by id —
-  // even when we're going to short-circuit because the runner is a stub.
-  // Cloud's ingest keys on finding_id, so emitting an empty string would
-  // make the failure non-attributable.
   const rawFinding = readJson<unknown>(args.findingPath, "finding");
   let finding: Finding;
   try {
@@ -854,33 +852,6 @@ export async function runDeterministicReplayCli(args: {
     throw err;
   }
 
-  // Eagerly fail the docker/qemu paths with a structured error result so
-  // cloud-side dispatchers can detect engine capability without parsing
-  // prose. The result still validates against the canonical schema.
-  if (args.runner !== "local") {
-    const now = new Date().toISOString();
-    const result: SharedVerificationResult = {
-      status: "error",
-      mode: "deterministic_replay",
-      finding_id: finding.id,
-      engine_version: VERSION,
-      started_at: now,
-      completed_at: now,
-      duration_ms: 0,
-      commands: [],
-      assertions: [],
-      evidence_artifacts: [],
-      engine_metadata: {
-        os: process.platform,
-        arch: process.arch,
-        runner: args.runner,
-      },
-      error_reason: `runner '${args.runner}' is not implemented yet; see 0sec#193 sandbox-isolation follow-up`,
-      summary: `runner '${args.runner}' not implemented`,
-    };
-    return { result, exitCode: 4 };
-  }
-
   // Use the operator-supplied --out as the run dir if provided; otherwise
   // the runner allocates a fresh tmpdir.
   let runDir: string | undefined;
@@ -889,16 +860,31 @@ export async function runDeterministicReplayCli(args: {
     mkdirSync(runDir, { recursive: true });
   }
 
+  if (args.dockerNetwork && args.runner !== "docker") {
+    throw new Error("--docker-network is only valid with --runner docker");
+  }
+  if (
+    (args.qemuBinary || args.qemuKernel || args.qemuBusybox) &&
+    args.runner !== "qemu"
+  ) {
+    throw new Error("--qemu-binary / --qemu-kernel / --qemu-busybox require --runner qemu");
+  }
+  const scope = args.scopeFile ? loadScope(args.scopeFile) : undefined;
   const runner =
     args.runner === "local"
       ? new LocalShellRunner()
       : args.runner === "docker"
-        ? new DockerRunner()
-        : new QemuRunner();
+        ? new DockerRunner({ network: args.dockerNetwork })
+        : new QemuRunner({
+            qemuBinary: args.qemuBinary,
+            kernelImage: args.qemuKernel,
+            busyboxPath: args.qemuBusybox,
+          });
 
   const { result } = await runDeterministicReplay(finding, {
     runner,
     runDir,
+    scope,
     engineVersion: VERSION,
   });
 
@@ -965,8 +951,8 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
     return;
   }
 
-  // 0sec#193 deterministic-replay path: triggered by a positional
-  // <finding.json> argument or an explicit --runner flag.
+  // Deterministic replay path: triggered by a positional finding path or an
+  // explicit runner selection.
   if (positionalFinding || opts.runner) {
     if (positionalFinding && opts.finding) {
       throw new Error(
@@ -984,6 +970,11 @@ async function verifyAction(opts: VerifyOpts, positionalFinding?: string): Promi
       findingPath,
       runner,
       outDir: opts.out,
+      scopeFile: opts.scope,
+      dockerNetwork: opts.dockerNetwork,
+      qemuBinary: opts.qemuBinary,
+      qemuKernel: opts.qemuKernel,
+      qemuBusybox: opts.qemuBusybox,
     });
     const json = JSON.stringify(result, null, 2);
     if (opts.output) {
@@ -1062,7 +1053,21 @@ export function registerVerifyCommand(program: Command): void {
     )
     .option(
       "--runner <kind>",
-      "0sec#193 replay runner: local|docker|qemu (default local; docker/qemu are NotImplemented stubs that exit 4).",
+      "Deterministic replay runner: local|docker|qemu (default local).",
+    )
+    .option(
+      "--docker-network <name>",
+      "Docker network for --runner docker. Defaults to none; bridge/custom networks require --scope and only permit HTTP steps.",
+    )
+    .option(
+      "--scope <path>",
+      "Engagement scope JSON required for networked Docker HTTP replay.",
+    )
+    .option("--qemu-binary <path>", "QEMU emulator for --runner qemu.")
+    .option("--qemu-kernel <path>", "Guest kernel image for --runner qemu.")
+    .option(
+      "--qemu-busybox <path>",
+      "Static BusyBox binary used to build the offline QEMU guest.",
     )
     .option(
       "--out <dir>",

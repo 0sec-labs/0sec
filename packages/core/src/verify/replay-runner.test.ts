@@ -16,15 +16,15 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VerificationResultSchema, type Finding, type PocStep } from "@0sec/shared";
+import { ScopePolicy } from "../scope/scope.js";
 import {
   LocalShellRunner,
   DockerRunner,
   QemuRunner,
-  NotImplementedError,
   STREAM_EXCERPT_BYTES,
   argvForStep,
   assertionFromStepExpect,
@@ -46,6 +46,13 @@ function makeFinding(steps: PocStep[]): Finding {
     pocSteps: steps,
     timestamp: Date.now(),
   };
+}
+
+function writeFakeExecutable(runDir: string, name: string, body: string): string {
+  const path = join(runDir, name);
+  writeFileSync(path, `#!/bin/sh\n${body}`, "utf8");
+  chmodSync(path, 0o755);
+  return path;
 }
 
 describe("LocalShellRunner", () => {
@@ -305,7 +312,7 @@ describe("assertion evaluation — pass + fail per kind", () => {
         target: "GET /admin",
         expected: 401,
       },
-      { lastExitCode: 0, aggregatedStdout: "", runDir: "/tmp" },
+      { lastExitCode: 0, lastHttpStatus: null, aggregatedStdout: "", runDir: "/tmp" },
     );
     expect(r.passed).toBe(false);
     expect(r.actual).toBeNull();
@@ -314,12 +321,12 @@ describe("assertion evaluation — pass + fail per kind", () => {
   it("evaluateAssertion handles string_in_output across aggregated stdout", () => {
     const pass = evaluateAssertion(
       { kind: "string_in_output", target: "any", expected: "magic" },
-      { lastExitCode: 0, aggregatedStdout: "the magic word", runDir: "/tmp" },
+      { lastExitCode: 0, lastHttpStatus: null, aggregatedStdout: "the magic word", runDir: "/tmp" },
     );
     expect(pass.passed).toBe(true);
     const fail = evaluateAssertion(
       { kind: "string_in_output", target: "any", expected: "missing" },
-      { lastExitCode: 0, aggregatedStdout: "the magic word", runDir: "/tmp" },
+      { lastExitCode: 0, lastHttpStatus: null, aggregatedStdout: "the magic word", runDir: "/tmp" },
     );
     expect(fail.passed).toBe(false);
   });
@@ -329,30 +336,235 @@ describe("assertion evaluation — pass + fail per kind", () => {
     writeFileSync(join(runDir, "marker"), "x");
     const pass = evaluateAssertion(
       { kind: "file_exists", target: "marker", expected: true },
-      { lastExitCode: 0, aggregatedStdout: "", runDir },
+      { lastExitCode: 0, lastHttpStatus: null, aggregatedStdout: "", runDir },
     );
     expect(pass.passed).toBe(true);
   });
 });
 
-describe("DockerRunner / QemuRunner stubs", () => {
-  it("DockerRunner.exec throws NotImplementedError", async () => {
-    const runner = new DockerRunner();
-    await expect(
-      runner.exec(
-        { id: "s", kind: "exploit", summary: "", action: { type: "shell", cmd: "id" } },
-        { runDir: "/tmp", stepTimeoutMs: 1000 },
-      ),
-    ).rejects.toBeInstanceOf(NotImplementedError);
+describe("sandbox replay runners", () => {
+  it("builds a credential-free, hardened, offline Docker invocation", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-docker-runner-"));
+    const docker = writeFakeExecutable(
+      runDir,
+      "fake-docker",
+      String.raw`
+printf '%s\n' "$@" > "$PWD/docker.args"
+env > "$PWD/docker.env"
+if [ "$1" = "run" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--cidfile" ]; then
+      shift
+      printf '%s\n' 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef > "$1"
+      break
+    fi
+    shift
+  done
+  printf '%s\n' "SANDBOX_OK"
+fi
+`,
+    );
+    const originalKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "must-not-reach-docker";
+    try {
+      const result = await new DockerRunner({ dockerBinary: docker }).exec(
+        {
+          id: "shell",
+          kind: "exploit",
+          summary: "print a marker",
+          action: { type: "shell", cmd: "echo SANDBOX_OK" },
+        },
+        { runDir, stepTimeoutMs: 1_000 },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdoutFull).toContain("SANDBOX_OK");
+      const argv = readFileSync(join(runDir, "docker.args"), "utf8").trim().split("\n");
+      expect(argv).toEqual(
+        expect.arrayContaining([
+          "run",
+          "--pull",
+          "never",
+          "--read-only",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges:true",
+          "--network",
+          "none",
+          "--tmpfs",
+          "/tmp:rw,noexec,nosuid,size=64m",
+          "alpine:3.20",
+          "/bin/sh",
+          "-lc",
+          "echo SANDBOX_OK",
+        ]),
+      );
+      expect(readFileSync(join(runDir, "docker.env"), "utf8")).not.toContain(
+        "must-not-reach-docker",
+      );
+    } finally {
+      if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = originalKey;
+    }
   });
-  it("QemuRunner.exec throws NotImplementedError", async () => {
-    const runner = new QemuRunner();
-    await expect(
-      runner.exec(
-        { id: "s", kind: "exploit", summary: "", action: { type: "shell", cmd: "id" } },
-        { runDir: "/tmp", stepTimeoutMs: 1000 },
-      ),
-    ).rejects.toBeInstanceOf(NotImplementedError);
+
+  it("replays scoped HTTP actions in a networked Docker sandbox", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-docker-http-"));
+    const docker = writeFakeExecutable(
+      runDir,
+      "fake-docker",
+      String.raw`
+printf '%s\n' "$@" > "$PWD/http-docker.args"
+if [ "$1" = "run" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--cidfile" ]; then
+      shift
+      printf '%s\n' 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef > "$1"
+      break
+    fi
+    shift
+  done
+  printf 'response-body\n__0SEC_HTTP_STATUS__:201\n'
+fi
+`,
+    );
+    const finding = makeFinding([
+      {
+        id: "http",
+        kind: "verify",
+        summary: "verify the scoped endpoint",
+        action: { type: "http", method: "POST", url: "https://api.example.test/check" },
+        expect: { type: "http-status", status: 201 },
+      },
+    ]);
+    const { result } = await runDeterministicReplay(finding, {
+      runner: new DockerRunner({ dockerBinary: docker, network: "bridge" }),
+      runDir,
+      scope: ScopePolicy.fromJson({ in_scope: ["api.example.test"] }),
+    });
+    expect(result.status).toBe("reproduced");
+    expect(result.commands[0].stdout_excerpt).toContain("response-body");
+    expect(result.assertions[0]).toMatchObject({
+      kind: "http_status",
+      actual: 201,
+      passed: true,
+    });
+    const argv = readFileSync(join(runDir, "http-docker.args"), "utf8").split("\n");
+    expect(argv).toEqual(expect.arrayContaining(["--entrypoint", "curl"]));
+  });
+
+  it("refuses networked Docker replay without an engagement scope", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-docker-scope-"));
+    const docker = writeFakeExecutable(runDir, "fake-docker", "touch should-not-run");
+    const result = await new DockerRunner({ dockerBinary: docker, network: "bridge" }).exec(
+      {
+        id: "http",
+        kind: "verify",
+        summary: "unscoped request",
+        action: { type: "http", method: "GET", url: "https://api.example.test/check" },
+      },
+      { runDir, stepTimeoutMs: 1_000 },
+    );
+    expect(result.launchError).toMatch(/engagement scope/);
+    expect(existsSync(join(runDir, "should-not-run"))).toBe(false);
+  });
+
+  it("kills a timed-out Docker container through its cidfile", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-docker-timeout-"));
+    const docker = writeFakeExecutable(
+      runDir,
+      "fake-docker",
+      String.raw`
+printf '%s\n' "$1" >> "$PWD/docker.calls"
+if [ "$1" = "run" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--cidfile" ]; then
+      shift
+      printf '%s\n' 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef > "$1"
+      break
+    fi
+    shift
+  done
+  sleep 5
+fi
+`,
+    );
+    const startedAt = Date.now();
+    const result = await new DockerRunner({ dockerBinary: docker }).exec(
+      {
+        id: "slow",
+        kind: "exploit",
+        summary: "sleep",
+        action: { type: "shell", cmd: "sleep 5" },
+      },
+      { runDir, stepTimeoutMs: 50 },
+    );
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(result.timedOut).toBe(true);
+    expect(readFileSync(join(runDir, "docker.calls"), "utf8")).toContain("kill");
+  });
+
+  it("runs shell PoCs in a configured, offline QEMU guest", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "0sec-qemu-runner-"));
+    const kernelImage = join(runDir, "vmlinuz");
+    const busybox = join(runDir, "busybox");
+    writeFileSync(kernelImage, "synthetic kernel");
+    writeFileSync(busybox, "synthetic busybox");
+    const qemu = writeFakeExecutable(
+      runDir,
+      "fake-qemu",
+      String.raw`
+share=
+previous=
+for arg in "$@"; do
+  if [ "$previous" = "-virtfs" ]; then
+    share="$arg"
+    break
+  fi
+  previous="$arg"
+done
+share=$(printf '%s' "$share" | sed 's/^local,path=//; s/,.*$//')
+printf '%s\n' "$@" > "$share/qemu.args"
+workspace=
+for candidate in "$share"/.0sec-qemu-*; do
+  if [ -d "$candidate" ]; then
+    workspace="$candidate"
+    break
+  fi
+done
+[ -n "$workspace" ] || exit 2
+printf '%s\n' "QEMU_GUEST_OK" > "$workspace/stdout.log"
+printf '%s\n' "guest stderr" > "$workspace/stderr.log"
+printf '%s\n' "0" > "$workspace/exit-code"
+printf '%s\n' "serial boot evidence"
+`,
+    );
+    const finding = makeFinding([
+      {
+        id: "guest",
+        kind: "exploit",
+        summary: "run inside the guest",
+        action: { type: "shell", cmd: "echo QEMU_GUEST_OK" },
+        expect: { type: "body-contains", text: "QEMU_GUEST_OK" },
+      },
+    ]);
+    const { result } = await runDeterministicReplay(finding, {
+      runner: new QemuRunner({ qemuBinary: qemu, kernelImage, busyboxPath: busybox }),
+      runDir,
+    });
+    expect(result.status).toBe("reproduced");
+    expect(result.engine_metadata.runner).toBe("qemu");
+    expect(result.commands[0].stderr_excerpt).toContain("serial boot evidence");
+    const argv = readFileSync(join(runDir, "qemu.args"), "utf8").split("\n");
+    expect(argv).toEqual(expect.arrayContaining(["-net", "none", "-sandbox"]));
+  });
+
+  it("reports missing QEMU guest prerequisites as a structured launch error", async () => {
+    const result = await new QemuRunner().exec(
+      { id: "guest", kind: "exploit", summary: "", action: { type: "shell", cmd: "id" } },
+      { runDir: mkdtempSync(join(tmpdir(), "0sec-qemu-unconfigured-")), stepTimeoutMs: 1_000 },
+    );
+    expect(result.launchError).toMatch(/requires kernelImage and busyboxPath/);
   });
 });
 
@@ -453,12 +665,17 @@ describe("runDeterministicReplay — end-to-end", () => {
       },
     ]);
     const { result } = await runDeterministicReplay(finding, {
-      runner: new DockerRunner(),
+      runner: {
+        kind: "docker",
+        async exec() {
+          throw new Error("injected runner failure");
+        },
+      },
     });
     expect(result.status).toBe("error");
-    expect(result.error_reason).toMatch(/not implemented/i);
-  });
+    expect(result.error_reason).toMatch(/injected runner failure/);
 
+  });
   it("caps stdout excerpts at STREAM_EXCERPT_BYTES while persisting full payload", async () => {
     // Generate ~32 KiB of stdout via printf
     const bytes = STREAM_EXCERPT_BYTES * 4;
