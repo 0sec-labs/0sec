@@ -14,11 +14,16 @@
  */
 
 import type { BenchManifest } from "./manifest.js";
+import { selectCiCases } from "./manifest.js";
+import type { BenchExecution, VariantExecutionFactory } from "./integration.js";
 import type { BenchOracle } from "./oracle.js";
 import {
+  runBenchCase,
   runBenchSuite,
+  type BenchAttemptPolicy,
   type TargetProvisioner,
   type BenchCaseResult,
+  type RunSuiteResult,
 } from "./runner.js";
 import {
   aggregateScorecard,
@@ -49,14 +54,18 @@ export interface PairwiseDelta {
   significant: boolean;
 }
 
+export type TournamentSchedule = "variant-major" | "case-major";
+
 export interface TournamentResult {
   manifestId: string;
   generatedAt?: string;
   config: {
     passAtK: number;
+    attemptPolicy: BenchAttemptPolicy;
     maxTurns: number;
     costCeilingUsd: number | null;
     ciSubset: boolean;
+    schedule: TournamentSchedule;
     variantIds: string[];
   };
   variants: VariantRunResult[];
@@ -136,17 +145,33 @@ export function pairwiseDeltas(results: VariantRunResult[]): PairwiseDelta[] {
 
 export interface RunTournamentOptions {
   variants: BenchVariant[];
-  /** Builds the scan for each variant. Injected so tests use mocked scans. */
-  variantScan: VariantScanFactory;
-  /** Defaults to the harness ObjectiveOracle (see runner.ts). */
+  /**
+   * Legacy scan-only factory. Supply this or `executionFactory`, not both.
+   * The shared oracle/provisioner fields below remain available for it.
+   */
+  variantScan?: VariantScanFactory;
+  /**
+   * Full integration factory. It may select a different scan adapter,
+   * provisioner, and oracle per variant while the generic runner remains the
+   * one orchestration path.
+   */
+  executionFactory?: VariantExecutionFactory;
+  /** Defaults to the harness ObjectiveOracle (legacy scan-only factory). */
   oracle?: BenchOracle;
-  /** Provisioner for web/kernel cases; source-audit needs none. */
+  /** Provisioner for legacy scan-only factories. */
   provisioner?: TargetProvisioner;
   passAtK?: number;
+  attemptPolicy?: BenchAttemptPolicy;
   maxTurns?: number;
   costCeilingUsd?: number;
   /** Run only the corpus CI subset (cases flagged `ci: true`). */
   ciSubset?: boolean;
+  /**
+   * `variant-major` completes one variant before the next. `case-major`
+   * interleaves variants on each case while keeping every target execution
+   * serial, reducing provider/time drift without Docker contention.
+   */
+  schedule?: TournamentSchedule;
   /** Supply to stamp `generatedAt` on the result + scorecards. */
   clock?: () => string;
   /** Progress hook, one call per completed variant. */
@@ -155,35 +180,96 @@ export interface RunTournamentOptions {
   onCase?: (result: BenchCaseResult, variantId: string) => void;
 }
 
+function resolveExecution(
+  variant: Readonly<BenchVariant>,
+  opts: RunTournamentOptions,
+): BenchExecution {
+  if (opts.executionFactory) return opts.executionFactory(variant);
+  if (!opts.variantScan) {
+    throw new Error("runTournament requires variantScan or executionFactory");
+  }
+  return {
+    scan: opts.variantScan(variant),
+    ...(opts.oracle ? { oracle: opts.oracle } : {}),
+    ...(opts.provisioner ? { provisioner: opts.provisioner } : {}),
+  };
+}
+
+function suiteOptions(
+  execution: BenchExecution,
+  opts: RunTournamentOptions,
+) {
+  return {
+    scan: execution.scan,
+    ...(execution.oracle ? { oracle: execution.oracle } : {}),
+    ...(execution.provisioner ? { provisioner: execution.provisioner } : {}),
+    ...(execution.executionMetadata ? { executionMetadata: execution.executionMetadata } : {}),
+    ...(opts.passAtK !== undefined ? { passAtK: opts.passAtK } : {}),
+    ...(opts.attemptPolicy ? { attemptPolicy: opts.attemptPolicy } : {}),
+    ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+    ...(opts.costCeilingUsd !== undefined ? { costCeilingUsd: opts.costCeilingUsd } : {}),
+  };
+}
+
 /**
- * Run a full N-variant tournament over the manifest. Variants run
- * sequentially (each suite already provisions resource-heavy targets
- * sequentially; running variants in parallel would contend further).
+ * Run a full N-variant tournament over the manifest. Every target execution
+ * remains serial. `case-major` changes only the ordering, not the execution
+ * contract, so it is safe for resource-heavy Docker/QEMU integrations.
  */
 export async function runTournament(
   manifest: BenchManifest,
   opts: RunTournamentOptions,
 ): Promise<TournamentResult> {
   if (opts.variants.length === 0) throw new Error("runTournament: no variants supplied");
+  if (opts.variantScan && opts.executionFactory) {
+    throw new Error("runTournament accepts variantScan or executionFactory, not both");
+  }
 
-  const variants: VariantRunResult[] = [];
+  const schedule = opts.schedule ?? "variant-major";
   const variantSnapshots = opts.variants.map((variant) => snapshotBenchVariant(variant));
-  for (let i = 0; i < variantSnapshots.length; i++) {
-    const variant = variantSnapshots[i];
-    const suite = await runBenchSuite(manifest, {
-      scan: opts.variantScan(variant),
-      oracle: opts.oracle,
-      provisioner: opts.provisioner,
-      passAtK: opts.passAtK,
-      maxTurns: opts.maxTurns,
-      costCeilingUsd: opts.costCeilingUsd,
-      ciSubset: opts.ciSubset,
-      onCase: opts.onCase ? (r) => opts.onCase!(r, variant.id) : undefined,
-    });
-    const scorecard = aggregateScorecard(suite, opts.clock ? { clock: opts.clock } : {});
-    const result: VariantRunResult = { variant, scorecard };
-    variants.push(result);
-    opts.onVariant?.(result, i, opts.variants.length);
+  const executions = variantSnapshots.map((variant) => resolveExecution(variant, opts));
+  const variants: VariantRunResult[] = [];
+
+  if (schedule === "variant-major") {
+    for (let i = 0; i < variantSnapshots.length; i++) {
+      const variant = variantSnapshots[i];
+      const suite = await runBenchSuite(manifest, {
+        ...suiteOptions(executions[i], opts),
+        ciSubset: opts.ciSubset,
+        onCase: opts.onCase ? (result) => opts.onCase!(result, variant.id) : undefined,
+      });
+      const scorecard = aggregateScorecard(suite, opts.clock ? { clock: opts.clock } : {});
+      const result: VariantRunResult = { variant, scorecard };
+      variants.push(result);
+      opts.onVariant?.(result, i, variantSnapshots.length);
+    }
+  } else {
+    const ciSubset = opts.ciSubset ?? false;
+    const cases = ciSubset ? selectCiCases(manifest) : manifest.cases;
+    const caseResults = variantSnapshots.map((): BenchCaseResult[] => []);
+    for (const c of cases) {
+      for (let i = 0; i < variantSnapshots.length; i++) {
+        const variant = variantSnapshots[i];
+        const result = await runBenchCase(c, suiteOptions(executions[i], opts));
+        caseResults[i].push(result);
+        opts.onCase?.(result, variant.id);
+      }
+    }
+    for (let i = 0; i < variantSnapshots.length; i++) {
+      const suite: RunSuiteResult = {
+        manifestId: manifest.id,
+        ciSubset,
+        passAtK: opts.passAtK ?? 1,
+        attemptPolicy: opts.attemptPolicy ?? "pass-at-k",
+        maxTurns: opts.maxTurns ?? 40,
+        costCeilingUsd: opts.costCeilingUsd ?? null,
+        cases: caseResults[i],
+      };
+      const scorecard = aggregateScorecard(suite, opts.clock ? { clock: opts.clock } : {});
+      const result: VariantRunResult = { variant: variantSnapshots[i], scorecard };
+      variants.push(result);
+      opts.onVariant?.(result, i, variantSnapshots.length);
+    }
   }
 
   const championId = pickChampion(variants);
@@ -194,9 +280,11 @@ export async function runTournament(
     ...(opts.clock ? { generatedAt: opts.clock() } : {}),
     config: {
       passAtK: first.config.passAtK,
+      attemptPolicy: first.config.attemptPolicy,
       maxTurns: first.config.maxTurns,
       costCeilingUsd: first.config.costCeilingUsd,
       ciSubset: first.config.ciSubset,
+      schedule,
       variantIds: variantSnapshots.map((v) => v.id),
     },
     variants,
@@ -212,10 +300,13 @@ export function formatTournamentSummary(t: TournamentResult): string {
     const s = v.scorecard;
     const champ = v.variant.id === t.championId ? " ★" : "";
     const cps = s.costPerSuccessUsd == null ? "n/a" : `$${s.costPerSuccessUsd.toFixed(3)}`;
+    const attemptRate = s.config.attemptPolicy === "independent-repeat"
+      ? ` attempt ${(s.attemptSuccessRate * 100).toFixed(1)}%`
+      : "";
     lines.push(
       `${v.variant.id}${champ}: success ${(s.successRate * 100).toFixed(1)}% ` +
-        `[${(s.successRateCI95[0] * 100).toFixed(1)}–${(s.successRateCI95[1] * 100).toFixed(1)}%] ` +
-        `fp ${(s.fpRate * 100).toFixed(1)}% cost/success ${cps}`,
+        `[${(s.successRateCI95[0] * 100).toFixed(1)}–${(s.successRateCI95[1] * 100).toFixed(1)}%]` +
+        `${attemptRate} fp ${(s.fpRate * 100).toFixed(1)}% cost/success ${cps}`,
     );
   }
   for (const d of t.pairwise) {

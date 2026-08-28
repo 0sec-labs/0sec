@@ -162,6 +162,36 @@ describe("runTournament", () => {
   });
 });
 
+describe("runTournament — integration execution and scheduling", () => {
+  it("interleaves variants per case without parallel target execution", async () => {
+    const order: string[] = [];
+    const tournament = await runTournament(corpus(2, 0), {
+      variants: [{ id: "weak" }, { id: "strong" }],
+      schedule: "case-major",
+      executionFactory: (variant) => ({
+        executionMetadata: { integrationId: "fixture", integrationVersion: "1" },
+        scan: async (input) => {
+          order.push(`${variant.id}:${input.case.id}`);
+          return scanFor(variant.id)(input);
+        },
+      }),
+    });
+    expect(order).toEqual(["weak:pos-0", "strong:pos-0", "weak:pos-1", "strong:pos-1"]);
+    expect(tournament.config.schedule).toBe("case-major");
+    expect(tournament.variants[0].scorecard.cases[0].attempts[0].execution).toMatchObject({
+      integrationId: "fixture",
+    });
+  });
+
+  it("rejects ambiguous legacy and integration execution factories", async () => {
+    await expect(runTournament(corpus(1, 0), {
+      variants: [{ id: "strong" }],
+      variantScan,
+      executionFactory: () => ({ scan: scanFor("strong") }),
+    })).rejects.toThrow(/variantScan or executionFactory/);
+  });
+});
+
 describe("pickChampion tie-breaks", () => {
   function vr(id: string, successRate: number, fpRate: number, cps: number | null): VariantRunResult {
     return {
@@ -169,15 +199,37 @@ describe("pickChampion tie-breaks", () => {
       scorecard: {
         schemaVersion: 1,
         manifestId: "m",
-        config: { passAtK: 1, maxTurns: 1, costCeilingUsd: null, ciSubset: false },
-        totals: { cases: 1, positives: 1, knownNegatives: 0, verified: 1, refuted: 0, inconclusive: 0 },
+        config: {
+          passAtK: 1,
+          attemptPolicy: "pass-at-k",
+          maxTurns: 1,
+          costCeilingUsd: null,
+          ciSubset: false,
+        },
+        totals: {
+          cases: 1,
+          positives: 1,
+          knownNegatives: 0,
+          verified: 1,
+          refuted: 0,
+          inconclusive: 0,
+          attempts: 1,
+          verifiedAttempts: 1,
+          refutedAttempts: 0,
+          inconclusiveAttempts: 0,
+        },
         successRate,
         successRateCI95: [0, 1],
+        attemptSuccessRate: successRate,
+        attemptSuccessRateCI95: [0, 1],
         falsePositives: 0,
         fpRate,
         totalCostUsd: 0,
         costPerSuccessUsd: cps,
         totalAttackTurns: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalTokens: 0,
         byObjective: {},
         cases: [],
       },
@@ -201,7 +253,15 @@ describe("compareScorecards / pairwiseDeltas helpers", () => {
   it("compareScorecards reports null cost delta when either side has no successes", () => {
     const a = aggregateScorecard(
       // both empty suites → costPerSuccess null
-      { manifestId: "m", ciSubset: false, passAtK: 1, maxTurns: 1, costCeilingUsd: null, cases: [] },
+      {
+        manifestId: "m",
+        ciSubset: false,
+        passAtK: 1,
+        attemptPolicy: "pass-at-k",
+        maxTurns: 1,
+        costCeilingUsd: null,
+        cases: [],
+      },
     );
     const d = compareScorecards(a, a);
     expect(d.costPerSuccessDelta).toBeNull();
@@ -213,7 +273,15 @@ describe("compareScorecards / pairwiseDeltas helpers", () => {
     const sc = aggregateScorecard(suite);
     const summary = formatTournamentSummary({
       manifestId: "m",
-      config: { passAtK: 1, maxTurns: 1, costCeilingUsd: null, ciSubset: false, variantIds: ["strong"] },
+      config: {
+        passAtK: 1,
+        attemptPolicy: "pass-at-k",
+        maxTurns: 1,
+        costCeilingUsd: null,
+        ciSubset: false,
+        schedule: "variant-major",
+        variantIds: ["strong"],
+      },
       variants: [{ variant: { id: "strong" }, scorecard: sc }],
       pairwise: [],
       championId: "strong",

@@ -3,6 +3,26 @@
 Benchmark runners for 0sec across multiple security evaluation suites
 (XBOW, AutoPenBench, CyBench, HarmBench, NPM advisories).
 
+## Canonical bench integrations
+
+`@0sec/core/bench` owns the only generic benchmark execution protocol:
+manifest → provisioner → scan adapter → oracle → scorecard → tournament →
+sealed evidence. This package contributes XBOW and CyberGym integrations; it
+does not add another runner/scorecard format.
+
+```sh
+0sec bench run --integration xbow --xbow-path /path/to/xbow --variants variants.json
+0sec bench run --integration cybergym \
+  --cybergym-harness /path/to/cybergym \
+  --cybergym-subset results/cybergym-fair-v1.subset.txt \
+  --variants variants.json
+```
+
+Use `--attempt-policy independent-repeat --pass-at-k N` for an honest
+per-attempt rate. The CyberGym integration defaults to one official
+differential submission per task; an ensemble or wider submit budget must be
+declared explicitly.
+
 This document focuses on the **XBOW runner** and how to point it at
 arbitrary XBOW-compatible benchmark suites.
 

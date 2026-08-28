@@ -101,6 +101,43 @@ describe("aggregateScorecard — end-to-end deterministic", () => {
   });
 });
 
+describe("aggregateScorecard — independent attempts", () => {
+  it("keeps case/pass@k and per-attempt rates distinct", async () => {
+    const manifest = parseManifest({
+      id: "repeat-corpus",
+      cases: [{
+        id: "repeat-positive",
+        target: { kind: "web", image: "fixture" },
+        objective: { type: "file-read", marker: "REPEAT_MARKER" },
+      }],
+    });
+    const scan: BenchScan = async ({ attemptIndex }) => ({
+      findings: attemptIndex === 0
+        ? [{ evidence: { response: "REPEAT_MARKER" } }]
+        : [],
+      benchmarkMeta: {
+        estimatedCostUsd: 0.1,
+        attackTurns: 2,
+        inputTokens: 10,
+        outputTokens: 5,
+      },
+    });
+    const scorecard = aggregateScorecard(await runBenchSuite(manifest, {
+      scan,
+      passAtK: 3,
+      attemptPolicy: "independent-repeat",
+    }));
+    expect(scorecard.successRate).toBe(1);
+    expect(scorecard.attemptSuccessRate).toBeCloseTo(1 / 3, 10);
+    expect(scorecard.totals).toMatchObject({
+      attempts: 3,
+      verifiedAttempts: 1,
+      refutedAttempts: 2,
+    });
+    expect(scorecard.totalTokens).toBe(45);
+  });
+});
+
 describe("wilson95", () => {
   it("returns [0,1] for zero trials", () => {
     expect(wilson95(0, 0)).toEqual([0, 1]);

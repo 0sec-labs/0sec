@@ -172,7 +172,7 @@ describe("0research execution evidence projection", () => {
     const golden = contract.evidence;
     expect(evidence).toEqual(golden);
     expect(researchExecutionEvidenceDigest(evidence)).toBe(
-      "sha256:6033e4c64e6de8dc22842a7c695f04aab8cf63666545bf7d9bf83d538aac5fed",
+      "sha256:3986f9883f5ed4be76488db503eb47c174771f9b099750924742b6a83803cd1b",
     );
     expect(evidence.schemaVersion).toBe(3);
     expect(evidence.variantBinding).toEqual({
@@ -191,8 +191,8 @@ describe("0research execution evidence projection", () => {
       },
     });
     expect(evidence.variantBinding?.candidateChangeDigest).toBe("sha256:4359282a157b33e32a555db67d0812e5e3fa3fd685d329b1d73b1e0ab8f42089");
-    expect(evidence.variantBinding?.champion.descriptorDigest).toBe("sha256:66b1070479ffcbf72aef9f980dcc323c43a8106ede446428b330bc1f163dfbe4");
-    expect(evidence.variantBinding?.challenger.descriptorDigest).toBe("sha256:6127962483acfcb41df4f9f6e6ded869de676b0341d09e05f939263008b4bedf");
+    expect(evidence.variantBinding?.champion.descriptorDigest).toBe("sha256:f4aa0a3098a314183c52fe937b59fb7abdd91836ec66646da32050ee59d25b53");
+    expect(evidence.variantBinding?.challenger.descriptorDigest).toBe("sha256:6a27c1bc66e5e707b87c79bdab418f81018a3bc9eb47a737e98eb30f85980b72");
   });
 
   it("rejects lane drift and undeclared executed knobs", () => {

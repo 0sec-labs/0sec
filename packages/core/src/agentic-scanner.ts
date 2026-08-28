@@ -1635,7 +1635,13 @@ export async function agenticScan(opts: AgenticScanOptions): Promise<ScanReport>
     });
 
     // ── Stage 2: Attack Agent ──
-    const maxAttackTurns = config.depth === "deep" ? 100 : config.depth === "default" ? 40 : 20;
+    const depthAttackTurns = config.depth === "deep" ? 100 : config.depth === "default" ? 40 : 20;
+    const maxAttackTurns =
+      typeof config.maxAttackTurns === "number" &&
+      Number.isFinite(config.maxAttackTurns) &&
+      config.maxAttackTurns > 0
+        ? Math.floor(config.maxAttackTurns)
+        : depthAttackTurns;
 
     emit({
       type: "stage:start",
@@ -3901,7 +3907,8 @@ async function runNativeAttack(
   // code, then found nothing. Scoping the toolset removes that drift.
   const tools = (isWeb || hasSource) ? shellTools : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
 
-  const effectiveMaxTurns = isWeb ? Math.max(maxTurns, 15) : maxTurns;
+  const effectiveMaxTurns =
+    isWeb && config.maxAttackTurns === undefined ? Math.max(maxTurns, 15) : maxTurns;
 
   const cloudSinkCfg = getCloudSinkConfig();
   const onTurnHandler = (turn: number, toolCalls: ToolCall[]) => {
@@ -4403,12 +4410,14 @@ async function runLegacyAttack(
     : getToolsForRole("attack", { hasBrowser, allowScanners: config.allowScanners });
 
   const cloudSinkCfg = getCloudSinkConfig();
+  const effectiveMaxTurns =
+    isWeb && config.maxAttackTurns === undefined ? Math.max(maxTurns, 25) : maxTurns;
   const state = await runAgentLoop({
     config: {
       role: "attack",
       systemPrompt,
       tools,
-      maxTurns: isWeb ? Math.max(maxTurns, 25) : maxTurns,
+      maxTurns: effectiveMaxTurns,
       target: config.target,
       scanId,
       sessionId: db?.getSession(scanId, "attack")?.id,

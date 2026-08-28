@@ -11,6 +11,7 @@ describe("default benchmark variant overrides", () => {
   it("validates, sorts, and deeply freezes execution descriptors", () => {
     const snapshot = snapshotBenchVariant({
       id: "challenger",
+      harnessId: "external-agent-v2",
       promptOverrides: {
         "web.challenge_hint": "Test authorization boundaries.",
         "source_audit.hypothesis": "Trace parser state transitions.",
@@ -25,6 +26,7 @@ describe("default benchmark variant overrides", () => {
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.promptOverrides)).toBe(true);
     expect(Object.isFrozen(snapshot.featureFlags)).toBe(true);
+    expect(snapshot.harnessId).toBe("external-agent-v2");
   });
 
   it("fails closed on unknown fields and invalid execution settings", () => {
@@ -32,6 +34,8 @@ describe("default benchmark variant overrides", () => {
       .toThrow(/unsupported bench variant field/);
     expect(() => snapshotBenchVariant({ id: "challenger", model: " padded " }))
       .toThrow(/model/);
+    expect(() => snapshotBenchVariant({ id: "challenger", harnessId: "bad id" }))
+      .toThrow(/harness id/);
     expect(() => snapshotBenchVariant({ id: "challenger", costCeilingUsdPerAttempt: 0 }))
       .toThrow(/cost ceiling/);
   });

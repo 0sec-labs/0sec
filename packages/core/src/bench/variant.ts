@@ -28,6 +28,11 @@ export interface BenchVariant {
   id: string;
   /** Human label. */
   label?: string;
+  /**
+   * Agent implementation selected by an integration. The core default is
+   * `0sec-agentic`; external integrations may reject unsupported ids.
+   */
+  harnessId?: string;
   /** Model override forwarded to the engine (e.g. a cheaper/stronger model). */
   model?: string;
   /** Runtime override (api/claude/codex/…). */
@@ -49,18 +54,28 @@ export interface BenchVariant {
   featureFlags?: Record<string, boolean>;
 }
 
-const VARIANT_KEYS = new Set([
-  "id", "label", "model", "runtime", "depth", "costCeilingUsdPerAttempt",
-  "promptOverrides", "featureFlags",
-]);
+const VARIANT_KEYS: Record<string, true> = {
+  id: true,
+  label: true,
+  harnessId: true,
+  model: true,
+  runtime: true,
+  depth: true,
+  costCeilingUsdPerAttempt: true,
+  promptOverrides: true,
+  featureFlags: true,
+};
 
 /** Validate, clone, and freeze the exact descriptor before any scan executes. */
 export function snapshotBenchVariant(value: BenchVariant): Readonly<BenchVariant> {
   for (const key of Object.keys(value)) {
-    if (!VARIANT_KEYS.has(key)) throw new Error(`unsupported bench variant field: ${key}`);
+    if (!VARIANT_KEYS[key]) throw new Error(`unsupported bench variant field: ${key}`);
   }
   if (!/^[a-z0-9][a-z0-9_-]{2,79}$/.test(value.id)) throw new Error("bench variant id must be filesystem-safe");
   if (value.label !== undefined && typeof value.label !== "string") throw new Error("bench variant label must be a string");
+  if (value.harnessId !== undefined && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value.harnessId)) {
+    throw new Error("bench harness id must be filesystem-safe");
+  }
   if (value.model !== undefined && (!value.model || value.model !== value.model.trim())) throw new Error("bench variant model must be non-empty and trimmed");
   if (value.runtime !== undefined && !["api", "claude", "codex", "gemini", "ollama", "auto"].includes(value.runtime)) throw new Error("bench variant runtime is unsupported");
   if (value.depth !== undefined && !["quick", "default", "deep"].includes(value.depth)) throw new Error("bench variant depth is unsupported");
@@ -75,6 +90,7 @@ export function snapshotBenchVariant(value: BenchVariant): Readonly<BenchVariant
   const snapshot: BenchVariant = {
     id: value.id,
     ...(value.label !== undefined ? { label: value.label } : {}),
+    ...(value.harnessId !== undefined ? { harnessId: value.harnessId } : {}),
     ...(value.model !== undefined ? { model: value.model } : {}),
     ...(value.runtime !== undefined ? { runtime: value.runtime } : {}),
     ...(value.depth !== undefined ? { depth: value.depth } : {}),
@@ -194,15 +210,32 @@ export function createDefaultVariantScan(
 
   return async (input) =>
     withVariantFeatureFlags(variant.featureFlags, async () => {
+      let result;
       switch (input.case.target.kind) {
         case "source-audit":
-          return auditScan(input);
+          result = await auditScan(input);
+          break;
         case "web":
-          return webScan(input);
+          result = await webScan(input);
+          break;
         case "kernel":
-          return {
-            error: `default variant scan does not handle kernel case "${input.case.id}" — inject a kernel scan adapter (cloud verify-kernel runner)`,
+        case "suite-task":
+          result = {
+            error: `default variant scan does not handle ${input.case.target.kind} case "${input.case.id}" — inject a matching integration adapter`,
           };
+          break;
       }
+      return {
+        ...result,
+        benchmarkMeta: {
+          ...result.benchmarkMeta,
+          execution: {
+            ...result.benchmarkMeta?.execution,
+            harnessId: variant.harnessId ?? "0sec-agentic",
+            ...(variant.model ? { model: variant.model } : {}),
+            ...(variant.runtime ? { runtime: variant.runtime } : {}),
+          },
+        },
+      };
     });
 }

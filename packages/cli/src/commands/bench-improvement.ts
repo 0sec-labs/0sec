@@ -29,6 +29,7 @@ import {
   researchExecutionEvidenceRef,
   snapshotBenchVariant,
   verifyImprovementLedger,
+  type BenchAttemptPolicy,
   type BenchCaseResult,
   type BenchEvaluatorAttestation,
   type BenchManifest,
@@ -404,6 +405,7 @@ function caseResult(
   manifestCase: BenchManifest["cases"][number],
   label: string,
   configuredPassAtK: number,
+  configuredAttemptPolicy: BenchAttemptPolicy,
 ): BenchCaseResult {
   const raw = record(value, label);
   if (text(raw.id, `${label}.id`) !== manifestCase.id) {
@@ -424,6 +426,10 @@ function caseResult(
   const passAtK = positiveInteger(raw.passAtK, `${label}.passAtK`);
   if (passAtK !== (manifestCase.passAtK ?? configuredPassAtK)) {
     throw new Error(`${label}.passAtK does not match its manifest or tournament config`);
+  }
+  const attemptPolicy = text(raw.attemptPolicy, `${label}.attemptPolicy`) as BenchAttemptPolicy;
+  if (attemptPolicy !== configuredAttemptPolicy) {
+    throw new Error(`${label}.attemptPolicy does not match its tournament config`);
   }
   if (!Array.isArray(raw.attempts)) throw new Error(`${label}.attempts must be an array`);
   if (raw.attempts.length === 0 || raw.attempts.length > passAtK) {
@@ -451,11 +457,18 @@ function caseResult(
     }
     finiteNonNegative(attempt.costUsd, `${label}.attempts[${index}].costUsd`);
     nonNegativeInteger(attempt.attackTurns, `${label}.attempts[${index}].attackTurns`);
+    nonNegativeInteger(attempt.inputTokens, `${label}.attempts[${index}].inputTokens`);
+    nonNegativeInteger(attempt.outputTokens, `${label}.attempts[${index}].outputTokens`);
+    nonNegativeInteger(attempt.totalTokens, `${label}.attempts[${index}].totalTokens`);
     nonNegativeInteger(attempt.durationMs, `${label}.attempts[${index}].durationMs`);
     return attempt;
   });
   const firstVerified = attempts.findIndex((attempt) => attempt.status === "verified");
-  if (firstVerified >= 0 && firstVerified !== attempts.length - 1) {
+  if (
+    configuredAttemptPolicy === "pass-at-k" &&
+    firstVerified >= 0 &&
+    firstVerified !== attempts.length - 1
+  ) {
     throw new Error(`${label}.attempts continue after the first verified receipt`);
   }
   const derivedVerdict = firstVerified >= 0
@@ -474,13 +487,22 @@ function caseResult(
   }
   const costUsd = finiteNonNegative(raw.costUsd, `${label}.costUsd`);
   const attackTurns = nonNegativeInteger(raw.attackTurns, `${label}.attackTurns`);
+  const inputTokens = nonNegativeInteger(raw.inputTokens, `${label}.inputTokens`);
+  const outputTokens = nonNegativeInteger(raw.outputTokens, `${label}.outputTokens`);
+  const totalTokens = nonNegativeInteger(raw.totalTokens, `${label}.totalTokens`);
   const attemptCost = attempts.reduce((sum, attempt) => sum + (attempt.costUsd as number), 0);
   const attemptTurns = attempts.reduce((sum, attempt) => sum + (attempt.attackTurns as number), 0);
+  const attemptInputTokens = attempts.reduce((sum, attempt) => sum + (attempt.inputTokens as number), 0);
+  const attemptOutputTokens = attempts.reduce((sum, attempt) => sum + (attempt.outputTokens as number), 0);
+  const attemptTotalTokens = attempts.reduce((sum, attempt) => sum + (attempt.totalTokens as number), 0);
   if (costUsd !== attemptCost) throw new Error(`${label}.costUsd does not equal attempt costs`);
   if (attackTurns !== attemptTurns) {
     throw new Error(`${label}.attackTurns does not equal attempt turns`);
   }
-  return { ...raw, attempts } as unknown as BenchCaseResult;
+  if (inputTokens !== attemptInputTokens || outputTokens !== attemptOutputTokens || totalTokens !== attemptTotalTokens) {
+    throw new Error(`${label}.token totals do not equal attempt totals`);
+  }
+  return { ...raw, attemptPolicy, attempts } as unknown as BenchCaseResult;
 }
 
 function validateScorecard(
@@ -496,6 +518,10 @@ function validateScorecard(
   const totals = record(raw.totals, `${label}.totals`);
   const config = record(raw.config, `${label}.config`);
   positiveInteger(config.passAtK, `${label}.config.passAtK`);
+  const attemptPolicy = text(config.attemptPolicy, `${label}.config.attemptPolicy`) as BenchAttemptPolicy;
+  if (attemptPolicy !== "pass-at-k" && attemptPolicy !== "independent-repeat") {
+    throw new Error(`${label}.config.attemptPolicy is invalid`);
+  }
   positiveInteger(config.maxTurns, `${label}.config.maxTurns`);
   nullableCost(config.costCeilingUsd, `${label}.config.costCeilingUsd`);
   if (typeof config.ciSubset !== "boolean") throw new Error(`${label}.config.ciSubset must be boolean`);
@@ -554,12 +580,14 @@ function validateScorecard(
       manifestCase,
       `${label}.cases[${index}]`,
       config.passAtK as number,
+      attemptPolicy,
     );
   });
   const recomputed = aggregateScorecard({
     manifestId: manifest.id,
     ciSubset: config.ciSubset as boolean,
     passAtK: config.passAtK as number,
+    attemptPolicy,
     maxTurns: config.maxTurns as number,
     costCeilingUsd: config.costCeilingUsd as number | null,
     cases: parsedCases,
@@ -622,6 +650,20 @@ export function parseTournamentPair(value: unknown, label: string): ParsedResear
   }
   const config = record(tournamentRaw.config, `${label}.tournament.config`);
   positiveInteger(config.passAtK, `${label}.tournament.config.passAtK`);
+  const attemptPolicy = text(
+    config.attemptPolicy,
+    `${label}.tournament.config.attemptPolicy`,
+  ) as BenchAttemptPolicy;
+  if (attemptPolicy !== "pass-at-k" && attemptPolicy !== "independent-repeat") {
+    throw new Error(`${label}.tournament.config.attemptPolicy is invalid`);
+  }
+  const schedule = text(
+    config.schedule,
+    `${label}.tournament.config.schedule`,
+  );
+  if (schedule !== "variant-major" && schedule !== "case-major") {
+    throw new Error(`${label}.tournament.config.schedule is invalid`);
+  }
   positiveInteger(config.maxTurns, `${label}.tournament.config.maxTurns`);
   nullableCost(config.costCeilingUsd, `${label}.tournament.config.costCeilingUsd`);
   if (typeof config.ciSubset !== "boolean") {
@@ -654,6 +696,7 @@ export function parseTournamentPair(value: unknown, label: string): ParsedResear
   }
   const expectedConfig = {
     passAtK: config.passAtK,
+    attemptPolicy,
     maxTurns: config.maxTurns,
     costCeilingUsd: config.costCeilingUsd,
     ciSubset: config.ciSubset,

@@ -74,6 +74,7 @@ export interface ProjectResearchExecutionEvidenceOptions {
 export interface ResearchVariantDescriptor {
   schemaVersion: 1;
   id: string;
+  harnessId: string | null;
   modelOverride: string | null;
   runtimeOverride: string | null;
   depthOverride: string | null;
@@ -82,16 +83,46 @@ export interface ResearchVariantDescriptor {
   featureFlags: Record<string, boolean>;
 }
 
-const IMPLEMENTED_FEATURE_FLAGS = new Set([
-  "agent_fanout", "budget_warnings", "cloud_sink", "cloud_surface", "consensus_verify",
-  "context_compaction", "decoy_detection", "dynamic_playbooks", "dynamic_triage", "early_stop",
-  "evidence_gate", "execution_journal", "external_memory", "holding_it_wrong", "inline_validation",
-  "jit_skills", "journal_rehydrate", "learned_router", "loop_detection", "loot_ledger",
-  "mongo_objectid_forge", "multimodal", "oast", "per_item_orchestration", "poc_gen_static",
-  "pov_gate", "pre_recon_cve", "preserve_critical_messages", "progress_handoff", "pty_session",
-  "publishability_gate", "reachability_gate", "script_templates", "specialist_routing",
-  "target_history_preseed", "web_recon", "web_search", "wp_fingerprint",
-]);
+const IMPLEMENTED_FEATURE_FLAGS: Record<string, true> = {
+  agent_fanout: true,
+  budget_warnings: true,
+  cloud_sink: true,
+  cloud_surface: true,
+  consensus_verify: true,
+  context_compaction: true,
+  decoy_detection: true,
+  dynamic_playbooks: true,
+  dynamic_triage: true,
+  early_stop: true,
+  evidence_gate: true,
+  execution_journal: true,
+  external_memory: true,
+  holding_it_wrong: true,
+  inline_validation: true,
+  jit_skills: true,
+  journal_rehydrate: true,
+  learned_router: true,
+  loop_detection: true,
+  loot_ledger: true,
+  mongo_objectid_forge: true,
+  multimodal: true,
+  oast: true,
+  per_item_orchestration: true,
+  poc_gen_static: true,
+  pov_gate: true,
+  pre_recon_cve: true,
+  preserve_critical_messages: true,
+  progress_handoff: true,
+  pty_session: true,
+  publishability_gate: true,
+  reachability_gate: true,
+  script_templates: true,
+  specialist_routing: true,
+  target_history_preseed: true,
+  web_recon: true,
+  web_search: true,
+  wp_fingerprint: true,
+};
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -117,6 +148,7 @@ export function researchVariantDescriptor(value: BenchVariant): ResearchVariantD
   return {
     schemaVersion: 1,
     id: value.id,
+    harnessId: value.harnessId ?? null,
     modelOverride: value.model ?? null,
     runtimeOverride: value.runtime ?? null,
     depthOverride: value.depth ?? null,
@@ -143,13 +175,15 @@ function validateCandidateVariantChange(
   const value = change.knobs[key];
   if (change.kind === "prompt" && ["source_audit.hypothesis", "web.challenge_hint"].includes(key) && typeof value === "string" && value !== "" && value === value.trim()) {
     expected.promptOverrides[key] = value;
-  } else if (change.kind === "feature_flag" && IMPLEMENTED_FEATURE_FLAGS.has(key) && typeof value === "boolean") {
+  } else if (change.kind === "feature_flag" && IMPLEMENTED_FEATURE_FLAGS[key] && typeof value === "boolean") {
     if (typeof champion.featureFlags[key] !== "boolean") throw new Error(`champion must explicitly bind feature flag ${key}`);
     expected.featureFlags[key] = value;
   } else if (change.kind === "routing" && key === "model" && typeof value === "string" && value !== "" && value === value.trim()) {
     expected.modelOverride = value;
   } else if (change.kind === "routing" && key === "runtime" && typeof value === "string" && ["api", "claude", "codex", "gemini", "ollama", "auto"].includes(value)) {
     expected.runtimeOverride = value;
+  } else if (change.kind === "harness" && key === "harnessId" && typeof value === "string" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)) {
+    expected.harnessId = value;
   } else if (change.kind === "scheduler" && key === "depth" && typeof value === "string" && ["quick", "default", "deep"].includes(value)) {
     expected.depthOverride = value;
   } else {

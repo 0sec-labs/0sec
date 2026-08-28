@@ -42,6 +42,13 @@ export const FileReadObjectiveSchema = z.object({
   path: z.string().optional(),
 });
 
+/** Capture a dynamically injected benchmark flag from a live target. */
+export const FlagCaptureObjectiveSchema = z.object({
+  type: z.literal("flag-capture"),
+  /** Fresh per-attempt flag injected by the target provisioner. */
+  marker: z.string().min(4),
+});
+
 /** Write to a location the unprivileged user shouldn't reach. */
 export const FileWriteObjectiveSchema = z.object({
   type: z.literal("file-write"),
@@ -109,15 +116,26 @@ export const FindingMatchObjectiveSchema = z.object({
    */
   sinkMarkers: z.array(z.string().min(2)).min(1),
 });
+/**
+ * Delegate grading to a named suite-owned oracle. The core harness validates
+ * the suite binding, while the integration supplies the oracle implementation.
+ */
+export const SuiteOracleObjectiveSchema = z.object({
+  type: z.literal("suite-oracle"),
+  /** Stable integration id, e.g. "cybergym". */
+  suite: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
+});
 
 export const BenchObjectiveSchema = z.discriminatedUnion("type", [
   FileReadObjectiveSchema,
+  FlagCaptureObjectiveSchema,
   FileWriteObjectiveSchema,
   DbAccessObjectiveSchema,
   AdminLoginObjectiveSchema,
   SsrfCallbackObjectiveSchema,
   KasanHitObjectiveSchema,
   FindingMatchObjectiveSchema,
+  SuiteOracleObjectiveSchema,
 ]);
 
 export type BenchObjective = z.infer<typeof BenchObjectiveSchema>;
@@ -169,10 +187,29 @@ export const SourceAuditTargetSchema = z.object({
   hint: z.string().optional(),
 });
 
+/**
+ * A task resolved and graded by an integration rather than by the built-in
+ * Docker/package/kernel adapters. The suite id is part of both target and
+ * objective, so a manifest cannot accidentally route a task to another
+ * integration's oracle.
+ */
+export const SuiteTaskTargetSchema = z.object({
+  kind: z.literal("suite-task"),
+  /** Stable integration id, e.g. "cybergym". */
+  suite: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
+  /** Suite-owned immutable task coordinate, e.g. "arvo:10400". */
+  taskRef: z.string().min(1),
+  /** Optional suite-specific difficulty/profile coordinate. */
+  difficulty: z.string().min(1).optional(),
+  /** Free-text task hint surfaced only to the selected integration. */
+  hint: z.string().optional(),
+});
+
 export const BenchTargetSchema = z.discriminatedUnion("kind", [
   WebTargetSchema,
   KernelTargetSchema,
   SourceAuditTargetSchema,
+  SuiteTaskTargetSchema,
 ]);
 
 export type BenchTarget = z.infer<typeof BenchTargetSchema>;
@@ -186,12 +223,14 @@ export type BenchTarget = z.infer<typeof BenchTargetSchema>;
 
 const OBJECTIVE_TARGET_KIND: Record<BenchObjectiveType, BenchTarget["kind"]> = {
   "file-read": "web",
+  "flag-capture": "web",
   "file-write": "web",
   "db-access": "web",
   "admin-login": "web",
   "ssrf-callback": "web",
   "kasan-hit": "kernel",
   "finding-match": "source-audit",
+  "suite-oracle": "suite-task",
 };
 
 // ── Case + manifest ───────────────────────────────────────────────────
@@ -236,6 +275,17 @@ export const BenchCaseSchema = z
           ? `case "${c.id}": kasan-hit objective requires a kernel target and vice versa (objective=${c.objective.type}, target=${c.target.kind})`
           : `case "${c.id}": ${c.objective.type} objective requires a ${expected} target (got target=${c.target.kind})`;
       ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+      return;
+    }
+    if (
+      c.objective.type === "suite-oracle" &&
+      c.target.kind === "suite-task" &&
+      c.objective.suite !== c.target.suite
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `case "${c.id}": suite-oracle objective suite "${c.objective.suite}" does not match suite-task target "${c.target.suite}"`,
+      });
     }
   });
 

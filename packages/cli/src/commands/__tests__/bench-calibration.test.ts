@@ -53,9 +53,11 @@ describe("zero-cost 0research calibration", () => {
     });
     expect(first.tournament.config).toEqual({
       passAtK: 1,
+      attemptPolicy: "pass-at-k",
       maxTurns: 1,
       costCeilingUsd: null,
       ciSubset: false,
+      schedule: "variant-major",
       variantIds: [CALIBRATION_CHAMPION_ID, CALIBRATION_CHALLENGER_ID],
     });
     expect(first.tournament.championId).toBe(CALIBRATION_CHALLENGER_ID);

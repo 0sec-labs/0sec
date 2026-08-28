@@ -39,6 +39,10 @@
     "./msrc-windows-lpe-capability-promotion": {
       "types": "./dist/msrc-windows-lpe-capability-promotion.d.ts",
       "default": "./dist/msrc-windows-lpe-capability-promotion.js"
+    },
+    "./bench-integrations": {
+      "types": "./dist/bench-integrations/index.d.ts",
+      "default": "./dist/bench-integrations/index.js"
     }
   },
   "scripts": {

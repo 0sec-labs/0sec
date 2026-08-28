@@ -133,6 +133,9 @@ function fixtureCase(
     notes: outcome.error ?? (outcome.surfaced ? "finder surfaced a finding" : "finder surfaced nothing"),
     costUsd: 0,
     attackTurns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
     durationMs: 0,
   };
   return {
@@ -142,11 +145,15 @@ function fixtureCase(
     knownNegative,
     tags: [],
     passAtK: 1,
+    attemptPolicy: "pass-at-k",
     attempts: [attempt],
     verdict: status,
     falsePositive: knownNegative && status === "verified",
     costUsd: 0,
     attackTurns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
   };
 }
 
@@ -168,6 +175,7 @@ async function scoreVariant(
     manifestId: `lens-validation:${variantId}`,
     ciSubset: false,
     passAtK: 1,
+    attemptPolicy: "pass-at-k",
     maxTurns: 1,
     costCeilingUsd: null,
     cases,

@@ -107,6 +107,12 @@ export interface ScanConfig {
   templateFilter?: string[];
   maxConcurrency?: number;
   timeout?: number;
+  /**
+   * Explicit attack-agent turn ceiling. When omitted the engine derives its
+   * normal budget from `depth`; benchmark adapters set this to make the
+   * declared per-attempt budget enforceable.
+   */
+  maxAttackTurns?: number;
   /** Whole-scan wallclock timeout for single-process runners. */
   scanTimeout?: number;
   verbose?: boolean;

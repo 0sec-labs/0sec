@@ -221,6 +221,8 @@ export interface AgenticScanAdapterOptions {
   costCeilingUsdPerAttempt?: number;
   /** Per-attempt wallclock timeout (ms). Default 60_000. */
   timeoutMs?: number;
+  /** Optional white-box source root for a particular web case. */
+  repoPathForCase?: (c: BenchCase) => string | undefined;
   /** Extra bounded research direction appended to the manifest hint. */
   challengeHint?: string;
 }
@@ -228,17 +230,13 @@ export interface AgenticScanAdapterOptions {
 /**
  * Build a {@link BenchScan} backed by the real `agenticScan` engine.
  *
- * The harness turn budget (`input.maxTurns`) is mapped to scan `depth`
- * ("quick" for tight budgets, "deep" otherwise) since the engine bounds the
- * attack loop by depth + cost rather than a raw turn count. The per-attempt
- * cost ceiling is forwarded verbatim to `ScanConfig.costCeilingUsd`.
+ * The harness's `input.maxTurns` is forwarded as the attack-agent ceiling;
+ * depth remains a coarse scheduling preference. The per-attempt cost ceiling
+ * is forwarded verbatim to `ScanConfig.costCeilingUsd`.
  *
- * Scope: WEB targets only. Kernel cases require the QEMU/KASAN verify path
- * (the cloud `verify-kernel` runner), which lives in `services/` and cannot
- * be imported here (services depends on core, not vice-versa, ADR-001).
- * Supply a kernel scan adapter / oracle for `kind: "kernel"` cases; this
- * default returns an `error` result for them so they surface as
- * `inconclusive` rather than being silently mis-run through the web engine.
+ * Scope: WEB targets only. Kernel and suite-owned tasks require their own
+ * integration adapters/oracles; this default returns an error so they surface
+ * as inconclusive rather than being silently mis-run through the web engine.
  */
 export function createAgenticScanAdapter(
   opts: AgenticScanAdapterOptions = {},
@@ -255,10 +253,12 @@ export function createAgenticScanAdapter(
         config: {
           target,
           depth: maxTurns <= 20 ? "quick" : "deep",
+          maxAttackTurns: maxTurns,
           format: "json",
           mode: "web",
           runtime: opts.runtime ?? "auto",
           model: opts.model,
+          ...(opts.repoPathForCase ? { repoPath: opts.repoPathForCase(c) } : {}),
           timeout: opts.timeoutMs ?? 60_000,
           ...(opts.costCeilingUsdPerAttempt != null
             ? { costCeilingUsd: opts.costCeilingUsdPerAttempt }

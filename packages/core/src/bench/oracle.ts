@@ -68,6 +68,51 @@ export interface BenchOracleOutcome {
 }
 
 /**
+ * Immutable execution identity attached by the harness and enriched by the
+ * selected scan adapter. It records what actually ran, rather than relying on
+ * a caller's intended configuration.
+ */
+export interface BenchExecutionMetadata {
+  integrationId?: string;
+  integrationVersion?: string;
+  harnessId?: string;
+  harnessVersion?: string;
+  model?: string;
+  provider?: string;
+  runtime?: string;
+  configDigest?: string;
+}
+
+/**
+ * A trusted suite-owned verdict emitted by an integration adapter. The generic
+ * harness never grades this directly; the matching suite oracle validates it.
+ */
+export interface BenchVerificationReceipt {
+  oracleId: string;
+  status: BenchVerdict;
+  notes?: string;
+  evidenceRef?: string;
+}
+
+export interface BenchScanMetadata {
+  attackTurns?: number;
+  estimatedCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  /** Actual model/runtime resolved by the underlying scan, when surfaced. */
+  model?: string;
+  provider?: string;
+  runtime?: string;
+  execution?: BenchExecutionMetadata;
+  /**
+   * Provenance of an audited source target, including resolved package
+   * coordinates and integrity status.
+   */
+  targetProvenance?: BenchTargetProvenance;
+}
+
+/**
  * Reproducibility provenance of a benchmarked source-audit target, threaded
  * into `benchmarkMeta`. Captures the requested-vs-resolved version (drift),
  * the source registry/tarball/integrity, and how reproducible the run is:
@@ -107,17 +152,9 @@ export interface BenchScanResult {
     evidence?: { request?: string; response?: string; analysis?: string };
   }>;
   trace?: unknown[];
-  benchmarkMeta?: {
-    attackTurns?: number;
-    estimatedCostUsd?: number;
-    totalTokens?: number;
-    /**
-     * Provenance of the audited target — which version actually resolved,
-     * registry/tarball/integrity, and how reproducible the run is. Threaded
-     * from the scan adapter so the scorecard can report reproducibility.
-     */
-    targetProvenance?: BenchTargetProvenance;
-  };
+  benchmarkMeta?: BenchScanMetadata;
+  /** Trusted suite-oracle evidence produced by the integration adapter. */
+  verification?: BenchVerificationReceipt;
   /** Per-attempt wall-clock, threaded through from the scan adapter. */
   durationMs?: number;
   /** Non-empty ⇒ the scan itself failed (provision/timeout/runtime error). */
@@ -180,6 +217,8 @@ function detectCrashSignature(haystack: string): string | null {
 
 const OBJECTIVE_CLAIM_CATEGORIES: Record<BenchObjective["type"], string[]> = {
   "file-read": ["path-traversal", "information-disclosure"],
+  // Flag capture is a benchmark success condition, not a vulnerability class.
+  "flag-capture": [],
   "file-write": ["path-traversal", "command-injection", "code-injection"],
   "db-access": ["sql-injection"],
   "admin-login": ["security-misconfiguration", "missing-validation", "cors"],
@@ -197,6 +236,8 @@ const OBJECTIVE_CLAIM_CATEGORIES: Record<BenchObjective["type"], string[]> = {
   // on the objective, not a static set), so this entry is intentionally empty;
   // the finding-match path computes its family via {@link acceptableCategories}.
   "finding-match": [],
+  // Suite-owned objectives must be graded by their selected suite oracle.
+  "suite-oracle": [],
 };
 
 // ── finding-match: vulnClass → acceptable finding categories ──────────
@@ -303,6 +344,7 @@ export function harvestEvidenceText(report: BenchScanResult): string {
 function objectiveMarker(objective: BenchObjective): string | null {
   switch (objective.type) {
     case "file-read":
+    case "flag-capture":
     case "file-write":
     case "db-access":
     case "admin-login":
@@ -310,9 +352,9 @@ function objectiveMarker(objective: BenchObjective): string | null {
     case "ssrf-callback":
       return objective.token;
     case "kasan-hit":
-      return null; // graded by crash-signature, not a marker
     case "finding-match":
-      return null; // graded by finding class + sink marker, not a single marker
+    case "suite-oracle":
+      return null;
   }
 }
 
@@ -365,6 +407,14 @@ export class ObjectiveOracle implements BenchOracle {
         status: "inconclusive",
         confidence: null,
         notes: `[objective:${c.objective.type}] scan did not complete: ${report.error}`,
+      };
+    }
+
+    if (c.objective.type === "suite-oracle") {
+      return {
+        status: "inconclusive",
+        confidence: null,
+        notes: `[objective:suite-oracle] suite "${c.objective.suite}" requires its registered oracle`,
       };
     }
 

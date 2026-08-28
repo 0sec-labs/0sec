@@ -93,6 +93,43 @@ describe("parseManifest", () => {
   });
 });
 
+describe("parseManifest — suite-task", () => {
+  const suiteCase = (overrides: Record<string, unknown> = {}) => ({
+    id: "cg1",
+    target: {
+      kind: "suite-task",
+      suite: "cybergym",
+      taskRef: "arvo:10400",
+      difficulty: "level1",
+    },
+    objective: { type: "suite-oracle", suite: "cybergym" },
+    ...overrides,
+  });
+
+  it("accepts a suite task bound to its matching suite oracle", () => {
+    const m = parseManifest({ id: "m1", cases: [suiteCase()] });
+    expect(m.cases[0].target.kind).toBe("suite-task");
+  });
+
+  it("rejects a suite oracle bound to another suite target", () => {
+    expect(() =>
+      parseManifest({
+        id: "m1",
+        cases: [suiteCase({ objective: { type: "suite-oracle", suite: "other" } })],
+      }),
+    ).toThrow(/does not match suite-task target/);
+  });
+
+  it("rejects a suite oracle on a normal web target", () => {
+    expect(() =>
+      parseManifest({
+        id: "m1",
+        cases: [suiteCase({ target: { kind: "web", image: "img:1" } })],
+      }),
+    ).toThrow(/suite-oracle objective requires a suite-task target/);
+  });
+});
+
 describe("loadManifest (example-manifest.json)", () => {
   let manifest: BenchManifest;
 

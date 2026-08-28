@@ -52,6 +52,7 @@ export interface BenchScorecard {
   generatedAt?: string;
   config: {
     passAtK: number;
+    attemptPolicy: RunSuiteResult["attemptPolicy"];
     maxTurns: number;
     costCeilingUsd: number | null;
     ciSubset: boolean;
@@ -63,11 +64,22 @@ export interface BenchScorecard {
     verified: number;
     refuted: number;
     inconclusive: number;
+    attempts: number;
+    verifiedAttempts: number;
+    refutedAttempts: number;
+    inconclusiveAttempts: number;
   };
   /** verified positives / gradeable positives (positives that weren't inconclusive). */
   successRate: number;
   /** 95% Wilson CI on successRate. */
   successRateCI95: [number, number];
+  /**
+   * Per-attempt verified-positive rate. This is the honest rate for
+   * `independent-repeat`; successRate above remains the case/pass@k metric.
+   */
+  attemptSuccessRate: number;
+  /** 95% Wilson CI on the gradeable positive attempt rate. */
+  attemptSuccessRateCI95: [number, number];
   /** Known-negatives that produced a `verified` (false exploit) verdict. */
   falsePositives: number;
   /** falsePositives / gradeable known-negatives. Target: 0. */
@@ -76,6 +88,9 @@ export interface BenchScorecard {
   /** totalCostUsd / verified positives, or null when there were no successes. */
   costPerSuccessUsd: number | null;
   totalAttackTurns: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
   /** Per-objective-type slice of the success rate. */
   byObjective: Record<string, { total: number; verified: number; successRate: number }>;
   cases: BenchCaseResult[];
@@ -104,6 +119,10 @@ export function aggregateScorecard(
   const verified = cases.filter((c) => c.verdict === "verified").length;
   const refuted = cases.filter((c) => c.verdict === "refuted").length;
   const inconclusive = cases.filter((c) => c.verdict === "inconclusive").length;
+  const attempts = cases.flatMap((c) => c.attempts);
+  const verifiedAttempts = attempts.filter((a) => a.status === "verified").length;
+  const refutedAttempts = attempts.filter((a) => a.status === "refuted").length;
+  const inconclusiveAttempts = attempts.filter((a) => a.status === "inconclusive").length;
 
   // Success rate: only over gradeable positives.
   const gradeablePositives = positives.filter((c) => c.verdict !== "inconclusive");
@@ -111,6 +130,21 @@ export function aggregateScorecard(
   const successRate =
     gradeablePositives.length === 0 ? 0 : verifiedPositives / gradeablePositives.length;
   const successRateCI95 = wilson95(verifiedPositives, gradeablePositives.length);
+  const positiveAttempts = positives.flatMap((c) => c.attempts);
+  const gradeablePositiveAttempts = positiveAttempts.filter(
+    (attempt) => attempt.status !== "inconclusive",
+  );
+  const verifiedPositiveAttempts = positiveAttempts.filter(
+    (attempt) => attempt.status === "verified",
+  ).length;
+  const attemptSuccessRate =
+    gradeablePositiveAttempts.length === 0
+      ? 0
+      : verifiedPositiveAttempts / gradeablePositiveAttempts.length;
+  const attemptSuccessRateCI95 = wilson95(
+    verifiedPositiveAttempts,
+    gradeablePositiveAttempts.length,
+  );
 
   // FP rate: over gradeable known-negatives.
   const gradeableNegatives = knownNegatives.filter((c) => c.verdict !== "inconclusive");
@@ -120,6 +154,9 @@ export function aggregateScorecard(
 
   const totalCostUsd = cases.reduce((s, c) => s + c.costUsd, 0);
   const totalAttackTurns = cases.reduce((s, c) => s + c.attackTurns, 0);
+  const totalInputTokens = cases.reduce((s, c) => s + c.inputTokens, 0);
+  const totalOutputTokens = cases.reduce((s, c) => s + c.outputTokens, 0);
+  const totalTokens = cases.reduce((s, c) => s + c.totalTokens, 0);
   const costPerSuccessUsd =
     verifiedPositives === 0 ? null : totalCostUsd / verifiedPositives;
 
@@ -140,6 +177,7 @@ export function aggregateScorecard(
     ...(opts.clock ? { generatedAt: opts.clock() } : {}),
     config: {
       passAtK: run.passAtK,
+      attemptPolicy: run.attemptPolicy,
       maxTurns: run.maxTurns,
       costCeilingUsd: run.costCeilingUsd,
       ciSubset: run.ciSubset,
@@ -151,14 +189,23 @@ export function aggregateScorecard(
       verified,
       refuted,
       inconclusive,
+      attempts: attempts.length,
+      verifiedAttempts,
+      refutedAttempts,
+      inconclusiveAttempts,
     },
     successRate,
     successRateCI95,
+    attemptSuccessRate,
+    attemptSuccessRateCI95,
     falsePositives,
     fpRate,
     totalCostUsd,
     costPerSuccessUsd,
     totalAttackTurns,
+    totalInputTokens,
+    totalOutputTokens,
+    totalTokens,
     byObjective,
     cases,
   };
@@ -228,10 +275,13 @@ export function evaluateGate(
 export function formatScorecardSummary(s: BenchScorecard): string {
   const succ = `${(s.successRate * 100).toFixed(1)}%`;
   const ci = `[${(s.successRateCI95[0] * 100).toFixed(1)}–${(s.successRateCI95[1] * 100).toFixed(1)}%]`;
+  const attempt = s.config.attemptPolicy === "independent-repeat"
+    ? ` attempt ${(s.attemptSuccessRate * 100).toFixed(1)}%`
+    : "";
   const fp = `${(s.fpRate * 100).toFixed(1)}%`;
   const cps = s.costPerSuccessUsd == null ? "n/a" : `$${s.costPerSuccessUsd.toFixed(3)}`;
   return (
-    `${s.manifestId}: success ${succ} ${ci} ` +
+    `${s.manifestId}: success ${succ} ${ci}${attempt} ` +
     `(${s.totals.verified}✓/${s.totals.refuted}✗/${s.totals.inconclusive}?) ` +
     `fp ${fp} (${s.falsePositives}/${s.totals.knownNegatives}) ` +
     `cost/success ${cps} turns ${s.totalAttackTurns}`

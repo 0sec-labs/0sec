@@ -8,6 +8,9 @@ export const osecWorkspaceAliases = {
   "@0sec/benchmark/kernel-weaponization-collector": fromRoot(
     "./packages/benchmark/src/kernel-weaponization-collector.ts",
   ),
+  "@0sec/benchmark/bench-integrations": fromRoot(
+    "./packages/benchmark/src/bench-integrations/index.ts",
+  ),
   "@0sec/core": fromRoot("./packages/core/src/index.ts"),
   "@0sec/db": fromRoot("./packages/db/src/index.ts"),
   "@0sec/shared": fromRoot("./packages/shared/src/index.ts"),

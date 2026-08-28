@@ -320,14 +320,12 @@ function chooseBetterResult(a: XbowResult, b: XbowResult): XbowResult {
 }
 
 // ── Load Challenges ──
-function loadChallenges(): XbowChallenge[] {
-  const benchDir = join(XBOW_PATH, "benchmarks");
+export function loadXbowChallenges(xbowPath: string = XBOW_PATH): XbowChallenge[] {
+  const benchDir = join(xbowPath, "benchmarks");
   if (!existsSync(benchDir)) {
-    console.error(`XBOW benchmarks not found at ${benchDir}`);
-    console.error(`Either clone them manually:`);
-    console.error(`  git clone https://github.com/0ca/xbow-validation-benchmarks-patched ${XBOW_PATH}`);
-    console.error(`or re-run with --benchmark-repo <owner/repo> to have the runner clone for you.`);
-    process.exit(1);
+    throw new Error(
+      `XBOW benchmarks not found at ${benchDir}. Clone them or pass --benchmark-path / XBOW_PATH.`,
+    );
   }
 
   const dirs = readdirSync(benchDir).filter((d) => d.startsWith("XBEN-")).sort();
@@ -372,7 +370,7 @@ function loadChallenges(): XbowChallenge[] {
 }
 
 // ── Docker Helpers ──
-function buildChallenge(challenge: XbowChallenge, flag: string): boolean {
+export function buildXbowChallenge(challenge: XbowChallenge, flag: string): boolean {
   try {
     execSync(`docker compose build --build-arg FLAG=${flag}`, {
       cwd: challenge.path,
@@ -385,7 +383,7 @@ function buildChallenge(challenge: XbowChallenge, flag: string): boolean {
   }
 }
 
-function startChallenge(challenge: XbowChallenge): number | null {
+export function startXbowChallenge(challenge: XbowChallenge): number | null {
   try {
     // Stop any previously running containers to avoid port conflicts
     try { execSync("docker compose down -v", { cwd: challenge.path, stdio: "pipe", timeout: 15_000 }); } catch {}
@@ -436,7 +434,7 @@ function startChallenge(challenge: XbowChallenge): number | null {
   }
 }
 
-function stopChallenge(challenge: XbowChallenge): void {
+export function stopXbowChallenge(challenge: XbowChallenge): void {
   try {
     execSync("docker compose down -v --remove-orphans", {
       cwd: challenge.path,
@@ -455,14 +453,14 @@ async function runChallengeOnce(challenge: XbowChallenge, model?: string): Promi
   const start = Date.now();
 
   // Build
-  if (!buildChallenge(challenge, flag)) {
+  if (!buildXbowChallenge(challenge, flag)) {
     return { id: challenge.id, name: challenge.name, level: challenge.level, tags: challenge.tags, model: effectiveModel, passed: false, flagFound: false, findingsCount: 0, durationMs: Date.now() - start, error: "Docker build failed" };
   }
 
   // Start
-  const port = startChallenge(challenge);
+  const port = startXbowChallenge(challenge);
   if (!port) {
-    stopChallenge(challenge);
+    stopXbowChallenge(challenge);
     return { id: challenge.id, name: challenge.name, level: challenge.level, tags: challenge.tags, model: effectiveModel, passed: false, flagFound: false, findingsCount: 0, durationMs: Date.now() - start, error: "Docker start failed or port not found" };
   }
 
@@ -639,7 +637,7 @@ async function runChallengeOnce(challenge: XbowChallenge, model?: string): Promi
       error: err instanceof Error ? err.message : String(err),
     };
   } finally {
-    stopChallenge(challenge);
+    stopXbowChallenge(challenge);
   }
 }
 
@@ -768,7 +766,7 @@ async function main() {
     console.log(`  models: ${modelsArg.join(", ")}`);
   }
 
-  let challenges = loadChallenges();
+  let challenges = loadXbowChallenges();
 
   if (tagFilter) challenges = challenges.filter((c) => c.tags.includes(tagFilter));
   if (levelFilter) challenges = challenges.filter((c) => c.level === levelFilter);

@@ -27,6 +27,9 @@ export {
   BenchTargetSchema,
   SourceAuditTargetSchema,
   FindingMatchObjectiveSchema,
+  FlagCaptureObjectiveSchema,
+  SuiteOracleObjectiveSchema,
+  SuiteTaskTargetSchema,
 } from "./manifest.js";
 export type {
   BenchManifest,
@@ -49,6 +52,9 @@ export type {
   BenchOracleInput,
   BenchOracleOutcome,
   BenchScanResult,
+  BenchScanMetadata,
+  BenchExecutionMetadata,
+  BenchVerificationReceipt,
   BenchVerdict,
   ObjectiveOracleOptions,
   BenchEvaluatorAttestation,
@@ -61,6 +67,7 @@ export type {
   TargetProvisioner,
   ProvisionedTarget,
   BenchAttemptResult,
+  BenchAttemptPolicy,
   BenchCaseResult,
   RunBenchOptions,
   RunSuiteOptions,
@@ -92,9 +99,27 @@ export type {
   PackageAuditAdapterOptions,
 } from "./adapters.js";
 
+export {
+  BenchIntegrationRegistry,
+  createBenchIntegrationRegistry,
+  createVariantExecutionFactory,
+} from "./integration.js";
+export type {
+  BenchExecution,
+  BenchIntegration,
+  VariantExecutionFactory,
+} from "./integration.js";
+
+export { createCoreBenchIntegration } from "./core-integration.js";
+export type { CoreBenchIntegrationOptions } from "./core-integration.js";
+
 export { corpusV1Path, exampleManifestPath } from "./paths.js";
 
-export { createDefaultVariantScan, snapshotBenchVariant } from "./variant.js";
+export {
+  createDefaultVariantScan,
+  snapshotBenchVariant,
+  withVariantFeatureFlags,
+} from "./variant.js";
 export type {
   BenchVariant,
   VariantScanFactory,
@@ -111,6 +136,7 @@ export {
 export type {
   VariantRunResult,
   PairwiseDelta,
+  TournamentSchedule,
   TournamentResult,
   RunTournamentOptions,
 } from "./tournament.js";

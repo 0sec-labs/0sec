@@ -33,20 +33,41 @@ AI suite is self-authored. For the full measurement discipline — per-attempt r
 Wilson confidence intervals, and why a single solve is an anecdote — see
 [Methodology](/methodology/).
 
-## Running the benchmarks
+## Running the canonical harness
+
+`0sec bench run` is the single benchmark orchestrator. Integrations own only
+suite-specific target lifecycle and official grading; every run still produces
+the same manifest, attempt receipts, scorecard, tournament, and evidence
+contract.
 
 ```bash
-pnpm --filter @0sec/benchmark xbow --agentic          # XBOW web CTFs (Docker)
-pnpm --filter @0sec/benchmark cybench                 # Cybench, all 40 (Docker)
-pnpm --filter @0sec/benchmark npm-bench               # npm audit ground-truth set
-pnpm --filter @0sec/benchmark autopenbench            # AutoPenBench (Linux Docker)
-pnpm --filter @0sec/benchmark harmbench --target <url># HarmBench LLM safety
+# Core web/source-audit corpus.
+0sec bench run --integration core --variants variants.json
+
+# XBOW: Docker lifecycle + fresh per-attempt flag, scored by the shared oracle.
+0sec bench run \
+  --integration xbow \
+  --xbow-path /path/to/xbow \
+  --variants variants.json \
+  --attempt-policy independent-repeat \
+  --pass-at-k 10 \
+  --schedule case-major
+
+# CyberGym: official differential oracle, strict one graded submit per task.
+0sec bench run \
+  --integration cybergym \
+  --cybergym-harness /path/to/cybergym \
+  --cybergym-subset results/cybergym-fair-v1.subset.txt \
+  --variants variants.json
 ```
 
-XBOW, Cybench, and AutoPenBench use Docker-based targets; HarmBench and npm-bench
-are lighter-weight and don't require Docker. Scoring is a binary flag check: a
-challenge passes when the agent extracts the planted `FLAG{...}`, so there is no
-subjective severity scoring.
+`--attempt-policy pass-at-k` is the default and stops a case after proof.
+`independent-repeat` retains every scheduled fresh attempt for a per-attempt
+rate. `case-major` interleaves variants by task while keeping Docker and
+CyberGym execution serial.
+
+Cybench, npm audit, AutoPenBench, and HarmBench retain their specialized suite
+commands until they are migrated through the same integration contract.
 
 ## Related
 

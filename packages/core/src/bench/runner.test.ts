@@ -61,6 +61,80 @@ describe("runBenchCase — pass@k", () => {
   });
 });
 
+describe("runBenchCase — independent-repeat", () => {
+  it("retains every scheduled attempt after a verified result", async () => {
+    const m = manifest([fileReadCase()]);
+    const scan = vi.fn(scanThatSucceedsFrom(0));
+    const result = await runBenchCase(m.cases[0], {
+      scan,
+      passAtK: 3,
+      attemptPolicy: "independent-repeat",
+    });
+    expect(scan).toHaveBeenCalledTimes(3);
+    expect(result.attemptPolicy).toBe("independent-repeat");
+    expect(result.attempts.map((attempt) => attempt.status)).toEqual([
+      "verified",
+      "verified",
+      "verified",
+    ]);
+  });
+
+  it("threads provisioned state, dynamic objectives, and execution receipts", async () => {
+    const m = manifest([fileReadCase()]);
+    const provisioner: TargetProvisioner = {
+      up: async () => ({
+        target: "http://localhost:1",
+        objective: { type: "file-read", marker: "FRESH_FLAG_001" },
+        handle: { task: "fresh" },
+      }),
+      down: async () => {},
+    };
+    const scan: BenchScan = async ({ case: c, provisioned }) => {
+      if (c.objective.type !== "file-read") throw new Error("expected file-read objective");
+      const handle = provisioned.handle;
+      if (
+        !handle ||
+        typeof handle !== "object" ||
+        !("task" in handle) ||
+        typeof handle.task !== "string"
+      ) {
+        throw new Error("expected fresh provisioned task");
+      }
+      return {
+        findings: [{ evidence: { response: c.objective.marker } }],
+        benchmarkMeta: {
+          attackTurns: 4,
+          estimatedCostUsd: 0.25,
+          inputTokens: 11,
+          outputTokens: 7,
+          execution: { model: "actual-model" },
+        },
+        verification: {
+          oracleId: "fixture",
+          status: "verified",
+          evidenceRef: handle.task,
+        },
+        durationMs: 8,
+      };
+    };
+    const result = await runBenchCase(m.cases[0], {
+      scan,
+      provisioner,
+      executionMetadata: { integrationId: "fixture", integrationVersion: "1" },
+    });
+    expect(result.verdict).toBe("verified");
+    expect(result.inputTokens).toBe(11);
+    expect(result.outputTokens).toBe(7);
+    expect(result.totalTokens).toBe(18);
+    expect(result.attempts[0].execution).toEqual({
+      integrationId: "fixture",
+      integrationVersion: "1",
+      model: "actual-model",
+    });
+    expect(result.attempts[0].verification?.evidenceRef).toBe("fresh");
+  });
+});
+
 describe("runBenchCase — budgets", () => {
   it("stops once the cumulative per-case cost ceiling is hit", async () => {
     const m = manifest([fileReadCase()]);

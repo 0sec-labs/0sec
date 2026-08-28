@@ -192,6 +192,8 @@ export interface CyberGymEngineOptions {
   model?: string;
   runtime: RuntimeMode;
   maxSteps: number;
+  /** Explicit official-oracle submit ceiling for the craft stage. */
+  maxSubmits?: number;
   /** Per-task engine spend ceiling. Undefined preserves unbounded legacy runs. */
   costCeilingUsd?: number;
   craftEvaluatePocOverride?: CraftPocEvaluator;
@@ -853,9 +855,9 @@ export const runEngineDefault: EngineRunner = async (task, opts) => {
       // CYBERGYM_MAX_SUBMITS overrides the submit budget. Set it to 1 to measure
       // STRICT pass@1 (one attempt, no oracle-feedback iteration) — the metric
       // comparable to the CyberGym leaderboard.
-      maxSubmits: process.env.CYBERGYM_MAX_SUBMITS
+      maxSubmits: opts.maxSubmits ?? (process.env.CYBERGYM_MAX_SUBMITS
         ? Math.max(1, parseInt(process.env.CYBERGYM_MAX_SUBMITS, 10))
-        : Math.max(6, Math.min(12, Math.ceil(opts.maxSteps / 3))),
+        : Math.max(6, Math.min(12, Math.ceil(opts.maxSteps / 3)))),
       // CYBERGYM_MAX_TESTS overrides the FREE (ungraded) self-test budget. More
       // free tests = more iteration to a crash before the one graded submit; it
       // costs no graded budget, so it's a cheap lever on the hard tail.
@@ -1130,6 +1132,8 @@ export async function runTaskBestOfN(
     runtime: RuntimeMode;
     maxSteps: number;
     bestOfN: number;
+    /** Explicit craft submit ceiling; default preserves environment behavior. */
+    maxSubmits?: number;
     /** Seam: run one craft trajectory (defaults to core runCraftScan). */
     runCraft?: (opts: CraftScanOptions) => Promise<CraftScanResult>;
     /** Seam: score ensemble candidates (defaults to core LLM judge). */
@@ -1171,9 +1175,9 @@ export async function runTaskBestOfN(
         ...(llmTimeoutMs ? { llmTimeoutMs } : {}),
         ...(deadlineMs ? { deadlineMs } : {}),
         ...(generatorUid ? { generatorUid } : {}),
-        maxSubmits: process.env.CYBERGYM_MAX_SUBMITS
+        maxSubmits: deps.maxSubmits ?? (process.env.CYBERGYM_MAX_SUBMITS
           ? Math.max(1, parseInt(process.env.CYBERGYM_MAX_SUBMITS, 10))
-          : Math.max(6, Math.min(12, Math.ceil(deps.maxSteps / 3))),
+          : Math.max(6, Math.min(12, Math.ceil(deps.maxSteps / 3)))),
         ...(process.env.CYBERGYM_MAX_TESTS
           ? { maxTests: Math.max(1, parseInt(process.env.CYBERGYM_MAX_TESTS, 10)) }
           : {}),
@@ -1279,6 +1283,10 @@ export async function runTaskOnce(
     model?: string;
     runtime: RuntimeMode;
     maxSteps: number;
+    /** Explicit ensemble cardinality; unset preserves CYBERGYM_BEST_OF_N. */
+    bestOfN?: number;
+    /** Explicit craft submit ceiling; unset preserves CYBERGYM_MAX_SUBMITS. */
+    maxSubmits?: number;
     /** Per-task engine spend ceiling; unsupported ensemble runs fail closed. */
     costCeilingUsd?: number;
     /** Ensemble seams (best-of-N only), forwarded to runTaskBestOfN → core. */
@@ -1286,7 +1294,7 @@ export async function runTaskOnce(
     judge?: CraftCandidateJudge;
   },
 ): Promise<CyberGymResult> {
-  const bestOfN = cyberGymBestOfN();
+  const bestOfN = deps.bestOfN ?? cyberGymBestOfN();
   if (deps.costCeilingUsd !== undefined && bestOfN > 1) {
     return {
       taskId: task.taskId,
@@ -1311,6 +1319,7 @@ export async function runTaskOnce(
       ...(deps.model ? { model: deps.model } : {}),
       runtime: deps.runtime,
       maxSteps: deps.maxSteps,
+      ...(deps.maxSubmits !== undefined ? { maxSubmits: deps.maxSubmits } : {}),
       ...(deps.costCeilingUsd !== undefined
         ? { costCeilingUsd: deps.costCeilingUsd }
         : {}),
