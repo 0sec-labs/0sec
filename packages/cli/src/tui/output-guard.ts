@@ -120,6 +120,10 @@ export function installTuiOutputGuard(options: TuiOutputGuardOptions = {}): TuiO
   const emit = (stream: TuiOutputStream, text: string): void => {
     const clean = sanitizeTuiText(text);
     if (!clean) return;
+    // Core already emitted the canonical event before writing the legacy cloud
+    // relay line. Keep that wire protocol out of the TUI transcript and avoid
+    // replaying it after terminal teardown.
+    if (stream === "stdout" && clean.startsWith("0SEC_EVENT_")) return;
     const line: TuiOutputLine = { stream, text: clean };
     presentationEventBus.emit(createPresentationEvent({
       source: "cli",

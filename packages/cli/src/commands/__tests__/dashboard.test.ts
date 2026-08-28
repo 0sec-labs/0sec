@@ -753,7 +753,7 @@ describe("dashboard — read APIs", () => {
         presentation: {
           protocol: "0sec.presentation/v1",
           kind: "event",
-          source: "dashboard",
+          source: "core",
           sequence: 1,
           at: "2026-08-26T00:00:00.000Z",
           eventType: "tool_call_started",

@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/react */
 import { appendFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CliRenderEvents, createCliRenderer, type CliRenderer } from "@opentui/core";
 import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
@@ -45,6 +46,8 @@ import {
 import { TranscriptReview } from "./chat/TranscriptReview.js";
 import type { TranscriptReviewRenderable } from "./transcript-review-renderable.js";
 import { createSessionTranscriptDocument } from "./session-presentation.js";
+import { projectSessionItem } from "./session-presentation.js";
+import { createSessionPresentationAdapter } from "../presentation/session-adapter.js";
 import {
   resumeProcessPresentationStreamBridge,
   suspendProcessPresentationStreamBridge,
@@ -4775,6 +4778,16 @@ export async function createOpenTuiSession(options: {
     localRuntimes: options.localRuntimes,
     model: options.model,
   });
+  const presentation = createSessionPresentationAdapter(randomUUID());
+  presentation.opened({
+    target: options.target,
+    depth: options.depth,
+    mode: options.mode,
+    runtime: options.runtime ?? "auto",
+  });
+  for (const item of state.transcript) {
+    presentation.transcriptAppend(projectSessionItem(item));
+  }
   const listeners = new Set<(value: SessionState) => void>();
   const sessionGate = createSessionCloseGate();
   const subscribe = (listener: (value: SessionState) => void) => {
@@ -4783,6 +4796,18 @@ export async function createOpenTuiSession(options: {
   };
   const emit = () => {
     for (const listener of listeners) listener(state);
+  };
+
+  const emitTranscriptChanges = (previous: readonly TranscriptItem[]) => {
+    const previousById = new Map(previous.map((item) => [item.id, item]));
+    for (const item of state.transcript) {
+      const prior = previousById.get(item.id);
+      if (!prior) {
+        presentation.transcriptAppend(projectSessionItem(item));
+      } else if (prior !== item) {
+        presentation.transcriptReplace(projectSessionItem(item));
+      }
+    }
   };
 
   const queueUserMessage = (text: string) => {
@@ -4799,6 +4824,8 @@ export async function createOpenTuiSession(options: {
         },
       ],
     };
+    const appended = state.transcript.at(-1);
+    if (appended) presentation.transcriptAppend(projectSessionItem(appended));
     emit();
   };
 
@@ -4808,6 +4835,7 @@ export async function createOpenTuiSession(options: {
     subscribe,
     queueUserMessage,
     onExit: () => {
+      presentation.closed();
       sessionGate.close();
     },
   });
@@ -4815,18 +4843,27 @@ export async function createOpenTuiSession(options: {
   return {
     onEvent: (event) => {
       if (sessionGate.closed) return;
+      const previousTranscript = state.transcript;
       state = applySessionEvent(state, event);
+      presentation.sessionEvent("session.event", {
+        type: event.type,
+        ...(event.stage ? { stage: event.stage } : {}),
+        ...(event.message ? { message: event.message } : {}),
+      });
+      emitTranscriptChanges(previousTranscript);
       emit();
     },
     setReport: (report) => {
       if (sessionGate.closed) return;
       state = applySessionReport(state, report);
+      presentation.sessionEvent("session.report", { report });
       emit();
     },
     waitForExit: () => sessionGate.wait(),
     getPendingUserMessages: () => {
       const msgs = state.pendingUserMessages;
       if (msgs.length > 0) {
+        presentation.sessionEvent("session.message.drained", { count: msgs.length });
         state = { ...state, pendingUserMessages: [] };
         emit();
       }

@@ -46,6 +46,25 @@ describe("installTuiOutputGuard", () => {
     ]);
   });
 
+  it("does not surface legacy cloud relay bytes as TUI output", () => {
+    const events: unknown[] = [];
+    const unsubscribe = presentationEventBus.subscribe({
+      emit(event) {
+        events.push(event);
+      },
+    });
+    const guard = installTuiOutputGuard();
+    try {
+      process.stdout.write('0SEC_EVENT_TOOL_CALL_STARTED {"tool":"read"}\n');
+    } finally {
+      guard.restore();
+      unsubscribe();
+    }
+
+    expect(guard.drain()).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
   it("reassembles a message split across writes", () => {
     const guard = installTuiOutputGuard();
     try {

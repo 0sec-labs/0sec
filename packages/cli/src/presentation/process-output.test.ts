@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createConsolePresentationOutput,
   createProcessPresentationOutput,
   installConsolePresentationBridge,
   installProcessPresentationStreamBridge,
@@ -133,5 +134,71 @@ describe("installProcessPresentationStreamBridge", () => {
         payload: { channel: "stdout", text: "last" },
       }),
     ]);
+  });
+});
+
+
+describe("semantic adapter deduplication", () => {
+  it("does not re-record semantic console output through the console bridge", () => {
+    const writes: string[] = [];
+    const genericEvents: unknown[] = [];
+    const semanticEvents: unknown[] = [];
+    const target: {
+      log: (...args: unknown[]) => void;
+      info: (...args: unknown[]) => void;
+      warn: (...args: unknown[]) => void;
+      error: (...args: unknown[]) => void;
+    } = {
+      log(...args) { writes.push(String(args[0])); },
+      info(...args) { writes.push(String(args[0])); },
+      warn(...args) { writes.push(String(args[0])); },
+      error(...args) { writes.push(String(args[0])); },
+    };
+    const bridge = installConsolePresentationBridge({
+      target,
+      onEvent(event) { genericEvents.push(event); },
+    });
+    const output = createConsolePresentationOutput({
+      log: target.log,
+      error: target.error,
+      onEvent(event) { semanticEvents.push(event); },
+    });
+
+    output.stdout("semantic", "command.semantic");
+    bridge.restore();
+
+    expect(writes).toEqual(["semantic"]);
+    expect(genericEvents).toEqual([]);
+    expect(semanticEvents).toHaveLength(1);
+  });
+
+  it("does not re-record semantic raw output through the stream bridge", () => {
+    const writes: string[] = [];
+    const genericEvents: unknown[] = [];
+    const semanticEvents: unknown[] = [];
+    const stdout = {
+      write(chunk: unknown) {
+        writes.push(String(chunk));
+        return true;
+      },
+    } as unknown as NodeJS.WriteStream;
+    const stderr = { write() { return true; } } as unknown as NodeJS.WriteStream;
+    const bridge = installProcessPresentationStreamBridge({
+      stdout,
+      stderr,
+      onEvent(event) { genericEvents.push(event); },
+    });
+    const output = createProcessPresentationOutput({
+      stdout,
+      stderr,
+      onEvent(event) { semanticEvents.push(event); },
+    });
+
+    output.stdout("semantic", "command.semantic");
+    bridge.restore();
+
+    expect(writes).toEqual(["semantic"]);
+    expect(genericEvents).toEqual([]);
+    expect(semanticEvents).toHaveLength(1);
   });
 });

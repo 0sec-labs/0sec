@@ -11,6 +11,7 @@ import {
   createPresentationEvent,
   type FindingTriageStatus,
   type PresentationEvent,
+  type PresentationSource,
 } from "@0sec/shared";
 import { readToolCallNames } from "@0sec/core";
 import { presentationEventBus } from "../presentation/event-bus.js";
@@ -73,8 +74,14 @@ type DBEventRow = {
   eventType: string;
   findingId?: string | null;
   agentRole?: string | null;
+  source?: string;
   payload: string;
   timestamp: number;
+};
+
+type DashboardRecentEventRow = DBEventRow & {
+  scanTarget: string;
+  findingFingerprint?: string | null;
 };
 
 type DBVerdictRow = {
@@ -257,6 +264,28 @@ function parsePayload(payload: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function presentationEventFromDashboardRow(
+  event: DashboardRecentEventRow,
+  sequence: number,
+): PresentationEvent {
+  const payload = parsePayload(event.payload);
+  const at = Number.isFinite(event.timestamp)
+    ? new Date(event.timestamp).toISOString()
+    : new Date(0).toISOString();
+  const source: PresentationSource =
+    event.source === "cli" || event.source === "dashboard" || event.source === "adapter"
+      ? event.source
+      : "core";
+  return createPresentationEvent({
+    source,
+    sequence,
+    at,
+    eventType: event.eventType,
+    payload: payload ?? { rawPayload: event.payload },
+    scanId: event.scanId,
+  });
 }
 
 function summarizeRecentEvent(event: {
@@ -1030,7 +1059,37 @@ function requireControlToken(req: IncomingMessage, res: ServerResponse, controlT
   return true;
 }
 
-function writePresentationSse(res: ServerResponse, event: PresentationEvent): void {
+type PresentationCursor = {
+  timestamp: number;
+  id: string;
+};
+
+function encodePresentationCursor(cursor: PresentationCursor): string {
+  return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+}
+
+function decodePresentationCursor(value: string | string[] | undefined): PresentationCursor | undefined {
+  const encoded = Array.isArray(value) ? value[0] : value;
+  if (!encoded) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
+      timestamp?: unknown;
+      id?: unknown;
+    };
+    return typeof parsed.timestamp === "number" && Number.isFinite(parsed.timestamp) && typeof parsed.id === "string"
+      ? { timestamp: parsed.timestamp, id: parsed.id }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writePresentationSse(
+  res: ServerResponse,
+  event: PresentationEvent,
+  cursor?: PresentationCursor,
+): void {
+  if (cursor) res.write(`id: ${encodePresentationCursor(cursor)}\n`);
   res.write(`event: presentation\ndata: ${JSON.stringify(event)}\n\n`);
 }
 
@@ -1041,29 +1100,60 @@ async function handleApiRequest(
   dbPath: string | undefined,
   controlToken: string,
 ): Promise<boolean> {
+  const { osecDB } = await import("@0sec/db");
+
   if (isPresentationEventsStreamPath(pathname)) {
     if (req.method !== "GET") {
       json(res, 405, { error: "Method not allowed" });
       return true;
     }
 
+    const db = new osecDB(dbPath);
+    let sequence = 0;
+    let cursor = decodePresentationCursor(req.headers["last-event-id"]);
+    const sendPersisted = () => {
+      try {
+        const events = (cursor
+          ? db.listEventsAfter(cursor, 250)
+          : (db.listRecentEvents(250) as DashboardRecentEventRow[]).slice().reverse()
+        ) as DashboardRecentEventRow[];
+        for (const event of events) {
+          const nextCursor = { timestamp: event.timestamp, id: event.id };
+          writePresentationSse(
+            res,
+            presentationEventFromDashboardRow(event, ++sequence),
+            nextCursor,
+          );
+          cursor = nextCursor;
+        }
+      } catch {
+        // The next polling pass may succeed after a concurrent DB rotation.
+      }
+    };
+
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
     });
-    // A comment keeps the endpoint valid SSE even before the first event.
     res.write(": connected\n\n");
+    sendPersisted();
+    const poll = setInterval(sendPersisted, 750);
     const unsubscribe = presentationEventBus.subscribe({
       emit(event) {
-        writePresentationSse(res, event);
+        // Core scan events are persisted and arrive through the ordered DB poll.
+        // Local CLI output has no DB row and remains useful to same-process users.
+        if (event.source !== "core") writePresentationSse(res, event);
       },
     });
-    req.once("close", unsubscribe);
+    req.once("close", () => {
+      clearInterval(poll);
+      unsubscribe();
+      db.close();
+    });
     return true;
   }
 
-  const { osecDB } = await import("@0sec/db");
   const controlPath = parseControlPath(pathname);
 
   if (controlPath) {
@@ -1283,46 +1373,29 @@ async function handleApiRequest(
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 20;
     const db = new osecDB(dbPath);
     try {
-      const events = (db.listRecentEvents(limit) as Array<{
-        id: string;
-        scanId: string;
-        scanTarget: string;
-        stage: string;
-        eventType: string;
-        findingId?: string | null;
-        findingFingerprint?: string | null;
-        agentRole?: string | null;
-        payload: string;
-        timestamp: number;
-      }>).map((event, index) => {
-        const payload = parsePayload(event.payload);
-        const presentation = createPresentationEvent({
-          source: "dashboard",
-          sequence: index + 1,
-          at: new Date(event.timestamp).toISOString(),
-          eventType: event.eventType,
-          payload: payload ?? { rawPayload: event.payload },
-          scanId: event.scanId,
-        });
-        return {
-          id: event.id,
-          scanId: event.scanId,
-          scanTarget: event.scanTarget,
-          stage: event.stage,
-          eventType: event.eventType,
-          findingId: event.findingId ?? null,
-          findingFingerprint: event.findingFingerprint ?? null,
-          agentRole: event.agentRole ?? null,
-          summary: summarizeRecentEvent({
+      const events = (db.listRecentEvents(limit) as DashboardRecentEventRow[])
+        .map((event, index) => {
+          const payload = parsePayload(event.payload);
+          const presentation = presentationEventFromDashboardRow(event, index + 1);
+          return {
+            id: event.id,
+            scanId: event.scanId,
+            scanTarget: event.scanTarget,
             stage: event.stage,
             eventType: event.eventType,
+            findingId: event.findingId ?? null,
+            findingFingerprint: event.findingFingerprint ?? null,
+            agentRole: event.agentRole ?? null,
+            summary: summarizeRecentEvent({
+              stage: event.stage,
+              eventType: event.eventType,
+              payload,
+            }),
             payload,
-          }),
-          payload,
-          timestamp: event.timestamp,
-          presentation,
-        };
-      });
+            timestamp: event.timestamp,
+            presentation,
+          };
+        });
 
       json(res, 200, { events });
     } finally {

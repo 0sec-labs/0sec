@@ -139,3 +139,36 @@ describe("osecDB getScanFindings", () => {
     });
   });
 });
+
+describe("osecDB presentation event cursor", () => {
+  it("persists provenance and reads strictly after a timestamp/id cursor", () => {
+    withTempDb((db) => {
+      const scanId = db.createScan({
+        target: "https://example.test",
+        depth: "quick",
+      } as Parameters<typeof db.createScan>[0]);
+      for (const [eventType, timestamp, source] of [
+        ["tool_call_started", 100, "core"],
+        ["tool_call_completed", 100, "cli"],
+        ["finding_ingested", 101, "adapter"],
+      ] as const) {
+        db.logEvent({
+          scanId,
+          stage: "discovery",
+          eventType,
+          payload: { eventType },
+          timestamp,
+          source,
+        });
+      }
+
+      const all = db.listEventsAfter(undefined, 10);
+      expect(all).toHaveLength(3);
+      expect(all.map((event) => event.source).sort()).toEqual(["adapter", "cli", "core"]);
+
+      const cursor = { timestamp: all[0]!.timestamp, id: all[0]!.id };
+      const after = db.listEventsAfter(cursor, 10);
+      expect(after.map((event) => event.id)).toEqual(all.slice(1).map((event) => event.id));
+    });
+  });
+});

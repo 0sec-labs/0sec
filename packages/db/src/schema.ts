@@ -243,6 +243,7 @@ export const pipelineEvents = sqliteTable(
     eventType: text("eventType").notNull(),
     findingId: text("findingId"),
     agentRole: text("agentRole"),
+    source: text("source").notNull().default("core"),
     payload: text("payload").notNull().default("{}"), // JSON
     timestamp: integer("timestamp").notNull(),
   },

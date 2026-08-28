@@ -46,6 +46,10 @@ import { useTheme, type Theme } from "./theme-context.js";
 import { createTranscriptDocument, modelProvider } from "@0sec/shared";
 import { homedir } from "node:os";
 import {
+  createPresentationEmitter,
+  type PresentationEmitter,
+} from "../presentation/event-bus.js";
+import {
   readGitStatus,
   type GitStatus,
 } from "./git-status.js";
@@ -686,6 +690,12 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   }, []);
   useEffect(() => discardStreamPatches, [discardStreamPatches]);
   const [session, setSession] = useState<ConsoleSession | null>(null);
+  const presentationEmitterRef = useRef<PresentationEmitter | null>(null);
+  if (!presentationEmitterRef.current) {
+    presentationEmitterRef.current = createPresentationEmitter();
+  }
+  const presentedEntriesRef = useRef(new Map<string, ChatEntry>());
+  const presentedSessionIdRef = useRef<string | undefined>(undefined);
   const [modelId, setModelId] = useState<string | null>(null);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [clockTick, setClockTick] = useState(() => Date.now());
@@ -793,6 +803,46 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   const [reviewOpen, setReviewOpen] = useState(false);
   const transcriptDocument = useMemo(() => createTranscriptDocument(entries), [entries]);
   const reviewRenderableRef = useRef<TranscriptReviewRenderable | null>(null);
+  const reviewEventOpenRef = useRef(false);
+  useEffect(() => {
+    const emitter = presentationEmitterRef.current!;
+    if (!session) return;
+    const correlation = { sessionId: session.scanId };
+    emitter.emit("session.opened", {
+      target: session.target,
+    }, correlation);
+    return () => {
+      emitter.emit("session.closed", {}, correlation);
+    };
+  }, [session]);
+  useEffect(() => {
+    const emitter = presentationEmitterRef.current!;
+    const sessionId = session?.scanId;
+    if (!sessionId) return;
+    if (presentedSessionIdRef.current !== sessionId) {
+      presentedSessionIdRef.current = sessionId;
+      presentedEntriesRef.current.clear();
+    }
+    const previous = presentedEntriesRef.current;
+    const next = new Map<string, ChatEntry>();
+    for (const entry of entries) {
+      const prior = previous.get(entry.id);
+      if (!prior) {
+        emitter.emit("session.transcript.append", { entry }, { sessionId });
+      } else if (prior !== entry) {
+        emitter.emit("session.transcript.replace", { entry }, { sessionId });
+      }
+      next.set(entry.id, entry);
+    }
+    presentedEntriesRef.current = next;
+  }, [entries, session?.scanId]);
+  useEffect(() => {
+    const emitter = presentationEmitterRef.current!;
+    const sessionId = session?.scanId;
+    if (!sessionId || reviewOpen === reviewEventOpenRef.current) return;
+    reviewEventOpenRef.current = reviewOpen;
+    emitter.emit(reviewOpen ? "review.opened" : "review.closed", {}, { sessionId });
+  }, [reviewOpen, session?.scanId]);
   /** The turn currently under the mouse, for the subtle hover highlight. */
   const [hoveredTurn, setHoveredTurn] = useState<number | null>(null);
   const toggleTurnExpanded = useCallback((turn: number) => {
@@ -3235,13 +3285,24 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
           const { queue, accepted } = enqueueComposerInput(queuedRef.current, input);
           queuedRef.current = queue;
           setQueuedMessages(queue);
-          appendEntry({
-            kind: accepted ? "notice" : "error",
-            text: accepted
-              ? `queued — will send when the current turn ends: ${input}`
-              : `queue is full (${COMPOSER_QUEUE_LIMIT} messages); not queued: ${input}`,
-            turn: turn.current,
-          });
+          // Enter during a running turn INTERRUPTS it so this message sends
+          // right away: interruptTurn() aborts the turn, the console goes idle,
+          // and the idle-drain effect delivers this queued message immediately.
+          // interruptTurn() returns false when there is nothing abortable (still
+          // connecting) — then it stays a plain queue. Mirrors the programmatic
+          // submitOperatorMessage path so a typed Enter and the Fix action agree.
+          const interrupting = accepted && interruptTurn();
+          if (!interrupting) {
+            appendEntry({
+              kind: accepted ? "notice" : "error",
+              text: accepted
+                ? `queued — will send when the current turn ends: ${input}`
+                : `queue is full (${COMPOSER_QUEUE_LIMIT} messages); not queued: ${input}`,
+              turn: turn.current,
+            });
+          }
+          // When interrupting, interruptTurn() already posts an "interrupting…"
+          // notice; the message then drains on the next idle transition.
         } else if (disposition === "send") {
           void send(input);
         }

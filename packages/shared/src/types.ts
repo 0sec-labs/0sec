@@ -945,6 +945,8 @@ export interface PipelineEvent {
   findingId?: string;
   agentRole?: string;
   payload: Record<string, unknown>;
+  /** Producer provenance survives DB persistence for presentation adapters. */
+  source?: string;
   timestamp: number;
 }
 

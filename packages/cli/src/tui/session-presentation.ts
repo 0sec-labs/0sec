@@ -5,7 +5,7 @@ import {
 } from "@0sec/shared";
 import type { SessionState, TranscriptItem } from "./session-state.js";
 
-function projectSessionItem(item: TranscriptItem): PresentationTranscriptEntry {
+export function projectSessionItem(item: TranscriptItem): PresentationTranscriptEntry {
   const kind = item.kind === "thinking"
     ? "reasoning"
     : item.kind === "error"

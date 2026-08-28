@@ -1,7 +1,25 @@
-import type { PresentationEvent } from "@0sec/shared";
+import {
+  createPresentationEvent,
+  type PresentationEvent,
+  type PresentationSource,
+} from "@0sec/shared";
 
 export interface PresentationEventListener {
   emit(event: PresentationEvent): void;
+}
+
+export interface PresentationEmitterOptions {
+  source?: PresentationSource;
+  now?: () => string;
+  bus?: PresentationEventBus;
+}
+
+export interface PresentationEmitter {
+  emit(
+    eventType: string,
+    payload: Record<string, unknown>,
+    correlation?: { scanId?: string; sessionId?: string },
+  ): PresentationEvent;
 }
 
 /**
@@ -35,3 +53,29 @@ export class PresentationEventBus {
 }
 
 export const presentationEventBus = new PresentationEventBus();
+
+/** Create a monotonic producer-local emitter for one interactive adapter. */
+export function createPresentationEmitter(
+  options: PresentationEmitterOptions = {},
+): PresentationEmitter {
+  const source = options.source ?? "cli";
+  const now = options.now ?? (() => new Date().toISOString());
+  const bus = options.bus ?? presentationEventBus;
+  let sequence = 0;
+
+  return {
+    emit(eventType, payload, correlation = {}) {
+      const event = createPresentationEvent({
+        source,
+        sequence: ++sequence,
+        at: now(),
+        eventType,
+        payload,
+        ...(correlation.scanId ? { scanId: correlation.scanId } : {}),
+        ...(correlation.sessionId ? { sessionId: correlation.sessionId } : {}),
+      });
+      bus.emit(event);
+      return event;
+    },
+  };
+}

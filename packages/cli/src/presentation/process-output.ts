@@ -104,7 +104,12 @@ export function createProcessPresentationOutput(
       eventType,
       payload: { channel, text },
     });
-    target.write(text);
+    streamBridgeSuppressionDepth += 1;
+    try {
+      target.write(text);
+    } finally {
+      streamBridgeSuppressionDepth -= 1;
+    }
     options.onEvent?.(event);
     return event;
   };
@@ -142,10 +147,15 @@ export function createConsolePresentationOutput(
       eventType,
       payload: { channel, text },
     });
-    if (channel === "stdout") {
-      (options.log ?? console.log)(text);
-    } else {
-      (options.error ?? console.error)(text);
+    streamBridgeSuppressionDepth += 1;
+    try {
+      if (channel === "stdout") {
+        (options.log ?? console.log)(text);
+      } else {
+        (options.error ?? console.error)(text);
+      }
+    } finally {
+      streamBridgeSuppressionDepth -= 1;
     }
     options.onEvent?.(event);
     return event;
@@ -193,6 +203,11 @@ export function installConsolePresentationBridge(
     eventType: string,
   ): void => {
     const text = format(...args);
+    if (streamBridgeSuppressionDepth > 0) {
+      originals[method].call(target, text);
+      return;
+    }
+
     const event = createPresentationEvent({
       source,
       sequence: ++sequence,

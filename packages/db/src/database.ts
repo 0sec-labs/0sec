@@ -4,7 +4,7 @@ import {
   type ShimmedDatabase,
 } from "./wasm-shim.js";
 import { homeStateDir } from "@0sec/shared";
-import { eq, desc, and, inArray } from "drizzle-orm";
+import { asc, eq, desc, and, gt, inArray, or } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
@@ -507,6 +507,12 @@ export class osecDB {
         ELSE 'backlog'
       END
     `);
+    const eventCols = this.sqlite
+      .prepare("PRAGMA table_info(pipeline_events)")
+      .all() as { name: string }[];
+    if (!new Set(eventCols.map((column) => column.name)).has("source")) {
+      this.sqlite.exec("ALTER TABLE pipeline_events ADD COLUMN source TEXT NOT NULL DEFAULT 'core'");
+    }
   }
 
   // ── Triage Memories (Semgrep-style per-target FP learning) ──
@@ -1677,6 +1683,7 @@ export class osecDB {
       eventType: event.eventType,
       findingId: event.findingId ?? null,
       agentRole: event.agentRole ?? null,
+      source: event.source ?? "core",
       payload: JSON.stringify(event.payload),
       timestamp: event.timestamp,
     }).run();
@@ -1708,6 +1715,7 @@ export class osecDB {
         findingId: schema.pipelineEvents.findingId,
         findingFingerprint: schema.findings.fingerprint,
         agentRole: schema.pipelineEvents.agentRole,
+        source: schema.pipelineEvents.source,
         payload: schema.pipelineEvents.payload,
         timestamp: schema.pipelineEvents.timestamp,
       })
@@ -1715,6 +1723,52 @@ export class osecDB {
       .innerJoin(schema.scans, eq(schema.pipelineEvents.scanId, schema.scans.id))
       .leftJoin(schema.findings, eq(schema.pipelineEvents.findingId, schema.findings.id))
       .orderBy(desc(schema.pipelineEvents.timestamp))
+      .limit(limit)
+      .all();
+  }
+
+  /**
+   * Read persisted events strictly after a durable `(timestamp, id)` cursor.
+   * The UUID tie-breaker makes same-millisecond multi-process writes stable.
+   */
+  listEventsAfter(
+    cursor: { timestamp: number; id: string } | undefined,
+    limit = 250,
+  ) {
+    const selectEvents = () => this.db
+      .select({
+        id: schema.pipelineEvents.id,
+        scanId: schema.pipelineEvents.scanId,
+        scanTarget: schema.scans.target,
+        stage: schema.pipelineEvents.stage,
+        eventType: schema.pipelineEvents.eventType,
+        findingId: schema.pipelineEvents.findingId,
+        findingFingerprint: schema.findings.fingerprint,
+        agentRole: schema.pipelineEvents.agentRole,
+        source: schema.pipelineEvents.source,
+        payload: schema.pipelineEvents.payload,
+        timestamp: schema.pipelineEvents.timestamp,
+      })
+      .from(schema.pipelineEvents)
+      .innerJoin(schema.scans, eq(schema.pipelineEvents.scanId, schema.scans.id))
+      .leftJoin(schema.findings, eq(schema.pipelineEvents.findingId, schema.findings.id));
+
+    if (!cursor) {
+      return selectEvents()
+        .orderBy(asc(schema.pipelineEvents.timestamp), asc(schema.pipelineEvents.id))
+        .limit(limit)
+        .all();
+    }
+
+    return selectEvents()
+      .where(or(
+        gt(schema.pipelineEvents.timestamp, cursor.timestamp),
+        and(
+          eq(schema.pipelineEvents.timestamp, cursor.timestamp),
+          gt(schema.pipelineEvents.id, cursor.id),
+        ),
+      ))
+      .orderBy(asc(schema.pipelineEvents.timestamp), asc(schema.pipelineEvents.id))
       .limit(limit)
       .all();
   }
@@ -2551,6 +2605,7 @@ CREATE TABLE IF NOT EXISTS verdicts (
 CREATE TABLE IF NOT EXISTS pipeline_events (
   id TEXT PRIMARY KEY,
   scanId TEXT NOT NULL REFERENCES scans(id),
+  source TEXT NOT NULL DEFAULT 'core',
   stage TEXT NOT NULL,
   eventType TEXT NOT NULL,
   findingId TEXT,
