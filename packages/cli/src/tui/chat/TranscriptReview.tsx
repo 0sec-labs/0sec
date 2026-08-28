@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/react */
 import React, { type MutableRefObject, useMemo } from "react";
+import type { PresentationTranscriptDocument } from "@0sec/shared";
 import type { Theme } from "../theme-context.js";
 import {
   compileTranscriptReview,
@@ -8,10 +9,9 @@ import {
 import "../transcript-review-renderable.js";
 import type { TranscriptReviewRenderable } from "../transcript-review-renderable.js";
 import type { TranscriptDetail } from "../transcript-style.js";
-import type { ChatEntry } from "./types.js";
 
 export interface TranscriptReviewProps {
-  entries: readonly ChatEntry[];
+  transcript: PresentationTranscriptDocument;
   width: number;
   detail: TranscriptDetail;
   expandedTurns: ReadonlySet<number>;
@@ -20,7 +20,7 @@ export interface TranscriptReviewProps {
 }
 
 export function TranscriptReview({
-  entries,
+  transcript,
   width,
   detail,
   expandedTurns,
@@ -28,12 +28,12 @@ export function TranscriptReview({
   renderableRef,
 }: TranscriptReviewProps) {
   const document = useMemo<TranscriptReviewDocument>(
-    () => compileTranscriptReview(entries, { width, detail, expandedTurns }),
-    [detail, entries, expandedTurns, width],
+    () => compileTranscriptReview(transcript, { width, detail, expandedTurns }),
+    [detail, expandedTurns, transcript, width],
   );
   const content = document.text
     ? [
-        `TRANSCRIPT REVIEW · ${entries.length} entries`,
+        `TRANSCRIPT REVIEW · ${transcript.entries.length} entries`,
         "Esc / Ctrl+O live · PgUp/PgDn scroll · Ctrl+Home/Ctrl+End jump",
         "",
         document.text,

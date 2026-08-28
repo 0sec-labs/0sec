@@ -21,6 +21,7 @@
 
 import type { Command } from "commander";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { processPresentationOutput } from "../presentation/process-output.js";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

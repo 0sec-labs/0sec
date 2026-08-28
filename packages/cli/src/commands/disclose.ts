@@ -4,6 +4,7 @@ import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import type { Finding, AttackCategory, Severity, Evidence, FindingStatus, PocStep } from "@0sec/shared";
+import { writePresentationLine, writePresentationErrorLine } from "../presentation/process-output.js";
 import { DEFAULT_SEVERITY_FLOOR, meetsSeverityFloor } from "@0sec/shared";
 import { z } from "zod";
 import { pocStepArraySchema, formatZodError } from "./schemas.js";

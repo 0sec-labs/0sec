@@ -20,6 +20,10 @@ import {
   getCommandByName,
   SLASH_COMMANDS,
 } from "../tui/slash-commands.js";
+import {
+  processPresentationOutput,
+  type ProcessPresentationOutput,
+} from "../presentation/process-output.js";
 
 interface ConsoleOptions {
   target?: string;
@@ -215,6 +219,7 @@ export function registerConsoleCommand(program: Command): void {
         process.exitCode = 2;
         return;
       }
+      const presentationOutput = processPresentationOutput;
 
       printBanner(session, opts.target);
 
@@ -236,9 +241,12 @@ export function registerConsoleCommand(program: Command): void {
         if (!parsed.isSlash) {
           rl.pause();
           try {
-            await runTurn(session, text);
+            await runTurn(session, text, presentationOutput);
           } catch (err) {
-            console.error(chalk.red(`\nturn failed: ${err instanceof Error ? err.message : String(err)}`));
+            presentationOutput.stderr(
+              chalk.red(`\nturn failed: ${err instanceof Error ? err.message : String(err)}\n`),
+              "console.turn.failure",
+            );
           }
           rl.resume();
           rl.prompt();
@@ -326,39 +334,46 @@ export function registerConsoleCommand(program: Command): void {
     });
 }
 
-async function runTurn(session: ConsoleSession, text: string): Promise<void> {
+async function runTurn(
+  session: ConsoleSession,
+  text: string,
+  output: ProcessPresentationOutput,
+): Promise<void> {
   let streamedAny = false;
-  process.stdout.write("\n" + chalk.bold.green("engine › "));
+  output.stdout("\n" + chalk.bold.green("engine › "), "console.assistant.prefix");
 
   const outcome = await session.send(text, {
     onAssistantDelta: (chunk) => {
       streamedAny = true;
-      process.stdout.write(chunk);
+      output.stdout(chunk, "console.assistant.delta");
     },
     onToolStart: (call: ToolCall) => {
-      process.stdout.write("\n" + chalk.yellow(`  ⚙ ${call.name}`) + chalk.dim(` ${previewArgs(call.arguments)}`));
+      output.stdout(
+        "\n" + chalk.yellow(`  ⚙ ${call.name}`) + chalk.dim(` ${previewArgs(call.arguments)}`),
+        "console.tool.started",
+      );
     },
     onToolResult: (_call: ToolCall, result: ToolResult) => {
       const mark = result.success ? chalk.green("✓") : chalk.red("✗");
-      process.stdout.write(chalk.dim(` → ${mark} ${previewResult(result)}`));
+      output.stdout(chalk.dim(` → ${mark} ${previewResult(result)}`), "console.tool.completed");
     },
     onNotice: (msg) => {
-      process.stdout.write("\n" + chalk.dim(`  (${msg})`));
+      output.stdout("\n" + chalk.dim(`  (${msg})`), "console.notice");
     },
   });
 
   // If nothing streamed token-by-token (provider without delta support), print
   // the collected assistant text now.
   if (!streamedAny && outcome.assistantText) {
-    process.stdout.write("\n" + outcome.assistantText);
+    output.stdout("\n" + outcome.assistantText, "console.assistant.complete");
   }
 
   const usage = outcome.usage;
   const footer = `${outcome.toolCalls.length} tool call${outcome.toolCalls.length === 1 ? "" : "s"} · ${usage.inputTokens}→${usage.outputTokens} tok`;
-  process.stdout.write("\n" + chalk.dim(`  [${footer}]`) + "\n");
+  output.stdout("\n" + chalk.dim(`  [${footer}]`) + "\n", "console.turn.completed");
 
   if (outcome.stopReason === "error") {
-    console.error(chalk.red(`\nengine error: ${outcome.error ?? "unknown"}`));
+    output.stderr(chalk.red(`\nengine error: ${outcome.error ?? "unknown"}\n`), "console.turn.error");
   }
 }
 

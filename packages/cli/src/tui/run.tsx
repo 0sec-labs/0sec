@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/react */
 import { appendFileSync } from "node:fs";
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { CliRenderEvents, createCliRenderer } from "@opentui/core";
+import { CliRenderEvents, createCliRenderer, type CliRenderer } from "@opentui/core";
 import { AppContext, createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { VERSION, type Finding, type FindingTriageStatus } from "@0sec/shared";
 import type { NativeRuntime, SourceFixResult, SourceFixStatus } from "@0sec/core";
@@ -42,6 +42,13 @@ import {
   type SessionState,
   type TranscriptItem,
 } from "./session-state.js";
+import { TranscriptReview } from "./chat/TranscriptReview.js";
+import type { TranscriptReviewRenderable } from "./transcript-review-renderable.js";
+import { createSessionTranscriptDocument } from "./session-presentation.js";
+import {
+  resumeProcessPresentationStreamBridge,
+  suspendProcessPresentationStreamBridge,
+} from "../presentation/process-output.js";
 
 type HomeAction = "scan" | "audit" | "review" | "tui" | "doctor" | "replay" | "history" | "findings";
 type LaunchRuntime = "auto" | "api" | "claude" | "codex" | "gemini";
@@ -3293,6 +3300,8 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
   const [expandedToolCards, setExpandedToolCards] = useState<Set<string>>(new Set());
   const [hoveredToolId, setHoveredToolId] = useState<string | null>(null);
   const [visibleFromTurnId, setVisibleFromTurnId] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewRenderableRef = useRef<TranscriptReviewRenderable | null>(null);
   const { width, height } = useTerminalDimensions();
   const sessionLayout = getSessionLayout(width, height);
   const sidebarOpen = sidebarVisible && sessionLayout.sidebarCanFit;
@@ -3343,6 +3352,8 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
     const index = state.transcript.findIndex((item) => item.id === visibleFromTurnId);
     return index >= 0 ? state.transcript.slice(index) : state.transcript;
   }, [state.transcript, visibleFromTurnId]);
+  const sessionTranscript = useMemo(() => createSessionTranscriptDocument(state), [state]);
+  const sessionReviewExpandedTurns = useMemo(() => new Set<number>(), []);
 
   const paletteCommands = useMemo<PaletteCommand[]>(() => [
     {
@@ -3396,6 +3407,15 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
       suggested: true,
       action: () => setVisibleFromTurnId(null),
     },
+    {
+      id: "open-transcript-review",
+      title: "Open transcript review",
+      category: "Display",
+      description: "Open the shared native transcript review surface",
+      keybind: "ctrl+o",
+      suggested: true,
+      action: () => setReviewOpen(true),
+    },
     ...(!state.summary && queueUserMessage ? [{
       id: "inject-message",
       title: "Send message to agent",
@@ -3447,6 +3467,40 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
     }
     if (shell && key.sequence === "]") {
       shell.goForward();
+      return;
+    }
+    if (reviewOpen) {
+      if (key.ctrl && key.name === "c") {
+        onExit();
+        return;
+      }
+      if (key.name === "escape" || (key.ctrl && key.name === "o")) {
+        setReviewOpen(false);
+        return;
+      }
+
+      const review = reviewRenderableRef.current;
+      if (!review) return;
+      const pageRows = Math.max(1, Math.floor(review.height / 2));
+      if (key.name === "pageup" || (key.ctrl && key.name === "up")) {
+        review.scrollY -= pageRows;
+        return;
+      }
+      if (key.name === "pagedown" || (key.ctrl && key.name === "down")) {
+        review.scrollY += pageRows;
+        return;
+      }
+      if (key.ctrl && key.name === "home") {
+        review.scrollY = 0;
+        return;
+      }
+      if (key.ctrl && key.name === "end") {
+        review.scrollY = review.maxScrollY;
+      }
+      return;
+    }
+    if (key.ctrl && key.name === "o") {
+      setReviewOpen(true);
       return;
     }
 
@@ -3554,12 +3608,22 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
 
   return (
     <ShellFrame
-      view={summary ? "report" : "live session"}
+      view={reviewOpen ? "transcript review" : summary ? "report" : "live session"}
       status={sidebarOpen ? state.mode : `${state.mode} · compact`}
     >
       {paletteOpen ? <PaletteOverlay title="Session commands" query={paletteQuery} selected={paletteSelected} commands={filteredPalette} /> : null}
       {timelineOpen ? <TimelineOverlay selected={timelineSelected} turns={turnItems} /> : null}
       {composeOpen ? <ComposeOverlay text={composeText} /> : null}
+      {reviewOpen ? (
+        <TranscriptReview
+          transcript={sessionTranscript}
+          width={sessionLayout.contentWidth}
+          detail="expanded"
+          expandedTurns={sessionReviewExpandedTurns}
+          theme={theme}
+          renderableRef={reviewRenderableRef}
+        />
+      ) : (
       <box flexDirection="row" gap={sidebarOpen ? SESSION_LAYOUT_GAP : 0} flexGrow={1} width="100%" minWidth={0} minHeight={0}>
         <scrollbox
           width={sidebarOpen ? sessionLayout.transcriptWidth : "100%"}
@@ -3726,10 +3790,13 @@ function SessionScreen({ state, onExit, shell, queueUserMessage }: { state: Sess
           ) : null}
         </scrollbox> : null}
       </box>
+      )}
       <FooterBar
-        hint={state.pendingUserMessages.length > 0
-          ? `message queued (${state.pendingUserMessages.length}) · ctrl+p commands`
-          : "i inject message · ctrl+p commands"}
+        hint={reviewOpen
+          ? "ctrl+o or esc live · pgup/pgdn scroll"
+          : state.pendingUserMessages.length > 0
+            ? `message queued (${state.pendingUserMessages.length}) · ctrl+p commands`
+            : "i inject message · ctrl+p commands"}
         status={summary ? <LiveBadge label={`ready · ${state.mode}`} active={false} /> : <LiveBadge label={`running · ${state.mode}`} />}
       />
     </ShellFrame>
@@ -4532,14 +4599,21 @@ function UnifiedApp({ mode }: { mode: AppMode }) {
 async function mountApp(mode: AppMode): Promise<void> {
   installTuiCrashHandlers();
   const traceRender = Boolean(process.env["0SEC_TRACE_TUI_RENDER"]);
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: false,
-    // State the fullscreen contract rather than relying on OpenTUI's default:
-    // this TUI owns a virtualized alternate-screen viewport, while non-TTY
-    // command paths never construct it.
-    screenMode: "alternate-screen",
-    gatherStats: traceRender,
-  });
+  suspendProcessPresentationStreamBridge();
+  let renderer: CliRenderer;
+  try {
+    renderer = await createCliRenderer({
+      exitOnCtrlC: false,
+      // State the fullscreen contract rather than relying on OpenTUI's default:
+      // this TUI owns a virtualized alternate-screen viewport, while non-TTY
+      // command paths never construct it.
+      screenMode: "alternate-screen",
+      gatherStats: traceRender,
+    });
+  } catch (error) {
+    resumeProcessPresentationStreamBridge();
+    throw error;
+  }
   let sampledFrames = 0;
   const traceFrame = () => {
     if (!traceRender || ++sampledFrames % 30 !== 0) return;
@@ -4584,6 +4658,7 @@ async function mountApp(mode: AppMode): Promise<void> {
       // Released after destroy(): opentui resets the stream itself, and
       // the guard only reinstalls originals it still owns.
       outputGuard.restore();
+      resumeProcessPresentationStreamBridge();
       // Anything captured during the session is replayed to the real
       // terminal on the way out, so an operator never loses a quota or
       // failure notice just because the TUI was on screen.
@@ -4613,6 +4688,7 @@ async function mountApp(mode: AppMode): Promise<void> {
       // Never leave the process with patched streams: the crash report
       // below and anything after it must reach the real terminal.
       outputGuard.restore();
+      resumeProcessPresentationStreamBridge();
       appendTuiCrash({
         source: "mountApp.render",
         error: serializeError(error),

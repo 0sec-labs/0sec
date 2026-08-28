@@ -210,6 +210,9 @@ importers:
 
   packages/dashboard:
     dependencies:
+      '@0sec/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)

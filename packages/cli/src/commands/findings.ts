@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import type { Finding, FindingTriageStatus, LayerVerdict } from "@0sec/shared";
+import { writePresentationLine, writePresentationErrorLine } from "../presentation/process-output.js";
 import {
   listOsecRunDatabasePaths,
   osecDB,

@@ -1,3 +1,5 @@
+import type { PresentationEvent } from "@0sec/shared";
+
 export type ScanSummary = {
   totalFindings: number;
   totalAttacks?: number;
@@ -195,6 +197,7 @@ export type RecentEventsResponse = {
     summary: string;
     payload: Record<string, unknown> | null;
     timestamp: number;
+    presentation: PresentationEvent;
   }>;
 };
 

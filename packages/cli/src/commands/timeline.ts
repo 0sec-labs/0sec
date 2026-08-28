@@ -24,6 +24,7 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
+import { writePresentationLine, writePresentationErrorLine } from "../presentation/process-output.js";
 import { atlasTechniquesForEvent, techniquesForEvent } from "@0sec/core";
 import {
   formatTimeline,

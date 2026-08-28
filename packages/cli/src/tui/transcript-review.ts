@@ -1,4 +1,7 @@
-import type { ChatEntry } from "./chat/types.js";
+import type {
+  PresentationTranscriptDocument,
+  PresentationTranscriptEntry,
+} from "@0sec/shared";
 import {
   renderMarkdown,
   spansToText,
@@ -88,7 +91,7 @@ function detailLines(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function reviewDetail(entry: ChatEntry, detail: TranscriptDetail): string[] {
+function reviewDetail(entry: PresentationTranscriptEntry, detail: TranscriptDetail): string[] {
   if (detail === "expanded") {
     const rich = entry.commandOutput ?? entry.editDiff ?? entry.webAnswer;
     if (rich) return detailLines(rich);
@@ -100,7 +103,7 @@ function pushLines(
   document: TranscriptReviewLine[],
   lines: readonly string[],
   tone: TranscriptReviewTone,
-  entry: ChatEntry,
+  entry: PresentationTranscriptEntry,
   indent: string = "",
 ): void {
   for (const text of lines) {
@@ -111,7 +114,7 @@ function pushLines(
 
 function compileEntry(
   document: TranscriptReviewLine[],
-  entry: ChatEntry,
+  entry: PresentationTranscriptEntry,
   options: TranscriptReviewOptions,
 ): void {
   const width = Math.max(8, options.width - 2);
@@ -154,15 +157,16 @@ function compileEntry(
 }
 
 /**
- * Compile canonical chat entries into a deterministic, line-oriented review
- * document. Native TextBufferView owns final terminal wrapping and scrolling.
+ * Compile the shared transcript document into a deterministic, line-oriented
+ * review projection. Native TextBufferView owns final terminal wrapping and
+ * scrolling.
  */
 export function compileTranscriptReview(
-  entries: readonly ChatEntry[],
+  transcript: PresentationTranscriptDocument,
   options: TranscriptReviewOptions,
 ): TranscriptReviewDocument {
   const lines: TranscriptReviewLine[] = [];
-  const plan = planTranscript(entries, options.detail, options.expandedTurns);
+  const plan = planTranscript(transcript.entries, options.detail, options.expandedTurns);
 
   for (const item of plan) {
     if (item.type === "fold") {

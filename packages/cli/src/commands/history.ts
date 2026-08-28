@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
+import { writePresentationLine } from "../presentation/process-output.js";
 import {
   listOsecRunDatabasePaths,
   osecDB,
@@ -49,13 +50,13 @@ export function registerHistoryCommand(program: Command): void {
         .slice(0, limit);
 
       if (scans.length === 0) {
-        console.log(chalk.gray("No scan history found."));
+        writePresentationLine(chalk.gray("No scan history found."), "history.list.empty");
         return;
       }
 
-      console.log("");
-      console.log(chalk.red.bold("  \u25C6 0sec") + chalk.gray(" scan history"));
-      console.log("");
+      writePresentationLine("", "history.list.blank");
+      writePresentationLine(chalk.red.bold("  \u25C6 0sec") + chalk.gray(" scan history"), "history.list.header");
+      writePresentationLine("", "history.list.blank");
 
       for (const s of scans) {
         const status =
@@ -72,10 +73,11 @@ export function registerHistoryCommand(program: Command): void {
             ? ""
             : ` ${chalk.gray(`resume:${s.id.slice(0, 8)}`)}`;
 
-        console.log(
-          `  ${status} ${chalk.white(s.target)} ${chalk.gray(`[${s.depth}]`)} ${chalk.gray(duration)} ${chalk.yellow(`${findings} findings`)} ${chalk.gray(s.startedAt)}${resumeHint}`
+        writePresentationLine(
+          `  ${status} ${chalk.white(s.target)} ${chalk.gray(`[${s.depth}]`)} ${chalk.gray(duration)} ${chalk.yellow(`${findings} findings`)} ${chalk.gray(s.startedAt)}${resumeHint}`,
+          "history.list.line"
         );
       }
-      console.log("");
+      writePresentationLine("", "history.list.blank");
     });
 }

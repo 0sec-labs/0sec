@@ -1,15 +1,15 @@
 /**
  * Hunt-lane event types and parsing helpers.
  *
- * The Hunt lane on /live subscribes to a separate SSE feed that emits one
- * `0sec.events/v1` record per `data:` frame. Two upstream shapes are
- * accepted, both normalised into {@link osecHuntEvent} for the renderer:
+ * `0sec.events/v1` record per `data:` frame. Three upstream shapes are
+ * accepted, all normalised into {@link osecHuntEvent} for the renderer:
  *
  *   1. Native `0sec.events/v1` JSON — what `scripts/serve-events.mjs`
  *      produces when tailing a 0sec event log (`0SEC_EVENT_*` lines).
  *   2. Raw 0sec eventBus payloads tagged with `{type, payload}` —
- *      forwarded by future in-process WebSocket bridges. We translate
- *      these into the v1 shape on ingest.
+ *      forwarded by future in-process bridges.
+ *   3. Canonical `0sec.presentation/v1` event envelopes emitted by the
+ *      local dashboard stream.
  *
  * The schema is intentionally a subset of 0sec's full eventBus
  * taxonomy — only the event types the Hunt lane actually renders are
@@ -92,6 +92,8 @@ export function extractFileLine(text: string | undefined): { file: string; line:
  *   - `{"schema":"0sec.events/v1", "kind":"…", …}` — native v1 record.
  *   - `{"type":"tool_call_started"|"finding_ingested"|…, "payload":{…}}`
  *     — raw eventBus shape, translated to v1 on the fly.
+ *   - `{"protocol":"0sec.presentation/v1", "kind":"event", "eventType":"…"}`
+ *     — canonical presentation event, translated from its semantic payload.
  */
 export function parseHuntEvent(raw: string): osecHuntEvent | null {
   let data: unknown;
@@ -106,6 +108,22 @@ export function parseHuntEvent(raw: string): osecHuntEvent | null {
   // Native v1 shape — trust the schema marker and pass through.
   if (obj.schema === "0sec.events/v1" && typeof obj.kind === "string") {
     return normaliseV1(obj);
+  }
+
+  if (
+    obj.protocol === "0sec.presentation/v1" &&
+    obj.kind === "event" &&
+    typeof obj.eventType === "string" &&
+    obj.payload &&
+    typeof obj.payload === "object" &&
+    !Array.isArray(obj.payload)
+  ) {
+    const payload = { ...(obj.payload as Record<string, unknown>) };
+    if (typeof payload.ts !== "number" && typeof obj.at === "string") {
+      const timestamp = Date.parse(obj.at);
+      if (Number.isFinite(timestamp)) payload.ts = timestamp / 1_000;
+    }
+    return translateRawEvent(obj.eventType, payload);
   }
 
   // Raw eventBus shape — translate.

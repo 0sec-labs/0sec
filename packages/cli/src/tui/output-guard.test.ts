@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { installTuiOutputGuard } from "./output-guard.js";
+import { presentationEventBus } from "../presentation/event-bus.js";
 
 const ESC = String.fromCharCode(27);
 
@@ -20,6 +21,29 @@ describe("installTuiOutputGuard", () => {
 
     expect(lines).toEqual(["stderr:[0sec] plan quota exhausted"]);
     expect(process.stderr.write).toBe(originalWrite);
+  });
+
+  it("projects captured TUI lines into the canonical event stream", () => {
+    const events: Array<{ eventType: string; payload: Record<string, unknown> }> = [];
+    const unsubscribe = presentationEventBus.subscribe({
+      emit(event) {
+        events.push({ eventType: event.eventType, payload: event.payload });
+      },
+    });
+    const guard = installTuiOutputGuard();
+    try {
+      process.stderr.write("runtime warning\n");
+    } finally {
+      guard.restore();
+      unsubscribe();
+    }
+
+    expect(events).toEqual([
+      {
+        eventType: "output.tui.stderr",
+        payload: { channel: "stderr", text: "runtime warning" },
+      },
+    ]);
   });
 
   it("reassembles a message split across writes", () => {

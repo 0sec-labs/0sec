@@ -185,7 +185,7 @@ function demoHuntEvents(t0: number): osecHuntEvent[] {
 export function LivePage() {
   const [params, setParams] = useSearchParams();
   const eventsUrl = params.get("events") ?? "";
-  const huntUrl = params.get("huntEvents") ?? "";
+  const huntUrl = params.get("huntEvents") ?? "/api/v1/presentation/events";
   const demoMode = params.get("demo") === "1";
 
   const [tokens, setTokens] = useState<ProbeTokenRow[]>([]);
@@ -418,12 +418,14 @@ export function LivePage() {
       // distinct message so the operator can tell the two apart.
       setLastError("Hunt EventSource error (connection dropped or refused).");
     };
-    source.onmessage = (message) => {
+    const receiveHuntEvent = (message: MessageEvent) => {
       const data = typeof message.data === "string" ? message.data.trim() : "";
       if (!data) return;
       const parsed = parseHuntEvent(data);
       if (parsed) ingestHunt(parsed);
     };
+    source.onmessage = receiveHuntEvent;
+    source.addEventListener("presentation", receiveHuntEvent);
     return () => {
       source?.close();
       setHuntConnection("closed");

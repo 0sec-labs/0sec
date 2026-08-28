@@ -46,6 +46,58 @@ export type PresentationReportDocument =
       report: ReviewReport;
     };
 
+export type PresentationTranscriptEntryKind =
+  | "user"
+  | "assistant"
+  | "reasoning"
+  | "tool"
+  | "subagent"
+  | "notice"
+  | "panel"
+  | "error";
+
+/**
+ * Renderer-neutral transcript record. UI adapters may attach visual state, but
+ * every retained semantic field belongs here so TTY, plain output, and browser
+ * projections never need to parse another renderer's text.
+ */
+export interface PresentationTranscriptEntry {
+  id: string;
+  kind: PresentationTranscriptEntryKind;
+  text: string;
+  turn: number;
+  detail?: string;
+  success?: boolean;
+  repeat?: number;
+  toolArgs?: string;
+  commandOutput?: string;
+  editDiff?: string;
+  webAnswer?: string;
+  subagentOutcome?: "completed" | "failed";
+  subagentSummary?: string;
+  subagentError?: string;
+  panel?: unknown;
+}
+
+export interface PresentationTranscriptDocument {
+  protocol: typeof PRESENTATION_PROTOCOL;
+  kind: "document";
+  documentType: "transcript";
+  entries: readonly PresentationTranscriptEntry[];
+}
+
+/** Wrap canonical transcript records for every renderer adapter. */
+export function createTranscriptDocument(
+  entries: readonly PresentationTranscriptEntry[],
+): PresentationTranscriptDocument {
+  return {
+    protocol: PRESENTATION_PROTOCOL,
+    kind: "document",
+    documentType: "transcript",
+    entries,
+  };
+}
+
 export interface CreatePresentationEventOptions {
   source: PresentationSource;
   sequence: number;

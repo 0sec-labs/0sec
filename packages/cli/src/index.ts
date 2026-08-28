@@ -4,10 +4,25 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { VERSION } from "@0sec/shared";
-import { createHerdrEventSink, eventBus, maybeSubscribeCloudEventSink } from "@0sec/core";
+import {
+  createHerdrEventSink,
+  eventBus,
+  maybeSubscribeCloudEventSink,
+  presentationEventSink,
+} from "@0sec/core";
 import { maybeLoadCodexAuth } from "./codex-auth.js";
+import { presentationEventBus } from "./presentation/event-bus.js";
+import {
+  installConsolePresentationBridge,
+  installProcessPresentationStreamBridge,
+} from "./presentation/process-output.js";
 import { setHerdrSink } from "./herdr-state.js";
 
+
+// Legacy command modules still use console methods. Bridge those bytes into
+// the canonical stream at the process boundary without changing their output.
+installConsolePresentationBridge();
+installProcessPresentationStreamBridge();
 // Local-dev convenience: if `codex login` has run (~/.codex/auth.json) and no
 // 0SEC_CHATGPT_* token is in the env, plumb the codex tokens in so the engine
 // resolves to the chatgpt-codex provider (highest priority) instead of falling
@@ -23,6 +38,10 @@ maybeLoadCodexAuth();
 // the sink module is dead code and the cloud's live-trace UI stays
 // dark for every scan.
 maybeSubscribeCloudEventSink();
+
+// Every core event also enters the process-local canonical presentation stream.
+// Legacy cloud/stdout and Herdr projections remain independent adapters.
+eventBus.subscribe(presentationEventSink(presentationEventBus));
 
 // Report coarse agent state to herdr when 0sec is running inside one of its
 // panes, so the pane shows working/idle instead of "unknown" and

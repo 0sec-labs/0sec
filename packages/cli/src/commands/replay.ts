@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { renderReplay } from "../formatters/replay.js";
+import { writePresentationErrorLine } from "../presentation/process-output.js";
 
 export async function replayScan(opts: { dbPath?: string; scan?: string }): Promise<void> {
   const { osecDB } = await import("@0sec/db");

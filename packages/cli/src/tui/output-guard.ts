@@ -31,6 +31,9 @@
  * screen clean would trade one bug for a worse one.
  */
 
+import { createPresentationEvent } from "@0sec/shared";
+import { presentationEventBus } from "../presentation/event-bus.js";
+
 import { sanitizeTuiText } from "./text.js";
 
 export type TuiOutputStream = "stdout" | "stderr";
@@ -108,6 +111,7 @@ export function installTuiOutputGuard(options: TuiOutputGuardOptions = {}): TuiO
   const buffer: TuiOutputLine[] = [];
   let dropped = 0;
   let restored = false;
+  let presentationSequence = 0;
 
   // Partial writes are common: core emits a message and its trailing
   // newline separately, and a single write may carry several lines.
@@ -117,6 +121,13 @@ export function installTuiOutputGuard(options: TuiOutputGuardOptions = {}): TuiO
     const clean = sanitizeTuiText(text);
     if (!clean) return;
     const line: TuiOutputLine = { stream, text: clean };
+    presentationEventBus.emit(createPresentationEvent({
+      source: "cli",
+      sequence: ++presentationSequence,
+      at: new Date().toISOString(),
+      eventType: `output.tui.${stream}`,
+      payload: { channel: stream, text: clean },
+    }));
     buffer.push(line);
     while (buffer.length > maxBuffered) {
       buffer.shift();

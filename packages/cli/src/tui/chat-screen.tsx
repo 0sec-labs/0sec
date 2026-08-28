@@ -43,7 +43,7 @@ import {
   reloadSettings,
 } from "./settings-store.js";
 import { useTheme, type Theme } from "./theme-context.js";
-import { modelProvider } from "@0sec/shared";
+import { createTranscriptDocument, modelProvider } from "@0sec/shared";
 import { homedir } from "node:os";
 import {
   readGitStatus,
@@ -791,6 +791,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
    */
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(() => new Set());
   const [reviewOpen, setReviewOpen] = useState(false);
+  const transcriptDocument = useMemo(() => createTranscriptDocument(entries), [entries]);
   const reviewRenderableRef = useRef<TranscriptReviewRenderable | null>(null);
   /** The turn currently under the mouse, for the subtle hover highlight. */
   const [hoveredTurn, setHoveredTurn] = useState<number | null>(null);
@@ -4281,7 +4282,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   // exactly as before.
   const conversationRegion = reviewOpen ? (
     <TranscriptReview
-      entries={entries}
+      transcript={transcriptDocument}
       width={transcriptWidth}
       detail={entryDisplay.transcriptDetail}
       expandedTurns={expandedTurns}

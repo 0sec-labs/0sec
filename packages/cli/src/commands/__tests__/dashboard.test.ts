@@ -230,6 +230,15 @@ const dbState: {
     scanId: string;
     fingerprint?: string | null;
   }>;
+  recentEvents: Array<{
+    id: string;
+    scanId: string;
+    scanTarget: string;
+    stage: string;
+    eventType: string;
+    payload: string;
+    timestamp: number;
+  }>;
 } = {
   ctorPaths: [],
   closes: 0,
@@ -240,6 +249,7 @@ const dbState: {
   workflowUpdates: [],
   scans: [],
   findings: [],
+  recentEvents: [],
 };
 
 const resetOsecDatabaseMock = vi.fn();
@@ -271,7 +281,7 @@ vi.mock("@0sec/db", () => {
       return [];
     }
     listRecentEvents(): unknown[] {
-      return [];
+      return dbState.recentEvents;
     }
     listArtifacts(): unknown[] {
       return [];
@@ -483,6 +493,7 @@ beforeEach(() => {
   dbState.workflowUpdates.length = 0;
   dbState.scans.length = 0;
   dbState.findings.length = 0;
+  dbState.recentEvents.length = 0;
 
   resetOsecDatabaseMock.mockReset().mockReturnValue("/fake/0sec.db");
   recoverStaleWorkersMock.mockReset().mockReturnValue(3);
@@ -719,13 +730,38 @@ describe("dashboard — read APIs", () => {
     expect(body.scan.id).toBe("scan-7");
   });
 
-  it("GET /api/events/recent returns events array (default limit)", async () => {
+  it("GET /api/events/recent returns canonical presentation records additively", async () => {
+    dbState.recentEvents.push({
+      id: "event-1",
+      scanId: "scan-1",
+      scanTarget: "https://example.test",
+      stage: "attack",
+      eventType: "tool_call_started",
+      payload: JSON.stringify({ tool: "read" }),
+      timestamp: Date.parse("2026-08-26T00:00:00.000Z"),
+    });
+
     const captured = await invokeHandler(
       makeRequest({ method: "GET", url: "/api/events/recent" }),
     );
+
     expect(captured.statusCode).toBe(200);
     const body = JSON.parse(captured.body);
-    expect(Array.isArray(body.events)).toBe(true);
+    expect(body.events).toEqual([
+      expect.objectContaining({
+        id: "event-1",
+        presentation: {
+          protocol: "0sec.presentation/v1",
+          kind: "event",
+          source: "dashboard",
+          sequence: 1,
+          at: "2026-08-26T00:00:00.000Z",
+          eventType: "tool_call_started",
+          payload: { tool: "read" },
+          scanId: "scan-1",
+        },
+      }),
+    ]);
   });
 
   it("unknown /api/* path → 404 (handler returns false, top-level falls through)", async () => {

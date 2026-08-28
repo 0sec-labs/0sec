@@ -40,6 +40,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Command } from "commander";
 import chalk from "chalk";
+import { consolePresentationOutput } from "../presentation/process-output.js";
 import {
   loadCloudCredentials,
   CloudAuthMissingError,
@@ -137,12 +138,12 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
   if (opts.token) {
     const tok = opts.token.trim();
     if (tok.length === 0) {
-      console.error(chalk.red("Error: --token cannot be empty."));
+      consolePresentationOutput.stderr(chalk.red("Error: --token cannot be empty."), "auth.login.token-empty");
       process.exitCode = EXIT_USER_ERROR;
       return;
     }
     persistCredentials(host, tok, opts.homeDir);
-    console.log(`Logged in (host=${host})`);
+    consolePresentationOutput.stdout(`Logged in (host=${host})`, "auth.login.logged-in");
     process.exitCode = EXIT_OK;
     return;
   }
@@ -155,23 +156,21 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
   const loginUrl = `${host}/cli-auth?session=${session}`;
   const pollUrl = `${host}/cli-auth/sessions/${session}`;
 
-  console.log(chalk.dim("Opening browser..."));
-  console.log(chalk.dim(`  ${loginUrl}`));
-  console.log("");
-  console.log(chalk.yellow("Note: server-side mint endpoint is not yet implemented (#303)."));
-  console.log(chalk.yellow("      For now, use: 0sec auth login --token <value>"));
-  console.log("");
+  consolePresentationOutput.stdout(chalk.dim("Opening browser..."), "auth.login.opening");
+  consolePresentationOutput.stdout(chalk.dim(`  ${loginUrl}`), "auth.login.url");
+  consolePresentationOutput.stdout("", "auth.login.empty-line");
+  consolePresentationOutput.stdout(chalk.yellow("Note: server-side mint endpoint is not yet implemented (#303)."), "auth.login.scaffold-warning");
+  consolePresentationOutput.stdout(chalk.yellow("      For now, use: 0sec auth login --token <value>"), "auth.login.scaffold-hint");
+  consolePresentationOutput.stdout("", "auth.login.empty-line");
 
   const opener = opts.openBrowser ?? defaultOpenBrowser;
   try {
     opener(loginUrl);
   } catch (err) {
-    console.error(
-      chalk.yellow(
-        `Could not open browser automatically (${err instanceof Error ? err.message : String(err)}). ` +
-          `Open this URL manually: ${loginUrl}`,
-      ),
-    );
+    consolePresentationOutput.stderr(chalk.yellow(
+      `Could not open browser automatically (${err instanceof Error ? err.message : String(err)}). ` +
+        `Open this URL manually: ${loginUrl}`,
+    ), "auth.login.browser-error");
   }
 
   const attempts = opts.pollAttempts ?? 150;
@@ -196,20 +195,18 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
       try {
         body = await res.json();
       } catch {
-        console.error(chalk.red(`Login poll returned 200 but no JSON body. Aborting.`));
+        consolePresentationOutput.stderr(chalk.red("Login poll returned 200 but no JSON body. Aborting."), "auth.login.poll-json-error");
         process.exitCode = EXIT_USER_ERROR;
         return;
       }
       const token = extractToken(body);
       if (!token) {
-        console.error(
-          chalk.red(`Login poll returned 200 but body did not contain a token. Aborting.`),
-        );
+        consolePresentationOutput.stderr(chalk.red("Login poll returned 200 but body did not contain a token. Aborting."), "auth.login.poll-token-error");
         process.exitCode = EXIT_USER_ERROR;
         return;
       }
       persistCredentials(host, token, opts.homeDir);
-      console.log(`Logged in (host=${host})`);
+      consolePresentationOutput.stdout(`Logged in (host=${host})`, "auth.login.logged-in");
       process.exitCode = EXIT_OK;
       return;
     }
@@ -217,12 +214,10 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
     // 403/5xx) we still keep polling for — only the timeout is fatal.
   }
 
-  console.error(
-    chalk.red(
-      `Login timed out after ${Math.round((attempts * intervalMs) / 1000)}s. ` +
-        `Use \`0sec auth login --token <value>\` until the server-side mint endpoint ships (#303).`,
-    ),
-  );
+  consolePresentationOutput.stderr(chalk.red(
+    `Login timed out after ${Math.round((attempts * intervalMs) / 1000)}s. ` +
+      "Use `0sec auth login --token <value>` until the server-side mint endpoint ships (#303).",
+  ), "auth.login.timed-out");
   process.exitCode = EXIT_NET;
 }
 
@@ -239,9 +234,7 @@ export function runLogout(opts: LogoutOptions): void {
   } catch (err: unknown) {
     const code = (err as { code?: string }).code;
     if (code !== "ENOENT") {
-      console.error(
-        chalk.red(`Could not delete ${osecPath}: ${err instanceof Error ? err.message : String(err)}`),
-      );
+      consolePresentationOutput.stderr(chalk.red(`Could not delete ${osecPath}: ${err instanceof Error ? err.message : String(err)}`), "auth.logout.delete-error");
       process.exitCode = EXIT_USER_ERROR;
       return;
     }
@@ -254,18 +247,16 @@ export function runLogout(opts: LogoutOptions): void {
   } catch (err: unknown) {
     const code = (err as { code?: string }).code;
     if (code !== "ENOENT") {
-      console.error(
-        chalk.red(`Could not delete ${cloudCredsPath}: ${err instanceof Error ? err.message : String(err)}`),
-      );
+      consolePresentationOutput.stderr(chalk.red(`Could not delete ${cloudCredsPath}: ${err instanceof Error ? err.message : String(err)}`), "auth.logout.delete-error");
       process.exitCode = EXIT_USER_ERROR;
       return;
     }
   }
 
   if (deletedAny) {
-    console.log("Logged out");
+    consolePresentationOutput.stdout("Logged out", "auth.logout.deleted");
   } else {
-    console.log("Logged out (no credentials file was present)");
+    consolePresentationOutput.stdout("Logged out (no credentials file was present)", "auth.logout.not-found");
   }
   process.exitCode = EXIT_OK;
 }
@@ -277,11 +268,11 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
     creds = { host: c.host, token: c.token };
   } catch (err) {
     if (err instanceof CloudAuthMissingError) {
-      console.error(chalk.red(err.message));
+      consolePresentationOutput.stderr(chalk.red(err.message), "auth.status.auth-missing");
       process.exitCode = EXIT_AUTH;
       return;
     }
-    console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+    consolePresentationOutput.stderr(chalk.red(err instanceof Error ? err.message : String(err)), "auth.status.load-error");
     process.exitCode = EXIT_AUTH;
     return;
   }
@@ -289,7 +280,7 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
   const client = new CloudClient({ ...creds, fetchImpl: opts.fetchImpl });
   try {
     await client.pingHealth();
-    console.log(`OK (host=${creds.host})`);
+    consolePresentationOutput.stdout(`OK (host=${creds.host})`, "auth.status.ok");
     process.exitCode = EXIT_OK;
   } catch (err) {
     handleStatusError(err);
@@ -298,26 +289,26 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
 
 function handleStatusError(err: unknown): void {
   if (err instanceof CloudUnauthorizedError) {
-    console.error(`FAIL (HTTP 401)`);
+    consolePresentationOutput.stderr("FAIL (HTTP 401)", "auth.status.unauthorized");
     process.exitCode = EXIT_AUTH;
     return;
   }
   if (err instanceof CloudForbiddenError) {
-    console.error(chalk.red(`FAIL (HTTP 403) — status: ${err.message}`));
+    consolePresentationOutput.stderr(chalk.red(`FAIL (HTTP 403) — status: ${err.message}`), "auth.status.forbidden");
     process.exitCode = EXIT_AUTH;
     return;
   }
   if (err instanceof CloudNetworkError) {
-    console.error(chalk.red(`FAIL (network) — status: ${err.message}`));
+    consolePresentationOutput.stderr(chalk.red(`FAIL (network) — status: ${err.message}`), "auth.status.network-error");
     process.exitCode = EXIT_NET;
     return;
   }
   if (err instanceof CloudError) {
-    console.error(chalk.red(`FAIL (HTTP ${err.status ?? "?"}) — status`));
+    consolePresentationOutput.stderr(chalk.red(`FAIL (HTTP ${err.status ?? "?"}) — status`), "auth.status.cloud-error");
     process.exitCode = EXIT_USER_ERROR;
     return;
   }
-  console.error(chalk.red(`FAIL — status: ${err instanceof Error ? err.message : String(err)}`));
+  consolePresentationOutput.stderr(chalk.red(`FAIL — status: ${err instanceof Error ? err.message : String(err)}`), "auth.status.error");
   process.exitCode = EXIT_USER_ERROR;
 }
 
@@ -327,7 +318,7 @@ function normaliseHostArg(host: string | undefined): string | null {
   if (!host) return null;
   let h = host.trim();
   if (!/^https?:\/\//.test(h)) {
-    console.error(chalk.red(`Error: --host must be an http(s) URL (got ${JSON.stringify(host)}).`));
+    consolePresentationOutput.stderr(chalk.red(`Error: --host must be an http(s) URL (got ${JSON.stringify(host)}).`), "auth.login.host-error");
     process.exitCode = EXIT_USER_ERROR;
     return null;
   }

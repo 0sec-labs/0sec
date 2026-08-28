@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import chalk from "chalk";
+import { consolePresentationOutput } from "../presentation/process-output.js";
 import {
   probeS3Bucket,
   classifyTakeover,
@@ -59,7 +60,7 @@ export function registerCloudCommand(program: Command): void {
     .option("--json", "Emit results as machine-readable JSON")
     .action(async (buckets: string[], opts: S3ProbeOptions) => {
       if (!features.cloudSurface) {
-        console.error(chalk.red(FEATURE_OFF_MSG));
+        consolePresentationOutput.stderr(chalk.red(FEATURE_OFF_MSG), "cloud.feature-off");
         process.exitCode = 2;
         return;
       }
@@ -70,7 +71,7 @@ export function registerCloudCommand(program: Command): void {
       if (opts.maxKeys !== undefined) {
         maxKeys = Number(opts.maxKeys);
         if (!Number.isFinite(maxKeys) || maxKeys <= 0) {
-          console.error(chalk.red(`Invalid --max-keys '${opts.maxKeys}': must be a positive number.`));
+          consolePresentationOutput.stderr(chalk.red(`Invalid --max-keys '${opts.maxKeys}': must be a positive number.`), "cloud.s3-probe.invalid-keys");
           process.exitCode = 2;
           return;
         }
@@ -91,23 +92,23 @@ export function registerCloudCommand(program: Command): void {
       }
 
       if (opts.json) {
-        console.log(JSON.stringify(out, null, 2));
+        consolePresentationOutput.stdout(JSON.stringify(out, null, 2), "cloud.s3-probe.json");
         return;
       }
       for (const row of out) {
         if (row.refused) {
-          console.log(`${chalk.bold(row.bucket)}  ${chalk.yellow("refused")} ${chalk.dim(row.refused)}`);
+          consolePresentationOutput.stdout(`${chalk.bold(row.bucket)}  ${chalk.yellow("refused")} ${chalk.dim(row.refused)}`, "cloud.s3-probe.refused");
           continue;
         }
         const p = row.probe!;
         const verdictColour = p.verdict === "public" ? chalk.red : p.verdict === "not-found" ? chalk.yellow : chalk.dim;
-        console.log(`${chalk.bold(row.bucket)}  ${verdictColour(p.verdict)} ${chalk.dim(`(sev ${p.severity}, list ${p.listStatus})`)}`);
-        console.log(`  ${chalk.dim(p.note)}`);
+        consolePresentationOutput.stdout(`${chalk.bold(row.bucket)}  ${verdictColour(p.verdict)} ${chalk.dim(`(sev ${p.severity}, list ${p.listStatus})`)}`, "cloud.s3-probe.result");
+        consolePresentationOutput.stdout(`  ${chalk.dim(p.note)}`, "cloud.s3-probe.note");
         if (row.takeover?.takeoverable) {
-          console.log(`  ${chalk.red("takeover-able")} ${chalk.dim(row.takeover.note)}`);
+          consolePresentationOutput.stdout(`  ${chalk.red("takeover-able")} ${chalk.dim(row.takeover.note)}`, "cloud.s3-probe.takeover");
         }
         if (p.sampleKeys.length > 0) {
-          console.log(`  keys: ${p.sampleKeys.join(", ")}`);
+          consolePresentationOutput.stdout(`  keys: ${p.sampleKeys.join(", ")}`, "cloud.s3-probe.keys");
         }
       }
     });
@@ -128,7 +129,7 @@ export function registerCloudCommand(program: Command): void {
     .option("--json", "Emit the result as machine-readable JSON")
     .action(async (opts: ValidateCredsOptions) => {
       if (!features.cloudSurface) {
-        console.error(chalk.red(FEATURE_OFF_MSG));
+        consolePresentationOutput.stderr(chalk.red(FEATURE_OFF_MSG), "cloud.feature-off");
         process.exitCode = 2;
         return;
       }
@@ -139,11 +140,9 @@ export function registerCloudCommand(program: Command): void {
       const secretAccessKey = (opts.secretAccessKey ?? process.env.AWS_SECRET_ACCESS_KEY ?? "").trim();
       const sessionToken = opts.sessionToken ?? process.env.AWS_SESSION_TOKEN ?? undefined;
       if (!accessKeyId || !secretAccessKey) {
-        console.error(
-          chalk.red(
-            "access key + secret required: pass --access-key-id/--secret-access-key or set $AWS_ACCESS_KEY_ID/$AWS_SECRET_ACCESS_KEY.",
-          ),
-        );
+        consolePresentationOutput.stderr(chalk.red(
+          "access key + secret required: pass --access-key-id/--secret-access-key or set $AWS_ACCESS_KEY_ID/$AWS_SECRET_ACCESS_KEY.",
+        ), "cloud.validate-creds.missing-creds");
         process.exitCode = 2;
         return;
       }
@@ -152,14 +151,14 @@ export function registerCloudCommand(program: Command): void {
       try {
         result = await validateAwsCredentials({ accessKeyId, secretAccessKey, sessionToken, region: opts.region });
       } catch (err) {
-        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        consolePresentationOutput.stderr(chalk.red(err instanceof Error ? err.message : String(err)), "cloud.validate-creds.error");
         process.exitCode = 2;
         return;
       }
 
       if (opts.json) {
         // Never echo the credential — only the non-secret verdict.
-        console.log(
+        consolePresentationOutput.stdout(
           JSON.stringify(
             {
               valid: result.valid,
@@ -173,17 +172,18 @@ export function registerCloudCommand(program: Command): void {
             null,
             2,
           ),
+          "cloud.validate-creds.json",
         );
         return;
       }
       const valid = result.valid ? chalk.green("valid") : chalk.dim("invalid");
-      console.log(`credential: ${valid} ${chalk.dim(`(sev ${result.severity})`)}`);
+      consolePresentationOutput.stdout(`credential: ${valid} ${chalk.dim(`(sev ${result.severity})`)}`, "cloud.validate-creds.result");
       if (result.valid) {
-        if (result.arn) console.log(`  arn: ${result.arn}`);
-        if (result.account) console.log(`  account: ${result.account}`);
-        console.log(`  effective read perms: ${result.effectivePermissions.join(", ")}`);
+        if (result.arn) consolePresentationOutput.stdout(`  arn: ${result.arn}`, "cloud.validate-creds.arn");
+        if (result.account) consolePresentationOutput.stdout(`  account: ${result.account}`, "cloud.validate-creds.account");
+        consolePresentationOutput.stdout(`  effective read perms: ${result.effectivePermissions.join(", ")}`, "cloud.validate-creds.permissions");
       }
-      console.log(`  ${chalk.dim(result.note)}`);
+      consolePresentationOutput.stdout(`  ${chalk.dim(result.note)}`, "cloud.validate-creds.note");
     });
 }
 
@@ -197,7 +197,7 @@ function loadScopeOrExit(path: string | undefined): ScopePolicy | undefined {
   try {
     return ScopePolicy.fromJsonFile(path!);
   } catch (err) {
-    console.error(chalk.red(`Failed to load --scope '${path}': ${err instanceof Error ? err.message : String(err)}`));
+    consolePresentationOutput.stderr(chalk.red(`Failed to load --scope '${path}': ${err instanceof Error ? err.message : String(err)}`), "cloud.scope.load-error");
     process.exitCode = 2;
     return undefined;
   }

@@ -7,8 +7,13 @@ import { fileURLToPath } from "node:url";
 import { URL } from "node:url";
 import type { Command } from "commander";
 import chalk from "chalk";
-import type { FindingTriageStatus } from "@0sec/shared";
+import {
+  createPresentationEvent,
+  type FindingTriageStatus,
+  type PresentationEvent,
+} from "@0sec/shared";
 import { readToolCallNames } from "@0sec/core";
+import { presentationEventBus } from "../presentation/event-bus.js";
 
 type DashboardOptions = {
   dbPath?: string;
@@ -792,6 +797,10 @@ function parseScanPath(pathname: string): { scanId: string; suffix?: "events" | 
   };
 }
 
+
+function isPresentationEventsStreamPath(pathname: string): boolean {
+  return pathname === "/api/v1/presentation/events";
+}
 function parseRecentEventsPath(pathname: string): boolean {
   return pathname === "/api/events/recent";
 }
@@ -988,8 +997,10 @@ function resolveDashboardAssetDir(): string {
   const candidates = [
     join(moduleDir, "dashboard"),
     join(moduleDir, "..", "dashboard"),
-    join(process.cwd(), "dist", "dashboard"),
+    // A source checkout must serve the freshly built workspace dashboard,
+    // not an unrelated stale root bundle left by an earlier packaging run.
     join(process.cwd(), "packages", "dashboard", "dist"),
+    join(process.cwd(), "dist", "dashboard"),
   ];
 
   for (const candidate of candidates) {
@@ -1019,6 +1030,10 @@ function requireControlToken(req: IncomingMessage, res: ServerResponse, controlT
   return true;
 }
 
+function writePresentationSse(res: ServerResponse, event: PresentationEvent): void {
+  res.write(`event: presentation\ndata: ${JSON.stringify(event)}\n\n`);
+}
+
 async function handleApiRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -1026,6 +1041,28 @@ async function handleApiRequest(
   dbPath: string | undefined,
   controlToken: string,
 ): Promise<boolean> {
+  if (isPresentationEventsStreamPath(pathname)) {
+    if (req.method !== "GET") {
+      json(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    });
+    // A comment keeps the endpoint valid SSE even before the first event.
+    res.write(": connected\n\n");
+    const unsubscribe = presentationEventBus.subscribe({
+      emit(event) {
+        writePresentationSse(res, event);
+      },
+    });
+    req.once("close", unsubscribe);
+    return true;
+  }
+
   const { osecDB } = await import("@0sec/db");
   const controlPath = parseControlPath(pathname);
 
@@ -1257,8 +1294,16 @@ async function handleApiRequest(
         agentRole?: string | null;
         payload: string;
         timestamp: number;
-      }>).map((event) => {
+      }>).map((event, index) => {
         const payload = parsePayload(event.payload);
+        const presentation = createPresentationEvent({
+          source: "dashboard",
+          sequence: index + 1,
+          at: new Date(event.timestamp).toISOString(),
+          eventType: event.eventType,
+          payload: payload ?? { rawPayload: event.payload },
+          scanId: event.scanId,
+        });
         return {
           id: event.id,
           scanId: event.scanId,
@@ -1275,6 +1320,7 @@ async function handleApiRequest(
           }),
           payload,
           timestamp: event.timestamp,
+          presentation,
         };
       });
 
