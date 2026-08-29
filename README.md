@@ -22,40 +22,24 @@
 </p>
 
 <p align="center">
-  <sub>Note: This project is currently in active development; interfaces may change. See <a href="#honest-limitations">Current limitations</a>.</sub>
+  <sub>Note: This project is currently in active development; features change daily! See <a href="#honest-limitations">Current limitations</a>.</sub>
 </p>
 
 <p align="center">
   <img src="assets/demo-intro.gif" alt="0sec — finds, proves, and reports vulnerabilities" width="840">
 </p>
 
-## Install
+## Install & Quick Start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
-0 --help
+0
 ```
 OR
 
 ```bash
-npx 0sec-cli --help              # one-shot, no install
+npx 0sec-cli              # one-shot, no install
 npm i -g 0sec-cli && 0 --help    # global install → `0` and `0sec`
-```
-
-## Quick start
-
-```bash
-# 1. say what you're allowed to touch
-echo '{ "in_scope": ["example.com"] }' > scope.json
-export ANTHROPIC_API_KEY=...        # or OpenAI, Azure, OpenRouter, Ollama, …
-
-# 2. scan a live target (out-of-scope requests are refused)
-0 scan --target https://example.com --scope ./scope.json
-
-# 3. or review code, audit a package, open the console
-0 review ./my-app                   # source review
-0 audit lodash                      # npm / pypi / cargo / oci package
-0 console --scope ./scope.json      # interactive; type / for commands
 ```
 
 <p align="center">
