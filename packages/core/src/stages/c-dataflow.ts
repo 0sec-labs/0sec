@@ -32,18 +32,18 @@
  * but the FP volume is a fraction of the token-level checker's.
  */
 
-import Parser from "tree-sitter";
-// tree-sitter-c is a CommonJS native grammar with no types; import as unknown.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-import C from "tree-sitter-c";
+import type Parser from "tree-sitter";
+import treeSitterRuntime from "./tree-sitter-runtime.cjs";
 import type { InvariantModel, InvariantViolation, ViolationKind } from "./subsystem-invariant-model.js";
+
+const { Parser: TreeSitterParser, language: C } = treeSitterRuntime;
 
 // ── tree-sitter parser (singleton) ─────────────────────────────────────────────
 
 let PARSER: Parser | null = null;
 function parser(): Parser {
   if (!PARSER) {
-    PARSER = new Parser();
+    PARSER = new TreeSitterParser();
     PARSER.setLanguage(C);
   }
   return PARSER;

@@ -35,19 +35,41 @@ mkdir -p "$(dirname "$OUTFILE")"
 
 if [ -n "$TARGET" ]; then
   TARGET_ARG="--target=$TARGET"
+  NATIVE_TARGET="${TARGET#bun-}"
   # Append target suffix to default outfile if caller didn't override
   if [ "$OUTFILE" = "dist-bin/0sec" ]; then
     OUTFILE="dist-bin/0sec-${TARGET#bun-}"
   fi
 else
   TARGET_ARG=""
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64|Linux-amd64) NATIVE_TARGET="linux-x64" ;;
+    Linux-aarch64|Linux-arm64) NATIVE_TARGET="linux-arm64" ;;
+    Darwin-arm64) NATIVE_TARGET="darwin-arm64" ;;
+    Darwin-x86_64) NATIVE_TARGET="darwin-x64" ;;
+    MINGW*-x86_64|MSYS*-x86_64) NATIVE_TARGET="win32-x64" ;;
+    MINGW*-aarch64|MSYS*-aarch64) NATIVE_TARGET="win32-arm64" ;;
+    *) echo "Unsupported native target: $(uname -s)-$(uname -m)" >&2; exit 2 ;;
+  esac
 fi
+
+case "$NATIVE_TARGET" in
+  linux-x64|linux-arm64|darwin-arm64|darwin-x64|win32-x64|win32-arm64) ;;
+  *) echo "Unsupported compiled target: $NATIVE_TARGET" >&2; exit 2 ;;
+esac
 
 # Pull the version from the root package.json so `--version` on the
 # compiled binary reports the actual release instead of constants.ts's
 # fallback ("0.0.0-dev") — the fallback reads a package.json path that
 # isn't in the /$bunfs virtual tree.
 PKG_VERSION="$(node -p "require('./package.json').version")"
+
+# `node-gyp-build` hides native addon paths behind a runtime lookup. Stage the
+# selected pair at fixed relative paths so c-dataflow's direct requires make Bun
+# embed them. The trap leaves normal source builds free of generated binaries.
+STAGE_DIR="packages/core/dist/stages/tree-sitter-compiled"
+node scripts/stage-tree-sitter-native.mjs "$NATIVE_TARGET" "$STAGE_DIR"
+trap 'rm -rf "$STAGE_DIR"' EXIT
 
 cd packages/cli
 
@@ -56,6 +78,7 @@ bun build src/index.ts \
   ${TARGET_ARG} \
   --outfile "../../$OUTFILE" \
   --define "__0SEC_VERSION__=\"$PKG_VERSION\"" \
+  --define "__0SEC_COMPILED_TARGET__=\"$NATIVE_TARGET\"" \
   --external playwright \
   --external playwright-core \
   --external electron \

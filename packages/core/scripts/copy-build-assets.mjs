@@ -29,6 +29,7 @@ copyByExt("src/bench", ".json", "dist/bench");
 copyByExt("src/xnu-fuzz/opener", ".c", "dist/xnu-fuzz/opener");
 copyByExt("src/stages/data", ".json", "dist/stages/data");
 copyByExt("src/review/data", ".json", "dist/review/data");
+copyByExt("src/stages", ".cjs", "dist/stages");
 
 // JIT methodology skills: the loader (src/agent/skills/index.ts) walks its own
 // module directory for *.yaml and validates each as a skill. Mirror the yaml
