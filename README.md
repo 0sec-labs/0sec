@@ -35,12 +35,8 @@
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
 0
 ```
-OR
-
-```bash
-npx 0sec-cli              # one-shot, no install
-npm i -g 0sec-cli && 0 --help    # global install → `0` and `0sec`
-```
+The verified binary is installed to `~/.0sec/bin`. The optional `0sec-cli` npm
+launcher is not published yet; use the installer above or a GitHub Release asset.
 
 <p align="center">
   <img src="assets/0sec-demo.gif" alt="0sec quickstart — a scan from start to finish" width="820">
@@ -48,7 +44,7 @@ npm i -g 0sec-cli && 0 --help    # global install → `0` and `0sec`
 
 ## What it covers
 
-Most AI pentesting harnesses and tools stop at the app. 0sec's core philosophy is to be a single "Swiss army knife" to tackle all layers by being as extensible and transparent as possible.
+Most AI pentesting harnesses and tools stop at the web app layer to find and chain vulnerabilities. However research suggests that supply chain and other infrastructure level exploits are more common, and cheaper to exploit than ever before. 0sec's core philosophy is to be a single, extensible and transparent tool to tackle all the remaining layers as security changes from point-in-time tests towards continuous security.
 
 | Layer | Finds |
 | --- | --- |
