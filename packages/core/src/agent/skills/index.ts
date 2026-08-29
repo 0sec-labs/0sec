@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import type { SkillDefinition, SkillSummary } from "./types.js";
 import type { VulnClass } from "../prompts.js";
+import { EMBEDDED_SKILL_YAML } from "./skills.generated.js";
 
 export type { SkillDefinition, SkillSummary } from "./types.js";
 
@@ -151,17 +152,39 @@ export function loadSkillRegistry(
   const yamlFiles = walkYamlFiles(dir);
   const registry = new Map<string, SkillDefinition>();
 
-  for (const filePath of yamlFiles) {
-    const raw = readFileSync(filePath, "utf-8");
-    const parsed = parseYaml(raw);
-    const skill = validateSkill(parsed, filePath);
+  if (yamlFiles.length > 0) {
+    // On-disk path: a source checkout, the test suite (which passes the real
+    // src dir), or the node/esbuild bundle where the YAML tree sits beside the
+    // loader. Reading the files directly lets a dev edit a skill without
+    // regenerating the embedded manifest.
+    for (const filePath of yamlFiles) {
+      const raw = readFileSync(filePath, "utf-8");
+      const parsed = parseYaml(raw);
+      const skill = validateSkill(parsed, filePath);
 
-    if (registry.has(skill.id)) {
-      throw new Error(
-        `Duplicate skill ID "${skill.id}" — found in multiple YAML files`,
-      );
+      if (registry.has(skill.id)) {
+        throw new Error(
+          `Duplicate skill ID "${skill.id}" — found in multiple YAML files`,
+        );
+      }
+      registry.set(skill.id, skill);
     }
-    registry.set(skill.id, skill);
+  } else {
+    // Compiled-binary path: `bun --compile` bakes imported modules but NOT
+    // files read via readdirSync, so the walk above finds nothing inside the
+    // /$bunfs virtual tree. Fall back to the build-time embedded manifest
+    // (skills.generated.ts) — a real import, so it IS baked into the binary.
+    for (const [relPath, raw] of Object.entries(EMBEDDED_SKILL_YAML)) {
+      const parsed = parseYaml(raw);
+      const skill = validateSkill(parsed, `embedded:${relPath}`);
+
+      if (registry.has(skill.id)) {
+        throw new Error(
+          `Duplicate skill ID "${skill.id}" — found in the embedded manifest`,
+        );
+      }
+      registry.set(skill.id, skill);
+    }
   }
 
   _registry = registry;
