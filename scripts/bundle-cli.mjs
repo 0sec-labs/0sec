@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 const outdir = "dist";
 
@@ -135,6 +136,33 @@ mkdirSync(`${outdir}/chunks/data`, { recursive: true });
 for (const dataFile of readdirSync(stagesDataSrc).filter((f) => f.endsWith(".json"))) {
   copyFileSync(`${stagesDataSrc}/${dataFile}`, `${outdir}/chunks/data/${dataFile}`);
 }
+
+// JIT methodology skills: packages/core/src/agent/skills/index.ts walks its own
+// module directory (`new URL(".", import.meta.url)`) for *.yaml and validates
+// each as a skill. esbuild lands that loader in `dist/chunks/`, so the walk
+// targets `dist/chunks/` — mirror the skills tree to `dist/chunks/agent/skills/`
+// so `list_skills`/`load_skill` (0SEC_FEATURE_JIT_SKILLS) find every pack in the
+// packaged binary, exactly as they do from source. Copy ONLY *.yaml: the loader
+// validates every yaml it walks as a skill, so a stray non-skill yaml under
+// chunks would hard-fail loading. There are no other yaml under dist/chunks/.
+const skillsSrc = "packages/core/src/agent/skills";
+let skillYamlCopied = 0;
+const copySkillYaml = (relDir) => {
+  const absDir = join(skillsSrc, relDir);
+  for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+    const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      copySkillYaml(rel);
+    } else if (entry.name.endsWith(".yaml") || entry.name.endsWith(".yml")) {
+      const dest = `${outdir}/chunks/agent/skills/${rel}`;
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(join(skillsSrc, rel), dest);
+      skillYamlCopied++;
+    }
+  }
+};
+copySkillYaml("");
+console.log(`Copied ${skillYamlCopied} skill YAML files → chunks/agent/skills/`);
 
 // Fix double shebang
 const bundlePath = `${outdir}/0sec.js`;

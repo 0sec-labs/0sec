@@ -29,3 +29,24 @@ copyByExt("src/bench", ".json", "dist/bench");
 copyByExt("src/xnu-fuzz/opener", ".c", "dist/xnu-fuzz/opener");
 copyByExt("src/stages/data", ".json", "dist/stages/data");
 copyByExt("src/review/data", ".json", "dist/review/data");
+
+// JIT methodology skills: the loader (src/agent/skills/index.ts) walks its own
+// module directory for *.yaml and validates each as a skill. Mirror the yaml
+// tree into dist/agent/skills so a consumer importing the built @0sec/core (not
+// the CLI bundle, which copies these separately in scripts/bundle-cli.mjs) also
+// resolves every pack. Copy ONLY *.yaml — a stray non-skill yaml would fail
+// validation. Recurses through frameworks/, techniques/, vulnerabilities/.
+const copyYamlTree = (fromRel, toRel) => {
+  if (!existsSync(abs(fromRel))) return;
+  for (const entry of readdirSync(abs(fromRel), { withFileTypes: true })) {
+    const from = join(fromRel, entry.name);
+    const to = join(toRel, entry.name);
+    if (entry.isDirectory()) {
+      copyYamlTree(from, to);
+    } else if (entry.name.endsWith(".yaml") || entry.name.endsWith(".yml")) {
+      mkdirSync(abs(toRel), { recursive: true });
+      cpSync(abs(from), abs(to));
+    }
+  }
+};
+copyYamlTree("src/agent/skills", "dist/agent/skills");
