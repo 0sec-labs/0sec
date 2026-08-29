@@ -60,7 +60,7 @@ const SHIPPED_PALETTE: Record<string, string> = {
   CANVAS: "#080808",
   PANEL: "#1C1A18",
   PANEL_ALT: "#2A2724",
-  BORDER: "#4A413B",
+  BORDER: "#302E2C",
   TEXT: "#F3EEE9",
   MUTED: "#A79A8D",
   PRIMARY: "#FFFFFF",
@@ -345,7 +345,7 @@ describe("contrast waivers", () => {
   it("names the replacement colours it claims fix the default", () => {
     const dark = THEMES.dark.palette;
     for (const bg of BACKGROUND_TOKENS) {
-      expect(contrastRatio("#9C8C7C", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
+      expect(contrastRatio("#8C8580", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
     }
   });
 

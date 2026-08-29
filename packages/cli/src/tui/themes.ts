@@ -236,7 +236,7 @@ const DARK: Theme = {
   CANVAS: "#080808",
   PANEL: "#1C1A18",
   PANEL_ALT: "#2A2724",
-  BORDER: "#4A413B",
+  BORDER: "#302E2C",
   TEXT: "#F3EEE9",
   MUTED: "#A79A8D",
   PRIMARY: "#FFFFFF",
@@ -690,23 +690,23 @@ export const CONTRAST_WAIVERS: readonly ContrastWaiver[] = [
     theme: "dark",
     token: "BORDER",
     against: "CANVAS",
-    ratio: 2.01,
+    ratio: 1.48,
     reason:
-      "Preserved default: #4A413B is an intentional hairline, well below even the 3:1 " +
-      "non-text bar. #9C8C7C reaches 3:1 on all three surfaces if visible panel edges are wanted.",
+      "Preserved default: #302E2C is an intentional hairline, well below even the 3:1 " +
+      "non-text bar. #8C8580 reaches 3:1 on all three surfaces if visible panel edges are wanted.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL",
-    ratio: 1.74,
+    ratio: 1.28,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL_ALT",
-    ratio: 1.49,
+    ratio: 1.1,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
 ];
