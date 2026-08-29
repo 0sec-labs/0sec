@@ -11,6 +11,7 @@ import {
 import type {
   ConsoleAutonomyMode,
   ConsoleSession,
+  NativeMessage,
   ToolCall,
   ToolResult,
 } from "@0sec/core";
@@ -35,6 +36,10 @@ interface ConsoleOptions {
   autonomy?: string;
   maxToolCalls?: string;
   allowScanners?: boolean;
+  /** `--resume [id]`: a session id/prefix to reopen, or `true` for the picker. */
+  resume?: string | boolean;
+  /** `--continue`: reopen the single most-recent console session, no picker. */
+  continue?: boolean;
 }
 
 /** Launch autonomy modes accepted by `--mode` / `--autonomy`. */
@@ -118,6 +123,8 @@ export function registerConsoleCommand(program: Command): void {
     .option("--autonomy <mode>", "Alias of --mode (standard|copilot|yolo|recon); --mode/--yolo take precedence.", "standard")
     .option("--max-tool-calls <n>", "Safety cap on tool-call rounds per operator message", "20")
     .option("--allow-scanners", "Expose generic-scanner tool wrappers (sqlmap/nikto/…); default off")
+    .option("--resume [id]", "Reopen a saved console session by id (or unique prefix); with no id, opens a session picker. Also reachable as `0 -r [id]`.")
+    .option("--continue", "Reopen the most recent console session, no picker. Also reachable as `0 -c`.")
     .action(async (opts: ConsoleOptions) => {
       let maxToolIterations = 20;
       if (opts.maxToolCalls !== undefined) {
@@ -171,19 +178,66 @@ export function registerConsoleCommand(program: Command): void {
         return;
       }
 
+      // Resolve a saved console session to resume/continue. `--continue` (and
+      // the `0 -c` shortcut) → the single most-recent; `--resume <id>` → that id
+      // or a unique prefix; bare `--resume` (and `0 -r`) → an interactive picker.
+      // A resumed session inherits its stored model/target unless overridden.
+      let resumeMessages: readonly unknown[] | undefined;
+      let resumedModel: string | undefined;
+      let resumedTarget: string | undefined;
+      let openResumePicker = false;
+      if (opts.continue || opts.resume !== undefined) {
+        const { listSessions, loadSession } = await import("../tui/session-store.js");
+        const idArg = typeof opts.resume === "string" ? opts.resume.trim() : "";
+        if (idArg || opts.continue) {
+          let stored = idArg ? loadSession(idArg) : null;
+          if (!stored && idArg) {
+            const matches = listSessions(undefined, { limit: 500 }).filter((s) => s.id.startsWith(idArg));
+            if (matches.length === 1) stored = loadSession(matches[0].id);
+            else if (matches.length > 1) {
+              console.error(chalk.red(`'${idArg}' matches ${matches.length} sessions — use a longer prefix or the full id.`));
+              process.exitCode = 2;
+              return;
+            }
+          } else if (!stored && opts.continue) {
+            const recent = listSessions(undefined, { limit: 1 })[0];
+            stored = recent ? loadSession(recent.id) : null;
+          }
+          if (!stored) {
+            console.error(chalk.red(idArg ? `No console session matches '${idArg}'.` : "No saved console session to continue."));
+            process.exitCode = 1;
+            return;
+          }
+          resumeMessages = stored.messages;
+          resumedModel = stored.model;
+          resumedTarget = stored.target;
+        } else {
+          openResumePicker = true; // bare `--resume` / `0 -r` → the picker
+        }
+      }
+
       if (isBunRuntime() && canUseOpenTui()) {
         // `run.tsx` imports Bun-only OpenTUI dependencies, so Node must not
         // resolve it before falling back to the readline console.
-        const { showOpenTuiConsole } = await import("../tui/run.js");
-        await showOpenTuiConsole({
-          target: opts.target,
+        const { showOpenTuiConsole, showOpenTuiResume } = await import("../tui/run.js");
+        type TuiOpts = NonNullable<Parameters<typeof showOpenTuiConsole>[0]>;
+        const baseOptions: TuiOpts = {
+          target: resumedTarget ?? opts.target,
           scope,
-          model: opts.model,
+          model: resumedModel ?? opts.model,
           role,
           maxToolIterations,
           allowScanners: opts.allowScanners,
           autonomyMode,
-        });
+        };
+        if (openResumePicker) {
+          await showOpenTuiResume(baseOptions);
+        } else {
+          await showOpenTuiConsole({
+            ...baseOptions,
+            initialMessages: resumeMessages as TuiOpts["initialMessages"],
+          });
+        }
         return;
       }
 
@@ -199,12 +253,16 @@ export function registerConsoleCommand(program: Command): void {
         const runtime = createConsoleRuntime({ model: opts.model });
         session = createConsoleSession({
           runtime,
-          target: opts.target,
+          target: resumedTarget ?? opts.target,
           role,
           maxToolIterations,
           allowScanners: opts.allowScanners,
           scope,
           autonomyMode,
+          // A resumed session seeds the model's history so it continues where it
+          // left off (the readline fallback can't repaint the old transcript, but
+          // the conversation context carries over).
+          ...(resumeMessages ? { initialMessages: resumeMessages as NativeMessage[] } : {}),
           // Readline has no approval surface, so session-only scope extensions are denied.
           requestScope: async () => null,
           approveTool: autonomyMode === "copilot" ? async () => false : undefined,

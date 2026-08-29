@@ -220,6 +220,16 @@ if (userArgs.length === 0) {
     console.error(chalk.red(err instanceof Error ? err.message : String(err)));
     process.exit(2);
   });
+} else if (userArgs[0] === "-r" || userArgs[0] === "--resume") {
+  // `0 -r [id]` is the top-level shortcut for `console --resume [id]`: resume a
+  // saved chat session by id/prefix, or open the picker with no id. commander's
+  // root can't take a bare `-r`, so rewrite argv onto the `console` subcommand.
+  process.argv = [process.argv[0], process.argv[1], "console", "--resume", ...userArgs.slice(1)];
+  program.parse();
+} else if (userArgs[0] === "-c" || userArgs[0] === "--continue") {
+  // `0 -c` → `console --continue`: reopen the most recent chat session.
+  process.argv = [process.argv[0], process.argv[1], "console", "--continue", ...userArgs.slice(1)];
+  program.parse();
 } else if (userArgs.length >= 1 && !knownCommands.includes(userArgs[0]) && !userArgs[0].startsWith("-")) {
   const route = detectAndRoute(userArgs[0]);
   if (route) {

@@ -4729,6 +4729,16 @@ export async function showOpenTuiHistory(options: { dbPath?: string; limit: numb
   await mountApp({ type: "console", initialRoute: { type: "history", dbPath: options.dbPath, limit: options.limit }, onResolve: () => {}, onExit: () => {} });
 }
 
+/**
+ * Opens the console straight onto the resume picker — the saved-session browser.
+ * Picking a session reopens the chat around its stored transcript; `chatOptions`
+ * seed a fresh chat if the operator backs out of the picker. Drives `0 -r` /
+ * `console --resume` with no id.
+ */
+export async function showOpenTuiResume(options: ChatScreenOptions = {}): Promise<void> {
+  await mountApp({ type: "console", initialRoute: { type: "resume", chatOptions: options }, onExit: () => {} });
+}
+
 /** Opens the console straight onto the settings screen. */
 export async function showOpenTuiSettings(): Promise<void> {
   await mountApp({ type: "console", initialRoute: { type: "settings" }, onResolve: () => {}, onExit: () => {} });
