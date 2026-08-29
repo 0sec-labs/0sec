@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  <strong>An autonomous pentester you run yourself.</strong><br/>
-  It finds a real vulnerability, proves it with a working exploit, and writes the fix — from web apps and source code down to the kernel. Multi-model, multi-agent, and entirely yours.
+  <strong>Your open-source AI cybersecurity team.</strong><br/>
+  0sec finds a vulnerability, proves it with a working exploit, and writes the fix. Multi-model, multi-agent, but most importantly: yours.
 </p>
 
 <p align="center">
