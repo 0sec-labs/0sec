@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <strong>[RESEARCH PREVIEW] Your open-source AI cybersecurity team.</strong><br/>
+  <strong>[RESEARCH PREVIEW] Your open & extensible AI cybersecurity team.</strong><br/>
   0sec vulnerabilities, creates working exploits, and writes the fix.
   Multi-model, multi-agent, but most importantly: yours.
 </p>
@@ -36,8 +36,14 @@
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
 0
 ```
-The verified binary is installed to `~/.0sec/bin`. The optional `0sec-cli` npm
-launcher is not published yet; use the installer above or a GitHub Release asset.
+The verified binary is installed to `~/.0sec/bin`. Prefer it when you want no
+Node/Bun dependency. The published `0sec-cli` npm launcher downloads the matching
+verified release binary on first invocation:
+
+```bash
+npx 0sec-cli --help
+npm i -g 0sec-cli && 0 --help
+```
 
 <p align="center">
   <img src="assets/0sec-demo.gif" alt="0sec quickstart — a scan from start to finish" width="820">
