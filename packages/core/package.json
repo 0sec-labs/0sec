@@ -20,7 +20,6 @@
     "@0sec/llm-redteam": "workspace:*",
     "@0sec/shared": "workspace:*",
     "@0sec/templates": "workspace:*",
-    "node-gyp-build": "4.8.4",
     "tree-sitter": "0.21.1",
     "tree-sitter-c": "0.21.4",
     "yaml": "^2.4.0",

@@ -47,6 +47,19 @@ const stubPlugin = {
   },
 };
 
+// The staged parser wrapper is real only while `bun-compile.sh` is building a
+// standalone executable. The JavaScript/npm bundle takes the source-mode branch,
+// so retain those unreachable requires without trying to resolve generated files.
+const releaseOnlyAddonPlugin = {
+  name: "external-release-only-addons",
+  setup(build) {
+    build.onResolve({ filter: /^\.\/tree-sitter-compiled\// }, (args) => ({
+      path: args.path,
+      external: true,
+    }));
+  },
+};
+
 await build({
   entryPoints: ["packages/cli/src/index.ts"],
   outdir,
@@ -108,7 +121,7 @@ await build({
     __0SEC_COMPILED_TARGET__: "undefined",
     __0SEC_BUILD_COMMIT__: JSON.stringify(BUILD_COMMIT),
   },
-  plugins: [stubPlugin],
+  plugins: [stubPlugin, releaseOnlyAddonPlugin],
 });
 
 cpSync("packages/templates/attacks", `${outdir}/attacks`, { recursive: true });
