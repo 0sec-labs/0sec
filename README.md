@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <strong>Your open-source AI cybersecurity team.</strong><br/>
+  <strong>[RESEARCH PREVIEW] Your open-source AI cybersecurity team.</strong><br/>
   0sec finds a vulnerability, proves it with a working exploit, and writes the fix. Multi-model, multi-agent, but most importantly: yours.
 </p>
 
