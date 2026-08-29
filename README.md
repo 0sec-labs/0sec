@@ -18,11 +18,11 @@
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3fb950" alt="license" />
   <img src="https://img.shields.io/github/v/release/0sec-labs/0sec?color=2563eb" alt="release" />
   <img src="https://img.shields.io/badge/docs-0.security-6366f1" alt="docs" />
-  <img src="https://img.shields.io/badge/status-beta-f0883e" alt="status: beta" />
+  <img src="https://img.shields.io/badge/status-research%20preview-f0883e" alt="status: research preview" />
 </p>
 
 <p align="center">
-  <sub>Beta — in active development; interfaces may change. See <a href="#honest-limitations">Honest limitations</a>.</sub>
+  <sub>Note: This project is currently in active development; interfaces may change. See <a href="#honest-limitations">Current limitations</a>.</sub>
 </p>
 
 <p align="center">
