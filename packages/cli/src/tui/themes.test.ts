@@ -58,17 +58,17 @@ import {
  */
 const SHIPPED_PALETTE: Record<string, string> = {
   CANVAS: "#080808",
-  PANEL: "#141312",
-  PANEL_ALT: "#242120",
-  BORDER: "#3A322D",
+  PANEL: "#1C1A18",
+  PANEL_ALT: "#2A2724",
+  BORDER: "#4A413B",
   TEXT: "#F3EEE9",
-  MUTED: "#9C9084",
+  MUTED: "#A79A8D",
   PRIMARY: "#FFFFFF",
   ACCENT: "#F3EEE9",
   BRAND: "#A78BFA",
   SUCCESS: "#22C55E",
   WARNING: "#EAB308",
-  ERROR: "#DC2626",
+  ERROR: "#F4695E",
   INFO: "#B8AFA6",
   background: "#080808",
   surface: "#111111",
@@ -292,7 +292,7 @@ describe("contrast sweep", () => {
       }),
     );
     expect(worst).toEqual({
-      dark: 3.31,
+      dark: 4.97,
       light: 5.24,
       "high-contrast": 7.75,
       ansi: 5.25,
@@ -339,17 +339,13 @@ describe("contrast waivers", () => {
       "dark/BORDER/CANVAS",
       "dark/BORDER/PANEL",
       "dark/BORDER/PANEL_ALT",
-      "dark/ERROR/CANVAS",
-      "dark/ERROR/PANEL",
-      "dark/ERROR/PANEL_ALT",
     ]);
   });
 
   it("names the replacement colours it claims fix the default", () => {
     const dark = THEMES.dark.palette;
     for (const bg of BACKGROUND_TOKENS) {
-      expect(contrastRatio("#F4695E", dark[bg])).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST);
-      expect(contrastRatio("#857567", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
+      expect(contrastRatio("#9C8C7C", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
     }
   });
 

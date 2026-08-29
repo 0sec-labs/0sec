@@ -234,17 +234,17 @@ export const MIN_SEMANTIC_CONTRAST = 1.15;
  */
 const DARK: Theme = {
   CANVAS: "#080808",
-  PANEL: "#141312",
-  PANEL_ALT: "#242120",
-  BORDER: "#3A322D",
+  PANEL: "#1C1A18",
+  PANEL_ALT: "#2A2724",
+  BORDER: "#4A413B",
   TEXT: "#F3EEE9",
-  MUTED: "#9C9084",
+  MUTED: "#A79A8D",
   PRIMARY: "#FFFFFF",
   ACCENT: "#F3EEE9",
   BRAND: "#A78BFA",
   SUCCESS: "#22C55E",
   WARNING: "#EAB308",
-  ERROR: "#DC2626",
+  ERROR: "#F4695E",
   INFO: "#B8AFA6",
   background: "#080808",
   surface: "#111111",
@@ -688,48 +688,25 @@ export interface ContrastWaiver {
 export const CONTRAST_WAIVERS: readonly ContrastWaiver[] = [
   {
     theme: "dark",
-    token: "ERROR",
-    against: "CANVAS",
-    ratio: 4.15,
-    reason:
-      "Preserved default: #DC2626 is the shipped error red. Below AA on all three surfaces. " +
-      "#F4695E clears 4.5:1 everywhere if a visible change is acceptable.",
-  },
-  {
-    theme: "dark",
-    token: "ERROR",
-    against: "PANEL",
-    ratio: 3.84,
-    reason: "Preserved default: see the CANVAS waiver for ERROR.",
-  },
-  {
-    theme: "dark",
-    token: "ERROR",
-    against: "PANEL_ALT",
-    ratio: 3.31,
-    reason: "Preserved default: see the CANVAS waiver for ERROR.",
-  },
-  {
-    theme: "dark",
     token: "BORDER",
     against: "CANVAS",
-    ratio: 1.6,
+    ratio: 2.01,
     reason:
-      "Preserved default: #3A322D is an intentional hairline, well below even the 3:1 " +
-      "non-text bar. #857567 reaches 3:1 on all three surfaces if visible panel edges are wanted.",
+      "Preserved default: #4A413B is an intentional hairline, well below even the 3:1 " +
+      "non-text bar. #9C8C7C reaches 3:1 on all three surfaces if visible panel edges are wanted.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL",
-    ratio: 1.48,
+    ratio: 1.74,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL_ALT",
-    ratio: 1.27,
+    ratio: 1.49,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
 ];
