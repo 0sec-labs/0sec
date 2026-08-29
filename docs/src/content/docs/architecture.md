@@ -254,6 +254,28 @@ Only confirmed findings ship. Formats: terminal (default, with share URL),
 HTML, PDF, SARIF (GitHub Security tab), Markdown, JSON. Each finding carries a
 severity score, category, PoC, and remediation.
 
+## Presentation contract
+
+Every UI and output surface consumes a renderer-neutral document or event rather
+than another renderer's terminal text. The versioned contract is
+`0sec.presentation/v1`: reports retain their existing schemas, while interactive
+sessions use typed transcript entries and live producers emit ordered semantic
+events with a local source, sequence, timestamp, type, payload, and optional scan
+or session correlation.
+
+The native OpenTUI console, plain terminal output, report formatters, and the
+browser dashboard are adapters over that contract. The dashboard exposes its
+same-origin live feed at `GET /api/v1/presentation/events` as Server-Sent
+Events; `Last-Event-ID` resumes only persisted events after the supplied
+timestamp/ID cursor. A producer's `sequence` is monotonic only within that
+producer, so consumers must not infer global ordering or exactly-once delivery
+across processes.
+
+The terminal remains authoritative for an interactive console. While OpenTUI
+owns stdout, direct process writes are captured as semantic records instead of
+being allowed to corrupt the renderer frame; the original stream is restored
+when the console exits.
+
 ## Scan modes
 
 | Mode | Target | What it does |

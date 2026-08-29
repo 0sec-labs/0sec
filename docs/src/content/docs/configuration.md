@@ -179,21 +179,42 @@ together. Paths below are relative to it.
 
 ## Console display settings
 
-The console persists display preferences to `tui-settings.json` in the [state
-directory](#state-directory). Change them from `/settings`, or hand-edit the
-plain JSON:
+The console loads `~/.0sec/tui-settings.json`, then layers
+`<project>/.0sec/tui-settings.json` over it when present. Change values from
+`/settings`, or hand-edit either plain JSON file; the project file overrides
+only the keys it contains.
 
-| Key | Type | Values | Default | Description |
-|-----|------|--------|---------|-------------|
-| `showStatusBar` | boolean | `true` / `false` | `true` | Bottom bar with model, working directory, git state and token counters |
-| `showComposerHints` | boolean | `true` / `false` | `true` | Keyboard-hint line under the input box |
-| `showLogo` | boolean | `true` / `false` | `true` | Block "0SEC" mark on an empty transcript |
-| `showRuntimeNotices` | boolean | `true` / `false` | `true` | Surface runtime stdout/stderr as transcript notices |
-| `showTurnSummary` | boolean | `true` / `false` | `true` | Per-turn "N tool calls · in→out tok" line |
-| `showSubagents` | boolean | `true` / `false` | `true` | List active subagents while workers run |
-| `showTimestamps` | boolean | `true` / `false` | `false` | Relative timestamps on transcript entries |
-| `density` | enum | `comfortable`, `compact` | `comfortable` | `comfortable` puts a blank line between entries; `compact` removes it |
-| `composerStyle` | enum | `border`, `rail`, `plain` | `border` | Input box framing style |
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `showStatusBar` | boolean | `true` | Bottom bar with model, working directory, git state and counters |
+| `showComposerHints` | boolean | `true` | Keyboard-hint line under the input |
+| `showLogo` | boolean | `true` | Block `0SEC` mark on an empty transcript |
+| `showLeftSidebar` | boolean | `false` | Recent sessions and this run's findings; hidden on narrow terminals |
+| `showRightSidebar` | boolean | `false` | Live agents and context strip; hidden on narrow terminals |
+| `showObjective` | boolean | `true` | Bottom-bar objective derived from the first message |
+| `showTarget` | boolean | `true` | Header target segment |
+| `showScope` | boolean | `true` | Header scope segment |
+| `density` | `comfortable`, `compact` | `comfortable` | Transcript spacing |
+| `composerStyle` | `border`, `rail`, `plain` | `border` | Input frame |
+| `transcriptStyle` | `rail`, `bubble`, `plain`, `compact`, `document` | `rail` | Conversation-turn framing |
+| `roleLabelStyle` | `full`, `short`, `glyph`, `off` | `full` | Speaker label treatment |
+| `toolCardStyle` | `compact`, `rail`, `inline`, `hidden` | `compact` | Successful tool/subagent-card treatment; failures always show |
+| `richToolCards` | boolean | `true` | Render shell and edit results as rich cards |
+| `transcriptDetail` | `expanded`, `collapsed` | `expanded` | Whether successful reasoning and tool steps are folded |
+| `showRuntimeNotices` | boolean | `true` | Surface runtime stdout/stderr as transcript notices |
+| `showTurnSummary` | boolean | `false` | Per-turn tool-call and token summary |
+| `showSubagents` | boolean | `true` | List active subagents while workers run |
+| `showTimestamps` | boolean | `false` | Relative timestamps on transcript entries |
+| `allowSubagentPeerMessaging` | boolean | `true` | Allow direct sibling-subagent messages |
+| `allowSubagentOperatorMessaging` | boolean | `true` | Allow sanitized child-to-operator transcript messages |
+| `allowModelSelfExtension` | boolean | `false` | Allow the model to add tools to its own session |
+| `theme` | built-in or installed theme ID | `midnight` | Colour palette; installed themes live in `~/.0sec/themes` |
+| `showTokenUsage` | boolean | `false` | Per-turn input/output token line |
+| `showCost` | boolean | `false` | Estimated dollar cost, per turn and in the status bar |
+| `showContextMeter` | boolean | `false` | Context-usage bar in the status bar |
+| `modelDisplay` | `statusbar`, `message`, `off` | `statusbar` | Where the model name appears |
+| `logoAnimation` | animation name or `off` | `glitch` | Intro or idle logo effect |
+| `reduceMotion` | boolean | `false` | Disable decorative animations |
 
 A missing, corrupt, or hand-broken file can't break the console: on load it's
 normalised against the table above (unknown keys dropped, bad values reset to

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <sub>🇨🇭 Swiss Applied AI Cybersecurity Research Lab · <a href="https://0.security">0.security</a></sub>
+  <sub>🇨🇭 Maintained by the Swiss Applied AI & Cybersecurity Research Lab · <a href="https://0.security">0.security</a></sub>
 </p>
 
 <p align="center">
@@ -42,9 +42,11 @@ launcher is not published yet; use the installer above or a GitHub Release asset
   <img src="assets/0sec-demo.gif" alt="0sec quickstart — a scan from start to finish" width="820">
 </p>
 
-## What it covers
+## What 0sec aims to cover
 
-Most AI pentesting harnesses and tools stop at the web app layer to find and chain vulnerabilities. However research suggests that supply chain and other infrastructure level exploits are more common, and cheaper to exploit than ever before. 0sec's core philosophy is to be a single, extensible and transparent tool to tackle all the remaining layers as security changes from point-in-time tests towards continuous security.
+Most AI pentesting harnesses and tools stop at the web app layer to find and chain vulnerabilities. However research suggests that supply chain and other infrastructure level exploits are more common, and cheaper to exploit than ever before.
+
+0sec's core philosophy is to be a single, extensible and transparent tool to tackle all the remaining layers as security changes from point-in-time tests towards continuous security.
 
 | Layer | Finds |
 | --- | --- |

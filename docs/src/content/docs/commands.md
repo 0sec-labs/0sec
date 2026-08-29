@@ -494,19 +494,30 @@ it explicitly.
 # Start in Co-pilot: approve every non-read-only tool call
 0sec console --autonomy copilot --scope ./scope.json
 
+# Run one prompt without opening the TUI; accept an argument or piped stdin
+0sec console -p "Summarize the saved findings"
+
+# Reopen the newest console session, or a specific saved session
+0sec -c
+0sec -r 8d4c2a
+
 # Expose the generic-scanner wrappers (sqlmap/nikto/…)
 0sec console --scope ./scope.json --allow-scanners
-```
 
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--target <url>` | Engagement target the tools operate against; can also be named in chat | (none) |
 | `--scope <file>` | Initial authorization scope. Required for YOLO and for the Node fallback | (none) |
-| `--model <id>` | Override the LLM model id | provider default |
+| `-m, --model <id>` | Override the LLM model id | provider default |
 | `--role <role>` | Tool set to expose: `audit`, `review`, `discovery`, `attack`, `verify` (`audit` = every tool) | `audit` |
-| `--autonomy <mode>` | `standard`, `copilot`, or `yolo` | `standard` |
+| `--mode <mode>` | `standard`, `recon`, `copilot`, or `yolo` | `standard` |
+| `--yolo` | Shortcut for `--mode yolo`; still requires `--scope` | off |
+| `--autonomy <mode>` | Alias of `--mode`; `--mode` and `--yolo` win if both are present | `standard` |
 | `--max-tool-calls <n>` | Safety cap on tool-call rounds per operator message | `20` |
 | `--allow-scanners` | Expose generic-scanner tool wrappers | off |
+| `--resume [id]`, `-r [id]` | Reopen a saved console session by ID or unique prefix; with no ID, opens the session picker | (none) |
+| `--continue`, `-c` | Reopen the most recent console session without a picker | off |
+| `--print [prompt]`, `-p [prompt]` | Run one non-interactive prompt, print the result, and exit; reads stdin when no prompt is supplied | off |
 
 Two front-ends. Under Bun with a TTY on stdin and stdout you get the full OpenTUI
 console below. Otherwise it falls back to a plain readline REPL, which
@@ -529,8 +540,9 @@ as an operator message.
 | `/mode [standard\|copilot\|yolo]` | — | With no argument, **opens a picker**. With an argument, switches directly. Refused while a turn is in flight; YOLO is refused — and shown greyed in the picker — when no scope is configured. |
 | `/model [id]` | `/models` | With no argument, **opens a model picker** whose header names the providers that currently hold credentials. With an id, rebuilds the session on that model and carries the conversation across; a failed rebuild leaves you on the old one. Refused mid-turn. |
 | `/providers` | `/login`, `/auth` | **Opens a picker** of the providers 0sec can detect, each marked configured (and via which env var) or not, with the exact env var to set. Selecting one prompts for a key, which is stored `0600` in `~/.0sec/credentials.json` and exported into the running process. The value is never echoed back into the transcript. |
-| `/settings` | `/config`, `/prefs` | **Opens a picker** of console display settings. Enter flips a boolean or cycles an enum, then reopens against the new values. Persisted to `~/.0sec/tui-settings.json`. |
-| `/resume` | `/sessions` | **Opens a picker** of saved transcripts for the current working directory (newest first, up to 30). See [Session persistence](#session-persistence). Refused mid-turn. |
+| `/settings` | `/config`, `/prefs` | **Opens a picker** of console display settings. Enter flips a boolean or cycles an enum, then reopens against the new values. Writes global settings; a project override can layer individual keys. |
+| `/resume` | `/sessions` | **Opens a picker** of saved transcripts for the current working directory (newest first, up to 20). See [Session persistence](#session-persistence). Refused mid-turn. |
+| `/transcript` | `/review` | Opens the virtualized transcript review. |
 | `/explain [topic]` | `/eli5` | Sends a real turn asking for a plain-language explanation of the previous result, or of `topic`. It is a normal model call and costs tokens. |
 | `/feedback <message>` | — | Appends the message, with a timestamp, version, model and mode, to `~/.0sec/feedback.md`. **Nothing is transmitted anywhere.** |
 | `/clear` | `/new` | Clears the conversation. Readline fallback only — see the caveat below. |
@@ -545,11 +557,12 @@ as an operator message.
 | `/exit` | `/quit` | Ends the session and returns to the shell. |
 
 **Front-end coverage.** `/agents`, `/scope`, `/chat`, `/back`, `/launcher`,
-`/ops`, `/history`, `/findings`, `/replay` and `/doctor` are TUI-only; the
-readline fallback recognises them and tells you the Bun TUI is needed. Of the
-rest, the fallback implements `/help`, `/status`, `/tools`, `/clear`, `/mode`
-and `/exit`. `/model`, `/resume`, `/providers`, `/settings`, `/explain` and
-`/feedback` are parsed there but currently do nothing — no output, no error.
+`/ops`, `/history`, `/findings`, `/replay`, `/doctor` and `/transcript` are
+TUI-only; the readline fallback recognises them and tells you the Bun TUI is
+needed. Of the rest, the fallback implements `/help`, `/status`, `/tools`,
+`/clear`, `/mode` and `/exit`. `/model`, `/resume`, `/providers`, `/settings`,
+`/explain` and `/feedback` are parsed there but currently do nothing — no
+output, no error.
 
 **`/clear` caveat.** It is registered, offered by the TUI's command menu and
 listed by `/help`, but the TUI's command router has no handler for it, so
@@ -618,20 +631,17 @@ deliberately not scrubbed is documented under
 [Session persistence](/configuration/#session-persistence).
 
 `/resume` lists transcripts whose recorded working directory matches the current
-one, newest first. Picking one rebuilds the session around the stored messages
-and model — the on-screen transcript starts empty and the turn counter resets,
-but the model keeps the full history.
-
-**Current limitation.** The save is wired into the turn's error path only, so a
-transcript is written when a turn throws, not after one that completes normally.
-In practice `/resume` only offers sessions that hit an exception. Save-after-every-turn
-is the intent, not today's behaviour.
+one, newest first. Each completed or failed turn is saved, so the picker includes
+normal sessions as well as interrupted ones. Picking a session rebuilds the model
+history and reconstructs the visible transcript from the stored messages; some
+display-only card metadata is intentionally not retained.
 
 ### Console settings
 
-`/settings` opens a picker of console display settings, persisted to
-`~/.0sec/tui-settings.json`. The full table of keys, values, and defaults is
-documented under
+`/settings` opens a picker of console display settings. It writes the global
+`~/.0sec/tui-settings.json`; a project-level
+`<project>/.0sec/tui-settings.json` can override individual keys. The full table
+of keys, values, and defaults is documented under
 [Console display settings](/configuration/#console-display-settings).
 
 ## resume
@@ -665,6 +675,18 @@ evidence, and tracking active scans. Runs entirely locally.
 | `--host <host>` | Host to bind | `127.0.0.1` |
 | `--no-open` | Do not auto-open a browser | (opens by default) |
 | `--db-path <path>` | Path to SQLite database | `~/.0sec/0sec.db` |
+
+To inspect a run-local database, pass its path explicitly:
+
+```bash
+0sec dashboard --db-path ~/.0sec/runs/<run-id>/state.db
+```
+
+The dashboard's live integration feed is `GET /api/v1/presentation/events`.
+It is a same-origin Server-Sent Events stream of `0sec.presentation/v1` records;
+clients may send the last received event ID in `Last-Event-ID` to resume
+persisted records. Keep the default loopback host unless the dashboard is behind
+an authenticated reverse proxy.
 
 ## history
 

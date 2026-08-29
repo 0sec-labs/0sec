@@ -11,6 +11,26 @@ and 0sec adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
+### Added
+
+- A versioned `0sec.presentation/v1` contract now carries canonical reports,
+  renderer-neutral console transcripts, and semantic events across the CLI,
+  browser dashboard, and output adapters.
+- The console can open a virtualized transcript review with `/transcript` (or
+  `/review`), and `--print` / `--resume` / `--continue` provide one-shot and
+  saved-session command-line workflows.
+- The local dashboard provides a same-origin presentation-event SSE endpoint
+  with resumable cursor replay.
+
+### Changed
+
+- Terminal, JSON, Markdown, HTML, SARIF, PDF, dashboard, and native-console
+  projections now consume shared presentation documents instead of deriving
+  state from renderer-specific output.
+- The OpenTUI console captures direct application stdout/stderr while it owns
+  the terminal, preserving those writes as transcript events and preventing
+  framebuffer corruption.
+
 
 ## [0.14.0] - 2026-08-25
 
