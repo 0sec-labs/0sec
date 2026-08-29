@@ -50,7 +50,10 @@ export function logoRunStyle(tone: LogoCellTone, theme: Theme): { fg: string; at
   if (tone.startsWith("#")) return { fg: tone };
   switch (tone) {
     case "error":
-      return { fg: theme.ERROR };
+      // The slashed-zero's diagonal is the 0sec BRAND red — a fixed mark, not a
+      // semantic error tone. Pinned so it stays the brand red regardless of the
+      // theme's ERROR colour (which is tuned for contrast on text surfaces).
+      return { fg: "#DC2626" };
     case "muted":
       return { fg: theme.MUTED };
     case "dim":
