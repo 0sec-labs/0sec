@@ -225,10 +225,17 @@ export function renderEntry(
     const marginTop = display.spacing + frame.extraMarginTop;
     const age = display.showTimestamps ? relativeAge(entry.at, display.now) : "";
     const label = roleLabelText(isUser ? "user" : "assistant", roleLabelStyle, age);
-    // With the old full-height rail gone, an unbordered turn hands the whole
-    // pane to its body: the two cells the rail and its gap used to spend are
-    // reclaimed for text. A bordered turn still wraps to its inner width.
-    const bodyWidth = frame.bordered ? frame.markdownWidth : Math.max(8, maxWidth);
+    // A bordered turn wraps to its inner width; the rail style frames each turn
+    // with a 1-cell spine plus a cell of padding on each side (3 cells of
+    // chrome), so its body must wrap inside the reduced width or the markdown
+    // clips against the frame. Every other unbordered style hands the whole pane
+    // to its body.
+    const RAIL_CHROME = 3;
+    const bodyWidth = frame.bordered
+      ? frame.markdownWidth
+      : transcriptStyle === "rail"
+        ? Math.max(8, maxWidth - RAIL_CHROME)
+        : Math.max(8, maxWidth);
     // Body: raw text for the operator, rendered markdown for the model.
     const body = isUser
       ? <text fg={TEXT} wrapMode="word">{sanitizeTuiText(entry.text)}</text>
@@ -257,55 +264,53 @@ export function renderEntry(
     // · elapsed), so the answer itself is unadorned and the provenance sits
     // quietly beneath it.
     if (transcriptStyle === "rail") {
-      if (isUser) {
-        return (
-          <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} backgroundColor={PANEL_ALT}>
-            <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={ACCENT} />
-            <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
-              {body}
-            </box>
-          </box>
-        );
-      }
-      // The footer is quiet provenance only — the per-turn telemetry the operator
-      // opted into: the model when `modelDisplay` routes it here (otherwise it
-      // lives in the bottom bar), the per-turn tokens under `showTokenUsage`, the
-      // per-turn cost under `showCost`, and the elapsed. The AUTONOMY MODE is NOT
-      // repeated here: it is a session-wide state, already shown persistently in
-      // the masthead and the bottom status bar, so tagging every single answer
-      // with "YOLO"/"Co-pilot" was redundant noise.
-      const footerParts: string[] = [];
-      if (display.modelInFooter && display.model) footerParts.push(display.model);
-      if (display.showTokenUsage && entry.usageInput !== undefined) {
-        footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
-      }
-      if (display.showCost && entry.usageInput !== undefined) {
-        footerParts.push(formatTurnCost(display.model, entry.usageInput, entry.usageOutput ?? 0));
-      }
-      const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
-      if (elapsed) footerParts.push(elapsed);
-      const footerBudget = Math.max(1, maxWidth - 2);
-      const restFitted = footerParts.length
-        ? fitTuiText(footerParts.join(" · "), footerBudget)
-        : "";
-      // No telemetry at all → no footer row, rather than a bare marker.
-      if (!restFitted) {
-        return (
-          <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
-            {body}
-          </box>
-        );
+      // BOTH voices are framed the same way — a thin left spine over a faint
+      // panel — so each turn reads as its own card, clearly set apart from the
+      // unframed tool activity that runs between them. Previously only the
+      // operator turn was framed and the AI answer was bare body text, so a long
+      // answer blended into the tool cards above it with nothing "around" it.
+      // The SPINE TONE is what tells the two apart: the operator turn takes the
+      // neutral ACCENT (it reads like the composer that produced it), the AI turn
+      // takes the BRAND purple (the "0sec" voice) and carries a small brand
+      // label so the answer announces itself.
+      const spine = isUser ? ACCENT : BRAND;
+      // The AI turn's footer is quiet provenance only — the per-turn telemetry
+      // the operator opted into: the model when `modelDisplay` routes it here
+      // (otherwise it lives in the bottom bar), tokens under `showTokenUsage`,
+      // cost under `showCost`, and the elapsed. The AUTONOMY MODE is NOT repeated
+      // here — it is session-wide state already shown in the masthead and status
+      // bar, so tagging every answer with "YOLO"/"Co-pilot" was redundant noise.
+      let restFitted = "";
+      if (!isUser) {
+        const footerParts: string[] = [];
+        if (display.modelInFooter && display.model) footerParts.push(display.model);
+        if (display.showTokenUsage && entry.usageInput !== undefined) {
+          footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
+        }
+        if (display.showCost && entry.usageInput !== undefined) {
+          footerParts.push(formatTurnCost(display.model, entry.usageInput, entry.usageOutput ?? 0));
+        }
+        const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
+        if (elapsed) footerParts.push(elapsed);
+        const footerBudget = Math.max(1, maxWidth - RAIL_CHROME);
+        restFitted = footerParts.length ? fitTuiText(footerParts.join(" · "), footerBudget) : "";
       }
       return (
-        <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
-          {body}
-          <box flexDirection="row" minWidth={0}>
-            <box width={2} flexShrink={0} minWidth={0}>
-              <text fg={ERROR}>▪ </text>
-            </box>
-            <box flexGrow={1} minWidth={0} flexDirection="row">
-              <text fg={MUTED}>{restFitted}</text>
-            </box>
+        <box key={entry.id} flexDirection="row" width={maxWidth} flexShrink={0} minWidth={0} marginTop={marginTop} backgroundColor={PANEL_ALT}>
+          <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={spine} />
+          <box flexDirection="column" flexGrow={1} minWidth={0} paddingX={1}>
+            {label ? <text fg={labelTone} attributes={TextAttributes.BOLD}>{label}</text> : null}
+            {body}
+            {restFitted ? (
+              <box flexDirection="row" minWidth={0} marginTop={1}>
+                <box width={2} flexShrink={0} minWidth={0}>
+                  <text fg={ERROR}>▪ </text>
+                </box>
+                <box flexGrow={1} minWidth={0} flexDirection="row">
+                  <text fg={MUTED}>{restFitted}</text>
+                </box>
+              </box>
+            ) : null}
           </box>
         </box>
       );

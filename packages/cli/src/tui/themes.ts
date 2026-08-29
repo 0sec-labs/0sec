@@ -224,13 +224,14 @@ export const MIN_SEMANTIC_CONTRAST = 1.15;
 /* ----------------------------------------------------------------- palettes */
 
 /**
- * `0sec Dark` — the palette shipped today, byte-for-byte from `ui/theme.ts`.
+ * `0sec Dark` ("Carbon") — the palette shipped originally, byte-for-byte from
+ * `ui/theme.ts`.
  *
- * It is the default because an existing operator must see no change unless
- * they opt in; a theme system that silently restyles everyone's console on
- * upgrade is a regression wearing a feature's clothes. It is therefore also
- * the one palette here that is *not* free to be fixed, and it carries the only
- * contrast waivers in the module (see `CONTRAST_WAIVERS`).
+ * No longer the default (Midnight is), but preserved exactly so an operator who
+ * preferred the original warm-grey look can opt back into it. Preserving it
+ * byte-for-byte is what makes it the one palette here that is *not* free to be
+ * fixed, and so the one that carries the only contrast waivers in the module
+ * (see `CONTRAST_WAIVERS` and `PRESERVED_THEME_NAME`).
  */
 const DARK: Theme = {
   CANVAS: "#080808",
@@ -508,11 +509,11 @@ const SWISS: Theme = {
 /* ----------------------------------------------------------------- registry */
 
 export const THEME_NAMES = [
+  "midnight",
   "dark",
   "light",
   "high-contrast",
   "ansi",
-  "midnight",
   "slate",
   "paper",
   "mono-dim",
@@ -520,7 +521,23 @@ export const THEME_NAMES = [
 ] as const;
 export type ThemeName = (typeof THEME_NAMES)[number];
 
-export const DEFAULT_THEME_NAME: ThemeName = "dark";
+/**
+ * The theme a fresh session gets. `midnight` — a deep blue-black dark palette
+ * that clears AA on every text token with no waivers — is the shipped look.
+ *
+ * `dark` ("Carbon") is *not* the default but is still shipped and is the one
+ * palette kept byte-for-byte from the original `ui/theme.ts`, so an operator who
+ * preferred the old warm-grey look can opt back into it. That preservation — not
+ * being the default — is why `dark` is the sole carrier of `CONTRAST_WAIVERS`.
+ */
+export const DEFAULT_THEME_NAME: ThemeName = "midnight";
+
+/**
+ * The one palette pinned byte-for-byte to the original `ui/theme.ts`, and so the
+ * only theme that may carry contrast waivers. Distinct from `DEFAULT_THEME_NAME`
+ * on purpose: the default is free to change, this is not.
+ */
+export const PRESERVED_THEME_NAME: ThemeName = "dark";
 
 /** Whether a theme is meant for a dark or a light terminal — for picker grouping. */
 export type ThemeMode = "dark" | "light";
@@ -541,7 +558,7 @@ export const THEMES: Readonly<Record<ThemeName, ThemeEntry>> = {
   dark: {
     name: "dark",
     label: "Carbon",
-    description: "The shipped default. Warm dark surfaces, neutral white highlight.",
+    description: "Warm dark surfaces, neutral white highlight. The original shipped palette.",
     mode: "dark",
     palette: DARK,
   },

@@ -59,7 +59,7 @@ describe("activeTheme", () => {
 describe("live selection through the store", () => {
   it("follows a theme change made on the store", () => {
     configureSettingsStore({ homeDir: makeHome() });
-    expect(activeTheme(getSettings())).toBe(THEMES.dark.palette);
+    expect(activeTheme(getSettings())).toBe(THEMES[DEFAULT_THEME_NAME].palette);
 
     updateSetting("theme", "high-contrast");
     expect(activeTheme(getSettings())).toBe(THEMES["high-contrast"].palette);

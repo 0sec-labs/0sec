@@ -88,7 +88,7 @@ describe("theme list", () => {
     runThemeList(cap.deps({ homeDir: home, projectDir: makeDir("th-proj-") }));
     const text = cap.out.join("\n");
     expect(text).toContain("dark");
-    expect(text).toMatch(/dark.*(active|default)/);
+    expect(text).toMatch(/midnight.*(active|default)/);
   });
 });
 

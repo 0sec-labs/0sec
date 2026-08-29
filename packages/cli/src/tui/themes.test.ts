@@ -7,6 +7,7 @@ import {
   CHROME_TOKENS,
   CONTRAST_WAIVERS,
   DEFAULT_THEME_NAME,
+  PRESERVED_THEME_NAME,
   LAYER_TOKENS,
   MIN_CHROME_CONTRAST,
   MIN_SEMANTIC_CONTRAST,
@@ -121,8 +122,8 @@ describe("default theme", () => {
   });
 
   it("is the fallback", () => {
-    expect(DEFAULT_THEME_NAME).toBe("dark");
-    expect(getTheme(DEFAULT_THEME_NAME)).toBe(THEMES.dark.palette);
+    expect(DEFAULT_THEME_NAME).toBe("midnight");
+    expect(getTheme(DEFAULT_THEME_NAME)).toBe(THEMES.midnight.palette);
   });
 
   it("reproduces severityTone's mapping", () => {
@@ -310,7 +311,7 @@ describe("contrast sweep", () => {
 describe("contrast waivers", () => {
   it("exist only for the theme that may not be changed", () => {
     for (const waiver of CONTRAST_WAIVERS) {
-      expect(waiver.theme).toBe(DEFAULT_THEME_NAME);
+      expect(waiver.theme).toBe(PRESERVED_THEME_NAME);
     }
   });
 
@@ -353,7 +354,7 @@ describe("contrast waivers", () => {
 
   it("does not suppress a failure in any other theme", () => {
     for (const name of THEME_NAMES) {
-      if (name === DEFAULT_THEME_NAME) continue;
+      if (name === PRESERVED_THEME_NAME) continue;
       expect(validateTheme(THEMES[name].palette, { name })).toEqual([]);
     }
   });

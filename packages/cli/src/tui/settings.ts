@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { homeStateDir } from "@0sec/shared";
 
 import {
+  DEFAULT_THEME_NAME,
   THEME_NAMES,
   allThemeNames,
   ensureInstalledThemesLoaded,
@@ -210,7 +211,7 @@ type TuiSettingDef =
  * below holds this exact array reference, and `syncThemeChoices` rewrites its
  * contents (never the reference) once the user-theme cache is populated, so the
  * settings screen and the enum cycler pick up user themes without the def table
- * being rebuilt. `THEME_NAMES[0]` (the default, "dark") always leads, so
+ * being rebuilt. `THEME_NAMES[0]` (the default, "midnight") always leads, so
  * `choices[0]` stays the default as the enum contract requires.
  */
 const THEME_CHOICES: string[] = [...THEME_NAMES];
@@ -418,9 +419,9 @@ const DEFS: readonly TuiSettingDef[] = [
     key: "theme",
     label: "Theme",
     description:
-      "Colour palette. Carbon (dark, default) and Standard/Paper (light), plus Contrast, Midnight, Slate, Mono Dim and ANSI 16 for 16-colour terminals. Drop validated palettes in ~/.0sec/themes to add your own.",
+      "Colour palette. Midnight (deep blue-black, default) and Carbon (warm dark), Standard/Paper (light), plus Contrast, Slate, Mono Dim and ANSI 16 for 16-colour terminals. Drop validated palettes in ~/.0sec/themes to add your own.",
     kind: "enum",
-    default: "dark",
+    default: DEFAULT_THEME_NAME,
     choices: THEME_CHOICES,
     group: "Display",
   },
@@ -528,7 +529,7 @@ export const DEFAULT_SETTINGS: TuiSettings = {
   toolCardStyle: "compact",
   richToolCards: true,
   transcriptDetail: "expanded",
-  theme: "dark",
+  theme: DEFAULT_THEME_NAME,
   allowModelSelfExtension: false,
   showTokenUsage: false,
   showCost: false,
