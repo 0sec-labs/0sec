@@ -35,10 +35,7 @@
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
 0 --help
 ```
-
-Verified release binary (SHA-256 checked) → `~/.0sec/bin`. macOS (Apple Silicon) and Linux (x64/arm64); Windows: `0sec-windows-x64.exe` from the release; Docker: `ghcr.io/0sec-labs/0sec:latest`.
-
-Prefer a package manager? The npm launcher fetches the same verified binary on first run and installs the `0` command:
+OR
 
 ```bash
 npx 0sec-cli --help              # one-shot, no install
@@ -67,7 +64,7 @@ export ANTHROPIC_API_KEY=...        # or OpenAI, Azure, OpenRouter, Ollama, …
 
 ## What it covers
 
-Most tools stop at the app. 0sec goes all the way down.
+Most AI pentesting harnesses and tools stop at the app. 0sec's core philosophy is to be a single "Swiss army knife" to tackle all layers by being as extensible and transparent as possible.
 
 | Layer | Finds |
 | --- | --- |
