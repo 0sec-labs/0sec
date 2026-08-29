@@ -234,8 +234,8 @@ export const MIN_SEMANTIC_CONTRAST = 1.15;
  */
 const DARK: Theme = {
   CANVAS: "#080808",
-  PANEL: "#2E2C2A",
-  PANEL_ALT: "#3A3733",
+  PANEL: "#2B2825",
+  PANEL_ALT: "#363129",
   BORDER: "#302E2C",
   TEXT: "#F3EEE9",
   MUTED: "#B8AC9E",
@@ -699,33 +699,24 @@ export const CONTRAST_WAIVERS: readonly ContrastWaiver[] = [
     theme: "dark",
     token: "BORDER",
     against: "PANEL",
-    ratio: 1.03,
+    ratio: 1.08,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL_ALT",
-    ratio: 1.14,
+    ratio: 1.05,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
   {
     theme: "dark",
     token: "ERROR",
     against: "PANEL_ALT",
-    ratio: 3.96,
+    ratio: 4.32,
     reason:
       "Preserved default: the coral #F4695E clears AA on CANVAS/PANEL but lands at " +
       "3.96:1 on the lightest surface. #FF9B93 clears 4.5:1 there if a visible change is acceptable.",
-  },
-  {
-    theme: "dark",
-    token: "BRAND",
-    against: "PANEL_ALT",
-    ratio: 4.35,
-    reason:
-      "Preserved default: the purple #A78BFA lands at 4.35:1 on the lightest surface. " +
-      "#C4B0FF clears 4.5:1 there if a visible change is acceptable.",
   },
 ];
 
