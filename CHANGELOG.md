@@ -40,8 +40,8 @@ on the published npm package and the GitHub Release tag.
   framebuffer corruption.
 - Console defaults now use the Midnight theme; transcript, tool-card, composer,
   sidebar, and focused-subagent surfaces were refined for legibility.
-- The `0sec-cli` npm launcher is published with the matching release binary and
-  downloads that platform-specific asset on first invocation.
+- The optional `0sec-cli` npm launcher downloads the matching platform-specific
+  release asset on first invocation when published to npm.
 
 ### Fixed
 
@@ -49,6 +49,8 @@ on the published npm package and the GitHub Release tag.
   source-only skill assets.
 - Markdown rendering no longer damages generic or unlabeled fenced code blocks.
 - Dependency overrides remove the previously reported audit advisories.
+- Standalone release binaries embed tree-sitter's parser and C grammar addons;
+  CI now removes build-host `node_modules` before its binary smoke test.
 
 ## [0.14.0] - 2026-08-25
 

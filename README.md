@@ -37,13 +37,9 @@ curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | ba
 0
 ```
 The verified binary is installed to `~/.0sec/bin`. Prefer it when you want no
-Node/Bun dependency. The published `0sec-cli` npm launcher downloads the matching
-verified release binary on first invocation:
-
-```bash
-npx 0sec-cli --help
-npm i -g 0sec-cli && 0 --help
-```
+Node/Bun dependency. The optional `0sec-cli` npm launcher downloads the matching
+verified release binary on first invocation when it is available on npm; use the
+installer above if the registry does not yet offer it.
 
 <p align="center">
   <img src="assets/0sec-demo.gif" alt="0sec quickstart — a scan from start to finish" width="820">
