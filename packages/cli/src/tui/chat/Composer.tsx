@@ -3,7 +3,7 @@ import React from "react";
 import type { BorderSides } from "@opentui/core";
 import type { Theme } from "../theme-context.js";
 import type { TuiSettings } from "../settings.js";
-import { fitTuiText } from "../text.js";
+import { fitTuiText, sanitizeComposerText } from "../text.js";
 
 /** The composer rail draws a single LEFT border (OpenCode's look). */
 const RAIL_SIDES: BorderSides[] = ["left"];
@@ -157,7 +157,12 @@ export function ComposerInput({
       <box flexDirection="column" minWidth={0}>
         {rows.map((line, i) => {
           const isLast = i === rows.length - 1;
-          const shown = fitTuiText(line, Math.max(1, textWidth - (isLast ? 1 : 0)));
+          // Preserve whitespace exactly (NOT fitTuiText, which collapses+trims):
+          // `wrapComposerInput` already bounds each row to `textWidth` and keeps
+          // every space, and `composerContentRows` guarantees the last row has a
+          // free cell, so a trailing space the operator just typed shows and the
+          // caret advances past it. Only control chars are stripped.
+          const shown = sanitizeComposerText(line);
           return (
             <text key={`composer-line-${i}`} fg={TEXT}>
               {isLast ? `${shown}${cursor}` : shown}

@@ -31,6 +31,18 @@ export function sanitizeTuiText(value: unknown, options: TuiTextFitOptions = {})
     .trim();
 }
 
+/**
+ * Sanitize composer INPUT for display. Strips terminal control sequences (so a
+ * pasted escape can't move the cursor or recolour the frame) but PRESERVES
+ * whitespace exactly — unlike {@link sanitizeTuiText}, which collapses runs of
+ * whitespace to one and trims the ends. The composer caret must be able to sit
+ * after a space (or between double spaces) the operator just typed, so its text
+ * cannot go through the label-oriented collapse/trim path.
+ */
+export function sanitizeComposerText(value: unknown): string {
+  return stripTerminalControl(String(value ?? ""));
+}
+
 export function fitTuiText(value: unknown, maxChars: number, options: TuiTextFitOptions = {}): string {
   const text = sanitizeTuiText(value, options);
   if (maxChars <= 0) return "";

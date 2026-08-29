@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { fitTuiText, fitTuiUrl, sanitizeTuiText } from "./text.js";
+import { fitTuiText, fitTuiUrl, sanitizeComposerText, sanitizeTuiText } from "./text.js";
+
+describe("sanitizeComposerText", () => {
+  it("preserves whitespace exactly (trailing, leading, and runs)", () => {
+    // The composer caret must be able to sit after a just-typed space — so
+    // unlike sanitizeTuiText this must NOT collapse runs or trim the ends.
+    expect(sanitizeComposerText("the ")).toBe("the ");
+    expect(sanitizeComposerText("a  b")).toBe("a  b");
+    expect(sanitizeComposerText("  x")).toBe("  x");
+    expect(sanitizeComposerText("")).toBe("");
+  });
+
+  it("still strips terminal control sequences (paste safety)", () => {
+    expect(sanitizeComposerText("\x1b[31mred\x1b[0m more")).toBe("red more");
+  });
+});
 
 describe("sanitizeTuiText", () => {
   it("collapses whitespace and strips terminal control sequences", () => {
