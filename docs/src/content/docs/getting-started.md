@@ -5,13 +5,18 @@ description: Install 0sec and run an authorized investigation.
 
 ## Install
 
-Install the verified release binary with one command, build from source, or run
-the container image. 0sec is not published to npm.
+Install the verified release binary with one command, use the `0sec-cli` npm
+launcher, build from source, or run the container image. The npm package is a
+thin launcher that downloads the matching GitHub Release binary on first use.
 
 ```bash
 # Verified release binary (macOS Apple Silicon / Linux x64/arm64)
 curl -fsSL https://raw.githubusercontent.com/0sec-labs/0sec/main/install.sh | bash
 0sec --help          # or just: 0 --help
+
+# npm launcher (downloads the matching release binary on first invocation)
+npx 0sec-cli --help
+npm i -g 0sec-cli && 0 --help
 
 # Source
 git clone https://github.com/0sec-labs/0sec.git

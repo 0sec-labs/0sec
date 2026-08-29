@@ -757,7 +757,7 @@ describe("span styling (renderer helpers)", () => {
 
   it("paints inline code as accent text on a subtle chip", () => {
     expect(spanColor("code", THEME)).toBe(THEME.ACCENT);
-    expect(spanBackground("code", THEME)).toBe(THEME.surfaceAlt);
+    expect(spanBackground("code", THEME)).toBe(THEME.overlay);
   });
 
   it("shows a link as underlined accent text", () => {

@@ -18,13 +18,6 @@ function codeTokenAttributes(style: CodeTokenStyle): number | undefined {
   return attributes === 0 ? undefined : attributes;
 }
 
-/** Display width of a string in cells (code points), matching markdown.ts. */
-function codeLineWidth(line: string): number {
-  let n = 0;
-  for (const _ of line) n += 1;
-  return n;
-}
-
 /**
  * Terminal text ATTRIBUTES for a markdown span — the real weight, not just a
  * colour. A bold run gets TextAttributes.BOLD so it renders visibly heavier;
@@ -72,7 +65,11 @@ export function spanColor(style: MdSpan["style"], theme: Theme, tone?: string): 
  */
 export function spanBackground(style: MdSpan["style"], theme: Theme, tone?: string): string | undefined {
   if (tone) return undefined;
-  return style === "code" ? theme.surfaceAlt : undefined;
+  // `overlay` is the one layer token guaranteed a step above every container
+  // surface (CANVAS / PANEL / PANEL_ALT), so an inline chip stays visible whether
+  // the turn is unframed on the canvas or inside a PANEL_ALT card — the same
+  // elevated surface a fenced code block fills with.
+  return style === "code" ? theme.overlay : undefined;
 }
 
 /**
@@ -99,11 +96,68 @@ export function headingColor(level: number, theme: Theme, tone?: string): string
  * overflowing its row.
  */
 export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, theme: Theme, tone?: string) {
-  const { ACCENT, BORDER, MUTED, PRIMARY } = theme;
+  const { BORDER, BRAND, MUTED, PRIMARY, overlay } = theme;
   return blocks.map((block, index) => {
     const id = `${key}-b${index}`;
+    const prev = index > 0 ? blocks[index - 1] : undefined;
+    // Vertical rhythm: one blank row between top-level blocks (the Glamour
+    // convention) so paragraphs, headings, lists and code don't butt together in
+    // a wall — the parser drops blank source lines, so separation is reintroduced
+    // here. Consecutive list items stay TIGHT (no gap), and the first block never
+    // gets a leading gap. Every block is wrapped in one flexShrink=0 column so
+    // spacing is uniform and blocks don't collapse under column pressure.
+    const gap = index === 0
+      ? 0
+      : block.kind === "listItem" && prev?.kind === "listItem"
+        ? 0
+        : 1;
+    const wrap = (content: React.ReactNode): React.ReactNode => (
+      <box key={id} flexDirection="column" flexShrink={0} minWidth={0} marginTop={gap}>
+        {content}
+      </box>
+    );
+
     if (block.kind === "rule") {
-      return <text key={id} fg={tone ?? MUTED}>{"─".repeat(8)}</text>;
+      // A section divider. Fixed-width (the renderer has no pane width here) but
+      // long enough to read as a rule, in the neutral chrome tone.
+      return wrap(<text fg={tone ?? BORDER}>{"─".repeat(24)}</text>);
+    }
+    if (block.kind === "code") {
+      // A fenced block reads as a quiet ELEVATED PANEL — no border, no left bar,
+      // matching how OpenCode/Claude Code/gemini render code (chrome-free; polish
+      // comes from fill + syntax colour + spacing). The body fills `overlay`, the
+      // one surface guaranteed a step lighter than every container (CANVAS /
+      // PANEL / PANEL_ALT), so the panel stays visible whether the turn is on the
+      // bare canvas or inside a PANEL_ALT card — on Midnight `surfaceAlt` equals
+      // `PANEL_ALT`, which is exactly why the old surfaceAlt fill was invisible.
+      // The box grows to the full message column, so the fill is a clean
+      // rectangle regardless of line lengths — no per-line right-padding needed.
+      // The language is a small DIM label on its own top row, flush LEFT
+      // (metadata, not content), shown only for a real language — generic
+      // "text"/"plain" fences a model emits for paths and output earn no label.
+      // Each line is tokenised so keywords/strings/comments carry theme colour
+      // and weight; whitespace is preserved verbatim.
+      const lang = block.language;
+      const GENERIC_FENCE_LANGS = new Set(["text", "txt", "plain", "plaintext", "none", "output"]);
+      const label = lang && !GENERIC_FENCE_LANGS.has(lang.toLowerCase()) ? lang.toLowerCase() : "";
+      return wrap(
+        <box flexDirection="column" flexShrink={0} minWidth={0} backgroundColor={overlay} paddingX={1}>
+          {label ? <text flexShrink={0} fg={MUTED} attributes={TextAttributes.DIM}>{label}</text> : null}
+          {block.lines.map((line, i) => {
+            const tokens = highlightCode(line, lang);
+            return (
+              <box key={`${id}-${i}`} flexDirection="row" flexShrink={0} minWidth={0}>
+                {tokens.map((token, j) => {
+                  const style = codeTokenStyle(token.kind, theme);
+                  return (
+                    <text key={`${id}-${i}-${j}`} flexShrink={0} fg={style.fg} attributes={codeTokenAttributes(style)}>{token.text}</text>
+                  );
+                })}
+              </box>
+            );
+          })}
+        </box>,
+      );
     }
     if (block.kind === "table") {
       // Rendered as a real BORDERED GRID: an outer box-drawing frame, a heavier
@@ -145,92 +199,42 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
           <text flexShrink={0} fg={BORDER}>{" │"}</text>
         </box>
       );
-      return (
-        <box key={id} flexDirection="column" flexShrink={0} minWidth={0}>
+      return wrap(
+        <box flexDirection="column" flexShrink={0} minWidth={0}>
           <text flexShrink={0} fg={BORDER}>{rule("┌", "┬", "┐")}</text>
           {renderRow(block.header, `${id}-h`, true)}
           <text flexShrink={0} fg={BORDER}>{rule("├", "┼", "┤")}</text>
           {block.rows.map((row, i) => renderRow(row, `${id}-r${i}`, false))}
           <text flexShrink={0} fg={BORDER}>{rule("└", "┴", "┘")}</text>
-        </box>
-      );
-    }
-    if (block.kind === "code") {
-      // A fenced block renders as a DISTINCT surface — a subtle tinted
-      // background with a one-cell gutter on each side (reserved by
-      // CODE_BLOCK_PAD when the lines were truncated, so it never overflows the
-      // content column) — not as indented prose. Each line is tokenised and
-      // painted per token, so keywords/strings/comments/numbers carry theme
-      // colour and real weight. Every row is padded to the block's widest line
-      // so the tinted surface reads as a clean rectangle regardless of how the
-      // parent sizes the box, and whitespace/indentation is preserved verbatim
-      // because a line's token texts concatenate back to the source line.
-      //
-      // The language is shown as a small CHIP — a bracketed `[bash]` in the
-      // accent hue, right-aligned on the surface's first row — not a bare word
-      // on its own line, so it reads as a label on the block rather than as
-      // stray code.
-      const { surfaceAlt } = theme;
-      const lang = block.language;
-      // Only label a REAL language. Unlabeled fences and generic "text"/"plain"
-      // blocks (which a model emits constantly for paths, output, prose) don't
-      // earn a "[text]" chip — it just adds noise over the block.
-      const GENERIC_FENCE_LANGS = new Set(["text", "txt", "plain", "plaintext", "none", "output"]);
-      const chip = lang && !GENERIC_FENCE_LANGS.has(lang.toLowerCase()) ? `[${lang}]` : "";
-      const chipWidth = codeLineWidth(chip);
-      const maxWidth = block.lines.reduce((w, line) => Math.max(w, codeLineWidth(line)), chipWidth);
-      const chipLead = Math.max(0, maxWidth - chipWidth);
-      return (
-        <box key={id} flexDirection="column" flexShrink={0} minWidth={0} paddingX={1} backgroundColor={surfaceAlt}>
-          {chip ? (
-            <box flexDirection="row" flexShrink={0} minWidth={0}>
-              {chipLead > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(chipLead)}</text> : null}
-              <text flexShrink={0} fg={ACCENT} attributes={TextAttributes.BOLD}>{chip}</text>
-            </box>
-          ) : null}
-          {block.lines.map((line, i) => {
-            const tokens = highlightCode(line, lang);
-            const pad = Math.max(0, maxWidth - codeLineWidth(line));
-            return (
-              <box key={`${id}-${i}`} flexDirection="row" flexShrink={0} minWidth={0}>
-                {tokens.map((token, j) => {
-                  const style = codeTokenStyle(token.kind, theme);
-                  return (
-                    <text key={`${id}-${i}-${j}`} flexShrink={0} fg={style.fg} attributes={codeTokenAttributes(style)}>{token.text}</text>
-                  );
-                })}
-                {pad > 0 ? <text flexShrink={0} fg={theme.TEXT}>{" ".repeat(pad)}</text> : null}
-              </box>
-            );
-          })}
-        </box>
+        </box>,
       );
     }
     if (block.kind === "heading") {
       // Coloured by level (see headingColor) and always bold, so the outline
       // stands out from body text. Wrapping/width were already handled upstream.
       const fg = headingColor(block.level, theme, tone);
-      return (
-        <box key={id} flexDirection="column" minWidth={0}>
+      return wrap(
+        <box flexDirection="column" flexShrink={0} minWidth={0}>
           {block.lines.map((line, i) => (
             <text key={`${id}-${i}`} fg={fg} attributes={TextAttributes.BOLD}>{line.map((span) => span.text).join("")}</text>
           ))}
-        </box>
+        </box>,
       );
     }
     if (block.kind === "listItem") {
-      // The marker is coloured (accent) and bold so it separates cleanly from
-      // the body; unordered bullets render as `•` regardless of the source glyph
-      // (`-`/`*`/`+`, all one cell, so the gutter arithmetic is unchanged).
-      // Continuation rows sit in the body column, aligning under the text.
+      // The marker is coloured (brand) and bold so bullets read as structure, not
+      // prose — the OpenCode/Glamour convention of a coloured marker + hanging
+      // indent. Unordered bullets render as `•` regardless of the source glyph
+      // (`-`/`*`/`+`, all one cell, so the gutter arithmetic is unchanged); the
+      // body sits in a flex-grow column so continuation rows align under the text.
       const gutter = listItemGutterWidth(block);
       const ordered = /\d/.test(block.marker);
       const marker = ordered ? block.marker : "•";
-      return (
-        <box key={id} flexDirection="row" minWidth={0}>
+      return wrap(
+        <box flexDirection="row" flexShrink={0} minWidth={0}>
           <box width={gutter} flexShrink={0} minWidth={0} flexDirection="row">
             {block.indent > 0 ? <text flexShrink={0} fg={MUTED}>{" ".repeat(block.indent)}</text> : null}
-            <text flexShrink={0} fg={tone ?? ACCENT} attributes={TextAttributes.BOLD}>{marker}</text>
+            <text flexShrink={0} fg={tone ?? BRAND} attributes={TextAttributes.BOLD}>{marker}</text>
           </box>
           <box flexDirection="column" flexGrow={1} minWidth={0}>
             {block.lines.map((line, i) => (
@@ -241,22 +245,39 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
               </box>
             ))}
           </box>
-        </box>
+        </box>,
       );
     }
-    // paragraph | quote — a quote is always muted, otherwise inherit the
-    // caller's tone override (if any).
-    const blockTone = block.kind === "quote" ? MUTED : tone;
-    return (
-      <box key={id} flexDirection="column" minWidth={0} marginLeft={block.kind === "quote" ? 2 : 0}>
+    // paragraph | quote. A quote reads as a quiet aside: a MUTED left bar + a
+    // cell of padding + muted italic body — a real gutter, not just an indent,
+    // and distinct from a code block (which has no bar). A plain paragraph is
+    // just its wrapped lines, inheriting any caller tone override.
+    const isQuote = block.kind === "quote";
+    const blockTone = isQuote ? MUTED : tone;
+    const body = (
+      <box flexDirection="column" flexGrow={1} minWidth={0}>
         {block.lines.map((line, i) => (
           <box key={`${id}-${i}`} flexDirection="row" minWidth={0}>
             {line.map((span, j) => (
-              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)} bg={spanBackground(span.style, theme, blockTone)} attributes={spanAttributes(span.style)}>{span.text}</text>
+              <text key={`${id}-${i}-${j}`} fg={spanColor(span.style, theme, blockTone)} bg={spanBackground(span.style, theme, blockTone)} attributes={spanAttributes(span.style) ?? (isQuote ? TextAttributes.ITALIC : undefined)}>{span.text}</text>
             ))}
           </box>
         ))}
       </box>
+    );
+    return wrap(
+      isQuote ? (
+        <box flexDirection="row" flexShrink={0} minWidth={0}>
+          <box width={1} flexShrink={0} alignSelf="stretch" backgroundColor={MUTED} />
+          <box flexDirection="column" flexGrow={1} minWidth={0} paddingLeft={1}>
+            {body}
+          </box>
+        </box>
+      ) : (
+        <box flexDirection="column" flexShrink={0} minWidth={0}>
+          {body}
+        </box>
+      ),
     );
   });
 }

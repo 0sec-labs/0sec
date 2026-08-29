@@ -11,16 +11,24 @@ and 0sec adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 on the published npm package and the GitHub Release tag.
 
 ## [Unreleased]
+
+## [0.15.0] - 2026-08-30
+
 ### Added
 
 - A versioned `0sec.presentation/v1` contract now carries canonical reports,
   renderer-neutral console transcripts, and semantic events across the CLI,
   browser dashboard, and output adapters.
 - The console can open a virtualized transcript review with `/transcript` (or
-  `/review`), and `--print` / `--resume` / `--continue` provide one-shot and
-  saved-session command-line workflows.
+  `/review`), focus a live subagent's real transcript, and let an operator
+  message that focused subagent.
+- `--print`, `--resume`, `--continue`, and the `-p`, `-r`, `-c`, and `-m`
+  aliases support one-shot and saved-session CLI workflows.
 - The local dashboard provides a same-origin presentation-event SSE endpoint
   with resumable cursor replay.
+- Framework packs, model-catalog synchronization, canonical benchmark
+  integrations, and isolated replay runners expand the reusable assessment
+  surface.
 
 ### Changed
 
@@ -30,7 +38,17 @@ on the published npm package and the GitHub Release tag.
 - The OpenTUI console captures direct application stdout/stderr while it owns
   the terminal, preserving those writes as transcript events and preventing
   framebuffer corruption.
+- Console defaults now use the Midnight theme; transcript, tool-card, composer,
+  sidebar, and focused-subagent surfaces were refined for legibility.
+- The `0sec-cli` npm launcher is published with the matching release binary and
+  downloads that platform-specific asset on first invocation.
 
+### Fixed
+
+- Packaged native binaries embed JIT skill YAML rather than failing to load
+  source-only skill assets.
+- Markdown rendering no longer damages generic or unlabeled fenced code blocks.
+- Dependency overrides remove the previously reported audit advisories.
 
 ## [0.14.0] - 2026-08-25
 

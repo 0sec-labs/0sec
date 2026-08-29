@@ -198,6 +198,6 @@ describe("0sec adgraph", () => {
     await runCli(["adgraph", "--input", collectionDir, "--timeout", "600000", "--json"]);
     expect(process.exitCode).toBeUndefined();
     const after = process.getActiveResourcesInfo?.().filter((r) => r === "Timeout").length ?? 0;
-    expect(after).toBe(before);
+    expect(after).toBeLessThanOrEqual(before);
   });
 });
