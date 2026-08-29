@@ -7,7 +7,8 @@
 
 <p align="center">
   <strong>[RESEARCH PREVIEW] Your open-source AI cybersecurity team.</strong><br/>
-  0sec finds a vulnerability, proves it with a working exploit, and writes the fix. Multi-model, multi-agent, but most importantly: yours.
+  0sec vulnerabilities, creates working exploits, and writes the fix.
+  Multi-model, multi-agent, but most importantly: yours.
 </p>
 
 <p align="center">
