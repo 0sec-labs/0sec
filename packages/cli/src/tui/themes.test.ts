@@ -58,11 +58,11 @@ import {
  */
 const SHIPPED_PALETTE: Record<string, string> = {
   CANVAS: "#080808",
-  PANEL: "#111111",
-  PANEL_ALT: "#171515",
-  BORDER: "#25201D",
+  PANEL: "#141312",
+  PANEL_ALT: "#242120",
+  BORDER: "#3A322D",
   TEXT: "#F3EEE9",
-  MUTED: "#8A7D73",
+  MUTED: "#9C9084",
   PRIMARY: "#FFFFFF",
   ACCENT: "#F3EEE9",
   BRAND: "#A78BFA",
@@ -292,7 +292,7 @@ describe("contrast sweep", () => {
       }),
     );
     expect(worst).toEqual({
-      dark: 3.77,
+      dark: 3.31,
       light: 5.24,
       "high-contrast": 7.75,
       ansi: 5.25,
@@ -349,7 +349,7 @@ describe("contrast waivers", () => {
     const dark = THEMES.dark.palette;
     for (const bg of BACKGROUND_TOKENS) {
       expect(contrastRatio("#F4695E", dark[bg])).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST);
-      expect(contrastRatio("#726359", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
+      expect(contrastRatio("#857567", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
     }
   });
 

@@ -234,11 +234,11 @@ export const MIN_SEMANTIC_CONTRAST = 1.15;
  */
 const DARK: Theme = {
   CANVAS: "#080808",
-  PANEL: "#111111",
-  PANEL_ALT: "#171515",
-  BORDER: "#25201D",
+  PANEL: "#141312",
+  PANEL_ALT: "#242120",
+  BORDER: "#3A322D",
   TEXT: "#F3EEE9",
-  MUTED: "#8A7D73",
+  MUTED: "#9C9084",
   PRIMARY: "#FFFFFF",
   ACCENT: "#F3EEE9",
   BRAND: "#A78BFA",
@@ -699,37 +699,37 @@ export const CONTRAST_WAIVERS: readonly ContrastWaiver[] = [
     theme: "dark",
     token: "ERROR",
     against: "PANEL",
-    ratio: 3.91,
+    ratio: 3.84,
     reason: "Preserved default: see the CANVAS waiver for ERROR.",
   },
   {
     theme: "dark",
     token: "ERROR",
     against: "PANEL_ALT",
-    ratio: 3.77,
+    ratio: 3.31,
     reason: "Preserved default: see the CANVAS waiver for ERROR.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "CANVAS",
-    ratio: 1.24,
+    ratio: 1.6,
     reason:
-      "Preserved default: #25201D is an intentional hairline, well below even the 3:1 " +
-      "non-text bar. #726359 reaches 3:1 on all three surfaces if visible panel edges are wanted.",
+      "Preserved default: #3A322D is an intentional hairline, well below even the 3:1 " +
+      "non-text bar. #857567 reaches 3:1 on all three surfaces if visible panel edges are wanted.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL",
-    ratio: 1.17,
+    ratio: 1.48,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL_ALT",
-    ratio: 1.13,
+    ratio: 1.27,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
 ];
