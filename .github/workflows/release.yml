@@ -50,7 +50,12 @@ jobs:
           # no prebuilt. Node 22 compiles it from source cleanly.
           node-version: 22
       - run: corepack enable
+      # tree-sitter@0.21.1 supports Bun 1.3's Node-compatible native ABI. Bun
+      # 1.4 changes that ABI, producing binaries that pass in-tree but cannot
+      # load tree-sitter after an operator installs the standalone asset.
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
       - name: Install dependencies
         # No --ignore-scripts: the native addon (tree-sitter) must build so the
         # compiled binary has a .node to load at runtime (arm64 has no prebuilt).
@@ -66,8 +71,17 @@ jobs:
       - name: Smoke the binary
         shell: bash
         run: |
-          "dist-bin/${{ matrix.asset }}" --version
-          "dist-bin/${{ matrix.asset }}" --help | grep -q "security research harness"
+          # Run from outside the checkout: an in-tree smoke can accidentally
+          # resolve a build-host native addon instead of testing the self-contained
+          # binary an operator downloads.
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$smoke_dir"' EXIT
+          cp "dist-bin/${{ matrix.asset }}" "$smoke_dir/0sec"
+          (
+            cd "$smoke_dir"
+            ./0sec --version
+            ./0sec --help | grep -q "security research harness"
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
