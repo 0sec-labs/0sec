@@ -172,7 +172,7 @@ export function registerBenchCommand(program: Command): void {
     .option("--variants <json|path>", "JSON array of variant descriptors, or a path to one")
     .option("--variant-id <id>", "Id for the implicit single variant", "champion")
     .option("--harness <id>", "Harness identity for the implicit single variant")
-    .option("--model <model>", "Model override for the implicit single variant")
+    .option("-m, --model <model>", "Model override for the implicit single variant")
     .option("--runtime <runtime>", "Runtime override (api/claude/codex/…)")
     .option("--depth <depth>", "Scan/audit depth override (quick/deep/…)")
     .option("--pass-at-k <n>", "Attempts per case (pass@k or independent repeats)", "1")

@@ -166,7 +166,7 @@ export function registerRecencyHuntCommand(program: Command): void {
     .requiredOption("--tree <path>", "Kernel source tree to hunt (e.g. /root/linux-next)")
     .option("--since <gitrange>", "Explicit git range (e.g. HEAD~20..HEAD or <sha>..HEAD); overrides --hours")
     .option("--hours <N>", "Hunt commits from the last N hours (default 24)")
-    .option("--model <model>", "Model-build / finder model override")
+    .option("-m, --model <model>", "Model-build / finder model override")
     .option("--classifier-model <model>", "Semantic-vs-cosmetic classifier model (default gpt-5.5)")
     .option("--runtime <mode>", "Engine runtime (default api)")
     .option("--model-dir <path>", "Where per-file invariant models are stored (default <tree>/.recency-models)")

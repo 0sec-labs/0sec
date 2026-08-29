@@ -650,7 +650,7 @@ export function registerOrchestrateCommand(program: Command): void {
     .option("--runtime <runtime>", "Runtime override: auto, claude, codex, gemini, api")
     .option("--timeout <ms>", "Request timeout in milliseconds", "30000")
     .option("--api-key <key>", "API key for LLM provider")
-    .option("--model <model>", "LLM model to use")
+    .option("-m, --model <model>", "LLM model to use")
     .option("--watch", "Run as a persistent daemon loop", false)
     .option("--poll-interval <ms>", "Idle poll interval for watch mode", "5000")
     .option("--label <name>", "Operator-facing worker label")

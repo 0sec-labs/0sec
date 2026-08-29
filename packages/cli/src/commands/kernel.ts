@@ -177,7 +177,7 @@ export function registerKernelCommand(program: Command): void {
     .option("--crash-summary <path>", "File with recent crash descriptions to inform weighting")
     .option("--enabled-syscalls <path>", "JSON array file of manager-enabled syscall names to constrain the plan")
     .option("--from-file <path>", "Validate/normalize a raw model JSON plan instead of calling the API")
-    .option("--model <model>", "Override model (default: env/auto-detected)")
+    .option("-m, --model <model>", "Override model (default: env/auto-detected)")
     .option("--max-entries <n>", "Maximum weighted syscalls", "48")
     .option("--dry-run", "Print the weights file instead of writing")
     .option("-o, --out <path>", "Output path for choice_weights.json")

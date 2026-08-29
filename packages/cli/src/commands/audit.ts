@@ -27,7 +27,7 @@ export function registerAuditCommand(program: Command): void {
     .option("--runtime <runtime>", "Runtime: auto, claude, codex, gemini, api", "auto")
     .option("--db-path <path>", "Path to SQLite database")
     .option("--api-key <key>", "API key for LLM provider")
-    .option("--model <model>", "LLM model to use")
+    .option("-m, --model <model>", "LLM model to use")
     .option("--cost-ceiling <usd>", "Hard per-audit USD cost ceiling. Aborts cleanly with partial findings if exceeded.")
     .option("--tui", "Open the local terminal UI after the audit completes", false)
     .option("--resume <run-id>", "Resume a previous run from its journal on disk (0sec#374)")

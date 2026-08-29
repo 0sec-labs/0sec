@@ -130,7 +130,7 @@ export function registerEvalCommand(program: Command): void {
     .option("--format <format>", "Output format: terminal, json", "terminal")
     .option("--timeout <ms>", "Request timeout in milliseconds", "30000")
     .option("--api-key <key>", "API key for LLM provider")
-    .option("--model <model>", "LLM model to use for evaluation")
+    .option("-m, --model <model>", "LLM model to use for evaluation")
     .option("--auth <json>", "Auth credentials for the target (JSON string or path)")
     .option(
       "--categories <list>",

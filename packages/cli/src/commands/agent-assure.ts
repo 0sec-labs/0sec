@@ -131,7 +131,7 @@ export function registerAgentAssureCommand(program: Command): void {
     .requiredOption("--model-version <version>", "Model deployment/version identifier")
     .option("--tool-version <name=version>", "Version of an MCP tool; repeatable", (value: string, previous: string[] = []) => [...previous, value], [])
     .option("--environment <name>", "local, test, or staging", "staging")
-    .option("--model <name>", "Optional model identifier passed to the customer agent adapter")
+    .option("-m, --model <name>", "Optional model identifier passed to the customer agent adapter")
     .option("--agent-headers <path>", "JSON file of headers for the agent adapter; never written to evidence")
     .option("--mcp-headers <path>", "JSON file of headers for the MCP endpoint; never written to evidence")
     .option("--oracle-headers <path>", "JSON file of headers for the state observer; never written to evidence")

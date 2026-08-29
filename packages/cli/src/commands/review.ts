@@ -62,7 +62,7 @@ export function registerReviewCommand(program: Command): void {
     .option("--runtime <runtime>", "Runtime: auto, claude, codex, gemini, api, ollama", "auto")
     .option("--db-path <path>", "Path to SQLite database")
     .option("--api-key <key>", "API key for LLM provider")
-    .option("--model <model>", "LLM model to use")
+    .option("-m, --model <model>", "LLM model to use")
     .option("--cost-ceiling <usd>", "Hard per-review USD cost ceiling. Aborts cleanly with partial findings if exceeded.")
     .option("--tui", "Open the local terminal UI after the review completes", false)
     .option("--diff-base <ref>", "Git base ref to review against (for diff-aware review)")

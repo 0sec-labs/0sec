@@ -127,7 +127,7 @@ export function registerFixCommand(program: Command): void {
     .option("--verification-result <path>", "Optional verification_result JSON from `0sec verify`; required when the finding does not already carry one")
     .requiredOption("--test-command <command>", "Explicit regression command to run in the isolated candidate worktree")
     .option("--runtime <runtime>", "Fix runtime: auto or api", "auto")
-    .option("--model <model>", "Model identifier for the selected runtime")
+    .option("-m, --model <model>", "Model identifier for the selected runtime")
     .option("--api-key <key>", "API key for the selected runtime")
     .option("--timeout <ms>", "Per-model-call timeout in milliseconds", "600000")
     .option("--test-timeout <ms>", "Regression-command timeout in milliseconds", "300000")

@@ -85,7 +85,7 @@ export function registerIngestCommand(program: Command): void {
     .option("--tree <path>", "Linux source tree used by --review-subsystem")
     .option("--runtime <runtime>", "Review runtime for --review-subsystem: auto, claude, codex, gemini, api", "auto")
     .option("--api-key <key>", "API key for --review-subsystem API runtime")
-    .option("--model <model>", "Model for --review-subsystem")
+    .option("-m, --model <model>", "Model for --review-subsystem")
     .option("--timeout <ms>", "AI review timeout for --review-subsystem", "600000")
     .option("--cost-ceiling <usd>", "Hard USD cost ceiling for --review-subsystem")
     .addOption(new Option("--review-subsystem-fixture <path>").hideHelp())

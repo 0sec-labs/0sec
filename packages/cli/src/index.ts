@@ -230,6 +230,11 @@ if (userArgs.length === 0) {
   // `0 -c` → `console --continue`: reopen the most recent chat session.
   process.argv = [process.argv[0], process.argv[1], "console", "--continue", ...userArgs.slice(1)];
   program.parse();
+} else if (userArgs[0] === "-p" || userArgs[0] === "--print") {
+  // `0 -p "<prompt>"` → `console --print "<prompt>"`: one-shot non-interactive
+  // query (or read the prompt from piped stdin when no argument is given).
+  process.argv = [process.argv[0], process.argv[1], "console", "--print", ...userArgs.slice(1)];
+  program.parse();
 } else if (userArgs.length >= 1 && !knownCommands.includes(userArgs[0]) && !userArgs[0].startsWith("-")) {
   const route = detectAndRoute(userArgs[0]);
   if (route) {

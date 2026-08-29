@@ -40,6 +40,16 @@ interface ConsoleOptions {
   resume?: string | boolean;
   /** `--continue`: reopen the single most-recent console session, no picker. */
   continue?: boolean;
+  /** `-p/--print [prompt]`: one-shot non-interactive prompt (or `true` → stdin). */
+  print?: string | boolean;
+}
+
+/** Read a piped prompt from stdin (for `--print` with no inline argument). */
+async function readStdinPrompt(): Promise<string> {
+  if (stdin.isTTY) return ""; // no pipe → nothing to read (don't hang on a tty)
+  const chunks: Buffer[] = [];
+  for await (const chunk of stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8").trim();
 }
 
 /** Launch autonomy modes accepted by `--mode` / `--autonomy`. */
@@ -116,7 +126,7 @@ export function registerConsoleCommand(program: Command): void {
     )
     .option("--target <url>", "Engagement target the tools operate against (optional; can be named in-chat)")
     .option("--scope <file>", "Initial authorization scope; required for the Node fallback (optional otherwise)")
-    .option("--model <id>", "Override the LLM model id (else provider default)")
+    .option("-m, --model <id>", "Override the LLM model id (else provider default)")
     .option("--role <role>", "Tool set to expose: audit|review|discovery|attack|verify (default audit = every tool)")
     .option("--mode <mode>", "Autonomy mode to start in: standard|recon|copilot|yolo (default standard). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab.")
     .option("--yolo", "Shortcut for --mode yolo — start the console in YOLO autonomy (no per-action prompts; still target-anchored and SSRF-railed).")
@@ -125,6 +135,7 @@ export function registerConsoleCommand(program: Command): void {
     .option("--allow-scanners", "Expose generic-scanner tool wrappers (sqlmap/nikto/…); default off")
     .option("--resume [id]", "Reopen a saved console session by id (or unique prefix); with no id, opens a session picker. Also reachable as `0 -r [id]`.")
     .option("--continue", "Reopen the most recent console session, no picker. Also reachable as `0 -c`.")
+    .option("-p, --print [prompt]", "Non-interactive: run ONE prompt through the engine, print the result, and exit (no TUI). Reads the prompt from the argument or piped stdin. Combine with --continue/--resume to query a saved session. Also reachable as `0 -p <prompt>`.")
     .action(async (opts: ConsoleOptions) => {
       let maxToolIterations = 20;
       if (opts.maxToolCalls !== undefined) {
@@ -214,6 +225,52 @@ export function registerConsoleCommand(program: Command): void {
         } else {
           openResumePicker = true; // bare `--resume` / `0 -r` → the picker
         }
+      }
+
+      // Non-interactive one-shot: run a single prompt headless and exit. Handled
+      // BEFORE the TUI/readline branches — `-p` is a scriptable query, not a
+      // session — and reuses the same session build + `runTurn` the readline
+      // console uses, so tool traces + the answer stream to stdout identically.
+      if (opts.print !== undefined) {
+        const promptText =
+          typeof opts.print === "string" && opts.print.trim()
+            ? opts.print
+            : await readStdinPrompt();
+        if (!promptText.trim()) {
+          console.error(chalk.red('--print needs a prompt: pass `--print "…"` or pipe it on stdin.'));
+          process.exitCode = 2;
+          return;
+        }
+        let printSession: ConsoleSession;
+        try {
+          const runtime = createConsoleRuntime({ model: resumedModel ?? opts.model });
+          printSession = createConsoleSession({
+            runtime,
+            target: resumedTarget ?? opts.target,
+            role,
+            maxToolIterations,
+            allowScanners: opts.allowScanners,
+            scope,
+            autonomyMode,
+            ...(resumeMessages ? { initialMessages: resumeMessages as NativeMessage[] } : {}),
+            // Headless: no operator to approve a scope extension or a copilot gate.
+            requestScope: async () => null,
+            approveTool: autonomyMode === "copilot" ? async () => false : undefined,
+          });
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          console.error(chalk.dim("The console needs an LLM provider. Set ANTHROPIC_API_KEY (or another supported provider key) and retry."));
+          process.exitCode = 2;
+          return;
+        }
+        try {
+          await runTurn(printSession, promptText, processPresentationOutput);
+          process.stdout.write("\n");
+        } catch (err) {
+          console.error(chalk.red(`\nturn failed: ${err instanceof Error ? err.message : String(err)}`));
+          process.exitCode = 1;
+        }
+        return;
       }
 
       if (isBunRuntime() && canUseOpenTui()) {

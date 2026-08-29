@@ -156,7 +156,7 @@ export function registerLensSynthCommand(program: Command): void {
     .requiredOption("--miss-input <path>", "miss-input JSON ({ misses, corpus })")
     .option("--registry <path>", "appsec registry to append to (defaults to the bundled seed registry)")
     .option("--max-register <n>", "cap how many lenses this run may register", (v) => Number.parseInt(v, 10))
-    .option("--model <id>", "synthesis model override")
+    .option("-m, --model <id>", "synthesis model override")
     .option("--promote", "register a validated champion in the selected registry", false)
     .option("--json", "print the full result as JSON", false)
     .action(async (opts) => {

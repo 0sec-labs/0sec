@@ -68,7 +68,7 @@ export function registerFileReviewCommand(program: Command): void {
     .option("--project-id <id>", "Project id (defaults to the target basename)")
     .option("--data-dir <path>", "Record store directory (default <target>/.0sec-review)")
     .option("--runtime <mode>", "Engine runtime: api|claude|codex|gemini|ollama (default api)")
-    .option("--model <model>", "Model for the investigation/revalidation agents")
+    .option("-m, --model <model>", "Model for the investigation/revalidation agents")
     .option("--timeout <ms>", "Per-invocation timeout in milliseconds", "600000")
     .option("--max-cost-usd <usd>", "Hard USD cap for the whole run (resumable stop)")
     .option("--max-duration <dur>", "Wall-clock cap: 30m / 2h / ms (resumable stop)")

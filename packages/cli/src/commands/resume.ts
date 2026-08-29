@@ -84,7 +84,7 @@ export function registerResumeCommand(program: Command): void {
     .option("--runtime <runtime>", "Runtime override: auto, claude, codex, gemini, api")
     .option("--timeout <ms>", "AI agent timeout override in milliseconds")
     .option("--api-key <key>", "API key for LLM provider")
-    .option("--model <model>", "LLM model to use")
+    .option("-m, --model <model>", "LLM model to use")
     .option("--branch-from <entry-index>", "Branch the journal at the given entry index before resuming. Copies entries 0..N into a new run and resumes from there.")
     .action(async (scanId: string, opts: Record<string, string | boolean>) => {
       const requestedDbPath =

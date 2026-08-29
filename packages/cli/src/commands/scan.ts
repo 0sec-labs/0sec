@@ -164,7 +164,7 @@ export function registerScanCommand(program: Command): void {
     .option("--timeout <ms>", "Request timeout in milliseconds", "30000")
     .option("--db-path <path>", "Path to SQLite database")
     .option("--api-key <key>", "API key for LLM provider")
-    .option("--model <model>", "LLM model to use")
+    .option("-m, --model <model>", "LLM model to use")
     .option("--repo <path>", "Source code path for white-box scanning (read code before attacking)")
     .option("--auth <json>", "Auth credentials as JSON string or path to JSON file (types: bearer, cookie, basic, header)")
     .option("--scope <path>", "Path to a JSON scope file ({in_scope, out_of_scope} arrays of host / *.domain / cidr rules). Out-of-scope URLs return as ToolResult.error at every fetch site. See 0sec#215.")
