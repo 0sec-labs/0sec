@@ -156,7 +156,7 @@ With special thanks to the startup and research programs supporting our work:
 
 ```bash
 git clone https://github.com/0sec-labs/0sec.git && cd 0sec
-corepack enable && pnpm install --frozen-lockfile && pnpm build && node dist/0sec.js --help
+corepack enable && pnpm install --frozen-lockfile && pnpm build && node packages/cli/dist/index.js --help
 ```
 
 ## Contributing & security

@@ -184,6 +184,9 @@ importers:
       '@0sec/templates':
         specifier: workspace:*
         version: link:../templates
+      node-gyp-build:
+        specifier: 4.8.4
+        version: 4.8.4
       tree-sitter:
         specifier: 0.21.1
         version: 0.21.1

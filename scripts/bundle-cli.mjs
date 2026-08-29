@@ -92,6 +92,10 @@ await build({
     "@opentui/core",
     "@opentui/react",
     "bun:ffi",
+    // Direct native-addon requires exist only for Bun's standalone compiler.
+    // The JavaScript bundle defines that path off and leaves all `.node` imports
+    // external so esbuild never expects staged release-only assets.
+    "*.node",
   ],
   define: {
     // Inject the root package.json version as a string literal so the
@@ -99,6 +103,9 @@ await build({
     // unbundled source/test path falls back to a one-time fs read of
     // the same root package.json.
     __0SEC_VERSION__: JSON.stringify(PKG_VERSION),
+    // The JavaScript bundle ships tree-sitter as an external runtime dependency.
+    // Only `bun --compile` stages and embeds its native addons.
+    __0SEC_COMPILED_TARGET__: "undefined",
     __0SEC_BUILD_COMMIT__: JSON.stringify(BUILD_COMMIT),
   },
   plugins: [stubPlugin],

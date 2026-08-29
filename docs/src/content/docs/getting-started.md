@@ -21,7 +21,7 @@ cd 0sec
 corepack enable
 pnpm install --frozen-lockfile
 pnpm build
-node dist/0sec.js --help
+node packages/cli/dist/index.js --help
 
 # Docker
 docker run --rm ghcr.io/0sec-labs/0sec:latest --help

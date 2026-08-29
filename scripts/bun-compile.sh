@@ -27,6 +27,8 @@
 #     with `ENOENT … node-sqlite3-wasm.wasm` on user machines.
 
 set -euo pipefail
+ROOT_DIR="$(pwd -P)"
+
 
 TARGET="${1:-}"
 OUTFILE="${2:-dist-bin/0sec}"
@@ -67,7 +69,7 @@ PKG_VERSION="$(node -p "require('./package.json').version")"
 # `node-gyp-build` hides native addon paths behind a runtime lookup. Stage the
 # selected pair at fixed relative paths so c-dataflow's direct requires make Bun
 # embed them. The trap leaves normal source builds free of generated binaries.
-STAGE_DIR="packages/core/dist/stages/tree-sitter-compiled"
+STAGE_DIR="${ROOT_DIR}/packages/core/dist/stages/tree-sitter-compiled"
 node scripts/stage-tree-sitter-native.mjs "$NATIVE_TARGET" "$STAGE_DIR"
 trap 'rm -rf "$STAGE_DIR"' EXIT
 
