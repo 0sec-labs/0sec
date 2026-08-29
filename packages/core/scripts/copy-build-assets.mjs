@@ -4,8 +4,9 @@
 // there. Pure Node fs — works on every platform.
 import { cpSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const abs = (p) => join(root, p);
 
 // Recursive directory copy: src/triage/kernel-vm -> dist/triage/kernel-vm
