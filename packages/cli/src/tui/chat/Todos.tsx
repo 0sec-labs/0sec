@@ -89,14 +89,22 @@ export function Todos({
               const done = item.status === "completed";
               const active = item.status === "in_progress";
               const glyphColor = done ? SUCCESS : active ? ACCENT : MUTED;
-              const textColor = done ? MUTED : active ? TEXT : MUTED;
+              // Completed items read as "done" at a glance: the WHOLE row goes
+              // green and is struck through (glyph + text), the way a checked-off
+              // checklist reads. Active is the accent tone; pending stays muted.
+              const textColor = done ? SUCCESS : active ? TEXT : MUTED;
               return (
                 <box key={item.id} flexDirection="row" minWidth={0}>
                   <box width={2} flexShrink={0} minWidth={0}>
                     <text fg={glyphColor}>{glyph}</text>
                   </box>
                   <box flexGrow={1} minWidth={0}>
-                    <text fg={textColor}>{fitTuiText(item.content, Math.max(1, width - 2))}</text>
+                    <text
+                      fg={textColor}
+                      attributes={done ? TextAttributes.STRIKETHROUGH : undefined}
+                    >
+                      {fitTuiText(item.content, Math.max(1, width - 2))}
+                    </text>
                   </box>
                 </box>
               );
@@ -178,7 +186,9 @@ export function TodosSidebar({
         const done = item.status === "completed";
         const active = item.status === "in_progress";
         const glyphColor = done ? SUCCESS : active ? ACCENT : MUTED;
-        const textColor = active ? TEXT : MUTED;
+        // Done → the whole item goes green + struck through (matching the panel),
+        // so a completed plan step reads as crossed-off at a glance.
+        const textColor = done ? SUCCESS : active ? TEXT : MUTED;
         const lines = wrapped[itemIdx];
         return (
           <box key={item.id} flexDirection="column" width={width} flexShrink={0} minWidth={0}>
@@ -194,7 +204,16 @@ export function TodosSidebar({
                   {lineIdx === 0 ? glyph : " "}
                 </text>
                 <box width={textCells} flexShrink={0} minWidth={0} marginLeft={1}>
-                  <text fg={textColor} attributes={active ? TextAttributes.BOLD : undefined}>
+                  <text
+                    fg={textColor}
+                    attributes={
+                      done
+                        ? TextAttributes.STRIKETHROUGH
+                        : active
+                          ? TextAttributes.BOLD
+                          : undefined
+                    }
+                  >
                     {line}
                   </text>
                 </box>

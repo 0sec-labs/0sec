@@ -3824,7 +3824,29 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       </ComposerFrame>
     </box>
   );
-  const composerNode = buildComposer({ textWidth: composerTextWidth });
+  // When a sidebar is shown, the composer aligns UNDER the transcript column
+  // (the left part) rather than spanning the full width beneath the rail — the
+  // input belongs to the conversation, not the AGENTS/FINDINGS/PLAN sidebar. It
+  // reverts to full width when no sidebar is up.
+  const composerConstrained = sidebars.rightVisible || sidebars.leftVisible;
+  const composerOuterWidth = composerConstrained ? sidebars.transcriptWidth : undefined;
+  const composerInnerTextWidth = composerConstrained
+    ? Math.max(8, sidebars.transcriptWidth - 3)
+    : composerTextWidth;
+  const composerBody = buildComposer({
+    textWidth: composerInnerTextWidth,
+    outerWidth: composerOuterWidth,
+  });
+  // A left sidebar pushes the transcript (and so the composer) right by its
+  // width + gap; a right-only sidebar leaves the composer flush left.
+  const composerNode = sidebars.leftVisible ? (
+    <box flexDirection="row" flexShrink={0} minWidth={0}>
+      <box width={sidebars.leftWidth + sidebars.leftGap} flexShrink={0} minWidth={0} />
+      {composerBody}
+    </box>
+  ) : (
+    composerBody
+  );
 
   // ── Sticky context above the composer ──────────────────────────────────────
   // Only messages the operator has PARKED for the next round stay pinned

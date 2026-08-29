@@ -267,11 +267,14 @@ export function renderEntry(
           </box>
         );
       }
-      // The footer is composed from the mode plus whatever telemetry the
-      // operator opted into: the model only when `modelDisplay` routes it here
-      // (otherwise it lives in the bottom bar), the per-turn tokens under
-      // `showTokenUsage`, the per-turn cost under `showCost`, and the elapsed.
-      const footerParts: string[] = [display.mode];
+      // The footer is quiet provenance only — the per-turn telemetry the operator
+      // opted into: the model when `modelDisplay` routes it here (otherwise it
+      // lives in the bottom bar), the per-turn tokens under `showTokenUsage`, the
+      // per-turn cost under `showCost`, and the elapsed. The AUTONOMY MODE is NOT
+      // repeated here: it is a session-wide state, already shown persistently in
+      // the masthead and the bottom status bar, so tagging every single answer
+      // with "YOLO"/"Co-pilot" was redundant noise.
+      const footerParts: string[] = [];
       if (display.modelInFooter && display.model) footerParts.push(display.model);
       if (display.showTokenUsage && entry.usageInput !== undefined) {
         footerParts.push(`${entry.usageInput}→${entry.usageOutput ?? 0} tok`);
@@ -281,19 +284,18 @@ export function renderEntry(
       }
       const elapsed = entry.durationMs ? formatElapsed(entry.durationMs) : "";
       if (elapsed) footerParts.push(elapsed);
-      // The MODE name carries its own colour (matching the header and the status
-      // bar) so the autonomy state is legible at a glance; the rest of the
-      // provenance (model · tok · cost · time) stays quietly muted. Both halves
-      // are budgeted against the same cells so the row never overflows.
       const footerBudget = Math.max(1, maxWidth - 2);
-      const modeFitted = fitTuiText(display.mode, footerBudget);
-      // The " · " lead is prepended AFTER fitting the rest's content, because
-      // `fitTuiText` trims leading whitespace — fitting `" · 4s"` would eat the
-      // separator's space and fuse the mode into it ("Co-pilot· 4s").
-      const restContent = footerParts.slice(1).join(" · ");
-      const restFitted = restContent
-        ? fitTuiText(restContent, Math.max(0, footerBudget - modeFitted.length - 3))
+      const restFitted = footerParts.length
+        ? fitTuiText(footerParts.join(" · "), footerBudget)
         : "";
+      // No telemetry at all → no footer row, rather than a bare marker.
+      if (!restFitted) {
+        return (
+          <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
+            {body}
+          </box>
+        );
+      }
       return (
         <box key={entry.id} flexDirection="column" marginTop={marginTop} minWidth={0}>
           {body}
@@ -302,8 +304,7 @@ export function renderEntry(
               <text fg={ERROR}>▪ </text>
             </box>
             <box flexGrow={1} minWidth={0} flexDirection="row">
-              <text fg={display.modeColor} flexShrink={0}>{modeFitted}</text>
-              {restFitted ? <text fg={MUTED}>{` · ${restFitted}`}</text> : null}
+              <text fg={MUTED}>{restFitted}</text>
             </box>
           </box>
         </box>
