@@ -172,7 +172,11 @@ export function renderMarkdownBlocks(blocks: readonly MdBlock[], key: string, th
       // stray code.
       const { surfaceAlt } = theme;
       const lang = block.language;
-      const chip = lang ? `[${lang}]` : "";
+      // Only label a REAL language. Unlabeled fences and generic "text"/"plain"
+      // blocks (which a model emits constantly for paths, output, prose) don't
+      // earn a "[text]" chip — it just adds noise over the block.
+      const GENERIC_FENCE_LANGS = new Set(["text", "txt", "plain", "plaintext", "none", "output"]);
+      const chip = lang && !GENERIC_FENCE_LANGS.has(lang.toLowerCase()) ? `[${lang}]` : "";
       const chipWidth = codeLineWidth(chip);
       const maxWidth = block.lines.reduce((w, line) => Math.max(w, codeLineWidth(line)), chipWidth);
       const chipLead = Math.max(0, maxWidth - chipWidth);
