@@ -58,11 +58,11 @@ import {
  */
 const SHIPPED_PALETTE: Record<string, string> = {
   CANVAS: "#080808",
-  PANEL: "#1C1A18",
-  PANEL_ALT: "#2A2724",
+  PANEL: "#292521",
+  PANEL_ALT: "#332E27",
   BORDER: "#302E2C",
   TEXT: "#F3EEE9",
-  MUTED: "#A79A8D",
+  MUTED: "#B3A79A",
   PRIMARY: "#FFFFFF",
   ACCENT: "#F3EEE9",
   BRAND: "#A78BFA",
@@ -292,7 +292,7 @@ describe("contrast sweep", () => {
       }),
     );
     expect(worst).toEqual({
-      dark: 4.97,
+      dark: 4.5,
       light: 5.24,
       "high-contrast": 7.75,
       ansi: 5.25,
@@ -345,7 +345,7 @@ describe("contrast waivers", () => {
   it("names the replacement colours it claims fix the default", () => {
     const dark = THEMES.dark.palette;
     for (const bg of BACKGROUND_TOKENS) {
-      expect(contrastRatio("#8C8580", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
+      expect(contrastRatio("#9C948C", dark[bg])).toBeGreaterThanOrEqual(MIN_CHROME_CONTRAST);
     }
   });
 

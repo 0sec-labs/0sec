@@ -234,11 +234,11 @@ export const MIN_SEMANTIC_CONTRAST = 1.15;
  */
 const DARK: Theme = {
   CANVAS: "#080808",
-  PANEL: "#1C1A18",
-  PANEL_ALT: "#2A2724",
+  PANEL: "#292521",
+  PANEL_ALT: "#332E27",
   BORDER: "#302E2C",
   TEXT: "#F3EEE9",
-  MUTED: "#A79A8D",
+  MUTED: "#B3A79A",
   PRIMARY: "#FFFFFF",
   ACCENT: "#F3EEE9",
   BRAND: "#A78BFA",
@@ -693,20 +693,20 @@ export const CONTRAST_WAIVERS: readonly ContrastWaiver[] = [
     ratio: 1.48,
     reason:
       "Preserved default: #302E2C is an intentional hairline, well below even the 3:1 " +
-      "non-text bar. #8C8580 reaches 3:1 on all three surfaces if visible panel edges are wanted.",
+      "non-text bar. #9C948C reaches 3:1 on all three surfaces if visible panel edges are wanted.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL",
-    ratio: 1.28,
+    ratio: 1.12,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
   {
     theme: "dark",
     token: "BORDER",
     against: "PANEL_ALT",
-    ratio: 1.1,
+    ratio: 1.01,
     reason: "Preserved default: see the CANVAS waiver for BORDER.",
   },
 ];

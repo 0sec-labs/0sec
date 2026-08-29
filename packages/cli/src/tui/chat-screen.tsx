@@ -4320,6 +4320,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             width="100%"
             flexGrow={1}
             minHeight={0}
+            backgroundColor={PANEL}
             stickyScroll
             stickyStart="bottom"
           >
@@ -4386,7 +4387,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         paddingX={compact ? 1 : 2}
         paddingY={1}
       >
-        <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} stickyScroll stickyStart="bottom">
+        <scrollbox ref={transcriptRef} focusable={false} width="100%" flexGrow={1} minHeight={0} backgroundColor={PANEL} stickyScroll stickyStart="bottom">
           <box flexDirection="column" width="100%">
             {planTranscript(entries, entryDisplay.transcriptDetail, expandedTurns).map((item) => {
               if (item.type === "fold") {
