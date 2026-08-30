@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { McpHost } from "./mcp-host.js";
+import { McpHost, parseMcpConfig } from "./mcp-host.js";
 import { ToolExecutor } from "./tools.js";
 import type { ToolContext } from "./types.js";
 
@@ -87,5 +87,37 @@ describe("McpHost (in-memory e2e)", () => {
 
     await host.closeAll();
     await server.close();
+  });
+});
+
+describe("parseMcpConfig", () => {
+  it("parses a valid server array", () => {
+    const cfg = parseMcpConfig(JSON.stringify([{ id: "gh", command: "npx", args: ["-y", "srv"] }]));
+    expect(cfg).toEqual([{ id: "gh", command: "npx", args: ["-y", "srv"] }]);
+  });
+
+  it("is fail-soft on bad JSON, non-array, and bad entries", () => {
+    expect(parseMcpConfig(undefined)).toEqual([]);
+    expect(parseMcpConfig("")).toEqual([]);
+    expect(parseMcpConfig("{not json")).toEqual([]);
+    expect(parseMcpConfig(JSON.stringify({ id: "x" }))).toEqual([]);
+    // missing command, unsafe id, non-object → all dropped; the good one survives.
+    const cfg = parseMcpConfig(
+      JSON.stringify([
+        { id: "ok", command: "run" },
+        { id: "nocmd" },
+        { id: "../evil", command: "x" },
+        "garbage",
+      ]),
+    );
+    expect(cfg).toEqual([{ id: "ok", command: "run" }]);
+  });
+
+  it("keeps only string args/env values", () => {
+    const cfg = parseMcpConfig(
+      JSON.stringify([{ id: "s", command: "c", args: ["a", 1, "b"], env: { A: "1", B: 2 } }]),
+    );
+    expect(cfg[0]!.args).toEqual(["a", "b"]);
+    expect(cfg[0]!.env).toEqual({ A: "1" });
   });
 });

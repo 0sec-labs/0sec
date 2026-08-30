@@ -138,3 +138,61 @@ export class McpHost {
     await Promise.allSettled(clients.map((s) => s.client.close()));
   }
 }
+
+/**
+ * Parse an MCP server config blob (e.g. the `0SEC_MCP` env var) — a JSON array of
+ * `{id, command, args?, env?, cwd?}` — into validated stdio configs. Total and
+ * fail-soft: malformed JSON, a non-array, or a bad entry yields fewer (or zero)
+ * servers rather than throwing, so a typo never takes a console down.
+ */
+export function parseMcpConfig(raw: string | undefined): McpStdioServerConfig[] {
+  if (!raw || !raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: McpStdioServerConfig[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (typeof o.id !== "string" || !isSafeMcpServerId(o.id)) continue;
+    if (typeof o.command !== "string" || o.command.trim().length === 0) continue;
+    const args = Array.isArray(o.args) ? o.args.filter((a): a is string => typeof a === "string") : undefined;
+    const env =
+      o.env && typeof o.env === "object" && !Array.isArray(o.env)
+        ? (Object.fromEntries(
+            Object.entries(o.env as Record<string, unknown>).filter(([, v]) => typeof v === "string"),
+          ) as Record<string, string>)
+        : undefined;
+    const cwd = typeof o.cwd === "string" ? o.cwd : undefined;
+    out.push({
+      id: o.id,
+      command: o.command,
+      ...(args && args.length > 0 ? { args } : {}),
+      ...(env && Object.keys(env).length > 0 ? { env } : {}),
+      ...(cwd ? { cwd } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * Build a host and connect the given stdio servers, fail-soft: a server that
+ * fails to spawn/handshake is skipped, not fatal. Returns the host only if at
+ * least one server connected (else undefined, so a caller can omit `mcpHost`).
+ */
+export async function connectMcpServers(configs: readonly McpStdioServerConfig[]): Promise<McpHost | undefined> {
+  if (configs.length === 0) return undefined;
+  const host = new McpHost();
+  for (const cfg of configs) {
+    try {
+      await host.connectStdio(cfg);
+    } catch {
+      // Skip a server that won't connect; the rest still load.
+    }
+  }
+  return host.serverIds().length > 0 ? host : undefined;
+}

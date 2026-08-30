@@ -493,12 +493,22 @@ export type {
 // kernel/FreeBSD/Chromium archetype packs, mapped straight to FinderLens[] for
 // the seedless finder surfaces (`deep-review` / `hunt`). See appsec-catalog.ts.
 export {
+  activeAppsecLensRegistryPath,
+  appsecArchetypeDigest,
   appsecArchetypesPath,
+  appsecLensLedgerEntryDigest,
+  appsecUserArchetypesPath,
   loadAppsecArchetypes,
   appsecArchetypeToFinderLens,
   loadAppsecFinderLenses,
 } from "./stages/appsec-catalog.js";
-export type { AppsecRoute, AppsecArchetype, RawAppsecArchetype } from "./stages/appsec-catalog.js";
+export type {
+  AppsecLensLedgerEntry,
+  AppsecLensRegistry,
+  AppsecRoute,
+  AppsecArchetype,
+  RawAppsecArchetype,
+} from "./stages/appsec-catalog.js";
 // Self-improving lens loop — miss ─▶ synthesize ─▶ bench-validate ─▶ register.
 // Turns a confirmed finder MISS into a new, validated, registered appsec lens.
 // Fail-closed; adds LENSES, never confirms FINDINGS. See stages/lens-synthesis/.
@@ -519,6 +529,8 @@ export {
   makeFinderLensProbe,
   registerArchetype,
   buildRegistryEntry,
+  inspectLensRegistry,
+  retireArchetype,
 } from "./stages/lens-synthesis/index.js";
 export type {
   LensCandidate,
@@ -543,6 +555,8 @@ export type {
   FinderLensProbeOptions,
   ValidateOptions,
   RegisterOutcome,
+  LensRegistryStatus,
+  RetireOutcome,
 } from "./stages/lens-synthesis/index.js";
 export {
   checkNovelty,
@@ -945,6 +959,7 @@ export type { ParseSeedFindingsOptions } from "./seed-findings.js";
 
 // Agent system
 export { runAgentLoop, runNativeAgentLoop, ToolExecutor, getToolsForRole, TOOL_DEFINITIONS, features, estimateCost } from "./agent/index.js";
+export { McpHost, parseMcpConfig, connectMcpServers, type McpStdioServerConfig } from "./agent/mcp-host.js";
 export { ToolHealthTracker } from "./agent/index.js";
 export type {
   ToolHealthCategory,

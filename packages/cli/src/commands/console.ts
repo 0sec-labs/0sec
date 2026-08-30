@@ -7,6 +7,8 @@ import {
   createConsoleRuntime,
   createConsoleSession,
   loadScope,
+  parseMcpConfig,
+  connectMcpServers,
 } from "@0sec/core";
 import type {
   ConsoleAutonomyMode,
@@ -25,10 +27,18 @@ import {
   processPresentationOutput,
   type ProcessPresentationOutput,
 } from "../presentation/process-output.js";
+import {
+  buildFindingChatPrompt,
+  loadFindingFocus,
+  resolveFindingChatIntent,
+} from "../finding-focus.js";
 
 interface ConsoleOptions {
   target?: string;
   scope?: string;
+  finding?: string;
+  findingIntent?: string;
+  dbPath?: string;
   model?: string;
   role?: string;
   mode?: string;
@@ -126,6 +136,9 @@ export function registerConsoleCommand(program: Command): void {
     )
     .option("--target <url>", "Engagement target the tools operate against (optional; can be named in-chat)")
     .option("--scope <file>", "Initial authorization scope; required for the Node fallback (optional otherwise)")
+    .option("--finding <id>", "Focus the chat on one persisted finding")
+    .option("--finding-intent <intent>", "Finding workflow: investigate, verify, or draft_fix")
+    .option("--db-path <path>", "Database containing --finding")
     .option("-m, --model <id>", "Override the LLM model id (else provider default)")
     .option("--role <role>", "Tool set to expose: audit|review|discovery|attack|verify (default audit = every tool)")
     .option("--mode <mode>", "Autonomy mode to start in: standard|recon|copilot|yolo (default standard). YOLO drops per-action prompts but stays target/scope-anchored; cycle live with Shift+Tab.")
@@ -188,6 +201,27 @@ export function registerConsoleCommand(program: Command): void {
         process.exitCode = 2;
         return;
       }
+      let findingPrompt: string | undefined;
+      let findingTarget: string | undefined;
+      if (opts.finding) {
+        try {
+          const focus = loadFindingFocus(opts.finding, { dbPath: opts.dbPath });
+          findingPrompt = buildFindingChatPrompt(
+            focus,
+            resolveFindingChatIntent(opts.findingIntent),
+          );
+          findingTarget = focus.target;
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exitCode = 2;
+          return;
+        }
+      } else if (opts.findingIntent !== undefined || opts.dbPath !== undefined) {
+        console.error(chalk.red("--finding-intent and --db-path require --finding <id>."));
+        process.exitCode = 2;
+        return;
+      }
+
 
       // Resolve a saved console session to resume/continue. `--continue` (and
       // the `0 -c` shortcut) → the single most-recent; `--resume <id>` → that id
@@ -227,6 +261,8 @@ export function registerConsoleCommand(program: Command): void {
         }
       }
 
+      const focusedTarget = resumedTarget ?? opts.target ?? findingTarget;
+
       // Non-interactive one-shot: run a single prompt headless and exit. Handled
       // BEFORE the TUI/readline branches — `-p` is a scriptable query, not a
       // session — and reuses the same session build + `runTurn` the readline
@@ -246,7 +282,7 @@ export function registerConsoleCommand(program: Command): void {
           const runtime = createConsoleRuntime({ model: resumedModel ?? opts.model });
           printSession = createConsoleSession({
             runtime,
-            target: resumedTarget ?? opts.target,
+            target: focusedTarget,
             role,
             maxToolIterations,
             allowScanners: opts.allowScanners,
@@ -264,7 +300,10 @@ export function registerConsoleCommand(program: Command): void {
           return;
         }
         try {
-          await runTurn(printSession, promptText, processPresentationOutput);
+          const request = findingPrompt
+            ? `${findingPrompt}\n\nOperator request:\n${promptText}`
+            : promptText;
+          await runTurn(printSession, request, processPresentationOutput);
           process.stdout.write("\n");
         } catch (err) {
           console.error(chalk.red(`\nturn failed: ${err instanceof Error ? err.message : String(err)}`));
@@ -279,10 +318,9 @@ export function registerConsoleCommand(program: Command): void {
         const { showOpenTuiConsole, showOpenTuiResume } = await import("../tui/run.js");
         type TuiOpts = NonNullable<Parameters<typeof showOpenTuiConsole>[0]>;
         const baseOptions: TuiOpts = {
-          target: resumedTarget ?? opts.target,
-          scope,
-          model: resumedModel ?? opts.model,
+          target: focusedTarget,
           role,
+          initialPrompt: findingPrompt,
           maxToolIterations,
           allowScanners: opts.allowScanners,
           autonomyMode,
@@ -308,14 +346,23 @@ export function registerConsoleCommand(program: Command): void {
       let session: ConsoleSession;
       try {
         const runtime = createConsoleRuntime({ model: opts.model });
+        // Attach any configured MCP servers (0SEC_MCP = JSON array of
+        // {id,command,args?}). Fail-soft: a bad config or a server that won't
+        // connect degrades to no MCP tools, never blocks the console. The
+        // session closes the host on cleanup (rl close).
+        const mcpHost = await connectMcpServers(parseMcpConfig(process.env["0SEC_MCP"]));
+        if (mcpHost) {
+          console.log(chalk.dim(`MCP: connected ${mcpHost.serverIds().length} server(s) — ${mcpHost.registeredTools().length} tool(s)`));
+        }
         session = createConsoleSession({
           runtime,
-          target: resumedTarget ?? opts.target,
+          target: focusedTarget,
           role,
           maxToolIterations,
           allowScanners: opts.allowScanners,
           scope,
           autonomyMode,
+          ...(mcpHost ? { mcpHost } : {}),
           // A resumed session seeds the model's history so it continues where it
           // left off (the readline fallback can't repaint the old transcript, but
           // the conversation context carries over).
@@ -336,7 +383,11 @@ export function registerConsoleCommand(program: Command): void {
       }
       const presentationOutput = processPresentationOutput;
 
-      printBanner(session, opts.target);
+      printBanner(session, focusedTarget);
+      if (findingPrompt) {
+        await runTurn(session, findingPrompt, presentationOutput);
+      }
+
 
       const rl = createInterface({ input: stdin, output: stdout });
       const prompt = () => rl.setPrompt(chalk.bold.cyan("operator › "));
