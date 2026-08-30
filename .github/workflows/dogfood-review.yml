@@ -103,6 +103,35 @@ jobs:
             echo "::error::0sec could not complete the dogfood review."
             exit 1
           fi
+      # v0.15 release reviewers emitted thread-flow locations without the
+      # physical location GitHub Code Scanning requires. Keep their evidence and
+      # normalize it until every supported release emits compliant SARIF.
+      - name: Normalize dogfood SARIF
+        if: always() && hashFiles('dogfood-review.sarif') != ''
+        run: |
+          node - dogfood-review.sarif <<'NODE'
+          const fs = require("node:fs");
+          const path = process.argv[2];
+          const sarif = JSON.parse(fs.readFileSync(path, "utf8"));
+          for (const run of sarif.runs ?? []) {
+            for (const result of run.results ?? []) {
+              const physicalLocation = result.locations?.[0]?.physicalLocation;
+              if (!physicalLocation) {
+                delete result.codeFlows;
+                continue;
+              }
+              for (const flow of result.codeFlows ?? []) {
+                for (const thread of flow.threadFlows ?? []) {
+                  for (const entry of thread.locations ?? []) {
+                    entry.location ??= {};
+                    entry.location.physicalLocation ??= physicalLocation;
+                  }
+                }
+              }
+            }
+          }
+          fs.writeFileSync(path, JSON.stringify(sarif));
+          NODE
       - name: Upload dogfood SARIF
         if: always() && hashFiles('dogfood-review.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
