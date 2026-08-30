@@ -40,10 +40,10 @@ jobs:
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # Node 22, not 24: tree-sitter@0.21.1's native addon fails to compile
           # against Node 24's V8 (missing cppgc header) on linux-arm64, which has
