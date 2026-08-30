@@ -446,6 +446,8 @@ export interface ChatScreenOptions {
    * transcript. Absent for a fresh chat.
    */
   initialMessages?: NativeMessage[];
+  /** A one-shot finding workflow request submitted after the session is ready. */
+  initialPrompt?: string;
 }
 
 export interface ChatScreenProps {
@@ -700,6 +702,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   }, []);
   useEffect(() => discardStreamPatches, [discardStreamPatches]);
   const [session, setSession] = useState<ConsoleSession | null>(null);
+  const initialPromptRef = useRef(options?.initialPrompt?.trim() || null);
   const presentationEmitterRef = useRef<PresentationEmitter | null>(null);
   if (!presentationEmitterRef.current) {
     presentationEmitterRef.current = createPresentationEmitter();
@@ -2971,6 +2974,13 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
       submitHandle.current = null;
     };
   }, [submitHandle, submitOperatorMessage]);
+  useEffect(() => {
+    const prompt = initialPromptRef.current;
+    if (!prompt || !session) return;
+    initialPromptRef.current = null;
+    submitOperatorMessage(prompt);
+  }, [session, submitOperatorMessage]);
+
 
   // Deliver one parked message per idle transition. One at a time rather than a
   // loop: delivering makes the console busy again, so the NEXT idle drains the
