@@ -44,15 +44,15 @@
  *   - **Centrally disableable.** See {@link submissionBlockedReason} — an
  *     organization can kill egress for every operator with one env var.
  *
- * The one thing on the wire that is not in the preview is whatever default
- * `User-Agent` the Node HTTP stack attaches; we set no headers of our own
- * beyond `content-type`, and deliberately do not encode OS, arch, or version
- * detail into a header where the preview would not show it.
+ * `User-Agent` the Node HTTP stack attaches. Cloud-authenticated submissions
+ * also carry a Bearer token; its header name is previewed but its value is
+ * deliberately redacted so credentials never enter the transcript.
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { loadCloudCredentials } from "@0sec/core";
 
 export interface FeedbackEntry {
   message: string;
@@ -156,7 +156,7 @@ export interface SubmitPreview {
   url: string;
   /** The exact bytes of the request body. Show verbatim; do not summarize. */
   body: string;
-  /** The exact headers we set. Show verbatim alongside the body. */
+  /** Headers shown to the operator; authentication values are redacted. */
   headers: Record<string, string>;
   warnings: string[];
 }
@@ -171,18 +171,71 @@ export interface SubmitResult {
 }
 
 /**
- * Default endpoint. Intentionally empty.
- *
- * TODO: confirm production endpoint. Guessing a URL here would be worse than
- * having none: an unconfirmed host either black-holes operator feedback or,
- * if someone else registers it, receives engagement data. Until a real
- * endpoint is confirmed, submission reports `no-endpoint` and the local file
- * remains the whole feature.
+ * Explicit default endpoint. Intentionally empty: an endpoint configured by an
+ * operator remains an override, while authenticated 0cloud delivery is derived
+ * only from real CLI credentials below.
  */
 export const DEFAULT_FEEDBACK_URL = "";
 
 /** Env var holding the submission endpoint. */
 export const FEEDBACK_URL_ENV = "0SEC_FEEDBACK_URL";
+
+/** The authenticated 0cloud receiver behind the dashboard feedback channel. */
+const CLOUD_FEEDBACK_PATH = "/api/cli-feedback";
+
+export interface FeedbackResolveOptions {
+  /**
+   * Test seam for the local `0sec auth login` credential store. An explicit
+   * 0SEC_FEEDBACK_URL always wins and never consumes this credential.
+   */
+  cloudCredentials?: () => { host: string; token: string } | null;
+}
+
+interface FeedbackTarget {
+  url: string;
+  authorization?: string;
+}
+
+function defaultCloudCredentials(env: FeedbackEnv): { host: string; token: string } | null {
+  try {
+    const credentials = loadCloudCredentials({
+      env: env as NodeJS.ProcessEnv,
+      warn: () => {},
+    });
+    return { host: credentials.host, token: credentials.token };
+  } catch {
+    return null;
+  }
+}
+
+function cloudFeedbackUrl(host: string): string | null {
+  try {
+    const url = new URL(host);
+    // cloud.0sec.ai is a legacy redirect. Redirecting a POST can change its
+    // method, so post to the canonical dashboard host directly.
+    if (url.hostname === "cloud.0sec.ai") url.hostname = "cloud.0.security";
+    url.pathname = CLOUD_FEEDBACK_PATH;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function resolveFeedbackTarget(
+  env: FeedbackEnv = process.env,
+  options: FeedbackResolveOptions = {},
+): FeedbackTarget | null {
+  const configured = env[FEEDBACK_URL_ENV]?.trim();
+  if (configured) return { url: configured };
+  if (DEFAULT_FEEDBACK_URL) return { url: DEFAULT_FEEDBACK_URL };
+
+  const credentials = (options.cloudCredentials ?? (() => defaultCloudCredentials(env)))();
+  if (!credentials) return null;
+  const url = cloudFeedbackUrl(credentials.host);
+  return url ? { url, authorization: `Bearer ${credentials.token}` } : null;
+}
 
 /**
  * Env vars that hard-disable submission.
@@ -221,32 +274,37 @@ function isOptOutSet(value: string | undefined): boolean {
 }
 
 /**
- * The configured endpoint, or null when none is set. Does not validate the
- * scheme — {@link submissionBlockedReason} owns that, so the UI can tell
- * "unset" apart from "set to something we refuse to use".
+ * The configured endpoint, or the authenticated dashboard receiver associated
+ * with `0sec auth login`. Scheme validation stays in
+ * {@link submissionBlockedReason}, so callers can distinguish absent from
+ * refused configuration.
  */
-export function feedbackEndpoint(env: FeedbackEnv = process.env): string | null {
-  const configured = env[FEEDBACK_URL_ENV]?.trim();
-  const url = configured && configured.length > 0 ? configured : DEFAULT_FEEDBACK_URL;
-  return url.length > 0 ? url : null;
+export function feedbackEndpoint(
+  env: FeedbackEnv = process.env,
+  options: FeedbackResolveOptions = {},
+): string | null {
+  return resolveFeedbackTarget(env, options)?.url ?? null;
 }
 
 /**
  * Why submission cannot happen, or null if it can. Lets the UI grey out the
  * send affordance with a real reason instead of discovering it post-hoc.
  */
-export function submissionBlockedReason(env: FeedbackEnv = process.env): SubmitSkipReason | null {
+export function submissionBlockedReason(
+  env: FeedbackEnv = process.env,
+  options: FeedbackResolveOptions = {},
+): SubmitSkipReason | null {
   // Opt-out is checked first and wins over everything, including an
   // explicitly configured endpoint. That precedence is the point: the org
   // policy must beat the individual operator's request.
   for (const name of FEEDBACK_OPT_OUT_ENV) {
     if (isOptOutSet(env[name])) return "opt-out";
   }
-  const url = feedbackEndpoint(env);
-  if (url === null) return "no-endpoint";
+  const target = resolveFeedbackTarget(env, options);
+  if (target === null) return "no-endpoint";
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new URL(target.url);
   } catch {
     return "insecure-endpoint";
   }
@@ -342,34 +400,35 @@ function serializePayload(payload: FeedbackPayload): string {
   return JSON.stringify(body);
 }
 
-const REQUEST_HEADERS: Readonly<Record<string, string>> = Object.freeze({
-  "content-type": "application/json",
-});
+function requestHeaders(target: FeedbackTarget, redactAuthorization = false): Record<string, string> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (target.authorization) {
+    headers.authorization = redactAuthorization ? "Bearer <redacted>" : target.authorization;
+  }
+  return headers;
+}
 
 /**
- * The exact request that {@link submitFeedback} would make, or null when
- * {@link submissionBlockedReason} says it would make none.
- *
- * Render `body` and `headers` verbatim. Summarizing them defeats the purpose:
- * the operator is looking for a client hostname they did not mean to include,
- * and a summary is precisely where that hostname hides.
+ * The exact body and safe-to-display headers {@link submitFeedback} would use,
+ * or null when {@link submissionBlockedReason} says it would make none.
  */
 export function buildSubmitPreview(
   payload: FeedbackPayload,
   env: FeedbackEnv = process.env,
+  options: FeedbackResolveOptions = {},
 ): SubmitPreview | null {
-  if (submissionBlockedReason(env) !== null) return null;
-  const url = feedbackEndpoint(env);
-  if (url === null) return null;
+  if (submissionBlockedReason(env, options) !== null) return null;
+  const target = resolveFeedbackTarget(env, options);
+  if (target === null) return null;
   return {
-    url,
+    url: target.url,
     body: serializePayload(payload),
-    headers: { ...REQUEST_HEADERS },
+    headers: requestHeaders(target, true),
     warnings: scanForSecrets(payload.message),
   };
 }
 
-export interface SubmitOptions {
+export interface SubmitOptions extends FeedbackResolveOptions {
   /** Injected transport, matching the repo's `fetchImpl` convention. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -388,11 +447,11 @@ export async function submitFeedback(
   env: FeedbackEnv = process.env,
   opts: SubmitOptions = {},
 ): Promise<SubmitResult> {
-  const blocked = submissionBlockedReason(env);
+  const blocked = submissionBlockedReason(env, opts);
   if (blocked !== null) return { ok: false, skipped: blocked, error: describeSkip(blocked) };
 
-  const url = feedbackEndpoint(env);
-  if (url === null) return { ok: false, skipped: "no-endpoint", error: describeSkip("no-endpoint") };
+  const target = resolveFeedbackTarget(env, opts);
+  if (target === null) return { ok: false, skipped: "no-endpoint", error: describeSkip("no-endpoint") };
 
   const body = serializePayload(payload);
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
@@ -419,9 +478,9 @@ export async function submitFeedback(
 
   const attempt = (async (): Promise<SubmitResult> => {
     try {
-      const response = await doFetch(url, {
+      const response = await doFetch(target.url, {
         method: "POST",
-        headers: { ...REQUEST_HEADERS },
+        headers: requestHeaders(target),
         body,
         signal: controller.signal,
       });

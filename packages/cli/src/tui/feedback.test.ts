@@ -117,6 +117,13 @@ describe("parseFeedbackCommand", () => {
 // ---------------------------------------------------------------------------
 
 const HTTPS_ENV = { "0SEC_FEEDBACK_URL": "https://feedback.example.test/v1/feedback" };
+const NO_CLOUD = { cloudCredentials: () => null };
+const CLOUD_CREDENTIALS = {
+  cloudCredentials: () => ({
+    host: "https://cloud.0sec.ai",
+    token: "cloud-feedback-token",
+  }),
+};
 
 function payload(overrides: Partial<FeedbackPayload> = {}): FeedbackPayload {
   return { message: "the picker is great", timestamp: "2026-08-22T10:00:00.000Z", ...overrides };
@@ -142,7 +149,7 @@ describe("feedbackEndpoint", () => {
   });
 
   it("returns null when nothing is configured", () => {
-    expect(feedbackEndpoint({})).toBeNull();
+    expect(feedbackEndpoint({}, NO_CLOUD)).toBeNull();
   });
 
   it("does not ship a guessed production URL", () => {
@@ -152,7 +159,11 @@ describe("feedbackEndpoint", () => {
   });
 
   it("ignores a blank or whitespace-only setting", () => {
-    expect(feedbackEndpoint({ "0SEC_FEEDBACK_URL": "   " })).toBeNull();
+    expect(feedbackEndpoint({ "0SEC_FEEDBACK_URL": "   " }, NO_CLOUD)).toBeNull();
+  });
+
+  it("derives the canonical authenticated cloud receiver from CLI credentials", () => {
+    expect(feedbackEndpoint({}, CLOUD_CREDENTIALS)).toBe("https://cloud.0.security/api/cli-feedback");
   });
 });
 
@@ -162,7 +173,7 @@ describe("submissionBlockedReason", () => {
   });
 
   it("reports no-endpoint when unset", () => {
-    expect(submissionBlockedReason({})).toBe("no-endpoint");
+    expect(submissionBlockedReason({}, NO_CLOUD)).toBe("no-endpoint");
   });
 
   it("refuses plaintext http", () => {
@@ -251,13 +262,29 @@ describe("buildSubmitPreview", () => {
     );
   });
 
+  it("redacts cloud authorization in the preview but sends it on the wire", async () => {
+    const preview = buildSubmitPreview(payload(), {}, CLOUD_CREDENTIALS)!;
+    expect(preview.url).toBe("https://cloud.0.security/api/cli-feedback");
+    expect(preview.headers).toEqual({
+      "content-type": "application/json",
+      authorization: "Bearer <redacted>",
+    });
+
+    const { fn, calls } = stubFetch(() => okResponse());
+    await submitFeedback(payload(), {}, { fetchImpl: fn, ...CLOUD_CREDENTIALS });
+    expect(calls[0]?.init.headers).toEqual({
+      "content-type": "application/json",
+      authorization: "Bearer cloud-feedback-token",
+    });
+  });
+
   it("surfaces credential warnings so the UI can show them before the confirm", () => {
     const preview = buildSubmitPreview(payload({ message: "broke on sk-abcdefghijklmnop123456" }), HTTPS_ENV);
     expect(preview!.warnings.length).toBeGreaterThan(0);
   });
 
   it("is null when submission is blocked", () => {
-    expect(buildSubmitPreview(payload(), {})).toBeNull();
+    expect(buildSubmitPreview(payload(), {}, NO_CLOUD)).toBeNull();
     expect(buildSubmitPreview(payload(), { ...HTTPS_ENV, "0SEC_OFFLINE": "1" })).toBeNull();
     expect(buildSubmitPreview(payload(), { "0SEC_FEEDBACK_URL": "http://x.test" })).toBeNull();
   });

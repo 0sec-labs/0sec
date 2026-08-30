@@ -173,23 +173,27 @@ the whole codebase on every PR:
 ## Feedback delivery
 
 `/feedback <message>` is local-only and appends to
-`~/.0sec/feedback.md`. To submit one message through an approved feedback
-relay, configure an HTTPS endpoint explicitly:
+`~/.0sec/feedback.md`. After `0sec auth login`, staged feedback defaults to the
+authenticated `cloud.0.security/api/cli-feedback` receiver; it attributes the
+message to the signed-in organization and delivers through the existing
+team-feedback channel. Re-authenticate after upgrading if an older CLI token
+lacks the `feedback:submit` scope.
+
+Use `/feedback submit <message>` to save locally and inspect the exact endpoint,
+JSON body, headers, and secret-shaped-content warnings. Only a second
+`/feedback send` transmits that exact staged payload; `/feedback cancel` drops
+the pending network action while retaining the local file.
+
+`0SEC_FEEDBACK_URL` overrides the cloud receiver for a self-hosted HTTPS relay:
 
 ```bash
 export 0SEC_FEEDBACK_URL="https://feedback.example.org/v1/feedback"
 ```
 
-Then use `/feedback submit <message>` to save locally and inspect the exact
-endpoint, JSON body, headers, and secret-shaped-content warnings. Only a second
-`/feedback send` transmits that exact staged payload; `/feedback cancel` drops
-the pending network action while retaining the local file.
-
-There is no built-in endpoint. Use an authenticated relay that owns any email or
-Slack integration; do **not** place an incoming Slack webhook URL directly in
-the CLI environment, because it is a bearer secret and does not accept 0sec's
-feedback wire schema. `0SEC_OFFLINE`, `0SEC_NO_TELEMETRY`, and `DO_NOT_TRACK`
-block every submission before any connection is made.
+Do **not** place an incoming Slack webhook URL directly in the CLI environment:
+it is a bearer secret and does not accept 0sec's feedback wire schema.
+`0SEC_OFFLINE`, `0SEC_NO_TELEMETRY`, and `DO_NOT_TRACK` block every submission
+before any connection is made.
 
 ## State directory
 
