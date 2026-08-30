@@ -72,7 +72,15 @@ import {
   type SelectorItem,
   type SelectorState,
 } from "./selector.js";
-import { appendFeedback } from "./feedback.js";
+import {
+  appendFeedback,
+  buildSubmitPreview,
+  submitFeedback,
+  submissionBlockedReason,
+  describeSkip,
+  parseFeedbackCommand,
+  type FeedbackPayload,
+} from "./feedback.js";
 import {
   formatToolArgs,
   formatToolResult,
@@ -260,6 +268,7 @@ import {
   shortAgentName,
   type AgentRowView,
 } from "./chat/AgentRow.js";
+import { agentAccentFor } from "./agent-color.js";
 
 export type ChatDestination = "launcher" | "ops" | "history" | "findings" | "doctor" | "replay" | "settings" | "models" | "market" | "usage" | "connect" | "finding" | "resume";
 
@@ -953,6 +962,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
   requestExitRef.current = requestExit;
   /** Latest plan snapshot from the `update_todos` tool (the `todos` bus event). */
   const [todos, setTodos] = useState<TodosEventPayload | null>(null);
+  /** Feedback staged for /feedback send (submitPreview is null when blocked). */
+  const [pendingFeedback, setPendingFeedback] = useState<{
+    payload: FeedbackPayload;
+    preview: { url: string; body: string; headers: Record<string, string>; warnings: string[] } | null;
+  } | null>(null);
   // The OMP-style "what am I working on" objective for the bottom-bar pill.
   // Empty ("") hides the pill; the session-objective service replaces it in
   // place (heuristic first, model-refined when/if it lands).
@@ -2054,18 +2068,149 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         return true;
       }
       case "feedback": {
-        const message = args.trim();
-        if (!message) {
+        const feedbackCommand = parseFeedbackCommand(args);
+        if (feedbackCommand.kind === "usage") {
           appendEntry({
             kind: "notice",
-            text: "usage: /feedback <message>",
-            detail: "Feedback is written to a local file. Nothing is transmitted.",
+            text: "usage: /feedback <message> | /feedback submit <message> | /feedback send | /feedback cancel",
+            detail: "Feedback is written to a local file. /feedback submit persists locally and shows a preview; /feedback send transmits it; /feedback cancel clears the pending message.",
             turn: turn.current,
           });
           return true;
         }
+
+        if (feedbackCommand.kind === "submit") {
+          const message = feedbackCommand.message;
+          if (!message) {
+            appendEntry({
+              kind: "notice",
+              text: "usage: /feedback submit <message>",
+              detail: "Write feedback locally and show a preview before sending.",
+              turn: turn.current,
+            });
+            return true;
+          }
+
+          const payload: FeedbackPayload = {
+            message,
+            timestamp: new Date().toISOString(),
+            version: VERSION,
+            model: modelId ?? undefined,
+            mode: modeLabel(mode),
+          };
+
+          // Persist locally first — always, regardless of submission state
+          const written = appendFeedback(payload);
+          if (!written.ok) {
+            appendEntry({
+              kind: "error",
+              text: "could not write feedback",
+              detail: written.error,
+              turn: turn.current,
+            });
+            return true;
+          }
+
+          const preview = buildSubmitPreview(payload);
+          setPendingFeedback({ payload, preview });
+
+          if (preview !== null) {
+            const warningBlock =
+              preview.warnings.length > 0
+                ? `\n\nWarnings:\n${preview.warnings.map((w) => `  • ${w}`).join("\n")}`
+                : "";
+
+            appendEntry({
+              kind: "notice",
+              text: "feedback staged for sending",
+              detail:
+                `Endpoint: ${preview.url}\n` +
+                `Headers: ${JSON.stringify(preview.headers)}\n` +
+                `Body: ${preview.body}${warningBlock}\n\n` +
+                `Run /feedback send to transmit, or /feedback cancel to discard.`,
+              turn: turn.current,
+            });
+          } else {
+            const blocked = submissionBlockedReason();
+            appendEntry({
+              kind: "notice",
+              text: "feedback saved locally, submission unavailable",
+              detail: `${blocked ? describeSkip(blocked) : "Submission is not available."}\nSaved to ${written.path}. Use /feedback cancel to clear.`,
+              turn: turn.current,
+            });
+          }
+          return true;
+        }
+
+        if (firstWord === "send") {
+          if (!pendingFeedback) {
+            appendEntry({
+              kind: "notice",
+              text: "no feedback to send",
+              detail: "Use /feedback submit <message> first.",
+              turn: turn.current,
+            });
+            return true;
+          }
+
+          if (pendingFeedback.preview === null) {
+            appendEntry({
+              kind: "notice",
+              text: "cannot send feedback",
+              detail: "Submission is blocked; the message was still saved locally. Use /feedback cancel to clear.",
+              turn: turn.current,
+            });
+            return true;
+          }
+
+          // Fire-and-forget: show immediate notice, append result asynchronously
+          const preview = pendingFeedback.preview;
+          const payload = pendingFeedback.payload;
+          setPendingFeedback(null);
+
+          appendEntry({
+            kind: "notice",
+            text: "sending feedback…",
+            detail: `Transmitting to ${preview.url}.`,
+            turn: turn.current,
+          });
+
+          submitFeedback(payload).then((result) => {
+            appendEntry({
+              kind: result.ok ? "notice" : "error",
+              text: result.ok ? "feedback sent" : "feedback not sent",
+              detail: result.ok
+                ? `Sent to ${preview.url}. Status: ${result.status}.`
+                : (result.error ?? "unknown error"),
+              turn: turn.current,
+            });
+          });
+
+          return true;
+        }
+
+        if (firstWord === "cancel") {
+          if (!pendingFeedback) {
+            appendEntry({
+              kind: "notice",
+              text: "no pending feedback to cancel",
+              turn: turn.current,
+            });
+            return true;
+          }
+          setPendingFeedback(null);
+          appendEntry({
+            kind: "notice",
+            text: "pending feedback cancelled",
+            detail: "The local copy remains saved; nothing was transmitted.",
+            turn: turn.current,
+          });
+          return true;
+        }
+
+        // Plain /feedback <message> — local-only (existing behaviour)
         const written = appendFeedback({
-          message,
+          message: raw,
           timestamp: new Date().toISOString(),
           version: VERSION,
           model: modelId ?? undefined,
@@ -2398,9 +2543,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
     onExit,
     onGoBack,
     onNavigate,
+    pendingFeedback,
     scopeLabel,
     scopeRules,
     session,
+    setPendingFeedback,
     target,
   ]);
 
@@ -4037,7 +4184,7 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         // label muted), so the down-into-agents hint no longer costs its own
         // row. Shown only when idle (not already navigating) and hints are on,
         // and only when the pair actually fits beside the title.
-        const subTitle = `ACTIVE SUBAGENTS · ${subagentEntries.length}`;
+        const subTitle = `AGENTS · ${subagentEntries.length}`;
         const showSelectHint =
           settings.showComposerHints && agentNavIndex < 0 && !focused;
         const selectPairs: KeyHint[] = [{ key: "↓", label: "select" }];
@@ -4062,10 +4209,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
         // selected row wearing the highlight bar + accent marker.
         const view: AgentRowView = {
           id: sa.agent_id,
-          name: shortAgentName(sa.agent_id),
+          name: sa.name ?? shortAgentName(sa.agent_id),
           task: sa.task ?? "",
           status: sa.status,
           meta: sa.turns !== undefined ? `${sa.turns}/${sa.max_turns}` : undefined,
+          accent: agentAccentFor(sa.agent_id, theme.CANVAS),
         };
         const isLast = index === subagentVisible.length - 1 && subagentOverflowRow === 0;
         return (
@@ -4157,10 +4305,11 @@ export function ChatScreen({ options, onGoBack, onNavigate, onExit, submitHandle
             if (typeof rec.findings === "number") meta.push(`${rec.findings}f`);
             const view: AgentRowView = {
               id: rec.agentId,
-              name: shortAgentName(rec.agentId),
+              name: rec.name ?? shortAgentName(rec.agentId),
               task: rec.task || rec.agentId,
               status: rec.status,
               meta: meta.length > 0 ? meta.join(" · ") : undefined,
+              accent: agentAccentFor(rec.agentId, theme.CANVAS),
             };
             return (
               <AgentSidebarRow

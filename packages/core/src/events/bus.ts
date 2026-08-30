@@ -471,6 +471,13 @@ export interface PhaseCompletedPayload {
 export interface SubagentLifecyclePayload {
   /** Opaque instance id for this sub-agent, unique within the parent scan. */
   agent_id: string;
+  /**
+   * Human-friendly `AdjectiveNoun` name for this agent (e.g. `SilentScout`),
+   * stable for the life of the agent and unique within the fleet. Display only —
+   * addressing still uses `agent_id`. Absent on older emitters; the UI falls back
+   * to a shortened `agent_id`.
+   */
+  name?: string;
   /** Scan id of the parent that called spawn_agent. */
   parent_scan_id: string;
   status: "queued" | "running" | "completed" | "failed";
@@ -586,6 +593,39 @@ export interface SubagentMessagePayload {
   assistant?: string;
   /** Tools the child ran this turn (bounded results). Absent when none. */
   tools?: SubagentToolMessage[];
+  [k: string]: unknown;
+}
+
+/**
+ * ONE inter-agent message crossing the hub — the signal an IRC-style chat view
+ * renders. Emitted the moment a message is SENT (the single, complete point that
+ * knows sender, recipient and body), so the operator can watch agents coordinate
+ * live instead of the traffic being invisible in the mailbox spool.
+ *
+ * This is OBSERVABILITY, not the channel itself: delivery still happens through
+ * the mailbox (`hub/mailbox.ts`), and a listed peer here is granted nothing —
+ * `decideAddressing` has already authorized the send. The body is the same
+ * bounded, control-stripped text the mailbox stores; the UI is responsible for
+ * treating it as untrusted display text (it is authored by another agent).
+ */
+export interface PeerMessagePayload {
+  /** Sender's peer id (e.g. "Main", "Explorer"). */
+  from: string;
+  /** Recipient's peer id, or "all" for a broadcast. */
+  to: string;
+  /** The message body, already bounded + control-stripped at the send site. */
+  body: string;
+  /** Epoch ms the message was sent, for the chat line's timestamp. */
+  ts: number;
+  /**
+   * Which channel this crossed: a child↔child/child↔parent `peer` send, an
+   * `operator` steer from the human, or a `broadcast` (to === "all").
+   */
+  kind: "peer" | "operator" | "broadcast";
+  /** Message id from the mailbox, so a reply/receipt can reference it. */
+  id?: string;
+  /** The id this message replies to, when it is a reply. */
+  reply_to?: string;
   [k: string]: unknown;
 }
 
@@ -717,6 +757,7 @@ export type osecEvent =
   | { type: "subagent_lifecycle"; payload: SubagentLifecyclePayload }
   | { type: "subagent_progress"; payload: SubagentProgressPayload }
   | { type: "subagent_message"; payload: SubagentMessagePayload }
+  | { type: "peer_message"; payload: PeerMessagePayload }
   | { type: "tool_health"; payload: ToolHealthPayload }
   | { type: "todos"; payload: TodosPayload }
   | { type: "session_objective"; payload: SessionObjectivePayload }

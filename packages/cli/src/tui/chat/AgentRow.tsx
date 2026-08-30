@@ -28,6 +28,12 @@ export interface AgentRowView {
   status: string;
   /** Optional right-aligned meta, e.g. "3/8" or "3/8 · 1f". */
   meta?: string;
+  /**
+   * Stable per-agent accent colour (from `agentAccent(id)`), used for the NAME so
+   * the same agent reads in the same hue here and in the inter-agent chat log.
+   * Falls back to the theme ACCENT when absent.
+   */
+  accent?: string;
 }
 
 /**
@@ -83,12 +89,13 @@ export function AgentTreeRow({
   const nameCells = Math.min(view.name.length, Math.max(4, Math.floor(bodyWidth * 0.45)));
   const taskCells = Math.max(0, bodyWidth - nameCells);
   const connector = selected ? "▸ " : isLast ? "└─" : "├─";
+  const nameFg = view.accent ?? ACCENT;
   return (
     <box flexDirection="row" width={width} flexShrink={0} minWidth={0} backgroundColor={bg}>
       <text width={2} flexShrink={0} fg={selected ? ACCENT : MUTED} bg={bg}>{connector}</text>
       <text width={1} flexShrink={0} marginLeft={1} fg={mark.color} bg={bg}>{mark.glyph}</text>
       <box width={nameCells} flexShrink={0} minWidth={0} marginLeft={1} backgroundColor={bg}>
-        <text fg={ACCENT} attributes={TextAttributes.BOLD} bg={bg}>{fitTuiText(view.name, nameCells)}</text>
+        <text fg={nameFg} attributes={TextAttributes.BOLD} bg={bg}>{fitTuiText(view.name, nameCells)}</text>
       </box>
       {taskCells > 0 ? (
         <box width={taskCells} flexShrink={0} minWidth={0} backgroundColor={bg}>
@@ -131,12 +138,13 @@ export function AgentSidebarRow({
   const metaCells = meta.length;
   const nameCells = Math.max(1, width - 2 - (metaCells > 0 ? metaCells + 1 : 0));
   const taskCells = Math.max(1, width - 2);
+  const nameFg = view.accent ?? ACCENT;
   return (
     <box flexDirection="column" width={width} flexShrink={0} minWidth={0} backgroundColor={bg}>
       <box flexDirection="row" width={width} flexShrink={0} minWidth={0}>
         <text width={1} flexShrink={0} fg={selected ? ACCENT : mark.color} bg={bg}>{selected ? "▸" : mark.glyph}</text>
         <box width={nameCells} flexShrink={0} minWidth={0} marginLeft={1} backgroundColor={bg}>
-          <text fg={ACCENT} attributes={TextAttributes.BOLD} bg={bg}>{fitTuiText(view.name, nameCells)}</text>
+          <text fg={nameFg} attributes={TextAttributes.BOLD} bg={bg}>{fitTuiText(view.name, nameCells)}</text>
         </box>
         {metaCells > 0 ? (
           <box width={metaCells} flexShrink={0} minWidth={0} marginLeft={1} backgroundColor={bg}>

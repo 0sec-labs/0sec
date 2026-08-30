@@ -1962,6 +1962,7 @@ export type {
   SubagentLifecyclePayload,
   SubagentMessagePayload,
   SubagentToolMessage,
+  PeerMessagePayload,
   SessionObjectivePayload,
 } from "./events/bus.js";
 export type {

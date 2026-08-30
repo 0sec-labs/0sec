@@ -861,6 +861,8 @@ export interface SubagentActivityEntry {
  */
 export interface HerdSubagentRecord {
   readonly agentId: string;
+  /** Human-friendly AdjectiveNoun name from the lifecycle event (display). */
+  readonly name?: string;
   readonly parentScanId: string;
   readonly task: string;
   readonly status: SubagentStatus;
@@ -947,6 +949,7 @@ export function applySubagentLifecycle(
 
   const record: HerdSubagentRecord = {
     agentId,
+    name: pickString(payload["name"]) ?? prev?.name,
     parentScanId: pickString(payload["parent_scan_id"]) ?? prev?.parentScanId ?? "",
     task,
     status,

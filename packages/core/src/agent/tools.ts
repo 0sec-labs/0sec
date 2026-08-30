@@ -162,6 +162,7 @@ import {
   sendMessage,
   type HubMessage,
 } from "../hub/mailbox.js";
+import { PRIMARY_AGENT_NAME, assignAgentName } from "../hub/name-generator.js";
 import {
   MAX_DRAINS_PER_TURN,
   clampOutboundBody,
@@ -2370,6 +2371,8 @@ type SubagentOutcome =
 /** Shared lifecycle payload base for one subagent (carries its unique id). */
 interface SubagentLifecycleBase {
   agent_id: string;
+  /** Human-friendly AdjectiveNoun name (display); see name-generator.ts. */
+  name: string;
   parent_scan_id: string;
   task: string;
   max_turns: number;
@@ -2664,6 +2667,13 @@ export class ToolExecutor {
    */
   private _msgDrainTurn = -1;
   private _msgDrainCount = 0;
+
+  /**
+   * Every agent display name this executor has handed out, seeded with the
+   * reserved primary name "Main". Used to uniquify each spawned agent's
+   * AdjectiveNoun name so no two agents in the fleet collide. Session-scoped.
+   */
+  private _assignedAgentNames = new Set<string>([PRIMARY_AGENT_NAME]);
 
   /**
    * OAST interaction handles minted this scan, plus verified callback verdicts
@@ -5434,8 +5444,15 @@ export class ToolExecutor {
           ...(this.ctx.scope.raw.out_of_scope ?? []),
         ]
       : undefined;
+    const agent_id = `${this.ctx.scanId}-sub-${randomUUID()}`;
+    // A stable AdjectiveNoun name from the id, uniquified against every name this
+    // executor has already handed out (which starts with the reserved "Main"), so
+    // no two agents in the fleet ever share a display name.
+    const name = assignAgentName(agent_id, this._assignedAgentNames);
+    this._assignedAgentNames.add(name);
     return {
-      agent_id: `${this.ctx.scanId}-sub-${randomUUID()}`,
+      agent_id,
+      name,
       parent_scan_id: this.ctx.scanId,
       task,
       max_turns: maxTurns,
@@ -7847,6 +7864,18 @@ export class ToolExecutor {
     if (!result.ok) {
       return { success: false, output: null, error: `Message could not be delivered (${result.reason ?? "io-error"}).` };
     }
+    // Surface the send so an IRC-style chat view can render inter-agent traffic
+    // live. Observability only — delivery already happened via the mailbox and
+    // decideAddressing already authorized it; this event grants nothing.
+    eventBus.emit("peer_message", {
+      from: msg.from,
+      to: msg.to,
+      body: msg.body,
+      ts: msg.ts,
+      kind: msg.to === "all" ? "broadcast" : "peer",
+      id: msg.id,
+      ...(msg.replyTo ? { reply_to: msg.replyTo } : {}),
+    });
     return {
       success: true,
       output: {
