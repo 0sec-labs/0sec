@@ -64,8 +64,8 @@ describe("CLI E2E", () => {
     }
   });
 
-  it("auto-routes an existing bare relative path to review", () => {
-    expect(detectAndRoute("src")).toEqual(["review", "src"]);
+  it("auto-routes an existing bare relative path to deep source review", () => {
+    expect(detectAndRoute("src")).toEqual(["review", "src", "--depth", "deep"]);
   });
 
   it("allows piped analysis commands without invoking shell operators", async () => {
