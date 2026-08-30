@@ -1,6 +1,6 @@
-# Evaluation Notes for pwnkit Paper Draft
+# Evaluation Notes for 0sec Paper Draft
 
-This file is a paper-support companion for `docs/paper/pwnkit.md`.
+This file is a paper-support companion for `docs/paper/0sec.md`.
 
 It consolidates the current measured numbers and their source paths so the
 submission draft can quote one canonical table set.

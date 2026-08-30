@@ -1,5 +1,5 @@
-% pwnkit: arXiv submission draft
-% Compile: pdflatex pwnkit-submission.tex && pdflatex pwnkit-submission.tex
+% 0sec: arXiv submission draft
+% Compile: pdflatex 0sec-submission.tex && pdflatex 0sec-submission.tex
 
 \documentclass[11pt]{article}
 
@@ -24,10 +24,10 @@
   urlcolor=blue!60!black,
 }
 
-\title{pwnkit: Methodology-Aware Evaluation and Cost-Aware Triage for Autonomous Pentesting Agents}
+\title{0sec: Methodology-Aware Evaluation and Cost-Aware Triage for Autonomous Pentesting Agents}
 
 \author{
-  PwnKit Labs \\
+  0sec Labs \\
   \texttt{github.com/0sec-labs/0sec}
 }
 
@@ -41,10 +41,10 @@
 Autonomous pentesting agents are frequently summarized by a single benchmark
 headline, although reported performance is sensitive to retry protocol,
 benchmark substrate, model/runtime, turn budget, and evidence policy. We
-present pwnkit, an open-source shell-first pentesting framework with layered
+present 0sec, an open-source shell-first pentesting framework with layered
 triage and blind verification, and pair it with a methodology-aware reporting
 protocol that separates retained artifact-backed evidence from historical mixed
-publication lines. In the current public ledger snapshot (2026-04-10), pwnkit
+publication lines. In the current public ledger snapshot (2026-04-10), 0sec
 reports a retained artifact-backed XBOW aggregate of 99/104. A 21-run triage
 ablation (2026-04-11) shows mode-dependent behavior: full-moat triage is a
 precision/recall tradeoff in white-box slices, a strict efficiency improvement
@@ -59,7 +59,7 @@ engineering surfaces for non-deterministic security agents.
 Single benchmark percentages for autonomous security agents hide variance and
 protocol sensitivity. In practice, score changes can come from retry strategy,
 benchmark fork, or evidence accounting policy rather than meaningful capability
-changes. We frame pwnkit as both:
+changes. We frame 0sec as both:
 
 \begin{itemize}[leftmargin=*]
   \item a \textbf{systems artifact}: shell-first exploitation, layered triage,
@@ -91,7 +91,7 @@ The pipeline is:
 \texttt{Plan} \rightarrow \texttt{Discover} \rightarrow \texttt{Attack} \rightarrow \texttt{Triage} \rightarrow \texttt{Verify} \rightarrow \texttt{Report}
 \]
 
-For web targets, pwnkit uses shell-first execution (\texttt{bash} as primary
+For web targets, 0sec uses shell-first execution (\texttt{bash} as primary
 tool), with structured helpers optional. Findings then pass through layered
 triage and verification before final reporting.
 
@@ -274,7 +274,7 @@ explicitly frozen benchmark protocols.
 
 \section{Related Work}
 
-Current pwnkit docs position this work adjacent to three threads:
+Current 0sec docs position this work adjacent to three threads:
 
 \begin{itemize}
   \item autonomous pentesting systems with differing orchestration styles
@@ -288,12 +288,12 @@ Current pwnkit docs position this work adjacent to three threads:
 The comparative caveat is central: cross-project benchmark numbers are only
 loosely comparable unless protocol and substrate are aligned.
 
-Representative systems in the current pwnkit docs include BoxPwnr, Shannon,
+Representative systems in the current 0sec docs include BoxPwnr, Shannon,
 KinoSec, Cyber-AutoAgent, deadend-cli, and
 MAPTA\citep{boxpwnr,shannon,kinosec,cyberautoagent,deadend,mapta}.
-For FP-triage architecture context, pwnkit docs reference Endor Labs and
+For FP-triage architecture context, 0sec docs reference Endor Labs and
 Semgrep Assistant disclosures\citep{endor,semgrep}. For hybrid feature+model
-signals, pwnkit docs use VulnBERT-style framing as design inspiration rather
+signals, 0sec docs use VulnBERT-style framing as design inspiration rather
 than a direct task-equivalent claim\citep{vulnbert}.
 
 Table~\ref{tab:competitors} collects the self-reported XBOW aggregates for
@@ -310,7 +310,7 @@ System & Aggregate & Model / Approach & Notes \\
 \midrule
 BoxPwnr\citep{boxpwnr}             & 97.1\% (101/104) & Best-of-N, 10 configs  & Context compaction, loop detection \\
 Shannon\citep{shannon}              & 96.2\% (100/104) & White-box, multi-agent & Source-to-sink taint \\
-\textbf{pwnkit (this work)}         & \textbf{95.2\% (99/104)} & Shell-first, gpt-5.4   & Retained artifact-backed; see Table~\ref{tab:ledger} \\
+\textbf{0sec (this work)}         & \textbf{95.2\% (99/104)} & Shell-first, gpt-5.4   & Retained artifact-backed; see Table~\ref{tab:ledger} \\
 KinoSec\citep{kinosec}              & 92.3\% (96/104)  & Black-box HTTP only    & 50-turn hard cap \\
 Cyber-AutoAgent\citep{cyberautoagent} & 84.6\% (88/104)  & Meta-agent             & Self-rewriting prompts \\
 deadend-cli\citep{deadend}          & 77.6\% ($\sim$76/98) & Single-agent CLI     & ADaPT decomposition \\
@@ -367,7 +367,7 @@ Canonical evidence files and runners are in:
 Companion drafting notes:
 
 \begin{itemize}
-  \item \texttt{docs/paper/pwnkit.md}
+  \item \texttt{docs/paper/0sec.md}
   \item \texttt{docs/paper/evaluation.md}
   \item \texttt{docs/paper/related\_work.md}
 \end{itemize}
@@ -375,7 +375,7 @@ Companion drafting notes:
 \section{Conclusion}
 
 For autonomous pentesting agents, measurement protocol quality is part of the
-core contribution. pwnkit's current evidence suggests that transparent protocol
+core contribution. 0sec's current evidence suggests that transparent protocol
 disclosure, retained-evidence lineage, and mode-aware triage policy are more
 reliable than single headline percentages.
 

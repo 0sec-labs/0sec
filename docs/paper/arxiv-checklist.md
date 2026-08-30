@@ -1,11 +1,11 @@
-# arXiv submission checklist (pwnkit)
+# arXiv submission checklist (0sec)
 
 Use this checklist right before uploading source to arXiv.
 
 ## 1) Files included in upload package
 
-- `pwnkit-submission.tex`
-- `pwnkit-submission.bbl`
+- `0sec-submission.tex`
+- `0sec-submission.bbl`
 - `refs.bib`
 
 Current draft has no external figures. If figures are added later, include only
@@ -17,7 +17,7 @@ the exact files referenced by `\includegraphics`.
 - `*.log`
 - `*.out`
 - `*.blg`
-- `pwnkit-submission.pdf` (optional; usually not needed in source upload)
+- `0sec-submission.pdf` (optional; usually not needed in source upload)
 
 ## 3) Metadata and claim hygiene checks
 
@@ -30,10 +30,10 @@ the exact files referenced by `\includegraphics`.
 ## 4) Local compile checks
 
 ```bash
-pdflatex -interaction=nonstopmode pwnkit-submission.tex
-bibtex pwnkit-submission
-pdflatex -interaction=nonstopmode pwnkit-submission.tex
-pdflatex -interaction=nonstopmode pwnkit-submission.tex
+pdflatex -interaction=nonstopmode 0sec-submission.tex
+bibtex 0sec-submission
+pdflatex -interaction=nonstopmode 0sec-submission.tex
+pdflatex -interaction=nonstopmode 0sec-submission.tex
 ```
 
 Pass criteria:

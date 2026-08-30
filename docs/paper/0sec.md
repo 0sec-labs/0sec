@@ -1,4 +1,4 @@
-# pwnkit: Methodology-Aware Evaluation and Cost-Aware Triage for Autonomous Pentesting Agents
+# 0sec: Methodology-Aware Evaluation and Cost-Aware Triage for Autonomous Pentesting Agents
 
 **Draft - work in progress.** Not yet submitted.
 
@@ -6,9 +6,9 @@
 
 ## Abstract
 
-Autonomous pentesting agents are usually communicated through single benchmark percentages. In practice, those percentages are unstable without explicit disclosure of retry protocol, benchmark substrate, model/runtime, turn budget, and evidence policy. We present pwnkit, an open-source agentic pentesting framework that combines shell-first exploitation, blind verification, and a layered triage stack, and we frame it as both a systems artifact and a methodology artifact.
+Autonomous pentesting agents are usually communicated through single benchmark percentages. In practice, those percentages are unstable without explicit disclosure of retry protocol, benchmark substrate, model/runtime, turn budget, and evidence policy. We present 0sec, an open-source agentic pentesting framework that combines shell-first exploitation, blind verification, and a layered triage stack, and we frame it as both a systems artifact and a methodology artifact.
 
-pwnkit reports benchmark evidence in three explicit lines: a model-specific cohort (per-model single-shot solve rate), retained artifact-backed totals (machine-reconstructible union over retained CI artifacts of any model), and historical mixed local+CI publication totals. As of the current public ledger (2026-05-06), the retained artifact-backed XBOW aggregate is 103/104 (99.0%) with 102/104 white-box solves; only XBEN-030 remains unsolved in any mode within the live retention window. The load-bearing black-box claim is the gpt-5.4 model-specific cohort at 93/95 (97.9%) — the retained-aggregate black-box count is rotation-volatile because GitHub Actions retains a 90-day window of run artifacts and older "unknown"-model proofs age out as new model-specific sweeps occupy the window. A first scored full Cybench run (2026-05-06) lands at 36/40 (90.0%) single-config single-shot. A 21-run triage ablation (2026-04-11) shows no static policy dominates across slices: in XBOW white-box, full-moat triage is a precision/recall-cost tradeoff; in XBOW black-box, moat is Pareto-superior to no-triage baselines on findings efficiency and dollars per solved challenge; in npm-bench, moat is close to a no-op over default scaffolding.
+0sec reports benchmark evidence in three explicit lines: a model-specific cohort (per-model single-shot solve rate), retained artifact-backed totals (machine-reconstructible union over retained CI artifacts of any model), and historical mixed local+CI publication totals. As of the current public ledger (2026-05-06), the retained artifact-backed XBOW aggregate is 103/104 (99.0%) with 102/104 white-box solves; only XBEN-030 remains unsolved in any mode within the live retention window. The load-bearing black-box claim is the gpt-5.4 model-specific cohort at 93/95 (97.9%) — the retained-aggregate black-box count is rotation-volatile because GitHub Actions retains a 90-day window of run artifacts and older "unknown"-model proofs age out as new model-specific sweeps occupy the window. A first scored full Cybench run (2026-05-06) lands at 36/40 (90.0%) single-config single-shot. A 21-run triage ablation (2026-04-11) shows no static policy dominates across slices: in XBOW white-box, full-moat triage is a precision/recall-cost tradeoff; in XBOW black-box, moat is Pareto-superior to no-triage baselines on findings efficiency and dollars per solved challenge; in npm-bench, moat is close to a no-op over default scaffolding.
 
 The key result is methodological: for non-deterministic autonomous security agents, protocol disclosure and retained-evidence lineage are not reporting accessories; they are part of the core technical contribution.
 
@@ -20,7 +20,7 @@ Code and artifacts: proprietary, 0sec Labs. The GitHub repo is archived and priv
 
 "Solved X%" claims for autonomous pentesting agents are only meaningful if the measurement protocol is clear. In this domain, score movement can come from changes in retry protocol, benchmark fork, run budget, model provider, or evidence accounting, even when the underlying agent logic is unchanged.
 
-This draft organizes pwnkit around two claims:
+This draft organizes 0sec around two claims:
 
 1. **Systems claim.** Shell-first tool use plus explicit triage/verification produces practical offensive coverage while controlling noise.
 2. **Methodology claim.** Benchmark claims should expose protocol details and uncertainty, and should separate machine-backed evidence from historical publication lines.
@@ -38,7 +38,7 @@ This draft organizes pwnkit around two claims:
 
 ## 2. System
 
-pwnkit executes a multi-stage pipeline:
+0sec executes a multi-stage pipeline:
 
 ```text
 Plan -> Discover -> Attack -> Triage -> Verify -> Report
@@ -48,7 +48,7 @@ Core implementation entrypoints include `packages/core/src/agentic-scanner.ts` a
 
 ### 2.1 Shell-first execution
 
-For web targets, pwnkit intentionally keeps attack tools minimal (`bash`, `save_finding`, `done`) and treats structured HTTP wrappers as optional. The design hypothesis is that LLM priors over shell and pentest tooling reduce orchestration overhead in multi-step exploit chains.
+For web targets, 0sec intentionally keeps attack tools minimal (`bash`, `save_finding`, `done`) and treats structured HTTP wrappers as optional. The design hypothesis is that LLM priors over shell and pentest tooling reduce orchestration overhead in multi-step exploit chains.
 
 ### 2.2 Triage and blind verification
 
@@ -58,7 +58,7 @@ Findings are post-processed before reporting. Triage layers may pass, downgrade,
 
 The same core logic is available through:
 
-- `pwnkit-cli`,
+- `0sec-cli`,
 - Docker image distribution,
 - GitHub Action integration,
 - multiple runtime adapters (API and subprocess-style runtimes).
@@ -71,7 +71,7 @@ The benchmark methodology is documented in `docs/src/content/docs/methodology.md
 
 ### 3.1 Reporting regimes
 
-pwnkit differentiates:
+0sec differentiates:
 
 - **single-shot** (one attempt per challenge),
 - **best-of-K** (challenge solved if any attempt succeeds),
@@ -145,8 +145,8 @@ From `packages/benchmark/results/benchmark-ledger.json`:
 
 From `packages/benchmark/results/benchmark-ledger.json`:
 
-- pwnkit: **36/40 = 90.0%** — single-config (Azure gpt-5.4), single-shot, 3 retries per challenge, 358 attack turns, ~$14.89 estimated cost across the run. 40/40 challenges started successfully (zero startup failures).
-- Reference: BoxPwnr's published 40/40 = 100% is best-of-N across ~10 model+solver configs; the comparable single-model number from BoxPwnr is not directly published. pwnkit's 36/40 is the closest single-config single-shot result currently in the open literature.
+- 0sec: **36/40 = 90.0%** — single-config (Azure gpt-5.4), single-shot, 3 retries per challenge, 358 attack turns, ~$14.89 estimated cost across the run. 40/40 challenges started successfully (zero startup failures).
+- Reference: BoxPwnr's published 40/40 = 100% is best-of-N across ~10 model+solver configs; the comparable single-model number from BoxPwnr is not directly published. 0sec's 36/40 is the closest single-config single-shot result currently in the open literature.
 
 ### 5.3 Triage ablation posture (21-run matrix, 2026-04-11)
 
@@ -180,7 +180,7 @@ These numbers should be treated as intermediate research artifacts, not final de
 
 ## 7. Related Work (Short)
 
-Adjacent systems and references cited by pwnkit docs include BoxPwnr, Shannon, KinoSec, MAPTA, Endor Labs AI SAST disclosures, Semgrep Assistant disclosures, and hybrid triage approaches (for example VulnBERT-style feature+model fusion).
+Adjacent systems and references cited by 0sec docs include BoxPwnr, Shannon, KinoSec, MAPTA, Endor Labs AI SAST disclosures, Semgrep Assistant disclosures, and hybrid triage approaches (for example VulnBERT-style feature+model fusion).
 
 Long-form notes are split into `docs/paper/related_work.md`.
 
@@ -193,8 +193,8 @@ Representative commands:
 ```bash
 pnpm lint
 pnpm test
-pnpm --filter @pwnkit/benchmark xbow --help
-pnpm --filter @pwnkit/benchmark xbow --repeat 10 --json
+pnpm --filter @0sec/benchmark xbow --help
+pnpm --filter @0sec/benchmark xbow --repeat 10 --json
 pnpm run consolidate-xbow
 ```
 
