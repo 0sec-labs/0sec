@@ -54,6 +54,8 @@ export const features = {
   get scriptTemplates(): boolean { return env("0SEC_FEATURE_SCRIPT_TEMPLATES", true); },
   /** Dynamic vulnerability playbooks injected after recon phase */
   get dynamicPlaybooks(): boolean { return env("0SEC_FEATURE_DYNAMIC_PLAYBOOKS", false); },
+  /** Just-in-time atomic DO/DON'T rules injected on a matching tool action */
+  get ruleInjection(): boolean { return env("0SEC_FEATURE_RULE_INJECTION", false); },
   /** Agent writes plan/creds to disk, injected at reflection checkpoints */
   get externalMemory(): boolean { return env("0SEC_FEATURE_EXTERNAL_MEMORY", false); },
   /** Inject prior attempt findings when retrying (LLM-summarized progress handoff) */

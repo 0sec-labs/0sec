@@ -42,6 +42,7 @@ import { createShadowJournal, type ShadowJournal } from "./journal/shadow.js";
 import { loadJournal, rehydrateContext, renderSeedMessages } from "./journal/index.js";
 import { detectPlaybooks, buildPlaybookInjection } from "./playbooks.js";
 import { detectDoomLoop, doomLoopNudge, toolCallSignature } from "./doom-loop.js";
+import { SECURITY_RULES, selectRules, buildRuleInjection, type EngagementPhase, type Rule } from "./rules.js";
 import { formatJitSkillsInstruction, getSkillById } from "./skills/index.js";
 import { estimateCost } from "./cost.js";
 import type { ScanCostLedger } from "./cost-ledger.js";
@@ -1256,6 +1257,15 @@ export async function runNativeAgentLoop(
   // once per stuck streak, not every turn.
   const toolCallLog: string[] = [];
 
+  // Rules already injected this scan, so an atomic rule fires once per streak,
+  // not every turn (see rules.ts). Persists across turns.
+  const injectedRuleIds = new Set<string>();
+  // Coarse engagement phase from turn-budget fraction, for phase-scoped rules.
+  const derivePhase = (): EngagementPhase => {
+    const frac = config.maxTurns > 0 ? state.turnCount / config.maxTurns : 0;
+    return frac < 0.3 ? "recon" : frac < 0.8 ? "exploit" : "report";
+  };
+
   try {
   while (!state.done && state.turnCount < config.maxTurns) {
     // ── Coordinator rails: supervise sub-agents BETWEEN iterations ──
@@ -1732,6 +1742,9 @@ export async function runNativeAgentLoop(
     const toolCalls: ToolCall[] = [];
     const toolResults: ToolResult[] = [];
     const toolResultBlocks: NativeContentBlock[] = [];
+    // JIT rules matched by this turn's tool actions (see rules.ts); injected with
+    // the tool-results message below.
+    const turnRuleMatches: Rule[] = [];
     // Action-level durable log for this turn (one entry per tool invocation,
     // each with its own wall clock + the correlation id that joins it to the
     // `tool_artifact` row). Persisted below as the `tool_calls` payload.
@@ -1747,6 +1760,34 @@ export async function runNativeAgentLoop(
       // Track the call signature for doom-loop detection (see after the loop).
       toolCallLog.push(toolCallSignature(call.name, call.arguments));
       if (toolCallLog.length > 12) toolCallLog.shift();
+
+      // JIT rule injection: match atomic DO/DON'T rules against THIS action (the
+      // tool + its input + the file it edits + the phase) and collect any fresh
+      // ones to inject with the tool results below. Feature-gated (default OFF).
+      if (features.ruleInjection) {
+        const args = (call.arguments ?? {}) as Record<string, unknown>;
+        const editedPath = typeof args.path === "string" ? args.path : undefined;
+        const matched = selectRules(
+          SECURITY_RULES,
+          {
+            phase: derivePhase(),
+            toolName: call.name,
+            toolInput: (() => {
+              try {
+                return JSON.stringify(call.arguments);
+              } catch {
+                return String(call.arguments);
+              }
+            })(),
+            ...(editedPath ? { editedPath } : {}),
+          },
+          injectedRuleIds,
+        );
+        for (const m of matched) {
+          if (!turnRuleMatches.some((x) => x.id === m.id)) turnRuleMatches.push(m);
+          injectedRuleIds.add(m.id);
+        }
+      }
 
       // Correlation id for this single invocation — threaded into the executor
       // so any `tool_artifact` it persists carries the same key, and recorded
@@ -2044,6 +2085,25 @@ export async function runNativeAgentLoop(
     // without creating an invalid two-user-messages-in-a-row sequence.
     for (const note of inlineValidationNotes) {
       toolResultBlocks.push({ type: "text", text: note });
+    }
+
+    // JIT rule injection: push any atomic rules this turn's actions matched into
+    // the SAME tool-results message so they reach the agent next turn. Fired once
+    // per rule per scan (injectedRuleIds), feature-gated.
+    if (turnRuleMatches.length > 0) {
+      toolResultBlocks.push({ type: "text", text: buildRuleInjection(turnRuleMatches) });
+      const ruleIds = turnRuleMatches.map((rr) => rr.id);
+      onEvent?.("rule_injected", { turn: state.turnCount, rules: ruleIds });
+      if (db) {
+        db.logEvent({
+          scanId: config.scanId,
+          stage: config.role,
+          eventType: "rule_injected",
+          agentRole: config.role,
+          payload: { turn: state.turnCount, rules: ruleIds },
+          timestamp: Date.now(),
+        });
+      }
     }
 
     // Doom-loop guard: if the last several tool calls are byte-identical the
