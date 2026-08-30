@@ -3,11 +3,16 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { readFileSync, existsSync } from "node:fs";
+
 import {
   snapshotWorkspace,
   diffSnapshots,
   isEmptyDiff,
   summarizeDiff,
+  captureCheckpoint,
+  restoreCheckpoint,
+  summarizeRestore,
 } from "./workspace-snapshot.js";
 
 let root: string;
@@ -83,5 +88,108 @@ describe("diffSnapshots", () => {
   it("summarizes a non-empty diff", () => {
     const d = { added: ["a"], modified: ["b", "c"], deleted: [] };
     expect(summarizeDiff(d)).toBe("workspace changes: +1 added, ~2 modified, -0 deleted");
+  });
+});
+
+const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
+
+describe("captureCheckpoint / restoreCheckpoint", () => {
+  it("restores a modified file back to its checkpoint content", () => {
+    write("a.txt", "original");
+    const cp = captureCheckpoint(root);
+    write("a.txt", "changed by agent");
+    const report = restoreCheckpoint(root, cp);
+    expect(read("a.txt")).toBe("original");
+    expect(report.restored).toEqual(["a.txt"]);
+    expect(report.errors).toEqual([]);
+  });
+
+  it("re-creates a file that was deleted since the checkpoint", () => {
+    write("keep.txt", "v1");
+    write("sub/gone.txt", "will be deleted");
+    const cp = captureCheckpoint(root);
+    rmSync(join(root, "sub/gone.txt"));
+    const report = restoreCheckpoint(root, cp);
+    expect(read("sub/gone.txt")).toBe("will be deleted");
+    expect(report.created).toEqual(["sub/gone.txt"]);
+    expect(report.unchanged).toContain("keep.txt");
+  });
+
+  it("prunes files created after the checkpoint by default", () => {
+    write("a.txt", "keep");
+    const cp = captureCheckpoint(root);
+    write("new-poc.py", "print('agent artifact')");
+    const report = restoreCheckpoint(root, cp);
+    expect(existsSync(join(root, "new-poc.py"))).toBe(false);
+    expect(report.pruned).toEqual(["new-poc.py"]);
+  });
+
+  it("keeps created files when pruneCreated is false", () => {
+    write("a.txt", "keep");
+    const cp = captureCheckpoint(root);
+    write("new.txt", "agent made this");
+    const report = restoreCheckpoint(root, cp, { pruneCreated: false });
+    expect(existsSync(join(root, "new.txt"))).toBe(true);
+    expect(report.pruned).toEqual([]);
+  });
+
+  it("dryRun reports without touching the filesystem", () => {
+    write("a.txt", "original");
+    const cp = captureCheckpoint(root);
+    write("a.txt", "changed");
+    write("created.txt", "new");
+    const report = restoreCheckpoint(root, cp, { dryRun: true });
+    // Nothing actually changed on disk.
+    expect(read("a.txt")).toBe("changed");
+    expect(existsSync(join(root, "created.txt"))).toBe(true);
+    // But the report predicts the actions.
+    expect(report.restored).toEqual(["a.txt"]);
+    expect(report.pruned).toEqual(["created.txt"]);
+  });
+
+  it("leaves an unchanged file alone", () => {
+    write("a.txt", "same");
+    const cp = captureCheckpoint(root);
+    const report = restoreCheckpoint(root, cp);
+    expect(report.unchanged).toEqual(["a.txt"]);
+    expect(report.restored).toEqual([]);
+    expect(report.created).toEqual([]);
+  });
+
+  it("never captures or prunes an over-cap file", () => {
+    write("small.txt", "x");
+    write("big.bin", "y".repeat(50));
+    const cp = captureCheckpoint(root, { maxFileBytes: 10 });
+    expect(Object.keys(cp)).toEqual(["small.txt"]);
+    // big.bin is over-cap → restore must not delete it even though it's not in cp.
+    const report = restoreCheckpoint(root, cp, { maxFileBytes: 10 });
+    expect(existsSync(join(root, "big.bin"))).toBe(true);
+    expect(report.pruned).toEqual([]);
+  });
+
+  it("guards against a checkpoint key that escapes the root", () => {
+    write("a.txt", "ok");
+    const cp = { ...captureCheckpoint(root), "../evil.txt": { content: Buffer.from("x").toString("base64"), mode: 0o644 } };
+    const report = restoreCheckpoint(root, cp);
+    expect(report.errors.some((e) => e.path === "../evil.txt")).toBe(true);
+    expect(existsSync(join(root, "../evil.txt"))).toBe(false);
+  });
+
+  it("round-trips a full undo (modify + delete + create)", () => {
+    write("mod.txt", "before");
+    write("del.txt", "keep me");
+    const cp = captureCheckpoint(root);
+    write("mod.txt", "after");        // modified
+    rmSync(join(root, "del.txt"));    // deleted
+    write("extra.txt", "artifact");   // created
+    restoreCheckpoint(root, cp);
+    expect(read("mod.txt")).toBe("before");
+    expect(read("del.txt")).toBe("keep me");
+    expect(existsSync(join(root, "extra.txt"))).toBe(false);
+  });
+
+  it("summarizeRestore is a readable one-liner", () => {
+    const s = summarizeRestore({ restored: ["a"], created: ["b"], pruned: [], unchanged: ["c", "d"], errors: [] });
+    expect(s).toBe("workspace restore: ~1 restored, +1 recreated, -0 pruned, =2 unchanged");
   });
 });
