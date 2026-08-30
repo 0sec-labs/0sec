@@ -50,17 +50,17 @@ jobs:
       # Do not execute checkout-controlled package lifecycle code in the
       # credentialed lane. A previously published release scans this checkout.
       - name: Download verified release reviewer
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tool_dir="$RUNNER_TEMP/0sec-dogfood-reviewer"
           mkdir -p "$tool_dir"
-          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
-            --pattern 0sec-linux-x64 \
-            --pattern checksums.txt \
-            --dir "$tool_dir"
+          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            --output "$tool_dir/0sec-linux-x64" \
+            "$release_base/0sec-linux-x64"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            --output "$tool_dir/checksums.txt" \
+            "$release_base/checksums.txt"
           expected="$(awk '$2 == "0sec-linux-x64" { print $1 }' "$tool_dir/checksums.txt")"
           actual="$(sha256sum "$tool_dir/0sec-linux-x64" | awk '{ print $1 }')"
           test -n "$expected" && test "$actual" = "$expected" || {
