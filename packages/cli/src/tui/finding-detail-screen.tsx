@@ -2,11 +2,10 @@
 /**
  * The full-screen finding-detail view.
  *
- * Open one finding, see everything about it — title, severity, category,
- * location, description, redacted evidence, remediation, CVSS and references —
- * and act on it: request a fix, copy a submission-ready report to the
- * clipboard, or move its status. It is the console's answer to "click a finding
- * and drill in", the read+act companion to the `/findings` list.
+ * Open one finding, see its title, severity, category, location, description,
+ * redacted evidence, remediation, CVSS and references — then investigate or
+ * plan a fix in the scoped chat, copy a submission-ready report, or move its
+ * status. It is the console's read+act companion to the `/findings` list.
  *
  * Three properties are load-bearing, all inherited from `usage-screen.tsx` and
  * `model-screen.tsx`:
@@ -24,10 +23,9 @@
  *
  * 3. **The data and the actions are injected.** The finding arrives as a prop
  *    (or is resolved lazily by id through an injected resolver) so the screen is
- *    testable without a live store; `onFix` / `onCopyReport` / `onSetStatus` are
- *    optional callbacks with graceful, note-only defaults. The screen never
- *    invokes a core tool directly — it hands the intent back to the coordinator,
- *    which wires it into the normal agent turn.
+ *    testable without a live store; chat handoff, report copy, and status actions
+ *    are callbacks. The screen never invokes a core tool directly — it hands the
+ *    intent back to the coordinator, which preserves the normal chat gates.
  */
 
 import React, { useMemo, useState } from "react";
@@ -78,12 +76,13 @@ export interface FindingDetailScreenProps {
    * when `finding` is absent. Injected so the screen never imports the DB.
    */
   resolveFinding?: (id: string) => Finding | undefined;
+  /** Open a safe, evidence-grounded investigation in the persistent chat. */
+  onInvestigate?: (finding: Finding) => void;
   /**
-   * Request a fix. The intent is "generate and apply a fix for this finding",
-   * routed through the normal agent turn by the coordinator (composer / steer).
-   * Default: a note-only no-op — the screen does not touch core tools itself.
+   * Open a proposal-only remediation discussion in the persistent chat. It
+   * never applies a patch; a separate explicit operator action is required.
    */
-  onFix?: (finding: Finding) => void;
+  onPlanFix?: (finding: Finding) => void;
   /**
    * Copy a submission-ready report for this finding. The screen renders the
    * markdown via `renderPlatformReport` and hands both the finding and the
@@ -315,7 +314,8 @@ export function FindingDetailScreen({
   finding: findingProp,
   findingId,
   resolveFinding,
-  onFix,
+  onInvestigate,
+  onPlanFix,
   onCopyReport,
   onSetStatus,
   onBack,
@@ -333,8 +333,14 @@ export function FindingDetailScreen({
     return undefined;
   }, [findingProp, findingId, resolveFinding]);
 
+  const canInvestigate = Boolean(onInvestigate);
+  const canPlanFix = Boolean(onPlanFix);
+  const canCopy = Boolean(onCopyReport);
   const canStatus = Boolean(onSetStatus);
-  const actions = useMemo(() => findingActions({ canStatus }), [canStatus]);
+  const actions = useMemo(
+    () => findingActions({ canInvestigate, canPlanFix, canCopy, canStatus }),
+    [canCopy, canInvestigate, canPlanFix, canStatus],
+  );
 
   const layout = computeFindingDetailLayout({ width, height, actionCount: actions.length });
 
@@ -359,10 +365,16 @@ export function FindingDetailScreen({
     setOffset((current) => Math.max(0, Math.min(max, current + delta)));
   };
 
-  const requestFix = () => {
-    if (!finding) return;
-    if (onFix) onFix(finding);
-    setNotice(`Fix requested for ${finding.id}.`);
+  const startInvestigation = () => {
+    if (!finding || !onInvestigate) return;
+    onInvestigate(finding);
+    setNotice(`Investigation opened for ${finding.id}.`);
+  };
+
+  const planFix = () => {
+    if (!finding || !onPlanFix) return;
+    onPlanFix(finding);
+    setNotice(`Fix planning opened for ${finding.id}.`);
   };
 
   const copyReport = () => {
@@ -422,8 +434,12 @@ export function FindingDetailScreen({
       setOffset(maxScrollOffset(rows.length, layout.visibleRows));
       return;
     }
-    if (key.name === "f") {
-      requestFix();
+    if (canInvestigate && key.name === "i") {
+      startInvestigation();
+      return;
+    }
+    if (canPlanFix && key.name === "f") {
+      planFix();
       return;
     }
     if (key.name === "c") {
@@ -468,5 +484,5 @@ export function FindingDetailScreen({
     </box>
   );
 
-  return <>{frame({ body, hint: findingDetailFooterHint({ canStatus }) })}</>;
+  return <>{frame({ body, hint: findingDetailFooterHint({ canInvestigate, canPlanFix, canCopy, canStatus }) })}</>;
 }

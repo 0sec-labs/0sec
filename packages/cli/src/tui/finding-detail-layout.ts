@@ -381,8 +381,10 @@ export interface FindingAction {
 }
 
 export interface FindingActionsInput {
-  /** Whether the Fix action is offered. */
-  canFix?: boolean;
+  /** Whether the investigate-in-chat action is offered. */
+  canInvestigate?: boolean;
+  /** Whether the plan-a-fix-in-chat action is offered. */
+  canPlanFix?: boolean;
   /** Whether the Copy-report action is offered. */
   canCopy?: boolean;
   /** Whether status transitions are offered (an `onSetStatus` was wired). */
@@ -394,12 +396,14 @@ export interface FindingActionsInput {
  * action-row geometry and the keyboard handler agree on how many buttons exist.
  */
 export function findingActions({
-  canFix = true,
+  canInvestigate = true,
+  canPlanFix = true,
   canCopy = true,
   canStatus = false,
 }: FindingActionsInput = {}): FindingAction[] {
   const actions: FindingAction[] = [];
-  if (canFix) actions.push({ key: "f", label: "Fix" });
+  if (canInvestigate) actions.push({ key: "i", label: "Investigate" });
+  if (canPlanFix) actions.push({ key: "f", label: "Plan fix" });
   if (canCopy) actions.push({ key: "c", label: "Copy report" });
   if (canStatus) {
     actions.push({ key: "v", label: "Verify" });
@@ -595,19 +599,22 @@ export function findingDetailTitle(finding?: Finding): string {
 export { paneTitleColumns, type PaneTitleColumns } from "./pane-layout.js";
 
 export interface FindingFooterHintInput {
-  canFix?: boolean;
+  canInvestigate?: boolean;
+  canPlanFix?: boolean;
   canCopy?: boolean;
   canStatus?: boolean;
 }
 
 /** The footer hint: the keys that actually do something on this screen. */
 export function findingDetailFooterHint({
-  canFix = true,
+  canInvestigate = true,
+  canPlanFix = true,
   canCopy = true,
   canStatus = false,
 }: FindingFooterHintInput = {}): string {
   const parts: string[] = [];
-  if (canFix) parts.push("f fix");
+  if (canInvestigate) parts.push("i investigate");
+  if (canPlanFix) parts.push("f plan fix");
   if (canCopy) parts.push("c copy report");
   if (canStatus) parts.push("v verify", "d dismiss");
   parts.push("↑/↓ scroll", "esc back", "ctrl+c exit");

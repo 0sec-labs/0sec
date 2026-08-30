@@ -222,10 +222,10 @@ describe("severityDetailTone", () => {
 });
 
 describe("findingActions / hints / title", () => {
-  it("offers status actions only when a status handler is wired", () => {
-    expect(findingActions().map((a) => a.key)).toEqual(["f", "c"]);
-    expect(findingActions({ canStatus: true }).map((a) => a.key)).toEqual(["f", "c", "v", "d"]);
-    expect(findingActions({ canFix: false, canCopy: false }).length).toBe(0);
+  it("offers only wired finding actions", () => {
+    expect(findingActions().map((action) => action.key)).toEqual(["i", "f", "c"]);
+    expect(findingActions({ canStatus: true }).map((action) => action.key)).toEqual(["i", "f", "c", "v", "d"]);
+    expect(findingActions({ canInvestigate: false, canPlanFix: false, canCopy: false }).length).toBe(0);
   });
 
   it("names the finding in the title, or falls back", () => {
@@ -235,7 +235,8 @@ describe("findingActions / hints / title", () => {
 
   it("lists the keys that work in the footer hint", () => {
     const hint = findingDetailFooterHint({ canStatus: true });
-    expect(hint).toContain("f fix");
+    expect(hint).toContain("i investigate");
+    expect(hint).toContain("f plan fix");
     expect(hint).toContain("c copy report");
     expect(hint).toContain("v verify");
     expect(hint).toContain("esc back");
